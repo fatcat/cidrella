@@ -1,0 +1,36 @@
+# IPAM DNSmasq default configuration
+# This file is copied to /data/dnsmasq/dnsmasq.conf on first run
+
+# Don't read /etc/resolv.conf
+no-resolv
+
+# Upstream DNS servers
+server=8.8.8.8
+server=1.1.1.1
+
+# Listen on all interfaces (required for DHCP)
+# Restrict as needed in production
+listen-address=0.0.0.0
+bind-dynamic
+
+# Watched directories for hot-reload (no restart needed)
+hostsdir=/data/dnsmasq/hosts.d
+dhcp-hostsdir=/data/dnsmasq/dhcp-hosts.d
+
+# Additional config directory (requires SIGHUP for reload)
+conf-dir=/data/dnsmasq/conf.d
+
+# Log queries for debugging (can be toggled via UI later)
+log-queries
+
+# Log DHCP transactions
+log-dhcp
+
+# Cache size
+cache-size=1000
+
+# Don't forward plain names (without a dot)
+domain-needed
+
+# Don't forward addresses in the non-routed address spaces
+bogus-priv

@@ -1,0 +1,2 @@
+#!/command/execlineb -P
+exec dnsmasq --keep-in-foreground --conf-file=/data/dnsmasq/dnsmasq.conf
