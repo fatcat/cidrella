@@ -731,11 +731,35 @@ router.post('/:id/configure', requirePerm('subnets:write'), (req, res) => {
     if (create_reverse_dns) {
       const reverseName = generateReverseName(subnet.cidr);
       const existingZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(reverseName);
+      let zoneId;
       if (!existingZone) {
-        db.prepare(`
+        const zoneResult = db.prepare(`
           INSERT INTO dns_zones (name, type, subnet_id, description) VALUES (?, 'reverse', ?, ?)
         `).run(reverseName, subnet.id, `Reverse zone for ${subnet.cidr}`);
+        zoneId = zoneResult.lastInsertRowid;
+      } else {
+        zoneId = existingZone.id;
       }
+
+      // Auto-create PTR records for all usable IPs in the subnet
+      const existingPtrs = db.prepare('SELECT name FROM dns_records WHERE zone_id = ? AND type = ?').all(zoneId, 'PTR');
+      const existingNames = new Set(existingPtrs.map(r => r.name));
+
+      const startIp = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
+      const endIp = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
+
+      const insertRecord = db.prepare(
+        'INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, ?, ?, 1)'
+      );
+      for (let ipLong = startIp; ipLong <= endIp; ipLong++) {
+        const lastOctet = String(ipLong & 255);
+        if (!existingNames.has(lastOctet)) {
+          insertRecord.run(zoneId, lastOctet, 'PTR', longToIp(ipLong));
+        }
+      }
+
+      // Increment SOA serial
+      db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?").run(zoneId);
     }
 
     // Create DHCP scope if requested and subnet is >= /29
@@ -754,9 +778,15 @@ router.post('/:id/configure', requirePerm('subnets:write'), (req, res) => {
         }
 
         if (poolStart <= poolEnd) {
-          db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
+          const rangeResult = db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
             subnet.id, dhcpType.id, longToIp(poolStart), longToIp(poolEnd), 'DHCP pool'
           );
+
+          // Auto-create DHCP scope with defaults
+          db.prepare(`
+            INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, description)
+            VALUES (?, ?, '24h', ?, 'Auto-created DHCP scope')
+          `).run(rangeResult.lastInsertRowid, subnet.id, gw);
         }
       }
     }

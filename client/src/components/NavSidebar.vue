@@ -34,7 +34,6 @@ const auth = useAuthStore();
 const navItems = [
   { to: '/', label: 'Dashboard', icon: 'pi pi-home' },
   { to: '/subnets', label: 'Subnets', icon: 'pi pi-sitemap' },
-  { to: '/range-types', label: 'Range Types', icon: 'pi pi-palette' },
   { to: '/dns', label: 'DNS', icon: 'pi pi-globe' },
   { to: '/dhcp', label: 'DHCP', icon: 'pi pi-list' },
   { to: '/blocklists', label: 'Blocklists', icon: 'pi pi-shield' },

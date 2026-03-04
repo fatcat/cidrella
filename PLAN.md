@@ -49,12 +49,15 @@
 - [x] Duplicate A record and CNAME conflict detection
 - [x] DNS management UI (zone list, records table, forwarders)
 
-## Phase 4: DHCP
-- [ ] DHCP scope configuration from functional ranges
-- [ ] DHCP options per scope (gateway, DNS, lease time)
-- [ ] DHCP reservations (MAC → IP)
-- [ ] Lease file monitoring and DB sync
-- [ ] Auto DNS/PTR creation for dynamic leases
+## Phase 4: DHCP [COMPLETE]
+- [x] DHCP scope configuration from functional ranges (dhcp_scopes linked to DHCP Pool ranges)
+- [x] DHCP options per scope (gateway, DNS servers, domain name, lease time)
+- [x] DHCP reservations (MAC → IP with hostname)
+- [x] Lease file monitoring and DB sync (fs.watchFile on dnsmasq.leases)
+- [x] DNSmasq config generation (dhcp-range/dhcp-option in conf.d, reservations in dhcp-hostsdir)
+- [x] Auto-create DHCP scope on subnet configure (when create_dhcp_scope=true)
+- [x] Available ranges endpoint (DHCP Pool ranges without existing scopes)
+- [x] DHCP management UI (scopes, reservations, leases tabs)
 
 ## Phase 5: Network Intelligence
 - [ ] IP conflict detection (ARP/ping scan)

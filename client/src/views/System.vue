@@ -59,6 +59,76 @@
           </div>
         </div>
       </TabPanel>
+      <TabPanel header="Range Types">
+        <div class="range-types-section">
+          <div class="section-header">
+            <Button label="Add Type" icon="pi pi-plus" size="small" @click="showRangeTypeDialog = true" />
+          </div>
+          <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows emptyMessage="No range types found." size="small">
+            <Column header="Color" style="width: 4rem">
+              <template #body="{ data }">
+                <span class="color-swatch" :style="{ background: data.color }"></span>
+              </template>
+            </Column>
+            <Column field="name" header="Name" sortable />
+            <Column field="description" header="Description">
+              <template #body="{ data }">{{ data.description ?? '—' }}</template>
+            </Column>
+            <Column header="Type" style="width: 7rem">
+              <template #body="{ data }">
+                <span :class="data.is_system ? 'badge-system' : 'badge-custom'">
+                  {{ data.is_system ? 'System' : 'Custom' }}
+                </span>
+              </template>
+            </Column>
+            <Column header="" style="width: 5rem">
+              <template #body="{ data }">
+                <div class="action-buttons" v-if="!data.is_system">
+                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                          @click="editRangeType(data)" />
+                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                          @click="confirmDeleteRangeType(data)" />
+                </div>
+              </template>
+            </Column>
+          </DataTable>
+        </div>
+
+        <!-- Range Type Dialog -->
+        <Dialog v-model:visible="showRangeTypeDialog" :header="editingRangeType ? 'Edit Range Type' : 'Add Range Type'"
+                modal :style="{ width: '24rem' }">
+          <div class="form-grid">
+            <div class="field">
+              <label>Name *</label>
+              <InputText v-model="rangeTypeForm.name" class="w-full" />
+            </div>
+            <div class="field">
+              <label>Color</label>
+              <div class="color-picker-row">
+                <input type="color" v-model="rangeTypeForm.color" />
+                <InputText v-model="rangeTypeForm.color" style="width: 8rem; font-family: monospace;" />
+              </div>
+            </div>
+            <div class="field">
+              <label>Description</label>
+              <InputText v-model="rangeTypeForm.description" class="w-full" />
+            </div>
+          </div>
+          <template #footer>
+            <Button label="Cancel" severity="secondary" @click="closeRangeTypeDialog" />
+            <Button :label="editingRangeType ? 'Save' : 'Create'" @click="saveRangeType" :loading="savingRangeType" />
+          </template>
+        </Dialog>
+
+        <!-- Delete Range Type Dialog -->
+        <Dialog v-model:visible="showDeleteRangeTypeDialog" header="Delete Range Type" modal :style="{ width: '24rem' }">
+          <p>Delete range type <strong>{{ deletingRangeType?.name }}</strong>?</p>
+          <template #footer>
+            <Button label="Cancel" severity="secondary" @click="showDeleteRangeTypeDialog = false" />
+            <Button label="Delete" severity="danger" @click="doDeleteRangeType" :loading="savingRangeType" />
+          </template>
+        </Dialog>
+      </TabPanel>
       <TabPanel header="Subnet Calculator">
         <SubnetCalculator />
       </TabPanel>
@@ -75,6 +145,9 @@ import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
+import Dialog from 'primevue/dialog';
 import Toast from 'primevue/toast';
 import SubnetCalculator from './SubnetCalculator.vue';
 import { useSubnetStore } from '../stores/subnets.js';
@@ -103,7 +176,8 @@ onMounted(async () => {
   try {
     const [data, servers] = await Promise.all([
       store.getSettings(),
-      dnsStore.getForwarders().catch(() => ['8.8.8.8', '1.1.1.1'])
+      dnsStore.getForwarders().catch(() => ['8.8.8.8', '1.1.1.1']),
+      loadRangeTypes()
     ]);
     settings.value = {
       subnet_name_template: data.subnet_name_template || '%1.%2.%3.%4/%bitmask',
@@ -113,6 +187,68 @@ onMounted(async () => {
   } catch { /* use defaults */ }
   loadingSettings.value = false;
 });
+
+// Range Types
+const rangeTypes = ref([]);
+const loadingRangeTypes = ref(false);
+const savingRangeType = ref(false);
+const showRangeTypeDialog = ref(false);
+const showDeleteRangeTypeDialog = ref(false);
+const editingRangeType = ref(null);
+const deletingRangeType = ref(null);
+const rangeTypeForm = ref({ name: '', color: '#6b7280', description: '' });
+
+async function loadRangeTypes() {
+  loadingRangeTypes.value = true;
+  try { rangeTypes.value = await store.getRangeTypes(); }
+  finally { loadingRangeTypes.value = false; }
+}
+
+function editRangeType(type) {
+  editingRangeType.value = type;
+  rangeTypeForm.value = { name: type.name, color: type.color, description: type.description || '' };
+  showRangeTypeDialog.value = true;
+}
+
+function closeRangeTypeDialog() {
+  showRangeTypeDialog.value = false;
+  editingRangeType.value = null;
+  rangeTypeForm.value = { name: '', color: '#6b7280', description: '' };
+}
+
+async function saveRangeType() {
+  savingRangeType.value = true;
+  try {
+    if (editingRangeType.value) {
+      await store.updateRangeType(editingRangeType.value.id, rangeTypeForm.value);
+      toast.add({ severity: 'success', summary: 'Range type updated', life: 3000 });
+    } else {
+      await store.createRangeType(rangeTypeForm.value);
+      toast.add({ severity: 'success', summary: 'Range type created', life: 3000 });
+    }
+    closeRangeTypeDialog();
+    await loadRangeTypes();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { savingRangeType.value = false; }
+}
+
+function confirmDeleteRangeType(type) {
+  deletingRangeType.value = type;
+  showDeleteRangeTypeDialog.value = true;
+}
+
+async function doDeleteRangeType() {
+  savingRangeType.value = true;
+  try {
+    await store.deleteRangeType(deletingRangeType.value.id);
+    showDeleteRangeTypeDialog.value = false;
+    toast.add({ severity: 'success', summary: 'Range type deleted', life: 3000 });
+    await loadRangeTypes();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { savingRangeType.value = false; }
+}
 
 async function saveSettings() {
   savingSettings.value = true;
@@ -203,5 +339,51 @@ async function saveSettings() {
 }
 .settings-actions {
   margin-top: 1rem;
+}
+.section-header {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.75rem;
+}
+.color-swatch {
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  border: 1px solid rgba(0,0,0,0.1);
+}
+.badge-system {
+  font-size: 0.75rem;
+  background: var(--p-surface-200);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+.badge-custom {
+  font-size: 0.75rem;
+  background: var(--p-primary-100);
+  color: var(--p-primary-700);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+}
+.action-buttons {
+  display: flex;
+  gap: 0.25rem;
+}
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.color-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.color-picker-row input[type="color"] {
+  width: 36px;
+  height: 36px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 </style>

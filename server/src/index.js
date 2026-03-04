@@ -8,7 +8,7 @@ import cors from 'cors';
 import morgan from 'morgan';
 import { fileURLToPath } from 'url';
 
-import { initDb } from './db/init.js';
+import { initDb, getDb } from './db/init.js';
 import { authMiddleware } from './auth/middleware.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
@@ -17,7 +17,9 @@ import rangeTypeRoutes from './routes/range-types.js';
 import rangeRoutes from './routes/ranges.js';
 import settingsRoutes from './routes/settings.js';
 import dnsRoutes from './routes/dns.js';
+import dhcpRoutes from './routes/dhcp.js';
 import { ensureCerts } from './utils/cert.js';
+import { startLeaseWatcher } from './utils/dhcp.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -35,6 +37,9 @@ async function main() {
   // Initialize database
   await initDb(DATA_DIR);
   console.log('Database initialized');
+
+  // Start DHCP lease file watcher
+  startLeaseWatcher(getDb());
 
   // Generate or load TLS certs
   const { keyPath, certPath } = ensureCerts(DATA_DIR);
@@ -61,6 +66,7 @@ async function main() {
   app.use('/api/range-types', rangeTypeRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dns', dnsRoutes);
+  app.use('/api/dhcp', dhcpRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
 
   // Serve Vue frontend (built files)

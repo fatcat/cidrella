@@ -26,9 +26,9 @@ const routes = [
       { path: '', name: 'Dashboard', component: Dashboard },
       { path: 'subnets', name: 'Subnets', component: () => import('../views/Subnets.vue') },
       { path: 'subnets/:id', name: 'SubnetDetail', component: () => import('../views/SubnetDetail.vue') },
-      { path: 'range-types', name: 'RangeTypes', component: () => import('../views/RangeTypes.vue') },
+      { path: 'range-types', redirect: '/system' },
       { path: 'dns', name: 'DNS', component: () => import('../views/DNS.vue') },
-      { path: 'dhcp', name: 'DHCP', component: () => import('../views/Placeholder.vue'), meta: { label: 'DHCP' } },
+      { path: 'dhcp', name: 'DHCP', component: () => import('../views/DHCP.vue') },
       { path: 'blocklists', name: 'Blocklists', component: () => import('../views/Placeholder.vue'), meta: { label: 'Blocklists' } },
       { path: 'system', name: 'System', component: () => import('../views/System.vue') }
     ]

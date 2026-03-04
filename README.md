@@ -14,11 +14,12 @@ A lightweight IP Address Management system with integrated DNS and DHCP via DNSm
 - **Reconsolidation** — Deleting subnets buddy-merges adjacent unallocated blocks back into larger CIDRs
 - **Merge subnets** — Ctrl-click to multi-select siblings and merge back into a larger CIDR with gateway preservation
 - **Functional ranges** — Define IP ranges (DHCP pools, static, custom) with overlap detection and color coding
-- **IP address grid** — Color-coded visual map of all IPs in an allocated subnet with drag-select and context menu
+- **IP address grid** — Color-coded visual map of all IPs in an allocated subnet with drag-select, shift-click range select, and context menu
 - **RFC1918 enforcement** — Supernets validated against reserved range boundaries
 - **Name templates** — Auto-generated subnet names from a configurable template (e.g., `MyCo-%1.%2.%3.%4/%bitmask`)
 - **DNS zones** — Create and manage forward and reverse DNS zones with enable/disable toggle
-- **DNS records** — A, CNAME, MX, TXT, and SRV records with type-specific validation
+- **DNS records** — A, CNAME, MX, TXT, and SRV records with type-specific validation and per-record TTL
+- **SOA management** — Editable SOA fields (primary NS, admin email, refresh, retry, expire, minimum TTL) with auto-incrementing serial
 - **DNSmasq integration** — Automatic config generation with atomic writes; hostsdir for A/PTR (hot-reload), conf.d for CNAME/MX/TXT/SRV (SIGHUP)
 - **Upstream forwarders** — Configure upstream DNS servers from the System settings page
 - **Reverse zone auto-creation** — Configuring a subnet with "create reverse DNS" auto-creates the in-addr.arpa zone

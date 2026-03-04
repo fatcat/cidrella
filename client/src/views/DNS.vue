@@ -68,6 +68,9 @@
             <Column header="Port" style="width: 4rem">
               <template #body="{ data }">{{ data.port ?? '—' }}</template>
             </Column>
+            <Column header="TTL" style="width: 4rem">
+              <template #body="{ data }">{{ data.ttl ?? '—' }}</template>
+            </Column>
             <Column header="Enabled" style="width: 5rem">
               <template #body="{ data }">
                 <span :class="data.enabled ? 'badge-enabled' : 'badge-disabled'">
@@ -97,7 +100,7 @@
 
     <!-- Zone Dialog -->
     <Dialog v-model:visible="showZoneDialog" :header="editingZone ? 'Edit Zone' : 'Add Zone'"
-            modal :style="{ width: '28rem' }">
+            modal :style="{ width: '32rem' }">
       <div class="form-grid">
         <div class="field">
           <label>Zone Name *</label>
@@ -116,6 +119,43 @@
           <label>Enabled</label>
           <ToggleSwitch v-model="zoneForm.enabled" />
         </div>
+
+        <!-- SOA Fields -->
+        <div class="soa-section">
+          <h4>SOA Record</h4>
+          <div class="field">
+            <label>Primary Nameserver</label>
+            <InputText v-model="zoneForm.soa_primary_ns" class="w-full" placeholder="ns1.example.com" />
+          </div>
+          <div class="field">
+            <label>Admin Email</label>
+            <InputText v-model="zoneForm.soa_admin_email" class="w-full" placeholder="admin.example.com" />
+            <small class="field-help">Use dotted notation (admin.example.com = admin@example.com)</small>
+          </div>
+          <div class="soa-grid">
+            <div class="field">
+              <label>Refresh (s)</label>
+              <InputNumber v-model="zoneForm.soa_refresh" class="w-full" :min="0" />
+            </div>
+            <div class="field">
+              <label>Retry (s)</label>
+              <InputNumber v-model="zoneForm.soa_retry" class="w-full" :min="0" />
+            </div>
+            <div class="field">
+              <label>Expire (s)</label>
+              <InputNumber v-model="zoneForm.soa_expire" class="w-full" :min="0" />
+            </div>
+            <div class="field">
+              <label>Minimum TTL (s)</label>
+              <InputNumber v-model="zoneForm.soa_minimum_ttl" class="w-full" :min="0" />
+            </div>
+          </div>
+          <div v-if="editingZone" class="field">
+            <label>Serial</label>
+            <span class="soa-serial">{{ editingZone.soa_serial || 1 }}</span>
+            <small class="field-help">Auto-incremented on changes</small>
+          </div>
+        </div>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showZoneDialog = false" />
@@ -128,15 +168,17 @@
             modal :style="{ width: '28rem' }">
       <div class="form-grid">
         <div class="field">
-          <label>Name *</label>
-          <InputText v-model="recordForm.name" class="w-full" placeholder="e.g. www or @" />
+          <label>{{ recordForm.type === 'PTR' ? 'IP Octet(s) *' : 'Name *' }}</label>
+          <InputText v-model="recordForm.name" class="w-full"
+                     :placeholder="recordForm.type === 'PTR' ? 'e.g. 10 (last octet)' : 'e.g. www or @'" />
+          <small v-if="recordForm.type === 'PTR'" class="field-help">Reversed IP octets relative to zone (e.g. "10" for .10 in the subnet)</small>
         </div>
         <div class="field">
           <label>Type *</label>
-          <Select v-model="recordForm.type" :options="recordTypes" class="w-full" :disabled="!!editingRecord" />
+          <Select v-model="recordForm.type" :options="availableRecordTypes" class="w-full" :disabled="!!editingRecord" />
         </div>
         <div class="field">
-          <label>Value *</label>
+          <label>{{ recordForm.type === 'PTR' ? 'Hostname *' : 'Value *' }}</label>
           <InputText v-model="recordForm.value" class="w-full" :placeholder="valuePlaceholder" />
         </div>
         <div class="field" v-if="['MX', 'SRV'].includes(recordForm.type)">
@@ -150,6 +192,11 @@
         <div class="field" v-if="recordForm.type === 'SRV'">
           <label>Port *</label>
           <InputNumber v-model="recordForm.port" class="w-full" :min="0" :max="65535" />
+        </div>
+        <div class="field">
+          <label>TTL (seconds)</label>
+          <InputNumber v-model="recordForm.ttl" class="w-full" :min="0" placeholder="Default" />
+          <small class="field-help">Leave empty to use zone default</small>
         </div>
         <div class="field">
           <label>Enabled</label>
@@ -210,7 +257,11 @@ const loadingRecords = ref(false);
 const showZoneDialog = ref(false);
 const editingZone = ref(null);
 const savingZone = ref(false);
-const zoneForm = ref({ name: '', type: 'forward', description: '', enabled: true });
+const zoneForm = ref({
+  name: '', type: 'forward', description: '', enabled: true,
+  soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
+  soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
+});
 const zoneTypes = [
   { label: 'Forward', value: 'forward' },
   { label: 'Reverse', value: 'reverse' }
@@ -220,8 +271,12 @@ const zoneTypes = [
 const showRecordDialog = ref(false);
 const editingRecord = ref(null);
 const savingRecord = ref(false);
-const recordForm = ref({ name: '', type: 'A', value: '', priority: null, weight: null, port: null, enabled: true });
-const recordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV'];
+const recordForm = ref({ name: '', type: 'A', value: '', priority: null, weight: null, port: null, ttl: null, enabled: true });
+const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
+const availableRecordTypes = computed(() => {
+  if (selectedZone.value?.type === 'reverse') return ['PTR'];
+  return allRecordTypes;
+});
 
 // Delete dialogs
 const showDeleteZoneDialog = ref(false);
@@ -238,6 +293,7 @@ const valuePlaceholder = computed(() => {
     case 'MX': return 'mail.example.com';
     case 'TXT': return 'v=spf1 include:...';
     case 'SRV': return 'server.example.com';
+    case 'PTR': return 'host.example.com';
     default: return '';
   }
 });
@@ -258,9 +314,19 @@ async function selectZone(zone) {
 function openZoneDialog(zone = null) {
   editingZone.value = zone;
   if (zone) {
-    zoneForm.value = { name: zone.name, type: zone.type, description: zone.description || '', enabled: !!zone.enabled };
+    zoneForm.value = {
+      name: zone.name, type: zone.type, description: zone.description || '', enabled: !!zone.enabled,
+      soa_primary_ns: zone.soa_primary_ns || 'ns1.localhost',
+      soa_admin_email: zone.soa_admin_email || 'admin.localhost',
+      soa_refresh: zone.soa_refresh ?? 3600, soa_retry: zone.soa_retry ?? 900,
+      soa_expire: zone.soa_expire ?? 604800, soa_minimum_ttl: zone.soa_minimum_ttl ?? 86400
+    };
   } else {
-    zoneForm.value = { name: '', type: 'forward', description: '', enabled: true };
+    zoneForm.value = {
+      name: '', type: 'forward', description: '', enabled: true,
+      soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
+      soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
+    };
   }
   showZoneDialog.value = true;
 }
@@ -316,10 +382,11 @@ function openRecordDialog(record = null) {
     recordForm.value = {
       name: record.name, type: record.type, value: record.value,
       priority: record.priority, weight: record.weight, port: record.port,
-      enabled: !!record.enabled
+      ttl: record.ttl, enabled: !!record.enabled
     };
   } else {
-    recordForm.value = { name: '', type: 'A', value: '', priority: null, weight: null, port: null, enabled: true };
+    const defaultType = selectedZone.value?.type === 'reverse' ? 'PTR' : 'A';
+    recordForm.value = { name: '', type: defaultType, value: '', priority: null, weight: null, port: null, ttl: null, enabled: true };
   }
   showRecordDialog.value = true;
 }
@@ -509,6 +576,34 @@ onMounted(async () => {
   margin-bottom: 0.35rem;
   font-size: 0.85rem;
   font-weight: 600;
+}
+
+.soa-section {
+  border-top: 1px solid var(--p-surface-200);
+  padding-top: 0.75rem;
+  margin-top: 0.25rem;
+}
+.soa-section h4 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.85rem;
+  color: var(--p-text-muted-color);
+  text-transform: uppercase;
+}
+.soa-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+.soa-serial {
+  font-family: monospace;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.field-help {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--p-text-muted-color);
 }
 
 @media (max-width: 900px) {

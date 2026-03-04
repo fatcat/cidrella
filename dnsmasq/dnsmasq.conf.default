@@ -23,6 +23,9 @@ conf-dir=/data/dnsmasq/conf.d
 # Log queries for debugging (can be toggled via UI later)
 log-queries
 
+# DHCP lease file
+dhcp-leasefile=/data/dnsmasq/dnsmasq.leases
+
 # Log DHCP transactions
 log-dhcp
 

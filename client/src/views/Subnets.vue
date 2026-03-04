@@ -27,7 +27,8 @@
           <span class="node-cidr">{{ node.data.cidr }}</span>
           <span class="node-prefix">/{{ node.data.prefix_length }}</span>
           <span v-if="node.data.status === 'allocated'" class="node-name">{{ node.data.name }}</span>
-          <span v-else class="node-badge unalloc-badge">unallocated</span>
+          <span v-else-if="node.data.name && node.data.name !== node.data.cidr" class="node-name faded">{{ node.data.name }}</span>
+          <span v-if="node.data.status === 'unallocated'" class="node-badge unalloc-badge">unallocated</span>
           <span v-if="node.data.status === 'allocated' && node.data.range_count > 0" class="node-badge range-badge">
             {{ node.data.range_count }} ranges
           </span>
@@ -155,7 +156,7 @@
             <InputText v-model="editForm.name" class="w-full" />
             <Button icon="pi pi-sync" severity="secondary" text rounded size="small"
                     title="Apply name template"
-                    @click="editForm.name = applyNameTemplate(nameTemplate, selectedNode.data.cidr)" />
+                    @click="applyTemplateToEdit" />
           </div>
         </div>
         <div class="field">
@@ -447,12 +448,20 @@ const contextMenuItems = computed(() => {
     items.push({ label: 'Edit', icon: 'pi pi-pencil', command: () => openEdit() });
   }
 
-  // Merge option — start merge selection with this node
+  // Merge option
   if (d.parent_id) {
-    items.push({ label: 'Merge...', icon: 'pi pi-sitemap', command: () => {
-      clearMergeSelection();
-      toggleMergeSelect(d.id);
-    }});
+    if (mergeSelectedIdsRaw.value.length >= 2 && mergeValidation.value.valid) {
+      // Already have a valid selection — offer to execute the merge
+      items.push({ label: 'Merge Selected', icon: 'pi pi-sitemap', command: () => openMergeConfirm() });
+    } else {
+      items.push({ label: 'Merge...', icon: 'pi pi-sitemap', command: () => {
+        if (!isMergeSelected(d.id)) toggleMergeSelect(d.id);
+        // If we now have 2+ valid, open the merge dialog
+        if (mergeSelectedIdsRaw.value.length >= 2 && mergeValidation.value.valid) {
+          openMergeConfirm();
+        }
+      }});
+    }
   }
 
   // Apply Template — only show if this node (or children) have names not matching the template
@@ -624,6 +633,15 @@ async function executeMerge() {
   }
 }
 
+function applyTemplateToEdit() {
+  const defaultTemplate = '%1.%2.%3.%4/%bitmask';
+  if (!nameTemplate.value || nameTemplate.value === defaultTemplate) {
+    toast.add({ severity: 'warn', summary: 'No custom template', detail: 'Configure a name template in System settings first', life: 4000 });
+    return;
+  }
+  editForm.value.name = applyNameTemplate(nameTemplate.value, selectedNode.value.data.cidr);
+}
+
 // Apply Template
 async function executeApplyTemplate(ids) {
   saving.value = true;
@@ -683,6 +701,9 @@ async function executeApplyTemplate(ids) {
 .node-name {
   color: var(--p-primary-color);
   font-weight: 500;
+}
+.node-name.faded {
+  opacity: 0.6;
 }
 .node-badge {
   font-size: 0.7rem;

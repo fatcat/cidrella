@@ -283,6 +283,7 @@ const ipGrid = computed(() => {
 const gridSelection = ref(new Set());
 const isDragging = ref(false);
 const dragStartIdx = ref(null);
+const lastClickedIdx = ref(null);
 
 function getCellIdx(event) {
   const cell = event.target.closest('.ip-cell');
@@ -295,17 +296,26 @@ function onGridMouseDown(event) {
   const idx = getCellIdx(event);
   if (idx === null) return;
 
-  if (event.ctrlKey || event.metaKey) {
+  if (event.shiftKey && lastClickedIdx.value !== null) {
+    // Shift-click: select range from last clicked to current
+    const start = Math.min(lastClickedIdx.value, idx);
+    const end = Math.max(lastClickedIdx.value, idx);
+    const newSet = new Set(gridSelection.value);
+    for (let i = start; i <= end; i++) newSet.add(i);
+    gridSelection.value = newSet;
+  } else if (event.ctrlKey || event.metaKey) {
     // Ctrl-click toggles individual cells
     const newSet = new Set(gridSelection.value);
     if (newSet.has(idx)) newSet.delete(idx);
     else newSet.add(idx);
     gridSelection.value = newSet;
+    lastClickedIdx.value = idx;
   } else {
     // Start drag selection
     isDragging.value = true;
     dragStartIdx.value = idx;
     gridSelection.value = new Set([idx]);
+    lastClickedIdx.value = idx;
   }
 }
 
@@ -325,8 +335,16 @@ function onGridMouseUp() {
   isDragging.value = false;
 }
 
+function isImmutableCell(idx) {
+  if (idx === null || !ipGrid.value[idx]) return false;
+  const rt = ipGrid.value[idx].rangeType;
+  return rt === 'Network' || rt === 'Broadcast';
+}
+
 function onGridContextMenu(event) {
   const idx = getCellIdx(event);
+  // Don't show context menu for Network or Broadcast cells
+  if (idx !== null && isImmutableCell(idx)) return;
   if (idx !== null && gridSelection.value.size === 0) {
     // Single right-click on a cell with no selection — select it
     gridSelection.value = new Set([idx]);
@@ -349,7 +367,8 @@ const gridContextMenuItems = computed(() => {
     if (ip.rangeId) {
       const range = ranges.value.find(r => r.id === ip.rangeId);
       if (range && isEditableRange(range)) {
-        items.push({ label: `Edit ${range.range_type_name} Range`, icon: 'pi pi-pencil', command: () => editRange(range) });
+        const editLabel = range.range_type_name === 'Gateway' ? 'Edit Gateway' : `Edit ${range.range_type_name} Range`;
+        items.push({ label: editLabel, icon: 'pi pi-pencil', command: () => editRange(range) });
       }
     }
   }
