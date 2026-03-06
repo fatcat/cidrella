@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
 import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
+import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
@@ -11,33 +12,58 @@ const LEASE_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.leases');
 /**
  * Generate dnsmasq config for a single DHCP scope.
  * Uses tagging so options only apply to the correct scope's range.
+ * Merges: scope options > global defaults > legacy columns (fallback).
  */
-function generateScopeConfig(scope) {
+function generateScopeConfig(scope, globalDefaults, scopeOptions) {
   const tag = `scope${scope.id}`;
   const lines = [];
 
   lines.push(`# DHCP scope for ${scope.subnet_cidr} (${scope.start_ip} - ${scope.end_ip})`);
   lines.push(`dhcp-range=set:${tag},${scope.start_ip},${scope.end_ip},${scope.netmask},${scope.lease_time}`);
 
-  // Gateway option
-  const gateway = scope.gateway || scope.subnet_gateway;
-  if (gateway) {
-    lines.push(`dhcp-option=tag:${tag},option:router,${gateway}`);
+  // Build merged options map: global defaults, then scope overrides
+  const mergedOptions = new Map();
+
+  // 1. Global defaults
+  for (const [code, value] of Object.entries(globalDefaults)) {
+    mergedOptions.set(parseInt(code, 10), value);
   }
 
-  // DNS servers option
-  if (scope.dns_servers) {
-    try {
-      const servers = JSON.parse(scope.dns_servers);
-      if (Array.isArray(servers) && servers.length > 0) {
-        lines.push(`dhcp-option=tag:${tag},option:dns-server,${servers.join(',')}`);
-      }
-    } catch { /* skip invalid JSON */ }
+  // 2. Scope-specific options override globals
+  for (const opt of scopeOptions) {
+    mergedOptions.set(opt.option_code, opt.value);
   }
 
-  // Domain name option
-  if (scope.domain_name) {
-    lines.push(`dhcp-option=tag:${tag},option:domain-name,${scope.domain_name}`);
+  // 3. Legacy column fallback: only if no scope_options exist for that code
+  if (scopeOptions.length === 0) {
+    const gw = scope.gateway || scope.subnet_gateway;
+    if (gw && !mergedOptions.has(3)) mergedOptions.set(3, gw);
+    if (scope.dns_servers && !mergedOptions.has(6)) {
+      try {
+        const servers = JSON.parse(scope.dns_servers);
+        if (Array.isArray(servers) && servers.length > 0) mergedOptions.set(6, servers.join(','));
+      } catch { /* skip */ }
+    }
+    if (scope.domain_name && !mergedOptions.has(15)) mergedOptions.set(15, scope.domain_name);
+    if (scope.ntp_servers && !mergedOptions.has(42)) {
+      try {
+        const servers = JSON.parse(scope.ntp_servers);
+        if (Array.isArray(servers) && servers.length > 0) mergedOptions.set(42, servers.join(','));
+      } catch { /* skip */ }
+    }
+    if (scope.domain_search && !mergedOptions.has(119)) mergedOptions.set(119, scope.domain_search);
+  }
+
+  // Special handling: if no gateway option set but subnet has one, include it
+  if (!mergedOptions.has(3) && scope.subnet_gateway) {
+    mergedOptions.set(3, scope.subnet_gateway);
+  }
+
+  // Emit dhcp-option lines
+  for (const [code, value] of mergedOptions) {
+    const optDef = DHCP_OPTIONS_BY_CODE[code];
+    if (!optDef || !value) continue;
+    lines.push(`dhcp-option=tag:${tag},${optDef.dnsmasqName},${value}`);
   }
 
   return lines.join('\n') + '\n';
@@ -58,6 +84,18 @@ export function regenerateScopeConfigs(db) {
     WHERE s.enabled = 1
   `).all();
 
+  // Load global defaults
+  const defaultRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults').all();
+  const globalDefaults = Object.fromEntries(defaultRows.map(r => [r.option_code, r.value]));
+
+  // Load all scope options
+  const allScopeOptions = db.prepare('SELECT scope_id, option_code, value FROM dhcp_scope_options').all();
+  const scopeOptionsMap = new Map();
+  for (const opt of allScopeOptions) {
+    if (!scopeOptionsMap.has(opt.scope_id)) scopeOptionsMap.set(opt.scope_id, []);
+    scopeOptionsMap.get(opt.scope_id).push(opt);
+  }
+
   const activeIds = new Set();
   let changed = false;
 
@@ -67,7 +105,8 @@ export function regenerateScopeConfigs(db) {
     scope.netmask = parsed.mask;
 
     const filePath = path.join(CONF_DIR, `dhcp-scope-${scope.id}.conf`);
-    const newContent = generateScopeConfig(scope);
+    const scopeOpts = scopeOptionsMap.get(scope.id) || [];
+    const newContent = generateScopeConfig(scope, globalDefaults, scopeOpts);
 
     let oldContent = '';
     try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* file doesn't exist */ }

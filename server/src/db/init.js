@@ -84,6 +84,47 @@ async function ensureDefaults() {
     db.prepare("INSERT INTO settings (key, value) VALUES ('dns_upstream_servers', ?)").run(JSON.stringify(['8.8.8.8', '1.1.1.1']));
   }
 
+  // Blocklist defaults
+  const blEnabled = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_enabled'").get();
+  if (!blEnabled) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
+  }
+  const blRedirect = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_redirect_ip'").get();
+  if (!blRedirect) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('blocklist_redirect_ip', '')").run();
+  }
+
+  // Backup defaults
+  const bkSched = db.prepare("SELECT value FROM settings WHERE key = 'backup_schedule'").get();
+  if (!bkSched) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('backup_schedule', 'off')").run();
+  }
+  const bkRetention = db.prepare("SELECT value FROM settings WHERE key = 'backup_retention_count'").get();
+  if (!bkRetention) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('backup_retention_count', '7')").run();
+  }
+
+  // Installation state
+  const installComplete = db.prepare("SELECT value FROM settings WHERE key = 'installation_complete'").get();
+  if (!installComplete) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('installation_complete', 'false')").run();
+  }
+
+  // GeoIP defaults
+  const geoipDefaults = {
+    geoip_enabled: 'false',
+    geoip_mode: 'blocklist',
+    geoip_proxy_port: '5353',
+    geoip_db_path: '/data/geoip/dbip-country-lite.mmdb',
+    geoip_last_updated: ''
+  };
+  for (const [key, value] of Object.entries(geoipDefaults)) {
+    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+    if (!row) {
+      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(key, value);
+    }
+  }
+
   // Create default admin user if no users exist
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
   if (userCount.count === 0) {

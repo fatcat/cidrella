@@ -156,9 +156,16 @@ export function regenerateDnsmasqConf(db) {
     if (row?.value) servers = JSON.parse(row.value);
   } catch { /* use defaults */ }
 
+  // If GeoIP proxy is enabled, route through local proxy instead of direct upstream
+  const geoipEnabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get();
+  const geoipPort = db.prepare("SELECT value FROM settings WHERE key = 'geoip_proxy_port'").get();
+  if (geoipEnabled?.value === 'true' && geoipPort?.value) {
+    servers = [`127.0.0.1#${geoipPort.value}`];
+  }
+
   const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
   const lines = content.split('\n');
-  const filtered = lines.filter(line => !line.match(/^server=\d/));
+  const filtered = lines.filter(line => !line.match(/^server=/));
 
   // Insert server lines after no-resolv or at the start
   const noResolvIdx = filtered.findIndex(l => l.trim() === 'no-resolv');

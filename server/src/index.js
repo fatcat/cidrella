@@ -17,9 +17,22 @@ import rangeTypeRoutes from './routes/range-types.js';
 import rangeRoutes from './routes/ranges.js';
 import settingsRoutes from './routes/settings.js';
 import dnsRoutes from './routes/dns.js';
-import dhcpRoutes from './routes/dhcp.js';
+import dhcpRoutes, { migrateLegacyScopeOptions } from './routes/dhcp.js';
+import scanRoutes from './routes/scans.js';
+import auditRoutes from './routes/audit.js';
+import blocklistRoutes from './routes/blocklists.js';
+import operationsRoutes from './routes/operations.js';
+import setupRoutes from './routes/setup.js';
+import geoipRoutes from './routes/geoip.js';
+import folderRoutes from './routes/folders.js';
+import vlanRoutes from './routes/vlans.js';
+import userRoutes from './routes/users.js';
 import { ensureCerts } from './utils/cert.js';
 import { startLeaseWatcher } from './utils/dhcp.js';
+import { startBlocklistScheduler } from './utils/blocklist.js';
+import { startBackupScheduler } from './utils/backup.js';
+import { startGeoipScheduler, startProxyIfEnabled } from './utils/geoip.js';
+import { startScanScheduler } from './utils/scan-scheduler.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -29,7 +42,7 @@ const HTTP_PORT = parseInt(process.env.HTTP_PORT || '8080', 10);
 
 async function main() {
   // Ensure data directories exist
-  const dataDirs = ['certs', 'backups', 'dnsmasq/hosts.d', 'dnsmasq/dhcp-hosts.d', 'dnsmasq/conf.d', 'blocklists'];
+  const dataDirs = ['certs', 'backups', 'dnsmasq/hosts.d', 'dnsmasq/dhcp-hosts.d', 'dnsmasq/conf.d', 'blocklists', 'geoip'];
   for (const dir of dataDirs) {
     fs.mkdirSync(path.join(DATA_DIR, dir), { recursive: true });
   }
@@ -38,8 +51,24 @@ async function main() {
   await initDb(DATA_DIR);
   console.log('Database initialized');
 
+  // Migrate legacy DHCP scope columns to scope_options table
+  migrateLegacyScopeOptions(getDb());
+
   // Start DHCP lease file watcher
   startLeaseWatcher(getDb());
+
+  // Start blocklist auto-update scheduler
+  startBlocklistScheduler();
+
+  // Start backup scheduler
+  startBackupScheduler();
+
+  // Start GeoIP scheduler and proxy (if enabled)
+  startGeoipScheduler();
+  await startProxyIfEnabled();
+
+  // Start scan scheduler for periodic subnet scans
+  startScanScheduler();
 
   // Generate or load TLS certs
   const { keyPath, certPath } = ensureCerts(DATA_DIR);
@@ -56,6 +85,9 @@ async function main() {
   app.use(morgan('short'));
   app.use(express.json());
 
+  // Setup routes (pre-auth — accessible before installation is complete)
+  app.use('/api/setup', setupRoutes);
+
   // Auth middleware for API routes
   app.use(authMiddleware);
 
@@ -67,7 +99,29 @@ async function main() {
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dns', dnsRoutes);
   app.use('/api/dhcp', dhcpRoutes);
+  app.use('/api/scans', scanRoutes);
+  app.use('/api/audit', auditRoutes);
+  app.use('/api/blocklists', blocklistRoutes);
+  app.use('/api/operations', operationsRoutes);
+  app.use('/api/geoip', geoipRoutes);
+  app.use('/api/folders', folderRoutes);
+  app.use('/api/vlans', vlanRoutes);
+  app.use('/api/users', userRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
+
+  // Block page for filtered domains
+  app.get('/blocked', (req, res) => {
+    const domain = req.query.domain || req.hostname;
+    res.status(200).send(`<!DOCTYPE html>
+<html><head><title>Blocked</title>
+<style>body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}
+.card{background:white;padding:2rem;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,.1);text-align:center;max-width:400px}
+h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
+</head><body><div class="card">
+<h1>Blocked</h1>
+<p>Access to <strong>${domain.replace(/[<>"'&]/g, '')}</strong> has been blocked by your network administrator.</p>
+</div></body></html>`);
+  });
 
   // Serve Vue frontend (built files)
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');

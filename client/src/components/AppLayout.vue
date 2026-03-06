@@ -1,24 +1,27 @@
 <template>
   <div class="app-layout">
-    <NavSidebar />
+    <HeaderBar />
     <main class="main-content">
       <router-view />
     </main>
+    <DebugPanel />
   </div>
 </template>
 
 <script setup>
-import NavSidebar from './NavSidebar.vue';
+import HeaderBar from './HeaderBar.vue';
+import DebugPanel from './DebugPanel.vue';
 </script>
 
 <style scoped>
 .app-layout {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
 .main-content {
   flex: 1;
-  padding: 1.5rem 2rem;
+  overflow: hidden;
   background: var(--p-surface-ground);
 }
 </style>

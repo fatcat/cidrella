@@ -3,6 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { isIpInSubnet, ipToLong } from '../utils/ip.js';
 import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
+import { DHCP_OPTIONS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
 
 const router = Router();
 
@@ -41,12 +42,19 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
     JOIN subnets sub ON s.subnet_id = sub.id
     ORDER BY sub.network_address
   `).all();
+
+  // Attach options to each scope
+  const optStmt = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?');
+  for (const scope of scopes) {
+    scope.options = optStmt.all(scope.id);
+  }
+
   res.json(scopes);
 });
 
 // POST /api/dhcp/scopes
 router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
-  const { range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, description } = req.body;
+  const { range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, description } = req.body;
   const db = getDb();
 
   if (!range_id || !subnet_id) {
@@ -94,17 +102,51 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid gateway IP address' });
   }
 
-  const result = db.prepare(`
-    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, description)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    range_id, subnet_id,
-    lease_time || '24h',
-    dns_servers || null,
-    domain_name || null,
-    gateway || null,
-    description || null
-  );
+  // Validate NTP servers
+  if (ntp_servers) {
+    try {
+      const servers = JSON.parse(ntp_servers);
+      if (!Array.isArray(servers) || !servers.every(isValidIpv4)) {
+        return res.status(400).json({ error: 'ntp_servers must be a JSON array of valid IPs' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'ntp_servers must be a valid JSON array' });
+    }
+  }
+
+  const { options } = req.body;
+
+  const txn = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, description)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      range_id, subnet_id,
+      lease_time || '24h',
+      dns_servers || null,
+      domain_name || null,
+      gateway || null,
+      ntp_servers || null,
+      domain_search || null,
+      description || null
+    );
+
+    const scopeId = result.lastInsertRowid;
+
+    // Save scope options if provided
+    if (Array.isArray(options) && options.length > 0) {
+      const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
+      for (const opt of options) {
+        if (opt.code && opt.value != null && opt.value !== '') {
+          insertOpt.run(scopeId, opt.code, String(opt.value));
+        }
+      }
+    }
+
+    return scopeId;
+  });
+
+  const scopeId = txn();
 
   const scope = db.prepare(`
     SELECT s.*, r.start_ip, r.end_ip,
@@ -113,7 +155,10 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id
     WHERE s.id = ?
-  `).get(result.lastInsertRowid);
+  `).get(scopeId);
+
+  // Attach scope options
+  scope.options = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?').all(scopeId);
 
   audit(req.user.id, 'dhcp_scope_created', 'dhcp_scope', scope.id, { subnet: subnet.cidr, range_id });
   regenerateDhcpConfigs(db);
@@ -122,7 +167,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
 // PUT /api/dhcp/scopes/:id
 router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
-  const { lease_time, dns_servers, domain_name, gateway, enabled, description } = req.body;
+  const { lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, enabled, description } = req.body;
   const db = getDb();
 
   const scope = db.prepare('SELECT * FROM dhcp_scopes WHERE id = ?').get(req.params.id);
@@ -147,19 +192,49 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid gateway IP address' });
   }
 
-  db.prepare(`
-    UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
-      gateway = ?, enabled = ?, description = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `).run(
-    lease_time ?? scope.lease_time,
-    dns_servers !== undefined ? dns_servers : scope.dns_servers,
-    domain_name !== undefined ? domain_name : scope.domain_name,
-    gateway !== undefined ? (gateway || null) : scope.gateway,
-    enabled !== undefined ? (enabled ? 1 : 0) : scope.enabled,
-    description !== undefined ? description : scope.description,
-    scope.id
-  );
+  if (ntp_servers !== undefined && ntp_servers !== null) {
+    try {
+      const servers = JSON.parse(ntp_servers);
+      if (!Array.isArray(servers) || !servers.every(isValidIpv4)) {
+        return res.status(400).json({ error: 'ntp_servers must be a JSON array of valid IPs' });
+      }
+    } catch {
+      return res.status(400).json({ error: 'ntp_servers must be a valid JSON array' });
+    }
+  }
+
+  const { options } = req.body;
+
+  const txn = db.transaction(() => {
+    db.prepare(`
+      UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
+        gateway = ?, ntp_servers = ?, domain_search = ?, enabled = ?, description = ?, updated_at = datetime('now')
+      WHERE id = ?
+    `).run(
+      lease_time ?? scope.lease_time,
+      dns_servers !== undefined ? dns_servers : scope.dns_servers,
+      domain_name !== undefined ? domain_name : scope.domain_name,
+      gateway !== undefined ? (gateway || null) : scope.gateway,
+      ntp_servers !== undefined ? (ntp_servers || null) : scope.ntp_servers,
+      domain_search !== undefined ? (domain_search || null) : scope.domain_search,
+      enabled !== undefined ? (enabled ? 1 : 0) : scope.enabled,
+      description !== undefined ? description : scope.description,
+      scope.id
+    );
+
+    // Replace scope options if provided
+    if (Array.isArray(options)) {
+      db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scope.id);
+      const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
+      for (const opt of options) {
+        if (opt.code && opt.value != null && opt.value !== '') {
+          insertOpt.run(scope.id, opt.code, String(opt.value));
+        }
+      }
+    }
+  });
+
+  txn();
 
   const updated = db.prepare(`
     SELECT s.*, r.start_ip, r.end_ip,
@@ -169,6 +244,8 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     JOIN subnets sub ON s.subnet_id = sub.id
     WHERE s.id = ?
   `).get(scope.id);
+
+  updated.options = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?').all(scope.id);
 
   audit(req.user.id, 'dhcp_scope_updated', 'dhcp_scope', scope.id, { changes: req.body });
   regenerateDhcpConfigs(db);
@@ -385,5 +462,92 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
   `).all();
   res.json(ranges);
 });
+
+// ─── DHCP Options ────────────────────────────────────────
+
+// GET /api/dhcp/options — catalog + global defaults
+router.get('/options', requirePerm('dhcp:read'), (req, res) => {
+  const db = getDb();
+  const rows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults').all();
+  const defaults = Object.fromEntries(rows.map(r => [r.option_code, r.value]));
+  res.json({ catalog: DHCP_OPTIONS, defaults });
+});
+
+// PUT /api/dhcp/options/defaults — set global defaults
+router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
+  const { options } = req.body;
+  if (!Array.isArray(options)) {
+    return res.status(400).json({ error: 'options must be an array of { code, value }' });
+  }
+
+  const db = getDb();
+  const txn = db.transaction(() => {
+    db.prepare('DELETE FROM dhcp_option_defaults').run();
+    const insert = db.prepare(`
+      INSERT INTO dhcp_option_defaults (option_code, value, updated_at)
+      VALUES (?, ?, datetime('now'))
+    `);
+    for (const opt of options) {
+      if (opt.code && opt.value != null && opt.value !== '') {
+        insert.run(opt.code, String(opt.value));
+      }
+    }
+  });
+
+  txn();
+  audit(req.user.id, 'dhcp_option_defaults_updated', 'dhcp', null, { count: options.length });
+  regenerateDhcpConfigs(db);
+
+  const rows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults').all();
+  const defaults = Object.fromEntries(rows.map(r => [r.option_code, r.value]));
+  res.json({ defaults });
+});
+
+// One-time migration: copy legacy column values to dhcp_scope_options
+export function migrateLegacyScopeOptions(db) {
+  const scopes = db.prepare('SELECT * FROM dhcp_scopes').all();
+  const hasAny = db.prepare('SELECT COUNT(*) as c FROM dhcp_scope_options').get();
+  if (hasAny.c > 0) return; // Already migrated
+
+  const insert = db.prepare('INSERT OR IGNORE INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
+  const txn = db.transaction(() => {
+    for (const scope of scopes) {
+      // gateway → option 3
+      if (scope.gateway) {
+        insert.run(scope.id, 3, scope.gateway);
+      }
+      // dns_servers → option 6
+      if (scope.dns_servers) {
+        try {
+          const servers = JSON.parse(scope.dns_servers);
+          if (Array.isArray(servers) && servers.length > 0) {
+            insert.run(scope.id, 6, servers.join(','));
+          }
+        } catch { /* skip */ }
+      }
+      // domain_name → option 15
+      if (scope.domain_name) {
+        insert.run(scope.id, 15, scope.domain_name);
+      }
+      // ntp_servers → option 42
+      if (scope.ntp_servers) {
+        try {
+          const servers = JSON.parse(scope.ntp_servers);
+          if (Array.isArray(servers) && servers.length > 0) {
+            insert.run(scope.id, 42, servers.join(','));
+          }
+        } catch { /* skip */ }
+      }
+      // domain_search → option 119
+      if (scope.domain_search) {
+        insert.run(scope.id, 119, scope.domain_search);
+      }
+    }
+  });
+  txn();
+  if (scopes.length > 0) {
+    console.log(`Migrated legacy DHCP options for ${scopes.length} scopes`);
+  }
+}
 
 export default router;

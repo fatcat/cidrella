@@ -8,9 +8,10 @@ no-resolv
 server=8.8.8.8
 server=1.1.1.1
 
-# Listen on all interfaces (required for DHCP)
-# Restrict as needed in production
-listen-address=0.0.0.0
+# bind-dynamic allows dnsmasq to bind to addresses that may appear later
+# and avoids conflicts with other DNS services (e.g. WSL2 DNS proxy)
+# Add listen-address lines for each address dnsmasq should serve
+listen-address=127.0.0.1
 bind-dynamic
 
 # Watched directories for hot-reload (no restart needed)

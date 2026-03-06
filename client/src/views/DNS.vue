@@ -1,7 +1,6 @@
 <template>
   <div class="dns-page">
     <div class="page-header">
-      <h2>DNS Management</h2>
       <div class="header-actions">
         <Button label="Apply Config" icon="pi pi-refresh" severity="secondary" @click="applyConfig" :loading="applying" />
         <Button label="Add Zone" icon="pi pi-plus" @click="openZoneDialog()" />

@@ -59,23 +59,39 @@
 - [x] Available ranges endpoint (DHCP Pool ranges without existing scopes)
 - [x] DHCP management UI (scopes, reservations, leases tabs)
 
-## Phase 5: Network Intelligence
-- [ ] IP conflict detection (ARP/ping scan)
-- [ ] Admin-triggered network scans
-- [ ] Conflict warnings and assignment blocking
-- [ ] Audit log viewer
-- [ ] System health dashboard (CPU, memory, disk, service status)
+## Phase 5: Network Intelligence [COMPLETE]
+- [x] IP conflict detection (ARP/ping scan)
+- [x] Admin-triggered network scans
+- [x] Conflict warnings on IP grid (non-blocking)
+- [x] Audit log viewer (paginated, filtered, in System page)
+- [x] System health dashboard (CPU, memory, disk, service status)
 
-## Phase 6: Filtering & Protection
-- [ ] Domain blocklist source management (UI)
-- [ ] Auto-update scheduler with deduplication
-- [ ] GeoIP DNS filtering proxy (Node.js)
-- [ ] GeoIP data from db-ip.com / ipverse.net
-- [ ] Block page redirect for filtered queries
+## Phase 6: Filtering & Protection [COMPLETE]
+- [x] Domain blocklist source management (CRUD sources, popular lists quick-add)
+- [x] Multi-format blocklist parsing (hosts, domains, adblock auto-detect)
+- [x] Auto-update scheduler with per-source intervals and deduplication
+- [x] DNSmasq native blocking via address=/domain/ directives
+- [x] Whitelist management (override blocked domains)
+- [x] Paginated domain search with source attribution
+- [x] Block page redirect for filtered queries (optional, via blocklist_redirect_ip setting)
+- [x] Blocklists UI (Sources, Whitelist, Search tabs with stats summary)
 
-## Phase 7: Operations
-- [ ] Backup to single archive file
-- [ ] Restore from backup to fresh instance
-- [ ] Scheduled automatic backups
-- [ ] First-run setup wizard
-- [ ] Custom TLS certificate upload via UI
+## Phase 8: GeoIP Filtering [COMPLETE]
+- [x] GeoIP DNS filtering proxy (Node.js UDP proxy between DNSmasq and upstream)
+- [x] DB-IP Lite MMDB country database (auto-download and monthly updates)
+- [x] Country-based blocklist/allowlist modes (configurable)
+- [x] LRU-cached GeoIP lookups with fail-open design
+- [x] DNSmasq integration (automatic upstream routing via proxy)
+- [x] GeoIP management UI (country rules, settings, proxy status)
+- [x] NXDOMAIN response for blocked queries
+
+## Phase 7: Operations [COMPLETE]
+- [x] Backup to single .tar.gz archive (DB + certs + dnsmasq config)
+- [x] Restore from backup with validation
+- [x] Scheduled automatic backups (daily/weekly/monthly with retention)
+- [x] First-run setup wizard (admin account creation, skippable)
+- [x] Custom TLS certificate upload via UI (PEM key + cert, openssl validation)
+- [x] Certificate info display (subject, issuer, expiry, self-signed detection)
+- [x] Reset to self-signed certificate
+- [x] Backup & Restore tab in System page
+- [x] Certificates tab in System page

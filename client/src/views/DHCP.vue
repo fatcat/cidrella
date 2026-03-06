@@ -1,7 +1,6 @@
 <template>
   <div class="dhcp-page">
     <div class="page-header">
-      <h2>DHCP Management</h2>
       <div class="header-actions">
         <Button label="Apply Config" icon="pi pi-refresh" severity="secondary" @click="applyConfig" :loading="applying" />
       </div>
@@ -28,14 +27,14 @@
             <template #body="{ data }">{{ data.start_ip }} — {{ data.end_ip }}</template>
           </Column>
           <Column field="lease_time" header="Lease Time" style="width: 7rem" />
-          <Column header="Gateway" style="width: 8rem">
-            <template #body="{ data }">{{ data.gateway || data.subnet_gateway || '—' }}</template>
-          </Column>
-          <Column header="DNS" style="width: 10rem">
-            <template #body="{ data }">{{ formatDns(data.dns_servers) }}</template>
-          </Column>
-          <Column field="domain_name" header="Domain" style="width: 8rem">
-            <template #body="{ data }">{{ data.domain_name || '—' }}</template>
+          <Column header="Options" style="min-width: 12rem">
+            <template #body="{ data }">
+              <span v-if="data.options && data.options.length > 0" class="option-tags-compact">
+                <span v-for="opt in data.options" :key="opt.option_code" class="option-tag-compact"
+                      :title="opt.value">{{ optionLabel(opt.option_code) }}</span>
+              </span>
+              <span v-else class="muted">—</span>
+            </template>
           </Column>
           <Column header="Enabled" style="width: 5rem">
             <template #body="{ data }">
@@ -95,6 +94,39 @@
         </DataTable>
       </TabPanel>
 
+      <!-- Option Defaults Tab -->
+      <TabPanel header="Option Defaults">
+        <div class="section-header">
+          <Button label="Save Defaults" icon="pi pi-save" size="small" @click="saveDefaults" :loading="savingDefaults" />
+        </div>
+        <DataTable :value="optionDefaultRows" stripedRows size="small" :loading="loadingOptions"
+                   emptyMessage="No DHCP options available." scrollable scrollHeight="24rem">
+          <Column field="code" header="Code" style="width: 4rem" />
+          <Column field="label" header="Option" style="min-width: 12rem" />
+          <Column field="type" header="Type" style="width: 6rem">
+            <template #body="{ data }">
+              <span class="text-sm muted">{{ data.type }}</span>
+            </template>
+          </Column>
+          <Column header="Default Value" style="min-width: 14rem">
+            <template #body="{ data }">
+              <Select v-if="data.type === 'select'" v-model="defaultValues[data.code]"
+                      :options="data.choices" class="w-full" size="small" showClear placeholder="—" />
+              <InputNumber v-else-if="data.type === 'number'" v-model="defaultValues[data.code]"
+                           class="w-full" size="small" :useGrouping="false" placeholder="—" />
+              <InputText v-else v-model="defaultValues[data.code]" class="w-full" size="small"
+                         :placeholder="placeholderForType(data.type)" />
+            </template>
+          </Column>
+          <Column header="" style="width: 3rem">
+            <template #body="{ data }">
+              <Button icon="pi pi-times" severity="secondary" text rounded size="small"
+                      @click="defaultValues[data.code] = null" title="Clear" />
+            </template>
+          </Column>
+        </DataTable>
+      </TabPanel>
+
       <!-- Leases Tab -->
       <TabPanel header="Leases">
         <div class="section-header">
@@ -123,7 +155,7 @@
       </TabPanel>
     </TabView>
 
-    <!-- Scope Dialog -->
+    <!-- Scope Dialog (basic fields) -->
     <Dialog v-model:visible="showScopeDialog" :header="editingScope ? 'Edit Scope' : 'Add Scope'"
             modal :style="{ width: '28rem' }">
       <div class="form-grid">
@@ -139,20 +171,6 @@
           <small class="field-help">Duration: number with optional suffix (s/m/h/d)</small>
         </div>
         <div class="field">
-          <label>Gateway</label>
-          <InputText v-model="scopeForm.gateway" class="w-full" placeholder="Override subnet gateway" />
-          <small class="field-help">Leave empty to use subnet's default gateway</small>
-        </div>
-        <div class="field">
-          <label>DNS Servers</label>
-          <InputText v-model="scopeForm.dns_servers_text" class="w-full" placeholder="e.g. 192.168.1.1, 8.8.8.8" />
-          <small class="field-help">Comma-separated list of DNS server IPs</small>
-        </div>
-        <div class="field">
-          <label>Domain Name</label>
-          <InputText v-model="scopeForm.domain_name" class="w-full" placeholder="e.g. home.lan" />
-        </div>
-        <div class="field">
           <label>Description</label>
           <InputText v-model="scopeForm.description" class="w-full" />
         </div>
@@ -160,10 +178,62 @@
           <label>Enabled</label>
           <ToggleSwitch v-model="scopeForm.enabled" />
         </div>
+        <div class="options-summary" v-if="scopeForm.selectedOptions.length > 0">
+          <label>Options ({{ scopeForm.selectedOptions.length }})</label>
+          <div class="option-tags">
+            <span v-for="code in scopeForm.selectedOptions" :key="code" class="option-tag">
+              {{ optionLabel(code) }}
+            </span>
+          </div>
+        </div>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showScopeDialog = false" />
+        <Button label="Options..." icon="pi pi-list" severity="secondary" @click="openOptionSelector" />
         <Button :label="editingScope ? 'Save' : 'Create'" @click="saveScope" :loading="savingScope" />
+      </template>
+    </Dialog>
+
+    <!-- Option Selector Dialog (Step 1: checkboxes) -->
+    <Dialog v-model:visible="showOptionSelector" header="Select DHCP Options" modal :style="{ width: '36rem' }">
+      <DataTable :value="optionCatalog" v-model:selection="selectedOptionRows" dataKey="code"
+                 stripedRows size="small" scrollable scrollHeight="20rem">
+        <Column selectionMode="multiple" headerStyle="width: 3rem" />
+        <Column field="code" header="Code" style="width: 4rem" />
+        <Column field="label" header="Option" />
+        <Column field="type" header="Type" style="width: 6rem">
+          <template #body="{ data }">
+            <span class="text-sm muted">{{ data.type }}</span>
+          </template>
+        </Column>
+        <Column header="Default" style="width: 8rem">
+          <template #body="{ data }">
+            <span class="text-sm muted">{{ defaultValues[data.code] || '—' }}</span>
+          </template>
+        </Column>
+      </DataTable>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="showOptionSelector = false" />
+        <Button label="Next →" @click="openOptionValues" :disabled="selectedOptionRows.length === 0" />
+      </template>
+    </Dialog>
+
+    <!-- Option Values Dialog (Step 2: values) -->
+    <Dialog v-model:visible="showOptionValues" header="Configure Option Values" modal :style="{ width: '32rem' }">
+      <div class="form-grid">
+        <div class="field" v-for="opt in selectedOptionRows" :key="opt.code">
+          <label>{{ opt.label }} <span class="text-sm muted">({{ opt.code }})</span></label>
+          <Select v-if="opt.type === 'select'" v-model="optionValues[opt.code]"
+                  :options="opt.choices" class="w-full" size="small" placeholder="—" />
+          <InputNumber v-else-if="opt.type === 'number'" v-model="optionValues[opt.code]"
+                       class="w-full" size="small" :useGrouping="false" />
+          <InputText v-else v-model="optionValues[opt.code]" class="w-full" size="small"
+                     :placeholder="placeholderForType(opt.type)" />
+        </div>
+      </div>
+      <template #footer>
+        <Button label="← Back" severity="secondary" @click="showOptionValues = false; showOptionSelector = true" />
+        <Button label="Done" @click="applyOptionSelections" />
       </template>
     </Dialog>
 
@@ -227,7 +297,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
@@ -236,6 +306,7 @@ import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
+import InputNumber from 'primevue/inputnumber';
 import Select from 'primevue/select';
 import ToggleSwitch from 'primevue/toggleswitch';
 import Toast from 'primevue/toast';
@@ -254,7 +325,7 @@ const syncing = ref(false);
 const showScopeDialog = ref(false);
 const editingScope = ref(null);
 const savingScope = ref(false);
-const scopeForm = ref({ range_id: null, lease_time: '24h', gateway: '', dns_servers_text: '', domain_name: '', description: '', enabled: true });
+const scopeForm = ref({ range_id: null, lease_time: '24h', description: '', enabled: true, selectedOptions: [], optionValues: {} });
 const availableRanges = ref([]);
 const loadingRanges = ref(false);
 
@@ -271,13 +342,17 @@ const deletingScope = ref(null);
 const showDeleteReservationDialog = ref(false);
 const deletingReservation = ref(null);
 
-function formatDns(jsonStr) {
-  if (!jsonStr) return '—';
-  try {
-    const arr = JSON.parse(jsonStr);
-    return arr.join(', ');
-  } catch { return '—'; }
-}
+// DHCP Options
+const optionCatalog = ref([]);
+const defaultValues = reactive({});
+const loadingOptions = ref(false);
+const savingDefaults = ref(false);
+const showOptionSelector = ref(false);
+const showOptionValues = ref(false);
+const selectedOptionRows = ref([]);
+const optionValues = reactive({});
+
+const optionDefaultRows = computed(() => optionCatalog.value);
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -286,21 +361,117 @@ function formatDate(iso) {
   } catch { return iso; }
 }
 
+// DHCP Options functions
+async function loadOptions() {
+  loadingOptions.value = true;
+  try {
+    const res = await api.get('/dhcp/options');
+    optionCatalog.value = res.data.catalog;
+    // Populate defaultValues reactive object
+    Object.keys(defaultValues).forEach(k => delete defaultValues[k]);
+    for (const [code, value] of Object.entries(res.data.defaults || {})) {
+      defaultValues[code] = value;
+    }
+  } catch (err) {
+    console.error('Failed to load DHCP options:', err);
+  } finally {
+    loadingOptions.value = false;
+  }
+}
+
+async function saveDefaults() {
+  savingDefaults.value = true;
+  try {
+    const options = [];
+    for (const opt of optionCatalog.value) {
+      const val = defaultValues[opt.code];
+      if (val != null && val !== '') {
+        options.push({ code: opt.code, value: String(val) });
+      }
+    }
+    await api.put('/dhcp/options/defaults', { options });
+    toast.add({ severity: 'success', summary: 'Defaults saved', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    savingDefaults.value = false;
+  }
+}
+
+function optionLabel(code) {
+  const opt = optionCatalog.value.find(o => o.code === code);
+  return opt ? opt.label : `Option ${code}`;
+}
+
+function placeholderForType(type) {
+  switch (type) {
+    case 'ip': return 'e.g. 192.168.1.1';
+    case 'ip-list': return 'e.g. 8.8.8.8, 1.1.1.1';
+    case 'text': return 'Value';
+    case 'text-list': return 'e.g. domain1.com, domain2.com';
+    case 'number': return '0';
+    default: return '';
+  }
+}
+
+function openOptionSelector() {
+  // Pre-select options that are already chosen for this scope
+  selectedOptionRows.value = optionCatalog.value.filter(o =>
+    scopeForm.value.selectedOptions.includes(o.code)
+  );
+  // Pre-populate optionValues from scopeForm
+  Object.keys(optionValues).forEach(k => delete optionValues[k]);
+  Object.assign(optionValues, scopeForm.value.optionValues);
+  showOptionSelector.value = true;
+}
+
+function openOptionValues() {
+  // Pre-fill values from defaults for newly selected options
+  for (const opt of selectedOptionRows.value) {
+    if (optionValues[opt.code] == null || optionValues[opt.code] === '') {
+      const def = defaultValues[opt.code];
+      if (def != null) optionValues[opt.code] = def;
+    }
+  }
+  showOptionSelector.value = false;
+  showOptionValues.value = true;
+}
+
+function applyOptionSelections() {
+  scopeForm.value.selectedOptions = selectedOptionRows.value.map(o => o.code);
+  scopeForm.value.optionValues = {};
+  for (const opt of selectedOptionRows.value) {
+    const val = optionValues[opt.code];
+    if (val != null && val !== '') {
+      scopeForm.value.optionValues[opt.code] = String(val);
+    }
+  }
+  showOptionValues.value = false;
+}
+
 // Scope CRUD
 async function openScopeDialog(scope = null) {
   editingScope.value = scope;
   if (scope) {
+    // Build selectedOptions and optionValues from scope.options array
+    const selOpts = [];
+    const optVals = {};
+    if (scope.options && Array.isArray(scope.options)) {
+      for (const o of scope.options) {
+        selOpts.push(o.option_code);
+        optVals[o.option_code] = o.value;
+      }
+    }
     scopeForm.value = {
       range_id: scope.range_id,
       lease_time: scope.lease_time || '24h',
-      gateway: scope.gateway || '',
-      dns_servers_text: scope.dns_servers ? JSON.parse(scope.dns_servers).join(', ') : '',
-      domain_name: scope.domain_name || '',
       description: scope.description || '',
-      enabled: !!scope.enabled
+      enabled: !!scope.enabled,
+      selectedOptions: selOpts,
+      optionValues: optVals
     };
   } else {
-    scopeForm.value = { range_id: null, lease_time: '24h', gateway: '', dns_servers_text: '', domain_name: '', description: '', enabled: true };
+    scopeForm.value = { range_id: null, lease_time: '24h', description: '', enabled: true, selectedOptions: [], optionValues: {} };
     loadingRanges.value = true;
     try {
       const ranges = await store.fetchAvailableRanges();
@@ -318,24 +489,22 @@ async function openScopeDialog(scope = null) {
 async function saveScope() {
   savingScope.value = true;
   try {
-    const dns_servers = scopeForm.value.dns_servers_text.trim()
-      ? JSON.stringify(scopeForm.value.dns_servers_text.split(',').map(s => s.trim()).filter(Boolean))
-      : null;
+    // Build options array from selectedOptions + optionValues
+    const options = scopeForm.value.selectedOptions
+      .filter(code => scopeForm.value.optionValues[code] != null && scopeForm.value.optionValues[code] !== '')
+      .map(code => ({ code, value: String(scopeForm.value.optionValues[code]) }));
 
     const payload = {
       lease_time: scopeForm.value.lease_time,
-      gateway: scopeForm.value.gateway || null,
-      dns_servers,
-      domain_name: scopeForm.value.domain_name || null,
       description: scopeForm.value.description || null,
-      enabled: scopeForm.value.enabled
+      enabled: scopeForm.value.enabled,
+      options
     };
 
     if (editingScope.value) {
       await store.updateScope(editingScope.value.id, payload);
       toast.add({ severity: 'success', summary: 'Scope updated', life: 3000 });
     } else {
-      // Find the range to get subnet_id
       const range = availableRanges.value.find(r => r.id === scopeForm.value.range_id);
       await store.createScope({
         range_id: scopeForm.value.range_id,
@@ -479,7 +648,8 @@ onMounted(async () => {
   await Promise.all([
     store.fetchScopes(),
     store.fetchReservations(),
-    store.fetchLeases()
+    store.fetchLeases(),
+    loadOptions()
   ]);
 });
 </script>
@@ -529,5 +699,28 @@ onMounted(async () => {
 code {
   font-family: monospace;
   font-size: 0.85rem;
+}
+
+.options-summary label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.option-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.option-tag {
+  background: var(--p-primary-50);
+  color: var(--p-primary-700);
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+.option-tags-compact { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.option-tag-compact {
+  background: var(--p-surface-100);
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  cursor: default;
 }
 </style>

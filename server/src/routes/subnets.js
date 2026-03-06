@@ -19,6 +19,28 @@ function requirePerm(permission) {
   };
 }
 
+// Wrap route handlers to catch sync/async errors and return informative 500s
+function asyncHandler(fn) {
+  return (req, res, next) => {
+    try {
+      const result = fn(req, res, next);
+      if (result && typeof result.catch === 'function') {
+        result.catch(err => {
+          console.error(`Route error [${req.method} ${req.originalUrl}]:`, err);
+          if (!res.headersSent) {
+            res.status(500).json({ error: err.message || 'Internal server error' });
+          }
+        });
+      }
+    } catch (err) {
+      console.error(`Route error [${req.method} ${req.originalUrl}]:`, err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message || 'Internal server error' });
+      }
+    }
+  };
+}
+
 // Helper: build nested tree from flat rows
 function buildTree(flatRows) {
   const map = new Map();
@@ -59,17 +81,52 @@ function createSystemRanges(db, subnetId, parsed, gatewayAddress) {
 }
 
 // Helper: insert a subnet row
-function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, parent_id, status, depth }) {
+function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, parent_id, folder_id, status, depth }) {
   const parsed = parseCidr(cidr);
   return db.prepare(`
     INSERT INTO subnets (cidr, name, description, vlan_id, network_address, broadcast_address,
-      prefix_length, total_addresses, gateway_address, parent_id, status, depth)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      prefix_length, total_addresses, gateway_address, parent_id, folder_id, status, depth)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     cidr, name, description || null, vlan_id || null,
     parsed.network, parsed.broadcast, parsed.prefix, parsed.totalAddresses,
-    gateway_address || null, parent_id || null, status || 'unallocated', depth || 0
+    gateway_address || null, parent_id || null, folder_id || null, status || 'unallocated', depth || 0
   );
+}
+
+// Helper: consolidate intermediate subnets after divide
+// If all children of a parent are unallocated containers (have children, no config),
+// flatten by re-parenting grandchildren directly to the parent and removing intermediaries.
+function consolidateIntermediate(db, parentId) {
+  if (!parentId) return;
+
+  const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ?').all(parentId);
+  if (children.length === 0) return;
+
+  // Check if ALL children are unallocated and have their own children (are intermediaries)
+  const allAreIntermediaries = children.every(c => {
+    if (c.status !== 'unallocated') return false;
+    const grandchildCount = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE parent_id = ?').get(c.id);
+    return grandchildCount.c > 0;
+  });
+
+  if (!allAreIntermediaries) return;
+
+  // Flatten: re-parent all grandchildren to this parent, then delete intermediaries
+  const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
+  if (!parent) return;
+
+  for (const child of children) {
+    // Move grandchildren up
+    db.prepare('UPDATE subnets SET parent_id = ?, depth = ? WHERE parent_id = ?')
+      .run(parentId, child.depth, child.id);
+    // Delete the intermediate child
+    db.prepare('DELETE FROM subnets WHERE id = ?').run(child.id);
+  }
+
+  // Fix depth recursively for moved grandchildren (they keep the intermediate's depth, which is correct)
+  // Recurse up in case the parent's parent can also be consolidated
+  consolidateIntermediate(db, parent.parent_id);
 }
 
 // Helper: buddy-merge unallocated siblings after deletion
@@ -100,16 +157,21 @@ function buddyMerge(db, parentId) {
           // They're buddies — merge
           const combinedNet = Math.min(aNet, bNet);
           const combinedCidr = `${longToIp(combinedNet)}/${combinedPrefix}`;
-          const combinedParsed = parseCidr(combinedCidr);
 
-          db.prepare('DELETE FROM subnets WHERE id IN (?, ?)').run(a.id, b.id);
-          insertSubnet(db, {
-            cidr: combinedCidr,
-            name: combinedCidr,
-            parent_id: parentId,
-            status: 'unallocated',
-            depth: a.depth
-          });
+          // Check if combined CIDR equals the parent — if so, just delete children
+          const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
+          if (parent && combinedCidr === parent.cidr) {
+            db.prepare('DELETE FROM subnets WHERE id IN (?, ?)').run(a.id, b.id);
+          } else {
+            db.prepare('DELETE FROM subnets WHERE id IN (?, ?)').run(a.id, b.id);
+            insertSubnet(db, {
+              cidr: combinedCidr,
+              name: combinedCidr,
+              parent_id: parentId,
+              status: 'unallocated',
+              depth: a.depth
+            });
+          }
           merged = true;
         }
       }
@@ -133,9 +195,14 @@ function buddyMerge(db, parentId) {
   }
 }
 
-// GET /api/subnets — return full tree
-router.get('/', requirePerm('subnets:read'), (req, res) => {
+// GET /api/subnets — return folder-grouped tree
+router.get('/', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
+
+  const folders = db.prepare(`
+    SELECT f.* FROM folders f ORDER BY f.sort_order, f.name
+  `).all();
+
   const rows = db.prepare(`
     WITH RECURSIVE subnet_tree AS (
       SELECT s.id FROM subnets s WHERE s.parent_id IS NULL
@@ -151,11 +218,31 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
     ORDER BY s.network_address, s.prefix_length
   `).all();
 
-  res.json({ tree: buildTree(rows) });
-});
+  const tree = buildTree(rows);
+
+  // Group root subnets by folder
+  const folderMap = new Map(folders.map(f => [f.id, { ...f, subnets: [] }]));
+  const ungrouped = [];
+
+  for (const node of tree) {
+    if (node.folder_id && folderMap.has(node.folder_id)) {
+      folderMap.get(node.folder_id).subnets.push(node);
+    } else {
+      ungrouped.push(node);
+    }
+  }
+
+  const result = [...folderMap.values()];
+  // Attach any ungrouped subnets (shouldn't happen normally)
+  if (ungrouped.length > 0) {
+    result.push({ id: null, name: 'Ungrouped', description: null, sort_order: 999, subnets: ungrouped });
+  }
+
+  res.json({ folders: result });
+}));
 
 // GET /api/subnets/:id — single subnet with children
-router.get('/:id', requirePerm('subnets:read'), (req, res) => {
+router.get('/:id', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare(`
     SELECT s.*,
@@ -174,11 +261,11 @@ router.get('/:id', requirePerm('subnets:read'), (req, res) => {
   `).all(subnet.id);
 
   res.json({ ...subnet, children });
-});
+}));
 
 // POST /api/subnets — create root supernet
-router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { cidr, name, description, vlan_id } = req.body;
+router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
+  const { cidr, name, description, vlan_id, folder_id } = req.body;
 
   if (!cidr) return res.status(400).json({ error: 'CIDR is required' });
   if (!isValidCidr(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
@@ -212,11 +299,18 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     subnetName = applyNameTemplate(template, normalized);
   }
 
+  // Validate folder exists if provided
+  if (folder_id) {
+    const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
+    if (!folder) return res.status(400).json({ error: 'Folder not found' });
+  }
+
   const result = insertSubnet(db, {
     cidr: normalized,
     name: subnetName,
     description,
     vlan_id,
+    folder_id: folder_id || null,
     status: 'unallocated',
     depth: 0
   });
@@ -224,10 +318,10 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(result.lastInsertRowid);
   audit(req.user.id, 'subnet_created', 'subnet', subnet.id, { cidr: normalized });
   res.status(201).json(subnet);
-});
+}));
 
 // POST /api/subnets/merge/preview — validate merge without committing
-router.post('/merge/preview', requirePerm('subnets:read'), (req, res) => {
+router.post('/merge/preview', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const { subnet_ids } = req.body;
   if (!Array.isArray(subnet_ids) || subnet_ids.length < 2) {
     return res.status(400).json({ error: 'At least 2 subnet IDs required' });
@@ -264,10 +358,10 @@ router.post('/merge/preview', requirePerm('subnets:read'), (req, res) => {
     gateway_preserved: gatewaySubnet ? { cidr: gatewaySubnet.cidr, gateway: gatewaySubnet.gateway_address } : null,
     config_loss: allocated.filter(s => s !== gatewaySubnet).map(s => s.cidr)
   });
-});
+}));
 
 // POST /api/subnets/merge — execute merge
-router.post('/merge', requirePerm('subnets:write'), (req, res) => {
+router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { subnet_ids } = req.body;
   if (!Array.isArray(subnet_ids) || subnet_ids.length < 2) {
     return res.status(400).json({ error: 'At least 2 subnet IDs required' });
@@ -301,57 +395,92 @@ router.post('/merge', requirePerm('subnets:write'), (req, res) => {
   const templateRow = db.prepare("SELECT value FROM settings WHERE key = 'subnet_name_template'").get();
   const template = templateRow?.value || '%1.%2.%3.%4/%bitmask';
 
-  const txn = db.transaction(() => {
-    // Delete all selected subnets and their data
-    for (const s of subnets) {
-      db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
-      db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(s.id);
-      db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
-    }
+  try {
+    const txn = db.transaction(() => {
+      const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
 
-    // Create merged subnet
-    const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-    const mergedParsed = parseCidr(mergeResult.merged_cidr);
+      // Check if merging reconstitutes the parent (merged CIDR equals parent CIDR)
+      if (mergeResult.merged_cidr === parent.cidr) {
+        // Just delete the children — parent becomes a leaf again
+        for (const s of subnets) {
+          db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
+          db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(s.id);
+          db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
+        }
 
-    const result = insertSubnet(db, {
-      cidr: mergeResult.merged_cidr,
-      name: gatewaySubnet ? gatewaySubnet.name : applyNameTemplate(template, mergeResult.merged_cidr),
-      description: gatewaySubnet?.description || null,
-      vlan_id: gatewaySubnet?.vlan_id || null,
-      gateway_address: gatewaySubnet?.gateway_address || null,
-      parent_id: parentId,
-      status: gatewaySubnet ? 'allocated' : 'unallocated',
-      depth: parent.depth + 1
-    });
+        // Restore parent config from the allocated child if any
+        const configSource = gatewaySubnet || allocated[0] || null;
+        if (allocated.length > 0) {
+          db.prepare(`UPDATE subnets SET status = 'allocated', name = ?, description = ?,
+            vlan_id = ?, gateway_address = ?, has_reverse_dns = ?, updated_at = datetime('now')
+            WHERE id = ?`).run(
+            configSource.name, configSource.description,
+            configSource.vlan_id, configSource.gateway_address,
+            configSource.has_reverse_dns || 0, parent.id
+          );
+          const mergedParsed = parseCidr(mergeResult.merged_cidr);
+          createSystemRanges(db, parent.id, mergedParsed, configSource.gateway_address);
+        } else {
+          db.prepare(`UPDATE subnets SET status = 'unallocated', updated_at = datetime('now') WHERE id = ?`).run(parent.id);
+          const mergedParsed = parseCidr(mergeResult.merged_cidr);
+          createSystemRanges(db, parent.id, mergedParsed, null);
+        }
 
-    const mergedId = result.lastInsertRowid;
+        return parent.id;
+      }
 
-    if (gatewaySubnet) {
-      createSystemRanges(db, mergedId, mergedParsed, gatewaySubnet.gateway_address);
-      if (gatewaySubnet.has_reverse_dns) {
+      // Normal case: merged CIDR is smaller than parent
+      // Delete all selected subnets and their data
+      for (const s of subnets) {
+        db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
+        db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(s.id);
+        db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
+      }
+
+      // Create merged subnet
+      const mergedParsed = parseCidr(mergeResult.merged_cidr);
+
+      // Use the gateway subnet for config, or fall back to any allocated subnet
+      const configSource = gatewaySubnet || allocated[0] || null;
+
+      const result = insertSubnet(db, {
+        cidr: mergeResult.merged_cidr,
+        name: configSource ? configSource.name : applyNameTemplate(template, mergeResult.merged_cidr),
+        description: configSource?.description || null,
+        vlan_id: configSource?.vlan_id || null,
+        gateway_address: configSource?.gateway_address || null,
+        parent_id: parentId,
+        status: allocated.length > 0 ? 'allocated' : 'unallocated',
+        depth: parent.depth + 1
+      });
+
+      const mergedId = result.lastInsertRowid;
+
+      createSystemRanges(db, mergedId, mergedParsed, configSource?.gateway_address || null);
+      if (configSource?.has_reverse_dns) {
         db.prepare('UPDATE subnets SET has_reverse_dns = 1 WHERE id = ?').run(mergedId);
       }
-    }
 
-    // Try buddy-merge with remaining siblings
-    buddyMerge(db, parentId);
+      return mergedId;
+    });
 
-    return mergedId;
-  });
+    const mergedId = txn();
+    audit(req.user.id, 'subnets_merged', 'subnet', mergedId, {
+      merged_cidrs: subnets.map(s => s.cidr),
+      result_cidr: mergeResult.merged_cidr
+    });
 
-  const mergedId = txn();
-  audit(req.user.id, 'subnets_merged', 'subnet', mergedId, {
-    merged_cidrs: subnets.map(s => s.cidr),
-    result_cidr: mergeResult.merged_cidr
-  });
-
-  const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-  const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ? ORDER BY network_address').all(parentId);
-  res.json({ ...parent, children });
-});
+    const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
+    const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ? ORDER BY network_address').all(parentId);
+    res.json({ ...parent, children });
+  } catch (err) {
+    console.error('Merge error:', err);
+    res.status(500).json({ error: `Merge failed: ${err.message}` });
+  }
+}));
 
 // POST /api/subnets/apply-template — apply name template to selected subnets
-router.post('/apply-template', requirePerm('subnets:write'), (req, res) => {
+router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { subnet_ids } = req.body;
   if (!Array.isArray(subnet_ids) || subnet_ids.length === 0) {
     return res.status(400).json({ error: 'At least 1 subnet ID required' });
@@ -382,43 +511,65 @@ router.post('/apply-template', requirePerm('subnets:write'), (req, res) => {
     audit(req.user.id, 'template_applied', 'subnet', null, { updated });
   }
   res.json({ updated, count: updated.length });
-});
+}));
 
 // PUT /api/subnets/:id — update subnet config
-router.put('/:id', requirePerm('subnets:write'), (req, res) => {
-  const { name, description, vlan_id, gateway_address } = req.body;
+router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
+  const { name, description, vlan_id, gateway_address, scan_interval, folder_id } = req.body;
   const db = getDb();
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
+  // Validate scan_interval if provided
+  const validIntervals = [null, '5m', '15m', '30m', '1h', '4h'];
+  if (scan_interval !== undefined && !validIntervals.includes(scan_interval)) {
+    return res.status(400).json({ error: 'Invalid scan interval. Use: null, 5m, 15m, 30m, 1h, 4h' });
+  }
+
+  // Validate folder_id if provided (only for root subnets)
+  if (folder_id !== undefined && !subnet.parent_id) {
+    if (folder_id !== null) {
+      const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
+      if (!folder) return res.status(400).json({ error: 'Folder not found' });
+    }
+  }
+
   db.prepare(`
-    UPDATE subnets SET name = ?, description = ?, vlan_id = ?, gateway_address = ?, updated_at = datetime('now')
+    UPDATE subnets SET name = ?, description = ?, vlan_id = ?, gateway_address = ?,
+      scan_interval = ?, folder_id = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(
     name ?? subnet.name,
     description !== undefined ? description : subnet.description,
     vlan_id !== undefined ? vlan_id : subnet.vlan_id,
     gateway_address ?? subnet.gateway_address,
+    scan_interval !== undefined ? scan_interval : subnet.scan_interval,
+    folder_id !== undefined && !subnet.parent_id ? folder_id : subnet.folder_id,
     subnet.id
   );
 
   if (gateway_address && gateway_address !== subnet.gateway_address) {
     const gwType = db.prepare("SELECT id FROM range_types WHERE name = 'Gateway' AND is_system = 1").get();
     if (gwType) {
-      db.prepare("UPDATE ranges SET start_ip = ?, end_ip = ?, updated_at = datetime('now') WHERE subnet_id = ? AND range_type_id = ?").run(
+      const result = db.prepare("UPDATE ranges SET start_ip = ?, end_ip = ?, updated_at = datetime('now') WHERE subnet_id = ? AND range_type_id = ?").run(
         gateway_address, gateway_address, subnet.id, gwType.id
       );
+      if (result.changes === 0) {
+        db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
+          subnet.id, gwType.id, gateway_address, gateway_address, 'Default gateway'
+        );
+      }
     }
   }
 
   const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);
   audit(req.user.id, 'subnet_updated', 'subnet', subnet.id, { changes: req.body });
   res.json(updated);
-});
+}));
 
 // POST /api/subnets/:id/divide/preview — preview division without committing
-router.post('/:id/divide/preview', requirePerm('subnets:read'), (req, res) => {
+router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const { cidr, new_prefix } = req.body;
   const db = getDb();
   const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -473,7 +624,7 @@ router.post('/:id/divide/preview', requirePerm('subnets:read'), (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
 // Helper: migrate config from parent to inheriting child during division
 function migrateConfigToChild(db, parentId, childId, childParsed, parentGateway, parentHasReverseDns) {
@@ -537,7 +688,7 @@ function clearParentConfig(db, parentId) {
 }
 
 // POST /api/subnets/:id/divide — execute division
-router.post('/:id/divide', requirePerm('subnets:write'), (req, res) => {
+router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { cidr, new_prefix, force } = req.body;
   const db = getDb();
   const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -596,17 +747,24 @@ router.post('/:id/divide', requirePerm('subnets:write'), (req, res) => {
             vlan_id: isInheriting ? parent.vlan_id : null,
             gateway_address: isInheriting ? parent.gateway_address : null,
             parent_id: parent.id,
-            status: isInheriting ? 'allocated' : 'unallocated',
+            status: parent.status === 'allocated' ? 'allocated' : 'unallocated',
             depth: childDepth
           });
 
           if (isInheriting) {
             migrateConfigToChild(db, parent.id, result.lastInsertRowid, s, parent.gateway_address, parent.has_reverse_dns);
+          } else {
+            // All children get Network/Broadcast ranges
+            createSystemRanges(db, result.lastInsertRowid, s, null);
           }
           childIds.push(result.lastInsertRowid);
         }
 
         clearParentConfig(db, parent.id);
+
+        // Consolidate: if all siblings of parent are also intermediaries, flatten
+        consolidateIntermediate(db, parent.parent_id);
+
         return childIds;
       });
 
@@ -666,16 +824,22 @@ router.post('/:id/divide', requirePerm('subnets:write'), (req, res) => {
           vlan_id: isInheriting ? parent.vlan_id : null,
           gateway_address: isInheriting ? parent.gateway_address : null,
           parent_id: parent.id,
-          status: isInheriting ? 'allocated' : 'unallocated',
+          status: parent.status === 'allocated' ? 'allocated' : 'unallocated',
           depth: childDepth
         });
 
         if (isInheriting) {
           migrateConfigToChild(db, parent.id, result.lastInsertRowid, aParsed, parent.gateway_address, parent.has_reverse_dns);
+        } else {
+          // All children get Network/Broadcast ranges
+          createSystemRanges(db, result.lastInsertRowid, aParsed, null);
         }
       }
 
       clearParentConfig(db, parent.id);
+
+      // Consolidate: if all siblings of parent are also intermediaries, flatten
+      consolidateIntermediate(db, parent.parent_id);
     });
 
     txn();
@@ -693,11 +857,11 @@ router.post('/:id/divide', requirePerm('subnets:write'), (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
 // POST /api/subnets/:id/configure — allocate a subnet
-router.post('/:id/configure', requirePerm('subnets:write'), (req, res) => {
-  const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns } = req.body;
+router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, res) => {
+  const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Name is required' });
 
@@ -714,6 +878,12 @@ router.post('/:id/configure', requirePerm('subnets:write'), (req, res) => {
     gw = gwPref?.value === 'last' ? parsed.lastUsable : parsed.firstUsable;
   }
 
+  // Validate folder_id if provided
+  if (folder_id !== undefined && folder_id !== null) {
+    const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
+    if (!folder) return res.status(400).json({ error: 'Folder not found' });
+  }
+
   const txn = db.transaction(() => {
     db.prepare(`
       UPDATE subnets SET status = 'allocated', name = ?, description = ?, vlan_id = ?,
@@ -721,11 +891,18 @@ router.post('/:id/configure', requirePerm('subnets:write'), (req, res) => {
       WHERE id = ?
     `).run(name, description || null, vlan_id || null, gw, create_reverse_dns ? 1 : 0, subnet.id);
 
-    // Create system ranges if they don't already exist
-    const existingRanges = db.prepare('SELECT COUNT(*) as c FROM ranges WHERE subnet_id = ?').get(subnet.id);
-    if (existingRanges.c === 0) {
-      createSystemRanges(db, subnet.id, parsed, gw);
+    // Move to specified folder if provided (root subnets only)
+    if (folder_id !== undefined && !subnet.parent_id) {
+      db.prepare('UPDATE subnets SET folder_id = ? WHERE id = ?').run(folder_id, subnet.id);
     }
+
+    // Recreate system ranges (Network/Gateway/Broadcast) with correct gateway
+    const sysTypes = db.prepare("SELECT id FROM range_types WHERE is_system = 1 AND name IN ('Network', 'Gateway', 'Broadcast')").all();
+    const sysTypeIds = sysTypes.map(t => t.id);
+    if (sysTypeIds.length > 0) {
+      db.prepare(`DELETE FROM ranges WHERE subnet_id = ? AND range_type_id IN (${sysTypeIds.join(',')})`).run(subnet.id);
+    }
+    createSystemRanges(db, subnet.id, parsed, gw);
 
     // Auto-create reverse DNS zone if requested
     if (create_reverse_dns) {
@@ -760,6 +937,19 @@ router.post('/:id/configure', requirePerm('subnets:write'), (req, res) => {
 
       // Increment SOA serial
       db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?").run(zoneId);
+    }
+
+    // Auto-populate ip_addresses for all usable IPs (up to /20 = 4096 IPs)
+    if (parsed.prefix >= 20) {
+      const ipStart = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
+      const ipEnd = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
+      const insertIp = db.prepare('INSERT OR IGNORE INTO ip_addresses (subnet_id, ip_address, status) VALUES (?, ?, ?)');
+      const gwLong = gw ? ipToLong(gw) : null;
+
+      for (let ipLong = ipStart; ipLong <= ipEnd; ipLong++) {
+        const ipStatus = (gwLong !== null && ipLong === gwLong) ? 'reserved' : 'available';
+        insertIp.run(subnet.id, longToIp(ipLong), ipStatus);
+      }
     }
 
     // Create DHCP scope if requested and subnet is >= /29
@@ -797,10 +987,10 @@ router.post('/:id/configure', requirePerm('subnets:write'), (req, res) => {
 
   const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);
   res.json(updated);
-});
+}));
 
 // DELETE /api/subnets/:id — hierarchy-aware deletion with reconsolidation
-router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
+router.delete('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
@@ -866,10 +1056,10 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const action = txn();
   audit(req.user.id, 'subnet_deleted', 'subnet', subnet.id, { cidr: subnet.cidr, action });
   res.json({ message: 'Subnet deleted', action });
-});
+}));
 
 // POST /api/subnets/calculate — standalone calculator (unchanged)
-router.post('/calculate', requirePerm('subnets:read'), (req, res) => {
+router.post('/calculate', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const { cidr, new_prefix } = req.body;
 
   if (!cidr || new_prefix === undefined) {
@@ -885,23 +1075,63 @@ router.post('/calculate', requirePerm('subnets:read'), (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
-});
+}));
 
-// GET /api/subnets/:id/ips — IP addresses for IP grid (allocated subnets only)
-router.get('/:id/ips', requirePerm('subnets:read'), (req, res) => {
+// GET /api/subnets/:id/ips — IP addresses with server-side pagination and virtual IPs
+router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-  const ips = db.prepare(`
-    SELECT ip.*, r.range_type_id, rt.name as range_type_name, rt.color as range_type_color
-    FROM ip_addresses ip
-    LEFT JOIN ranges r ON ip.range_id = r.id
-    LEFT JOIN range_types rt ON r.range_type_id = rt.id
-    WHERE ip.subnet_id = ?
-    ORDER BY ip.ip_address
-  `).all(req.params.id);
+  const parsed = parseCidr(subnet.cidr);
+  const totalIps = parsed.broadcastLong - parsed.networkLong + 1;
 
+  // Pagination params
+  const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+  const totalPages = Math.ceil(totalIps / pageSize);
+  const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), totalPages);
+
+  // Compute IP range for this page
+  const pageStartLong = parsed.networkLong + (page - 1) * pageSize;
+  const pageEndLong = Math.min(pageStartLong + pageSize - 1, parsed.broadcastLong);
+  const pageStartIp = longToIp(pageStartLong);
+  const pageEndIp = longToIp(pageEndLong);
+
+  // Load persisted ip_addresses for this subnet and filter to page range in JS
+  // (ip_address is text so SQL string comparison on dotted-decimal is unreliable)
+  const lastScan = db.prepare(`
+    SELECT id FROM network_scans WHERE subnet_id = ? AND status = 'completed'
+    ORDER BY completed_at DESC LIMIT 1
+  `).get(req.params.id);
+
+  let allPersisted;
+  if (lastScan) {
+    allPersisted = db.prepare(`
+      SELECT ip.*,
+        sr.responded as scan_responded, sr.mac_address as scan_mac
+      FROM ip_addresses ip
+      LEFT JOIN scan_results sr ON sr.scan_id = ? AND sr.ip_address = ip.ip_address
+      WHERE ip.subnet_id = ?
+    `).all(lastScan.id, req.params.id);
+  } else {
+    allPersisted = db.prepare(`
+      SELECT ip.*,
+        NULL as scan_responded, NULL as scan_mac
+      FROM ip_addresses ip
+      WHERE ip.subnet_id = ?
+    `).all(req.params.id);
+  }
+
+  // Build lookup of persisted IPs by long value, filtering to page range
+  const persistedMap = new Map();
+  for (const ip of allPersisted) {
+    const long = ipToLong(ip.ip_address);
+    if (long >= pageStartLong && long <= pageEndLong) {
+      persistedMap.set(long, ip);
+    }
+  }
+
+  // Load ranges for this subnet
   const ranges = db.prepare(`
     SELECT r.*, rt.name as range_type_name, rt.color as range_type_color, rt.is_system as range_type_is_system
     FROM ranges r
@@ -910,7 +1140,65 @@ router.get('/:id/ips', requirePerm('subnets:read'), (req, res) => {
     ORDER BY r.start_ip
   `).all(req.params.id);
 
-  res.json({ subnet, ips, ranges });
+  // Pre-compute range lookup: sorted by startLong for binary search
+  const rangeLookup = ranges.map(r => ({
+    ...r,
+    startLong: ipToLong(r.start_ip),
+    endLong: ipToLong(r.end_ip)
+  })).sort((a, b) => a.startLong - b.startLong);
+
+  // Build a flat array mapping each IP long to its range info (O(n) sweep)
+  // Only covers the page range to keep it small
+  const rangeForIp = new Array(pageEndLong - pageStartLong + 1);
+  for (const r of rangeLookup) {
+    const lo = Math.max(r.startLong, pageStartLong) - pageStartLong;
+    const hi = Math.min(r.endLong, pageEndLong) - pageStartLong;
+    for (let i = lo; i <= hi; i++) {
+      rangeForIp[i] = r;
+    }
+  }
+
+  // Generate virtual IPs for this page, merging with persisted data
+  const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
+  const ips = [];
+
+  for (let ipLong = pageStartLong; ipLong <= pageEndLong; ipLong++) {
+    const persisted = persistedMap.get(ipLong);
+    const match = rangeForIp[ipLong - pageStartLong] || null;
+
+    if (persisted) {
+      persisted.range_type_id = match?.range_type_id || null;
+      persisted.range_type_name = match?.range_type_name || null;
+      persisted.range_type_color = match?.range_type_color || null;
+      ips.push(persisted);
+    } else {
+      // Virtual IP entry
+      const isGw = gwLong !== null && ipLong === gwLong;
+      ips.push({
+        ip_address: longToIp(ipLong),
+        subnet_id: subnet.id,
+        status: isGw ? 'reserved' : 'available',
+        hostname: null,
+        mac_address: null,
+        is_online: 0,
+        last_seen_at: null,
+        last_seen_mac: null,
+        scan_responded: null,
+        scan_mac: null,
+        range_type_id: match?.range_type_id || null,
+        range_type_name: match?.range_type_name || null,
+        range_type_color: match?.range_type_color || null
+      });
+    }
+  }
+
+  res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });
+}));
+
+// Error handler for all subnet routes
+router.use((err, req, res, _next) => {
+  console.error(`Subnet route error [${req.method} ${req.originalUrl}]:`, err);
+  res.status(500).json({ error: err.message || 'Internal server error' });
 });
 
 export default router;

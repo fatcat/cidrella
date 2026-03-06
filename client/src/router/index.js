@@ -3,11 +3,17 @@ import { useAuthStore } from '../stores/auth.js';
 
 import Login from '../views/Login.vue';
 import ChangePassword from '../views/ChangePassword.vue';
-import Dashboard from '../views/Dashboard.vue';
+import SetupWizard from '../views/SetupWizard.vue';
 import NotFound from '../views/NotFound.vue';
 import AppLayout from '../components/AppLayout.vue';
 
 const routes = [
+  {
+    path: '/setup',
+    name: 'Setup',
+    component: SetupWizard,
+    meta: { public: true }
+  },
   {
     path: '/login',
     name: 'Login',
@@ -23,14 +29,15 @@ const routes = [
     path: '/',
     component: AppLayout,
     children: [
-      { path: '', name: 'Dashboard', component: Dashboard },
-      { path: 'subnets', name: 'Subnets', component: () => import('../views/Subnets.vue') },
-      { path: 'subnets/:id', name: 'SubnetDetail', component: () => import('../views/SubnetDetail.vue') },
-      { path: 'range-types', redirect: '/system' },
-      { path: 'dns', name: 'DNS', component: () => import('../views/DNS.vue') },
-      { path: 'dhcp', name: 'DHCP', component: () => import('../views/DHCP.vue') },
-      { path: 'blocklists', name: 'Blocklists', component: () => import('../views/Placeholder.vue'), meta: { label: 'Blocklists' } },
-      { path: 'system', name: 'System', component: () => import('../views/System.vue') }
+      { path: '', name: 'Subnets', component: () => import('../views/Subnets.vue') },
+      { path: 'system', name: 'System', component: () => import('../views/System.vue') },
+      // Redirects for old bookmarks
+      { path: 'subnets', redirect: '/' },
+      { path: 'dns', redirect: '/system' },
+      { path: 'dhcp', redirect: '/system' },
+      { path: 'blocklists', redirect: '/system' },
+      { path: 'geoip', redirect: '/system' },
+      { path: 'range-types', redirect: '/system' }
     ]
   },
   {
@@ -45,11 +52,31 @@ const router = createRouter({
   routes
 });
 
+let setupChecked = false;
+let setupRequired = false;
+
 router.beforeEach(async (to) => {
   const auth = useAuthStore();
 
-  // Allow public routes
-  if (to.meta.public) {
+  // Check setup status once on first navigation
+  if (!setupChecked) {
+    try {
+      const res = await fetch('/api/setup/status');
+      const data = await res.json();
+      setupRequired = data.setup_required;
+    } catch {
+      setupRequired = false;
+    }
+    setupChecked = true;
+  }
+
+  // Don't redirect to setup if already complete
+  if (!setupRequired && to.name === 'Setup') {
+    return { name: 'Login' };
+  }
+
+  // Allow public routes (login page)
+  if (to.meta.public && to.name !== 'Setup') {
     return true;
   }
 
@@ -66,12 +93,21 @@ router.beforeEach(async (to) => {
     }
   }
 
-  // Force password change
-  if (auth.mustChangePassword && to.name !== 'ChangePassword') {
+  // Redirect to setup wizard if installation is not complete (after login)
+  if (setupRequired && to.name !== 'Setup') {
+    return { name: 'Setup' };
+  }
+
+  // Force password change (but allow setup wizard to take priority)
+  if (auth.mustChangePassword && to.name !== 'ChangePassword' && to.name !== 'Setup') {
     return { name: 'ChangePassword' };
   }
 
   return true;
 });
+
+export function markSetupComplete() {
+  setupRequired = false;
+}
 
 export default router;
