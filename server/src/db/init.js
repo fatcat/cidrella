@@ -46,18 +46,32 @@ function runMigrations() {
     .filter(f => f.endsWith('.sql'))
     .sort();
 
+  // Run each migration in a transaction so partial applies can't corrupt the schema
+  const applyMigration = db.transaction((sql, version) => {
+    db.exec(sql);
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
+  });
+
+  let newCount = 0;
   for (const file of migrationFiles) {
     const version = parseInt(file.split('_')[0], 10);
     if (applied.has(version)) continue;
 
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf-8');
-    db.exec(sql);
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
+    applyMigration(sql, version);
     console.log(`Applied migration: ${file}`);
+    newCount++;
+  }
+
+  const currentVersion = db.prepare('SELECT MAX(version) as v FROM schema_version').get()?.v ?? 0;
+  if (newCount > 0) {
+    console.log(`Schema version: ${currentVersion} (applied ${newCount} new migration${newCount !== 1 ? 's' : ''})`);
+  } else {
+    console.log(`Schema version: ${currentVersion} (up to date)`);
   }
 }
 
-async function ensureDefaults() {
+export async function ensureDefaults() {
   // Generate JWT secret if not present
   const existing = db.prepare("SELECT value FROM settings WHERE key = 'jwt_secret'").get();
   if (!existing) {
@@ -93,6 +107,10 @@ async function ensureDefaults() {
   if (!blRedirect) {
     db.prepare("INSERT INTO settings (key, value) VALUES ('blocklist_redirect_ip', '')").run();
   }
+  const blSchedule = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_update_schedule'").get();
+  if (!blSchedule) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('blocklist_update_schedule', 'daily')").run();
+  }
 
   // Backup defaults
   const bkSched = db.prepare("SELECT value FROM settings WHERE key = 'backup_schedule'").get();
@@ -116,7 +134,8 @@ async function ensureDefaults() {
     geoip_mode: 'blocklist',
     geoip_proxy_port: '5353',
     geoip_db_path: '/data/geoip/dbip-country-lite.mmdb',
-    geoip_last_updated: ''
+    geoip_last_updated: '',
+    geoip_update_schedule: 'monthly'
   };
   for (const [key, value] of Object.entries(geoipDefaults)) {
     const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);

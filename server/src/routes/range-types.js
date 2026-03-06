@@ -44,13 +44,13 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const type = db.prepare('SELECT * FROM range_types WHERE id = ?').get(req.params.id);
   if (!type) return res.status(404).json({ error: 'Range type not found' });
-  if (type.is_system) return res.status(403).json({ error: 'Cannot modify system range types' });
+  if (type.is_system) return res.status(403).json({ error: 'Cannot modify system address types' });
 
   const { name, color, description } = req.body;
 
   if (name && name !== type.name) {
     const dup = db.prepare('SELECT id FROM range_types WHERE name = ? AND id != ?').get(name, type.id);
-    if (dup) return res.status(409).json({ error: 'Range type name already exists' });
+    if (dup) return res.status(409).json({ error: 'Address type name already exists' });
   }
 
   db.prepare(`
@@ -66,13 +66,13 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const type = db.prepare('SELECT * FROM range_types WHERE id = ?').get(req.params.id);
-  if (!type) return res.status(404).json({ error: 'Range type not found' });
-  if (type.is_system) return res.status(403).json({ error: 'Cannot delete system range types' });
+  if (!type) return res.status(404).json({ error: 'Address type not found' });
+  if (type.is_system) return res.status(403).json({ error: 'Cannot delete system address types' });
 
   // Check if in use
   const usageCount = db.prepare('SELECT COUNT(*) as count FROM ranges WHERE range_type_id = ?').get(type.id);
   if (usageCount.count > 0) {
-    return res.status(409).json({ error: `Range type is in use by ${usageCount.count} range(s)` });
+    return res.status(409).json({ error: `Address type is in use by ${usageCount.count} range(s)` });
   }
 
   db.prepare('DELETE FROM range_types WHERE id = ?').run(type.id);

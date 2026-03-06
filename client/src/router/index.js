@@ -29,7 +29,7 @@ const routes = [
     path: '/',
     component: AppLayout,
     children: [
-      { path: '', name: 'Subnets', component: () => import('../views/Subnets.vue') },
+      { path: '', name: 'Subnets', component: () => import('../views/SubnetsLayoutB.vue') },
       { path: 'system', name: 'System', component: () => import('../views/System.vue') },
       // Redirects for old bookmarks
       { path: 'subnets', redirect: '/' },
@@ -58,20 +58,8 @@ let setupRequired = false;
 router.beforeEach(async (to) => {
   const auth = useAuthStore();
 
-  // Check setup status once on first navigation
-  if (!setupChecked) {
-    try {
-      const res = await fetch('/api/setup/status');
-      const data = await res.json();
-      setupRequired = data.setup_required;
-    } catch {
-      setupRequired = false;
-    }
-    setupChecked = true;
-  }
-
-  // Don't redirect to setup if already complete
-  if (!setupRequired && to.name === 'Setup') {
+  // Setup wizard disabled — always skip
+  if (to.name === 'Setup') {
     return { name: 'Login' };
   }
 
@@ -93,13 +81,8 @@ router.beforeEach(async (to) => {
     }
   }
 
-  // Redirect to setup wizard if installation is not complete (after login)
-  if (setupRequired && to.name !== 'Setup') {
-    return { name: 'Setup' };
-  }
-
-  // Force password change (but allow setup wizard to take priority)
-  if (auth.mustChangePassword && to.name !== 'ChangePassword' && to.name !== 'Setup') {
+  // Force password change
+  if (auth.mustChangePassword && to.name !== 'ChangePassword') {
     return { name: 'ChangePassword' };
   }
 

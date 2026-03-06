@@ -3,54 +3,62 @@ import { ref } from 'vue';
 import api from '../api/client.js';
 
 export const useBlocklistStore = defineStore('blocklists', () => {
-  const sources = ref([]);
+  const categories = ref([]);
   const whitelist = ref([]);
-  const stats = ref({ total_sources: 0, enabled_sources: 0, total_domains: 0, whitelist_count: 0, last_update: null });
+  const stats = ref({ enabled_categories: 0, total_domains: 0, whitelist_count: 0, last_update: null });
+  const settings = ref({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily' });
   const loading = ref(false);
 
-  async function fetchSources() {
+  async function fetchCategories() {
     loading.value = true;
     try {
-      const res = await api.get('/blocklists/sources');
-      sources.value = res.data;
+      const res = await api.get('/blocklists/categories');
+      categories.value = res.data;
       return res.data;
     } finally {
       loading.value = false;
     }
   }
 
-  async function createSource(data) {
-    const res = await api.post('/blocklists/sources', data);
-    await fetchSources();
+  async function toggleCategory(slug, enabled) {
+    const res = await api.put(`/blocklists/categories/${slug}`, { enabled });
+    await fetchCategories();
     return res.data;
   }
 
-  async function updateSource(id, data) {
-    const res = await api.put(`/blocklists/sources/${id}`, data);
-    await fetchSources();
+  async function updateCategoryUrl(slug, sourceUrl) {
+    const res = await api.put(`/blocklists/categories/${slug}/url`, { source_url: sourceUrl });
+    await fetchCategories();
     return res.data;
   }
 
-  async function deleteSource(id) {
-    await api.delete(`/blocklists/sources/${id}`);
-    await fetchSources();
-  }
-
-  async function refreshSource(id) {
-    const res = await api.post(`/blocklists/sources/${id}/refresh`);
-    await fetchSources();
+  async function refreshCategory(slug) {
+    const res = await api.post(`/blocklists/categories/${slug}/refresh`);
+    await fetchCategories();
     return res.data;
   }
 
   async function refreshAll() {
     const res = await api.post('/blocklists/refresh');
-    await fetchSources();
+    await fetchCategories();
     return res.data;
   }
 
   async function fetchStats() {
     const res = await api.get('/blocklists/stats');
     stats.value = res.data;
+    return res.data;
+  }
+
+  async function fetchSettings() {
+    const res = await api.get('/blocklists/settings');
+    settings.value = res.data;
+    return res.data;
+  }
+
+  async function updateSettings(data) {
+    const res = await api.put('/blocklists/settings', data);
+    await fetchSettings();
     return res.data;
   }
 
@@ -76,22 +84,11 @@ export const useBlocklistStore = defineStore('blocklists', () => {
     return res.data;
   }
 
-  async function fetchCategories() {
-    const res = await api.get('/blocklists/categories');
-    return res.data;
-  }
-
-  async function toggleCategory(name, enabled) {
-    const res = await api.put(`/blocklists/categories/${name}`, { enabled });
-    await fetchSources();
-    return res.data;
-  }
-
   return {
-    sources, whitelist, stats, loading,
-    fetchSources, createSource, updateSource, deleteSource,
-    refreshSource, refreshAll, fetchStats,
+    categories, whitelist, stats, settings, loading,
+    fetchCategories, toggleCategory, updateCategoryUrl, refreshCategory, refreshAll,
+    fetchStats, fetchSettings, updateSettings,
     fetchWhitelist, addWhitelist, removeWhitelist,
-    searchDomains, fetchCategories, toggleCategory
+    searchDomains
   };
 });

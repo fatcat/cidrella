@@ -1,7 +1,7 @@
 <template>
-  <div class="subnet-calc">
-    <h2>Subnet Calculator</h2>
-    <p class="subtitle">Split a network into smaller subnets or calculate subnet details.</p>
+  <div class="subnet-calc" style="display: flex; flex-direction: column; height: 100%;">
+    <h2>Network Calculator</h2>
+    <p class="subtitle">Split a network into smaller networks or calculate network details.</p>
 
     <div class="calc-form">
       <div class="field">
@@ -30,8 +30,10 @@
 
     <!-- Split results -->
     <div class="results" v-if="subnets.length">
-      <h3>{{ subnets.length }} Subnet{{ subnets.length > 1 ? 's' : '' }} (each /{{ newPrefix }})</h3>
-      <DataTable :value="subnets" stripedRows size="small" :paginator="subnets.length > 50" :rows="50">
+      <h3>{{ subnets.length }} Network{{ subnets.length > 1 ? 's' : '' }} (each /{{ newPrefix }})</h3>
+      <DataTable :value="subnets" stripedRows size="small"
+                 :paginator="subnets.length > 256" :rows="256"
+                 :rowsPerPageOptions="[64, 128, 256, 512]" scrollable scrollHeight="flex">
         <Column header="#" style="width: 3rem">
           <template #body="{ index }">{{ index + 1 }}</template>
         </Column>
@@ -65,13 +67,23 @@ import Column from 'primevue/column';
 import Toast from 'primevue/toast';
 import { useSubnetStore } from '../stores/subnets.js';
 
+const STORAGE_KEY = 'ipam-subnet-calc';
 const store = useSubnetStore();
 const toast = useToast();
 
-const cidr = ref('');
-const newPrefix = ref(24);
-const parent = ref(null);
-const subnets = ref([]);
+function loadSaved() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+
+const saved = loadSaved();
+const cidr = ref(saved?.cidr || '');
+const newPrefix = ref(saved?.newPrefix ?? 24);
+const parent = ref(saved?.parent || null);
+const subnets = ref(saved?.subnets || []);
 const loading = ref(false);
 const error = ref('');
 
@@ -83,6 +95,10 @@ async function calculate() {
     const result = await store.calculateSubnets(cidr.value, newPrefix.value);
     parent.value = result.parent;
     subnets.value = result.subnets;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      cidr: cidr.value, newPrefix: newPrefix.value,
+      parent: result.parent, subnets: result.subnets
+    }));
   } catch (err) {
     error.value = err.response?.data?.error || err.message;
     parent.value = null;
@@ -131,7 +147,7 @@ async function calculate() {
   color: var(--p-text-muted-color);
   font-family: inherit;
 }
-.results { margin-top: 1rem; }
+.results { margin-top: 1rem; flex: 1; min-height: 0; display: flex; flex-direction: column; margin-bottom: 1.1rem; }
 .results h3 { margin: 0 0 0.75rem 0; }
 .error-msg {
   margin-top: 1rem;

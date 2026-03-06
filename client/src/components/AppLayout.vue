@@ -17,11 +17,12 @@ import DebugPanel from './DebugPanel.vue';
 .app-layout {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
 }
 .main-content {
   flex: 1;
-  overflow: hidden;
-  background: var(--p-surface-ground);
+  min-height: 0;
+  overflow: auto;
+  background: var(--ipam-ground);
 }
 </style>

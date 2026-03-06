@@ -1,11 +1,14 @@
 <template>
-  <div class="range-types-page">
+  <div class="range-types-page" style="display: flex; flex-direction: column; height: 100%;">
     <div class="page-header">
-      <h2>Range Types</h2>
+      <h2>Address Types</h2>
       <Button label="Add Type" icon="pi pi-plus" @click="showDialog = true" />
     </div>
 
-    <DataTable :value="types" :loading="loading" stripedRows emptyMessage="No range types found.">
+    <DataTable :value="types" :loading="loading" stripedRows emptyMessage="No address types found."
+               :paginator="types.length > 256" :rows="256"
+               :rowsPerPageOptions="[64, 128, 256, 512]"
+               scrollable scrollHeight="flex">
       <Column header="Color" style="width: 4rem">
         <template #body="{ data }">
           <span class="color-swatch" :style="{ background: data.color }"></span>
@@ -34,7 +37,7 @@
       </Column>
     </DataTable>
 
-    <Dialog v-model:visible="showDialog" :header="editing ? 'Edit Range Type' : 'Add Range Type'"
+    <Dialog v-model:visible="showDialog" :header="editing ? 'Edit Address Type' : 'Add Address Type'"
             modal :style="{ width: '24rem' }">
       <div class="form-grid">
         <div class="field">
@@ -59,8 +62,8 @@
       </template>
     </Dialog>
 
-    <Dialog v-model:visible="showDeleteDialog" header="Delete Range Type" modal :style="{ width: '24rem' }">
-      <p>Delete range type <strong>{{ deleting?.name }}</strong>?</p>
+    <Dialog v-model:visible="showDeleteDialog" header="Delete Address Type" modal :style="{ width: '24rem' }">
+      <p>Delete address type <strong>{{ deleting?.name }}</strong>?</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteDialog = false" />
         <Button label="Delete" severity="danger" @click="doDelete" :loading="saving" />
@@ -120,10 +123,10 @@ async function save() {
   try {
     if (editing.value) {
       await store.updateRangeType(editing.value.id, form.value);
-      toast.add({ severity: 'success', summary: 'Range type updated', life: 3000 });
+      toast.add({ severity: 'success', summary: 'Address type updated', life: 3000 });
     } else {
       await store.createRangeType(form.value);
-      toast.add({ severity: 'success', summary: 'Range type created', life: 3000 });
+      toast.add({ severity: 'success', summary: 'Address type created', life: 3000 });
     }
     closeDialog();
     await loadTypes();
@@ -175,14 +178,15 @@ onMounted(loadTypes);
 }
 .badge-system {
   font-size: 0.75rem;
-  background: var(--p-surface-200);
+  background: var(--p-surface-ground);
+  color: var(--p-text-muted-color);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
 }
 .badge-custom {
   font-size: 0.75rem;
-  background: var(--p-primary-100);
-  color: var(--p-primary-700);
+  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
+  color: var(--p-primary-color);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
 }

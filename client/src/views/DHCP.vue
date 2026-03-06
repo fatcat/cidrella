@@ -1,21 +1,15 @@
 <template>
-  <div class="dhcp-page">
-    <div class="page-header">
-      <div class="header-actions">
-        <Button label="Apply Config" icon="pi pi-refresh" severity="secondary" @click="applyConfig" :loading="applying" />
-      </div>
-    </div>
-
+  <div class="dhcp-page" style="display: flex; flex-direction: column; height: 100%;">
     <TabView>
       <!-- Scopes Tab -->
       <TabPanel header="Scopes">
-        <div class="section-header">
-          <Button label="Add Scope" icon="pi pi-plus" size="small" @click="openScopeDialog()" />
-        </div>
 
         <DataTable :value="store.scopes" :loading="store.loading" stripedRows
-                   emptyMessage="No DHCP scopes configured." size="small">
-          <Column header="Subnet" style="min-width: 10rem">
+                   emptyMessage="No DHCP scopes configured." size="small"
+                   :paginator="store.scopes.length > 256" :rows="256"
+                   :rowsPerPageOptions="[64, 128, 256, 512]"
+                   scrollable scrollHeight="flex">
+          <Column header="Network" style="min-width: 10rem">
             <template #body="{ data }">
               <div>
                 <strong>{{ data.subnet_name }}</strong>
@@ -63,7 +57,10 @@
         </div>
 
         <DataTable :value="store.reservations" stripedRows
-                   emptyMessage="No DHCP reservations." size="small">
+                   emptyMessage="No DHCP reservations." size="small"
+                   :paginator="store.reservations.length > 256" :rows="256"
+                   :rowsPerPageOptions="[64, 128, 256, 512]"
+                   scrollable scrollHeight="flex">
           <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
             <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
           </Column>
@@ -71,7 +68,7 @@
           <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
             <template #body="{ data }">{{ data.hostname || '—' }}</template>
           </Column>
-          <Column header="Subnet" style="min-width: 8rem">
+          <Column header="Network" style="min-width: 8rem">
             <template #body="{ data }">{{ data.subnet_name || data.subnet_cidr }}</template>
           </Column>
           <Column header="Enabled" style="width: 5rem">
@@ -100,7 +97,10 @@
           <Button label="Save Defaults" icon="pi pi-save" size="small" @click="saveDefaults" :loading="savingDefaults" />
         </div>
         <DataTable :value="optionDefaultRows" stripedRows size="small" :loading="loadingOptions"
-                   emptyMessage="No DHCP options available." scrollable scrollHeight="24rem">
+                   emptyMessage="No DHCP options available."
+                   :paginator="optionDefaultRows.length > 256" :rows="256"
+                   :rowsPerPageOptions="[64, 128, 256, 512]"
+                   scrollable scrollHeight="flex">
           <Column field="code" header="Code" style="width: 4rem" />
           <Column field="label" header="Option" style="min-width: 12rem" />
           <Column field="type" header="Type" style="width: 6rem">
@@ -115,7 +115,7 @@
               <InputNumber v-else-if="data.type === 'number'" v-model="defaultValues[data.code]"
                            class="w-full" size="small" :useGrouping="false" placeholder="—" />
               <InputText v-else v-model="defaultValues[data.code]" class="w-full" size="small"
-                         :placeholder="placeholderForType(data.type)" />
+                         :placeholder="data.code === 3 ? 'Defaults to network\'s gateway' : placeholderForType(data.type)" />
             </template>
           </Column>
           <Column header="" style="width: 3rem">
@@ -135,7 +135,10 @@
         </div>
 
         <DataTable :value="store.leases" stripedRows
-                   emptyMessage="No active DHCP leases." size="small">
+                   emptyMessage="No active DHCP leases." size="small"
+                   :paginator="store.leases.length > 256" :rows="256"
+                   :rowsPerPageOptions="[64, 128, 256, 512]"
+                   scrollable scrollHeight="flex">
           <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem" />
           <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
             <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
@@ -143,7 +146,7 @@
           <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
             <template #body="{ data }">{{ data.hostname || '—' }}</template>
           </Column>
-          <Column header="Subnet" style="min-width: 8rem">
+          <Column header="Network" style="min-width: 8rem">
             <template #body="{ data }">{{ data.subnet_name || data.subnet_cidr || '—' }}</template>
           </Column>
           <Column header="Expires" sortable field="expires_at" style="min-width: 10rem">
@@ -228,7 +231,7 @@
           <InputNumber v-else-if="opt.type === 'number'" v-model="optionValues[opt.code]"
                        class="w-full" size="small" :useGrouping="false" />
           <InputText v-else v-model="optionValues[opt.code]" class="w-full" size="small"
-                     :placeholder="placeholderForType(opt.type)" />
+                     :placeholder="opt.code === 3 ? 'Defaults to network\'s gateway' : placeholderForType(opt.type)" />
         </div>
       </div>
       <template #footer>
@@ -242,9 +245,9 @@
             modal :style="{ width: '28rem' }">
       <div class="form-grid">
         <div class="field" v-if="!editingReservation">
-          <label>Subnet *</label>
+          <label>Network *</label>
           <Select v-model="reservationForm.subnet_id" :options="allocatedSubnets" optionLabel="_label" optionValue="id"
-                  class="w-full" placeholder="Select subnet" />
+                  class="w-full" placeholder="Select network" />
         </div>
         <div class="field">
           <label>MAC Address *</label>
@@ -297,7 +300,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
@@ -449,6 +452,18 @@ function applyOptionSelections() {
   showOptionValues.value = false;
 }
 
+// When creating a new scope and user picks a range, auto-populate gateway (option 3)
+watch(() => scopeForm.value.range_id, (rangeId) => {
+  if (!rangeId || editingScope.value) return;
+  const range = availableRanges.value.find(r => r.id === rangeId);
+  if (range?.subnet_gateway) {
+    if (!scopeForm.value.selectedOptions.includes(3)) {
+      scopeForm.value.selectedOptions.push(3);
+    }
+    scopeForm.value.optionValues[3] = range.subnet_gateway;
+  }
+});
+
 // Scope CRUD
 async function openScopeDialog(scope = null) {
   editingScope.value = scope;
@@ -514,6 +529,7 @@ async function saveScope() {
       toast.add({ severity: 'success', summary: 'Scope created', life: 3000 });
     }
     showScopeDialog.value = false;
+    window.dispatchEvent(new Event('ipam:stats-changed'));
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
@@ -532,6 +548,7 @@ async function doDeleteScope() {
     await store.deleteScope(deletingScope.value.id);
     showDeleteScopeDialog.value = false;
     toast.add({ severity: 'success', summary: 'Scope deleted', life: 3000 });
+    window.dispatchEvent(new Event('ipam:stats-changed'));
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
@@ -637,6 +654,10 @@ async function applyConfig() {
   try {
     const result = await store.applyConfig();
     toast.add({ severity: 'success', summary: 'Config applied', detail: `${result.scopes} scopes, ${result.reservations} reservations`, life: 3000 });
+    // Re-check health 3 times over 6 seconds to update dnsmasq/DNS status
+    for (let i = 0; i < 3; i++) {
+      setTimeout(() => window.dispatchEvent(new Event('ipam:stats-changed')), (i + 1) * 2000);
+    }
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
@@ -652,9 +673,31 @@ onMounted(async () => {
     loadOptions()
   ]);
 });
+
+defineExpose({ openScopeDialog, applyConfig });
 </script>
 
 <style scoped>
+.dhcp-page :deep(.p-tabview) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.dhcp-page :deep(.p-tabview-panels) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.dhcp-page :deep(.p-tabview-panel) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;
@@ -672,8 +715,8 @@ onMounted(async () => {
 
 .action-buttons { display: flex; gap: 0.25rem; }
 
-.badge-enabled { font-size: 0.75rem; color: var(--p-green-600); }
-.badge-disabled { font-size: 0.75rem; color: var(--p-red-600); background: var(--p-red-50); padding: 0.1rem 0.4rem; border-radius: 3px; }
+.badge-enabled { font-size: 0.75rem; color: var(--p-green-500); }
+.badge-disabled { font-size: 0.75rem; color: var(--p-red-500); background: color-mix(in srgb, var(--p-red-500) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
 
 .text-sm { font-size: 0.8rem; }
 .muted { color: var(--p-text-muted-color); }
@@ -709,15 +752,15 @@ code {
 }
 .option-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .option-tag {
-  background: var(--p-primary-50);
-  color: var(--p-primary-700);
+  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
+  color: var(--p-primary-color);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
   font-size: 0.75rem;
 }
 .option-tags-compact { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .option-tag-compact {
-  background: var(--p-surface-100);
+  background: var(--p-surface-ground);
   padding: 0.1rem 0.35rem;
   border-radius: 3px;
   font-size: 0.7rem;

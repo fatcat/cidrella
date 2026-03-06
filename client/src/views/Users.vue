@@ -1,10 +1,9 @@
 <template>
-  <div class="users-page">
-    <div class="section-header">
-      <Button label="Add User" icon="pi pi-plus" size="small" @click="openCreateDialog" />
-    </div>
-
-    <DataTable :value="users" :loading="loading" stripedRows size="small" emptyMessage="No users found.">
+  <div class="users-page" style="display: flex; flex-direction: column; height: 100%;">
+    <DataTable :value="users" :loading="loading" stripedRows size="small" emptyMessage="No users found."
+               :paginator="users.length > 256" :rows="256"
+               :rowsPerPageOptions="[64, 128, 256, 512]"
+               scrollable scrollHeight="flex">
       <Column field="username" header="Username" sortable style="min-width: 10rem" />
       <Column header="Role" sortable sortField="role" style="min-width: 10rem">
         <template #body="{ data }">{{ roleLabel(data.role) }}</template>
@@ -270,6 +269,8 @@ function copyPassword() {
 }
 
 onMounted(loadUsers);
+
+defineExpose({ openCreateDialog });
 </script>
 
 <style scoped>

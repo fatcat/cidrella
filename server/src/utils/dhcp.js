@@ -1,8 +1,32 @@
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
 import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
+
+const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+
+/**
+ * Resolve a hostname to an IPv4 address. Returns the IP string, or null on failure.
+ * Caches results for the lifetime of a config generation pass.
+ */
+const dnsCache = new Map();
+function resolveToIp(value) {
+  if (IPV4_RE.test(value)) return value;
+  if (dnsCache.has(value)) return dnsCache.get(value);
+  try {
+    const out = execFileSync('getent', ['ahostsv4', value], { timeout: 3000, encoding: 'utf-8' });
+    const firstLine = out.split('\n')[0];
+    const ip = firstLine?.split(/\s+/)[0];
+    const result = ip && IPV4_RE.test(ip) ? ip : null;
+    dnsCache.set(value, result);
+    return result;
+  } catch {
+    dnsCache.set(value, null);
+    return null;
+  }
+}
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
@@ -59,11 +83,18 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
     mergedOptions.set(3, scope.subnet_gateway);
   }
 
-  // Emit dhcp-option lines
+  // Emit dhcp-option lines, resolving hostnames to IPs where needed
   for (const [code, value] of mergedOptions) {
     const optDef = DHCP_OPTIONS_BY_CODE[code];
     if (!optDef || !value) continue;
-    lines.push(`dhcp-option=tag:${tag},${optDef.dnsmasqName},${value}`);
+    let emitValue = String(value);
+    if (optDef.type === 'ip' || optDef.type === 'ip-list') {
+      const parts = emitValue.split(',').map(s => s.trim());
+      const resolved = parts.map(p => resolveToIp(p)).filter(Boolean);
+      if (resolved.length === 0) continue;  // all failed to resolve
+      emitValue = resolved.join(',');
+    }
+    lines.push(`dhcp-option=tag:${tag},${optDef.dnsmasqName},${emitValue}`);
   }
 
   return lines.join('\n') + '\n';
@@ -71,9 +102,11 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
 
 /**
  * Regenerate all DHCP scope config files in conf.d/.
+ * Clears the DNS resolution cache each pass.
  * Returns true if any file changed (needs SIGHUP).
  */
 export function regenerateScopeConfigs(db) {
+  dnsCache.clear();
   const scopes = db.prepare(`
     SELECT s.*, r.start_ip, r.end_ip,
       sub.cidr as subnet_cidr, sub.gateway_address as subnet_gateway,

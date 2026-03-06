@@ -1,13 +1,47 @@
 <template>
   <div class="system-page">
-    <h2>System</h2>
+    <div class="sys-toolbar">
+      <div class="sys-toolbar-left">
+        <Button label="IP Management" icon="pi pi-arrow-left" size="small" text @click="$router.push('/')" />
+        <template v-if="activeTab === 1">
+          <span class="sys-toolbar-divider"></span>
+          <Button label="Add Type" icon="pi pi-plus" size="small" text @click="showRangeTypeDialog = true" />
+        </template>
+        <template v-if="activeTab === 2">
+          <span class="sys-toolbar-divider"></span>
+          <Button label="Add VLAN" icon="pi pi-plus" size="small" text @click="openVlanDialog()" />
+        </template>
+        <template v-if="activeTab === 5">
+          <span class="sys-toolbar-divider"></span>
+          <Button label="Create Backup Now" icon="pi pi-download" size="small" text @click="doCreateBackup" :loading="creatingBackup" />
+        </template>
+        <template v-if="activeTab === 6">
+          <span class="sys-toolbar-divider"></span>
+          <Button label="Upload Certificate" icon="pi pi-upload" size="small" text @click="doUploadCert" :loading="uploadingCert"
+                  :disabled="!certUpload.cert || !certUpload.key || certValidation.cert === false || certValidation.key === false" />
+        </template>
+        <template v-if="activeTab === 7">
+          <span class="sys-toolbar-divider"></span>
+          <Button label="Add Zone" icon="pi pi-plus" size="small" text @click="dnsPanelRef?.openZoneDialog()" />
+        </template>
+        <template v-if="activeTab === 8">
+          <span class="sys-toolbar-divider"></span>
+          <Button label="Add Scope" icon="pi pi-plus" size="small" text @click="dhcpPanelRef?.openScopeDialog()" />
+          <Button label="Apply Config" icon="pi pi-refresh" size="small" text @click="dhcpPanelRef?.applyConfig()" />
+        </template>
+        <template v-if="activeTab === 11">
+          <span class="sys-toolbar-divider"></span>
+          <Button label="Add User" icon="pi pi-plus" size="small" text @click="usersPanelRef?.openCreateDialog()" />
+        </template>
+      </div>
+    </div>
 
     <TabView v-model:activeIndex="activeTab">
       <TabPanel header="Settings">
         <div v-if="loadingSettings" class="muted">Loading settings...</div>
         <div v-else class="settings-form">
           <div class="setting-group">
-            <h3>Subnet Naming</h3>
+            <h3>Network Naming</h3>
             <div class="field">
               <label>Name Template</label>
               <InputText v-model="settings.subnet_name_template" class="w-full" />
@@ -38,42 +72,25 @@
           </div>
 
           <div class="setting-group">
-            <h3>DNS</h3>
-            <div class="field">
-              <label>Upstream Forwarders</label>
-              <div class="forwarders-list">
-                <div v-for="(server, idx) in forwarders" :key="idx" class="forwarder-row">
-                  <InputText v-model="forwarders[idx]" placeholder="e.g. 8.8.8.8" style="flex: 1;" />
-                  <Button icon="pi pi-times" severity="danger" text rounded size="small"
-                          @click="forwarders.splice(idx, 1)" :disabled="forwarders.length <= 1" />
-                </div>
-                <Button label="Add Server" icon="pi pi-plus" severity="secondary" size="small" text
-                        @click="forwarders.push('')" />
-              </div>
-              <small class="field-help">DNS servers used for upstream resolution (e.g., 8.8.8.8, 1.1.1.1)</small>
-            </div>
-          </div>
-
-          <div class="setting-group">
             <h3>Network Scanning</h3>
             <p class="field-help" style="margin-bottom: 0.75rem;">
-              Configure automatic network scanning for allocated subnets. Scans send ARP probes to detect online hosts.
+              Configure automatic network scanning for allocated networks. Scans send ARP probes to detect online hosts.
             </p>
             <div class="field">
               <label>Default Scan Interval</label>
               <Select v-model="settings.default_scan_interval" :options="scanIntervalOptions" optionLabel="label" optionValue="value"
                       class="w-full" style="max-width: 16rem;" />
-              <small class="field-help">Applied to newly configured subnets.</small>
+              <small class="field-help">Applied to newly configured networks.</small>
             </div>
             <div class="field">
               <label>On-Demand Scan</label>
               <div class="scan-row">
                 <Select v-model="scanSubnetId" :options="allocatedSubnets" optionLabel="label" optionValue="value"
-                        placeholder="Select subnet" class="w-full" style="max-width: 20rem;" />
+                        placeholder="Select network" class="w-full" style="max-width: 20rem;" />
                 <Button label="Scan Now" icon="pi pi-search" size="small" @click="doStartScan"
                         :loading="startingScan" :disabled="!scanSubnetId" />
               </div>
-              <small class="field-help">Send ARP probes to all usable IPs in the selected subnet.</small>
+              <small class="field-help">Send ARP probes to all usable IPs in the selected network.</small>
             </div>
           </div>
 
@@ -82,12 +99,12 @@
           </div>
         </div>
       </TabPanel>
-      <TabPanel header="Range Types">
+      <TabPanel header="Address Types">
         <div class="range-types-section">
-          <div class="section-header">
-            <Button label="Add Type" icon="pi pi-plus" size="small" @click="showRangeTypeDialog = true" />
-          </div>
-          <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows emptyMessage="No range types found." size="small">
+          <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows emptyMessage="No address types found." size="small"
+                     :paginator="rangeTypes.length > 256" :rows="256"
+                     :rowsPerPageOptions="[64, 128, 256, 512]"
+                     scrollable scrollHeight="flex">
             <Column header="Color" style="width: 4rem">
               <template #body="{ data }">
                 <span class="color-swatch" :style="{ background: data.color }"></span>
@@ -117,8 +134,8 @@
           </DataTable>
         </div>
 
-        <!-- Range Type Dialog -->
-        <Dialog v-model:visible="showRangeTypeDialog" :header="editingRangeType ? 'Edit Range Type' : 'Add Range Type'"
+        <!-- Address Type Dialog -->
+        <Dialog v-model:visible="showRangeTypeDialog" :header="editingRangeType ? 'Edit Address Type' : 'Add Address Type'"
                 modal :style="{ width: '24rem' }">
           <div class="form-grid">
             <div class="field">
@@ -143,9 +160,9 @@
           </template>
         </Dialog>
 
-        <!-- Delete Range Type Dialog -->
-        <Dialog v-model:visible="showDeleteRangeTypeDialog" header="Delete Range Type" modal :style="{ width: '24rem' }">
-          <p>Delete range type <strong>{{ deletingRangeType?.name }}</strong>?</p>
+        <!-- Delete Address Type Dialog -->
+        <Dialog v-model:visible="showDeleteRangeTypeDialog" header="Delete Address Type" modal :style="{ width: '24rem' }">
+          <p>Delete address type <strong>{{ deletingRangeType?.name }}</strong>?</p>
           <template #footer>
             <Button label="Cancel" severity="secondary" @click="showDeleteRangeTypeDialog = false" />
             <Button label="Delete" severity="danger" @click="doDeleteRangeType" :loading="savingRangeType" />
@@ -157,13 +174,15 @@
           <div class="section-header">
             <Select v-model="vlanOrgFilter" :options="orgOptions" optionLabel="label" optionValue="value"
                     placeholder="All Organizations" showClear class="audit-filter" @change="loadVlans" />
-            <Button label="Add VLAN" icon="pi pi-plus" size="small" @click="openVlanDialog()" />
           </div>
-          <DataTable :value="vlans" :loading="loadingVlans" stripedRows emptyMessage="No VLANs found." size="small">
+          <DataTable :value="vlans" :loading="loadingVlans" stripedRows emptyMessage="No VLANs found." size="small"
+                     :paginator="vlans.length > 256" :rows="256"
+                     :rowsPerPageOptions="[64, 128, 256, 512]"
+                     scrollable scrollHeight="flex">
             <Column field="vlan_id" header="VLAN ID" sortable style="width: 6rem" />
             <Column field="name" header="Name" sortable />
             <Column field="folder_name" header="Organization" sortable />
-            <Column field="subnet_count" header="Subnets" style="width: 5rem">
+            <Column field="subnet_count" header="Networks" style="width: 5rem">
               <template #body="{ data }">{{ data.subnet_count || 0 }}</template>
             </Column>
             <Column header="" style="width: 5rem">
@@ -190,11 +209,12 @@
             </div>
             <div class="field">
               <label>VLAN ID *</label>
-              <InputNumber v-model="vlanForm.vlan_id" :min="1" :max="4094" class="w-full" />
+              <InputNumber v-model="vlanForm.vlan_id" :min="1" :max="4094" class="w-full"
+                           @input="onVlanIdInput" />
             </div>
             <div class="field">
               <label>Name *</label>
-              <InputText v-model="vlanForm.name" class="w-full" />
+              <InputText v-model="vlanForm.name" class="w-full" @input="vlanNameManual = true" />
             </div>
           </div>
           <template #footer>
@@ -213,20 +233,23 @@
           </template>
         </Dialog>
       </TabPanel>
-      <TabPanel header="Subnet Calculator">
+      <TabPanel header="Network Calculator">
         <SubnetCalculator />
       </TabPanel>
       <TabPanel header="Audit Log">
         <div class="audit-section">
           <div class="audit-filters">
-            <Select v-model="auditFilters.action" :options="auditActionOptions" optionLabel="label" optionValue="value"
-                    placeholder="All Actions" showClear class="audit-filter" />
-            <Select v-model="auditFilters.entity_type" :options="auditEntityOptions" optionLabel="label" optionValue="value"
-                    placeholder="All Entities" showClear class="audit-filter" />
+            <MultiSelect v-model="auditFilters.action" :options="auditActionOptions" optionLabel="label" optionValue="value"
+                    placeholder="All Actions" :maxSelectedLabels="2" class="audit-filter" display="chip" />
+            <MultiSelect v-model="auditFilters.entity_type" :options="auditEntityOptions" optionLabel="label" optionValue="value"
+                    placeholder="All Entities" :maxSelectedLabels="2" class="audit-filter" display="chip" />
             <Button icon="pi pi-refresh" severity="secondary" text rounded @click="loadAuditLog" />
           </div>
           <DataTable :value="auditLog.items" :loading="loadingAudit" stripedRows size="small"
-                     emptyMessage="No audit entries found.">
+                     emptyMessage="No audit entries found."
+                     :paginator="auditLog.items.length > 256" :rows="256"
+                     :rowsPerPageOptions="[64, 128, 256, 512]"
+                     scrollable scrollHeight="flex">
             <Column field="created_at" header="Time" style="width: 11rem">
               <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
             </Column>
@@ -235,7 +258,7 @@
             </Column>
             <Column field="action" header="Action" style="width: 8rem">
               <template #body="{ data }">
-                <span class="audit-action" :class="'action-' + data.action">{{ data.action }}</span>
+                <span class="audit-action" :class="'action-' + actionColor(data.action)">{{ data.action }}</span>
               </template>
             </Column>
             <Column field="entity_type" header="Entity" style="width: 8rem" />
@@ -261,7 +284,6 @@
           <div class="setting-group">
             <h3>Manual Backup</h3>
             <p class="field-help" style="margin-bottom: 0.75rem;">Creates a backup of the database, certificates, and DNSmasq configuration.</p>
-            <Button label="Create Backup Now" icon="pi pi-download" @click="doCreateBackup" :loading="creatingBackup" />
           </div>
 
           <div class="setting-group">
@@ -281,7 +303,10 @@
           <div class="setting-group">
             <h3>Existing Backups</h3>
             <DataTable :value="opsStore.backups" :loading="opsStore.loading" stripedRows size="small"
-                       emptyMessage="No backups found.">
+                       emptyMessage="No backups found."
+                       :paginator="opsStore.backups.length > 256" :rows="256"
+                       :rowsPerPageOptions="[64, 128, 256, 512]"
+                       scrollable scrollHeight="flex">
               <Column field="filename" header="Filename" />
               <Column header="Size" style="width: 8rem">
                 <template #body="{ data }">{{ formatSize(data.size_bytes) }}</template>
@@ -311,6 +336,16 @@
                       :disabled="!restoreFile" />
             </div>
           </div>
+
+          <div class="setting-group" v-if="authStore.user?.role === 'admin'">
+            <h3 style="color: var(--p-red-500);">Database Reset</h3>
+            <p class="field-help" style="margin-bottom: 0.75rem;">
+              Reset the application to a fresh state. This will delete all networks, DNS zones, DHCP scopes,
+              users, audit logs, settings, and VLANs. TLS certificates, backup files, and blocklist files on disk are preserved.
+            </p>
+            <Button label="Reset Database" icon="pi pi-exclamation-triangle" severity="danger"
+                    @click="showResetDbDialog = true" />
+          </div>
         </div>
 
         <!-- Delete Backup Dialog -->
@@ -319,6 +354,20 @@
           <template #footer>
             <Button label="Cancel" severity="secondary" @click="showDeleteBackupDialog = false" />
             <Button label="Delete" severity="danger" @click="doDeleteBackup" :loading="deletingBackupLoading" />
+          </template>
+        </Dialog>
+
+        <!-- Database Reset Confirmation Dialog -->
+        <Dialog v-model:visible="showResetDbDialog" header="Reset Database" modal :style="{ width: '28rem' }">
+          <p style="color: var(--p-red-500); font-weight: 600;">This action cannot be undone.</p>
+          <p>All application data will be permanently deleted and the database will be reinitialized.
+             You will be logged out and a new admin account will be generated.</p>
+          <p>Type <strong>RESET</strong> to confirm:</p>
+          <InputText v-model="resetConfirmText" class="w-full" placeholder="Type RESET" />
+          <template #footer>
+            <Button label="Cancel" severity="secondary" @click="showResetDbDialog = false; resetConfirmText = ''" />
+            <Button label="Reset Database" severity="danger" @click="doResetDatabase"
+                    :loading="resettingDb" :disabled="resetConfirmText !== 'RESET'" />
           </template>
         </Dialog>
 
@@ -355,33 +404,47 @@
             <h3>Upload Custom Certificate</h3>
             <p class="field-help" style="margin-bottom: 0.75rem;">Upload PEM-encoded certificate and private key files. Server restart required after upload.</p>
             <div class="cert-upload-form">
-              <div class="field">
-                <label>Certificate (.pem, .crt)</label>
-                <textarea v-model="certUpload.cert" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----"
-                          class="cert-textarea"></textarea>
+              <div class="cert-fields-row">
+                <div class="field cert-field">
+                  <label>Certificate (.pem, .crt)</label>
+                  <div class="cert-drop-zone" :class="{ 'drop-active': certDragOver === 'cert' }"
+                       @dragover.prevent="certDragOver = 'cert'" @dragleave="certDragOver = null"
+                       @drop.prevent="onCertDrop($event, 'cert')">
+                    <textarea v-model="certUpload.cert" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----&#10;&#10;Drop a .pem or .crt file here"
+                              class="cert-textarea" :class="{ 'cert-valid': certValidation.cert === true, 'cert-invalid': certValidation.cert === false }"></textarea>
+                    <div v-if="certDragOver === 'cert'" class="drop-overlay">Drop certificate file</div>
+                  </div>
+                  <small v-if="certValidation.cert === true" class="cert-status cert-status-ok"><i class="pi pi-check-circle"></i> Valid PEM certificate</small>
+                  <small v-else-if="certValidation.cert === false" class="cert-status cert-status-err"><i class="pi pi-times-circle"></i> {{ certValidation.certError }}</small>
+                </div>
+                <div class="field cert-field">
+                  <label>Private Key (.pem, .key)</label>
+                  <div class="cert-drop-zone" :class="{ 'drop-active': certDragOver === 'key' }"
+                       @dragover.prevent="certDragOver = 'key'" @dragleave="certDragOver = null"
+                       @drop.prevent="onCertDrop($event, 'key')">
+                    <textarea v-model="certUpload.key" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----&#10;&#10;Drop a .pem or .key file here"
+                              class="cert-textarea" :class="{ 'cert-valid': certValidation.key === true, 'cert-invalid': certValidation.key === false }"></textarea>
+                    <div v-if="certDragOver === 'key'" class="drop-overlay">Drop key file</div>
+                  </div>
+                  <small v-if="certValidation.key === true" class="cert-status cert-status-ok"><i class="pi pi-check-circle"></i> Valid PEM private key</small>
+                  <small v-else-if="certValidation.key === false" class="cert-status cert-status-err"><i class="pi pi-times-circle"></i> {{ certValidation.keyError }}</small>
+                </div>
               </div>
-              <div class="field">
-                <label>Private Key (.pem, .key)</label>
-                <textarea v-model="certUpload.key" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----"
-                          class="cert-textarea"></textarea>
-              </div>
-              <Button label="Upload Certificate" icon="pi pi-upload" @click="doUploadCert" :loading="uploadingCert"
-                      :disabled="!certUpload.cert || !certUpload.key" />
             </div>
           </div>
 
           <div class="setting-group">
             <h3>Reset to Self-Signed</h3>
             <p class="field-help" style="margin-bottom: 0.75rem;">Generate a new self-signed certificate. Server restart required.</p>
-            <Button label="Reset to Self-Signed" icon="pi pi-refresh" severity="secondary" @click="doResetCert" :loading="resettingCert" />
+            <Button label="Reset to Self-Signed" icon="pi pi-refresh" severity="secondary" @click="confirmResetCert" :loading="resettingCert" />
           </div>
         </div>
       </TabPanel>
       <TabPanel header="DNS">
-        <DnsPanel />
+        <DnsPanel ref="dnsPanelRef" />
       </TabPanel>
       <TabPanel header="DHCP">
-        <DhcpPanel />
+        <DhcpPanel ref="dhcpPanelRef" />
       </TabPanel>
       <TabPanel header="Blocklists">
         <BlocklistsPanel />
@@ -390,7 +453,44 @@
         <GeoipPanel />
       </TabPanel>
       <TabPanel header="Users">
-        <UsersPanel />
+        <UsersPanel ref="usersPanelRef" />
+      </TabPanel>
+      <TabPanel header="Themes">
+        <div class="themes-page">
+          <p class="field-help" style="margin-bottom: 1.25rem">Choose a color theme. The active theme is highlighted.</p>
+
+          <div class="theme-group">
+            <h3>Dark Themes</h3>
+            <div class="theme-card-grid">
+              <div v-for="t in darkThemes" :key="t.id"
+                   class="theme-card" :class="{ 'theme-active': themeStore.currentThemeId === t.id }"
+                   @click="themeStore.applyTheme(t.id)">
+                <span class="theme-swatch-dot" :style="{ background: themeSwatches[t.primary] }"></span>
+                <div class="theme-card-info">
+                  <span class="theme-card-name">{{ t.name }}</span>
+                  <span class="theme-card-desc">{{ t.primary }} primary, {{ t.surface }} surface</span>
+                </div>
+                <i v-if="themeStore.currentThemeId === t.id" class="pi pi-check theme-check"></i>
+              </div>
+            </div>
+          </div>
+
+          <div class="theme-group">
+            <h3>Light Themes</h3>
+            <div class="theme-card-grid">
+              <div v-for="t in lightThemes" :key="t.id"
+                   class="theme-card" :class="{ 'theme-active': themeStore.currentThemeId === t.id }"
+                   @click="themeStore.applyTheme(t.id)">
+                <span class="theme-swatch-dot" :style="{ background: themeSwatches[t.primary] }"></span>
+                <div class="theme-card-info">
+                  <span class="theme-card-name">{{ t.name }}</span>
+                  <span class="theme-card-desc">{{ t.primary }} primary, {{ t.surface }} surface</span>
+                </div>
+                <i v-if="themeStore.currentThemeId === t.id" class="pi pi-check theme-check"></i>
+              </div>
+            </div>
+          </div>
+        </div>
       </TabPanel>
     </TabView>
 
@@ -409,14 +509,16 @@ import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
 import Select from 'primevue/select';
+import MultiSelect from 'primevue/multiselect';
 import InputNumber from 'primevue/inputnumber';
 import Toast from 'primevue/toast';
 import SubnetCalculator from './SubnetCalculator.vue';
 import { useSubnetStore } from '../stores/subnets.js';
-import { useDnsStore } from '../stores/dns.js';
 import { useOperationsStore } from '../stores/operations.js';
 import { applyNameTemplate } from '../utils/ip.js';
 import api from '../api/client.js';
+import { useAuthStore } from '../stores/auth.js';
+import { useThemeStore, themes, colorSwatches } from '../stores/theme.js';
 
 const DnsPanel = defineAsyncComponent(() => import('./DNS.vue'));
 const DhcpPanel = defineAsyncComponent(() => import('./DHCP.vue'));
@@ -424,14 +526,26 @@ const BlocklistsPanel = defineAsyncComponent(() => import('./Blocklists.vue'));
 const GeoipPanel = defineAsyncComponent(() => import('./GeoIP.vue'));
 const UsersPanel = defineAsyncComponent(() => import('./Users.vue'));
 
+const dnsPanelRef = ref(null);
+const dhcpPanelRef = ref(null);
+const usersPanelRef = ref(null);
+
 const store = useSubnetStore();
-const dnsStore = useDnsStore();
 const opsStore = useOperationsStore();
+const authStore = useAuthStore();
+const themeStore = useThemeStore();
 const toast = useToast();
+
+const themeSwatches = colorSwatches;
+const darkThemes = themes.filter(t => t.group === 'dark');
+const lightThemes = themes.filter(t => t.group === 'light');
 
 // Persist active tab across refreshes
 const activeTab = ref(parseInt(localStorage.getItem('ipam_system_tab') || '0', 10));
-watch(activeTab, (val) => localStorage.setItem('ipam_system_tab', String(val)));
+watch(activeTab, (val) => {
+  localStorage.setItem('ipam_system_tab', String(val));
+  if (val === 4) { loadAuditFilterOptions(); loadAuditLog(); }
+});
 
 const loadingSettings = ref(true);
 const savingSettings = ref(false);
@@ -440,8 +554,6 @@ const settings = ref({
   default_gateway_position: 'first',
   default_scan_interval: ''
 });
-const forwarders = ref(['8.8.8.8', '1.1.1.1']);
-
 const scanIntervalOptions = [
   { label: 'Off', value: '' },
   { label: 'Every 5 minutes', value: '5m' },
@@ -493,9 +605,8 @@ const templatePreview = computed(() => {
 
 onMounted(async () => {
   try {
-    const [data, servers] = await Promise.all([
+    const [data] = await Promise.all([
       store.getSettings(),
-      dnsStore.getForwarders().catch(() => ['8.8.8.8', '1.1.1.1']),
       loadRangeTypes(),
       loadVlans(),
       opsStore.fetchBackups(),
@@ -508,12 +619,12 @@ onMounted(async () => {
       default_gateway_position: data.default_gateway_position || 'first',
       default_scan_interval: data.default_scan_interval || ''
     };
-    forwarders.value = servers;
   } catch { /* use defaults */ }
   loadingSettings.value = false;
+  if (activeTab.value === 4) { loadAuditFilterOptions(); loadAuditLog(); }
 });
 
-// Range Types
+// Address Types
 const rangeTypes = ref([]);
 const loadingRangeTypes = ref(false);
 const savingRangeType = ref(false);
@@ -584,7 +695,20 @@ const showDeleteVlanDialog = ref(false);
 const editingVlan = ref(null);
 const deletingVlan = ref(null);
 const vlanForm = ref({ folder_id: null, vlan_id: null, name: '' });
+const vlanNameManual = ref(false);
 const vlanOrgFilter = ref(null);
+
+function onVlanIdInput(e) {
+  let id = e.value;
+  if (id !== null && id !== undefined) {
+    if (id < 1) id = 1;
+    if (id > 4094) id = 4094;
+    vlanForm.value.vlan_id = id;
+  }
+  if (!editingVlan.value && !vlanNameManual.value) {
+    vlanForm.value.name = id ? `VLAN${id}` : '';
+  }
+}
 
 const orgOptions = computed(() => {
   return store.folders.map(f => ({ label: f.name, value: f.id }));
@@ -601,6 +725,7 @@ async function loadVlans() {
 
 function openVlanDialog() {
   editingVlan.value = null;
+  vlanNameManual.value = false;
   vlanForm.value = { folder_id: vlanOrgFilter.value || (store.folders[0]?.id || null), vlan_id: null, name: '' };
   showVlanDialog.value = true;
 }
@@ -654,37 +779,32 @@ async function doDeleteVlan() {
 // Audit Log
 const loadingAudit = ref(false);
 const auditLog = ref({ items: [], total: 0 });
-const auditFilters = ref({ page: 1, limit: 50, action: null, entity_type: null });
+const auditFilters = ref({ page: 1, limit: 200, action: [], entity_type: [] });
 
-const auditActionOptions = [
-  { label: 'Create', value: 'create' },
-  { label: 'Update', value: 'update' },
-  { label: 'Delete', value: 'delete' },
-  { label: 'Login', value: 'login' },
-  { label: 'Login Failed', value: 'login_failed' },
-  { label: 'Password Change', value: 'password_change' },
-  { label: 'Configure', value: 'configure' },
-  { label: 'Divide', value: 'divide' },
-  { label: 'Merge', value: 'merge' }
-];
+const auditActionOptions = ref([]);
+const auditEntityOptions = ref([]);
 
-const auditEntityOptions = [
-  { label: 'Subnet', value: 'subnet' },
-  { label: 'DNS Zone', value: 'dns_zone' },
-  { label: 'DNS Record', value: 'dns_record' },
-  { label: 'DHCP Scope', value: 'dhcp_scope' },
-  { label: 'DHCP Reservation', value: 'dhcp_reservation' },
-  { label: 'User', value: 'user' },
-  { label: 'Range', value: 'range' },
-  { label: 'Setting', value: 'setting' }
-];
+async function loadAuditFilterOptions() {
+  try {
+    const [actionsRes, entitiesRes] = await Promise.all([
+      api.get('/audit/actions'),
+      api.get('/audit/entities')
+    ]);
+    auditActionOptions.value = actionsRes.data.map(a => ({ label: a, value: a }));
+    auditEntityOptions.value = entitiesRes.data.map(e => ({ label: e, value: e }));
+  } catch { /* ignore — filters will just be empty */ }
+}
+
+// Auto-refresh when filters change
+watch(() => auditFilters.value.action, () => { auditFilters.value.page = 1; loadAuditLog(); }, { deep: true });
+watch(() => auditFilters.value.entity_type, () => { auditFilters.value.page = 1; loadAuditLog(); }, { deep: true });
 
 async function loadAuditLog() {
   loadingAudit.value = true;
   try {
     const params = { page: auditFilters.value.page, limit: auditFilters.value.limit };
-    if (auditFilters.value.action) params.action = auditFilters.value.action;
-    if (auditFilters.value.entity_type) params.entity_type = auditFilters.value.entity_type;
+    if (auditFilters.value.action?.length > 0) params.action = auditFilters.value.action.join(',');
+    if (auditFilters.value.entity_type?.length > 0) params.entity_type = auditFilters.value.entity_type.join(',');
     const res = await api.get('/audit', { params });
     auditLog.value = res.data;
   } catch (err) {
@@ -698,6 +818,25 @@ function formatDate(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr + 'Z');
   return d.toLocaleString();
+}
+
+function actionColor(action) {
+  // Direct matches
+  const direct = { create: 'create', update: 'update', delete: 'delete', restore: 'restore',
+    login: 'login', login_failed: 'login_failed', password_change: 'password_change',
+    configure: 'configure', divide: 'divide', merge: 'merge' };
+  if (direct[action]) return action;
+  // Map compound actions by verb suffix
+  if (action.endsWith('_created')) return 'create';
+  if (action.endsWith('_updated')) return 'update';
+  if (action.endsWith('_deleted')) return 'delete';
+  if (action.endsWith('_configured') || action.endsWith('_applied')) return 'configure';
+  if (action.endsWith('_divided')) return 'divide';
+  if (action.endsWith('_merged')) return 'merge';
+  if (action.endsWith('_started')) return 'login'; // indigo for "started" actions like scans
+  if (action.endsWith('_reset')) return 'password_change';
+  if (action.endsWith('_changed')) return 'update';
+  return 'update'; // fallback — at least show a badge
 }
 
 function formatDetails(details) {
@@ -715,16 +854,11 @@ function formatDetails(details) {
 async function saveSettings() {
   savingSettings.value = true;
   try {
-    const validForwarders = forwarders.value.filter(s => s.trim());
     await Promise.all([
       store.updateSetting('subnet_name_template', settings.value.subnet_name_template),
       store.updateSetting('default_gateway_position', settings.value.default_gateway_position),
-      store.updateSetting('default_scan_interval', settings.value.default_scan_interval || ''),
-      validForwarders.length > 0 ? dnsStore.updateForwarders(validForwarders) : Promise.resolve()
+      store.updateSetting('default_scan_interval', settings.value.default_scan_interval || '')
     ]);
-    if (validForwarders.length > 0) {
-      forwarders.value = validForwarders;
-    }
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -738,6 +872,9 @@ const creatingBackup = ref(false);
 const deletingBackup = ref(null);
 const deletingBackupLoading = ref(false);
 const showDeleteBackupDialog = ref(false);
+const showResetDbDialog = ref(false);
+const resetConfirmText = ref('');
+const resettingDb = ref(false);
 const showRestoreDialog = ref(false);
 const restoreFile = ref(null);
 const restoreFileInput = ref(null);
@@ -820,6 +957,21 @@ async function doRestore() {
   }
 }
 
+async function doResetDatabase() {
+  resettingDb.value = true;
+  try {
+    await api.post('/operations/reset-database');
+    authStore.logout();
+    window.location.href = '/login';
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Reset failed', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    resettingDb.value = false;
+    showResetDbDialog.value = false;
+    resetConfirmText.value = '';
+  }
+}
+
 function formatSize(bytes) {
   if (!bytes) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB'];
@@ -832,8 +984,68 @@ function formatSize(bytes) {
 // Certificates
 const certInfo = ref(null);
 const certUpload = ref({ cert: '', key: '' });
+const certDragOver = ref(null);
 const uploadingCert = ref(false);
 const resettingCert = ref(false);
+
+const certValidation = computed(() => {
+  const result = { cert: null, certError: '', key: null, keyError: '' };
+  const certText = certUpload.value.cert.trim();
+  const keyText = certUpload.value.key.trim();
+  if (certText) {
+    if (!certText.startsWith('-----BEGIN CERTIFICATE-----')) {
+      result.cert = false;
+      result.certError = 'Must start with -----BEGIN CERTIFICATE-----';
+    } else if (!certText.includes('-----END CERTIFICATE-----')) {
+      result.cert = false;
+      result.certError = 'Missing -----END CERTIFICATE-----';
+    } else {
+      const body = certText.replace(/-----BEGIN CERTIFICATE-----/g, '').replace(/-----END CERTIFICATE-----/g, '').replace(/\s/g, '');
+      if (!/^[A-Za-z0-9+/=]+$/.test(body) || body.length < 100) {
+        result.cert = false;
+        result.certError = 'Invalid base64 content';
+      } else {
+        result.cert = true;
+      }
+    }
+  }
+  if (keyText) {
+    const keyHeaders = ['-----BEGIN PRIVATE KEY-----', '-----BEGIN RSA PRIVATE KEY-----', '-----BEGIN EC PRIVATE KEY-----'];
+    const keyFooters = ['-----END PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----', '-----END EC PRIVATE KEY-----'];
+    const hasHeader = keyHeaders.some(h => keyText.startsWith(h));
+    const hasFooter = keyFooters.some(f => keyText.includes(f));
+    if (!hasHeader) {
+      result.key = false;
+      result.keyError = 'Must start with -----BEGIN PRIVATE KEY----- (or RSA/EC variant)';
+    } else if (!hasFooter) {
+      result.key = false;
+      result.keyError = 'Missing -----END PRIVATE KEY-----';
+    } else {
+      const body = keyText.replace(/-----BEGIN [A-Z ]+-----/g, '').replace(/-----END [A-Z ]+-----/g, '').replace(/\s/g, '');
+      if (!/^[A-Za-z0-9+/=]+$/.test(body) || body.length < 50) {
+        result.key = false;
+        result.keyError = 'Invalid base64 content';
+      } else {
+        result.key = true;
+      }
+    }
+  }
+  return result;
+});
+
+function confirmResetCert() {
+  if (!confirm('Are you sure you want to reset to a self-signed certificate? The current certificate will be replaced and a server restart will be required.')) return;
+  doResetCert();
+}
+
+function onCertDrop(event, field) {
+  certDragOver.value = null;
+  const file = event.dataTransfer?.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => { certUpload.value[field] = reader.result; };
+  reader.readAsText(file);
+}
 
 async function doUploadCert() {
   uploadingCert.value = true;
@@ -865,10 +1077,50 @@ async function doResetCert() {
 
 <style scoped>
 .system-page {
-  padding: 1.5rem 2rem;
+  padding: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
 }
-.system-page h2 {
-  margin: 0 0 1.5rem 0;
+.system-page :deep(.p-tabview) {
+  padding: 0 1.5rem;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.system-page :deep(.p-tabview-panels) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.system-page :deep(.p-tabview-panel) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sys-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 1rem;
+  background: var(--ipam-card);
+  border-bottom: 1px solid var(--p-surface-border);
+  flex-shrink: 0;
+}
+.sys-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.sys-toolbar-divider {
+  width: 1px;
+  height: 1.2rem;
+  background: var(--p-surface-border);
 }
 .muted {
   color: var(--p-text-muted-color);
@@ -878,6 +1130,12 @@ async function doResetCert() {
 }
 .setting-group {
   margin-bottom: 1.5rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--p-surface-border);
+}
+.setting-group:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
 }
 .scan-row {
   display: flex;
@@ -927,16 +1185,6 @@ async function doResetCert() {
   cursor: pointer;
   font-size: 0.9rem;
 }
-.forwarders-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-.forwarder-row {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
 .settings-actions {
   margin-top: 1rem;
 }
@@ -954,14 +1202,15 @@ async function doResetCert() {
 }
 .badge-system {
   font-size: 0.75rem;
-  background: var(--p-surface-200);
+  background: var(--p-surface-ground);
+  color: var(--p-text-muted-color);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
 }
 .badge-custom {
   font-size: 0.75rem;
-  background: var(--p-primary-100);
-  color: var(--p-primary-700);
+  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
+  color: var(--p-primary-color);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
 }
@@ -990,6 +1239,8 @@ async function doResetCert() {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+  flex: 1;
+  min-height: 0;
 }
 .audit-filters {
   display: flex;
@@ -997,7 +1248,8 @@ async function doResetCert() {
   align-items: center;
 }
 .audit-filter {
-  width: 12rem;
+  min-width: 14rem;
+  max-width: 22rem;
 }
 .audit-action {
   font-size: 0.75rem;
@@ -1005,15 +1257,16 @@ async function doResetCert() {
   border-radius: 4px;
   font-weight: 600;
 }
-.action-create { background: #dcfce7; color: #166534; }
-.action-update { background: #dbeafe; color: #1e40af; }
-.action-delete { background: #fee2e2; color: #991b1b; }
-.action-login { background: #e0e7ff; color: #3730a3; }
-.action-login_failed { background: #fee2e2; color: #991b1b; }
-.action-password_change { background: #fef3c7; color: #92400e; }
-.action-configure { background: #f3e8ff; color: #6b21a8; }
-.action-divide { background: #fef3c7; color: #92400e; }
-.action-merge { background: #fef3c7; color: #92400e; }
+.action-create { background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); }
+.action-update { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent); color: var(--p-blue-500); }
+.action-delete { background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); }
+.action-login { background: color-mix(in srgb, var(--p-indigo-500) 20%, transparent); color: var(--p-indigo-500); }
+.action-login_failed { background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); }
+.action-password_change { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
+.action-configure { background: color-mix(in srgb, var(--p-purple-500) 20%, transparent); color: var(--p-purple-500); }
+.action-divide { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
+.action-merge { background: color-mix(in srgb, var(--p-orange-500) 20%, transparent); color: var(--p-orange-500); }
+.action-restore { background: color-mix(in srgb, var(--p-indigo-500) 20%, transparent); color: var(--p-indigo-500); }
 .audit-details {
   font-size: 0.8rem;
   color: var(--p-text-muted-color);
@@ -1034,11 +1287,17 @@ async function doResetCert() {
   font-size: 0.85rem;
   color: var(--p-text-muted-color);
 }
+.range-types-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
 .backup-section, .cert-section {
   max-width: 48rem;
 }
 .restore-warning {
-  color: #991b1b;
+  color: var(--p-red-500);
   font-weight: 600;
 }
 .restore-row {
@@ -1064,30 +1323,131 @@ async function doResetCert() {
 .cert-upload-form {
   max-width: 32rem;
 }
+.cert-fields-row {
+  display: flex;
+  gap: 1rem;
+}
+.cert-field {
+  flex: 1;
+  min-width: 0;
+}
+.cert-drop-zone {
+  position: relative;
+}
+.cert-drop-zone.drop-active .cert-textarea {
+  border-color: var(--p-primary-color);
+  border-style: dashed;
+}
+.drop-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--p-primary-color) 10%, transparent);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--p-primary-color);
+  pointer-events: none;
+}
 .cert-textarea {
   width: 100%;
-  min-height: 6rem;
+  height: 24rem;
   font-family: monospace;
   font-size: 0.8rem;
   padding: 0.5rem;
   border: 1px solid var(--p-surface-border);
   border-radius: 6px;
   resize: vertical;
+  overflow-y: auto;
 }
+.cert-textarea.cert-valid {
+  border-color: var(--p-green-500);
+}
+.cert-textarea.cert-invalid {
+  border-color: #ef4444;
+}
+.cert-status {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+}
+.cert-status-ok { color: var(--p-green-500); }
+.cert-status-err { color: #ef4444; }
 .badge-warning {
   font-size: 0.75rem;
-  background: #fef3c7;
-  color: #92400e;
+  background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent);
+  color: var(--p-yellow-500);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
   font-weight: 600;
 }
 .badge-success {
   font-size: 0.75rem;
-  background: #dcfce7;
-  color: #166534;
+  background: color-mix(in srgb, var(--p-green-500) 20%, transparent);
+  color: var(--p-green-500);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
   font-weight: 600;
+}
+
+/* ── Themes ── */
+.themes-page h3 {
+  margin: 0 0 0.75rem 0;
+}
+.theme-group {
+  margin-bottom: 1.5rem;
+}
+.theme-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.5rem;
+}
+.theme-card {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.6rem 0.75rem;
+  border: 2px solid var(--p-surface-border);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.theme-card:hover {
+  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
+  border-color: color-mix(in srgb, var(--p-primary-color) 40%, transparent);
+}
+.theme-card.theme-active {
+  border-color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--p-primary-color) 12%, transparent);
+}
+.theme-swatch-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+}
+.theme-card-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.theme-card-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.theme-card-desc {
+  font-size: 0.7rem;
+  color: var(--p-text-muted-color);
+}
+.theme-check {
+  color: var(--p-primary-color);
+  font-size: 0.9rem;
+  flex-shrink: 0;
 }
 </style>

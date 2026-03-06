@@ -57,6 +57,22 @@ docker compose exec ipam node /app/server/src/reset-password.js <username>
 
 The new password will be printed to the console. The user will be forced to change it on next login.
 
+### Database Reset
+
+```bash
+docker compose run --rm reset
+docker compose restart ipam
+```
+
+This deletes the SQLite database and reinitializes it on next startup. All networks, DNS zones, DHCP scopes, users, audit logs, settings, and VLANs will be lost. A new default admin account will be generated (check the container logs for the password).
+
+The following are **not** deleted by a database reset and persist on disk:
+
+- `data/certs/` — TLS certificates (self-signed or uploaded)
+- `data/dnsmasq/` — DNSmasq configuration files (will be regenerated on startup)
+- `data/backups/` — Backup archives
+- `data/blocklists/` — Downloaded DNS blocklist files
+
 ## Architecture
 
 - **Backend**: Node.js + Express

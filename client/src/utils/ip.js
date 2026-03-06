@@ -109,24 +109,24 @@ export function calculateSubnets(cidr, newPrefix) {
 }
 
 export function canMergeCidrs(cidrs) {
-  if (cidrs.length < 2) return { valid: false, error: 'Need at least 2 subnets to merge' };
+  if (cidrs.length < 2) return { valid: false, error: 'Need at least 2 networks to merge' };
 
   const parsed = cidrs.map(c => parseCidr(c)).sort((a, b) => a.networkLong - b.networkLong);
 
   const prefix = parsed[0].prefix;
   if (!parsed.every(p => p.prefix === prefix)) {
-    return { valid: false, error: 'All subnets must have the same prefix length' };
+    return { valid: false, error: 'All networks must have the same prefix length' };
   }
 
   const count = parsed.length;
   if ((count & (count - 1)) !== 0) {
-    return { valid: false, error: 'Number of subnets must be a power of 2' };
+    return { valid: false, error: 'Number of networks must be a power of 2' };
   }
 
   const subnetSize = (1 << (32 - prefix)) >>> 0;
   for (let i = 1; i < parsed.length; i++) {
     if ((parsed[i].networkLong >>> 0) !== ((parsed[i - 1].networkLong + subnetSize) >>> 0)) {
-      return { valid: false, error: 'Subnets must be contiguous' };
+      return { valid: false, error: 'Networks must be contiguous' };
     }
   }
 
@@ -136,7 +136,7 @@ export function canMergeCidrs(cidrs) {
 
   const newMask = (0xFFFFFFFF << (32 - newPrefix)) >>> 0;
   if (((parsed[0].networkLong & newMask) >>> 0) !== parsed[0].networkLong) {
-    return { valid: false, error: 'Subnets do not align to a valid CIDR boundary' };
+    return { valid: false, error: 'Networks do not align to a valid CIDR boundary' };
   }
 
   const mergedCidr = `${parsed[0].network}/${newPrefix}`;

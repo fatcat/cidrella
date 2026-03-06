@@ -345,26 +345,46 @@ export function resetStats() {
   statsAllowed = 0;
 }
 
+// Map schedule setting to interval in days
+function scheduleToDays(schedule) {
+  switch (schedule) {
+    case 'weekly': return 7;
+    case 'biweekly': return 14;
+    case 'monthly': return 30;
+    default: return 0; // 'off'
+  }
+}
+
 // Auto-update scheduler
 export function startGeoipScheduler() {
   // Check every 6 hours if MMDB needs updating
   updateTimer = setInterval(async () => {
-    const enabled = getSetting('geoip_enabled');
-    if (enabled !== 'true') return;
+    try {
+      const enabled = getSetting('geoip_enabled');
+      if (enabled !== 'true') return;
 
-    const lastUpdated = getSetting('geoip_last_updated');
-    if (!lastUpdated) return;
+      const schedule = getSetting('geoip_update_schedule') || 'monthly';
+      if (schedule === 'off') return;
 
-    const lastDate = new Date(lastUpdated);
-    const daysSinceUpdate = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+      const intervalDays = scheduleToDays(schedule);
+      if (intervalDays === 0) return;
 
-    if (daysSinceUpdate >= 30) {
-      console.log('GeoIP database is older than 30 days, downloading update...');
-      try {
-        await downloadMmdb();
-      } catch (err) {
-        console.error('GeoIP auto-update failed:', err.message);
+      const lastUpdated = getSetting('geoip_last_updated');
+      if (!lastUpdated) return;
+
+      const lastDate = new Date(lastUpdated);
+      const daysSinceUpdate = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
+
+      if (daysSinceUpdate >= intervalDays) {
+        console.log(`GeoIP database is older than ${intervalDays} days, downloading update...`);
+        try {
+          await downloadMmdb();
+        } catch (err) {
+          console.error('GeoIP auto-update failed:', err.message);
+        }
       }
+    } catch (err) {
+      console.error('GeoIP scheduler error:', err.message);
     }
   }, 6 * 60 * 60 * 1000);
 

@@ -70,6 +70,21 @@ async function main() {
   // Start scan scheduler for periodic subnet scans
   startScanScheduler();
 
+  // Audit log retention: delete entries older than 7 days
+  function pruneAuditLog() {
+    try {
+      const db = getDb();
+      const result = db.prepare("DELETE FROM audit_log WHERE created_at < datetime('now', '-7 days')").run();
+      if (result.changes > 0) {
+        console.log(`Audit log pruned: ${result.changes} entries older than 7 days removed`);
+      }
+    } catch (err) {
+      console.error('Audit log prune error:', err.message);
+    }
+  }
+  pruneAuditLog();
+  setInterval(pruneAuditLog, 6 * 60 * 60 * 1000); // every 6 hours
+
   // Generate or load TLS certs
   const { keyPath, certPath } = ensureCerts(DATA_DIR);
 

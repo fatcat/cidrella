@@ -1,17 +1,17 @@
 <template>
-  <div class="blocklists-page">
+  <div class="blocklists-page" style="display: flex; flex-direction: column; height: 100%;">
     <!-- Stats Bar -->
-    <div class="stats-bar" v-if="stats.total_sources > 0">
+    <div class="stats-bar">
       <div class="stat">
-        <span class="stat-value">{{ stats.enabled_sources }}</span>
-        <span class="stat-label">Active Sources</span>
+        <span class="stat-value">{{ stats.enabled_categories || 0 }}</span>
+        <span class="stat-label">Enabled Categories</span>
       </div>
       <div class="stat">
         <span class="stat-value">{{ formatNumber(stats.total_domains) }}</span>
         <span class="stat-label">Blocked Domains</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ stats.whitelist_count }}</span>
+        <span class="stat-value">{{ stats.whitelist_count || 0 }}</span>
         <span class="stat-label">Whitelisted</span>
       </div>
       <div class="stat">
@@ -21,45 +21,56 @@
     </div>
 
     <TabView>
-      <!-- Sources Tab -->
-      <TabPanel header="Sources">
-        <!-- Category Toggles -->
-        <div class="category-bar" v-if="categories.length > 0">
-          <div v-for="cat in categories" :key="cat.category" class="category-toggle"
-               :class="{ 'category-disabled': cat.enabled_count === 0 }">
-            <label class="category-label">
-              <input type="checkbox" :checked="cat.enabled_count > 0"
-                     @change="toggleCategoryEnabled(cat.category, $event.target.checked)"
-                     :disabled="togglingCategory === cat.category" />
-              <span class="category-dot" :style="{ background: categoryColors[cat.category] }"></span>
-              <span class="category-name">{{ categoryLabels[cat.category] || cat.category }}</span>
-              <span class="category-count">{{ cat.source_count }} source{{ cat.source_count !== 1 ? 's' : '' }}</span>
-            </label>
+      <!-- Categories Tab -->
+      <TabPanel header="Categories">
+        <!-- Settings Row -->
+        <div class="settings-row">
+          <div class="schedule-group">
+            <label class="schedule-label">Update Schedule:</label>
+            <Select v-model="settings.blocklist_update_schedule" :options="scheduleOptions"
+                    optionLabel="label" optionValue="value" size="small" style="width: 10rem" />
           </div>
-        </div>
-        <div class="section-header">
-          <Button label="Add Source" icon="pi pi-plus" size="small" @click="openAddSource" />
-          <Button label="Popular Lists" icon="pi pi-star" size="small" severity="secondary" @click="showPopularDialog = true" />
+          <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" />
           <Button label="Refresh All" icon="pi pi-refresh" size="small" severity="secondary"
                   @click="doRefreshAll" :loading="refreshingAll" />
         </div>
-        <DataTable :value="store.sources" :loading="store.loading" stripedRows size="small"
-                   emptyMessage="No blocklist sources configured.">
-          <Column field="name" header="Name" sortable />
-          <Column header="Category" style="width: 7rem">
+
+        <!-- Category Table -->
+        <DataTable :value="store.categories" :loading="store.loading" stripedRows size="small"
+                   emptyMessage="Loading categories..." dataKey="slug"
+                   :paginator="store.categories.length > 256" :rows="256"
+                   :rowsPerPageOptions="[64, 128, 256, 512]"
+                   scrollable scrollHeight="flex">
+          <Column style="width: 3.5rem">
+            <template #header>
+              <input type="checkbox" :checked="allEnabled" :indeterminate="someEnabled && !allEnabled"
+                     @change="doToggleAll($event.target.checked)" :disabled="togglingAll" />
+            </template>
             <template #body="{ data }">
-              <span class="category-badge" :style="{ background: categoryColors[data.category] + '20', color: categoryColors[data.category], borderColor: categoryColors[data.category] + '40' }">
-                {{ categoryLabels[data.category] || data.category }}
+              <input type="checkbox" :checked="data.enabled"
+                     @change="doToggleCategory(data, $event.target.checked)"
+                     :disabled="togglingSlug === data.slug || togglingAll" />
+            </template>
+          </Column>
+          <Column header="Category" style="min-width: 14rem">
+            <template #body="{ data }">
+              <div>
+                <strong>{{ data.name }}</strong>
+                <div class="text-sm muted">{{ data.description }}</div>
+              </div>
+            </template>
+          </Column>
+          <Column header="Group" style="width: 5rem">
+            <template #body="{ data }">
+              <span :class="data.group === 'beta' ? 'badge-beta' : 'badge-main'">
+                {{ data.group === 'beta' ? 'Beta' : 'Main' }}
               </span>
             </template>
           </Column>
-          <Column field="url" header="URL">
+          <Column header="Domains" style="width: 7rem">
             <template #body="{ data }">
-              <span class="url-text" :title="data.url">{{ truncateUrl(data.url) }}</span>
+              {{ data.domain_count > 0 ? formatNumber(data.domain_count) : '—' }}
             </template>
-          </Column>
-          <Column header="Entries" style="width: 6rem">
-            <template #body="{ data }">{{ formatNumber(data.entry_count || data.last_entry_count) }}</template>
           </Column>
           <Column header="Last Updated" style="width: 10rem">
             <template #body="{ data }">
@@ -69,20 +80,35 @@
           <Column header="Status" style="width: 6rem">
             <template #body="{ data }">
               <span v-if="data.last_error" class="badge-error" :title="data.last_error">Error</span>
-              <span v-else-if="data.enabled" class="badge-active">Active</span>
-              <span v-else class="badge-disabled">Disabled</span>
+              <span v-else-if="data.enabled && data.last_fetched_at" class="badge-active">Active</span>
+              <span v-else-if="data.enabled" class="badge-pending">Pending</span>
+              <span v-else class="badge-disabled">Off</span>
             </template>
           </Column>
-          <Column header="" style="width: 7rem">
+          <Column header="Source URL" style="min-width: 18rem">
             <template #body="{ data }">
-              <div class="action-buttons">
-                <Button icon="pi pi-refresh" severity="secondary" text rounded size="small"
-                        @click="doRefreshSource(data)" :loading="refreshingId === data.id" />
-                <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                        @click="editSource(data)" />
-                <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                        @click="confirmDeleteSource(data)" />
+              <div class="url-cell">
+                <template v-if="editingUrlSlug === data.slug">
+                  <InputText v-model="editingUrlValue" class="url-input" size="small" placeholder="https://..."
+                             @keyup.enter="doSaveUrl(data.slug)" @keyup.escape="editingUrlSlug = null" />
+                  <Button icon="pi pi-check" severity="success" text rounded size="small" @click="doSaveUrl(data.slug)" :loading="savingUrl" />
+                  <Button icon="pi pi-times" severity="secondary" text rounded size="small" @click="editingUrlSlug = null" />
+                </template>
+                <template v-else>
+                  <span class="url-text" :class="{ 'url-custom': data.is_custom_url }" :title="data.source_url">{{ data.source_url }}</span>
+                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                          @click="startEditUrl(data)" title="Edit URL" />
+                  <Button v-if="data.is_custom_url" icon="pi pi-undo" severity="secondary" text rounded size="small"
+                          @click="doResetUrl(data.slug)" title="Reset to default URL" :loading="savingUrl" />
+                </template>
               </div>
+            </template>
+          </Column>
+          <Column header="" style="width: 3.5rem">
+            <template #body="{ data }">
+              <Button v-if="data.enabled" icon="pi pi-refresh" severity="secondary" text rounded size="small"
+                      @click="doRefreshCategory(data)" :loading="refreshingSlug === data.slug"
+                      title="Refresh this category" />
             </template>
           </Column>
         </DataTable>
@@ -95,7 +121,10 @@
           <InputText v-model="newWhitelistReason" placeholder="Reason (optional)" class="wl-reason" />
           <Button label="Add" icon="pi pi-plus" size="small" @click="doAddWhitelist" :loading="addingWhitelist" />
         </div>
-        <DataTable :value="store.whitelist" stripedRows size="small" emptyMessage="No whitelisted domains.">
+        <DataTable :value="store.whitelist" stripedRows size="small" emptyMessage="No whitelisted domains."
+                   :paginator="store.whitelist.length > 256" :rows="256"
+                   :rowsPerPageOptions="[64, 128, 256, 512]"
+                   scrollable scrollHeight="flex">
           <Column field="domain" header="Domain" sortable />
           <Column field="reason" header="Reason">
             <template #body="{ data }">{{ data.reason || '—' }}</template>
@@ -120,9 +149,12 @@
           <Button label="Search" icon="pi pi-search" size="small" @click="doSearch" :loading="searching" />
         </div>
         <DataTable v-if="searchResults.items.length > 0 || searchPerformed" :value="searchResults.items"
-                   stripedRows size="small" emptyMessage="No matching domains found.">
+                   stripedRows size="small" emptyMessage="No matching domains found."
+                   :paginator="searchResults.items.length > 256" :rows="256"
+                   :rowsPerPageOptions="[64, 128, 256, 512]"
+                   scrollable scrollHeight="flex">
           <Column field="domain" header="Domain" />
-          <Column field="sources" header="Sources" />
+          <Column field="categories" header="Categories" />
           <Column header="Status" style="width: 8rem">
             <template #body="{ data }">
               <span v-if="data.whitelisted" class="badge-whitelisted">Whitelisted</span>
@@ -141,82 +173,12 @@
       </TabPanel>
     </TabView>
 
-    <!-- Add/Edit Source Dialog -->
-    <Dialog v-model:visible="showSourceDialog" :header="editingSource ? 'Edit Source' : 'Add Source'"
-            modal :style="{ width: '28rem' }">
-      <div class="form-grid">
-        <div class="field">
-          <label>Name *</label>
-          <InputText v-model="sourceForm.name" class="w-full" />
-        </div>
-        <div class="field">
-          <label>URL *</label>
-          <InputText v-model="sourceForm.url" class="w-full" placeholder="https://..." />
-        </div>
-        <div class="field">
-          <label>Category</label>
-          <Select v-model="sourceForm.category" :options="categoryOptions" optionLabel="label" optionValue="value"
-                  class="w-full" />
-        </div>
-        <div class="field">
-          <label>Format</label>
-          <Select v-model="sourceForm.format" :options="formatOptions" optionLabel="label" optionValue="value"
-                  class="w-full" />
-        </div>
-        <div class="field">
-          <label>Update Interval (hours)</label>
-          <InputText v-model.number="sourceForm.update_interval_hours" type="number" class="w-full" />
-        </div>
-        <div class="field checkbox-field">
-          <label>
-            <input type="checkbox" v-model="sourceForm.enabled" /> Enabled
-          </label>
-          <label>
-            <input type="checkbox" v-model="sourceForm.auto_update" /> Auto-update
-          </label>
-        </div>
-      </div>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="closeSourceDialog" />
-        <Button :label="editingSource ? 'Save' : 'Add'" @click="saveSource" :loading="savingSource" />
-      </template>
-    </Dialog>
-
-    <!-- Delete Source Dialog -->
-    <Dialog v-model:visible="showDeleteDialog" header="Delete Source" modal :style="{ width: '24rem' }">
-      <p>Delete <strong>{{ deletingSource?.name }}</strong> and all its entries?</p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteSource" :loading="savingSource" />
-      </template>
-    </Dialog>
-
-    <!-- Popular Lists Dialog -->
-    <Dialog v-model:visible="showPopularDialog" header="Popular Blocklists" modal :style="{ width: '32rem' }">
-      <p style="margin-top: 0;">Select lists to add:</p>
-      <div class="popular-list" v-for="list in popularLists" :key="list.url">
-        <label class="popular-item">
-          <input type="checkbox" v-model="list.selected" :disabled="isSourceAdded(list.url)" />
-          <div>
-            <strong>{{ list.name }}</strong>
-            <span v-if="isSourceAdded(list.url)" class="badge-active" style="margin-left: 0.5rem;">Added</span>
-            <div class="popular-desc">{{ list.description }}</div>
-          </div>
-        </label>
-      </div>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showPopularDialog = false" />
-        <Button label="Add Selected" @click="addPopularLists" :loading="addingPopular"
-                :disabled="popularLists.filter(l => l.selected && !isSourceAdded(l.url)).length === 0" />
-      </template>
-    </Dialog>
-
     <Toast />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
@@ -225,46 +187,67 @@ import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
 import Toast from 'primevue/toast';
 import { useBlocklistStore } from '../stores/blocklists.js';
 
 const store = useBlocklistStore();
 const toast = useToast();
 
-const stats = ref({ total_sources: 0, enabled_sources: 0, total_domains: 0, whitelist_count: 0, last_update: null });
+const stats = ref({ enabled_categories: 0, total_domains: 0, whitelist_count: 0, last_update: null });
+const settings = reactive({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily' });
 
-// Source CRUD
-const showSourceDialog = ref(false);
-const showDeleteDialog = ref(false);
-const editingSource = ref(null);
-const deletingSource = ref(null);
-const savingSource = ref(false);
-const refreshingId = ref(null);
+const scheduleOptions = [
+  { label: 'Off', value: 'off' },
+  { label: 'Every 6 hours', value: '6h' },
+  { label: 'Every 12 hours', value: '12h' },
+  { label: 'Daily', value: 'daily' },
+  { label: 'Weekly', value: 'weekly' }
+];
+
+// Category toggling
+const togglingSlug = ref(null);
+const togglingAll = ref(false);
+
+const allEnabled = computed(() => store.categories.length > 0 && store.categories.every(c => c.enabled));
+const someEnabled = computed(() => store.categories.some(c => c.enabled));
+const refreshingSlug = ref(null);
 const refreshingAll = ref(false);
-const sourceForm = ref({ name: '', url: '', format: 'auto', category: 'other', update_interval_hours: 24, enabled: true, auto_update: true });
+const savingSettings = ref(false);
 
-const formatOptions = [
-  { label: 'Auto-detect', value: 'auto' },
-  { label: 'Hosts file', value: 'hosts' },
-  { label: 'Domain list', value: 'domains' },
-  { label: 'Adblock filter', value: 'adblock' }
-];
+// URL editing
+const editingUrlSlug = ref(null);
+const editingUrlValue = ref('');
+const savingUrl = ref(false);
 
-const categoryOptions = [
-  { label: 'Ads', value: 'ads' },
-  { label: 'Malware', value: 'malware' },
-  { label: 'Tracking', value: 'tracking' },
-  { label: 'Adult', value: 'adult' },
-  { label: 'Other', value: 'other' }
-];
+function startEditUrl(cat) {
+  editingUrlSlug.value = cat.slug;
+  editingUrlValue.value = cat.source_url;
+}
 
-const categoryLabels = { ads: 'Ads', malware: 'Malware', tracking: 'Tracking', adult: 'Adult', other: 'Other' };
-const categoryColors = { ads: '#3b82f6', malware: '#ef4444', tracking: '#f59e0b', adult: '#8b5cf6', other: '#6b7280' };
+async function doSaveUrl(slug) {
+  savingUrl.value = true;
+  try {
+    await store.updateCategoryUrl(slug, editingUrlValue.value.trim());
+    editingUrlSlug.value = null;
+    toast.add({ severity: 'success', summary: 'URL updated', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    savingUrl.value = false;
+  }
+}
 
-// Categories
-const categories = ref([]);
-const togglingCategory = ref(null);
+async function doResetUrl(slug) {
+  savingUrl.value = true;
+  try {
+    await store.updateCategoryUrl(slug, '');
+    toast.add({ severity: 'success', summary: 'URL reset to default', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    savingUrl.value = false;
+  }
+}
 
 // Whitelist
 const newWhitelistDomain = ref('');
@@ -279,16 +262,6 @@ const searchLimit = 50;
 const searching = ref(false);
 const searchPerformed = ref(false);
 
-// Popular lists
-const showPopularDialog = ref(false);
-const addingPopular = ref(false);
-const popularLists = ref([
-  { name: 'Steven Black Unified', url: 'https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts', description: 'Adware + malware hosts (~170K domains)', category: 'malware', selected: false },
-  { name: 'OISD Small', url: 'https://small.oisd.nl/', description: 'Balanced ad-blocking list for most users', category: 'ads', selected: false },
-  { name: "Pete Lowe's Ad Servers", url: 'https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0', description: 'Minimal, well-maintained ad server list', category: 'ads', selected: false },
-  { name: 'AdGuard DNS Filter', url: 'https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt', description: 'AdGuard DNS-level ad blocking filter', category: 'ads', selected: false }
-]);
-
 function formatNumber(n) {
   if (n === null || n === undefined) return '0';
   return n.toLocaleString();
@@ -300,94 +273,45 @@ function formatDate(dateStr) {
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function truncateUrl(url) {
+async function doToggleCategory(cat, enabled) {
+  togglingSlug.value = cat.slug;
   try {
-    const u = new URL(url);
-    const p = u.pathname.length > 30 ? u.pathname.slice(0, 30) + '...' : u.pathname;
-    return u.hostname + p;
-  } catch { return url; }
-}
-
-function isSourceAdded(url) {
-  return store.sources.some(s => s.url === url);
-}
-
-function openAddSource() {
-  editingSource.value = null;
-  sourceForm.value = { name: '', url: '', format: 'auto', category: 'other', update_interval_hours: 24, enabled: true, auto_update: true };
-  showSourceDialog.value = true;
-}
-
-function editSource(source) {
-  editingSource.value = source;
-  sourceForm.value = {
-    name: source.name, url: source.url, format: source.format,
-    category: source.category || 'other',
-    update_interval_hours: source.update_interval_hours,
-    enabled: !!source.enabled, auto_update: !!source.auto_update
-  };
-  showSourceDialog.value = true;
-}
-
-function closeSourceDialog() {
-  showSourceDialog.value = false;
-  editingSource.value = null;
-}
-
-async function saveSource() {
-  savingSource.value = true;
-  try {
-    if (editingSource.value) {
-      await store.updateSource(editingSource.value.id, sourceForm.value);
-      toast.add({ severity: 'success', summary: 'Source updated', life: 3000 });
-    } else {
-      await store.createSource(sourceForm.value);
-      toast.add({ severity: 'success', summary: 'Source added', life: 3000 });
-    }
-    closeSourceDialog();
-    await Promise.all([
-      store.fetchStats().then(s => stats.value = s),
-      store.fetchCategories().then(c => categories.value = c)
-    ]);
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally {
-    savingSource.value = false;
-  }
-}
-
-function confirmDeleteSource(source) {
-  deletingSource.value = source;
-  showDeleteDialog.value = true;
-}
-
-async function doDeleteSource() {
-  savingSource.value = true;
-  try {
-    await store.deleteSource(deletingSource.value.id);
-    showDeleteDialog.value = false;
-    toast.add({ severity: 'success', summary: 'Source deleted', life: 3000 });
-    await Promise.all([
-      store.fetchStats().then(s => stats.value = s),
-      store.fetchCategories().then(c => categories.value = c)
-    ]);
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally {
-    savingSource.value = false;
-  }
-}
-
-async function doRefreshSource(source) {
-  refreshingId.value = source.id;
-  try {
-    await store.refreshSource(source.id);
-    toast.add({ severity: 'success', summary: `${source.name} refreshed`, life: 3000 });
+    await store.toggleCategory(cat.slug, enabled);
     await store.fetchStats().then(s => stats.value = s);
+    toast.add({ severity: 'success', summary: `${cat.name} ${enabled ? 'enabled' : 'disabled'}`, life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    togglingSlug.value = null;
+  }
+}
+
+async function doToggleAll(enabled) {
+  togglingAll.value = true;
+  try {
+    const toToggle = store.categories.filter(c => c.enabled !== enabled);
+    for (const cat of toToggle) {
+      await store.toggleCategory(cat.slug, enabled);
+    }
+    await store.fetchStats().then(s => stats.value = s);
+    toast.add({ severity: 'success', summary: `All categories ${enabled ? 'enabled' : 'disabled'}`, life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    togglingAll.value = false;
+  }
+}
+
+async function doRefreshCategory(cat) {
+  refreshingSlug.value = cat.slug;
+  try {
+    await store.refreshCategory(cat.slug);
+    await store.fetchStats().then(s => stats.value = s);
+    toast.add({ severity: 'success', summary: `${cat.name} refreshed`, life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Refresh failed', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
-    refreshingId.value = null;
+    refreshingSlug.value = null;
   }
 }
 
@@ -395,8 +319,8 @@ async function doRefreshAll() {
   refreshingAll.value = true;
   try {
     await store.refreshAll();
-    toast.add({ severity: 'success', summary: 'All sources refreshed', life: 3000 });
     await store.fetchStats().then(s => stats.value = s);
+    toast.add({ severity: 'success', summary: 'All categories refreshed', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Refresh failed', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
@@ -404,40 +328,19 @@ async function doRefreshAll() {
   }
 }
 
-async function addPopularLists() {
-  addingPopular.value = true;
+async function doSaveSettings() {
+  savingSettings.value = true;
   try {
-    for (const list of popularLists.value) {
-      if (list.selected && !isSourceAdded(list.url)) {
-        await store.createSource({ name: list.name, url: list.url, format: 'auto', category: list.category });
-      }
-    }
-    showPopularDialog.value = false;
-    popularLists.value.forEach(l => l.selected = false);
-    toast.add({ severity: 'success', summary: 'Lists added', life: 3000 });
-    await Promise.all([
-      store.fetchStats().then(s => stats.value = s),
-      store.fetchCategories().then(c => categories.value = c)
-    ]);
+    await store.updateSettings({
+      blocklist_enabled: 'true',
+      blocklist_redirect_ip: settings.blocklist_redirect_ip,
+      blocklist_update_schedule: settings.blocklist_update_schedule
+    });
+    toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
-    addingPopular.value = false;
-  }
-}
-
-// Category toggle
-async function toggleCategoryEnabled(category, enabled) {
-  togglingCategory.value = category;
-  try {
-    await store.toggleCategory(category, enabled);
-    categories.value = await store.fetchCategories();
-    await store.fetchStats().then(s => stats.value = s);
-    toast.add({ severity: 'success', summary: `${categoryLabels[category]} ${enabled ? 'enabled' : 'disabled'}`, life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally {
-    togglingCategory.value = null;
+    savingSettings.value = false;
   }
 }
 
@@ -483,16 +386,21 @@ async function doSearch() {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    store.fetchSources(),
+  const [, , fetchedSettings] = await Promise.all([
+    store.fetchCategories(),
     store.fetchWhitelist(),
-    store.fetchStats().then(s => stats.value = s),
-    store.fetchCategories().then(c => categories.value = c)
+    store.fetchSettings(),
+    store.fetchStats().then(s => stats.value = s)
   ]);
+  Object.assign(settings, fetchedSettings);
 });
 </script>
 
 <style scoped>
+.blocklists-page { padding: 1.5rem 2rem; box-sizing: border-box; }
+.blocklists-page :deep(.p-tabview) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.blocklists-page :deep(.p-tabview-panels) { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.blocklists-page :deep(.p-tabview-panel) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .blocklists-page h2 {
   margin: 0 0 1rem 0;
 }
@@ -508,32 +416,40 @@ onMounted(async () => {
 .stat { display: flex; flex-direction: column; }
 .stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; }
 .stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
-.section-header {
+
+.settings-row {
   display: flex;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--p-surface-card);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
   margin-bottom: 0.75rem;
+  flex-wrap: wrap;
 }
-.url-text {
-  font-family: monospace;
-  font-size: 0.8rem;
+.schedule-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.schedule-label {
+  font-size: 0.85rem;
   color: var(--p-text-muted-color);
 }
-.format-badge {
-  font-size: 0.75rem;
-  background: var(--p-surface-200);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-}
-.badge-active { font-size: 0.75rem; background: #dcfce7; color: #166534; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; }
-.badge-disabled { font-size: 0.75rem; background: var(--p-surface-200); color: var(--p-text-muted-color); padding: 0.15rem 0.5rem; border-radius: 4px; }
-.badge-error { font-size: 0.75rem; background: #fee2e2; color: #991b1b; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; cursor: help; }
-.badge-blocked { font-size: 0.75rem; background: #fee2e2; color: #991b1b; padding: 0.15rem 0.5rem; border-radius: 4px; }
-.badge-whitelisted { font-size: 0.75rem; background: #dcfce7; color: #166534; padding: 0.15rem 0.5rem; border-radius: 4px; }
-.action-buttons { display: flex; gap: 0.25rem; }
-.form-grid { display: flex; flex-direction: column; gap: 1rem; }
-.field label { display: block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600; }
-.checkbox-field { display: flex; gap: 1.5rem; }
-.checkbox-field label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-weight: normal; }
+
+.text-sm { font-size: 0.8rem; }
+.muted { color: var(--p-text-muted-color); }
+
+.badge-main { font-size: 0.7rem; background: var(--p-surface-ground); color: var(--p-text-muted-color); padding: 0.1rem 0.4rem; border-radius: 4px; }
+.badge-beta { font-size: 0.7rem; background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); padding: 0.1rem 0.4rem; border-radius: 4px; }
+.badge-active { font-size: 0.75rem; background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; }
+.badge-pending { font-size: 0.75rem; background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); padding: 0.15rem 0.5rem; border-radius: 4px; }
+.badge-disabled { font-size: 0.75rem; background: var(--p-surface-ground); color: var(--p-text-muted-color); padding: 0.15rem 0.5rem; border-radius: 4px; }
+.badge-error { font-size: 0.75rem; background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; cursor: help; }
+.badge-blocked { font-size: 0.75rem; background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); padding: 0.15rem 0.5rem; border-radius: 4px; }
+.badge-whitelisted { font-size: 0.75rem; background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); padding: 0.15rem 0.5rem; border-radius: 4px; }
+
 .whitelist-add {
   display: flex;
   gap: 0.5rem;
@@ -542,6 +458,7 @@ onMounted(async () => {
 }
 .wl-input { width: 16rem; }
 .wl-reason { width: 14rem; }
+
 .search-bar {
   display: flex;
   gap: 0.5rem;
@@ -556,47 +473,31 @@ onMounted(async () => {
   margin-top: 0.5rem;
 }
 .page-info { font-size: 0.85rem; color: var(--p-text-muted-color); }
-.category-bar {
-  display: flex;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding: 0.75rem 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  margin-bottom: 0.75rem;
-}
-.category-toggle { }
-.category-toggle.category-disabled { opacity: 0.5; }
-.category-label {
+
+.url-cell {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  cursor: pointer;
-  font-size: 0.85rem;
+  gap: 0.25rem;
+  min-width: 0;
 }
-.category-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  display: inline-block;
+.url-text {
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: var(--p-text-muted-color);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
-.category-name { font-weight: 600; }
-.category-count { font-size: 0.75rem; color: var(--p-text-muted-color); }
-.category-badge {
-  font-size: 0.7rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
+.url-custom {
+  color: var(--p-primary-color);
   font-weight: 600;
-  border: 1px solid;
 }
-.popular-list { margin-bottom: 0.75rem; }
-.popular-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  cursor: pointer;
+.url-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.75rem;
+  font-family: monospace;
 }
-.popular-item input { margin-top: 0.3rem; }
-.popular-desc { font-size: 0.8rem; color: var(--p-text-muted-color); }
 </style>

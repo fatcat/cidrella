@@ -5,7 +5,15 @@ export const useDebugStore = defineStore('debug', () => {
   const entries = ref([]);
   const maxEntries = 200;
 
+  const maxAgeMs = 24 * 60 * 60 * 1000; // 1 day retention
+
+  function pruneOld() {
+    const cutoff = Date.now() - maxAgeMs;
+    entries.value = entries.value.filter(e => e.timestamp.getTime() > cutoff);
+  }
+
   function add(type, message, detail = null) {
+    pruneOld();
     entries.value.unshift({
       id: Date.now() + Math.random(),
       type,

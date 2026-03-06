@@ -1,5 +1,5 @@
 <template>
-  <div class="geoip-page">
+  <div class="geoip-page" style="display: flex; flex-direction: column; height: 100%;">
     <!-- Stats Bar -->
     <div class="stats-bar" v-if="status">
       <div class="stat">
@@ -31,84 +31,55 @@
       </div>
     </div>
 
-    <TabView>
-      <!-- Country Rules Tab -->
-      <TabPanel header="Country Rules">
-        <div class="section-header">
-          <Button label="Add Countries" icon="pi pi-plus" size="small" @click="openAddCountries" />
-        </div>
-        <DataTable :value="store.rules" :loading="store.loading" stripedRows size="small"
-                   emptyMessage="No country rules configured.">
-          <Column header="" style="width: 3rem">
-            <template #body="{ data }">
-              <span class="country-flag">{{ countryFlag(data.country_code) }}</span>
-            </template>
-          </Column>
-          <Column field="country_name" header="Country" sortable />
-          <Column field="country_code" header="Code" style="width: 5rem" sortable />
-          <Column header="Status" style="width: 7rem">
-            <template #body="{ data }">
-              <span v-if="data.enabled" class="badge-active">Active</span>
-              <span v-else class="badge-disabled">Disabled</span>
-            </template>
-          </Column>
-          <Column header="" style="width: 7rem">
-            <template #body="{ data }">
-              <div class="action-buttons">
-                <Button :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'" severity="secondary"
-                        text rounded size="small" @click="doToggleRule(data)"
-                        :title="data.enabled ? 'Disable' : 'Enable'" />
-                <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                        @click="confirmDeleteRule(data)" />
-              </div>
-            </template>
-          </Column>
-        </DataTable>
-      </TabPanel>
+    <!-- Settings Row -->
+    <div class="settings-row">
+      <div class="schedule-group">
+        <label class="schedule-label">Mode:</label>
+        <Select v-model="settingsForm.geoip_mode" :options="modeOptions" optionLabel="label"
+                optionValue="value" size="small" style="width: 16rem" />
+      </div>
+      <div class="schedule-group">
+        <label class="schedule-label">DB Update:</label>
+        <Select v-model="settingsForm.geoip_update_schedule" :options="scheduleOptions"
+                optionLabel="label" optionValue="value" size="small" style="width: 10rem" />
+      </div>
+      <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" />
+      <Button label="Update DB" icon="pi pi-download" size="small" severity="secondary"
+              @click="doRefreshDb" :loading="refreshingDb" />
+      <Button label="Add Countries" icon="pi pi-plus" size="small" severity="secondary" @click="openAddCountries" />
+    </div>
 
-      <!-- Settings Tab -->
-      <TabPanel header="Settings">
-        <div class="settings-form">
-          <div class="setting-group">
-            <h3>GeoIP Proxy</h3>
-            <div class="field checkbox-field">
-              <label>
-                <input type="checkbox" v-model="settingsForm.geoip_enabled" />
-                Enable GeoIP DNS filtering
-              </label>
-            </div>
-            <div class="field">
-              <label>Filtering Mode</label>
-              <Select v-model="settingsForm.geoip_mode" :options="modeOptions" optionLabel="label"
-                      optionValue="value" class="w-full" />
-              <small class="hint" v-if="settingsForm.geoip_mode === 'blocklist'">
-                DNS queries resolving to IPs in listed countries will be blocked.
-              </small>
-              <small class="hint" v-else>
-                Only DNS queries resolving to IPs in listed countries will be allowed. All others blocked.
-              </small>
-            </div>
-            <div class="field">
-              <label>Proxy Port</label>
-              <InputText v-model.number="settingsForm.geoip_proxy_port" type="number" class="w-full"
-                         :min="1024" :max="65535" />
-            </div>
-            <Button label="Save Settings" icon="pi pi-check" @click="doSaveSettings" :loading="savingSettings" />
+    <!-- Country Rules Table -->
+    <DataTable :value="store.rules" :loading="store.loading" stripedRows size="small"
+               emptyMessage="No country rules configured."
+               :paginator="store.rules.length > 256" :rows="256"
+               :rowsPerPageOptions="[64, 128, 256, 512]"
+               scrollable scrollHeight="flex">
+      <Column header="" style="width: 3rem">
+        <template #body="{ data }">
+          <span class="country-flag">{{ countryFlag(data.country_code) }}</span>
+        </template>
+      </Column>
+      <Column field="country_name" header="Country" sortable />
+      <Column field="country_code" header="Code" style="width: 5rem" sortable />
+      <Column header="Status" style="width: 7rem">
+        <template #body="{ data }">
+          <span v-if="data.enabled" class="badge-active">Active</span>
+          <span v-else class="badge-disabled">Disabled</span>
+        </template>
+      </Column>
+      <Column header="" style="width: 7rem">
+        <template #body="{ data }">
+          <div class="action-buttons">
+            <Button :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'" severity="secondary"
+                    text rounded size="small" @click="doToggleRule(data)"
+                    :title="data.enabled ? 'Disable' : 'Enable'" />
+            <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                    @click="confirmDeleteRule(data)" />
           </div>
-
-          <div class="setting-group">
-            <h3>GeoIP Database</h3>
-            <div class="db-info" v-if="status">
-              <div><strong>Status:</strong> {{ status.dbLoaded ? 'Loaded' : (status.dbExists ? 'Not loaded' : 'Not downloaded') }}</div>
-              <div><strong>Last Updated:</strong> {{ status.dbLastUpdated ? formatDate(status.dbLastUpdated) : 'Never' }}</div>
-            </div>
-            <Button label="Download / Update Database" icon="pi pi-download" severity="secondary"
-                    @click="doRefreshDb" :loading="refreshingDb" />
-            <small class="hint">Downloads the latest DB-IP Lite country database. Auto-updates monthly when enabled.</small>
-          </div>
-        </div>
-      </TabPanel>
-    </TabView>
+        </template>
+      </Column>
+    </DataTable>
 
     <!-- Add Countries Dialog -->
     <Dialog v-model:visible="showAddDialog" header="Add Countries" modal :style="{ width: '32rem' }">
@@ -147,8 +118,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
-import TabView from 'primevue/tabview';
-import TabPanel from 'primevue/tabpanel';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
@@ -165,13 +134,20 @@ const toast = useToast();
 const status = ref(null);
 
 // Settings form
-const settingsForm = ref({ geoip_enabled: false, geoip_mode: 'blocklist', geoip_proxy_port: 5353 });
+const settingsForm = ref({ geoip_enabled: false, geoip_mode: 'blocklist', geoip_proxy_port: 5353, geoip_update_schedule: 'monthly' });
 const savingSettings = ref(false);
 const refreshingDb = ref(false);
 
 const modeOptions = [
   { label: 'Blocklist — block listed countries', value: 'blocklist' },
   { label: 'Allowlist — allow only listed countries', value: 'allowlist' }
+];
+
+const scheduleOptions = [
+  { label: 'Off', value: 'off' },
+  { label: 'Weekly', value: 'weekly' },
+  { label: 'Biweekly', value: 'biweekly' },
+  { label: 'Monthly', value: 'monthly' }
 ];
 
 // Add countries dialog
@@ -296,7 +272,8 @@ async function refreshStatus() {
   settingsForm.value = {
     geoip_enabled: s.enabled,
     geoip_mode: s.mode,
-    geoip_proxy_port: s.port
+    geoip_proxy_port: s.port,
+    geoip_update_schedule: s.updateSchedule || 'monthly'
   };
 }
 
@@ -328,33 +305,30 @@ onMounted(async () => {
 .stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
 .indicator-on { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; }
 .indicator-off { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; display: inline-block; }
-.section-header {
+.settings-row {
   display: flex;
-  gap: 0.5rem;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--p-surface-card);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
   margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+.schedule-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.schedule-label {
+  font-size: 0.85rem;
+  color: var(--p-text-muted-color);
 }
 .country-flag { font-size: 1.1rem; }
-.badge-active { font-size: 0.75rem; background: #dcfce7; color: #166534; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; }
-.badge-disabled { font-size: 0.75rem; background: var(--p-surface-200); color: var(--p-text-muted-color); padding: 0.15rem 0.5rem; border-radius: 4px; }
+.badge-active { font-size: 0.75rem; background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; }
+.badge-disabled { font-size: 0.75rem; background: var(--p-surface-ground); color: var(--p-text-muted-color); padding: 0.15rem 0.5rem; border-radius: 4px; }
 .action-buttons { display: flex; gap: 0.25rem; }
-.settings-form {
-  display: flex;
-  flex-direction: column;
-  gap: 2rem;
-  max-width: 500px;
-}
-.setting-group h3 { margin: 0 0 1rem 0; }
-.field { margin-bottom: 1rem; }
-.field label { display: block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600; }
-.checkbox-field label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; font-weight: normal; }
-.hint { display: block; margin-top: 0.35rem; font-size: 0.8rem; color: var(--p-text-muted-color); }
-.db-info {
-  font-size: 0.9rem;
-  margin-bottom: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
 .country-search { margin-bottom: 0.75rem; }
 .country-list {
   max-height: 350px;

@@ -284,7 +284,12 @@ export const useSubnetStore = defineStore('subnets', () => {
     await api.delete(`/subnets/${subnetId}/ranges/${rangeId}`);
   }
 
-  // Range types (cached — rarely changes)
+  async function setIpStatus(subnetId, ipAddress, status, note) {
+    const res = await api.put(`/subnets/${subnetId}/ips/${ipAddress}/status`, { status, note });
+    return res.data;
+  }
+
+  // Address types (cached — rarely changes)
   let _rangeTypesCache = null;
   let _rangeTypesCacheTime = 0;
 
@@ -300,16 +305,19 @@ export const useSubnetStore = defineStore('subnets', () => {
 
   async function createRangeType(data) {
     const res = await api.post('/range-types', data);
+    _rangeTypesCache = null;
     return res.data;
   }
 
   async function updateRangeType(id, data) {
     const res = await api.put(`/range-types/${id}`, data);
+    _rangeTypesCache = null;
     return res.data;
   }
 
   async function deleteRangeType(id) {
     await api.delete(`/range-types/${id}`);
+    _rangeTypesCache = null;
   }
 
   // Network scans
@@ -332,6 +340,11 @@ export const useSubnetStore = defineStore('subnets', () => {
     await api.delete(`/scans/${scanId}`);
   }
 
+  async function calculateSubnets(cidr, newPrefix) {
+    const res = await api.post('/subnets/calculate', { cidr, new_prefix: newPrefix });
+    return res.data;
+  }
+
   return {
     folders, tree, treeNodes, allocatedTreeNodes, unallocatedTreeNodes, loading, subnetCount, toSubnetNodes,
     fetchTree, createFolder, updateFolder, deleteFolder, fetchFolders,
@@ -339,8 +352,9 @@ export const useSubnetStore = defineStore('subnets', () => {
     divideSubnet, configureSubnet, configureSubnetNoRefresh,
     getSubnetDetail, invalidateDetailCache, previewMerge, mergeSubnets, applyTemplate,
     getSettings, updateSetting,
-    getRanges, createRange, updateRange, deleteRange,
+    getRanges, createRange, updateRange, deleteRange, setIpStatus,
     getRangeTypes, createRangeType, updateRangeType, deleteRangeType,
-    startScan, getScan, getScans, deleteScan
+    startScan, getScan, getScans, deleteScan,
+    calculateSubnets
   };
 });

@@ -24,12 +24,14 @@ router.get('/status', requirePerm('dns:read'), (req, res) => {
   const status = getProxyStatus();
   const mode = db.prepare("SELECT value FROM settings WHERE key = 'geoip_mode'").get();
   const enabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get();
+  const updateSchedule = db.prepare("SELECT value FROM settings WHERE key = 'geoip_update_schedule'").get();
   const ruleCount = db.prepare('SELECT COUNT(*) as c FROM geoip_rules WHERE enabled = 1').get().c;
 
   res.json({
     ...status,
     enabled: enabled?.value === 'true',
     mode: mode?.value || 'blocklist',
+    updateSchedule: updateSchedule?.value || 'monthly',
     ruleCount
   });
 });
@@ -101,7 +103,7 @@ router.delete('/rules/:id', requirePerm('dns:write'), (req, res) => {
 // PUT /api/geoip/settings — update GeoIP settings
 router.put('/settings', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
-  const { geoip_enabled, geoip_mode, geoip_proxy_port } = req.body;
+  const { geoip_enabled, geoip_mode, geoip_proxy_port, geoip_update_schedule } = req.body;
 
   if (geoip_mode !== undefined && !['blocklist', 'allowlist'].includes(geoip_mode)) {
     return res.status(400).json({ error: 'Mode must be blocklist or allowlist' });
@@ -114,6 +116,10 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     }
   }
 
+  if (geoip_update_schedule !== undefined && !['off', 'weekly', 'biweekly', 'monthly'].includes(geoip_update_schedule)) {
+    return res.status(400).json({ error: 'Update schedule must be off, weekly, biweekly, or monthly' });
+  }
+
   const wasEnabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get()?.value === 'true';
   const oldPort = db.prepare("SELECT value FROM settings WHERE key = 'geoip_proxy_port'").get()?.value;
 
@@ -123,6 +129,9 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
   }
   if (geoip_proxy_port !== undefined) {
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_proxy_port', ?)").run(String(geoip_proxy_port));
+  }
+  if (geoip_update_schedule !== undefined) {
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_update_schedule', ?)").run(geoip_update_schedule);
   }
 
   const nowEnabled = geoip_enabled !== undefined ? geoip_enabled : wasEnabled;

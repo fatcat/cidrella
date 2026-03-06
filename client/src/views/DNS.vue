@@ -1,10 +1,20 @@
 <template>
-  <div class="dns-page">
-    <div class="page-header">
-      <div class="header-actions">
-        <Button label="Apply Config" icon="pi pi-refresh" severity="secondary" @click="applyConfig" :loading="applying" />
-        <Button label="Add Zone" icon="pi pi-plus" @click="openZoneDialog()" />
+  <div class="dns-page" style="display: flex; flex-direction: column; height: 100%;">
+    <!-- Forwarders & Actions Row -->
+    <div class="settings-row">
+      <div class="forwarders-group">
+        <label class="schedule-label">Forwarders:</label>
+        <div class="forwarder-inputs">
+          <div v-for="(srv, i) in forwarders" :key="i" class="forwarder-row">
+            <InputText v-model="forwarders[i]" size="small" placeholder="e.g. 8.8.8.8" style="width: 10rem" />
+            <Button icon="pi pi-times" severity="danger" text rounded size="small"
+                    @click="forwarders.splice(i, 1)" v-if="forwarders.length > 1" />
+          </div>
+          <Button icon="pi pi-plus" severity="secondary" text rounded size="small"
+                  @click="forwarders.push('')" title="Add forwarder" />
+        </div>
       </div>
+      <Button label="Save Forwarders" icon="pi pi-save" size="small" @click="saveForwarders" :loading="savingForwarders" />
     </div>
 
     <div class="dns-layout">
@@ -53,7 +63,10 @@
           </div>
 
           <DataTable :value="records" :loading="loadingRecords" stripedRows
-                     emptyMessage="No records in this zone." size="small">
+                     emptyMessage="No records in this zone." size="small"
+                     :paginator="records.length > 256" :rows="256"
+                     :rowsPerPageOptions="[64, 128, 256, 512]"
+                     scrollable scrollHeight="flex">
             <Column field="name" header="Name" sortable style="min-width: 8rem" />
             <Column field="type" header="Type" sortable style="width: 5rem">
               <template #body="{ data }">
@@ -170,7 +183,7 @@
           <label>{{ recordForm.type === 'PTR' ? 'IP Octet(s) *' : 'Name *' }}</label>
           <InputText v-model="recordForm.name" class="w-full"
                      :placeholder="recordForm.type === 'PTR' ? 'e.g. 10 (last octet)' : 'e.g. www or @'" />
-          <small v-if="recordForm.type === 'PTR'" class="field-help">Reversed IP octets relative to zone (e.g. "10" for .10 in the subnet)</small>
+          <small v-if="recordForm.type === 'PTR'" class="field-help">Reversed IP octets relative to zone (e.g. "10" for .10 in the network)</small>
         </div>
         <div class="field">
           <label>Type *</label>
@@ -284,6 +297,10 @@ const showDeleteRecordDialog = ref(false);
 const deletingRecord = ref(null);
 
 const applying = ref(false);
+
+// Forwarders
+const forwarders = ref(['8.8.8.8', '1.1.1.1']);
+const savingForwarders = ref(false);
 
 const valuePlaceholder = computed(() => {
   switch (recordForm.value.type) {
@@ -430,6 +447,20 @@ async function doDeleteRecord() {
   }
 }
 
+async function saveForwarders() {
+  savingForwarders.value = true;
+  try {
+    const servers = forwarders.value.map(s => s.trim()).filter(Boolean);
+    await store.updateForwarders(servers);
+    forwarders.value = servers;
+    toast.add({ severity: 'success', summary: 'Forwarders saved', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    savingForwarders.value = false;
+  }
+}
+
 async function applyConfig() {
   applying.value = true;
   try {
@@ -443,30 +474,60 @@ async function applyConfig() {
 }
 
 onMounted(async () => {
-  await store.fetchZones();
+  await Promise.all([
+    store.fetchZones(),
+    store.getForwarders().then(s => forwarders.value = s).catch(() => {})
+  ]);
 });
+
+defineExpose({ openZoneDialog });
 </script>
 
 <style scoped>
-.page-header {
+.settings-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-bottom: 1.5rem;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--p-surface-card);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
 }
-.page-header h2 { margin: 0; }
-.header-actions { display: flex; gap: 0.5rem; }
+.forwarders-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.forwarder-inputs {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.forwarder-row {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.schedule-label {
+  font-size: 0.85rem;
+  color: var(--p-text-muted-color);
+  white-space: nowrap;
+}
 
 .dns-layout {
   display: grid;
   grid-template-columns: 320px 1fr;
   gap: 1.5rem;
-  align-items: start;
+  flex: 1;
+  min-height: 0;
 }
 
 .zone-panel {
   background: var(--p-content-background);
-  border: 1px solid var(--p-surface-200);
+  border: 1px solid var(--p-surface-border);
   border-radius: 8px;
   overflow: hidden;
   color: var(--p-text-color);
@@ -477,8 +538,8 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--p-surface-200);
-  background: var(--p-surface-100);
+  border-bottom: 1px solid var(--p-surface-border);
+  background: var(--p-surface-ground);
   color: var(--p-text-color);
 }
 .panel-header h3 { margin: 0; font-size: 0.9rem; color: var(--p-text-color); }
@@ -491,11 +552,11 @@ onMounted(async () => {
   align-items: center;
   padding: 0.6rem 1rem;
   cursor: pointer;
-  border-bottom: 1px solid var(--p-surface-100);
+  border-bottom: 1px solid var(--p-surface-border);
   transition: background 0.15s;
 }
-.zone-item:hover { background: var(--p-surface-50); }
-.zone-item.active { background: var(--p-primary-50); border-left: 3px solid var(--p-primary-500); }
+.zone-item:hover { background: var(--p-highlight-background); }
+.zone-item.active { background: var(--p-highlight-background); border-left: 3px solid var(--p-primary-color); }
 
 .zone-info { flex: 1; min-width: 0; }
 .zone-name {
@@ -518,8 +579,8 @@ onMounted(async () => {
   text-transform: uppercase;
   font-weight: 600;
 }
-.zone-type-badge.forward { background: var(--p-blue-100); color: var(--p-blue-700); }
-.zone-type-badge.reverse { background: var(--p-orange-100); color: var(--p-orange-700); }
+.zone-type-badge.forward { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent); color: var(--p-blue-500); }
+.zone-type-badge.reverse { background: color-mix(in srgb, var(--p-orange-500) 20%, transparent); color: var(--p-orange-500); }
 
 .record-count { font-size: 0.75rem; color: var(--p-surface-500); }
 
@@ -528,21 +589,21 @@ onMounted(async () => {
 .records-panel {
   display: flex;
   flex-direction: column;
-  gap: 1.5rem;
+  min-height: 0;
 }
 
 .type-badge {
   font-size: 0.75rem;
   font-weight: 600;
-  background: var(--p-surface-100);
+  background: var(--p-surface-ground);
   color: var(--p-text-color);
   padding: 0.15rem 0.4rem;
   border-radius: 3px;
   font-family: monospace;
 }
 
-.badge-enabled { font-size: 0.75rem; color: var(--p-green-600); }
-.badge-disabled { font-size: 0.75rem; color: var(--p-red-600); background: var(--p-red-50); padding: 0.1rem 0.4rem; border-radius: 3px; }
+.badge-enabled { font-size: 0.75rem; color: var(--p-green-500); }
+.badge-disabled { font-size: 0.75rem; color: var(--p-red-500); background: color-mix(in srgb, var(--p-red-500) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
 
 .action-buttons { display: flex; gap: 0.25rem; }
 
@@ -568,7 +629,7 @@ onMounted(async () => {
 .form-grid {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 1.25rem;
 }
 .field label {
   display: block;
@@ -578,12 +639,15 @@ onMounted(async () => {
 }
 
 .soa-section {
-  border-top: 1px solid var(--p-surface-200);
+  border-top: 1px solid var(--p-surface-border);
   padding-top: 0.75rem;
   margin-top: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
 .soa-section h4 {
-  margin: 0 0 0.75rem 0;
+  margin: 0;
   font-size: 0.85rem;
   color: var(--p-text-muted-color);
   text-transform: uppercase;
@@ -591,7 +655,7 @@ onMounted(async () => {
 .soa-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.75rem;
+  gap: 1.25rem;
 }
 .soa-serial {
   font-family: monospace;
@@ -600,7 +664,7 @@ onMounted(async () => {
 }
 .field-help {
   display: block;
-  margin-top: 0.2rem;
+  margin-top: 0.4rem;
   font-size: 0.75rem;
   color: var(--p-text-muted-color);
 }

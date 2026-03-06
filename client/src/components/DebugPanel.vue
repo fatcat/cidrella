@@ -2,6 +2,7 @@
   <div class="debug-container">
     <button class="debug-btn" :class="{ 'has-errors': debugStore.errorCount > 0 }" @click="open = !open">
       <i class="pi pi-bug"></i>
+      <span class="debug-label">Debug</span>
       <span v-if="debugStore.errorCount > 0" class="error-badge">{{ debugStore.errorCount }}</span>
     </button>
 
@@ -95,9 +96,9 @@ onMounted(() => {
 }
 
 .debug-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  height: 28px;
+  padding: 0 0.6rem;
+  border-radius: 6px;
   border: 1px solid var(--p-surface-border);
   background: var(--p-surface-card);
   color: var(--p-text-muted-color);
@@ -105,8 +106,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 0.35rem;
   position: relative;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
   transition: all 0.15s;
 }
 .debug-btn:hover {
@@ -116,6 +118,11 @@ onMounted(() => {
 .debug-btn.has-errors {
   border-color: #ef4444;
   color: #ef4444;
+}
+
+.debug-label {
+  font-size: 0.7rem;
+  font-weight: 600;
 }
 
 .error-badge {
@@ -226,10 +233,10 @@ onMounted(() => {
   border-radius: 3px;
   flex-shrink: 0;
 }
-.entry-error .entry-type { background: #fecaca; color: #dc2626; }
-.entry-warn .entry-type { background: #fef3c7; color: #d97706; }
-.entry-api .entry-type { background: #dbeafe; color: #2563eb; }
-.entry-info .entry-type { background: #e0e7ff; color: #4f46e5; }
+.entry-error .entry-type { background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); }
+.entry-warn .entry-type { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
+.entry-api .entry-type { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent); color: var(--p-blue-500); }
+.entry-info .entry-type { background: color-mix(in srgb, var(--p-indigo-500) 20%, transparent); color: var(--p-indigo-500); }
 
 .entry-msg {
   flex: 1;

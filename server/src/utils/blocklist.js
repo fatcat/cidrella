@@ -2,12 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/init.js';
 import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
+import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const BLOCKLIST_CONF = path.join(CONF_DIR, 'blocklist.conf');
 
-// Domain validation: must have a dot, only valid chars, not an IP
+// Domain validation
 const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const IP_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
@@ -16,152 +17,127 @@ function isValidDomain(d) {
 }
 
 /**
- * Detect blocklist format from content sample
+ * Ensure all catalog categories exist in the database
  */
-function detectFormat(content) {
-  const lines = content.split('\n')
-    .map(l => l.trim())
-    .filter(l => l && !l.startsWith('#') && !l.startsWith('!'))
-    .slice(0, 30);
+export function ensureCategoryRows(db) {
+  // Create table if migration hasn't run yet
+  db.exec(`CREATE TABLE IF NOT EXISTS blocklist_categories (
+    slug TEXT PRIMARY KEY,
+    enabled INTEGER NOT NULL DEFAULT 0,
+    domain_count INTEGER NOT NULL DEFAULT 0,
+    last_fetched_at TEXT,
+    last_error TEXT
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS blocklist_domains (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    domain TEXT NOT NULL,
+    category_slug TEXT NOT NULL REFERENCES blocklist_categories(slug) ON DELETE CASCADE,
+    UNIQUE(domain, category_slug)
+  )`);
 
-  let hostsCount = 0;
-  let adblockCount = 0;
-
-  for (const line of lines) {
-    if (/^(0\.0\.0\.0|127\.0\.0\.1)\s+\S/.test(line)) hostsCount++;
-    if (/^\|\|[a-z0-9].*\^/.test(line)) adblockCount++;
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO blocklist_categories (slug) VALUES (?)'
+  );
+  for (const cat of BLOCKLIST_CATEGORIES) {
+    insert.run(cat.slug);
   }
-
-  if (hostsCount > lines.length * 0.5) return 'hosts';
-  if (adblockCount > lines.length * 0.3) return 'adblock';
-  return 'domains';
 }
 
 /**
- * Parse blocklist content into array of domains
+ * Parse domain-per-line content (Block List Project "No IP" format)
  */
-export function parseBlocklist(content, format = 'auto') {
-  if (format === 'auto') format = detectFormat(content);
-
+function parseDomainList(content) {
   const domains = new Set();
-  const lines = content.split('\n');
-
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#') || line.startsWith('!')) continue;
-
-    let domain = null;
-
-    if (format === 'hosts') {
-      // Format: 0.0.0.0 domain.com or 127.0.0.1 domain.com
-      const parts = line.split(/\s+/);
-      if (parts.length >= 2 && (parts[0] === '0.0.0.0' || parts[0] === '127.0.0.1')) {
-        domain = parts[1].toLowerCase();
-      }
-    } else if (format === 'adblock') {
-      // Format: ||domain.com^
-      const match = line.match(/^\|\|([a-z0-9][a-z0-9.-]+)\^/i);
-      if (match) {
-        domain = match[1].toLowerCase();
-      }
-    } else {
-      // domains: one per line
-      const stripped = line.split('#')[0].trim().toLowerCase();
-      if (stripped) domain = stripped;
-    }
-
+  for (const rawLine of content.split('\n')) {
+    const line = rawLine.trim().toLowerCase();
+    if (!line || line.startsWith('#')) continue;
+    // Strip inline comments
+    const domain = line.split('#')[0].trim();
     if (domain && isValidDomain(domain) && domain !== 'localhost') {
       domains.add(domain);
     }
   }
-
   return Array.from(domains);
 }
 
 /**
- * Fetch and refresh a single blocklist source
- * Returns true if entries changed
+ * Fetch and refresh a single category's domain list.
+ * Returns { count, changed }
  */
-export async function refreshSource(db, sourceId) {
-  const source = db.prepare('SELECT * FROM blocklist_sources WHERE id = ?').get(sourceId);
-  if (!source) throw new Error('Source not found');
+export async function refreshCategory(db, slug) {
+  // Use custom URL from DB if set, otherwise fall back to default
+  const row = db.prepare('SELECT source_url FROM blocklist_categories WHERE slug = ?').get(slug);
+  const url = row?.source_url || getDefaultCategoryUrl(slug);
 
   let response;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-    response = await fetch(source.url, {
+    const timeout = setTimeout(() => controller.abort(), 60000);
+    response = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'IPAM-Blocklist/1.0' }
     });
     clearTimeout(timeout);
   } catch (err) {
     const msg = err.name === 'AbortError' ? 'Request timed out' : err.message;
-    db.prepare("UPDATE blocklist_sources SET last_error = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(msg, sourceId);
+    db.prepare("UPDATE blocklist_categories SET last_error = ? WHERE slug = ?")
+      .run(msg, slug);
     throw new Error(msg);
   }
 
   if (!response.ok) {
     const msg = `HTTP ${response.status} ${response.statusText}`;
-    db.prepare("UPDATE blocklist_sources SET last_error = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(msg, sourceId);
+    db.prepare("UPDATE blocklist_categories SET last_error = ? WHERE slug = ?")
+      .run(msg, slug);
     throw new Error(msg);
   }
 
   const content = await response.text();
-  const domains = parseBlocklist(content, source.format);
+  const domains = parseDomainList(content);
+  const oldCount = db.prepare('SELECT domain_count FROM blocklist_categories WHERE slug = ?').get(slug)?.domain_count || 0;
 
-  const oldCount = source.last_entry_count;
-
-  // Replace entries in a transaction
   db.transaction(() => {
-    db.prepare('DELETE FROM blocklist_entries WHERE source_id = ?').run(sourceId);
-    const insert = db.prepare('INSERT OR IGNORE INTO blocklist_entries (domain, source_id) VALUES (?, ?)');
+    db.prepare('DELETE FROM blocklist_domains WHERE category_slug = ?').run(slug);
+    const insert = db.prepare('INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES (?, ?)');
     for (const domain of domains) {
-      insert.run(domain, sourceId);
+      insert.run(domain, slug);
     }
-    db.prepare(`UPDATE blocklist_sources SET
+    db.prepare(`UPDATE blocklist_categories SET
+      domain_count = ?,
       last_fetched_at = datetime('now'),
-      last_entry_count = ?,
-      last_error = NULL,
-      updated_at = datetime('now')
-      WHERE id = ?`).run(domains.length, sourceId);
+      last_error = NULL
+      WHERE slug = ?`).run(domains.length, slug);
   })();
 
-  return domains.length !== oldCount;
+  return { count: domains.length, changed: domains.length !== oldCount };
 }
 
 /**
- * Refresh all enabled sources, regenerate config if any changed
+ * Refresh all enabled categories, regenerate config once at end
  */
-export async function refreshAllSources(db) {
-  const sources = db.prepare('SELECT id FROM blocklist_sources WHERE enabled = 1').all();
+export async function refreshAllEnabled(db) {
+  const enabled = db.prepare('SELECT slug FROM blocklist_categories WHERE enabled = 1').all();
   let anyChanged = false;
 
-  for (const source of sources) {
+  for (const row of enabled) {
     try {
-      const changed = await refreshSource(db, source.id);
-      if (changed) anyChanged = true;
+      const result = await refreshCategory(db, row.slug);
+      if (result.changed) anyChanged = true;
     } catch (err) {
-      console.error(`Blocklist refresh failed for source ${source.id}:`, err.message);
+      console.error(`Blocklist refresh failed for ${row.slug}:`, err.message);
     }
   }
 
-  if (anyChanged) {
-    generateBlocklistConfig(db);
-  }
-
+  generateBlocklistConfig(db);
   return anyChanged;
 }
 
 /**
- * Generate /data/dnsmasq/conf.d/blocklist.conf from all enabled entries minus whitelist
+ * Generate /data/dnsmasq/conf.d/blocklist.conf from enabled category domains minus whitelist
  */
 export function generateBlocklistConfig(db) {
   const enabled = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_enabled'").get();
   if (!enabled || enabled.value !== 'true') {
-    // Blocklist disabled — write empty file
     const existing = fs.existsSync(BLOCKLIST_CONF) ? fs.readFileSync(BLOCKLIST_CONF, 'utf-8') : '';
     if (existing !== '') {
       atomicWrite(BLOCKLIST_CONF, '');
@@ -173,14 +149,13 @@ export function generateBlocklistConfig(db) {
   const redirectIp = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_redirect_ip'").get();
   const targetIp = redirectIp?.value || '';
 
-  // Get all unique blocked domains from enabled sources, minus whitelist
   const domains = db.prepare(`
-    SELECT DISTINCT be.domain
-    FROM blocklist_entries be
-    JOIN blocklist_sources bs ON be.source_id = bs.id
-    WHERE bs.enabled = 1
-      AND be.domain NOT IN (SELECT domain FROM blocklist_whitelist)
-    ORDER BY be.domain
+    SELECT DISTINCT bd.domain
+    FROM blocklist_domains bd
+    JOIN blocklist_categories bc ON bd.category_slug = bc.slug
+    WHERE bc.enabled = 1
+      AND bd.domain NOT IN (SELECT domain FROM blocklist_whitelist)
+    ORDER BY bd.domain
   `).all();
 
   const lines = ['# Auto-generated blocklist — do not edit manually'];
@@ -204,41 +179,67 @@ export function generateBlocklistConfig(db) {
 }
 
 /**
+ * Map schedule setting to interval in hours
+ */
+function scheduleToHours(schedule) {
+  switch (schedule) {
+    case '6h': return 6;
+    case '12h': return 12;
+    case 'daily': return 24;
+    case 'weekly': return 168;
+    default: return 0; // 'off'
+  }
+}
+
+/**
  * Start the blocklist auto-update scheduler
  */
 export function startBlocklistScheduler() {
-  // Check every 15 minutes for sources that need refreshing
+  // Check every 15 minutes for categories that need refreshing
   setInterval(async () => {
-    const db = getDb();
-    const due = db.prepare(`
-      SELECT id FROM blocklist_sources
-      WHERE enabled = 1 AND auto_update = 1
-        AND (last_fetched_at IS NULL
-             OR datetime(last_fetched_at, '+' || update_interval_hours || ' hours') <= datetime('now'))
-    `).all();
+    try {
+      const db = getDb();
 
-    if (due.length === 0) return;
+      const schedSetting = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_update_schedule'").get();
+      const schedule = schedSetting?.value || 'daily';
+      if (schedule === 'off') return;
 
-    let anyChanged = false;
-    for (const source of due) {
-      try {
-        const changed = await refreshSource(db, source.id);
-        if (changed) anyChanged = true;
-      } catch (err) {
-        console.error(`Scheduled blocklist refresh failed for source ${source.id}:`, err.message);
+      const intervalHours = scheduleToHours(schedule);
+      if (intervalHours === 0) return;
+
+      const due = db.prepare(`
+        SELECT slug FROM blocklist_categories
+        WHERE enabled = 1
+          AND (last_fetched_at IS NULL
+               OR datetime(last_fetched_at, '+${intervalHours} hours') <= datetime('now'))
+      `).all();
+
+      if (due.length === 0) return;
+
+      let anyChanged = false;
+      for (const row of due) {
+        try {
+          const result = await refreshCategory(db, row.slug);
+          if (result.changed) anyChanged = true;
+        } catch (err) {
+          console.error(`Scheduled blocklist refresh failed for ${row.slug}:`, err.message);
+        }
       }
-    }
 
-    if (anyChanged) {
-      generateBlocklistConfig(db);
+      if (anyChanged) {
+        generateBlocklistConfig(db);
+      }
+    } catch (err) {
+      console.error('Blocklist scheduler error:', err.message);
     }
   }, 15 * 60 * 1000);
 
-  // Initial refresh 10s after startup
+  // Initial: ensure category rows + refresh enabled categories 10s after startup
   setTimeout(async () => {
     try {
       const db = getDb();
-      await refreshAllSources(db);
+      ensureCategoryRows(db);
+      await refreshAllEnabled(db);
     } catch (err) {
       console.error('Initial blocklist refresh failed:', err.message);
     }

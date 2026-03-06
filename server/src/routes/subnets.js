@@ -398,6 +398,15 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
   try {
     const txn = db.transaction(() => {
       const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
+      const mergedParsed = parseCidr(mergeResult.merged_cidr);
+
+      // Determine correct gateway for the merged network
+      const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
+      const gwPosition = gwPref?.value || 'first';
+      const mergedGateway = gwPosition === 'last' ? mergedParsed.lastUsable : mergedParsed.firstUsable;
+
+      // Use the gateway subnet for config metadata, or fall back to any allocated subnet
+      const configSource = gatewaySubnet || allocated[0] || null;
 
       // Check if merging reconstitutes the parent (merged CIDR equals parent CIDR)
       if (mergeResult.merged_cidr === parent.cidr) {
@@ -409,21 +418,20 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
         }
 
         // Restore parent config from the allocated child if any
-        const configSource = gatewaySubnet || allocated[0] || null;
         if (allocated.length > 0) {
           db.prepare(`UPDATE subnets SET status = 'allocated', name = ?, description = ?,
             vlan_id = ?, gateway_address = ?, has_reverse_dns = ?, updated_at = datetime('now')
             WHERE id = ?`).run(
             configSource.name, configSource.description,
-            configSource.vlan_id, configSource.gateway_address,
+            configSource.vlan_id, mergedGateway,
             configSource.has_reverse_dns || 0, parent.id
           );
-          const mergedParsed = parseCidr(mergeResult.merged_cidr);
-          createSystemRanges(db, parent.id, mergedParsed, configSource.gateway_address);
+          createSystemRanges(db, parent.id, mergedParsed, mergedGateway);
         } else {
-          db.prepare(`UPDATE subnets SET status = 'unallocated', updated_at = datetime('now') WHERE id = ?`).run(parent.id);
-          const mergedParsed = parseCidr(mergeResult.merged_cidr);
-          createSystemRanges(db, parent.id, mergedParsed, null);
+          db.prepare(`UPDATE subnets SET status = 'unallocated', gateway_address = ?, updated_at = datetime('now') WHERE id = ?`).run(
+            mergedGateway, parent.id
+          );
+          createSystemRanges(db, parent.id, mergedParsed, mergedGateway);
         }
 
         return parent.id;
@@ -437,18 +445,12 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
         db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
       }
 
-      // Create merged subnet
-      const mergedParsed = parseCidr(mergeResult.merged_cidr);
-
-      // Use the gateway subnet for config, or fall back to any allocated subnet
-      const configSource = gatewaySubnet || allocated[0] || null;
-
       const result = insertSubnet(db, {
         cidr: mergeResult.merged_cidr,
         name: configSource ? configSource.name : applyNameTemplate(template, mergeResult.merged_cidr),
         description: configSource?.description || null,
         vlan_id: configSource?.vlan_id || null,
-        gateway_address: configSource?.gateway_address || null,
+        gateway_address: mergedGateway,
         parent_id: parentId,
         status: allocated.length > 0 ? 'allocated' : 'unallocated',
         depth: parent.depth + 1
@@ -456,7 +458,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
 
       const mergedId = result.lastInsertRowid;
 
-      createSystemRanges(db, mergedId, mergedParsed, configSource?.gateway_address || null);
+      createSystemRanges(db, mergedId, mergedParsed, mergedGateway);
       if (configSource?.has_reverse_dns) {
         db.prepare('UPDATE subnets SET has_reverse_dns = 1 WHERE id = ?').run(mergedId);
       }
@@ -727,25 +729,32 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       }
 
       const txn = db.transaction(() => {
-        // Find which child gets the gateway
+        // Find which child gets the parent's gateway
         let inheritIdx = -1;
         if (parent.status === 'allocated' && parent.gateway_address) {
           const gwLong = ipToLong(parent.gateway_address);
           inheritIdx = subnets.findIndex(s => gwLong >= s.networkLong && gwLong <= s.broadcastLong);
         }
 
+        // Determine default gateway position for non-inheriting children
+        const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
+        const gwPosition = gwPref?.value || 'first';
+
         const childIds = [];
         for (let i = 0; i < subnets.length; i++) {
           const s = subnets[i];
           const sCidr = `${s.network}/${s.prefix}`;
           const isInheriting = i === inheritIdx;
+          const childParsed = parseCidr(sCidr);
+          const childGw = isInheriting ? parent.gateway_address
+            : (gwPosition === 'last' ? childParsed.lastUsable : childParsed.firstUsable);
 
           const result = insertSubnet(db, {
             cidr: sCidr,
             name: applyNameTemplate(template, sCidr),
             description: isInheriting ? parent.description : null,
             vlan_id: isInheriting ? parent.vlan_id : null,
-            gateway_address: isInheriting ? parent.gateway_address : null,
+            gateway_address: childGw,
             parent_id: parent.id,
             status: parent.status === 'allocated' ? 'allocated' : 'unallocated',
             depth: childDepth
@@ -754,8 +763,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
           if (isInheriting) {
             migrateConfigToChild(db, parent.id, result.lastInsertRowid, s, parent.gateway_address, parent.has_reverse_dns);
           } else {
-            // All children get Network/Broadcast ranges
-            createSystemRanges(db, result.lastInsertRowid, s, null);
+            // All children get Network/Broadcast/Gateway ranges
+            createSystemRanges(db, result.lastInsertRowid, childParsed, childGw);
           }
           childIds.push(result.lastInsertRowid);
         }
@@ -811,18 +820,24 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         }
       }
 
+      // Determine default gateway position for non-inheriting children
+      const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
+      const gwPosition = gwPref?.value || 'first';
+
       // All children in the division
       const allCidrs = [normalized, ...remainder];
       for (const aCidr of allCidrs) {
         const aParsed = parseCidr(aCidr);
         const isInheriting = inheritingCidr === aCidr;
+        const childGw = isInheriting ? parent.gateway_address
+          : (gwPosition === 'last' ? aParsed.lastUsable : aParsed.firstUsable);
 
         const result = insertSubnet(db, {
           cidr: aCidr,
           name: applyNameTemplate(template, aCidr),
           description: isInheriting ? parent.description : null,
           vlan_id: isInheriting ? parent.vlan_id : null,
-          gateway_address: isInheriting ? parent.gateway_address : null,
+          gateway_address: childGw,
           parent_id: parent.id,
           status: parent.status === 'allocated' ? 'allocated' : 'unallocated',
           depth: childDepth
@@ -831,8 +846,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         if (isInheriting) {
           migrateConfigToChild(db, parent.id, result.lastInsertRowid, aParsed, parent.gateway_address, parent.has_reverse_dns);
         } else {
-          // All children get Network/Broadcast ranges
-          createSystemRanges(db, result.lastInsertRowid, aParsed, null);
+          // All children get Network/Broadcast/Gateway ranges
+          createSystemRanges(db, result.lastInsertRowid, aParsed, childGw);
         }
       }
 
@@ -1174,10 +1189,12 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     } else {
       // Virtual IP entry
       const isGw = gwLong !== null && ipLong === gwLong;
+      const isNetwork = ipLong === parsed.networkLong;
+      const isBroadcast = ipLong === parsed.broadcastLong;
       ips.push({
         ip_address: longToIp(ipLong),
         subnet_id: subnet.id,
-        status: isGw ? 'reserved' : 'available',
+        status: (isGw || isNetwork || isBroadcast) ? 'reserved' : 'available',
         hostname: null,
         mac_address: null,
         is_online: 0,
@@ -1193,6 +1210,35 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   }
 
   res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });
+}));
+
+// PUT /api/subnets/:id/ips/:ip/status — reserve or unreserve an IP
+router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((req, res) => {
+  const db = getDb();
+  const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+  if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+
+  const ipAddress = req.params.ip;
+  const { status, note } = req.body;
+  if (!['available', 'reserved', 'assigned'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+
+  // When reserving, store the note; when unreserving, clear it
+  const reservationNote = status === 'reserved' ? (note || null) : null;
+
+  // Check if IP exists in persisted table
+  const existing = db.prepare('SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, ipAddress);
+  if (existing) {
+    db.prepare('UPDATE ip_addresses SET status = ?, reservation_note = ?, updated_at = datetime(\'now\') WHERE subnet_id = ? AND ip_address = ?')
+      .run(status, reservationNote, subnet.id, ipAddress);
+  } else {
+    db.prepare('INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, ?, ?)')
+      .run(subnet.id, ipAddress, status, reservationNote);
+  }
+
+  audit(req.user.id, 'ip_status_changed', 'ip_address', subnet.id, { ip_address: ipAddress, status, note: reservationNote });
+  res.json({ ip_address: ipAddress, status, reservation_note: reservationNote });
 }));
 
 // Error handler for all subnet routes

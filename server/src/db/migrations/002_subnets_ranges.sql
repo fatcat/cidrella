@@ -1,6 +1,6 @@
--- Phase 2: Subnets, ranges, and range types
+-- Phase 2: Subnets, ranges, and address types
 
--- Range types (system-created are immutable, user-created have full CRUD)
+-- Address types (system-created are immutable, user-created have full CRUD)
 CREATE TABLE IF NOT EXISTS range_types (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT UNIQUE NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS range_types (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Seed system range types
+-- Seed system address types
 INSERT INTO range_types (name, color, is_system, description) VALUES
   ('Network',   '#6b7280', 1, 'Network address (not assignable)'),
   ('Gateway',   '#f59e0b', 1, 'Default gateway address'),
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS subnets (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
--- Functional ranges within subnets
+-- Functional addresses within subnets
 CREATE TABLE IF NOT EXISTS ranges (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   subnet_id INTEGER NOT NULL,

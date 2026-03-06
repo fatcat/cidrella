@@ -1,26 +1,45 @@
 <template>
-  <div class="subnet-detail" v-if="subnet" style="position: relative;">
+  <div class="subnet-detail" :class="{ 'compact-mode': compact }" v-if="subnet" style="position: relative;">
     <!-- Loading overlay for large subnets -->
     <Transition name="fade">
       <div v-if="showLoadingOverlay" class="loading-overlay">
         <div class="loading-card">
-          <i class="pi pi-spin pi-spinner" style="font-size: 1.5rem"></i>
           <span>Loading Data</span>
         </div>
       </div>
     </Transition>
-    <div class="detail-header">
+    <div v-if="!compact" class="detail-header">
       <div>
         <h3 style="margin: 0; display: inline;">{{ subnet.name }}</h3>
         <span class="cidr-badge">{{ subnet.cidr }}</span>
       </div>
       <div class="header-actions">
-        <Button label="Add Range" icon="pi pi-plus" severity="secondary" size="small" @click="openAddRange" />
+        <Button label="Add Network" icon="pi pi-plus" size="small" @click="openAddRange" />
       </div>
     </div>
 
-    <!-- Subnet Info Cards -->
-    <div class="info-cards">
+    <!-- Compact info bar (used when embedded in Layout B) -->
+    <div v-if="compact" class="info-bar">
+      <span class="info-bar-name">{{ subnet.name }}</span>
+      <span class="info-bar-cidr">{{ subnet.cidr }}</span>
+      <span class="info-bar-sep"></span>
+      <span class="info-bar-pair"><span class="info-bar-label">Network</span> <span class="info-bar-val">{{ subnet.network_address }}</span></span>
+      <span class="info-bar-sep"></span>
+      <span class="info-bar-pair"><span class="info-bar-label">Broadcast</span> <span class="info-bar-val">{{ subnet.broadcast_address }}</span></span>
+      <span class="info-bar-sep"></span>
+      <span class="info-bar-pair"><span class="info-bar-label">Gateway</span> <span class="info-bar-val">{{ subnet.gateway_address }}</span></span>
+      <span class="info-bar-sep"></span>
+      <span class="info-bar-pair"><span class="info-bar-label">VLAN</span> <span class="info-bar-val">{{ subnet.vlan_id ?? '—' }}</span></span>
+      <span class="info-bar-sep"></span>
+      <span class="info-bar-pair"><span class="info-bar-label">Total IPs</span> <span class="info-bar-val">{{ subnet.total_addresses }}</span></span>
+      <span class="info-bar-sep"></span>
+      <span class="info-bar-pair"><span class="info-bar-label">Prefix</span> <span class="info-bar-val">/{{ subnet.prefix_length }}</span></span>
+      <span style="flex:1"></span>
+      <Button label="Add DHCP Pool" size="small" text @click="openAddRange" />
+    </div>
+
+    <!-- Subnet Info Cards (non-compact) -->
+    <div v-if="!compact" class="info-cards">
       <div class="info-card">
         <div class="info-label">Network</div>
         <div class="info-value">{{ subnet.network_address }}</div>
@@ -50,31 +69,19 @@
     <!-- Tabs: IP Addresses + Grid View -->
     <TabView>
       <TabPanel header="IP Addresses">
-        <div class="ip-table-controls">
-          <div class="page-size-control">
-            <label>Per page:</label>
-            <Select v-model="currentPageSize" :options="pageSizeOptions"
-                    optionLabel="label" optionValue="value" size="small"
-                    @change="onPageSizeChange" style="width: 7rem" />
-          </div>
-          <div class="page-nav" v-if="totalPages > 1">
-            <Button icon="pi pi-angle-double-left" severity="secondary" text size="small"
-                    :disabled="currentPage <= 1 || loadingPage" @click="goToPage(1)" title="First page" />
-            <Button icon="pi pi-angle-left" severity="secondary" text size="small"
-                    :disabled="currentPage <= 1 || loadingPage" @click="goToPage(currentPage - 1)" title="Previous page" />
-            <span class="page-info">Page {{ currentPage }} of {{ totalPages }}</span>
-            <Button icon="pi pi-angle-right" severity="secondary" text size="small"
-                    :disabled="currentPage >= totalPages || loadingPage" @click="goToPage(currentPage + 1)" title="Next page" />
-            <Button icon="pi pi-angle-double-right" severity="secondary" text size="small"
-                    :disabled="currentPage >= totalPages || loadingPage" @click="goToPage(totalPages)" title="Last page" />
-          </div>
-          <span class="ip-count">{{ totalIps }} total IPs</span>
-        </div>
         <DataTable :value="ips" stripedRows size="small"
                    :loading="loadingPage"
                    emptyMessage="No IP addresses."
                    scrollable scrollHeight="flex"
-                   dataKey="ip_address">
+                   dataKey="ip_address"
+                   @row-contextmenu="onTableRowContextMenu"
+                   contextMenu
+                   lazy paginator paginatorPosition="bottom"
+                   :rows="currentPageSize"
+                   :totalRecords="totalIps"
+                   :first="(currentPage - 1) * currentPageSize"
+                   :rowsPerPageOptions="rowsPerPageOptions"
+                   @page="onLazyPage">
           <Column header="Address" style="width: 10rem">
             <template #body="{ data }">
               <span class="ip-mono">{{ data.ip_address }}</span>
@@ -85,9 +92,12 @@
               <Tag :severity="statusSeverity(data.status)" :value="data.status" />
             </template>
           </Column>
-          <Column header="Type" style="width: 7rem">
+          <Column header="Type" style="width: 9rem">
             <template #body="{ data }">
-              <span v-if="data.range_type_name" class="range-type-badge" :style="{ background: data.range_type_color }">
+              <span v-if="data.status === 'reserved' && data.reservation_note" class="range-type-badge reservation-badge">
+                {{ data.reservation_note }}
+              </span>
+              <span v-else-if="data.range_type_name" class="range-type-badge" :style="{ background: data.range_type_color }">
                 {{ data.range_type_name }}
               </span>
               <span v-else>—</span>
@@ -112,10 +122,14 @@
       </TabPanel>
 
       <TabPanel header="Grid View">
+        <div class="grid-view-scroll">
         <!-- Ranges Table -->
         <div class="section">
           <h4 style="margin:0 0 0.5rem 0">Ranges</h4>
-          <DataTable :value="ranges" stripedRows size="small" emptyMessage="No ranges defined.">
+          <DataTable :value="ranges" stripedRows size="small" emptyMessage="No ranges defined."
+                     :paginator="ranges.length > 256" :rows="256"
+                     :rowsPerPageOptions="[64, 128, 256, 512]"
+                     scrollable scrollHeight="flex">
             <Column header="Type">
               <template #body="{ data }">
                 <span class="range-type-badge" :style="{ background: data.range_type_color }">
@@ -168,14 +182,15 @@
             </div>
           </div>
           <div v-else class="grid-too-large">
-            Subnet too large for grid view ({{ subnet.total_addresses }} addresses, max 512). Use the IP Addresses tab.
+            Network too large for grid view ({{ subnet.total_addresses }} addresses, max 512). Use the IP Addresses tab.
           </div>
+        </div>
         </div>
       </TabPanel>
     </TabView>
 
     <!-- Scan Progress -->
-    <div class="section" v-if="activeScan">
+    <div class="section" style="flex-shrink: 0;" v-if="activeScan">
       <h4 style="margin:0 0 0.5rem 0">Network Scan</h4>
       <div class="scan-progress">
         <div class="scan-info">
@@ -205,8 +220,11 @@
     <!-- Grid Context Menu -->
     <ContextMenu ref="gridContextMenuRef" :model="gridContextMenuItems" />
 
+    <!-- Table Context Menu -->
+    <ContextMenu ref="tableContextMenuRef" :model="tableContextMenuItems" />
+
     <!-- Range Create/Edit Dialog -->
-    <Dialog v-model:visible="showRangeDialog" :header="editingRange ? 'Edit Range' : 'Add Range'"
+    <Dialog v-model:visible="showRangeDialog" :header="editingRange ? 'Edit Range' : 'Add DHCP Pool'"
             modal :style="{ width: '28rem' }">
       <div class="form-grid">
         <div class="field">
@@ -327,7 +345,7 @@
           <InputNumber v-else-if="opt.type === 'number'" v-model="scopeOptionValues[opt.code]"
                        class="w-full" size="small" :useGrouping="false" />
           <InputText v-else v-model="scopeOptionValues[opt.code]" class="w-full" size="small"
-                     :placeholder="scopePlaceholderForType(opt.type)" />
+                     :placeholder="opt.code === 3 ? 'Defaults to network\'s gateway' : scopePlaceholderForType(opt.type)" />
         </div>
       </div>
       <template #footer>
@@ -336,10 +354,25 @@
       </template>
     </Dialog>
 
+    <!-- Reserve IP Note Dialog -->
+    <Dialog v-model:visible="showReserveDialog" header="Reserve IP Address" modal :style="{ width: '24rem' }">
+      <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
+        Reserving <strong>{{ reserveTarget }}</strong> will prevent it from being used for DHCP or static assignment.
+      </p>
+      <div class="field">
+        <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Reason (max 16 characters)</label>
+        <InputText v-model="reserveNote" class="w-full" :maxlength="16" placeholder="e.g. MGMT, PRINTER" @keyup.enter="confirmReserve" />
+      </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
+        <Button label="Reserve" icon="pi pi-lock" @click="confirmReserve" :disabled="!reserveNote.trim()" />
+      </template>
+    </Dialog>
+
     <Toast />
   </div>
-  <div v-else-if="loading" class="loading">Loading subnet...</div>
-  <div v-else class="empty-state">Select a subnet to view details.</div>
+  <div v-else-if="loading" class="loading">Loading network...</div>
+  <div v-else class="empty-state">Select a network to view details.</div>
 </template>
 
 <script setup>
@@ -361,7 +394,8 @@ import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 
 const props = defineProps({
-  subnetId: { type: [Number, String], default: null }
+  subnetId: { type: [Number, String], default: null },
+  compact: { type: Boolean, default: false }
 });
 
 const emit = defineEmits(['refresh']);
@@ -376,6 +410,11 @@ const rangeTypes = ref([]);
 const loading = ref(false);
 const saving = ref(false);
 
+// Reserve IP dialog
+const showReserveDialog = ref(false);
+const reserveTarget = ref('');
+const reserveNote = ref('');
+
 // Server-side pagination state
 const currentPage = ref(1);
 const currentPageSize = ref(256);
@@ -386,18 +425,7 @@ const loadingPage = ref(false);
 // Loading overlay for large subnets (>256 IPs)
 const showLoadingOverlay = ref(false);
 
-const pageSizeOptions = computed(() => {
-  if (!subnet.value) return [{ value: 256, label: '256' }];
-  // Use full subnet size (including network/broadcast) so page sizes align with power-of-2 boundaries
-  const prefix = subnet.value.prefix_length || 24;
-  const subnetSize = Math.pow(2, 32 - prefix);
-  const opts = [];
-  for (const s of [16, 32, 64, 128, 256, 512]) {
-    if (subnetSize >= s) opts.push({ value: s, label: String(s) });
-  }
-  if (opts.length === 0) opts.push({ value: total, label: String(total) });
-  return opts;
-});
+const rowsPerPageOptions = [64, 128, 256, 512];
 
 const showRangeDialog = ref(false);
 const showOverlapDialog = ref(false);
@@ -433,8 +461,38 @@ const activeScan = ref(null);
 const scanResults = ref([]);
 let scanPollTimer = null;
 
-// Grid context menu
+// Context menus
 const gridContextMenuRef = ref(null);
+const tableContextMenuRef = ref(null);
+const tableContextIp = ref(null);
+
+function onTableRowContextMenu(event) {
+  const row = event.data;
+  // Skip Network/Broadcast
+  if (row.range_type_name === 'Network' || row.range_type_name === 'Broadcast') return;
+  tableContextIp.value = row;
+  tableContextMenuRef.value.show(event.originalEvent);
+}
+
+const tableContextMenuItems = computed(() => {
+  const row = tableContextIp.value;
+  if (!row) return [];
+
+  const range = findRangeForIp(row.ip_address);
+  const ip = {
+    address: row.ip_address,
+    rangeId: range?.id || null,
+    rangeType: row.range_type_name || null,
+    status: row.status || 'available'
+  };
+
+  return buildContextMenuItems([ip]);
+});
+
+function findRangeForIp(ipAddress) {
+  const long = ipToLong(ipAddress);
+  return ranges.value.find(r => long >= ipToLong(r.start_ip) && long <= ipToLong(r.end_ip));
+}
 
 function ipToLong(ip) {
   const parts = ip.split('.').map(Number);
@@ -483,7 +541,8 @@ function isGatewayType(typeId) {
 
 function gridTooltip(ip) {
   const lines = [ip.address];
-  if (ip.rangeType) lines.push(`Type: ${ip.rangeType}`);
+  if (ip.status === 'reserved' && ip.reservationNote) lines.push(`Reserved: ${ip.reservationNote}`);
+  else if (ip.rangeType) lines.push(`Type: ${ip.rangeType}`);
   lines.push(`Status: ${ip.status}`);
   if (ip.hostname) lines.push(`Host: ${ip.hostname}`);
   if (ip.mac) lines.push(`MAC: ${ip.mac}`);
@@ -536,6 +595,7 @@ const ipGrid = computed(() => {
       hostname: assignInfo?.hostname || null,
       mac: assignInfo?.mac_address || assignInfo?.last_seen_mac || assignInfo?.scan_mac || null,
       status: assignInfo?.status || 'available',
+      reservationNote: assignInfo?.reservation_note || null,
       isOnline: assignInfo?.is_online === 1,
       lastSeen: assignInfo?.last_seen_at || null,
       isConflict: conflictMap.has(addr),
@@ -616,34 +676,125 @@ function onGridContextMenu(event) {
   }
 }
 
-const gridContextMenuItems = computed(() => {
-  const sel = gridSelection.value;
-  if (sel.size === 0) return [];
+function isSystemReserved(ip) {
+  const rangeType = ip.rangeType || ip.range_type_name;
+  return rangeType === 'Network' || rangeType === 'Broadcast' || rangeType === 'Gateway';
+}
+
+function buildContextMenuItems(selectedIps) {
+  if (selectedIps.length === 0) return [];
 
   const items = [];
-  const selectedIps = Array.from(sel).sort((a, b) => a - b).map(i => ipGrid.value[i]);
+  const firstIp = selectedIps[0];
+  const lastIp = selectedIps[selectedIps.length - 1];
 
-  if (sel.size === 1) {
-    const ip = selectedIps[0];
-    if (ip.rangeId) {
-      const range = ranges.value.find(r => r.id === ip.rangeId);
-      if (range && isEditableRange(range)) {
-        items.push({ label: `Edit ${range.range_type_name} Range`, icon: 'pi pi-pencil', command: () => editRange(range) });
+  if (selectedIps.length === 1) {
+    const ip = firstIp;
+    const range = ip.rangeId ? ranges.value.find(r => r.id === ip.rangeId) : null;
+    const isDhcpPool = range && range.range_type_name === 'DHCP Pool';
+    const isGateway = range && range.range_type_name === 'Gateway';
+    const ipStatus = ip.status || 'available';
+
+    if (isGateway) {
+      // Gateway IP: Edit, Delete, and create pool
+      items.push({ label: 'Edit Gateway', icon: 'pi pi-pencil', command: () => editRange(range) });
+      items.push({ label: 'Delete Gateway', icon: 'pi pi-trash', command: () => confirmDeleteRange(range) });
+      items.push({ separator: true });
+      items.push({
+        label: 'Create DHCP Pool',
+        icon: 'pi pi-plus',
+        command: () => openRangeFromSelection(ip.address, ip.address)
+      });
+    } else if (isDhcpPool) {
+      // IP inside a DHCP Pool
+      items.push({
+        label: `Edit Pool ${range.start_ip} – ${range.end_ip}`,
+        icon: 'pi pi-pencil',
+        command: () => editRange(range)
+      });
+      items.push({
+        label: 'Remove this IP from Pool',
+        icon: 'pi pi-minus',
+        command: () => removeIpFromPool(range, ip.address)
+      });
+      items.push({
+        label: `Delete Pool ${range.start_ip} – ${range.end_ip}`,
+        icon: 'pi pi-trash',
+        command: () => confirmDeleteRange(range)
+      });
+    } else if (range && isEditableRange(range)) {
+      // Other editable range
+      items.push({ label: `Edit ${range.range_type_name} Range`, icon: 'pi pi-pencil', command: () => editRange(range) });
+      items.push({
+        label: 'Create DHCP Pool',
+        icon: 'pi pi-plus',
+        command: () => openRangeFromSelection(ip.address, ip.address)
+      });
+    } else {
+      // No range or non-editable
+      items.push({
+        label: 'Create DHCP Pool',
+        icon: 'pi pi-plus',
+        command: () => openRangeFromSelection(ip.address, ip.address)
+      });
+    }
+
+    // Reserve / Unreserve (not for system ranges)
+    if (!isSystemReserved(ip)) {
+      items.push({ separator: true });
+      if (ipStatus === 'reserved') {
+        items.push({
+          label: 'Remove Reservation',
+          icon: 'pi pi-unlock',
+          command: () => setIpReservation(ip.address, 'available')
+        });
+      } else {
+        items.push({
+          label: `Reserve ${ip.address}`,
+          icon: 'pi pi-lock',
+          command: () => openReserveDialog(ip.address)
+        });
       }
     }
-  }
-
-  if (sel.size >= 1) {
-    const firstIp = selectedIps[0].address;
-    const lastIp = selectedIps[selectedIps.length - 1].address;
+  } else {
+    // Multi-select
     items.push({
-      label: sel.size === 1 ? `Create range at ${firstIp}` : `Create range ${firstIp} – ${lastIp}`,
+      label: `Add DHCP Pool ${firstIp.address} – ${lastIp.address}`,
       icon: 'pi pi-plus',
-      command: () => openRangeFromSelection(firstIp, lastIp)
+      command: () => openRangeFromSelection(firstIp.address, lastIp.address)
     });
   }
 
   return items;
+}
+
+function openReserveDialog(ipAddress) {
+  reserveTarget.value = ipAddress;
+  reserveNote.value = '';
+  showReserveDialog.value = true;
+}
+
+async function confirmReserve() {
+  if (!reserveNote.value.trim()) return;
+  showReserveDialog.value = false;
+  await setIpReservation(reserveTarget.value, 'reserved', reserveNote.value.trim());
+}
+
+async function setIpReservation(ipAddress, status, note) {
+  try {
+    await store.setIpStatus(subnet.value.id, ipAddress, status, note);
+    toast.add({ severity: 'success', summary: status === 'reserved' ? 'IP reserved' : 'Reservation removed', life: 3000 });
+    await reloadData();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  }
+}
+
+const gridContextMenuItems = computed(() => {
+  const sel = gridSelection.value;
+  if (sel.size === 0) return [];
+  const selectedIps = Array.from(sel).sort((a, b) => a - b).map(i => ipGrid.value[i]);
+  return buildContextMenuItems(selectedIps);
 });
 
 function openRangeFromSelection(startIp, endIp) {
@@ -696,7 +847,7 @@ async function loadData({ skipCache = false } = {}) {
 
   try {
     currentPage.value = 1;
-    // Load IPs and range types in parallel
+    // Load IPs and address types in parallel
     const [, rt] = await Promise.all([
       loadIpPage(1, currentPageSize.value, { skipCache }),
       store.getRangeTypes()
@@ -709,7 +860,7 @@ async function loadData({ skipCache = false } = {}) {
     if (scanPollTimer) { clearInterval(scanPollTimer); scanPollTimer = null; }
     await loadLatestScan();
   } catch (err) {
-    console.error('Failed to load subnet detail:', err);
+    console.error('Failed to load network detail:', err);
     subnet.value = null;
   } finally {
     loading.value = false;
@@ -725,13 +876,10 @@ async function reloadData() {
   await loadData({ skipCache: true });
 }
 
-function goToPage(page) {
-  loadIpPage(page, currentPageSize.value);
-}
-
-function onPageSizeChange() {
-  currentPage.value = 1;
-  loadIpPage(1, currentPageSize.value);
+function onLazyPage(event) {
+  const newPage = Math.floor(event.first / event.rows) + 1;
+  currentPageSize.value = event.rows;
+  loadIpPage(newPage, event.rows);
 }
 
 // Watch for subnetId changes — debounce rapid clicks
@@ -798,18 +946,25 @@ async function saveRange(force = false) {
 
       // Auto-open DHCP scope dialog for DHCP Pool ranges
       if (created.range_type_name === 'DHCP Pool') {
+        // Load options catalog if not already loaded
+        if (scopeOptionCatalog.value.length === 0) {
+          await loadScopeOptions();
+        }
+        // Pre-populate with subnet gateway as Router (option 3)
+        const defaultOptions = [];
+        const defaultOptionValues = {};
+        if (subnet.value.gateway_address) {
+          defaultOptions.push(3);
+          defaultOptionValues[3] = subnet.value.gateway_address;
+        }
         dhcpScopeForm.value = {
           range_id: created.id,
           subnet_id: subnet.value.id,
           lease_time: '24h',
           description: '',
-          selectedOptions: [],
-          optionValues: {}
+          selectedOptions: defaultOptions,
+          optionValues: defaultOptionValues
         };
-        // Load options catalog if not already loaded
-        if (scopeOptionCatalog.value.length === 0) {
-          await loadScopeOptions();
-        }
         showDhcpScopeDialog.value = true;
       }
     }
@@ -830,6 +985,51 @@ async function saveRange(force = false) {
 async function forceCreateRange() {
   rangeForm.value = pendingRangeForm.value;
   await saveRange(true);
+}
+
+async function removeIpFromPool(range, ipAddress) {
+  saving.value = true;
+  try {
+    const startLong = ipToLong(range.start_ip);
+    const endLong = ipToLong(range.end_ip);
+    const ipLong = ipToLong(ipAddress);
+
+    if (startLong === endLong) {
+      // Single-IP pool — just delete it
+      await store.deleteRange(subnet.value.id, range.id);
+      toast.add({ severity: 'success', summary: 'Pool deleted', life: 3000 });
+    } else if (ipLong === startLong) {
+      // Remove from start
+      await store.updateRange(subnet.value.id, range.id, {
+        ...range, start_ip: longToIp(startLong + 1)
+      });
+      toast.add({ severity: 'success', summary: 'IP removed from pool', life: 3000 });
+    } else if (ipLong === endLong) {
+      // Remove from end
+      await store.updateRange(subnet.value.id, range.id, {
+        ...range, end_ip: longToIp(endLong - 1)
+      });
+      toast.add({ severity: 'success', summary: 'IP removed from pool', life: 3000 });
+    } else {
+      // Middle — shrink original to before the IP, create new range after
+      await store.updateRange(subnet.value.id, range.id, {
+        ...range, end_ip: longToIp(ipLong - 1)
+      });
+      await store.createRange(subnet.value.id, {
+        range_type_id: range.range_type_id,
+        start_ip: longToIp(ipLong + 1),
+        end_ip: range.end_ip,
+        description: range.description || '',
+        force: true
+      });
+      toast.add({ severity: 'success', summary: 'IP removed from pool (pool split)', life: 3000 });
+    }
+    await reloadData();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    saving.value = false;
+  }
 }
 
 function confirmDeleteRange(range) {
@@ -931,6 +1131,7 @@ async function saveDhcpScope() {
     });
     showDhcpScopeDialog.value = false;
     toast.add({ severity: 'success', summary: 'DHCP scope created', life: 3000 });
+    window.dispatchEvent(new Event('ipam:stats-changed'));
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
@@ -1005,11 +1206,88 @@ onUnmounted(() => {
 });
 </script>
 
+
+
 <style scoped>
 .subnet-detail {
   height: 100%;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   padding: 1rem;
+}
+.subnet-detail.compact-mode {
+  padding: 0;
+}
+
+/* ── Compact info bar ── */
+.info-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--p-surface-border);
+  padding: 0 0.75rem;
+  gap: 0.6rem;
+  height: 2.4rem;
+  box-sizing: border-box;
+}
+.info-bar-name {
+  font-weight: 700;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.info-bar-cidr {
+  font-size: 0.75rem;
+  font-family: monospace;
+  background: var(--p-surface-ground);
+  color: var(--p-text-muted-color);
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+}
+.info-bar-sep {
+  width: 1px;
+  height: 1rem;
+  background: var(--p-surface-border);
+  flex-shrink: 0;
+}
+.info-bar-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  white-space: nowrap;
+}
+.info-bar-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  color: var(--p-text-muted-color);
+  letter-spacing: 0.04em;
+}
+.info-bar-val {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+:deep(.p-tabview) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+:deep(.p-tabview-panels) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+:deep(.p-tabview-panel) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+:deep(.p-tabview-panel > .p-datatable) {
+  flex: 1;
+  min-height: 0;
 }
 .detail-header {
   display: flex;
@@ -1017,6 +1295,7 @@ onUnmounted(() => {
   align-items: center;
   margin-bottom: 1rem;
   flex-wrap: wrap;
+  flex-shrink: 0;
   gap: 0.5rem;
 }
 .header-actions {
@@ -1026,7 +1305,8 @@ onUnmounted(() => {
 }
 .cidr-badge {
   font-size: 0.85rem;
-  background: var(--p-surface-200);
+  background: var(--p-surface-ground);
+  color: var(--p-text-muted-color);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
   margin-left: 0.5rem;
@@ -1037,6 +1317,7 @@ onUnmounted(() => {
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 0.5rem;
   margin-bottom: 1rem;
+  flex-shrink: 0;
 }
 .info-card {
   background: var(--p-surface-card);
@@ -1063,6 +1344,11 @@ onUnmounted(() => {
 }
 .online-dot.online { color: #22c55e; }
 .online-dot.offline { color: #d1d5db; }
+.grid-view-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .section {
   margin-bottom: 1rem;
 }
@@ -1070,9 +1356,13 @@ onUnmounted(() => {
   display: inline-block;
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
-  color: white;
+  color: #1a1a1a;
   font-size: 0.75rem;
   font-weight: 600;
+}
+.reservation-badge {
+  background: color-mix(in srgb, var(--p-orange-500) 25%, transparent) !important;
+  color: var(--p-orange-500);
 }
 .action-buttons {
   display: flex;
@@ -1132,34 +1422,7 @@ onUnmounted(() => {
   background: #ef4444;
   border-radius: 50%;
 }
-.ip-table-controls {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  margin-bottom: 0.5rem;
-  flex-wrap: wrap;
-}
-.page-size-control {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-}
-.page-nav {
-  display: flex;
-  align-items: center;
-  gap: 0.15rem;
-}
-.page-info {
-  font-size: 0.8rem;
-  padding: 0 0.5rem;
-  white-space: nowrap;
-}
-.ip-count {
-  font-size: 0.8rem;
-  color: var(--p-text-muted-color);
-  margin-left: auto;
-}
+
 .grid-too-large {
   padding: 1.5rem;
   text-align: center;
@@ -1207,13 +1470,13 @@ onUnmounted(() => {
   font-weight: 600;
   text-transform: uppercase;
 }
-.scan-pending { background: #fef3c7; color: #92400e; }
-.scan-running { background: #dbeafe; color: #1e40af; }
-.scan-completed { background: #dcfce7; color: #166534; }
-.scan-failed { background: #fee2e2; color: #991b1b; }
+.scan-pending { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
+.scan-running { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent); color: var(--p-blue-500); }
+.scan-completed { background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); }
+.scan-failed { background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); }
 .scan-bar-container {
   height: 4px;
-  background: var(--p-surface-200);
+  background: var(--p-surface-border);
   border-radius: 2px;
   overflow: hidden;
   margin-top: 0.5rem;
@@ -1265,8 +1528,8 @@ onUnmounted(() => {
 }
 .option-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .option-tag {
-  background: var(--p-primary-50);
-  color: var(--p-primary-700);
+  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
+  color: var(--p-primary-color);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
   font-size: 0.75rem;
