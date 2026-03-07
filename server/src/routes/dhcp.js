@@ -3,7 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { isIpInSubnet, ipToLong } from '../utils/ip.js';
 import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
-import { DHCP_OPTIONS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
+import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
 
 const router = Router();
 
@@ -61,15 +61,15 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'range_id and subnet_id are required' });
   }
 
-  // Validate range exists and is a DHCP Pool type
+  // Validate range exists and is a DHCP Scope type
   const range = db.prepare(`
     SELECT r.*, rt.name as range_type_name FROM ranges r
     JOIN range_types rt ON r.range_type_id = rt.id
     WHERE r.id = ?
   `).get(range_id);
   if (!range) return res.status(404).json({ error: 'Range not found' });
-  if (range.range_type_name !== 'DHCP Pool') {
-    return res.status(400).json({ error: 'Range must be of type DHCP Pool' });
+  if (range.range_type_name !== 'DHCP Scope') {
+    return res.status(400).json({ error: 'Range must be of type DHCP Scope' });
   }
 
   // Validate subnet
@@ -456,7 +456,7 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
     FROM ranges r
     JOIN range_types rt ON r.range_type_id = rt.id
     JOIN subnets sub ON r.subnet_id = sub.id
-    WHERE rt.name = 'DHCP Pool'
+    WHERE rt.name = 'DHCP Scope'
       AND r.id NOT IN (SELECT range_id FROM dhcp_scopes)
     ORDER BY sub.network_address, r.start_ip
   `).all();
@@ -465,12 +465,72 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
 
 // ─── DHCP Options ────────────────────────────────────────
 
-// GET /api/dhcp/options — catalog + global defaults
+// GET /api/dhcp/options — catalog + global defaults + custom options
 router.get('/options', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
   const rows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults').all();
   const defaults = Object.fromEntries(rows.map(r => [r.option_code, r.value]));
-  res.json({ catalog: DHCP_OPTIONS, defaults });
+
+  // Merge built-in catalog with custom options
+  const customRows = db.prepare('SELECT * FROM dhcp_custom_options ORDER BY code').all();
+  const customOptions = customRows.map(r => ({
+    code: r.code, name: r.name, label: r.label, type: r.type,
+    dnsmasqName: String(r.code),
+    group: 'Custom', rfc: null, rfcUrl: null,
+    description: r.description || 'User-defined option.',
+    custom: true
+  }));
+
+  const catalog = [...DHCP_OPTIONS, ...customOptions];
+  res.json({ catalog, defaults, groups: DHCP_OPTION_GROUPS });
+});
+
+// POST /api/dhcp/options/custom — create a custom option (codes 128-254)
+router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
+  const db = getDb();
+  const { code, name, label, type, description } = req.body;
+
+  if (!code || !label) return res.status(400).json({ error: 'code and label are required' });
+  const codeNum = parseInt(code, 10);
+  if (isNaN(codeNum) || codeNum < 128 || codeNum > 254) {
+    return res.status(400).json({ error: 'Code must be between 128 and 254' });
+  }
+
+  const allowedTypes = ['ip', 'ip-list', 'text', 'text-list', 'number'];
+  const optType = allowedTypes.includes(type) ? type : 'text';
+
+  // Check conflict with built-in catalog
+  const builtIn = DHCP_OPTIONS.find(o => o.code === codeNum);
+  if (builtIn) return res.status(409).json({ error: `Code ${codeNum} is already a built-in option (${builtIn.label})` });
+
+  // Check conflict with existing custom option
+  const existing = db.prepare('SELECT id FROM dhcp_custom_options WHERE code = ?').get(codeNum);
+  if (existing) return res.status(409).json({ error: `Code ${codeNum} already exists as a custom option` });
+
+  const optName = name || `custom-${codeNum}`;
+  const result = db.prepare('INSERT INTO dhcp_custom_options (code, name, label, type, description) VALUES (?, ?, ?, ?, ?)')
+    .run(codeNum, optName, label, optType, description || null);
+
+  audit(req.user.id, 'create', 'dhcp_custom_option', result.lastInsertRowid, { code: codeNum, label });
+  res.status(201).json({ id: result.lastInsertRowid, code: codeNum, label, type: optType });
+});
+
+// DELETE /api/dhcp/options/custom/:code — delete a custom option
+router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => {
+  const db = getDb();
+  const codeNum = parseInt(req.params.code, 10);
+
+  const entry = db.prepare('SELECT * FROM dhcp_custom_options WHERE code = ?').get(codeNum);
+  if (!entry) return res.status(404).json({ error: 'Custom option not found' });
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM dhcp_custom_options WHERE code = ?').run(codeNum);
+    db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code = ?').run(codeNum);
+    db.prepare('DELETE FROM dhcp_scope_options WHERE option_code = ?').run(codeNum);
+  })();
+
+  audit(req.user.id, 'delete', 'dhcp_custom_option', entry.id, { code: codeNum, label: entry.label });
+  res.json({ ok: true });
 });
 
 // PUT /api/dhcp/options/defaults — set global defaults

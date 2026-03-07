@@ -46,7 +46,7 @@ Build a single-container, self-hosted IP Address Management (IPAM) system with i
 ### Functional Ranges
 
 - IP ranges within subnets with start/end IP, type, color, and description
-- 5 system range types (immutable): Network, Gateway, Broadcast, DHCP Pool, Static
+- 5 system range types (immutable): Network, Gateway, Broadcast, DHCP Scope, Static
 - Custom user-created range types with color
 - Overlap detection with optional force override
 - System ranges (Network/Broadcast) auto-created when a subnet is created or allocated; cannot be manually edited or deleted
@@ -76,7 +76,7 @@ Build a single-container, self-hosted IP Address Management (IPAM) system with i
 
 ## DHCP Management
 
-- DHCP scopes linked to ranges of type "DHCP Pool"
+- DHCP scopes linked to ranges of type "DHCP Scope"
 - Scope settings: lease time, enabled/disabled, description
 - **DHCP Options system:**
   - Static catalog of standard DHCP options (code, name, label, type, dnsmasq option name). Types: `ip`, `ip-list`, `text`, `text-list`, `number`, `select`
@@ -85,7 +85,7 @@ Build a single-container, self-hosted IP Address Management (IPAM) system with i
   - Options include: Router (3), DNS Servers (6), Hostname (12), Domain Name (15), MTU (26), NTP Servers (42), WINS/NetBIOS (44, 46), Vendor Class (60), TFTP/PXE (66, 67, 150), Domain Search (119), Classless Static Routes (121), WPAD (252)
 - MAC-based DHCP reservations with hostname and description
 - Lease tracking synced from dnsmasq.leases file (fs.watchFile)
-- Available ranges endpoint (DHCP Pool ranges without active scopes)
+- Available ranges endpoint (DHCP Scope ranges without active scopes)
 - **DNSmasq config generation:** `dhcp-range` directives with tags, `dhcp-option` with tag scoping, `dhcp-hostsfile` for reservations. Scope options merged: global defaults overridden by per-scope values.
 - Manual "Apply DHCP" button
 

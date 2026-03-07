@@ -289,6 +289,11 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
+  async function bulkSetIpStatus(subnetId, startIp, endIp, status, note) {
+    const res = await api.put(`/subnets/${subnetId}/ips/bulk-status`, { start_ip: startIp, end_ip: endIp, status, note });
+    return res.data;
+  }
+
   // Address types (cached — rarely changes)
   let _rangeTypesCache = null;
   let _rangeTypesCacheTime = 0;
@@ -352,7 +357,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     divideSubnet, configureSubnet, configureSubnetNoRefresh,
     getSubnetDetail, invalidateDetailCache, previewMerge, mergeSubnets, applyTemplate,
     getSettings, updateSetting,
-    getRanges, createRange, updateRange, deleteRange, setIpStatus,
+    getRanges, createRange, updateRange, deleteRange, setIpStatus, bulkSetIpStatus,
     getRangeTypes, createRangeType, updateRangeType, deleteRangeType,
     startScan, getScan, getScans, deleteScan,
     calculateSubnets

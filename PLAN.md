@@ -15,7 +15,7 @@
 - [x] CRUD for subnets with CIDR notation
 - [x] Functional ranges (unified with DHCP scopes)
 - [x] System setting: default gateway position (first/last)
-- [x] System-created range types (Network, Gateway, Broadcast, DHCP Pool, Static)
+- [x] System-created range types (Network, Gateway, Broadcast, DHCP Scope, Static)
 - [x] User-created range types (CRUD)
 - [x] Color-coded IP address grid/map view
 - [x] Subnet calculator/divider tool
@@ -50,13 +50,13 @@
 - [x] DNS management UI (zone list, records table, forwarders)
 
 ## Phase 4: DHCP [COMPLETE]
-- [x] DHCP scope configuration from functional ranges (dhcp_scopes linked to DHCP Pool ranges)
+- [x] DHCP scope configuration from functional ranges (dhcp_scopes linked to DHCP Scope ranges)
 - [x] DHCP options per scope (gateway, DNS servers, domain name, lease time)
 - [x] DHCP reservations (MAC → IP with hostname)
 - [x] Lease file monitoring and DB sync (fs.watchFile on dnsmasq.leases)
 - [x] DNSmasq config generation (dhcp-range/dhcp-option in conf.d, reservations in dhcp-hostsdir)
 - [x] Auto-create DHCP scope on subnet configure (when create_dhcp_scope=true)
-- [x] Available ranges endpoint (DHCP Pool ranges without existing scopes)
+- [x] Available ranges endpoint (DHCP Scope ranges without existing scopes)
 - [x] DHCP management UI (scopes, reservations, leases tabs)
 
 ## Phase 5: Network Intelligence [COMPLETE]

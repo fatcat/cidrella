@@ -632,12 +632,12 @@ router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((re
 function migrateConfigToChild(db, parentId, childId, childParsed, parentGateway, parentHasReverseDns) {
   createSystemRanges(db, childId, childParsed, parentGateway);
 
-  // Migrate DHCP pool ranges if they fit and child is >= /29
+  // Migrate DHCP scope ranges if they fit and child is >= /29
   if (childParsed.prefix <= 29) {
     const dhcpRanges = db.prepare(`
       SELECT r.* FROM ranges r
       JOIN range_types rt ON r.range_type_id = rt.id
-      WHERE r.subnet_id = ? AND rt.name = 'DHCP Pool'
+      WHERE r.subnet_id = ? AND rt.name = 'DHCP Scope'
     `).all(parentId);
 
     for (const dhcpRange of dhcpRanges) {
@@ -646,7 +646,7 @@ function migrateConfigToChild(db, parentId, childId, childParsed, parentGateway,
       const clippedStart = Math.max(rStart, childParsed.networkLong + 1);
       const clippedEnd = Math.min(rEnd, childParsed.broadcastLong - 1);
       if (clippedStart <= clippedEnd) {
-        const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Pool' AND is_system = 1").get();
+        const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
         if (dhcpType) {
           db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
             childId, dhcpType.id, longToIp(clippedStart), longToIp(clippedEnd), dhcpRange.description
@@ -969,9 +969,9 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
 
     // Create DHCP scope if requested and subnet is >= /29
     if (create_dhcp_scope && parsed.prefix <= 29) {
-      const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Pool' AND is_system = 1").get();
+      const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
       if (dhcpType) {
-        // DHCP pool = all usable IPs minus gateway
+        // DHCP scope = all usable IPs minus gateway
         const gwLong = ipToLong(gw);
         let poolStart = parsed.networkLong + 1;
         let poolEnd = parsed.broadcastLong - 1;
@@ -984,7 +984,7 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
 
         if (poolStart <= poolEnd) {
           const rangeResult = db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
-            subnet.id, dhcpType.id, longToIp(poolStart), longToIp(poolEnd), 'DHCP pool'
+            subnet.id, dhcpType.id, longToIp(poolStart), longToIp(poolEnd), 'DHCP scope'
           );
 
           // Auto-create DHCP scope with defaults
@@ -1210,6 +1210,46 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   }
 
   res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });
+}));
+
+// PUT /api/subnets/:id/ips/bulk-status — reserve or unreserve a range of IPs
+router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((req, res) => {
+  const db = getDb();
+  const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+  if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+
+  const { start_ip, end_ip, status, note } = req.body;
+  if (!start_ip || !end_ip) return res.status(400).json({ error: 'start_ip and end_ip are required' });
+  if (!['available', 'reserved', 'assigned'].includes(status)) {
+    return res.status(400).json({ error: 'Invalid status' });
+  }
+
+  const startLong = ipToLong(start_ip);
+  const endLong = ipToLong(end_ip);
+  if (startLong > endLong) return res.status(400).json({ error: 'start_ip must be <= end_ip' });
+  if (endLong - startLong > 1024) return res.status(400).json({ error: 'Range too large (max 1024 IPs)' });
+
+  const reservationNote = status === 'reserved' ? (note || null) : null;
+  const updated = [];
+
+  const upsert = db.transaction(() => {
+    for (let long = startLong; long <= endLong; long++) {
+      const ip = longToIp(long);
+      const existing = db.prepare('SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, ip);
+      if (existing) {
+        db.prepare("UPDATE ip_addresses SET status = ?, reservation_note = ?, updated_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?")
+          .run(status, reservationNote, subnet.id, ip);
+      } else {
+        db.prepare('INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, ?, ?)')
+          .run(subnet.id, ip, status, reservationNote);
+      }
+      updated.push(ip);
+    }
+  });
+  upsert();
+
+  audit(req.user.id, 'ip_status_changed', 'ip_address', subnet.id, { start_ip, end_ip, count: updated.length, status, note: reservationNote });
+  res.json({ count: updated.length, status, reservation_note: reservationNote });
 }));
 
 // PUT /api/subnets/:id/ips/:ip/status — reserve or unreserve an IP

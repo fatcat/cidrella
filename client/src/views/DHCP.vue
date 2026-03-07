@@ -94,15 +94,24 @@
       <!-- Option Defaults Tab -->
       <TabPanel header="Option Defaults">
         <div class="section-header">
+          <Button label="Add Custom Option" icon="pi pi-plus" size="small" severity="secondary"
+                  @click="customOptionForm = { code: null, label: '', name: '', type: 'text', description: '' }; showCustomOptionDialog = true" />
           <Button label="Save Defaults" icon="pi pi-save" size="small" @click="saveDefaults" :loading="savingDefaults" />
         </div>
-        <DataTable :value="optionDefaultRows" stripedRows size="small" :loading="loadingOptions"
+        <DataTable :value="optionDefaultRows" size="small" :loading="loadingOptions"
                    emptyMessage="No DHCP options available."
-                   :paginator="optionDefaultRows.length > 256" :rows="256"
-                   :rowsPerPageOptions="[64, 128, 256, 512]"
+                   rowGroupMode="subheader" groupRowsBy="_group"
                    scrollable scrollHeight="flex">
+          <template #groupheader="{ data }">
+            <strong>{{ data._group }}</strong>
+          </template>
           <Column field="code" header="Code" style="width: 4rem" />
-          <Column field="label" header="Option" style="min-width: 12rem" />
+          <Column field="label" header="Option" style="min-width: 12rem">
+            <template #body="{ data }">
+              {{ data.label }}
+              <i class="pi pi-question-circle option-help-icon" @click="showOptionHelp($event, data)" />
+            </template>
+          </Column>
           <Column field="type" header="Type" style="width: 6rem">
             <template #body="{ data }">
               <span class="text-sm muted">{{ data.type }}</span>
@@ -120,8 +129,12 @@
           </Column>
           <Column header="" style="width: 3rem">
             <template #body="{ data }">
-              <Button icon="pi pi-times" severity="secondary" text rounded size="small"
-                      @click="defaultValues[data.code] = null" title="Clear" />
+              <div class="action-buttons">
+                <Button icon="pi pi-times" severity="secondary" text rounded size="small"
+                        @click="defaultValues[data.code] = null" title="Clear" />
+                <Button v-if="data.custom" icon="pi pi-trash" severity="danger" text rounded size="small"
+                        @click="deleteCustomOption(data.code)" title="Delete custom option" />
+              </div>
             </template>
           </Column>
         </DataTable>
@@ -158,15 +171,15 @@
       </TabPanel>
     </TabView>
 
-    <!-- Scope Dialog (basic fields) -->
+    <!-- Scope Dialog -->
     <Dialog v-model:visible="showScopeDialog" :header="editingScope ? 'Edit Scope' : 'Add Scope'"
-            modal :style="{ width: '28rem' }">
+            modal :style="{ width: '36rem' }">
       <div class="form-grid">
         <div class="field" v-if="!editingScope">
-          <label>DHCP Pool Range *</label>
+          <label>DHCP Scope Range *</label>
           <Select v-model="scopeForm.range_id" :options="availableRanges" optionLabel="_label" optionValue="id"
-                  class="w-full" placeholder="Select a DHCP Pool range" :loading="loadingRanges" />
-          <small class="field-help">Only DHCP Pool ranges without existing scopes are shown</small>
+                  class="w-full" placeholder="Select a DHCP Scope range" :loading="loadingRanges" />
+          <small class="field-help">Only DHCP Scope ranges without existing scopes are shown</small>
         </div>
         <div class="field">
           <label>Lease Time</label>
@@ -181,62 +194,50 @@
           <label>Enabled</label>
           <ToggleSwitch v-model="scopeForm.enabled" />
         </div>
-        <div class="options-summary" v-if="scopeForm.selectedOptions.length > 0">
-          <label>Options ({{ scopeForm.selectedOptions.length }})</label>
-          <div class="option-tags">
-            <span v-for="code in scopeForm.selectedOptions" :key="code" class="option-tag">
-              {{ optionLabel(code) }}
-            </span>
-          </div>
+      </div>
+
+      <!-- Inline Options Section -->
+      <div class="scope-options-section">
+        <div class="scope-options-header" @click="scopeOptionsExpanded = !scopeOptionsExpanded">
+          <i class="pi" :class="scopeOptionsExpanded ? 'pi-chevron-down' : 'pi-chevron-right'" style="font-size: 0.7rem"></i>
+          <span class="scope-options-title">DHCP Options</span>
+          <span class="scope-options-count" v-if="scopeForm.selectedOptions.length > 0">{{ scopeForm.selectedOptions.length }} selected</span>
+        </div>
+        <div v-if="scopeOptionsExpanded" class="scope-options-list">
+          <template v-for="group in optionGroups" :key="group.name">
+            <div class="scope-option-group-header">{{ group.label }}</div>
+            <div v-for="opt in group.options" :key="opt.code" class="scope-option-row">
+              <div class="scope-option-check">
+                <input type="checkbox"
+                       :checked="scopeForm.selectedOptions.includes(opt.code)"
+                       @change="toggleScopeOption(opt.code, $event.target.checked)" />
+              </div>
+              <div class="scope-option-info">
+                <span class="scope-option-label">{{ opt.label }}</span>
+                <span class="scope-option-code">({{ opt.code }})</span>
+                <i class="pi pi-question-circle scope-option-help" @click="showOptionHelp($event, opt)" />
+              </div>
+              <div class="scope-option-value">
+                <template v-if="scopeForm.selectedOptions.includes(opt.code)">
+                  <Select v-if="opt.type === 'select'" v-model="scopeForm.optionValues[opt.code]"
+                          :options="opt.choices" size="small" :placeholder="defaultValues[opt.code] || '—'" showClear />
+                  <InputNumber v-else-if="opt.type === 'number'" v-model="scopeForm.optionValues[opt.code]"
+                               size="small" :useGrouping="false" :placeholder="defaultValues[opt.code] || '0'" />
+                  <InputText v-else v-model="scopeForm.optionValues[opt.code]" size="small"
+                             :placeholder="defaultValues[opt.code] || placeholderForType(opt.type)" />
+                </template>
+                <span v-else-if="defaultValues[opt.code]" class="scope-option-default">
+                  default: {{ defaultValues[opt.code] }}
+                </span>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
+
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showScopeDialog = false" />
-        <Button label="Options..." icon="pi pi-list" severity="secondary" @click="openOptionSelector" />
         <Button :label="editingScope ? 'Save' : 'Create'" @click="saveScope" :loading="savingScope" />
-      </template>
-    </Dialog>
-
-    <!-- Option Selector Dialog (Step 1: checkboxes) -->
-    <Dialog v-model:visible="showOptionSelector" header="Select DHCP Options" modal :style="{ width: '36rem' }">
-      <DataTable :value="optionCatalog" v-model:selection="selectedOptionRows" dataKey="code"
-                 stripedRows size="small" scrollable scrollHeight="20rem">
-        <Column selectionMode="multiple" headerStyle="width: 3rem" />
-        <Column field="code" header="Code" style="width: 4rem" />
-        <Column field="label" header="Option" />
-        <Column field="type" header="Type" style="width: 6rem">
-          <template #body="{ data }">
-            <span class="text-sm muted">{{ data.type }}</span>
-          </template>
-        </Column>
-        <Column header="Default" style="width: 8rem">
-          <template #body="{ data }">
-            <span class="text-sm muted">{{ defaultValues[data.code] || '—' }}</span>
-          </template>
-        </Column>
-      </DataTable>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showOptionSelector = false" />
-        <Button label="Next →" @click="openOptionValues" :disabled="selectedOptionRows.length === 0" />
-      </template>
-    </Dialog>
-
-    <!-- Option Values Dialog (Step 2: values) -->
-    <Dialog v-model:visible="showOptionValues" header="Configure Option Values" modal :style="{ width: '32rem' }">
-      <div class="form-grid">
-        <div class="field" v-for="opt in selectedOptionRows" :key="opt.code">
-          <label>{{ opt.label }} <span class="text-sm muted">({{ opt.code }})</span></label>
-          <Select v-if="opt.type === 'select'" v-model="optionValues[opt.code]"
-                  :options="opt.choices" class="w-full" size="small" placeholder="—" />
-          <InputNumber v-else-if="opt.type === 'number'" v-model="optionValues[opt.code]"
-                       class="w-full" size="small" :useGrouping="false" />
-          <InputText v-else v-model="optionValues[opt.code]" class="w-full" size="small"
-                     :placeholder="opt.code === 3 ? 'Defaults to network\'s gateway' : placeholderForType(opt.type)" />
-        </div>
-      </div>
-      <template #footer>
-        <Button label="← Back" severity="secondary" @click="showOptionValues = false; showOptionSelector = true" />
-        <Button label="Done" @click="applyOptionSelections" />
       </template>
     </Dialog>
 
@@ -279,7 +280,7 @@
     <!-- Delete Scope Dialog -->
     <Dialog v-model:visible="showDeleteScopeDialog" header="Delete Scope" modal :style="{ width: '24rem' }">
       <p>Delete DHCP scope for <strong>{{ deletingScope?.subnet_cidr }}</strong>?</p>
-      <p class="text-sm muted">The underlying DHCP Pool range will be kept.</p>
+      <p class="text-sm muted">The underlying DHCP Scope range will be kept.</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteScopeDialog = false" />
         <Button label="Delete" severity="danger" @click="doDeleteScope" :loading="savingScope" />
@@ -292,6 +293,44 @@
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteReservationDialog = false" />
         <Button label="Delete" severity="danger" @click="doDeleteReservation" :loading="savingReservation" />
+      </template>
+    </Dialog>
+
+    <!-- Help Popover (shared) -->
+    <Popover ref="helpPopoverRef">
+      <div class="option-help-popover">
+        <strong>{{ helpPopoverData.label }}</strong>
+        <p>{{ helpPopoverData.description }}</p>
+        <a v-if="helpPopoverData.rfcUrl" :href="helpPopoverData.rfcUrl" target="_blank" rel="noopener" class="rfc-link">
+          {{ helpPopoverData.rfc }}
+        </a>
+      </div>
+    </Popover>
+
+    <!-- Custom Option Dialog -->
+    <Dialog v-model:visible="showCustomOptionDialog" header="Add Custom Option" modal :style="{ width: '26rem' }">
+      <div class="form-grid">
+        <div class="field">
+          <label>Option Code (128–254) *</label>
+          <InputNumber v-model="customOptionForm.code" class="w-full" :min="128" :max="254" :useGrouping="false" placeholder="e.g. 200" />
+        </div>
+        <div class="field">
+          <label>Label *</label>
+          <InputText v-model="customOptionForm.label" class="w-full" placeholder="e.g. Vendor Config URL" />
+        </div>
+        <div class="field">
+          <label>Type</label>
+          <Select v-model="customOptionForm.type" :options="['ip', 'ip-list', 'text', 'text-list', 'number']" class="w-full" />
+        </div>
+        <div class="field">
+          <label>Description</label>
+          <InputText v-model="customOptionForm.description" class="w-full" placeholder="Brief explanation" />
+        </div>
+      </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="showCustomOptionDialog = false" />
+        <Button label="Create" @click="createCustomOption" :loading="savingCustomOption"
+                :disabled="!customOptionForm.code || !customOptionForm.label" />
       </template>
     </Dialog>
 
@@ -312,6 +351,7 @@ import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import Select from 'primevue/select';
 import ToggleSwitch from 'primevue/toggleswitch';
+import Popover from 'primevue/popover';
 import Toast from 'primevue/toast';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
@@ -350,12 +390,84 @@ const optionCatalog = ref([]);
 const defaultValues = reactive({});
 const loadingOptions = ref(false);
 const savingDefaults = ref(false);
-const showOptionSelector = ref(false);
-const showOptionValues = ref(false);
-const selectedOptionRows = ref([]);
-const optionValues = reactive({});
+const scopeOptionsExpanded = ref(false);
 
-const optionDefaultRows = computed(() => optionCatalog.value);
+const optionGroupOrder = ref([]);
+
+const optionGroups = computed(() => {
+  const order = optionGroupOrder.value.map(g => g.name);
+  const groups = {};
+  for (const opt of optionCatalog.value) {
+    const g = opt.group || 'Common';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(opt);
+  }
+  const result = [];
+  for (const name of order) {
+    if (groups[name]?.length) {
+      const meta = optionGroupOrder.value.find(g => g.name === name);
+      result.push({ name, label: meta?.label || name, options: groups[name] });
+    }
+  }
+  // Any group not in the order
+  for (const [name, opts] of Object.entries(groups)) {
+    if (!order.includes(name) && opts.length) {
+      result.push({ name, label: name, options: opts });
+    }
+  }
+  return result;
+});
+
+const optionDefaultRows = computed(() => {
+  const rows = [];
+  for (const group of optionGroups.value) {
+    for (const opt of group.options) {
+      rows.push({ ...opt, _group: group.label });
+    }
+  }
+  return rows;
+});
+
+// Help popover
+const helpPopoverRef = ref(null);
+const helpPopoverData = ref({ label: '', description: '', rfc: '', rfcUrl: '' });
+
+function showOptionHelp(event, opt) {
+  helpPopoverData.value = { label: opt.label, description: opt.description || '', rfc: opt.rfc || '', rfcUrl: opt.rfcUrl || '' };
+  helpPopoverRef.value.toggle(event);
+}
+
+// Custom option dialog
+const showCustomOptionDialog = ref(false);
+const savingCustomOption = ref(false);
+const customOptionForm = ref({ code: null, label: '', name: '', type: 'text', description: '' });
+
+async function createCustomOption() {
+  savingCustomOption.value = true;
+  try {
+    const f = customOptionForm.value;
+    await api.post('/dhcp/options/custom', {
+      code: f.code, label: f.label, name: f.name || `custom-${f.code}`, type: f.type, description: f.description
+    });
+    showCustomOptionDialog.value = false;
+    toast.add({ severity: 'success', summary: 'Custom option created', life: 3000 });
+    await loadOptions();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    savingCustomOption.value = false;
+  }
+}
+
+async function deleteCustomOption(code) {
+  try {
+    await api.delete(`/dhcp/options/custom/${code}`);
+    toast.add({ severity: 'success', summary: 'Custom option deleted', life: 3000 });
+    await loadOptions();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  }
+}
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -370,6 +482,7 @@ async function loadOptions() {
   try {
     const res = await api.get('/dhcp/options');
     optionCatalog.value = res.data.catalog;
+    if (res.data.groups) optionGroupOrder.value = res.data.groups;
     // Populate defaultValues reactive object
     Object.keys(defaultValues).forEach(k => delete defaultValues[k]);
     for (const [code, value] of Object.entries(res.data.defaults || {})) {
@@ -417,39 +530,20 @@ function placeholderForType(type) {
   }
 }
 
-function openOptionSelector() {
-  // Pre-select options that are already chosen for this scope
-  selectedOptionRows.value = optionCatalog.value.filter(o =>
-    scopeForm.value.selectedOptions.includes(o.code)
-  );
-  // Pre-populate optionValues from scopeForm
-  Object.keys(optionValues).forEach(k => delete optionValues[k]);
-  Object.assign(optionValues, scopeForm.value.optionValues);
-  showOptionSelector.value = true;
-}
-
-function openOptionValues() {
-  // Pre-fill values from defaults for newly selected options
-  for (const opt of selectedOptionRows.value) {
-    if (optionValues[opt.code] == null || optionValues[opt.code] === '') {
-      const def = defaultValues[opt.code];
-      if (def != null) optionValues[opt.code] = def;
+function toggleScopeOption(code, checked) {
+  if (checked) {
+    if (!scopeForm.value.selectedOptions.includes(code)) {
+      scopeForm.value.selectedOptions.push(code);
     }
-  }
-  showOptionSelector.value = false;
-  showOptionValues.value = true;
-}
-
-function applyOptionSelections() {
-  scopeForm.value.selectedOptions = selectedOptionRows.value.map(o => o.code);
-  scopeForm.value.optionValues = {};
-  for (const opt of selectedOptionRows.value) {
-    const val = optionValues[opt.code];
-    if (val != null && val !== '') {
-      scopeForm.value.optionValues[opt.code] = String(val);
+    // Pre-fill from default if no value set
+    if (scopeForm.value.optionValues[code] == null || scopeForm.value.optionValues[code] === '') {
+      const def = defaultValues[code];
+      if (def != null) scopeForm.value.optionValues[code] = def;
     }
+  } else {
+    scopeForm.value.selectedOptions = scopeForm.value.selectedOptions.filter(c => c !== code);
+    delete scopeForm.value.optionValues[code];
   }
-  showOptionValues.value = false;
 }
 
 // When creating a new scope and user picks a range, auto-populate gateway (option 3)
@@ -486,7 +580,15 @@ async function openScopeDialog(scope = null) {
       optionValues: optVals
     };
   } else {
-    scopeForm.value = { range_id: null, lease_time: '24h', description: '', enabled: true, selectedOptions: [], optionValues: {} };
+    // Auto-select all options that have defaults
+    const autoSelected = [];
+    const autoValues = {};
+    for (const code of Object.keys(defaultValues)) {
+      const c = Number(code);
+      autoSelected.push(c);
+      autoValues[c] = defaultValues[code];
+    }
+    scopeForm.value = { range_id: null, lease_time: '24h', description: '', enabled: true, selectedOptions: autoSelected, optionValues: autoValues };
     loadingRanges.value = true;
     try {
       const ranges = await store.fetchAvailableRanges();
@@ -498,6 +600,7 @@ async function openScopeDialog(scope = null) {
       loadingRanges.value = false;
     }
   }
+  scopeOptionsExpanded.value = scopeForm.value.selectedOptions.length > 0;
   showScopeDialog.value = true;
 }
 
@@ -710,6 +813,7 @@ defineExpose({ openScopeDialog, applyConfig });
 .section-header {
   display: flex;
   justify-content: flex-end;
+  gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
 
@@ -765,5 +869,134 @@ code {
   border-radius: 3px;
   font-size: 0.7rem;
   cursor: default;
+}
+
+/* Scope dialog inline options */
+.scope-options-section {
+  margin-top: 1rem;
+  border: 1px solid var(--p-surface-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.scope-options-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  background: var(--p-surface-ground);
+  transition: background 0.1s;
+}
+.scope-options-header:hover {
+  background: color-mix(in srgb, var(--p-primary-color) 5%, var(--p-surface-ground));
+}
+.scope-options-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.scope-options-count {
+  font-size: 0.75rem;
+  color: var(--p-primary-color);
+  margin-left: auto;
+}
+.scope-options-list {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+.scope-option-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
+  font-size: 0.8rem;
+}
+.scope-option-row:first-child {
+  border-top: 1px solid var(--p-surface-border);
+}
+.scope-option-check {
+  flex-shrink: 0;
+}
+.scope-option-info {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 10rem;
+  flex-shrink: 0;
+}
+.scope-option-label {
+  font-weight: 500;
+}
+.scope-option-code {
+  font-size: 0.7rem;
+  color: var(--p-text-muted-color);
+}
+.scope-option-help {
+  font-size: 0.7rem;
+  color: var(--p-text-muted-color);
+  cursor: pointer;
+  margin-left: 0.15rem;
+}
+.scope-option-help:hover {
+  color: var(--p-primary-color);
+}
+.scope-option-group-header {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--p-text-muted-color);
+  background: var(--p-surface-ground);
+  border-top: 1px solid var(--p-surface-border);
+}
+.scope-option-value {
+  flex: 1;
+  min-width: 0;
+}
+.scope-option-value :deep(.p-inputtext),
+.scope-option-value :deep(.p-select),
+.scope-option-value :deep(.p-inputnumber) {
+  width: 100%;
+  font-size: 0.8rem;
+}
+.scope-option-default {
+  font-size: 0.75rem;
+  color: var(--p-text-muted-color);
+  font-style: italic;
+}
+
+/* Help popover */
+.option-help-popover {
+  max-width: 20rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.option-help-popover strong {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+.option-help-popover p {
+  margin: 0 0 0.4rem 0;
+  color: var(--p-text-muted-color);
+}
+.rfc-link {
+  font-size: 0.75rem;
+  color: var(--p-primary-color);
+  text-decoration: none;
+}
+.rfc-link:hover { text-decoration: underline; }
+
+/* Defaults table help icon */
+.option-help-icon {
+  font-size: 0.7rem;
+  color: var(--p-text-muted-color);
+  cursor: pointer;
+  margin-left: 0.3rem;
+  vertical-align: middle;
+}
+.option-help-icon:hover {
+  color: var(--p-primary-color);
 }
 </style>

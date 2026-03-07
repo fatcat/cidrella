@@ -218,7 +218,7 @@ router.post('/reset-database', async (req, res) => {
       ('Network',   '#6b7280', 1, 'Network address (not assignable)'),
       ('Gateway',   '#f59e0b', 1, 'Default gateway address'),
       ('Broadcast', '#6b7280', 1, 'Broadcast address (not assignable)'),
-      ('DHCP Pool', '#3b82f6', 1, 'Dynamic DHCP allocation pool'),
+      ('DHCP Scope', '#3b82f6', 1, 'Dynamic DHCP allocation scope'),
       ('Static',    '#10b981', 1, 'Statically assigned addresses')
     `).run();
 

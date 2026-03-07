@@ -13,7 +13,7 @@ A lightweight IP Address Management system with integrated DNS and DHCP via DNSm
 - **Config migration** — Dividing an allocated subnet migrates gateway, DHCP scopes, and ranges to the inheriting child
 - **Reconsolidation** — Deleting subnets buddy-merges adjacent unallocated blocks back into larger CIDRs
 - **Merge subnets** — Ctrl-click to multi-select siblings and merge back into a larger CIDR with gateway preservation
-- **Functional ranges** — Define IP ranges (DHCP pools, static, custom) with overlap detection and color coding
+- **Functional ranges** — Define IP ranges (DHCP scopes, static, custom) with overlap detection and color coding
 - **IP address grid** — Color-coded visual map of all IPs in an allocated subnet with drag-select, shift-click range select, and context menu
 - **RFC1918 enforcement** — Supernets validated against reserved range boundaries
 - **Name templates** — Auto-generated subnet names from a configurable template (e.g., `MyCo-%1.%2.%3.%4/%bitmask`)

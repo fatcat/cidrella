@@ -35,7 +35,7 @@
       <span class="info-bar-sep"></span>
       <span class="info-bar-pair"><span class="info-bar-label">Prefix</span> <span class="info-bar-val">/{{ subnet.prefix_length }}</span></span>
       <span style="flex:1"></span>
-      <Button label="Add DHCP Pool" size="small" text @click="openAddRange" />
+      <Button label="Add DHCP Scope" size="small" text @click="openAddRange" />
     </div>
 
     <!-- Subnet Info Cards (non-compact) -->
@@ -224,10 +224,10 @@
     <ContextMenu ref="tableContextMenuRef" :model="tableContextMenuItems" />
 
     <!-- Range Create/Edit Dialog -->
-    <Dialog v-model:visible="showRangeDialog" :header="editingRange ? 'Edit Range' : 'Add DHCP Pool'"
+    <Dialog v-model:visible="showRangeDialog" :header="editingRange ? 'Edit Range' : 'Add DHCP Scope'"
             modal :style="{ width: '28rem' }">
       <div class="form-grid">
-        <div class="field">
+        <div class="field" v-if="editingRange">
           <label>Range Type *</label>
           <Select v-model="rangeForm.range_type_id" :options="editableRangeTypes"
                     optionLabel="name" optionValue="id" placeholder="Select type" class="w-full" />
@@ -284,7 +284,7 @@
     </Dialog>
 
     <!-- DHCP Scope Auto-Create Dialog -->
-    <Dialog v-model:visible="showDhcpScopeDialog" header="Configure DHCP Scope" modal :style="{ width: '28rem' }">
+    <Dialog v-model:visible="showDhcpScopeDialog" header="Configure DHCP Scope" modal :style="{ width: '36rem' }">
       <div class="form-grid">
         <div class="field">
           <label>Lease Time</label>
@@ -295,79 +295,88 @@
           <label>Description</label>
           <InputText v-model="dhcpScopeForm.description" class="w-full" />
         </div>
-        <div class="options-summary" v-if="dhcpScopeForm.selectedOptions.length > 0">
-          <label>Options ({{ dhcpScopeForm.selectedOptions.length }})</label>
-          <div class="option-tags">
-            <span v-for="code in dhcpScopeForm.selectedOptions" :key="code" class="option-tag">
-              {{ scopeOptionLabel(code) }}
-            </span>
-          </div>
+      </div>
+
+      <!-- Inline Options Section -->
+      <div class="scope-options-section">
+        <div class="scope-options-header" @click="scopeOptionsExpanded = !scopeOptionsExpanded">
+          <i class="pi" :class="scopeOptionsExpanded ? 'pi-chevron-down' : 'pi-chevron-right'" style="font-size: 0.7rem"></i>
+          <span class="scope-options-title">DHCP Options</span>
+          <span class="scope-options-count" v-if="dhcpScopeForm.selectedOptions.length > 0">{{ dhcpScopeForm.selectedOptions.length }} selected</span>
+        </div>
+        <div v-if="scopeOptionsExpanded" class="scope-options-list">
+          <template v-for="group in scopeOptionGroups" :key="group.name">
+            <div class="scope-option-group-header">{{ group.label }}</div>
+            <div v-for="opt in group.options" :key="opt.code" class="scope-option-row">
+              <div class="scope-option-check">
+                <input type="checkbox"
+                       :checked="dhcpScopeForm.selectedOptions.includes(opt.code)"
+                       @change="toggleScopeOption(opt.code, $event.target.checked)" />
+              </div>
+              <div class="scope-option-info">
+                <span class="scope-option-label">{{ opt.label }}</span>
+                <span class="scope-option-code">({{ opt.code }})</span>
+                <i class="pi pi-question-circle scope-option-help" @click="showOptionHelp($event, opt)" />
+              </div>
+              <div class="scope-option-value">
+                <template v-if="dhcpScopeForm.selectedOptions.includes(opt.code)">
+                  <Select v-if="opt.type === 'select'" v-model="dhcpScopeForm.optionValues[opt.code]"
+                          :options="opt.choices" size="small" :placeholder="scopeOptionDefaults[opt.code] || '—'" showClear />
+                  <InputNumber v-else-if="opt.type === 'number'" v-model="dhcpScopeForm.optionValues[opt.code]"
+                               size="small" :useGrouping="false" :placeholder="scopeOptionDefaults[opt.code] || '0'" />
+                  <InputText v-else v-model="dhcpScopeForm.optionValues[opt.code]" size="small"
+                             :placeholder="scopeOptionDefaults[opt.code] || scopePlaceholderForType(opt.type)" />
+                </template>
+                <span v-else-if="scopeOptionDefaults[opt.code]" class="scope-option-default">
+                  default: {{ scopeOptionDefaults[opt.code] }}
+                </span>
+              </div>
+            </div>
+          </template>
         </div>
       </div>
+
       <template #footer>
         <Button label="Skip" severity="secondary" @click="showDhcpScopeDialog = false" />
-        <Button label="Options..." icon="pi pi-list" severity="secondary" @click="openScopeOptionSelector" />
         <Button label="Create Scope" @click="saveDhcpScope" :loading="savingDhcpScope" />
       </template>
     </Dialog>
 
-    <!-- Scope Option Selector Dialog -->
-    <Dialog v-model:visible="showScopeOptionSelector" header="Select DHCP Options" modal :style="{ width: '36rem' }">
-      <DataTable :value="scopeOptionCatalog" v-model:selection="scopeSelectedOptionRows" dataKey="code"
-                 stripedRows size="small" scrollable scrollHeight="20rem">
-        <Column selectionMode="multiple" headerStyle="width: 3rem" />
-        <Column field="code" header="Code" style="width: 4rem" />
-        <Column field="label" header="Option" />
-        <Column field="type" header="Type" style="width: 6rem">
-          <template #body="{ data }">
-            <span class="text-sm muted">{{ data.type }}</span>
-          </template>
-        </Column>
-        <Column header="Default" style="width: 8rem">
-          <template #body="{ data }">
-            <span class="text-sm muted">{{ scopeOptionDefaults[data.code] || '—' }}</span>
-          </template>
-        </Column>
-      </DataTable>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showScopeOptionSelector = false" />
-        <Button label="Next →" @click="openScopeOptionValues" :disabled="scopeSelectedOptionRows.length === 0" />
-      </template>
-    </Dialog>
-
-    <!-- Scope Option Values Dialog -->
-    <Dialog v-model:visible="showScopeOptionValues" header="Configure Option Values" modal :style="{ width: '32rem' }">
-      <div class="form-grid">
-        <div class="field" v-for="opt in scopeSelectedOptionRows" :key="opt.code">
-          <label>{{ opt.label }} <span class="text-sm muted">({{ opt.code }})</span></label>
-          <Select v-if="opt.type === 'select'" v-model="scopeOptionValues[opt.code]"
-                  :options="opt.choices" class="w-full" size="small" placeholder="—" />
-          <InputNumber v-else-if="opt.type === 'number'" v-model="scopeOptionValues[opt.code]"
-                       class="w-full" size="small" :useGrouping="false" />
-          <InputText v-else v-model="scopeOptionValues[opt.code]" class="w-full" size="small"
-                     :placeholder="opt.code === 3 ? 'Defaults to network\'s gateway' : scopePlaceholderForType(opt.type)" />
-        </div>
-      </div>
-      <template #footer>
-        <Button label="← Back" severity="secondary" @click="showScopeOptionValues = false; showScopeOptionSelector = true" />
-        <Button label="Done" @click="applyScopeOptionSelections" />
-      </template>
-    </Dialog>
-
     <!-- Reserve IP Note Dialog -->
-    <Dialog v-model:visible="showReserveDialog" header="Reserve IP Address" modal :style="{ width: '24rem' }">
+    <Dialog v-model:visible="showReserveDialog" header="Reserve IP Address(es)" modal :style="{ width: '26rem' }">
       <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
-        Reserving <strong>{{ reserveTarget }}</strong> will prevent it from being used for DHCP or static assignment.
+        Reserved IPs cannot be used for DHCP or static assignment.
       </p>
-      <div class="field">
-        <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Reason (max 16 characters)</label>
-        <InputText v-model="reserveNote" class="w-full" :maxlength="16" placeholder="e.g. MGMT, PRINTER" @keyup.enter="confirmReserve" />
+      <div class="form-grid">
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Start IP</label>
+          <InputText v-model="reserveStartIp" class="w-full" />
+        </div>
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">End IP</label>
+          <InputText v-model="reserveEndIp" class="w-full" />
+        </div>
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Reason (max 16 characters)</label>
+          <InputText v-model="reserveNote" class="w-full" :maxlength="16" placeholder="e.g. MGMT, PRINTER" @keyup.enter="confirmReserve" />
+        </div>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
         <Button label="Reserve" icon="pi pi-lock" @click="confirmReserve" :disabled="!reserveNote.trim()" />
       </template>
     </Dialog>
+
+    <!-- Help Popover (shared) -->
+    <Popover ref="helpPopoverRef">
+      <div class="option-help-popover">
+        <strong>{{ helpPopoverData.label }}</strong>
+        <p>{{ helpPopoverData.description }}</p>
+        <a v-if="helpPopoverData.rfcUrl" :href="helpPopoverData.rfcUrl" target="_blank" rel="noopener" class="rfc-link">
+          {{ helpPopoverData.rfc }}
+        </a>
+      </div>
+    </Popover>
 
     <Toast />
   </div>
@@ -382,6 +391,7 @@ import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
+import Popover from 'primevue/popover';
 import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import Select from 'primevue/select';
@@ -412,7 +422,8 @@ const saving = ref(false);
 
 // Reserve IP dialog
 const showReserveDialog = ref(false);
-const reserveTarget = ref('');
+const reserveStartIp = ref('');
+const reserveEndIp = ref('');
 const reserveNote = ref('');
 
 // Server-side pagination state
@@ -446,13 +457,43 @@ const dhcpScopeForm = ref({
   selectedOptions: [], optionValues: {}
 });
 
-// Scope option selector state
+// Scope option state
 const scopeOptionCatalog = ref([]);
 const scopeOptionDefaults = reactive({});
-const showScopeOptionSelector = ref(false);
-const showScopeOptionValues = ref(false);
-const scopeSelectedOptionRows = ref([]);
-const scopeOptionValues = reactive({});
+const scopeOptionsExpanded = ref(false);
+const scopeOptionGroupOrder = ref([]);
+
+const scopeOptionGroups = computed(() => {
+  const order = scopeOptionGroupOrder.value.map(g => g.name);
+  const groups = {};
+  for (const opt of scopeOptionCatalog.value) {
+    const g = opt.group || 'Common';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(opt);
+  }
+  const result = [];
+  for (const name of order) {
+    if (groups[name]?.length) {
+      const meta = scopeOptionGroupOrder.value.find(g => g.name === name);
+      result.push({ name, label: meta?.label || name, options: groups[name] });
+    }
+  }
+  for (const [name, opts] of Object.entries(groups)) {
+    if (!order.includes(name) && opts.length) {
+      result.push({ name, label: name, options: opts });
+    }
+  }
+  return result;
+});
+
+// Help popover
+const helpPopoverRef = ref(null);
+const helpPopoverData = ref({ label: '', description: '', rfc: '', rfcUrl: '' });
+
+function showOptionHelp(event, opt) {
+  helpPopoverData.value = { label: opt.label, description: opt.description || '', rfc: opt.rfc || '', rfcUrl: opt.rfcUrl || '' };
+  helpPopoverRef.value.toggle(event);
+}
 
 // Scan state
 const showScanConfirm = ref(false);
@@ -691,7 +732,7 @@ function buildContextMenuItems(selectedIps) {
   if (selectedIps.length === 1) {
     const ip = firstIp;
     const range = ip.rangeId ? ranges.value.find(r => r.id === ip.rangeId) : null;
-    const isDhcpPool = range && range.range_type_name === 'DHCP Pool';
+    const isDhcpScope = range && range.range_type_name === 'DHCP Scope';
     const isGateway = range && range.range_type_name === 'Gateway';
     const ipStatus = ip.status || 'available';
 
@@ -701,24 +742,24 @@ function buildContextMenuItems(selectedIps) {
       items.push({ label: 'Delete Gateway', icon: 'pi pi-trash', command: () => confirmDeleteRange(range) });
       items.push({ separator: true });
       items.push({
-        label: 'Create DHCP Pool',
+        label: 'Create DHCP Scope',
         icon: 'pi pi-plus',
         command: () => openRangeFromSelection(ip.address, ip.address)
       });
-    } else if (isDhcpPool) {
-      // IP inside a DHCP Pool
+    } else if (isDhcpScope) {
+      // IP inside a DHCP Scope
       items.push({
-        label: `Edit Pool ${range.start_ip} – ${range.end_ip}`,
+        label: `Edit Scope ${range.start_ip} – ${range.end_ip}`,
         icon: 'pi pi-pencil',
         command: () => editRange(range)
       });
       items.push({
-        label: 'Remove this IP from Pool',
+        label: 'Remove this IP from Scope',
         icon: 'pi pi-minus',
         command: () => removeIpFromPool(range, ip.address)
       });
       items.push({
-        label: `Delete Pool ${range.start_ip} – ${range.end_ip}`,
+        label: `Delete Scope ${range.start_ip} – ${range.end_ip}`,
         icon: 'pi pi-trash',
         command: () => confirmDeleteRange(range)
       });
@@ -726,14 +767,14 @@ function buildContextMenuItems(selectedIps) {
       // Other editable range
       items.push({ label: `Edit ${range.range_type_name} Range`, icon: 'pi pi-pencil', command: () => editRange(range) });
       items.push({
-        label: 'Create DHCP Pool',
+        label: 'Create DHCP Scope',
         icon: 'pi pi-plus',
         command: () => openRangeFromSelection(ip.address, ip.address)
       });
     } else {
       // No range or non-editable
       items.push({
-        label: 'Create DHCP Pool',
+        label: 'Create DHCP Scope',
         icon: 'pi pi-plus',
         command: () => openRangeFromSelection(ip.address, ip.address)
       });
@@ -759,25 +800,42 @@ function buildContextMenuItems(selectedIps) {
   } else {
     // Multi-select
     items.push({
-      label: `Add DHCP Pool ${firstIp.address} – ${lastIp.address}`,
+      label: `Add DHCP Scope ${firstIp.address} – ${lastIp.address}`,
       icon: 'pi pi-plus',
       command: () => openRangeFromSelection(firstIp.address, lastIp.address)
+    });
+    items.push({
+      label: `Reserve ${firstIp.address} – ${lastIp.address}`,
+      icon: 'pi pi-lock',
+      command: () => openReserveDialog(firstIp.address, lastIp.address)
     });
   }
 
   return items;
 }
 
-function openReserveDialog(ipAddress) {
-  reserveTarget.value = ipAddress;
+function openReserveDialog(ipAddress, endIpAddress) {
+  reserveStartIp.value = ipAddress;
+  reserveEndIp.value = endIpAddress || ipAddress;
   reserveNote.value = '';
   showReserveDialog.value = true;
 }
 
 async function confirmReserve() {
   if (!reserveNote.value.trim()) return;
+  const note = reserveNote.value.trim();
   showReserveDialog.value = false;
-  await setIpReservation(reserveTarget.value, 'reserved', reserveNote.value.trim());
+  if (reserveStartIp.value === reserveEndIp.value) {
+    await setIpReservation(reserveStartIp.value, 'reserved', note);
+  } else {
+    try {
+      const result = await store.bulkSetIpStatus(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'reserved', note);
+      toast.add({ severity: 'success', summary: `${result.count} IPs reserved`, life: 3000 });
+      await reloadData();
+    } catch (err) {
+      toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    }
+  }
 }
 
 async function setIpReservation(ipAddress, status, note) {
@@ -798,7 +856,7 @@ const gridContextMenuItems = computed(() => {
 });
 
 function openRangeFromSelection(startIp, endIp) {
-  const dhcpType = rangeTypes.value.find(rt => rt.name === 'DHCP Pool' && rt.is_system);
+  const dhcpType = rangeTypes.value.find(rt => rt.name === 'DHCP Scope' && rt.is_system);
   rangeForm.value = {
     range_type_id: dhcpType?.id || null,
     start_ip: startIp,
@@ -904,7 +962,8 @@ function isEditableRange(range) {
 
 function openAddRange() {
   editingRange.value = null;
-  rangeForm.value = { range_type_id: null, start_ip: '', end_ip: '', description: '' };
+  const dhcpType = rangeTypes.value.find(rt => rt.name === 'DHCP Scope' && rt.is_system);
+  rangeForm.value = { range_type_id: dhcpType?.id || null, start_ip: '', end_ip: '', description: '' };
   showRangeDialog.value = true;
 }
 
@@ -944,17 +1003,23 @@ async function saveRange(force = false) {
       showOverlapDialog.value = false;
       toast.add({ severity: 'success', summary: 'Range created', life: 3000 });
 
-      // Auto-open DHCP scope dialog for DHCP Pool ranges
-      if (created.range_type_name === 'DHCP Pool') {
+      // Auto-open DHCP scope dialog for DHCP Scope ranges
+      if (created.range_type_name === 'DHCP Scope') {
         // Load options catalog if not already loaded
         if (scopeOptionCatalog.value.length === 0) {
           await loadScopeOptions();
         }
-        // Pre-populate with subnet gateway as Router (option 3)
+        // Auto-select all options that have defaults
         const defaultOptions = [];
         const defaultOptionValues = {};
+        for (const code of Object.keys(scopeOptionDefaults)) {
+          const c = Number(code);
+          defaultOptions.push(c);
+          defaultOptionValues[c] = scopeOptionDefaults[code];
+        }
+        // Override Router (option 3) with subnet gateway if available
         if (subnet.value.gateway_address) {
-          defaultOptions.push(3);
+          if (!defaultOptions.includes(3)) defaultOptions.push(3);
           defaultOptionValues[3] = subnet.value.gateway_address;
         }
         dhcpScopeForm.value = {
@@ -965,6 +1030,7 @@ async function saveRange(force = false) {
           selectedOptions: defaultOptions,
           optionValues: defaultOptionValues
         };
+        scopeOptionsExpanded.value = defaultOptions.length > 0;
         showDhcpScopeDialog.value = true;
       }
     }
@@ -1056,6 +1122,7 @@ async function loadScopeOptions() {
   try {
     const res = await api.get('/dhcp/options');
     scopeOptionCatalog.value = res.data.catalog;
+    if (res.data.groups) scopeOptionGroupOrder.value = res.data.groups;
     Object.keys(scopeOptionDefaults).forEach(k => delete scopeOptionDefaults[k]);
     for (const [code, value] of Object.entries(res.data.defaults || {})) {
       scopeOptionDefaults[code] = value;
@@ -1063,11 +1130,6 @@ async function loadScopeOptions() {
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
   }
-}
-
-function scopeOptionLabel(code) {
-  const opt = scopeOptionCatalog.value.find(o => o.code === code);
-  return opt ? opt.label : `Option ${code}`;
 }
 
 function scopePlaceholderForType(type) {
@@ -1081,36 +1143,19 @@ function scopePlaceholderForType(type) {
   }
 }
 
-function openScopeOptionSelector() {
-  scopeSelectedOptionRows.value = scopeOptionCatalog.value.filter(o =>
-    dhcpScopeForm.value.selectedOptions.includes(o.code)
-  );
-  Object.keys(scopeOptionValues).forEach(k => delete scopeOptionValues[k]);
-  Object.assign(scopeOptionValues, dhcpScopeForm.value.optionValues);
-  showScopeOptionSelector.value = true;
-}
-
-function openScopeOptionValues() {
-  for (const opt of scopeSelectedOptionRows.value) {
-    if (scopeOptionValues[opt.code] == null || scopeOptionValues[opt.code] === '') {
-      const def = scopeOptionDefaults[opt.code];
-      if (def != null) scopeOptionValues[opt.code] = def;
+function toggleScopeOption(code, checked) {
+  if (checked) {
+    if (!dhcpScopeForm.value.selectedOptions.includes(code)) {
+      dhcpScopeForm.value.selectedOptions.push(code);
     }
-  }
-  showScopeOptionSelector.value = false;
-  showScopeOptionValues.value = true;
-}
-
-function applyScopeOptionSelections() {
-  dhcpScopeForm.value.selectedOptions = scopeSelectedOptionRows.value.map(o => o.code);
-  dhcpScopeForm.value.optionValues = {};
-  for (const opt of scopeSelectedOptionRows.value) {
-    const val = scopeOptionValues[opt.code];
-    if (val != null && val !== '') {
-      dhcpScopeForm.value.optionValues[opt.code] = String(val);
+    if (dhcpScopeForm.value.optionValues[code] == null || dhcpScopeForm.value.optionValues[code] === '') {
+      const def = scopeOptionDefaults[code];
+      if (def != null) dhcpScopeForm.value.optionValues[code] = def;
     }
+  } else {
+    dhcpScopeForm.value.selectedOptions = dhcpScopeForm.value.selectedOptions.filter(c => c !== code);
+    delete dhcpScopeForm.value.optionValues[code];
   }
-  showScopeOptionValues.value = false;
 }
 
 // DHCP scope auto-creation
@@ -1520,18 +1565,118 @@ onUnmounted(() => {
   font-size: 0.75rem;
   color: var(--p-text-muted-color);
 }
-.options-summary label {
-  display: block;
-  margin-bottom: 0.35rem;
+/* Scope dialog inline options */
+.scope-options-section {
+  margin-top: 1rem;
+  border: 1px solid var(--p-surface-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.scope-options-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+  user-select: none;
+  background: var(--p-surface-ground);
+  transition: background 0.1s;
+}
+.scope-options-header:hover {
+  background: color-mix(in srgb, var(--p-primary-color) 5%, var(--p-surface-ground));
+}
+.scope-options-title {
   font-size: 0.85rem;
   font-weight: 600;
 }
-.option-tags { display: flex; flex-wrap: wrap; gap: 0.3rem; }
-.option-tag {
-  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
-  color: var(--p-primary-color);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
+.scope-options-count {
   font-size: 0.75rem;
+  color: var(--p-primary-color);
+  margin-left: auto;
+}
+.scope-options-list {
+  max-height: 18rem;
+  overflow-y: auto;
+}
+.scope-option-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
+  font-size: 0.8rem;
+}
+.scope-option-row:first-child {
+  border-top: 1px solid var(--p-surface-border);
+}
+.scope-option-check {
+  flex-shrink: 0;
+}
+.scope-option-info {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 10rem;
+  flex-shrink: 0;
+}
+.scope-option-label {
+  font-weight: 500;
+}
+.scope-option-code {
+  font-size: 0.7rem;
+  color: var(--p-text-muted-color);
+}
+.scope-option-help {
+  font-size: 0.7rem;
+  color: var(--p-text-muted-color);
+  cursor: pointer;
+  margin-left: 0.15rem;
+}
+.scope-option-help:hover {
+  color: var(--p-primary-color);
+}
+.scope-option-group-header {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--p-text-muted-color);
+  background: var(--p-surface-ground);
+  border-top: 1px solid var(--p-surface-border);
+}
+.option-help-popover {
+  max-width: 20rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+.option-help-popover strong {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+.option-help-popover p {
+  margin: 0 0 0.4rem 0;
+  color: var(--p-text-muted-color);
+}
+.rfc-link {
+  font-size: 0.75rem;
+  color: var(--p-primary-color);
+  text-decoration: none;
+}
+.rfc-link:hover { text-decoration: underline; }
+.scope-option-value {
+  flex: 1;
+  min-width: 0;
+}
+.scope-option-value :deep(.p-inputtext),
+.scope-option-value :deep(.p-select),
+.scope-option-value :deep(.p-inputnumber) {
+  width: 100%;
+  font-size: 0.8rem;
+}
+.scope-option-default {
+  font-size: 0.75rem;
+  color: var(--p-text-muted-color);
+  font-style: italic;
 }
 </style>
