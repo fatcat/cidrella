@@ -43,7 +43,6 @@ import Password from 'primevue/password';
 import Button from 'primevue/button';
 import Message from 'primevue/message';
 import { useOperationsStore } from '../stores/operations.js';
-import { markSetupComplete } from '../router/index.js';
 
 const router = useRouter();
 const opsStore = useOperationsStore();
@@ -76,7 +75,6 @@ async function handleSetup() {
   try {
     await opsStore.completeSetup({ username: username.value, password: password.value });
     completed.value = true;
-    markSetupComplete();
     setTimeout(() => router.push('/login'), 2000);
   } catch (err) {
     error.value = err.response?.data?.error || 'Setup failed';
@@ -90,7 +88,6 @@ async function handleSkip() {
   try {
     await opsStore.completeSetup({ skip: true });
     completed.value = true;
-    markSetupComplete();
     setTimeout(() => router.push('/login'), 2000);
   } catch (err) {
     error.value = err.response?.data?.error || 'Setup failed';
