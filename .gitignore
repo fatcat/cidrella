@@ -3,3 +3,5 @@ dist/
 data/
 *.db
 .env
+PLAN.md
+PROMPT.md

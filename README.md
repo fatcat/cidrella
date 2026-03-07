@@ -28,10 +28,16 @@ A lightweight IP Address Management system with integrated DNS and DHCP via DNSm
 ## Quick Start
 
 ```bash
-docker compose up --build
+git clone git@github.com:fatcat/ipam.git
+cd ipam
+docker compose up -d --build
 ```
 
 Check the container logs for the generated admin password:
+
+```bash
+docker compose logs ipam
+```
 
 ```
 ========================================
@@ -42,6 +48,76 @@ Check the container logs for the generated admin password:
 ```
 
 Open `https://localhost:8443` and log in. You will be prompted to change your password.
+
+## Production Deployment
+
+### 1. Configure dnsmasq
+
+On first run, a default config is copied to `data/dnsmasq/dnsmasq.conf`. You **must** edit it for production:
+
+**listen-address** — Change from `127.0.0.1` to include your server's real IP(s). Without this, dnsmasq only listens on loopback and clients can't reach it:
+
+```
+listen-address=127.0.0.1,192.168.1.1
+```
+
+**Upstream DNS servers** — Change the `server=` lines to your preferred upstream resolvers (or your internal DNS):
+
+```
+server=10.0.0.2
+server=10.0.0.3
+```
+
+After editing, restart the container:
+
+```bash
+docker compose restart
+```
+
+### 2. DNS
+
+DNS works automatically through dnsmasq:
+
+- **Forward DNS records** created in the UI are written to `data/dnsmasq/hosts.d/` (hostsdir hot-reload — no restart needed)
+- **Reverse DNS** (PTR records) are handled automatically by dnsmasq's hosts file format
+- Point your clients' DNS to the IPAM server's IP address (via DHCP option 6, or manually)
+
+To make this server authoritative for specific zones while forwarding everything else upstream, add to `data/dnsmasq/dnsmasq.conf`:
+
+```
+local=/example.com/
+local=/168.192.in-addr.arpa/
+```
+
+### 3. DHCP
+
+DHCP is configured entirely through the UI:
+
+1. Create a network (e.g. `192.168.1.0/24`)
+2. Configure it (set gateway, domain name, etc.) — a DHCP scope is auto-created
+3. Set DHCP options (DNS servers, NTP, domain search, etc.) on the DHCP settings page
+4. The app writes config to `data/dnsmasq/conf.d/dhcp-scope-*.conf` and signals dnsmasq automatically
+
+**Important**: Ensure no other DHCP server is running on the same broadcast domain.
+
+### 4. TLS Certificates
+
+A self-signed certificate is auto-generated on first run. To use your own, place `cert.pem` and `key.pem` in `data/certs/` and restart the container.
+
+### 5. Networking
+
+The container runs with `network_mode: host`, which is required for DHCP broadcast traffic. Ensure these ports are open on the host firewall:
+
+| Port | Protocol | Service |
+|------|----------|---------|
+| 53 | TCP/UDP | DNS |
+| 67 | UDP | DHCP server |
+| 8443 | TCP | Web UI (HTTPS) |
+| 8080 | TCP | Web UI (HTTP) |
+
+### 6. Backups
+
+All persistent data lives in `./data/`. Back up this directory regularly. The UI also provides database backup/restore under System settings.
 
 ### Reset Admin Password
 
