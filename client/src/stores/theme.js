@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref, watch } from 'vue';
+import { ref, computed } from 'vue';
 
 // Each theme: { id, name, group: 'light'|'dark', primary, surface, preset }
 // primary = Tailwind color name used for primary palette
@@ -53,7 +53,7 @@ export const colorSwatches = {
 export const useThemeStore = defineStore('theme', () => {
   const currentThemeId = ref(localStorage.getItem('ipam-theme') || 'dark-emerald-zinc');
 
-  const currentTheme = () => themes.find(t => t.id === currentThemeId.value) || themes[0];
+  const currentTheme = computed(() => themes.find(t => t.id === currentThemeId.value) || themes[0]);
 
   function applyTheme(themeId) {
     const theme = themes.find(t => t.id === themeId);

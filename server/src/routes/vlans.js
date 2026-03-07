@@ -40,13 +40,14 @@ router.get('/search', requirePerm('subnets:read'), (req, res) => {
   const { folder_id, q } = req.query;
   if (!folder_id) return res.status(400).json({ error: 'folder_id is required' });
 
-  const term = `%${(q || '').trim()}%`;
+  const escaped = (q || '').trim().replace(/[%_]/g, '\\$&');
+  const term = `%${escaped}%`;
   const vlans = db.prepare(`
     SELECT v.*, f.name as folder_name,
       (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id AND folder_id = v.folder_id) as subnet_count
     FROM vlans v
     JOIN folders f ON f.id = v.folder_id
-    WHERE v.folder_id = ? AND (v.name LIKE ? OR CAST(v.vlan_id AS TEXT) LIKE ?)
+    WHERE v.folder_id = ? AND (v.name LIKE ? ESCAPE '\\' OR CAST(v.vlan_id AS TEXT) LIKE ? ESCAPE '\\')
     ORDER BY v.vlan_id
     LIMIT 20
   `).all(folder_id, term, term);

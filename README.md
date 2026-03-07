@@ -115,7 +115,24 @@ The container runs with `network_mode: host`, which is required for DHCP broadca
 | 8443 | TCP | Web UI (HTTPS) |
 | 8080 | TCP | Web UI (HTTP) |
 
-### 6. Backups
+### 6. User/Group Ownership (PUID/PGID)
+
+By default the container runs as root and files in `./data/` will be root-owned. To have data files owned by your host user, set `PUID` and `PGID`:
+
+```bash
+PUID=$(id -u) PGID=$(id -g) docker compose up -d --build
+```
+
+Or add them to a `.env` file:
+
+```
+PUID=1000
+PGID=1000
+```
+
+The Node.js server will run as the specified user while dnsmasq stays as root (required for privileged ports 53/67).
+
+### 7. Backups
 
 All persistent data lives in `./data/`. Back up this directory regularly. The UI also provides database backup/restore under System settings.
 

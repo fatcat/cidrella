@@ -167,7 +167,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
 // PUT /api/dhcp/scopes/:id
 router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
-  const { lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, enabled, description } = req.body;
+  const { lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, enabled, description, start_ip, end_ip } = req.body;
   const db = getDb();
 
   const scope = db.prepare('SELECT * FROM dhcp_scopes WHERE id = ?').get(req.params.id);
@@ -203,6 +203,26 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     }
   }
 
+  // Validate start_ip / end_ip if provided
+  if (start_ip !== undefined && !isValidIpv4(start_ip)) {
+    return res.status(400).json({ error: 'Invalid start IP address' });
+  }
+  if (end_ip !== undefined && !isValidIpv4(end_ip)) {
+    return res.status(400).json({ error: 'Invalid end IP address' });
+  }
+  if (start_ip !== undefined || end_ip !== undefined) {
+    const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
+    const newStart = start_ip || range.start_ip;
+    const newEnd = end_ip || range.end_ip;
+    if (!isIpInSubnet(newStart, subnet.cidr) || !isIpInSubnet(newEnd, subnet.cidr)) {
+      return res.status(400).json({ error: 'IP addresses must be within the subnet' });
+    }
+    if (ipToLong(newStart) > ipToLong(newEnd)) {
+      return res.status(400).json({ error: 'Start IP must be before or equal to end IP' });
+    }
+  }
+
   const { options } = req.body;
 
   const txn = db.transaction(() => {
@@ -221,6 +241,16 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       description !== undefined ? description : scope.description,
       scope.id
     );
+
+    // Update range IPs if provided
+    if (start_ip !== undefined || end_ip !== undefined) {
+      const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
+      db.prepare("UPDATE ranges SET start_ip = ?, end_ip = ?, updated_at = datetime('now') WHERE id = ?").run(
+        start_ip || range.start_ip,
+        end_ip || range.end_ip,
+        scope.range_id
+      );
+    }
 
     // Replace scope options if provided
     if (Array.isArray(options)) {

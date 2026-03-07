@@ -68,8 +68,8 @@ router.post('/change-password', async (req, res) => {
     return res.status(400).json({ error: 'Current password and new password are required' });
   }
 
-  if (new_password.length < 4) {
-    return res.status(400).json({ error: 'New password must be at least 4 characters' });
+  if (new_password.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters' });
   }
 
   const db = getDb();

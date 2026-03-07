@@ -147,7 +147,8 @@ function roleLabel(role) {
 
 function formatDate(dateStr) {
   if (!dateStr) return '—';
-  return new Date(dateStr + 'Z').toLocaleDateString();
+  const d = new Date(dateStr + (dateStr.includes('Z') ? '' : 'Z'));
+  return d.toLocaleDateString();
 }
 
 const users = ref([]);

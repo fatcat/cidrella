@@ -20,21 +20,21 @@
         </div>
       </div>
 
-      <div class="dash-card card-ok">
+      <div class="dash-card" :class="cpuStatusClass">
         <div class="card-body">
           <span class="card-value">{{ cpuDisplay }}</span>
           <span class="card-label">CPU Load</span>
         </div>
       </div>
 
-      <div class="dash-card card-ok">
+      <div class="dash-card" :class="ramStatusClass">
         <div class="card-body">
           <span class="card-value">{{ ramDisplay }}</span>
           <span class="card-label">RAM</span>
         </div>
       </div>
 
-      <div class="dash-card card-ok">
+      <div class="dash-card" :class="diskStatusClass">
         <div class="card-body">
           <span class="card-value">{{ diskDisplay }}</span>
           <span class="card-label">Disk</span>
@@ -204,6 +204,24 @@ const diskDisplay = computed(() => {
   return `${used} (${pct}%)`;
 });
 
+const cpuStatusClass = computed(() => {
+  const cpu = health.value?.cpu;
+  if (!cpu || !cpu.cores) return 'card-ok';
+  return cpu.loadAvg[0] > cpu.cores * 2 ? 'card-err' : 'card-ok';
+});
+
+const ramStatusClass = computed(() => {
+  const mem = health.value?.memory;
+  if (!mem || !mem.total) return 'card-ok';
+  return (mem.used / mem.total) >= 0.95 ? 'card-err' : 'card-ok';
+});
+
+const diskStatusClass = computed(() => {
+  const disk = health.value?.disk;
+  if (!disk) return 'card-ok';
+  return disk.percent >= 90 ? 'card-err' : 'card-ok';
+});
+
 const dnsStatusClass = computed(() => {
   const dns = health.value?.dns;
   if (!dns) return '';
@@ -227,7 +245,8 @@ const dnsTooltip = computed(() => {
     lines.push('<hr style="border:0;border-top:1px solid rgba(255,255,255,0.15);margin:4px 0">');
     lines.push('<strong>Upstream Servers</strong>');
     for (const s of dns.servers) {
-      lines.push(`${s.server} — ${s.status === 'up' ? ok : fail}`);
+      const escaped = s.server.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      lines.push(`${escaped} — ${s.status === 'up' ? ok : fail}`);
     }
   } else {
     lines.push('No upstream DNS servers configured');

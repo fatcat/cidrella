@@ -50,7 +50,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { version as vueVersion } from 'vue';
 import { useDebugStore } from '../stores/debug.js';
 
@@ -59,6 +59,8 @@ const open = ref(false);
 const filter = ref('all');
 const expandedId = ref(null);
 const sessionStart = Date.now();
+const now = ref(Date.now());
+let timer;
 
 const filteredEntries = computed(() => {
   if (filter.value === 'all') return debugStore.entries;
@@ -66,7 +68,7 @@ const filteredEntries = computed(() => {
 });
 
 const sessionDuration = computed(() => {
-  const ms = Date.now() - sessionStart;
+  const ms = now.value - sessionStart;
   const mins = Math.floor(ms / 60000);
   if (mins < 1) return '<1m';
   if (mins < 60) return `${mins}m`;
@@ -84,6 +86,11 @@ function formatDetail(detail) {
 
 onMounted(() => {
   debugStore.logInfo('Debug panel initialized');
+  timer = setInterval(() => { now.value = Date.now(); }, 60000);
+});
+
+onUnmounted(() => {
+  clearInterval(timer);
 });
 </script>
 

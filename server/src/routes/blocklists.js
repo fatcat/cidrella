@@ -87,6 +87,9 @@ router.put('/categories/:slug/url', requirePerm('dns:write'), (req, res) => {
 
   // Empty or null resets to default
   const urlValue = source_url?.trim() || null;
+  if (urlValue && !/^https?:\/\//i.test(urlValue)) {
+    return res.status(400).json({ error: 'Source URL must be an HTTP(S) URL' });
+  }
   db.prepare('UPDATE blocklist_categories SET source_url = ? WHERE slug = ?')
     .run(urlValue, slug);
 
@@ -212,25 +215,28 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
   const { q, page = 1, limit = 50 } = req.query;
   if (!q || q.length < 2) return res.json({ items: [], total: 0 });
 
-  const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-  const searchTerm = `%${q}%`;
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+  const offset = (pageNum - 1) * limitNum;
+  const escaped = q.replace(/[%_]/g, '\\$&');
+  const searchTerm = `%${escaped}%`;
 
   const total = db.prepare(`
     SELECT COUNT(DISTINCT bd.domain) as c
     FROM blocklist_domains bd
     JOIN blocklist_categories bc ON bd.category_slug = bc.slug
-    WHERE bc.enabled = 1 AND bd.domain LIKE ?
+    WHERE bc.enabled = 1 AND bd.domain LIKE ? ESCAPE '\\'
   `).get(searchTerm).c;
 
   const items = db.prepare(`
     SELECT bd.domain, GROUP_CONCAT(bc.slug, ', ') as categories
     FROM blocklist_domains bd
     JOIN blocklist_categories bc ON bd.category_slug = bc.slug
-    WHERE bc.enabled = 1 AND bd.domain LIKE ?
+    WHERE bc.enabled = 1 AND bd.domain LIKE ? ESCAPE '\\'
     GROUP BY bd.domain
     ORDER BY bd.domain
     LIMIT ? OFFSET ?
-  `).all(searchTerm, parseInt(limit, 10), offset);
+  `).all(searchTerm, limitNum, offset);
 
   const whitelisted = new Set(
     db.prepare('SELECT domain FROM blocklist_whitelist').all().map(r => r.domain)
@@ -240,7 +246,7 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
     item.whitelisted = whitelisted.has(item.domain);
   }
 
-  res.json({ items, total, page: parseInt(page, 10), limit: parseInt(limit, 10) });
+  res.json({ items, total, page: pageNum, limit: limitNum });
 });
 
 export default router;

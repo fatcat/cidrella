@@ -2,7 +2,7 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { getDb, audit } from '../db/init.js';
 import { requireRole } from '../auth/roles.js';
 import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup } from '../utils/backup.js';
@@ -100,8 +100,8 @@ router.get('/certs/info', (req, res) => {
   }
 
   try {
-    const output = execSync(
-      `openssl x509 -in "${certPath}" -noout -subject -issuer -dates -fingerprint -sha256`,
+    const output = execFileSync(
+      'openssl', ['x509', '-in', certPath, '-noout', '-subject', '-issuer', '-dates', '-fingerprint', '-sha256'],
       { encoding: 'utf-8', timeout: 5000 }
     );
 
@@ -139,14 +139,19 @@ router.post('/certs/upload', (req, res) => {
     fs.writeFileSync(tmpKey, key);
 
     // Validate certificate
-    execSync(`openssl x509 -in "${tmpCert}" -noout`, { stdio: 'pipe', timeout: 5000 });
+    execFileSync('openssl', ['x509', '-in', tmpCert, '-noout'], { stdio: 'pipe', timeout: 5000 });
 
     // Validate key
-    execSync(`openssl pkey -in "${tmpKey}" -noout`, { stdio: 'pipe', timeout: 5000 });
+    execFileSync('openssl', ['pkey', '-in', tmpKey, '-noout'], { stdio: 'pipe', timeout: 5000 });
 
     // Verify key matches cert
-    const certModulus = execSync(`openssl x509 -in "${tmpCert}" -noout -modulus`, { encoding: 'utf-8', timeout: 5000 }).trim();
-    const keyModulus = execSync(`openssl pkey -in "${tmpKey}" -noout -text 2>/dev/null | openssl rsa -modulus -noout 2>/dev/null || openssl pkey -in "${tmpKey}" -noout -text`, { encoding: 'utf-8', timeout: 5000 }).trim();
+    const certModulus = execFileSync('openssl', ['x509', '-in', tmpCert, '-noout', '-modulus'], { encoding: 'utf-8', timeout: 5000 }).trim();
+    let keyModulus;
+    try {
+      keyModulus = execFileSync('openssl', ['rsa', '-in', tmpKey, '-noout', '-modulus'], { encoding: 'utf-8', timeout: 5000 }).trim();
+    } catch {
+      keyModulus = execFileSync('openssl', ['pkey', '-in', tmpKey, '-noout', '-text'], { encoding: 'utf-8', timeout: 5000 }).trim();
+    }
 
     // For RSA keys, modulus should match
     if (certModulus.startsWith('Modulus=') && keyModulus.startsWith('Modulus=') && certModulus !== keyModulus) {
@@ -180,11 +185,10 @@ router.post('/certs/reset', (req, res) => {
     if (fs.existsSync(certPath)) fs.unlinkSync(certPath);
 
     // Regenerate self-signed
-    execSync(
-      `openssl req -x509 -newkey rsa:2048 -keyout "${keyPath}" -out "${certPath}" ` +
-      `-days 365 -nodes -subj "/CN=ipam/O=IPAM/C=US"`,
-      { stdio: 'pipe', timeout: 10000 }
-    );
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', certPath,
+      '-days', '365', '-nodes', '-subj', '/CN=ipam/O=IPAM/C=US'
+    ], { stdio: 'pipe', timeout: 10000 });
 
     audit(req.user.id, 'update', 'tls_certificate', null, { action: 'reset_self_signed' });
     res.json({ ok: true, message: 'Self-signed certificate regenerated. Server restart required to apply.' });

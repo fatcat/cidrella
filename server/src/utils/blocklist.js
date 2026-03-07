@@ -196,7 +196,7 @@ function scheduleToHours(schedule) {
  */
 export function startBlocklistScheduler() {
   // Check every 15 minutes for categories that need refreshing
-  setInterval(async () => {
+  const intervalId = setInterval(async () => {
     try {
       const db = getDb();
 
@@ -211,8 +211,8 @@ export function startBlocklistScheduler() {
         SELECT slug FROM blocklist_categories
         WHERE enabled = 1
           AND (last_fetched_at IS NULL
-               OR datetime(last_fetched_at, '+${intervalHours} hours') <= datetime('now'))
-      `).all();
+               OR datetime(last_fetched_at, '+' || ? || ' hours') <= datetime('now'))
+      `).all(intervalHours);
 
       if (due.length === 0) return;
 
@@ -235,7 +235,7 @@ export function startBlocklistScheduler() {
   }, 15 * 60 * 1000);
 
   // Initial: ensure category rows + refresh enabled categories 10s after startup
-  setTimeout(async () => {
+  const timeoutId = setTimeout(async () => {
     try {
       const db = getDb();
       ensureCategoryRows(db);
@@ -244,4 +244,6 @@ export function startBlocklistScheduler() {
       console.error('Initial blocklist refresh failed:', err.message);
     }
   }, 10_000);
+
+  return { intervalId, timeoutId };
 }

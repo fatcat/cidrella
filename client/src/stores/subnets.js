@@ -215,10 +215,17 @@ export const useSubnetStore = defineStore('subnets', () => {
       }
     }
     const res = await api.get(`/subnets/${id}/ips`, { params: { page, pageSize } });
-    // Evict oldest entries if cache is full
+    // Evict least recently used entry if cache is full
     if (_detailCache.size >= DETAIL_CACHE_MAX) {
-      const oldest = _detailCache.keys().next().value;
-      _detailCache.delete(oldest);
+      let oldestKey = null;
+      let oldestTime = Infinity;
+      for (const [key, entry] of _detailCache) {
+        if (entry.timestamp < oldestTime) {
+          oldestTime = entry.timestamp;
+          oldestKey = key;
+        }
+      }
+      if (oldestKey) _detailCache.delete(oldestKey);
     }
     _detailCache.set(cacheKey, { data: res.data, timestamp: Date.now() });
     return res.data;

@@ -126,7 +126,8 @@ async function main() {
 
   // Block page for filtered domains
   app.get('/blocked', (req, res) => {
-    const domain = req.query.domain || req.hostname;
+    const rawDomain = req.query.domain || req.hostname;
+    const domain = rawDomain.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     res.status(200).send(`<!DOCTYPE html>
 <html><head><title>Blocked</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}
@@ -134,7 +135,7 @@ async function main() {
 h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
 </head><body><div class="card">
 <h1>Blocked</h1>
-<p>Access to <strong>${domain.replace(/[<>"'&]/g, '')}</strong> has been blocked by your network administrator.</p>
+<p>Access to <strong>${domain}</strong> has been blocked by your network administrator.</p>
 </div></body></html>`);
   });
 
@@ -164,7 +165,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
 
   // HTTP redirect to HTTPS (non-fatal if port is in use)
   const httpServer = http.createServer((req, res) => {
-    const host = req.headers.host?.replace(`:${HTTP_PORT}`, `:${HTTPS_PORT}`) || `localhost:${HTTPS_PORT}`;
+    const host = `localhost:${HTTPS_PORT}`;
     res.writeHead(301, { Location: `https://${host}${req.url}` });
     res.end();
   });

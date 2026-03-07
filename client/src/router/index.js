@@ -52,9 +52,6 @@ const router = createRouter({
   routes
 });
 
-let setupChecked = false;
-let setupRequired = false;
-
 router.beforeEach(async (to) => {
   const auth = useAuthStore();
 
@@ -88,9 +85,5 @@ router.beforeEach(async (to) => {
 
   return true;
 });
-
-export function markSetupComplete() {
-  setupRequired = false;
-}
 
 export default router;

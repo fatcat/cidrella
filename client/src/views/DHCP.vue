@@ -181,6 +181,14 @@
                   class="w-full" placeholder="Select a DHCP Scope range" :loading="loadingRanges" />
           <small class="field-help">Only DHCP Scope ranges without existing scopes are shown</small>
         </div>
+        <div class="field" v-if="editingScope">
+          <label>Start IP</label>
+          <InputText v-model="scopeForm.start_ip" class="w-full" placeholder="e.g. 192.168.1.10" />
+        </div>
+        <div class="field" v-if="editingScope">
+          <label>End IP</label>
+          <InputText v-model="scopeForm.end_ip" class="w-full" placeholder="e.g. 192.168.1.254" />
+        </div>
         <div class="field">
           <label>Lease Time</label>
           <InputText v-model="scopeForm.lease_time" class="w-full" placeholder="e.g. 24h, 3600, 1d" />
@@ -486,7 +494,7 @@ async function loadOptions() {
     // Populate defaultValues reactive object
     Object.keys(defaultValues).forEach(k => delete defaultValues[k]);
     for (const [code, value] of Object.entries(res.data.defaults || {})) {
-      defaultValues[code] = value;
+      defaultValues[Number(code)] = value;
     }
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
@@ -586,6 +594,8 @@ async function openScopeDialog(scope = null) {
     }
     scopeForm.value = {
       range_id: scope.range_id,
+      start_ip: scope.start_ip || '',
+      end_ip: scope.end_ip || '',
       lease_time: scope.lease_time || '24h',
       description: scope.description || '',
       enabled: !!scope.enabled,
@@ -633,6 +643,8 @@ async function saveScope() {
     };
 
     if (editingScope.value) {
+      if (scopeForm.value.start_ip) payload.start_ip = scopeForm.value.start_ip;
+      if (scopeForm.value.end_ip) payload.end_ip = scopeForm.value.end_ip;
       await store.updateScope(editingScope.value.id, payload);
       toast.add({ severity: 'success', summary: 'Scope updated', life: 3000 });
     } else {

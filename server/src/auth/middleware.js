@@ -14,7 +14,8 @@ export function authMiddleware(req, res, next) {
   }
 
   // Skip auth for public paths
-  if (PUBLIC_PATHS.includes(req.path)) {
+  const normalizedPath = req.path.replace(/\/+$/, '') || '/';
+  if (PUBLIC_PATHS.includes(normalizedPath)) {
     return next();
   }
 
@@ -33,10 +34,16 @@ export function authMiddleware(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, settings.value);
-    req.user = decoded;
+
+    // Re-validate user from DB to catch deletions/role changes
+    const user = db.prepare('SELECT id, role, must_change_password FROM users WHERE id = ?').get(decoded.id);
+    if (!user) {
+      return res.status(401).json({ error: 'User no longer exists' });
+    }
+    req.user = { ...decoded, role: user.role, must_change_password: !!user.must_change_password };
 
     // If user must change password, only allow specific endpoints
-    if (decoded.must_change_password && !PASSWORD_CHANGE_PATHS.includes(req.path)) {
+    if (req.user.must_change_password && !PASSWORD_CHANGE_PATHS.includes(normalizedPath)) {
       return res.status(403).json({
         error: 'Password change required',
         code: 'MUST_CHANGE_PASSWORD'

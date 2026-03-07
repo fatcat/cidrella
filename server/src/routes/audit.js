@@ -39,8 +39,10 @@ router.get('/', (req, res) => {
     }
   }
   if (req.query.user_id) {
+    const userId = parseInt(req.query.user_id, 10);
+    if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user_id' });
     where.push('a.user_id = ?');
-    params.push(parseInt(req.query.user_id, 10));
+    params.push(userId);
   }
 
   const whereClause = where.length > 0 ? 'WHERE ' + where.join(' AND ') : '';

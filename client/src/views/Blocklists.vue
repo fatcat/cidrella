@@ -164,11 +164,11 @@
         </DataTable>
         <div class="search-pagination" v-if="searchResults.total > searchLimit">
           <Button label="Previous" severity="secondary" size="small" :disabled="searchPage <= 1"
-                  @click="searchPage--; doSearch()" />
+                  @click="searchPage--; doSearch(true)" />
           <span class="page-info">Page {{ searchPage }} of {{ Math.ceil(searchResults.total / searchLimit) }}</span>
           <Button label="Next" severity="secondary" size="small"
                   :disabled="searchPage >= Math.ceil(searchResults.total / searchLimit)"
-                  @click="searchPage++; doSearch()" />
+                  @click="searchPage++; doSearch(true)" />
         </div>
       </TabPanel>
     </TabView>
@@ -293,12 +293,12 @@ async function doToggleAll(enabled) {
     for (const cat of toToggle) {
       await store.toggleCategory(cat.slug, enabled);
     }
-    await store.fetchStats().then(s => stats.value = s);
     toast.add({ severity: 'success', summary: `All categories ${enabled ? 'enabled' : 'disabled'}`, life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
     togglingAll.value = false;
+    await store.fetchStats().then(s => stats.value = s).catch(() => {});
   }
 }
 
@@ -372,8 +372,9 @@ async function doRemoveWhitelist(entry) {
 }
 
 // Search
-async function doSearch() {
+async function doSearch(fromPagination = false) {
   if (!searchQuery.value.trim() || searchQuery.value.trim().length < 2) return;
+  if (!fromPagination) searchPage.value = 1;
   searching.value = true;
   searchPerformed.value = true;
   try {

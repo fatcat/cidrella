@@ -22,7 +22,7 @@ export const useDebugStore = defineStore('debug', () => {
       timestamp: new Date()
     });
     if (entries.value.length > maxEntries) {
-      entries.value.length = maxEntries;
+      entries.value.splice(maxEntries);
     }
   }
 

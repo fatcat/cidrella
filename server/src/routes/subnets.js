@@ -566,6 +566,25 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
         );
       }
     }
+
+    // Release old gateway IP (set to available) if it was persisted
+    if (subnet.gateway_address) {
+      const oldGwIp = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, subnet.gateway_address);
+      if (oldGwIp) {
+        db.prepare("UPDATE ip_addresses SET status = 'available', reservation_note = NULL, updated_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?")
+          .run(subnet.id, subnet.gateway_address);
+      }
+    }
+
+    // Reserve new gateway IP
+    const newGwIp = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, gateway_address);
+    if (newGwIp) {
+      db.prepare("UPDATE ip_addresses SET status = 'reserved', reservation_note = 'Default gateway', updated_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?")
+        .run(subnet.id, gateway_address);
+    } else {
+      db.prepare("INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, 'reserved', 'Default gateway')")
+        .run(subnet.id, gateway_address);
+    }
   }
 
   const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);

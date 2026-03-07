@@ -191,12 +191,19 @@ export function startProxy(port) {
 
       // Store pending query mapping
       const timer = setTimeout(() => {
-        // Timeout — forward query directly as fallback (fail-open)
+        // Timeout — send SERVFAIL so client doesn't hang
         const p = pendingQueries.get(internalId);
         if (p) {
           pendingQueries.delete(internalId);
           statsAllowed++;
           statsTotal++;
+          try {
+            const servfail = dnsPacket.encode({
+              id: p.originalId, type: 'response', rcode: 'SERVFAIL',
+              questions: [], answers: [], authorities: [], additionals: []
+            });
+            proxyServer?.send(servfail, p.port, p.address);
+          } catch { /* ignore */ }
         }
       }, 5000);
 

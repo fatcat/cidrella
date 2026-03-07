@@ -296,8 +296,6 @@ const deletingZone = ref(null);
 const showDeleteRecordDialog = ref(false);
 const deletingRecord = ref(null);
 
-const applying = ref(false);
-
 // Forwarders
 const forwarders = ref(['8.8.8.8', '1.1.1.1']);
 const savingForwarders = ref(false);
@@ -458,18 +456,6 @@ async function saveForwarders() {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
     savingForwarders.value = false;
-  }
-}
-
-async function applyConfig() {
-  applying.value = true;
-  try {
-    const result = await store.applyConfig();
-    toast.add({ severity: 'success', summary: 'Config applied', detail: `${result.zones} zones, ${result.records} records`, life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally {
-    applying.value = false;
   }
 }
 

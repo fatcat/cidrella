@@ -134,7 +134,11 @@ function enforceRetention(db) {
  * Get the backup directory path for a given backup
  */
 export function getBackupPath(filename) {
-  return path.join(BACKUP_DIR, filename);
+  const resolved = path.resolve(BACKUP_DIR, filename);
+  if (!resolved.startsWith(path.resolve(BACKUP_DIR) + path.sep)) {
+    throw new Error('Invalid backup filename');
+  }
+  return resolved;
 }
 
 /**
@@ -148,7 +152,7 @@ export function startBackupScheduler() {
   };
 
   // Check every 15 minutes if a backup is due
-  setInterval(() => {
+  return setInterval(() => {
     try {
       const db = getDb();
       const schedule = db.prepare("SELECT value FROM settings WHERE key = 'backup_schedule'").get();
