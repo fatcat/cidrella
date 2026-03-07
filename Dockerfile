@@ -1,10 +1,12 @@
 FROM node:20-alpine AS client-build
 
+ARG DEV_TRACKING=0
+
 WORKDIR /build/client
 COPY client/package.json client/package-lock.json* ./
 RUN npm install
 COPY client/ ./
-RUN npx vite build
+RUN VITE_TRACKING=$DEV_TRACKING npx vite build
 
 FROM node:20-alpine
 
@@ -24,7 +26,21 @@ RUN apk add --no-cache \
     openssl \
     arping \
     nmap \
-    bind-tools
+    bind-tools \
+    sudo
+
+# Create non-root user for Node.js
+RUN addgroup -g 65532 cidrella && \
+    adduser -D -u 65532 -G cidrella -H -s /sbin/nologin cidrella
+
+# Allow cidrella user to send signals to dnsmasq and run network scans
+RUN echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*' > /etc/sudoers.d/cidrella-dnsmasq && \
+    echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/nmap *' >> /etc/sudoers.d/cidrella-dnsmasq && \
+    echo 'cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *' >> /etc/sudoers.d/cidrella-dnsmasq && \
+    echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/tail -n 0 -F /data/dnsmasq/dnsmasq.log' >> /etc/sudoers.d/cidrella-dnsmasq && \
+    echo 'cidrella ALL=(root) NOPASSWD: /bin/cat /data/dnsmasq/dnsmasq.log' >> /etc/sudoers.d/cidrella-dnsmasq && \
+    echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/tee /data/dnsmasq/dnsmasq.log' >> /etc/sudoers.d/cidrella-dnsmasq && \
+    chmod 440 /etc/sudoers.d/cidrella-dnsmasq
 
 # Set up app directory
 WORKDIR /app

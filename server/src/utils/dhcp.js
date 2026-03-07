@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
@@ -88,6 +89,11 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
     mergedOptions.set(15, scope.subnet_domain_name);
   }
 
+  // Fallback: if no domain search list set, use subnet's domain_name
+  if (!mergedOptions.has(119) && scope.subnet_domain_name) {
+    mergedOptions.set(119, scope.subnet_domain_name);
+  }
+
   // Emit dhcp-option lines, resolving hostnames to IPs where needed
   for (const [code, value] of mergedOptions) {
     const optDef = DHCP_OPTIONS_BY_CODE[code];
@@ -99,7 +105,7 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
       if (resolved.length === 0) continue;  // all failed to resolve
       emitValue = resolved.join(',');
     }
-    lines.push(`dhcp-option=tag:${tag},${optDef.dnsmasqName},${emitValue}`);
+    lines.push(`dhcp-option=tag:${tag},${code},${emitValue}`);
   }
 
   return lines.join('\n') + '\n';
@@ -123,7 +129,7 @@ export function regenerateScopeConfigs(db) {
   `).all();
 
   // Load global defaults
-  const defaultRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults').all();
+  const defaultRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE value IS NOT NULL').all();
   const globalDefaults = Object.fromEntries(defaultRows.map(r => [r.option_code, r.value]));
 
   // Load all scope options
@@ -286,4 +292,42 @@ export function startLeaseWatcher(db) {
   } catch (err) {
     console.warn('Could not watch lease file:', err.message);
   }
+}
+
+/**
+ * Detect the server's primary IPv4 address and update the DNS Servers
+ * global default (option 6) to "<server_ip>, 9.9.9.9".
+ * Runs at startup so a host IP change is always reflected.
+ */
+export function syncServerDnsDefault(db) {
+  // Find the first non-internal IPv4 address
+  const ifaces = os.networkInterfaces();
+  let serverIp = null;
+  for (const addrs of Object.values(ifaces)) {
+    for (const addr of addrs) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        serverIp = addr.address;
+        break;
+      }
+    }
+    if (serverIp) break;
+  }
+
+  if (!serverIp) {
+    console.warn('Could not detect server IPv4 address for DNS default');
+    return;
+  }
+
+  const newValue = `${serverIp},9.9.9.9`;
+
+  const existing = db.prepare('SELECT value FROM dhcp_option_defaults WHERE option_code = 6').get();
+  if (existing?.value === newValue) return; // no change
+
+  db.prepare(`
+    INSERT INTO dhcp_option_defaults (option_code, value, updated_at)
+    VALUES (6, ?, datetime('now'))
+    ON CONFLICT(option_code) DO UPDATE SET value = ?, updated_at = datetime('now')
+  `).run(newValue, newValue);
+
+  console.log(`DNS Servers default updated: ${newValue}`);
 }

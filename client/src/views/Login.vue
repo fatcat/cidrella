@@ -1,7 +1,7 @@
 <template>
   <div class="login-container">
     <div class="login-card">
-      <h1>IPAM</h1>
+      <h1>CIDRella</h1>
       <p class="subtitle">IP Address Management</p>
       <form @submit.prevent="handleLogin">
         <div class="field">

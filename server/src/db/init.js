@@ -18,7 +18,11 @@ export function getDb() {
 }
 
 export async function initDb(dataDir) {
-  const dbPath = path.join(dataDir, 'ipam.db');
+  let dbPath = path.join(dataDir, 'cidrella.db');
+  // Backwards compatibility: use existing ipam.db if cidrella.db doesn't exist yet
+  if (!fs.existsSync(dbPath) && fs.existsSync(path.join(dataDir, 'ipam.db'))) {
+    dbPath = path.join(dataDir, 'ipam.db');
+  }
   db = new Database(dbPath);
 
   // Enable WAL mode for better concurrent read performance

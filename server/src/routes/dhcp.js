@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
-import { isIpInSubnet, ipToLong } from '../utils/ip.js';
+import { isIpInSubnet, ipToLong, getServerIpForSubnet } from '../utils/ip.js';
 import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
 
@@ -36,17 +36,21 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
   const scopes = db.prepare(`
     SELECT s.*, r.start_ip, r.end_ip,
-      sub.cidr as subnet_cidr, sub.name as subnet_name, sub.gateway_address as subnet_gateway
+      sub.cidr as subnet_cidr, sub.name as subnet_name, sub.gateway_address as subnet_gateway,
+      sub.domain_name as subnet_domain_name
     FROM dhcp_scopes s
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id
     ORDER BY sub.network_address
   `).all();
 
-  // Attach options to each scope
+  // Attach options and server IP to each scope
   const optStmt = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?');
   for (const scope of scopes) {
     scope.options = optStmt.all(scope.id);
+    if (scope.subnet_cidr) {
+      scope.server_ip = getServerIpForSubnet(scope.subnet_cidr);
+    }
   }
 
   res.json(scopes);
@@ -484,7 +488,7 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
   const ranges = db.prepare(`
     SELECT r.*, rt.name as range_type_name, sub.cidr as subnet_cidr, sub.name as subnet_name,
-      sub.gateway_address as subnet_gateway
+      sub.gateway_address as subnet_gateway, sub.domain_name as subnet_domain_name
     FROM ranges r
     JOIN range_types rt ON r.range_type_id = rt.id
     JOIN subnets sub ON r.subnet_id = sub.id
@@ -492,6 +496,11 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
       AND r.id NOT IN (SELECT range_id FROM dhcp_scopes)
     ORDER BY sub.network_address, r.start_ip
   `).all();
+  for (const range of ranges) {
+    if (range.subnet_cidr) {
+      range.server_ip = getServerIpForSubnet(range.subnet_cidr);
+    }
+  }
   res.json(ranges);
 });
 
@@ -500,8 +509,9 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
 // GET /api/dhcp/options — catalog + global defaults + custom options
 router.get('/options', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
-  const rows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults').all();
-  const defaults = Object.fromEntries(rows.map(r => [r.option_code, r.value]));
+  const rows = db.prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults').all();
+  const defaults = Object.fromEntries(rows.filter(r => r.value != null).map(r => [r.option_code, r.value]));
+  const enabledDefaults = rows.filter(r => r.enabled_by_default).map(r => r.option_code);
 
   // Merge built-in catalog with custom options
   const customRows = db.prepare('SELECT * FROM dhcp_custom_options ORDER BY code').all();
@@ -514,7 +524,7 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
   }));
 
   const catalog = [...DHCP_OPTIONS, ...customOptions];
-  res.json({ catalog, defaults, groups: DHCP_OPTION_GROUPS });
+  res.json({ catalog, defaults, enabledDefaults, groups: DHCP_OPTION_GROUPS });
 });
 
 // POST /api/dhcp/options/custom — create a custom option (codes 128-254)
@@ -567,21 +577,31 @@ router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => 
 
 // PUT /api/dhcp/options/defaults — set global defaults
 router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
-  const { options } = req.body;
+  const { options, enabledDefaults } = req.body;
   if (!Array.isArray(options)) {
     return res.status(400).json({ error: 'options must be an array of { code, value }' });
   }
+  const enabledSet = new Set((enabledDefaults || []).map(Number));
 
   const db = getDb();
   const txn = db.transaction(() => {
     db.prepare('DELETE FROM dhcp_option_defaults').run();
     const insert = db.prepare(`
-      INSERT INTO dhcp_option_defaults (option_code, value, updated_at)
-      VALUES (?, ?, datetime('now'))
+      INSERT INTO dhcp_option_defaults (option_code, value, enabled_by_default, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
     `);
+    // Insert options that have a value
+    const inserted = new Set();
     for (const opt of options) {
       if (opt.code && opt.value != null && opt.value !== '') {
-        insert.run(opt.code, String(opt.value));
+        insert.run(opt.code, String(opt.value), enabledSet.has(Number(opt.code)) ? 1 : 0);
+        inserted.add(Number(opt.code));
+      }
+    }
+    // Insert enabled-only entries (no value but enabled by default)
+    for (const code of enabledSet) {
+      if (!inserted.has(code)) {
+        insert.run(code, null, 1);
       }
     }
   });
@@ -590,9 +610,10 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   audit(req.user.id, 'dhcp_option_defaults_updated', 'dhcp', null, { count: options.length });
   regenerateDhcpConfigs(db);
 
-  const rows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults').all();
-  const defaults = Object.fromEntries(rows.map(r => [r.option_code, r.value]));
-  res.json({ defaults });
+  const rows = db.prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults').all();
+  const defaults = Object.fromEntries(rows.filter(r => r.value != null).map(r => [r.option_code, r.value]));
+  const returnedEnabled = rows.filter(r => r.enabled_by_default).map(r => r.option_code);
+  res.json({ defaults, enabledDefaults: returnedEnabled });
 });
 
 // One-time migration: copy legacy column values to dhcp_scope_options

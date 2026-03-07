@@ -11,25 +11,25 @@
           <span class="sys-toolbar-divider"></span>
           <Button label="Add VLAN" icon="pi pi-plus" size="small" text @click="openVlanDialog()" />
         </template>
-        <template v-if="activeTab === 5">
+        <template v-if="activeTab === 4">
           <span class="sys-toolbar-divider"></span>
           <Button label="Create Backup Now" icon="pi pi-download" size="small" text @click="doCreateBackup" :loading="creatingBackup" />
         </template>
-        <template v-if="activeTab === 6">
+        <template v-if="activeTab === 5">
           <span class="sys-toolbar-divider"></span>
           <Button label="Upload Certificate" icon="pi pi-upload" size="small" text @click="doUploadCert" :loading="uploadingCert"
                   :disabled="!certUpload.cert || !certUpload.key || certValidation.cert === false || certValidation.key === false" />
         </template>
-        <template v-if="activeTab === 7">
+        <template v-if="activeTab === 6">
           <span class="sys-toolbar-divider"></span>
           <Button label="Add Zone" icon="pi pi-plus" size="small" text @click="dnsPanelRef?.openZoneDialog()" />
         </template>
-        <template v-if="activeTab === 8">
+        <template v-if="activeTab === 7">
           <span class="sys-toolbar-divider"></span>
           <Button label="Add Scope" icon="pi pi-plus" size="small" text @click="dhcpPanelRef?.openScopeDialog()" />
           <Button label="Apply Config" icon="pi pi-refresh" size="small" text @click="dhcpPanelRef?.applyConfig()" />
         </template>
-        <template v-if="activeTab === 11">
+        <template v-if="activeTab === 10">
           <span class="sys-toolbar-divider"></span>
           <Button label="Add User" icon="pi pi-plus" size="small" text @click="usersPanelRef?.openCreateDialog()" />
         </template>
@@ -209,7 +209,7 @@
             </div>
             <div class="field">
               <label>VLAN ID *</label>
-              <InputNumber v-model="vlanForm.vlan_id" :min="1" :max="4094" class="w-full"
+              <InputNumber v-model="vlanForm.vlan_id" :min="1" :max="4094" :useGrouping="false" class="w-full"
                            @input="onVlanIdInput" />
             </div>
             <div class="field">
@@ -235,49 +235,6 @@
       </TabPanel>
       <TabPanel header="Network Calculator">
         <SubnetCalculator />
-      </TabPanel>
-      <TabPanel header="Audit Log">
-        <div class="audit-section">
-          <div class="audit-filters">
-            <MultiSelect v-model="auditFilters.action" :options="auditActionOptions" optionLabel="label" optionValue="value"
-                    placeholder="All Actions" :maxSelectedLabels="2" class="audit-filter" display="chip" />
-            <MultiSelect v-model="auditFilters.entity_type" :options="auditEntityOptions" optionLabel="label" optionValue="value"
-                    placeholder="All Entities" :maxSelectedLabels="2" class="audit-filter" display="chip" />
-            <Button icon="pi pi-refresh" severity="secondary" text rounded @click="loadAuditLog" />
-          </div>
-          <DataTable :value="auditLog.items" :loading="loadingAudit" stripedRows size="small"
-                     emptyMessage="No audit entries found."
-                     :paginator="auditLog.items.length > 256" :rows="256"
-                     :rowsPerPageOptions="[64, 128, 256, 512]"
-                     scrollable scrollHeight="flex">
-            <Column field="created_at" header="Time" style="width: 11rem">
-              <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
-            </Column>
-            <Column field="username" header="User" style="width: 8rem">
-              <template #body="{ data }">{{ data.username || 'system' }}</template>
-            </Column>
-            <Column field="action" header="Action" style="width: 8rem">
-              <template #body="{ data }">
-                <span class="audit-action" :class="'action-' + actionColor(data.action)">{{ data.action }}</span>
-              </template>
-            </Column>
-            <Column field="entity_type" header="Entity" style="width: 8rem" />
-            <Column field="entity_id" header="ID" style="width: 4rem" />
-            <Column header="Details">
-              <template #body="{ data }">
-                <span class="audit-details">{{ formatDetails(data.details) }}</span>
-              </template>
-            </Column>
-          </DataTable>
-          <div class="audit-pagination" v-if="auditLog.total > auditFilters.limit">
-            <Button label="Previous" severity="secondary" size="small" :disabled="auditFilters.page <= 1"
-                    @click="auditFilters.page--; loadAuditLog()" />
-            <span class="page-info">Page {{ auditFilters.page }} of {{ Math.ceil(auditLog.total / auditFilters.limit) }}</span>
-            <Button label="Next" severity="secondary" size="small"
-                    :disabled="auditFilters.page >= Math.ceil(auditLog.total / auditFilters.limit)"
-                    @click="auditFilters.page++; loadAuditLog()" />
-          </div>
-        </div>
       </TabPanel>
       <TabPanel header="Backup & Restore">
         <div class="backup-section">
@@ -465,10 +422,10 @@
               <div v-for="t in darkThemes" :key="t.id"
                    class="theme-card" :class="{ 'theme-active': themeStore.currentThemeId === t.id }"
                    @click="themeStore.applyTheme(t.id)">
-                <span class="theme-swatch-dot" :style="{ background: themeSwatches[t.primary] }"></span>
+                <span class="theme-swatch-dot" :style="{ background: getThemeSwatch(t) }"></span>
                 <div class="theme-card-info">
                   <span class="theme-card-name">{{ t.name }}</span>
-                  <span class="theme-card-desc">{{ t.primary }} primary, {{ t.surface }} surface</span>
+                  <span class="theme-card-desc">{{ getThemeDesc(t) }}</span>
                 </div>
                 <i v-if="themeStore.currentThemeId === t.id" class="pi pi-check theme-check"></i>
               </div>
@@ -481,16 +438,66 @@
               <div v-for="t in lightThemes" :key="t.id"
                    class="theme-card" :class="{ 'theme-active': themeStore.currentThemeId === t.id }"
                    @click="themeStore.applyTheme(t.id)">
-                <span class="theme-swatch-dot" :style="{ background: themeSwatches[t.primary] }"></span>
+                <span class="theme-swatch-dot" :style="{ background: getThemeSwatch(t) }"></span>
                 <div class="theme-card-info">
                   <span class="theme-card-name">{{ t.name }}</span>
-                  <span class="theme-card-desc">{{ t.primary }} primary, {{ t.surface }} surface</span>
+                  <span class="theme-card-desc">{{ getThemeDesc(t) }}</span>
                 </div>
                 <i v-if="themeStore.currentThemeId === t.id" class="pi pi-check theme-check"></i>
               </div>
             </div>
           </div>
         </div>
+      </TabPanel>
+      <TabPanel header="Logging">
+        <TabView class="logging-subtabs">
+          <TabPanel header="DNSmasq">
+            <LogViewer />
+          </TabPanel>
+          <TabPanel header="Audit Log">
+            <div class="audit-section">
+              <div class="audit-filters">
+                <MultiSelect v-model="auditFilters.action" :options="auditActionOptions" optionLabel="label" optionValue="value"
+                        placeholder="All Actions" :maxSelectedLabels="2" class="audit-filter" display="chip" />
+                <MultiSelect v-model="auditFilters.entity_type" :options="auditEntityOptions" optionLabel="label" optionValue="value"
+                        placeholder="All Entities" :maxSelectedLabels="2" class="audit-filter" display="chip" />
+                <Button icon="pi pi-refresh" severity="secondary" text rounded @click="loadAuditLog" />
+              </div>
+              <DataTable :value="auditLog.items" :loading="loadingAudit" stripedRows size="small"
+                         emptyMessage="No audit entries found."
+                         :paginator="auditLog.items.length > 256" :rows="256"
+                         :rowsPerPageOptions="[64, 128, 256, 512]"
+                         scrollable scrollHeight="flex">
+                <Column field="created_at" header="Time" style="width: 11rem">
+                  <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
+                </Column>
+                <Column field="username" header="User" style="width: 8rem">
+                  <template #body="{ data }">{{ data.username || 'system' }}</template>
+                </Column>
+                <Column field="action" header="Action" style="width: 8rem">
+                  <template #body="{ data }">
+                    <span class="audit-action" :class="'action-' + actionColor(data.action)">{{ data.action }}</span>
+                  </template>
+                </Column>
+                <Column field="entity_type" header="Entity" style="width: 8rem" />
+                <Column field="entity_id" header="ID" style="width: 4rem" />
+                <Column header="Details">
+                  <template #body="{ data }">
+                    <span class="audit-details">{{ formatDetails(data.details) }}</span>
+                  </template>
+                </Column>
+              </DataTable>
+              <div class="audit-pagination" v-if="auditLog.total > auditFilters.limit">
+                <Button label="Previous" severity="secondary" size="small" :disabled="auditFilters.page <= 1"
+                        @click="auditFilters.page--; loadAuditLog()" />
+                <span class="page-info">Page {{ auditFilters.page }} of {{ Math.ceil(auditLog.total / auditFilters.limit) }}</span>
+                <Button label="Next" severity="secondary" size="small"
+                        :disabled="auditFilters.page >= Math.ceil(auditLog.total / auditFilters.limit)"
+                        @click="auditFilters.page++; loadAuditLog()" />
+              </div>
+            </div>
+          </TabPanel>
+        </TabView>
       </TabPanel>
     </TabView>
 
@@ -525,6 +532,7 @@ const DhcpPanel = defineAsyncComponent(() => import('./DHCP.vue'));
 const BlocklistsPanel = defineAsyncComponent(() => import('./Blocklists.vue'));
 const GeoipPanel = defineAsyncComponent(() => import('./GeoIP.vue'));
 const UsersPanel = defineAsyncComponent(() => import('./Users.vue'));
+const LogViewer = defineAsyncComponent(() => import('../components/LogViewer.vue'));
 
 const dnsPanelRef = ref(null);
 const dhcpPanelRef = ref(null);
@@ -536,9 +544,18 @@ const authStore = useAuthStore();
 const themeStore = useThemeStore();
 const toast = useToast();
 
-const themeSwatches = colorSwatches;
 const darkThemes = themes.filter(t => t.group === 'dark');
 const lightThemes = themes.filter(t => t.group === 'light');
+
+function getThemeSwatch(t) {
+  if (t.primary) return colorSwatches[t.primary];
+  return colorSwatches[t.name.toLowerCase()] || t.customPrimary?.[300] || '#888';
+}
+
+function getThemeDesc(t) {
+  if (t.primary) return `${t.primary} primary, ${t.surface} surface`;
+  return 'custom palette';
+}
 
 // Persist active tab across refreshes
 const activeTab = ref(parseInt(localStorage.getItem('ipam_system_tab') || '0', 10));
@@ -699,14 +716,9 @@ const vlanNameManual = ref(false);
 const vlanOrgFilter = ref(null);
 
 function onVlanIdInput(e) {
-  let id = e.value;
-  if (id !== null && id !== undefined) {
-    if (id < 1) id = 1;
-    if (id > 4094) id = 4094;
-    vlanForm.value.vlan_id = id;
-  }
-  if (!editingVlan.value && !vlanNameManual.value) {
-    vlanForm.value.name = id ? `VLAN${id}` : '';
+  const val = e.value;
+  if (!vlanNameManual.value) {
+    vlanForm.value.name = val ? `VLAN${val}` : '';
   }
 }
 
@@ -732,6 +744,7 @@ function openVlanDialog() {
 
 function editVlan(vlan) {
   editingVlan.value = vlan;
+  vlanNameManual.value = vlan.name !== `VLAN${vlan.vlan_id}`;
   vlanForm.value = { folder_id: vlan.folder_id, vlan_id: vlan.vlan_id, name: vlan.name };
   showVlanDialog.value = true;
 }

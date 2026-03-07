@@ -1,6 +1,9 @@
 services:
-  ipam:
-    build: .
+  cidrella:
+    build:
+      context: .
+      args:
+        DEV_TRACKING: ${DEV_TRACKING:-0}
     network_mode: host
     cap_add:
       - NET_ADMIN
@@ -10,14 +13,15 @@ services:
       - DATA_DIR=/data
       - HTTPS_PORT=8443
       - HTTP_PORT=8080
-      - PUID=${PUID:-0}
-      - PGID=${PGID:-0}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - DEV_TRACKING=${DEV_TRACKING:-0}
     restart: unless-stopped
 
   reset:
     image: alpine
     volumes:
       - ./data:/data
-    command: sh -c "rm -f /data/ipam.db /data/ipam.db-wal /data/ipam.db-shm && echo 'Database reset complete. Restart ipam service to reinitialize.'"
+    command: sh -c "rm -f /data/cidrella.db /data/cidrella.db-wal /data/cidrella.db-shm && echo 'Database reset complete. Restart cidrella service to reinitialize.'"
     profiles:
       - tools

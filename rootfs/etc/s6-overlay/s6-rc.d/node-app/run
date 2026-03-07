@@ -1,5 +1,3 @@
 #!/command/execlineb -P
-importas -D "0" PUID PUID
-ifelse { test ${PUID} -ne 0 }
-{ s6-setuidgid ipam node /app/server/src/index.js }
-exec node /app/server/src/index.js
+s6-setuidgid cidrella
+node /app/server/src/index.js

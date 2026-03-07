@@ -1,4 +1,4 @@
-# IPAM DNSmasq default configuration
+# CIDRella DNSmasq default configuration
 # This file is copied to /data/dnsmasq/dnsmasq.conf on first run
 
 # Don't read /etc/resolv.conf
@@ -8,10 +8,15 @@ no-resolv
 server=8.8.8.8
 server=1.1.1.1
 
+# DNS listener (loopback only by default)
+listen-address=127.0.0.1
+
+# DHCP requires listening on a real interface IP.
+# Uncomment and set your server's IP to enable DHCP:
+#listen-address=192.168.1.1
+
 # bind-dynamic allows dnsmasq to bind to addresses that may appear later
 # and avoids conflicts with other DNS services (e.g. WSL2 DNS proxy)
-# Add listen-address lines for each address dnsmasq should serve
-listen-address=127.0.0.1
 bind-dynamic
 
 # Watched directories for hot-reload (no restart needed)
@@ -23,6 +28,9 @@ conf-dir=/data/dnsmasq/conf.d
 
 # PID file for signaling
 pid-file=/data/dnsmasq/dnsmasq.pid
+
+# Log to file (tailed by the web UI)
+log-facility=/data/dnsmasq/dnsmasq.log
 
 # Log queries for debugging (can be toggled via UI later)
 log-queries

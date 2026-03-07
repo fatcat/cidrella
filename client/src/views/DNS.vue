@@ -20,38 +20,113 @@
     <div class="dns-layout">
       <!-- Zone List -->
       <div class="zone-panel">
-        <div class="panel-header">
-          <h3>Zones</h3>
-        </div>
-        <div class="zone-list" v-if="!store.loading">
-          <div v-for="zone in store.zones" :key="zone.id"
-               class="zone-item" :class="{ active: selectedZone?.id === zone.id }"
-               @click="selectZone(zone)">
-            <div class="zone-info">
-              <div class="zone-name">
-                <i :class="zone.type === 'forward' ? 'pi pi-globe' : 'pi pi-replay'" />
-                {{ zone.name }}
+        <Tabs v-model:value="zoneTab">
+          <TabList>
+            <Tab value="forward"><i class="pi pi-globe" style="margin-right: 0.3rem" />Forward</Tab>
+            <Tab value="reverse"><i class="pi pi-replay" style="margin-right: 0.3rem" />Reverse</Tab>
+          </TabList>
+          <TabPanels>
+            <!-- Forward Zones Tab -->
+            <TabPanel value="forward">
+              <div class="zone-list" v-if="!store.loading">
+                <div v-for="zone in forwardZones" :key="zone.id"
+                     class="zone-item"
+                     :class="{ active: selectedZone?.id === zone.id }"
+                     @click="selectZone(zone)">
+                  <div class="zone-info">
+                    <div class="zone-name">
+                      <i class="pi pi-globe" />
+                      {{ zone.name }}
+                    </div>
+                    <div class="zone-meta">
+                      <span class="record-count">{{ zone.record_count }} records</span>
+                      <span v-if="!zone.enabled" class="badge-disabled">disabled</span>
+                    </div>
+                  </div>
+                  <div class="zone-actions">
+                    <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                            @click.stop="openZoneDialog(zone)" />
+                    <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                            @click.stop="confirmDeleteZone(zone)" />
+                  </div>
+                </div>
+                <div v-if="forwardZones.length === 0" class="empty-state">
+                  No forward zones configured.
+                </div>
               </div>
-              <div class="zone-meta">
-                <span class="zone-type-badge" :class="zone.type">{{ zone.type }}</span>
-                <span class="record-count">{{ zone.record_count }} records</span>
-                <span v-if="!zone.enabled" class="badge-disabled">disabled</span>
+              <div v-else class="loading-state">
+                <i class="pi pi-spin pi-spinner" /> Loading zones...
               </div>
-            </div>
-            <div class="zone-actions">
-              <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                      @click.stop="openZoneDialog(zone)" />
-              <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                      @click.stop="confirmDeleteZone(zone)" />
-            </div>
-          </div>
-          <div v-if="store.zones.length === 0" class="empty-state">
-            No zones configured. Click "Add Zone" to get started.
-          </div>
-        </div>
-        <div v-else class="loading-state">
-          <i class="pi pi-spin pi-spinner" /> Loading zones...
-        </div>
+            </TabPanel>
+
+            <!-- Reverse Zones Tab -->
+            <TabPanel value="reverse">
+              <div class="zone-list" v-if="!store.loading">
+                <template v-for="entry in groupedReverseZones" :key="entry.key">
+                  <!-- Standalone reverse zone -->
+                  <div v-if="!entry.isGroup" class="zone-item"
+                       :class="{ active: selectedZone?.id === entry.zone.id }"
+                       @click="selectZone(entry.zone)">
+                    <div class="zone-info">
+                      <div class="zone-name">
+                        <i class="pi pi-replay" />
+                        {{ entry.zone.name }}
+                      </div>
+                      <div class="zone-meta">
+                        <span class="record-count">{{ entry.zone.record_count }} records</span>
+                        <span v-if="!entry.zone.enabled" class="badge-disabled">disabled</span>
+                      </div>
+                    </div>
+                    <div class="zone-actions">
+                      <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                              @click.stop="openZoneDialog(entry.zone)" />
+                      <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                              @click.stop="confirmDeleteZone(entry.zone)" />
+                    </div>
+                  </div>
+                  <!-- Grouped reverse zones -->
+                  <template v-else>
+                    <div class="zone-group-header" @click="toggleGroup(entry.key)">
+                      <i class="pi" :class="expandedGroups[entry.key] ? 'pi-chevron-down' : 'pi-chevron-right'" style="font-size: 0.6rem" />
+                      <i class="pi pi-replay" />
+                      <span>{{ entry.description }}</span>
+                      <span class="record-count">{{ entry.zones.length }} zones</span>
+                    </div>
+                    <template v-if="expandedGroups[entry.key]">
+                      <div v-for="zone in entry.zones" :key="zone.id"
+                           class="zone-item zone-child"
+                           :class="{ active: selectedZone?.id === zone.id }"
+                           @click="selectZone(zone)">
+                        <div class="zone-info">
+                          <div class="zone-name">
+                            <i class="pi pi-replay" />
+                            {{ zone.name }}
+                          </div>
+                          <div class="zone-meta">
+                            <span class="record-count">{{ zone.record_count }} records</span>
+                            <span v-if="!zone.enabled" class="badge-disabled">disabled</span>
+                          </div>
+                        </div>
+                        <div class="zone-actions">
+                          <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                                  @click.stop="openZoneDialog(zone)" />
+                          <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                                  @click.stop="confirmDeleteZone(zone)" />
+                        </div>
+                      </div>
+                    </template>
+                  </template>
+                </template>
+                <div v-if="groupedReverseZones.length === 0" class="empty-state">
+                  No reverse zones configured.
+                </div>
+              </div>
+              <div v-else class="loading-state">
+                <i class="pi pi-spin pi-spinner" /> Loading zones...
+              </div>
+            </TabPanel>
+          </TabPanels>
+        </Tabs>
       </div>
 
       <!-- Records Panel -->
@@ -254,6 +329,11 @@ import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import Select from 'primevue/select';
 import ToggleSwitch from 'primevue/toggleswitch';
+import Tabs from 'primevue/tabs';
+import TabList from 'primevue/tablist';
+import Tab from 'primevue/tab';
+import TabPanels from 'primevue/tabpanels';
+import TabPanel from 'primevue/tabpanel';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
 
@@ -264,6 +344,48 @@ const toast = useToast();
 const selectedZone = ref(null);
 const records = ref([]);
 const loadingRecords = ref(false);
+const expandedGroups = ref({});
+const zoneTab = ref('forward');
+
+// Forward zones (simple list)
+const forwardZones = computed(() => store.zones.filter(z => z.type === 'forward'));
+
+// Group reverse zones that share a subnet_id (multiple /24 zones for one supernet)
+const groupedReverseZones = computed(() => {
+  const result = [];
+  const bySubnet = new Map();
+  const reverseZones = store.zones.filter(z => z.type === 'reverse');
+
+  for (const zone of reverseZones) {
+    if (zone.subnet_id) {
+      if (!bySubnet.has(zone.subnet_id)) bySubnet.set(zone.subnet_id, []);
+      bySubnet.get(zone.subnet_id).push(zone);
+    }
+  }
+
+  const grouped = new Set();
+  for (const zone of reverseZones) {
+    if (grouped.has(zone.id)) continue;
+
+    if (zone.subnet_id && bySubnet.get(zone.subnet_id).length > 1) {
+      const zones = bySubnet.get(zone.subnet_id);
+      zones.forEach(z => grouped.add(z.id));
+      result.push({
+        isGroup: true,
+        key: `subnet-${zone.subnet_id}`,
+        description: zones[0].description?.replace(/^Reverse zone for /, '') || `Subnet ${zone.subnet_id}`,
+        zones
+      });
+    } else {
+      result.push({ isGroup: false, key: `zone-${zone.id}`, zone });
+    }
+  }
+  return result;
+});
+
+function toggleGroup(key) {
+  expandedGroups.value = { ...expandedGroups.value, [key]: !expandedGroups.value[key] };
+}
 
 // Zone dialog
 const showZoneDialog = ref(false);
@@ -316,7 +438,11 @@ async function selectZone(zone) {
   selectedZone.value = zone;
   loadingRecords.value = true;
   try {
-    records.value = await store.getRecords(zone.id);
+    const fetched = await store.getRecords(zone.id);
+    if (zone.type === 'reverse') {
+      fetched.sort((a, b) => (a.value || '').localeCompare(b.value || '', undefined, { numeric: true }));
+    }
+    records.value = fetched;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
@@ -337,7 +463,7 @@ function openZoneDialog(zone = null) {
     };
   } else {
     zoneForm.value = {
-      name: '', type: 'forward', description: '', enabled: true,
+      name: '', type: zoneTab.value || 'forward', description: '', enabled: true,
       soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
       soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
     };
@@ -518,6 +644,12 @@ defineExpose({ openZoneDialog });
   overflow: hidden;
   color: var(--p-text-color);
 }
+.zone-panel :deep(.p-tabpanels) {
+  padding: 0;
+}
+.zone-panel :deep(.p-tablist) {
+  background: var(--p-surface-ground);
+}
 
 .panel-header {
   display: flex;
@@ -557,16 +689,6 @@ defineExpose({ openZoneDialog });
   color: var(--p-text-color);
 }
 .zone-meta { display: flex; gap: 0.4rem; margin-top: 0.2rem; align-items: center; }
-
-.zone-type-badge {
-  font-size: 0.7rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 3px;
-  text-transform: uppercase;
-  font-weight: 600;
-}
-.zone-type-badge.forward { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent); color: var(--p-blue-500); }
-.zone-type-badge.reverse { background: color-mix(in srgb, var(--p-orange-500) 20%, transparent); color: var(--p-orange-500); }
 
 .record-count { font-size: 0.75rem; color: var(--p-surface-500); }
 
@@ -653,6 +775,30 @@ defineExpose({ openZoneDialog });
   margin-top: 0.4rem;
   font-size: 0.75rem;
   color: var(--p-text-muted-color);
+}
+
+.zone-group-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--p-text-color);
+  background: var(--p-surface-ground);
+  border-bottom: 1px solid var(--p-surface-border);
+  transition: background 0.15s;
+}
+.zone-group-header:hover {
+  background: color-mix(in srgb, var(--p-surface-ground) 80%, var(--p-highlight-background));
+}
+.zone-group-header .record-count {
+  margin-left: auto;
+}
+
+.zone-child {
+  padding-left: 2rem;
 }
 
 @media (max-width: 900px) {

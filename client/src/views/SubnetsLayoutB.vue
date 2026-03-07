@@ -3,8 +3,8 @@
     <!-- Unified Toolbar -->
     <div class="toolbar">
       <div class="toolbar-left">
-        <Button label="Add Organization" icon="pi pi-plus" size="small" text @click="dialogs.openOrgDialog()" />
-        <Button label="Add Network" icon="pi pi-plus" size="small" text @click="dialogs.openSubnetDialog(selectedFolder?.id)" />
+        <Button label="Add Organization" icon="pi pi-plus" size="small" text @click="dialogs.openWizard()" />
+        <Button label="Add Network" icon="pi pi-plus" size="small" text @click="dialogs.openCreateNetwork(selectedFolder?.id)" />
         <span class="toolbar-divider"></span>
         <Button label="Settings" icon="pi pi-cog" size="small" text @click="$router.push('/system')" />
       </div>
@@ -348,11 +348,7 @@ const subnetContextMenuItems = computed(() => {
   if (isLeaf) {
     items.push({ label: 'Divide', icon: 'pi pi-share-alt', command: () => dialogs.value.openDivide(node) });
   }
-  if (d.status === 'unallocated') {
-    items.push({ label: 'Configure', icon: 'pi pi-cog', command: () => dialogs.value.openConfigure(node) });
-  } else {
-    items.push({ label: 'Edit', icon: 'pi pi-pencil', command: () => dialogs.value.openEdit(node) });
-  }
+  items.push({ label: 'Edit', icon: 'pi pi-pencil', command: () => dialogs.value.openEdit(node) });
 
   if (d.parent_id) {
     if (mergeSelectedIdsRaw.value.length >= 2 && mergeValidation.value.valid) {
@@ -375,7 +371,11 @@ const subnetContextMenuItems = computed(() => {
   }
 
   items.push({ separator: true });
-  items.push({ label: 'Delete', icon: 'pi pi-trash', class: 'p-error', command: () => dialogs.value.openDelete(node) });
+  if (d.status === 'allocated') {
+    items.push({ label: 'Deallocate', icon: 'pi pi-undo', class: 'p-error', command: () => dialogs.value.openDeallocate(node) });
+  } else {
+    items.push({ label: 'Delete', icon: 'pi pi-trash', class: 'p-error', command: () => dialogs.value.openDelete(node) });
+  }
   return items;
 });
 
@@ -512,7 +512,7 @@ function onDropSubnet(event, folderId) {
   if (!subnet) return;
 
   selectedNode.value = { data: { ...subnet, type: 'subnet' }, key: `subnet-${subnet.id}`, children: subnet.children || [] };
-  dialogs.value.openConfigure(selectedNode.value, folderId);
+  dialogs.value.openEdit(selectedNode.value, folderId);
 }
 
 function isDraggableBrowseNode(node) {
@@ -590,7 +590,7 @@ function refreshSelectionRefs() {
 function findNodeInTrees(subnetId) {
   function search(nodes) {
     for (const n of nodes) {
-      if (n.data.id === subnetId) return n;
+      if (n.data.id === subnetId && n.data.type !== 'folder') return n;
       if (n.children) {
         const found = search(n.children);
         if (found) return found;
@@ -628,6 +628,17 @@ onMounted(async () => {
   if (selectedSubnetId.value) {
     const node = findNodeInTrees(selectedSubnetId.value);
     if (node) selectedNode.value = node;
+  }
+
+  // Restore folder selection
+  if (!selectedSubnetId.value) {
+    const savedFolderId = loadJson('ipam_b_selected_folder_id', null);
+    if (savedFolderId) {
+      const folder = store.folders.find(f => f.id === savedFolderId);
+      if (folder) selectedFolder.value = folder;
+    } else if (store.folders.length > 0) {
+      selectedFolder.value = store.folders[0];
+    }
   }
 });
 

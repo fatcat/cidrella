@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { parseCidr } from './ip.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
@@ -29,17 +30,33 @@ function toFqdn(recordName, zoneName) {
 }
 
 export function generateReverseName(cidr) {
+  return generateReverseNames(cidr)[0];
+}
+
+/**
+ * Generate all /24 reverse zone names for a CIDR.
+ * Networks /24+ → 1 zone, /17-/23 → multiple /24 zones, /16 → /16 zone, etc.
+ */
+export function generateReverseNames(cidr) {
   const parsed = parseCidr(cidr);
-  const octets = parsed.network.split('.');
+  const octets = parsed.network.split('.').map(Number);
 
   if (parsed.prefix >= 24) {
-    return `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`;
+    return [`${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`];
+  } else if (parsed.prefix >= 17) {
+    // Split into individual /24 zones
+    const numBlocks = 1 << (24 - parsed.prefix);
+    const zones = [];
+    for (let i = 0; i < numBlocks; i++) {
+      zones.push(`${octets[2] + i}.${octets[1]}.${octets[0]}.in-addr.arpa`);
+    }
+    return zones;
   } else if (parsed.prefix >= 16) {
-    return `${octets[1]}.${octets[0]}.in-addr.arpa`;
+    return [`${octets[1]}.${octets[0]}.in-addr.arpa`];
   } else if (parsed.prefix >= 8) {
-    return `${octets[0]}.in-addr.arpa`;
+    return [`${octets[0]}.in-addr.arpa`];
   }
-  return `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`;
+  return [`${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`];
 }
 
 export function regenerateHostsDir(db) {
@@ -180,7 +197,7 @@ const DNSMASQ_PID = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.pid');
 export function signalDnsmasq() {
   try {
     const pid = parseInt(fs.readFileSync(DNSMASQ_PID, 'utf-8').trim(), 10);
-    if (pid) process.kill(pid, 'SIGHUP');
+    if (pid) execFileSync('sudo', ['kill', '-HUP', String(pid)]);
   } catch {
     console.warn('Could not send SIGHUP to dnsmasq (may not be running)');
   }

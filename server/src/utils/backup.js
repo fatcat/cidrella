@@ -7,7 +7,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '.
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 
 /**
- * Create a backup archive of the IPAM data
+ * Create a backup archive of the CIDRella data
  */
 export function createBackup(db) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
@@ -16,12 +16,13 @@ export function createBackup(db) {
   db.pragma('wal_checkpoint(TRUNCATE)');
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
-  const filename = `ipam-backup-${timestamp}.tar.gz`;
+  const filename = `cidrella-backup-${timestamp}.tar.gz`;
   const archivePath = path.join(BACKUP_DIR, filename);
 
   // Build list of files/dirs to include (relative to DATA_DIR)
   const includes = [];
-  if (fs.existsSync(path.join(DATA_DIR, 'ipam.db'))) includes.push('ipam.db');
+  if (fs.existsSync(path.join(DATA_DIR, 'cidrella.db'))) includes.push('cidrella.db');
+  else if (fs.existsSync(path.join(DATA_DIR, 'ipam.db'))) includes.push('ipam.db');
   if (fs.existsSync(path.join(DATA_DIR, 'certs'))) includes.push('certs');
   if (fs.existsSync(path.join(DATA_DIR, 'dnsmasq'))) includes.push('dnsmasq');
 
@@ -61,8 +62,8 @@ export function restoreBackup(archivePath) {
 
   // Validate archive contents
   const listing = execFileSync('tar', ['tzf', archivePath], { encoding: 'utf-8', timeout: 30000 });
-  if (!listing.includes('ipam.db')) {
-    throw new Error('Invalid backup: missing ipam.db');
+  if (!listing.includes('cidrella.db') && !listing.includes('ipam.db')) {
+    throw new Error('Invalid backup: missing database file');
   }
 
   // Extract to DATA_DIR, overwriting existing files

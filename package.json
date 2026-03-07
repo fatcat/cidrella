@@ -1,8 +1,8 @@
 {
-  "name": "ipam",
+  "name": "cidrella",
   "version": "1.0.0",
   "private": true,
-  "description": "IP Address Management system with DNS and DHCP via DNSmasq",
+  "description": "CIDRella — IP Address Management system with DNS and DHCP via DNSmasq",
   "scripts": {
     "dev:server": "cd server && node src/index.js",
     "dev:client": "cd client && npx vite --host",

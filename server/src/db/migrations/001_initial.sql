@@ -1,4 +1,4 @@
--- Initial schema for IPAM Phase 1
+-- Initial schema for CIDRella
 
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

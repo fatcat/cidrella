@@ -68,7 +68,7 @@ router.post('/restore', (req, res) => {
     return res.status(400).json({ error: 'Content-Type must be application/gzip or application/octet-stream' });
   }
 
-  const tmpPath = path.join(os.tmpdir(), `ipam-restore-${Date.now()}.tar.gz`);
+  const tmpPath = path.join(os.tmpdir(), `cidrella-restore-${Date.now()}.tar.gz`);
 
   const writeStream = fs.createWriteStream(tmpPath);
   req.pipe(writeStream);
@@ -131,8 +131,8 @@ router.post('/certs/upload', (req, res) => {
   }
 
   // Validate cert
-  const tmpCert = path.join(os.tmpdir(), `ipam-cert-${Date.now()}.pem`);
-  const tmpKey = path.join(os.tmpdir(), `ipam-key-${Date.now()}.pem`);
+  const tmpCert = path.join(os.tmpdir(), `cidrella-cert-${Date.now()}.pem`);
+  const tmpKey = path.join(os.tmpdir(), `cidrella-key-${Date.now()}.pem`);
 
   try {
     fs.writeFileSync(tmpCert, cert);
@@ -187,7 +187,7 @@ router.post('/certs/reset', (req, res) => {
     // Regenerate self-signed
     execFileSync('openssl', [
       'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', certPath,
-      '-days', '365', '-nodes', '-subj', '/CN=ipam/O=IPAM/C=US'
+      '-days', '365', '-nodes', '-subj', '/CN=cidrella/O=CIDRella/C=US'
     ], { stdio: 'pipe', timeout: 10000 });
 
     audit(req.user.id, 'update', 'tls_certificate', null, { action: 'reset_self_signed' });

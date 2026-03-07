@@ -1,7 +1,7 @@
 <template>
   <header class="header-bar">
     <div class="header-left">
-      <router-link to="/" class="logo">IP Address, DNS and DHCP Management</router-link>
+      <router-link to="/" class="logo"><img src="/logo.png" alt="CIDRella" class="logo-img" /></router-link>
     </div>
 
     <div class="header-cards-wrapper">
@@ -293,10 +293,15 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .logo {
-  font-size: 1.1rem;
-  font-weight: 700;
-  color: var(--p-primary-color);
+  display: flex;
+  align-items: center;
   text-decoration: none;
+}
+.logo-img {
+  height: 54px;
+  width: auto;
+  margin: -10px 0;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
 }
 
 .header-cards-wrapper {

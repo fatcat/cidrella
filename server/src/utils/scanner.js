@@ -7,7 +7,7 @@ import { parseCidr, longToIp } from './ip.js';
  */
 function arpingIp(ip) {
   return new Promise((resolve) => {
-    execFile('arping', ['-c', '1', '-w', '1', ip], { timeout: 5000 }, (error, stdout) => {
+    execFile('sudo', ['arping', '-c', '1', '-w', '1', ip], { timeout: 5000 }, (error, stdout) => {
       if (error) {
         // arping returns non-zero if no reply
         resolve({ responded: false, mac: null });

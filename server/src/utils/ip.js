@@ -3,6 +3,7 @@
  * All IPs are handled as 32-bit unsigned integers internally for math,
  * and converted to/from dotted-quad strings at boundaries.
  */
+import os from 'os';
 
 export function ipToLong(ip) {
   const parts = ip.split('.').map(Number);
@@ -58,6 +59,24 @@ export function isIpInSubnet(ip, cidr) {
 export function isIpInRange(ip, startIp, endIp) {
   const ipLong = ipToLong(ip);
   return ipLong >= ipToLong(startIp) && ipLong <= ipToLong(endIp);
+}
+
+/**
+ * Find the server's (host's) IP address that falls within a given CIDR subnet.
+ * Uses os.networkInterfaces() to scan all interfaces. Returns the first match or null.
+ */
+export function getServerIpForSubnet(cidr) {
+  const ifaces = os.networkInterfaces();
+  for (const addrs of Object.values(ifaces)) {
+    for (const addr of addrs) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        try {
+          if (isIpInSubnet(addr.address, cidr)) return addr.address;
+        } catch { /* skip invalid */ }
+      }
+    }
+  }
+  return null;
 }
 
 /**

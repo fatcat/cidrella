@@ -4,9 +4,10 @@ import { hasPermission } from '../auth/roles.js';
 import {
   parseCidr, normalizeCidr, isValidCidr, calculateSubnets,
   ipToLong, longToIp, isIpInSubnet, subtractCidr, isSubnetOf, cidrsOverlap,
-  validateSupernet, applyNameTemplate, canMergeCidrs
+  validateSupernet, applyNameTemplate, canMergeCidrs, getServerIpForSubnet
 } from '../utils/ip.js';
-import { generateReverseName } from '../utils/dnsmasq.js';
+import { generateReverseNames, regenerateConfigs } from '../utils/dnsmasq.js';
+import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 
 const router = Router();
 
@@ -88,7 +89,7 @@ function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, p
       prefix_length, total_addresses, gateway_address, parent_id, folder_id, status, depth, domain_name)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    cidr, name, description || null, vlan_id || null,
+    cidr, name || cidr, description || null, vlan_id || null,
     parsed.network, parsed.broadcast, parsed.prefix, parsed.totalAddresses,
     gateway_address || null, parent_id || null, folder_id || null, status || 'unallocated', depth || 0,
     domain_name || null
@@ -413,6 +414,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
       if (mergeResult.merged_cidr === parent.cidr) {
         // Just delete the children — parent becomes a leaf again
         for (const s of subnets) {
+          cleanupSubnetZones(db, s.id);
           db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
           db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(s.id);
           db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
@@ -441,6 +443,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
       // Normal case: merged CIDR is smaller than parent
       // Delete all selected subnets and their data
       for (const s of subnets) {
+        cleanupSubnetZones(db, s.id);
         db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
         db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(s.id);
         db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
@@ -469,6 +472,8 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
     });
 
     const mergedId = txn();
+    regenerateConfigs(db);
+    regenerateDhcpConfigs(db);
     audit(req.user.id, 'subnets_merged', 'subnet', mergedId, {
       merged_cidrs: subnets.map(s => s.cidr),
       result_cidr: mergeResult.merged_cidr
@@ -587,6 +592,27 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     }
   }
 
+  // Clean up old forward DNS zone if domain_name changed
+  if (domain_name !== undefined && subnet.domain_name && domain_name !== subnet.domain_name) {
+    db.prepare("DELETE FROM dns_zones WHERE name = ? AND type = 'forward' AND subnet_id = ?")
+      .run(subnet.domain_name, subnet.id);
+  }
+
+  // Auto-create forward DNS zone if domain_name is newly set
+  if (domain_name && domain_name !== subnet.domain_name) {
+    const existingFwdZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(domain_name);
+    if (!existingFwdZone) {
+      db.prepare(`
+        INSERT INTO dns_zones (name, type, subnet_id, description, enabled) VALUES (?, 'forward', ?, ?, 1)
+      `).run(domain_name, subnet.id, `Forward zone for ${subnet.cidr}`);
+    }
+  }
+
+  // Regenerate DNS configs if domain changed
+  if (domain_name !== undefined && domain_name !== subnet.domain_name) {
+    regenerateConfigs(db);
+  }
+
   const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);
   audit(req.user.id, 'subnet_updated', 'subnet', subnet.id, { changes: req.body });
   res.json(updated);
@@ -700,10 +726,28 @@ function migrateConfigToChild(db, parentId, childId, childParsed, parentGateway,
   }
 }
 
+// Helper: delete DNS zones owned by a subnet (records cascade via FK)
+function cleanupSubnetZones(db, subnetId) {
+  db.prepare('DELETE FROM dns_zones WHERE subnet_id = ?').run(subnetId);
+}
+
+// Helper: delete DNS zones for all descendants of a subnet
+function cleanupSubtreeZones(db, parentId) {
+  db.prepare(`
+    WITH RECURSIVE tree AS (
+      SELECT id FROM subnets WHERE parent_id = ?
+      UNION ALL
+      SELECT s.id FROM subnets s JOIN tree t ON s.parent_id = t.id
+    )
+    DELETE FROM dns_zones WHERE subnet_id IN (SELECT id FROM tree)
+  `).run(parentId);
+}
+
 // Helper: clear parent config after division
 function clearParentConfig(db, parentId) {
   db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(parentId);
   db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(parentId);
+  cleanupSubnetZones(db, parentId);
   db.prepare(`
     UPDATE subnets SET status = 'unallocated', description = NULL, vlan_id = NULL,
       gateway_address = NULL, has_reverse_dns = 0, domain_name = NULL, updated_at = datetime('now')
@@ -801,6 +845,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       });
 
       txn();
+      regenerateConfigs(db);
+      regenerateDhcpConfigs(db);
       audit(req.user.id, 'subnet_divided', 'subnet', parent.id, {
         parent_cidr: parent.cidr,
         mode: 'equal',
@@ -882,6 +928,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
     });
 
     txn();
+    regenerateConfigs(db);
+    regenerateDhcpConfigs(db);
     audit(req.user.id, 'subnet_divided', 'subnet', parent.id, {
       parent_cidr: parent.cidr,
       mode: 'carve',
@@ -900,7 +948,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
 
 // POST /api/subnets/:id/configure — allocate a subnet
 router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id, domain_name } = req.body;
+  const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id, domain_name, dhcp_start_ip, dhcp_end_ip } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Name is required' });
 
@@ -943,39 +991,54 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     }
     createSystemRanges(db, subnet.id, parsed, gw);
 
-    // Auto-create reverse DNS zone if requested
+    // Auto-create reverse DNS zone(s) if requested
     if (create_reverse_dns) {
-      const reverseName = generateReverseName(subnet.cidr);
-      const existingZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(reverseName);
-      let zoneId;
-      if (!existingZone) {
-        const zoneResult = db.prepare(`
-          INSERT INTO dns_zones (name, type, subnet_id, description) VALUES (?, 'reverse', ?, ?)
-        `).run(reverseName, subnet.id, `Reverse zone for ${subnet.cidr}`);
-        zoneId = zoneResult.lastInsertRowid;
-      } else {
-        zoneId = existingZone.id;
-      }
-
-      // Auto-create PTR records for all usable IPs in the subnet
-      const existingPtrs = db.prepare('SELECT name FROM dns_records WHERE zone_id = ? AND type = ?').all(zoneId, 'PTR');
-      const existingNames = new Set(existingPtrs.map(r => r.name));
-
+      const reverseNames = generateReverseNames(subnet.cidr);
       const startIp = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
       const endIp = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
 
       const insertRecord = db.prepare(
         'INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, ?, ?, 1)'
       );
-      for (let ipLong = startIp; ipLong <= endIp; ipLong++) {
-        const lastOctet = String(ipLong & 255);
-        if (!existingNames.has(lastOctet)) {
-          insertRecord.run(zoneId, lastOctet, 'PTR', longToIp(ipLong));
-        }
-      }
 
-      // Increment SOA serial
-      db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?").run(zoneId);
+      for (const reverseName of reverseNames) {
+        const existingZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(reverseName);
+        let zoneId;
+        if (!existingZone) {
+          const zoneResult = db.prepare(`
+            INSERT INTO dns_zones (name, type, subnet_id, description) VALUES (?, 'reverse', ?, ?)
+          `).run(reverseName, subnet.id, `Reverse zone for ${subnet.cidr}`);
+          zoneId = zoneResult.lastInsertRowid;
+        } else {
+          zoneId = existingZone.id;
+        }
+
+        // Determine which IPs belong in this /24 zone
+        // Parse the zone's 3rd octet from the zone name (e.g., "2.0.10.in-addr.arpa" → 3rd octet = 2)
+        const zoneParts = reverseName.replace('.in-addr.arpa', '').split('.').map(Number);
+        const zoneThirdOctet = zoneParts.length === 3 ? zoneParts[0] : null;
+
+        const existingPtrs = db.prepare('SELECT name FROM dns_records WHERE zone_id = ? AND type = ?').all(zoneId, 'PTR');
+        const existingNames = new Set(existingPtrs.map(r => r.name));
+
+        for (let ipLong = startIp; ipLong <= endIp; ipLong++) {
+          // For /24 zones, only include IPs whose 3rd octet matches
+          if (zoneThirdOctet !== null && ((ipLong >>> 8) & 255) !== zoneThirdOctet) continue;
+
+          const ptrName = zoneParts.length === 3
+            ? String(ipLong & 255)                                          // /24 zone: last octet
+            : zoneParts.length === 2
+              ? `${ipLong & 255}.${(ipLong >>> 8) & 255}`                   // /16 zone: last.3rd
+              : `${ipLong & 255}.${(ipLong >>> 8) & 255}.${(ipLong >>> 16) & 255}`; // /8 zone
+
+          if (!existingNames.has(ptrName)) {
+            insertRecord.run(zoneId, ptrName, 'PTR', longToIp(ipLong));
+          }
+        }
+
+        // Increment SOA serial
+        db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?").run(zoneId);
+      }
     }
 
     // Auto-populate ip_addresses for all usable IPs (up to /20 = 4096 IPs)
@@ -991,19 +1054,31 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
       }
     }
 
+    // Auto-create forward DNS zone if domain_name is set
+    if (domain_name) {
+      const existingFwdZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(domain_name);
+      if (!existingFwdZone) {
+        db.prepare(`
+          INSERT INTO dns_zones (name, type, subnet_id, description, enabled) VALUES (?, 'forward', ?, ?, 1)
+        `).run(domain_name, subnet.id, `Forward zone for ${subnet.cidr}`);
+      }
+    }
+
     // Create DHCP scope if requested and subnet is >= /29
     if (create_dhcp_scope && parsed.prefix <= 29) {
       const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
       if (dhcpType) {
-        // DHCP scope = all usable IPs minus gateway
+        // Use client-provided start/end or fall back to all usable IPs minus gateway
         const gwLong = ipToLong(gw);
-        let poolStart = parsed.networkLong + 1;
-        let poolEnd = parsed.broadcastLong - 1;
-
-        if (gwLong === poolStart) {
-          poolStart++;
-        } else if (gwLong === poolEnd) {
-          poolEnd--;
+        let poolStart, poolEnd;
+        if (dhcp_start_ip && dhcp_end_ip) {
+          poolStart = ipToLong(dhcp_start_ip);
+          poolEnd = ipToLong(dhcp_end_ip);
+        } else {
+          poolStart = parsed.networkLong + 1;
+          poolEnd = parsed.broadcastLong - 1;
+          if (gwLong === poolStart) poolStart++;
+          else if (gwLong === poolEnd) poolEnd--;
         }
 
         if (poolStart <= poolEnd) {
@@ -1013,10 +1088,39 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
 
           // Auto-create DHCP scope with defaults
           const effectiveDomain = domain_name || null;
-          db.prepare(`
+          const scopeResult = db.prepare(`
             INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
             VALUES (?, ?, '24h', ?, ?, 'Auto-created DHCP scope')
           `).run(rangeResult.lastInsertRowid, subnet.id, gw, effectiveDomain);
+
+          // Populate scope options from enabled defaults + network-derived values
+          const scopeId = scopeResult.lastInsertRowid;
+          const enabledRows = db.prepare(
+            'SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1'
+          ).all();
+          const optionValues = new Map();
+          for (const row of enabledRows) {
+            if (row.value != null) optionValues.set(row.option_code, row.value);
+            else optionValues.set(row.option_code, null); // enabled but no explicit default
+          }
+          // Network-derived values
+          if (gw) optionValues.set(3, gw);                         // Router/Gateway
+          optionValues.set(1, parsed.mask);                        // Subnet Mask
+          optionValues.set(28, parsed.broadcast);                  // Broadcast
+          if (effectiveDomain) {
+            if (!optionValues.has(15) || !optionValues.get(15)) optionValues.set(15, effectiveDomain);
+            if (!optionValues.has(119) || !optionValues.get(119)) optionValues.set(119, effectiveDomain);
+          }
+          const serverIp = getServerIpForSubnet(subnet.cidr);
+          if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
+            optionValues.set(6, `${serverIp}, 9.9.9.9`);
+          }
+          const insertOpt = db.prepare(
+            'INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)'
+          );
+          for (const [code, value] of optionValues) {
+            if (value != null && value !== '') insertOpt.run(scopeId, code, String(value));
+          }
         }
       }
     }
@@ -1024,6 +1128,10 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
 
   txn();
   audit(req.user.id, 'subnet_configured', 'subnet', subnet.id, { name, cidr: subnet.cidr, dhcp: !!create_dhcp_scope, reverse_dns: !!create_reverse_dns });
+
+  if (create_dhcp_scope) {
+    regenerateDhcpConfigs(db);
+  }
 
   const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);
   res.json(updated);
@@ -1038,62 +1146,66 @@ router.delete('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const hasChildren = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE parent_id = ?').get(subnet.id).c > 0;
 
   const txn = db.transaction(() => {
-    if (!subnet.parent_id) {
-      // Root node: delete entirely with subtree
-      db.prepare('DELETE FROM subnets WHERE id = ?').run(subnet.id);
-      return 'deleted';
-    }
-
     if (subnet.status === 'allocated') {
-      // Allocated: convert to unallocated (clear config, ranges, IPs, delete children)
+      // Allocated: convert to unallocated (clear config, ranges, IPs, zones, delete children)
       if (hasChildren) {
-        // Delete entire subtree under this node first (CASCADE handles ranges/IPs)
-        // We need to recursively delete children
-        const deleteSubtree = db.prepare(`
+        cleanupSubtreeZones(db, subnet.id);
+        db.prepare(`
           WITH RECURSIVE tree AS (
             SELECT id FROM subnets WHERE parent_id = ?
             UNION ALL
             SELECT s.id FROM subnets s JOIN tree t ON s.parent_id = t.id
           )
           DELETE FROM subnets WHERE id IN (SELECT id FROM tree)
-        `);
-        deleteSubtree.run(subnet.id);
+        `).run(subnet.id);
       }
 
+      cleanupSubnetZones(db, subnet.id);
       db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(subnet.id);
       db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnet.id);
+      db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ?').run(subnet.id);
       db.prepare(`
         UPDATE subnets SET status = 'unallocated', name = ?, description = NULL,
           vlan_id = NULL, gateway_address = NULL, has_reverse_dns = 0, domain_name = NULL, updated_at = datetime('now')
         WHERE id = ?
       `).run(subnet.cidr, subnet.id);
 
-      // Try buddy-merge
-      buddyMerge(db, subnet.parent_id);
+      if (subnet.parent_id) buddyMerge(db, subnet.parent_id);
       return 'deallocated';
+    }
+
+    if (!subnet.parent_id) {
+      // Root unallocated node: delete entirely with subtree
+      cleanupSubnetZones(db, subnet.id);
+      if (hasChildren) cleanupSubtreeZones(db, subnet.id);
+      db.prepare('DELETE FROM subnets WHERE id = ?').run(subnet.id);
+      return 'deleted';
     }
 
     // Unallocated leaf: delete the row, then try to merge
     if (!hasChildren) {
+      cleanupSubnetZones(db, subnet.id);
       db.prepare('DELETE FROM subnets WHERE id = ?').run(subnet.id);
       buddyMerge(db, subnet.parent_id);
       return 'deleted';
     }
 
     // Unallocated with children: delete children, making it a leaf again
-    const deleteSubtree = db.prepare(`
+    cleanupSubtreeZones(db, subnet.id);
+    db.prepare(`
       WITH RECURSIVE tree AS (
         SELECT id FROM subnets WHERE parent_id = ?
         UNION ALL
         SELECT s.id FROM subnets s JOIN tree t ON s.parent_id = t.id
       )
       DELETE FROM subnets WHERE id IN (SELECT id FROM tree)
-    `);
-    deleteSubtree.run(subnet.id);
+    `).run(subnet.id);
     return 'children_deleted';
   });
 
   const action = txn();
+  regenerateConfigs(db);
+  regenerateDhcpConfigs(db);
   audit(req.user.id, 'subnet_deleted', 'subnet', subnet.id, { cidr: subnet.cidr, action });
   res.json({ message: 'Subnet deleted', action });
 }));

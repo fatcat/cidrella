@@ -27,8 +27,9 @@ import geoipRoutes from './routes/geoip.js';
 import folderRoutes from './routes/folders.js';
 import vlanRoutes from './routes/vlans.js';
 import userRoutes from './routes/users.js';
+import logRoutes from './routes/logs.js';
 import { ensureCerts } from './utils/cert.js';
-import { startLeaseWatcher } from './utils/dhcp.js';
+import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/geoip.js';
@@ -53,6 +54,9 @@ async function main() {
 
   // Migrate legacy DHCP scope columns to scope_options table
   migrateLegacyScopeOptions(getDb());
+
+  // Sync server IP into DNS Servers default
+  syncServerDnsDefault(getDb());
 
   // Start DHCP lease file watcher
   startLeaseWatcher(getDb());
@@ -106,6 +110,13 @@ async function main() {
   // Auth middleware for API routes
   app.use(authMiddleware);
 
+  // Dev-only tracking endpoint (set DEV_TRACKING=1 to enable)
+  if (process.env.DEV_TRACKING === '1') {
+    const { default: trackingRoutes } = await import('./routes/tracking.js');
+    app.use('/api/dev/tracking', trackingRoutes);
+    console.log('Dev interaction tracking enabled');
+  }
+
   // API routes
   app.use('/api/auth', authRoutes);
   app.use('/api/health', healthRoutes);
@@ -122,6 +133,7 @@ async function main() {
   app.use('/api/folders', folderRoutes);
   app.use('/api/vlans', vlanRoutes);
   app.use('/api/users', userRoutes);
+  app.use('/api/logs', logRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
 
   // Block page for filtered domains
@@ -139,6 +151,22 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
 </div></body></html>`);
   });
 
+  // Global API error handler
+  app.use('/api', (err, req, res, next) => {
+    const msg = err.message || 'Internal server error';
+    // Detect missing table errors from SQLite
+    if (msg.includes('no such table')) {
+      const match = msg.match(/no such table:\s*(\S+)/);
+      const table = match ? match[1] : 'unknown';
+      console.error(`Missing table "${table}" — database migrations may not have been applied`);
+      return res.status(500).json({
+        error: `Missing database table "${table}". Please restart the server to apply pending migrations.`
+      });
+    }
+    console.error('API error:', msg);
+    res.status(err.status || 500).json({ error: msg });
+  });
+
   // Serve Vue frontend (built files)
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   if (fs.existsSync(clientDist)) {
@@ -149,7 +177,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
     });
   } else {
     app.get('/', (req, res) => {
-      res.json({ message: 'IPAM API running. Client not built yet.' });
+      res.json({ message: 'CIDRella API running. Client not built yet.' });
     });
   }
 

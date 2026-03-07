@@ -196,6 +196,13 @@ async function doAddCountries() {
 
   addingCountries.value = true;
   try {
+    // Auto-download GeoIP database if not yet present
+    if (!status.value?.dbLastUpdated) {
+      toast.add({ severity: 'info', summary: 'Downloading GeoIP database...', life: 5000 });
+      await store.refreshDb();
+      await refreshStatus();
+    }
+
     const countries = toAdd.map(code => {
       const c = COUNTRIES.find(x => x.code === code);
       return { code, name: c?.name || code };

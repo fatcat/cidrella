@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { ipToLong, isIpInSubnet, rangesOverlap } from '../utils/ip.js';
+import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 
 const router = Router({ mergeParams: true });
 
@@ -53,6 +54,24 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   // Validate range type exists
   const rangeType = db.prepare('SELECT * FROM range_types WHERE id = ?').get(range_type_id);
   if (!rangeType) return res.status(404).json({ error: 'Range type not found' });
+
+  // Check for reserved IPs in the range (for DHCP Scope ranges)
+  if (rangeType.name === 'DHCP Scope') {
+    const startLong = ipToLong(start_ip);
+    const endLong = ipToLong(end_ip);
+    const reservedIps = db.prepare(
+      `SELECT ip_address FROM ip_addresses WHERE subnet_id = ? AND status = 'reserved'`
+    ).all(subnetId).filter(r => {
+      const l = ipToLong(r.ip_address);
+      return l >= startLong && l <= endLong;
+    });
+
+    if (reservedIps.length > 0) {
+      return res.status(400).json({
+        error: `Range contains ${reservedIps.length} reserved IP(s): ${reservedIps.slice(0, 5).map(r => r.ip_address).join(', ')}${reservedIps.length > 5 ? '...' : ''}`
+      });
+    }
+  }
 
   // Check for overlapping ranges (warn unless force=true)
   const existingRanges = db.prepare('SELECT * FROM ranges WHERE subnet_id = ?').all(subnetId);
@@ -151,7 +170,9 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
     return res.status(403).json({ error: 'Cannot delete Network or Broadcast ranges' });
   }
 
+  const hasDhcpScope = db.prepare('SELECT id FROM dhcp_scopes WHERE range_id = ?').get(range.id);
   db.prepare('DELETE FROM ranges WHERE id = ?').run(range.id);
+  if (hasDhcpScope) regenerateDhcpConfigs(db);
   audit(req.user.id, 'range_deleted', 'range', range.id, { subnet_id: req.params.subnetId, type: rangeType?.name });
   res.json({ message: 'Range deleted' });
 });

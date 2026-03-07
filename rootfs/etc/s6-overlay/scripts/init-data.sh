@@ -1,8 +1,8 @@
 #!/bin/sh
-# Initialize data directories, create ipam user, and set ownership
+# Initialize data directories and set ownership for cidrella user
 
-PUID=${PUID:-0}
-PGID=${PGID:-0}
+PUID=${PUID:-65532}
+PGID=${PGID:-65532}
 
 mkdir -p /data/certs
 mkdir -p /data/backups
@@ -17,14 +17,31 @@ if [ ! -f /data/dnsmasq/dnsmasq.conf ]; then
   echo "Copied default dnsmasq configuration"
 fi
 
-# Create ipam group and user with the requested PUID/PGID
-if [ "$PUID" -ne 0 ]; then
-  if ! getent group ipam >/dev/null 2>&1; then
-    addgroup -g "$PGID" ipam
-  fi
-  if ! getent passwd ipam >/dev/null 2>&1; then
-    adduser -D -u "$PUID" -G ipam -H -s /sbin/nologin ipam
-  fi
-  chown -R "$PUID:$PGID" /data
-  echo "Data directory owned by PUID=$PUID PGID=$PGID"
+# Remove existing cidrella user/group (from Dockerfile defaults)
+deluser cidrella 2>/dev/null
+delgroup cidrella 2>/dev/null
+
+# Remove any other user/group that conflicts with requested PUID/PGID
+CONFLICT_USER=$(getent passwd "$PUID" 2>/dev/null | cut -d: -f1)
+if [ -n "$CONFLICT_USER" ]; then
+  deluser "$CONFLICT_USER" 2>/dev/null
+  echo "Removed conflicting user $CONFLICT_USER (had UID $PUID)"
 fi
+
+CONFLICT_GROUP=$(getent group "$PGID" 2>/dev/null | cut -d: -f1)
+if [ -n "$CONFLICT_GROUP" ]; then
+  delgroup "$CONFLICT_GROUP" 2>/dev/null
+  echo "Removed conflicting group $CONFLICT_GROUP (had GID $PGID)"
+fi
+
+# Create cidrella group and user with requested PUID/PGID
+addgroup -g "$PGID" cidrella
+adduser -D -u "$PUID" -G cidrella -H -s /sbin/nologin cidrella
+
+# Create dnsmasq log file so the Node process can read it
+touch /data/dnsmasq/dnsmasq.log
+chmod 644 /data/dnsmasq/dnsmasq.log
+
+# Set ownership on data directory
+chown -R "$PUID:$PGID" /data
+echo "Data directory owned by cidrella (PUID=$PUID PGID=$PGID)"

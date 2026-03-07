@@ -19,7 +19,7 @@ export function ensureCerts(dataDir) {
     'req', '-x509', '-newkey', 'rsa:2048',
     '-keyout', keyPath, '-out', certPath,
     '-days', '365', '-nodes',
-    '-subj', '/CN=ipam/O=IPAM/C=US'
+    '-subj', '/CN=cidrella/O=CIDRella/C=US'
   ], { stdio: 'pipe' });
 
   console.log('Self-signed certificate generated');

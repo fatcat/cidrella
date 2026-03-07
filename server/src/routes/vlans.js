@@ -113,6 +113,9 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const vlan = db.prepare('SELECT * FROM vlans WHERE id = ?').get(req.params.id);
   if (!vlan) return res.status(404).json({ error: 'VLAN not found' });
 
+  // Clear dangling vlan_id references in subnets
+  db.prepare('UPDATE subnets SET vlan_id = NULL WHERE vlan_id = ? AND folder_id = ?')
+    .run(vlan.vlan_id, vlan.folder_id);
   db.prepare('DELETE FROM vlans WHERE id = ?').run(vlan.id);
   audit(req.user.id, 'vlan_deleted', 'vlan', vlan.id, { vlan_id: vlan.vlan_id, name: vlan.name });
   res.json({ ok: true });

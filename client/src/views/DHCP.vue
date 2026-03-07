@@ -101,6 +101,7 @@
         <DataTable :value="optionDefaultRows" size="small" :loading="loadingOptions"
                    emptyMessage="No DHCP options available."
                    rowGroupMode="subheader" groupRowsBy="_group"
+                   :rowClass="(data) => defaultEnabled[data.code] ? 'option-enabled-row' : ''"
                    scrollable scrollHeight="flex">
           <template #groupheader="{ data }">
             <strong>{{ data._group }}</strong>
@@ -124,7 +125,14 @@
               <InputNumber v-else-if="data.type === 'number'" v-model="defaultValues[data.code]"
                            class="w-full" size="small" :useGrouping="false" placeholder="—" />
               <InputText v-else v-model="defaultValues[data.code]" class="w-full" size="small"
-                         :placeholder="data.code === 1 ? 'Defaults to network\'s mask' : data.code === 3 ? 'Defaults to network\'s gateway' : placeholderForType(data.type)" />
+                         :placeholder="data.code === 1 ? 'Defaults to network\'s mask' : data.code === 3 ? 'Defaults to network\'s gateway' : data.code === 15 ? 'Defaults to network\'s domain' : data.code === 119 ? 'Defaults to network\'s domain' : placeholderForType(data.type)"
+                         @blur="data.type === 'ip-list' || data.type === 'ip' ? resolveDefaultHostname(data.code) : null" />
+            </template>
+          </Column>
+          <Column header="Enabled by Default" style="width: 9rem; text-align: center">
+            <template #body="{ data }">
+              <input type="checkbox" :checked="!!defaultEnabled[data.code]"
+                     @change="defaultEnabled[data.code] = $event.target.checked" />
             </template>
           </Column>
           <Column header="" style="width: 3rem">
@@ -171,83 +179,8 @@
       </TabPanel>
     </TabView>
 
-    <!-- Scope Dialog -->
-    <Dialog v-model:visible="showScopeDialog" :header="editingScope ? 'Edit Scope' : 'Add Scope'"
-            modal :style="{ width: '36rem' }">
-      <div class="form-grid">
-        <div class="field" v-if="!editingScope">
-          <label>DHCP Scope Range *</label>
-          <Select v-model="scopeForm.range_id" :options="availableRanges" optionLabel="_label" optionValue="id"
-                  class="w-full" placeholder="Select a DHCP Scope range" :loading="loadingRanges" />
-          <small class="field-help">Only DHCP Scope ranges without existing scopes are shown</small>
-        </div>
-        <div class="field" v-if="editingScope">
-          <label>Start IP</label>
-          <InputText v-model="scopeForm.start_ip" class="w-full" placeholder="e.g. 192.168.1.10" />
-        </div>
-        <div class="field" v-if="editingScope">
-          <label>End IP</label>
-          <InputText v-model="scopeForm.end_ip" class="w-full" placeholder="e.g. 192.168.1.254" />
-        </div>
-        <div class="field">
-          <label>Lease Time</label>
-          <InputText v-model="scopeForm.lease_time" class="w-full" placeholder="e.g. 24h, 3600, 1d" />
-          <small class="field-help">Duration: number with optional suffix (s/m/h/d)</small>
-        </div>
-        <div class="field">
-          <label>Description</label>
-          <InputText v-model="scopeForm.description" class="w-full" />
-        </div>
-        <div class="field" v-if="editingScope">
-          <label>Enabled</label>
-          <ToggleSwitch v-model="scopeForm.enabled" />
-        </div>
-      </div>
-
-      <!-- Inline Options Section -->
-      <div class="scope-options-section">
-        <div class="scope-options-header" @click="scopeOptionsExpanded = !scopeOptionsExpanded">
-          <i class="pi" :class="scopeOptionsExpanded ? 'pi-chevron-down' : 'pi-chevron-right'" style="font-size: 0.7rem"></i>
-          <span class="scope-options-title">DHCP Options</span>
-          <span class="scope-options-count" v-if="scopeForm.selectedOptions.length > 0">{{ scopeForm.selectedOptions.length }} selected</span>
-        </div>
-        <div v-if="scopeOptionsExpanded" class="scope-options-list">
-          <template v-for="group in optionGroups" :key="group.name">
-            <div class="scope-option-group-header">{{ group.label }}</div>
-            <div v-for="opt in group.options" :key="opt.code" class="scope-option-row">
-              <div class="scope-option-check">
-                <input type="checkbox"
-                       :checked="scopeForm.selectedOptions.includes(opt.code)"
-                       @change="toggleScopeOption(opt.code, $event.target.checked)" />
-              </div>
-              <div class="scope-option-info">
-                <span class="scope-option-label">{{ opt.label }}</span>
-                <span class="scope-option-code">({{ opt.code }})</span>
-                <i class="pi pi-question-circle scope-option-help" @click="showOptionHelp($event, opt)" />
-              </div>
-              <div class="scope-option-value">
-                <template v-if="scopeForm.selectedOptions.includes(opt.code)">
-                  <Select v-if="opt.type === 'select'" v-model="scopeForm.optionValues[opt.code]"
-                          :options="opt.choices" size="small" :placeholder="defaultValues[opt.code] || '—'" showClear />
-                  <InputNumber v-else-if="opt.type === 'number'" v-model="scopeForm.optionValues[opt.code]"
-                               size="small" :useGrouping="false" :placeholder="defaultValues[opt.code] || '0'" />
-                  <InputText v-else v-model="scopeForm.optionValues[opt.code]" size="small"
-                             :placeholder="defaultValues[opt.code] || placeholderForType(opt.type)" />
-                </template>
-                <span v-else-if="defaultValues[opt.code]" class="scope-option-default">
-                  default: {{ defaultValues[opt.code] }}
-                </span>
-              </div>
-            </div>
-          </template>
-        </div>
-      </div>
-
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showScopeDialog = false" />
-        <Button :label="editingScope ? 'Save' : 'Create'" @click="saveScope" :loading="savingScope" />
-      </template>
-    </Dialog>
+    <!-- Scope Dialog (shared component) -->
+    <ScopeDialog ref="scopeDialogRef" @saved="onScopeSaved" />
 
     <!-- Reservation Dialog -->
     <Dialog v-model:visible="showReservationDialog" :header="editingReservation ? 'Edit Reservation' : 'Add Reservation'"
@@ -347,7 +280,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { ref, reactive, computed, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
@@ -362,23 +295,18 @@ import ToggleSwitch from 'primevue/toggleswitch';
 import Popover from 'primevue/popover';
 import Toast from 'primevue/toast';
 import { useDhcpStore } from '../stores/dhcp.js';
-import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
+import ScopeDialog from '../components/ScopeDialog.vue';
 
 const store = useDhcpStore();
-const subnetStore = useSubnetStore();
 const toast = useToast();
 
 const applying = ref(false);
 const syncing = ref(false);
 
-// Scope dialog
-const showScopeDialog = ref(false);
-const editingScope = ref(null);
+// Scope dialog (shared component)
+const scopeDialogRef = ref(null);
 const savingScope = ref(false);
-const scopeForm = ref({ range_id: null, lease_time: '24h', description: '', enabled: true, selectedOptions: [], optionValues: {} });
-const availableRanges = ref([]);
-const loadingRanges = ref(false);
 
 // Reservation dialog
 const showReservationDialog = ref(false);
@@ -396,10 +324,9 @@ const deletingReservation = ref(null);
 // DHCP Options
 const optionCatalog = ref([]);
 const defaultValues = reactive({});
+const defaultEnabled = reactive({});
 const loadingOptions = ref(false);
 const savingDefaults = ref(false);
-const scopeOptionsExpanded = ref(false);
-
 const optionGroupOrder = ref([]);
 
 const optionGroups = computed(() => {
@@ -496,11 +423,46 @@ async function loadOptions() {
     for (const [code, value] of Object.entries(res.data.defaults || {})) {
       defaultValues[Number(code)] = value;
     }
+    // Populate defaultEnabled
+    Object.keys(defaultEnabled).forEach(k => delete defaultEnabled[k]);
+    for (const code of (res.data.enabledDefaults || [])) {
+      defaultEnabled[Number(code)] = true;
+    }
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
   } finally {
     loadingOptions.value = false;
   }
+}
+
+const IP_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+
+async function resolveHostname(value) {
+  if (!value || IP_RE.test(value.trim())) return value;
+  // Could be comma-separated mix of IPs and hostnames
+  const parts = value.split(',').map(s => s.trim()).filter(Boolean);
+  const resolved = [];
+  for (const part of parts) {
+    if (IP_RE.test(part)) {
+      resolved.push(part);
+    } else {
+      try {
+        const res = await api.get(`/dns/resolve?name=${encodeURIComponent(part)}`);
+        resolved.push(...res.data.ips);
+      } catch {
+        toast.add({ severity: 'warn', summary: `Could not resolve "${part}"`, life: 3000 });
+        resolved.push(part);
+      }
+    }
+  }
+  return resolved.join(',');
+}
+
+async function resolveDefaultHostname(code) {
+  const val = defaultValues[code];
+  if (!val) return;
+  const resolved = await resolveHostname(val);
+  if (resolved !== val) defaultValues[code] = resolved;
 }
 
 async function saveDefaults() {
@@ -513,8 +475,11 @@ async function saveDefaults() {
         options.push({ code: opt.code, value: String(val) });
       }
     }
-    await api.put('/dhcp/options/defaults', { options });
+    const enabledDefaults = Object.keys(defaultEnabled).filter(k => defaultEnabled[k]).map(Number);
+    await api.put('/dhcp/options/defaults', { options, enabledDefaults });
     toast.add({ severity: 'success', summary: 'Defaults saved', life: 3000 });
+    // Invalidate scope dialog's cached options so next open picks up new defaults
+    scopeDialogRef.value?.reloadOptions();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
@@ -538,131 +503,17 @@ function placeholderForType(type) {
   }
 }
 
-function toggleScopeOption(code, checked) {
-  if (checked) {
-    if (!scopeForm.value.selectedOptions.includes(code)) {
-      scopeForm.value.selectedOptions.push(code);
-    }
-    // Pre-fill from default if no value set
-    if (scopeForm.value.optionValues[code] == null || scopeForm.value.optionValues[code] === '') {
-      const def = defaultValues[code];
-      if (def != null) scopeForm.value.optionValues[code] = def;
-    }
-  } else {
-    scopeForm.value.selectedOptions = scopeForm.value.selectedOptions.filter(c => c !== code);
-    delete scopeForm.value.optionValues[code];
-  }
-}
-
-// When creating a new scope and user picks a range, auto-populate subnet mask (option 1) and gateway (option 3)
-watch(() => scopeForm.value.range_id, (rangeId) => {
-  if (!rangeId || editingScope.value) return;
-  const range = availableRanges.value.find(r => r.id === rangeId);
-  // Auto-populate subnet mask from the network's prefix length
-  if (range?.subnet_cidr) {
-    const prefix = parseInt(range.subnet_cidr.split('/')[1], 10);
-    if (prefix >= 0 && prefix <= 32) {
-      const maskLong = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
-      const mask = [(maskLong >>> 24) & 255, (maskLong >>> 16) & 255, (maskLong >>> 8) & 255, maskLong & 255].join('.');
-      if (!scopeForm.value.selectedOptions.includes(1)) {
-        scopeForm.value.selectedOptions.push(1);
-      }
-      scopeForm.value.optionValues[1] = mask;
-    }
-  }
-  // Auto-populate gateway
-  if (range?.subnet_gateway) {
-    if (!scopeForm.value.selectedOptions.includes(3)) {
-      scopeForm.value.selectedOptions.push(3);
-    }
-    scopeForm.value.optionValues[3] = range.subnet_gateway;
-  }
-});
-
-// Scope CRUD
+// Scope dialog methods (delegated to shared ScopeDialog component)
 async function openScopeDialog(scope = null) {
-  editingScope.value = scope;
   if (scope) {
-    // Build selectedOptions and optionValues from scope.options array
-    const selOpts = [];
-    const optVals = {};
-    if (scope.options && Array.isArray(scope.options)) {
-      for (const o of scope.options) {
-        selOpts.push(o.option_code);
-        optVals[o.option_code] = o.value;
-      }
-    }
-    scopeForm.value = {
-      range_id: scope.range_id,
-      start_ip: scope.start_ip || '',
-      end_ip: scope.end_ip || '',
-      lease_time: scope.lease_time || '24h',
-      description: scope.description || '',
-      enabled: !!scope.enabled,
-      selectedOptions: selOpts,
-      optionValues: optVals
-    };
+    scopeDialogRef.value.openEdit(scope);
   } else {
-    // Auto-select all options that have defaults
-    const autoSelected = [];
-    const autoValues = {};
-    for (const code of Object.keys(defaultValues)) {
-      const c = Number(code);
-      autoSelected.push(c);
-      autoValues[c] = defaultValues[code];
-    }
-    scopeForm.value = { range_id: null, lease_time: '24h', description: '', enabled: true, selectedOptions: autoSelected, optionValues: autoValues };
-    loadingRanges.value = true;
-    try {
-      const ranges = await store.fetchAvailableRanges();
-      availableRanges.value = ranges.map(r => ({
-        ...r,
-        _label: `${r.subnet_name} (${r.start_ip} — ${r.end_ip})`
-      }));
-    } finally {
-      loadingRanges.value = false;
-    }
+    scopeDialogRef.value.openNewWithPicker();
   }
-  scopeOptionsExpanded.value = scopeForm.value.selectedOptions.length > 0;
-  showScopeDialog.value = true;
 }
 
-async function saveScope() {
-  savingScope.value = true;
-  try {
-    // Build options array from selectedOptions + optionValues
-    const options = scopeForm.value.selectedOptions
-      .filter(code => scopeForm.value.optionValues[code] != null && scopeForm.value.optionValues[code] !== '')
-      .map(code => ({ code, value: String(scopeForm.value.optionValues[code]) }));
-
-    const payload = {
-      lease_time: scopeForm.value.lease_time,
-      description: scopeForm.value.description || null,
-      enabled: scopeForm.value.enabled,
-      options
-    };
-
-    if (editingScope.value) {
-      if (scopeForm.value.start_ip) payload.start_ip = scopeForm.value.start_ip;
-      if (scopeForm.value.end_ip) payload.end_ip = scopeForm.value.end_ip;
-      await store.updateScope(editingScope.value.id, payload);
-      toast.add({ severity: 'success', summary: 'Scope updated', life: 3000 });
-    } else {
-      const range = availableRanges.value.find(r => r.id === scopeForm.value.range_id);
-      await store.createScope({
-        range_id: scopeForm.value.range_id,
-        subnet_id: range?.subnet_id,
-        ...payload
-      });
-      toast.add({ severity: 'success', summary: 'Scope created', life: 3000 });
-    }
-    showScopeDialog.value = false;
-    window.dispatchEvent(new Event('ipam:stats-changed'));
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally {
-    savingScope.value = false;
-  }
+async function onScopeSaved() {
+  await store.fetchScopes();
 }
 
 function confirmDeleteScope(scope) {
@@ -896,122 +747,6 @@ code {
   cursor: default;
 }
 
-/* Scope dialog inline options */
-.scope-options-section {
-  margin-top: 1rem;
-  border: 1px solid var(--p-surface-border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-.scope-options-header {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  cursor: pointer;
-  user-select: none;
-  background: var(--p-surface-ground);
-  transition: background 0.1s;
-}
-.scope-options-header:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 5%, var(--p-surface-ground));
-}
-.scope-options-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-.scope-options-count {
-  font-size: 0.75rem;
-  color: var(--p-primary-color);
-  margin-left: auto;
-}
-.scope-options-list {
-  max-height: 18rem;
-  overflow-y: auto;
-}
-.scope-option-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.75rem;
-  border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
-  font-size: 0.8rem;
-}
-.scope-option-row:first-child {
-  border-top: 1px solid var(--p-surface-border);
-}
-.scope-option-check {
-  flex-shrink: 0;
-}
-.scope-option-info {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  min-width: 10rem;
-  flex-shrink: 0;
-}
-.scope-option-label {
-  font-weight: 500;
-}
-.scope-option-code {
-  font-size: 0.7rem;
-  color: var(--p-text-muted-color);
-}
-.scope-option-help {
-  font-size: 0.7rem;
-  color: var(--p-text-muted-color);
-  cursor: pointer;
-  margin-left: 0.15rem;
-}
-.scope-option-help:hover {
-  color: var(--p-primary-color);
-}
-.scope-option-group-header {
-  padding: 0.3rem 0.75rem;
-  font-size: 0.7rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--p-text-muted-color);
-  background: var(--p-surface-ground);
-  border-top: 1px solid var(--p-surface-border);
-}
-.scope-option-value {
-  flex: 1;
-  min-width: 0;
-}
-.scope-option-value :deep(.p-inputtext),
-.scope-option-value :deep(.p-select),
-.scope-option-value :deep(.p-inputnumber) {
-  width: 100%;
-  font-size: 0.8rem;
-}
-.scope-option-default {
-  font-size: 0.75rem;
-  color: var(--p-text-muted-color);
-  font-style: italic;
-}
-
-/* Help popover */
-.option-help-popover {
-  max-width: 20rem;
-  font-size: 0.8rem;
-  line-height: 1.4;
-}
-.option-help-popover strong {
-  display: block;
-  margin-bottom: 0.3rem;
-}
-.option-help-popover p {
-  margin: 0 0 0.4rem 0;
-  color: var(--p-text-muted-color);
-}
-.rfc-link {
-  font-size: 0.75rem;
-  color: var(--p-primary-color);
-  text-decoration: none;
-}
-.rfc-link:hover { text-decoration: underline; }
 
 /* Defaults table help icon */
 .option-help-icon {
@@ -1023,5 +758,10 @@ code {
 }
 .option-help-icon:hover {
   color: var(--p-primary-color);
+}
+
+/* Subtle highlight for enabled-by-default rows */
+:deep(.option-enabled-row) {
+  background: color-mix(in srgb, var(--p-primary-color) 6%, transparent) !important;
 }
 </style>

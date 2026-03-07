@@ -20,11 +20,13 @@ export function authMiddleware(req, res, next) {
   }
 
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  // Support token as query param for SSE (EventSource can't set headers)
+  const queryToken = req.query.token;
+  if (!authHeader?.startsWith('Bearer ') && !queryToken) {
     return res.status(401).json({ error: 'No token provided' });
   }
 
-  const token = authHeader.slice(7);
+  const token = authHeader ? authHeader.slice(7) : queryToken;
   const db = getDb();
   const settings = db.prepare("SELECT value FROM settings WHERE key = 'jwt_secret'").get();
 

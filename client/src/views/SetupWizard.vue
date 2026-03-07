@@ -1,7 +1,7 @@
 <template>
   <div class="setup-container">
     <div class="setup-card">
-      <h1>IPAM Setup</h1>
+      <h1>CIDRella Setup</h1>
       <p class="subtitle">Create your administrator account</p>
 
       <form @submit.prevent="handleSetup" v-if="!completed">

@@ -293,7 +293,7 @@ export async function downloadMmdb() {
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'IPAM-GeoIP/1.0' }
+      headers: { 'User-Agent': 'CIDRella-GeoIP/1.0' }
     });
     clearTimeout(timeout);
 

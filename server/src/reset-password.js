@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
-const dbPath = path.join(DATA_DIR, 'ipam.db');
+const dbPath = path.join(DATA_DIR, 'cidrella.db');
 
 const username = process.argv[2] || 'admin';
 

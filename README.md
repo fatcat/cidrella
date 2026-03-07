@@ -1,4 +1,4 @@
-# IPAM
+# CIDRella
 
 A lightweight IP Address Management system with integrated DNS and DHCP via DNSmasq.
 
@@ -28,15 +28,15 @@ A lightweight IP Address Management system with integrated DNS and DHCP via DNSm
 ## Quick Start
 
 ```bash
-git clone git@github.com:fatcat/ipam.git
-cd ipam
+git clone git@github.com:fatcat/cidrella.git
+cd cidrella
 docker compose up -d --build
 ```
 
 Check the container logs for the generated admin password:
 
 ```bash
-docker compose logs ipam
+docker compose logs cidrella
 ```
 
 ```
@@ -80,7 +80,7 @@ DNS works automatically through dnsmasq:
 
 - **Forward DNS records** created in the UI are written to `data/dnsmasq/hosts.d/` (hostsdir hot-reload — no restart needed)
 - **Reverse DNS** (PTR records) are handled automatically by dnsmasq's hosts file format
-- Point your clients' DNS to the IPAM server's IP address (via DHCP option 6, or manually)
+- Point your clients' DNS to the CIDRella server's IP address (via DHCP option 6, or manually)
 
 To make this server authoritative for specific zones while forwarding everything else upstream, add to `data/dnsmasq/dnsmasq.conf`:
 
@@ -139,13 +139,13 @@ All persistent data lives in `./data/`. Back up this directory regularly. The UI
 ### Reset Admin Password
 
 ```bash
-docker compose exec ipam node /app/server/src/reset-password.js
+docker compose exec cidrella node /app/server/src/reset-password.js
 ```
 
 To reset a specific user:
 
 ```bash
-docker compose exec ipam node /app/server/src/reset-password.js <username>
+docker compose exec cidrella node /app/server/src/reset-password.js <username>
 ```
 
 The new password will be printed to the console. The user will be forced to change it on next login.
@@ -154,7 +154,7 @@ The new password will be printed to the console. The user will be forced to chan
 
 ```bash
 docker compose run --rm reset
-docker compose restart ipam
+docker compose restart cidrella
 ```
 
 This deletes the SQLite database and reinitializes it on next startup. All networks, DNS zones, DHCP scopes, users, audit logs, settings, and VLANs will be lost. A new default admin account will be generated (check the container logs for the password).
@@ -179,7 +179,7 @@ The following are **not** deleted by a database reset and persist on disk:
 
 All persistent data is stored in `./data/` (mapped to `/data` inside the container):
 
-- `ipam.db` — SQLite database
+- `cidrella.db` — SQLite database
 - `certs/` — TLS certificates
 - `dnsmasq/` — DNSmasq configuration and watched directories
 - `backups/` — Backup files

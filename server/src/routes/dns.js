@@ -486,4 +486,19 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   res.json({ servers });
 });
 
+// GET /api/dns/resolve?name=hostname — resolve hostname to IPs
+router.get('/resolve', requirePerm('dns:read'), async (req, res) => {
+  const { name } = req.query;
+  if (!name) return res.status(400).json({ error: 'name parameter required' });
+
+  try {
+    const dns = await import('dns');
+    const { resolve4 } = dns.promises;
+    const ips = await resolve4(name);
+    res.json({ name, ips });
+  } catch (err) {
+    res.status(404).json({ error: `Could not resolve ${name}`, details: err.code });
+  }
+});
+
 export default router;

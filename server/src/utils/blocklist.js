@@ -75,7 +75,7 @@ export async function refreshCategory(db, slug) {
     const timeout = setTimeout(() => controller.abort(), 60000);
     response = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'IPAM-Blocklist/1.0' }
+      headers: { 'User-Agent': 'CIDRella-Blocklist/1.0' }
     });
     clearTimeout(timeout);
   } catch (err) {

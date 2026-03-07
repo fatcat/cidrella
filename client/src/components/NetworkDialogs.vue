@@ -40,6 +40,133 @@
     </template>
   </Dialog>
 
+  <!-- Guided Setup Wizard -->
+  <Dialog v-model:visible="showWizard" header="New Organization Setup" modal :style="{ width: '32rem' }"
+          :closable="true" @hide="onWizardClose">
+    <!-- Step indicators -->
+    <div class="wizard-steps">
+      <div class="wizard-step" :class="{ active: wizardStep === 1, done: wizardStep > 1 }">
+        <span class="step-num">1</span>
+        <span class="step-label">Organization</span>
+      </div>
+      <div class="wizard-step-line" :class="{ done: wizardStep > 1 }"></div>
+      <div class="wizard-step" :class="{ active: wizardStep === 2 }">
+        <span class="step-num">2</span>
+        <span class="step-label">Network</span>
+      </div>
+    </div>
+
+    <!-- Step 1: Organization -->
+    <div v-if="wizardStep === 1" class="form-grid">
+      <div class="field">
+        <label>Organization Name *</label>
+        <InputText v-model="wizardOrg.name" class="w-full" />
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <InputText v-model="wizardOrg.description" class="w-full" />
+      </div>
+    </div>
+
+    <!-- Step 2: Network -->
+    <div v-if="wizardStep === 2" class="form-grid">
+      <div class="field">
+        <label>CIDR *</label>
+        <InputText v-model="wizardNet.cidr" placeholder="10.0.0.0/8" class="w-full" />
+        <small v-if="wizardCidrError" class="field-error">{{ wizardCidrError }}</small>
+      </div>
+      <div class="field">
+        <label>Name</label>
+        <div class="name-with-template">
+          <InputText v-model="wizardNet.name" class="w-full" :placeholder="wizardAutoName || ''" />
+          <Button icon="pi pi-sync" severity="secondary" text rounded size="small"
+                  title="Apply name template" @click="wizardNet.name = wizardAutoName" />
+        </div>
+      </div>
+      <div class="field">
+        <label>Description</label>
+        <InputText v-model="wizardNet.description" class="w-full" />
+      </div>
+      <div class="field">
+        <label>VLAN</label>
+        <div style="display: flex; gap: 0.25rem; align-items: center">
+          <AutoComplete v-model="wizardVlanSelection" :suggestions="vlanSuggestions"
+                        @complete="searchWizardVlans" optionLabel="display"
+                        placeholder="Search by name or ID..." class="w-full"
+                        @item-select="onWizardVlanSelect" @clear="wizardNet.vlan_id = null" dropdown />
+          <Button icon="pi pi-plus" text rounded size="small"
+                  title="Create VLAN" @click="wizardNewVlanNameManual = false; wizardNewVlanForm = { vlan_id: null, name: '' }; showWizardCreateVlan = true" />
+        </div>
+      </div>
+      <div class="field">
+        <label>Gateway</label>
+        <InputText v-model="wizardNet.gateway_address" placeholder="Auto (system default)" class="w-full" />
+      </div>
+      <div class="field">
+        <label>Domain Name</label>
+        <InputText v-model="wizardNet.domain_name" placeholder="e.g. office.example.com" class="w-full" />
+      </div>
+      <div class="field" v-if="wizardPrefixLength <= 29">
+        <label class="toggle-label">
+          <input type="checkbox" v-model="wizardNet.create_dhcp_scope" />
+          Create DHCP scope
+        </label>
+      </div>
+      <template v-if="wizardNet.create_dhcp_scope && wizardPrefixLength <= 29">
+        <div class="field">
+          <label>Start IP</label>
+          <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" :placeholder="wizardDhcpDefaults.start" />
+        </div>
+        <div class="field">
+          <label>End IP</label>
+          <InputText v-model="wizardNet.dhcp_end_ip" class="w-full" :placeholder="wizardDhcpDefaults.end" />
+        </div>
+      </template>
+      <div class="field">
+        <label class="toggle-label">
+          <input type="checkbox" v-model="wizardNet.create_reverse_dns" />
+          Create reverse DNS zone
+        </label>
+      </div>
+    </div>
+
+    <template #footer>
+      <div class="wizard-footer">
+        <Button v-if="wizardStep > 1" label="Back" icon="pi pi-arrow-left" severity="secondary" text
+                @click="wizardStep--" />
+        <span style="flex: 1"></span>
+        <Button label="Cancel" severity="secondary" text @click="showWizard = false" />
+        <Button v-if="wizardStep === 1" label="Save & Exit" severity="secondary"
+                @click="wizardSaveAndExit" :loading="saving" :disabled="!wizardOrg.name" />
+        <Button v-if="wizardStep === 1" label="Continue" icon="pi pi-arrow-right" iconPos="right"
+                @click="wizardStep = 2" :disabled="!wizardOrg.name" />
+        <Button v-if="wizardStep === 2" label="Create" icon="pi pi-check"
+                @click="wizardCreate" :loading="saving"
+                :disabled="!!wizardCidrError || !wizardNet.cidr" />
+      </div>
+    </template>
+  </Dialog>
+
+  <!-- Create VLAN from Wizard -->
+  <Dialog v-model:visible="showWizardCreateVlan" header="Create VLAN" modal :style="{ width: '24rem' }">
+    <div class="form-grid">
+      <div class="field">
+        <label>VLAN ID *</label>
+        <InputNumber v-model="wizardNewVlanForm.vlan_id" :min="1" :max="4094" :useGrouping="false" class="w-full"
+                     @update:modelValue="onWizardNewVlanIdInput" />
+      </div>
+      <div class="field">
+        <label>Name *</label>
+        <InputText v-model="wizardNewVlanForm.name" class="w-full" @input="wizardNewVlanNameManual = true" />
+      </div>
+    </div>
+    <template #footer>
+      <Button label="Cancel" severity="secondary" @click="showWizardCreateVlan = false" />
+      <Button label="Save" @click="createVlanFromWizard" :loading="saving"
+              :disabled="!wizardNewVlanForm.vlan_id || !wizardNewVlanForm.name" />
+    </template>
+  </Dialog>
+
   <!-- Delete Organization Dialog -->
   <Dialog v-model:visible="showDeleteFolderDialog" header="Delete Organization" modal :style="{ width: '24rem' }">
     <p>Delete organization <strong>{{ deletingFolder?.name }}</strong>?</p>
@@ -153,63 +280,32 @@
     </template>
   </Dialog>
 
-  <!-- Configure Network Dialog -->
-  <Dialog v-model:visible="showConfigure" header="Configure Network" modal :style="{ width: '30rem' }">
-    <p>Configuring <strong>{{ props.selectedNode?.data.cidr }}</strong></p>
-    <div class="form-grid">
-      <div class="field">
-        <label>Name *</label>
-        <InputText v-model="configForm.name" class="w-full" />
-      </div>
-      <div class="field">
-        <label>Description</label>
-        <InputText v-model="configForm.description" class="w-full" />
-      </div>
-      <div class="field">
-        <label>VLAN ID</label>
-        <InputNumber v-model="configForm.vlan_id" :min="1" :max="4094" class="w-full" />
-      </div>
-      <div class="field">
-        <label>Gateway Address</label>
-        <InputText v-model="configForm.gateway_address" placeholder="Auto (system default)" class="w-full" />
-      </div>
-      <div class="field">
-        <label>Domain Name</label>
-        <InputText v-model="configForm.domain_name" placeholder="e.g. office.example.com" class="w-full" />
-      </div>
-      <div class="field" v-if="props.selectedNode && props.selectedNode.data.prefix_length <= 29">
-        <label class="toggle-label">
-          <input type="checkbox" v-model="configForm.create_dhcp_scope" />
-          Create DHCP scope
-        </label>
-      </div>
-      <div class="field">
-        <label class="toggle-label">
-          <input type="checkbox" v-model="configForm.create_reverse_dns" />
-          Create reverse DNS zone
-        </label>
-      </div>
-    </div>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showConfigure = false" />
-      <Button label="Configure" @click="executeConfigure" :loading="saving" />
-    </template>
-  </Dialog>
-
   <!-- Edit Network Dialog -->
-  <Dialog v-model:visible="showEdit" header="Edit Network" modal :style="{ width: '28rem' }">
+  <Dialog v-model:visible="showNetworkDialog" :header="networkDialogHeader" modal :style="{ width: '30rem' }">
     <div class="form-grid">
+      <template v-if="networkDialogMode === 'create'">
+        <div class="field">
+          <label>CIDR *</label>
+          <InputText v-model="networkForm.cidr" placeholder="10.0.0.0/8" class="w-full" />
+          <small v-if="createCidrError" class="field-error">{{ createCidrError }}</small>
+        </div>
+        <div class="field">
+          <label>Organization</label>
+          <Select v-model="networkForm.folder_id" :options="folderOptions" optionLabel="name" optionValue="id"
+                  placeholder="Select organization" class="w-full" />
+        </div>
+      </template>
       <div class="field">
         <label>Name *</label>
         <div class="name-with-template">
-          <InputText v-model="editForm.name" class="w-full" />
+          <InputText v-model="networkForm.name" class="w-full" :placeholder="createAutoName || ''" />
           <Button icon="pi pi-sync" severity="secondary" text rounded size="small"
                   title="Apply name template" @click="applyTemplateToEdit" />
         </div>
       </div>
       <div class="field">
         <label>Description</label>
-        <InputText v-model="editForm.description" class="w-full" />
+        <InputText v-model="networkForm.description" class="w-full" />
       </div>
       <div class="field">
         <label>VLAN</label>
@@ -219,21 +315,46 @@
                         placeholder="Search by name or ID..." class="w-full"
                         @item-select="onVlanSelect" @clear="onVlanClear" dropdown />
           <Button icon="pi pi-plus" text rounded size="small"
-                  title="Create VLAN" @click="showCreateVlanFromEdit = true" />
+                  title="Create VLAN" @click="newVlanNameManual = false; newVlanForm = { vlan_id: null, name: '' }; showCreateVlanFromEdit = true" />
         </div>
       </div>
       <div class="field">
         <label>Gateway</label>
-        <InputText v-model="editForm.gateway_address" class="w-full" />
+        <InputText v-model="networkForm.gateway_address" placeholder="Auto (system default)" class="w-full" />
       </div>
       <div class="field">
         <label>Domain Name</label>
-        <InputText v-model="editForm.domain_name" placeholder="e.g. office.example.com" class="w-full" />
+        <InputText v-model="networkForm.domain_name" placeholder="e.g. office.example.com" class="w-full" />
       </div>
+      <template v-if="networkDialogMode === 'configure' || networkDialogMode === 'create'">
+        <div class="field" v-if="effectivePrefixLength <= 29">
+          <label class="toggle-label">
+            <input type="checkbox" v-model="networkForm.create_dhcp_scope" />
+            Create DHCP scope
+          </label>
+        </div>
+        <template v-if="networkForm.create_dhcp_scope">
+          <div class="field">
+            <label>Start IP *</label>
+            <InputText v-model="networkForm.dhcp_start_ip" class="w-full" :placeholder="dhcpDefaults.start" />
+          </div>
+          <div class="field">
+            <label>End IP *</label>
+            <InputText v-model="networkForm.dhcp_end_ip" class="w-full" :placeholder="dhcpDefaults.end" />
+          </div>
+        </template>
+        <div class="field">
+          <label class="toggle-label">
+            <input type="checkbox" v-model="networkForm.create_reverse_dns" />
+            Create reverse DNS zone
+          </label>
+        </div>
+      </template>
     </div>
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showEdit = false" />
-      <Button label="Save" @click="executeEdit" :loading="saving" />
+      <Button label="Cancel" severity="secondary" @click="showNetworkDialog = false" />
+      <Button :label="networkDialogMode === 'create' ? 'Create' : 'Save'" @click="executeNetworkSave" :loading="saving"
+              :disabled="networkDialogMode === 'create' && !!createCidrError" />
     </template>
   </Dialog>
 
@@ -242,11 +363,12 @@
     <div class="form-grid">
       <div class="field">
         <label>VLAN ID *</label>
-        <InputNumber v-model="newVlanForm.vlan_id" :min="1" :max="4094" class="w-full" />
+        <InputNumber v-model="newVlanForm.vlan_id" :min="1" :max="4094" :useGrouping="false" class="w-full"
+                     @update:modelValue="onNewVlanIdInput" />
       </div>
       <div class="field">
         <label>Name *</label>
-        <InputText v-model="newVlanForm.name" class="w-full" />
+        <InputText v-model="newVlanForm.name" class="w-full" @input="newVlanNameManual = true" />
       </div>
     </div>
     <template #footer>
@@ -279,6 +401,20 @@
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showDelete = false" />
       <Button label="Delete" severity="danger" @click="executeDelete" :loading="saving" />
+    </template>
+  </Dialog>
+
+  <!-- Deallocate Network Dialog -->
+  <Dialog v-model:visible="showDeallocate" header="Deallocate Network" modal :style="{ width: '26rem' }">
+    <template v-if="props.selectedNode">
+      <p>Deallocate <strong>{{ props.selectedNode.data.cidr }}</strong>?</p>
+      <p class="warn-text">
+        This will remove all configuration, ranges, and IP assignments. The network block will remain as unallocated space.
+      </p>
+    </template>
+    <template #footer>
+      <Button label="Cancel" severity="secondary" @click="showDeallocate = false" />
+      <Button label="Deallocate" severity="danger" @click="executeDeallocate" :loading="saving" />
     </template>
   </Dialog>
 
@@ -329,7 +465,7 @@ import Message from 'primevue/message';
 import AutoComplete from 'primevue/autocomplete';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
-import { validateSupernet, isValidCidr, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr } from '../utils/ip.js';
+import { validateSupernet, isValidCidr, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp } from '../utils/ip.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -383,6 +519,190 @@ async function createOrg() {
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally { saving.value = false; }
+}
+
+// ── Guided Setup Wizard ──
+const showWizard = ref(false);
+const wizardStep = ref(1);
+const wizardOrg = ref({ name: '', description: '' });
+const wizardNet = ref({
+  cidr: '', name: '', description: '', vlan_id: null,
+  gateway_address: '', domain_name: '',
+  create_dhcp_scope: false, create_reverse_dns: false,
+  dhcp_start_ip: '', dhcp_end_ip: '',
+});
+const wizardVlanSelection = ref(null);
+const showWizardCreateVlan = ref(false);
+const wizardNewVlanForm = ref({ vlan_id: null, name: '' });
+const wizardNewVlanNameManual = ref(false);
+// Track created resources for cleanup on cancel
+const wizardCreatedFolderId = ref(null);
+const wizardCreatedVlanId = ref(null);
+
+// Ensure the org exists (commit eagerly), returns folder_id
+async function ensureWizardOrg() {
+  if (wizardCreatedFolderId.value) return wizardCreatedFolderId.value;
+  await store.createFolder({
+    name: wizardOrg.value.name,
+    description: wizardOrg.value.description || undefined,
+  });
+  const folder = store.folders.find(f => f.name === wizardOrg.value.name.trim());
+  wizardCreatedFolderId.value = folder?.id;
+  return folder?.id;
+}
+
+const wizardCidrError = computed(() => {
+  const cidr = (wizardNet.value.cidr || '').trim();
+  if (!cidr) return null;
+  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
+  return null;
+});
+
+const wizardAutoName = computed(() => {
+  const cidr = (wizardNet.value.cidr || '').trim();
+  if (!cidr || !isValidCidr(cidr)) return '';
+  try { return applyNameTemplate(props.nameTemplate, normalizeCidr(cidr)); }
+  catch { return ''; }
+});
+
+const wizardPrefixLength = computed(() => {
+  const cidr = (wizardNet.value.cidr || '').trim();
+  if (cidr && isValidCidr(cidr)) return parseCidr(cidr).prefix;
+  return 32;
+});
+
+const wizardDhcpDefaults = computed(() => {
+  const cidr = (wizardNet.value.cidr || '').trim();
+  if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
+  const p = parseCidr(cidr);
+  const gw = wizardNet.value.gateway_address || null;
+  const gwLong = gw ? ipToLong(gw) : null;
+  let poolStart = p.networkLong + 1;
+  let poolEnd = p.broadcastLong - 1;
+  if (gwLong === poolStart) poolStart++;
+  else if (gwLong === poolEnd) poolEnd--;
+  return { start: longToIp(poolStart), end: longToIp(poolEnd) };
+});
+
+function searchWizardVlans(event) {
+  // Reuse the existing vlan search but scoped — wizard has no folder yet so search all
+  api.get('/vlans/search', { params: { q: event.query } }).then(res => {
+    vlanSuggestions.value = res.data.map(v => ({ ...v, display: `VLAN ${v.vlan_id} — ${v.name}` }));
+  }).catch(() => { vlanSuggestions.value = []; });
+}
+
+function onWizardVlanSelect(event) {
+  wizardNet.value.vlan_id = event.value.vlan_id;
+}
+
+function onWizardNewVlanIdInput(val) {
+  if (!wizardNewVlanNameManual.value) {
+    wizardNewVlanForm.value.name = val ? `VLAN${val}` : '';
+  }
+}
+
+async function createVlanFromWizard() {
+  saving.value = true;
+  try {
+    const folderId = await ensureWizardOrg();
+    const res = await api.post('/vlans', {
+      folder_id: folderId,
+      vlan_id: wizardNewVlanForm.value.vlan_id,
+      name: wizardNewVlanForm.value.name,
+    });
+    const created = res.data;
+    wizardNet.value.vlan_id = created.vlan_id;
+    wizardVlanSelection.value = { ...created, display: `VLAN ${created.vlan_id} — ${created.name}` };
+    wizardCreatedVlanId.value = created.id;
+    showWizardCreateVlan.value = false;
+    wizardNewVlanForm.value = { vlan_id: null, name: '' };
+    wizardNewVlanNameManual.value = false;
+    toast.add({ severity: 'success', summary: 'VLAN created', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { saving.value = false; }
+}
+
+async function wizardSaveAndExit() {
+  saving.value = true;
+  try {
+    await ensureWizardOrg();
+    wizardCreatedFolderId.value = null; // don't clean up on close — user chose to save
+    showWizard.value = false;
+    toast.add({ severity: 'success', summary: 'Organization created', life: 3000 });
+    emit('org-created');
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { saving.value = false; }
+}
+
+async function wizardCreate() {
+  saving.value = true;
+  try {
+    // Step 1: Ensure organization exists
+    const folderId = await ensureWizardOrg();
+
+    // Step 2: Create supernet
+    const cidr = wizardNet.value.cidr.trim();
+    const created = await store.createSupernet({
+      cidr,
+      name: wizardNet.value.name || undefined,
+      folder_id: folderId,
+    });
+
+    // Step 3: Configure the network
+    const payload = {
+      name: wizardNet.value.name || wizardAutoName.value || cidr,
+      description: wizardNet.value.description || undefined,
+      vlan_id: wizardNet.value.vlan_id || undefined,
+      gateway_address: wizardNet.value.gateway_address || undefined,
+      domain_name: wizardNet.value.domain_name || undefined,
+      create_dhcp_scope: wizardNet.value.create_dhcp_scope,
+      create_reverse_dns: wizardNet.value.create_reverse_dns,
+    };
+    if (payload.create_dhcp_scope) {
+      payload.dhcp_start_ip = wizardNet.value.dhcp_start_ip || wizardDhcpDefaults.value.start;
+      payload.dhcp_end_ip = wizardNet.value.dhcp_end_ip || wizardDhcpDefaults.value.end;
+    }
+    await store.configureSubnet(created.id, payload);
+
+    wizardCreatedFolderId.value = null; // don't clean up — user completed the wizard
+    wizardCreatedVlanId.value = null;
+    showWizard.value = false;
+    toast.add({ severity: 'success', summary: 'Organization and network created', life: 3000 });
+    emit('org-created');
+    emit('network-created');
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { saving.value = false; }
+}
+
+async function onWizardClose() {
+  // Clean up eagerly-created resources if user cancelled
+  if (wizardCreatedVlanId.value) {
+    try { await api.delete(`/vlans/${wizardCreatedVlanId.value}`); } catch { /* best effort */ }
+  }
+  if (wizardCreatedFolderId.value) {
+    try { await store.deleteFolder(wizardCreatedFolderId.value); } catch { /* best effort */ }
+    emit('org-deleted');
+  }
+  // Reset wizard state
+  wizardStep.value = 1;
+  wizardOrg.value = { name: '', description: '' };
+  wizardNet.value = {
+    cidr: '', name: '', description: '', vlan_id: null,
+    gateway_address: '', domain_name: '',
+    create_dhcp_scope: false, create_reverse_dns: false,
+    dhcp_start_ip: '', dhcp_end_ip: '',
+  };
+  wizardVlanSelection.value = null;
+  wizardCreatedFolderId.value = null;
+  wizardCreatedVlanId.value = null;
+}
+
+function openWizard() {
+  onWizardClose(); // reset
+  showWizard.value = true;
 }
 
 async function quickCreateOrg() {
@@ -561,39 +881,82 @@ async function executeCarve() {
   } finally { saving.value = false; }
 }
 
-// ── Configure dialog ──
-const showConfigure = ref(false);
-const configForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false });
+// ── Unified Configure / Edit dialog ──
+const showNetworkDialog = ref(false);
+const networkDialogMode = ref('edit'); // 'create', 'configure', or 'edit'
+const networkForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '' });
 const dropTargetFolderIdForConfigure = ref(null);
 
-watch(showConfigure, (val) => { if (!val) dropTargetFolderIdForConfigure.value = null; });
+const networkDialogHeader = computed(() => {
+  if (networkDialogMode.value === 'create') return 'Add Network';
+  if (networkDialogMode.value === 'configure') return 'Configure Network';
+  return 'Edit Network';
+});
 
-async function executeConfigure() {
-  saving.value = true;
-  try {
-    const payload = { ...configForm.value };
-    if (dropTargetFolderIdForConfigure.value) {
-      payload.folder_id = dropTargetFolderIdForConfigure.value;
-    }
-    await store.configureSubnet(props.selectedNode.data.id, payload);
-    showConfigure.value = false;
-    dropTargetFolderIdForConfigure.value = null;
-    toast.add({ severity: 'success', summary: 'Network configured', life: 3000 });
-    emit('network-configured', props.selectedNode.data.id);
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally { saving.value = false; }
-}
+const createCidrError = computed(() => {
+  if (networkDialogMode.value !== 'create') return null;
+  const cidr = (networkForm.value.cidr || '').trim();
+  if (!cidr) return null;
+  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
+  return null;
+});
 
-// ── Edit dialog ──
-const showEdit = ref(false);
-const editForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '' });
+const createAutoName = computed(() => {
+  if (networkDialogMode.value !== 'create') return '';
+  const cidr = (networkForm.value.cidr || '').trim();
+  if (!cidr || !isValidCidr(cidr)) return '';
+  try { return applyNameTemplate(props.nameTemplate, normalizeCidr(cidr)); }
+  catch { return ''; }
+});
+
+const effectivePrefixLength = computed(() => {
+  if (networkDialogMode.value === 'create') {
+    const cidr = (networkForm.value.cidr || '').trim();
+    if (cidr && isValidCidr(cidr)) return parseCidr(cidr).prefix;
+    return 32;
+  }
+  return props.selectedNode?.data?.prefix_length ?? 32;
+});
+
+const dhcpDefaults = computed(() => {
+  if (networkDialogMode.value === 'create') {
+    const cidr = (networkForm.value.cidr || '').trim();
+    if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
+    const p = parseCidr(cidr);
+    const gw = networkForm.value.gateway_address || null;
+    const gwLong = gw ? ipToLong(gw) : null;
+    let poolStart = p.networkLong + 1;
+    let poolEnd = p.broadcastLong - 1;
+    if (gwLong === poolStart) poolStart++;
+    else if (gwLong === poolEnd) poolEnd--;
+    return { start: longToIp(poolStart), end: longToIp(poolEnd) };
+  }
+  const d = props.selectedNode?.data;
+  if (!d) return { start: '', end: '' };
+  const p = parseCidr(d.cidr);
+  const gw = networkForm.value.gateway_address || null;
+  const gwLong = gw ? ipToLong(gw) : null;
+  let poolStart = p.networkLong + 1;
+  let poolEnd = p.broadcastLong - 1;
+  if (gwLong === poolStart) poolStart++;
+  else if (gwLong === poolEnd) poolEnd--;
+  return { start: longToIp(poolStart), end: longToIp(poolEnd) };
+});
+
+watch(showNetworkDialog, (val) => { if (!val) dropTargetFolderIdForConfigure.value = null; });
 const editVlanSelection = ref(null);
 const vlanSuggestions = ref([]);
 const showVlanWarning = ref(false);
 const pendingVlanSelection = ref(null);
 const showCreateVlanFromEdit = ref(false);
 const newVlanForm = ref({ vlan_id: null, name: '' });
+const newVlanNameManual = ref(false);
+
+function onNewVlanIdInput(val) {
+  if (!newVlanNameManual.value) {
+    newVlanForm.value.name = val ? `VLAN${val}` : '';
+  }
+}
 
 function getSubnetFolderId() {
   const folderId = props.selectedNode?.data?.folder_id;
@@ -622,7 +985,11 @@ async function searchVlans(event) {
   try {
     const res = await api.get('/vlans/search', { params: { folder_id: folderId, q: event.query } });
     vlanSuggestions.value = res.data.map(v => ({ ...v, display: `VLAN ${v.vlan_id} — ${v.name}` }));
-  } catch { vlanSuggestions.value = []; }
+  } catch (err) {
+    vlanSuggestions.value = [];
+    const detail = err.response?.data?.error || err.message;
+    toast.add({ severity: 'error', summary: 'VLAN lookup failed', detail, life: 5000 });
+  }
 }
 
 function onVlanSelect(event) {
@@ -632,12 +999,14 @@ function onVlanSelect(event) {
     pendingVlanSelection.value = vlan;
     showVlanWarning.value = true;
   } else {
-    editForm.value.vlan_id = vlan.vlan_id;
+    networkForm.value.vlan_id = vlan.vlan_id;
+    if (!networkForm.value.name) networkForm.value.name = vlan.name;
   }
 }
 
 function confirmVlanAssignment() {
-  editForm.value.vlan_id = pendingVlanSelection.value.vlan_id;
+  networkForm.value.vlan_id = pendingVlanSelection.value.vlan_id;
+  if (!networkForm.value.name) networkForm.value.name = pendingVlanSelection.value.name;
   showVlanWarning.value = false;
   pendingVlanSelection.value = null;
 }
@@ -651,11 +1020,11 @@ function cancelVlanAssignment() {
   } else {
     editVlanSelection.value = null;
   }
-  editForm.value.vlan_id = d?.vlan_id || null;
+  networkForm.value.vlan_id = d?.vlan_id || null;
 }
 
 function onVlanClear() {
-  editForm.value.vlan_id = null;
+  networkForm.value.vlan_id = null;
   editVlanSelection.value = null;
 }
 
@@ -670,10 +1039,12 @@ async function createVlanFromEdit() {
       name: newVlanForm.value.name,
     });
     const created = res.data;
-    editForm.value.vlan_id = created.vlan_id;
+    networkForm.value.vlan_id = created.vlan_id;
+    if (!networkForm.value.name) networkForm.value.name = created.name;
     editVlanSelection.value = { ...created, display: `VLAN ${created.vlan_id} — ${created.name}` };
     showCreateVlanFromEdit.value = false;
     newVlanForm.value = { vlan_id: null, name: '' };
+    newVlanNameManual.value = false;
     toast.add({ severity: 'success', summary: 'VLAN created', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -686,16 +1057,61 @@ function applyTemplateToEdit() {
     toast.add({ severity: 'warn', summary: 'No custom template', detail: 'Configure a name template in System settings first', life: 4000 });
     return;
   }
-  editForm.value.name = applyNameTemplate(props.nameTemplate, props.selectedNode.data.cidr);
+  const cidr = networkDialogMode.value === 'create'
+    ? networkForm.value.cidr
+    : props.selectedNode.data.cidr;
+  if (cidr && isValidCidr(cidr)) {
+    networkForm.value.name = applyNameTemplate(props.nameTemplate, cidr);
+  }
 }
 
-async function executeEdit() {
+async function executeNetworkSave() {
   saving.value = true;
   try {
-    await store.updateSubnet(props.selectedNode.data.id, editForm.value);
-    showEdit.value = false;
-    toast.add({ severity: 'success', summary: 'Network updated', life: 3000 });
-    emit('network-updated', props.selectedNode.data.id);
+    if (networkDialogMode.value === 'create') {
+      // Create the supernet first, then configure it
+      const cidr = networkForm.value.cidr.trim();
+      const created = await store.createSupernet({
+        cidr,
+        name: networkForm.value.name || undefined,
+        folder_id: networkForm.value.folder_id || undefined,
+      });
+      // Now configure it with full options
+      const payload = { ...networkForm.value };
+      payload.name = payload.name || createAutoName.value || cidr;
+      delete payload.cidr;
+      delete payload.folder_id;
+      if (payload.create_dhcp_scope) {
+        payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
+        payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
+      }
+      await store.configureSubnet(created.id, payload);
+      showNetworkDialog.value = false;
+      toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
+      emit('network-created');
+    } else if (networkDialogMode.value === 'configure') {
+      const id = props.selectedNode.data.id;
+      const payload = { ...networkForm.value };
+      if (dropTargetFolderIdForConfigure.value) {
+        payload.folder_id = dropTargetFolderIdForConfigure.value;
+      }
+      // Use user-specified or default DHCP range
+      if (payload.create_dhcp_scope) {
+        payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
+        payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
+      }
+      await store.configureSubnet(id, payload);
+      showNetworkDialog.value = false;
+      toast.add({ severity: 'success', summary: 'Network configured', life: 3000 });
+      emit('network-configured', id);
+    } else {
+      const id = props.selectedNode.data.id;
+      const { create_dhcp_scope, create_reverse_dns, ...editPayload } = networkForm.value;
+      await store.updateSubnet(id, editPayload);
+      showNetworkDialog.value = false;
+      toast.add({ severity: 'success', summary: 'Network updated', life: 3000 });
+      emit('network-updated', id);
+    }
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally { saving.value = false; }
@@ -710,6 +1126,21 @@ async function executeDelete() {
     await store.deleteSubnet(props.selectedNode.data.id);
     showDelete.value = false;
     toast.add({ severity: 'success', summary: 'Network deleted', life: 3000 });
+    emit('network-deleted', props.selectedNode.data.id);
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { saving.value = false; }
+}
+
+// ── Deallocate dialog ──
+const showDeallocate = ref(false);
+
+async function executeDeallocate() {
+  saving.value = true;
+  try {
+    await store.deleteSubnet(props.selectedNode.data.id);
+    showDeallocate.value = false;
+    toast.add({ severity: 'success', summary: 'Network deallocated', life: 3000 });
     emit('network-deleted', props.selectedNode.data.id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -749,7 +1180,8 @@ async function executeGroupConfigure() {
       await store.configureSubnetNoRefresh(id, {
         name: autoName, description: '', vlan_id: null,
         gateway_address: '', create_dhcp_scope: false,
-        create_reverse_dns: false, folder_id: groupDropFolderId.value,
+        create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '',
+        folder_id: groupDropFolderId.value,
       });
     }
     await store.fetchTree();
@@ -814,6 +1246,25 @@ function openSubnetDialog(folderId) {
   showSubnetDialog.value = true;
 }
 
+function openCreateNetwork(folderId) {
+  networkDialogMode.value = 'create';
+  networkForm.value = {
+    cidr: '',
+    name: '',
+    description: '',
+    vlan_id: null,
+    gateway_address: '',
+    domain_name: '',
+    folder_id: folderId || store.folders[0]?.id || null,
+    create_dhcp_scope: false,
+    create_reverse_dns: false,
+    dhcp_start_ip: '',
+    dhcp_end_ip: '',
+  };
+  editVlanSelection.value = null;
+  showNetworkDialog.value = true;
+}
+
 function openDivide(node) {
   divideMode.value = 'equal';
   divideSteps.value = 1;
@@ -830,33 +1281,54 @@ function openDivide(node) {
 }
 
 function openConfigure(node, folderId) {
-  const d = (node || props.selectedNode)?.data;
-  if (!d) return;
-  const autoName = applyNameTemplate(props.nameTemplate, d.cidr);
-  configForm.value = { name: autoName, description: '', vlan_id: null, gateway_address: '', domain_name: d.domain_name || '', create_dhcp_scope: false, create_reverse_dns: false };
-  if (folderId) dropTargetFolderIdForConfigure.value = folderId;
-  showConfigure.value = true;
+  openEdit(node, folderId);
 }
 
-function openEdit(node) {
+function openEdit(node, folderId) {
   const d = (node || props.selectedNode)?.data;
   if (!d) return;
-  editForm.value = { name: d.name, description: d.description || '', vlan_id: d.vlan_id, gateway_address: d.gateway_address || '', domain_name: d.domain_name || '' };
-  const folderId = getSubnetFolderId();
-  if (d.vlan_id && folderId) {
-    api.get('/vlans/search', { params: { folder_id: folderId, q: String(d.vlan_id) } }).then(res => {
+  const isUnconfigured = d.status === 'unallocated';
+  networkDialogMode.value = isUnconfigured ? 'configure' : 'edit';
+
+  const autoName = isUnconfigured ? applyNameTemplate(props.nameTemplate, d.cidr) : null;
+  networkForm.value = {
+    name: d.name || autoName || '',
+    description: d.description || '',
+    vlan_id: d.vlan_id || null,
+    gateway_address: d.gateway_address || '',
+    domain_name: d.domain_name || '',
+    create_dhcp_scope: false,
+    create_reverse_dns: false,
+    dhcp_start_ip: '',
+    dhcp_end_ip: ''
+  };
+
+  if (folderId) dropTargetFolderIdForConfigure.value = folderId;
+
+  // Load VLAN display if one is set
+  const resolvedFolderId = folderId || getSubnetFolderId();
+  if (d.vlan_id && resolvedFolderId) {
+    api.get('/vlans/search', { params: { folder_id: resolvedFolderId, q: String(d.vlan_id) } }).then(res => {
       const match = res.data.find(v => v.vlan_id === d.vlan_id);
       if (match) editVlanSelection.value = { ...match, display: `VLAN ${match.vlan_id} — ${match.name}` };
       else editVlanSelection.value = `VLAN ${d.vlan_id}`;
-    }).catch(() => { editVlanSelection.value = `VLAN ${d.vlan_id}`; });
+    }).catch((err) => {
+      editVlanSelection.value = `VLAN ${d.vlan_id}`;
+      const detail = err.response?.data?.error || err.message;
+      toast.add({ severity: 'error', summary: 'VLAN lookup failed', detail, life: 5000 });
+    });
   } else {
     editVlanSelection.value = null;
   }
-  showEdit.value = true;
+  showNetworkDialog.value = true;
 }
 
 function openDelete(node) {
   showDelete.value = true;
+}
+
+function openDeallocate(node) {
+  showDeallocate.value = true;
 }
 
 async function openMergeConfirm(ids) {
@@ -881,9 +1353,9 @@ function openGroupConfigure(leafIds, folderId) {
 }
 
 defineExpose({
-  openOrgDialog, openEditFolder, openDeleteFolder,
-  openSubnetDialog, openDivide, openConfigure,
-  openEdit, openDelete, openMergeConfirm,
+  openWizard, openOrgDialog, openEditFolder, openDeleteFolder,
+  openSubnetDialog, openCreateNetwork, openDivide, openConfigure,
+  openEdit, openDelete, openDeallocate, openMergeConfirm,
   openGroupConfigure, executeApplyTemplate,
 });
 </script>
@@ -1003,6 +1475,72 @@ defineExpose({
   margin-top: 0.75rem;
 }
 .w-full {
+  width: 100%;
+}
+
+/* Wizard styles */
+.wizard-steps {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--p-surface-border);
+}
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: var(--p-surface-200);
+  color: var(--p-text-muted-color);
+  transition: all 0.2s;
+}
+.step-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--p-text-muted-color);
+  transition: color 0.2s;
+}
+.wizard-step.active .step-num {
+  background: var(--p-primary-color);
+  color: #fff;
+}
+.wizard-step.active .step-label {
+  color: var(--p-text-color);
+  font-weight: 600;
+}
+.wizard-step.done .step-num {
+  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
+  color: var(--p-primary-color);
+}
+.wizard-step.done .step-label {
+  color: var(--p-text-color);
+}
+.wizard-step-line {
+  width: 3rem;
+  height: 2px;
+  background: var(--p-surface-200);
+  margin: 0 0.5rem;
+  transition: background 0.2s;
+}
+.wizard-step-line.done {
+  background: var(--p-primary-color);
+}
+.wizard-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
   width: 100%;
 }
 </style>

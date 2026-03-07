@@ -4,6 +4,7 @@ import { ref, computed } from 'vue';
 // Each theme: { id, name, group: 'light'|'dark', primary, surface, preset }
 // primary = Tailwind color name used for primary palette
 // surface = Tailwind color name used for surface palette (neutral tones)
+// Custom themes can use customPrimary/customSurface with raw hex palettes
 export const themes = [
   // ── Light Themes ──
   { id: 'light-emerald-slate',   name: 'Emerald',      group: 'light', primary: 'emerald', surface: 'slate' },
@@ -32,6 +33,24 @@ export const themes = [
   { id: 'dark-amber-neutral',    name: 'Amber',         group: 'dark', primary: 'amber',   surface: 'neutral' },
   { id: 'dark-orange-neutral',   name: 'Orange',        group: 'dark', primary: 'orange',  surface: 'neutral' },
   { id: 'dark-rose-zinc',        name: 'Rose',          group: 'dark', primary: 'rose',    surface: 'zinc' },
+
+  // ── Custom Themes ──
+  {
+    id: 'dark-nord', name: 'Nord', group: 'dark',
+    customPrimary: {
+      50:  '#f0f4f8', 100: '#dae5f0', 200: '#b8cfe0',
+      300: '#88c0d0', 400: '#81a1c1', 500: '#5e81ac',
+      600: '#4e6d91', 700: '#3f5876', 800: '#31445c',
+      900: '#2e3440', 950: '#242933',
+    },
+    customSurface: {
+      0:   '#eceff4', 50:  '#e5e9f0', 100: '#d8dee9',
+      200: '#c2c9d6', 300: '#8891a1', 400: '#6d7a8c',
+      500: '#4c566a', 600: '#434c5e', 700: '#3b4252',
+      800: '#2e3440', 900: '#272c36', 950: '#21252e',
+    },
+    customIpam: { ground: '#21252e', card: '#2e3440' },
+  },
 ];
 
 // Color swatches for preview (500-level shade)
@@ -48,6 +67,7 @@ export const colorSwatches = {
   amber: '#f59e0b',
   orange: '#f97316',
   rose: '#f43f5e',
+  nord: '#88c0d0',
 };
 
 export const useThemeStore = defineStore('theme', () => {

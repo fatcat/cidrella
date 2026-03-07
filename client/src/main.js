@@ -9,6 +9,7 @@ import 'primeicons/primeicons.css';
 
 import App from './App.vue';
 import router from './router/index.js';
+import api from './api/client.js';
 import { useDebugStore } from './stores/debug.js';
 import { useThemeStore } from './stores/theme.js';
 
@@ -17,6 +18,13 @@ const pinia = createPinia();
 
 app.use(pinia);
 app.use(router);
+
+// Dev-only interaction tracking — tree-shaken out of production builds
+if (import.meta.env.VITE_TRACKING) {
+  import('./utils/tracker.js').then(({ initTracker }) => {
+    initTracker({ router, apiClient: api, pinia });
+  });
+}
 app.use(PrimeVue, {
   theme: {
     preset: Aura,
@@ -29,74 +37,37 @@ app.use(ToastService);
 app.directive('tooltip', Tooltip);
 
 // Theme switching — listen for theme change events and update PrimeVue preset
+function buildPalette(colorName, customPalette) {
+  if (customPalette) return { ...customPalette };
+  const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
+  return Object.fromEntries(shades.map(s => [s, `{${colorName}.${s}}`]));
+}
+
 window.addEventListener('ipam:theme-change', (e) => {
   const theme = e.detail;
+  const primary = buildPalette(theme.primary, theme.customPrimary);
+  const surface = buildPalette(theme.surface, theme.customSurface);
+
   updatePreset({
     semantic: {
-      primary: {
-        50: `{${theme.primary}.50}`,
-        100: `{${theme.primary}.100}`,
-        200: `{${theme.primary}.200}`,
-        300: `{${theme.primary}.300}`,
-        400: `{${theme.primary}.400}`,
-        500: `{${theme.primary}.500}`,
-        600: `{${theme.primary}.600}`,
-        700: `{${theme.primary}.700}`,
-        800: `{${theme.primary}.800}`,
-        900: `{${theme.primary}.900}`,
-        950: `{${theme.primary}.950}`,
-      },
+      primary,
       colorScheme: {
-        light: {
-          surface: {
-            0: '#ffffff',
-            50: `{${theme.surface}.50}`,
-            100: `{${theme.surface}.100}`,
-            200: `{${theme.surface}.200}`,
-            300: `{${theme.surface}.300}`,
-            400: `{${theme.surface}.400}`,
-            500: `{${theme.surface}.500}`,
-            600: `{${theme.surface}.600}`,
-            700: `{${theme.surface}.700}`,
-            800: `{${theme.surface}.800}`,
-            900: `{${theme.surface}.900}`,
-            950: `{${theme.surface}.950}`,
-          }
-        },
-        dark: {
-          surface: {
-            0: '#ffffff',
-            50: `{${theme.surface}.50}`,
-            100: `{${theme.surface}.100}`,
-            200: `{${theme.surface}.200}`,
-            300: `{${theme.surface}.300}`,
-            400: `{${theme.surface}.400}`,
-            500: `{${theme.surface}.500}`,
-            600: `{${theme.surface}.600}`,
-            700: `{${theme.surface}.700}`,
-            800: `{${theme.surface}.800}`,
-            900: `{${theme.surface}.900}`,
-            950: `{${theme.surface}.950}`,
-          }
-        }
+        light: { surface: { 0: '#ffffff', ...surface } },
+        dark: { surface: { 0: '#ffffff', ...surface } },
       }
     }
   });
 
-  // Also update the surface palette directly so semantic tokens (ground, card, etc.) resolve
-  updateSurfacePalette({
-    50: `{${theme.surface}.50}`,
-    100: `{${theme.surface}.100}`,
-    200: `{${theme.surface}.200}`,
-    300: `{${theme.surface}.300}`,
-    400: `{${theme.surface}.400}`,
-    500: `{${theme.surface}.500}`,
-    600: `{${theme.surface}.600}`,
-    700: `{${theme.surface}.700}`,
-    800: `{${theme.surface}.800}`,
-    900: `{${theme.surface}.900}`,
-    950: `{${theme.surface}.950}`,
-  });
+  updateSurfacePalette(surface);
+
+  // Apply custom ipam variables if defined
+  if (theme.customIpam) {
+    document.documentElement.style.setProperty('--ipam-ground', theme.customIpam.ground);
+    document.documentElement.style.setProperty('--ipam-card', theme.customIpam.card);
+  } else {
+    document.documentElement.style.removeProperty('--ipam-ground');
+    document.documentElement.style.removeProperty('--ipam-card');
+  }
 });
 
 // Initialize theme store (applies saved theme)
