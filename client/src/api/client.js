@@ -21,7 +21,7 @@ api.interceptors.response.use(
   response => {
     try {
       const debug = useDebugStore();
-      debug.logApi(`${response.config.method.toUpperCase()} ${response.config.url} → ${response.status}`);
+      debug.logApi(`${response.config?.method?.toUpperCase()} ${response.config?.url} → ${response.status}`);
     } catch { /* store may not be ready */ }
     return response;
   },

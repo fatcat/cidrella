@@ -124,7 +124,7 @@
               <InputNumber v-else-if="data.type === 'number'" v-model="defaultValues[data.code]"
                            class="w-full" size="small" :useGrouping="false" placeholder="—" />
               <InputText v-else v-model="defaultValues[data.code]" class="w-full" size="small"
-                         :placeholder="data.code === 3 ? 'Defaults to network\'s gateway' : placeholderForType(data.type)" />
+                         :placeholder="data.code === 1 ? 'Defaults to network\'s mask' : data.code === 3 ? 'Defaults to network\'s gateway' : placeholderForType(data.type)" />
             </template>
           </Column>
           <Column header="" style="width: 3rem">
@@ -546,10 +546,23 @@ function toggleScopeOption(code, checked) {
   }
 }
 
-// When creating a new scope and user picks a range, auto-populate gateway (option 3)
+// When creating a new scope and user picks a range, auto-populate subnet mask (option 1) and gateway (option 3)
 watch(() => scopeForm.value.range_id, (rangeId) => {
   if (!rangeId || editingScope.value) return;
   const range = availableRanges.value.find(r => r.id === rangeId);
+  // Auto-populate subnet mask from the network's prefix length
+  if (range?.subnet_cidr) {
+    const prefix = parseInt(range.subnet_cidr.split('/')[1], 10);
+    if (prefix >= 0 && prefix <= 32) {
+      const maskLong = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
+      const mask = [(maskLong >>> 24) & 255, (maskLong >>> 16) & 255, (maskLong >>> 8) & 255, maskLong & 255].join('.');
+      if (!scopeForm.value.selectedOptions.includes(1)) {
+        scopeForm.value.selectedOptions.push(1);
+      }
+      scopeForm.value.optionValues[1] = mask;
+    }
+  }
+  // Auto-populate gateway
   if (range?.subnet_gateway) {
     if (!scopeForm.value.selectedOptions.includes(3)) {
       scopeForm.value.selectedOptions.push(3);

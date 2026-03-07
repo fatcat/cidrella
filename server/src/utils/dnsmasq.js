@@ -1,6 +1,5 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
@@ -176,9 +175,12 @@ export function regenerateDnsmasqConf(db) {
   atomicWrite(DNSMASQ_CONF, filtered.join('\n'));
 }
 
+const DNSMASQ_PID = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.pid');
+
 export function signalDnsmasq() {
   try {
-    execSync('kill -HUP $(pidof dnsmasq) 2>/dev/null || true', { stdio: 'ignore' });
+    const pid = parseInt(fs.readFileSync(DNSMASQ_PID, 'utf-8').trim(), 10);
+    if (pid) process.kill(pid, 'SIGHUP');
   } catch {
     console.warn('Could not send SIGHUP to dnsmasq (may not be running)');
   }

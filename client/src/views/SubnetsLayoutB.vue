@@ -176,7 +176,7 @@ function loadJson(key, fallback) {
 
 let _persistTimer = null;
 function persistState() {
-  if (_persistTimer) return;
+  if (_persistTimer) clearTimeout(_persistTimer);
   _persistTimer = setTimeout(() => {
     _persistTimer = null;
     try {

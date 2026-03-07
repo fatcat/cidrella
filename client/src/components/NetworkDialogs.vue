@@ -173,6 +173,10 @@
         <label>Gateway Address</label>
         <InputText v-model="configForm.gateway_address" placeholder="Auto (system default)" class="w-full" />
       </div>
+      <div class="field">
+        <label>Domain Name</label>
+        <InputText v-model="configForm.domain_name" placeholder="e.g. office.example.com" class="w-full" />
+      </div>
       <div class="field" v-if="props.selectedNode && props.selectedNode.data.prefix_length <= 29">
         <label class="toggle-label">
           <input type="checkbox" v-model="configForm.create_dhcp_scope" />
@@ -221,6 +225,10 @@
       <div class="field">
         <label>Gateway</label>
         <InputText v-model="editForm.gateway_address" class="w-full" />
+      </div>
+      <div class="field">
+        <label>Domain Name</label>
+        <InputText v-model="editForm.domain_name" placeholder="e.g. office.example.com" class="w-full" />
       </div>
     </div>
     <template #footer>
@@ -555,7 +563,7 @@ async function executeCarve() {
 
 // ── Configure dialog ──
 const showConfigure = ref(false);
-const configForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', create_dhcp_scope: false, create_reverse_dns: false });
+const configForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false });
 const dropTargetFolderIdForConfigure = ref(null);
 
 watch(showConfigure, (val) => { if (!val) dropTargetFolderIdForConfigure.value = null; });
@@ -579,7 +587,7 @@ async function executeConfigure() {
 
 // ── Edit dialog ──
 const showEdit = ref(false);
-const editForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '' });
+const editForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '' });
 const editVlanSelection = ref(null);
 const vlanSuggestions = ref([]);
 const showVlanWarning = ref(false);
@@ -825,7 +833,7 @@ function openConfigure(node, folderId) {
   const d = (node || props.selectedNode)?.data;
   if (!d) return;
   const autoName = applyNameTemplate(props.nameTemplate, d.cidr);
-  configForm.value = { name: autoName, description: '', vlan_id: null, gateway_address: '', create_dhcp_scope: false, create_reverse_dns: false };
+  configForm.value = { name: autoName, description: '', vlan_id: null, gateway_address: '', domain_name: d.domain_name || '', create_dhcp_scope: false, create_reverse_dns: false };
   if (folderId) dropTargetFolderIdForConfigure.value = folderId;
   showConfigure.value = true;
 }
@@ -833,7 +841,7 @@ function openConfigure(node, folderId) {
 function openEdit(node) {
   const d = (node || props.selectedNode)?.data;
   if (!d) return;
-  editForm.value = { name: d.name, description: d.description || '', vlan_id: d.vlan_id, gateway_address: d.gateway_address || '' };
+  editForm.value = { name: d.name, description: d.description || '', vlan_id: d.vlan_id, gateway_address: d.gateway_address || '', domain_name: d.domain_name || '' };
   const folderId = getSubnetFolderId();
   if (d.vlan_id && folderId) {
     api.get('/vlans/search', { params: { folder_id: folderId, q: String(d.vlan_id) } }).then(res => {

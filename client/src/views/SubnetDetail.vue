@@ -31,6 +31,8 @@
       <span class="info-bar-sep"></span>
       <span class="info-bar-pair"><span class="info-bar-label">VLAN</span> <span class="info-bar-val">{{ subnet.vlan_id ?? '—' }}</span></span>
       <span class="info-bar-sep"></span>
+      <span v-if="subnet.domain_name" class="info-bar-pair"><span class="info-bar-label">Domain</span> <span class="info-bar-val">{{ subnet.domain_name }}</span></span>
+      <span v-if="subnet.domain_name" class="info-bar-sep"></span>
       <span class="info-bar-pair"><span class="info-bar-label">Total IPs</span> <span class="info-bar-val">{{ subnet.total_addresses }}</span></span>
       <span class="info-bar-sep"></span>
       <span class="info-bar-pair"><span class="info-bar-label">Prefix</span> <span class="info-bar-val">/{{ subnet.prefix_length }}</span></span>
@@ -55,6 +57,10 @@
       <div class="info-card">
         <div class="info-label">VLAN</div>
         <div class="info-value">{{ subnet.vlan_id ?? '—' }}</div>
+      </div>
+      <div v-if="subnet.domain_name" class="info-card">
+        <div class="info-label">Domain</div>
+        <div class="info-value">{{ subnet.domain_name }}</div>
       </div>
       <div class="info-card">
         <div class="info-label">Total IPs</div>

@@ -81,16 +81,17 @@ function createSystemRanges(db, subnetId, parsed, gatewayAddress) {
 }
 
 // Helper: insert a subnet row
-function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, parent_id, folder_id, status, depth }) {
+function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, parent_id, folder_id, status, depth, domain_name }) {
   const parsed = parseCidr(cidr);
   return db.prepare(`
     INSERT INTO subnets (cidr, name, description, vlan_id, network_address, broadcast_address,
-      prefix_length, total_addresses, gateway_address, parent_id, folder_id, status, depth)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      prefix_length, total_addresses, gateway_address, parent_id, folder_id, status, depth, domain_name)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     cidr, name, description || null, vlan_id || null,
     parsed.network, parsed.broadcast, parsed.prefix, parsed.totalAddresses,
-    gateway_address || null, parent_id || null, folder_id || null, status || 'unallocated', depth || 0
+    gateway_address || null, parent_id || null, folder_id || null, status || 'unallocated', depth || 0,
+    domain_name || null
   );
 }
 
@@ -420,11 +421,11 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
         // Restore parent config from the allocated child if any
         if (allocated.length > 0) {
           db.prepare(`UPDATE subnets SET status = 'allocated', name = ?, description = ?,
-            vlan_id = ?, gateway_address = ?, has_reverse_dns = ?, updated_at = datetime('now')
+            vlan_id = ?, gateway_address = ?, has_reverse_dns = ?, domain_name = ?, updated_at = datetime('now')
             WHERE id = ?`).run(
             configSource.name, configSource.description,
             configSource.vlan_id, mergedGateway,
-            configSource.has_reverse_dns || 0, parent.id
+            configSource.has_reverse_dns || 0, configSource.domain_name || null, parent.id
           );
           createSystemRanges(db, parent.id, mergedParsed, mergedGateway);
         } else {
@@ -453,7 +454,8 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
         gateway_address: mergedGateway,
         parent_id: parentId,
         status: allocated.length > 0 ? 'allocated' : 'unallocated',
-        depth: parent.depth + 1
+        depth: parent.depth + 1,
+        domain_name: configSource?.domain_name || null,
       });
 
       const mergedId = result.lastInsertRowid;
@@ -517,7 +519,7 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
 
 // PUT /api/subnets/:id — update subnet config
 router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { name, description, vlan_id, gateway_address, scan_interval, folder_id } = req.body;
+  const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name } = req.body;
   const db = getDb();
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -539,7 +541,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
 
   db.prepare(`
     UPDATE subnets SET name = ?, description = ?, vlan_id = ?, gateway_address = ?,
-      scan_interval = ?, folder_id = ?, updated_at = datetime('now')
+      scan_interval = ?, folder_id = ?, domain_name = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(
     name ?? subnet.name,
@@ -548,6 +550,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     gateway_address ?? subnet.gateway_address,
     scan_interval !== undefined ? scan_interval : subnet.scan_interval,
     folder_id !== undefined && !subnet.parent_id ? folder_id : subnet.folder_id,
+    domain_name !== undefined ? domain_name : subnet.domain_name,
     subnet.id
   );
 
@@ -684,7 +687,7 @@ function clearParentConfig(db, parentId) {
   db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(parentId);
   db.prepare(`
     UPDATE subnets SET status = 'unallocated', description = NULL, vlan_id = NULL,
-      gateway_address = NULL, has_reverse_dns = 0, updated_at = datetime('now')
+      gateway_address = NULL, has_reverse_dns = 0, domain_name = NULL, updated_at = datetime('now')
     WHERE id = ?
   `).run(parentId);
 }
@@ -757,7 +760,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
             gateway_address: childGw,
             parent_id: parent.id,
             status: parent.status === 'allocated' ? 'allocated' : 'unallocated',
-            depth: childDepth
+            depth: childDepth,
+            domain_name: parent.domain_name,
           });
 
           if (isInheriting) {
@@ -840,7 +844,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
           gateway_address: childGw,
           parent_id: parent.id,
           status: parent.status === 'allocated' ? 'allocated' : 'unallocated',
-          depth: childDepth
+          depth: childDepth,
+          domain_name: parent.domain_name,
         });
 
         if (isInheriting) {
@@ -876,7 +881,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
 
 // POST /api/subnets/:id/configure — allocate a subnet
 router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id } = req.body;
+  const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id, domain_name } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Name is required' });
 
@@ -902,9 +907,9 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   const txn = db.transaction(() => {
     db.prepare(`
       UPDATE subnets SET status = 'allocated', name = ?, description = ?, vlan_id = ?,
-        gateway_address = ?, has_reverse_dns = ?, updated_at = datetime('now')
+        gateway_address = ?, has_reverse_dns = ?, domain_name = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(name, description || null, vlan_id || null, gw, create_reverse_dns ? 1 : 0, subnet.id);
+    `).run(name, description || null, vlan_id || null, gw, create_reverse_dns ? 1 : 0, domain_name || null, subnet.id);
 
     // Move to specified folder if provided (root subnets only)
     if (folder_id !== undefined && !subnet.parent_id) {
@@ -988,10 +993,11 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
           );
 
           // Auto-create DHCP scope with defaults
+          const effectiveDomain = domain_name || null;
           db.prepare(`
-            INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, description)
-            VALUES (?, ?, '24h', ?, 'Auto-created DHCP scope')
-          `).run(rangeResult.lastInsertRowid, subnet.id, gw);
+            INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
+            VALUES (?, ?, '24h', ?, ?, 'Auto-created DHCP scope')
+          `).run(rangeResult.lastInsertRowid, subnet.id, gw, effectiveDomain);
         }
       }
     }
@@ -1039,7 +1045,7 @@ router.delete('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
       db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnet.id);
       db.prepare(`
         UPDATE subnets SET status = 'unallocated', name = ?, description = NULL,
-          vlan_id = NULL, gateway_address = NULL, has_reverse_dns = 0, updated_at = datetime('now')
+          vlan_id = NULL, gateway_address = NULL, has_reverse_dns = 0, domain_name = NULL, updated_at = datetime('now')
         WHERE id = ?
       `).run(subnet.cidr, subnet.id);
 

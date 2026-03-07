@@ -343,8 +343,8 @@ onUnmounted(() => {
 
 .dash-card.card-ok { border-left: 3px solid #22c55e; }
 .dash-card.card-err { border-left: 3px solid #ef4444; }
-.card-ok .card-value { color: #22c55e; }
-.card-err .card-value { color: #ef4444; }
+.card-ok .card-value { color: #ffffff; font-weight: 700; }
+.card-err .card-value { color: #ffffff; font-weight: 700; }
 
 .header-right {
   display: flex;

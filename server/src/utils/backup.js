@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { getDb } from '../db/init.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
@@ -29,7 +29,7 @@ export function createBackup(db) {
     throw new Error('No data files found to backup');
   }
 
-  execSync(`tar czf "${archivePath}" ${includes.join(' ')}`, {
+  execFileSync('tar', ['czf', archivePath, ...includes], {
     cwd: DATA_DIR,
     stdio: 'pipe',
     timeout: 60000
@@ -60,13 +60,13 @@ export function restoreBackup(archivePath) {
   }
 
   // Validate archive contents
-  const listing = execSync(`tar tzf "${archivePath}"`, { encoding: 'utf-8', timeout: 30000 });
+  const listing = execFileSync('tar', ['tzf', archivePath], { encoding: 'utf-8', timeout: 30000 });
   if (!listing.includes('ipam.db')) {
     throw new Error('Invalid backup: missing ipam.db');
   }
 
   // Extract to DATA_DIR, overwriting existing files
-  execSync(`tar xzf "${archivePath}" -C "${DATA_DIR}"`, {
+  execFileSync('tar', ['xzf', archivePath, '-C', DATA_DIR], {
     stdio: 'pipe',
     timeout: 60000
   });

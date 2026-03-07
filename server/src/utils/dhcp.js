@@ -83,6 +83,11 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
     mergedOptions.set(3, scope.subnet_gateway);
   }
 
+  // Fallback: if no domain name option set, use subnet's domain_name
+  if (!mergedOptions.has(15) && scope.subnet_domain_name) {
+    mergedOptions.set(15, scope.subnet_domain_name);
+  }
+
   // Emit dhcp-option lines, resolving hostnames to IPs where needed
   for (const [code, value] of mergedOptions) {
     const optDef = DHCP_OPTIONS_BY_CODE[code];
@@ -110,7 +115,7 @@ export function regenerateScopeConfigs(db) {
   const scopes = db.prepare(`
     SELECT s.*, r.start_ip, r.end_ip,
       sub.cidr as subnet_cidr, sub.gateway_address as subnet_gateway,
-      sub.network_address, sub.prefix_length
+      sub.network_address, sub.prefix_length, sub.domain_name as subnet_domain_name
     FROM dhcp_scopes s
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id

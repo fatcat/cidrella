@@ -21,6 +21,9 @@ dhcp-hostsdir=/data/dnsmasq/dhcp-hosts.d
 # Additional config directory (requires SIGHUP for reload)
 conf-dir=/data/dnsmasq/conf.d
 
+# PID file for signaling
+pid-file=/data/dnsmasq/dnsmasq.pid
+
 # Log queries for debugging (can be toggled via UI later)
 log-queries
 

@@ -258,7 +258,9 @@ router.delete('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   const scope = db.prepare('SELECT * FROM dhcp_scopes WHERE id = ?').get(req.params.id);
   if (!scope) return res.status(404).json({ error: 'Scope not found' });
 
+  db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scope.id);
   db.prepare('DELETE FROM dhcp_scopes WHERE id = ?').run(scope.id);
+  db.prepare('DELETE FROM ranges WHERE id = ?').run(scope.range_id);
   audit(req.user.id, 'dhcp_scope_deleted', 'dhcp_scope', scope.id, { range_id: scope.range_id });
   regenerateDhcpConfigs(db);
   res.json({ message: 'Scope deleted' });
