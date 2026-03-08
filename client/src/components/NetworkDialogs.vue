@@ -50,9 +50,14 @@
         <span class="step-label">Organization</span>
       </div>
       <div class="wizard-step-line" :class="{ done: wizardStep > 1 }"></div>
-      <div class="wizard-step" :class="{ active: wizardStep === 2 }">
+      <div class="wizard-step" :class="{ active: wizardStep === 2, done: wizardStep > 2 }">
         <span class="step-num">2</span>
         <span class="step-label">Network</span>
+      </div>
+      <div class="wizard-step-line" :class="{ done: wizardStep > 2 }"></div>
+      <div class="wizard-step" :class="{ active: wizardStep === 3 }">
+        <span class="step-num">3</span>
+        <span class="step-label">Import</span>
       </div>
     </div>
 
@@ -130,6 +135,84 @@
       </div>
     </div>
 
+    <!-- Step 3: Pi-hole Import -->
+    <div v-if="wizardStep === 3" class="pihole-import-step">
+      <Tabs :value="piholeTab">
+        <TabList>
+          <Tab value="online"><i class="pi pi-globe" style="margin-right: 0.3rem" />Online</Tab>
+          <Tab value="file"><i class="pi pi-upload" style="margin-right: 0.3rem" />File Upload</Tab>
+        </TabList>
+        <TabPanels>
+          <TabPanel value="online">
+            <div class="form-grid" style="margin-top: 0.5rem">
+              <div class="field">
+                <label>Pi-hole URL</label>
+                <InputText v-model="piholeUrl" placeholder="http://pihole.local" class="w-full"
+                           :class="{ 'pihole-reachable': piholeProbeStatus === 'ok', 'pihole-unreachable': piholeProbeStatus === 'fail' }"
+                           @blur="probePihole" />
+                <small v-if="piholeProbeStatus === 'fail'" class="field-error">{{ piholeProbeError }}</small>
+                <small v-if="piholeProbeStatus === 'ok' && piholeNeedsPassword && !piholePassword" class="field-warn">Password required</small>
+              </div>
+              <div class="field">
+                <label>Password (optional)</label>
+                <InputText v-model="piholePassword" type="password" class="w-full" placeholder="Leave empty if none" />
+              </div>
+              <div class="field" style="text-align: right">
+                <Button label="Connect" icon="pi pi-download" size="small"
+                        @click="fetchPiholeConfig" :loading="piholeFetching"
+                        :disabled="piholeProbeStatus !== 'ok' || (piholeNeedsPassword && !piholePassword)" />
+              </div>
+            </div>
+          </TabPanel>
+          <TabPanel value="file">
+            <div class="form-grid" style="margin-top: 0.5rem">
+              <div class="field">
+                <label>Select pihole.toml</label>
+                <input type="file" accept=".toml" @change="onPiholeFileSelect" ref="piholeFileInput" />
+              </div>
+              <div class="field" style="text-align: right" v-if="piholeFileContent">
+                <Button label="Parse" icon="pi pi-cog" size="small"
+                        @click="parsePiholeFile" :loading="piholeParsing" />
+              </div>
+            </div>
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
+
+      <!-- Preview -->
+      <div v-if="piholePreview" class="pihole-preview">
+        <h4>Import Preview</h4>
+        <div class="preview-summary">
+          <div class="preview-item">
+            <span class="preview-count">{{ piholePreview.hosts.length }}</span>
+            <span class="preview-label">A records</span>
+          </div>
+          <div class="preview-item">
+            <span class="preview-count">{{ piholePreview.cnames.length }}</span>
+            <span class="preview-label">CNAME records</span>
+          </div>
+          <div class="preview-item">
+            <span class="preview-count">{{ piholePreview.dhcpHosts.length }}</span>
+            <span class="preview-label">DHCP reservations</span>
+          </div>
+        </div>
+        <small v-if="piholePreview.zoneName" class="muted">Zone: {{ piholePreview.zoneName }}</small>
+      </div>
+
+      <!-- Import results -->
+      <div v-if="piholeImportResults" class="pihole-results">
+        <Message severity="success" :closable="false">
+          Import complete:
+          {{ piholeImportResults.a.created }} A,
+          {{ piholeImportResults.cname.created }} CNAME,
+          {{ piholeImportResults.dhcp.created }} DHCP created
+          <template v-if="piholeImportResults.dhcp.noSubnet > 0">
+            ({{ piholeImportResults.dhcp.noSubnet }} DHCP skipped — no matching subnet)
+          </template>
+        </Message>
+      </div>
+    </div>
+
     <template #footer>
       <div class="wizard-footer">
         <Button v-if="wizardStep > 1" label="Back" icon="pi pi-arrow-left" severity="secondary" text
@@ -140,9 +223,16 @@
                 @click="wizardSaveAndExit" :loading="saving" :disabled="!wizardOrg.name" />
         <Button v-if="wizardStep === 1" label="Continue" icon="pi pi-arrow-right" iconPos="right"
                 @click="wizardStep = 2" :disabled="!wizardOrg.name" />
-        <Button v-if="wizardStep === 2" label="Create" icon="pi pi-check"
-                @click="wizardCreate" :loading="saving"
+        <Button v-if="wizardStep === 2" label="Create & Continue" icon="pi pi-arrow-right" iconPos="right"
+                @click="wizardCreateAndContinue" :loading="saving"
                 :disabled="!!wizardCidrError || !wizardNet.cidr" />
+        <Button v-if="wizardStep === 3" label="Skip" severity="secondary"
+                @click="wizardFinish" :disabled="piholeImporting" />
+        <Button v-if="wizardStep === 3 && !piholeImportResults" label="Import" icon="pi pi-download"
+                @click="executePiholeImport" :loading="piholeImporting"
+                :disabled="!piholePreview" />
+        <Button v-if="wizardStep === 3 && piholeImportResults" label="Done" icon="pi pi-check"
+                @click="wizardFinish" />
       </div>
     </template>
   </Dialog>
@@ -168,15 +258,24 @@
   </Dialog>
 
   <!-- Delete Organization Dialog -->
-  <Dialog v-model:visible="showDeleteFolderDialog" header="Delete Organization" modal :style="{ width: '24rem' }">
+  <Dialog v-model:visible="showDeleteFolderDialog" header="Delete Organization" modal :style="{ width: '28rem' }"
+          @hide="deleteConfirmText = ''">
     <p>Delete organization <strong>{{ deletingFolder?.name }}</strong>?</p>
-    <p class="warn-text" v-if="deletingFolder?.subnets?.length > 0">
-      This organization contains {{ deletingFolder.subnets.length }} networks. Move or delete them first.
-    </p>
+    <template v-if="deletingFolder?.subnets?.length > 0 || deletingFolder?.zone_count > 0">
+      <p class="warn-text">
+        This will permanently delete
+        <template v-if="deletingFolder.subnets?.length > 0">{{ deletingFolder.subnets.length }} network(s)</template>
+        <template v-if="deletingFolder.subnets?.length > 0 && deletingFolder.zone_count > 0"> and </template>
+        <template v-if="deletingFolder.zone_count > 0">{{ deletingFolder.zone_count }} DNS zone(s)</template>
+        and all associated DHCP scopes, reservations, and records.
+      </p>
+      <p class="warn-text" style="margin-top: 0.5rem;">Type <strong>DELETE</strong> to confirm:</p>
+      <InputText v-model="deleteConfirmText" placeholder="DELETE" style="width: 100%" />
+    </template>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showDeleteFolderDialog = false" />
       <Button label="Delete" severity="danger" @click="executeDeleteFolder" :loading="saving"
-              :disabled="deletingFolder?.subnets?.length > 0" />
+              :disabled="(deletingFolder?.subnets?.length > 0 || deletingFolder?.zone_count > 0) && deleteConfirmText !== 'DELETE'" />
     </template>
   </Dialog>
 
@@ -463,6 +562,11 @@ import InputNumber from 'primevue/inputnumber';
 import Select from 'primevue/select';
 import Message from 'primevue/message';
 import AutoComplete from 'primevue/autocomplete';
+import Tabs from 'primevue/tabs';
+import TabList from 'primevue/tablist';
+import Tab from 'primevue/tab';
+import TabPanels from 'primevue/tabpanels';
+import TabPanel from 'primevue/tabpanel';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import { validateSupernet, isValidCidr, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp } from '../utils/ip.js';
@@ -491,6 +595,7 @@ const showOrgDialog = ref(false);
 const showDeleteFolderDialog = ref(false);
 const editingFolder = ref(null);
 const deletingFolder = ref(null);
+const deleteConfirmText = ref('');
 const folderForm = ref({ name: '', description: '' });
 const orgForm = ref({ name: '', description: '', cidr: '' });
 
@@ -636,13 +741,11 @@ async function wizardSaveAndExit() {
   } finally { saving.value = false; }
 }
 
-async function wizardCreate() {
+async function wizardCreateAndContinue() {
   saving.value = true;
   try {
-    // Step 1: Ensure organization exists
     const folderId = await ensureWizardOrg();
 
-    // Step 2: Create supernet
     const cidr = wizardNet.value.cidr.trim();
     const created = await store.createSupernet({
       cidr,
@@ -650,7 +753,6 @@ async function wizardCreate() {
       folder_id: folderId,
     });
 
-    // Step 3: Configure the network
     const payload = {
       name: wizardNet.value.name || wizardAutoName.value || cidr,
       description: wizardNet.value.description || undefined,
@@ -666,15 +768,135 @@ async function wizardCreate() {
     }
     await store.configureSubnet(created.id, payload);
 
-    wizardCreatedFolderId.value = null; // don't clean up — user completed the wizard
-    wizardCreatedVlanId.value = null;
-    showWizard.value = false;
+    wizardCreatedSubnetId.value = created.id;
     toast.add({ severity: 'success', summary: 'Organization and network created', life: 3000 });
-    emit('org-created');
-    emit('network-created');
+    wizardStep.value = 3;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally { saving.value = false; }
+}
+
+function wizardFinish() {
+  wizardCreatedFolderId.value = null;
+  wizardCreatedVlanId.value = null;
+  showWizard.value = false;
+  emit('org-created');
+  emit('network-created');
+}
+
+// ── Pi-hole Import (Step 3) ──
+const piholeTab = ref('online');
+const piholeUrl = ref('');
+const piholePassword = ref('');
+const piholeProbeStatus = ref(null); // null | 'ok' | 'fail'
+const piholeProbeError = ref('');
+const piholeNeedsPassword = ref(false);
+const piholeFetching = ref(false);
+const piholeParsing = ref(false);
+const piholeImporting = ref(false);
+const piholePreview = ref(null);
+const piholeImportResults = ref(null);
+const piholeFileContent = ref(null);
+const piholeFileInput = ref(null);
+const wizardCreatedSubnetId = ref(null);
+
+async function probePihole() {
+  const url = piholeUrl.value.trim();
+  if (!url) { piholeProbeStatus.value = null; return; }
+  try {
+    const res = await api.post('/pihole/probe', { url, password: piholePassword.value || undefined });
+    if (res.data.reachable) {
+      piholeProbeStatus.value = 'ok';
+      piholeNeedsPassword.value = res.data.needsPassword;
+      piholeProbeError.value = '';
+    } else {
+      piholeProbeStatus.value = 'fail';
+      piholeProbeError.value = res.data.error || 'Could not connect';
+    }
+  } catch (err) {
+    piholeProbeStatus.value = 'fail';
+    piholeProbeError.value = err.response?.data?.error || err.message;
+  }
+}
+
+async function fetchPiholeConfig() {
+  piholeFetching.value = true;
+  try {
+    const res = await api.post('/pihole/fetch', {
+      url: piholeUrl.value.trim(),
+      password: piholePassword.value || undefined
+    });
+    piholePreview.value = res.data;
+    piholeImportResults.value = null;
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Fetch failed', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { piholeFetching.value = false; }
+}
+
+function onPiholeFileSelect(event) {
+  const file = event.target.files[0];
+  if (!file) { piholeFileContent.value = null; return; }
+  const reader = new FileReader();
+  reader.onload = (e) => { piholeFileContent.value = e.target.result; };
+  reader.readAsText(file);
+}
+
+async function parsePiholeFile() {
+  piholeParsing.value = true;
+  try {
+    const res = await api.post('/pihole/parse', piholeFileContent.value, {
+      headers: { 'Content-Type': 'text/plain' }
+    });
+    piholePreview.value = res.data;
+    piholeImportResults.value = null;
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Parse failed', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { piholeParsing.value = false; }
+}
+
+async function executePiholeImport() {
+  if (!piholePreview.value) return;
+  piholeImporting.value = true;
+  try {
+    // Find the forward zone for the domain created in step 2
+    const dnsStore = (await import('../stores/dns.js')).useDnsStore();
+    await dnsStore.fetchZones();
+    const domainName = piholePreview.value.zoneName || wizardNet.value.domain_name;
+
+    let zone = dnsStore.zones.find(z => z.name === domainName && z.type === 'forward');
+    if (!zone && domainName) {
+      // Create the zone if it doesn't exist
+      zone = await dnsStore.createZone({ name: domainName, type: 'forward', folder_id: wizardCreatedFolderId.value });
+    }
+    if (!zone) {
+      toast.add({ severity: 'error', summary: 'No zone found', detail: 'Could not find or create a forward DNS zone for import', life: 5000 });
+      return;
+    }
+
+    const res = await api.post('/pihole/import', {
+      zoneId: zone.id,
+      hosts: piholePreview.value.hosts,
+      cnames: piholePreview.value.cnames,
+      dhcpHosts: piholePreview.value.dhcpHosts,
+    });
+    piholeImportResults.value = res.data.results;
+    toast.add({ severity: 'success', summary: 'Pi-hole import complete', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Import failed', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally { piholeImporting.value = false; }
+}
+
+function resetPiholeState() {
+  piholeTab.value = 'online';
+  piholeUrl.value = '';
+  piholePassword.value = '';
+  piholeProbeStatus.value = null;
+  piholeProbeError.value = '';
+  piholeNeedsPassword.value = false;
+  piholePreview.value = null;
+  piholeImportResults.value = null;
+  piholeFileContent.value = null;
+  wizardCreatedSubnetId.value = null;
 }
 
 async function onWizardClose() {
@@ -683,7 +905,7 @@ async function onWizardClose() {
     try { await api.delete(`/vlans/${wizardCreatedVlanId.value}`); } catch { /* best effort */ }
   }
   if (wizardCreatedFolderId.value) {
-    try { await store.deleteFolder(wizardCreatedFolderId.value); } catch { /* best effort */ }
+    try { await store.deleteFolder(wizardCreatedFolderId.value, true); } catch { /* best effort */ }
     emit('org-deleted');
   }
   // Reset wizard state
@@ -698,6 +920,7 @@ async function onWizardClose() {
   wizardVlanSelection.value = null;
   wizardCreatedFolderId.value = null;
   wizardCreatedVlanId.value = null;
+  resetPiholeState();
 }
 
 function openWizard() {
@@ -741,9 +964,11 @@ async function saveFolder() {
 async function executeDeleteFolder() {
   saving.value = true;
   try {
-    await store.deleteFolder(deletingFolder.value.id);
+    const force = deletingFolder.value?.subnets?.length > 0 || deletingFolder.value?.zone_count > 0;
+    await store.deleteFolder(deletingFolder.value.id, force);
     showDeleteFolderDialog.value = false;
-    toast.add({ severity: 'success', summary: 'Folder deleted', life: 3000 });
+    deleteConfirmText.value = '';
+    toast.add({ severity: 'success', summary: 'Organization deleted', life: 3000 });
     emit('org-deleted', deletingFolder.value.id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -1542,5 +1767,54 @@ defineExpose({
   align-items: center;
   gap: 0.5rem;
   width: 100%;
+}
+
+/* Pi-hole import styles */
+.pihole-import-step {
+  min-height: 12rem;
+}
+.pihole-reachable {
+  border-color: var(--p-green-500) !important;
+  box-shadow: 0 0 0 1px var(--p-green-500);
+}
+.pihole-unreachable {
+  border-color: var(--p-red-500) !important;
+  box-shadow: 0 0 0 1px var(--p-red-500);
+}
+.field-warn {
+  color: var(--p-orange-500);
+}
+.pihole-preview {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--p-surface-border);
+  border-radius: 6px;
+  background: var(--p-surface-50);
+}
+.pihole-preview h4 {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.preview-summary {
+  display: flex;
+  gap: 1.5rem;
+}
+.preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.preview-count {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--p-primary-color);
+}
+.preview-label {
+  font-size: 0.75rem;
+  color: var(--p-text-muted-color);
+}
+.pihole-results {
+  margin-top: 1rem;
 }
 </style>

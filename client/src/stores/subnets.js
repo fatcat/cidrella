@@ -151,8 +151,8 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  async function deleteFolder(id) {
-    const res = await api.delete(`/folders/${id}`);
+  async function deleteFolder(id, force = false) {
+    const res = await api.delete(`/folders/${id}${force ? '?force=true' : ''}`);
     await fetchTree();
     return res.data;
   }
@@ -211,6 +211,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     if (!skipCache) {
       const cached = _detailCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < DETAIL_CACHE_TTL) {
+        cached.timestamp = Date.now();
         return cached.data;
       }
     }

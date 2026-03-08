@@ -4,6 +4,7 @@ import { hasPermission } from '../auth/roles.js';
 import {
   isValidCidr, normalizeCidr, validateSupernet, cidrsOverlap, parseCidr, applyNameTemplate
 } from '../utils/ip.js';
+import { regenerateConfigs } from '../utils/dnsmasq.js';
 
 const router = Router();
 
@@ -117,19 +118,42 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   res.json(updated);
 });
 
-// DELETE /api/folders/:id — delete folder (only if empty)
+// DELETE /api/folders/:id — delete folder (cascade with ?force=true)
 router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(req.params.id);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
-  const subnetCount = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE folder_id = ? AND parent_id IS NULL').get(folder.id);
-  if (subnetCount.c > 0) {
-    return res.status(400).json({ error: 'Cannot delete folder that contains subnets. Move or delete subnets first.' });
+  const subnetCount = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE folder_id = ? AND parent_id IS NULL').get(folder.id).c;
+  const zoneCount = db.prepare('SELECT COUNT(*) as c FROM dns_zones WHERE folder_id = ?').get(folder.id).c;
+
+  if ((subnetCount > 0 || zoneCount > 0) && req.query.force !== 'true') {
+    return res.status(400).json({
+      error: 'Organization contains child resources. Use force delete to remove.',
+      children: { subnets: subnetCount, zones: zoneCount }
+    });
   }
 
-  db.prepare('DELETE FROM folders WHERE id = ?').run(folder.id);
-  audit(req.user.id, 'folder_deleted', 'folder', folder.id, { name: folder.name });
+  const doDelete = db.transaction(() => {
+    // Delete subnets (children cascade via FK: ranges, IPs, DHCP, scans)
+    if (subnetCount > 0) {
+      db.prepare('DELETE FROM subnets WHERE folder_id = ? AND parent_id IS NULL').run(folder.id);
+    }
+    // Delete DNS zones (records cascade via FK)
+    if (zoneCount > 0) {
+      db.prepare('DELETE FROM dns_zones WHERE folder_id = ?').run(folder.id);
+    }
+    // VLANs cascade via FK ON DELETE CASCADE
+    db.prepare('DELETE FROM folders WHERE id = ?').run(folder.id);
+  });
+  doDelete();
+
+  audit(req.user.id, 'folder_deleted', 'folder', folder.id, {
+    name: folder.name, force: subnetCount > 0 || zoneCount > 0,
+    deleted_subnets: subnetCount, deleted_zones: zoneCount
+  });
+
+  regenerateConfigs(db);
   res.json({ ok: true });
 });
 

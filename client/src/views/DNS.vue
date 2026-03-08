@@ -39,6 +39,7 @@
                       {{ zone.name }}
                     </div>
                     <div class="zone-meta">
+                      <span v-if="zone.folder_name" class="folder-badge">{{ zone.folder_name }}</span>
                       <span class="record-count">{{ zone.record_count }} records</span>
                       <span v-if="!zone.enabled" class="badge-disabled">disabled</span>
                     </div>
@@ -137,8 +138,9 @@
             <Button label="Add Record" icon="pi pi-plus" size="small" @click="openRecordDialog()" />
           </div>
 
-          <DataTable :value="records" :loading="loadingRecords" stripedRows
+          <DataTable :key="'records-' + selectedZone?.type" :value="records" :loading="loadingRecords" stripedRows
                      emptyMessage="No records in this zone." size="small"
+                     :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
                      :paginator="records.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
                      scrollable scrollHeight="flex">
@@ -197,6 +199,11 @@
           <label>Type *</label>
           <Select v-model="zoneForm.type" :options="zoneTypes" optionLabel="label" optionValue="value"
                     class="w-full" />
+        </div>
+        <div class="field">
+          <label>Organization *</label>
+          <Select v-model="zoneForm.folder_id" :options="folders" optionLabel="name" optionValue="id"
+                    class="w-full" placeholder="Select organization" />
         </div>
         <div class="field">
           <label>Description</label>
@@ -297,11 +304,20 @@
     </Dialog>
 
     <!-- Delete Zone Dialog -->
-    <Dialog v-model:visible="showDeleteZoneDialog" header="Delete Zone" modal :style="{ width: '24rem' }">
-      <p>Delete zone <strong>{{ deletingZone?.name }}</strong> and all its records?</p>
+    <Dialog v-model:visible="showDeleteZoneDialog" header="Delete Zone" modal :style="{ width: '28rem' }"
+            @hide="zoneDeleteConfirmText = ''">
+      <p>Delete zone <strong>{{ deletingZone?.name }}</strong>?</p>
+      <template v-if="deletingZone?.record_count > 0">
+        <p class="warn-text">
+          This will permanently delete {{ deletingZone.record_count }} DNS record(s).
+        </p>
+        <p class="warn-text" style="margin-top: 0.5rem;">Type <strong>DELETE</strong> to confirm:</p>
+        <InputText v-model="zoneDeleteConfirmText" placeholder="DELETE" style="width: 100%" />
+      </template>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteZoneDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteZone" :loading="savingZone" />
+        <Button label="Delete" severity="danger" @click="doDeleteZone" :loading="savingZone"
+                :disabled="deletingZone?.record_count > 0 && zoneDeleteConfirmText !== 'DELETE'" />
       </template>
     </Dialog>
 
@@ -336,9 +352,11 @@ import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
+import api from '../api/client.js';
 
 const store = useDnsStore();
 const toast = useToast();
+const folders = ref([]);
 
 // Zone state
 const selectedZone = ref(null);
@@ -348,13 +366,24 @@ const expandedGroups = ref({});
 const zoneTab = ref('forward');
 
 // Forward zones (simple list)
-const forwardZones = computed(() => store.zones.filter(z => z.type === 'forward'));
+const forwardZones = computed(() =>
+  store.zones.filter(z => z.type === 'forward').sort((a, b) => a.name.localeCompare(b.name))
+);
 
 // Group reverse zones that share a subnet_id (multiple /24 zones for one supernet)
 const groupedReverseZones = computed(() => {
   const result = [];
   const bySubnet = new Map();
-  const reverseZones = store.zones.filter(z => z.type === 'reverse');
+  const reverseZones = store.zones.filter(z => z.type === 'reverse').sort((a, b) => {
+    // Sort by numeric octets (e.g. "3.0.10.in-addr.arpa" → [10, 0, 3])
+    const octetsA = a.name.replace('.in-addr.arpa', '').split('.').reverse().map(Number);
+    const octetsB = b.name.replace('.in-addr.arpa', '').split('.').reverse().map(Number);
+    for (let i = 0; i < Math.max(octetsA.length, octetsB.length); i++) {
+      const diff = (octetsA[i] || 0) - (octetsB[i] || 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  });
 
   for (const zone of reverseZones) {
     if (zone.subnet_id) {
@@ -392,7 +421,7 @@ const showZoneDialog = ref(false);
 const editingZone = ref(null);
 const savingZone = ref(false);
 const zoneForm = ref({
-  name: '', type: 'forward', description: '', enabled: true,
+  name: '', type: 'forward', folder_id: null, description: '', enabled: true,
   soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
   soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
 });
@@ -415,6 +444,7 @@ const availableRecordTypes = computed(() => {
 // Delete dialogs
 const showDeleteZoneDialog = ref(false);
 const deletingZone = ref(null);
+const zoneDeleteConfirmText = ref('');
 const showDeleteRecordDialog = ref(false);
 const deletingRecord = ref(null);
 
@@ -455,7 +485,8 @@ function openZoneDialog(zone = null) {
   editingZone.value = zone;
   if (zone) {
     zoneForm.value = {
-      name: zone.name, type: zone.type, description: zone.description || '', enabled: !!zone.enabled,
+      name: zone.name, type: zone.type, folder_id: zone.folder_id || null,
+      description: zone.description || '', enabled: !!zone.enabled,
       soa_primary_ns: zone.soa_primary_ns || 'ns1.localhost',
       soa_admin_email: zone.soa_admin_email || 'admin.localhost',
       soa_refresh: zone.soa_refresh ?? 3600, soa_retry: zone.soa_retry ?? 900,
@@ -463,7 +494,9 @@ function openZoneDialog(zone = null) {
     };
   } else {
     zoneForm.value = {
-      name: '', type: zoneTab.value || 'forward', description: '', enabled: true,
+      name: '', type: zoneTab.value || 'forward',
+      folder_id: folders.value.length === 1 ? folders.value[0].id : null,
+      description: '', enabled: true,
       soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
       soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
     };
@@ -588,7 +621,8 @@ async function saveForwarders() {
 onMounted(async () => {
   await Promise.all([
     store.fetchZones(),
-    store.getForwarders().then(s => forwarders.value = s).catch(() => {})
+    store.getForwarders().then(s => forwarders.value = s).catch(() => {}),
+    api.get('/folders').then(r => folders.value = r.data).catch(() => {})
   ]);
 });
 
@@ -691,6 +725,14 @@ defineExpose({ openZoneDialog });
 .zone-meta { display: flex; gap: 0.4rem; margin-top: 0.2rem; align-items: center; }
 
 .record-count { font-size: 0.75rem; color: var(--p-surface-500); }
+.folder-badge {
+  font-size: 0.65rem;
+  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
+  color: var(--p-primary-color);
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  white-space: nowrap;
+}
 
 .zone-actions { display: flex; gap: 0.15rem; flex-shrink: 0; }
 

@@ -9,6 +9,11 @@ import {
 import { generateReverseNames, regenerateConfigs } from '../utils/dnsmasq.js';
 import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 
+const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
+function isValidDomainName(name) {
+  return typeof name === 'string' && DOMAIN_RE.test(name) && name.length <= 253;
+}
+
 const router = Router();
 
 function requirePerm(permission) {
@@ -94,6 +99,18 @@ function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, p
     gateway_address || null, parent_id || null, folder_id || null, status || 'unallocated', depth || 0,
     domain_name || null
   );
+}
+
+// Helper: resolve folder_id for a subnet (walks up to root if needed)
+function resolveFolderId(db, subnet) {
+  if (subnet.folder_id) return subnet.folder_id;
+  let current = subnet;
+  while (current.parent_id) {
+    current = db.prepare('SELECT id, folder_id, parent_id FROM subnets WHERE id = ?').get(current.parent_id);
+    if (!current) break;
+    if (current.folder_id) return current.folder_id;
+  }
+  return null;
 }
 
 // Helper: consolidate intermediate subnets after divide
@@ -222,8 +239,12 @@ router.get('/', requirePerm('subnets:read'), asyncHandler((req, res) => {
 
   const tree = buildTree(rows);
 
+  // Count DNS zones per folder
+  const zoneCounts = db.prepare('SELECT folder_id, COUNT(*) as c FROM dns_zones WHERE folder_id IS NOT NULL GROUP BY folder_id').all();
+  const zoneCountMap = new Map(zoneCounts.map(r => [r.folder_id, r.c]));
+
   // Group root subnets by folder
-  const folderMap = new Map(folders.map(f => [f.id, { ...f, subnets: [] }]));
+  const folderMap = new Map(folders.map(f => [f.id, { ...f, zone_count: zoneCountMap.get(f.id) || 0, subnets: [] }]));
   const ungrouped = [];
 
   for (const node of tree) {
@@ -525,6 +546,9 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
 // PUT /api/subnets/:id — update subnet config
 router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name } = req.body;
+  if (domain_name && !isValidDomainName(domain_name)) {
+    return res.status(400).json({ error: 'Invalid domain name format' });
+  }
   const db = getDb();
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -602,9 +626,10 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   if (domain_name && domain_name !== subnet.domain_name) {
     const existingFwdZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(domain_name);
     if (!existingFwdZone) {
+      const fid = resolveFolderId(db, subnet);
       db.prepare(`
-        INSERT INTO dns_zones (name, type, subnet_id, description, enabled) VALUES (?, 'forward', ?, ?, 1)
-      `).run(domain_name, subnet.id, `Forward zone for ${subnet.cidr}`);
+        INSERT INTO dns_zones (name, type, subnet_id, folder_id, description, enabled) VALUES (?, 'forward', ?, ?, ?, 1)
+      `).run(domain_name, subnet.id, fid, `Forward zone for ${subnet.cidr}`);
     }
   }
 
@@ -951,6 +976,9 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id, domain_name, dhcp_start_ip, dhcp_end_ip } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Name is required' });
+  if (domain_name && !isValidDomainName(domain_name)) {
+    return res.status(400).json({ error: 'Invalid domain name format' });
+  }
 
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -1005,9 +1033,10 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
         const existingZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(reverseName);
         let zoneId;
         if (!existingZone) {
+          const fid = resolveFolderId(db, subnet);
           const zoneResult = db.prepare(`
-            INSERT INTO dns_zones (name, type, subnet_id, description) VALUES (?, 'reverse', ?, ?)
-          `).run(reverseName, subnet.id, `Reverse zone for ${subnet.cidr}`);
+            INSERT INTO dns_zones (name, type, subnet_id, folder_id, description) VALUES (?, 'reverse', ?, ?, ?)
+          `).run(reverseName, subnet.id, fid, `Reverse zone for ${subnet.cidr}`);
           zoneId = zoneResult.lastInsertRowid;
         } else {
           zoneId = existingZone.id;
@@ -1058,9 +1087,10 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     if (domain_name) {
       const existingFwdZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(domain_name);
       if (!existingFwdZone) {
+        const fid = resolveFolderId(db, subnet);
         db.prepare(`
-          INSERT INTO dns_zones (name, type, subnet_id, description, enabled) VALUES (?, 'forward', ?, ?, 1)
-        `).run(domain_name, subnet.id, `Forward zone for ${subnet.cidr}`);
+          INSERT INTO dns_zones (name, type, subnet_id, folder_id, description, enabled) VALUES (?, 'forward', ?, ?, ?, 1)
+        `).run(domain_name, subnet.id, fid, `Forward zone for ${subnet.cidr}`);
       }
     }
 

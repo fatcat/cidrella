@@ -558,10 +558,11 @@ function getThemeDesc(t) {
 }
 
 // Persist active tab across refreshes
+const LOGGING_TAB_INDEX = 12;
 const activeTab = ref(parseInt(localStorage.getItem('ipam_system_tab') || '0', 10));
 watch(activeTab, (val) => {
   localStorage.setItem('ipam_system_tab', String(val));
-  if (val === 4) { loadAuditFilterOptions(); loadAuditLog(); }
+  if (val === LOGGING_TAB_INDEX) { loadAuditFilterOptions(); loadAuditLog(); }
 });
 
 const loadingSettings = ref(true);
@@ -638,7 +639,7 @@ onMounted(async () => {
     };
   } catch { /* use defaults */ }
   loadingSettings.value = false;
-  if (activeTab.value === 4) { loadAuditFilterOptions(); loadAuditLog(); }
+  if (activeTab.value === LOGGING_TAB_INDEX) { loadAuditFilterOptions(); loadAuditLog(); }
 });
 
 // Address Types

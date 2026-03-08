@@ -28,6 +28,7 @@ import folderRoutes from './routes/folders.js';
 import vlanRoutes from './routes/vlans.js';
 import userRoutes from './routes/users.js';
 import logRoutes from './routes/logs.js';
+import piholeRoutes from './routes/pihole.js';
 import { ensureCerts } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
@@ -134,6 +135,7 @@ async function main() {
   app.use('/api/vlans', vlanRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/logs', logRoutes);
+  app.use('/api/pihole', piholeRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
 
   // Block page for filtered domains
