@@ -1,68 +1,61 @@
 <template>
   <header class="header-bar">
     <div class="header-left">
-      <router-link to="/" class="logo"><img src="/logo.png" alt="CIDRella" class="logo-img" /></router-link>
+      <router-link to="/" class="logo" data-track="header-logo"><img src="/logo.png" alt="CIDRella" class="logo-img" /></router-link>
     </div>
 
     <div class="header-cards-wrapper">
       <div class="header-cards">
-      <div class="dash-card" :class="health?.services?.dnsmasq ? 'card-ok' : 'card-err'">
+      <div class="dash-card" :class="health?.services?.dnsmasq ? 'card-ok' : 'card-err'" data-track="header-card-dnsmasq">
         <div class="card-body">
           <span class="card-value">{{ health?.services?.dnsmasq ? 'Running' : 'Down' }}</span>
           <span class="card-label">DNSmasq</span>
         </div>
       </div>
 
-      <div class="dash-card" :class="dnsStatusClass" v-tooltip.bottom="dnsTooltip">
-        <div class="card-body">
-          <span class="card-value">{{ dnsStatusLabel }}</span>
-          <span class="card-label">Name Resolution</span>
-        </div>
-      </div>
-
-      <div class="dash-card" :class="cpuStatusClass">
+      <div class="dash-card" :class="cpuStatusClass" data-track="header-card-cpu">
         <div class="card-body">
           <span class="card-value">{{ cpuDisplay }}</span>
           <span class="card-label">CPU Load</span>
         </div>
       </div>
 
-      <div class="dash-card" :class="ramStatusClass">
+      <div class="dash-card" :class="ramStatusClass" data-track="header-card-ram">
         <div class="card-body">
           <span class="card-value">{{ ramDisplay }}</span>
           <span class="card-label">RAM</span>
         </div>
       </div>
 
-      <div class="dash-card" :class="diskStatusClass">
+      <div class="dash-card" :class="diskStatusClass" data-track="header-card-disk">
         <div class="card-body">
           <span class="card-value">{{ diskDisplay }}</span>
           <span class="card-label">Disk</span>
         </div>
       </div>
 
-      <div class="dash-card">
+      <div class="dash-card" data-track="header-card-networks">
         <div class="card-body">
           <span class="card-value">{{ health?.stats?.subnets ?? subnetStore.subnetCount }}</span>
           <span class="card-label">Networks</span>
         </div>
       </div>
 
-      <div class="dash-card">
+      <div class="dash-card" data-track="header-card-dns-zones">
         <div class="card-body">
           <span class="card-value">{{ health?.stats?.dns_zones ?? '--' }}</span>
           <span class="card-label">DNS Zones</span>
         </div>
       </div>
 
-      <div class="dash-card">
+      <div class="dash-card" data-track="header-card-dhcp-scopes">
         <div class="card-body">
           <span class="card-value">{{ health?.stats?.dhcp_scopes ?? '--' }}</span>
           <span class="card-label">DHCP Scopes</span>
         </div>
       </div>
 
-      <div class="dash-card">
+      <div class="dash-card" data-track="header-card-leases">
         <div class="card-body">
           <span class="card-value">{{ health?.stats?.dhcp_leases ?? '--' }}</span>
           <span class="card-label">Leases</span>
@@ -73,10 +66,10 @@
 
     <div class="header-right">
       <div class="status-area" ref="statusAreaRef">
-        <button v-if="systemAlerts.length === 0" class="status-btn status-ok">
+        <button v-if="systemAlerts.length === 0" class="status-btn status-ok" data-track="header-status-ok">
           All Systems Green
         </button>
-        <button v-else class="status-btn status-error" @click="statusDropdownOpen = !statusDropdownOpen">
+        <button v-else class="status-btn status-error" data-track="header-status-error" @click="statusDropdownOpen = !statusDropdownOpen">
           {{ systemAlerts.length === 1 ? 'System Error' : `${systemAlerts.length} Errors` }}
         </button>
         <div v-if="statusDropdownOpen && systemAlerts.length > 0" class="status-dropdown">
@@ -92,7 +85,7 @@
         <span class="role-badge">{{ auth.user?.role }}</span>
       </div>
       <Button icon="pi pi-sign-out" severity="secondary" text rounded size="small"
-              title="Sign out" @click="handleLogout" />
+              title="Sign out" data-track="header-logout" @click="handleLogout" />
     </div>
 
     <!-- Alert Detail Dialog -->
@@ -137,15 +130,6 @@ const systemAlerts = computed(() => {
 
   if (h.services?.dnsmasq === false) {
     alerts.push({ summary: 'DNSmasq is not running', detail: 'The DNSmasq process has stopped or failed to start. DHCP and DNS services are unavailable. Check container logs for details.' });
-  }
-  if (h.dns && !h.dns.ok) {
-    const downServers = h.dns.servers?.filter(s => s.status !== 'up').map(s => s.server) || [];
-    const detail = h.dns.systemResolution === false
-      ? `System-level DNS resolution is failing. ${downServers.length > 0 ? `Unreachable upstream servers: ${downServers.join(', ')}` : 'No upstream servers responded.'}`
-      : `Some upstream DNS servers are unreachable: ${downServers.join(', ')}`;
-    alerts.push({ summary: 'Name resolution failing', detail });
-  } else if (h.dns?.systemResolution === false) {
-    alerts.push({ summary: 'System DNS resolution failed', detail: 'The local resolver cannot resolve hostnames, but upstream servers may still be reachable.' });
   }
   if (h.disk && h.disk.percent >= 90) {
     alerts.push({ summary: `Disk usage critical (${h.disk.percent}%)`, detail: `The /data volume is ${h.disk.percent}% full. Used: ${formatBytes(h.disk.used)} of ${formatBytes(h.disk.total)}. Free up space or expand the volume to avoid service disruption.` });
@@ -220,38 +204,6 @@ const diskStatusClass = computed(() => {
   const disk = health.value?.disk;
   if (!disk) return 'card-ok';
   return disk.percent >= 90 ? 'card-err' : 'card-ok';
-});
-
-const dnsStatusClass = computed(() => {
-  const dns = health.value?.dns;
-  if (!dns) return '';
-  return dns.ok ? 'card-ok' : 'card-err';
-});
-
-const dnsStatusLabel = computed(() => {
-  const dns = health.value?.dns;
-  if (!dns) return '--';
-  return dns.ok ? 'OK' : 'Down';
-});
-
-const dnsTooltip = computed(() => {
-  const dns = health.value?.dns;
-  if (!dns) return { value: 'Loading...', escape: false };
-  const lines = [];
-  const ok = '<span style="color:#22c55e">OK</span>';
-  const fail = '<span style="color:#ef4444">DOWN</span>';
-  lines.push(`<strong>System resolution:</strong> ${dns.systemResolution ? ok : fail}`);
-  if (dns.servers?.length > 0) {
-    lines.push('<hr style="border:0;border-top:1px solid rgba(255,255,255,0.15);margin:4px 0">');
-    lines.push('<strong>Upstream Servers</strong>');
-    for (const s of dns.servers) {
-      const escaped = s.server.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      lines.push(`${escaped} — ${s.status === 'up' ? ok : fail}`);
-    }
-  } else {
-    lines.push('No upstream DNS servers configured');
-  }
-  return { value: lines.join('<br>'), escape: false };
 });
 
 async function fetchHealth() {

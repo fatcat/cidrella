@@ -35,6 +35,7 @@ import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/geoip.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
+import { startVendorScheduler } from './utils/mac-vendor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -74,6 +75,9 @@ async function main() {
 
   // Start scan scheduler for periodic subnet scans
   startScanScheduler();
+
+  // Start MAC vendor database auto-refresh (every 24h)
+  startVendorScheduler();
 
   // Audit log retention: delete entries older than 7 days
   function pruneAuditLog() {

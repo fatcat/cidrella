@@ -8,6 +8,7 @@ import {
 } from '../utils/ip.js';
 import { generateReverseNames, regenerateConfigs } from '../utils/dnsmasq.js';
 import { regenerateDhcpConfigs } from '../utils/dhcp.js';
+import { lookupVendorBatch } from '../utils/mac-vendor.js';
 
 const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 function isValidDomainName(name) {
@@ -15,6 +16,18 @@ function isValidDomainName(name) {
 }
 
 const router = Router();
+
+/**
+ * Get gateway position for a subnet's folder, falling back to global setting then 'first'.
+ */
+function getGatewayPosition(db, folderId) {
+  if (folderId) {
+    const folder = db.prepare('SELECT gateway_position FROM folders WHERE id = ?').get(folderId);
+    if (folder?.gateway_position) return folder.gateway_position;
+  }
+  const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
+  return gwPref?.value || 'first';
+}
 
 function requirePerm(permission) {
   return (req, res, next) => {
@@ -84,6 +97,93 @@ function createSystemRanges(db, subnetId, parsed, gatewayAddress) {
   db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
     subnetId, typeMap['Broadcast'], parsed.broadcast, parsed.broadcast, 'Broadcast address'
   );
+}
+
+// Helper: nearest power of 2
+function nearestPow2(n) {
+  if (n <= 1) return 1;
+  const lower = Math.pow(2, Math.floor(Math.log2(n)));
+  const upper = lower * 2;
+  return (n - lower) <= (upper - n) ? lower : upper;
+}
+
+// Helper: compute default DHCP range for /21–/26 subnets
+function dhcpRangeDefaults(parsed) {
+  const size = parsed.broadcastLong - parsed.networkLong + 1;
+  const prefix = parsed.prefix;
+  if (prefix < 21 || prefix > 26) return null;
+  let poolEnd, poolSize;
+  if (prefix <= 23) {
+    poolEnd = parsed.networkLong + 128;
+    poolSize = 64;
+  } else {
+    poolEnd = parsed.networkLong + nearestPow2(size * 0.35);
+    poolSize = nearestPow2(size * 0.15);
+  }
+  let poolStart = poolEnd - poolSize + 1;
+  poolStart = Math.max(poolStart, parsed.networkLong + 1);
+  poolEnd = Math.min(poolEnd, parsed.broadcastLong - 1);
+  return { startLong: poolStart, endLong: poolEnd };
+}
+
+// Helper: auto-create DHCP scope for a subnet if no existing hosts/leases/scopes
+function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
+  const defaults = dhcpRangeDefaults(parsed);
+  if (!defaults) return;
+
+  // Skip if existing IP assignments, leases, reservations, or scopes
+  const ipCount = db.prepare("SELECT COUNT(*) as c FROM ip_addresses WHERE subnet_id = ? AND status != 'available'").get(subnetId);
+  if (ipCount.c > 0) return;
+  const leaseCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_leases WHERE subnet_id = ?').get(subnetId);
+  if (leaseCount.c > 0) return;
+  const resCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_reservations WHERE subnet_id = ?').get(subnetId);
+  if (resCount.c > 0) return;
+  const existingScope = db.prepare(`
+    SELECT r.id FROM ranges r JOIN range_types rt ON r.range_type_id = rt.id
+    WHERE r.subnet_id = ? AND rt.name = 'DHCP Scope'
+  `).get(subnetId);
+  if (existingScope) return;
+
+  const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
+  if (!dhcpType) return;
+
+  let { startLong, endLong } = defaults;
+  const gwLong = gateway ? ipToLong(gateway) : null;
+  if (gwLong === startLong) startLong++;
+  else if (gwLong === endLong) endLong--;
+
+  const rangeResult = db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
+    subnetId, dhcpType.id, longToIp(startLong), longToIp(endLong), 'DHCP scope'
+  );
+
+  const effectiveDomain = domainName || null;
+  const scopeResult = db.prepare(`
+    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
+    VALUES (?, ?, '24h', ?, ?, 'Auto-created DHCP scope')
+  `).run(rangeResult.lastInsertRowid, subnetId, gateway, effectiveDomain);
+
+  // Populate scope options from defaults
+  const scopeId = scopeResult.lastInsertRowid;
+  const enabledRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1').all();
+  const optionValues = new Map();
+  for (const row of enabledRows) {
+    optionValues.set(row.option_code, row.value != null ? row.value : null);
+  }
+  if (gateway) optionValues.set(3, gateway);
+  optionValues.set(1, parsed.mask);
+  optionValues.set(28, parsed.broadcast);
+  if (effectiveDomain) {
+    if (!optionValues.has(15) || !optionValues.get(15)) optionValues.set(15, effectiveDomain);
+    if (!optionValues.has(119) || !optionValues.get(119)) optionValues.set(119, effectiveDomain);
+  }
+  const serverIp = getServerIpForSubnet(parsed.network + '/' + parsed.prefix);
+  if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
+    optionValues.set(6, `${serverIp}, 9.9.9.9`);
+  }
+  const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
+  for (const [code, value] of optionValues) {
+    if (value != null && value !== '') insertOpt.run(scopeId, code, String(value));
+  }
 }
 
 // Helper: insert a subnet row
@@ -424,9 +524,9 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
       const mergedParsed = parseCidr(mergeResult.merged_cidr);
 
       // Determine correct gateway for the merged network
-      const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
-      const gwPosition = gwPref?.value || 'first';
-      const mergedGateway = gwPosition === 'last' ? mergedParsed.lastUsable : mergedParsed.firstUsable;
+      const gwPosition = getGatewayPosition(db, parent.folder_id);
+      const mergedGateway = gwPosition === 'last' ? mergedParsed.lastUsable
+        : gwPosition === 'none' ? null : mergedParsed.firstUsable;
 
       // Use the gateway subnet for config metadata, or fall back to any allocated subnet
       const configSource = gatewaySubnet || allocated[0] || null;
@@ -828,8 +928,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         }
 
         // Determine default gateway position for non-inheriting children
-        const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
-        const gwPosition = gwPref?.value || 'first';
+        const gwPosition = getGatewayPosition(db, parent.folder_id);
 
         const childIds = [];
         for (let i = 0; i < subnets.length; i++) {
@@ -838,6 +937,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
           const isInheriting = i === inheritIdx;
           const childParsed = parseCidr(sCidr);
           const childGw = isInheriting ? parent.gateway_address
+            : gwPosition === 'none' ? null
             : (gwPosition === 'last' ? childParsed.lastUsable : childParsed.firstUsable);
 
           const result = insertSubnet(db, {
@@ -857,6 +957,10 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
           } else {
             // All children get Network/Broadcast/Gateway ranges
             createSystemRanges(db, result.lastInsertRowid, childParsed, childGw);
+            // Auto-create DHCP scope for appropriately-sized allocated children
+            if (parent.status === 'allocated') {
+              autoCreateDhcpScope(db, result.lastInsertRowid, childParsed, childGw, parent.domain_name);
+            }
           }
           childIds.push(result.lastInsertRowid);
         }
@@ -915,8 +1019,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       }
 
       // Determine default gateway position for non-inheriting children
-      const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
-      const gwPosition = gwPref?.value || 'first';
+      const gwPosition = getGatewayPosition(db, parent.folder_id);
 
       // All children in the division
       const allCidrs = [normalized, ...remainder];
@@ -924,6 +1027,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         const aParsed = parseCidr(aCidr);
         const isInheriting = inheritingCidr === aCidr;
         const childGw = isInheriting ? parent.gateway_address
+          : gwPosition === 'none' ? null
           : (gwPosition === 'last' ? aParsed.lastUsable : aParsed.firstUsable);
 
         const result = insertSubnet(db, {
@@ -943,6 +1047,10 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         } else {
           // All children get Network/Broadcast/Gateway ranges
           createSystemRanges(db, result.lastInsertRowid, aParsed, childGw);
+          // Auto-create DHCP scope for appropriately-sized allocated children
+          if (parent.status === 'allocated') {
+            autoCreateDhcpScope(db, result.lastInsertRowid, aParsed, childGw, parent.domain_name);
+          }
         }
       }
 
@@ -989,8 +1097,10 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   // Determine gateway
   let gw = gateway_address;
   if (!gw) {
-    const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
-    gw = gwPref?.value === 'last' ? parsed.lastUsable : parsed.firstUsable;
+    const targetFolder = folder_id || subnet.folder_id;
+    const gwPosition = getGatewayPosition(db, targetFolder);
+    gw = gwPosition === 'none' ? null
+      : gwPosition === 'last' ? parsed.lastUsable : parsed.firstUsable;
   }
 
   // Validate folder_id if provided
@@ -1098,15 +1208,21 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     if (create_dhcp_scope && parsed.prefix <= 29) {
       const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
       if (dhcpType) {
-        // Use client-provided start/end or fall back to all usable IPs minus gateway
+        // Use client-provided start/end or fall back to formula defaults
         const gwLong = ipToLong(gw);
         let poolStart, poolEnd;
         if (dhcp_start_ip && dhcp_end_ip) {
           poolStart = ipToLong(dhcp_start_ip);
           poolEnd = ipToLong(dhcp_end_ip);
         } else {
-          poolStart = parsed.networkLong + 1;
-          poolEnd = parsed.broadcastLong - 1;
+          const defaults = dhcpRangeDefaults(parsed);
+          if (defaults) {
+            poolStart = defaults.startLong;
+            poolEnd = defaults.endLong;
+          } else {
+            poolStart = parsed.networkLong + 1;
+            poolEnd = parsed.broadcastLong - 1;
+          }
           if (gwLong === poolStart) poolStart++;
           else if (gwLong === poolEnd) poolEnd--;
         }
@@ -1267,7 +1383,93 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
 
   const parsed = parseCidr(subnet.cidr);
   const totalIps = parsed.broadcastLong - parsed.networkLong + 1;
+  const search = (req.query.search || '').trim().toLowerCase();
 
+  // ── Search mode: return only matching persisted IPs (no virtual fill) ──
+  if (search) {
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+
+    const lastScan = db.prepare(`
+      SELECT id FROM network_scans WHERE subnet_id = ? AND status = 'completed'
+      ORDER BY completed_at DESC LIMIT 1
+    `).get(req.params.id);
+
+    let allPersisted;
+    if (lastScan) {
+      allPersisted = db.prepare(`
+        SELECT ip.*,
+          sr.responded as scan_responded, sr.mac_address as scan_mac,
+          CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+          dl.expires_at as dhcp_expires_at
+        FROM ip_addresses ip
+        LEFT JOIN scan_results sr ON sr.scan_id = ? AND sr.ip_address = ip.ip_address
+        LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+        LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+        WHERE ip.subnet_id = ?
+      `).all(lastScan.id, req.params.id);
+    } else {
+      allPersisted = db.prepare(`
+        SELECT ip.*,
+          NULL as scan_responded, NULL as scan_mac,
+          CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+          dl.expires_at as dhcp_expires_at
+        FROM ip_addresses ip
+        LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+        LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+        WHERE ip.subnet_id = ?
+      `).all(req.params.id);
+    }
+
+    // Load ranges
+    const ranges = db.prepare(`
+      SELECT r.*, rt.name as range_type_name, rt.color as range_type_color, rt.is_system as range_type_is_system
+      FROM ranges r JOIN range_types rt ON r.range_type_id = rt.id
+      WHERE r.subnet_id = ? ORDER BY r.start_ip
+    `).all(req.params.id);
+
+    const rangeLookup = ranges.map(r => ({
+      ...r, startLong: ipToLong(r.start_ip), endLong: ipToLong(r.end_ip)
+    })).sort((a, b) => a.startLong - b.startLong);
+
+    // Vendor lookup
+    const allMacs = allPersisted.map(ip => ip.mac_address || ip.last_seen_mac || ip.scan_mac).filter(Boolean);
+    const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
+
+    // Filter and enrich
+    const matched = [];
+    for (const ip of allPersisted) {
+      const mac = ip.mac_address || ip.last_seen_mac || ip.scan_mac;
+      ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
+      const ipLong = ipToLong(ip.ip_address);
+      const range = rangeLookup.find(r => ipLong >= r.startLong && ipLong <= r.endLong);
+      ip.range_type_id = range?.range_type_id || null;
+      ip.range_type_name = range?.range_type_name || null;
+      ip.range_type_color = range?.range_type_color || null;
+
+      if (ip.ip_address.includes(search) ||
+          (ip.hostname && ip.hostname.toLowerCase().includes(search)) ||
+          (ip.mac_address && ip.mac_address.toLowerCase().includes(search)) ||
+          (ip.last_seen_mac && ip.last_seen_mac.toLowerCase().includes(search)) ||
+          (ip.scan_mac && ip.scan_mac.toLowerCase().includes(search)) ||
+          (ip.vendor && ip.vendor.toLowerCase().includes(search)) ||
+          (ip.status && ip.status.toLowerCase().includes(search))) {
+        matched.push(ip);
+      }
+    }
+
+    // Sort by IP
+    matched.sort((a, b) => ipToLong(a.ip_address) - ipToLong(b.ip_address));
+
+    const searchTotal = matched.length;
+    const searchTotalPages = Math.ceil(searchTotal / pageSize) || 1;
+    const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), searchTotalPages);
+    const start = (page - 1) * pageSize;
+    const ips = matched.slice(start, start + pageSize);
+
+    return res.json({ subnet, ips, ranges, totalIps: searchTotal, page, pageSize, totalPages: searchTotalPages, search });
+  }
+
+  // ── Normal mode: virtual IPs with pagination ──
   // Pagination params
   const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
   const totalPages = Math.ceil(totalIps / pageSize);
@@ -1290,16 +1492,24 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   if (lastScan) {
     allPersisted = db.prepare(`
       SELECT ip.*,
-        sr.responded as scan_responded, sr.mac_address as scan_mac
+        sr.responded as scan_responded, sr.mac_address as scan_mac,
+        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+        dl.expires_at as dhcp_expires_at
       FROM ip_addresses ip
       LEFT JOIN scan_results sr ON sr.scan_id = ? AND sr.ip_address = ip.ip_address
+      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+      LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
       WHERE ip.subnet_id = ?
     `).all(lastScan.id, req.params.id);
   } else {
     allPersisted = db.prepare(`
       SELECT ip.*,
-        NULL as scan_responded, NULL as scan_mac
+        NULL as scan_responded, NULL as scan_mac,
+        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+        dl.expires_at as dhcp_expires_at
       FROM ip_addresses ip
+      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+      LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
   }
@@ -1369,11 +1579,21 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
         last_seen_mac: null,
         scan_responded: null,
         scan_mac: null,
+        has_dhcp_reservation: 0,
+        dhcp_expires_at: null,
         range_type_id: match?.range_type_id || null,
         range_type_name: match?.range_type_name || null,
         range_type_color: match?.range_type_color || null
       });
     }
+  }
+
+  // Batch vendor lookup for all MACs on this page
+  const allMacs = ips.map(ip => ip.mac_address || ip.last_seen_mac || ip.scan_mac).filter(Boolean);
+  const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
+  for (const ip of ips) {
+    const mac = ip.mac_address || ip.last_seen_mac || ip.scan_mac;
+    ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
   }
 
   res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });

@@ -5,6 +5,7 @@ import { regenerateConfigs } from '../utils/dnsmasq.js';
 import http from 'http';
 import https from 'https';
 import { ipToLong } from '../utils/ip.js';
+import { syncDnsToIp, syncDhcpReservationToIp } from '../utils/ip-sync.js';
 import express from 'express';
 
 const router = Router();
@@ -369,6 +370,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
       if (existingRecords.has(key)) { results.a.skipped++; continue; }
       try {
         insertRecord.run(zoneId, name, 'A', h.ip);
+        syncDnsToIp(db, name, h.ip, zone.name);
         existingRecords.add(key);
         results.a.created++;
       } catch { results.a.failed++; }
@@ -405,7 +407,11 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
       'INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, description) VALUES (?, ?, ?, ?, ?)'
     );
 
+    const MAC_RE = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
+
     for (const d of dhcpHosts) {
+      if (!MAC_RE.test(d.mac)) { results.dhcp.failed++; continue; }
+
       // Find best matching subnet
       const ipLong = ipToLong(d.ip);
       let best = null;
@@ -425,6 +431,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
 
       try {
         insertRes.run(best.id, d.mac, d.ip, d.hostname, 'Imported from Pi-hole');
+        syncDhcpReservationToIp(db, best.id, d.ip, { hostname: d.hostname, mac_address: d.mac });
         existingMacs.add(macKey);
         existingIps.add(ipKey);
         results.dhcp.created++;

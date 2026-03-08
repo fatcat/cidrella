@@ -1,38 +1,50 @@
 <template>
   <div class="layout-b">
-    <!-- Unified Toolbar -->
-    <div class="toolbar">
-      <div class="toolbar-left">
-        <Button label="Add Organization" icon="pi pi-plus" size="small" text @click="dialogs.openWizard()" />
-        <Button label="Add Network" icon="pi pi-plus" size="small" text @click="dialogs.openCreateNetwork(selectedFolder?.id)" />
-        <span class="toolbar-divider"></span>
-        <Button label="Settings" icon="pi pi-cog" size="small" text @click="$router.push('/system')" />
-      </div>
-      <div class="toolbar-right" v-if="mergeSelectedIdsRaw.length > 0">
-        <span class="merge-badge">{{ mergeSelectedIdsRaw.length }} selected</span>
-        <Button v-if="mergeSelectedIdsRaw.length >= 2 && mergeValidation.valid"
-                label="Merge" icon="pi pi-sitemap" size="small" severity="warn"
-                @click="dialogs.openMergeConfirm(mergeSelectedIdsRaw)" />
-        <Button label="Cancel" size="small" severity="secondary" text @click="clearMergeSelection" />
-      </div>
-    </div>
+    <!-- Menubar -->
+    <Menubar :model="menuItems">
+      <template #start>
+        <Button label="Add Organization" icon="pi pi-plus" size="small" data-track="toolbar-add-org" @click="dialogs.openWizard()" :class="{ 'pulse-attention': store.folders.length === 0 }" :text="store.folders.length > 0" />
+      </template>
+      <template #item="{ item, props: itemProps }">
+        <a v-bind="itemProps.action" :class="{ 'active-menuitem': item.key === activeTab }" :data-track="item.dataTrack">
+          <span :class="item.icon" />
+          <span class="ml-1">{{ item.label }}</span>
+        </a>
+      </template>
+      <template #end>
+        <div class="toolbar-right">
+          <template v-if="activeTab === 'networks' && mergeSelectedIdsRaw.length > 0">
+            <span class="merge-badge">{{ mergeSelectedIdsRaw.length }} selected</span>
+            <Button v-if="mergeSelectedIdsRaw.length >= 2 && mergeValidation.valid"
+                    label="Merge" icon="pi pi-sitemap" size="small" severity="warn"
+                    data-track="toolbar-merge" @click="dialogs.openMergeConfirm(mergeSelectedIdsRaw)" />
+            <Button label="Cancel" size="small" severity="secondary" text data-track="toolbar-merge-cancel" @click="clearMergeSelection" />
+            <span class="toolbar-divider"></span>
+          </template>
+          <Select v-model="selectedOrgId" :options="orgOptions" optionLabel="name" optionValue="id"
+                  size="small" data-track="toolbar-org-filter" class="org-selector" />
+        </div>
+      </template>
+    </Menubar>
 
-    <div class="content-area">
+    <!-- Networks Tab -->
+    <div class="content-area" v-if="activeTab === 'networks'">
       <!-- Left Sidebar -->
       <div class="sidebar-panel">
-        <!-- Sidebar mode tabs -->
-        <div class="sidebar-tabs">
-          <span class="sidebar-tab" :class="{ active: sidebarMode === 'orgs' }" @click="sidebarMode = 'orgs'">Organizations</span>
-          <span class="sidebar-tab" :class="{ active: sidebarMode === 'browse' }" @click="sidebarMode = 'browse'">Browse</span>
-        </div>
+        <Tabs v-model:value="sidebarMode">
+          <TabList>
+            <Tab value="orgs" data-track="sidebar-tab-orgs"><i class="pi pi-building" style="margin-right: 0.3rem" />Organizations</Tab>
+            <Tab value="browse" data-track="sidebar-tab-browse"><i class="pi pi-list" style="margin-right: 0.3rem" />Browse</Tab>
+          </TabList>
+          <TabPanels>
+            <TabPanel value="orgs">
+              <div class="sidebar-search">
+                <i class="pi pi-search search-icon"></i>
+                <input type="text" v-model="filterText" placeholder="Filter networks..." class="sidebar-filter" data-track="sidebar-filter" />
+              </div>
 
-        <div class="sidebar-search">
-          <i class="pi pi-search search-icon"></i>
-          <input type="text" v-model="filterText" placeholder="Filter networks..." class="sidebar-filter" />
-        </div>
-
-        <!-- Organizations mode -->
-        <div class="sidebar-tree" v-if="sidebarMode === 'orgs'"
+              <!-- Organizations mode -->
+              <div class="sidebar-tree"
              @dragover.prevent="onTreeContainerDragOver"
              @dragenter.prevent="onTreeContainerDragEnter"
              @dragleave="onTreeContainerDragLeave"
@@ -78,43 +90,53 @@
             No organizations found.
           </div>
         </div>
-
-        <!-- Browse mode -->
-        <div class="sidebar-tree" v-else>
-          <template v-for="item in filteredBrowseNodes" :key="item.node.key">
-            <div class="tree-item"
-                 :style="{ paddingLeft: (0.75 + item.depth * 1.2) + 'rem' }"
-                 :class="{
-                   active: selectedSubnetId === item.node.data.id,
-                   'merge-selected': isMergeSelected(item.node.data.id),
-                   'tree-item-unallocated': item.node.data.status === 'unallocated',
-                 }"
-                 :draggable="isDraggableBrowseNode(item.node)"
-                 @dragstart="onBrowseDragStart($event, item.node.data, item.node)"
-                 @click="selectBrowseNode(item.node)"
-                 @contextmenu.prevent="openSubnetContextMenu($event, item.node)">
-              <div class="tree-item-row">
-                <i v-if="item.node.children && item.node.children.length > 0"
-                   class="pi" :class="browseExpanded[item.node.key] ? 'pi-chevron-down' : 'pi-chevron-right'"
-                   style="font-size:0.6rem; margin-right: 0.25rem"
-                   @click.stop="toggleBrowseExpand(item.node.key)"></i>
-                <span class="item-name">{{ item.node.data.cidr }}</span>
-                <span v-if="item.node.data.status === 'allocated'" class="status-dot allocated"></span>
+            </TabPanel>
+            <TabPanel value="browse">
+              <div class="sidebar-search">
+                <i class="pi pi-search search-icon"></i>
+                <input type="text" v-model="filterText" placeholder="Filter networks..." class="sidebar-filter" data-track="sidebar-filter-browse" />
               </div>
-              <div class="tree-item-meta">
-                <span v-if="item.node.data.name">{{ item.node.data.name }}</span>
-                <span v-else-if="item.node.data.status === 'unallocated'" class="unalloc-label">unallocated</span>
+              <div class="sidebar-tree">
+                <template v-for="item in filteredBrowseNodes" :key="item.node.key">
+                  <div class="tree-item"
+                       :style="{ paddingLeft: (0.75 + item.depth * 1.2) + 'rem' }"
+                       :class="{
+                         active: selectedSubnetId === item.node.data.id,
+                         'merge-selected': isMergeSelected(item.node.data.id),
+                         'tree-item-unallocated': item.node.data.status === 'unallocated',
+                       }"
+                       :draggable="isDraggableBrowseNode(item.node)"
+                       @dragstart="onBrowseDragStart($event, item.node.data, item.node)"
+                       @click="selectBrowseNode(item.node)"
+                       @contextmenu.prevent="openSubnetContextMenu($event, item.node)">
+                    <div class="tree-item-row">
+                      <i v-if="item.node.children && item.node.children.length > 0"
+                         class="pi" :class="browseExpanded[item.node.key] ? 'pi-chevron-down' : 'pi-chevron-right'"
+                         style="font-size:0.6rem; margin-right: 0.25rem"
+                         @click.stop="toggleBrowseExpand(item.node.key)"></i>
+                      <span class="item-name">{{ item.node.data.cidr }}</span>
+                      <span v-if="item.node.data.status === 'allocated'" class="status-dot allocated"></span>
+                    </div>
+                    <div class="tree-item-meta">
+                      <span v-if="item.node.data.name">{{ item.node.data.name }}</span>
+                      <span v-else-if="item.node.data.status === 'unallocated'" class="unalloc-label">unallocated</span>
+                    </div>
+                  </div>
+                </template>
+                <div v-if="filteredBrowseNodes.length === 0" class="sidebar-empty">
+                  No networks found.
+                </div>
               </div>
-            </div>
-          </template>
-          <div v-if="filteredBrowseNodes.length === 0" class="sidebar-empty">
-            No networks found.
-          </div>
-        </div>
+            </TabPanel>
+          </TabPanels>
+        </Tabs>
       </div>
 
       <!-- Right Detail Panel -->
       <div class="detail-panel">
+        <div class="networks-toolbar">
+          <Button label="Add Network" icon="pi pi-plus" size="small" text data-track="toolbar-add-network" @click="dialogs.openCreateNetwork(selectedFolder?.id)" />
+        </div>
         <SubnetDetail v-if="selectedSubnetId" :subnet-id="selectedSubnetId" :compact="true" />
         <OrgNetworkTable v-else-if="selectedFolder" :folder="selectedFolder"
             :merge-selected-ids="mergeSelectedIdsRaw"
@@ -123,9 +145,19 @@
             @context-menu="openSubnetContextMenu" />
         <div v-else class="empty-detail">
           <i class="pi pi-sitemap" style="font-size: 2rem; opacity: 0.3"></i>
-          <span>Select a network</span>
+          <span>{{ store.folders.length === 0 ? 'Add an Organization to get started' : 'Select a network' }}</span>
         </div>
       </div>
+    </div>
+
+    <!-- DNS Tab -->
+    <div v-else-if="activeTab === 'dns'" class="tab-content">
+      <DnsPanel ref="dnsPanelRef" :org-id="selectedOrgId" />
+    </div>
+
+    <!-- DHCP Tab -->
+    <div v-else-if="activeTab === 'dhcp'" class="tab-content">
+      <DhcpPanel ref="dhcpPanelRef" :org-id="selectedOrgId" />
     </div>
 
     <!-- Context Menus -->
@@ -153,18 +185,49 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
+import Select from 'primevue/select';
+import Menubar from 'primevue/menubar';
 import ContextMenu from 'primevue/contextmenu';
+import Tabs from 'primevue/tabs';
+import TabList from 'primevue/tablist';
+import Tab from 'primevue/tab';
+import TabPanels from 'primevue/tabpanels';
+import TabPanel from 'primevue/tabpanel';
 import SubnetDetail from './SubnetDetail.vue';
 import OrgNetworkTable from '../components/OrgNetworkTable.vue';
 import NetworkDialogs from '../components/NetworkDialogs.vue';
+import { defineAsyncComponent } from 'vue';
+const DnsPanel = defineAsyncComponent(() => import('../components/DnsPanel.vue'));
+const DhcpPanel = defineAsyncComponent(() => import('../components/DhcpPanel.vue'));
 import { useSubnetStore } from '../stores/subnets.js';
 import { applyNameTemplate, canMergeCidrs } from '../utils/ip.js';
 
 const store = useSubnetStore();
 const toast = useToast();
+const router = useRouter();
 const dialogs = ref(null);
+const dnsPanelRef = ref(null);
+const dhcpPanelRef = ref(null);
+
+// ── Top-level tab state ──
+const activeTab = ref(loadJson('ipam_b_active_tab', 'networks'));
+
+const menuItems = computed(() => [
+  { key: 'networks', label: 'Networks', icon: 'pi pi-sitemap', dataTrack: 'tab-networks', command: () => { activeTab.value = 'networks'; } },
+  { key: 'dns', label: 'DNS', icon: 'pi pi-globe', dataTrack: 'tab-dns', command: () => { activeTab.value = 'dns'; } },
+  { key: 'dhcp', label: 'DHCP', icon: 'pi pi-server', dataTrack: 'tab-dhcp', command: () => { activeTab.value = 'dhcp'; } },
+  { separator: true },
+  { label: 'Settings', icon: 'pi pi-cog', dataTrack: 'toolbar-settings', command: () => { router.push('/system'); } },
+]);
+const selectedOrgId = ref(loadJson('ipam_b_selected_org_id', null));
+
+const orgOptions = computed(() => [
+  { id: null, name: 'All Organizations' },
+  ...store.folders.map(f => ({ id: f.id, name: f.name }))
+]);
 
 // ── Persistence helpers ──
 function loadJson(key, fallback) {
@@ -185,6 +248,8 @@ function persistState() {
       localStorage.setItem('ipam_b_sidebar_mode', JSON.stringify(sidebarMode.value));
       localStorage.setItem('ipam_b_expanded_folders', JSON.stringify(expandedFolders.value));
       localStorage.setItem('ipam_b_browse_expanded', JSON.stringify(browseExpanded.value));
+      localStorage.setItem('ipam_b_active_tab', JSON.stringify(activeTab.value));
+      localStorage.setItem('ipam_b_selected_org_id', JSON.stringify(selectedOrgId.value));
     } catch { /* */ }
   }, 300);
 }
@@ -204,6 +269,8 @@ const filterText = ref('');
 const expandedFolders = ref(loadJson('ipam_b_expanded_folders', {}));
 const browseExpanded = ref(loadJson('ipam_b_browse_expanded', {}));
 
+watch(activeTab, persistState);
+watch(selectedOrgId, persistState);
 watch(sidebarMode, persistState);
 watch(expandedFolders, persistState, { deep: true });
 watch(browseExpanded, persistState, { deep: true });
@@ -299,8 +366,12 @@ function toggleBrowseExpand(key) {
 // ── Filtered data ──
 const filteredFolders = computed(() => {
   const q = filterText.value.toLowerCase().trim();
-  if (!q) return store.folders;
-  return store.folders.filter(f => {
+  let folders = store.folders;
+  if (selectedOrgId.value != null) {
+    folders = folders.filter(f => f.id === selectedOrgId.value);
+  }
+  if (!q) return folders;
+  return folders.filter(f => {
     if (f.name.toLowerCase().includes(q)) return true;
     if (f.subnets?.some(s => s.cidr.includes(q) || s.name?.toLowerCase().includes(q))) return true;
     return false;
@@ -309,8 +380,11 @@ const filteredFolders = computed(() => {
 
 const filteredBrowseNodes = computed(() => {
   const flat = [];
+  const orgId = selectedOrgId.value;
   function flatten(nodes, depth) {
     for (const n of nodes) {
+      // Filter by org at root level (depth 0)
+      if (orgId != null && depth === 0 && n.data.folder_id !== orgId) continue;
       const q = filterText.value.toLowerCase().trim();
       const match = !q || n.data.cidr.includes(q) || n.data.name?.toLowerCase().includes(q);
       if (match) flat.push({ node: n, depth });
@@ -627,7 +701,12 @@ onMounted(async () => {
   // Restore selection
   if (selectedSubnetId.value) {
     const node = findNodeInTrees(selectedSubnetId.value);
-    if (node) selectedNode.value = node;
+    if (node) {
+      selectedNode.value = node;
+    } else {
+      // Subnet no longer exists — clear so folder restoration kicks in
+      selectedSubnetId.value = null;
+    }
   }
 
   // Restore folder selection
@@ -656,29 +735,34 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 
-/* ── Unified Toolbar ── */
-.toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.4rem 1rem;
-  background: var(--ipam-card);
-  border-bottom: 1px solid var(--p-surface-border);
-  flex-shrink: 0;
-}
-.toolbar-left, .toolbar-right {
+/* ── Menubar ── */
+.toolbar-right {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
-.toolbar-title {
-  font-weight: 700;
-  font-size: 0.95rem;
+.org-selector {
+  min-width: 10rem;
+  font-size: 0.8rem;
 }
 .toolbar-divider {
   width: 1px;
   height: 1.2rem;
   background: var(--p-surface-border);
+}
+:deep(.p-menubar-item-content) {
+  padding: 0.45rem 0.65rem !important;
+}
+:deep(.active-menuitem) {
+  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent) !important;
+  color: var(--p-primary-color) !important;
+  font-weight: 600;
+}
+
+.tab-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 .merge-badge {
   font-size: 0.8rem;
@@ -691,44 +775,27 @@ onBeforeUnmount(() => {
 
 /* ── Content Area ── */
 .content-area {
-  display: flex;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 1.5rem;
   flex: 1;
   min-height: 0;
-  overflow: hidden;
-  gap: 0.5rem;
-  padding: 0.5rem;
-  background: var(--ipam-ground);
 }
 
 /* ── Sidebar ── */
 .sidebar-panel {
-  width: 280px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--ipam-card);
-  border-radius: 10px;
+  background: var(--p-content-background);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  color: var(--p-text-color);
 }
-.sidebar-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--p-surface-border);
-  flex-shrink: 0;
+.sidebar-panel :deep(.p-tabpanels) {
+  padding: 0;
 }
-.sidebar-tab {
-  flex: 1;
-  text-align: center;
-  padding: 0.45rem 0;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--p-text-muted-color);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all 0.15s;
+.sidebar-panel :deep(.p-tablist) {
+  background: var(--p-surface-ground);
 }
-.sidebar-tab:hover { color: var(--p-text-color); }
-.sidebar-tab.active { color: var(--p-primary-color); border-bottom-color: var(--p-primary-color); }
 
 .sidebar-search {
   display: flex;
@@ -772,18 +839,19 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  padding: 0.5rem 0.75rem;
+  padding: 0.5rem 1rem;
   font-weight: 600;
   font-size: 0.85rem;
   color: var(--p-text-color);
   cursor: pointer;
+  border-bottom: 1px solid var(--p-surface-border);
   transition: background 0.15s;
 }
 .tree-folder:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 5%, transparent);
+  background: var(--p-highlight-background);
 }
 .tree-folder.drop-target {
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
+  background: var(--p-highlight-background);
 }
 .folder-label {
   flex: 1;
@@ -794,16 +862,17 @@ onBeforeUnmount(() => {
   font-weight: 400;
 }
 .tree-item {
-  padding: 0.4rem 0.75rem 0.4rem 2rem;
+  padding: 0.6rem 1rem 0.6rem 2rem;
   cursor: pointer;
   border-left: 3px solid transparent;
-  transition: all 0.15s;
+  border-bottom: 1px solid var(--p-surface-border);
+  transition: background 0.15s;
 }
 .tree-item:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
+  background: var(--p-highlight-background);
 }
 .tree-item.active {
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
+  background: var(--p-highlight-background);
   border-left-color: var(--p-primary-color);
 }
 .tree-item.merge-selected {
@@ -845,14 +914,22 @@ onBeforeUnmount(() => {
 
 /* ── Detail Panel ── */
 .detail-panel {
-  flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  background: var(--ipam-card);
-  border-radius: 10px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  min-height: 0;
+}
+.networks-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--p-surface-border);
+  flex-shrink: 0;
+}
+.networks-toolbar .toolbar-divider {
+  width: 1px;
+  height: 1.2rem;
+  background: var(--p-surface-border);
 }
 .empty-detail {
   flex: 1;
@@ -863,5 +940,14 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
   color: var(--p-text-muted-color);
   font-size: 0.9rem;
+}
+
+/* Pulse animation for empty-state call to action */
+.pulse-attention {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 </style>

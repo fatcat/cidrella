@@ -33,8 +33,8 @@ const routes = [
       { path: 'system', name: 'System', component: () => import('../views/System.vue') },
       // Redirects for old bookmarks
       { path: 'subnets', redirect: '/' },
-      { path: 'dns', redirect: '/system' },
-      { path: 'dhcp', redirect: '/system' },
+      { path: 'dns', redirect: '/' },
+      { path: 'dhcp', redirect: '/' },
       { path: 'blocklists', redirect: '/system' },
       { path: 'geoip', redirect: '/system' },
       { path: 'range-types', redirect: '/system' }

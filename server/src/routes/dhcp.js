@@ -4,6 +4,7 @@ import { hasPermission } from '../auth/roles.js';
 import { isIpInSubnet, ipToLong, getServerIpForSubnet } from '../utils/ip.js';
 import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
+import { syncDhcpReservationToIp, clearDhcpReservationFromIp } from '../utils/ip-sync.js';
 
 const router = Router();
 
@@ -37,7 +38,7 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
   const scopes = db.prepare(`
     SELECT s.*, r.start_ip, r.end_ip,
       sub.cidr as subnet_cidr, sub.name as subnet_name, sub.gateway_address as subnet_gateway,
-      sub.domain_name as subnet_domain_name
+      sub.domain_name as subnet_domain_name, sub.folder_id
     FROM dhcp_scopes s
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id
@@ -368,6 +369,7 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
     WHERE dr.id = ?
   `).get(result.lastInsertRowid);
 
+  syncDhcpReservationToIp(db, subnet_id, ip_address, { hostname: hostname || null, mac_address: mac });
   audit(req.user.id, 'dhcp_reservation_created', 'dhcp_reservation', reservation.id, { mac, ip: ip_address, subnet: subnet.cidr });
   regenerateDhcpConfigs(db);
   res.status(201).json(reservation);
@@ -429,6 +431,14 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     WHERE dr.id = ?
   `).get(reservation.id);
 
+  // If IP changed, clear old IP's DHCP metadata
+  if (newIp !== reservation.ip_address) {
+    clearDhcpReservationFromIp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
+  }
+  syncDhcpReservationToIp(db, reservation.subnet_id, newIp, {
+    hostname: hostname !== undefined ? (hostname || null) : reservation.hostname,
+    mac_address: newMac
+  });
   audit(req.user.id, 'dhcp_reservation_updated', 'dhcp_reservation', reservation.id, { changes: req.body });
   regenerateDhcpConfigs(db);
   res.json(updated);
@@ -441,6 +451,7 @@ router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
 
   db.prepare('DELETE FROM dhcp_reservations WHERE id = ?').run(reservation.id);
+  clearDhcpReservationFromIp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
   audit(req.user.id, 'dhcp_reservation_deleted', 'dhcp_reservation', reservation.id, {
     mac: reservation.mac_address, ip: reservation.ip_address
   });
@@ -450,16 +461,94 @@ router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
 
 // ─── Leases ──────────────────────────────────────────────
 
-// GET /api/dhcp/leases
+// GET /api/dhcp/leases — unified view: dynamic leases + reservations
 router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
+
+  // Fetch all dynamic leases
   const leases = db.prepare(`
-    SELECT dl.*, sub.cidr as subnet_cidr, sub.name as subnet_name
+    SELECT dl.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.folder_id
     FROM dhcp_leases dl
     LEFT JOIN subnets sub ON dl.subnet_id = sub.id
     ORDER BY dl.ip_address
   `).all();
-  res.json(leases);
+
+  // Fetch all reservations
+  const reservations = db.prepare(`
+    SELECT dr.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.folder_id
+    FROM dhcp_reservations dr
+    JOIN subnets sub ON dr.subnet_id = sub.id
+    ORDER BY dr.ip_address
+  `).all();
+
+  // Build a map of leases by MAC+IP for matching
+  const leaseMap = new Map();
+  for (const l of leases) {
+    leaseMap.set(`${l.mac_address}:${l.ip_address}`, l);
+  }
+
+  const unified = [];
+
+  // Add reservations first (they take priority)
+  const matchedLeaseKeys = new Set();
+  for (const r of reservations) {
+    const key = `${r.mac_address}:${r.ip_address}`;
+    const matchedLease = leaseMap.get(key);
+    const entry = {
+      id: r.id,
+      type: 'reserved',
+      ip_address: r.ip_address,
+      mac_address: r.mac_address,
+      hostname: r.hostname,
+      description: r.description,
+      subnet_id: r.subnet_id,
+      subnet_cidr: r.subnet_cidr,
+      subnet_name: r.subnet_name,
+      folder_id: r.folder_id,
+      enabled: r.enabled,
+      status: matchedLease ? 'active' : 'offline',
+      expires_at: matchedLease ? matchedLease.expires_at : null,
+      reservation_id: r.id,
+      created_at: r.created_at,
+      updated_at: r.updated_at
+    };
+    unified.push(entry);
+    if (matchedLease) matchedLeaseKeys.add(key);
+  }
+
+  // Add dynamic leases that don't match a reservation
+  for (const l of leases) {
+    const key = `${l.mac_address}:${l.ip_address}`;
+    if (!matchedLeaseKeys.has(key)) {
+      unified.push({
+        id: l.id,
+        type: 'dynamic',
+        ip_address: l.ip_address,
+        mac_address: l.mac_address,
+        hostname: l.hostname,
+        description: null,
+        subnet_id: l.subnet_id,
+        subnet_cidr: l.subnet_cidr,
+        subnet_name: l.subnet_name,
+        folder_id: l.folder_id,
+        enabled: true,
+        status: 'active',
+        expires_at: l.expires_at,
+        reservation_id: null,
+        created_at: l.created_at,
+        updated_at: l.updated_at
+      });
+    }
+  }
+
+  // Sort by IP address
+  unified.sort((a, b) => {
+    const aLong = a.ip_address.split('.').reduce((acc, o) => (acc << 8) + parseInt(o), 0);
+    const bLong = b.ip_address.split('.').reduce((acc, o) => (acc << 8) + parseInt(o), 0);
+    return aLong - bLong;
+  });
+
+  res.json(unified);
 });
 
 // POST /api/dhcp/sync-leases

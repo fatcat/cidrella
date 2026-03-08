@@ -70,16 +70,16 @@ function connect() {
   });
 
   eventSource.addEventListener('backlog-end', () => {
-    scrollToBottom();
+    scrollToTop();
   });
 
   eventSource.onmessage = (event) => {
-    lines.value.push(event.data);
+    lines.value.unshift(event.data);
     if (lines.value.length > MAX_LINES) {
-      lines.value.splice(0, lines.value.length - MAX_LINES);
+      lines.value.splice(MAX_LINES);
     }
     if (!paused.value) {
-      nextTick(scrollToBottom);
+      nextTick(scrollToTop);
     }
   };
 
@@ -94,24 +94,24 @@ function switchFilter(filter) {
   connect();
 }
 
-function scrollToBottom() {
+function scrollToTop() {
   if (logPre.value) {
-    logPre.value.scrollTop = logPre.value.scrollHeight;
+    logPre.value.scrollTop = 0;
   }
 }
 
 function onScroll() {
   if (!logPre.value) return;
   const el = logPre.value;
-  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  if (atBottom && paused.value) {
+  const atTop = el.scrollTop < 40;
+  if (atTop && paused.value) {
     paused.value = false;
   }
 }
 
 function resumeScroll() {
   paused.value = false;
-  nextTick(scrollToBottom);
+  nextTick(scrollToTop);
 }
 
 async function clearLogs() {

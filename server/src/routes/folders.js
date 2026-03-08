@@ -31,7 +31,7 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
 
 // POST /api/folders — create organization (folder + optional supernet)
 router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { name, description, cidr } = req.body;
+  const { name, description, cidr, gateway_position } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   const db = getDb();
@@ -61,9 +61,10 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   const sortOrder = (maxOrder?.m ?? -1) + 1;
 
   const txn = db.transaction(() => {
+    const gwPos = ['first', 'last', 'none'].includes(gateway_position) ? gateway_position : 'first';
     const folderResult = db.prepare(
-      'INSERT INTO folders (name, description, sort_order) VALUES (?, ?, ?)'
-    ).run(name.trim(), description || null, sortOrder);
+      'INSERT INTO folders (name, description, sort_order, gateway_position) VALUES (?, ?, ?, ?)'
+    ).run(name.trim(), description || null, sortOrder, gwPos);
     const folderId = folderResult.lastInsertRowid;
 
     let subnet = null;
@@ -102,14 +103,16 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(req.params.id);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
-  const { name, description, sort_order } = req.body;
+  const { name, description, sort_order, gateway_position } = req.body;
 
+  const gwPos = gateway_position && ['first', 'last', 'none'].includes(gateway_position) ? gateway_position : undefined;
   db.prepare(`
-    UPDATE folders SET name = ?, description = ?, sort_order = ? WHERE id = ?
+    UPDATE folders SET name = ?, description = ?, sort_order = ?, gateway_position = ? WHERE id = ?
   `).run(
     name ?? folder.name,
     description !== undefined ? description : folder.description,
     sort_order !== undefined ? sort_order : folder.sort_order,
+    gwPos ?? folder.gateway_position,
     folder.id
   );
 

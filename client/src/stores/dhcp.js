@@ -50,19 +50,19 @@ export const useDhcpStore = defineStore('dhcp', () => {
 
   async function createReservation(data) {
     const res = await api.post('/dhcp/reservations', data);
-    await fetchReservations();
+    await fetchLeases();
     return res.data;
   }
 
   async function updateReservation(id, data) {
     const res = await api.put(`/dhcp/reservations/${id}`, data);
-    await fetchReservations();
+    await fetchLeases();
     return res.data;
   }
 
   async function deleteReservation(id) {
     await api.delete(`/dhcp/reservations/${id}`);
-    await fetchReservations();
+    await fetchLeases();
   }
 
   async function fetchLeases() {

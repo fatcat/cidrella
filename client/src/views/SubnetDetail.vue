@@ -14,7 +14,7 @@
         <span class="cidr-badge">{{ subnet.cidr }}</span>
       </div>
       <div class="header-actions">
-        <Button label="Add Network" icon="pi pi-plus" size="small" @click="openAddRange" />
+        <Button label="Add Network" icon="pi pi-plus" size="small" data-track="subnet-add-network" @click="openAddRange" />
       </div>
     </div>
 
@@ -37,7 +37,7 @@
       <span class="info-bar-sep"></span>
       <span class="info-bar-pair"><span class="info-bar-label">Prefix</span> <span class="info-bar-val">/{{ subnet.prefix_length }}</span></span>
       <span style="flex:1"></span>
-      <Button label="Add DHCP Scope" size="small" text @click="openAddRange" />
+      <Button label="Add DHCP Scope" size="small" text data-track="subnet-add-dhcp-scope" @click="openAddRange" />
     </div>
 
     <!-- Subnet Info Cards (non-compact) -->
@@ -73,8 +73,15 @@
     </div>
 
     <!-- Tabs: IP Addresses + Grid View -->
-    <TabView>
-      <TabPanel header="IP Addresses">
+    <TabView v-model:activeIndex="activeTabIndex">
+      <TabPanel header="IP Addresses" :pt="{ headerAction: { 'data-track': 'subnet-tab-ip-addresses' } }">
+        <div class="ip-search-bar">
+          <IconField>
+            <InputIcon class="pi pi-search" />
+            <InputText v-model="ipSearch" placeholder="Search by IP, hostname, MAC, vendor, status…" size="small" class="ip-search-input" />
+          </IconField>
+          <Button v-if="ipSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="ipSearch = ''" />
+        </div>
         <DataTable :value="ips" stripedRows size="small"
                    :loading="loadingPage"
                    emptyMessage="No IP addresses."
@@ -88,46 +95,53 @@
                    :first="(currentPage - 1) * currentPageSize"
                    :rowsPerPageOptions="rowsPerPageOptions"
                    @page="onLazyPage">
-          <Column header="Address" style="width: 10rem">
+          <Column field="ip_address" header="Address" sortable style="width: 10rem">
             <template #body="{ data }">
               <span class="ip-mono">{{ data.ip_address }}</span>
             </template>
           </Column>
-          <Column header="Status" style="width: 7rem">
+          <Column field="status" header="Status" sortable style="width: 7rem">
             <template #body="{ data }">
-              <Tag :severity="statusSeverity(data.status)" :value="data.status" />
+              <Tag :severity="computeIpState(data).statusSeverity" :value="computeIpState(data).status" />
             </template>
           </Column>
           <Column header="Type" style="width: 9rem">
             <template #body="{ data }">
-              <span v-if="data.status === 'reserved' && data.reservation_note" class="range-type-badge reservation-badge">
-                {{ data.reservation_note }}
-              </span>
-              <span v-else-if="data.range_type_name" class="range-type-badge" :style="{ background: data.range_type_color }">
-                {{ data.range_type_name }}
-              </span>
+              <Tag v-if="computeIpState(data).type" :severity="computeIpState(data).typeSeverity"
+                   :value="computeIpState(data).type"
+                   v-tooltip.top="computeIpState(data).tooltip || null" />
               <span v-else>—</span>
             </template>
           </Column>
-          <Column field="hostname" header="Hostname" style="width: 10rem">
-            <template #body="{ data }">{{ data.hostname || '—' }}</template>
+          <Column field="hostname" header="Hostname" sortable style="width: 10rem">
+            <template #body="{ data }">{{ displayHostname(data.hostname) }}</template>
           </Column>
-          <Column header="MAC Address" style="width: 10rem">
+          <Column header="MAC Address" sortable style="width: 10rem" :sortField="'mac_address'">
             <template #body="{ data }">{{ data.mac_address || data.last_seen_mac || data.scan_mac || '—' }}</template>
           </Column>
-          <Column header="Online" style="width: 5rem">
+          <Column field="vendor" header="Vendor" sortable style="width: 10rem">
+            <template #body="{ data }">{{ data.vendor || '—' }}</template>
+          </Column>
+          <Column field="is_online" header="Online" sortable style="width: 5rem">
             <template #body="{ data }">
               <span v-if="data.is_online" class="online-dot online">●</span>
               <span v-else class="online-dot offline">●</span>
             </template>
           </Column>
-          <Column header="Last Seen" style="width: 10rem">
+          <Column field="last_seen_at" header="Last Seen" sortable style="width: 10rem">
             <template #body="{ data }">{{ data.last_seen_at ? formatDate(data.last_seen_at) : '—' }}</template>
+          </Column>
+          <Column field="dhcp_expires_at" header="Expires" sortable style="width: 9rem">
+            <template #body="{ data }">
+              <template v-if="!data.dhcp_expires_at">—</template>
+              <template v-else-if="data.dhcp_expires_at === 'infinite'">Never</template>
+              <template v-else>{{ formatDate(data.dhcp_expires_at) }}</template>
+            </template>
           </Column>
         </DataTable>
       </TabPanel>
 
-      <TabPanel header="Grid View">
+      <TabPanel header="Grid View" :pt="{ headerAction: { 'data-track': 'subnet-tab-grid-view' } }">
         <div class="grid-view-scroll">
         <!-- Ranges Table -->
         <div class="section">
@@ -219,11 +233,11 @@
     </div>
 
     <!-- Scan Confirm Dialog -->
-    <Dialog v-model:visible="showScanConfirm" header="Scan Network" modal :style="{ width: '26rem' }">
+    <Dialog v-model:visible="showScanConfirm" header="Scan Network" modal :style="{ width: '26rem' }" data-track="dialog-scan-network">
       <p>This will send ARP probes to all usable IPs in <strong>{{ subnet?.cidr }}</strong>.</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showScanConfirm = false" />
-        <Button label="Start Scan" icon="pi pi-search" @click="doStartScan" :loading="startingScan" />
+        <Button label="Start Scan" icon="pi pi-search" data-track="btn-start-scan" @click="doStartScan" :loading="startingScan" />
       </template>
     </Dialog>
 
@@ -235,7 +249,7 @@
 
     <!-- Range Create/Edit Dialog -->
     <Dialog v-model:visible="showRangeDialog" :header="rangeDialogHeader"
-            modal :style="{ width: '28rem' }">
+            modal :style="{ width: '28rem' }" data-track="dialog-range-edit">
       <div class="form-grid">
         <div class="field" v-if="editingRange">
           <label>Range Type *</label>
@@ -270,7 +284,7 @@
     </Dialog>
 
     <!-- Overlap Warning Dialog -->
-    <Dialog v-model:visible="showOverlapDialog" header="Range Overlap Warning" modal :style="{ width: '30rem' }">
+    <Dialog v-model:visible="showOverlapDialog" header="Range Overlap Warning" modal :style="{ width: '30rem' }" data-track="dialog-overlap-warning">
       <p>This range overlaps with existing ranges:</p>
       <ul>
         <li v-for="o in overlapDetails" :key="o.id">
@@ -287,7 +301,7 @@
     <!-- Delete Range/Address Confirmation -->
     <Dialog v-model:visible="showDeleteRangeDialog"
             :header="deletingRange?.start_ip === deletingRange?.end_ip ? 'Delete Address' : 'Delete Range'"
-            modal :style="{ width: '24rem' }">
+            modal :style="{ width: '24rem' }" data-track="dialog-delete-range">
       <p v-if="deletingRange?.start_ip === deletingRange?.end_ip">Delete this address ({{ deletingRange?.start_ip }})?</p>
       <p v-else>Delete this range ({{ deletingRange?.start_ip }} – {{ deletingRange?.end_ip }})?</p>
       <template #footer>
@@ -300,7 +314,7 @@
     <ScopeDialog ref="scopeDialogRef" @saved="reloadData" />
 
     <!-- Reserve IP Note Dialog -->
-    <Dialog v-model:visible="showReserveDialog" header="Reserve IP Address(es)" modal :style="{ width: '26rem' }">
+    <Dialog v-model:visible="showReserveDialog" header="Reserve IP Address(es)" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
       <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
         Reserved IPs cannot be used for DHCP or static assignment.
       </p>
@@ -320,7 +334,36 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
-        <Button label="Reserve" icon="pi pi-lock" @click="confirmReserve" :disabled="!reserveNote.trim()" />
+        <Button label="Reserve" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
+      </template>
+    </Dialog>
+
+    <!-- Convert to Static DHCP Reservation Dialog -->
+    <Dialog v-model:visible="showStaticDhcpDialog" header="Create Static DHCP Reservation" modal :style="{ width: '28rem' }" data-track="dialog-static-dhcp">
+      <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
+        Convert this dynamic DHCP assignment to a static reservation.
+      </p>
+      <div class="form-grid">
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">IP Address</label>
+          <InputText v-model="staticDhcpForm.ip_address" class="w-full" readonly />
+        </div>
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">MAC Address</label>
+          <InputText v-model="staticDhcpForm.mac_address" class="w-full" placeholder="XX:XX:XX:XX:XX:XX" />
+        </div>
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Hostname</label>
+          <InputText v-model="staticDhcpForm.hostname" class="w-full" placeholder="Optional" />
+        </div>
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Description</label>
+          <InputText v-model="staticDhcpForm.description" class="w-full" placeholder="Optional" />
+        </div>
+      </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="showStaticDhcpDialog = false" />
+        <Button label="Create Reservation" icon="pi pi-check" data-track="btn-create-static-dhcp" @click="confirmStaticDhcp" :disabled="!staticDhcpForm.mac_address" />
       </template>
     </Dialog>
 
@@ -338,6 +381,8 @@ import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
+import IconField from 'primevue/iconfield';
+import InputIcon from 'primevue/inputicon';
 import Select from 'primevue/select';
 import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
@@ -346,6 +391,7 @@ import TabPanel from 'primevue/tabpanel';
 import Tag from 'primevue/tag';
 import ScopeDialog from '../components/ScopeDialog.vue';
 import { useSubnetStore } from '../stores/subnets.js';
+import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
 
 const props = defineProps({
@@ -357,6 +403,7 @@ const emit = defineEmits(['refresh']);
 
 const toast = useToast();
 const store = useSubnetStore();
+const dhcpStore = useDhcpStore();
 
 const subnet = ref(null);
 const ips = ref([]);
@@ -371,12 +418,42 @@ const reserveStartIp = ref('');
 const reserveEndIp = ref('');
 const reserveNote = ref('');
 
+// Convert to Static DHCP Reservation dialog
+const showStaticDhcpDialog = ref(false);
+const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', description: '' });
+
 // Server-side pagination state
 const currentPage = ref(1);
 const currentPageSize = ref(256);
 const totalIps = ref(0);
 const totalPages = ref(0);
 const loadingPage = ref(false);
+
+// Persistence helper
+function loadJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch { return fallback; }
+}
+
+// Active tab (IP Addresses = 0, Grid View = 1)
+const activeTabIndex = ref(loadJson('ipam_subnet_detail_tab', 0));
+watch(activeTabIndex, (val) => {
+  try { localStorage.setItem('ipam_subnet_detail_tab', JSON.stringify(val)); } catch {}
+});
+
+// Search / filter
+const ipSearch = ref('');
+let _searchTimer = null;
+watch(ipSearch, (val) => {
+  if (_searchTimer) clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => {
+    _searchTimer = null;
+    currentPage.value = 1;
+    loadIpPage(1, currentPageSize.value);
+  }, 300);
+});
 
 // Loading overlay for large subnets (>256 IPs)
 const showLoadingOverlay = ref(false);
@@ -425,7 +502,9 @@ const tableContextMenuItems = computed(() => {
     address: row.ip_address,
     rangeId: range?.id || null,
     rangeType: row.range_type_name || null,
-    status: row.status || 'available'
+    status: row.status || 'available',
+    mac: row.mac_address || row.last_seen_mac || row.scan_mac || null,
+    hostname: row.hostname || null
   };
 
   return buildContextMenuItems([ip]);
@@ -451,14 +530,71 @@ function formatDate(dateStr) {
   return d.toLocaleString();
 }
 
-function statusSeverity(status) {
-  switch (status) {
-    case 'assigned': return 'info';
-    case 'reserved': return 'warn';
-    case 'dhcp': return 'success';
-    case 'available': return 'secondary';
-    default: return 'danger';
+function displayHostname(hostname) {
+  if (!hostname) return '—';
+  const domain = subnet.value?.domain_name;
+  if (domain && hostname.endsWith('.' + domain)) {
+    return hostname.slice(0, -(domain.length + 1));
   }
+  return hostname;
+}
+
+/**
+ * Compute unified status + type for an IP row.
+ * Returns { status, statusSeverity, type, typeSeverity, tooltip? }
+ */
+function computeIpState(data) {
+  const mac = data.mac_address || data.last_seen_mac || data.scan_mac;
+  const isDhcpScope = data.range_type_name === 'DHCP Scope';
+  const isLeaseExpired = data.dhcp_expires_at && data.dhcp_expires_at !== 'infinite'
+    && new Date(data.dhcp_expires_at) < new Date();
+
+  // Network / Broadcast
+  if (data.range_type_name === 'Network' || data.range_type_name === 'Broadcast') {
+    return { status: 'unavailable', statusSeverity: 'danger', type: 'system', typeSeverity: 'secondary' };
+  }
+
+  // Gateway
+  if (data.range_type_name === 'Gateway') {
+    return { status: 'unavailable', statusSeverity: 'danger', type: 'gateway', typeSeverity: 'warn' };
+  }
+
+  // Rogue: something responded on wire but has no lease, reservation, or assignment
+  if (mac && (data.is_online || data.scan_responded)
+      && data.status === 'available' && !data.has_dhcp_reservation && !data.hostname && !isDhcpScope) {
+    return { status: 'unavailable', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger' };
+  }
+
+  // Inside DHCP scope
+  if (isDhcpScope) {
+    // Static reservation in DHCP range
+    if (data.has_dhcp_reservation) {
+      return { status: 'unavailable', statusSeverity: 'danger', type: 'static', typeSeverity: 'info' };
+    }
+    // Dynamic lease — active
+    if (data.dhcp_expires_at && !isLeaseExpired) {
+      return { status: 'unavailable', statusSeverity: 'danger', type: 'dynamic', typeSeverity: 'success' };
+    }
+    // Unassigned or expired lease in DHCP range
+    return { status: 'available', statusSeverity: 'secondary', type: 'dhcp', typeSeverity: 'secondary' };
+  }
+
+  // Reserved (manual, outside DHCP)
+  if (data.status === 'reserved') {
+    return {
+      status: 'unavailable', statusSeverity: 'danger',
+      type: 'reserved', typeSeverity: 'warn',
+      tooltip: data.reservation_note || null
+    };
+  }
+
+  // DNS assigned (has hostname, outside DHCP range)
+  if ((data.status === 'assigned' || data.hostname) && !isDhcpScope) {
+    return { status: 'unavailable', statusSeverity: 'danger', type: 'dns assigned', typeSeverity: 'info' };
+  }
+
+  // Completely undefined
+  return { status: 'available', statusSeverity: 'secondary', type: null, typeSeverity: null };
 }
 
 const rangeTypeLegend = computed(() => {
@@ -490,11 +626,21 @@ const rangeDialogHeader = computed(() => {
 
 function gridTooltip(ip) {
   const lines = [ip.address];
-  if (ip.status === 'reserved' && ip.reservationNote) lines.push(`Reserved: ${ip.reservationNote}`);
-  else if (ip.rangeType) lines.push(`Type: ${ip.rangeType}`);
-  lines.push(`Status: ${ip.status}`);
-  if (ip.hostname) lines.push(`Host: ${ip.hostname}`);
+  const pseudoData = {
+    status: ip.status, range_type_name: ip.rangeType, reservation_note: ip.reservationNote,
+    has_dhcp_reservation: ip.hasDhcpReservation, hostname: ip.hostname,
+    mac_address: ip.mac, last_seen_mac: null, scan_mac: null,
+    is_online: ip.isOnline ? 1 : 0, scan_responded: null,
+    dhcp_expires_at: ip.dhcpExpiresAt || null
+  };
+  const state = computeIpState(pseudoData);
+  lines.push(`Status: ${state.status}`);
+  if (state.type) {
+    lines.push(`Type: ${state.type}${state.tooltip ? ` (${state.tooltip})` : ''}`);
+  }
+  if (ip.hostname) lines.push(`Host: ${displayHostname(ip.hostname)}`);
   if (ip.mac) lines.push(`MAC: ${ip.mac}`);
+  if (ip.vendor) lines.push(`Vendor: ${ip.vendor}`);
   lines.push(ip.isOnline ? 'Online' : 'Offline');
   if (ip.lastSeen) lines.push(`Last seen: ${formatDate(ip.lastSeen)}`);
   if (ip.conflictReason) lines.push(`Warning: ${ip.conflictReason}`);
@@ -545,6 +691,9 @@ const ipGrid = computed(() => {
       mac: assignInfo?.mac_address || assignInfo?.last_seen_mac || assignInfo?.scan_mac || null,
       status: assignInfo?.status || 'available',
       reservationNote: assignInfo?.reservation_note || null,
+      hasDhcpReservation: assignInfo?.has_dhcp_reservation || 0,
+      dhcpExpiresAt: assignInfo?.dhcp_expires_at || null,
+      vendor: assignInfo?.vendor || null,
       isOnline: assignInfo?.is_online === 1,
       lastSeen: assignInfo?.last_seen_at || null,
       isConflict: conflictMap.has(addr),
@@ -705,6 +854,16 @@ function buildContextMenuItems(selectedIps) {
         });
       }
     }
+
+    // Convert dynamic DHCP to static reservation
+    if (ip.mac && (ipStatus === 'dhcp' || isDhcpScope)) {
+      items.push({ separator: true });
+      items.push({
+        label: 'Make Static DHCP Reservation',
+        icon: 'pi pi-arrow-right-arrow-left',
+        command: () => openStaticDhcpDialog(ip)
+      });
+    }
   } else {
     // Multi-select
     items.push({
@@ -756,6 +915,33 @@ async function setIpReservation(ipAddress, status, note) {
   }
 }
 
+function openStaticDhcpDialog(ip) {
+  staticDhcpForm.value = {
+    ip_address: ip.address,
+    mac_address: ip.mac || '',
+    hostname: ip.hostname || '',
+    description: ''
+  };
+  showStaticDhcpDialog.value = true;
+}
+
+async function confirmStaticDhcp() {
+  try {
+    await dhcpStore.createReservation({
+      subnet_id: Number(subnet.value.id),
+      ip_address: staticDhcpForm.value.ip_address,
+      mac_address: staticDhcpForm.value.mac_address,
+      hostname: staticDhcpForm.value.hostname || null,
+      description: staticDhcpForm.value.description || null
+    });
+    showStaticDhcpDialog.value = false;
+    toast.add({ severity: 'success', summary: 'Static DHCP reservation created', life: 3000 });
+    await reloadData();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  }
+}
+
 const gridContextMenuItems = computed(() => {
   const sel = gridSelection.value;
   if (sel.size === 0) return [];
@@ -767,7 +953,7 @@ const gridContextMenuItems = computed(() => {
 async function loadIpPage(page, pageSize, { skipCache = false } = {}) {
   loadingPage.value = true;
   try {
-    const detail = await store.getSubnetDetail(props.subnetId, page, pageSize, { skipCache });
+    const detail = await store.getSubnetDetail(props.subnetId, page, pageSize, { skipCache, search: ipSearch.value });
     // Guard: if subnetId changed while we were loading, discard stale result
     if (detail.subnet.id !== Number(props.subnetId)) return;
     subnet.value = detail.subnet;
@@ -840,6 +1026,7 @@ function onLazyPage(event) {
 let _loadTimer = null;
 watch(() => props.subnetId, (newId, oldId) => {
   gridSelection.value = new Set();
+  ipSearch.value = '';
   if (_loadTimer) clearTimeout(_loadTimer);
   if (!newId) {
     subnet.value = null;
@@ -1064,6 +1251,16 @@ onUnmounted(() => {
 
 
 <style scoped>
+.ip-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0;
+}
+.ip-search-input {
+  width: 22rem;
+}
+
 .subnet-detail {
   height: 100%;
   display: flex;

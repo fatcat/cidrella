@@ -22,6 +22,3 @@ ALTER TABLE ip_addresses ADD COLUMN is_online INTEGER NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_subnets_folder ON subnets(folder_id);
 
--- Migrate existing root subnets into a Default folder
-INSERT INTO folders (name, description, sort_order) VALUES ('Default', 'Default folder', 0);
-UPDATE subnets SET folder_id = (SELECT id FROM folders WHERE name = 'Default') WHERE parent_id IS NULL;

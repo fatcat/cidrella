@@ -5,6 +5,8 @@ import { execFileSync } from 'child_process';
 import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
 import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
+import { syncLeasesToIps } from './ip-sync.js';
+import { generateFallbackHostname } from './mac-vendor.js';
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
@@ -186,7 +188,8 @@ export function regenerateReservations(db) {
 
   const lines = reservations.map(r => {
     const parts = [r.mac_address, r.ip_address];
-    if (r.hostname) parts.push(r.hostname);
+    const hostname = r.hostname || generateFallbackHostname(r.mac_address);
+    if (hostname) parts.push(hostname);
     parts.push('infinite');
     return parts.join(',');
   });
@@ -252,6 +255,28 @@ export function syncLeases(db) {
   });
 
   txn();
+
+  // Generate fallback hostnames for leases without one
+  for (const l of leases) {
+    if (!l.hostname && l.mac) {
+      l.hostname = generateFallbackHostname(l.mac) || null;
+    }
+  }
+
+  syncLeasesToIps(db, leases);
+
+  // Write dnsmasq hosts file for fallback hostnames (forward + reverse resolution)
+  const fallbackEntries = leases.filter(l => l.hostname && l.subnetId);
+  const hostsLines = fallbackEntries.map(l => `${l.ip} ${l.hostname}`);
+  const hostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
+  const newContent = hostsLines.length > 0 ? hostsLines.join('\n') + '\n' : '';
+  let oldContent = '';
+  try { oldContent = fs.readFileSync(hostsPath, 'utf-8'); } catch { /* doesn't exist */ }
+  if (newContent !== oldContent) {
+    atomicWrite(hostsPath, newContent);
+    signalDnsmasq();
+  }
+
   return { synced: leases.length };
 }
 

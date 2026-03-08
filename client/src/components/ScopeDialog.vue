@@ -1,12 +1,16 @@
 <template>
   <!-- Scope Create/Edit Dialog -->
   <Dialog v-model:visible="dialogVisible" :header="editing ? 'Edit Scope' : (showRangePicker ? 'Add Scope' : 'Configure DHCP Scope')"
-          modal :style="{ width: '36rem' }">
+          modal :style="{ width: '36rem' }" data-track="dialog-dhcp-scope">
     <div class="form-grid">
       <div class="field" v-if="showRangePicker">
         <label>Network *</label>
-        <Select v-model="form.subnet_id" :options="subnetsList" optionLabel="_label" optionValue="id"
-                class="w-full" placeholder="Select network" :disabled="!!form.range_id" />
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <Select v-model="form.subnet_id" :options="subnetsList" optionLabel="_label" optionValue="id"
+                  class="w-full" placeholder="Select network" :disabled="!!form.range_id" />
+          <Button icon="pi pi-plus" severity="success" text rounded size="small"
+                  title="Add Network" @click="openAddNetwork" :disabled="!!form.range_id" />
+        </div>
       </div>
       <div class="field" v-if="showRangePicker">
         <label>DHCP Scope Range</label>
@@ -101,6 +105,8 @@
       </a>
     </div>
   </Popover>
+
+  <NetworkDialogs ref="networkDialogsRef" :folders="subnetStore.folders" @network-created="onNetworkCreated" />
 </template>
 
 <script setup>
@@ -115,6 +121,8 @@ import ToggleSwitch from 'primevue/toggleswitch';
 import Popover from 'primevue/popover';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
+import NetworkDialogs from './NetworkDialogs.vue';
+import { parseCidr, longToIp } from '../utils/ip.js';
 import api from '../api/client.js';
 
 const toast = useToast();
@@ -129,10 +137,12 @@ const form = ref(emptyForm());
 const availableRanges = ref([]);
 const loadingRanges = ref(false);
 const subnetsList = ref([]);
+const networkDialogsRef = ref(null);
 
 // Options state
 const optionCatalog = ref([]);
 const defaultValues = reactive({});
+const enabledDefaultCodes = ref([]);
 const optionsExpanded = ref(false);
 const optionGroupOrder = ref([]);
 
@@ -187,6 +197,7 @@ async function loadOptions() {
     for (const [code, value] of Object.entries(res.data.defaults || {})) {
       defaultValues[Number(code)] = value;
     }
+    enabledDefaultCodes.value = res.data.enabledDefaults || [];
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
   }
@@ -296,9 +307,8 @@ watch(() => form.value.subnet_id, (subnetId, oldSubnetId) => {
   const subnet = subnetsList.value.find(s => s.id === subnetId);
   if (!subnet) return;
 
-  // Enable all network-dependent options
-  const networkCodes = [3, 1, 6, 15, 119]; // Gateway, Subnet Mask, DNS Servers, Domain Name, DNS Search List
-  for (const code of networkCodes) {
+  // Enable all enabled-by-default options
+  for (const code of enabledDefaultCodes.value) {
     if (!form.value.selectedOptions.includes(code)) form.value.selectedOptions.push(code);
     if (defaultValues[code] != null && !form.value.optionValues[code]) {
       form.value.optionValues[code] = defaultValues[code];
@@ -318,6 +328,15 @@ watch(() => form.value.subnet_id, (subnetId, oldSubnetId) => {
   }
   if (subnet.name && !form.value.description) {
     form.value.description = `${subnet.name} DHCP Scope`;
+  }
+
+  // Pre-fill suggested start/end IPs from subnet CIDR
+  if (subnet.cidr && !form.value.start_ip && !form.value.end_ip) {
+    try {
+      const { network, broadcast } = parseCidr(subnet.cidr);
+      form.value.start_ip = longToIp(network + 1);
+      form.value.end_ip = longToIp(broadcast - 1);
+    } catch { /* ignore */ }
   }
 });
 
@@ -380,6 +399,19 @@ async function loadSubnetsList() {
     }
     subnetsList.value = result;
   } catch { /* ignore */ }
+}
+
+function openAddNetwork() {
+  networkDialogsRef.value?.openCreateNetwork(null);
+}
+
+async function onNetworkCreated() {
+  const oldIds = new Set(subnetsList.value.map(s => s.id));
+  await loadSubnetsList();
+  const newSubnet = subnetsList.value.find(s => !oldIds.has(s.id));
+  if (newSubnet) {
+    form.value.subnet_id = newSubnet.id;
+  }
 }
 
 const emit = defineEmits(['saved']);
@@ -506,20 +538,14 @@ async function openNewWithPicker(subnetCtx) {
   const autoSelected = [];
   const autoValues = {};
 
-  // Always auto-select non-network-dependent options
-  const alwaysSelectCodes = [51]; // Lease Time
-  for (const code of alwaysSelectCodes) {
+  // Auto-select all enabled-by-default options
+  for (const code of enabledDefaultCodes.value) {
     autoSelected.push(code);
     if (defaultValues[code] != null) autoValues[code] = defaultValues[code];
   }
 
-  // Network-dependent options — only enable when we have subnet context
+  // Network-dependent overrides from subnet context
   if (subnetCtx) {
-    const networkCodes = [3, 1, 6, 15, 119]; // Gateway, Subnet Mask, DNS Servers, Domain Name, DNS Search List
-    for (const code of networkCodes) {
-      autoSelected.push(code);
-      if (defaultValues[code] != null) autoValues[code] = defaultValues[code];
-    }
     if (subnetCtx.gateway_address) autoValues[3] = subnetCtx.gateway_address;
     if (subnetCtx.cidr) {
       const mask = computeMask(subnetCtx.cidr);
@@ -565,11 +591,10 @@ async function openNewForRange(opts) {
   editing.value = null;
   showRangePicker.value = false;
 
-  // Auto-select specific options with their defaults
-  const autoSelectCodes = [3, 1, 6, 15, 119, 51]; // Gateway, Subnet Mask, DNS Servers, Domain Name, DNS Search List, Lease Time
+  // Auto-select enabled-by-default options
   const autoSelected = [];
   const autoValues = {};
-  for (const code of autoSelectCodes) {
+  for (const code of enabledDefaultCodes.value) {
     autoSelected.push(code);
     if (defaultValues[code] != null) {
       autoValues[code] = defaultValues[code];

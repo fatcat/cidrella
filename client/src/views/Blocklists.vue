@@ -20,21 +20,21 @@
       </div>
     </div>
 
+    <!-- Settings Row -->
+    <div class="settings-row">
+      <div class="schedule-group">
+        <label class="schedule-label">Update Schedule:</label>
+        <Select v-model="settings.blocklist_update_schedule" :options="scheduleOptions"
+                optionLabel="label" optionValue="value" size="small" style="width: 10rem" />
+      </div>
+      <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" />
+      <Button label="Refresh All" icon="pi pi-refresh" size="small" severity="secondary"
+              @click="doRefreshAll" :loading="refreshingAll" />
+    </div>
+
     <TabView>
       <!-- Categories Tab -->
       <TabPanel header="Categories">
-        <!-- Settings Row -->
-        <div class="settings-row">
-          <div class="schedule-group">
-            <label class="schedule-label">Update Schedule:</label>
-            <Select v-model="settings.blocklist_update_schedule" :options="scheduleOptions"
-                    optionLabel="label" optionValue="value" size="small" style="width: 10rem" />
-          </div>
-          <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" />
-          <Button label="Refresh All" icon="pi pi-refresh" size="small" severity="secondary"
-                  @click="doRefreshAll" :loading="refreshingAll" />
-        </div>
-
         <!-- Category Table -->
         <DataTable :value="store.categories" :loading="store.loading" stripedRows size="small"
                    emptyMessage="Loading categories..." dataKey="slug"
@@ -116,9 +116,9 @@
 
       <!-- Whitelist Tab -->
       <TabPanel header="Whitelist">
-        <div class="whitelist-add">
-          <InputText v-model="newWhitelistDomain" placeholder="domain.com" class="wl-input" />
-          <InputText v-model="newWhitelistReason" placeholder="Reason (optional)" class="wl-reason" />
+        <div class="settings-row">
+          <InputText v-model="newWhitelistDomain" placeholder="domain.com" style="width: 16rem" />
+          <InputText v-model="newWhitelistReason" placeholder="Reason (optional)" style="width: 14rem" />
           <Button label="Add" icon="pi pi-plus" size="small" @click="doAddWhitelist" :loading="addingWhitelist" />
         </div>
         <DataTable :value="store.whitelist" stripedRows size="small" emptyMessage="No whitelisted domains."
@@ -143,8 +143,8 @@
 
       <!-- Search Tab -->
       <TabPanel header="Search">
-        <div class="search-bar">
-          <InputText v-model="searchQuery" placeholder="Search blocked domains..." class="search-input"
+        <div class="settings-row">
+          <InputText v-model="searchQuery" placeholder="Search blocked domains..." style="width: 20rem"
                      @keyup.enter="doSearch" />
           <Button label="Search" icon="pi pi-search" size="small" @click="doSearch" :loading="searching" />
         </div>
@@ -398,7 +398,7 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.blocklists-page { padding: 1.5rem 2rem; box-sizing: border-box; }
+.blocklists-page { }
 .blocklists-page :deep(.p-tabview) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .blocklists-page :deep(.p-tabview-panels) { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .blocklists-page :deep(.p-tabview-panel) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -413,9 +413,10 @@ onMounted(async () => {
   border: 1px solid var(--p-surface-border);
   border-radius: 8px;
   margin-bottom: 1.5rem;
+  flex-wrap: wrap;
 }
 .stat { display: flex; flex-direction: column; }
-.stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; }
+.stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
 .stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
 
 .settings-row {
@@ -451,21 +452,6 @@ onMounted(async () => {
 .badge-blocked { font-size: 0.75rem; background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); padding: 0.15rem 0.5rem; border-radius: 4px; }
 .badge-whitelisted { font-size: 0.75rem; background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); padding: 0.15rem 0.5rem; border-radius: 4px; }
 
-.whitelist-add {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-  align-items: center;
-}
-.wl-input { width: 16rem; }
-.wl-reason { width: 14rem; }
-
-.search-bar {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-.search-input { width: 20rem; }
 .search-pagination {
   display: flex;
   align-items: center;

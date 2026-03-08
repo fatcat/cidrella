@@ -1,0 +1,688 @@
+<template>
+  <div class="dhcp-panel" style="display: flex; flex-direction: column; height: 100%;">
+    <div class="dhcp-layout">
+      <!-- Scopes Sidebar -->
+      <div class="scope-panel">
+        <Tabs v-model:value="scopeTab">
+          <TabList>
+            <Tab value="scopes" data-track="dhcp-tab-scopes"><i class="pi pi-server" style="margin-right: 0.3rem" />Scopes</Tab>
+          </TabList>
+          <TabPanels>
+            <TabPanel value="scopes">
+              <div class="scope-list" v-if="!store.loading">
+                <div v-for="scope in filteredScopes" :key="scope.id"
+                     class="scope-item"
+                     :class="{ active: selectedScope?.id === scope.id }"
+                     @click="selectScope(scope)">
+                  <div class="scope-info">
+                    <div class="scope-name">
+                      <i class="pi pi-server" />
+                      {{ scope.subnet_name || scope.subnet_cidr }}
+                    </div>
+                    <div class="scope-meta">
+                      <span class="scope-range">{{ scope.start_ip }} — {{ scope.end_ip }}</span>
+                      <span v-if="!scope.enabled" class="badge-disabled">disabled</span>
+                    </div>
+                  </div>
+                  <div class="scope-actions">
+                    <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                            @click.stop="openScopeDialog(scope)" />
+                    <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                            @click.stop="confirmDeleteScope(scope)" />
+                  </div>
+                </div>
+                <div v-if="filteredScopes.length === 0" class="empty-state">
+                  No DHCP scopes configured.
+                </div>
+              </div>
+              <div v-else class="loading-state">
+                <i class="pi pi-spin pi-spinner" /> Loading scopes...
+              </div>
+            </TabPanel>
+          </TabPanels>
+        </Tabs>
+      </div>
+
+      <!-- Leases Panel -->
+      <div class="leases-panel">
+        <div class="dhcp-toolbar">
+          <Button label="Add Scope" icon="pi pi-plus" size="small" text data-track="dhcp-add-scope" @click="openScopeDialog()" />
+          <span class="toolbar-divider"></span>
+          <Button label="Add Reservation" icon="pi pi-plus" size="small" text data-track="dhcp-add-reservation" @click="openReservationDialog()" />
+          <span class="toolbar-divider"></span>
+          <Button label="Sync Now" icon="pi pi-sync" size="small" text data-track="dhcp-sync-leases" @click="doSyncLeases" :loading="syncing" />
+        </div>
+
+        <template v-if="selectedScope">
+          <div class="panel-header">
+            <h3>{{ selectedScope.subnet_name || selectedScope.subnet_cidr }} — Leases</h3>
+          </div>
+
+          <DataTable :value="scopeLeases" :loading="loadingLeases" stripedRows
+                     emptyMessage="No leases or reservations for this scope." size="small"
+                     :paginator="scopeLeases.length > 256" :rows="256"
+                     :rowsPerPageOptions="[64, 128, 256, 512]"
+                     v-model:filters="dhcpFilters" filterDisplay="row"
+                     scrollable scrollHeight="flex">
+            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
+              </template>
+            </Column>
+            <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
+              </template>
+              <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
+            </Column>
+            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
+              </template>
+              <template #body="{ data }">{{ data.hostname || '—' }}</template>
+            </Column>
+            <Column header="Type" sortable field="type" style="width: 7rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpTypeOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
+              </template>
+              <template #body="{ data }">
+                <span :class="data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic'">
+                  {{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}
+                </span>
+              </template>
+            </Column>
+            <Column header="Status" sortable field="status" style="width: 6rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpStatusOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
+              </template>
+              <template #body="{ data }">
+                <span :class="data.status === 'active' ? 'badge-enabled' : 'badge-offline'">
+                  {{ data.status === 'active' ? 'Active' : 'Offline' }}
+                </span>
+              </template>
+            </Column>
+            <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
+              <template #body="{ data }">
+                <template v-if="data.type === 'reserved'">Static</template>
+                <template v-else>{{ data.expires_at === 'infinite' ? 'Never' : formatDate(data.expires_at) }}</template>
+              </template>
+            </Column>
+            <Column header="" style="width: 5rem">
+              <template #body="{ data }">
+                <div v-if="data.type === 'reserved'" class="action-buttons">
+                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                          @click="openReservationDialog(data)" />
+                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                          @click="confirmDeleteReservation(data)" />
+                </div>
+              </template>
+            </Column>
+          </DataTable>
+        </template>
+
+        <template v-else-if="filteredLeases.length > 0">
+          <div class="panel-header">
+            <h3>All Leases</h3>
+          </div>
+
+          <DataTable :value="filteredLeases" :loading="loadingLeases" stripedRows
+                     emptyMessage="No DHCP leases or reservations." size="small"
+                     :paginator="filteredLeases.length > 256" :rows="256"
+                     :rowsPerPageOptions="[64, 128, 256, 512]"
+                     v-model:filters="dhcpAllFilters" filterDisplay="row"
+                     scrollable scrollHeight="flex">
+            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
+              </template>
+            </Column>
+            <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
+              </template>
+              <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
+            </Column>
+            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
+              </template>
+              <template #body="{ data }">{{ data.hostname || '—' }}</template>
+            </Column>
+            <Column header="Network" style="min-width: 8rem">
+              <template #body="{ data }">{{ data.subnet_name || data.subnet_cidr || '—' }}</template>
+            </Column>
+            <Column header="Type" sortable field="type" style="width: 7rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpTypeOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
+              </template>
+              <template #body="{ data }">
+                <span :class="data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic'">
+                  {{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}
+                </span>
+              </template>
+            </Column>
+            <Column header="Status" sortable field="status" style="width: 6rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpStatusOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
+              </template>
+              <template #body="{ data }">
+                <span :class="data.status === 'active' ? 'badge-enabled' : 'badge-offline'">
+                  {{ data.status === 'active' ? 'Active' : 'Offline' }}
+                </span>
+              </template>
+            </Column>
+            <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
+              <template #body="{ data }">
+                <template v-if="data.type === 'reserved'">Static</template>
+                <template v-else>{{ data.expires_at === 'infinite' ? 'Never' : formatDate(data.expires_at) }}</template>
+              </template>
+            </Column>
+            <Column header="" style="width: 5rem">
+              <template #body="{ data }">
+                <div v-if="data.type === 'reserved'" class="action-buttons">
+                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                          @click="openReservationDialog(data)" />
+                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                          @click="confirmDeleteReservation(data)" />
+                </div>
+              </template>
+            </Column>
+          </DataTable>
+        </template>
+
+        <div v-else class="empty-state centered">
+          <i class="pi pi-server" style="font-size: 2rem; opacity: 0.3"></i>
+          <span>Select a scope to view leases</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Scope Dialog (shared component) -->
+    <ScopeDialog ref="scopeDialogRef" @saved="onScopeSaved" />
+
+    <!-- Reservation Dialog -->
+    <Dialog v-model:visible="showReservationDialog" :header="editingReservation ? 'Edit Reservation' : 'Add Reservation'" data-track="dialog-dhcp-reservation"
+            modal :style="{ width: '28rem' }">
+      <div class="form-grid">
+        <div class="field" v-if="!editingReservation">
+          <label>Network *</label>
+          <Select v-model="reservationForm.subnet_id" :options="allocatedSubnets" optionLabel="_label" optionValue="id"
+                  class="w-full" placeholder="Select network" />
+        </div>
+        <div class="field">
+          <label>MAC Address *</label>
+          <InputText v-model="reservationForm.mac_address" class="w-full" placeholder="AA:BB:CC:DD:EE:FF" />
+        </div>
+        <div class="field">
+          <label>IP Address *</label>
+          <InputText v-model="reservationForm.ip_address" class="w-full" placeholder="192.168.1.100" />
+        </div>
+        <div class="field">
+          <label>Hostname</label>
+          <InputText v-model="reservationForm.hostname" class="w-full" placeholder="mydevice" />
+        </div>
+        <div class="field">
+          <label>Description</label>
+          <InputText v-model="reservationForm.description" class="w-full" />
+        </div>
+        <div class="field" v-if="editingReservation">
+          <label>Enabled</label>
+          <ToggleSwitch v-model="reservationForm.enabled" />
+        </div>
+      </div>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="showReservationDialog = false" />
+        <Button :label="editingReservation ? 'Save' : 'Create'" @click="saveReservation" :loading="savingReservation" />
+      </template>
+    </Dialog>
+
+    <!-- Delete Scope Dialog -->
+    <Dialog v-model:visible="showDeleteScopeDialog" header="Delete Scope" modal :style="{ width: '24rem' }" data-track="dialog-dhcp-delete-scope">
+      <p>Delete DHCP scope for <strong>{{ deletingScope?.subnet_cidr }}</strong>?</p>
+      <p class="text-sm muted">The underlying DHCP Scope range will be kept.</p>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="showDeleteScopeDialog = false" />
+        <Button label="Delete" severity="danger" @click="doDeleteScope" :loading="savingScope" />
+      </template>
+    </Dialog>
+
+    <!-- Delete Reservation Dialog -->
+    <Dialog v-model:visible="showDeleteReservationDialog" header="Delete Reservation" modal :style="{ width: '24rem' }" data-track="dialog-dhcp-delete-reservation">
+      <p>Delete reservation for <strong>{{ deletingReservation?.mac_address }}</strong> → {{ deletingReservation?.ip_address }}?</p>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="showDeleteReservationDialog = false" />
+        <Button label="Delete" severity="danger" @click="doDeleteReservation" :loading="savingReservation" />
+      </template>
+    </Dialog>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, watch, onMounted } from 'vue';
+import { useToast } from 'primevue/usetoast';
+import { FilterMatchMode } from '@primevue/core/api';
+import Button from 'primevue/button';
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
+import Dialog from 'primevue/dialog';
+import InputText from 'primevue/inputtext';
+import Select from 'primevue/select';
+import ToggleSwitch from 'primevue/toggleswitch';
+import Tabs from 'primevue/tabs';
+import TabList from 'primevue/tablist';
+import Tab from 'primevue/tab';
+import TabPanels from 'primevue/tabpanels';
+import TabPanel from 'primevue/tabpanel';
+import { useDhcpStore } from '../stores/dhcp.js';
+import api from '../api/client.js';
+import ScopeDialog from './ScopeDialog.vue';
+
+const props = defineProps({
+  orgId: { type: [Number, null], default: null }
+});
+
+const store = useDhcpStore();
+const toast = useToast();
+
+const scopeTab = ref('scopes');
+const selectedScope = ref(null);
+const syncing = ref(false);
+const loadingLeases = ref(false);
+
+// Scope dialog
+const scopeDialogRef = ref(null);
+const savingScope = ref(false);
+
+// Reservation dialog
+const showReservationDialog = ref(false);
+const editingReservation = ref(null);
+const savingReservation = ref(false);
+const reservationForm = ref({ subnet_id: null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true });
+const allocatedSubnets = ref([]);
+
+const dhcpTypeOptions = ['reserved', 'dynamic'];
+const dhcpStatusOptions = ['active', 'offline'];
+
+const dhcpFilters = ref({
+  ip_address: { value: null, matchMode: FilterMatchMode.CONTAINS },
+  mac_address: { value: null, matchMode: FilterMatchMode.CONTAINS },
+  hostname: { value: null, matchMode: FilterMatchMode.CONTAINS },
+  type: { value: null, matchMode: FilterMatchMode.EQUALS },
+  status: { value: null, matchMode: FilterMatchMode.EQUALS },
+});
+
+const dhcpAllFilters = ref({
+  ip_address: { value: null, matchMode: FilterMatchMode.CONTAINS },
+  mac_address: { value: null, matchMode: FilterMatchMode.CONTAINS },
+  hostname: { value: null, matchMode: FilterMatchMode.CONTAINS },
+  type: { value: null, matchMode: FilterMatchMode.EQUALS },
+  status: { value: null, matchMode: FilterMatchMode.EQUALS },
+});
+
+// Delete dialogs
+const showDeleteScopeDialog = ref(false);
+const deletingScope = ref(null);
+const showDeleteReservationDialog = ref(false);
+const deletingReservation = ref(null);
+
+// Org-filtered scopes and leases
+const filteredScopes = computed(() => {
+  if (props.orgId == null) return store.scopes;
+  return store.scopes.filter(s => s.folder_id === props.orgId);
+});
+
+const filteredLeases = computed(() => {
+  if (props.orgId == null) return store.leases;
+  return store.leases.filter(l => l.folder_id === props.orgId);
+});
+
+// Filter leases for selected scope
+const scopeLeases = computed(() => {
+  if (!selectedScope.value) return [];
+  return store.leases.filter(l => l.subnet_id === selectedScope.value.subnet_id);
+});
+
+// Clear selection if org filter changes and selected scope is no longer visible
+watch(() => props.orgId, () => {
+  if (selectedScope.value && !filteredScopes.value.find(s => s.id === selectedScope.value.id)) {
+    selectedScope.value = filteredScopes.value[0] || null;
+  }
+});
+
+function loadJson(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch { return fallback; }
+}
+
+function selectScope(scope) {
+  selectedScope.value = scope;
+  try { localStorage.setItem('ipam_dhcp_selected_scope_id', JSON.stringify(scope?.id || null)); } catch {}
+}
+
+function formatDate(iso) {
+  if (!iso) return '—';
+  try {
+    return new Date(iso).toLocaleString();
+  } catch { return iso; }
+}
+
+// Scope dialog methods
+async function openScopeDialog(scope = null) {
+  if (scope) {
+    scopeDialogRef.value.openEdit(scope);
+  } else {
+    scopeDialogRef.value.openNewWithPicker();
+  }
+}
+
+async function onScopeSaved() {
+  await store.fetchScopes();
+  // Re-select if the scope was updated
+  if (selectedScope.value) {
+    const fresh = store.scopes.find(s => s.id === selectedScope.value.id);
+    if (fresh) selectedScope.value = fresh;
+  }
+}
+
+function confirmDeleteScope(scope) {
+  deletingScope.value = scope;
+  showDeleteScopeDialog.value = true;
+}
+
+async function doDeleteScope() {
+  savingScope.value = true;
+  try {
+    await store.deleteScope(deletingScope.value.id);
+    showDeleteScopeDialog.value = false;
+    if (selectedScope.value?.id === deletingScope.value.id) {
+      selectedScope.value = null;
+    }
+    toast.add({ severity: 'success', summary: 'Scope deleted', life: 3000 });
+    window.dispatchEvent(new Event('ipam:stats-changed'));
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    savingScope.value = false;
+  }
+}
+
+// Reservation CRUD
+async function openReservationDialog(reservation = null) {
+  editingReservation.value = reservation;
+  if (reservation) {
+    reservationForm.value = {
+      subnet_id: reservation.subnet_id,
+      mac_address: reservation.mac_address,
+      ip_address: reservation.ip_address,
+      hostname: reservation.hostname || '',
+      description: reservation.description || '',
+      enabled: reservation.enabled !== undefined ? !!reservation.enabled : true
+    };
+  } else {
+    reservationForm.value = { subnet_id: selectedScope.value?.subnet_id || null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true };
+    try {
+      const res = await api.get('/subnets');
+      const flatten = (nodes) => {
+        let result = [];
+        for (const n of nodes) {
+          if (n.status === 'allocated') {
+            result.push({ ...n, _label: `${n.name} (${n.cidr})` });
+          }
+          if (n.children?.length) result.push(...flatten(n.children));
+        }
+        return result;
+      };
+      allocatedSubnets.value = flatten(res.data.tree || []);
+    } catch { /* ignore */ }
+  }
+  showReservationDialog.value = true;
+}
+
+async function saveReservation() {
+  savingReservation.value = true;
+  try {
+    const payload = {
+      mac_address: reservationForm.value.mac_address,
+      ip_address: reservationForm.value.ip_address,
+      hostname: reservationForm.value.hostname || null,
+      description: reservationForm.value.description || null,
+      enabled: reservationForm.value.enabled
+    };
+
+    if (editingReservation.value) {
+      const resId = editingReservation.value.reservation_id || editingReservation.value.id;
+      await store.updateReservation(resId, payload);
+      toast.add({ severity: 'success', summary: 'Reservation updated', life: 3000 });
+    } else {
+      await store.createReservation({
+        subnet_id: reservationForm.value.subnet_id,
+        ...payload
+      });
+      toast.add({ severity: 'success', summary: 'Reservation created', life: 3000 });
+    }
+    showReservationDialog.value = false;
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    savingReservation.value = false;
+  }
+}
+
+function confirmDeleteReservation(reservation) {
+  deletingReservation.value = reservation;
+  showDeleteReservationDialog.value = true;
+}
+
+async function doDeleteReservation() {
+  savingReservation.value = true;
+  try {
+    const resId = deletingReservation.value.reservation_id || deletingReservation.value.id;
+    await store.deleteReservation(resId);
+    showDeleteReservationDialog.value = false;
+    toast.add({ severity: 'success', summary: 'Reservation deleted', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    savingReservation.value = false;
+  }
+}
+
+// Lease sync
+async function doSyncLeases() {
+  syncing.value = true;
+  try {
+    const result = await store.syncLeases();
+    toast.add({ severity: 'success', summary: 'Leases synced', detail: `${result.synced} leases`, life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  } finally {
+    syncing.value = false;
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([
+    store.fetchScopes(),
+    store.fetchLeases()
+  ]);
+  // Restore previously selected scope, or auto-select first
+  const savedScopeId = loadJson('ipam_dhcp_selected_scope_id', null);
+  if (savedScopeId) {
+    const scope = filteredScopes.value.find(s => s.id === savedScopeId);
+    if (scope) {
+      selectedScope.value = scope;
+      return;
+    }
+  }
+  if (filteredScopes.value.length > 0 && !selectedScope.value) {
+    selectedScope.value = filteredScopes.value[0];
+  }
+});
+
+defineExpose({ openScopeDialog });
+</script>
+
+<style scoped>
+.dhcp-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 1.5rem;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Scope Sidebar ── */
+.scope-panel {
+  background: var(--p-content-background);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
+  overflow: hidden;
+  color: var(--p-text-color);
+}
+.scope-panel :deep(.p-tabpanels) {
+  padding: 0;
+}
+.scope-panel :deep(.p-tablist) {
+  background: var(--p-surface-ground);
+}
+
+.scope-list {
+  overflow-y: auto;
+}
+
+.scope-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.6rem 1rem;
+  cursor: pointer;
+  border-bottom: 1px solid var(--p-surface-border);
+  border-left: 3px solid transparent;
+  transition: background 0.15s;
+}
+.scope-item:hover {
+  background: var(--p-highlight-background);
+}
+.scope-item.active {
+  background: var(--p-highlight-background);
+  border-left-color: var(--p-primary-color);
+}
+
+.scope-info {
+  flex: 1;
+  min-width: 0;
+}
+.scope-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--p-text-color);
+}
+.scope-meta {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+  align-items: center;
+}
+.scope-range {
+  font-size: 0.75rem;
+  color: var(--p-surface-500);
+  font-family: monospace;
+}
+.scope-actions {
+  display: flex;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+/* ── Leases Panel ── */
+.leases-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.dhcp-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid var(--p-surface-border);
+  flex-shrink: 0;
+}
+.dhcp-toolbar .toolbar-divider {
+  width: 1px;
+  height: 1.2rem;
+  background: var(--p-surface-border);
+}
+
+.panel-header {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--p-surface-border);
+}
+.panel-header h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.badge-enabled { font-size: 0.75rem; color: var(--p-green-500); }
+.badge-disabled { font-size: 0.75rem; color: var(--p-red-500); background: color-mix(in srgb, var(--p-red-500) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
+.badge-reserved { font-size: 0.75rem; color: var(--p-primary-color); background: color-mix(in srgb, var(--p-primary-color) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
+.badge-dynamic { font-size: 0.75rem; color: var(--p-text-muted-color); }
+.badge-offline { font-size: 0.75rem; color: var(--p-text-muted-color); background: color-mix(in srgb, var(--p-text-muted-color) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
+
+.action-buttons { display: flex; gap: 0.25rem; }
+
+.text-sm { font-size: 0.8rem; }
+.muted { color: var(--p-text-muted-color); }
+
+code {
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.empty-state {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--p-surface-400);
+  font-size: 0.9rem;
+}
+.empty-state.centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 4rem 2rem;
+}
+.loading-state {
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--p-surface-400);
+}
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.field label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+@media (max-width: 900px) {
+  .dhcp-layout {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

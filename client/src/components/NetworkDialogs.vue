@@ -1,6 +1,6 @@
 <template>
   <!-- Create/Edit Organization Dialog -->
-  <Dialog v-model:visible="showFolderDialog" :header="editingFolder ? 'Edit Organization' : 'Create Organization'" modal :style="{ width: '26rem' }">
+  <Dialog v-model:visible="showFolderDialog" :header="editingFolder ? 'Edit Organization' : 'Create Organization'" modal :style="{ width: '26rem' }" data-track="dialog-org-edit">
     <div class="form-grid">
       <div class="field">
         <label>Name *</label>
@@ -18,7 +18,7 @@
   </Dialog>
 
   <!-- Create Organization with Network Dialog -->
-  <Dialog v-model:visible="showOrgDialog" header="Create Organization" modal :style="{ width: '28rem' }">
+  <Dialog v-model:visible="showOrgDialog" header="Create Organization" modal :style="{ width: '28rem' }" data-track="dialog-org-create">
     <div class="form-grid">
       <div class="field">
         <label>Organization Name *</label>
@@ -41,7 +41,7 @@
   </Dialog>
 
   <!-- Guided Setup Wizard -->
-  <Dialog v-model:visible="showWizard" header="New Organization Setup" modal :style="{ width: '32rem' }"
+  <Dialog v-model:visible="showWizard" header="New Organization Setup" modal :style="{ width: '32rem' }" data-track="dialog-org-wizard"
           :closable="true" @hide="onWizardClose">
     <!-- Step indicators -->
     <div class="wizard-steps">
@@ -104,12 +104,16 @@
         </div>
       </div>
       <div class="field">
-        <label>Gateway</label>
-        <InputText v-model="wizardNet.gateway_address" placeholder="Auto (system default)" class="w-full" />
+        <label>Default Gateway Position</label>
+        <SelectButton v-model="wizardNet.gateway_position" :options="gatewayOptions"
+                      optionLabel="label" optionValue="value" size="small" />
       </div>
       <div class="field">
         <label>Domain Name</label>
-        <InputText v-model="wizardNet.domain_name" placeholder="e.g. office.example.com" class="w-full" />
+        <InputText v-model="wizardNet.domain_name" class="w-full" />
+        <Message v-if="domainWarningShown && !wizardNet.domain_name" severity="warn" :closable="false" class="mt-1">
+          No domain name entered — DNS features will be limited. Click "Create &amp; Continue" again to proceed anyway.
+        </Message>
       </div>
       <div class="field" v-if="wizardPrefixLength <= 29">
         <label class="toggle-label">
@@ -120,11 +124,11 @@
       <template v-if="wizardNet.create_dhcp_scope && wizardPrefixLength <= 29">
         <div class="field">
           <label>Start IP</label>
-          <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" :placeholder="wizardDhcpDefaults.start" />
+          <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" />
         </div>
         <div class="field">
           <label>End IP</label>
-          <InputText v-model="wizardNet.dhcp_end_ip" class="w-full" :placeholder="wizardDhcpDefaults.end" />
+          <InputText v-model="wizardNet.dhcp_end_ip" class="w-full" />
         </div>
       </template>
       <div class="field">
@@ -148,8 +152,7 @@
               <div class="field">
                 <label>Pi-hole URL</label>
                 <InputText v-model="piholeUrl" placeholder="http://pihole.local" class="w-full"
-                           :class="{ 'pihole-reachable': piholeProbeStatus === 'ok', 'pihole-unreachable': piholeProbeStatus === 'fail' }"
-                           @blur="probePihole" />
+                           :class="{ 'pihole-reachable': piholeProbeStatus === 'ok', 'pihole-unreachable': piholeProbeStatus === 'fail' }" />
                 <small v-if="piholeProbeStatus === 'fail'" class="field-error">{{ piholeProbeError }}</small>
                 <small v-if="piholeProbeStatus === 'ok' && piholeNeedsPassword && !piholePassword" class="field-warn">Password required</small>
               </div>
@@ -258,7 +261,7 @@
   </Dialog>
 
   <!-- Delete Organization Dialog -->
-  <Dialog v-model:visible="showDeleteFolderDialog" header="Delete Organization" modal :style="{ width: '28rem' }"
+  <Dialog v-model:visible="showDeleteFolderDialog" header="Delete Organization" modal :style="{ width: '28rem' }" data-track="dialog-org-delete"
           @hide="deleteConfirmText = ''">
     <p>Delete organization <strong>{{ deletingFolder?.name }}</strong>?</p>
     <template v-if="deletingFolder?.subnets?.length > 0 || deletingFolder?.zone_count > 0">
@@ -280,7 +283,7 @@
   </Dialog>
 
   <!-- Create Network Dialog -->
-  <Dialog v-model:visible="showSubnetDialog" header="Create Network" modal :style="{ width: '28rem' }">
+  <Dialog v-model:visible="showSubnetDialog" header="Create Network" modal :style="{ width: '28rem' }" data-track="dialog-network-create">
     <div class="form-grid">
       <div class="field">
         <label>CIDR *</label>
@@ -307,7 +310,7 @@
   </Dialog>
 
   <!-- Divide Network Dialog -->
-  <Dialog v-model:visible="showDivide" header="Divide Network" modal :style="{ width: '36rem' }">
+  <Dialog v-model:visible="showDivide" header="Divide Network" modal :style="{ width: '36rem' }" data-track="dialog-network-divide">
     <p>Network: <strong>{{ props.selectedNode?.data.cidr }}</strong></p>
 
     <div class="divide-mode-toggle">
@@ -380,7 +383,7 @@
   </Dialog>
 
   <!-- Edit Network Dialog -->
-  <Dialog v-model:visible="showNetworkDialog" :header="networkDialogHeader" modal :style="{ width: '30rem' }">
+  <Dialog v-model:visible="showNetworkDialog" :header="networkDialogHeader" modal :style="{ width: '30rem' }" data-track="dialog-network-edit">
     <div class="form-grid">
       <template v-if="networkDialogMode === 'create'">
         <div class="field">
@@ -487,7 +490,7 @@
   </Dialog>
 
   <!-- Delete Network Dialog -->
-  <Dialog v-model:visible="showDelete" header="Delete Network" modal :style="{ width: '26rem' }">
+  <Dialog v-model:visible="showDelete" header="Delete Network" modal :style="{ width: '26rem' }" data-track="dialog-network-delete">
     <template v-if="props.selectedNode">
       <p>Delete <strong>{{ props.selectedNode.data.cidr }}</strong>?</p>
       <p v-if="props.selectedNode.data.status === 'allocated'" class="warn-text">
@@ -504,7 +507,7 @@
   </Dialog>
 
   <!-- Deallocate Network Dialog -->
-  <Dialog v-model:visible="showDeallocate" header="Deallocate Network" modal :style="{ width: '26rem' }">
+  <Dialog v-model:visible="showDeallocate" header="Deallocate Network" modal :style="{ width: '26rem' }" data-track="dialog-network-deallocate">
     <template v-if="props.selectedNode">
       <p>Deallocate <strong>{{ props.selectedNode.data.cidr }}</strong>?</p>
       <p class="warn-text">
@@ -518,7 +521,7 @@
   </Dialog>
 
   <!-- Merge Networks Dialog -->
-  <Dialog v-model:visible="showMerge" header="Merge Networks" modal :style="{ width: '32rem' }">
+  <Dialog v-model:visible="showMerge" header="Merge Networks" modal :style="{ width: '32rem' }" data-track="dialog-network-merge">
     <template v-if="mergePreview">
       <p>Merging <strong>{{ mergePreview.source_cidrs.length }}</strong> networks into:</p>
       <p class="merge-result-cidr">{{ mergePreview.merged_cidr }}</p>
@@ -539,7 +542,7 @@
   </Dialog>
 
   <!-- Group Allocate Dialog -->
-  <Dialog v-model:visible="showGroupConfigure" header="Allocate Group" modal :style="{ width: '28rem' }">
+  <Dialog v-model:visible="showGroupConfigure" header="Allocate Group" modal :style="{ width: '28rem' }" data-track="dialog-group-allocate">
     <p>Allocate <strong>{{ groupDropIds.length }}</strong> networks to this organization?</p>
     <p style="font-size: 0.85rem; color: var(--p-text-muted-color);">
       Each network will be named using the current template and allocated with default settings.
@@ -632,10 +635,16 @@ const wizardStep = ref(1);
 const wizardOrg = ref({ name: '', description: '' });
 const wizardNet = ref({
   cidr: '', name: '', description: '', vlan_id: null,
-  gateway_address: '', domain_name: '',
+  gateway_position: 'first', domain_name: '',
   create_dhcp_scope: false, create_reverse_dns: false,
   dhcp_start_ip: '', dhcp_end_ip: '',
 });
+const gatewayOptions = [
+  { label: 'First Addr', value: 'first' },
+  { label: 'Last Addr', value: 'last' },
+  { label: 'None', value: 'none' },
+];
+const domainWarningShown = ref(false);
 const wizardVlanSelection = ref(null);
 const showWizardCreateVlan = ref(false);
 const wizardNewVlanForm = ref({ vlan_id: null, name: '' });
@@ -650,6 +659,7 @@ async function ensureWizardOrg() {
   await store.createFolder({
     name: wizardOrg.value.name,
     description: wizardOrg.value.description || undefined,
+    gateway_position: wizardNet.value.gateway_position || 'first',
   });
   const folder = store.folders.find(f => f.name === wizardOrg.value.name.trim());
   wizardCreatedFolderId.value = folder?.id;
@@ -676,17 +686,66 @@ const wizardPrefixLength = computed(() => {
   return 32;
 });
 
+function nearestPow2(n) {
+  if (n <= 1) return 1;
+  const lower = Math.pow(2, Math.floor(Math.log2(n)));
+  const upper = lower * 2;
+  return (n - lower) <= (upper - n) ? lower : upper;
+}
+
+function dhcpRangeDefaults(p, gw) {
+  const size = p.broadcastLong - p.networkLong + 1;
+  const prefix = Math.round(32 - Math.log2(size));
+  // Only auto-fill for /21 through /26
+  if (prefix < 21 || prefix > 26) return { start: '', end: '' };
+  const gwLong = gw ? ipToLong(gw) : null;
+  let poolEnd, poolSize;
+  if (prefix <= 23) {
+    // /21, /22, /23: cap end at network + 128, pool size = 64
+    poolEnd = p.networkLong + 128;
+    poolSize = 64;
+  } else {
+    // /24, /25, /26: use power-of-2 formula
+    poolEnd = p.networkLong + nearestPow2(size * 0.35);
+    poolSize = nearestPow2(size * 0.15);
+  }
+  let poolStart = poolEnd - poolSize + 1;
+  // Ensure within usable range
+  poolStart = Math.max(poolStart, p.networkLong + 1);
+  poolEnd = Math.min(poolEnd, p.broadcastLong - 1);
+  if (gwLong === poolStart) poolStart++;
+  else if (gwLong === poolEnd) poolEnd--;
+  return { start: longToIp(poolStart), end: longToIp(poolEnd) };
+}
+
+function gatewayIpFromPosition(cidr, position) {
+  if (!position || position === 'none') return null;
+  const p = parseCidr(cidr);
+  return position === 'last' ? p.lastUsable : p.firstUsable;
+}
+
 const wizardDhcpDefaults = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
   if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
   const p = parseCidr(cidr);
-  const gw = wizardNet.value.gateway_address || null;
-  const gwLong = gw ? ipToLong(gw) : null;
-  let poolStart = p.networkLong + 1;
-  let poolEnd = p.broadcastLong - 1;
-  if (gwLong === poolStart) poolStart++;
-  else if (gwLong === poolEnd) poolEnd--;
-  return { start: longToIp(poolStart), end: longToIp(poolEnd) };
+  const gw = gatewayIpFromPosition(cidr, wizardNet.value.gateway_position);
+  return dhcpRangeDefaults(p, gw);
+});
+
+watch(() => wizardNet.value.gateway_position, () => {
+  if (wizardNet.value.create_dhcp_scope) {
+    const d = wizardDhcpDefaults.value;
+    wizardNet.value.dhcp_start_ip = d.start || '';
+    wizardNet.value.dhcp_end_ip = d.end || '';
+  }
+});
+
+watch(() => wizardNet.value.create_dhcp_scope, (checked) => {
+  if (checked && !wizardNet.value.dhcp_start_ip && !wizardNet.value.dhcp_end_ip) {
+    const d = wizardDhcpDefaults.value;
+    if (d.start) wizardNet.value.dhcp_start_ip = d.start;
+    if (d.end) wizardNet.value.dhcp_end_ip = d.end;
+  }
 });
 
 function searchWizardVlans(event) {
@@ -742,6 +801,10 @@ async function wizardSaveAndExit() {
 }
 
 async function wizardCreateAndContinue() {
+  if (!wizardNet.value.domain_name && !domainWarningShown.value) {
+    domainWarningShown.value = true;
+    return;
+  }
   saving.value = true;
   try {
     const folderId = await ensureWizardOrg();
@@ -757,7 +820,7 @@ async function wizardCreateAndContinue() {
       name: wizardNet.value.name || wizardAutoName.value || cidr,
       description: wizardNet.value.description || undefined,
       vlan_id: wizardNet.value.vlan_id || undefined,
-      gateway_address: wizardNet.value.gateway_address || undefined,
+      gateway_address: gatewayIpFromPosition(cidr, wizardNet.value.gateway_position) || undefined,
       domain_name: wizardNet.value.domain_name || undefined,
       create_dhcp_scope: wizardNet.value.create_dhcp_scope,
       create_reverse_dns: wizardNet.value.create_reverse_dns,
@@ -800,9 +863,27 @@ const piholeFileContent = ref(null);
 const piholeFileInput = ref(null);
 const wizardCreatedSubnetId = ref(null);
 
+function cleanPiholeUrl(raw) {
+  let url = raw.trim();
+  if (!url) return '';
+  // Add scheme if missing
+  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+  try {
+    const parsed = new URL(url);
+    // Strip path, query, hash — keep only scheme://host[:port]
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return url;
+  }
+}
+
+let piholeProbeTimer = null;
+
 async function probePihole() {
-  const url = piholeUrl.value.trim();
+  const url = cleanPiholeUrl(piholeUrl.value);
   if (!url) { piholeProbeStatus.value = null; return; }
+  // Update the input to the cleaned URL
+  if (url !== piholeUrl.value.trim()) piholeUrl.value = url;
   try {
     const res = await api.post('/pihole/probe', { url, password: piholePassword.value || undefined });
     if (res.data.reachable) {
@@ -818,6 +899,16 @@ async function probePihole() {
     piholeProbeError.value = err.response?.data?.error || err.message;
   }
 }
+
+// Auto-probe when URL changes (debounced)
+watch(piholeUrl, (val) => {
+  clearTimeout(piholeProbeTimer);
+  piholeProbeStatus.value = null;
+  piholeProbeError.value = '';
+  const trimmed = val?.trim();
+  if (!trimmed) return;
+  piholeProbeTimer = setTimeout(() => probePihole(), 600);
+});
 
 async function fetchPiholeConfig() {
   piholeFetching.value = true;
@@ -913,10 +1004,11 @@ async function onWizardClose() {
   wizardOrg.value = { name: '', description: '' };
   wizardNet.value = {
     cidr: '', name: '', description: '', vlan_id: null,
-    gateway_address: '', domain_name: '',
+    gateway_position: 'first', domain_name: '',
     create_dhcp_scope: false, create_reverse_dns: false,
     dhcp_start_ip: '', dhcp_end_ip: '',
   };
+  domainWarningShown.value = false;
   wizardVlanSelection.value = null;
   wizardCreatedFolderId.value = null;
   wizardCreatedVlanId.value = null;
@@ -1147,25 +1239,11 @@ const dhcpDefaults = computed(() => {
   if (networkDialogMode.value === 'create') {
     const cidr = (networkForm.value.cidr || '').trim();
     if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
-    const p = parseCidr(cidr);
-    const gw = networkForm.value.gateway_address || null;
-    const gwLong = gw ? ipToLong(gw) : null;
-    let poolStart = p.networkLong + 1;
-    let poolEnd = p.broadcastLong - 1;
-    if (gwLong === poolStart) poolStart++;
-    else if (gwLong === poolEnd) poolEnd--;
-    return { start: longToIp(poolStart), end: longToIp(poolEnd) };
+    return dhcpRangeDefaults(parseCidr(cidr), networkForm.value.gateway_address || null);
   }
   const d = props.selectedNode?.data;
   if (!d) return { start: '', end: '' };
-  const p = parseCidr(d.cidr);
-  const gw = networkForm.value.gateway_address || null;
-  const gwLong = gw ? ipToLong(gw) : null;
-  let poolStart = p.networkLong + 1;
-  let poolEnd = p.broadcastLong - 1;
-  if (gwLong === poolStart) poolStart++;
-  else if (gwLong === poolEnd) poolEnd--;
-  return { start: longToIp(poolStart), end: longToIp(poolEnd) };
+  return dhcpRangeDefaults(parseCidr(d.cidr), networkForm.value.gateway_address || null);
 });
 
 watch(showNetworkDialog, (val) => { if (!val) dropTargetFolderIdForConfigure.value = null; });

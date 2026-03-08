@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import os from 'os';
-import { execSync, execFileSync } from 'child_process';
+import { execSync } from 'child_process';
 import { getDb } from '../db/init.js';
 
 const router = Router();
@@ -72,47 +72,12 @@ router.get('/system', (req, res) => {
     stats.audit_entries = db.prepare('SELECT COUNT(*) as c FROM audit_log').get().c;
   } catch { /* tables may not exist yet */ }
 
-  // DNS resolution check — test each configured upstream server
-  let dnsServers = [];
-  try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
-    if (row?.value) dnsServers = JSON.parse(row.value);
-  } catch { /* ignore */ }
-
-  const dnsResults = [];
-  const testDomain = 'dns-check.example.com';  // any domain; we just care if the server responds
-  for (const server of dnsServers) {
-    try {
-      // Use dig to query each server with a short timeout
-      execFileSync('dig', ['+short', '+time=2', '+tries=1', `@${server}`, 'example.com'], {
-        timeout: 4000, encoding: 'utf-8', stdio: ['pipe', 'pipe', 'pipe']
-      });
-      dnsResults.push({ server, status: 'up' });
-    } catch {
-      dnsResults.push({ server, status: 'down' });
-    }
-  }
-
-  // Also test system-level resolution (what the app itself uses for hostname options)
-  let systemResolution = false;
-  try {
-    const out = execFileSync('getent', ['ahostsv4', 'example.com'], {
-      timeout: 4000, encoding: 'utf-8'
-    });
-    systemResolution = out.trim().length > 0;
-  } catch { /* failed */ }
-
   res.json({
     cpu: { loadAvg, cores: cpuCount },
     memory: { total: totalMem, used: usedMem, free: freeMem },
     disk,
     uptime: { system: systemUptime, process: processUptime },
     services: { dnsmasq: dnsmasqRunning },
-    dns: {
-      servers: dnsResults,
-      systemResolution,
-      ok: systemResolution && dnsResults.length > 0 && dnsResults.some(d => d.status === 'up')
-    },
     stats,
     timestamp: new Date().toISOString()
   });

@@ -1,46 +1,36 @@
 <template>
   <div class="system-page">
-    <div class="sys-toolbar">
-      <div class="sys-toolbar-left">
-        <Button label="IP Management" icon="pi pi-arrow-left" size="small" text @click="$router.push('/')" />
-        <template v-if="activeTab === 1">
-          <span class="sys-toolbar-divider"></span>
-          <Button label="Add Type" icon="pi pi-plus" size="small" text @click="showRangeTypeDialog = true" />
-        </template>
-        <template v-if="activeTab === 2">
-          <span class="sys-toolbar-divider"></span>
-          <Button label="Add VLAN" icon="pi pi-plus" size="small" text @click="openVlanDialog()" />
-        </template>
-        <template v-if="activeTab === 4">
-          <span class="sys-toolbar-divider"></span>
-          <Button label="Create Backup Now" icon="pi pi-download" size="small" text @click="doCreateBackup" :loading="creatingBackup" />
-        </template>
-        <template v-if="activeTab === 5">
-          <span class="sys-toolbar-divider"></span>
-          <Button label="Upload Certificate" icon="pi pi-upload" size="small" text @click="doUploadCert" :loading="uploadingCert"
+    <Menubar ref="menubarRef" :model="visibleMenuItems">
+      <template #start>
+        <Button label="IP Management" icon="pi pi-arrow-left" size="small" text data-track="sys-back-to-ipam" @click="$router.push('/')" />
+      </template>
+      <template #item="{ item, props: itemProps }">
+        <a v-bind="itemProps.action" :class="{ 'active-menuitem': item.tabIndex === activeTab }" :data-track="item.dataTrack">
+          <span :class="item.icon" />
+          <span class="ml-1">{{ item.label }}</span>
+        </a>
+      </template>
+      <template #end>
+        <div class="sys-toolbar-actions">
+          <Button v-if="overflowItems.length > 0" icon="pi pi-angle-double-right" size="small" text
+                  class="overflow-trigger" @click="toggleOverflow" aria-label="More tabs" />
+          <Menu ref="overflowMenuRef" :model="overflowItems" :popup="true" />
+          <Button v-if="activeTab === 0" label="Add Type" icon="pi pi-plus" size="small" text data-track="sys-add-range-type" @click="showRangeTypeDialog = true" />
+          <Button v-if="activeTab === 1" label="Add VLAN" icon="pi pi-plus" size="small" text data-track="sys-add-vlan" @click="openVlanDialog()" />
+          <Button v-if="activeTab === 3" label="Create Backup Now" icon="pi pi-download" size="small" text data-track="sys-create-backup" @click="doCreateBackup" :loading="creatingBackup" />
+          <Button v-if="activeTab === 4" label="Upload Certificate" icon="pi pi-upload" size="small" text data-track="sys-upload-cert" @click="doUploadCert" :loading="uploadingCert"
                   :disabled="!certUpload.cert || !certUpload.key || certValidation.cert === false || certValidation.key === false" />
-        </template>
-        <template v-if="activeTab === 6">
-          <span class="sys-toolbar-divider"></span>
-          <Button label="Add Zone" icon="pi pi-plus" size="small" text @click="dnsPanelRef?.openZoneDialog()" />
-        </template>
-        <template v-if="activeTab === 7">
-          <span class="sys-toolbar-divider"></span>
-          <Button label="Add Scope" icon="pi pi-plus" size="small" text @click="dhcpPanelRef?.openScopeDialog()" />
-          <Button label="Apply Config" icon="pi pi-refresh" size="small" text @click="dhcpPanelRef?.applyConfig()" />
-        </template>
-        <template v-if="activeTab === 10">
-          <span class="sys-toolbar-divider"></span>
-          <Button label="Add User" icon="pi pi-plus" size="small" text @click="usersPanelRef?.openCreateDialog()" />
-        </template>
-      </div>
-    </div>
+          <Button v-if="activeTab === 6" label="Apply Config" icon="pi pi-refresh" size="small" text data-track="sys-apply-dhcp-config" @click="dhcpPanelRef?.applyConfig()" />
+          <Button v-if="activeTab === 9" label="Add User" icon="pi pi-plus" size="small" text data-track="sys-add-user" @click="usersPanelRef?.openCreateDialog()" />
+        </div>
+      </template>
+    </Menubar>
 
-    <TabView v-model:activeIndex="activeTab">
-      <TabPanel header="Settings">
+    <div class="sys-content">
+      <div v-if="activeTab === 0">
         <div v-if="loadingSettings" class="muted">Loading settings...</div>
-        <div v-else class="settings-form">
-          <div class="setting-group">
+        <template v-else>
+          <div class="content-card settings-form">
             <h3>Network Naming</h3>
             <div class="field">
               <label>Name Template</label>
@@ -54,7 +44,7 @@
             </div>
           </div>
 
-          <div class="setting-group">
+          <div class="content-card settings-form">
             <h3>Network Defaults</h3>
             <div class="field">
               <label>Default Gateway Position</label>
@@ -71,7 +61,7 @@
             </div>
           </div>
 
-          <div class="setting-group">
+          <div class="content-card settings-form">
             <h3>Network Scanning</h3>
             <p class="field-help" style="margin-bottom: 0.75rem;">
               Configure automatic network scanning for allocated networks. Scans send ARP probes to detect online hosts.
@@ -92,47 +82,48 @@
               </div>
               <small class="field-help">Send ARP probes to all usable IPs in the selected network.</small>
             </div>
+            <div class="settings-actions">
+              <Button label="Save Settings" icon="pi pi-save" @click="saveSettings" :loading="savingSettings" />
+            </div>
           </div>
 
-          <div class="settings-actions">
-            <Button label="Save Settings" icon="pi pi-save" @click="saveSettings" :loading="savingSettings" />
+          <div class="content-card">
+            <h3>Address Types</h3>
+            <div class="range-types-section">
+                <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows emptyMessage="No address types found." size="small"
+                           :paginator="rangeTypes.length > 256" :rows="256"
+                           :rowsPerPageOptions="[64, 128, 256, 512]"
+                           scrollable scrollHeight="flex">
+                  <Column header="Color" style="width: 4rem">
+                    <template #body="{ data }">
+                      <span class="color-swatch" :style="{ background: data.color }"></span>
+                    </template>
+                  </Column>
+                  <Column field="name" header="Name" sortable />
+                  <Column field="description" header="Description">
+                    <template #body="{ data }">{{ data.description ?? '—' }}</template>
+                  </Column>
+                  <Column header="Type" style="width: 7rem">
+                    <template #body="{ data }">
+                      <span :class="data.is_system ? 'badge-system' : 'badge-custom'">
+                        {{ data.is_system ? 'System' : 'Custom' }}
+                      </span>
+                    </template>
+                  </Column>
+                  <Column header="" style="width: 5rem">
+                    <template #body="{ data }">
+                      <div class="action-buttons" v-if="!data.is_system">
+                        <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                                @click="editRangeType(data)" />
+                        <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                                @click="confirmDeleteRangeType(data)" />
+                      </div>
+                    </template>
+                  </Column>
+                </DataTable>
+            </div>
           </div>
-        </div>
-      </TabPanel>
-      <TabPanel header="Address Types">
-        <div class="range-types-section">
-          <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows emptyMessage="No address types found." size="small"
-                     :paginator="rangeTypes.length > 256" :rows="256"
-                     :rowsPerPageOptions="[64, 128, 256, 512]"
-                     scrollable scrollHeight="flex">
-            <Column header="Color" style="width: 4rem">
-              <template #body="{ data }">
-                <span class="color-swatch" :style="{ background: data.color }"></span>
-              </template>
-            </Column>
-            <Column field="name" header="Name" sortable />
-            <Column field="description" header="Description">
-              <template #body="{ data }">{{ data.description ?? '—' }}</template>
-            </Column>
-            <Column header="Type" style="width: 7rem">
-              <template #body="{ data }">
-                <span :class="data.is_system ? 'badge-system' : 'badge-custom'">
-                  {{ data.is_system ? 'System' : 'Custom' }}
-                </span>
-              </template>
-            </Column>
-            <Column header="" style="width: 5rem">
-              <template #body="{ data }">
-                <div class="action-buttons" v-if="!data.is_system">
-                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                          @click="editRangeType(data)" />
-                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                          @click="confirmDeleteRangeType(data)" />
-                </div>
-              </template>
-            </Column>
-          </DataTable>
-        </div>
+        </template>
 
         <!-- Address Type Dialog -->
         <Dialog v-model:visible="showRangeTypeDialog" :header="editingRangeType ? 'Edit Address Type' : 'Add Address Type'"
@@ -168,8 +159,8 @@
             <Button label="Delete" severity="danger" @click="doDeleteRangeType" :loading="savingRangeType" />
           </template>
         </Dialog>
-      </TabPanel>
-      <TabPanel header="VLANs">
+      </div>
+      <div v-if="activeTab === 1">
         <div class="range-types-section">
           <div class="section-header">
             <Select v-model="vlanOrgFilter" :options="orgOptions" optionLabel="label" optionValue="value"
@@ -232,11 +223,11 @@
             <Button label="Delete" severity="danger" @click="doDeleteVlan" :loading="savingVlan" />
           </template>
         </Dialog>
-      </TabPanel>
-      <TabPanel header="Network Calculator">
+      </div>
+      <div v-if="activeTab === 2">
         <SubnetCalculator />
-      </TabPanel>
-      <TabPanel header="Backup & Restore">
+      </div>
+      <div v-if="activeTab === 3" class="content-card">
         <div class="backup-section">
           <div class="setting-group">
             <h3>Manual Backup</h3>
@@ -337,8 +328,8 @@
             <Button label="Restore Now" severity="danger" @click="doRestore" :loading="restoring" />
           </template>
         </Dialog>
-      </TabPanel>
-      <TabPanel header="Certificates">
+      </div>
+      <div v-if="activeTab === 4" class="content-card">
         <div class="cert-section">
           <div class="setting-group">
             <h3>Current Certificate</h3>
@@ -396,23 +387,23 @@
             <Button label="Reset to Self-Signed" icon="pi pi-refresh" severity="secondary" @click="confirmResetCert" :loading="resettingCert" />
           </div>
         </div>
-      </TabPanel>
-      <TabPanel header="DNS">
+      </div>
+      <div v-if="activeTab === 5" class="content-card">
         <DnsPanel ref="dnsPanelRef" />
-      </TabPanel>
-      <TabPanel header="DHCP">
+      </div>
+      <div v-if="activeTab === 6" class="content-card">
         <DhcpPanel ref="dhcpPanelRef" />
-      </TabPanel>
-      <TabPanel header="Blocklists">
+      </div>
+      <div v-if="activeTab === 7">
         <BlocklistsPanel />
-      </TabPanel>
-      <TabPanel header="GeoIP">
+      </div>
+      <div v-if="activeTab === 8">
         <GeoipPanel />
-      </TabPanel>
-      <TabPanel header="Users">
+      </div>
+      <div v-if="activeTab === 9" class="content-card">
         <UsersPanel ref="usersPanelRef" />
-      </TabPanel>
-      <TabPanel header="Themes">
+      </div>
+      <div v-if="activeTab === 10" class="content-card">
         <div class="themes-page">
           <p class="field-help" style="margin-bottom: 1.25rem">Choose a color theme. The active theme is highlighted.</p>
 
@@ -448,8 +439,8 @@
             </div>
           </div>
         </div>
-      </TabPanel>
-      <TabPanel header="Logging">
+      </div>
+      <div v-if="activeTab === 11">
         <TabView class="logging-subtabs">
           <TabPanel header="DNSmasq">
             <LogViewer />
@@ -498,16 +489,18 @@
             </div>
           </TabPanel>
         </TabView>
-      </TabPanel>
-    </TabView>
+      </div>
+    </div>
 
     <Toast />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, defineAsyncComponent } from 'vue';
 import { useToast } from 'primevue/usetoast';
+import Menubar from 'primevue/menubar';
+import Menu from 'primevue/menu';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
 import Button from 'primevue/button';
@@ -558,11 +551,88 @@ function getThemeDesc(t) {
 }
 
 // Persist active tab across refreshes
-const LOGGING_TAB_INDEX = 12;
+const LOGGING_TAB_INDEX = 11;
 const activeTab = ref(parseInt(localStorage.getItem('ipam_system_tab') || '0', 10));
 watch(activeTab, (val) => {
   localStorage.setItem('ipam_system_tab', String(val));
   if (val === LOGGING_TAB_INDEX) { loadAuditFilterOptions(); loadAuditLog(); }
+});
+
+const allMenuItems = [
+  { tabIndex: 0, label: 'Network', icon: 'pi pi-cog', dataTrack: 'sys-tab-settings', command: () => { activeTab.value = 0; } },
+  { tabIndex: 1, label: 'VLANs', icon: 'pi pi-list', dataTrack: 'sys-tab-vlans', command: () => { activeTab.value = 1; } },
+  { tabIndex: 2, label: 'Calculator', icon: 'pi pi-calculator', dataTrack: 'sys-tab-calculator', command: () => { activeTab.value = 2; } },
+  { tabIndex: 3, label: 'Backup', icon: 'pi pi-database', dataTrack: 'sys-tab-backups', command: () => { activeTab.value = 3; } },
+  { tabIndex: 4, label: 'Certificates', icon: 'pi pi-lock', dataTrack: 'sys-tab-certificates', command: () => { activeTab.value = 4; } },
+  { tabIndex: 5, label: 'DNS', icon: 'pi pi-globe', dataTrack: 'sys-tab-dns', command: () => { activeTab.value = 5; } },
+  { tabIndex: 6, label: 'DHCP', icon: 'pi pi-server', dataTrack: 'sys-tab-dhcp', command: () => { activeTab.value = 6; } },
+  { tabIndex: 7, label: 'Blocklists', icon: 'pi pi-ban', dataTrack: 'sys-tab-blocklists', command: () => { activeTab.value = 7; } },
+  { tabIndex: 8, label: 'GeoIP', icon: 'pi pi-map', dataTrack: 'sys-tab-geoip', command: () => { activeTab.value = 8; } },
+  { tabIndex: 9, label: 'Users', icon: 'pi pi-users', dataTrack: 'sys-tab-users', command: () => { activeTab.value = 9; } },
+  { tabIndex: 10, label: 'Themes', icon: 'pi pi-palette', dataTrack: 'sys-tab-themes', command: () => { activeTab.value = 10; } },
+  { tabIndex: 11, label: 'Logging', icon: 'pi pi-file', dataTrack: 'sys-tab-logging', command: () => { activeTab.value = 11; } },
+];
+
+// Overflow menu logic
+const menubarRef = ref(null);
+const overflowMenuRef = ref(null);
+const visibleCount = ref(allMenuItems.length);
+
+const visibleMenuItems = computed(() => allMenuItems.slice(0, visibleCount.value));
+const overflowItems = computed(() => allMenuItems.slice(visibleCount.value));
+
+function toggleOverflow(event) {
+  overflowMenuRef.value.toggle(event);
+}
+
+let _resizeObserver = null;
+function measureOverflow() {
+  const el = menubarRef.value?.$el;
+  if (!el) return;
+  const rootList = el.querySelector('.p-menubar-root-list');
+  if (!rootList) return;
+
+  // Temporarily show all items to measure
+  const items = rootList.querySelectorAll(':scope > .p-menubar-item');
+  if (items.length === 0) return;
+
+  // Get the available width (rootList container)
+  const listRect = rootList.getBoundingClientRect();
+  let count = 0;
+  for (const item of items) {
+    const itemRect = item.getBoundingClientRect();
+    // Item is visible if its right edge fits within the list
+    if (itemRect.right <= listRect.right + 2) {
+      count++;
+    } else {
+      break;
+    }
+  }
+  // If not all fit, show one fewer to make room for the >> button
+  if (count < allMenuItems.length && count > 0) {
+    visibleCount.value = count;
+  } else {
+    visibleCount.value = allMenuItems.length;
+  }
+}
+
+onMounted(() => {
+  nextTick(() => {
+    // First measure with all items
+    visibleCount.value = allMenuItems.length;
+    nextTick(measureOverflow);
+  });
+  _resizeObserver = new ResizeObserver(() => {
+    // Reset to full to get accurate measurement
+    visibleCount.value = allMenuItems.length;
+    nextTick(measureOverflow);
+  });
+  const el = menubarRef.value?.$el;
+  if (el) _resizeObserver.observe(el);
+});
+
+onBeforeUnmount(() => {
+  _resizeObserver?.disconnect();
 });
 
 const loadingSettings = ref(true);
@@ -1097,47 +1167,70 @@ async function doResetCert() {
   flex-direction: column;
   box-sizing: border-box;
 }
-.system-page :deep(.p-tabview) {
-  padding: 0 1.5rem;
+/* Inner TabView (Logging subtabs) */
+.system-page :deep(.logging-subtabs) {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
 }
-.system-page :deep(.p-tabview-panels) {
+.system-page :deep(.logging-subtabs .p-tabview-panels) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-.system-page :deep(.p-tabview-panel) {
+.system-page :deep(.logging-subtabs .p-tabview-panel) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-.sys-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 0.4rem 1rem;
-  background: var(--ipam-card);
-  border-bottom: 1px solid var(--p-surface-border);
-  flex-shrink: 0;
-}
-.sys-toolbar-left {
+.sys-toolbar-actions {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
-.sys-toolbar-divider {
-  width: 1px;
-  height: 1.2rem;
-  background: var(--p-surface-border);
+.sys-content {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+}
+:deep(.p-menubar-root-list) {
+  flex-wrap: nowrap !important;
+  overflow: hidden !important;
+}
+:deep(.p-menubar-item-content) {
+  padding: 0.45rem 0.65rem !important;
+}
+:deep(.active-menuitem) {
+  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent) !important;
+  color: var(--p-primary-color) !important;
+  font-weight: 600;
+}
+.overflow-trigger {
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.overflow-trigger:hover {
+  opacity: 1;
 }
 .muted {
   color: var(--p-text-muted-color);
+}
+.content-card {
+  margin: 3% 7% 0;
+  padding: 1.25rem;
+  background: var(--p-surface-card);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
+}
+.content-card h3 {
+  margin: 0 0 0.75rem 0;
+}
+.content-card + .content-card {
+  margin-top: 0.75rem;
 }
 .settings-form {
   max-width: 32rem;

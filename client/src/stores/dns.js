@@ -73,10 +73,15 @@ export const useDnsStore = defineStore('dns', () => {
     return res.data.servers;
   }
 
+  async function testForwarder(ip) {
+    const res = await api.post('/dns/forwarders/test', { ip });
+    return res.data;
+  }
+
   return {
     zones, loading,
     fetchZones, getZone, createZone, updateZone, deleteZone,
     getRecords, createRecord, updateRecord, deleteRecord,
-    applyConfig, getForwarders, updateForwarders
+    applyConfig, getForwarders, updateForwarders, testForwarder
   };
 });

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { regenerateConfigs, regenerateDnsmasqConf, signalDnsmasq } from '../utils/dnsmasq.js';
+import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
 
 const router = Router();
 
@@ -348,6 +349,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   // Auto-create/update PTR record when A record is added to a forward zone
   if (type === 'A' && zone.type === 'forward') {
     syncPtrForARecord(db, name, value, zone.name);
+    syncDnsToIp(db, name, value, zone.name);
   }
 
   regenerateConfigs(db);
@@ -401,11 +403,13 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
 
   // Sync PTR when A record is updated in a forward zone
   if (newType === 'A' && zone.type === 'forward') {
-    // If IP changed, clear old PTR
+    // If IP changed, clear old PTR and old IP hostname
     if (record.value !== newValue) {
       clearPtrForIp(db, record.value);
+      clearDnsFromIp(db, record.name, record.value, zone.name);
     }
     syncPtrForARecord(db, newName, newValue, zone.name);
+    syncDnsToIp(db, newName, newValue, zone.name);
   }
 
   regenerateConfigs(db);
@@ -423,10 +427,11 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
   // Increment zone SOA serial on record change
   db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(\'now\') WHERE id = ?').run(parseInt(req.params.zoneId, 10));
 
-  // Clear PTR when A record is deleted from a forward zone
-  const delZone = db.prepare('SELECT type FROM dns_zones WHERE id = ?').get(parseInt(req.params.zoneId, 10));
+  // Clear PTR and IP hostname when A record is deleted from a forward zone
+  const delZone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(parseInt(req.params.zoneId, 10));
   if (record.type === 'A' && delZone?.type === 'forward') {
     clearPtrForIp(db, record.value);
+    clearDnsFromIp(db, record.name, record.value, delZone.name);
   }
 
   audit(req.user.id, 'record_deleted', 'dns_record', record.id, { type: record.type, name: record.name });
@@ -492,6 +497,42 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   });
 
   res.json({ servers });
+});
+
+// POST /api/dns/forwarders/test — test if a DNS forwarder is reachable
+router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
+  const { ip } = req.body;
+  if (!ip || !isValidIpv4(ip)) {
+    return res.status(400).json({ error: 'Valid IPv4 address required' });
+  }
+
+  async function tryResolve() {
+    const dns = await import('dns');
+    const resolver = new dns.Resolver();
+    resolver.setServers([ip]);
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Timeout')), 5000);
+      resolver.resolve4('google.com', (err, addresses) => {
+        clearTimeout(timeout);
+        if (err) reject(err);
+        else resolve(addresses);
+      });
+    });
+  }
+
+  try {
+    const result = await tryResolve();
+    res.json({ ip, reachable: true, resolved: result });
+  } catch {
+    // Retry once after 5 seconds
+    await new Promise(r => setTimeout(r, 5000));
+    try {
+      const result = await tryResolve();
+      res.json({ ip, reachable: true, resolved: result });
+    } catch (err) {
+      res.json({ ip, reachable: false, error: err.message || err.code });
+    }
+  }
 });
 
 // GET /api/dns/resolve?name=hostname — resolve hostname to IPs
