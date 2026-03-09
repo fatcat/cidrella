@@ -1,6 +1,6 @@
 <template>
-  <!-- Create/Edit Organization Dialog -->
-  <Dialog v-model:visible="showFolderDialog" :header="editingFolder ? 'Edit Organization' : 'Create Organization'" modal :style="{ width: '26rem' }" data-track="dialog-org-edit">
+  <!-- Create/Edit Folder Dialog -->
+  <Dialog v-model:visible="showFolderDialog" :header="editingFolder ? 'Edit Folder' : 'Create Folder'" modal :style="{ width: '26rem' }" data-track="dialog-folder-edit">
     <div class="form-grid">
       <div class="field">
         <label>Name *</label>
@@ -10,17 +10,6 @@
         <label>Description</label>
         <InputText v-model="folderForm.description" class="w-full" />
       </div>
-      <div class="field">
-        <label>Default Gateway Position</label>
-        <SelectButton v-model="folderForm.gateway_position" :options="gatewayOptions"
-                      optionLabel="label" optionValue="value" size="small" />
-      </div>
-      <div class="field">
-        <label class="toggle-label">
-          <input type="checkbox" v-model="folderForm.scan_enabled" />
-          Include owned hosts in liveness scans by default
-        </label>
-      </div>
     </div>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showFolderDialog = false" />
@@ -28,64 +17,24 @@
     </template>
   </Dialog>
 
-  <!-- Create Organization with Network Dialog -->
-  <Dialog v-model:visible="showOrgDialog" header="Create Organization" modal :style="{ width: '28rem' }" data-track="dialog-org-create">
-    <div class="form-grid">
-      <div class="field">
-        <label>Organization Name *</label>
-        <InputText v-model="orgForm.name" class="w-full" />
-      </div>
-      <div class="field">
-        <label>Description</label>
-        <InputText v-model="orgForm.description" class="w-full" />
-      </div>
-      <div class="field">
-        <label>Network CIDR *</label>
-        <InputText v-model="orgForm.cidr" placeholder="e.g. 10.0.0.0/8" class="w-full" />
-        <small v-if="orgValidationError" class="field-error">{{ orgValidationError }}</small>
-      </div>
-    </div>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showOrgDialog = false" />
-      <Button label="Create" @click="createOrg" :loading="saving" :disabled="!!orgValidationError || !orgForm.name || !orgForm.cidr" />
-    </template>
-  </Dialog>
-
-  <!-- Guided Setup Wizard -->
-  <Dialog v-model:visible="showWizard" header="New Organization Setup" modal :style="{ width: '32rem' }" data-track="dialog-org-wizard"
+  <!-- First-time Guided Setup Wizard -->
+  <Dialog v-model:visible="showWizard" header="First-time Guided Setup" modal :style="{ width: '32rem' }" data-track="dialog-setup-wizard"
           :closable="true" @hide="onWizardClose">
     <!-- Step indicators -->
     <div class="wizard-steps">
       <div class="wizard-step" :class="{ active: wizardStep === 1, done: wizardStep > 1 }">
         <span class="step-num">1</span>
-        <span class="step-label">Organization</span>
-      </div>
-      <div class="wizard-step-line" :class="{ done: wizardStep > 1 }"></div>
-      <div class="wizard-step" :class="{ active: wizardStep === 2, done: wizardStep > 2 }">
-        <span class="step-num">2</span>
         <span class="step-label">Network</span>
       </div>
-      <div class="wizard-step-line" :class="{ done: wizardStep > 2 }"></div>
-      <div class="wizard-step" :class="{ active: wizardStep === 3 }">
-        <span class="step-num">3</span>
+      <div class="wizard-step-line" :class="{ done: wizardStep > 1 }"></div>
+      <div class="wizard-step" :class="{ active: wizardStep === 2 }">
+        <span class="step-num">2</span>
         <span class="step-label">Import</span>
       </div>
     </div>
 
-    <!-- Step 1: Organization -->
+    <!-- Step 1: Network -->
     <div v-if="wizardStep === 1" class="form-grid">
-      <div class="field">
-        <label>Organization Name *</label>
-        <InputText v-model="wizardOrg.name" class="w-full" />
-      </div>
-      <div class="field">
-        <label>Description</label>
-        <InputText v-model="wizardOrg.description" class="w-full" />
-      </div>
-    </div>
-
-    <!-- Step 2: Network -->
-    <div v-if="wizardStep === 2" class="form-grid">
       <div class="field">
         <label>CIDR *</label>
         <InputText v-model="wizardNet.cidr" placeholder="10.0.0.0/8" class="w-full" />
@@ -156,8 +105,8 @@
       </div>
     </div>
 
-    <!-- Step 3: Pi-hole Import -->
-    <div v-if="wizardStep === 3" class="pihole-import-step">
+    <!-- Step 2: Pi-hole Import -->
+    <div v-if="wizardStep === 2" class="pihole-import-step">
       <Tabs :value="piholeTab">
         <TabList>
           <Tab value="online"><i class="pi pi-globe" style="margin-right: 0.3rem" />Online</Tab>
@@ -235,23 +184,17 @@
 
     <template #footer>
       <div class="wizard-footer">
-        <Button v-if="wizardStep > 1" label="Back" icon="pi pi-arrow-left" severity="secondary" text
-                @click="wizardStep--" />
         <span style="flex: 1"></span>
-        <Button label="Cancel" severity="secondary" text @click="showWizard = false" />
-        <Button v-if="wizardStep === 1" label="Save & Exit" severity="secondary"
-                @click="wizardSaveAndExit" :loading="saving" :disabled="!wizardOrg.name" />
-        <Button v-if="wizardStep === 1" label="Continue" icon="pi pi-arrow-right" iconPos="right"
-                @click="wizardStep = 2" :disabled="!wizardOrg.name" />
-        <Button v-if="wizardStep === 2" label="Create & Continue" icon="pi pi-arrow-right" iconPos="right"
+        <Button label="Skip" severity="secondary" text @click="wizardSkip" />
+        <Button v-if="wizardStep === 1" label="Create & Continue" icon="pi pi-arrow-right" iconPos="right"
                 @click="wizardCreateAndContinue" :loading="saving"
                 :disabled="!!wizardCidrError || !wizardNet.cidr" />
-        <Button v-if="wizardStep === 3" label="Skip" severity="secondary"
+        <Button v-if="wizardStep === 2" label="Skip Import" severity="secondary"
                 @click="wizardFinish" :disabled="piholeImporting" />
-        <Button v-if="wizardStep === 3 && !piholeImportResults" label="Import" icon="pi pi-download"
+        <Button v-if="wizardStep === 2 && !piholeImportResults" label="Import" icon="pi pi-download"
                 @click="executePiholeImport" :loading="piholeImporting"
                 :disabled="!piholePreview" />
-        <Button v-if="wizardStep === 3 && piholeImportResults" label="Done" icon="pi pi-check"
+        <Button v-if="wizardStep === 2 && piholeImportResults" label="Done" icon="pi pi-check"
                 @click="wizardFinish" />
       </div>
     </template>
@@ -277,48 +220,37 @@
     </template>
   </Dialog>
 
-  <!-- Delete Organization Dialog -->
-  <Dialog v-model:visible="showDeleteFolderDialog" header="Delete Organization" modal :style="{ width: '28rem' }" data-track="dialog-org-delete"
-          @hide="deleteConfirmText = ''">
-    <p>Delete organization <strong>{{ deletingFolder?.name }}</strong>?</p>
-    <template v-if="deletingFolder?.subnets?.length > 0 || deletingFolder?.zone_count > 0">
-      <p class="warn-text">
-        This will permanently delete
-        <template v-if="deletingFolder.subnets?.length > 0">{{ deletingFolder.subnets.length }} network(s)</template>
-        <template v-if="deletingFolder.subnets?.length > 0 && deletingFolder.zone_count > 0"> and </template>
-        <template v-if="deletingFolder.zone_count > 0">{{ deletingFolder.zone_count }} DNS zone(s)</template>
-        and all associated DHCP scopes, reservations, and records.
-      </p>
-      <p class="warn-text" style="margin-top: 0.5rem;">Type <strong>DELETE</strong> to confirm:</p>
-      <InputText v-model="deleteConfirmText" placeholder="DELETE" style="width: 100%" />
-    </template>
+  <!-- Delete Folder Dialog -->
+  <Dialog v-model:visible="showDeleteFolderDialog" header="Delete Folder" modal :style="{ width: '28rem' }" data-track="dialog-folder-delete">
+    <p>Delete folder <strong>{{ deletingFolder?.name }}</strong>?</p>
+    <p v-if="deletingFolder?.subnet_count > 0" style="font-size: 0.85rem; color: var(--p-text-muted-color);">
+      {{ deletingFolder.subnet_count }} network(s) will be moved to ungrouped.
+    </p>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showDeleteFolderDialog = false" />
-      <Button label="Delete" severity="danger" @click="executeDeleteFolder" :loading="saving"
-              :disabled="(deletingFolder?.subnets?.length > 0 || deletingFolder?.zone_count > 0) && deleteConfirmText !== 'DELETE'" />
+      <Button label="Delete" severity="danger" @click="executeDeleteFolder" :loading="saving" />
     </template>
   </Dialog>
 
   <!-- Create Network Dialog -->
-  <Dialog v-model:visible="showSubnetDialog" header="Create Network" modal :style="{ width: '28rem' }" data-track="dialog-network-create">
+  <Dialog v-model:visible="showSubnetDialog" :header="quickAddMode ? 'Add Network' : 'Create Network'" modal :style="{ width: '28rem' }" data-track="dialog-network-create">
     <div class="form-grid">
       <div class="field">
         <label>CIDR *</label>
         <InputText v-model="supernetForm.cidr" placeholder="10.0.0.0/8" class="w-full" />
         <small v-if="supernetValidationError" class="field-error">{{ supernetValidationError }}</small>
       </div>
-      <div class="field">
-        <label>Name</label>
-        <InputText v-model="supernetForm.name" :placeholder="supernetAutoName || 'Optional — defaults to template'" class="w-full" />
-      </div>
-      <div class="field">
-        <label>Organization</label>
-        <div style="display: flex; gap: 0.5rem;">
-          <Select v-model="supernetForm.folder_id" :options="folderOptions" optionLabel="name" optionValue="id"
-                  placeholder="Select organization" class="w-full" />
-          <Button icon="pi pi-plus" @click="quickCreateOrg" v-tooltip="'New Organization'" />
+      <template v-if="!quickAddMode">
+        <div class="field">
+          <label>Name</label>
+          <InputText v-model="supernetForm.name" :placeholder="supernetAutoName || 'Optional — defaults to template'" class="w-full" />
         </div>
-      </div>
+        <div class="field">
+          <label>Folder (optional)</label>
+          <Select v-model="supernetForm.folder_id" :options="folderOptions" optionLabel="name" optionValue="id"
+                  placeholder="None (ungrouped)" class="w-full" showClear />
+        </div>
+      </template>
     </div>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showSubnetDialog = false" />
@@ -409,9 +341,9 @@
           <small v-if="createCidrError" class="field-error">{{ createCidrError }}</small>
         </div>
         <div class="field">
-          <label>Organization</label>
+          <label>Folder (optional)</label>
           <Select v-model="networkForm.folder_id" :options="folderOptions" optionLabel="name" optionValue="id"
-                  placeholder="Select organization" class="w-full" />
+                  placeholder="None (ungrouped)" class="w-full" showClear />
         </div>
       </template>
       <div class="field">
@@ -456,7 +388,7 @@
                   @click="networkForm.scan_enabled = false">Disabled</button>
         </div>
         <small class="field-help" v-if="networkForm.scan_enabled === null">
-          Inherits from organization — scanning is {{ resolvedOrgScanEnabled ? 'enabled' : 'disabled' }} for this network
+          Inherits from global default — scanning is {{ resolvedGlobalScanEnabled ? 'enabled' : 'disabled' }} for this network
         </small>
         <small class="field-help" v-else-if="networkForm.scan_enabled === true">Scanning is enabled for this network</small>
         <small class="field-help" v-else>Scanning is disabled for this network</small>
@@ -471,11 +403,11 @@
         <template v-if="networkForm.create_dhcp_scope">
           <div class="field">
             <label>Start IP *</label>
-            <InputText v-model="networkForm.dhcp_start_ip" class="w-full" :placeholder="dhcpDefaults.start" />
+            <InputText v-model="networkForm.dhcp_start_ip" class="w-full" />
           </div>
           <div class="field">
             <label>End IP *</label>
-            <InputText v-model="networkForm.dhcp_end_ip" class="w-full" :placeholder="dhcpDefaults.end" />
+            <InputText v-model="networkForm.dhcp_end_ip" class="w-full" />
           </div>
         </template>
         <div class="field">
@@ -576,7 +508,7 @@
 
   <!-- Group Allocate Dialog -->
   <Dialog v-model:visible="showGroupConfigure" header="Allocate Group" modal :style="{ width: '28rem' }" data-track="dialog-group-allocate">
-    <p>Allocate <strong>{{ groupDropIds.length }}</strong> networks to this organization?</p>
+    <p>Allocate <strong>{{ groupDropIds.length }}</strong> networks to this folder?</p>
     <p style="font-size: 0.85rem; color: var(--p-text-muted-color);">
       Each network will be named using the current template and allocated with default settings.
     </p>
@@ -615,7 +547,7 @@ const props = defineProps({
 });
 
 const emit = defineEmits([
-  'org-created', 'org-updated', 'org-deleted',
+  'folder-created', 'folder-updated', 'folder-deleted',
   'network-created', 'network-configured', 'network-updated',
   'network-divided', 'network-deleted', 'networks-merged',
   'group-configured',
@@ -625,47 +557,16 @@ const store = useSubnetStore();
 const toast = useToast();
 const saving = ref(false);
 
-// ── Folder / Organization dialogs ──
+// ── Folder dialogs ──
 const showFolderDialog = ref(false);
-const showOrgDialog = ref(false);
 const showDeleteFolderDialog = ref(false);
 const editingFolder = ref(null);
 const deletingFolder = ref(null);
-const deleteConfirmText = ref('');
-const folderForm = ref({ name: '', description: '', gateway_position: 'first', scan_enabled: true });
-const orgForm = ref({ name: '', description: '', cidr: '' });
-
-const orgValidationError = computed(() => {
-  const cidr = orgForm.value.cidr.trim();
-  if (!cidr) return null;
-  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
-  const normalized = normalizeCidr(cidr);
-  const result = validateSupernet(normalized);
-  if (!result.valid) return result.error;
-  return null;
-});
-
-async function createOrg() {
-  saving.value = true;
-  try {
-    await store.createFolder({
-      name: orgForm.value.name,
-      description: orgForm.value.description || undefined,
-      cidr: orgForm.value.cidr,
-    });
-    showOrgDialog.value = false;
-    orgForm.value = { name: '', description: '', cidr: '' };
-    toast.add({ severity: 'success', summary: 'Organization created', life: 3000 });
-    emit('org-created');
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally { saving.value = false; }
-}
+const folderForm = ref({ name: '', description: '' });
 
 // ── Guided Setup Wizard ──
 const showWizard = ref(false);
 const wizardStep = ref(1);
-const wizardOrg = ref({ name: '', description: '' });
 const wizardNet = ref({
   cidr: '', name: '', description: '', vlan_id: null,
   gateway_position: 'first', domain_name: '',
@@ -684,22 +585,7 @@ const showWizardCreateVlan = ref(false);
 const wizardNewVlanForm = ref({ vlan_id: null, name: '' });
 const wizardNewVlanNameManual = ref(false);
 // Track created resources for cleanup on cancel
-const wizardCreatedFolderId = ref(null);
 const wizardCreatedVlanId = ref(null);
-
-// Ensure the org exists (commit eagerly), returns folder_id
-async function ensureWizardOrg() {
-  if (wizardCreatedFolderId.value) return wizardCreatedFolderId.value;
-  await store.createFolder({
-    name: wizardOrg.value.name,
-    description: wizardOrg.value.description || undefined,
-    gateway_position: wizardNet.value.gateway_position || 'first',
-    scan_enabled: wizardNet.value.scan_enabled,
-  });
-  const folder = store.folders.find(f => f.name === wizardOrg.value.name.trim());
-  wizardCreatedFolderId.value = folder?.id;
-  return folder?.id;
-}
 
 const wizardCidrError = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
@@ -803,9 +689,7 @@ function onWizardNewVlanIdInput(val) {
 async function createVlanFromWizard() {
   saving.value = true;
   try {
-    const folderId = await ensureWizardOrg();
     const res = await api.post('/vlans', {
-      folder_id: folderId,
       vlan_id: wizardNewVlanForm.value.vlan_id,
       name: wizardNewVlanForm.value.name,
     });
@@ -822,17 +706,12 @@ async function createVlanFromWizard() {
   } finally { saving.value = false; }
 }
 
-async function wizardSaveAndExit() {
-  saving.value = true;
+async function wizardSkip() {
+  // Mark wizard as completed and close
   try {
-    await ensureWizardOrg();
-    wizardCreatedFolderId.value = null; // don't clean up on close — user chose to save
-    showWizard.value = false;
-    toast.add({ severity: 'success', summary: 'Organization created', life: 3000 });
-    emit('org-created');
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally { saving.value = false; }
+    await store.updateSetting('setup_wizard_completed', '1');
+  } catch { /* best effort */ }
+  showWizard.value = false;
 }
 
 async function wizardCreateAndContinue() {
@@ -842,13 +721,10 @@ async function wizardCreateAndContinue() {
   }
   saving.value = true;
   try {
-    const folderId = await ensureWizardOrg();
-
     const cidr = wizardNet.value.cidr.trim();
     const created = await store.createSupernet({
       cidr,
       name: wizardNet.value.name || undefined,
-      folder_id: folderId,
     });
 
     const payload = {
@@ -867,18 +743,19 @@ async function wizardCreateAndContinue() {
     await store.configureSubnet(created.id, payload);
 
     wizardCreatedSubnetId.value = created.id;
-    toast.add({ severity: 'success', summary: 'Organization and network created', life: 3000 });
-    wizardStep.value = 3;
+    toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
+    wizardStep.value = 2;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally { saving.value = false; }
 }
 
-function wizardFinish() {
-  wizardCreatedFolderId.value = null;
+async function wizardFinish() {
   wizardCreatedVlanId.value = null;
+  try {
+    await store.updateSetting('setup_wizard_completed', '1');
+  } catch { /* best effort */ }
   showWizard.value = false;
-  emit('org-created');
   emit('network-created');
 }
 
@@ -992,7 +869,7 @@ async function executePiholeImport() {
     let zone = dnsStore.zones.find(z => z.name === domainName && z.type === 'forward');
     if (!zone && domainName) {
       // Create the zone if it doesn't exist
-      zone = await dnsStore.createZone({ name: domainName, type: 'forward', folder_id: wizardCreatedFolderId.value });
+      zone = await dnsStore.createZone({ name: domainName, type: 'forward' });
     }
     if (!zone) {
       toast.add({ severity: 'error', summary: 'No zone found', detail: 'Could not find or create a forward DNS zone for import', life: 5000 });
@@ -1030,13 +907,8 @@ async function onWizardClose() {
   if (wizardCreatedVlanId.value) {
     try { await api.delete(`/vlans/${wizardCreatedVlanId.value}`); } catch { /* best effort */ }
   }
-  if (wizardCreatedFolderId.value) {
-    try { await store.deleteFolder(wizardCreatedFolderId.value, true); } catch { /* best effort */ }
-    emit('org-deleted');
-  }
   // Reset wizard state
   wizardStep.value = 1;
-  wizardOrg.value = { name: '', description: '' };
   wizardNet.value = {
     cidr: '', name: '', description: '', vlan_id: null,
     gateway_position: 'first', domain_name: '',
@@ -1045,7 +917,6 @@ async function onWizardClose() {
   };
   domainWarningShown.value = false;
   wizardVlanSelection.value = null;
-  wizardCreatedFolderId.value = null;
   wizardCreatedVlanId.value = null;
   resetPiholeState();
 }
@@ -1055,31 +926,17 @@ function openWizard() {
   showWizard.value = true;
 }
 
-async function quickCreateOrg() {
-  const name = prompt('Organization name:');
-  if (!name || !name.trim()) return;
-  try {
-    await store.createFolder({ name: name.trim() });
-    toast.add({ severity: 'success', summary: 'Organization created', life: 3000 });
-    const created = store.folders.find(f => f.name === name.trim());
-    if (created) supernetForm.value.folder_id = created.id;
-    emit('org-created');
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  }
-}
-
 async function saveFolder() {
   saving.value = true;
   try {
     if (editingFolder.value) {
       await store.updateFolder(editingFolder.value.id, folderForm.value);
       toast.add({ severity: 'success', summary: 'Folder updated', life: 3000 });
-      emit('org-updated');
+      emit('folder-updated');
     } else {
       await store.createFolder(folderForm.value);
       toast.add({ severity: 'success', summary: 'Folder created', life: 3000 });
-      emit('org-created');
+      emit('folder-created');
     }
     showFolderDialog.value = false;
     editingFolder.value = null;
@@ -1091,12 +948,10 @@ async function saveFolder() {
 async function executeDeleteFolder() {
   saving.value = true;
   try {
-    const force = deletingFolder.value?.subnets?.length > 0 || deletingFolder.value?.zone_count > 0;
-    await store.deleteFolder(deletingFolder.value.id, force);
+    await store.deleteFolder(deletingFolder.value.id);
     showDeleteFolderDialog.value = false;
-    deleteConfirmText.value = '';
-    toast.add({ severity: 'success', summary: 'Organization deleted', life: 3000 });
-    emit('org-deleted', deletingFolder.value.id);
+    toast.add({ severity: 'success', summary: 'Folder deleted', life: 3000 });
+    emit('folder-deleted', deletingFolder.value.id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally { saving.value = false; }
@@ -1104,6 +959,7 @@ async function executeDeleteFolder() {
 
 // ── Create Network dialog ──
 const showSubnetDialog = ref(false);
+const quickAddMode = ref(false);
 const supernetForm = ref({ cidr: '', name: '', folder_id: null });
 const folderOptions = computed(() => store.folders);
 
@@ -1237,12 +1093,11 @@ async function executeCarve() {
 const showNetworkDialog = ref(false);
 const networkDialogMode = ref('edit'); // 'create', 'configure', or 'edit'
 const networkForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '', scan_enabled: null });
-const resolvedOrgScanEnabled = computed(() => {
-  const folderId = props.selectedNode?.data?.folder_id || getSubnetFolderId();
-  if (!folderId) return true; // default
-  const folder = store.folders.find(f => f.id === folderId);
-  return folder ? !!folder.scan_enabled : true;
+const resolvedGlobalScanEnabled = computed(() => {
+  // Read from settings cache if available, default true
+  return true; // Will be resolved from settings when dialog opens
 });
+const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
 
 const networkDialogHeader = computed(() => {
@@ -1288,6 +1143,13 @@ const dhcpDefaults = computed(() => {
 });
 
 watch(showNetworkDialog, (val) => { if (!val) dropTargetFolderIdForConfigure.value = null; });
+watch(() => networkForm.value.create_dhcp_scope, (checked) => {
+  if (checked && !networkForm.value.dhcp_start_ip && !networkForm.value.dhcp_end_ip) {
+    const d = dhcpDefaults.value;
+    if (d.start) networkForm.value.dhcp_start_ip = d.start;
+    if (d.end) networkForm.value.dhcp_end_ip = d.end;
+  }
+});
 const editVlanSelection = ref(null);
 const vlanSuggestions = ref([]);
 const showVlanWarning = ref(false);
@@ -1302,32 +1164,9 @@ function onNewVlanIdInput(val) {
   }
 }
 
-function getSubnetFolderId() {
-  const folderId = props.selectedNode?.data?.folder_id;
-  if (folderId) return folderId;
-  const subnetId = props.selectedNode?.data?.id;
-  if (subnetId) {
-    for (const f of store.folders) {
-      if (f.subnets) {
-        const found = (function find(nodes) {
-          for (const n of nodes) {
-            if (n.id === subnetId) return true;
-            if (n.children && find(n.children)) return true;
-          }
-          return false;
-        })(f.subnets);
-        if (found) return f.id;
-      }
-    }
-  }
-  return null;
-}
-
 async function searchVlans(event) {
-  const folderId = getSubnetFolderId();
-  if (!folderId) { vlanSuggestions.value = []; return; }
   try {
-    const res = await api.get('/vlans/search', { params: { folder_id: folderId, q: event.query } });
+    const res = await api.get('/vlans/search', { params: { q: event.query } });
     vlanSuggestions.value = res.data.map(v => ({ ...v, display: `VLAN ${v.vlan_id} — ${v.name}` }));
   } catch (err) {
     vlanSuggestions.value = [];
@@ -1373,12 +1212,9 @@ function onVlanClear() {
 }
 
 async function createVlanFromEdit() {
-  const folderId = getSubnetFolderId();
-  if (!folderId) return;
   saving.value = true;
   try {
     const res = await api.post('/vlans', {
-      folder_id: folderId,
       vlan_id: newVlanForm.value.vlan_id,
       name: newVlanForm.value.name,
     });
@@ -1569,14 +1405,15 @@ async function executeApplyTemplate(ids) {
 }
 
 // ── Exposed methods ──
-function openOrgDialog() {
-  orgForm.value = { name: '', description: '', cidr: '' };
-  showOrgDialog.value = true;
+function openCreateFolder() {
+  editingFolder.value = null;
+  folderForm.value = { name: '', description: '' };
+  showFolderDialog.value = true;
 }
 
 function openEditFolder(folder) {
   editingFolder.value = folder;
-  folderForm.value = { name: folder.name, description: folder.description || '', gateway_position: folder.gateway_position || 'first', scan_enabled: folder.scan_enabled !== 0 };
+  folderForm.value = { name: folder.name, description: folder.description || '' };
   showFolderDialog.value = true;
 }
 
@@ -1586,7 +1423,14 @@ function openDeleteFolder(folder) {
 }
 
 function openSubnetDialog(folderId) {
+  quickAddMode.value = false;
   supernetForm.value = { cidr: '', name: '', folder_id: folderId || store.folders[0]?.id || null };
+  showSubnetDialog.value = true;
+}
+
+function openQuickAddNetwork() {
+  quickAddMode.value = true;
+  supernetForm.value = { cidr: '', name: '', folder_id: null };
   showSubnetDialog.value = true;
 }
 
@@ -1651,9 +1495,8 @@ function openEdit(node, folderId) {
   if (folderId) dropTargetFolderIdForConfigure.value = folderId;
 
   // Load VLAN display if one is set
-  const resolvedFolderId = folderId || getSubnetFolderId();
-  if (d.vlan_id && resolvedFolderId) {
-    api.get('/vlans/search', { params: { folder_id: resolvedFolderId, q: String(d.vlan_id) } }).then(res => {
+  if (d.vlan_id) {
+    api.get('/vlans/search', { params: { q: String(d.vlan_id) } }).then(res => {
       const match = res.data.find(v => v.vlan_id === d.vlan_id);
       if (match) editVlanSelection.value = { ...match, display: `VLAN ${match.vlan_id} — ${match.name}` };
       else editVlanSelection.value = `VLAN ${d.vlan_id}`;
@@ -1698,8 +1541,8 @@ function openGroupConfigure(leafIds, folderId) {
 }
 
 defineExpose({
-  openWizard, openOrgDialog, openEditFolder, openDeleteFolder,
-  openSubnetDialog, openCreateNetwork, openDivide, openConfigure,
+  openWizard, openCreateFolder, openEditFolder, openDeleteFolder,
+  openSubnetDialog, openQuickAddNetwork, openCreateNetwork, openDivide, openConfigure,
   openEdit, openDelete, openDeallocate, openMergeConfirm,
   openGroupConfigure, executeApplyTemplate,
 });
@@ -1759,12 +1602,21 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
 }
 .divide-slider {
   flex: 1;
+  min-width: 0;
 }
 .divide-count-input {
-  width: 5rem;
+  width: 4rem;
+  max-width: 4rem;
+  flex-shrink: 0;
+}
+.divide-count-input :deep(input) {
+  width: 100%;
+  text-align: center;
+  padding: 0.3rem;
 }
 .divide-count-label {
   font-size: 0.8rem;

@@ -2,7 +2,7 @@
   <div class="org-table">
     <!-- Header -->
     <div class="org-header">
-      <i class="pi pi-building" style="font-size: 0.9rem"></i>
+      <i class="pi pi-folder" style="font-size: 0.9rem"></i>
       <span class="org-name">{{ folder.name }}</span>
       <span v-if="folder.description" class="org-desc">{{ folder.description }}</span>
       <span style="flex:1"></span>
@@ -47,7 +47,7 @@
         </span>
       </div>
       <div v-if="flatRows.length === 0" class="empty-state">
-        No networks in this organization.
+        No networks in this folder.
       </div>
     </div>
   </div>

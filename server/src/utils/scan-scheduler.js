@@ -16,10 +16,9 @@ function checkScheduledScans() {
   if (!db) return;
 
   const subnets = db.prepare(`
-    SELECT s.*, f.scan_enabled AS folder_scan_enabled FROM subnets s
-    LEFT JOIN folders f ON s.folder_id = f.id
+    SELECT s.* FROM subnets s
     WHERE s.scan_interval IS NOT NULL AND s.status = 'allocated' AND s.prefix_length > 20
-      AND COALESCE(s.scan_enabled, f.scan_enabled, 1) = 1
+      AND COALESCE(s.scan_enabled, (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'default_scan_enabled'), 1) = 1
   `).all();
 
   for (const subnet of subnets) {

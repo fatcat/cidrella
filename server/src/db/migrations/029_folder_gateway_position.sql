@@ -1,1 +1,1 @@
-ALTER TABLE folders ADD COLUMN gateway_position TEXT NOT NULL DEFAULT 'first';
+-- Removed: gateway_position column on folders (org layer removed, gateway position is now a global setting only)

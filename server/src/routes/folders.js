@@ -1,10 +1,6 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
-import {
-  isValidCidr, normalizeCidr, validateSupernet, cidrsOverlap, parseCidr, applyNameTemplate
-} from '../utils/ip.js';
-import { regenerateConfigs } from '../utils/dnsmasq.js';
 
 const router = Router();
 
@@ -29,69 +25,24 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   res.json(folders);
 });
 
-// POST /api/folders — create organization (folder + optional supernet)
+// POST /api/folders — create folder (grouping only)
 router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { name, description, cidr, gateway_position, scan_enabled } = req.body;
+  const { name, description } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   const db = getDb();
 
-  // Validate CIDR if provided
-  let normalized = null;
-  if (cidr) {
-    if (!isValidCidr(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
-    normalized = normalizeCidr(cidr);
-
-    const existing = db.prepare('SELECT id FROM subnets WHERE cidr = ?').get(normalized);
-    if (existing) return res.status(409).json({ error: 'Subnet already exists' });
-
-    const validation = validateSupernet(normalized);
-    if (!validation.valid) return res.status(400).json({ error: validation.error });
-
-    const roots = db.prepare('SELECT cidr FROM subnets WHERE parent_id IS NULL').all();
-    for (const root of roots) {
-      if (cidrsOverlap(normalized, root.cidr)) {
-        return res.status(409).json({ error: `Overlaps with existing supernet ${root.cidr}` });
-      }
-    }
-  }
-
   try {
-  const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM folders').get();
-  const sortOrder = (maxOrder?.m ?? -1) + 1;
+    const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM folders').get();
+    const sortOrder = (maxOrder?.m ?? -1) + 1;
 
-  const txn = db.transaction(() => {
-    const gwPos = ['first', 'last', 'none'].includes(gateway_position) ? gateway_position : 'first';
-    const scanEn = scan_enabled !== undefined ? (scan_enabled ? 1 : 0) : 1;
-    const folderResult = db.prepare(
-      'INSERT INTO folders (name, description, sort_order, gateway_position, scan_enabled) VALUES (?, ?, ?, ?, ?)'
-    ).run(name.trim(), description || null, sortOrder, gwPos, scanEn);
-    const folderId = folderResult.lastInsertRowid;
+    const result = db.prepare(
+      'INSERT INTO folders (name, description, sort_order) VALUES (?, ?, ?)'
+    ).run(name.trim(), description || null, sortOrder);
 
-    let subnet = null;
-    if (normalized) {
-      const templateRow = db.prepare("SELECT value FROM settings WHERE key = 'subnet_name_template'").get();
-      const template = templateRow?.value || '%1.%2.%3.%4/%bitmask';
-      const subnetName = applyNameTemplate(template, normalized);
-      const parsed = parseCidr(normalized);
-
-      const subnetResult = db.prepare(`
-        INSERT INTO subnets (cidr, network_address, broadcast_address, prefix_length, total_addresses, name,
-          parent_id, folder_id, status, depth)
-        VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'unallocated', 0)
-      `).run(normalized, parsed.network, parsed.broadcast, parsed.prefix, parsed.totalAddresses, subnetName, folderId);
-
-      subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetResult.lastInsertRowid);
-      audit(req.user.id, 'subnet_created', 'subnet', subnet.id, { cidr: normalized });
-    }
-
-    audit(req.user.id, 'folder_created', 'folder', folderId, { name: name.trim(), cidr: normalized });
-    const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(folderId);
-    return { folder, subnet };
-  });
-
-  const result = txn();
-  res.status(201).json(result.folder);
+    audit(req.user.id, 'folder_created', 'folder', result.lastInsertRowid, { name: name.trim() });
+    const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(result.lastInsertRowid);
+    res.status(201).json(folder);
   } catch (err) {
     console.error('Create folder error:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });
@@ -104,18 +55,14 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(req.params.id);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
-  const { name, description, sort_order, gateway_position, scan_enabled } = req.body;
+  const { name, description, sort_order } = req.body;
 
-  const gwPos = gateway_position && ['first', 'last', 'none'].includes(gateway_position) ? gateway_position : undefined;
-  const scanEn = scan_enabled !== undefined ? (scan_enabled ? 1 : 0) : undefined;
   db.prepare(`
-    UPDATE folders SET name = ?, description = ?, sort_order = ?, gateway_position = ?, scan_enabled = ? WHERE id = ?
+    UPDATE folders SET name = ?, description = ?, sort_order = ? WHERE id = ?
   `).run(
     name ?? folder.name,
     description !== undefined ? description : folder.description,
     sort_order !== undefined ? sort_order : folder.sort_order,
-    gwPos ?? folder.gateway_position,
-    scanEn !== undefined ? scanEn : folder.scan_enabled,
     folder.id
   );
 
@@ -124,42 +71,25 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   res.json(updated);
 });
 
-// DELETE /api/folders/:id — delete folder (cascade with ?force=true)
+// DELETE /api/folders/:id — delete folder (ungroups children, does not delete them)
 router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(req.params.id);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
-  const subnetCount = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE folder_id = ? AND parent_id IS NULL').get(folder.id).c;
-  const zoneCount = db.prepare('SELECT COUNT(*) as c FROM dns_zones WHERE folder_id = ?').get(folder.id).c;
-
-  if ((subnetCount > 0 || zoneCount > 0) && req.query.force !== 'true') {
-    return res.status(400).json({
-      error: 'Organization contains child resources. Use force delete to remove.',
-      children: { subnets: subnetCount, zones: zoneCount }
-    });
-  }
-
   const doDelete = db.transaction(() => {
-    // Delete subnets (children cascade via FK: ranges, IPs, DHCP, scans)
-    if (subnetCount > 0) {
-      db.prepare('DELETE FROM subnets WHERE folder_id = ? AND parent_id IS NULL').run(folder.id);
-    }
-    // Delete DNS zones (records cascade via FK)
-    if (zoneCount > 0) {
-      db.prepare('DELETE FROM dns_zones WHERE folder_id = ?').run(folder.id);
-    }
-    // VLANs cascade via FK ON DELETE CASCADE
+    // Ungroup subnets — move to ungrouped
+    db.prepare('UPDATE subnets SET folder_id = NULL WHERE folder_id = ?').run(folder.id);
+    // Ungroup DNS zones
+    db.prepare('UPDATE dns_zones SET folder_id = NULL WHERE folder_id = ?').run(folder.id);
+    // Ungroup VLANs
+    db.prepare('UPDATE vlans SET folder_id = NULL WHERE folder_id = ?').run(folder.id);
+    // Delete the folder itself
     db.prepare('DELETE FROM folders WHERE id = ?').run(folder.id);
   });
   doDelete();
 
-  audit(req.user.id, 'folder_deleted', 'folder', folder.id, {
-    name: folder.name, force: subnetCount > 0 || zoneCount > 0,
-    deleted_subnets: subnetCount, deleted_zones: zoneCount
-  });
-
-  regenerateConfigs(db);
+  audit(req.user.id, 'folder_deleted', 'folder', folder.id, { name: folder.name });
   res.json({ ok: true });
 });
 

@@ -18,13 +18,9 @@ function isValidDomainName(name) {
 const router = Router();
 
 /**
- * Get gateway position for a subnet's folder, falling back to global setting then 'first'.
+ * Get gateway position from global setting, falling back to 'first'.
  */
-function getGatewayPosition(db, folderId) {
-  if (folderId) {
-    const folder = db.prepare('SELECT gateway_position FROM folders WHERE id = ?').get(folderId);
-    if (folder?.gateway_position) return folder.gateway_position;
-  }
+function getGatewayPosition(db) {
   const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
   return gwPref?.value || 'first';
 }
@@ -524,7 +520,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
       const mergedParsed = parseCidr(mergeResult.merged_cidr);
 
       // Determine correct gateway for the merged network
-      const gwPosition = getGatewayPosition(db, parent.folder_id);
+      const gwPosition = getGatewayPosition(db);
       const mergedGateway = gwPosition === 'last' ? mergedParsed.lastUsable
         : gwPosition === 'none' ? null : mergedParsed.firstUsable;
 
@@ -888,7 +884,7 @@ function clearParentConfig(db, parentId) {
 
 // POST /api/subnets/:id/divide — execute division
 router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { cidr, new_prefix, force } = req.body;
+  const { cidr, new_prefix, force, selected_cidrs } = req.body;
   const db = getDb();
   const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!parent) return res.status(404).json({ error: 'Subnet not found' });
@@ -920,9 +916,20 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       if (targetPrefix <= parentParsed.prefix || targetPrefix > 32) {
         return res.status(400).json({ error: 'Invalid target prefix' });
       }
-      const subnets = calculateSubnets(parent.cidr, targetPrefix);
+      let subnets = calculateSubnets(parent.cidr, targetPrefix);
       if (subnets.length > 256) {
         return res.status(400).json({ error: 'Cannot divide into more than 256 subnets' });
+      }
+
+      // Filter to selected CIDRs if provided
+      if (Array.isArray(selected_cidrs) && selected_cidrs.length > 0) {
+        const allCidrs = new Set(subnets.map(s => `${s.network}/${s.prefix}`));
+        const invalid = selected_cidrs.filter(c => !allCidrs.has(c));
+        if (invalid.length > 0) {
+          return res.status(400).json({ error: `Invalid selected CIDRs: ${invalid.join(', ')}` });
+        }
+        const selectedSet = new Set(selected_cidrs);
+        subnets = subnets.filter(s => selectedSet.has(`${s.network}/${s.prefix}`));
       }
 
       const txn = db.transaction(() => {
@@ -934,7 +941,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         }
 
         // Determine default gateway position for non-inheriting children
-        const gwPosition = getGatewayPosition(db, parent.folder_id);
+        const gwPosition = getGatewayPosition(db);
 
         const childIds = [];
         for (let i = 0; i < subnets.length; i++) {
@@ -1025,7 +1032,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       }
 
       // Determine default gateway position for non-inheriting children
-      const gwPosition = getGatewayPosition(db, parent.folder_id);
+      const gwPosition = getGatewayPosition(db);
 
       // All children in the division
       const allCidrs = [normalized, ...remainder];
@@ -1104,7 +1111,7 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   let gw = gateway_address;
   if (!gw) {
     const targetFolder = folder_id || subnet.folder_id;
-    const gwPosition = getGatewayPosition(db, targetFolder);
+    const gwPosition = getGatewayPosition(db);
     gw = gwPosition === 'none' ? null
       : gwPosition === 'last' ? parsed.lastUsable : parsed.firstUsable;
   }

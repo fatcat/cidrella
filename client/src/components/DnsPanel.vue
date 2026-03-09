@@ -200,9 +200,9 @@
                     class="w-full" />
         </div>
         <div class="field">
-          <label>Organization *</label>
+          <label>Folder</label>
           <Select v-model="zoneForm.folder_id" :options="folders" optionLabel="name" optionValue="id"
-                    class="w-full" placeholder="Select organization" />
+                    class="w-full" placeholder="Select folder (optional)" showClear />
         </div>
         <div class="field">
           <label>Description</label>
@@ -362,9 +362,7 @@ import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
 import api from '../api/client.js';
 
-const props = defineProps({
-  orgId: { type: [Number, null], default: null }
-});
+// No props needed — shows all zones globally
 
 const store = useDnsStore();
 const toast = useToast();
@@ -386,22 +384,16 @@ const loadingRecords = ref(false);
 const expandedGroups = ref({});
 const zoneTab = ref(loadJson('ipam_dns_zone_tab', 'forward'));
 
-// Filtered zones by org
-function filterByOrg(zones) {
-  if (props.orgId == null) return zones;
-  return zones.filter(z => z.folder_id === props.orgId);
-}
-
 // Forward zones (simple list)
 const forwardZones = computed(() =>
-  filterByOrg(store.zones.filter(z => z.type === 'forward')).sort((a, b) => a.name.localeCompare(b.name))
+  store.zones.filter(z => z.type === 'forward').sort((a, b) => a.name.localeCompare(b.name))
 );
 
 // Group reverse zones that share a subnet_id (multiple /24 zones for one supernet)
 const groupedReverseZones = computed(() => {
   const result = [];
   const bySubnet = new Map();
-  const reverseZones = filterByOrg(store.zones.filter(z => z.type === 'reverse')).sort((a, b) => {
+  const reverseZones = store.zones.filter(z => z.type === 'reverse').sort((a, b) => {
     const octetsA = a.name.replace('.in-addr.arpa', '').split('.').reverse().map(Number);
     const octetsB = b.name.replace('.in-addr.arpa', '').split('.').reverse().map(Number);
     for (let i = 0; i < Math.max(octetsA.length, octetsB.length); i++) {
@@ -516,17 +508,6 @@ const valuePlaceholder = computed(() => {
 // Persist zone tab selection
 watch(zoneTab, (val) => {
   try { localStorage.setItem('ipam_dns_zone_tab', JSON.stringify(val)); } catch {}
-});
-
-// Clear selection if org filter changes and selected zone is no longer visible
-watch(() => props.orgId, () => {
-  if (selectedZone.value) {
-    const allFiltered = [...forwardZones.value, ...groupedReverseZones.value.flatMap(e => e.isGroup ? e.zones : [e.zone])];
-    if (!allFiltered.find(z => z.id === selectedZone.value.id)) {
-      selectedZone.value = null;
-      records.value = [];
-    }
-  }
 });
 
 async function selectZone(zone) {

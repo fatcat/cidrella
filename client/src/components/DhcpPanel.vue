@@ -219,7 +219,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
@@ -242,9 +242,7 @@ import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
 import ScopeDialog from './ScopeDialog.vue';
 
-const props = defineProps({
-  orgId: { type: [Number, null], default: null }
-});
+// No props needed — shows all scopes globally
 
 const store = useDhcpStore();
 const toast = useToast();
@@ -318,28 +316,15 @@ const deletingScope = ref(null);
 const showDeleteReservationDialog = ref(false);
 const deletingReservation = ref(null);
 
-// Org-filtered scopes and leases
-const filteredScopes = computed(() => {
-  if (props.orgId == null) return store.scopes;
-  return store.scopes.filter(s => s.folder_id === props.orgId);
-});
+// All scopes and leases (no org filtering)
+const filteredScopes = computed(() => store.scopes);
 
-const filteredLeases = computed(() => {
-  if (props.orgId == null) return store.leases;
-  return store.leases.filter(l => l.folder_id === props.orgId);
-});
+const filteredLeases = computed(() => store.leases);
 
 // Filter leases for selected scope
 const scopeLeases = computed(() => {
   if (!selectedScope.value) return [];
   return store.leases.filter(l => l.subnet_id === selectedScope.value.subnet_id);
-});
-
-// Clear selection if org filter changes and selected scope is no longer visible
-watch(() => props.orgId, () => {
-  if (selectedScope.value && !filteredScopes.value.find(s => s.id === selectedScope.value.id)) {
-    selectedScope.value = filteredScopes.value[0] || null;
-  }
 });
 
 function loadJson(key, fallback) {

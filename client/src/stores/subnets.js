@@ -92,7 +92,7 @@ export const useSubnetStore = defineStore('subnets', () => {
           styleClass: 'node-allocated',
           icon: 'pi pi-check-circle'
         })),
-        icon: 'pi pi-building',
+        icon: 'pi pi-folder',
         styleClass: 'node-folder'
       };
     });
@@ -151,8 +151,8 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  async function deleteFolder(id, force = false) {
-    const res = await api.delete(`/folders/${id}${force ? '?force=true' : ''}`);
+  async function deleteFolder(id) {
+    const res = await api.delete(`/folders/${id}`);
     await fetchTree();
     return res.data;
   }
@@ -181,10 +181,11 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  async function divideSubnet(id, { new_prefix, cidr, force }) {
+  async function divideSubnet(id, { new_prefix, cidr, force, selected_cidrs }) {
     const payload = { force };
     if (new_prefix !== undefined) payload.new_prefix = new_prefix;
     if (cidr) payload.cidr = cidr;
+    if (selected_cidrs?.length) payload.selected_cidrs = selected_cidrs;
     const res = await api.post(`/subnets/${id}/divide`, payload);
     await fetchTree();
     return res.data;

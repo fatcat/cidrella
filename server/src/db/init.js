@@ -134,6 +134,18 @@ export async function ensureDefaults() {
     db.prepare("INSERT INTO settings (key, value) VALUES ('installation_complete', 'false')").run();
   }
 
+  // Default scan enabled (global inheritance root)
+  const scanEn = db.prepare("SELECT value FROM settings WHERE key = 'default_scan_enabled'").get();
+  if (!scanEn) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('default_scan_enabled', '1')").run();
+  }
+
+  // Setup wizard state
+  const wizardDone = db.prepare("SELECT value FROM settings WHERE key = 'setup_wizard_completed'").get();
+  if (!wizardDone) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('setup_wizard_completed', '0')").run();
+  }
+
   // GeoIP defaults
   const geoipDefaults = {
     geoip_enabled: 'false',

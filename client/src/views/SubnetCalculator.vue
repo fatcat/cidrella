@@ -33,7 +33,8 @@
       <h3>{{ subnets.length }} Network{{ subnets.length > 1 ? 's' : '' }} (each /{{ newPrefix }})</h3>
       <DataTable :value="subnets" stripedRows size="small"
                  :paginator="subnets.length > 256" :rows="256"
-                 :rowsPerPageOptions="[64, 128, 256, 512]" scrollable scrollHeight="flex">
+                 :rowsPerPageOptions="[64, 128, 256, 512]" scrollable scrollHeight="flex"
+                 @row-contextmenu="onRowContextMenu" :contextMenu="true" v-model:contextMenuSelection="contextRow">
         <Column header="#" style="width: 3rem">
           <template #body="{ index }">{{ index + 1 }}</template>
         </Column>
@@ -48,6 +49,7 @@
           <template #body="{ data }">{{ data.usableCount.toLocaleString() }}</template>
         </Column>
       </DataTable>
+      <ContextMenu ref="contextMenuRef" :model="contextMenuItems" />
     </div>
 
     <div class="error-msg" v-if="error">{{ error }}</div>
@@ -57,19 +59,22 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
+import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useSubnetStore } from '../stores/subnets.js';
 
 const STORAGE_KEY = 'ipam-subnet-calc';
 const store = useSubnetStore();
 const toast = useToast();
+const contextMenuRef = ref(null);
+const contextRow = ref(null);
 
 function loadSaved() {
   try {
@@ -105,6 +110,33 @@ async function calculate() {
     subnets.value = [];
   } finally {
     loading.value = false;
+  }
+}
+
+// ── Context menu ──
+function onRowContextMenu(event) {
+  contextMenuRef.value.show(event.originalEvent);
+}
+
+const contextMenuItems = computed(() => {
+  const row = contextRow.value;
+  if (!row) return [];
+  return [
+    {
+      label: 'Add Network',
+      icon: 'pi pi-plus',
+      command: () => addNetwork(row),
+    },
+  ];
+});
+
+async function addNetwork(row) {
+  const networkCidr = `${row.network}/${row.prefix}`;
+  try {
+    await store.createSupernet({ cidr: networkCidr });
+    toast.add({ severity: 'success', summary: 'Network added', detail: networkCidr, life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   }
 }
 </script>

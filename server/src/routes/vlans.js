@@ -13,68 +13,54 @@ function requirePerm(permission) {
   };
 }
 
-// GET /api/vlans — list VLANs, optionally filtered by folder_id
+// GET /api/vlans — list all VLANs
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
-  const { folder_id } = req.query;
-
-  let sql = `
-    SELECT v.*, f.name as folder_name,
-      (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id AND folder_id = v.folder_id) as subnet_count
+  const vlans = db.prepare(`
+    SELECT v.*,
+      (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id) as subnet_count
     FROM vlans v
-    JOIN folders f ON f.id = v.folder_id
-  `;
-  const params = [];
-  if (folder_id) {
-    sql += ' WHERE v.folder_id = ?';
-    params.push(folder_id);
-  }
-  sql += ' ORDER BY v.folder_id, v.vlan_id';
-
-  res.json(db.prepare(sql).all(...params));
+    ORDER BY v.vlan_id
+  `).all();
+  res.json(vlans);
 });
 
 // GET /api/vlans/search — search VLANs for autocomplete
 router.get('/search', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
-  const { folder_id, q } = req.query;
-  if (!folder_id) return res.status(400).json({ error: 'folder_id is required' });
+  const { q } = req.query;
 
   const escaped = (q || '').trim().replace(/[%_]/g, '\\$&');
   const term = `%${escaped}%`;
   const vlans = db.prepare(`
-    SELECT v.*, f.name as folder_name,
-      (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id AND folder_id = v.folder_id) as subnet_count
+    SELECT v.*,
+      (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id) as subnet_count
     FROM vlans v
-    JOIN folders f ON f.id = v.folder_id
-    WHERE v.folder_id = ? AND (v.name LIKE ? ESCAPE '\\' OR CAST(v.vlan_id AS TEXT) LIKE ? ESCAPE '\\')
+    WHERE v.name LIKE ? ESCAPE '\\' OR CAST(v.vlan_id AS TEXT) LIKE ? ESCAPE '\\'
     ORDER BY v.vlan_id
     LIMIT 20
-  `).all(folder_id, term, term);
+  `).all(term, term);
 
   res.json(vlans);
 });
 
 // POST /api/vlans — create VLAN
 router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { folder_id, vlan_id, name } = req.body;
-  if (!folder_id) return res.status(400).json({ error: 'Organization is required' });
+  const { vlan_id, name, folder_id } = req.body;
   if (!vlan_id || vlan_id < 1 || vlan_id > 4094) return res.status(400).json({ error: 'VLAN ID must be between 1 and 4094' });
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
   const db = getDb();
-  const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
-  if (!folder) return res.status(404).json({ error: 'Organization not found' });
 
-  const existing = db.prepare('SELECT id FROM vlans WHERE folder_id = ? AND vlan_id = ?').get(folder_id, vlan_id);
-  if (existing) return res.status(409).json({ error: `VLAN ${vlan_id} already exists in this organization` });
+  const existing = db.prepare('SELECT id FROM vlans WHERE vlan_id = ?').get(vlan_id);
+  if (existing) return res.status(409).json({ error: `VLAN ${vlan_id} already exists` });
 
   try {
     const result = db.prepare(
       'INSERT INTO vlans (folder_id, vlan_id, name) VALUES (?, ?, ?)'
-    ).run(folder_id, vlan_id, name.trim());
+    ).run(folder_id || null, vlan_id, name.trim());
 
-    audit(req.user.id, 'vlan_created', 'vlan', result.lastInsertRowid, { folder_id, vlan_id, name: name.trim() });
+    audit(req.user.id, 'vlan_created', 'vlan', result.lastInsertRowid, { vlan_id, name: name.trim() });
     const vlan = db.prepare('SELECT * FROM vlans WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(vlan);
   } catch (err) {
@@ -97,8 +83,8 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const newName = name !== undefined ? name.trim() : vlan.name;
 
   if (newVlanId !== vlan.vlan_id) {
-    const dup = db.prepare('SELECT id FROM vlans WHERE folder_id = ? AND vlan_id = ? AND id != ?').get(vlan.folder_id, newVlanId, vlan.id);
-    if (dup) return res.status(409).json({ error: `VLAN ${newVlanId} already exists in this organization` });
+    const dup = db.prepare('SELECT id FROM vlans WHERE vlan_id = ? AND id != ?').get(newVlanId, vlan.id);
+    if (dup) return res.status(409).json({ error: `VLAN ${newVlanId} already exists` });
   }
 
   db.prepare('UPDATE vlans SET vlan_id = ?, name = ? WHERE id = ?').run(newVlanId, newName, vlan.id);
@@ -114,8 +100,7 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   if (!vlan) return res.status(404).json({ error: 'VLAN not found' });
 
   // Clear dangling vlan_id references in subnets
-  db.prepare('UPDATE subnets SET vlan_id = NULL WHERE vlan_id = ? AND folder_id = ?')
-    .run(vlan.vlan_id, vlan.folder_id);
+  db.prepare('UPDATE subnets SET vlan_id = NULL WHERE vlan_id = ?').run(vlan.vlan_id);
   db.prepare('DELETE FROM vlans WHERE id = ?').run(vlan.id);
   audit(req.user.id, 'vlan_deleted', 'vlan', vlan.id, { vlan_id: vlan.vlan_id, name: vlan.name });
   res.json({ ok: true });

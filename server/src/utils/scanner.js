@@ -74,13 +74,13 @@ export async function startScan(db, scanId, subnetId) {
   const probeIp = local ? arpingIp : pingIp;
   console.log(`[scanner] Subnet ${subnet.cidr} — using ${local ? 'ARP' : 'ICMP'} probes`);
 
-  // Resolve subnet-level scan default from inheritance chain
+  // Resolve subnet-level scan default from inheritance chain (subnet → global setting)
   let subnetDefault = true;
   if (subnet.scan_enabled !== null && subnet.scan_enabled !== undefined) {
     subnetDefault = !!subnet.scan_enabled;
-  } else if (subnet.folder_id) {
-    const folder = db.prepare('SELECT scan_enabled FROM folders WHERE id = ?').get(subnet.folder_id);
-    if (folder) subnetDefault = !!folder.scan_enabled;
+  } else {
+    const setting = db.prepare("SELECT value FROM settings WHERE key = 'default_scan_enabled'").get();
+    subnetDefault = setting ? setting.value === '1' : true;
   }
 
   // Pre-load per-IP scan_enabled overrides

@@ -3,7 +3,8 @@
     <!-- Menubar -->
     <Menubar :model="menuItems">
       <template #start>
-        <Button label="Add Organization" icon="pi pi-plus" size="small" data-track="toolbar-add-org" @click="dialogs.openWizard()" :class="{ 'pulse-attention': store.folders.length === 0 }" :text="store.folders.length > 0" />
+        <Button label="Add Folder" icon="pi pi-plus" size="small" data-track="toolbar-add-folder" @click="dialogs.openCreateFolder()" text />
+        <Button label="Add Network" icon="pi pi-plus" size="small" data-track="toolbar-add-network-top" @click="dialogs.openQuickAddNetwork()" text />
       </template>
       <template #item="{ item, props: itemProps }">
         <a v-bind="itemProps.action" :class="{ 'active-menuitem': item.key === activeTab }" :data-track="item.dataTrack">
@@ -21,8 +22,6 @@
             <Button label="Cancel" size="small" severity="secondary" text data-track="toolbar-merge-cancel" @click="clearMergeSelection" />
             <span class="toolbar-divider"></span>
           </template>
-          <Select v-model="selectedOrgId" :options="orgOptions" optionLabel="name" optionValue="id"
-                  size="small" data-track="toolbar-org-filter" class="org-selector" />
         </div>
       </template>
     </Menubar>
@@ -33,8 +32,8 @@
       <div class="sidebar-panel">
         <Tabs v-model:value="sidebarMode">
           <TabList>
-            <Tab value="orgs" data-track="sidebar-tab-orgs"><i class="pi pi-building" style="margin-right: 0.3rem" />Organizations</Tab>
-            <Tab value="browse" data-track="sidebar-tab-browse"><i class="pi pi-list" style="margin-right: 0.3rem" />Browse</Tab>
+            <Tab value="orgs" data-track="sidebar-tab-folders"><i class="pi pi-folder" style="margin-right: 0.3rem" />Folders</Tab>
+            <Tab value="browse" data-track="sidebar-tab-browse"><i class="pi pi-list" style="margin-right: 0.3rem" />Browse Unallocated</Tab>
           </TabList>
           <TabPanels>
             <TabPanel value="orgs">
@@ -59,17 +58,19 @@
                  @drop.prevent="onDropSubnet($event, folder.id)">
               <i class="pi" :class="expandedFolders[folder.id] ? 'pi-chevron-down' : 'pi-chevron-right'" style="font-size:0.65rem"
                  @click.stop="toggleFolder(folder.id)"></i>
-              <i class="pi pi-building" style="font-size:0.8rem"></i>
+              <i class="pi pi-folder" style="font-size:0.8rem"></i>
               <span class="folder-label">{{ folder.name }}</span>
               <span class="count-badge">{{ allocatedSubnetsForFolder(folder).length }}</span>
             </div>
-            <template v-if="expandedFolders[folder.id]">
+            <template v-if="expandedFolders[folder.id] || filterText.trim()">
               <template v-for="subnet in allocatedSubnetsForFolder(folder)" :key="'subnet-' + subnet.id">
                 <div class="tree-item"
                      :class="{
                        active: selectedSubnetId === subnet.id,
                        'merge-selected': isMergeSelected(subnet.id),
                      }"
+                     :draggable="!subnet.parent_id"
+                     @dragstart="onFolderSubnetDragStart($event, subnet)"
                      @click="selectSubnetById(subnet)"
                      @contextmenu.prevent="openSubnetContextMenuById($event, subnet)">
                   <div class="tree-item-row">
@@ -86,8 +87,40 @@
               </template>
             </template>
           </template>
-          <div v-if="filteredFolders.length === 0" class="sidebar-empty">
-            No organizations found.
+          <!-- Ungrouped networks drop zone -->
+          <div class="tree-folder ungrouped-zone"
+               :class="{ 'drop-target': dropTargetFolderId === 'ungrouped' }"
+               @dragover.prevent="onUngroupedDragOver"
+               @dragleave="onUngroupedDragLeave"
+               @drop.prevent="onDropUngrouped">
+            <i class="pi pi-inbox" style="font-size:0.8rem"></i>
+            <span class="folder-label">Ungrouped</span>
+            <span class="count-badge">{{ ungroupedSubnets.length }}</span>
+          </div>
+          <template v-for="subnet in ungroupedSubnets" :key="'ungrouped-' + subnet.id">
+            <div class="tree-item"
+                 :class="{
+                   active: selectedSubnetId === subnet.id,
+                   'merge-selected': isMergeSelected(subnet.id),
+                 }"
+                 :draggable="!subnet.parent_id"
+                 @dragstart="onUngroupedDragStart($event, subnet)"
+                 @click="selectSubnetById(subnet)"
+                 @contextmenu.prevent="openSubnetContextMenuById($event, subnet)">
+              <div class="tree-item-row">
+                <span class="item-name">{{ subnet.cidr }}</span>
+              </div>
+              <div class="tree-item-meta">
+                <span v-if="subnet.name">{{ subnet.name }}</span>
+                <template v-if="subnet.vlan_id">
+                  <span>&middot;</span>
+                  <span>VLAN {{ subnet.vlan_id }}</span>
+                </template>
+              </div>
+            </div>
+          </template>
+          <div v-if="filteredFolders.length === 0 && ungroupedSubnets.length === 0" class="sidebar-empty">
+            No folders or networks found.
           </div>
         </div>
             </TabPanel>
@@ -105,8 +138,6 @@
                          'merge-selected': isMergeSelected(item.node.data.id),
                          'tree-item-unallocated': item.node.data.status === 'unallocated',
                        }"
-                       :draggable="isDraggableBrowseNode(item.node)"
-                       @dragstart="onBrowseDragStart($event, item.node.data, item.node)"
                        @click="selectBrowseNode(item.node)"
                        @contextmenu.prevent="openSubnetContextMenu($event, item.node)">
                     <div class="tree-item-row">
@@ -135,7 +166,6 @@
       <!-- Right Detail Panel -->
       <div class="detail-panel">
         <div class="networks-toolbar">
-          <Button label="Add Network" icon="pi pi-plus" size="small" text data-track="toolbar-add-network" @click="dialogs.openCreateNetwork(selectedFolder?.id)" />
         </div>
         <SubnetDetail v-if="selectedSubnetId" :subnet-id="selectedSubnetId" :compact="true" />
         <OrgNetworkTable v-else-if="selectedFolder" :folder="selectedFolder"
@@ -145,19 +175,19 @@
             @context-menu="openSubnetContextMenu" />
         <div v-else class="empty-detail">
           <i class="pi pi-sitemap" style="font-size: 2rem; opacity: 0.3"></i>
-          <span>{{ store.folders.length === 0 ? 'Add an Organization to get started' : 'Select a network' }}</span>
+          <span>Select a network to view details</span>
         </div>
       </div>
     </div>
 
     <!-- DNS Tab -->
     <div v-else-if="activeTab === 'dns'" class="tab-content">
-      <DnsPanel ref="dnsPanelRef" :org-id="selectedOrgId" />
+      <DnsPanel ref="dnsPanelRef" />
     </div>
 
     <!-- DHCP Tab -->
     <div v-else-if="activeTab === 'dhcp'" class="tab-content">
-      <DhcpPanel ref="dhcpPanelRef" :org-id="selectedOrgId" />
+      <DhcpPanel ref="dhcpPanelRef" />
     </div>
 
     <!-- Context Menus -->
@@ -170,9 +200,9 @@
                     :name-template="nameTemplate"
                     :merge-selected-ids="mergeSelectedIdsRaw"
                     :folders="store.folders"
-                    @org-created="onTreeChanged"
-                    @org-updated="onTreeChanged"
-                    @org-deleted="onOrgDeleted"
+                    @folder-created="onTreeChanged"
+                    @folder-updated="onTreeChanged"
+                    @folder-deleted="onFolderDeleted"
                     @network-created="onTreeChanged"
                     @network-configured="onNetworkConfigured"
                     @network-updated="onTreeChanged"
@@ -188,7 +218,6 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
-import Select from 'primevue/select';
 import Menubar from 'primevue/menubar';
 import ContextMenu from 'primevue/contextmenu';
 import Tabs from 'primevue/tabs';
@@ -222,12 +251,6 @@ const menuItems = computed(() => [
   { separator: true },
   { label: 'Settings', icon: 'pi pi-cog', dataTrack: 'toolbar-settings', command: () => { router.push('/system'); } },
 ]);
-const selectedOrgId = ref(loadJson('ipam_b_selected_org_id', null));
-
-const orgOptions = computed(() => [
-  { id: null, name: 'All Organizations' },
-  ...store.folders.map(f => ({ id: f.id, name: f.name }))
-]);
 
 // ── Persistence helpers ──
 function loadJson(key, fallback) {
@@ -248,8 +271,8 @@ function persistState() {
       localStorage.setItem('ipam_b_sidebar_mode', JSON.stringify(sidebarMode.value));
       localStorage.setItem('ipam_b_expanded_folders', JSON.stringify(expandedFolders.value));
       localStorage.setItem('ipam_b_browse_expanded', JSON.stringify(browseExpanded.value));
+      localStorage.setItem('ipam_b_expanded_unallocated', JSON.stringify(expandedUnallocated.value));
       localStorage.setItem('ipam_b_active_tab', JSON.stringify(activeTab.value));
-      localStorage.setItem('ipam_b_selected_org_id', JSON.stringify(selectedOrgId.value));
     } catch { /* */ }
   }, 300);
 }
@@ -260,7 +283,8 @@ async function loadSettings() {
   try {
     const settings = await store.getSettings();
     if (settings.subnet_name_template) nameTemplate.value = settings.subnet_name_template;
-  } catch { /* use default */ }
+    return settings;
+  } catch { return null; }
 }
 
 // ── Sidebar state ──
@@ -268,12 +292,13 @@ const sidebarMode = ref(loadJson('ipam_b_sidebar_mode', 'orgs'));
 const filterText = ref('');
 const expandedFolders = ref(loadJson('ipam_b_expanded_folders', {}));
 const browseExpanded = ref(loadJson('ipam_b_browse_expanded', {}));
+const expandedUnallocated = ref(loadJson('ipam_b_expanded_unallocated', false));
 
 watch(activeTab, persistState);
-watch(selectedOrgId, persistState);
 watch(sidebarMode, persistState);
 watch(expandedFolders, persistState, { deep: true });
 watch(browseExpanded, persistState, { deep: true });
+watch(expandedUnallocated, persistState);
 
 // ── Selection state ──
 const selectedSubnetId = ref(loadJson('ipam_b_selected_subnet_id', null));
@@ -292,6 +317,7 @@ function toggleFolder(folderId) {
 }
 
 function selectFolder(folder) {
+  clearMergeSelection();
   selectedFolder.value = folder;
   // Clear subnet detail so org network table shows
   selectedSubnetId.value = null;
@@ -309,10 +335,15 @@ function onOrgTableSelectSubnet(node) {
 
 function allocatedSubnetsForFolder(folder) {
   if (!folder.subnets) return [];
+  const q = filterText.value.toLowerCase().trim();
   const result = [];
   function collect(nodes) {
     for (const s of nodes) {
-      if (s.status === 'allocated') result.push(s);
+      if (s.status === 'allocated') {
+        if (!q || s.cidr.includes(q) || s.name?.toLowerCase().includes(q)) {
+          result.push(s);
+        }
+      }
       if (s.children && s.children.length > 0) collect(s.children);
     }
   }
@@ -325,6 +356,7 @@ function selectSubnetById(subnet) {
     toggleMergeSelect(subnet.id);
     return;
   }
+  clearMergeSelection();
   const node = findNodeInTrees(subnet.id) || { data: subnet, key: `subnet-${subnet.id}`, children: [] };
   selectedNode.value = node;
   selectedSubnetId.value = subnet.id;
@@ -341,6 +373,7 @@ function selectSubnet(node) {
     toggleMergeSelect(node.data.id);
     return;
   }
+  clearMergeSelection();
   selectedNode.value = node;
   // Only show detail for allocated subnets (unallocated have no IP data)
   if (node.data.status === 'allocated') {
@@ -353,6 +386,7 @@ function selectBrowseNode(node) {
     toggleMergeSelect(node.data.id);
     return;
   }
+  clearMergeSelection();
   selectedNode.value = node;
   if (node.data.status === 'allocated') {
     selectedSubnetId.value = node.data.id;
@@ -366,25 +400,62 @@ function toggleBrowseExpand(key) {
 // ── Filtered data ──
 const filteredFolders = computed(() => {
   const q = filterText.value.toLowerCase().trim();
-  let folders = store.folders;
-  if (selectedOrgId.value != null) {
-    folders = folders.filter(f => f.id === selectedOrgId.value);
-  }
-  if (!q) return folders;
-  return folders.filter(f => {
+  // Exclude the virtual "Ungrouped" folder (id=null) — shown separately
+  const realFolders = store.folders.filter(f => f.id !== null);
+  if (!q) return realFolders;
+  return realFolders.filter(f => {
     if (f.name.toLowerCase().includes(q)) return true;
-    if (f.subnets?.some(s => s.cidr.includes(q) || s.name?.toLowerCase().includes(q))) return true;
+    // Deep check: any subnet (allocated or not) matches
+    if (f.subnets && allocatedSubnetsForFolder(f).length > 0) return true;
     return false;
   });
 });
 
+// Ungrouped subnets: from virtual folder with id=null (created by server)
+const ungroupedSubnets = computed(() => {
+  const ungroupedFolder = store.folders.find(f => f.id === null);
+  if (!ungroupedFolder?.subnets) return [];
+  const q = filterText.value.toLowerCase().trim();
+  const result = [];
+  function collect(nodes) {
+    for (const s of nodes) {
+      if (s.status === 'allocated') {
+        if (!q || s.cidr.includes(q) || s.name?.toLowerCase().includes(q)) {
+          result.push(s);
+        }
+      }
+      if (s.children) collect(s.children);
+    }
+  }
+  collect(ungroupedFolder.subnets);
+  return result;
+});
+
+// Unallocated subnets: all non-allocated networks across all folders
+const unallocatedSubnets = computed(() => {
+  const q = filterText.value.toLowerCase().trim();
+  const result = [];
+  function collect(nodes) {
+    for (const s of nodes) {
+      const hasChildren = s.children && s.children.length > 0;
+      if (s.status !== 'allocated' && !hasChildren) {
+        if (!q || s.cidr.includes(q) || s.name?.toLowerCase().includes(q)) {
+          result.push(s);
+        }
+      }
+      if (hasChildren) collect(s.children);
+    }
+  }
+  for (const folder of store.folders) {
+    if (folder.subnets) collect(folder.subnets);
+  }
+  return result;
+});
+
 const filteredBrowseNodes = computed(() => {
   const flat = [];
-  const orgId = selectedOrgId.value;
   function flatten(nodes, depth) {
     for (const n of nodes) {
-      // Filter by org at root level (depth 0)
-      if (orgId != null && depth === 0 && n.data.folder_id !== orgId) continue;
       const q = filterText.value.toLowerCase().trim();
       const match = !q || n.data.cidr.includes(q) || n.data.name?.toLowerCase().includes(q);
       if (match) flat.push({ node: n, depth });
@@ -419,10 +490,15 @@ const subnetContextMenuItems = computed(() => {
   const isLeaf = (d.child_count || 0) === 0 && (!node.children || node.children.length === 0);
   const items = [];
 
+  if (d.status !== 'allocated') {
+    items.push({ label: 'Allocate', icon: 'pi pi-check-circle', command: () => dialogs.value.openEdit(node) });
+  }
   if (isLeaf) {
     items.push({ label: 'Divide', icon: 'pi pi-share-alt', command: () => dialogs.value.openDivide(node) });
   }
-  items.push({ label: 'Edit', icon: 'pi pi-pencil', command: () => dialogs.value.openEdit(node) });
+  if (d.status === 'allocated') {
+    items.push({ label: 'Edit', icon: 'pi pi-pencil', command: () => dialogs.value.openEdit(node) });
+  }
 
   if (d.parent_id) {
     if (mergeSelectedIdsRaw.value.length >= 2 && mergeValidation.value.valid) {
@@ -457,9 +533,9 @@ const folderContextMenuItems = computed(() => {
   const f = contextFolder.value;
   if (!f) return [];
   return [
-    { label: 'Edit Organization', icon: 'pi pi-pencil', command: () => dialogs.value.openEditFolder(f) },
+    { label: 'Edit Folder', icon: 'pi pi-pencil', command: () => dialogs.value.openEditFolder(f) },
     { separator: true },
-    { label: 'Delete Organization', icon: 'pi pi-trash', class: 'p-error', command: () => dialogs.value.openDeleteFolder(f) },
+    { label: 'Delete Folder', icon: 'pi pi-trash', class: 'p-error', command: () => dialogs.value.openDeleteFolder(f) },
   ];
 });
 
@@ -569,11 +645,10 @@ function onTreeContainerDrop(event) {
   if (selectedFolder.value) onDropSubnet(event, selectedFolder.value.id);
 }
 
-function onDropSubnet(event, folderId) {
+async function onDropSubnet(event, folderId) {
   dropTargetFolderId.value = null;
   const subnetIdsJson = event.dataTransfer.getData('application/x-subnet-ids');
   const subnetId = event.dataTransfer.getData('application/x-subnet-id');
-  const cidr = event.dataTransfer.getData('text/plain');
 
   if (subnetIdsJson) {
     const leafIds = JSON.parse(subnetIdsJson);
@@ -585,8 +660,51 @@ function onDropSubnet(event, folderId) {
   const subnet = findSubnetInTree(parseInt(subnetId, 10));
   if (!subnet) return;
 
-  selectedNode.value = { data: { ...subnet, type: 'subnet' }, key: `subnet-${subnet.id}`, children: subnet.children || [] };
-  dialogs.value.openEdit(selectedNode.value, folderId);
+  // Skip if already in this folder
+  if (subnet.folder_id === folderId) return;
+
+  try {
+    await store.updateSubnet(subnet.id, { folder_id: folderId });
+    const folder = store.folders.find(f => f.id === folderId);
+    toast.add({ severity: 'success', summary: 'Moved', detail: `${subnet.cidr} moved to ${folder?.name || 'folder'}`, life: 2000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 3000 });
+  }
+}
+
+function onFolderSubnetDragStart(event, subnet) {
+  event.dataTransfer.setData('application/x-subnet-id', String(subnet.id));
+  event.dataTransfer.setData('text/plain', subnet.cidr);
+  event.dataTransfer.effectAllowed = 'move';
+}
+
+function onUngroupedDragOver(event) {
+  event.dataTransfer.dropEffect = 'move';
+  dropTargetFolderId.value = 'ungrouped';
+}
+
+function onUngroupedDragLeave() {
+  if (dropTargetFolderId.value === 'ungrouped') dropTargetFolderId.value = null;
+}
+
+async function onDropUngrouped(event) {
+  dropTargetFolderId.value = null;
+  const subnetId = event.dataTransfer.getData('application/x-subnet-id');
+  if (!subnetId) return;
+  const subnet = findSubnetInTree(parseInt(subnetId, 10));
+  if (!subnet || !subnet.folder_id) return;
+  try {
+    await store.updateSubnet(subnet.id, { folder_id: null });
+    toast.add({ severity: 'success', summary: 'Moved', detail: `${subnet.cidr} moved to ungrouped`, life: 2000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 3000 });
+  }
+}
+
+function onUngroupedDragStart(event, subnet) {
+  event.dataTransfer.setData('application/x-subnet-id', String(subnet.id));
+  event.dataTransfer.setData('text/plain', subnet.cidr);
+  event.dataTransfer.effectAllowed = 'move';
 }
 
 function isDraggableBrowseNode(node) {
@@ -622,7 +740,7 @@ function onTreeChanged() {
   refreshSelectionRefs();
 }
 
-function onOrgDeleted(folderId) {
+function onFolderDeleted(folderId) {
   if (selectedFolder.value?.id === folderId) {
     selectedFolder.value = null;
     selectedSubnetId.value = null;
@@ -688,7 +806,12 @@ watch(() => store.folders, () => {
 onMounted(async () => {
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
-  await Promise.all([store.fetchTree(), loadSettings()]);
+  const [, settings] = await Promise.all([store.fetchTree(), loadSettings()]);
+
+  // Auto-trigger first-time wizard if no networks exist and wizard not completed
+  if (store.subnetCount === 0 && settings?.setup_wizard_completed !== '1') {
+    dialogs.value?.openWizard();
+  }
 
   // Auto-expand first folder
   if (store.folders.length > 0) {
@@ -740,10 +863,6 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-}
-.org-selector {
-  min-width: 10rem;
-  font-size: 0.8rem;
 }
 .toolbar-divider {
   width: 1px;
@@ -853,6 +972,18 @@ onBeforeUnmount(() => {
 .tree-folder.drop-target {
   background: var(--p-highlight-background);
 }
+.ungrouped-zone {
+  border-top: 1px solid var(--p-surface-border);
+  margin-top: 0.25rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+.unallocated-zone {
+  border-top: 1px solid var(--p-surface-border);
+  margin-top: 0.25rem;
+  font-weight: 500;
+  opacity: 0.7;
+}
 .folder-label {
   flex: 1;
 }
@@ -867,6 +998,9 @@ onBeforeUnmount(() => {
   border-left: 3px solid transparent;
   border-bottom: 1px solid var(--p-surface-border);
   transition: background 0.15s;
+}
+.tree-item[draggable="true"] {
+  cursor: grab;
 }
 .tree-item:hover {
   background: var(--p-highlight-background);

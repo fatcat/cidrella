@@ -80,6 +80,8 @@
           </div>
         </div>
       </div>
+      <Button icon="pi pi-download" severity="secondary" text rounded size="small"
+              title="Import" data-track="header-import" @click="piholeImportRef?.open()" />
       <div class="user-info">
         <span class="username">{{ auth.user?.username }}</span>
         <span class="role-badge">{{ auth.user?.role }}</span>
@@ -87,6 +89,8 @@
       <Button icon="pi pi-sign-out" severity="secondary" text rounded size="small"
               title="Sign out" data-track="header-logout" @click="handleLogout" />
     </div>
+
+    <PiholeImport ref="piholeImportRef" @imported="fetchHealth" />
 
     <!-- Alert Detail Dialog -->
     <Dialog v-model:visible="showAlertDetail" :header="alertDetailData?.summary" modal :style="{ width: '28rem' }">
@@ -103,12 +107,14 @@ import Button from 'primevue/button';
 import Dialog from 'primevue/dialog';
 import { useAuthStore } from '../stores/auth.js';
 import { useSubnetStore } from '../stores/subnets.js';
+import PiholeImport from './PiholeImport.vue';
 import api from '../api/client.js';
 
 const router = useRouter();
 
 const auth = useAuthStore();
 const subnetStore = useSubnetStore();
+const piholeImportRef = ref(null);
 const health = ref(null);
 let pollInterval = null;
 

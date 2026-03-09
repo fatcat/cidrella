@@ -49,6 +49,11 @@
               Configure automatic network scanning for allocated networks. Uses ARP probes for local subnets and ICMP ping for remote subnets.
             </p>
             <div class="field">
+              <label>Enable Scanning by Default</label>
+              <ToggleSwitch v-model="settings.default_scan_enabled" />
+              <small class="field-help">Global default for liveness scanning. Individual subnets and hosts can override this.</small>
+            </div>
+            <div class="field">
               <label>Default Scan Interval</label>
               <Select v-model="settings.default_scan_interval" :options="scanIntervalOptions" optionLabel="label" optionValue="value"
                       class="w-full" style="max-width: 16rem;" />
@@ -477,6 +482,7 @@ import MultiSelect from 'primevue/multiselect';
 import InputNumber from 'primevue/inputnumber';
 import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
+import ToggleSwitch from 'primevue/toggleswitch';
 import SubnetCalculator from './SubnetCalculator.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import { useOperationsStore } from '../stores/operations.js';
@@ -604,10 +610,11 @@ const loadingSettings = ref(true);
 const savingSettings = ref(false);
 const settings = ref({
   subnet_name_template: '%1.%2.%3.%4/%bitmask',
-  default_scan_interval: ''
+  default_scan_interval: 'off',
+  default_scan_enabled: true
 });
 const scanIntervalOptions = [
-  { label: 'Off', value: '' },
+  { label: 'Off', value: 'off' },
   { label: 'Every 5 minutes', value: '5m' },
   { label: 'Every 15 minutes', value: '15m' },
   { label: 'Every 30 minutes', value: '30m' },
@@ -668,7 +675,8 @@ onMounted(async () => {
     ]);
     settings.value = {
       subnet_name_template: data.subnet_name_template || '%1.%2.%3.%4/%bitmask',
-      default_scan_interval: data.default_scan_interval || ''
+      default_scan_interval: data.default_scan_interval || 'off',
+      default_scan_enabled: data.default_scan_enabled === '1' || data.default_scan_enabled === true
     };
   } catch { /* use defaults */ }
   loadingSettings.value = false;
@@ -935,7 +943,8 @@ async function saveSettings() {
   try {
     await Promise.all([
       store.updateSetting('subnet_name_template', settings.value.subnet_name_template),
-      store.updateSetting('default_scan_interval', settings.value.default_scan_interval || '')
+      store.updateSetting('default_scan_interval', settings.value.default_scan_interval === 'off' ? '' : settings.value.default_scan_interval),
+      store.updateSetting('default_scan_enabled', settings.value.default_scan_enabled ? '1' : '0')
     ]);
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
