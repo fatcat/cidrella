@@ -15,6 +15,7 @@ services:
       - HTTP_PORT=8080
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
+      - TZ=${TZ:-UTC}
       - DEV_TRACKING=${DEV_TRACKING:-0}
     restart: unless-stopped
 

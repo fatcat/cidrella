@@ -367,6 +367,10 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ? AND zone_id = ?').get(req.params.id, zone.id);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
+  if (record.source === 'dhcp') {
+    return res.status(403).json({ error: 'DHCP-managed records cannot be edited manually' });
+  }
+
   const newType = type || record.type;
   const newName = name ?? record.name;
   const newValue = value ?? record.value;
@@ -421,6 +425,10 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
   const db = getDb();
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ? AND zone_id = ?').get(req.params.id, req.params.zoneId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
+
+  if (record.source === 'dhcp') {
+    return res.status(403).json({ error: 'DHCP-managed records cannot be deleted manually' });
+  }
 
   db.prepare('DELETE FROM dns_records WHERE id = ?').run(record.id);
 

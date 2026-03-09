@@ -132,7 +132,23 @@ PGID=1000
 
 The Node.js server will run as the specified user while dnsmasq stays as root (required for privileged ports 53/67).
 
-### 7. Backups
+### 7. Timezone
+
+By default the container uses UTC. To use your local timezone, set the `TZ` environment variable to any [IANA timezone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones):
+
+```bash
+TZ=America/New_York docker compose up -d
+```
+
+Or add it to your `.env` file:
+
+```
+TZ=America/New_York
+```
+
+This affects dnsmasq log timestamps, audit log times, and all other time-related output.
+
+### 8. Backups
 
 All persistent data lives in `./data/`. Back up this directory regularly. The UI also provides database backup/restore under System settings.
 

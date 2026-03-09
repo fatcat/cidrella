@@ -69,6 +69,22 @@
                 <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
               </template>
             </Column>
+            <Column header="Status" sortable field="status" style="width: 7rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpStatusOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
+              </template>
+              <template #body="{ data }">
+                <span :class="['type-badge', data.status === 'active' ? 'badge-active' : 'badge-offline']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
+              </template>
+            </Column>
+            <Column header="Type" sortable field="type" style="width: 7rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpTypeOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
+              </template>
+              <template #body="{ data }">
+                <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}</span>
+              </template>
+            </Column>
             <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem" :showFilterMenu="false">
               <template #filter="{ filterModel, filterCallback }">
                 <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
@@ -80,26 +96,6 @@
                 <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
               </template>
               <template #body="{ data }">{{ data.hostname || '—' }}</template>
-            </Column>
-            <Column header="Type" sortable field="type" style="width: 7rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpTypeOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
-              <template #body="{ data }">
-                <span :class="data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic'">
-                  {{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}
-                </span>
-              </template>
-            </Column>
-            <Column header="Status" sortable field="status" style="width: 6rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpStatusOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
-              <template #body="{ data }">
-                <span :class="data.status === 'active' ? 'badge-enabled' : 'badge-offline'">
-                  {{ data.status === 'active' ? 'Active' : 'Offline' }}
-                </span>
-              </template>
             </Column>
             <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
               <template #body="{ data }">
@@ -136,6 +132,22 @@
                 <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
               </template>
             </Column>
+            <Column header="Status" sortable field="status" style="width: 7rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpStatusOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
+              </template>
+              <template #body="{ data }">
+                <span :class="['type-badge', data.status === 'active' ? 'badge-active' : 'badge-offline']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
+              </template>
+            </Column>
+            <Column header="Type" sortable field="type" style="width: 7rem" :showFilterMenu="false">
+              <template #filter="{ filterModel, filterCallback }">
+                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpTypeOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
+              </template>
+              <template #body="{ data }">
+                <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}</span>
+              </template>
+            </Column>
             <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem" :showFilterMenu="false">
               <template #filter="{ filterModel, filterCallback }">
                 <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
@@ -150,26 +162,6 @@
             </Column>
             <Column header="Network" style="min-width: 8rem">
               <template #body="{ data }">{{ data.subnet_name || data.subnet_cidr || '—' }}</template>
-            </Column>
-            <Column header="Type" sortable field="type" style="width: 7rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpTypeOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
-              <template #body="{ data }">
-                <span :class="data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic'">
-                  {{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}
-                </span>
-              </template>
-            </Column>
-            <Column header="Status" sortable field="status" style="width: 6rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpStatusOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
-              <template #body="{ data }">
-                <span :class="data.status === 'active' ? 'badge-enabled' : 'badge-offline'">
-                  {{ data.status === 'active' ? 'Active' : 'Offline' }}
-                </span>
-              </template>
             </Column>
             <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
               <template #body="{ data }">
@@ -267,6 +259,7 @@ import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
+
 import ToggleSwitch from 'primevue/toggleswitch';
 import Tabs from 'primevue/tabs';
 import TabList from 'primevue/tablist';
@@ -633,11 +626,19 @@ defineExpose({ openScopeDialog });
   font-weight: 600;
 }
 
-.badge-enabled { font-size: 0.75rem; color: var(--p-green-500); }
 .badge-disabled { font-size: 0.75rem; color: var(--p-red-500); background: color-mix(in srgb, var(--p-red-500) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
-.badge-reserved { font-size: 0.75rem; color: var(--p-primary-color); background: color-mix(in srgb, var(--p-primary-color) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
-.badge-dynamic { font-size: 0.75rem; color: var(--p-text-muted-color); }
-.badge-offline { font-size: 0.75rem; color: var(--p-text-muted-color); background: color-mix(in srgb, var(--p-text-muted-color) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
+
+.type-badge {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-family: monospace;
+}
+.badge-active { background: color-mix(in srgb, var(--p-green-500) 15%, transparent); color: var(--p-green-500); }
+.badge-offline { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-muted-color); }
+.badge-reserved { background: color-mix(in srgb, var(--p-primary-color) 15%, transparent); color: var(--p-primary-color); }
+.badge-dynamic { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-color); }
 
 .action-buttons { display: flex; gap: 0.25rem; }
 

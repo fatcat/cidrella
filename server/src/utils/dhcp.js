@@ -7,6 +7,7 @@ import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { syncLeasesToIps } from './ip-sync.js';
 import { generateFallbackHostname } from './mac-vendor.js';
+import { regenerateConfigs } from './dnsmasq.js';
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
@@ -46,7 +47,6 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
   const lines = [];
 
   lines.push(`# DHCP scope for ${scope.subnet_cidr} (${scope.start_ip} - ${scope.end_ip})`);
-  lines.push(`dhcp-range=set:${tag},${scope.start_ip},${scope.end_ip},${scope.netmask},${scope.lease_time}`);
 
   // Build merged options map: global defaults, then scope overrides
   const mergedOptions = new Map();
@@ -60,6 +60,15 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
   for (const opt of scopeOptions) {
     mergedOptions.set(opt.option_code, opt.value);
   }
+
+  // Option 51 (lease-time) overrides the scope's lease_time in dhcp-range
+  // dnsmasq ignores option 51 via dhcp-option — it only uses the dhcp-range lease time
+  let leaseTime = scope.lease_time;
+  if (mergedOptions.has(51)) {
+    leaseTime = `${mergedOptions.get(51)}s`;
+    mergedOptions.delete(51);
+  }
+  lines.push(`dhcp-range=set:${tag},${scope.start_ip},${scope.end_ip},${scope.netmask},${leaseTime}`);
 
   // 3. Legacy column fallback: only if no scope_options exist for that code
   if (scopeOptions.length === 0) {
@@ -95,6 +104,12 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
   if (!mergedOptions.has(119) && scope.subnet_domain_name) {
     mergedOptions.set(119, scope.subnet_domain_name);
   }
+
+  // Options handled internally by dnsmasq — don't emit as dhcp-option lines
+  // Option 1 (subnet mask): derived from dhcp-range netmask
+  // Option 28 (broadcast): auto-computed from network/mask
+  mergedOptions.delete(1);
+  mergedOptions.delete(28);
 
   // Emit dhcp-option lines, resolving hostnames to IPs where needed
   for (const [code, value] of mergedOptions) {
@@ -265,19 +280,100 @@ export function syncLeases(db) {
 
   syncLeasesToIps(db, leases);
 
-  // Write dnsmasq hosts file for fallback hostnames (forward + reverse resolution)
-  const fallbackEntries = leases.filter(l => l.hostname && l.subnetId);
-  const hostsLines = fallbackEntries.map(l => `${l.ip} ${l.hostname}`);
-  const hostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
-  const newContent = hostsLines.length > 0 ? hostsLines.join('\n') + '\n' : '';
-  let oldContent = '';
-  try { oldContent = fs.readFileSync(hostsPath, 'utf-8'); } catch { /* doesn't exist */ }
-  if (newContent !== oldContent) {
-    atomicWrite(hostsPath, newContent);
-    signalDnsmasq();
-  }
+  // Remove legacy dhcp-leases.hosts (hostnames now managed via dns_records)
+  const legacyHostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
+  try { if (fs.existsSync(legacyHostsPath)) fs.unlinkSync(legacyHostsPath); } catch { /* ignore */ }
+
+  // Sync DHCP hostnames into dns_records for UI visibility
+  syncDhcpDnsRecords(db, leases);
 
   return { synced: leases.length };
+}
+
+/**
+ * Sync DHCP lease hostnames into dns_records table as A records with source='dhcp'.
+ * Matches leases to forward DNS zones via the DHCP scope's domain_name or subnet's domain_name.
+ * Also cleans up stale DHCP records for IPs no longer in leases.
+ */
+function syncDhcpDnsRecords(db, leases) {
+  // Build a map of subnet_id -> domain_name from DHCP scopes and subnets
+  const scopes = db.prepare(`
+    SELECT s.subnet_id, s.domain_name as scope_domain, sub.domain_name as subnet_domain
+    FROM dhcp_scopes s
+    JOIN subnets sub ON s.subnet_id = sub.id
+    WHERE s.enabled = 1
+  `).all();
+
+  const subnetDomainMap = new Map();
+  for (const s of scopes) {
+    const domain = s.scope_domain || s.subnet_domain;
+    if (domain) subnetDomainMap.set(s.subnet_id, domain);
+  }
+
+  // Build a map of zone_name -> zone for forward zones
+  const forwardZones = db.prepare("SELECT * FROM dns_zones WHERE type = 'forward' AND enabled = 1").all();
+  const zoneByName = new Map();
+  for (const z of forwardZones) zoneByName.set(z.name, z);
+
+  // Track which DHCP dns_record IDs are still active
+  const activeRecordIds = new Set();
+  let configChanged = false;
+
+  const findRecord = db.prepare(`
+    SELECT id, source FROM dns_records WHERE zone_id = ? AND name = ? AND type = 'A' AND value = ?
+  `);
+
+  const insertDhcp = db.prepare(`
+    INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+    VALUES (?, ?, 'A', ?, 'dhcp', 1)
+  `);
+
+  const touchDhcp = db.prepare(`
+    UPDATE dns_records SET updated_at = datetime('now') WHERE id = ?
+  `);
+
+  for (const l of leases) {
+    if (!l.hostname || !l.subnetId) continue;
+
+    const domain = subnetDomainMap.get(l.subnetId);
+    if (!domain) continue;
+
+    const zone = zoneByName.get(domain);
+    if (!zone) continue;
+
+    // Use the hostname as the record name (strip the domain suffix if present)
+    let recordName = l.hostname;
+    if (recordName.endsWith('.' + domain)) {
+      recordName = recordName.slice(0, -(domain.length + 1));
+    }
+
+    const existing = findRecord.get(zone.id, recordName, l.ip);
+    if (existing) {
+      // Don't overwrite manual records; just track DHCP ones as active
+      if (existing.source === 'dhcp') {
+        touchDhcp.run(existing.id);
+        activeRecordIds.add(existing.id);
+      }
+    } else {
+      const result = insertDhcp.run(zone.id, recordName, l.ip);
+      activeRecordIds.add(result.lastInsertRowid);
+      configChanged = true;
+    }
+  }
+
+  // Clean up DHCP records that no longer have a matching lease
+  const staleRecords = db.prepare("SELECT id FROM dns_records WHERE source = 'dhcp'").all();
+  for (const r of staleRecords) {
+    if (!activeRecordIds.has(r.id)) {
+      db.prepare('DELETE FROM dns_records WHERE id = ?').run(r.id);
+      configChanged = true;
+    }
+  }
+
+  // Regenerate dnsmasq config files if records changed
+  if (configChanged) {
+    regenerateConfigs(db);
+  }
 }
 
 /**

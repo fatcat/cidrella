@@ -27,7 +27,8 @@ RUN apk add --no-cache \
     arping \
     nmap \
     bind-tools \
-    sudo
+    sudo \
+    tzdata
 
 # Create non-root user for Node.js
 RUN addgroup -g 65532 cidrella && \

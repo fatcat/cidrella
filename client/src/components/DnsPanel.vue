@@ -134,12 +134,15 @@
                      :rowsPerPageOptions="[64, 128, 256, 512]"
                      v-model:filters="dnsFilters" filterDisplay="row"
                      scrollable scrollHeight="flex">
-            <Column field="name" header="Name" sortable style="min-width: 8rem" :showFilterMenu="false">
+            <Column field="name" :header="isReverse ? 'Name' : 'Name'" sortable style="min-width: 8rem" :showFilterMenu="false">
               <template #filter="{ filterModel, filterCallback }">
                 <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
               </template>
+              <template #body="{ data }">
+                {{ isReverse ? `${data.name}.${selectedZone.name}` : data.name }}
+              </template>
             </Column>
-            <Column field="type" header="Type" sortable style="width: 7rem" :showFilterMenu="false">
+            <Column field="type" header="Type" sortable style="width: 7rem" :showFilterMenu="false" v-if="!isReverse">
               <template #filter="{ filterModel, filterCallback }">
                 <Select v-model="filterModel.value" @change="filterCallback()" :options="allRecordTypes" placeholder="All" size="small" showClear style="max-width: 6rem" />
               </template>
@@ -147,15 +150,15 @@
                 <span class="type-badge">{{ data.type }}</span>
               </template>
             </Column>
-            <Column field="value" header="Value" sortable style="min-width: 10rem" :showFilterMenu="false">
+            <Column field="value" :header="isReverse ? 'Hostname' : 'Value'" sortable style="min-width: 10rem" :showFilterMenu="false">
               <template #filter="{ filterModel, filterCallback }">
                 <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
               </template>
             </Column>
-            <Column header="Priority" style="width: 5rem">
+            <Column header="Priority" style="width: 5rem" v-if="!isReverse">
               <template #body="{ data }">{{ data.priority ?? '—' }}</template>
             </Column>
-            <Column header="Port" style="width: 4rem">
+            <Column header="Port" style="width: 4rem" v-if="!isReverse">
               <template #body="{ data }">{{ data.port ?? '—' }}</template>
             </Column>
             <Column header="TTL" style="width: 4rem">
@@ -168,9 +171,15 @@
                 </span>
               </template>
             </Column>
-            <Column header="" style="width: 5rem">
+            <Column header="Source" style="width: 5rem">
               <template #body="{ data }">
-                <div class="action-buttons">
+                <Tag v-if="data.source === 'dhcp'" value="DHCP" severity="warn" />
+                <Tag v-else value="Manual" severity="secondary" />
+              </template>
+            </Column>
+            <Column header="" style="width: 5rem" v-if="!isReverse">
+              <template #body="{ data }">
+                <div class="action-buttons" v-if="data.source !== 'dhcp'">
                   <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
                           @click="openRecordDialog(data)" />
                   <Button icon="pi pi-trash" severity="danger" text rounded size="small"
@@ -261,19 +270,24 @@
     <Dialog v-model:visible="showRecordDialog" :header="editingRecord ? 'Edit Record' : 'Add Record'"
             modal :style="{ width: '28rem' }" data-track="dialog-dns-record">
       <div class="form-grid">
-        <div class="field">
-          <label>{{ recordForm.type === 'PTR' ? 'IP Octet(s) *' : 'Name *' }}</label>
-          <InputText v-model="recordForm.name" class="w-full"
-                     :placeholder="recordForm.type === 'PTR' ? 'e.g. 10 (last octet)' : 'e.g. www or @'" />
-          <small v-if="recordForm.type === 'PTR'" class="field-help">Reversed IP octets relative to zone (e.g. "10" for .10 in the network)</small>
+        <div v-if="recordForm.type === 'PTR' && selectedZone" class="field ptr-preview">
+          <label>Record Name</label>
+          <span class="ptr-preview-value">{{ recordForm.name ? `${recordForm.name}.${selectedZone.name}` : selectedZone.name }}</span>
         </div>
         <div class="field">
+          <label>{{ recordForm.type === 'PTR' ? 'Last Octet *' : 'Name *' }}</label>
+          <InputText v-model="recordForm.name" class="w-full"
+                     :placeholder="recordForm.type === 'PTR' ? 'e.g. 5' : 'e.g. www or @'" />
+          <small v-if="recordForm.type === 'PTR'" class="field-help">Host portion of the IP address</small>
+        </div>
+        <div class="field" v-if="!isReverse">
           <label>Type *</label>
           <Select v-model="recordForm.type" :options="availableRecordTypes" class="w-full" :disabled="!!editingRecord" />
         </div>
         <div class="field">
           <label>{{ recordForm.type === 'PTR' ? 'Hostname *' : 'Value *' }}</label>
           <InputText v-model="recordForm.value" class="w-full" :placeholder="valuePlaceholder" />
+          <small v-if="recordForm.type === 'PTR'" class="field-help">The FQDN this IP resolves to (e.g., web.example.com)</small>
         </div>
         <div class="field" v-if="['MX', 'SRV'].includes(recordForm.type)">
           <label>Priority *</label>
@@ -351,6 +365,7 @@ import TabList from 'primevue/tablist';
 import Tab from 'primevue/tab';
 import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
+import Tag from 'primevue/tag';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
 import api from '../api/client.js';
@@ -373,6 +388,7 @@ function loadJson(key, fallback) {
 
 // Zone state
 const selectedZone = ref(null);
+const isReverse = computed(() => selectedZone.value?.type === 'reverse');
 const records = ref([]);
 const loadingRecords = ref(false);
 const expandedGroups = ref({});
@@ -868,6 +884,19 @@ defineExpose({ openZoneDialog });
 .warn-text {
   color: var(--p-red-500);
   font-weight: 500;
+}
+
+.ptr-preview {
+  background: var(--p-surface-ground);
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  border: 1px solid var(--p-surface-border);
+}
+.ptr-preview-value {
+  font-family: monospace;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--p-text-color);
 }
 
 @media (max-width: 900px) {

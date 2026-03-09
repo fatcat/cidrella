@@ -4,6 +4,13 @@
 PUID=${PUID:-65532}
 PGID=${PGID:-65532}
 
+# Apply timezone if TZ is set and tzdata is installed
+if [ -n "$TZ" ] && [ -f "/usr/share/zoneinfo/$TZ" ]; then
+  cp "/usr/share/zoneinfo/$TZ" /etc/localtime
+  echo "$TZ" > /etc/timezone
+  echo "Timezone set to $TZ"
+fi
+
 mkdir -p /data/certs
 mkdir -p /data/backups
 mkdir -p /data/dnsmasq/hosts.d
