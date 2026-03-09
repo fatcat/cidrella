@@ -37,6 +37,18 @@ body {
   --ipam-card: #212121;
 }
 
+/* Monospace font for all DataTable body cells; headers stay sans-serif */
+.p-datatable .p-datatable-tbody > tr > td {
+  font-family: monospace;
+}
+
+/* Compact action buttons inside DataTable rows to reduce row height */
+.p-datatable .p-button-sm.p-button-icon-only {
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+}
+
 /* Fix PrimeVue TabView ink bar sizing incorrectly on initial mount */
 .p-tabview-ink-bar {
   display: none !important;

@@ -645,7 +645,7 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
 
 // PUT /api/subnets/:id — update subnet config
 router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name } = req.body;
+  const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name, scan_enabled } = req.body;
   if (domain_name && !isValidDomainName(domain_name)) {
     return res.status(400).json({ error: 'Invalid domain name format' });
   }
@@ -668,9 +668,14 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     }
   }
 
+  // Resolve scan_enabled: true→1, false→0, null→NULL, undefined→keep existing
+  const scanEn = scan_enabled === undefined ? subnet.scan_enabled
+    : scan_enabled === null ? null
+    : scan_enabled ? 1 : 0;
+
   db.prepare(`
     UPDATE subnets SET name = ?, description = ?, vlan_id = ?, gateway_address = ?,
-      scan_interval = ?, folder_id = ?, domain_name = ?, updated_at = datetime('now')
+      scan_interval = ?, folder_id = ?, domain_name = ?, scan_enabled = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(
     name ?? subnet.name,
@@ -680,6 +685,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     scan_interval !== undefined ? scan_interval : subnet.scan_interval,
     folder_id !== undefined && !subnet.parent_id ? folder_id : subnet.folder_id,
     domain_name !== undefined ? domain_name : subnet.domain_name,
+    scanEn,
     subnet.id
   );
 
@@ -1666,6 +1672,28 @@ router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((re
 
   audit(req.user.id, 'ip_status_changed', 'ip_address', subnet.id, { ip_address: ipAddress, status, note: reservationNote });
   res.json({ ip_address: ipAddress, status, reservation_note: reservationNote });
+}));
+
+// PUT /:id/ips/:ip/scan-enabled — set per-IP liveness scan override
+router.put('/:id/ips/:ip/scan-enabled', requirePerm('subnets:write'), asyncHandler((req, res) => {
+  const db = getDb();
+  const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+  if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+
+  const ipAddress = req.params.ip;
+  const { scan_enabled } = req.body;
+  const scanEn = scan_enabled === null ? null : scan_enabled ? 1 : 0;
+
+  const existing = db.prepare('SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, ipAddress);
+  if (existing) {
+    db.prepare('UPDATE ip_addresses SET scan_enabled = ?, updated_at = datetime(\'now\') WHERE subnet_id = ? AND ip_address = ?')
+      .run(scanEn, subnet.id, ipAddress);
+  } else {
+    db.prepare('INSERT INTO ip_addresses (subnet_id, ip_address, status, scan_enabled) VALUES (?, ?, \'available\', ?)')
+      .run(subnet.id, ipAddress, scanEn);
+  }
+
+  res.json({ ip_address: ipAddress, scan_enabled: scanEn });
 }));
 
 // Error handler for all subnet routes

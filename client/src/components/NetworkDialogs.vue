@@ -10,6 +10,12 @@
         <label>Description</label>
         <InputText v-model="folderForm.description" class="w-full" />
       </div>
+      <div class="field">
+        <label class="toggle-label">
+          <input type="checkbox" v-model="folderForm.scan_enabled" />
+          Include owned hosts in liveness scans by default
+        </label>
+      </div>
     </div>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showFolderDialog = false" />
@@ -135,6 +141,12 @@
         <label class="toggle-label">
           <input type="checkbox" v-model="wizardNet.create_reverse_dns" />
           Create reverse DNS zone
+        </label>
+      </div>
+      <div class="field">
+        <label class="toggle-label">
+          <input type="checkbox" v-model="wizardNet.scan_enabled" />
+          Include hosts in liveness scans by default
         </label>
       </div>
     </div>
@@ -428,6 +440,22 @@
         <label>Domain Name</label>
         <InputText v-model="networkForm.domain_name" placeholder="e.g. office.example.com" class="w-full" />
       </div>
+      <div class="field">
+        <label>Liveness Scanning</label>
+        <div class="scan-toggle-group">
+          <button type="button" :class="['scan-toggle-btn', 'scan-inherit', { active: networkForm.scan_enabled === null }]"
+                  @click="networkForm.scan_enabled = null">Inherit</button>
+          <button type="button" :class="['scan-toggle-btn', 'scan-enabled', { active: networkForm.scan_enabled === true, resolved: networkForm.scan_enabled === null && resolvedOrgScanEnabled }]"
+                  @click="networkForm.scan_enabled = true">Enabled</button>
+          <button type="button" :class="['scan-toggle-btn', 'scan-disabled', { active: networkForm.scan_enabled === false, resolved: networkForm.scan_enabled === null && !resolvedOrgScanEnabled }]"
+                  @click="networkForm.scan_enabled = false">Disabled</button>
+        </div>
+        <small class="field-help" v-if="networkForm.scan_enabled === null">
+          Inherits from organization — scanning is {{ resolvedOrgScanEnabled ? 'enabled' : 'disabled' }} for this network
+        </small>
+        <small class="field-help" v-else-if="networkForm.scan_enabled === true">Scanning is enabled for this network</small>
+        <small class="field-help" v-else>Scanning is disabled for this network</small>
+      </div>
       <template v-if="networkDialogMode === 'configure' || networkDialogMode === 'create'">
         <div class="field" v-if="effectivePrefixLength <= 29">
           <label class="toggle-label">
@@ -599,7 +627,7 @@ const showDeleteFolderDialog = ref(false);
 const editingFolder = ref(null);
 const deletingFolder = ref(null);
 const deleteConfirmText = ref('');
-const folderForm = ref({ name: '', description: '' });
+const folderForm = ref({ name: '', description: '', scan_enabled: true });
 const orgForm = ref({ name: '', description: '', cidr: '' });
 
 const orgValidationError = computed(() => {
@@ -638,6 +666,7 @@ const wizardNet = ref({
   gateway_position: 'first', domain_name: '',
   create_dhcp_scope: false, create_reverse_dns: false,
   dhcp_start_ip: '', dhcp_end_ip: '',
+  scan_enabled: true,
 });
 const gatewayOptions = [
   { label: 'First Addr', value: 'first' },
@@ -660,6 +689,7 @@ async function ensureWizardOrg() {
     name: wizardOrg.value.name,
     description: wizardOrg.value.description || undefined,
     gateway_position: wizardNet.value.gateway_position || 'first',
+    scan_enabled: wizardNet.value.scan_enabled,
   });
   const folder = store.folders.find(f => f.name === wizardOrg.value.name.trim());
   wizardCreatedFolderId.value = folder?.id;
@@ -1201,7 +1231,13 @@ async function executeCarve() {
 // ── Unified Configure / Edit dialog ──
 const showNetworkDialog = ref(false);
 const networkDialogMode = ref('edit'); // 'create', 'configure', or 'edit'
-const networkForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '' });
+const networkForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '', scan_enabled: null });
+const resolvedOrgScanEnabled = computed(() => {
+  const folderId = props.selectedNode?.data?.folder_id || getSubnetFolderId();
+  if (!folderId) return true; // default
+  const folder = store.folders.find(f => f.id === folderId);
+  return folder ? !!folder.scan_enabled : true;
+});
 const dropTargetFolderIdForConfigure = ref(null);
 
 const networkDialogHeader = computed(() => {
@@ -1535,7 +1571,7 @@ function openOrgDialog() {
 
 function openEditFolder(folder) {
   editingFolder.value = folder;
-  folderForm.value = { name: folder.name, description: folder.description || '' };
+  folderForm.value = { name: folder.name, description: folder.description || '', scan_enabled: folder.scan_enabled !== 0 };
   showFolderDialog.value = true;
 }
 
@@ -1603,7 +1639,8 @@ function openEdit(node, folderId) {
     create_dhcp_scope: false,
     create_reverse_dns: false,
     dhcp_start_ip: '',
-    dhcp_end_ip: ''
+    dhcp_end_ip: '',
+    scan_enabled: d.scan_enabled === null || d.scan_enabled === undefined ? null : !!d.scan_enabled,
   };
 
   if (folderId) dropTargetFolderIdForConfigure.value = folderId;
@@ -1894,5 +1931,59 @@ defineExpose({
 }
 .pihole-results {
   margin-top: 1rem;
+}
+
+/* Scan toggle button group */
+.scan-toggle-group {
+  display: inline-flex;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--p-surface-border);
+}
+.scan-toggle-btn {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  background: var(--p-surface-ground);
+  color: var(--p-text-muted-color);
+  transition: background 0.15s, color 0.15s;
+}
+.scan-toggle-btn + .scan-toggle-btn {
+  border-left: 1px solid var(--p-surface-border);
+}
+.scan-toggle-btn:hover {
+  background: var(--p-surface-200);
+}
+.p-dark .scan-toggle-btn:hover {
+  background: var(--p-surface-700);
+}
+/* Active states */
+.scan-inherit.active {
+  background: var(--p-surface-300);
+  color: var(--p-text-color);
+}
+.p-dark .scan-inherit.active {
+  background: var(--p-surface-600);
+}
+.scan-enabled.active {
+  background: color-mix(in srgb, var(--p-green-500) 25%, transparent);
+  color: var(--p-green-500);
+}
+.scan-disabled.active {
+  background: color-mix(in srgb, var(--p-blue-500) 25%, transparent);
+  color: var(--p-blue-500);
+}
+/* Resolved (inherited) indicator — subtle highlight */
+.scan-enabled.resolved {
+  background: color-mix(in srgb, var(--p-green-500) 10%, transparent);
+  color: var(--p-green-500);
+  opacity: 0.7;
+}
+.scan-disabled.resolved {
+  background: color-mix(in srgb, var(--p-blue-500) 10%, transparent);
+  color: var(--p-blue-500);
+  opacity: 0.7;
 }
 </style>

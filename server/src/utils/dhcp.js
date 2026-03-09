@@ -214,9 +214,11 @@ export function regenerateReservations(db) {
 
   let oldContent = '';
   try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* doesn't exist */ }
-  if (content !== oldContent) {
+  const changed = content !== oldContent;
+  if (changed) {
     atomicWrite(filePath, content);
   }
+  return changed;
 }
 
 /**
@@ -381,8 +383,8 @@ function syncDhcpDnsRecords(db, leases) {
  */
 export function regenerateDhcpConfigs(db) {
   const confChanged = regenerateScopeConfigs(db);
-  regenerateReservations(db);
-  if (confChanged) {
+  const resChanged = regenerateReservations(db);
+  if (confChanged || resChanged) {
     signalDnsmasq();
   }
 }

@@ -127,33 +127,31 @@
             <h3>{{ selectedZone.name }} — Records</h3>
           </div>
 
-          <DataTable :key="'records-' + selectedZone?.type" :value="records" :loading="loadingRecords" stripedRows
+          <div class="search-bar">
+            <IconField>
+              <InputIcon class="pi pi-search" />
+              <InputText v-model="dnsSearch" placeholder="Search by name, type, value…" size="small" class="search-input" />
+            </IconField>
+            <Button v-if="dnsSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dnsSearch = ''" />
+          </div>
+
+          <DataTable :key="'records-' + selectedZone?.type" :value="filteredRecords" :loading="loadingRecords" stripedRows
                      emptyMessage="No records in this zone." size="small"
                      :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
-                     :paginator="records.length > 256" :rows="256"
+                     :paginator="filteredRecords.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
-                     v-model:filters="dnsFilters" filterDisplay="row"
                      scrollable scrollHeight="flex">
-            <Column field="name" :header="isReverse ? 'Name' : 'Name'" sortable style="min-width: 8rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
-              </template>
+            <Column field="name" :header="isReverse ? 'Name' : 'Name'" sortable style="min-width: 8rem">
               <template #body="{ data }">
                 {{ isReverse ? `${data.name}.${selectedZone.name}` : data.name }}
               </template>
             </Column>
-            <Column field="type" header="Type" sortable style="width: 7rem" :showFilterMenu="false" v-if="!isReverse">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="allRecordTypes" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
+            <Column field="type" header="Type" sortable style="width: 7rem" v-if="!isReverse">
               <template #body="{ data }">
                 <span class="type-badge">{{ data.type }}</span>
               </template>
             </Column>
-            <Column field="value" :header="isReverse ? 'Hostname' : 'Value'" sortable style="min-width: 10rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
-              </template>
+            <Column field="value" :header="isReverse ? 'Hostname' : 'Value'" sortable style="min-width: 10rem">
             </Column>
             <Column header="Priority" style="width: 5rem" v-if="!isReverse">
               <template #body="{ data }">{{ data.priority ?? '—' }}</template>
@@ -173,8 +171,7 @@
             </Column>
             <Column header="Source" style="width: 5rem">
               <template #body="{ data }">
-                <Tag v-if="data.source === 'dhcp'" value="DHCP" severity="warn" />
-                <Tag v-else value="Manual" severity="secondary" />
+                <span :class="['type-badge', data.source === 'dhcp' ? 'badge-dhcp' : 'badge-manual']">{{ data.source === 'dhcp' ? 'DHCP' : 'Manual' }}</span>
               </template>
             </Column>
             <Column header="" style="width: 5rem" v-if="!isReverse">
@@ -351,13 +348,14 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
-import { FilterMatchMode } from '@primevue/core/api';
 import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
+import IconField from 'primevue/iconfield';
+import InputIcon from 'primevue/inputicon';
 import Select from 'primevue/select';
 import ToggleSwitch from 'primevue/toggleswitch';
 import Tabs from 'primevue/tabs';
@@ -365,7 +363,7 @@ import TabList from 'primevue/tablist';
 import Tab from 'primevue/tab';
 import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
-import Tag from 'primevue/tag';
+
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
 import api from '../api/client.js';
@@ -471,10 +469,15 @@ const savingRecord = ref(false);
 const recordForm = ref({ name: '', type: 'A', value: '', priority: null, weight: null, port: null, ttl: null, enabled: true });
 const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
 
-const dnsFilters = ref({
-  name: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  type: { value: null, matchMode: FilterMatchMode.EQUALS },
-  value: { value: null, matchMode: FilterMatchMode.CONTAINS },
+const dnsSearch = ref('');
+const filteredRecords = computed(() => {
+  const q = dnsSearch.value.trim().toLowerCase();
+  if (!q) return records.value;
+  return records.value.filter(r =>
+    (r.name && r.name.toLowerCase().includes(q)) ||
+    (r.type && r.type.toLowerCase().includes(q)) ||
+    (r.value && r.value.toLowerCase().includes(q))
+  );
 });
 const availableRecordTypes = computed(() => {
   if (selectedZone.value?.type === 'reverse') return ['PTR'];
@@ -792,8 +795,13 @@ defineExpose({ openZoneDialog });
 
 .badge-enabled { font-size: 0.75rem; color: var(--p-green-500); }
 .badge-disabled { font-size: 0.75rem; color: var(--p-red-500); background: color-mix(in srgb, var(--p-red-500) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
+.badge-dhcp { background: color-mix(in srgb, var(--p-yellow-500) 15%, transparent); color: var(--p-yellow-500); }
+.badge-manual { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-muted-color); }
 
 .action-buttons { display: flex; gap: 0.25rem; }
+
+.search-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; }
+.search-input { width: 22rem; }
 
 .empty-state {
   padding: 2rem 1rem;

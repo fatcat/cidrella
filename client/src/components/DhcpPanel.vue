@@ -58,48 +58,40 @@
             <h3>{{ selectedScope.subnet_name || selectedScope.subnet_cidr }} — Leases</h3>
           </div>
 
-          <DataTable :value="scopeLeases" :loading="loadingLeases" stripedRows
+          <div class="search-bar">
+            <IconField>
+              <InputIcon class="pi pi-search" />
+              <InputText v-model="dhcpSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
+            </IconField>
+            <Button v-if="dhcpSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpSearch = ''" />
+          </div>
+
+          <DataTable :value="searchedScopeLeases" :loading="loadingLeases" stripedRows
                      emptyMessage="No leases or reservations for this scope." size="small"
-                     :paginator="scopeLeases.length > 256" :rows="256"
+                     :paginator="searchedScopeLeases.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
-                     v-model:filters="dhcpFilters" filterDisplay="row"
                      scrollable scrollHeight="flex">
-            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
-              </template>
+            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
-            <Column header="Status" sortable field="status" style="width: 7rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpStatusOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
+            <Column header="Status" sortable field="status" style="width: 7rem">
               <template #body="{ data }">
                 <span :class="['type-badge', data.status === 'active' ? 'badge-active' : 'badge-offline']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
               </template>
             </Column>
-            <Column header="Type" sortable field="type" style="width: 7rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpTypeOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
+            <Column header="Type" sortable field="type" style="width: 7rem">
               <template #body="{ data }">
                 <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}</span>
               </template>
             </Column>
-            <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
-              </template>
+            <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
               <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
             </Column>
-            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
-              </template>
-              <template #body="{ data }">{{ data.hostname || '—' }}</template>
+            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
+              <template #body="{ data }">{{ displayHostname(data.hostname, selectedScope?.subnet_domain_name) }}</template>
             </Column>
             <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
               <template #body="{ data }">
-                <template v-if="data.type === 'reserved'">Static</template>
+                <template v-if="data.type === 'reserved'">never</template>
                 <template v-else>{{ data.expires_at === 'infinite' ? 'Never' : formatDate(data.expires_at) }}</template>
               </template>
             </Column>
@@ -121,51 +113,43 @@
             <h3>All Leases</h3>
           </div>
 
-          <DataTable :value="filteredLeases" :loading="loadingLeases" stripedRows
+          <div class="search-bar">
+            <IconField>
+              <InputIcon class="pi pi-search" />
+              <InputText v-model="dhcpAllSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
+            </IconField>
+            <Button v-if="dhcpAllSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpAllSearch = ''" />
+          </div>
+
+          <DataTable :value="searchedAllLeases" :loading="loadingLeases" stripedRows
                      emptyMessage="No DHCP leases or reservations." size="small"
-                     :paginator="filteredLeases.length > 256" :rows="256"
+                     :paginator="searchedAllLeases.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
-                     v-model:filters="dhcpAllFilters" filterDisplay="row"
                      scrollable scrollHeight="flex">
-            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
-              </template>
+            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
-            <Column header="Status" sortable field="status" style="width: 7rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpStatusOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
+            <Column header="Status" sortable field="status" style="width: 7rem">
               <template #body="{ data }">
                 <span :class="['type-badge', data.status === 'active' ? 'badge-active' : 'badge-offline']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
               </template>
             </Column>
-            <Column header="Type" sortable field="type" style="width: 7rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <Select v-model="filterModel.value" @change="filterCallback()" :options="dhcpTypeOptions" placeholder="All" size="small" showClear style="max-width: 6rem" />
-              </template>
+            <Column header="Type" sortable field="type" style="width: 7rem">
               <template #body="{ data }">
                 <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}</span>
               </template>
             </Column>
-            <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 10rem" />
-              </template>
+            <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
               <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
             </Column>
-            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem" :showFilterMenu="false">
-              <template #filter="{ filterModel, filterCallback }">
-                <InputText v-model="filterModel.value" @input="filterCallback()" placeholder="Filter" size="small" style="max-width: 8rem" />
-              </template>
-              <template #body="{ data }">{{ data.hostname || '—' }}</template>
+            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
+              <template #body="{ data }">{{ displayHostname(data.hostname, data.subnet_domain_name) }}</template>
             </Column>
             <Column header="Network" style="min-width: 8rem">
               <template #body="{ data }">{{ data.subnet_name || data.subnet_cidr || '—' }}</template>
             </Column>
             <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
               <template #body="{ data }">
-                <template v-if="data.type === 'reserved'">Static</template>
+                <template v-if="data.type === 'reserved'">never</template>
                 <template v-else>{{ data.expires_at === 'infinite' ? 'Never' : formatDate(data.expires_at) }}</template>
               </template>
             </Column>
@@ -252,12 +236,13 @@
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
-import { FilterMatchMode } from '@primevue/core/api';
 import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
+import IconField from 'primevue/iconfield';
+import InputIcon from 'primevue/inputicon';
 import Select from 'primevue/select';
 
 import ToggleSwitch from 'primevue/toggleswitch';
@@ -293,24 +278,36 @@ const savingReservation = ref(false);
 const reservationForm = ref({ subnet_id: null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true });
 const allocatedSubnets = ref([]);
 
-const dhcpTypeOptions = ['reserved', 'dynamic'];
-const dhcpStatusOptions = ['active', 'offline'];
+const dhcpSearch = ref('');
+const dhcpAllSearch = ref('');
 
-const dhcpFilters = ref({
-  ip_address: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  mac_address: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  hostname: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  type: { value: null, matchMode: FilterMatchMode.EQUALS },
-  status: { value: null, matchMode: FilterMatchMode.EQUALS },
+function dhcpMatchSearch(item, query) {
+  return (item.ip_address && item.ip_address.toLowerCase().includes(query)) ||
+    (item.mac_address && item.mac_address.toLowerCase().includes(query)) ||
+    (item.hostname && item.hostname.toLowerCase().includes(query)) ||
+    (item.type && item.type.toLowerCase().includes(query)) ||
+    (item.status && item.status.toLowerCase().includes(query));
+}
+
+const searchedScopeLeases = computed(() => {
+  const q = dhcpSearch.value.trim().toLowerCase();
+  if (!q) return scopeLeases.value;
+  return scopeLeases.value.filter(r => dhcpMatchSearch(r, q));
 });
 
-const dhcpAllFilters = ref({
-  ip_address: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  mac_address: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  hostname: { value: null, matchMode: FilterMatchMode.CONTAINS },
-  type: { value: null, matchMode: FilterMatchMode.EQUALS },
-  status: { value: null, matchMode: FilterMatchMode.EQUALS },
+const searchedAllLeases = computed(() => {
+  const q = dhcpAllSearch.value.trim().toLowerCase();
+  if (!q) return filteredLeases.value;
+  return filteredLeases.value.filter(r => dhcpMatchSearch(r, q));
 });
+
+function displayHostname(hostname, domainName) {
+  if (!hostname) return '—';
+  if (domainName && hostname.endsWith('.' + domainName)) {
+    return hostname.slice(0, -(domainName.length + 1));
+  }
+  return hostname;
+}
 
 // Delete dialogs
 const showDeleteScopeDialog = ref(false);
@@ -641,6 +638,9 @@ defineExpose({ openScopeDialog });
 .badge-dynamic { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-color); }
 
 .action-buttons { display: flex; gap: 0.25rem; }
+
+.search-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; }
+.search-input { width: 22rem; }
 
 .text-sm { font-size: 0.8rem; }
 .muted { color: var(--p-text-muted-color); }

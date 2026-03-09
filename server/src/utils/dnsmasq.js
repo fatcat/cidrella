@@ -15,14 +15,17 @@ export function atomicWrite(filePath, content) {
 }
 
 function cleanStaleFiles(dir, prefix, suffix, activeIds) {
-  if (!fs.existsSync(dir)) return;
+  if (!fs.existsSync(dir)) return false;
+  let removed = false;
   const pattern = new RegExp(`^${prefix}(\\d+)${suffix.replace('.', '\\.')}$`);
   for (const file of fs.readdirSync(dir)) {
     const match = file.match(pattern);
     if (match && !activeIds.has(parseInt(match[1], 10))) {
       fs.unlinkSync(path.join(dir, file));
+      removed = true;
     }
   }
+  return removed;
 }
 
 function toFqdn(recordName, zoneName) {
@@ -65,6 +68,7 @@ export function regenerateHostsDir(db) {
   `).all();
 
   const activeIds = new Set();
+  let changed = false;
 
   for (const zone of zones) {
     const records = db.prepare(`
@@ -75,11 +79,18 @@ export function regenerateHostsDir(db) {
     if (records.length === 0) continue;
 
     activeIds.add(zone.id);
-    const lines = records.map(r => `${r.value} ${toFqdn(r.name, zone.name)}`);
-    atomicWrite(path.join(HOSTS_DIR, `zone-${zone.id}.hosts`), lines.join('\n') + '\n');
+    const filePath = path.join(HOSTS_DIR, `zone-${zone.id}.hosts`);
+    const newContent = records.map(r => `${r.value} ${toFqdn(r.name, zone.name)}`).join('\n') + '\n';
+    let oldContent = '';
+    try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* doesn't exist */ }
+    if (newContent !== oldContent) {
+      atomicWrite(filePath, newContent);
+      changed = true;
+    }
   }
 
-  cleanStaleFiles(HOSTS_DIR, 'zone-', '.hosts', activeIds);
+  if (cleanStaleFiles(HOSTS_DIR, 'zone-', '.hosts', activeIds)) changed = true;
+  return changed;
 }
 
 export function regenerateConfDir(db) {
@@ -204,9 +215,9 @@ export function signalDnsmasq() {
 }
 
 export function regenerateConfigs(db) {
-  regenerateHostsDir(db);
+  const hostsChanged = regenerateHostsDir(db);
   const confChanged = regenerateConfDir(db);
-  if (confChanged) {
+  if (hostsChanged || confChanged) {
     signalDnsmasq();
   }
 }

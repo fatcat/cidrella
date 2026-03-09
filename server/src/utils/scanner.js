@@ -1,19 +1,18 @@
 import { execFile } from 'child_process';
-import { parseCidr, longToIp } from './ip.js';
+import os from 'os';
+import { parseCidr, longToIp, isIpInSubnet } from './ip.js';
 
 /**
- * Run arping on a single IP. Returns { responded, mac } or { responded: false }.
- * Uses arping -c 1 -w 1 (1 probe, 1 second timeout).
+ * Run arping on a single IP (Layer 2 — local subnets only).
+ * Returns { responded, mac } or { responded: false, mac: null }.
  */
 function arpingIp(ip) {
   return new Promise((resolve) => {
     execFile('sudo', ['arping', '-c', '1', '-w', '1', ip], { timeout: 5000 }, (error, stdout) => {
       if (error) {
-        // arping returns non-zero if no reply
         resolve({ responded: false, mac: null });
         return;
       }
-      // Parse MAC from arping output: "Unicast reply from <ip> [<MAC>]"
       const macMatch = stdout.match(/\[([0-9a-fA-F:]+)\]/);
       resolve({
         responded: true,
@@ -21,6 +20,42 @@ function arpingIp(ip) {
       });
     });
   });
+}
+
+/**
+ * Run ICMP ping on a single IP (Layer 3 — works across routers).
+ * Cannot detect MAC addresses.
+ */
+function pingIp(ip) {
+  return new Promise((resolve) => {
+    execFile('ping', ['-c', '1', '-W', '1', ip], { timeout: 5000 }, (error) => {
+      resolve({ responded: !error, mac: null });
+    });
+  });
+}
+
+/**
+ * Check if a subnet is directly connected to one of the host's interfaces.
+ */
+function isLocalSubnet(cidr) {
+  const ifaces = os.networkInterfaces();
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        if (isIpInSubnet(iface.address, cidr)) return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Resolve whether an IP should be included in a liveness scan.
+ * Inheritance: IP override → Subnet override → Org default → true
+ */
+function shouldScanIp(ipOverride, subnetDefault) {
+  if (ipOverride !== null && ipOverride !== undefined) return !!ipOverride;
+  return subnetDefault;
 }
 
 /**
@@ -33,6 +68,26 @@ export async function startScan(db, scanId, subnetId) {
     db.prepare("UPDATE network_scans SET status = 'failed', error = 'Subnet not found', completed_at = datetime('now') WHERE id = ?").run(scanId);
     return;
   }
+
+  // Resolve scan method based on network locality
+  const local = isLocalSubnet(subnet.cidr);
+  const probeIp = local ? arpingIp : pingIp;
+  console.log(`[scanner] Subnet ${subnet.cidr} — using ${local ? 'ARP' : 'ICMP'} probes`);
+
+  // Resolve subnet-level scan default from inheritance chain
+  let subnetDefault = true;
+  if (subnet.scan_enabled !== null && subnet.scan_enabled !== undefined) {
+    subnetDefault = !!subnet.scan_enabled;
+  } else if (subnet.folder_id) {
+    const folder = db.prepare('SELECT scan_enabled FROM folders WHERE id = ?').get(subnet.folder_id);
+    if (folder) subnetDefault = !!folder.scan_enabled;
+  }
+
+  // Pre-load per-IP scan_enabled overrides
+  const ipOverrides = db.prepare(
+    'SELECT ip_address, scan_enabled FROM ip_addresses WHERE subnet_id = ? AND scan_enabled IS NOT NULL'
+  ).all(subnetId);
+  const overrideMap = new Map(ipOverrides.map(r => [r.ip_address, r.scan_enabled]));
 
   const parsed = parseCidr(subnet.cidr);
   const startIp = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
@@ -66,7 +121,14 @@ export async function startScan(db, scanId, subnetId) {
 
       for (let ipLong = batchStart; ipLong <= batchEnd; ipLong++) {
         const ip = longToIp(ipLong);
-        promises.push(arpingIp(ip).then(result => ({ ip, ...result })));
+
+        // Check scan_enabled for this IP
+        const override = overrideMap.get(ip);
+        if (!shouldScanIp(override !== undefined ? override : null, subnetDefault)) {
+          continue; // skip — scanning disabled for this IP
+        }
+
+        promises.push(probeIp(ip).then(result => ({ ip, ...result })));
       }
 
       const results = await Promise.all(promises);
@@ -81,9 +143,9 @@ export async function startScan(db, scanId, subnetId) {
             // IP responded but not assigned — rogue device
             isConflict = 1;
             conflictReason = 'Rogue device (IP not assigned)';
-          } else if (assignment.mac_address && result.mac &&
+          } else if (local && assignment.mac_address && result.mac &&
                      assignment.mac_address.toLowerCase() !== result.mac) {
-            // IP responded with different MAC
+            // MAC mismatch — only detectable on local (ARP) subnets
             isConflict = 1;
             conflictReason = `MAC mismatch (expected ${assignment.mac_address}, got ${result.mac})`;
           }

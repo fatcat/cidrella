@@ -36,8 +36,6 @@
       <span class="info-bar-pair"><span class="info-bar-label">Total IPs</span> <span class="info-bar-val">{{ subnet.total_addresses }}</span></span>
       <span class="info-bar-sep"></span>
       <span class="info-bar-pair"><span class="info-bar-label">Prefix</span> <span class="info-bar-val">/{{ subnet.prefix_length }}</span></span>
-      <span style="flex:1"></span>
-      <Button label="Add DHCP Scope" size="small" text data-track="subnet-add-dhcp-scope" @click="openAddRange" />
     </div>
 
     <!-- Subnet Info Cards (non-compact) -->
@@ -124,8 +122,7 @@
           </Column>
           <Column field="is_online" header="Online" sortable style="width: 5rem">
             <template #body="{ data }">
-              <span v-if="data.is_online" class="online-dot online">●</span>
-              <span v-else class="online-dot offline">●</span>
+              <span :class="['type-badge', data.is_online ? 'badge-online' : 'badge-scan-offline']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
             </template>
           </Column>
           <Column field="last_seen_at" header="Last Seen" sortable style="width: 10rem">
@@ -331,6 +328,22 @@
           <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Reason (max 16 characters)</label>
           <InputText v-model="reserveNote" class="w-full" :maxlength="16" placeholder="e.g. MGMT, PRINTER" @keyup.enter="confirmReserve" />
         </div>
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Liveness Scanning</label>
+          <div class="scan-toggle-group">
+            <button type="button" :class="['scan-toggle-btn', 'scan-inherit', { active: reserveScanEnabled === null }]"
+                    @click="reserveScanEnabled = null">Inherit</button>
+            <button type="button" :class="['scan-toggle-btn', 'scan-enabled', { active: reserveScanEnabled === true, resolved: reserveScanEnabled === null && resolvedSubnetScanEnabled }]"
+                    @click="reserveScanEnabled = true">Enabled</button>
+            <button type="button" :class="['scan-toggle-btn', 'scan-disabled', { active: reserveScanEnabled === false, resolved: reserveScanEnabled === null && !resolvedSubnetScanEnabled }]"
+                    @click="reserveScanEnabled = false">Disabled</button>
+          </div>
+          <small v-if="reserveScanEnabled === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
+            Inherits from subnet/organization — scanning is {{ resolvedSubnetScanEnabled ? 'enabled' : 'disabled' }} for this network
+          </small>
+          <small v-else-if="reserveScanEnabled === true" style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is enabled for this network</small>
+          <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is disabled for this network</small>
+        </div>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
@@ -359,6 +372,22 @@
         <div class="field">
           <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Description</label>
           <InputText v-model="staticDhcpForm.description" class="w-full" placeholder="Optional" />
+        </div>
+        <div class="field">
+          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Liveness Scanning</label>
+          <div class="scan-toggle-group">
+            <button type="button" :class="['scan-toggle-btn', 'scan-inherit', { active: staticDhcpScanEnabled === null }]"
+                    @click="staticDhcpScanEnabled = null">Inherit</button>
+            <button type="button" :class="['scan-toggle-btn', 'scan-enabled', { active: staticDhcpScanEnabled === true, resolved: staticDhcpScanEnabled === null && resolvedSubnetScanEnabled }]"
+                    @click="staticDhcpScanEnabled = true">Enabled</button>
+            <button type="button" :class="['scan-toggle-btn', 'scan-disabled', { active: staticDhcpScanEnabled === false, resolved: staticDhcpScanEnabled === null && !resolvedSubnetScanEnabled }]"
+                    @click="staticDhcpScanEnabled = false">Disabled</button>
+          </div>
+          <small v-if="staticDhcpScanEnabled === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
+            Inherits from subnet/organization — scanning is {{ resolvedSubnetScanEnabled ? 'enabled' : 'disabled' }} for this network
+          </small>
+          <small v-else-if="staticDhcpScanEnabled === true" style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is enabled for this network</small>
+          <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is disabled for this network</small>
         </div>
       </div>
       <template #footer>
@@ -417,10 +446,21 @@ const showReserveDialog = ref(false);
 const reserveStartIp = ref('');
 const reserveEndIp = ref('');
 const reserveNote = ref('');
+const reserveScanEnabled = ref(null);
 
 // Convert to Static DHCP Reservation dialog
 const showStaticDhcpDialog = ref(false);
 const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', description: '' });
+const staticDhcpScanEnabled = ref(null);
+
+// Resolve the effective scan_enabled for this subnet (subnet → org → default true)
+const resolvedSubnetScanEnabled = computed(() => {
+  if (!subnet.value) return true;
+  if (subnet.value.scan_enabled !== null && subnet.value.scan_enabled !== undefined) return !!subnet.value.scan_enabled;
+  // Inherit from org
+  const folder = store.folders?.find(f => f.id === subnet.value.folder_id);
+  return folder ? !!folder.scan_enabled : true;
+});
 
 // Server-side pagination state
 const currentPage = ref(1);
@@ -864,6 +904,21 @@ function buildContextMenuItems(selectedIps) {
         command: () => openStaticDhcpDialog(ip)
       });
     }
+
+    // Liveness scan toggle
+    items.push({ separator: true });
+    const ipData = ips.value.find(a => a.ip_address === ip.address);
+    const currentScanEnabled = ipData?.scan_enabled ?? null;
+    if (currentScanEnabled === 1) {
+      items.push({ label: 'Disable Scanning', icon: 'pi pi-eye-slash', command: () => toggleIpScan(ip.address, false) });
+      items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
+    } else if (currentScanEnabled === 0) {
+      items.push({ label: 'Enable Scanning', icon: 'pi pi-eye', command: () => toggleIpScan(ip.address, true) });
+      items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
+    } else {
+      items.push({ label: 'Enable Scanning', icon: 'pi pi-eye', command: () => toggleIpScan(ip.address, true) });
+      items.push({ label: 'Disable Scanning', icon: 'pi pi-eye-slash', command: () => toggleIpScan(ip.address, false) });
+    }
   } else {
     // Multi-select
     items.push({
@@ -885,15 +940,30 @@ function openReserveDialog(ipAddress, endIpAddress) {
   reserveStartIp.value = ipAddress;
   reserveEndIp.value = endIpAddress || ipAddress;
   reserveNote.value = '';
+  reserveScanEnabled.value = null;
   showReserveDialog.value = true;
+}
+
+async function toggleIpScan(ipAddress, enabled) {
+  try {
+    await api.put(`/subnets/${subnet.value.id}/ips/${ipAddress}/scan-enabled`, { scan_enabled: enabled });
+    toast.add({ severity: 'success', summary: enabled === null ? 'Scan reset to inherit' : enabled ? 'Scanning enabled' : 'Scanning disabled', life: 3000 });
+    await reloadData();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  }
 }
 
 async function confirmReserve() {
   if (!reserveNote.value.trim()) return;
   const note = reserveNote.value.trim();
+  const scanEn = reserveScanEnabled.value;
   showReserveDialog.value = false;
   if (reserveStartIp.value === reserveEndIp.value) {
     await setIpReservation(reserveStartIp.value, 'reserved', note);
+    if (scanEn !== null) {
+      await api.put(`/subnets/${subnet.value.id}/ips/${reserveStartIp.value}/scan-enabled`, { scan_enabled: scanEn });
+    }
   } else {
     try {
       const result = await store.bulkSetIpStatus(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'reserved', note);
@@ -922,6 +992,7 @@ function openStaticDhcpDialog(ip) {
     hostname: ip.hostname || '',
     description: ''
   };
+  staticDhcpScanEnabled.value = null;
   showStaticDhcpDialog.value = true;
 }
 
@@ -934,6 +1005,9 @@ async function confirmStaticDhcp() {
       hostname: staticDhcpForm.value.hostname || null,
       description: staticDhcpForm.value.description || null
     });
+    if (staticDhcpScanEnabled.value !== null) {
+      await api.put(`/subnets/${subnet.value.id}/ips/${staticDhcpForm.value.ip_address}/scan-enabled`, { scan_enabled: staticDhcpScanEnabled.value });
+    }
     showStaticDhcpDialog.value = false;
     toast.add({ severity: 'success', summary: 'Static DHCP reservation created', life: 3000 });
     await reloadData();
@@ -1391,11 +1465,9 @@ onUnmounted(() => {
   font-family: monospace;
   font-size: 0.85rem;
 }
-.online-dot {
-  font-size: 1.1rem;
-}
-.online-dot.online { color: #22c55e; }
-.online-dot.offline { color: #d1d5db; }
+.type-badge { font-size: 0.75rem; font-weight: 600; padding: 0.15rem 0.4rem; border-radius: 3px; font-family: monospace; }
+.badge-online { background: color-mix(in srgb, var(--p-green-500) 15%, transparent); color: var(--p-green-500); }
+.badge-scan-offline { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-muted-color); }
 .grid-view-scroll {
   flex: 1;
   min-height: 0;
@@ -1571,6 +1643,58 @@ onUnmounted(() => {
   margin-top: 0.2rem;
   font-size: 0.75rem;
   color: var(--p-text-muted-color);
+}
+
+/* Scan toggle button group */
+.scan-toggle-group {
+  display: inline-flex;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--p-surface-border);
+}
+.scan-toggle-btn {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  background: var(--p-surface-ground);
+  color: var(--p-text-muted-color);
+  transition: background 0.15s, color 0.15s;
+}
+.scan-toggle-btn + .scan-toggle-btn {
+  border-left: 1px solid var(--p-surface-border);
+}
+.scan-toggle-btn:hover {
+  background: var(--p-surface-200);
+}
+.p-dark .scan-toggle-btn:hover {
+  background: var(--p-surface-700);
+}
+.scan-inherit.active {
+  background: var(--p-surface-300);
+  color: var(--p-text-color);
+}
+.p-dark .scan-inherit.active {
+  background: var(--p-surface-600);
+}
+.scan-enabled.active {
+  background: color-mix(in srgb, var(--p-green-500) 25%, transparent);
+  color: var(--p-green-500);
+}
+.scan-disabled.active {
+  background: color-mix(in srgb, var(--p-blue-500) 25%, transparent);
+  color: var(--p-blue-500);
+}
+.scan-enabled.resolved {
+  background: color-mix(in srgb, var(--p-green-500) 10%, transparent);
+  color: var(--p-green-500);
+  opacity: 0.7;
+}
+.scan-disabled.resolved {
+  background: color-mix(in srgb, var(--p-blue-500) 10%, transparent);
+  color: var(--p-blue-500);
+  opacity: 0.7;
 }
 
 </style>

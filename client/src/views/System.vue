@@ -15,7 +15,6 @@
           <Button v-if="overflowItems.length > 0" icon="pi pi-angle-double-right" size="small" text
                   class="overflow-trigger" @click="toggleOverflow" aria-label="More tabs" />
           <Menu ref="overflowMenuRef" :model="overflowItems" :popup="true" />
-          <Button v-if="activeTab === 0" label="Add Type" icon="pi pi-plus" size="small" text data-track="sys-add-range-type" @click="showRangeTypeDialog = true" />
           <Button v-if="activeTab === 1" label="Add VLAN" icon="pi pi-plus" size="small" text data-track="sys-add-vlan" @click="openVlanDialog()" />
           <Button v-if="activeTab === 3" label="Create Backup Now" icon="pi pi-download" size="small" text data-track="sys-create-backup" @click="doCreateBackup" :loading="creatingBackup" />
           <Button v-if="activeTab === 4" label="Upload Certificate" icon="pi pi-upload" size="small" text data-track="sys-upload-cert" @click="doUploadCert" :loading="uploadingCert"
@@ -64,7 +63,7 @@
           <div class="content-card settings-form">
             <h3>Network Scanning</h3>
             <p class="field-help" style="margin-bottom: 0.75rem;">
-              Configure automatic network scanning for allocated networks. Scans send ARP probes to detect online hosts.
+              Configure automatic network scanning for allocated networks. Uses ARP probes for local subnets and ICMP ping for remote subnets.
             </p>
             <div class="field">
               <label>Default Scan Interval</label>
@@ -72,6 +71,7 @@
                       class="w-full" style="max-width: 16rem;" />
               <small class="field-help">Applied to newly configured networks.</small>
             </div>
+            <hr style="border: none; border-top: 1px solid var(--p-surface-border); margin: 0.75rem 0;" />
             <div class="field">
               <label>On-Demand Scan</label>
               <div class="scan-row">
@@ -80,7 +80,7 @@
                 <Button label="Scan Now" icon="pi pi-search" size="small" @click="doStartScan"
                         :loading="startingScan" :disabled="!scanSubnetId" />
               </div>
-              <small class="field-help">Send ARP probes to all usable IPs in the selected network.</small>
+              <small class="field-help">Probe all scannable IPs in the selected network.</small>
             </div>
             <div class="settings-actions">
               <Button label="Save Settings" icon="pi pi-save" @click="saveSettings" :loading="savingSettings" />
@@ -88,7 +88,10 @@
           </div>
 
           <div class="content-card">
-            <h3>Address Types</h3>
+            <div class="card-header">
+              <h3>Address Types</h3>
+              <Button label="Add Type" icon="pi pi-plus" size="small" text data-track="sys-add-range-type" @click="showRangeTypeDialog = true" />
+            </div>
             <div class="range-types-section">
                 <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows emptyMessage="No address types found." size="small"
                            :paginator="rangeTypes.length > 256" :rows="256"
@@ -1229,10 +1232,12 @@ async function doResetCert() {
 .content-card h3 {
   margin: 0 0 0.75rem 0;
 }
+.card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+.card-header h3 { margin: 0; }
 .content-card + .content-card {
   margin-top: 0.75rem;
 }
-.settings-form {
+.settings-form .field {
   max-width: 32rem;
 }
 .setting-group {

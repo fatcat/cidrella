@@ -467,7 +467,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
 
   // Fetch all dynamic leases
   const leases = db.prepare(`
-    SELECT dl.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.folder_id
+    SELECT dl.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.domain_name as subnet_domain_name, sub.folder_id
     FROM dhcp_leases dl
     LEFT JOIN subnets sub ON dl.subnet_id = sub.id
     ORDER BY dl.ip_address
@@ -475,7 +475,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
 
   // Fetch all reservations
   const reservations = db.prepare(`
-    SELECT dr.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.folder_id
+    SELECT dr.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.domain_name as subnet_domain_name, sub.folder_id
     FROM dhcp_reservations dr
     JOIN subnets sub ON dr.subnet_id = sub.id
     ORDER BY dr.ip_address
@@ -504,6 +504,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
       subnet_id: r.subnet_id,
       subnet_cidr: r.subnet_cidr,
       subnet_name: r.subnet_name,
+      subnet_domain_name: r.subnet_domain_name,
       folder_id: r.folder_id,
       enabled: r.enabled,
       status: matchedLease ? 'active' : 'offline',
@@ -530,6 +531,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
         subnet_id: l.subnet_id,
         subnet_cidr: l.subnet_cidr,
         subnet_name: l.subnet_name,
+        subnet_domain_name: l.subnet_domain_name,
         folder_id: l.folder_id,
         enabled: true,
         status: 'active',

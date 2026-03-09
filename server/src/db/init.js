@@ -92,6 +92,12 @@ export async function ensureDefaults() {
     db.prepare("INSERT INTO settings (key, value) VALUES ('subnet_name_template', '%1.%2.%3.%4/%bitmask')").run();
   }
 
+  // Set default scan interval
+  const scanInterval = db.prepare("SELECT value FROM settings WHERE key = 'default_scan_interval'").get();
+  if (!scanInterval) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('default_scan_interval', '')").run();
+  }
+
   // Set default DNS upstream servers
   const dnsUp = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
   if (!dnsUp) {
