@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { spawn, execFileSync } from 'child_process';
+import fs from 'fs';
 import path from 'path';
 
 const router = Router();
@@ -29,8 +29,37 @@ function matchesFilter(line, filter) {
 }
 
 /**
+ * Read new bytes appended to the log file since the given offset.
+ * Returns { lines, newOffset }. Handles truncation (reset to 0).
+ */
+function readNewLines(offset) {
+  let size;
+  try {
+    size = fs.statSync(LOG_FILE).size;
+  } catch {
+    return { lines: [], newOffset: 0 };
+  }
+
+  // File was truncated (e.g. clear) — reset
+  if (size < offset) offset = 0;
+  if (size === offset) return { lines: [], newOffset: offset };
+
+  const buf = Buffer.alloc(size - offset);
+  const fd = fs.openSync(LOG_FILE, 'r');
+  try {
+    fs.readSync(fd, buf, 0, buf.length, offset);
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  const text = buf.toString('utf-8');
+  const lines = text.split('\n').filter(l => l.trim());
+  return { lines, newOffset: size };
+}
+
+/**
  * GET /api/logs/stream?filter=all|dns|dhcp&token=<jwt>
- * SSE endpoint that tails the dnsmasq log file.
+ * SSE endpoint that watches the dnsmasq log file.
  */
 router.get('/stream', (req, res) => {
   if (!req.user) {
@@ -51,9 +80,11 @@ router.get('/stream', (req, res) => {
   // Send initial connected event
   res.write('event: connected\ndata: ok\n\n');
 
-  // Send last 200 lines as initial backlog (use sudo cat since log is owned by dnsmasq)
+  // Send last 200 lines as initial backlog
+  let offset = 0;
   try {
-    const content = execFileSync('sudo', ['cat', LOG_FILE], { encoding: 'utf-8', timeout: 5000 });
+    const content = fs.readFileSync(LOG_FILE, 'utf-8');
+    offset = Buffer.byteLength(content, 'utf-8');
     const lines = content.split('\n').filter(l => l.trim());
     const backlog = lines.slice(-200);
     for (const line of backlog) {
@@ -66,21 +97,21 @@ router.get('/stream', (req, res) => {
     res.write('event: backlog-end\ndata: ok\n\n');
   }
 
-  // Tail the log file for new lines (use sudo since log is owned by dnsmasq)
-  const tail = spawn('sudo', ['tail', '-n', '0', '-F', LOG_FILE]);
-
-  tail.stdout.on('data', (chunk) => {
-    const lines = chunk.toString().split('\n').filter(l => l.trim());
-    for (const line of lines) {
-      if (matchesFilter(line, filter)) {
-        res.write(`data: ${line}\n\n`);
+  // Watch the log file for new writes
+  let watcher;
+  try {
+    watcher = fs.watch(LOG_FILE, () => {
+      const { lines, newOffset } = readNewLines(offset);
+      offset = newOffset;
+      for (const line of lines) {
+        if (matchesFilter(line, filter)) {
+          res.write(`data: ${line}\n\n`);
+        }
       }
-    }
-  });
-
-  tail.on('error', () => {
-    res.write('event: error\ndata: tail process failed\n\n');
-  });
+    });
+  } catch {
+    res.write('event: error\ndata: watch failed\n\n');
+  }
 
   // Keepalive every 30s
   const keepalive = setInterval(() => {
@@ -90,7 +121,7 @@ router.get('/stream', (req, res) => {
   // Cleanup on client disconnect
   req.on('close', () => {
     clearInterval(keepalive);
-    tail.kill();
+    if (watcher) watcher.close();
   });
 });
 
@@ -104,8 +135,7 @@ router.post('/clear', (req, res) => {
   }
 
   try {
-    // Truncate by writing empty string via tee
-    execFileSync('sudo', ['tee', LOG_FILE], { input: '', timeout: 5000 });
+    fs.writeFileSync(LOG_FILE, '');
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Failed to clear log file' });
