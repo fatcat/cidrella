@@ -43,10 +43,27 @@ body {
 }
 
 /* Compact action buttons inside DataTable rows to reduce row height */
-.p-datatable .p-button-sm.p-button-icon-only {
-  width: 1.5rem;
-  height: 1.5rem;
-  padding: 0;
+.p-datatable .p-datatable-tbody .p-button {
+  width: 1.5rem !important;
+  height: 1.5rem !important;
+  min-width: 1.5rem !important;
+  min-height: 1.5rem !important;
+  padding: 0 !important;
+  font-size: 0.75rem !important;
+  line-height: 1 !important;
+}
+.p-datatable .p-datatable-tbody .p-button .p-button-icon {
+  font-size: 0.75rem !important;
+}
+.p-datatable .p-datatable-tbody > tr > td {
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+}
+.p-datatable .action-buttons {
+  display: flex;
+  gap: 0.25rem;
+  align-items: center;
+  line-height: 1;
 }
 
 /* Fix PrimeVue TabView ink bar sizing incorrectly on initial mount */

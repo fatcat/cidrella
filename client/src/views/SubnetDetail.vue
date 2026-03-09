@@ -188,7 +188,7 @@
               Unassigned
             </span>
           </div>
-          <div class="ip-grid" v-if="subnet.total_addresses <= 512"
+          <div class="ip-grid" v-if="subnet.total_addresses <= 1024"
                @mousedown="onGridMouseDown"
                @mousemove="onGridMouseMove"
                @mouseup="onGridMouseUp"
@@ -203,7 +203,7 @@
             </div>
           </div>
           <div v-else class="grid-too-large">
-            Network too large for grid view ({{ subnet.total_addresses }} addresses, max 512). Use the IP Addresses tab.
+            Network too large for grid view ({{ subnet.total_addresses }} addresses, max 1024). Use the IP Addresses tab.
           </div>
         </div>
         </div>
@@ -688,7 +688,7 @@ function gridTooltip(ip) {
 }
 
 const ipGrid = computed(() => {
-  if (!subnet.value || subnet.value.total_addresses > 512) return [];
+  if (!subnet.value || subnet.value.total_addresses > 1024) return [];
 
   const net = ipToLong(subnet.value.network_address);
   const bcast = ipToLong(subnet.value.broadcast_address);
@@ -1512,7 +1512,7 @@ onUnmounted(() => {
 }
 .ip-grid {
   display: grid;
-  grid-template-columns: repeat(32, 1fr);
+  grid-template-columns: repeat(64, 1fr);
   gap: 1px;
   user-select: none;
 }
@@ -1521,9 +1521,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 2px;
+  border-radius: 1px;
   cursor: pointer;
-  min-height: 12px;
+  min-height: 6px;
   min-width: 0;
   position: relative;
   transition: outline 0.1s;
