@@ -140,7 +140,9 @@
                      :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
                      :paginator="filteredRecords.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
-                     scrollable scrollHeight="flex">
+                     scrollable scrollHeight="flex"
+                     @row-contextmenu="onRecordRightClick"
+                     :contextMenu="true">
             <Column field="name" :header="isReverse ? 'Name' : 'Name'" sortable style="min-width: 8rem">
               <template #body="{ data }">
                 {{ isReverse ? `${data.name}.${selectedZone.name}` : data.name }}
@@ -174,17 +176,8 @@
                 <span :class="['type-badge', data.source === 'dhcp' ? 'badge-dhcp' : 'badge-manual']">{{ data.source === 'dhcp' ? 'DHCP' : 'Manual' }}</span>
               </template>
             </Column>
-            <Column header="" style="width: 5rem" v-if="!isReverse">
-              <template #body="{ data }">
-                <div class="action-buttons" v-if="data.source !== 'dhcp'">
-                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                          @click="openRecordDialog(data)" />
-                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                          @click="confirmDeleteRecord(data)" />
-                </div>
-              </template>
-            </Column>
           </DataTable>
+          <ContextMenu ref="recordContextMenu" :model="recordContextMenuItems" />
         </template>
         <div v-else class="empty-state centered">
           <i class="pi pi-arrow-left" style="font-size: 2rem; opacity: 0.3;" />
@@ -364,6 +357,7 @@ import Tab from 'primevue/tab';
 import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 
+import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
 import api from '../api/client.js';
@@ -483,6 +477,22 @@ const availableRecordTypes = computed(() => {
   if (selectedZone.value?.type === 'reverse') return ['PTR'];
   return allRecordTypes;
 });
+
+// Record context menu
+const recordContextMenu = ref();
+const selectedRecord = ref(null);
+const recordContextMenuItems = computed(() => {
+  const r = selectedRecord.value;
+  if (!r || r.source === 'dhcp') return [];
+  return [
+    { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
+    { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
+  ];
+});
+function onRecordRightClick(event) {
+  selectedRecord.value = event.data;
+  recordContextMenu.value.show(event.originalEvent);
+}
 
 // Delete dialogs
 const showDeleteZoneDialog = ref(false);

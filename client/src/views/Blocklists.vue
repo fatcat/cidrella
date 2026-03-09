@@ -124,6 +124,7 @@
         <DataTable :value="store.whitelist" stripedRows size="small" emptyMessage="No whitelisted domains."
                    :paginator="store.whitelist.length > 256" :rows="256"
                    :rowsPerPageOptions="[64, 128, 256, 512]"
+                   @row-contextmenu="onWhitelistRightClick" contextMenu
                    scrollable scrollHeight="flex">
           <Column field="domain" header="Domain" sortable />
           <Column field="reason" header="Reason">
@@ -132,13 +133,8 @@
           <Column field="created_at" header="Added" style="width: 10rem">
             <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
           </Column>
-          <Column header="" style="width: 4rem">
-            <template #body="{ data }">
-              <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                      @click="doRemoveWhitelist(data)" />
-            </template>
-          </Column>
         </DataTable>
+        <ContextMenu ref="whitelistContextMenuRef" :model="whitelistContextMenuItems" />
       </TabPanel>
 
       <!-- Search Tab -->
@@ -187,6 +183,7 @@ import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
+import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useBlocklistStore } from '../stores/blocklists.js';
 
@@ -247,6 +244,21 @@ async function doResetUrl(slug) {
   } finally {
     savingUrl.value = false;
   }
+}
+
+// Whitelist context menu
+const whitelistContextMenuRef = ref();
+const selectedWhitelist = ref(null);
+const whitelistContextMenuItems = computed(() => {
+  const w = selectedWhitelist.value;
+  if (!w) return [];
+  return [
+    { label: 'Remove from Whitelist', icon: 'pi pi-trash', command: () => doRemoveWhitelist(w) }
+  ];
+});
+function onWhitelistRightClick(event) {
+  selectedWhitelist.value = event.data;
+  whitelistContextMenuRef.value.show(event.originalEvent);
 }
 
 // Whitelist

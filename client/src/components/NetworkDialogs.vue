@@ -11,6 +11,11 @@
         <InputText v-model="folderForm.description" class="w-full" />
       </div>
       <div class="field">
+        <label>Default Gateway Position</label>
+        <SelectButton v-model="folderForm.gateway_position" :options="gatewayOptions"
+                      optionLabel="label" optionValue="value" size="small" />
+      </div>
+      <div class="field">
         <label class="toggle-label">
           <input type="checkbox" v-model="folderForm.scan_enabled" />
           Include owned hosts in liveness scans by default
@@ -627,7 +632,7 @@ const showDeleteFolderDialog = ref(false);
 const editingFolder = ref(null);
 const deletingFolder = ref(null);
 const deleteConfirmText = ref('');
-const folderForm = ref({ name: '', description: '', scan_enabled: true });
+const folderForm = ref({ name: '', description: '', gateway_position: 'first', scan_enabled: true });
 const orgForm = ref({ name: '', description: '', cidr: '' });
 
 const orgValidationError = computed(() => {
@@ -1571,7 +1576,7 @@ function openOrgDialog() {
 
 function openEditFolder(folder) {
   editingFolder.value = folder;
-  folderForm.value = { name: folder.name, description: folder.description || '', scan_enabled: folder.scan_enabled !== 0 };
+  folderForm.value = { name: folder.name, description: folder.description || '', gateway_position: folder.gateway_position || 'first', scan_enabled: folder.scan_enabled !== 0 };
   showFolderDialog.value = true;
 }
 

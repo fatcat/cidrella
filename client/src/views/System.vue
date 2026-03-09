@@ -44,23 +44,6 @@
           </div>
 
           <div class="content-card settings-form">
-            <h3>Network Defaults</h3>
-            <div class="field">
-              <label>Default Gateway Position</label>
-              <div class="radio-group">
-                <label class="radio-label">
-                  <input type="radio" v-model="settings.default_gateway_position" value="first" />
-                  First usable IP
-                </label>
-                <label class="radio-label">
-                  <input type="radio" v-model="settings.default_gateway_position" value="last" />
-                  Last usable IP
-                </label>
-              </div>
-            </div>
-          </div>
-
-          <div class="content-card settings-form">
             <h3>Network Scanning</h3>
             <p class="field-help" style="margin-bottom: 0.75rem;">
               Configure automatic network scanning for allocated networks. Uses ARP probes for local subnets and ICMP ping for remote subnets.
@@ -96,6 +79,7 @@
                 <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows emptyMessage="No address types found." size="small"
                            :paginator="rangeTypes.length > 256" :rows="256"
                            :rowsPerPageOptions="[64, 128, 256, 512]"
+                           @row-contextmenu="onRangeTypeRightClick" contextMenu
                            scrollable scrollHeight="flex">
                   <Column header="Color" style="width: 4rem">
                     <template #body="{ data }">
@@ -111,16 +95,6 @@
                       <span :class="data.is_system ? 'badge-system' : 'badge-custom'">
                         {{ data.is_system ? 'System' : 'Custom' }}
                       </span>
-                    </template>
-                  </Column>
-                  <Column header="" style="width: 5rem">
-                    <template #body="{ data }">
-                      <div class="action-buttons" v-if="!data.is_system">
-                        <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                                @click="editRangeType(data)" />
-                        <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                                @click="confirmDeleteRangeType(data)" />
-                      </div>
                     </template>
                   </Column>
                 </DataTable>
@@ -172,22 +146,13 @@
           <DataTable :value="vlans" :loading="loadingVlans" stripedRows emptyMessage="No VLANs found." size="small"
                      :paginator="vlans.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
+                     @row-contextmenu="onVlanRightClick" contextMenu
                      scrollable scrollHeight="flex">
             <Column field="vlan_id" header="VLAN ID" sortable style="width: 6rem" />
             <Column field="name" header="Name" sortable />
             <Column field="folder_name" header="Organization" sortable />
             <Column field="subnet_count" header="Networks" style="width: 5rem">
               <template #body="{ data }">{{ data.subnet_count || 0 }}</template>
-            </Column>
-            <Column header="" style="width: 5rem">
-              <template #body="{ data }">
-                <div class="action-buttons">
-                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                          @click="editVlan(data)" />
-                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                          @click="confirmDeleteVlan(data)" />
-                </div>
-              </template>
             </Column>
           </DataTable>
         </div>
@@ -257,6 +222,7 @@
                        emptyMessage="No backups found."
                        :paginator="opsStore.backups.length > 256" :rows="256"
                        :rowsPerPageOptions="[64, 128, 256, 512]"
+                       @row-contextmenu="onBackupRightClick" contextMenu
                        scrollable scrollHeight="flex">
               <Column field="filename" header="Filename" />
               <Column header="Size" style="width: 8rem">
@@ -264,16 +230,6 @@
               </Column>
               <Column header="Created" style="width: 12rem">
                 <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
-              </Column>
-              <Column header="" style="width: 6rem">
-                <template #body="{ data }">
-                  <div class="action-buttons">
-                    <Button icon="pi pi-download" severity="secondary" text rounded size="small"
-                            @click="opsStore.downloadBackup(data.id, data.filename)" />
-                    <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                            @click="confirmDeleteBackup(data)" />
-                  </div>
-                </template>
               </Column>
             </DataTable>
           </div>
@@ -495,6 +451,11 @@
       </div>
     </div>
 
+    <!-- Context Menus -->
+    <ContextMenu ref="rangeTypeContextMenuRef" :model="rangeTypeContextMenuItems" />
+    <ContextMenu ref="vlanContextMenuRef" :model="vlanContextMenuItems" />
+    <ContextMenu ref="backupContextMenuRef" :model="backupContextMenuItems" />
+
     <Toast />
   </div>
 </template>
@@ -514,6 +475,7 @@ import Dialog from 'primevue/dialog';
 import Select from 'primevue/select';
 import MultiSelect from 'primevue/multiselect';
 import InputNumber from 'primevue/inputnumber';
+import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import SubnetCalculator from './SubnetCalculator.vue';
 import { useSubnetStore } from '../stores/subnets.js';
@@ -642,7 +604,6 @@ const loadingSettings = ref(true);
 const savingSettings = ref(false);
 const settings = ref({
   subnet_name_template: '%1.%2.%3.%4/%bitmask',
-  default_gateway_position: 'first',
   default_scan_interval: ''
 });
 const scanIntervalOptions = [
@@ -707,7 +668,6 @@ onMounted(async () => {
     ]);
     settings.value = {
       subnet_name_template: data.subnet_name_template || '%1.%2.%3.%4/%bitmask',
-      default_gateway_position: data.default_gateway_position || 'first',
       default_scan_interval: data.default_scan_interval || ''
     };
   } catch { /* use defaults */ }
@@ -775,6 +735,22 @@ async function doDeleteRangeType() {
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally { savingRangeType.value = false; }
+}
+
+// Address Types context menu
+const rangeTypeContextMenuRef = ref();
+const selectedRangeType = ref(null);
+const rangeTypeContextMenuItems = computed(() => {
+  const r = selectedRangeType.value;
+  if (!r || r.is_system) return [];
+  return [
+    { label: 'Edit Type', icon: 'pi pi-pencil', command: () => editRangeType(r) },
+    { label: 'Delete Type', icon: 'pi pi-trash', command: () => confirmDeleteRangeType(r) }
+  ];
+});
+function onRangeTypeRightClick(event) {
+  selectedRangeType.value = event.data;
+  rangeTypeContextMenuRef.value.show(event.originalEvent);
 }
 
 // VLANs
@@ -863,6 +839,22 @@ async function doDeleteVlan() {
   } finally { savingVlan.value = false; }
 }
 
+// VLANs context menu
+const vlanContextMenuRef = ref();
+const selectedVlan = ref(null);
+const vlanContextMenuItems = computed(() => {
+  const v = selectedVlan.value;
+  if (!v) return [];
+  return [
+    { label: 'Edit VLAN', icon: 'pi pi-pencil', command: () => editVlan(v) },
+    { label: 'Delete VLAN', icon: 'pi pi-trash', command: () => confirmDeleteVlan(v) }
+  ];
+});
+function onVlanRightClick(event) {
+  selectedVlan.value = event.data;
+  vlanContextMenuRef.value.show(event.originalEvent);
+}
+
 // Audit Log
 const loadingAudit = ref(false);
 const auditLog = ref({ items: [], total: 0 });
@@ -943,7 +935,6 @@ async function saveSettings() {
   try {
     await Promise.all([
       store.updateSetting('subnet_name_template', settings.value.subnet_name_template),
-      store.updateSetting('default_gateway_position', settings.value.default_gateway_position),
       store.updateSetting('default_scan_interval', settings.value.default_scan_interval || '')
     ]);
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
@@ -1024,6 +1015,22 @@ async function doDeleteBackup() {
   } finally {
     deletingBackupLoading.value = false;
   }
+}
+
+// Backups context menu
+const backupContextMenuRef = ref();
+const selectedBackup = ref(null);
+const backupContextMenuItems = computed(() => {
+  const b = selectedBackup.value;
+  if (!b) return [];
+  return [
+    { label: 'Download', icon: 'pi pi-download', command: () => opsStore.downloadBackup(b.id, b.filename) },
+    { label: 'Delete', icon: 'pi pi-trash', command: () => confirmDeleteBackup(b) }
+  ];
+});
+function onBackupRightClick(event) {
+  selectedBackup.value = event.data;
+  backupContextMenuRef.value.show(event.originalEvent);
 }
 
 function onRestoreFileSelected(e) {
@@ -1283,19 +1290,6 @@ async function doResetCert() {
   font-family: monospace;
   font-size: 0.85rem;
   color: var(--p-text-color);
-}
-.radio-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  margin-top: 0.25rem;
-}
-.radio-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  cursor: pointer;
-  font-size: 0.9rem;
 }
 .settings-actions {
   margin-top: 1rem;

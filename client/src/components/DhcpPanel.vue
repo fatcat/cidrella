@@ -70,6 +70,7 @@
                      emptyMessage="No leases or reservations for this scope." size="small"
                      :paginator="searchedScopeLeases.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
+                     @row-contextmenu="onLeaseRightClick" contextMenu
                      scrollable scrollHeight="flex">
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
@@ -95,16 +96,6 @@
                 <template v-else>{{ data.expires_at === 'infinite' ? 'Never' : formatDate(data.expires_at) }}</template>
               </template>
             </Column>
-            <Column header="" style="width: 5rem">
-              <template #body="{ data }">
-                <div v-if="data.type === 'reserved'" class="action-buttons">
-                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                          @click="openReservationDialog(data)" />
-                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                          @click="confirmDeleteReservation(data)" />
-                </div>
-              </template>
-            </Column>
           </DataTable>
         </template>
 
@@ -125,6 +116,7 @@
                      emptyMessage="No DHCP leases or reservations." size="small"
                      :paginator="searchedAllLeases.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
+                     @row-contextmenu="onLeaseRightClick" contextMenu
                      scrollable scrollHeight="flex">
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
@@ -151,16 +143,6 @@
               <template #body="{ data }">
                 <template v-if="data.type === 'reserved'">never</template>
                 <template v-else>{{ data.expires_at === 'infinite' ? 'Never' : formatDate(data.expires_at) }}</template>
-              </template>
-            </Column>
-            <Column header="" style="width: 5rem">
-              <template #body="{ data }">
-                <div v-if="data.type === 'reserved'" class="action-buttons">
-                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                          @click="openReservationDialog(data)" />
-                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                          @click="confirmDeleteReservation(data)" />
-                </div>
               </template>
             </Column>
           </DataTable>
@@ -230,11 +212,15 @@
         <Button label="Delete" severity="danger" @click="doDeleteReservation" :loading="savingReservation" />
       </template>
     </Dialog>
+
+    <!-- Lease Context Menu -->
+    <ContextMenu ref="leaseContextMenuRef" :model="leaseContextMenuItems" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
+
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
@@ -245,6 +231,7 @@ import IconField from 'primevue/iconfield';
 import InputIcon from 'primevue/inputicon';
 import Select from 'primevue/select';
 
+import ContextMenu from 'primevue/contextmenu';
 import ToggleSwitch from 'primevue/toggleswitch';
 import Tabs from 'primevue/tabs';
 import TabList from 'primevue/tablist';
@@ -280,6 +267,22 @@ const allocatedSubnets = ref([]);
 
 const dhcpSearch = ref('');
 const dhcpAllSearch = ref('');
+
+// Lease context menu
+const leaseContextMenuRef = ref();
+const selectedLease = ref(null);
+const leaseContextMenuItems = computed(() => {
+  const r = selectedLease.value;
+  if (!r || r.type !== 'reserved') return [];
+  return [
+    { label: 'Edit Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
+    { label: 'Delete Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
+  ];
+});
+function onLeaseRightClick(event) {
+  selectedLease.value = event.data;
+  leaseContextMenuRef.value.show(event.originalEvent);
+}
 
 function dhcpMatchSearch(item, query) {
   return (item.ip_address && item.ip_address.toLowerCase().includes(query)) ||
@@ -636,8 +639,6 @@ defineExpose({ openScopeDialog });
 .badge-offline { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-muted-color); }
 .badge-reserved { background: color-mix(in srgb, var(--p-primary-color) 15%, transparent); color: var(--p-primary-color); }
 .badge-dynamic { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-color); }
-
-.action-buttons { display: flex; gap: 0.25rem; }
 
 .search-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; }
 .search-input { width: 22rem; }

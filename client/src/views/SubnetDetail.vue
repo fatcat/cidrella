@@ -146,6 +146,7 @@
           <DataTable :value="ranges" stripedRows size="small" emptyMessage="No ranges defined."
                      :paginator="ranges.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
+                     @row-contextmenu="onRangeRightClick" contextMenu
                      scrollable scrollHeight="flex">
             <Column header="Type">
               <template #body="{ data }">
@@ -162,16 +163,6 @@
             </Column>
             <Column field="description" header="Description">
               <template #body="{ data }">{{ data.description ?? '—' }}</template>
-            </Column>
-            <Column header="" style="width: 5rem">
-              <template #body="{ data }">
-                <div class="action-buttons" v-if="isEditableRange(data)">
-                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                          @click="data.range_type_name === 'DHCP Scope' ? editDhcpScope(data) : editRange(data)" />
-                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                          @click="confirmDeleteRange(data)" />
-                </div>
-              </template>
             </Column>
           </DataTable>
         </div>
@@ -243,6 +234,9 @@
 
     <!-- Table Context Menu -->
     <ContextMenu ref="tableContextMenuRef" :model="tableContextMenuItems" />
+
+    <!-- Range Context Menu -->
+    <ContextMenu ref="rangeContextMenuRef" :model="rangeContextMenuItems" />
 
     <!-- Range Create/Edit Dialog -->
     <Dialog v-model:visible="showRangeDialog" :header="rangeDialogHeader"
@@ -549,6 +543,22 @@ const tableContextMenuItems = computed(() => {
 
   return buildContextMenuItems([ip]);
 });
+
+// Range context menu
+const rangeContextMenuRef = ref(null);
+const selectedRange = ref(null);
+const rangeContextMenuItems = computed(() => {
+  const r = selectedRange.value;
+  if (!r || !isEditableRange(r)) return [];
+  return [
+    { label: r.range_type_name === 'DHCP Scope' ? 'Edit DHCP Scope' : 'Edit Range', icon: 'pi pi-pencil', command: () => r.range_type_name === 'DHCP Scope' ? editDhcpScope(r) : editRange(r) },
+    { label: 'Delete Range', icon: 'pi pi-trash', command: () => confirmDeleteRange(r) }
+  ];
+});
+function onRangeRightClick(event) {
+  selectedRange.value = event.data;
+  rangeContextMenuRef.value.show(event.originalEvent);
+}
 
 function findRangeForIp(ipAddress) {
   const long = ipToLong(ipAddress);

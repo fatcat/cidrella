@@ -3,6 +3,7 @@
     <DataTable :value="users" :loading="loading" stripedRows size="small" emptyMessage="No users found."
                :paginator="users.length > 256" :rows="256"
                :rowsPerPageOptions="[64, 128, 256, 512]"
+               @row-contextmenu="onUserRightClick" contextMenu
                scrollable scrollHeight="flex">
       <Column field="username" header="Username" sortable style="min-width: 10rem" />
       <Column header="Role" sortable sortField="role" style="min-width: 10rem">
@@ -18,20 +19,10 @@
       <Column header="Created" field="created_at" sortable style="width: 10rem">
         <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
       </Column>
-      <Column header="" style="width: 8rem">
-        <template #body="{ data }">
-          <div class="action-buttons">
-            <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                    title="Edit role" @click="openEditDialog(data)" />
-            <Button icon="pi pi-key" severity="warning" text rounded size="small"
-                    title="Reset password" @click="confirmResetPassword(data)" />
-            <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                    title="Delete user" @click="confirmDelete(data)"
-                    :disabled="data.id === currentUserId" />
-          </div>
-        </template>
-      </Column>
     </DataTable>
+
+    <!-- User Context Menu -->
+    <ContextMenu ref="userContextMenuRef" :model="userContextMenuItems" />
 
     <!-- Create User Dialog -->
     <Dialog v-model:visible="showCreateDialog" header="Create User" modal :style="{ width: '24rem' }">
@@ -114,11 +105,12 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
+import ContextMenu from 'primevue/contextmenu';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
@@ -170,6 +162,26 @@ const resettingUser = ref(null);
 
 const showDeleteDialog = ref(false);
 const deletingUser = ref(null);
+
+// User context menu
+const userContextMenuRef = ref();
+const selectedUser = ref(null);
+const userContextMenuItems = computed(() => {
+  const u = selectedUser.value;
+  if (!u) return [];
+  const items = [
+    { label: 'Edit Role', icon: 'pi pi-pencil', command: () => openEditDialog(u) },
+    { label: 'Reset Password', icon: 'pi pi-key', command: () => confirmResetPassword(u) }
+  ];
+  if (u.id !== currentUserId) {
+    items.push({ label: 'Delete User', icon: 'pi pi-trash', command: () => confirmDelete(u) });
+  }
+  return items;
+});
+function onUserRightClick(event) {
+  selectedUser.value = event.data;
+  userContextMenuRef.value.show(event.originalEvent);
+}
 
 async function loadUsers() {
   loading.value = true;
@@ -279,11 +291,6 @@ defineExpose({ openCreateDialog });
   display: flex;
   justify-content: flex-end;
   margin-bottom: 0.75rem;
-}
-
-.action-buttons {
-  display: flex;
-  gap: 0.25rem;
 }
 
 .form-grid {
