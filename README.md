@@ -24,19 +24,70 @@ A lightweight IP Address Management system with integrated DNS and DHCP via DNSm
 - **Upstream forwarders** — Configure upstream DNS servers from the System settings page
 - **Reverse zone auto-creation** — Configuring a subnet with "create reverse DNS" auto-creates the in-addr.arpa zone
 - **Subnet calculator** — Standalone tool on the System page for splitting networks
+- **In-app update checker** — Periodic check against GitHub releases with UI notification
 
-## Quick Start
+## Installation
+
+### Option 1: Docker (quickest)
 
 ```bash
-git clone git@github.com:fatcat/cidrella.git
+git clone https://github.com/mcnultyd/cidrella.git
 cd cidrella
 docker compose up -d --build
 ```
 
-Check the container logs for the generated admin password:
+### Option 2: Native Install (Debian/Ubuntu — recommended for production)
+
+CIDRella runs natively on Debian/Ubuntu with systemd. Choose one of the following methods:
+
+#### Method A: One-line install
 
 ```bash
+curl -sSL https://raw.githubusercontent.com/mcnultyd/cidrella/main/scripts/install.sh | sudo bash
+```
+
+#### Method B: Download and review first
+
+```bash
+curl -sSLO https://raw.githubusercontent.com/mcnultyd/cidrella/main/scripts/install.sh
+less install.sh        # review the script
+sudo bash install.sh
+```
+
+#### Method C: Clone and install
+
+```bash
+git clone https://github.com/mcnultyd/cidrella.git
+cd cidrella
+sudo bash scripts/install.sh
+```
+
+#### Install a specific version
+
+```bash
+sudo bash install.sh --version 0.1.0
+```
+
+The installer is interactive and will:
+
+- Install Node.js 20+ (via NodeSource) if not present
+- Install system dependencies (dnsmasq, build-essential, nmap, arping, etc.)
+- Detect and handle conflicts with systemd-resolved (port 53)
+- Handle existing dnsmasq installations (replace config, include config, or skip)
+- Create a `cidrella` system user and data directory at `/var/lib/cidrella`
+- Download and extract the latest release to `/opt/cidrella`
+- Install and start systemd services
+
+### First Login
+
+Check the logs for the generated admin password:
+
+```bash
+# Docker
 docker compose logs cidrella
+
+# Native
+journalctl -u cidrella --no-pager | head -20
 ```
 
 ```
@@ -47,140 +98,176 @@ docker compose logs cidrella
 ========================================
 ```
 
-Open `https://localhost:8443` and log in. You will be prompted to change your password.
+Open `https://<your-server-ip>:8443` and log in. A setup wizard will guide you through initial configuration.
 
-## Production Deployment
+## Updating
 
-### 1. Configure dnsmasq
-
-On first run, a default config is copied to `data/dnsmasq/dnsmasq.conf`. You **must** edit it for production:
-
-**listen-address** — Change from `127.0.0.1` to include your server's real IP(s). Without this, dnsmasq only listens on loopback and clients can't reach it:
-
-```
-listen-address=127.0.0.1,192.168.1.1
-```
-
-**Upstream DNS servers** — Change the `server=` lines to your preferred upstream resolvers (or your internal DNS):
-
-```
-server=10.0.0.2
-server=10.0.0.3
-```
-
-After editing, restart the container:
+### Docker
 
 ```bash
-docker compose restart
+cd cidrella
+git pull
+docker compose up -d --build
 ```
 
-### 2. DNS
+### Native
+
+```bash
+# Update to latest
+sudo cidrella-update
+
+# Update to specific version
+sudo cidrella-update --version 0.2.0
+```
+
+The update script will:
+- Back up the current installation
+- Download and extract the new release
+- Install updated dependencies
+- Update systemd units if changed
+- Restart services
+- Database migrations run automatically on startup
+
+CIDRella also checks for updates in the background and shows a notification badge in the header when a new version is available.
+
+## Configuration
+
+### DNS
 
 DNS works automatically through dnsmasq:
 
-- **Forward DNS records** created in the UI are written to `data/dnsmasq/hosts.d/` (hostsdir hot-reload — no restart needed)
+- **Forward DNS records** created in the UI are written to hostsdir (hot-reload — no restart needed)
 - **Reverse DNS** (PTR records) are handled automatically by dnsmasq's hosts file format
 - Point your clients' DNS to the CIDRella server's IP address (via DHCP option 6, or manually)
 
-To make this server authoritative for specific zones while forwarding everything else upstream, add to `data/dnsmasq/dnsmasq.conf`:
-
-```
-local=/example.com/
-local=/168.192.in-addr.arpa/
-```
-
-### 3. DHCP
+### DHCP
 
 DHCP is configured entirely through the UI:
 
 1. Create a network (e.g. `192.168.1.0/24`)
 2. Configure it (set gateway, domain name, etc.) — a DHCP scope is auto-created
 3. Set DHCP options (DNS servers, NTP, domain search, etc.) on the DHCP settings page
-4. The app writes config to `data/dnsmasq/conf.d/dhcp-scope-*.conf` and signals dnsmasq automatically
+4. The app writes config to dnsmasq conf.d and signals dnsmasq automatically
 
 **Important**: Ensure no other DHCP server is running on the same broadcast domain.
 
-### 4. TLS Certificates
+### TLS Certificates
 
-A self-signed certificate is auto-generated on first run. To use your own, place `cert.pem` and `key.pem` in `data/certs/` and restart the container.
+A self-signed certificate is auto-generated on first run. To use your own:
 
-### 5. Networking
+```bash
+# Docker
+cp cert.pem key.pem data/certs/
+docker compose restart
 
-The container runs with `network_mode: host`, which is required for DHCP broadcast traffic. Ensure these ports are open on the host firewall:
+# Native
+cp cert.pem key.pem /var/lib/cidrella/certs/
+sudo systemctl restart cidrella
+```
+
+### Networking
+
+CIDRella requires the following ports:
 
 | Port | Protocol | Service |
 |------|----------|---------|
 | 53 | TCP/UDP | DNS |
 | 67 | UDP | DHCP server |
 | 8443 | TCP | Web UI (HTTPS) |
-| 8080 | TCP | Web UI (HTTP) |
+| 8080 | TCP | Web UI (HTTP redirect) |
 
-### 6. User/Group Ownership (PUID/PGID)
+Docker runs with `network_mode: host` for DHCP broadcast support. Native installs bind directly.
 
-By default the container runs as root and files in `./data/` will be root-owned. To have data files owned by your host user, set `PUID` and `PGID`:
+### User/Group Ownership (Docker only)
+
+By default the container runs as root and files in `./data/` will be root-owned. To have data files owned by your host user:
 
 ```bash
 PUID=$(id -u) PGID=$(id -g) docker compose up -d --build
 ```
 
-Or add them to a `.env` file:
+Or add to a `.env` file:
 
 ```
 PUID=1000
 PGID=1000
 ```
 
-The Node.js server will run as the specified user while dnsmasq stays as root (required for privileged ports 53/67).
+### Timezone
 
-### 7. Timezone
-
-By default the container uses UTC. To use your local timezone, set the `TZ` environment variable to any [IANA timezone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones):
+Set the `TZ` environment variable to any [IANA timezone name](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones):
 
 ```bash
+# Docker
 TZ=America/New_York docker compose up -d
+
+# Native: edit the systemd unit
+sudo systemctl edit cidrella
+# Add: Environment=TZ=America/New_York
 ```
 
-Or add it to your `.env` file:
+### Backups
 
-```
-TZ=America/New_York
-```
+All persistent data lives in the data directory:
 
-This affects dnsmasq log timestamps, audit log times, and all other time-related output.
+| Path | Docker | Native |
+|------|--------|--------|
+| Database | `data/cidrella.db` | `/var/lib/cidrella/cidrella.db` |
+| Certificates | `data/certs/` | `/var/lib/cidrella/certs/` |
+| DNSmasq config | `data/dnsmasq/` | `/var/lib/cidrella/dnsmasq/` |
+| Backups | `data/backups/` | `/var/lib/cidrella/backups/` |
+| Blocklists | `data/blocklists/` | `/var/lib/cidrella/blocklists/` |
 
-### 8. Backups
+The UI also provides database backup/restore under System settings.
 
-All persistent data lives in `./data/`. Back up this directory regularly. The UI also provides database backup/restore under System settings.
+## Administration
 
 ### Reset Admin Password
 
 ```bash
+# Docker
 docker compose exec cidrella node /app/server/src/reset-password.js
+
+# Native
+cd /opt/cidrella && sudo -u cidrella DATA_DIR=/var/lib/cidrella node server/src/reset-password.js
 ```
 
-To reset a specific user:
+To reset a specific user, append the username:
 
 ```bash
 docker compose exec cidrella node /app/server/src/reset-password.js <username>
 ```
 
-The new password will be printed to the console. The user will be forced to change it on next login.
-
-### Database Reset
+### Database Reset (Docker)
 
 ```bash
 docker compose run --rm reset
 docker compose restart cidrella
 ```
 
-This deletes the SQLite database and reinitializes it on next startup. All networks, DNS zones, DHCP scopes, users, audit logs, settings, and VLANs will be lost. A new default admin account will be generated (check the container logs for the password).
+This deletes the SQLite database and reinitializes it on next startup. A new default admin account will be generated.
 
-The following are **not** deleted by a database reset and persist on disk:
+The following are **not** deleted and persist on disk:
+- TLS certificates
+- DNSmasq configuration (regenerated on startup)
+- Backup archives
+- Downloaded blocklist files
 
-- `data/certs/` — TLS certificates (self-signed or uploaded)
-- `data/dnsmasq/` — DNSmasq configuration files (will be regenerated on startup)
-- `data/backups/` — Backup archives
-- `data/blocklists/` — Downloaded DNS blocklist files
+### Service Management (Native)
+
+```bash
+# Check status
+sudo systemctl status cidrella
+sudo systemctl status cidrella-dnsmasq
+
+# View logs
+journalctl -u cidrella -f
+journalctl -u cidrella-dnsmasq -f
+
+# Restart
+sudo systemctl restart cidrella
+sudo systemctl restart cidrella-dnsmasq
+```
 
 ## Architecture
 
@@ -188,27 +275,8 @@ The following are **not** deleted by a database reset and persist on disk:
 - **Frontend**: Vue 3 + PrimeVue
 - **Database**: SQLite (via better-sqlite3)
 - **DNS/DHCP**: DNSmasq
-- **Process Manager**: s6-overlay
-- **Container**: Single Docker container with host networking
-
-## Data
-
-All persistent data is stored in `./data/` (mapped to `/data` inside the container):
-
-- `cidrella.db` — SQLite database
-- `certs/` — TLS certificates
-- `dnsmasq/` — DNSmasq configuration and watched directories
-- `backups/` — Backup files
-- `blocklists/` — DNS blocklist files
-
-## Ports
-
-| Port | Protocol | Service |
-|------|----------|---------|
-| 8443 | TCP | HTTPS web UI |
-| 8080 | TCP | HTTP (redirects to HTTPS) |
-| 53 | TCP/UDP | DNS (DNSmasq) |
-| 67 | UDP | DHCP (DNSmasq) |
+- **Process Manager**: s6-overlay (Docker), systemd (native)
+- **Deployment**: Docker container or native Debian/Ubuntu
 
 ## Roles
 
@@ -220,11 +288,3 @@ All persistent data is stored in `./data/` (mapped to `/data` inside the contain
 | readonly_dns | View DNS configuration |
 | readonly_dhcp | View DHCP configuration |
 | readonly | View all configuration |
-
-## Planned Features
-
-- DHCP scope management with lease tracking
-- Network scanning and IP conflict detection
-- Domain blocklists and GeoIP DNS filtering
-- Backup/restore and scheduled backups
-- System health monitoring
