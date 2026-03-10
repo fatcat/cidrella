@@ -253,23 +253,40 @@ export function applyInterfaceConfig(db) {
 
   // Enumerate current system interfaces for IP lookup
   const sysIfaces = os.networkInterfaces();
+  const hasExplicitConfig = Object.keys(ifaceConfig).length > 0;
 
-  for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
-    if (!cfg.dns && !cfg.dhcp) continue;
+  if (hasExplicitConfig) {
+    // User has configured specific interfaces — use those
+    for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
+      if (!cfg.dns && !cfg.dhcp) continue;
 
-    // Add listen-address for each IPv4 address on this interface
-    const addrs = sysIfaces[ifName];
-    if (addrs) {
+      const addrs = sysIfaces[ifName];
+      if (addrs) {
+        for (const addr of addrs) {
+          if (addr.family === 'IPv4') {
+            newDirectives.push(`listen-address=${addr.address}`);
+          }
+        }
+      }
+
+      // If DHCP disabled for this interface (or globally), add no-dhcp-interface
+      if (!cfg.dhcp || !dhcpEnabled) {
+        newDirectives.push(`no-dhcp-interface=${ifName}`);
+      }
+    }
+  } else {
+    // No interface config yet (fresh deploy) — listen on all real interfaces
+    for (const [ifName, addrs] of Object.entries(sysIfaces)) {
+      if (ifName === 'lo') continue;
       for (const addr of addrs) {
         if (addr.family === 'IPv4') {
           newDirectives.push(`listen-address=${addr.address}`);
         }
       }
-    }
-
-    // If DHCP disabled for this interface (or globally), add no-dhcp-interface
-    if (!cfg.dhcp || !dhcpEnabled) {
-      newDirectives.push(`no-dhcp-interface=${ifName}`);
+      // No explicit config means DHCP disabled everywhere by default
+      if (!dhcpEnabled) {
+        newDirectives.push(`no-dhcp-interface=${ifName}`);
+      }
     }
   }
 

@@ -317,11 +317,17 @@ function syncDhcpDnsRecords(db, leases) {
   const entries = [...leases];
   const leaseIps = new Set(leases.map(l => l.ip));
 
-  const reservations = db.prepare(`
-    SELECT r.ip_address, r.hostname, r.mac_address, r.subnet_id
-    FROM dhcp_reservations r
-    WHERE r.enabled = 1 AND r.hostname IS NOT NULL AND r.hostname != ''
-  `).all();
+  let reservations = [];
+  try {
+    reservations = db.prepare(`
+      SELECT r.ip_address, r.hostname, r.mac_address, r.subnet_id
+      FROM dhcp_reservations r
+      WHERE r.enabled = 1 AND r.hostname IS NOT NULL AND r.hostname != ''
+    `).all();
+  } catch (err) {
+    console.error('Failed to query DHCP reservations for DNS sync:', err.message);
+    return;
+  }
 
   for (const r of reservations) {
     // Only add reservations not already covered by a lease entry
@@ -385,12 +391,16 @@ function syncDhcpDnsRecords(db, leases) {
     }
   }
 
-  // Clean up DHCP records that no longer have a matching lease/reservation
-  const staleRecords = db.prepare("SELECT id FROM dns_records WHERE source = 'dhcp'").all();
-  for (const r of staleRecords) {
-    if (!activeRecordIds.has(r.id)) {
-      db.prepare('DELETE FROM dns_records WHERE id = ?').run(r.id);
-      configChanged = true;
+  // Clean up DHCP records that no longer have a matching lease/reservation.
+  // Only prune if we actually processed entries — avoids wiping all records
+  // when all zones are disabled (activeRecordIds would be empty).
+  if (entries.length > 0 || forwardZones.length > 0) {
+    const staleRecords = db.prepare("SELECT id FROM dns_records WHERE source = 'dhcp'").all();
+    for (const r of staleRecords) {
+      if (!activeRecordIds.has(r.id)) {
+        db.prepare('DELETE FROM dns_records WHERE id = ?').run(r.id);
+        configChanged = true;
+      }
     }
   }
 

@@ -63,6 +63,10 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 
   try {
     const create = db.transaction(() => {
+      // Re-check inside transaction to prevent concurrent VLAN assignment
+      const fresh = db.prepare('SELECT vlan_id FROM subnets WHERE id = ?').get(subnet_id);
+      if (fresh?.vlan_id) throw new Error('Network already has a VLAN assigned');
+
       const result = db.prepare(
         'INSERT INTO vlans (vlan_id, name) VALUES (?, ?)'
       ).run(vlan_id, name.trim());
