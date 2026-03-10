@@ -10,7 +10,7 @@ set -euo pipefail
 #   cidrella-update --version 0.2.0  # update to specific version
 # ═══════════════════════════════════════════════════════════
 
-GITHUB_REPO="mcnultyd/cidrella"
+GITHUB_REPO="fatcat/cidrella"
 INSTALL_DIR="/opt/cidrella"
 DATA_DIR="/var/lib/cidrella"
 REQUESTED_VERSION=""

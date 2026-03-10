@@ -1,6 +1,11 @@
+
 # CIDRella
 
-A lightweight IP Address Management system with integrated DNS and DHCP via DNSmasq.
+A lightweight IP Address Management system with integrated DNS and DHCP suitable for home labs and small to medium commercial deployments.
+
+Pronounced cider-ella, a lame, near-homophone of Cinderella. Why? It's complicated.
+
+CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing)
 
 ## Features
 
@@ -28,10 +33,12 @@ A lightweight IP Address Management system with integrated DNS and DHCP via DNSm
 
 ## Installation
 
-### Option 1: Docker (quickest)
+<b>WARNING</b>: While no known vulnerabilities exist in this application it would be unwise to expose it's open ports on a public network. Always secure your infrastructure.
+
+### Option 1: Docker Compose
 
 ```bash
-git clone https://github.com/mcnultyd/cidrella.git
+git clone https://github.com/fatcat/cidrella.git
 cd cidrella
 docker compose up -d --build
 ```
@@ -40,26 +47,32 @@ docker compose up -d --build
 
 CIDRella runs natively on Debian/Ubuntu with systemd. Choose one of the following methods:
 
-#### Method A: One-line install
+#### Method A: Clone and install
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/mcnultyd/cidrella/main/scripts/install.sh | sudo bash
+git clone https://github.com/fatcat/cidrella.git
+cd cidrella
+sudo bash scripts/install.sh
 ```
 
 #### Method B: Download and review first
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/mcnultyd/cidrella/main/scripts/install.sh
+curl -sSLO https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh
 less install.sh        # review the script
-sudo bash install.sh
+sudo bash install.sh   # if deemed benign
 ```
 
-#### Method C: Clone and install
+#### Method C: One-line install
+
+This install method, while fast and easy, is potentially a real headache. If I or an unknown malefactor injects hostile code into this script it will execute with root permissions. 
+
+Obviously this would be Bad (tm).
+
+It is strongly advised you do not use this method and instead use Method B above but only after thoroughly reviewing not only the install script but every line of source code in this app, and that of its external dependencies including the operating system, its libraries and dependencies, compilers and so on. Probably the hardware and firmware too, to be thorough. If you're still alive after completing the review and find no problems, you are good to go!
 
 ```bash
-git clone https://github.com/mcnultyd/cidrella.git
-cd cidrella
-sudo bash scripts/install.sh
+curl -sSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh | sudo bash
 ```
 
 #### Install a specific version
@@ -84,10 +97,10 @@ Check the logs for the generated admin password:
 
 ```bash
 # Docker
-docker compose logs cidrella
+docker compose logs cidrella | grep Password
 
 # Native
-journalctl -u cidrella --no-pager | head -20
+journalctl -u cidrella --no-pager | head -20 | grep Password
 ```
 
 ```
@@ -244,6 +257,7 @@ docker compose exec cidrella node /app/server/src/reset-password.js <username>
 docker compose run --rm reset
 docker compose restart cidrella
 ```
+There is also a database reset button on the "Settings - Backup and Restore" page.
 
 This deletes the SQLite database and reinitializes it on next startup. A new default admin account will be generated.
 

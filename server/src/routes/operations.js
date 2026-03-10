@@ -6,6 +6,7 @@ import { execFileSync } from 'child_process';
 import { getDb, audit } from '../db/init.js';
 import { requireRole } from '../auth/roles.js';
 import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup } from '../utils/backup.js';
+import { reloadTlsCerts } from '../utils/cert.js';
 
 const router = Router();
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
@@ -164,7 +165,8 @@ router.post('/certs/upload', (req, res) => {
     fs.copyFileSync(tmpKey, path.join(certsDir, 'server.key'));
 
     audit(req.user.id, 'update', 'tls_certificate', null, {});
-    res.json({ ok: true, message: 'Certificate installed. Server restart required to apply.' });
+    const reloaded = reloadTlsCerts();
+    res.json({ ok: true, message: reloaded ? 'Certificate installed and applied.' : 'Certificate installed. Server restart required to apply.' });
   } catch (err) {
     res.status(400).json({ error: err.message || 'Invalid certificate or key' });
   } finally {
@@ -191,7 +193,8 @@ router.post('/certs/reset', (req, res) => {
     ], { stdio: 'pipe', timeout: 10000 });
 
     audit(req.user.id, 'update', 'tls_certificate', null, { action: 'reset_self_signed' });
-    res.json({ ok: true, message: 'Self-signed certificate regenerated. Server restart required to apply.' });
+    const reloaded = reloadTlsCerts();
+    res.json({ ok: true, message: reloaded ? 'Self-signed certificate regenerated and applied.' : 'Self-signed certificate regenerated. Server restart required to apply.' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

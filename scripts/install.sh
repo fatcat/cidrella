@@ -6,12 +6,12 @@ set -euo pipefail
 # Interactive installer for Debian/Ubuntu (bare-metal or LXC)
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/mcnultyd/cidrella/main/scripts/install.sh | sudo bash
+#   curl -sSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh | sudo bash
 #   # or with a specific version:
 #   sudo bash install.sh --version 0.1.0
 # ═══════════════════════════════════════════════════════════
 
-GITHUB_REPO="mcnultyd/cidrella"
+GITHUB_REPO="fatcat/cidrella"
 INSTALL_DIR="/opt/cidrella"
 DATA_DIR="/var/lib/cidrella"
 SERVICE_USER="cidrella"
@@ -445,7 +445,7 @@ systemctl start cidrella
 ok "cidrella started."
 
 # Wait briefly for startup
-sleep 2
+sleep 3
 
 if systemctl is-active --quiet cidrella; then
   ok "CIDRella is running!"
@@ -453,6 +453,13 @@ else
   warn "CIDRella service may not have started correctly."
   warn "Check logs: journalctl -u cidrella -f"
 fi
+
+# ═══════════════════════════════════════════════════════════
+# EXTRACT ADMIN PASSWORD
+# ═══════════════════════════════════════════════════════════
+
+ADMIN_PASSWORD=""
+ADMIN_PASSWORD=$(journalctl -u cidrella --no-pager -n 50 2>/dev/null | grep -oP 'Password: \K\S+' | head -1 || true)
 
 # ═══════════════════════════════════════════════════════════
 # SUMMARY
@@ -471,6 +478,19 @@ echo -e "  ${BOLD}Web UI:${NC}      https://${SERVER_IP}:8443"
 echo -e "  ${BOLD}Data dir:${NC}    ${DATA_DIR}"
 echo -e "  ${BOLD}Install dir:${NC} ${INSTALL_DIR}"
 echo -e "  ${BOLD}Update:${NC}      cidrella-update"
+echo ""
+if [ -n "$ADMIN_PASSWORD" ]; then
+  echo -e "  ${BOLD}Admin login:${NC}"
+  echo -e "    Username: ${GREEN}admin${NC}"
+  echo -e "    Password: ${GREEN}${ADMIN_PASSWORD}${NC}"
+  echo ""
+  echo -e "  ${YELLOW}Save this password — it will not be shown again.${NC}"
+  echo -e "  ${YELLOW}You will be prompted to change it on first login.${NC}"
+else
+  echo -e "  ${BOLD}Admin login:${NC}"
+  echo -e "    Check the service logs for the generated password:"
+  echo -e "    ${BLUE}journalctl -u cidrella --no-pager | grep Password${NC}"
+fi
 echo ""
 echo -e "  ${BOLD}Services:${NC}"
 echo -e "    systemctl status cidrella"

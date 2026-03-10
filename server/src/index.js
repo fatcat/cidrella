@@ -32,7 +32,7 @@ import logRoutes from './routes/logs.js';
 import piholeRoutes from './routes/pihole.js';
 import interfaceRoutes from './routes/interfaces.js';
 import versionRoutes from './routes/version.js';
-import { ensureCerts } from './utils/cert.js';
+import { ensureCerts, setHttpsServer } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler } from './utils/backup.js';
@@ -212,7 +212,9 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
     cert: fs.readFileSync(certPath)
   };
 
-  https.createServer(httpsOptions, app).listen(HTTPS_PORT, () => {
+  const server = https.createServer(httpsOptions, app);
+  setHttpsServer(server);
+  server.listen(HTTPS_PORT, () => {
     console.log(`HTTPS server listening on port ${HTTPS_PORT}`);
   });
 

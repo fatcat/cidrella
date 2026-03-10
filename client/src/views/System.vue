@@ -315,7 +315,7 @@
 
           <div class="setting-group">
             <h3>Upload Custom Certificate</h3>
-            <p class="field-help" style="margin-bottom: 0.75rem;">Upload PEM-encoded certificate and private key files. Server restart required after upload.</p>
+            <p class="field-help" style="margin-bottom: 0.75rem;">Upload PEM-encoded certificate and private key files. Applied immediately to new connections.</p>
             <div class="cert-upload-form">
               <div class="cert-fields-row">
                 <div class="field cert-field">
@@ -351,7 +351,7 @@
 
           <div class="setting-group">
             <h3>Reset to Self-Signed</h3>
-            <p class="field-help" style="margin-bottom: 0.75rem;">Generate a new self-signed certificate. Server restart required.</p>
+            <p class="field-help" style="margin-bottom: 0.75rem;">Generate a new self-signed certificate. Applied immediately to new connections.</p>
             <Button label="Reset to Self-Signed" icon="pi pi-refresh" severity="secondary" @click="confirmResetCert" :loading="resettingCert" />
           </div>
         </div>

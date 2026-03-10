@@ -1,7 +1,7 @@
 [Unit]
 Description=CIDRella DNSmasq (DNS/DHCP)
 After=network.target
-Documentation=https://github.com/mcnultyd/cidrella
+Documentation=https://github.com/fatcat/cidrella
 
 [Service]
 Type=simple

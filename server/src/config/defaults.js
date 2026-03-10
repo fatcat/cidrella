@@ -56,7 +56,7 @@ export const DHCP_LEASE_WATCH_MS      = 10000;               // 10 seconds
 export const BLOCKLIST_DOWNLOAD_TIMEOUT_MS = 60000;
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const UPDATE_CHECK_DELAY_MS    = 30000;               // 30 seconds
-export const GITHUB_REPO              = 'mcnultyd/cidrella'; // owner/repo for update checks
+export const GITHUB_REPO              = 'fatcat/cidrella';    // owner/repo for update checks
 
 // Secondary DNS server used when auto-populating DHCP option 6
 export const FALLBACK_SECONDARY_DNS   = '9.9.9.9';
