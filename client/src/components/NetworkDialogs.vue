@@ -24,17 +24,64 @@
     <div class="wizard-steps">
       <div class="wizard-step" :class="{ active: wizardStep === 1, done: wizardStep > 1 }">
         <span class="step-num">1</span>
-        <span class="step-label">Network</span>
+        <span class="step-label">Interfaces</span>
       </div>
       <div class="wizard-step-line" :class="{ done: wizardStep > 1 }"></div>
-      <div class="wizard-step" :class="{ active: wizardStep === 2 }">
+      <div class="wizard-step" :class="{ active: wizardStep === 2, done: wizardStep > 2 }">
         <span class="step-num">2</span>
+        <span class="step-label">Network</span>
+      </div>
+      <div class="wizard-step-line" :class="{ done: wizardStep > 2 }"></div>
+      <div class="wizard-step" :class="{ active: wizardStep === 3 }">
+        <span class="step-num">3</span>
         <span class="step-label">Import</span>
       </div>
     </div>
 
-    <!-- Step 1: Network -->
-    <div v-if="wizardStep === 1" class="form-grid">
+    <!-- Step 1: Interfaces -->
+    <div v-if="wizardStep === 1">
+      <p class="field-help" style="margin-bottom: 0.75rem;">
+        Select which network interfaces CIDRella should listen on for DNS and DHCP.
+      </p>
+      <div v-if="wizardIfaceLoading" style="text-align: center; padding: 2rem;">
+        <i class="pi pi-spinner pi-spin" style="font-size: 1.5rem;"></i>
+      </div>
+      <div v-else-if="wizardIfaces.length === 0" class="field-help" style="padding: 1rem; text-align: center;">
+        No network interfaces found.
+      </div>
+      <table v-else class="wizard-iface-table">
+        <thead>
+          <tr>
+            <th>Interface</th>
+            <th>IP Address</th>
+            <th style="text-align: center;">DNS</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="iface in wizardIfaces" :key="iface.name">
+            <td>
+              <span class="iface-name">{{ iface.name }}</span>
+              <Tag v-if="iface.state === 'down'" value="down" severity="warn" style="margin-left: 0.4rem; font-size: 0.7rem;" />
+            </td>
+            <td>
+              <template v-if="iface.addresses && iface.addresses.length">
+                <div v-for="addr in iface.addresses" :key="addr.address">{{ addr.address }}</div>
+              </template>
+              <span v-else class="muted">--</span>
+            </td>
+            <td style="text-align: center;">
+              <ToggleSwitch v-model="iface.dns" />
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <small class="field-help" style="margin-top: 0.5rem; display: block;">
+        DHCP can be enabled per-interface later from System &rarr; Interfaces once your network is fully configured.
+      </small>
+    </div>
+
+    <!-- Step 2: Network -->
+    <div v-if="wizardStep === 2" class="form-grid">
       <div class="field">
         <label>CIDR *</label>
         <InputText v-model="wizardNet.cidr" placeholder="10.0.0.0/8" class="w-full" />
@@ -105,8 +152,8 @@
       </div>
     </div>
 
-    <!-- Step 2: Pi-hole Import -->
-    <div v-if="wizardStep === 2" class="pihole-import-step">
+    <!-- Step 3: Pi-hole Import -->
+    <div v-if="wizardStep === 3" class="pihole-import-step">
       <Tabs :value="piholeTab">
         <TabList>
           <Tab value="online"><i class="pi pi-globe" style="margin-right: 0.3rem" />Online</Tab>
@@ -186,15 +233,18 @@
       <div class="wizard-footer">
         <span style="flex: 1"></span>
         <Button label="Skip" severity="secondary" text @click="wizardSkip" />
-        <Button v-if="wizardStep === 1" label="Create & Continue" icon="pi pi-arrow-right" iconPos="right"
+        <Button v-if="wizardStep === 1" label="Continue" icon="pi pi-arrow-right" iconPos="right"
+                @click="wizardSaveInterfaces" :loading="wizardIfaceSaving"
+                :disabled="!wizardHasSelectedIface" />
+        <Button v-if="wizardStep === 2" label="Create & Continue" icon="pi pi-arrow-right" iconPos="right"
                 @click="wizardCreateAndContinue" :loading="saving"
                 :disabled="!!wizardCidrError || !wizardNet.cidr" />
-        <Button v-if="wizardStep === 2" label="Skip Import" severity="secondary"
+        <Button v-if="wizardStep === 3" label="Skip Import" severity="secondary"
                 @click="wizardFinish" :disabled="piholeImporting" />
-        <Button v-if="wizardStep === 2 && !piholeImportResults" label="Import" icon="pi pi-download"
+        <Button v-if="wizardStep === 3 && !piholeImportResults" label="Import" icon="pi pi-download"
                 @click="executePiholeImport" :loading="piholeImporting"
                 :disabled="!piholePreview" />
-        <Button v-if="wizardStep === 2 && piholeImportResults" label="Done" icon="pi pi-check"
+        <Button v-if="wizardStep === 3 && piholeImportResults" label="Done" icon="pi pi-check"
                 @click="wizardFinish" />
       </div>
     </template>
@@ -530,6 +580,8 @@ import InputNumber from 'primevue/inputnumber';
 import Select from 'primevue/select';
 import Message from 'primevue/message';
 import AutoComplete from 'primevue/autocomplete';
+import ToggleSwitch from 'primevue/toggleswitch';
+import Tag from 'primevue/tag';
 import Tabs from 'primevue/tabs';
 import TabList from 'primevue/tablist';
 import Tab from 'primevue/tab';
@@ -586,6 +638,49 @@ const wizardNewVlanForm = ref({ vlan_id: null, name: '' });
 const wizardNewVlanNameManual = ref(false);
 // Track created resources for cleanup on cancel
 const wizardCreatedVlanId = ref(null);
+
+// ── Wizard Step 1: Interfaces ──
+const wizardIfaces = ref([]);
+const wizardIfaceLoading = ref(false);
+const wizardIfaceSaving = ref(false);
+const wizardHasSelectedIface = computed(() => wizardIfaces.value.some(i => i.dns));
+
+async function loadWizardInterfaces() {
+  wizardIfaceLoading.value = true;
+  try {
+    const res = await api.get('/interfaces');
+    wizardIfaces.value = res.data.map(iface => ({
+      ...iface,
+      dns: false,
+    }));
+  } catch {
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to load interfaces', life: 3000 });
+  } finally {
+    wizardIfaceLoading.value = false;
+  }
+}
+
+async function wizardSaveInterfaces() {
+  wizardIfaceSaving.value = true;
+  try {
+    const interfaces = {};
+    for (const iface of wizardIfaces.value) {
+      if (iface.dns) {
+        interfaces[iface.name] = { dns: true, dhcp: false };
+      }
+    }
+    await api.put('/interfaces/config', {
+      interfaces,
+      dns_enabled: true,
+      dhcp_enabled: false,
+    });
+    wizardStep.value = 2;
+  } catch {
+    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to save interface config', life: 3000 });
+  } finally {
+    wizardIfaceSaving.value = false;
+  }
+}
 
 const wizardCidrError = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
@@ -744,7 +839,7 @@ async function wizardCreateAndContinue() {
 
     wizardCreatedSubnetId.value = created.id;
     toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
-    wizardStep.value = 2;
+    wizardStep.value = 3;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally { saving.value = false; }
@@ -909,6 +1004,7 @@ async function onWizardClose() {
   }
   // Reset wizard state
   wizardStep.value = 1;
+  wizardIfaces.value = [];
   wizardNet.value = {
     cidr: '', name: '', description: '', vlan_id: null,
     gateway_position: 'first', domain_name: '',
@@ -924,6 +1020,7 @@ async function onWizardClose() {
 function openWizard() {
   onWizardClose(); // reset
   showWizard.value = true;
+  loadWizardInterfaces();
 }
 
 async function saveFolder() {
@@ -1739,6 +1836,32 @@ defineExpose({
   align-items: center;
   gap: 0.5rem;
   width: 100%;
+}
+
+/* Wizard interface table */
+.wizard-iface-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.wizard-iface-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--p-text-muted-color);
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--p-surface-border);
+}
+.wizard-iface-table td {
+  padding: 0.5rem;
+  border-bottom: 1px solid var(--p-surface-50);
+}
+.wizard-iface-table .iface-name {
+  font-weight: 600;
+  font-family: var(--font-mono, monospace);
+}
+.wizard-iface-table .muted {
+  color: var(--p-text-muted-color);
 }
 
 /* Pi-hole import styles */

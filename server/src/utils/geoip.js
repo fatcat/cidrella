@@ -16,6 +16,12 @@ import {
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
+const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
+
+function resolveDbPath() {
+  const p = resolveDbPath();
+  return (!p || p === 'auto') ? DEFAULT_MMDB : p;
+}
 
 // Module state
 let proxyServer = null;
@@ -39,7 +45,7 @@ function setSetting(key, value) {
 
 // Load MMDB database file
 export async function loadMmdb() {
-  const dbPath = getSetting('geoip_db_path');
+  const dbPath = resolveDbPath();
   if (!fs.existsSync(dbPath)) {
     console.warn('GeoIP MMDB file not found:', dbPath);
     mmdbReader = null;
@@ -275,7 +281,7 @@ export async function downloadMmdb() {
 
   fs.mkdirSync(GEOIP_DIR, { recursive: true });
 
-  const dbPath = getSetting('geoip_db_path');
+  const dbPath = resolveDbPath();
   const tmpPath = dbPath + '.tmp.' + process.pid;
 
   console.log('Downloading GeoIP database from:', url);
@@ -322,7 +328,7 @@ export async function downloadMmdb() {
 // Get proxy status
 export function getProxyStatus() {
   const lastUpdated = getSetting('geoip_last_updated');
-  const dbPath = getSetting('geoip_db_path');
+  const dbPath = resolveDbPath();
   const dbExists = fs.existsSync(dbPath);
 
   return {
@@ -393,7 +399,7 @@ export function startGeoipScheduler() {
     const enabled = getSetting('geoip_enabled');
     if (enabled !== 'true') return;
 
-    const dbPath = getSetting('geoip_db_path');
+    const dbPath = resolveDbPath();
     if (!fs.existsSync(dbPath)) {
       console.log('GeoIP enabled but no MMDB found, downloading...');
       try {

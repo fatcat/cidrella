@@ -2,6 +2,13 @@
   <header class="header-bar">
     <div class="header-left">
       <router-link to="/" class="logo" data-track="header-logo"><img src="/logo.png" alt="CIDRella" class="logo-img" /></router-link>
+      <span v-if="health?.version" class="version-tag">
+        v{{ health.version }}
+        <a v-if="updateInfo?.updateAvailable" :href="updateInfo.updateUrl" target="_blank"
+           class="update-badge" :title="`Update available: v${updateInfo.updateAvailable}`">
+          <i class="pi pi-arrow-up"></i>
+        </a>
+      </span>
     </div>
 
     <div class="header-cards-wrapper">
@@ -103,6 +110,7 @@ const subnetStore = useSubnetStore();
 const piholeImportRef = ref(null);
 const health = ref(null);
 const activeScan = ref(null);
+const updateInfo = ref(null);
 let pollInterval = null;
 let scanPollInterval = null;
 
@@ -194,9 +202,17 @@ async function fetchHealth() {
   } catch { /* health endpoint may not be available */ }
 }
 
+async function fetchUpdateInfo() {
+  try {
+    const res = await api.get('/version');
+    updateInfo.value = res.data;
+  } catch { /* ignore */ }
+}
+
 onMounted(() => {
   fetchHealth();
   fetchActiveScan();
+  fetchUpdateInfo();
   pollInterval = setInterval(() => { fetchHealth(); fetchActiveScan(); }, 60000);
   window.addEventListener('ipam:stats-changed', fetchHealth);
   window.addEventListener('ipam:scan-started', fetchActiveScan);
@@ -324,5 +340,37 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
+.version-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.6rem;
+  color: var(--p-text-muted-color);
+  font-weight: 500;
+  opacity: 0.7;
+}
+
+.update-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--p-orange-500);
+  color: white;
+  font-size: 0.55rem;
+  text-decoration: none;
+  opacity: 1;
+  animation: pulse-update 2s ease-in-out infinite;
+}
+.update-badge:hover {
+  background: var(--p-orange-600);
+}
+
+@keyframes pulse-update {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--p-orange-500), 0.4); }
+  50% { box-shadow: 0 0 0 4px transparent; }
+}
 
 </style>

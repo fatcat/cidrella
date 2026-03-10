@@ -1,0 +1,30 @@
+[Unit]
+Description=CIDRella IPAM Server
+After=network.target cidrella-dnsmasq.service
+Wants=cidrella-dnsmasq.service
+
+[Service]
+Type=simple
+User=cidrella
+Group=cidrella
+WorkingDirectory=/opt/cidrella
+ExecStart=/usr/bin/node server/src/index.js
+Environment=DATA_DIR=/var/lib/cidrella
+Environment=NODE_ENV=production
+Environment=HTTPS_PORT=8443
+Environment=HTTP_PORT=8080
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cidrella
+ProtectHome=true
+PrivateTmp=true
+
+# Network scanning capabilities (nmap, arping, raw sockets)
+AmbientCapabilities=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

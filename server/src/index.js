@@ -31,6 +31,7 @@ import userRoutes from './routes/users.js';
 import logRoutes from './routes/logs.js';
 import piholeRoutes from './routes/pihole.js';
 import interfaceRoutes from './routes/interfaces.js';
+import versionRoutes from './routes/version.js';
 import { ensureCerts } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
@@ -40,6 +41,7 @@ import { startScanScheduler } from './utils/scan-scheduler.js';
 import { applyInterfaceConfig } from './utils/dnsmasq.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
+import { startUpdateScheduler } from './utils/update-checker.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -89,6 +91,9 @@ async function main() {
 
   // Start MAC vendor database auto-refresh (every 24h)
   startVendorScheduler();
+
+  // Start update checker (checks GitHub releases periodically)
+  startUpdateScheduler();
 
   // Audit log retention
   function pruneAuditLog() {
@@ -153,6 +158,7 @@ async function main() {
   app.use('/api/logs', logRoutes);
   app.use('/api/pihole', piholeRoutes);
   app.use('/api/interfaces', interfaceRoutes);
+  app.use('/api/version', versionRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
 
   // Block page for filtered domains

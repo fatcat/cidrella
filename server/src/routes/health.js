@@ -2,6 +2,7 @@ import { Router } from 'express';
 import os from 'os';
 import { execSync } from 'child_process';
 import { getDb } from '../db/init.js';
+import { APP_VERSION } from '../utils/version.js';
 
 const router = Router();
 
@@ -10,7 +11,7 @@ router.get('/', (req, res) => {
   try {
     const db = getDb();
     db.prepare('SELECT 1').get();
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({ status: 'ok', version: APP_VERSION, timestamp: new Date().toISOString() });
   } catch {
     res.status(503).json({ status: 'error', message: 'Database unavailable' });
   }
@@ -33,10 +34,11 @@ router.get('/system', (req, res) => {
   const freeMem = os.freemem();
   const usedMem = totalMem - freeMem;
 
-  // Disk usage for /data
+  // Disk usage for data directory
+  const dataDir = process.env.DATA_DIR || '/data';
   let disk = { total: 0, used: 0, available: 0, percent: 0 };
   try {
-    const dfOutput = execSync('df -B1 /data 2>/dev/null || df -B1 / 2>/dev/null', { encoding: 'utf-8' });
+    const dfOutput = execSync(`df -B1 ${dataDir} 2>/dev/null || df -B1 / 2>/dev/null`, { encoding: 'utf-8' });
     const lines = dfOutput.trim().split('\n');
     if (lines.length >= 2) {
       const parts = lines[1].split(/\s+/);
@@ -73,6 +75,7 @@ router.get('/system', (req, res) => {
   } catch { /* tables may not exist yet */ }
 
   res.json({
+    version: APP_VERSION,
     cpu: { loadAvg, cores: cpuCount },
     memory: { total: totalMem, used: usedMem, free: freeMem },
     disk,

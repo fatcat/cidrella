@@ -13,7 +13,8 @@
       "Bash(node --check src/utils/blocklist.js)",
       "Bash(node --check src/index.js)",
       "Bash(node --check /home/mcnultyd/dev/cidrella/server/src/config/defaults.js)",
-      "Bash(grep -n getSubnetDetail /home/mcnultyd/dev/cidrella/client/src/stores/dns.js /home/mcnultyd/dev/cidrella/client/src/stores/*.js)"
+      "Bash(grep -n getSubnetDetail /home/mcnultyd/dev/cidrella/client/src/stores/dns.js /home/mcnultyd/dev/cidrella/client/src/stores/*.js)",
+      "Bash(du -sh /home/mcnultyd/dev/cidrella/* --exclude=node_modules)"
     ]
   }
 }

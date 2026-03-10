@@ -42,6 +42,7 @@ const activeFilter = ref('all');
 const MAX_LINES = 5000;
 
 let eventSource = null;
+let pauseBuffer = [];
 
 const filteredLines = computed(() => {
   if (!searchText.value) return lines.value;
@@ -74,13 +75,15 @@ function connect() {
   });
 
   eventSource.onmessage = (event) => {
+    if (paused.value) {
+      pauseBuffer.push(event.data);
+      return;
+    }
     lines.value.unshift(event.data);
     if (lines.value.length > MAX_LINES) {
       lines.value.splice(MAX_LINES);
     }
-    if (!paused.value) {
-      nextTick(scrollToTop);
-    }
+    nextTick(scrollToTop);
   };
 
   eventSource.onerror = () => {
@@ -91,6 +94,8 @@ function connect() {
 function switchFilter(filter) {
   activeFilter.value = filter;
   lines.value = [];
+  pauseBuffer = [];
+  paused.value = false;
   connect();
 }
 
@@ -105,13 +110,24 @@ function onScroll() {
   const el = logPre.value;
   const atTop = el.scrollTop < 40;
   if (atTop && paused.value) {
-    paused.value = false;
+    flushBuffer();
   }
 }
 
-function resumeScroll() {
+function flushBuffer() {
   paused.value = false;
+  if (pauseBuffer.length) {
+    lines.value.unshift(...pauseBuffer);
+    pauseBuffer = [];
+    if (lines.value.length > MAX_LINES) {
+      lines.value.splice(MAX_LINES);
+    }
+  }
   nextTick(scrollToTop);
+}
+
+function resumeScroll() {
+  flushBuffer();
 }
 
 async function clearLogs() {
@@ -119,6 +135,8 @@ async function clearLogs() {
     const { default: api } = await import('../api/client.js');
     await api.post('/logs/clear');
     lines.value = [];
+    pauseBuffer = [];
+    paused.value = false;
   } catch { /* ignore */ }
 }
 
