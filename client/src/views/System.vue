@@ -1,24 +1,19 @@
 <template>
   <div class="system-page">
-    <Menubar ref="menubarRef" :model="visibleMenuItems">
-      <template #start>
-        <Button label="IP Management" icon="pi pi-arrow-left" size="small" text data-track="sys-back-to-ipam" @click="$router.push('/')" />
-      </template>
-      <template #item="{ item, props: itemProps }">
-        <a v-bind="itemProps.action" :class="{ 'active-menuitem': item.tabIndex === activeTab }" :data-track="item.dataTrack">
-          <span :class="item.icon" />
-          <span class="ml-1">{{ item.label }}</span>
-        </a>
-      </template>
-      <template #end>
-        <div class="sys-toolbar-actions">
-          <Button v-if="overflowItems.length > 0" icon="pi pi-angle-double-right" size="small" text
-                  class="overflow-trigger" @click="toggleOverflow" aria-label="More tabs" />
-          <Menu ref="overflowMenuRef" :model="overflowItems" :popup="true" />
-
-        </div>
-      </template>
-    </Menubar>
+    <aside class="sys-sidebar">
+      <Button label="IP Management" icon="pi pi-arrow-left" size="small" text class="back-btn" data-track="sys-back-to-ipam" @click="$router.push('/')" />
+      <nav class="sys-nav">
+        <template v-for="group in navGroups" :key="group.label">
+          <div class="nav-group-label">{{ group.label }}</div>
+          <a v-for="item in group.items" :key="item.tabIndex"
+             class="sys-nav-item" :class="{ active: activeTab === item.tabIndex }"
+             :data-track="item.dataTrack" @click="item.command()">
+            <i :class="item.icon"></i>
+            <span>{{ item.label }}</span>
+          </a>
+        </template>
+      </nav>
+    </aside>
 
     <div class="sys-content">
       <div v-if="activeTab === 0">
@@ -92,7 +87,7 @@
                   </Column>
                   <Column header="Type" style="width: 7rem">
                     <template #body="{ data }">
-                      <span :class="data.is_system ? 'badge-system' : 'badge-custom'">
+                      <span :class="data.is_system ? 'badge badge-muted' : 'badge badge-primary'">
                         {{ data.is_system ? 'System' : 'Custom' }}
                       </span>
                     </template>
@@ -310,7 +305,7 @@
               <div class="cert-row"><span class="cert-key">Valid Until:</span> {{ certInfo.notafter || 'N/A' }}</div>
               <div class="cert-row">
                 <span class="cert-key">Type:</span>
-                <span :class="certInfo.self_signed ? 'badge-warning' : 'badge-success'">
+                <span :class="certInfo.self_signed ? 'badge badge-yellow' : 'badge badge-green'">
                   {{ certInfo.self_signed ? 'Self-Signed' : 'Custom' }}
                 </span>
               </div>
@@ -440,7 +435,7 @@
                 </Column>
                 <Column field="action" header="Action" style="width: 8rem">
                   <template #body="{ data }">
-                    <span class="audit-action" :class="'action-' + actionColor(data.action)">{{ data.action }}</span>
+                    <span class="badge" :class="'badge-' + actionColor(data.action)">{{ data.action }}</span>
                   </template>
                 </Column>
                 <Column field="entity_type" header="Entity" style="width: 8rem" />
@@ -463,6 +458,10 @@
           </TabPanel>
         </TabView>
       </div>
+
+      <div v-if="activeTab === 12" class="content-card">
+        <InterfacePanel />
+      </div>
     </div>
 
     <!-- Context Menus -->
@@ -475,10 +474,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick, defineAsyncComponent } from 'vue';
+import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
 import { useToast } from 'primevue/usetoast';
-import Menubar from 'primevue/menubar';
-import Menu from 'primevue/menu';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
 import Button from 'primevue/button';
@@ -506,6 +503,7 @@ const BlocklistsPanel = defineAsyncComponent(() => import('./Blocklists.vue'));
 const GeoipPanel = defineAsyncComponent(() => import('./GeoIP.vue'));
 const UsersPanel = defineAsyncComponent(() => import('./Users.vue'));
 const LogViewer = defineAsyncComponent(() => import('../components/LogViewer.vue'));
+const InterfacePanel = defineAsyncComponent(() => import('../components/InterfacePanel.vue'));
 
 const dnsPanelRef = ref(null);
 
@@ -550,69 +548,15 @@ const allMenuItems = [
   { tabIndex: 9, label: 'Users', icon: 'pi pi-users', dataTrack: 'sys-tab-users', command: () => { activeTab.value = 9; } },
   { tabIndex: 10, label: 'Themes', icon: 'pi pi-palette', dataTrack: 'sys-tab-themes', command: () => { activeTab.value = 10; } },
   { tabIndex: 11, label: 'Logging', icon: 'pi pi-file', dataTrack: 'sys-tab-logging', command: () => { activeTab.value = 11; } },
+  { tabIndex: 12, label: 'Interfaces', icon: 'pi pi-sitemap', dataTrack: 'sys-tab-interfaces', command: () => { activeTab.value = 12; } },
 ];
 
-// Overflow menu logic
-const menubarRef = ref(null);
-const overflowMenuRef = ref(null);
-const visibleCount = ref(allMenuItems.length);
-
-const visibleMenuItems = computed(() => allMenuItems.slice(0, visibleCount.value));
-const overflowItems = computed(() => allMenuItems.slice(visibleCount.value));
-
-function toggleOverflow(event) {
-  overflowMenuRef.value.toggle(event);
-}
-
-let _resizeObserver = null;
-function measureOverflow() {
-  const el = menubarRef.value?.$el;
-  if (!el) return;
-  const rootList = el.querySelector('.p-menubar-root-list');
-  if (!rootList) return;
-
-  // Temporarily show all items to measure
-  const items = rootList.querySelectorAll(':scope > .p-menubar-item');
-  if (items.length === 0) return;
-
-  // Get the available width (rootList container)
-  const listRect = rootList.getBoundingClientRect();
-  let count = 0;
-  for (const item of items) {
-    const itemRect = item.getBoundingClientRect();
-    // Item is visible if its right edge fits within the list
-    if (itemRect.right <= listRect.right + 2) {
-      count++;
-    } else {
-      break;
-    }
-  }
-  // If not all fit, show one fewer to make room for the >> button
-  if (count < allMenuItems.length && count > 0) {
-    visibleCount.value = count;
-  } else {
-    visibleCount.value = allMenuItems.length;
-  }
-}
-
-onMounted(() => {
-  nextTick(() => {
-    // First measure with all items
-    visibleCount.value = allMenuItems.length;
-    nextTick(measureOverflow);
-  });
-  _resizeObserver = new ResizeObserver(() => {
-    // Reset to full to get accurate measurement
-    visibleCount.value = allMenuItems.length;
-    nextTick(measureOverflow);
-  });
-  const el = menubarRef.value?.$el;
-  if (el) _resizeObserver.observe(el);
-});
-
-onBeforeUnmount(() => {
-  _resizeObserver?.disconnect();
-});
+const navGroups = [
+  { label: 'Network', items: allMenuItems.filter(i => [0, 1, 2, 12].includes(i.tabIndex)) },
+  { label: 'Services', items: allMenuItems.filter(i => [5, 6].includes(i.tabIndex)) },
+  { label: 'Security', items: allMenuItems.filter(i => [7, 8].includes(i.tabIndex)) },
+  { label: 'System', items: allMenuItems.filter(i => [3, 4, 9, 10, 11].includes(i.tabIndex)) },
+];
 
 const loadingSettings = ref(true);
 const savingSettings = ref(false);
@@ -656,6 +600,7 @@ async function doStartScan() {
   startingScan.value = true;
   try {
     await store.startScan(scanSubnetId.value);
+    window.dispatchEvent(new Event('ipam:scan-started'));
     toast.add({ severity: 'success', summary: 'Scan started', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Scan Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -766,7 +711,9 @@ const rangeTypeContextMenuItems = computed(() => {
 });
 function onRangeTypeRightClick(event) {
   selectedRangeType.value = event.data;
-  rangeTypeContextMenuRef.value.show(event.originalEvent);
+  if (rangeTypeContextMenuItems.value.length) {
+    rangeTypeContextMenuRef.value.show(event.originalEvent);
+  }
 }
 
 // VLANs
@@ -929,22 +876,22 @@ function formatDate(dateStr) {
 }
 
 function actionColor(action) {
-  // Direct matches
-  const direct = { create: 'create', update: 'update', delete: 'delete', restore: 'restore',
-    login: 'login', login_failed: 'login_failed', password_change: 'password_change',
-    configure: 'configure', divide: 'divide', merge: 'merge' };
-  if (direct[action]) return action;
+  // Direct matches → global badge color class names
+  const direct = { create: 'green', update: 'blue', delete: 'red', restore: 'indigo',
+    login: 'indigo', login_failed: 'red', password_change: 'yellow',
+    configure: 'purple', divide: 'yellow', merge: 'orange' };
+  if (direct[action]) return direct[action];
   // Map compound actions by verb suffix
-  if (action.endsWith('_created')) return 'create';
-  if (action.endsWith('_updated')) return 'update';
-  if (action.endsWith('_deleted')) return 'delete';
-  if (action.endsWith('_configured') || action.endsWith('_applied')) return 'configure';
-  if (action.endsWith('_divided')) return 'divide';
-  if (action.endsWith('_merged')) return 'merge';
-  if (action.endsWith('_started')) return 'login'; // indigo for "started" actions like scans
-  if (action.endsWith('_reset')) return 'password_change';
-  if (action.endsWith('_changed')) return 'update';
-  return 'update'; // fallback — at least show a badge
+  if (action.endsWith('_created')) return 'green';
+  if (action.endsWith('_updated')) return 'blue';
+  if (action.endsWith('_deleted')) return 'red';
+  if (action.endsWith('_configured') || action.endsWith('_applied')) return 'purple';
+  if (action.endsWith('_divided')) return 'yellow';
+  if (action.endsWith('_merged')) return 'orange';
+  if (action.endsWith('_started')) return 'indigo';
+  if (action.endsWith('_reset')) return 'yellow';
+  if (action.endsWith('_changed')) return 'blue';
+  return 'blue'; // fallback
 }
 
 function formatDetails(details) {
@@ -1240,8 +1187,58 @@ async function doResetCert() {
   padding: 0;
   height: 100%;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   box-sizing: border-box;
+}
+.sys-sidebar {
+  width: 180px;
+  flex-shrink: 0;
+  background: var(--p-surface-card);
+  border-right: 1px solid var(--p-surface-border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.back-btn {
+  margin: 0.5rem;
+  justify-content: flex-start !important;
+}
+.sys-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem 0;
+}
+.sys-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: var(--p-text-color);
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.sys-nav-item:hover {
+  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
+}
+.sys-nav-item.active {
+  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
+  color: var(--p-primary-color);
+  font-weight: 600;
+}
+.sys-nav-item i {
+  width: 1.25rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+.nav-group-label {
+  padding: 0.6rem 1rem 0.25rem;
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--p-text-muted-color);
 }
 /* Inner TabView (Logging subtabs) */
 .system-page :deep(.logging-subtabs) {
@@ -1263,34 +1260,10 @@ async function doResetCert() {
   display: flex;
   flex-direction: column;
 }
-.sys-toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
 .sys-content {
   flex: 1;
   overflow: auto;
   padding: 1rem;
-}
-:deep(.p-menubar-root-list) {
-  flex-wrap: nowrap !important;
-  overflow: hidden !important;
-}
-:deep(.p-menubar-item-content) {
-  padding: 0.45rem 0.65rem !important;
-}
-:deep(.active-menuitem) {
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent) !important;
-  color: var(--p-primary-color) !important;
-  font-weight: 600;
-}
-.overflow-trigger {
-  opacity: 0.7;
-  transition: opacity 0.15s;
-}
-.overflow-trigger:hover {
-  opacity: 1;
 }
 .muted {
   color: var(--p-text-muted-color);
@@ -1372,20 +1345,6 @@ async function doResetCert() {
   border-radius: 4px;
   border: 1px solid rgba(0,0,0,0.1);
 }
-.badge-system {
-  font-size: 0.75rem;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-}
-.badge-custom {
-  font-size: 0.75rem;
-  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
-  color: var(--p-primary-color);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-}
 .action-buttons {
   display: flex;
   gap: 0.25rem;
@@ -1423,22 +1382,6 @@ async function doResetCert() {
   min-width: 14rem;
   max-width: 22rem;
 }
-.audit-action {
-  font-size: 0.75rem;
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-  font-weight: 600;
-}
-.action-create { background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); }
-.action-update { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent); color: var(--p-blue-500); }
-.action-delete { background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); }
-.action-login { background: color-mix(in srgb, var(--p-indigo-500) 20%, transparent); color: var(--p-indigo-500); }
-.action-login_failed { background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); }
-.action-password_change { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
-.action-configure { background: color-mix(in srgb, var(--p-purple-500) 20%, transparent); color: var(--p-purple-500); }
-.action-divide { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
-.action-merge { background: color-mix(in srgb, var(--p-orange-500) 20%, transparent); color: var(--p-orange-500); }
-.action-restore { background: color-mix(in srgb, var(--p-indigo-500) 20%, transparent); color: var(--p-indigo-500); }
 .audit-details {
   font-size: 0.8rem;
   color: var(--p-text-muted-color);
@@ -1545,7 +1488,7 @@ async function doResetCert() {
   border-color: var(--p-green-500);
 }
 .cert-textarea.cert-invalid {
-  border-color: #ef4444;
+  border-color: var(--p-red-500);
 }
 .cert-status {
   display: flex;
@@ -1555,23 +1498,7 @@ async function doResetCert() {
   font-size: 0.75rem;
 }
 .cert-status-ok { color: var(--p-green-500); }
-.cert-status-err { color: #ef4444; }
-.badge-warning {
-  font-size: 0.75rem;
-  background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent);
-  color: var(--p-yellow-500);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-  font-weight: 600;
-}
-.badge-success {
-  font-size: 0.75rem;
-  background: color-mix(in srgb, var(--p-green-500) 20%, transparent);
-  color: var(--p-green-500);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-  font-weight: 600;
-}
+.cert-status-err { color: var(--p-red-500); }
 
 /* ── Themes ── */
 .themes-page h3 {

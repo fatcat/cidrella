@@ -64,8 +64,8 @@
       <Column field="country_code" header="Code" style="width: 5rem" sortable />
       <Column header="Status" style="width: 7rem">
         <template #body="{ data }">
-          <span v-if="data.enabled" class="badge-active">Active</span>
-          <span v-else class="badge-disabled">Disabled</span>
+          <span v-if="data.enabled" class="badge badge-green">Active</span>
+          <span v-else class="badge badge-muted">Disabled</span>
         </template>
       </Column>
       <Column header="" style="width: 7rem">
@@ -92,7 +92,7 @@
           <span class="country-flag">{{ countryFlag(c.code) }}</span>
           <span>{{ c.name }}</span>
           <span class="country-code">{{ c.code }}</span>
-          <span v-if="isRuleAdded(c.code)" class="badge-active" style="margin-left: auto;">Added</span>
+          <span v-if="isRuleAdded(c.code)" class="badge badge-green" style="margin-left: auto;">Added</span>
         </label>
       </div>
       <template #footer>
@@ -310,8 +310,8 @@ onMounted(async () => {
 .stat { display: flex; flex-direction: column; }
 .stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
 .stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
-.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; display: inline-block; }
-.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; display: inline-block; }
+.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
+.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
 .settings-row {
   display: flex;
   align-items: center;
@@ -333,8 +333,6 @@ onMounted(async () => {
   color: var(--p-text-muted-color);
 }
 .country-flag { font-size: 1.1rem; }
-.badge-active { font-size: 0.75rem; background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; }
-.badge-disabled { font-size: 0.75rem; background: var(--p-surface-ground); color: var(--p-text-muted-color); padding: 0.15rem 0.5rem; border-radius: 4px; }
 .action-buttons { display: flex; gap: 0.25rem; }
 .country-search { margin-bottom: 0.75rem; }
 .country-list {

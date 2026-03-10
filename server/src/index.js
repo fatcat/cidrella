@@ -8,7 +8,8 @@ import cors from 'cors';
 import morgan from 'morgan';
 import { fileURLToPath } from 'url';
 
-import { initDb, getDb } from './db/init.js';
+import { initDb, getDb, getSetting } from './db/init.js';
+import { AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { authMiddleware } from './auth/middleware.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
@@ -17,7 +18,7 @@ import rangeTypeRoutes from './routes/range-types.js';
 import rangeRoutes from './routes/ranges.js';
 import settingsRoutes from './routes/settings.js';
 import dnsRoutes from './routes/dns.js';
-import dhcpRoutes, { migrateLegacyScopeOptions } from './routes/dhcp.js';
+import dhcpRoutes, { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './routes/dhcp.js';
 import scanRoutes from './routes/scans.js';
 import auditRoutes from './routes/audit.js';
 import blocklistRoutes from './routes/blocklists.js';
@@ -29,12 +30,15 @@ import vlanRoutes from './routes/vlans.js';
 import userRoutes from './routes/users.js';
 import logRoutes from './routes/logs.js';
 import piholeRoutes from './routes/pihole.js';
+import interfaceRoutes from './routes/interfaces.js';
 import { ensureCerts } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/geoip.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
+import { applyInterfaceConfig } from './utils/dnsmasq.js';
+import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -57,6 +61,9 @@ async function main() {
   // Migrate legacy DHCP scope columns to scope_options table
   migrateLegacyScopeOptions(getDb());
 
+  // Remove redundant gateway options that should be inherited from subnet
+  cleanupRedundantGatewayOptions(getDb());
+
   // Sync server IP into DNS Servers default
   syncServerDnsDefault(getDb());
 
@@ -73,26 +80,31 @@ async function main() {
   startGeoipScheduler();
   await startProxyIfEnabled();
 
-  // Start scan scheduler for periodic subnet scans
+  // Apply saved interface config to dnsmasq.conf
+  applyInterfaceConfig(getDb());
+
+  // Resume any scans interrupted by server restart, then start scheduler
+  resumeInterruptedScans(getDb());
   startScanScheduler();
 
   // Start MAC vendor database auto-refresh (every 24h)
   startVendorScheduler();
 
-  // Audit log retention: delete entries older than 7 days
+  // Audit log retention
   function pruneAuditLog() {
     try {
       const db = getDb();
-      const result = db.prepare("DELETE FROM audit_log WHERE created_at < datetime('now', '-7 days')").run();
+      const days = getSetting('audit_log_retention_days');
+      const result = db.prepare(`DELETE FROM audit_log WHERE created_at < datetime('now', '-${days} days')`).run();
       if (result.changes > 0) {
-        console.log(`Audit log pruned: ${result.changes} entries older than 7 days removed`);
+        console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
       }
     } catch (err) {
       console.error('Audit log prune error:', err.message);
     }
   }
   pruneAuditLog();
-  setInterval(pruneAuditLog, 6 * 60 * 60 * 1000); // every 6 hours
+  setInterval(pruneAuditLog, AUDIT_PRUNE_INTERVAL_MS);
 
   // Generate or load TLS certs
   const { keyPath, certPath } = ensureCerts(DATA_DIR);
@@ -140,6 +152,7 @@ async function main() {
   app.use('/api/users', userRoutes);
   app.use('/api/logs', logRoutes);
   app.use('/api/pihole', piholeRoutes);
+  app.use('/api/interfaces', interfaceRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
 
   // Block page for filtered domains

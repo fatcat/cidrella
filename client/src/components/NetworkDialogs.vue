@@ -1565,11 +1565,11 @@ defineExpose({
   color: var(--p-text-muted-color);
 }
 .field-error {
-  color: #ef4444;
+  color: var(--p-red-500);
   font-size: 0.75rem;
 }
 .warn-text {
-  color: #ef4444;
+  color: var(--p-red-500);
   font-size: 0.85rem;
 }
 .merge-result-cidr {
@@ -1636,8 +1636,8 @@ defineExpose({
   font-size: 0.8rem;
 }
 .divide-preview-warn {
-  background: color-mix(in srgb, #ef4444 10%, transparent);
-  color: #ef4444;
+  background: color-mix(in srgb, var(--p-red-500) 10%, transparent);
+  color: var(--p-red-500);
 }
 .remainder-list {
   list-style: none;
@@ -1711,7 +1711,7 @@ defineExpose({
 }
 .wizard-step.active .step-num {
   background: var(--p-primary-color);
-  color: #fff;
+  color: var(--p-surface-0);
 }
 .wizard-step.active .step-label {
   color: var(--p-text-color);

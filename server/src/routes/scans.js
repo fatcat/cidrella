@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { startScan } from '../utils/scanner.js';
+import { MAX_SCAN_SIZE } from '../config/defaults.js';
 
 const router = Router();
 
@@ -73,9 +74,9 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     return res.status(409).json({ error: 'A scan is already in progress for this subnet', scan_id: running.id });
   }
 
-  // Limit scan size to /20 (4096 IPs) to prevent excessive load
-  if (subnet.total_addresses > 4096) {
-    return res.status(400).json({ error: 'Subnet too large for scanning (max /20 = 4096 IPs)' });
+  // Limit scan size to prevent excessive load
+  if (subnet.total_addresses > MAX_SCAN_SIZE) {
+    return res.status(400).json({ error: `Subnet too large for scanning (max ${MAX_SCAN_SIZE} IPs)` });
   }
 
   const result = db.prepare("INSERT INTO network_scans (subnet_id, status) VALUES (?, 'pending')").run(subnet_id);

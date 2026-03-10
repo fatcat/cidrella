@@ -3,7 +3,7 @@
     <!-- Menubar -->
     <Menubar :model="menuItems">
       <template #item="{ item, props: itemProps }">
-        <a v-bind="itemProps.action" :class="{ 'active-menuitem': item.key === activeTab }" :data-track="item.dataTrack">
+        <a v-bind="itemProps.action" :class="{ 'menubar-active-item': item.key === activeTab }" :data-track="item.dataTrack">
           <span :class="item.icon" />
           <span class="ml-1">{{ item.label }}</span>
         </a>
@@ -157,7 +157,7 @@
           <Button label="Add Network" icon="pi pi-plus" size="small" data-track="toolbar-add-network-top" @click="dialogs.openQuickAddNetwork()" text />
           <template v-if="mergeSelectedIdsRaw.length > 0">
             <span class="toolbar-divider"></span>
-            <span class="merge-badge">{{ mergeSelectedIdsRaw.length }} selected</span>
+            <span class="badge badge-orange">{{ mergeSelectedIdsRaw.length }} selected</span>
             <Button v-if="mergeSelectedIdsRaw.length >= 2 && mergeValidation.valid"
                     label="Merge" icon="pi pi-sitemap" size="small" severity="warn"
                     data-track="toolbar-merge" @click="dialogs.openMergeConfirm(mergeSelectedIdsRaw)" />
@@ -872,24 +872,12 @@ onBeforeUnmount(() => {
 :deep(.p-menubar-item-content) {
   padding: 0.45rem 0.65rem !important;
 }
-:deep(.active-menuitem) {
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent) !important;
-  color: var(--p-primary-color) !important;
-  font-weight: 600;
-}
+
 
 .tab-content {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-}
-.merge-badge {
-  font-size: 0.8rem;
-  background: color-mix(in srgb, var(--p-orange-500) 20%, transparent);
-  color: var(--p-orange-500);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-  font-weight: 500;
 }
 
 /* ── Content Area ── */
@@ -1037,7 +1025,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .status-dot.allocated {
-  background: #22c55e;
+  background: var(--p-green-500);
 }
 .unalloc-label {
   font-style: italic;

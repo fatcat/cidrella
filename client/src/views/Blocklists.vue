@@ -62,7 +62,7 @@
           </Column>
           <Column header="Group" style="width: 5rem">
             <template #body="{ data }">
-              <span :class="data.group === 'beta' ? 'badge-beta' : 'badge-main'">
+              <span :class="data.group === 'beta' ? 'badge-sm badge-yellow' : 'badge-sm badge-muted'">
                 {{ data.group === 'beta' ? 'Beta' : 'Main' }}
               </span>
             </template>
@@ -79,10 +79,10 @@
           </Column>
           <Column header="Status" style="width: 6rem">
             <template #body="{ data }">
-              <span v-if="data.last_error" class="badge-error" :title="data.last_error">Error</span>
-              <span v-else-if="data.enabled && data.last_fetched_at" class="badge-active">Active</span>
-              <span v-else-if="data.enabled" class="badge-pending">Pending</span>
-              <span v-else class="badge-disabled">Off</span>
+              <span v-if="data.last_error" class="badge badge-red" style="cursor: help" :title="data.last_error">Error</span>
+              <span v-else-if="data.enabled && data.last_fetched_at" class="badge badge-green">Active</span>
+              <span v-else-if="data.enabled" class="badge badge-yellow">Pending</span>
+              <span v-else class="badge badge-muted">Off</span>
             </template>
           </Column>
           <Column header="Source URL" style="min-width: 18rem">
@@ -153,8 +153,8 @@
           <Column field="categories" header="Categories" />
           <Column header="Status" style="width: 8rem">
             <template #body="{ data }">
-              <span v-if="data.whitelisted" class="badge-whitelisted">Whitelisted</span>
-              <span v-else class="badge-blocked">Blocked</span>
+              <span v-if="data.whitelisted" class="badge badge-green">Whitelisted</span>
+              <span v-else class="badge badge-red">Blocked</span>
             </template>
           </Column>
         </DataTable>
@@ -455,14 +455,6 @@ onMounted(async () => {
 .text-sm { font-size: 0.8rem; }
 .muted { color: var(--p-text-muted-color); }
 
-.badge-main { font-size: 0.7rem; background: var(--p-surface-ground); color: var(--p-text-muted-color); padding: 0.1rem 0.4rem; border-radius: 4px; }
-.badge-beta { font-size: 0.7rem; background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); padding: 0.1rem 0.4rem; border-radius: 4px; }
-.badge-active { font-size: 0.75rem; background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; }
-.badge-pending { font-size: 0.75rem; background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); padding: 0.15rem 0.5rem; border-radius: 4px; }
-.badge-disabled { font-size: 0.75rem; background: var(--p-surface-ground); color: var(--p-text-muted-color); padding: 0.15rem 0.5rem; border-radius: 4px; }
-.badge-error { font-size: 0.75rem; background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; cursor: help; }
-.badge-blocked { font-size: 0.75rem; background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); padding: 0.15rem 0.5rem; border-radius: 4px; }
-.badge-whitelisted { font-size: 0.75rem; background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); padding: 0.15rem 0.5rem; border-radius: 4px; }
 
 .search-pagination {
   display: flex;

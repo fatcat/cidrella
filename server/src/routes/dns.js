@@ -1,8 +1,9 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb, getSetting, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { regenerateConfigs, regenerateDnsmasqConf, signalDnsmasq } from '../utils/dnsmasq.js';
 import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
+import { DNS_TEST_TIMEOUT_MS, DNS_TEST_RETRY_DELAY_MS } from '../config/defaults.js';
 
 const router = Router();
 
@@ -190,13 +191,17 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     if (!subnet) return res.status(400).json({ error: 'Referenced subnet not found' });
   }
 
+  // Load SOA defaults from settings
+  const soaDefaults = getSetting('dns_soa_defaults');
+
   const result = db.prepare(`
     INSERT INTO dns_zones (name, type, subnet_id, description,
       soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(name, type, subnet_id || null, description || null,
-    soa_primary_ns || 'ns1.localhost', soa_admin_email || 'admin.localhost',
-    soa_refresh ?? 3600, soa_retry ?? 900, soa_expire ?? 604800, soa_minimum_ttl ?? 86400);
+    soa_primary_ns || soaDefaults.soa_primary_ns, soa_admin_email || soaDefaults.soa_admin_email,
+    soa_refresh ?? soaDefaults.soa_refresh, soa_retry ?? soaDefaults.soa_retry,
+    soa_expire ?? soaDefaults.soa_expire, soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl);
 
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(result.lastInsertRowid);
   audit(req.user.id, 'zone_created', 'dns_zone', zone.id, { name, type });
@@ -461,13 +466,7 @@ router.post('/apply', requirePerm('dns:write'), (req, res) => {
 
 // GET /api/dns/forwarders
 router.get('/forwarders', requirePerm('dns:read'), (req, res) => {
-  const db = getDb();
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
-  let servers = ['8.8.8.8', '9.9.9.9'];
-  try {
-    if (row?.value) servers = JSON.parse(row.value);
-  } catch { /* use defaults */ }
-  res.json({ servers });
+  res.json({ servers: getSetting('dns_upstream_servers') });
 });
 
 // PUT /api/dns/forwarders
@@ -499,6 +498,26 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   res.json({ servers });
 });
 
+// GET /api/dns/soa-defaults
+router.get('/soa-defaults', requirePerm('dns:read'), (req, res) => {
+  res.json(getSetting('dns_soa_defaults'));
+});
+
+// PUT /api/dns/soa-defaults
+router.put('/soa-defaults', requirePerm('dns:write'), (req, res) => {
+  const { soa_refresh, soa_retry, soa_expire, soa_minimum_ttl, soa_primary_ns, soa_admin_email } = req.body;
+  const current = getSetting('dns_soa_defaults');
+  const defaults = {
+    soa_refresh: soa_refresh ?? current.soa_refresh, soa_retry: soa_retry ?? current.soa_retry,
+    soa_expire: soa_expire ?? current.soa_expire, soa_minimum_ttl: soa_minimum_ttl ?? current.soa_minimum_ttl,
+    soa_primary_ns: soa_primary_ns || current.soa_primary_ns, soa_admin_email: soa_admin_email || current.soa_admin_email
+  };
+  const db = getDb();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dns_soa_defaults', ?)").run(JSON.stringify(defaults));
+  audit(req.user.id, 'configure', 'dns_soa_defaults', null, defaults);
+  res.json(defaults);
+});
+
 // POST /api/dns/forwarders/test — test if a DNS forwarder is reachable
 router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
   const { ip } = req.body;
@@ -511,7 +530,7 @@ router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
     const resolver = new dns.Resolver();
     resolver.setServers([ip]);
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Timeout')), 5000);
+      const timeout = setTimeout(() => reject(new Error('Timeout')), DNS_TEST_TIMEOUT_MS);
       resolver.resolve4('google.com', (err, addresses) => {
         clearTimeout(timeout);
         if (err) reject(err);
@@ -524,8 +543,8 @@ router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
     const result = await tryResolve();
     res.json({ ip, reachable: true, resolved: result });
   } catch {
-    // Retry once after 5 seconds
-    await new Promise(r => setTimeout(r, 5000));
+    // Retry once after delay
+    await new Promise(r => setTimeout(r, DNS_TEST_RETRY_DELAY_MS));
     try {
       const result = await tryResolve();
       res.json({ ip, reachable: true, resolved: result });

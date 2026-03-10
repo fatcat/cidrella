@@ -123,8 +123,8 @@ onUnmounted(() => {
   color: var(--p-text-color);
 }
 .debug-btn.has-errors {
-  border-color: #ef4444;
-  color: #ef4444;
+  border-color: var(--p-red-500);
+  color: var(--p-red-500);
 }
 
 .debug-label {
@@ -136,8 +136,8 @@ onUnmounted(() => {
   position: absolute;
   top: -4px;
   right: -4px;
-  background: #ef4444;
-  color: white;
+  background: var(--p-red-500);
+  color: var(--p-surface-0);
   font-size: 0.6rem;
   font-weight: 700;
   min-width: 16px;

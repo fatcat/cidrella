@@ -7,8 +7,12 @@ import { Readable } from 'stream';
 import dnsPacket from 'dns-packet';
 import maxmind from 'maxmind';
 import { LRUCache } from 'lru-cache';
-import { getDb } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
 import { regenerateDnsmasqConf, signalDnsmasq } from './dnsmasq.js';
+import {
+  GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
+  GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
+} from '../config/defaults.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
@@ -17,7 +21,7 @@ const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 let proxyServer = null;
 let mmdbReader = null;
 let geoCache = null;
-let proxyPort = 5353;
+let proxyPort = 0;
 let statsTotal = 0;
 let statsBlocked = 0;
 let statsAllowed = 0;
@@ -28,12 +32,6 @@ let pendingQueries = new Map();
 let upstreamSocket = null;
 let nextQueryId = 1;
 
-function getSetting(key) {
-  const db = getDb();
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
-  return row?.value || null;
-}
-
 function setSetting(key, value) {
   const db = getDb();
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, String(value));
@@ -41,7 +39,7 @@ function setSetting(key, value) {
 
 // Load MMDB database file
 export async function loadMmdb() {
-  const dbPath = getSetting('geoip_db_path') || path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
+  const dbPath = getSetting('geoip_db_path');
   if (!fs.existsSync(dbPath)) {
     console.warn('GeoIP MMDB file not found:', dbPath);
     mmdbReader = null;
@@ -49,7 +47,7 @@ export async function loadMmdb() {
   }
   try {
     mmdbReader = await maxmind.open(dbPath);
-    geoCache = new LRUCache({ max: 10000, ttl: 60 * 60 * 1000 });
+    geoCache = new LRUCache({ max: GEOIP_CACHE_MAX, ttl: GEOIP_CACHE_TTL_MS });
     console.log('GeoIP MMDB loaded:', dbPath);
     return true;
   } catch (err) {
@@ -98,12 +96,7 @@ function shouldBlock(countryCodes) {
 }
 
 function getUpstreamServers() {
-  const raw = getSetting('dns_upstream_servers');
-  try {
-    return raw ? JSON.parse(raw) : ['8.8.8.8', '9.9.9.9'];
-  } catch {
-    return ['8.8.8.8', '9.9.9.9'];
-  }
+  return getSetting('dns_upstream_servers');
 }
 
 // Create NXDOMAIN response for a query
@@ -127,7 +120,7 @@ export function startProxy(port) {
     return;
   }
 
-  proxyPort = port || parseInt(getSetting('geoip_proxy_port') || '5353', 10);
+  proxyPort = port || parseInt(getSetting('geoip_proxy_port'), 10);
 
   // Create upstream socket for forwarding
   upstreamSocket = dgram.createSocket('udp4');
@@ -205,7 +198,7 @@ export function startProxy(port) {
             proxyServer?.send(servfail, p.port, p.address);
           } catch { /* ignore */ }
         }
-      }, 5000);
+      }, GEOIP_QUERY_TIMEOUT_MS);
 
       pendingQueries.set(internalId, {
         address: rinfo.address,
@@ -269,7 +262,7 @@ export async function startProxyIfEnabled() {
     console.warn('GeoIP enabled but MMDB not available — proxy will start without filtering');
   }
 
-  const port = parseInt(getSetting('geoip_proxy_port') || '5353', 10);
+  const port = parseInt(getSetting('geoip_proxy_port'), 10);
   startProxy(port);
 }
 
@@ -282,13 +275,13 @@ export async function downloadMmdb() {
 
   fs.mkdirSync(GEOIP_DIR, { recursive: true });
 
-  const dbPath = getSetting('geoip_db_path') || path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
+  const dbPath = getSetting('geoip_db_path');
   const tmpPath = dbPath + '.tmp.' + process.pid;
 
   console.log('Downloading GeoIP database from:', url);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60000);
+  const timeout = setTimeout(() => controller.abort(), GEOIP_DOWNLOAD_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -329,7 +322,7 @@ export async function downloadMmdb() {
 // Get proxy status
 export function getProxyStatus() {
   const lastUpdated = getSetting('geoip_last_updated');
-  const dbPath = getSetting('geoip_db_path') || path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
+  const dbPath = getSetting('geoip_db_path');
   const dbExists = fs.existsSync(dbPath);
 
   return {
@@ -393,14 +386,14 @@ export function startGeoipScheduler() {
     } catch (err) {
       console.error('GeoIP scheduler error:', err.message);
     }
-  }, 6 * 60 * 60 * 1000);
+  }, GEOIP_CHECK_INTERVAL_MS);
 
-  // Initial check 15s after startup
+  // Initial check after startup
   setTimeout(async () => {
     const enabled = getSetting('geoip_enabled');
     if (enabled !== 'true') return;
 
-    const dbPath = getSetting('geoip_db_path') || path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
+    const dbPath = getSetting('geoip_db_path');
     if (!fs.existsSync(dbPath)) {
       console.log('GeoIP enabled but no MMDB found, downloading...');
       try {
@@ -409,5 +402,5 @@ export function startGeoipScheduler() {
         console.error('GeoIP initial download failed:', err.message);
       }
     }
-  }, 15000);
+  }, GEOIP_STARTUP_DELAY_MS);
 }

@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
+import { DEFAULTS } from '../config/defaults.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
@@ -15,6 +16,34 @@ export function getDb() {
     throw new Error('Database not initialized. Call initDb() first.');
   }
   return db;
+}
+
+/**
+ * Read a setting from the database, falling back to DEFAULTS.
+ * For JSON-stored settings (dns_upstream_servers, dns_soa_defaults),
+ * the value is automatically parsed.
+ */
+export function getSetting(key) {
+  const row = getDb().prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  const raw = row?.value;
+
+  // JSON-stored keys
+  if (key === 'dns_upstream_servers' || key === 'dns_soa_defaults') {
+    try {
+      return raw ? JSON.parse(raw) : DEFAULTS[key];
+    } catch {
+      return DEFAULTS[key];
+    }
+  }
+
+  // Numeric keys
+  if (key === 'audit_log_retention_days') {
+    return raw != null ? parseInt(raw, 10) : DEFAULTS[key];
+  }
+
+  // String keys — return DB value or default
+  if (raw != null) return raw;
+  return DEFAULTS[key] ?? null;
 }
 
 export async function initDb(dataDir) {
@@ -80,86 +109,11 @@ export async function ensureDefaults() {
     console.log('Generated JWT secret');
   }
 
-  // Set default gateway preference
-  const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
-  if (!gwPref) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('default_gateway_position', 'first')").run();
-  }
-
-  // Set default subnet name template
-  const tmpl = db.prepare("SELECT value FROM settings WHERE key = 'subnet_name_template'").get();
-  if (!tmpl) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('subnet_name_template', '%1.%2.%3.%4/%bitmask')").run();
-  }
-
-  // Set default scan interval
-  const scanInterval = db.prepare("SELECT value FROM settings WHERE key = 'default_scan_interval'").get();
-  if (!scanInterval) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('default_scan_interval', '')").run();
-  }
-
-  // Set default DNS upstream servers
-  const dnsUp = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
-  if (!dnsUp) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('dns_upstream_servers', ?)").run(JSON.stringify(['8.8.8.8', '9.9.9.9']));
-  }
-
-  // Blocklist defaults
-  const blEnabled = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_enabled'").get();
-  if (!blEnabled) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
-  }
-  const blRedirect = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_redirect_ip'").get();
-  if (!blRedirect) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('blocklist_redirect_ip', '')").run();
-  }
-  const blSchedule = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_update_schedule'").get();
-  if (!blSchedule) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('blocklist_update_schedule', 'daily')").run();
-  }
-
-  // Backup defaults
-  const bkSched = db.prepare("SELECT value FROM settings WHERE key = 'backup_schedule'").get();
-  if (!bkSched) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('backup_schedule', 'off')").run();
-  }
-  const bkRetention = db.prepare("SELECT value FROM settings WHERE key = 'backup_retention_count'").get();
-  if (!bkRetention) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('backup_retention_count', '7')").run();
-  }
-
-  // Installation state
-  const installComplete = db.prepare("SELECT value FROM settings WHERE key = 'installation_complete'").get();
-  if (!installComplete) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('installation_complete', 'false')").run();
-  }
-
-  // Default scan enabled (global inheritance root)
-  const scanEn = db.prepare("SELECT value FROM settings WHERE key = 'default_scan_enabled'").get();
-  if (!scanEn) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('default_scan_enabled', '1')").run();
-  }
-
-  // Setup wizard state
-  const wizardDone = db.prepare("SELECT value FROM settings WHERE key = 'setup_wizard_completed'").get();
-  if (!wizardDone) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('setup_wizard_completed', '0')").run();
-  }
-
-  // GeoIP defaults
-  const geoipDefaults = {
-    geoip_enabled: 'false',
-    geoip_mode: 'blocklist',
-    geoip_proxy_port: '5353',
-    geoip_db_path: '/data/geoip/dbip-country-lite.mmdb',
-    geoip_last_updated: '',
-    geoip_update_schedule: 'monthly'
-  };
-  for (const [key, value] of Object.entries(geoipDefaults)) {
-    const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
-    if (!row) {
-      db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(key, value);
-    }
+  // Seed every key in DEFAULTS that doesn't already have a DB row
+  const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
+  for (const [key, value] of Object.entries(DEFAULTS)) {
+    const serialized = typeof value === 'object' ? JSON.stringify(value) : String(value);
+    insert.run(key, serialized);
   }
 
   // Create default admin user if no users exist

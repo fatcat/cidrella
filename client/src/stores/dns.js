@@ -78,10 +78,21 @@ export const useDnsStore = defineStore('dns', () => {
     return res.data;
   }
 
+  async function getSoaDefaults() {
+    const res = await api.get('/dns/soa-defaults');
+    return res.data;
+  }
+
+  async function updateSoaDefaults(defaults) {
+    const res = await api.put('/dns/soa-defaults', defaults);
+    return res.data;
+  }
+
   return {
     zones, loading,
     fetchZones, getZone, createZone, updateZone, deleteZone,
     getRecords, createRecord, updateRecord, deleteRecord,
-    applyConfig, getForwarders, updateForwarders, testForwarder
+    applyConfig, getForwarders, updateForwarders, testForwarder,
+    getSoaDefaults, updateSoaDefaults
   };
 });

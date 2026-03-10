@@ -8,6 +8,7 @@ import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { syncLeasesToIps } from './ip-sync.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { regenerateConfigs } from './dnsmasq.js';
+import { FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
@@ -428,7 +429,7 @@ export function startLeaseWatcher(db) {
 
   // Watch for changes (poll every 10 seconds since fs.watch can be unreliable)
   try {
-    fs.watchFile(LEASE_FILE, { interval: 10000 }, () => {
+    fs.watchFile(LEASE_FILE, { interval: DHCP_LEASE_WATCH_MS }, () => {
       try {
         syncLeases(leaseWatcherDb);
       } catch (err) {
@@ -443,7 +444,7 @@ export function startLeaseWatcher(db) {
 
 /**
  * Detect the server's primary IPv4 address and update the DNS Servers
- * global default (option 6) to "<server_ip>, 9.9.9.9".
+ * global default (option 6) to "<server_ip>, <secondary>".
  * Runs at startup so a host IP change is always reflected.
  */
 export function syncServerDnsDefault(db) {
@@ -465,7 +466,7 @@ export function syncServerDnsDefault(db) {
     return;
   }
 
-  const newValue = `${serverIp},9.9.9.9`;
+  const newValue = `${serverIp},${FALLBACK_SECONDARY_DNS}`;
 
   const existing = db.prepare('SELECT value FROM dhcp_option_defaults WHERE option_code = 6').get();
   if (existing?.value === newValue) return; // no change

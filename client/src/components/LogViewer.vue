@@ -201,8 +201,8 @@ onUnmounted(() => {
   height: 7px;
   border-radius: 50%;
 }
-.status-dot.connected { background: #22c55e; }
-.status-dot.disconnected { background: #ef4444; }
+.status-dot.connected { background: var(--p-green-500); }
+.status-dot.disconnected { background: var(--p-red-500); }
 
 .log-count {
   margin-left: auto;

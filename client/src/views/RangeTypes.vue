@@ -20,7 +20,7 @@
       </Column>
       <Column header="Type" style="width: 7rem">
         <template #body="{ data }">
-          <span :class="data.is_system ? 'badge-system' : 'badge-custom'">
+          <span :class="data.is_system ? 'badge badge-muted' : 'badge badge-primary'">
             {{ data.is_system ? 'System' : 'Custom' }}
           </span>
         </template>
@@ -175,20 +175,6 @@ onMounted(loadTypes);
   height: 24px;
   border-radius: 4px;
   border: 1px solid rgba(0,0,0,0.1);
-}
-.badge-system {
-  font-size: 0.75rem;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
-}
-.badge-custom {
-  font-size: 0.75rem;
-  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
-  color: var(--p-primary-color);
-  padding: 0.15rem 0.5rem;
-  border-radius: 4px;
 }
 .action-buttons {
   display: flex;

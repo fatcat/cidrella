@@ -6,7 +6,7 @@
       "args": [
         "mcp-server-sqlite",
         "--db-path",
-        "/home/mcnultyd/dev/ipam/data/cidrella.db"
+        "/home/mcnultyd/dev/cidrella/data/cidrella.db"
       ]
     }
   }

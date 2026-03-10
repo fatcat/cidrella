@@ -23,7 +23,7 @@
                     </div>
                     <div class="zone-meta">
                       <span class="record-count">{{ zone.record_count }} records</span>
-                      <span v-if="!zone.enabled" class="badge-disabled">disabled</span>
+                      <span v-if="!zone.enabled" class="badge-sm badge-red-light">disabled</span>
                     </div>
                   </div>
                   <div class="zone-actions">
@@ -57,7 +57,7 @@
                       </div>
                       <div class="zone-meta">
                         <span class="record-count">{{ entry.zone.record_count }} records</span>
-                        <span v-if="!entry.zone.enabled" class="badge-disabled">disabled</span>
+                        <span v-if="!entry.zone.enabled" class="badge-sm badge-red-light">disabled</span>
                       </div>
                     </div>
                     <div class="zone-actions">
@@ -87,7 +87,7 @@
                           </div>
                           <div class="zone-meta">
                             <span class="record-count">{{ zone.record_count }} records</span>
-                            <span v-if="!zone.enabled" class="badge-disabled">disabled</span>
+                            <span v-if="!zone.enabled" class="badge-sm badge-red-light">disabled</span>
                           </div>
                         </div>
                         <div class="zone-actions">
@@ -170,14 +170,14 @@
             </Column>
             <Column header="Enabled" style="width: 5rem">
               <template #body="{ data }">
-                <span :class="data.enabled ? 'badge-enabled' : 'badge-disabled'">
+                <span :class="data.enabled ? 'badge-enabled' : 'badge-sm badge-red-light'">
                   {{ data.enabled ? 'Yes' : 'No' }}
                 </span>
               </template>
             </Column>
             <Column header="Source" style="width: 5rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.source === 'dhcp' ? 'badge-dhcp' : 'badge-manual']">{{ data.source === 'dhcp' ? 'DHCP' : 'Manual' }}</span>
+                <span :class="['type-badge', data.source === 'dhcp' ? 'badge-yellow-light' : 'badge-muted']">{{ data.source === 'dhcp' ? 'DHCP' : 'Manual' }}</span>
               </template>
             </Column>
           </DataTable>
@@ -226,19 +226,19 @@
           </div>
           <div class="soa-grid">
             <div class="field">
-              <label>Refresh (s)</label>
+              <label>Refresh (s) <span v-tooltip.top="'How often secondaries check for zone updates'" class="soa-help">?</span></label>
               <InputNumber v-model="zoneForm.soa_refresh" class="w-full" :min="0" />
             </div>
             <div class="field">
-              <label>Retry (s)</label>
+              <label>Retry (s) <span v-tooltip.top="'How long secondaries wait before retrying a failed refresh'" class="soa-help">?</span></label>
               <InputNumber v-model="zoneForm.soa_retry" class="w-full" :min="0" />
             </div>
             <div class="field">
-              <label>Expire (s)</label>
+              <label>Expire (s) <span v-tooltip.top="'How long secondaries serve the zone without a successful refresh'" class="soa-help">?</span></label>
               <InputNumber v-model="zoneForm.soa_expire" class="w-full" :min="0" />
             </div>
             <div class="field">
-              <label>Minimum TTL (s)</label>
+              <label>Minimum TTL (s) <span v-tooltip.top="'Default negative-cache TTL — how long resolvers cache NXDOMAIN responses'" class="soa-help">?</span></label>
               <InputNumber v-model="zoneForm.soa_minimum_ttl" class="w-full" :min="0" />
             </div>
           </div>
@@ -438,7 +438,7 @@ const savingZone = ref(false);
 const zoneForm = ref({
   name: '', type: 'forward', description: '', enabled: true,
   soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
-  soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
+  soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 900
 });
 const zoneTypes = [
   { label: 'Forward', value: 'forward' },
@@ -480,7 +480,9 @@ const recordContextMenuItems = computed(() => {
 });
 function onRecordRightClick(event) {
   selectedRecord.value = event.data;
-  recordContextMenu.value.show(event.originalEvent);
+  if (recordContextMenuItems.value.length) {
+    recordContextMenu.value.show(event.originalEvent);
+  }
 }
 
 // Delete dialogs
@@ -525,7 +527,7 @@ async function selectZone(zone) {
 }
 
 // Zone CRUD
-function openZoneDialog(zone = null) {
+async function openZoneDialog(zone = null) {
   editingZone.value = zone;
   if (zone) {
     zoneForm.value = {
@@ -534,14 +536,17 @@ function openZoneDialog(zone = null) {
       soa_primary_ns: zone.soa_primary_ns || 'ns1.localhost',
       soa_admin_email: zone.soa_admin_email || 'admin.localhost',
       soa_refresh: zone.soa_refresh ?? 3600, soa_retry: zone.soa_retry ?? 900,
-      soa_expire: zone.soa_expire ?? 604800, soa_minimum_ttl: zone.soa_minimum_ttl ?? 86400
+      soa_expire: zone.soa_expire ?? 604800, soa_minimum_ttl: zone.soa_minimum_ttl ?? 900
     };
   } else {
+    // Load SOA defaults from settings
+    let soaDefaults = { soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
+      soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 900 };
+    try { soaDefaults = await store.getSoaDefaults(); } catch { /* use local defaults */ }
     zoneForm.value = {
       name: '', type: zoneTab.value || 'forward',
       description: '', enabled: true,
-      soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
-      soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
+      ...soaDefaults
     };
   }
   showZoneDialog.value = true;
@@ -767,7 +772,6 @@ defineExpose({ openZoneDialog });
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  background: var(--ipam-card);
   border-bottom: 1px solid var(--p-surface-border);
   flex-shrink: 0;
 }
@@ -788,9 +792,6 @@ defineExpose({ openZoneDialog });
 }
 
 .badge-enabled { font-size: 0.75rem; color: var(--p-green-500); }
-.badge-disabled { font-size: 0.75rem; color: var(--p-red-500); background: color-mix(in srgb, var(--p-red-500) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
-.badge-dhcp { background: color-mix(in srgb, var(--p-yellow-500) 15%, transparent); color: var(--p-yellow-500); }
-.badge-manual { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-muted-color); }
 
 .action-buttons { display: flex; gap: 0.25rem; }
 
@@ -846,6 +847,21 @@ defineExpose({ openZoneDialog });
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 1.25rem;
+}
+.soa-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 50%;
+  background: var(--p-surface-200);
+  color: var(--p-text-muted-color);
+  font-size: 0.65rem;
+  font-weight: 700;
+  cursor: help;
+  margin-left: 0.25rem;
+  vertical-align: middle;
 }
 .soa-serial {
   font-family: monospace;

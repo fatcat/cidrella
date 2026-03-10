@@ -1,7 +1,9 @@
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { execFileSync } from 'child_process';
 import { parseCidr } from './ip.js';
+import { getSetting } from '../db/init.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
@@ -177,17 +179,13 @@ export function regenerateConfDir(db) {
 export function regenerateDnsmasqConf(db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return;
 
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
-  let servers = ['8.8.8.8', '9.9.9.9'];
-  try {
-    if (row?.value) servers = JSON.parse(row.value);
-  } catch { /* use defaults */ }
+  let servers = getSetting('dns_upstream_servers');
 
   // If GeoIP proxy is enabled, route through local proxy instead of direct upstream
-  const geoipEnabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get();
-  const geoipPort = db.prepare("SELECT value FROM settings WHERE key = 'geoip_proxy_port'").get();
-  if (geoipEnabled?.value === 'true' && geoipPort?.value) {
-    servers = [`127.0.0.1#${geoipPort.value}`];
+  const geoipEnabled = getSetting('geoip_enabled');
+  const geoipPort = getSetting('geoip_proxy_port');
+  if (geoipEnabled === 'true' && geoipPort) {
+    servers = [`127.0.0.1#${geoipPort}`];
   }
 
   const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
@@ -212,6 +210,80 @@ export function signalDnsmasq() {
   } catch {
     console.warn('Could not send SIGHUP to dnsmasq (may not be running)');
   }
+}
+
+export function applyInterfaceConfig(db) {
+  if (!fs.existsSync(DNSMASQ_CONF)) return;
+
+  const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
+  const lines = content.split('\n');
+
+  // Strip existing interface-related directives (not comments)
+  const filtered = lines.filter(line => {
+    if (line.startsWith('#')) return true;
+    if (/^listen-address=/.test(line)) return false;
+    if (/^interface=/.test(line)) return false;
+    if (/^no-dhcp-interface=/.test(line)) return false;
+    if (/^port=0$/.test(line)) return false;
+    return true;
+  });
+
+  // Always listen on loopback
+  const newDirectives = ['listen-address=127.0.0.1'];
+
+  // Read settings
+  let ifaceConfig = {};
+  let dnsEnabled = true;
+  let dhcpEnabled = true;
+
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'interface_config'").get();
+    if (row?.value) ifaceConfig = JSON.parse(row.value);
+  } catch { /* use default */ }
+
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_enabled'").get();
+    if (row?.value === 'false') dnsEnabled = false;
+  } catch { /* use default */ }
+
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'dhcp_enabled'").get();
+    if (row?.value === 'false') dhcpEnabled = false;
+  } catch { /* use default */ }
+
+  // Enumerate current system interfaces for IP lookup
+  const sysIfaces = os.networkInterfaces();
+
+  for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
+    if (!cfg.dns && !cfg.dhcp) continue;
+
+    // Add listen-address for each IPv4 address on this interface
+    const addrs = sysIfaces[ifName];
+    if (addrs) {
+      for (const addr of addrs) {
+        if (addr.family === 'IPv4') {
+          newDirectives.push(`listen-address=${addr.address}`);
+        }
+      }
+    }
+
+    // If DHCP disabled for this interface (or globally), add no-dhcp-interface
+    if (!cfg.dhcp || !dhcpEnabled) {
+      newDirectives.push(`no-dhcp-interface=${ifName}`);
+    }
+  }
+
+  // Global DNS off → port=0
+  if (!dnsEnabled) {
+    newDirectives.push('port=0');
+  }
+
+  // Insert directives after bind-dynamic or at the end
+  const bindIdx = filtered.findIndex(l => l.trim() === 'bind-dynamic');
+  const insertIdx = bindIdx >= 0 ? bindIdx + 1 : filtered.length;
+  filtered.splice(insertIdx, 0, ...newDirectives);
+
+  atomicWrite(DNSMASQ_CONF, filtered.join('\n'));
 }
 
 export function regenerateConfigs(db) {

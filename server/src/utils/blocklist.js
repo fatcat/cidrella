@@ -3,6 +3,7 @@ import path from 'path';
 import { getDb } from '../db/init.js';
 import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
+import { BLOCKLIST_DOWNLOAD_TIMEOUT_MS } from '../config/defaults.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
@@ -72,7 +73,7 @@ export async function refreshCategory(db, slug) {
   let response;
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60000);
+    const timeout = setTimeout(() => controller.abort(), BLOCKLIST_DOWNLOAD_TIMEOUT_MS);
     response = await fetch(url, {
       signal: controller.signal,
       headers: { 'User-Agent': 'CIDRella-Blocklist/1.0' }

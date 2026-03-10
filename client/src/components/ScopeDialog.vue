@@ -241,7 +241,7 @@ async function resolveHostnameField(code) {
 function placeholderForType(type) {
   switch (type) {
     case 'ip': return 'e.g. 192.168.1.1';
-    case 'ip-list': return 'e.g. 8.8.8.8, 1.1.1.1';
+    case 'ip-list': return 'e.g. 8.8.8.8, 9.9.9.9';
     case 'text': return 'Value';
     case 'text-list': return 'e.g. domain1.com, domain2.com';
     case 'number': return '0';
@@ -419,8 +419,14 @@ const emit = defineEmits(['saved']);
 async function save() {
   saving.value = true;
   try {
+    // Don't persist option 3 (gateway) when it matches the subnet's gateway —
+    // the config generator inherits it dynamically so it stays in sync.
+    const subnet = subnetsList.value.find(s => s.id === form.value.subnet_id);
+    const subnetGateway = subnet?.gateway_address || null;
+
     const options = form.value.selectedOptions
       .filter(code => form.value.optionValues[code] != null && form.value.optionValues[code] !== '')
+      .filter(code => !(code === 3 && subnetGateway && String(form.value.optionValues[3]) === subnetGateway))
       .map(code => ({ code, value: String(form.value.optionValues[code]) }));
 
     const payload = {

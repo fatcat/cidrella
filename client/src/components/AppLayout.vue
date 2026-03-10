@@ -23,6 +23,6 @@ import DebugPanel from './DebugPanel.vue';
   flex: 1;
   min-height: 0;
   overflow: auto;
-  background: var(--ipam-ground);
+  background: var(--p-surface-ground);
 }
 </style>

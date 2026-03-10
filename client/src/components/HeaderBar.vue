@@ -61,25 +61,17 @@
           <span class="card-label">Leases</span>
         </div>
       </div>
+
+      <div class="dash-card" :class="activeScan ? 'card-ok' : ''" data-track="header-card-scan">
+        <div class="card-body">
+          <span class="card-value">{{ scanDisplay }}</span>
+          <span class="card-label">Scan</span>
+        </div>
+      </div>
       </div>
     </div>
 
     <div class="header-right">
-      <div class="status-area" ref="statusAreaRef">
-        <button v-if="systemAlerts.length === 0" class="status-btn status-ok" data-track="header-status-ok">
-          All Systems Green
-        </button>
-        <button v-else class="status-btn status-error" data-track="header-status-error" @click="statusDropdownOpen = !statusDropdownOpen">
-          {{ systemAlerts.length === 1 ? 'System Error' : `${systemAlerts.length} Errors` }}
-        </button>
-        <div v-if="statusDropdownOpen && systemAlerts.length > 0" class="status-dropdown">
-          <div v-for="(alert, i) in systemAlerts" :key="i" class="status-alert-row"
-               @click="openAlertDetail(alert)">
-            <i class="pi pi-exclamation-circle" style="color: #ef4444; flex-shrink: 0"></i>
-            <span>{{ alert.summary }}</span>
-          </div>
-        </div>
-      </div>
       <Button icon="pi pi-download" severity="secondary" text rounded size="small"
               title="Import" data-track="header-import" @click="piholeImportRef?.open()" />
       <div class="user-info">
@@ -92,11 +84,6 @@
 
     <PiholeImport ref="piholeImportRef" @imported="fetchHealth" />
 
-    <!-- Alert Detail Dialog -->
-    <Dialog v-model:visible="showAlertDetail" :header="alertDetailData?.summary" modal :style="{ width: '28rem' }">
-      <p style="margin: 0; line-height: 1.6">{{ alertDetailData?.detail }}</p>
-    </Dialog>
-
   </header>
 </template>
 
@@ -104,7 +91,6 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useRouter } from 'vue-router';
 import Button from 'primevue/button';
-import Dialog from 'primevue/dialog';
 import { useAuthStore } from '../stores/auth.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import PiholeImport from './PiholeImport.vue';
@@ -116,52 +102,13 @@ const auth = useAuthStore();
 const subnetStore = useSubnetStore();
 const piholeImportRef = ref(null);
 const health = ref(null);
+const activeScan = ref(null);
 let pollInterval = null;
+let scanPollInterval = null;
 
 function handleLogout() {
   auth.logout();
   router.push('/login');
-}
-
-// ── System Status Alerts ──
-const statusDropdownOpen = ref(false);
-const showAlertDetail = ref(false);
-const alertDetailData = ref(null);
-const statusAreaRef = ref(null);
-
-const systemAlerts = computed(() => {
-  const h = health.value;
-  if (!h) return [];
-  const alerts = [];
-
-  if (h.services?.dnsmasq === false) {
-    alerts.push({ summary: 'DNSmasq is not running', detail: 'The DNSmasq process has stopped or failed to start. DHCP and DNS services are unavailable. Check container logs for details.' });
-  }
-  if (h.disk && h.disk.percent >= 90) {
-    alerts.push({ summary: `Disk usage critical (${h.disk.percent}%)`, detail: `The /data volume is ${h.disk.percent}% full. Used: ${formatBytes(h.disk.used)} of ${formatBytes(h.disk.total)}. Free up space or expand the volume to avoid service disruption.` });
-  }
-  if (h.memory && h.memory.total > 0 && (h.memory.used / h.memory.total) >= 0.95) {
-    const pct = Math.round((h.memory.used / h.memory.total) * 100);
-    alerts.push({ summary: `Memory usage critical (${pct}%)`, detail: `Used: ${formatBytes(h.memory.used)} of ${formatBytes(h.memory.total)}. Free: ${formatBytes(h.memory.free)}. Consider increasing container memory limits.` });
-  }
-  if (h.cpu && h.cpu.cores > 0 && h.cpu.loadAvg[0] > h.cpu.cores * 2) {
-    const load = h.cpu.loadAvg;
-    alerts.push({ summary: `CPU load very high (${load[0].toFixed(1)})`, detail: `Load averages: ${load[0].toFixed(2)} / ${load[1].toFixed(2)} / ${load[2].toFixed(2)} (1/5/15 min) across ${h.cpu.cores} cores. Sustained high load may degrade service performance.` });
-  }
-
-  return alerts;
-});
-
-function openAlertDetail(alert) {
-  alertDetailData.value = alert;
-  statusDropdownOpen.value = false;
-  showAlertDetail.value = true;
-}
-
-function onDocumentClick(e) {
-  if (statusAreaRef.value && !statusAreaRef.value.contains(e.target)) {
-    statusDropdownOpen.value = false;
-  }
 }
 
 function formatBytes(bytes) {
@@ -212,6 +159,34 @@ const diskStatusClass = computed(() => {
   return disk.percent >= 90 ? 'card-err' : 'card-ok';
 });
 
+const scanDisplay = computed(() => {
+  if (!activeScan.value) return 'No Scan';
+  const s = activeScan.value;
+  if (s.status === 'pending') return 'Pending';
+  if (s.status === 'running' && s.total_ips > 0) {
+    return `${Math.round((s.scanned_ips / s.total_ips) * 100)}%`;
+  }
+  if (s.status === 'running') return 'Running';
+  return 'No Scan';
+});
+
+async function fetchActiveScan() {
+  try {
+    // Always use the list endpoint (lightweight — no results array)
+    const res = await api.get('/scans');
+    const active = res.data.find(s => s.status === 'running' || s.status === 'pending');
+    activeScan.value = active || null;
+
+    // Start/stop fast polling based on scan state
+    if (active && !scanPollInterval) {
+      scanPollInterval = setInterval(fetchActiveScan, 2000);
+    } else if (!active && scanPollInterval) {
+      clearInterval(scanPollInterval);
+      scanPollInterval = null;
+    }
+  } catch { /* ignore */ }
+}
+
 async function fetchHealth() {
   try {
     const res = await api.get('/health/system');
@@ -221,15 +196,17 @@ async function fetchHealth() {
 
 onMounted(() => {
   fetchHealth();
-  pollInterval = setInterval(fetchHealth, 60000);
+  fetchActiveScan();
+  pollInterval = setInterval(() => { fetchHealth(); fetchActiveScan(); }, 60000);
   window.addEventListener('ipam:stats-changed', fetchHealth);
-  document.addEventListener('mousedown', onDocumentClick);
+  window.addEventListener('ipam:scan-started', fetchActiveScan);
 });
 
 onUnmounted(() => {
   if (pollInterval) clearInterval(pollInterval);
+  if (scanPollInterval) clearInterval(scanPollInterval);
   window.removeEventListener('ipam:stats-changed', fetchHealth);
-  document.removeEventListener('mousedown', onDocumentClick);
+  window.removeEventListener('ipam:scan-started', fetchActiveScan);
 });
 </script>
 
@@ -238,7 +215,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   padding: 0.5rem 1rem;
-  background: var(--ipam-card);
+  background: var(--p-surface-card);
   border-bottom: 1px solid var(--p-surface-border);
   flex-shrink: 0;
   gap: 1rem;
@@ -285,19 +262,10 @@ onUnmounted(() => {
   min-width: 90px;
   max-width: 160px;
   padding: 0.3rem 0.55rem;
-  background: var(--ipam-card);
+  background: var(--p-surface-card);
   border-radius: 6px;
   flex-shrink: 1;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
-}
-
-.card-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1rem;
-  color: var(--p-text-muted-color);
-  flex-shrink: 0;
 }
 
 .card-body {
@@ -323,10 +291,10 @@ onUnmounted(() => {
   line-height: 1.2;
 }
 
-.dash-card.card-ok { border-left: 3px solid #22c55e; }
-.dash-card.card-err { border-left: 3px solid #ef4444; }
-.card-ok .card-value { color: #ffffff; font-weight: 700; }
-.card-err .card-value { color: #ffffff; font-weight: 700; }
+.dash-card.card-ok { border-left: 3px solid var(--p-primary-color); }
+.dash-card.card-err { border-left: 3px solid var(--p-red-500); }
+.card-ok .card-value { color: var(--p-primary-color); font-weight: 700; }
+.card-err .card-value { color: var(--p-red-500); font-weight: 700; }
 
 .header-right {
   display: flex;
@@ -356,65 +324,5 @@ onUnmounted(() => {
   text-transform: uppercase;
 }
 
-/* ── System Status ── */
-.status-area {
-  position: relative;
-}
-.status-btn {
-  height: 26px;
-  padding: 0 0.6rem;
-  border-radius: 6px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  cursor: default;
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  white-space: nowrap;
-  transition: all 0.15s;
-}
-.status-ok {
-  border: 1px solid #22c55e;
-  background: color-mix(in srgb, #22c55e 10%, transparent);
-  color: #22c55e;
-}
-.status-error {
-  border: 1px solid #ef4444;
-  background: color-mix(in srgb, #ef4444 10%, transparent);
-  color: #ef4444;
-  cursor: pointer;
-}
-.status-error:hover {
-  background: color-mix(in srgb, #ef4444 20%, transparent);
-}
-.status-dropdown {
-  position: absolute;
-  top: calc(100% + 0.4rem);
-  right: 0;
-  min-width: 280px;
-  max-height: 300px;
-  overflow-y: auto;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-  z-index: 1000;
-}
-.status-alert-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.6rem 0.75rem;
-  font-size: 0.8rem;
-  cursor: pointer;
-  border-bottom: 1px solid var(--p-surface-border);
-  transition: background 0.1s;
-}
-.status-alert-row:last-child {
-  border-bottom: none;
-}
-.status-alert-row:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
-}
 
 </style>

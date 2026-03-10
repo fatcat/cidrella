@@ -6,7 +6,7 @@ no-resolv
 
 # Upstream DNS servers
 server=8.8.8.8
-server=1.1.1.1
+server=9.9.9.9
 
 # DNS listener (loopback only by default)
 listen-address=127.0.0.1

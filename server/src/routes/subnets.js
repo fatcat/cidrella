@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb, getSetting, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import {
   parseCidr, normalizeCidr, isValidCidr, calculateSubnets,
@@ -8,6 +8,7 @@ import {
 } from '../utils/ip.js';
 import { generateReverseNames, regenerateConfigs } from '../utils/dnsmasq.js';
 import { regenerateDhcpConfigs } from '../utils/dhcp.js';
+import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
 
 const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
@@ -155,8 +156,8 @@ function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
   const effectiveDomain = domainName || null;
   const scopeResult = db.prepare(`
     INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
-    VALUES (?, ?, '24h', ?, ?, 'Auto-created DHCP scope')
-  `).run(rangeResult.lastInsertRowid, subnetId, gateway, effectiveDomain);
+    VALUES (?, ?, ?, ?, ?, 'Auto-created DHCP scope')
+  `).run(rangeResult.lastInsertRowid, subnetId, getSetting('default_lease_time'), gateway, effectiveDomain);
 
   // Populate scope options from defaults
   const scopeId = scopeResult.lastInsertRowid;
@@ -174,7 +175,7 @@ function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
   }
   const serverIp = getServerIpForSubnet(parsed.network + '/' + parsed.prefix);
   if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
-    optionValues.set(6, `${serverIp}, 9.9.9.9`);
+    optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
   }
   const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
   for (const [code, value] of optionValues) {
@@ -701,6 +702,11 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
       db.prepare("INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, 'reserved', 'Default gateway')")
         .run(subnet.id, gateway_address);
     }
+  }
+
+  // Regenerate DHCP configs if gateway changed (scope fallback uses subnet gateway)
+  if (gateway_address && gateway_address !== subnet.gateway_address) {
+    regenerateDhcpConfigs(db);
   }
 
   // Clean up old forward DNS zone if domain_name changed
@@ -1231,8 +1237,8 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
           const effectiveDomain = domain_name || null;
           const scopeResult = db.prepare(`
             INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
-            VALUES (?, ?, '24h', ?, ?, 'Auto-created DHCP scope')
-          `).run(rangeResult.lastInsertRowid, subnet.id, gw, effectiveDomain);
+            VALUES (?, ?, ?, ?, ?, 'Auto-created DHCP scope')
+          `).run(rangeResult.lastInsertRowid, subnet.id, getSetting('default_lease_time'), gw, effectiveDomain);
 
           // Populate scope options from enabled defaults + network-derived values
           const scopeId = scopeResult.lastInsertRowid;
@@ -1254,7 +1260,7 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
           }
           const serverIp = getServerIpForSubnet(subnet.cidr);
           if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
-            optionValues.set(6, `${serverIp}, 9.9.9.9`);
+            optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
           }
           const insertOpt = db.prepare(
             'INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)'
@@ -1545,6 +1551,17 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     }
   }
 
+  // Build scan results lookup for virtual IPs (rogue device detection)
+  const scanResultMap = new Map();
+  if (lastScan) {
+    const scanRows = db.prepare(
+      'SELECT ip_address, responded, mac_address FROM scan_results WHERE scan_id = ?'
+    ).all(lastScan.id);
+    for (const sr of scanRows) {
+      scanResultMap.set(sr.ip_address, sr);
+    }
+  }
+
   // Generate virtual IPs for this page, merging with persisted data
   const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
   const ips = [];
@@ -1559,21 +1576,23 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       persisted.range_type_color = match?.range_type_color || null;
       ips.push(persisted);
     } else {
-      // Virtual IP entry
+      // Virtual IP entry — check scan results for rogue detection
+      const addr = longToIp(ipLong);
+      const sr = scanResultMap.get(addr);
       const isGw = gwLong !== null && ipLong === gwLong;
       const isNetwork = ipLong === parsed.networkLong;
       const isBroadcast = ipLong === parsed.broadcastLong;
       ips.push({
-        ip_address: longToIp(ipLong),
+        ip_address: addr,
         subnet_id: subnet.id,
         status: (isGw || isNetwork || isBroadcast) ? 'reserved' : 'available',
         hostname: null,
         mac_address: null,
-        is_online: 0,
+        is_online: sr?.responded ? 1 : 0,
         last_seen_at: null,
-        last_seen_mac: null,
-        scan_responded: null,
-        scan_mac: null,
+        last_seen_mac: sr?.mac_address || null,
+        scan_responded: sr?.responded ?? null,
+        scan_mac: sr?.mac_address || null,
         has_dhcp_reservation: 0,
         dhcp_expires_at: null,
         range_type_id: match?.range_type_id || null,

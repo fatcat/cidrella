@@ -268,7 +268,7 @@ defineExpose({ open });
   color: var(--p-text-muted-color);
 }
 .field-error {
-  color: #ef4444;
+  color: var(--p-red-500);
   font-size: 0.75rem;
 }
 .field-warn {

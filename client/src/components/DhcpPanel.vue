@@ -21,7 +21,7 @@
                     </div>
                     <div class="scope-meta">
                       <span class="scope-range">{{ scope.start_ip }} — {{ scope.end_ip }}</span>
-                      <span v-if="!scope.enabled" class="badge-disabled">disabled</span>
+                      <span v-if="!scope.enabled" class="badge-sm badge-red-light">disabled</span>
                     </div>
                   </div>
                   <div class="scope-actions">
@@ -85,7 +85,7 @@
             </Column>
             <Column header="Status" sortable field="status" style="width: 7rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.status === 'active' ? 'badge-active' : 'badge-offline']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
+                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
               </template>
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
@@ -130,7 +130,7 @@
             </Column>
             <Column header="Status" sortable field="status" style="width: 7rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.status === 'active' ? 'badge-active' : 'badge-offline']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
+                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
               </template>
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
@@ -279,15 +279,26 @@ const leaseContextMenuRef = ref();
 const selectedLease = ref(null);
 const leaseContextMenuItems = computed(() => {
   const r = selectedLease.value;
-  if (!r || r.type !== 'reserved') return [];
-  return [
-    { label: 'Edit Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
-    { label: 'Delete Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
-  ];
+  if (!r) return [];
+  if (r.type === 'reserved') {
+    return [
+      { label: 'Edit Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
+      { label: 'Delete Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
+    ];
+  }
+  // Active lease — offer conversion to reservation
+  if (r.mac_address && r.ip_address) {
+    return [
+      { label: 'Convert to Reservation', icon: 'pi pi-lock', command: () => convertLeaseToReservation(r) }
+    ];
+  }
+  return [];
 });
 function onLeaseRightClick(event) {
   selectedLease.value = event.data;
-  leaseContextMenuRef.value.show(event.originalEvent);
+  if (leaseContextMenuItems.value.length) {
+    leaseContextMenuRef.value.show(event.originalEvent);
+  }
 }
 
 function dhcpMatchSearch(item, query) {
@@ -394,6 +405,19 @@ async function doDeleteScope() {
   }
 }
 
+function convertLeaseToReservation(lease) {
+  editingReservation.value = null;
+  reservationForm.value = {
+    subnet_id: lease.subnet_id,
+    mac_address: lease.mac_address,
+    ip_address: lease.ip_address,
+    hostname: lease.hostname || '',
+    description: '',
+    enabled: true
+  };
+  showReservationDialog.value = true;
+}
+
 // Reservation CRUD
 async function openReservationDialog(reservation = null) {
   editingReservation.value = reservation;
@@ -410,17 +434,18 @@ async function openReservationDialog(reservation = null) {
     reservationForm.value = { subnet_id: selectedScope.value?.subnet_id || null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true };
     try {
       const res = await api.get('/subnets');
-      const flatten = (nodes) => {
+      const flattenTree = (nodes) => {
         let result = [];
         for (const n of nodes) {
           if (n.status === 'allocated') {
             result.push({ ...n, _label: `${n.name} (${n.cidr})` });
           }
-          if (n.children?.length) result.push(...flatten(n.children));
+          if (n.children?.length) result.push(...flattenTree(n.children));
         }
         return result;
       };
-      allocatedSubnets.value = flatten(res.data.tree || []);
+      const allSubnets = (res.data.folders || []).flatMap(f => f.subnets || []);
+      allocatedSubnets.value = flattenTree(allSubnets);
     } catch { /* ignore */ }
   }
   showReservationDialog.value = true;
@@ -637,8 +662,6 @@ defineExpose({ openScopeDialog });
 .info-bar-label { font-size: 0.65rem; text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.04em; }
 .info-bar-val { font-size: 0.8rem; font-weight: 600; }
 
-.badge-disabled { font-size: 0.75rem; color: var(--p-red-500); background: color-mix(in srgb, var(--p-red-500) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
-
 .type-badge {
   font-size: 0.75rem;
   font-weight: 600;
@@ -646,8 +669,6 @@ defineExpose({ openScopeDialog });
   border-radius: 3px;
   font-family: monospace;
 }
-.badge-active { background: color-mix(in srgb, var(--p-green-500) 15%, transparent); color: var(--p-green-500); }
-.badge-offline { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-muted-color); }
 .badge-reserved { background: color-mix(in srgb, var(--p-primary-color) 15%, transparent); color: var(--p-primary-color); }
 .badge-dynamic { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-color); }
 

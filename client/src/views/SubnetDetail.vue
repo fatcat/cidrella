@@ -122,7 +122,7 @@
           </Column>
           <Column field="is_online" header="Online" sortable style="width: 5rem">
             <template #body="{ data }">
-              <span :class="['type-badge', data.is_online ? 'badge-online' : 'badge-scan-offline']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
+              <span :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
             </template>
           </Column>
           <Column field="last_seen_at" header="Last Seen" sortable style="width: 10rem">
@@ -175,7 +175,7 @@
               {{ rt.name }}
             </span>
             <span class="legend-item">
-              <span class="legend-swatch" style="background: #e5e7eb"></span>
+              <span class="legend-swatch" style="background: var(--p-surface-200)"></span>
               Unassigned
             </span>
           </div>
@@ -200,25 +200,6 @@
         </div>
       </TabPanel>
     </TabView>
-
-    <!-- Scan Progress -->
-    <div class="section" style="flex-shrink: 0;" v-if="activeScan">
-      <h4 style="margin:0 0 0.5rem 0">Network Scan</h4>
-      <div class="scan-progress">
-        <div class="scan-info">
-          <span class="scan-status" :class="'scan-' + activeScan.status">{{ activeScan.status }}</span>
-          <span v-if="activeScan.status === 'running'">
-            {{ activeScan.scanned_ips }} / {{ activeScan.total_ips }} IPs scanned
-          </span>
-          <span v-if="activeScan.status === 'completed'">
-            {{ activeScan.conflicts_found }} conflict{{ activeScan.conflicts_found !== 1 ? 's' : '' }} found
-          </span>
-        </div>
-        <div class="scan-bar-container" v-if="activeScan.status === 'running'">
-          <div class="scan-bar" :style="{ width: scanProgress + '%' }"></div>
-        </div>
-      </div>
-    </div>
 
     <!-- Scan Confirm Dialog -->
     <Dialog v-model:visible="showScanConfirm" header="Scan Network" modal :style="{ width: '26rem' }" data-track="dialog-scan-network">
@@ -524,7 +505,9 @@ function onTableRowContextMenu(event) {
   // Skip Network/Broadcast
   if (row.range_type_name === 'Network' || row.range_type_name === 'Broadcast') return;
   tableContextIp.value = row;
-  tableContextMenuRef.value.show(event.originalEvent);
+  if (tableContextMenuItems.value.length) {
+    tableContextMenuRef.value.show(event.originalEvent);
+  }
 }
 
 const tableContextMenuItems = computed(() => {
@@ -557,7 +540,9 @@ const rangeContextMenuItems = computed(() => {
 });
 function onRangeRightClick(event) {
   selectedRange.value = event.data;
-  rangeContextMenuRef.value.show(event.originalEvent);
+  if (rangeContextMenuItems.value.length) {
+    rangeContextMenuRef.value.show(event.originalEvent);
+  }
 }
 
 function findRangeForIp(ipAddress) {
@@ -601,38 +586,40 @@ function computeIpState(data) {
 
   // Network / Broadcast
   if (data.range_type_name === 'Network' || data.range_type_name === 'Broadcast') {
-    return { status: 'unavailable', statusSeverity: 'danger', type: 'system', typeSeverity: 'secondary' };
+    return { status: 'in use', statusSeverity: 'danger', type: 'system', typeSeverity: 'secondary' };
   }
 
   // Gateway
   if (data.range_type_name === 'Gateway') {
-    return { status: 'unavailable', statusSeverity: 'danger', type: 'gateway', typeSeverity: 'warn' };
+    return { status: 'in use', statusSeverity: 'danger', type: 'gateway', typeSeverity: 'warn' };
   }
 
-  // Rogue: something responded on wire but has no lease, reservation, or assignment
-  if (mac && (data.is_online || data.scan_responded)
-      && data.status === 'available' && !data.has_dhcp_reservation && !data.hostname && !isDhcpScope) {
-    return { status: 'unavailable', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger' };
+  // Rogue: responded to scan but has no assignment, reservation, lease, or DNS record
+  const hasActiveLease = data.dhcp_expires_at && !isLeaseExpired;
+  if ((data.is_online || data.scan_responded)
+      && data.status === 'available' && !data.has_dhcp_reservation && !data.hostname && !hasActiveLease) {
+    return { status: 'in use', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger' };
+  }
+
+  // DHCP reservation (static IP assignment via DHCP — inside or outside a scope)
+  if (data.has_dhcp_reservation) {
+    return { status: 'in use', statusSeverity: 'danger', type: 'reservation', typeSeverity: 'info' };
   }
 
   // Inside DHCP scope
   if (isDhcpScope) {
-    // Static reservation in DHCP range
-    if (data.has_dhcp_reservation) {
-      return { status: 'unavailable', statusSeverity: 'danger', type: 'static', typeSeverity: 'info' };
-    }
     // Dynamic lease — active
     if (data.dhcp_expires_at && !isLeaseExpired) {
-      return { status: 'unavailable', statusSeverity: 'danger', type: 'dynamic', typeSeverity: 'success' };
+      return { status: 'in use', statusSeverity: 'danger', type: 'dynamic', typeSeverity: 'success' };
     }
     // Unassigned or expired lease in DHCP range
     return { status: 'available', statusSeverity: 'secondary', type: 'dhcp', typeSeverity: 'secondary' };
   }
 
-  // Reserved (manual, outside DHCP)
+  // Reserved (manually held — cannot be used until released)
   if (data.status === 'reserved') {
     return {
-      status: 'unavailable', statusSeverity: 'danger',
+      status: 'in use', statusSeverity: 'danger',
       type: 'reserved', typeSeverity: 'warn',
       tooltip: data.reservation_note || null
     };
@@ -640,7 +627,7 @@ function computeIpState(data) {
 
   // DNS assigned (has hostname, outside DHCP range)
   if ((data.status === 'assigned' || data.hostname) && !isDhcpScope) {
-    return { status: 'unavailable', statusSeverity: 'danger', type: 'dns assigned', typeSeverity: 'info' };
+    return { status: 'in use', statusSeverity: 'danger', type: 'dns assigned', typeSeverity: 'info' };
   }
 
   // Completely undefined
@@ -734,7 +721,7 @@ const ipGrid = computed(() => {
       address: addr,
       ipLong: i,
       lastOctet: i & 255,
-      color: rangeInfo?.color || '#e5e7eb',
+      color: rangeInfo?.color || 'var(--p-surface-200)',
       rangeType: rangeInfo?.rangeType || null,
       rangeId: rangeInfo?.rangeId || null,
       hostname: assignInfo?.hostname || null,
@@ -819,7 +806,7 @@ function onGridContextMenu(event) {
   if (idx !== null && gridSelection.value.size === 0) {
     gridSelection.value = new Set([idx]);
   }
-  if (gridSelection.value.size > 0) {
+  if (gridSelection.value.size > 0 && gridContextMenuItems.value.length) {
     gridContextMenuRef.value.show(event);
   }
 }
@@ -1273,17 +1260,13 @@ async function doStartScan() {
     activeScan.value = { id: result.scan_id, status: 'pending', total_ips: 0, scanned_ips: 0, conflicts_found: 0 };
     showScanConfirm.value = false;
     startPollingScan(result.scan_id);
+    window.dispatchEvent(new Event('ipam:scan-started'));
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Scan Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally {
     startingScan.value = false;
   }
 }
-
-const scanProgress = computed(() => {
-  if (!activeScan.value || activeScan.value.total_ips === 0) return 0;
-  return Math.round((activeScan.value.scanned_ips / activeScan.value.total_ips) * 100);
-});
 
 function startPollingScan(scanId) {
   if (scanPollTimer) clearInterval(scanPollTimer);
@@ -1476,8 +1459,6 @@ onUnmounted(() => {
   font-size: 0.85rem;
 }
 .type-badge { font-size: 0.75rem; font-weight: 600; padding: 0.15rem 0.4rem; border-radius: 3px; font-family: monospace; }
-.badge-online { background: color-mix(in srgb, var(--p-green-500) 15%, transparent); color: var(--p-green-500); }
-.badge-scan-offline { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-muted-color); }
 .grid-view-scroll {
   flex: 1;
   min-height: 0;
@@ -1490,7 +1471,7 @@ onUnmounted(() => {
   display: inline-block;
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
-  color: #1a1a1a;
+  color: var(--p-surface-900);
   font-size: 0.75rem;
   font-weight: 600;
 }
@@ -1544,7 +1525,7 @@ onUnmounted(() => {
   z-index: 1;
 }
 .ip-cell-conflict {
-  outline: 2px solid #ef4444 !important;
+  outline: 2px solid var(--p-red-500) !important;
   outline-offset: -1px;
 }
 .conflict-dot {
@@ -1553,7 +1534,7 @@ onUnmounted(() => {
   right: 1px;
   width: 4px;
   height: 4px;
-  background: #ef4444;
+  background: var(--p-red-500);
   border-radius: 50%;
 }
 
@@ -1584,42 +1565,6 @@ onUnmounted(() => {
   height: 100%;
   color: var(--p-text-muted-color);
   font-size: 0.95rem;
-}
-.scan-progress {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 6px;
-  padding: 0.75rem;
-}
-.scan-info {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-}
-.scan-status {
-  font-size: 0.7rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 4px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-.scan-pending { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
-.scan-running { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent); color: var(--p-blue-500); }
-.scan-completed { background: color-mix(in srgb, var(--p-green-500) 20%, transparent); color: var(--p-green-500); }
-.scan-failed { background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); }
-.scan-bar-container {
-  height: 4px;
-  background: var(--p-surface-border);
-  border-radius: 2px;
-  overflow: hidden;
-  margin-top: 0.5rem;
-}
-.scan-bar {
-  height: 100%;
-  background: var(--p-primary-color);
-  border-radius: 2px;
-  transition: width 0.3s;
 }
 .loading-overlay {
   position: fixed;

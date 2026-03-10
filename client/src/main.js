@@ -59,15 +59,6 @@ window.addEventListener('ipam:theme-change', (e) => {
   });
 
   updateSurfacePalette(surface);
-
-  // Apply custom ipam variables if defined
-  if (theme.customIpam) {
-    document.documentElement.style.setProperty('--ipam-ground', theme.customIpam.ground);
-    document.documentElement.style.setProperty('--ipam-card', theme.customIpam.card);
-  } else {
-    document.documentElement.style.removeProperty('--ipam-ground');
-    document.documentElement.style.removeProperty('--ipam-card');
-  }
 });
 
 // Initialize theme store (applies saved theme)

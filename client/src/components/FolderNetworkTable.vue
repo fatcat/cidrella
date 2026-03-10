@@ -202,7 +202,7 @@ function statusLabel(node) {
   border-bottom: 1px solid var(--p-surface-border);
   position: sticky;
   top: 0;
-  background: var(--ipam-card);
+  background: var(--p-surface-card);
   z-index: 1;
 }
 
@@ -271,8 +271,8 @@ function statusLabel(node) {
   font-weight: 500;
 }
 .st-allocated {
-  background: color-mix(in srgb, #22c55e 20%, transparent);
-  color: #22c55e;
+  background: color-mix(in srgb, var(--p-green-500) 20%, transparent);
+  color: var(--p-green-500);
 }
 .st-unallocated {
   color: var(--p-text-muted-color);

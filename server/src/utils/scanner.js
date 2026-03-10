@@ -1,6 +1,9 @@
 import { execFile } from 'child_process';
+import { readFile } from 'fs/promises';
 import os from 'os';
+import ping from 'net-ping';
 import { parseCidr, longToIp, isIpInSubnet } from './ip.js';
+import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 
 /**
  * Run arping on a single IP (Layer 2 — local subnets only).
@@ -8,7 +11,7 @@ import { parseCidr, longToIp, isIpInSubnet } from './ip.js';
  */
 function arpingIp(ip) {
   return new Promise((resolve) => {
-    execFile('sudo', ['arping', '-c', '1', '-w', '1', ip], { timeout: 5000 }, (error, stdout) => {
+    execFile('sudo', ['arping', '-c', '1', '-w', '1', ip], { timeout: ARPING_TIMEOUT_MS }, (error, stdout) => {
       if (error) {
         resolve({ responded: false, mac: null });
         return;
@@ -23,15 +26,42 @@ function arpingIp(ip) {
 }
 
 /**
- * Run ICMP ping on a single IP (Layer 3 — works across routers).
- * Cannot detect MAC addresses.
+ * ICMP ping using net-ping (raw sockets — no shell, no sudo).
+ * Requires CAP_NET_RAW on the node binary or running as root.
  */
-function pingIp(ip) {
+function createPingSession() {
+  return ping.createSession({
+    timeout: PING_TIMEOUT_MS,
+    retries: 0,
+    packetSize: 16,
+  });
+}
+
+function pingIp(session, ip) {
   return new Promise((resolve) => {
-    execFile('ping', ['-c', '1', '-W', '1', ip], { timeout: 5000 }, (error) => {
+    session.pingHost(ip, (error) => {
       resolve({ responded: !error, mac: null });
     });
   });
+}
+
+/**
+ * Read the OS ARP cache from /proc/net/arp.
+ * Returns a Map of IP → MAC for all entries with a valid MAC.
+ */
+async function readArpCache() {
+  const arpMap = new Map();
+  try {
+    const data = await readFile('/proc/net/arp', 'utf8');
+    // Format: IP address  HW type  Flags  HW address  Mask  Device
+    for (const line of data.split('\n').slice(1)) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length >= 4 && parts[3] !== '00:00:00:00:00:00') {
+        arpMap.set(parts[0], parts[3].toLowerCase());
+      }
+    }
+  } catch { /* /proc/net/arp may not exist on non-Linux */ }
+  return arpMap;
 }
 
 /**
@@ -59,7 +89,25 @@ function shouldScanIp(ipOverride, subnetDefault) {
 }
 
 /**
+ * Resume any interrupted scans (status = 'running' or 'pending') on startup.
+ * Skips IPs that already have scan_results from a previous partial run.
+ */
+export function resumeInterruptedScans(db) {
+  const interrupted = db.prepare(
+    "SELECT * FROM network_scans WHERE status IN ('running', 'pending')"
+  ).all();
+
+  for (const scan of interrupted) {
+    console.log(`[scanner] Resuming interrupted scan #${scan.id} for subnet ${scan.subnet_id} (${scan.scanned_ips}/${scan.total_ips} done)`);
+    startScan(db, scan.id, scan.subnet_id);
+  }
+}
+
+/**
  * Start an async network scan for a subnet.
+ * Uses arping (Layer 2) for local subnets, net-ping ICMP (Layer 3) for remote.
+ * After ICMP scanning, reads the OS ARP cache to capture MAC addresses.
+ * Resumes from where it left off if scan_results already exist for some IPs.
  * Updates the database with progress and results as it goes.
  */
 export async function startScan(db, scanId, subnetId) {
@@ -71,8 +119,23 @@ export async function startScan(db, scanId, subnetId) {
 
   // Resolve scan method based on network locality
   const local = isLocalSubnet(subnet.cidr);
-  const probeIp = local ? arpingIp : pingIp;
-  console.log(`[scanner] Subnet ${subnet.cidr} — using ${local ? 'ARP' : 'ICMP'} probes`);
+  let icmpSession = null;
+  let probeIp;
+
+  if (local) {
+    probeIp = (ip) => arpingIp(ip);
+  } else {
+    try {
+      icmpSession = createPingSession();
+    } catch (err) {
+      db.prepare("UPDATE network_scans SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?")
+        .run(`Failed to create ICMP session: ${err.message}`, scanId);
+      return;
+    }
+    probeIp = (ip) => pingIp(icmpSession, ip);
+  }
+
+  console.log(`[scanner] Subnet ${subnet.cidr} — using ${local ? 'ARP (arping)' : 'ICMP (net-ping)'} probes`);
 
   // Resolve subnet-level scan default from inheritance chain (subnet → global setting)
   let subnetDefault = true;
@@ -94,8 +157,25 @@ export async function startScan(db, scanId, subnetId) {
   const endIp = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
   const totalIps = endIp - startIp + 1;
 
+  // Check for already-scanned IPs (resume support)
+  const alreadyScanned = new Set(
+    db.prepare('SELECT ip_address FROM scan_results WHERE scan_id = ?')
+      .all(scanId)
+      .map(r => r.ip_address)
+  );
+
+  // Load existing counts from partial run
+  let scannedCount = alreadyScanned.size;
+  let conflictsFound = db.prepare(
+    'SELECT COUNT(*) as cnt FROM scan_results WHERE scan_id = ? AND is_conflict = 1'
+  ).get(scanId).cnt;
+
+  if (alreadyScanned.size > 0) {
+    console.log(`[scanner] Resuming scan #${scanId} — ${alreadyScanned.size} IPs already scanned, continuing from where we left off`);
+  }
+
   // Update scan status to running
-  db.prepare("UPDATE network_scans SET status = 'running', total_ips = ?, started_at = datetime('now') WHERE id = ?").run(totalIps, scanId);
+  db.prepare("UPDATE network_scans SET status = 'running', total_ips = ?, started_at = COALESCE(started_at, datetime('now')) WHERE id = ?").run(totalIps, scanId);
 
   // Get existing IP assignments for conflict detection
   const assignments = db.prepare(`
@@ -109,18 +189,17 @@ export async function startScan(db, scanId, subnetId) {
     VALUES (?, ?, ?, ?, ?, ?)
   `);
 
-  let scannedCount = 0;
-  let conflictsFound = 0;
-
   try {
-    // Scan in batches of 10 for reasonable speed
-    const BATCH_SIZE = 10;
-    for (let batchStart = startIp; batchStart <= endIp; batchStart += BATCH_SIZE) {
-      const batchEnd = Math.min(batchStart + BATCH_SIZE - 1, endIp);
+    // Scan in batches for reasonable speed
+    for (let batchStart = startIp; batchStart <= endIp; batchStart += SCAN_BATCH_SIZE) {
+      const batchEnd = Math.min(batchStart + SCAN_BATCH_SIZE - 1, endIp);
       const promises = [];
 
       for (let ipLong = batchStart; ipLong <= batchEnd; ipLong++) {
         const ip = longToIp(ipLong);
+
+        // Skip IPs already scanned in a previous partial run
+        if (alreadyScanned.has(ip)) continue;
 
         // Check scan_enabled for this IP
         const override = overrideMap.get(ip);
@@ -131,9 +210,22 @@ export async function startScan(db, scanId, subnetId) {
         promises.push(probeIp(ip).then(result => ({ ip, ...result })));
       }
 
+      if (promises.length === 0) continue;
+
       const results = await Promise.all(promises);
 
+      // For ICMP scans, read the ARP cache to capture MACs the kernel learned
+      let arpCache = null;
+      if (!local && results.some(r => r.responded)) {
+        arpCache = await readArpCache();
+      }
+
       for (const result of results) {
+        // Enrich ICMP results with ARP cache MAC
+        if (!local && result.responded && !result.mac && arpCache) {
+          result.mac = arpCache.get(result.ip) || null;
+        }
+
         let isConflict = 0;
         let conflictReason = null;
         const assignment = assignmentMap.get(result.ip);
@@ -143,9 +235,9 @@ export async function startScan(db, scanId, subnetId) {
             // IP responded but not assigned — rogue device
             isConflict = 1;
             conflictReason = 'Rogue device (IP not assigned)';
-          } else if (local && assignment.mac_address && result.mac &&
+          } else if (assignment.mac_address && result.mac &&
                      assignment.mac_address.toLowerCase() !== result.mac) {
-            // MAC mismatch — only detectable on local (ARP) subnets
+            // MAC mismatch
             isConflict = 1;
             conflictReason = `MAC mismatch (expected ${assignment.mac_address}, got ${result.mac})`;
           }
@@ -192,5 +284,10 @@ export async function startScan(db, scanId, subnetId) {
   } catch (err) {
     db.prepare("UPDATE network_scans SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?")
       .run(err.message, scanId);
+  } finally {
+    // Clean up the ICMP session
+    if (icmpSession) {
+      try { icmpSession.close(); } catch { /* ignore */ }
+    }
   }
 }

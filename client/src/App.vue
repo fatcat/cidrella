@@ -26,21 +26,18 @@ body {
   --p-surface-ground: var(--p-surface-100);
   --p-surface-card: var(--p-surface-0);
   --p-surface-border: var(--p-surface-200);
-  --ipam-ground: #898989;
-  --ipam-card: #c4c4c4;
 }
 .p-dark {
   --p-surface-ground: var(--p-surface-950);
   --p-surface-card: var(--p-surface-800);
   --p-surface-border: var(--p-surface-700);
-  --ipam-ground: #1b1b1b;
-  --ipam-card: #212121;
 }
 
 /* Monospace font for all DataTable body cells; headers stay sans-serif */
 .p-datatable .p-datatable-tbody > tr > td {
   font-family: monospace;
 }
+
 
 /* Compact action buttons inside DataTable rows to reduce row height */
 .p-datatable .p-datatable-tbody .p-button {
@@ -74,23 +71,23 @@ body {
   border-bottom-color: var(--p-primary-color) !important;
 }
 
-/* Uniform toast style: medium gray background, white text */
+/* Uniform toast style: dark background, light text */
 .p-toast-message {
-  background: #444 !important;
+  background: var(--p-surface-700) !important;
   border: none !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
 }
 .p-toast-message-text,
 .p-toast-summary,
 .p-toast-detail {
-  color: #fff !important;
+  color: var(--p-surface-0) !important;
 }
 .p-toast-close-button {
-  color: #ccc !important;
+  color: var(--p-surface-300) !important;
 }
 /* Circular icon backgrounds — white icon on colored circle */
 .p-toast-message-icon {
-  color: #fff !important;
+  color: var(--p-surface-0) !important;
   width: 1.75rem !important;
   height: 1.75rem !important;
   min-width: 1.75rem !important;
@@ -101,15 +98,40 @@ body {
   font-size: 0.9rem !important;
 }
 .p-toast-message-success .p-toast-message-icon {
-  background: #22c55e !important;
+  background: var(--p-green-500) !important;
 }
 .p-toast-message-info .p-toast-message-icon {
-  background: #3b82f6 !important;
+  background: var(--p-blue-500) !important;
 }
 .p-toast-message-warn .p-toast-message-icon {
-  background: #eab308 !important;
+  background: var(--p-yellow-500) !important;
 }
 .p-toast-message-error .p-toast-message-icon {
-  background: #ef4444 !important;
+  background: var(--p-red-500) !important;
+}
+
+/* ── Global badge utility classes ── */
+.badge { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; display: inline-block; }
+.badge-sm { font-size: 0.7rem; padding: 0.1rem 0.4rem; }
+
+.badge-green   { background: color-mix(in srgb, var(--p-green-500) 20%, transparent);  color: var(--p-green-500); }
+.badge-red     { background: color-mix(in srgb, var(--p-red-500) 20%, transparent);    color: var(--p-red-500); }
+.badge-blue    { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent);   color: var(--p-blue-500); }
+.badge-yellow  { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
+.badge-orange  { background: color-mix(in srgb, var(--p-orange-500) 20%, transparent); color: var(--p-orange-500); }
+.badge-indigo  { background: color-mix(in srgb, var(--p-indigo-500) 20%, transparent); color: var(--p-indigo-500); }
+.badge-purple  { background: color-mix(in srgb, var(--p-purple-500) 20%, transparent); color: var(--p-purple-500); }
+.badge-muted   { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-muted-color); }
+.badge-primary { background: color-mix(in srgb, var(--p-primary-color) 20%, transparent); color: var(--p-primary-color); }
+
+.badge-green-light  { background: color-mix(in srgb, var(--p-green-500) 15%, transparent);  color: var(--p-green-500); }
+.badge-red-light    { background: color-mix(in srgb, var(--p-red-500) 15%, transparent);    color: var(--p-red-500); }
+.badge-yellow-light { background: color-mix(in srgb, var(--p-yellow-500) 15%, transparent); color: var(--p-yellow-500); }
+
+/* Shared active menubar item styling */
+.menubar-active-item {
+  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
+  color: var(--p-primary-color);
+  font-weight: 600;
 }
 </style>

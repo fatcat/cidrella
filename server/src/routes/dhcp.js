@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb, getSetting, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { isIpInSubnet, ipToLong, getServerIpForSubnet } from '../utils/ip.js';
 import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
@@ -127,7 +127,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       range_id, subnet_id,
-      lease_time || '24h',
+      lease_time || getSetting('default_lease_time'),
       dns_servers || null,
       domain_name || null,
       gateway || null,
@@ -138,11 +138,12 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
     const scopeId = result.lastInsertRowid;
 
-    // Save scope options if provided
+    // Save scope options if provided (skip option 3 if it matches subnet gateway — inherited dynamically)
     if (Array.isArray(options) && options.length > 0) {
       const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
       for (const opt of options) {
         if (opt.code && opt.value != null && opt.value !== '') {
+          if (opt.code === 3 && subnet.gateway_address && String(opt.value) === subnet.gateway_address) continue;
           insertOpt.run(scopeId, opt.code, String(opt.value));
         }
       }
@@ -257,12 +258,14 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       );
     }
 
-    // Replace scope options if provided
+    // Replace scope options if provided (skip option 3 if it matches subnet gateway — inherited dynamically)
     if (Array.isArray(options)) {
+      const subnet = db.prepare('SELECT gateway_address FROM subnets WHERE id = ?').get(scope.subnet_id);
       db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scope.id);
       const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
       for (const opt of options) {
         if (opt.code && opt.value != null && opt.value !== '') {
+          if (opt.code === 3 && subnet?.gateway_address && String(opt.value) === subnet.gateway_address) continue;
           insertOpt.run(scope.id, opt.code, String(opt.value));
         }
       }
@@ -706,6 +709,32 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   const returnedEnabled = rows.filter(r => r.enabled_by_default).map(r => r.option_code);
   res.json({ defaults, enabledDefaults: returnedEnabled });
 });
+
+/**
+ * Remove redundant option 3 (gateway) entries from dhcp_scope_options
+ * when they match the subnet's gateway_address. These are inherited
+ * dynamically by the config generator and should not be stored.
+ */
+export function cleanupRedundantGatewayOptions(db) {
+  const result = db.prepare(`
+    DELETE FROM dhcp_scope_options
+    WHERE option_code = 3
+      AND scope_id IN (
+        SELECT s.id FROM dhcp_scopes s
+        JOIN subnets sub ON s.subnet_id = sub.id
+        WHERE sub.gateway_address IS NOT NULL
+          AND sub.gateway_address != ''
+      )
+      AND value = (
+        SELECT sub.gateway_address FROM dhcp_scopes s
+        JOIN subnets sub ON s.subnet_id = sub.id
+        WHERE s.id = dhcp_scope_options.scope_id
+      )
+  `).run();
+  if (result.changes > 0) {
+    console.log(`Cleaned up ${result.changes} redundant gateway option(s) from DHCP scopes`);
+  }
+}
 
 // One-time migration: copy legacy column values to dhcp_scope_options
 export function migrateLegacyScopeOptions(db) {

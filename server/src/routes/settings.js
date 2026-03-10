@@ -17,7 +17,7 @@ function requirePerm(permission) {
 const SECRET_KEYS = new Set(['jwt_secret']);
 
 // Keys that are allowed to be updated
-const EDITABLE_KEYS = new Set(['default_gateway_position', 'subnet_name_template', 'dns_upstream_servers', 'backup_schedule', 'backup_retention_count', 'backup_last_run', 'geoip_enabled', 'geoip_mode', 'geoip_proxy_port', 'default_scan_interval', 'default_scan_enabled', 'setup_wizard_completed']);
+const EDITABLE_KEYS = new Set(['default_gateway_position', 'subnet_name_template', 'dns_upstream_servers', 'backup_schedule', 'backup_retention_count', 'backup_last_run', 'geoip_enabled', 'geoip_mode', 'geoip_proxy_port', 'default_scan_interval', 'default_scan_enabled', 'setup_wizard_completed', 'interface_config', 'dns_enabled', 'dhcp_enabled']);
 
 // GET /api/settings — return all non-secret settings
 router.get('/', requirePerm('subnets:read'), (req, res) => {

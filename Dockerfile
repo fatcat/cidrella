@@ -28,7 +28,8 @@ RUN apk add --no-cache \
     nmap \
     bind-tools \
     sudo \
-    tzdata
+    tzdata \
+    libcap
 
 # Create non-root user for Node.js
 RUN addgroup -g 65532 cidrella && \
@@ -43,9 +44,12 @@ RUN echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*' > /etc/sudoer
 # Set up app directory
 WORKDIR /app
 
-# Install server dependencies
+# Install server dependencies (raw-socket needs python3/make/g++ to build)
 COPY server/package.json server/package-lock.json* ./server/
-RUN cd server && npm install --production
+RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
+    cd server && npm install --production && \
+    apk del .build-deps && \
+    setcap cap_net_raw+ep $(readlink -f $(which node))
 
 # Copy application code
 COPY server/ ./server/
