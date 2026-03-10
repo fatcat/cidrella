@@ -1,4 +1,4 @@
--- Add folder_id to dns_zones so zones belong to an organization
+-- Add folder_id to dns_zones so zones can be grouped by folder
 ALTER TABLE dns_zones ADD COLUMN folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL;
 
 -- Backfill: inherit folder_id from the linked subnet

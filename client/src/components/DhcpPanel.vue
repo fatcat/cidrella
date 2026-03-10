@@ -54,8 +54,18 @@
         </div>
 
         <template v-if="selectedScope">
-          <div class="panel-header">
-            <h3>{{ selectedScope.subnet_name || selectedScope.subnet_cidr }} — Leases</h3>
+          <div class="info-bar">
+            <span class="info-bar-name">{{ selectedScope.subnet_name || selectedScope.subnet_cidr }}</span>
+            <span class="info-bar-sep"></span>
+            <span class="info-bar-pair"><span class="info-bar-label">Range</span> <span class="info-bar-val">{{ selectedScope.start_ip }} — {{ selectedScope.end_ip }}</span></span>
+            <span class="info-bar-sep"></span>
+            <span class="info-bar-pair"><span class="info-bar-label">Lease</span> <span class="info-bar-val">{{ selectedScope.lease_time }}</span></span>
+            <span class="info-bar-sep"></span>
+            <span v-if="selectedScope.gateway || selectedScope.subnet_gateway" class="info-bar-pair"><span class="info-bar-label">Gateway</span> <span class="info-bar-val">{{ selectedScope.gateway || selectedScope.subnet_gateway }}</span></span>
+            <span v-if="selectedScope.gateway || selectedScope.subnet_gateway" class="info-bar-sep"></span>
+            <span v-if="selectedScope.domain_name || selectedScope.subnet_domain_name" class="info-bar-pair"><span class="info-bar-label">Domain</span> <span class="info-bar-val">{{ selectedScope.domain_name || selectedScope.subnet_domain_name }}</span></span>
+            <span v-if="selectedScope.domain_name || selectedScope.subnet_domain_name" class="info-bar-sep"></span>
+            <span class="info-bar-pair"><span class="info-bar-label">Status</span> <span class="info-bar-val">{{ selectedScope.enabled ? 'enabled' : 'disabled' }}</span></span>
           </div>
 
           <div class="search-bar">
@@ -68,10 +78,9 @@
 
           <DataTable :value="searchedScopeLeases" :loading="loadingLeases" stripedRows
                      emptyMessage="No leases or reservations for this scope." size="small"
-                     :paginator="searchedScopeLeases.length > 256" :rows="256"
-                     :rowsPerPageOptions="[64, 128, 256, 512]"
-                     @row-contextmenu="onLeaseRightClick" contextMenu
-                     scrollable scrollHeight="flex">
+                     paginator :rows="100"
+                     :rowsPerPageOptions="[50, 100, 250, 500]"
+                     @row-contextmenu="onLeaseRightClick" contextMenu>
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
             <Column header="Status" sortable field="status" style="width: 7rem">
@@ -114,10 +123,9 @@
 
           <DataTable :value="searchedAllLeases" :loading="loadingLeases" stripedRows
                      emptyMessage="No DHCP leases or reservations." size="small"
-                     :paginator="searchedAllLeases.length > 256" :rows="256"
-                     :rowsPerPageOptions="[64, 128, 256, 512]"
-                     @row-contextmenu="onLeaseRightClick" contextMenu
-                     scrollable scrollHeight="flex">
+                     paginator :rows="100"
+                     :rowsPerPageOptions="[50, 100, 250, 500]"
+                     @row-contextmenu="onLeaseRightClick" contextMenu>
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
             <Column header="Status" sortable field="status" style="width: 7rem">
@@ -316,7 +324,7 @@ const deletingScope = ref(null);
 const showDeleteReservationDialog = ref(false);
 const deletingReservation = ref(null);
 
-// All scopes and leases (no org filtering)
+// All scopes and leases
 const filteredScopes = computed(() => store.scopes);
 
 const filteredLeases = computed(() => store.leases);
@@ -585,6 +593,8 @@ defineExpose({ openScopeDialog });
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 1rem;
 }
 
 .dhcp-toolbar {
@@ -610,6 +620,22 @@ defineExpose({ openScopeDialog });
   font-size: 0.9rem;
   font-weight: 600;
 }
+
+.info-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--p-surface-border);
+  padding: 0 0.75rem;
+  gap: 0.6rem;
+  height: 2.4rem;
+  box-sizing: border-box;
+}
+.info-bar-name { font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+.info-bar-sep { width: 1px; height: 1rem; background: var(--p-surface-border); flex-shrink: 0; }
+.info-bar-pair { display: flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
+.info-bar-label { font-size: 0.65rem; text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.04em; }
+.info-bar-val { font-size: 0.8rem; font-weight: 600; }
 
 .badge-disabled { font-size: 0.75rem; color: var(--p-red-500); background: color-mix(in srgb, var(--p-red-500) 15%, transparent); padding: 0.1rem 0.4rem; border-radius: 3px; }
 

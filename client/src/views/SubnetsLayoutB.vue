@@ -2,10 +2,6 @@
   <div class="layout-b">
     <!-- Menubar -->
     <Menubar :model="menuItems">
-      <template #start>
-        <Button label="Add Folder" icon="pi pi-plus" size="small" data-track="toolbar-add-folder" @click="dialogs.openCreateFolder()" text />
-        <Button label="Add Network" icon="pi pi-plus" size="small" data-track="toolbar-add-network-top" @click="dialogs.openQuickAddNetwork()" text />
-      </template>
       <template #item="{ item, props: itemProps }">
         <a v-bind="itemProps.action" :class="{ 'active-menuitem': item.key === activeTab }" :data-track="item.dataTrack">
           <span :class="item.icon" />
@@ -13,16 +9,7 @@
         </a>
       </template>
       <template #end>
-        <div class="toolbar-right">
-          <template v-if="activeTab === 'networks' && mergeSelectedIdsRaw.length > 0">
-            <span class="merge-badge">{{ mergeSelectedIdsRaw.length }} selected</span>
-            <Button v-if="mergeSelectedIdsRaw.length >= 2 && mergeValidation.valid"
-                    label="Merge" icon="pi pi-sitemap" size="small" severity="warn"
-                    data-track="toolbar-merge" @click="dialogs.openMergeConfirm(mergeSelectedIdsRaw)" />
-            <Button label="Cancel" size="small" severity="secondary" text data-track="toolbar-merge-cancel" @click="clearMergeSelection" />
-            <span class="toolbar-divider"></span>
-          </template>
-        </div>
+        <Button label="Settings" icon="pi pi-cog" size="small" text data-track="toolbar-settings" @click="router.push('/system')" />
       </template>
     </Menubar>
 
@@ -32,17 +19,17 @@
       <div class="sidebar-panel">
         <Tabs v-model:value="sidebarMode">
           <TabList>
-            <Tab value="orgs" data-track="sidebar-tab-folders"><i class="pi pi-folder" style="margin-right: 0.3rem" />Folders</Tab>
+            <Tab value="folders" data-track="sidebar-tab-folders"><i class="pi pi-folder" style="margin-right: 0.3rem" />Folders</Tab>
             <Tab value="browse" data-track="sidebar-tab-browse"><i class="pi pi-list" style="margin-right: 0.3rem" />Browse Unallocated</Tab>
           </TabList>
           <TabPanels>
-            <TabPanel value="orgs">
+            <TabPanel value="folders">
               <div class="sidebar-search">
                 <i class="pi pi-search search-icon"></i>
                 <input type="text" v-model="filterText" placeholder="Filter networks..." class="sidebar-filter" data-track="sidebar-filter" />
               </div>
 
-              <!-- Organizations mode -->
+              <!-- Folders mode -->
               <div class="sidebar-tree"
              @dragover.prevent="onTreeContainerDragOver"
              @dragenter.prevent="onTreeContainerDragEnter"
@@ -166,11 +153,21 @@
       <!-- Right Detail Panel -->
       <div class="detail-panel">
         <div class="networks-toolbar">
+          <Button label="Add Folder" icon="pi pi-plus" size="small" data-track="toolbar-add-folder" @click="dialogs.openCreateFolder()" text />
+          <Button label="Add Network" icon="pi pi-plus" size="small" data-track="toolbar-add-network-top" @click="dialogs.openQuickAddNetwork()" text />
+          <template v-if="mergeSelectedIdsRaw.length > 0">
+            <span class="toolbar-divider"></span>
+            <span class="merge-badge">{{ mergeSelectedIdsRaw.length }} selected</span>
+            <Button v-if="mergeSelectedIdsRaw.length >= 2 && mergeValidation.valid"
+                    label="Merge" icon="pi pi-sitemap" size="small" severity="warn"
+                    data-track="toolbar-merge" @click="dialogs.openMergeConfirm(mergeSelectedIdsRaw)" />
+            <Button label="Cancel" size="small" severity="secondary" text data-track="toolbar-merge-cancel" @click="clearMergeSelection" />
+          </template>
         </div>
         <SubnetDetail v-if="selectedSubnetId" :subnet-id="selectedSubnetId" :compact="true" />
-        <OrgNetworkTable v-else-if="selectedFolder" :folder="selectedFolder"
+        <FolderNetworkTable v-else-if="selectedFolder" :folder="selectedFolder"
             :merge-selected-ids="mergeSelectedIdsRaw"
-            @select-subnet="onOrgTableSelectSubnet"
+            @select-subnet="onFolderTableSelectSubnet"
             @merge-toggle="toggleMergeSelect"
             @context-menu="openSubnetContextMenu" />
         <div v-else class="empty-detail">
@@ -203,7 +200,7 @@
                     @folder-created="onTreeChanged"
                     @folder-updated="onTreeChanged"
                     @folder-deleted="onFolderDeleted"
-                    @network-created="onTreeChanged"
+                    @network-created="onNetworkCreated"
                     @network-configured="onNetworkConfigured"
                     @network-updated="onTreeChanged"
                     @network-divided="onNetworkDivided"
@@ -226,7 +223,7 @@ import Tab from 'primevue/tab';
 import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import SubnetDetail from './SubnetDetail.vue';
-import OrgNetworkTable from '../components/OrgNetworkTable.vue';
+import FolderNetworkTable from '../components/FolderNetworkTable.vue';
 import NetworkDialogs from '../components/NetworkDialogs.vue';
 import { defineAsyncComponent } from 'vue';
 const DnsPanel = defineAsyncComponent(() => import('../components/DnsPanel.vue'));
@@ -248,8 +245,6 @@ const menuItems = computed(() => [
   { key: 'networks', label: 'Networks', icon: 'pi pi-sitemap', dataTrack: 'tab-networks', command: () => { activeTab.value = 'networks'; } },
   { key: 'dns', label: 'DNS', icon: 'pi pi-globe', dataTrack: 'tab-dns', command: () => { activeTab.value = 'dns'; } },
   { key: 'dhcp', label: 'DHCP', icon: 'pi pi-server', dataTrack: 'tab-dhcp', command: () => { activeTab.value = 'dhcp'; } },
-  { separator: true },
-  { label: 'Settings', icon: 'pi pi-cog', dataTrack: 'toolbar-settings', command: () => { router.push('/system'); } },
 ]);
 
 // ── Persistence helpers ──
@@ -288,7 +283,7 @@ async function loadSettings() {
 }
 
 // ── Sidebar state ──
-const sidebarMode = ref(loadJson('ipam_b_sidebar_mode', 'orgs'));
+const sidebarMode = ref(loadJson('ipam_b_sidebar_mode', 'folders'));
 const filterText = ref('');
 const expandedFolders = ref(loadJson('ipam_b_expanded_folders', {}));
 const browseExpanded = ref(loadJson('ipam_b_browse_expanded', {}));
@@ -319,7 +314,7 @@ function toggleFolder(folderId) {
 function selectFolder(folder) {
   clearMergeSelection();
   selectedFolder.value = folder;
-  // Clear subnet detail so org network table shows
+  // Clear subnet detail so folder network table shows
   selectedSubnetId.value = null;
   selectedNode.value = null;
   // Expand the folder in sidebar
@@ -328,7 +323,7 @@ function selectFolder(folder) {
   }
 }
 
-function onOrgTableSelectSubnet(node) {
+function onFolderTableSelectSubnet(node) {
   selectedNode.value = node;
   selectedSubnetId.value = node.data.id;
 }
@@ -738,6 +733,11 @@ function onBrowseDragStart(event, subnet, node) {
 function onTreeChanged() {
   // Tree is auto-refreshed by store — just update stale refs
   refreshSelectionRefs();
+}
+
+function onNetworkCreated() {
+  refreshSelectionRefs();
+  sidebarMode.value = 'browse';
 }
 
 function onFolderDeleted(folderId) {

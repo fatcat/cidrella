@@ -100,9 +100,9 @@ function shouldBlock(countryCodes) {
 function getUpstreamServers() {
   const raw = getSetting('dns_upstream_servers');
   try {
-    return raw ? JSON.parse(raw) : ['8.8.8.8', '1.1.1.1'];
+    return raw ? JSON.parse(raw) : ['8.8.8.8', '9.9.9.9'];
   } catch {
-    return ['8.8.8.8', '1.1.1.1'];
+    return ['8.8.8.8', '9.9.9.9'];
   }
 }
 

@@ -1,12 +1,12 @@
 <template>
-  <div class="org-table">
+  <div class="folder-table">
     <!-- Header -->
-    <div class="org-header">
+    <div class="folder-header">
       <i class="pi pi-folder" style="font-size: 0.9rem"></i>
-      <span class="org-name">{{ folder.name }}</span>
-      <span v-if="folder.description" class="org-desc">{{ folder.description }}</span>
+      <span class="folder-name">{{ folder.name }}</span>
+      <span v-if="folder.description" class="folder-desc">{{ folder.description }}</span>
       <span style="flex:1"></span>
-      <span class="org-count">{{ totalCount }} networks</span>
+      <span class="folder-count">{{ totalCount }} networks</span>
     </div>
 
     <!-- Table -->
@@ -155,14 +155,14 @@ function statusLabel(node) {
 </script>
 
 <style scoped>
-.org-table {
+.folder-table {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
 }
 
-.org-header {
+.folder-header {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -172,15 +172,15 @@ function statusLabel(node) {
   border-bottom: 1px solid var(--p-surface-border);
   flex-shrink: 0;
 }
-.org-name {
+.folder-name {
   font-weight: 700;
   font-size: 0.9rem;
 }
-.org-desc {
+.folder-desc {
   font-size: 0.8rem;
   color: var(--p-text-muted-color);
 }
-.org-count {
+.folder-count {
   font-size: 0.75rem;
   color: var(--p-text-muted-color);
 }

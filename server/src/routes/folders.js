@@ -80,10 +80,6 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const doDelete = db.transaction(() => {
     // Ungroup subnets — move to ungrouped
     db.prepare('UPDATE subnets SET folder_id = NULL WHERE folder_id = ?').run(folder.id);
-    // Ungroup DNS zones
-    db.prepare('UPDATE dns_zones SET folder_id = NULL WHERE folder_id = ?').run(folder.id);
-    // Ungroup VLANs
-    db.prepare('UPDATE vlans SET folder_id = NULL WHERE folder_id = ?').run(folder.id);
     // Delete the folder itself
     db.prepare('DELETE FROM folders WHERE id = ?').run(folder.id);
   });

@@ -18,7 +18,8 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
   const vlans = db.prepare(`
     SELECT v.*,
-      (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id) as subnet_count
+      (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id) as subnet_count,
+      (SELECT GROUP_CONCAT(COALESCE(name, cidr), ', ') FROM subnets WHERE vlan_id = v.vlan_id AND status = 'allocated') as subnet_names
     FROM vlans v
     ORDER BY v.vlan_id
   `).all();
@@ -46,21 +47,33 @@ router.get('/search', requirePerm('subnets:read'), (req, res) => {
 
 // POST /api/vlans — create VLAN
 router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { vlan_id, name, folder_id } = req.body;
+  const { vlan_id, name, subnet_id } = req.body;
   if (!vlan_id || vlan_id < 1 || vlan_id > 4094) return res.status(400).json({ error: 'VLAN ID must be between 1 and 4094' });
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  if (!subnet_id) return res.status(400).json({ error: 'A network must be selected' });
 
   const db = getDb();
 
   const existing = db.prepare('SELECT id FROM vlans WHERE vlan_id = ?').get(vlan_id);
   if (existing) return res.status(409).json({ error: `VLAN ${vlan_id} already exists` });
 
-  try {
-    const result = db.prepare(
-      'INSERT INTO vlans (folder_id, vlan_id, name) VALUES (?, ?, ?)'
-    ).run(folder_id || null, vlan_id, name.trim());
+  const subnet = db.prepare('SELECT id, vlan_id FROM subnets WHERE id = ? AND status = ?').get(subnet_id, 'allocated');
+  if (!subnet) return res.status(404).json({ error: 'Network not found' });
+  if (subnet.vlan_id) return res.status(409).json({ error: 'Network already has a VLAN assigned' });
 
-    audit(req.user.id, 'vlan_created', 'vlan', result.lastInsertRowid, { vlan_id, name: name.trim() });
+  try {
+    const create = db.transaction(() => {
+      const result = db.prepare(
+        'INSERT INTO vlans (vlan_id, name) VALUES (?, ?)'
+      ).run(vlan_id, name.trim());
+
+      db.prepare('UPDATE subnets SET vlan_id = ? WHERE id = ?').run(vlan_id, subnet_id);
+
+      return result;
+    });
+    const result = create();
+
+    audit(req.user.id, 'vlan_created', 'vlan', result.lastInsertRowid, { vlan_id, name: name.trim(), subnet_id });
     const vlan = db.prepare('SELECT * FROM vlans WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(vlan);
   } catch (err) {

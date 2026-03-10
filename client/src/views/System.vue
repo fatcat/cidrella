@@ -15,12 +15,7 @@
           <Button v-if="overflowItems.length > 0" icon="pi pi-angle-double-right" size="small" text
                   class="overflow-trigger" @click="toggleOverflow" aria-label="More tabs" />
           <Menu ref="overflowMenuRef" :model="overflowItems" :popup="true" />
-          <Button v-if="activeTab === 1" label="Add VLAN" icon="pi pi-plus" size="small" text data-track="sys-add-vlan" @click="openVlanDialog()" />
-          <Button v-if="activeTab === 3" label="Create Backup Now" icon="pi pi-download" size="small" text data-track="sys-create-backup" @click="doCreateBackup" :loading="creatingBackup" />
-          <Button v-if="activeTab === 4" label="Upload Certificate" icon="pi pi-upload" size="small" text data-track="sys-upload-cert" @click="doUploadCert" :loading="uploadingCert"
-                  :disabled="!certUpload.cert || !certUpload.key || certValidation.cert === false || certValidation.key === false" />
-          <Button v-if="activeTab === 6" label="Apply Config" icon="pi pi-refresh" size="small" text data-track="sys-apply-dhcp-config" @click="dhcpPanelRef?.applyConfig()" />
-          <Button v-if="activeTab === 9" label="Add User" icon="pi pi-plus" size="small" text data-track="sys-add-user" @click="usersPanelRef?.openCreateDialog()" />
+
         </div>
       </template>
     </Menubar>
@@ -143,10 +138,10 @@
         </Dialog>
       </div>
       <div v-if="activeTab === 1">
-        <div class="range-types-section">
-          <div class="section-header">
-            <Select v-model="vlanOrgFilter" :options="orgOptions" optionLabel="label" optionValue="value"
-                    placeholder="All Organizations" showClear class="audit-filter" @change="loadVlans" />
+        <div class="content-card range-types-section">
+          <div class="card-header">
+            <h3>VLANs</h3>
+            <Button label="Add VLAN" icon="pi pi-plus" size="small" data-track="sys-add-vlan" @click="openVlanDialog()" />
           </div>
           <DataTable :value="vlans" :loading="loadingVlans" stripedRows emptyMessage="No VLANs found." size="small"
                      :paginator="vlans.length > 256" :rows="256"
@@ -155,21 +150,20 @@
                      scrollable scrollHeight="flex">
             <Column field="vlan_id" header="VLAN ID" sortable style="width: 6rem" />
             <Column field="name" header="Name" sortable />
-            <Column field="folder_name" header="Organization" sortable />
-            <Column field="subnet_count" header="Networks" style="width: 5rem">
-              <template #body="{ data }">{{ data.subnet_count || 0 }}</template>
+            <Column field="subnet_names" header="Network" sortable>
+              <template #body="{ data }">{{ data.subnet_names || '—' }}</template>
             </Column>
           </DataTable>
         </div>
 
         <!-- VLAN Dialog -->
         <Dialog v-model:visible="showVlanDialog" :header="editingVlan ? 'Edit VLAN' : 'Add VLAN'"
-                modal :style="{ width: '24rem' }">
+                modal :style="{ width: '28rem' }">
           <div class="form-grid">
             <div class="field" v-if="!editingVlan">
-              <label>Organization *</label>
-              <Select v-model="vlanForm.folder_id" :options="orgOptions.filter(o => o.value)" optionLabel="label" optionValue="value"
-                      placeholder="Select organization" class="w-full" />
+              <label>Network *</label>
+              <Select v-model="vlanForm.subnet_id" :options="availableNetworks" optionLabel="label" optionValue="value"
+                      placeholder="Select a network" class="w-full" filter />
             </div>
             <div class="field">
               <label>VLAN ID *</label>
@@ -184,7 +178,7 @@
           <template #footer>
             <Button label="Cancel" severity="secondary" @click="closeVlanDialog" />
             <Button :label="editingVlan ? 'Save' : 'Create'" @click="saveVlan" :loading="savingVlan"
-                    :disabled="!vlanForm.folder_id || !vlanForm.vlan_id || !vlanForm.name" />
+                    :disabled="(!editingVlan && !vlanForm.subnet_id) || !vlanForm.vlan_id || !vlanForm.name" />
           </template>
         </Dialog>
 
@@ -197,7 +191,7 @@
           </template>
         </Dialog>
       </div>
-      <div v-if="activeTab === 2">
+      <div v-if="activeTab === 2" class="content-card">
         <SubnetCalculator />
       </div>
       <div v-if="activeTab === 3" class="content-card">
@@ -205,6 +199,7 @@
           <div class="setting-group">
             <h3>Manual Backup</h3>
             <p class="field-help" style="margin-bottom: 0.75rem;">Creates a backup of the database, certificates, and DNSmasq configuration.</p>
+            <Button label="Create Backup" icon="pi pi-download" size="small" data-track="sys-create-backup-inline" @click="doCreateBackup" :loading="creatingBackup" />
           </div>
 
           <div class="setting-group">
@@ -219,22 +214,33 @@
               <InputText v-model.number="backupRetention" type="number" min="1" max="100"
                          style="width: 8rem;" @change="saveBackupSettings" />
             </div>
+            <div class="field">
+              <label>Next Backup</label>
+              <span class="next-backup-value">{{ nextBackupLabel }}</span>
+            </div>
           </div>
 
           <div class="setting-group">
             <h3>Existing Backups</h3>
             <DataTable :value="opsStore.backups" :loading="opsStore.loading" stripedRows size="small"
                        emptyMessage="No backups found."
-                       :paginator="opsStore.backups.length > 256" :rows="256"
-                       :rowsPerPageOptions="[64, 128, 256, 512]"
-                       @row-contextmenu="onBackupRightClick" contextMenu
-                       scrollable scrollHeight="flex">
+                       @row-contextmenu="onBackupRightClick" contextMenu>
               <Column field="filename" header="Filename" />
               <Column header="Size" style="width: 8rem">
                 <template #body="{ data }">{{ formatSize(data.size_bytes) }}</template>
               </Column>
               <Column header="Created" style="width: 12rem">
                 <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
+              </Column>
+              <Column header="" style="width: 5rem; text-align: right;">
+                <template #body="{ data }">
+                  <div class="action-buttons">
+                    <Button icon="pi pi-download" severity="secondary" text rounded size="small"
+                            v-tooltip.top="'Download'" @click="opsStore.downloadBackup(data.id, data.filename)" />
+                    <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                            v-tooltip.top="'Delete'" @click="confirmDeleteBackup(data)" />
+                  </div>
+                </template>
               </Column>
             </DataTable>
           </div>
@@ -342,6 +348,9 @@
                   <small v-else-if="certValidation.key === false" class="cert-status cert-status-err"><i class="pi pi-times-circle"></i> {{ certValidation.keyError }}</small>
                 </div>
               </div>
+              <Button label="Upload Certificate" icon="pi pi-upload" data-track="sys-upload-cert"
+                      @click="doUploadCert" :loading="uploadingCert"
+                      :disabled="!certUpload.cert || !certUpload.key || certValidation.cert === false || certValidation.key === false" />
             </div>
           </div>
 
@@ -356,16 +365,16 @@
         <DnsPanel ref="dnsPanelRef" />
       </div>
       <div v-if="activeTab === 6" class="content-card">
-        <DhcpPanel ref="dhcpPanelRef" />
+        <DhcpPanel />
       </div>
-      <div v-if="activeTab === 7">
+      <div v-if="activeTab === 7" class="padded-tab">
         <BlocklistsPanel />
       </div>
-      <div v-if="activeTab === 8">
+      <div v-if="activeTab === 8" class="padded-tab">
         <GeoipPanel />
       </div>
       <div v-if="activeTab === 9" class="content-card">
-        <UsersPanel ref="usersPanelRef" />
+        <UsersPanel />
       </div>
       <div v-if="activeTab === 10" class="content-card">
         <div class="themes-page">
@@ -499,8 +508,7 @@ const UsersPanel = defineAsyncComponent(() => import('./Users.vue'));
 const LogViewer = defineAsyncComponent(() => import('../components/LogViewer.vue'));
 
 const dnsPanelRef = ref(null);
-const dhcpPanelRef = ref(null);
-const usersPanelRef = ref(null);
+
 
 const store = useSubnetStore();
 const opsStore = useOperationsStore();
@@ -769,9 +777,25 @@ const showVlanDialog = ref(false);
 const showDeleteVlanDialog = ref(false);
 const editingVlan = ref(null);
 const deletingVlan = ref(null);
-const vlanForm = ref({ folder_id: null, vlan_id: null, name: '' });
+const vlanForm = ref({ vlan_id: null, name: '', subnet_id: null });
 const vlanNameManual = ref(false);
-const vlanOrgFilter = ref(null);
+
+const availableNetworks = computed(() => {
+  const usedVlanIds = new Set(vlans.value.map(v => v.vlan_id));
+  const result = [];
+  function collect(subnets) {
+    for (const s of subnets) {
+      if (s.status === 'allocated' && !s.vlan_id && !usedVlanIds.has(s.vlan_id)) {
+        result.push({ label: `${s.cidr} — ${s.name || s.cidr}`, value: s.id });
+      }
+      if (s.children) collect(s.children);
+    }
+  }
+  for (const f of store.folders) {
+    if (f.subnets) collect(f.subnets);
+  }
+  return result;
+});
 
 function onVlanIdInput(e) {
   const val = e.value;
@@ -780,15 +804,10 @@ function onVlanIdInput(e) {
   }
 }
 
-const orgOptions = computed(() => {
-  return store.folders.map(f => ({ label: f.name, value: f.id }));
-});
-
 async function loadVlans() {
   loadingVlans.value = true;
   try {
-    const params = vlanOrgFilter.value ? `?folder_id=${vlanOrgFilter.value}` : '';
-    const res = await api.get(`/vlans${params}`);
+    const res = await api.get('/vlans');
     vlans.value = res.data;
   } finally { loadingVlans.value = false; }
 }
@@ -796,27 +815,28 @@ async function loadVlans() {
 function openVlanDialog() {
   editingVlan.value = null;
   vlanNameManual.value = false;
-  vlanForm.value = { folder_id: vlanOrgFilter.value || (store.folders[0]?.id || null), vlan_id: null, name: '' };
+  vlanForm.value = { vlan_id: null, name: '', subnet_id: null };
   showVlanDialog.value = true;
 }
 
 function editVlan(vlan) {
   editingVlan.value = vlan;
   vlanNameManual.value = vlan.name !== `VLAN${vlan.vlan_id}`;
-  vlanForm.value = { folder_id: vlan.folder_id, vlan_id: vlan.vlan_id, name: vlan.name };
+  vlanForm.value = { vlan_id: vlan.vlan_id, name: vlan.name };
   showVlanDialog.value = true;
 }
 
 function closeVlanDialog() {
   showVlanDialog.value = false;
   editingVlan.value = null;
-  vlanForm.value = { folder_id: null, vlan_id: null, name: '' };
+  vlanForm.value = { vlan_id: null, name: '', subnet_id: null };
 }
 
 async function saveVlan() {
   savingVlan.value = true;
+  const isEditing = !!editingVlan.value;
   try {
-    if (editingVlan.value) {
+    if (isEditing) {
       await api.put(`/vlans/${editingVlan.value.id}`, { vlan_id: vlanForm.value.vlan_id, name: vlanForm.value.name });
       toast.add({ severity: 'success', summary: 'VLAN updated', life: 3000 });
     } else {
@@ -825,6 +845,7 @@ async function saveVlan() {
     }
     closeVlanDialog();
     await loadVlans();
+    if (!isEditing) await store.fetchTree();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   } finally { savingVlan.value = false; }
@@ -968,6 +989,7 @@ const restoreFileInput = ref(null);
 const restoring = ref(false);
 const backupSchedule = ref('off');
 const backupRetention = ref(7);
+const backupLastRun = ref(null);
 
 const scheduleOptions = [
   { label: 'Off', value: 'off' },
@@ -976,21 +998,56 @@ const scheduleOptions = [
   { label: 'Monthly', value: 'monthly' }
 ];
 
+const INTERVAL_MS = {
+  daily: 24 * 60 * 60 * 1000,
+  weekly: 7 * 24 * 60 * 60 * 1000,
+  monthly: 30 * 24 * 60 * 60 * 1000
+};
+
+const nextBackupLabel = computed(() => {
+  if (backupSchedule.value === 'off') return 'None scheduled';
+  const interval = INTERVAL_MS[backupSchedule.value];
+  if (!interval) return 'None scheduled';
+  const lastRun = backupLastRun.value ? new Date(backupLastRun.value).getTime() : 0;
+  if (!lastRun) return 'Pending — will run within 15 minutes';
+  const nextTime = new Date(lastRun + interval);
+  if (nextTime.getTime() <= Date.now()) return 'Pending — will run within 15 minutes';
+  return nextTime.toLocaleString();
+});
+
 async function loadBackupSettings() {
   try {
     const data = await store.getSettings();
     backupSchedule.value = data.backup_schedule || 'off';
     backupRetention.value = parseInt(data.backup_retention_count || '7', 10);
+    backupLastRun.value = data.backup_last_run || null;
   } catch {}
 }
 
 async function saveBackupSettings() {
+  const previousSchedule = backupSchedule.value;
   try {
     await Promise.all([
       store.updateSetting('backup_schedule', backupSchedule.value),
       store.updateSetting('backup_retention_count', String(backupRetention.value))
     ]);
     toast.add({ severity: 'success', summary: 'Backup settings saved', life: 3000 });
+
+    // If enabling a schedule and no backups exist, create one immediately
+    if (backupSchedule.value !== 'off' && opsStore.backups.length === 0) {
+      creatingBackup.value = true;
+      try {
+        const backup = await opsStore.createBackup();
+        // Record as the last scheduled run so next backup is scheduled correctly
+        await store.updateSetting('backup_last_run', new Date().toISOString());
+        toast.add({ severity: 'success', summary: `Initial backup created: ${backup.filename}`, life: 5000 });
+        await loadBackupSettings();
+      } catch (err) {
+        toast.add({ severity: 'error', summary: 'Initial backup failed', detail: err.response?.data?.error || err.message, life: 5000 });
+      } finally {
+        creatingBackup.value = false;
+      }
+    }
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
   }
@@ -1408,8 +1465,15 @@ async function doResetCert() {
   flex: 1;
   min-height: 0;
 }
+.padded-tab {
+  margin: 0 7%;
+}
 .backup-section, .cert-section {
   max-width: 48rem;
+}
+.next-backup-value {
+  font-size: 0.85rem;
+  color: var(--p-text-muted-color);
 }
 .restore-warning {
   color: var(--p-red-500);

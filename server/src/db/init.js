@@ -101,7 +101,7 @@ export async function ensureDefaults() {
   // Set default DNS upstream servers
   const dnsUp = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
   if (!dnsUp) {
-    db.prepare("INSERT INTO settings (key, value) VALUES ('dns_upstream_servers', ?)").run(JSON.stringify(['8.8.8.8', '1.1.1.1']));
+    db.prepare("INSERT INTO settings (key, value) VALUES ('dns_upstream_servers', ?)").run(JSON.stringify(['8.8.8.8', '9.9.9.9']));
   }
 
   // Blocklist defaults

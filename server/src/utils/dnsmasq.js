@@ -178,7 +178,7 @@ export function regenerateDnsmasqConf(db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return;
 
   const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
-  let servers = ['8.8.8.8', '1.1.1.1'];
+  let servers = ['8.8.8.8', '9.9.9.9'];
   try {
     if (row?.value) servers = JSON.parse(row.value);
   } catch { /* use defaults */ }

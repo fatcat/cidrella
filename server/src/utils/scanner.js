@@ -51,7 +51,7 @@ function isLocalSubnet(cidr) {
 
 /**
  * Resolve whether an IP should be included in a liveness scan.
- * Inheritance: IP override → Subnet override → Org default → true
+ * Inheritance: IP override → Subnet override → Folder default → true
  */
 function shouldScanIp(ipOverride, subnetDefault) {
   if (ipOverride !== null && ipOverride !== undefined) return !!ipOverride;

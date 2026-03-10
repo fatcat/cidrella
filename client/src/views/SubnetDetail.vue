@@ -333,7 +333,7 @@
                     @click="reserveScanEnabled = false">Disabled</button>
           </div>
           <small v-if="reserveScanEnabled === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
-            Inherits from subnet/organization — scanning is {{ resolvedSubnetScanEnabled ? 'enabled' : 'disabled' }} for this network
+            Inherits from subnet — scanning is {{ resolvedSubnetScanEnabled ? 'enabled' : 'disabled' }} for this network
           </small>
           <small v-else-if="reserveScanEnabled === true" style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is enabled for this network</small>
           <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is disabled for this network</small>
@@ -378,7 +378,7 @@
                     @click="staticDhcpScanEnabled = false">Disabled</button>
           </div>
           <small v-if="staticDhcpScanEnabled === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
-            Inherits from subnet/organization — scanning is {{ resolvedSubnetScanEnabled ? 'enabled' : 'disabled' }} for this network
+            Inherits from subnet — scanning is {{ resolvedSubnetScanEnabled ? 'enabled' : 'disabled' }} for this network
           </small>
           <small v-else-if="staticDhcpScanEnabled === true" style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is enabled for this network</small>
           <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is disabled for this network</small>
@@ -447,11 +447,11 @@ const showStaticDhcpDialog = ref(false);
 const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', description: '' });
 const staticDhcpScanEnabled = ref(null);
 
-// Resolve the effective scan_enabled for this subnet (subnet → org → default true)
+// Resolve the effective scan_enabled for this subnet (subnet → folder → default true)
 const resolvedSubnetScanEnabled = computed(() => {
   if (!subnet.value) return true;
   if (subnet.value.scan_enabled !== null && subnet.value.scan_enabled !== undefined) return !!subnet.value.scan_enabled;
-  // Inherit from org
+  // Inherit from folder
   const folder = store.folders?.find(f => f.id === subnet.value.folder_id);
   return folder ? !!folder.scan_enabled : true;
 });

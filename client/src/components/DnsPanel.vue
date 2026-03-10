@@ -22,7 +22,6 @@
                       {{ zone.name }}
                     </div>
                     <div class="zone-meta">
-                      <span v-if="zone.folder_name" class="folder-badge">{{ zone.folder_name }}</span>
                       <span class="record-count">{{ zone.record_count }} records</span>
                       <span v-if="!zone.enabled" class="badge-disabled">disabled</span>
                     </div>
@@ -123,8 +122,14 @@
           </template>
         </div>
         <template v-if="selectedZone">
-          <div class="panel-header">
-            <h3>{{ selectedZone.name }} — Records</h3>
+          <div class="info-bar">
+            <span class="info-bar-name">{{ selectedZone.name }}</span>
+            <span class="info-bar-sep"></span>
+            <span class="info-bar-pair"><span class="info-bar-label">Type</span> <span class="info-bar-val">{{ selectedZone.type }}</span></span>
+            <span class="info-bar-sep"></span>
+            <span class="info-bar-pair"><span class="info-bar-label">Records</span> <span class="info-bar-val">{{ selectedZone.record_count ?? 0 }}</span></span>
+            <span class="info-bar-sep"></span>
+            <span class="info-bar-pair"><span class="info-bar-label">Status</span> <span class="info-bar-val">{{ selectedZone.enabled ? 'enabled' : 'disabled' }}</span></span>
           </div>
 
           <div class="search-bar">
@@ -138,9 +143,8 @@
           <DataTable :key="'records-' + selectedZone?.type" :value="filteredRecords" :loading="loadingRecords" stripedRows
                      emptyMessage="No records in this zone." size="small"
                      :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
-                     :paginator="filteredRecords.length > 256" :rows="256"
-                     :rowsPerPageOptions="[64, 128, 256, 512]"
-                     scrollable scrollHeight="flex"
+                     paginator :rows="100"
+                     :rowsPerPageOptions="[50, 100, 250, 500]"
                      @row-contextmenu="onRecordRightClick"
                      :contextMenu="true">
             <Column field="name" :header="isReverse ? 'Name' : 'Name'" sortable style="min-width: 8rem">
@@ -198,11 +202,6 @@
           <label>Type *</label>
           <Select v-model="zoneForm.type" :options="zoneTypes" optionLabel="label" optionValue="value"
                     class="w-full" />
-        </div>
-        <div class="field">
-          <label>Folder</label>
-          <Select v-model="zoneForm.folder_id" :options="folders" optionLabel="name" optionValue="id"
-                    class="w-full" placeholder="Select folder (optional)" showClear />
         </div>
         <div class="field">
           <label>Description</label>
@@ -360,13 +359,11 @@ import TabPanel from 'primevue/tabpanel';
 import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
-import api from '../api/client.js';
 
 // No props needed — shows all zones globally
 
 const store = useDnsStore();
 const toast = useToast();
-const folders = ref([]);
 
 // Persistence helper
 function loadJson(key, fallback) {
@@ -439,7 +436,7 @@ const showZoneDialog = ref(false);
 const editingZone = ref(null);
 const savingZone = ref(false);
 const zoneForm = ref({
-  name: '', type: 'forward', folder_id: null, description: '', enabled: true,
+  name: '', type: 'forward', description: '', enabled: true,
   soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
   soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
 });
@@ -532,7 +529,7 @@ function openZoneDialog(zone = null) {
   editingZone.value = zone;
   if (zone) {
     zoneForm.value = {
-      name: zone.name, type: zone.type, folder_id: zone.folder_id || null,
+      name: zone.name, type: zone.type,
       description: zone.description || '', enabled: !!zone.enabled,
       soa_primary_ns: zone.soa_primary_ns || 'ns1.localhost',
       soa_admin_email: zone.soa_admin_email || 'admin.localhost',
@@ -542,7 +539,6 @@ function openZoneDialog(zone = null) {
   } else {
     zoneForm.value = {
       name: '', type: zoneTab.value || 'forward',
-      folder_id: folders.value.length === 1 ? folders.value[0].id : null,
       description: '', enabled: true,
       soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
       soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 86400
@@ -652,10 +648,7 @@ async function doDeleteRecord() {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    store.fetchZones(),
-    api.get('/folders').then(r => folders.value = r.data).catch(() => {})
-  ]);
+  await store.fetchZones();
   // Restore previously selected zone
   const savedZoneId = loadJson('ipam_dns_selected_zone_id', null);
   if (savedZoneId) {
@@ -713,6 +706,22 @@ defineExpose({ openZoneDialog });
 }
 .panel-header h3 { margin: 0; font-size: 0.9rem; color: var(--p-text-color); }
 
+.info-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--p-surface-border);
+  padding: 0 0.75rem;
+  gap: 0.6rem;
+  height: 2.4rem;
+  box-sizing: border-box;
+}
+.info-bar-name { font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+.info-bar-sep { width: 1px; height: 1rem; background: var(--p-surface-border); flex-shrink: 0; }
+.info-bar-pair { display: flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
+.info-bar-label { font-size: 0.65rem; text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.04em; }
+.info-bar-val { font-size: 0.8rem; font-weight: 600; }
+
 .zone-list { max-height: 500px; overflow-y: auto; }
 
 .zone-item {
@@ -742,14 +751,6 @@ defineExpose({ openZoneDialog });
 .zone-meta { display: flex; gap: 0.4rem; margin-top: 0.2rem; align-items: center; }
 
 .record-count { font-size: 0.75rem; color: var(--p-surface-500); }
-.folder-badge {
-  font-size: 0.65rem;
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
-  color: var(--p-primary-color);
-  padding: 0.05rem 0.35rem;
-  border-radius: 3px;
-  white-space: nowrap;
-}
 
 .zone-actions { display: flex; gap: 0.15rem; flex-shrink: 0; }
 
@@ -757,6 +758,8 @@ defineExpose({ openZoneDialog });
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 1rem;
 }
 
 .dns-toolbar {

@@ -286,16 +286,16 @@ export function syncLeases(db) {
   const legacyHostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
   try { if (fs.existsSync(legacyHostsPath)) fs.unlinkSync(legacyHostsPath); } catch { /* ignore */ }
 
-  // Sync DHCP hostnames into dns_records for UI visibility
+  // Sync DHCP hostnames (leases + reservations) into dns_records
   syncDhcpDnsRecords(db, leases);
 
   return { synced: leases.length };
 }
 
 /**
- * Sync DHCP lease hostnames into dns_records table as A records with source='dhcp'.
- * Matches leases to forward DNS zones via the DHCP scope's domain_name or subnet's domain_name.
- * Also cleans up stale DHCP records for IPs no longer in leases.
+ * Sync DHCP lease and reservation hostnames into dns_records table as A records with source='dhcp'.
+ * Matches entries to forward DNS zones via the DHCP scope's domain_name or subnet's domain_name.
+ * Also cleans up stale DHCP records for IPs no longer in leases/reservations.
  */
 function syncDhcpDnsRecords(db, leases) {
   // Build a map of subnet_id -> domain_name from DHCP scopes and subnets
@@ -310,6 +310,27 @@ function syncDhcpDnsRecords(db, leases) {
   for (const s of scopes) {
     const domain = s.scope_domain || s.subnet_domain;
     if (domain) subnetDomainMap.set(s.subnet_id, domain);
+  }
+
+  // Merge leases with reservations (reservations take priority for same IP)
+  const entries = [...leases];
+  const leaseIps = new Set(leases.map(l => l.ip));
+
+  const reservations = db.prepare(`
+    SELECT r.ip_address, r.hostname, r.mac_address, r.subnet_id
+    FROM dhcp_reservations r
+    WHERE r.enabled = 1 AND r.hostname IS NOT NULL AND r.hostname != ''
+  `).all();
+
+  for (const r of reservations) {
+    // Only add reservations not already covered by a lease entry
+    if (!leaseIps.has(r.ip_address)) {
+      entries.push({
+        ip: r.ip_address,
+        hostname: r.hostname,
+        subnetId: r.subnet_id
+      });
+    }
   }
 
   // Build a map of zone_name -> zone for forward zones
@@ -334,7 +355,7 @@ function syncDhcpDnsRecords(db, leases) {
     UPDATE dns_records SET updated_at = datetime('now') WHERE id = ?
   `);
 
-  for (const l of leases) {
+  for (const l of entries) {
     if (!l.hostname || !l.subnetId) continue;
 
     const domain = subnetDomainMap.get(l.subnetId);
@@ -363,7 +384,7 @@ function syncDhcpDnsRecords(db, leases) {
     }
   }
 
-  // Clean up DHCP records that no longer have a matching lease
+  // Clean up DHCP records that no longer have a matching lease/reservation
   const staleRecords = db.prepare("SELECT id FROM dns_records WHERE source = 'dhcp'").all();
   for (const r of staleRecords) {
     if (!activeRecordIds.has(r.id)) {
@@ -379,11 +400,14 @@ function syncDhcpDnsRecords(db, leases) {
 }
 
 /**
- * Orchestrator: regenerate all DHCP configs.
+ * Orchestrator: regenerate all DHCP configs and sync DNS records.
  */
 export function regenerateDhcpConfigs(db) {
   const confChanged = regenerateScopeConfigs(db);
   const resChanged = regenerateReservations(db);
+  // Sync DHCP hostnames (leases + reservations) into dns_records
+  const leases = db.prepare('SELECT ip_address as ip, hostname, subnet_id as subnetId FROM dhcp_leases WHERE hostname IS NOT NULL').all();
+  syncDhcpDnsRecords(db, leases);
   if (confChanged || resChanged) {
     signalDnsmasq();
   }

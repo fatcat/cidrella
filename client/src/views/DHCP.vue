@@ -4,6 +4,7 @@
     <div class="section-header">
       <Button label="Add Custom Option" icon="pi pi-plus" size="small" severity="secondary"
               @click="customOptionForm = { code: null, label: '', name: '', type: 'text', description: '' }; showCustomOptionDialog = true" />
+      <Button label="Apply Config" icon="pi pi-refresh" size="small" data-track="sys-apply-dhcp-config" @click="applyConfig" />
       <Button label="Save Defaults" icon="pi pi-save" size="small" data-track="dhcp-save-defaults" @click="saveDefaults" :loading="savingDefaults" />
     </div>
     <DataTable :value="optionDefaultRows" size="small" :loading="loadingOptions"
@@ -292,7 +293,6 @@ onMounted(async () => {
   await loadOptions();
 });
 
-defineExpose({ applyConfig });
 </script>
 
 <style scoped>

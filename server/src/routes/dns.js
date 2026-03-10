@@ -143,10 +143,8 @@ router.get('/zones', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   const zones = db.prepare(`
     SELECT z.*,
-      (SELECT COUNT(*) FROM dns_records WHERE zone_id = z.id) as record_count,
-      f.name as folder_name
+      (SELECT COUNT(*) FROM dns_records WHERE zone_id = z.id) as record_count
     FROM dns_zones z
-    LEFT JOIN folders f ON f.id = z.folder_id
     ORDER BY z.type, z.name
   `).all();
   res.json(zones);
@@ -171,7 +169,7 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
 
 // POST /api/dns/zones
 router.post('/zones', requirePerm('dns:write'), (req, res) => {
-  const { name, type, subnet_id, folder_id, description,
+  const { name, type, subnet_id, description,
           soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Zone name is required' });
@@ -192,16 +190,11 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     if (!subnet) return res.status(400).json({ error: 'Referenced subnet not found' });
   }
 
-  if (folder_id) {
-    const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
-    if (!folder) return res.status(400).json({ error: 'Referenced organization not found' });
-  }
-
   const result = db.prepare(`
-    INSERT INTO dns_zones (name, type, subnet_id, folder_id, description,
+    INSERT INTO dns_zones (name, type, subnet_id, description,
       soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, type, subnet_id || null, folder_id || null, description || null,
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, type, subnet_id || null, description || null,
     soa_primary_ns || 'ns1.localhost', soa_admin_email || 'admin.localhost',
     soa_refresh ?? 3600, soa_retry ?? 900, soa_expire ?? 604800, soa_minimum_ttl ?? 86400);
 
@@ -214,7 +207,7 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
 
 // PUT /api/dns/zones/:id
 router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
-  const { name, description, enabled, folder_id,
+  const { name, description, enabled,
           soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl } = req.body;
   const db = getDb();
 
@@ -230,7 +223,7 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
   const newSerial = (zone.soa_serial || 0) + 1;
 
   db.prepare(`
-    UPDATE dns_zones SET name = ?, description = ?, enabled = ?, folder_id = ?,
+    UPDATE dns_zones SET name = ?, description = ?, enabled = ?,
       soa_primary_ns = ?, soa_admin_email = ?, soa_serial = ?,
       soa_refresh = ?, soa_retry = ?, soa_expire = ?, soa_minimum_ttl = ?,
       updated_at = datetime('now')
@@ -239,7 +232,6 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
     name ?? zone.name,
     description !== undefined ? description : zone.description,
     enabled !== undefined ? (enabled ? 1 : 0) : zone.enabled,
-    folder_id !== undefined ? (folder_id || null) : zone.folder_id,
     soa_primary_ns !== undefined ? soa_primary_ns : zone.soa_primary_ns,
     soa_admin_email !== undefined ? soa_admin_email : zone.soa_admin_email,
     newSerial,
@@ -471,7 +463,7 @@ router.post('/apply', requirePerm('dns:write'), (req, res) => {
 router.get('/forwarders', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
-  let servers = ['8.8.8.8', '1.1.1.1'];
+  let servers = ['8.8.8.8', '9.9.9.9'];
   try {
     if (row?.value) servers = JSON.parse(row.value);
   } catch { /* use defaults */ }

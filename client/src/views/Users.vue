@@ -1,5 +1,9 @@
 <template>
   <div class="users-page" style="display: flex; flex-direction: column; height: 100%;">
+    <div class="card-header">
+      <h3>Users</h3>
+      <Button label="Add User" icon="pi pi-plus" size="small" data-track="sys-add-user" @click="openCreateDialog()" />
+    </div>
     <DataTable :value="users" :loading="loading" stripedRows size="small" emptyMessage="No users found."
                :paginator="users.length > 256" :rows="256"
                :rowsPerPageOptions="[64, 128, 256, 512]"
@@ -283,10 +287,19 @@ function copyPassword() {
 
 onMounted(loadUsers);
 
-defineExpose({ openCreateDialog });
+
 </script>
 
 <style scoped>
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.card-header h3 {
+  margin: 0;
+}
 .section-header {
   display: flex;
   justify-content: flex-end;
