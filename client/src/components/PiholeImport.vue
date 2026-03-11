@@ -67,8 +67,8 @@
       <div v-if="importResults" class="pihole-results">
         <Message severity="success" :closable="false">
           Import complete:
-          {{ importResults.a.created }} A,
-          {{ importResults.cname.created }} CNAME,
+          {{ importResults.a.created }} A created<template v-if="importResults.a.updated">, {{ importResults.a.updated }} updated</template>;
+          {{ importResults.cname.created }} CNAME created<template v-if="importResults.cname.updated">, {{ importResults.cname.updated }} updated</template>;
           {{ importResults.dhcp.created }} DHCP created
           <template v-if="importResults.dhcp.noSubnet > 0">
             ({{ importResults.dhcp.noSubnet }} DHCP skipped — no matching subnet)

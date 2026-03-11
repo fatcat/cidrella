@@ -419,25 +419,10 @@ const emit = defineEmits(['saved']);
 async function save() {
   saving.value = true;
   try {
-    // Don't persist options that match inherited subnet values —
-    // the config generator inherits them dynamically so they stay in sync.
-    const subnet = subnetsList.value.find(s => s.id === form.value.subnet_id);
-    const subnetGateway = subnet?.gateway_address || null;
-    const subnetMask = subnet?.cidr ? computeMask(subnet.cidr) : null;
-    const subnetDomain = subnet?.domain_name || null;
-
-    function isInherited(code) {
-      const val = String(form.value.optionValues[code] || '');
-      if (code === 3 && subnetGateway && val === subnetGateway) return true;
-      if (code === 1 && subnetMask && val === subnetMask) return true;
-      if (code === 15 && subnetDomain && val === subnetDomain) return true;
-      if (code === 119 && subnetDomain && val === subnetDomain) return true;
-      return false;
-    }
-
+    // Send all selected options to the server — the server strips inherited
+    // values using fresh subnet data from the DB (avoids stale client-side list).
     const options = form.value.selectedOptions
       .filter(code => form.value.optionValues[code] != null && form.value.optionValues[code] !== '')
-      .filter(code => !isInherited(code))
       .map(code => ({ code, value: String(form.value.optionValues[code]) }));
 
     const payload = {

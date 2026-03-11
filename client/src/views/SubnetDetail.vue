@@ -92,7 +92,11 @@
                    :totalRecords="totalIps"
                    :first="(currentPage - 1) * currentPageSize"
                    :rowsPerPageOptions="rowsPerPageOptions"
-                   @page="onLazyPage">
+                   :sortField="sortField"
+                   :sortOrder="sortOrder"
+                   removableSort
+                   @page="onLazyPage"
+                   @sort="onLazySort">
           <Column field="ip_address" header="Address" sortable style="width: 10rem">
             <template #body="{ data }">
               <span class="ip-mono">{{ data.ip_address }}</span>
@@ -442,6 +446,8 @@ const currentPage = ref(1);
 const currentPageSize = ref(256);
 const totalIps = ref(0);
 const totalPages = ref(0);
+const sortField = ref(null);
+const sortOrder = ref(1);
 const loadingPage = ref(false);
 
 // Persistence helper
@@ -1030,7 +1036,12 @@ const gridContextMenuItems = computed(() => {
 async function loadIpPage(page, pageSize, { skipCache = false } = {}) {
   loadingPage.value = true;
   try {
-    const detail = await store.getSubnetDetail(props.subnetId, page, pageSize, { skipCache, search: ipSearch.value });
+    const detail = await store.getSubnetDetail(props.subnetId, page, pageSize, {
+      skipCache,
+      search: ipSearch.value,
+      sortField: sortField.value,
+      sortOrder: sortOrder.value
+    });
     // Guard: if subnetId changed while we were loading, discard stale result
     if (detail.subnet.id !== Number(props.subnetId)) return;
     subnet.value = detail.subnet;
@@ -1099,11 +1110,20 @@ function onLazyPage(event) {
   loadIpPage(newPage, event.rows);
 }
 
+function onLazySort(event) {
+  sortField.value = event.sortField || null;
+  sortOrder.value = event.sortOrder ?? 1;
+  currentPage.value = 1;
+  loadIpPage(1, currentPageSize.value);
+}
+
 // Watch for subnetId changes — debounce rapid clicks
 let _loadTimer = null;
 watch(() => props.subnetId, (newId, oldId) => {
   gridSelection.value = new Set();
   ipSearch.value = '';
+  sortField.value = null;
+  sortOrder.value = 1;
   if (_loadTimer) clearTimeout(_loadTimer);
   if (!newId) {
     subnet.value = null;

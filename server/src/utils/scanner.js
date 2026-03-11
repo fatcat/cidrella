@@ -264,6 +264,7 @@ export async function startScan(db, scanId, subnetId) {
         is_online = ?,
         last_seen_at = CASE WHEN ? = 1 THEN datetime('now') ELSE last_seen_at END,
         last_seen_mac = CASE WHEN ? IS NOT NULL THEN ? ELSE last_seen_mac END,
+        mac_address = CASE WHEN ? IS NOT NULL AND (mac_address IS NULL OR mac_address = '') THEN ? ELSE mac_address END,
         updated_at = datetime('now')
       WHERE subnet_id = ? AND ip_address = ?
     `);
@@ -273,6 +274,7 @@ export async function startScan(db, scanId, subnetId) {
       updateIpOnline.run(
         sr.responded ? 1 : 0,
         sr.responded ? 1 : 0,
+        sr.mac_address, sr.mac_address,
         sr.mac_address, sr.mac_address,
         subnetId, sr.ip_address
       );

@@ -1386,6 +1386,33 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const totalIps = parsed.broadcastLong - parsed.networkLong + 1;
   const search = (req.query.search || '').trim().toLowerCase();
 
+  // Sort params
+  const SORTABLE_FIELDS = new Set(['ip_address', 'status', 'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at', 'dhcp_expires_at']);
+  const reqSortField = SORTABLE_FIELDS.has(req.query.sortField) ? req.query.sortField : null;
+  const reqSortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
+
+  function sortIps(arr, field, order) {
+    if (!field) return;
+    arr.sort((a, b) => {
+      let va, vb;
+      if (field === 'ip_address') {
+        va = ipToLong(a.ip_address);
+        vb = ipToLong(b.ip_address);
+      } else {
+        va = a[field];
+        vb = b[field];
+      }
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      if (typeof va === 'string') va = va.toLowerCase();
+      if (typeof vb === 'string') vb = vb.toLowerCase();
+      if (va < vb) return -1 * order;
+      if (va > vb) return 1 * order;
+      return 0;
+    });
+  }
+
   // ── Search mode: return only matching persisted IPs (no virtual fill) ──
   if (search) {
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
@@ -1460,8 +1487,8 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       }
     }
 
-    // Sort by IP
-    matched.sort((a, b) => ipToLong(a.ip_address) - ipToLong(b.ip_address));
+    // Sort results
+    sortIps(matched, reqSortField || 'ip_address', reqSortField ? reqSortOrder : 1);
 
     const searchTotal = matched.length;
     const searchTotalPages = Math.ceil(searchTotal / pageSize) || 1;
@@ -1470,6 +1497,78 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     const ips = matched.slice(start, start + pageSize);
 
     return res.json({ subnet, ips, ranges, totalIps: searchTotal, page, pageSize, totalPages: searchTotalPages, search });
+  }
+
+  // ── Sorted mode (non-IP field): persisted IPs only ──
+  if (reqSortField && reqSortField !== 'ip_address') {
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+
+    const lastScan = db.prepare(`
+      SELECT id FROM network_scans WHERE subnet_id = ? AND status = 'completed'
+      ORDER BY completed_at DESC LIMIT 1
+    `).get(req.params.id);
+
+    let allPersisted;
+    if (lastScan) {
+      allPersisted = db.prepare(`
+        SELECT ip.*,
+          sr.responded as scan_responded, sr.mac_address as scan_mac,
+          sr.is_conflict as scan_conflict, sr.conflict_reason as scan_conflict_reason,
+          CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+          dl.expires_at as dhcp_expires_at
+        FROM ip_addresses ip
+        LEFT JOIN scan_results sr ON sr.scan_id = ? AND sr.ip_address = ip.ip_address
+        LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+        LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+        WHERE ip.subnet_id = ?
+      `).all(lastScan.id, req.params.id);
+    } else {
+      allPersisted = db.prepare(`
+        SELECT ip.*,
+          NULL as scan_responded, NULL as scan_mac,
+          NULL as scan_conflict, NULL as scan_conflict_reason,
+          CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+          dl.expires_at as dhcp_expires_at
+        FROM ip_addresses ip
+        LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+        LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+        WHERE ip.subnet_id = ?
+      `).all(req.params.id);
+    }
+
+    // Ranges
+    const ranges = db.prepare(`
+      SELECT r.*, rt.name as range_type_name, rt.color as range_type_color, rt.is_system as range_type_is_system
+      FROM ranges r JOIN range_types rt ON r.range_type_id = rt.id
+      WHERE r.subnet_id = ? ORDER BY r.start_ip
+    `).all(req.params.id);
+
+    const rangeLookup = ranges.map(r => ({
+      ...r, startLong: ipToLong(r.start_ip), endLong: ipToLong(r.end_ip)
+    })).sort((a, b) => a.startLong - b.startLong);
+
+    // Vendor lookup + range enrichment
+    const allMacs = allPersisted.map(ip => ip.mac_address || ip.last_seen_mac || ip.scan_mac).filter(Boolean);
+    const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
+    for (const ip of allPersisted) {
+      const mac = ip.mac_address || ip.last_seen_mac || ip.scan_mac;
+      ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
+      const ipLong = ipToLong(ip.ip_address);
+      const range = rangeLookup.find(r => ipLong >= r.startLong && ipLong <= r.endLong);
+      ip.range_type_id = range?.range_type_id || null;
+      ip.range_type_name = range?.range_type_name || null;
+      ip.range_type_color = range?.range_type_color || null;
+    }
+
+    sortIps(allPersisted, reqSortField, reqSortOrder);
+
+    const sortedTotal = allPersisted.length;
+    const sortedTotalPages = Math.ceil(sortedTotal / pageSize) || 1;
+    const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), sortedTotalPages);
+    const start = (page - 1) * pageSize;
+    const ips = allPersisted.slice(start, start + pageSize);
+
+    return res.json({ subnet, ips, ranges, totalIps: sortedTotal, page, pageSize, totalPages: sortedTotalPages, sorted: true });
   }
 
   // ── Normal mode: virtual IPs with pagination ──

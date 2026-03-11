@@ -131,7 +131,14 @@ function detectZoneName(hosts, cnames) {
       common.unshift(segment);
     } else break;
   }
-  return common.length > 0 ? common.join('.') : null;
+  if (common.length === 0) return null;
+  const zone = common.join('.');
+  // If the detected zone equals a full hostname, drop the first label
+  // (e.g. single host "hass.the-mcnultys.org" → "the-mcnultys.org", not the full FQDN)
+  if (allNames.some(n => n === zone) && common.length > 1) {
+    return common.slice(1).join('.');
+  }
+  return zone;
 }
 
 /** Strip zone suffix from hostname to get record name */
@@ -351,42 +358,76 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(zoneId);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
-  const results = { a: { created: 0, skipped: 0, failed: 0 }, cname: { created: 0, skipped: 0, failed: 0 }, dhcp: { created: 0, skipped: 0, failed: 0, noSubnet: 0 } };
+  const results = {
+    a: { created: 0, updated: 0, skipped: 0, failed: 0 },
+    cname: { created: 0, updated: 0, skipped: 0, failed: 0 },
+    dhcp: { created: 0, skipped: 0, failed: 0, noSubnet: 0 }
+  };
 
-  const existingRecords = new Set(
-    db.prepare('SELECT type, name, value FROM dns_records WHERE zone_id = ?').all(zoneId)
-      .map(r => `${r.type}|${r.name}|${r.value}`)
-  );
+  // Build lookup maps: exact match set + name+type→record for merge/update
+  const existingExact = new Set();
+  const existingByNameType = new Map(); // "type|name" → { id, value }
+  for (const r of db.prepare('SELECT id, type, name, value FROM dns_records WHERE zone_id = ?').all(zoneId)) {
+    existingExact.add(`${r.type}|${r.name}|${r.value}`);
+    existingByNameType.set(`${r.type}|${r.name}`, { id: r.id, value: r.value });
+  }
 
   const insertRecord = db.prepare(
     'INSERT INTO dns_records (zone_id, name, type, value) VALUES (?, ?, ?, ?)'
   );
+  const updateRecord = db.prepare(
+    "UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?"
+  );
 
-  // Import A records
+  // Import A records — merge: skip exact dupes, update if same name but different value
   if (hosts && hosts.length > 0) {
     for (const h of hosts) {
       const name = recordName(h.hostname, zone.name);
-      const key = `A|${name}|${h.ip}`;
-      if (existingRecords.has(key)) { results.a.skipped++; continue; }
+      const exactKey = `A|${name}|${h.ip}`;
+      if (existingExact.has(exactKey)) { results.a.skipped++; continue; }
+
+      const nameKey = `A|${name}`;
+      const existing = existingByNameType.get(nameKey);
       try {
-        insertRecord.run(zoneId, name, 'A', h.ip);
-        syncDnsToIp(db, name, h.ip, zone.name);
-        existingRecords.add(key);
-        results.a.created++;
+        if (existing) {
+          // Same name, different value → update existing record
+          updateRecord.run(h.ip, existing.id);
+          existingExact.delete(`A|${name}|${existing.value}`);
+          existingExact.add(exactKey);
+          existingByNameType.set(nameKey, { id: existing.id, value: h.ip });
+          syncDnsToIp(db, name, h.ip, zone.name);
+          results.a.updated++;
+        } else {
+          insertRecord.run(zoneId, name, 'A', h.ip);
+          existingExact.add(exactKey);
+          syncDnsToIp(db, name, h.ip, zone.name);
+          results.a.created++;
+        }
       } catch { results.a.failed++; }
     }
   }
 
-  // Import CNAME records
+  // Import CNAME records — merge: skip exact dupes, update if same name but different target
   if (cnames && cnames.length > 0) {
     for (const c of cnames) {
       const name = recordName(c.alias, zone.name);
-      const key = `CNAME|${name}|${c.target}`;
-      if (existingRecords.has(key)) { results.cname.skipped++; continue; }
+      const exactKey = `CNAME|${name}|${c.target}`;
+      if (existingExact.has(exactKey)) { results.cname.skipped++; continue; }
+
+      const nameKey = `CNAME|${name}`;
+      const existing = existingByNameType.get(nameKey);
       try {
-        insertRecord.run(zoneId, name, 'CNAME', c.target);
-        existingRecords.add(key);
-        results.cname.created++;
+        if (existing) {
+          updateRecord.run(c.target, existing.id);
+          existingExact.delete(`CNAME|${name}|${existing.value}`);
+          existingExact.add(exactKey);
+          existingByNameType.set(nameKey, { id: existing.id, value: c.target });
+          results.cname.updated++;
+        } else {
+          insertRecord.run(zoneId, name, 'CNAME', c.target);
+          existingExact.add(exactKey);
+          results.cname.created++;
+        }
       } catch { results.cname.failed++; }
     }
   }

@@ -5,6 +5,7 @@ import { isIpInSubnet, ipToLong, getServerIpForSubnet } from '../utils/ip.js';
 import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
 import { syncDhcpReservationToIp, clearDhcpReservationFromIp } from '../utils/ip-sync.js';
+import { lookupVendorBatch } from '../utils/mac-vendor.js';
 
 const router = Router();
 
@@ -138,12 +139,26 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
     const scopeId = result.lastInsertRowid;
 
-    // Save scope options if provided (skip option 3 if it matches subnet gateway — inherited dynamically)
+    // Save scope options — skip values that match subnet defaults (inherited dynamically)
     if (Array.isArray(options) && options.length > 0) {
+      const inherited = {};
+      if (subnet.gateway_address) inherited[3] = subnet.gateway_address;
+      if (subnet.cidr) {
+        const pfx = parseInt(subnet.cidr.split('/')[1], 10);
+        if (pfx >= 0 && pfx <= 32) {
+          const m = pfx === 0 ? 0 : (0xFFFFFFFF << (32 - pfx)) >>> 0;
+          inherited[1] = [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255].join('.');
+        }
+      }
+      if (subnet.domain_name) {
+        inherited[15] = subnet.domain_name;
+        inherited[119] = subnet.domain_name;
+      }
+
       const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
       for (const opt of options) {
         if (opt.code && opt.value != null && opt.value !== '') {
-          if (opt.code === 3 && subnet.gateway_address && String(opt.value) === subnet.gateway_address) continue;
+          if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
           insertOpt.run(scopeId, opt.code, String(opt.value));
         }
       }
@@ -258,14 +273,31 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       );
     }
 
-    // Replace scope options if provided (skip option 3 if it matches subnet gateway — inherited dynamically)
+    // Replace scope options if provided — skip values that match subnet defaults (inherited dynamically)
     if (Array.isArray(options)) {
-      const subnet = db.prepare('SELECT gateway_address FROM subnets WHERE id = ?').get(scope.subnet_id);
+      const subnet = db.prepare('SELECT gateway_address, cidr, domain_name FROM subnets WHERE id = ?').get(scope.subnet_id);
       db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scope.id);
       const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
+
+      // Compute inherited values from subnet
+      const inherited = {};
+      if (subnet?.gateway_address) inherited[3] = subnet.gateway_address;
+      if (subnet?.cidr) {
+        const pfx = parseInt(subnet.cidr.split('/')[1], 10);
+        if (pfx >= 0 && pfx <= 32) {
+          const m = pfx === 0 ? 0 : (0xFFFFFFFF << (32 - pfx)) >>> 0;
+          inherited[1] = [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255].join('.');
+        }
+      }
+      if (subnet?.domain_name) {
+        inherited[15] = subnet.domain_name;
+        inherited[119] = subnet.domain_name;
+      }
+
       for (const opt of options) {
         if (opt.code && opt.value != null && opt.value !== '') {
-          if (opt.code === 3 && subnet?.gateway_address && String(opt.value) === subnet.gateway_address) continue;
+          // Skip if value matches what the config generator inherits from the subnet
+          if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
           insertOpt.run(scope.id, opt.code, String(opt.value));
         }
       }
@@ -552,6 +584,13 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
     const bLong = b.ip_address.split('.').reduce((acc, o) => (acc << 8) + parseInt(o), 0);
     return aLong - bLong;
   });
+
+  // Vendor lookup
+  const allMacs = unified.map(e => e.mac_address).filter(Boolean);
+  const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
+  for (const entry of unified) {
+    entry.vendor = entry.mac_address ? (vendorMap.get(entry.mac_address) || null) : null;
+  }
 
   res.json(unified);
 });

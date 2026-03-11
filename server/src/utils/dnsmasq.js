@@ -224,17 +224,8 @@ export function restartDnsmasq() {
 
   try {
     // Docker / other: kill the process and let the supervisor restart it
-    const pid = parseInt(fs.readFileSync(DNSMASQ_PID, 'utf-8').trim(), 10);
-    if (pid) {
-      // Verify the PID is actually a dnsmasq process before signaling
-      const comm = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { stdio: 'pipe', encoding: 'utf-8' }).trim();
-      if (comm === 'dnsmasq') {
-        execFileSync('sudo', ['kill', '-TERM', String(pid)]);
-        console.log('dnsmasq terminated (supervisor will restart)');
-      } else {
-        console.warn(`PID ${pid} is not dnsmasq (found: ${comm}), skipping kill`);
-      }
-    }
+    execFileSync('sudo', ['pkill', '-TERM', '-x', 'dnsmasq'], { stdio: 'pipe' });
+    console.log('dnsmasq terminated (supervisor will restart)');
   } catch {
     console.warn('Could not restart dnsmasq');
   }

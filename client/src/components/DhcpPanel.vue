@@ -59,7 +59,7 @@
             <span class="info-bar-sep"></span>
             <span class="info-bar-pair"><span class="info-bar-label">Range</span> <span class="info-bar-val">{{ selectedScope.start_ip }} — {{ selectedScope.end_ip }}</span></span>
             <span class="info-bar-sep"></span>
-            <span class="info-bar-pair"><span class="info-bar-label">Lease</span> <span class="info-bar-val">{{ selectedScope.lease_time }}</span></span>
+            <span class="info-bar-pair"><span class="info-bar-label">Lease</span> <span class="info-bar-val">{{ scopeLeaseTime }}</span></span>
             <span class="info-bar-sep"></span>
             <span v-if="scopeGateway" class="info-bar-pair"><span class="info-bar-label">Gateway</span> <span class="info-bar-val">{{ scopeGateway }}</span></span>
             <span v-if="scopeGateway" class="info-bar-sep"></span>
@@ -90,11 +90,14 @@
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}</span>
+                <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reservation' : 'Dynamic' }}</span>
               </template>
             </Column>
             <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
               <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
+            </Column>
+            <Column field="vendor" header="Vendor" sortable style="min-width: 8rem">
+              <template #body="{ data }">{{ data.vendor || '—' }}</template>
             </Column>
             <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
               <template #body="{ data }">{{ displayHostname(data.hostname, selectedScope?.subnet_domain_name) }}</template>
@@ -135,11 +138,14 @@
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reserved' : 'Dynamic' }}</span>
+                <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reservation' : 'Dynamic' }}</span>
               </template>
             </Column>
             <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
               <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
+            </Column>
+            <Column field="vendor" header="Vendor" sortable style="min-width: 8rem">
+              <template #body="{ data }">{{ data.vendor || '—' }}</template>
             </Column>
             <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
               <template #body="{ data }">{{ displayHostname(data.hostname, data.subnet_domain_name) }}</template>
@@ -343,8 +349,19 @@ const filteredLeases = computed(() => store.leases);
 const scopeGateway = computed(() => {
   const s = selectedScope.value;
   if (!s) return null;
+  // Check scope options first (option 3), then legacy column, then subnet fallback
   const opt3 = s.options?.find(o => o.option_code === 3);
-  return opt3?.value || s.gateway || s.subnet_gateway || null;
+  if (opt3?.value) return opt3.value;
+  return s.gateway || s.subnet_gateway || null;
+});
+
+const scopeLeaseTime = computed(() => {
+  const s = selectedScope.value;
+  if (!s) return null;
+  // Option 51 overrides the scope's lease_time column
+  const opt51 = s.options?.find(o => o.option_code === 51);
+  if (opt51?.value) return `${opt51.value}s`;
+  return s.lease_time || null;
 });
 
 // Filter leases for selected scope
@@ -375,6 +392,8 @@ function formatDate(iso) {
 // Scope dialog methods
 async function openScopeDialog(scope = null) {
   if (scope) {
+    // Ensure the header reflects this scope while editing
+    selectedScope.value = scope;
     scopeDialogRef.value.openEdit(scope);
   } else {
     scopeDialogRef.value.openNewWithPicker();
