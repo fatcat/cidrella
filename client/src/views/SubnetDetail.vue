@@ -285,10 +285,10 @@
     <!-- Scope Dialog (shared component) -->
     <ScopeDialog ref="scopeDialogRef" @saved="reloadData" />
 
-    <!-- Reserve IP Note Dialog -->
-    <Dialog v-model:visible="showReserveDialog" header="Reserve IP Address(es)" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
+    <!-- Lock IP Dialog -->
+    <Dialog v-model:visible="showReserveDialog" header="Lock IP Address(es)" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
       <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
-        Reserved IPs cannot be used for DHCP or static assignment.
+        Locked IPs are held and cannot be used for DHCP or static assignment.
       </p>
       <div class="form-grid">
         <div class="field">
@@ -322,7 +322,7 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
-        <Button label="Reserve" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
+        <Button label="Lock" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
       </template>
     </Dialog>
 
@@ -594,8 +594,14 @@ function computeIpState(data) {
     return { status: 'in use', statusSeverity: 'danger', type: 'gateway', typeSeverity: 'warn' };
   }
 
-  // Rogue: responded to scan but has no assignment, reservation, lease, or DNS record
+  // Rogue: scanner flagged as conflict, OR responded but has no assignment/reservation/lease/DNS
   const hasActiveLease = data.dhcp_expires_at && !isLeaseExpired;
+  if (data.scan_conflict) {
+    return {
+      status: 'in use', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger',
+      tooltip: data.scan_conflict_reason || null
+    };
+  }
   if ((data.is_online || data.scan_responded)
       && data.status === 'available' && !data.has_dhcp_reservation && !data.hostname && !hasActiveLease) {
     return { status: 'in use', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger' };
@@ -616,11 +622,11 @@ function computeIpState(data) {
     return { status: 'available', statusSeverity: 'secondary', type: 'dhcp', typeSeverity: 'secondary' };
   }
 
-  // Reserved (manually held — cannot be used until released)
-  if (data.status === 'reserved') {
+  // Locked (manually held — cannot be used until unlocked)
+  if (data.status === 'locked') {
     return {
       status: 'in use', statusSeverity: 'danger',
-      type: 'reserved', typeSeverity: 'warn',
+      type: 'locked', typeSeverity: 'warn',
       tooltip: data.reservation_note || null
     };
   }
@@ -874,18 +880,18 @@ function buildContextMenuItems(selectedIps) {
       });
     }
 
-    // Reserve / Unreserve (not for system ranges)
+    // Lock / Unlock (not for system ranges)
     if (!isSystemReserved(ip)) {
       items.push({ separator: true });
-      if (ipStatus === 'reserved') {
+      if (ipStatus === 'locked') {
         items.push({
-          label: 'Remove Reservation',
+          label: 'Unlock',
           icon: 'pi pi-unlock',
           command: () => setIpReservation(ip.address, 'available')
         });
       } else {
         items.push({
-          label: `Reserve ${ip.address}`,
+          label: `Lock ${ip.address}`,
           icon: 'pi pi-lock',
           command: () => openReserveDialog(ip.address)
         });
@@ -924,7 +930,7 @@ function buildContextMenuItems(selectedIps) {
       command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
     });
     items.push({
-      label: `Reserve ${firstIp.address} – ${lastIp.address}`,
+      label: `Lock ${firstIp.address} – ${lastIp.address}`,
       icon: 'pi pi-lock',
       command: () => openReserveDialog(firstIp.address, lastIp.address)
     });
@@ -957,14 +963,14 @@ async function confirmReserve() {
   const scanEn = reserveScanEnabled.value;
   showReserveDialog.value = false;
   if (reserveStartIp.value === reserveEndIp.value) {
-    await setIpReservation(reserveStartIp.value, 'reserved', note);
+    await setIpReservation(reserveStartIp.value, 'locked', note);
     if (scanEn !== null) {
       await api.put(`/subnets/${subnet.value.id}/ips/${reserveStartIp.value}/scan-enabled`, { scan_enabled: scanEn });
     }
   } else {
     try {
-      const result = await store.bulkSetIpStatus(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'reserved', note);
-      toast.add({ severity: 'success', summary: `${result.count} IPs reserved`, life: 3000 });
+      const result = await store.bulkSetIpStatus(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'locked', note);
+      toast.add({ severity: 'success', summary: `${result.count} IPs locked`, life: 3000 });
       await reloadData();
     } catch (err) {
       toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -975,7 +981,7 @@ async function confirmReserve() {
 async function setIpReservation(ipAddress, status, note) {
   try {
     await store.setIpStatus(subnet.value.id, ipAddress, status, note);
-    toast.add({ severity: 'success', summary: status === 'reserved' ? 'IP reserved' : 'Reservation removed', life: 3000 });
+    toast.add({ severity: 'success', summary: status === 'locked' ? 'IP locked' : 'IP unlocked', life: 3000 });
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });

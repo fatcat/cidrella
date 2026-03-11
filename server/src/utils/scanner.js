@@ -11,7 +11,7 @@ import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/d
  */
 function arpingIp(ip) {
   return new Promise((resolve) => {
-    execFile('sudo', ['arping', '-c', '1', '-w', '1', ip], { timeout: ARPING_TIMEOUT_MS }, (error, stdout) => {
+    execFile('sudo', ['/usr/sbin/arping', '-c', '1', '-w', '1', ip], { timeout: ARPING_TIMEOUT_MS }, (error, stdout) => {
       if (error) {
         resolve({ responded: false, mac: null });
         return;

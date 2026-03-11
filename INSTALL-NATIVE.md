@@ -43,7 +43,7 @@ sudo bash install.sh --version 0.1.0
 
 The installer is interactive and will:
 
-- Install Node.js 20+ (via NodeSource) if not present
+- Install Node.js 22+ (via NodeSource) if not present
 - Install system dependencies (dnsmasq, build-essential, nmap, arping, etc.)
 - Detect and handle conflicts with systemd-resolved (port 53)
 - Handle existing dnsmasq installations (replace config, include config, or skip)

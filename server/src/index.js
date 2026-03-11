@@ -42,6 +42,7 @@ import { applyInterfaceConfig } from './utils/dnsmasq.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
+import { startPassiveLivenessWatcher } from './utils/passive-liveness.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -71,6 +72,9 @@ async function main() {
 
   // Start DHCP lease file watcher
   startLeaseWatcher(getDb());
+
+  // Start passive liveness watcher (DNS query log → is_online)
+  startPassiveLivenessWatcher(getDb());
 
   // Start blocklist auto-update scheduler
   startBlocklistScheduler();

@@ -12,7 +12,7 @@ import { generateFallbackHostname } from './mac-vendor.js';
  * Find the subnet that contains a given IP address.
  * Returns the most specific (longest prefix) match.
  */
-function findSubnetForIp(db, ip) {
+export function findSubnetForIp(db, ip) {
   const ipLong = ipToLong(ip);
   const subnets = db.prepare(`
     SELECT id, network_address, prefix_length FROM subnets
@@ -34,7 +34,7 @@ function findSubnetForIp(db, ip) {
  * Ensure an ip_addresses row exists for the given IP, then update its metadata.
  * Only updates fields that are provided (non-undefined).
  */
-function upsertIpMeta(db, subnetId, ip, { hostname, mac_address, status } = {}) {
+function upsertIpMeta(db, subnetId, ip, { hostname, mac_address, status, is_online, last_seen_mac } = {}) {
   const existing = db.prepare(
     'SELECT id, hostname, mac_address, status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
@@ -55,6 +55,15 @@ function upsertIpMeta(db, subnetId, ip, { hostname, mac_address, status } = {}) 
       updates.push('status = ?');
       params.push(status);
     }
+    if (is_online !== undefined) {
+      updates.push('is_online = ?');
+      params.push(is_online);
+      updates.push("last_seen_at = datetime('now')");
+    }
+    if (last_seen_mac !== undefined) {
+      updates.push('last_seen_mac = ?');
+      params.push(last_seen_mac);
+    }
 
     if (updates.length > 0) {
       updates.push("updated_at = datetime('now')");
@@ -62,9 +71,10 @@ function upsertIpMeta(db, subnetId, ip, { hostname, mac_address, status } = {}) 
       db.prepare(`UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`).run(...params);
     }
   } else {
-    db.prepare(
-      'INSERT INTO ip_addresses (subnet_id, ip_address, hostname, mac_address, status) VALUES (?, ?, ?, ?, ?)'
-    ).run(subnetId, ip, hostname || null, mac_address || null, status || 'assigned');
+    db.prepare(`
+      INSERT INTO ip_addresses (subnet_id, ip_address, hostname, mac_address, status, is_online, last_seen_at, last_seen_mac)
+      VALUES (?, ?, ?, ?, ?, ?, ${is_online ? "datetime('now')" : 'NULL'}, ?)
+    `).run(subnetId, ip, hostname || null, mac_address || null, status || 'assigned', is_online || 0, last_seen_mac || null);
   }
 }
 
@@ -136,7 +146,9 @@ export function syncLeasesToIps(db, leases) {
     upsertIpMeta(db, l.subnetId, l.ip, {
       hostname: l.hostname || undefined,
       mac_address: l.mac || undefined,
-      status: 'dhcp'
+      status: 'dhcp',
+      is_online: 1,
+      last_seen_mac: l.mac || undefined
     });
   }
 }

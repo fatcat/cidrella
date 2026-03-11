@@ -17,7 +17,7 @@ DATA_DIR="/var/lib/cidrella"
 SERVICE_USER="cidrella"
 REQUESTED_VERSION=""
 FORCE_INSTALL=false
-NODE_MAJOR=20
+NODE_MAJOR=22
 
 # ─── Colors ───────────────────────────────────────────────
 RED='\033[0;31m'

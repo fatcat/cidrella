@@ -17,13 +17,12 @@ Restart=on-failure
 RestartSec=5
 
 # Security hardening
-NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=/var/lib/cidrella
 ProtectHome=true
 PrivateTmp=true
 
-# Network scanning capabilities (nmap, arping, raw sockets)
+# Network scanning requires sudo for arping/nmap (NoNewPrivileges must be off)
 AmbientCapabilities=CAP_NET_RAW
 
 [Install]

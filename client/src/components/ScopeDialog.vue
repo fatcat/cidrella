@@ -241,7 +241,7 @@ async function resolveHostnameField(code) {
 function placeholderForType(type) {
   switch (type) {
     case 'ip': return 'e.g. 192.168.1.1';
-    case 'ip-list': return 'e.g. 8.8.8.8, 9.9.9.9';
+    case 'ip-list': return 'e.g. 192.168.1.1, 192.168.1.2';
     case 'text': return 'Value';
     case 'text-list': return 'e.g. domain1.com, domain2.com';
     case 'number': return '0';
@@ -419,14 +419,25 @@ const emit = defineEmits(['saved']);
 async function save() {
   saving.value = true;
   try {
-    // Don't persist option 3 (gateway) when it matches the subnet's gateway —
-    // the config generator inherits it dynamically so it stays in sync.
+    // Don't persist options that match inherited subnet values —
+    // the config generator inherits them dynamically so they stay in sync.
     const subnet = subnetsList.value.find(s => s.id === form.value.subnet_id);
     const subnetGateway = subnet?.gateway_address || null;
+    const subnetMask = subnet?.cidr ? computeMask(subnet.cidr) : null;
+    const subnetDomain = subnet?.domain_name || null;
+
+    function isInherited(code) {
+      const val = String(form.value.optionValues[code] || '');
+      if (code === 3 && subnetGateway && val === subnetGateway) return true;
+      if (code === 1 && subnetMask && val === subnetMask) return true;
+      if (code === 15 && subnetDomain && val === subnetDomain) return true;
+      if (code === 119 && subnetDomain && val === subnetDomain) return true;
+      return false;
+    }
 
     const options = form.value.selectedOptions
       .filter(code => form.value.optionValues[code] != null && form.value.optionValues[code] !== '')
-      .filter(code => !(code === 3 && subnetGateway && String(form.value.optionValues[3]) === subnetGateway))
+      .filter(code => !isInherited(code))
       .map(code => ({ code, value: String(form.value.optionValues[code]) }));
 
     const payload = {
@@ -514,6 +525,27 @@ async function openEdit(scope) {
       optVals[o.option_code] = o.value;
     }
   }
+
+  // Re-populate inherited values for options not stored in scope_options
+  // Gateway (option 3) is stripped on save when it matches the subnet gateway,
+  // so re-fill it from the subnet so the UI always shows the effective value.
+  if (!selOpts.includes(3) && scope.subnet_gateway) {
+    selOpts.push(3);
+    optVals[3] = scope.subnet_gateway;
+  }
+  if (!selOpts.includes(1) && scope.subnet_cidr) {
+    const mask = computeMask(scope.subnet_cidr);
+    if (mask) { selOpts.push(1); optVals[1] = mask; }
+  }
+  if (!selOpts.includes(15) && scope.subnet_domain_name) {
+    selOpts.push(15);
+    optVals[15] = scope.subnet_domain_name;
+  }
+  if (!selOpts.includes(119) && scope.subnet_domain_name) {
+    selOpts.push(119);
+    optVals[119] = scope.subnet_domain_name;
+  }
+
   form.value = {
     range_id: scope.range_id,
     subnet_id: scope.subnet_id,

@@ -1,4 +1,4 @@
-FROM node:20-alpine AS client-build
+FROM node:22-alpine AS client-build
 
 ARG DEV_TRACKING=0
 
@@ -8,7 +8,7 @@ RUN npm install
 COPY client/ ./
 RUN VITE_TRACKING=$DEV_TRACKING npx vite build
 
-FROM node:20-alpine
+FROM node:22-alpine
 
 # s6-overlay version
 ARG S6_OVERLAY_VERSION=3.2.0.2

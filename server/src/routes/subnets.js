@@ -696,10 +696,10 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     // Reserve new gateway IP
     const newGwIp = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, gateway_address);
     if (newGwIp) {
-      db.prepare("UPDATE ip_addresses SET status = 'reserved', reservation_note = 'Default gateway', updated_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?")
+      db.prepare("UPDATE ip_addresses SET status = 'locked', reservation_note = 'Default gateway', updated_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?")
         .run(subnet.id, gateway_address);
     } else {
-      db.prepare("INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, 'reserved', 'Default gateway')")
+      db.prepare("INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, 'locked', 'Default gateway')")
         .run(subnet.id, gateway_address);
     }
   }
@@ -1190,7 +1190,7 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
       const gwLong = gw ? ipToLong(gw) : null;
 
       for (let ipLong = ipStart; ipLong <= ipEnd; ipLong++) {
-        const ipStatus = (gwLong !== null && ipLong === gwLong) ? 'reserved' : 'available';
+        const ipStatus = (gwLong !== null && ipLong === gwLong) ? 'locked' : 'available';
         insertIp.run(subnet.id, longToIp(ipLong), ipStatus);
       }
     }
@@ -1400,6 +1400,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       allPersisted = db.prepare(`
         SELECT ip.*,
           sr.responded as scan_responded, sr.mac_address as scan_mac,
+          sr.is_conflict as scan_conflict, sr.conflict_reason as scan_conflict_reason,
           CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
           dl.expires_at as dhcp_expires_at
         FROM ip_addresses ip
@@ -1412,6 +1413,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       allPersisted = db.prepare(`
         SELECT ip.*,
           NULL as scan_responded, NULL as scan_mac,
+          NULL as scan_conflict, NULL as scan_conflict_reason,
           CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
           dl.expires_at as dhcp_expires_at
         FROM ip_addresses ip
@@ -1494,6 +1496,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     allPersisted = db.prepare(`
       SELECT ip.*,
         sr.responded as scan_responded, sr.mac_address as scan_mac,
+        sr.is_conflict as scan_conflict, sr.conflict_reason as scan_conflict_reason,
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
         dl.expires_at as dhcp_expires_at
       FROM ip_addresses ip
@@ -1506,6 +1509,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     allPersisted = db.prepare(`
       SELECT ip.*,
         NULL as scan_responded, NULL as scan_mac,
+        NULL as scan_conflict, NULL as scan_conflict_reason,
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
         dl.expires_at as dhcp_expires_at
       FROM ip_addresses ip
@@ -1585,7 +1589,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       ips.push({
         ip_address: addr,
         subnet_id: subnet.id,
-        status: (isGw || isNetwork || isBroadcast) ? 'reserved' : 'available',
+        status: (isGw || isNetwork || isBroadcast) ? 'locked' : 'available',
         hostname: null,
         mac_address: null,
         is_online: sr?.responded ? 1 : 0,
@@ -1593,6 +1597,8 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
         last_seen_mac: sr?.mac_address || null,
         scan_responded: sr?.responded ?? null,
         scan_mac: sr?.mac_address || null,
+        scan_conflict: sr?.is_conflict ?? null,
+        scan_conflict_reason: sr?.conflict_reason || null,
         has_dhcp_reservation: 0,
         dhcp_expires_at: null,
         range_type_id: match?.range_type_id || null,
@@ -1621,7 +1627,7 @@ router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((r
 
   const { start_ip, end_ip, status, note } = req.body;
   if (!start_ip || !end_ip) return res.status(400).json({ error: 'start_ip and end_ip are required' });
-  if (!['available', 'reserved', 'assigned'].includes(status)) {
+  if (!['available', 'locked', 'assigned'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
 
@@ -1630,7 +1636,7 @@ router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((r
   if (startLong > endLong) return res.status(400).json({ error: 'start_ip must be <= end_ip' });
   if (endLong - startLong > 1024) return res.status(400).json({ error: 'Range too large (max 1024 IPs)' });
 
-  const reservationNote = status === 'reserved' ? (note || null) : null;
+  const reservationNote = status === 'locked' ? (note || null) : null;
   const updated = [];
 
   const upsert = db.transaction(() => {
@@ -1661,12 +1667,12 @@ router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((re
 
   const ipAddress = req.params.ip;
   const { status, note } = req.body;
-  if (!['available', 'reserved', 'assigned'].includes(status)) {
+  if (!['available', 'locked', 'assigned'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
 
-  // When reserving, store the note; when unreserving, clear it
-  const reservationNote = status === 'reserved' ? (note || null) : null;
+  // When locking, store the note; when unlocking, clear it
+  const reservationNote = status === 'locked' ? (note || null) : null;
 
   // Check if IP exists in persisted table
   const existing = db.prepare('SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, ipAddress);

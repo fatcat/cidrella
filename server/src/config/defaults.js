@@ -11,11 +11,11 @@ export const DEFAULTS = {
     soa_refresh:     3600,
     soa_retry:       900,
     soa_expire:      604800,
-    soa_minimum_ttl: 900,
+    soa_minimum_ttl: 1800,
     soa_primary_ns:  'ns1.localhost',
     soa_admin_email: 'admin.localhost',
   },
-  default_lease_time:      '24h',
+  default_lease_time:      '1h',
   default_gateway_position: 'first',
   subnet_name_template:    '%1.%2.%3.%4/%bitmask',
   default_scan_interval:   '',
@@ -53,6 +53,9 @@ export const ARPING_TIMEOUT_MS        = 5000;
 export const PING_TIMEOUT_MS          = 1500;
 export const AUDIT_PRUNE_INTERVAL_MS  = 6 * 60 * 60 * 1000; // 6 hours
 export const DHCP_LEASE_WATCH_MS      = 10000;               // 10 seconds
+export const PASSIVE_LIVENESS_POLL_MS     = 5000;            // 5 seconds
+export const PASSIVE_LIVENESS_DEBOUNCE_MS = 60000;           // 60 seconds per IP
+export const PASSIVE_LIVENESS_STALE_MS    = 600000;          // 10 minutes → mark offline
 export const BLOCKLIST_DOWNLOAD_TIMEOUT_MS = 60000;
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const UPDATE_CHECK_DELAY_MS    = 30000;               // 30 seconds

@@ -269,7 +269,7 @@ async function saveDefaults() {
 function placeholderForType(type) {
   switch (type) {
     case 'ip': return 'e.g. 192.168.1.1';
-    case 'ip-list': return 'e.g. 8.8.8.8, 9.9.9.9';
+    case 'ip-list': return 'e.g. 192.168.1.1, 192.168.1.2';
     case 'text': return 'Value';
     case 'text-list': return 'e.g. domain1.com, domain2.com';
     case 'number': return '0';

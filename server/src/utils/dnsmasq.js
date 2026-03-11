@@ -289,7 +289,10 @@ export function applyInterfaceConfig(db) {
   const hasExplicitConfig = Object.keys(ifaceConfig).length > 0;
 
   if (hasExplicitConfig) {
-    // User has configured specific interfaces — use those
+    // User has configured specific interfaces — use those.
+    // Every active interface gets interface= so dnsmasq listens on it
+    // (bind-dynamic restricts to interface= list when any are present).
+    // no-dhcp-interface= selectively disables DHCP per interface.
     for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
       if (!cfg.dns && !cfg.dhcp) continue;
 
@@ -302,10 +305,8 @@ export function applyInterfaceConfig(db) {
         }
       }
 
-      if (cfg.dhcp && dhcpEnabled) {
-        // interface= is required for dnsmasq to associate DHCP broadcasts with this interface
-        newDirectives.push(`interface=${ifName}`);
-      } else {
+      newDirectives.push(`interface=${ifName}`);
+      if (!cfg.dhcp || !dhcpEnabled) {
         newDirectives.push(`no-dhcp-interface=${ifName}`);
       }
     }
