@@ -1,7 +1,7 @@
 <template>
   <header class="header-bar">
     <div class="header-left">
-      <router-link to="/" class="logo" data-track="header-logo"><img src="/logo.png" alt="CIDRella" class="logo-img" /></router-link>
+      <router-link to="/" class="logo" data-track="header-logo">CIDRella</router-link>
       <span v-if="health?.version" class="version-tag">
         v{{ health.version }}
         <a v-if="updateInfo?.updateAvailable" :href="updateInfo.updateUrl" target="_blank"
@@ -247,12 +247,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   text-decoration: none;
-}
-.logo-img {
-  height: 54px;
-  width: auto;
-  margin: -10px 0;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.3));
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--p-primary-color);
+  letter-spacing: 0.02em;
 }
 
 .header-cards-wrapper {

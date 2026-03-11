@@ -6,6 +6,7 @@ Documentation=https://github.com/fatcat/cidrella
 
 [Service]
 Type=simple
+ExecStartPre=-/usr/bin/pkill -x dnsmasq
 ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/var/lib/cidrella/dnsmasq/dnsmasq.conf
 Restart=on-failure
 RestartSec=3

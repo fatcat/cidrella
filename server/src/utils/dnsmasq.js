@@ -218,14 +218,22 @@ export function restartDnsmasq() {
     execFileSync('sudo', ['systemctl', 'restart', 'cidrella-dnsmasq'], { stdio: 'pipe' });
     console.log('dnsmasq restarted via systemctl');
     return;
-  } catch { /* not a systemd environment */ }
+  } catch {
+    console.warn('systemctl restart failed, falling back to PID method');
+  }
 
   try {
     // Docker / other: kill the process and let the supervisor restart it
     const pid = parseInt(fs.readFileSync(DNSMASQ_PID, 'utf-8').trim(), 10);
     if (pid) {
-      execFileSync('sudo', ['kill', '-TERM', String(pid)]);
-      console.log('dnsmasq terminated (supervisor will restart)');
+      // Verify the PID is actually a dnsmasq process before signaling
+      const comm = execFileSync('ps', ['-p', String(pid), '-o', 'comm='], { stdio: 'pipe', encoding: 'utf-8' }).trim();
+      if (comm === 'dnsmasq') {
+        execFileSync('sudo', ['kill', '-TERM', String(pid)]);
+        console.log('dnsmasq terminated (supervisor will restart)');
+      } else {
+        console.warn(`PID ${pid} is not dnsmasq (found: ${comm}), skipping kill`);
+      }
     }
   } catch {
     console.warn('Could not restart dnsmasq');
@@ -244,12 +252,10 @@ export function applyInterfaceConfig(db) {
     if (/^listen-address=/.test(line)) return false;
     if (/^interface=/.test(line)) return false;
     if (/^no-dhcp-interface=/.test(line)) return false;
+    if (/^bind-dynamic$/.test(line)) return false;
     if (/^port=0$/.test(line)) return false;
     return true;
   });
-
-  // Always listen on loopback
-  const newDirectives = ['listen-address=127.0.0.1'];
 
   // Read settings
   let ifaceConfig = {};
@@ -273,6 +279,13 @@ export function applyInterfaceConfig(db) {
 
   // Enumerate current system interfaces for IP lookup
   const sysIfaces = os.networkInterfaces();
+
+  // bind-dynamic allows mixing interface= and listen-address= directives
+  // and handles interfaces that may appear/disappear
+  const newDirectives = ['bind-dynamic', 'listen-address=127.0.0.1'];
+  if (sysIfaces.lo?.some(a => a.family === 'IPv6')) {
+    newDirectives.push('listen-address=::1');
+  }
   const hasExplicitConfig = Object.keys(ifaceConfig).length > 0;
 
   if (hasExplicitConfig) {
@@ -289,8 +302,10 @@ export function applyInterfaceConfig(db) {
         }
       }
 
-      // If DHCP disabled for this interface (or globally), add no-dhcp-interface
-      if (!cfg.dhcp || !dhcpEnabled) {
+      if (cfg.dhcp && dhcpEnabled) {
+        // interface= is required for dnsmasq to associate DHCP broadcasts with this interface
+        newDirectives.push(`interface=${ifName}`);
+      } else {
         newDirectives.push(`no-dhcp-interface=${ifName}`);
       }
     }
@@ -303,8 +318,9 @@ export function applyInterfaceConfig(db) {
           newDirectives.push(`listen-address=${addr.address}`);
         }
       }
-      // No explicit config means DHCP disabled everywhere by default
-      if (!dhcpEnabled) {
+      if (dhcpEnabled) {
+        newDirectives.push(`interface=${ifName}`);
+      } else {
         newDirectives.push(`no-dhcp-interface=${ifName}`);
       }
     }
@@ -315,10 +331,8 @@ export function applyInterfaceConfig(db) {
     newDirectives.push('port=0');
   }
 
-  // Insert directives after bind-dynamic or at the end
-  const bindIdx = filtered.findIndex(l => l.trim() === 'bind-dynamic');
-  const insertIdx = bindIdx >= 0 ? bindIdx + 1 : filtered.length;
-  filtered.splice(insertIdx, 0, ...newDirectives);
+  // Append directives at the end
+  filtered.push(...newDirectives);
 
   atomicWrite(DNSMASQ_CONF, filtered.join('\n'));
 }

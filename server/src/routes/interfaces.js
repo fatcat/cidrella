@@ -117,13 +117,19 @@ router.put('/config', requirePerm('subnets:write'), (req, res) => {
 
   // Regenerate dnsmasq config and restart (interface changes require full restart)
   applyInterfaceConfig(db);
-  restartDnsmasq();
+
+  let dnsmasqStatus = 'restarted';
+  try {
+    restartDnsmasq();
+  } catch {
+    dnsmasqStatus = 'restart_failed';
+  }
 
   audit(req.user.id, 'interface_config_updated', 'setting', null, {
     interfaces, dns_enabled, dhcp_enabled
   });
 
-  res.json({ ok: true });
+  res.json({ ok: true, dnsmasq: dnsmasqStatus });
 });
 
 export default router;

@@ -37,6 +37,7 @@ RUN addgroup -g 65532 cidrella && \
 
 # Allow cidrella user to send signals to dnsmasq and run network scans
 RUN echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*' > /etc/sudoers.d/cidrella-dnsmasq && \
+    echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -TERM [0-9]*' >> /etc/sudoers.d/cidrella-dnsmasq && \
     echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/nmap *' >> /etc/sudoers.d/cidrella-dnsmasq && \
     echo 'cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *' >> /etc/sudoers.d/cidrella-dnsmasq && \
     chmod 440 /etc/sudoers.d/cidrella-dnsmasq
@@ -52,6 +53,7 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
     setcap cap_net_raw+ep $(readlink -f $(which node))
 
 # Copy application code
+COPY package.json ./
 COPY server/ ./server/
 COPY dnsmasq/ ./dnsmasq/
 

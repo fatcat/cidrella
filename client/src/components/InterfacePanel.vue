@@ -162,7 +162,12 @@ function onDhcpToggle(iface, val) {
 }
 
 function onGlobalDnsToggle(val) {
-  if (!val) {
+  if (val) {
+    // DNS on → enable DNS on all available interfaces
+    for (const iface of mergedInterfaces.value) {
+      if (!iface.missing) iface.dns = true;
+    }
+  } else {
     // DNS off → DHCP must also be off
     dhcpEnabled.value = false;
   }
@@ -172,6 +177,14 @@ function onGlobalDhcpToggle(val) {
   if (val && !dnsEnabled.value) {
     // Can't enable DHCP without DNS
     dhcpEnabled.value = false;
+  } else if (val) {
+    // DHCP on → enable DHCP (and DNS) on all available interfaces
+    for (const iface of mergedInterfaces.value) {
+      if (!iface.missing) {
+        iface.dhcp = true;
+        iface.dns = true;
+      }
+    }
   }
 }
 
@@ -184,12 +197,16 @@ async function saveConfig() {
         interfaces[iface.name] = { dns: iface.dns, dhcp: iface.dhcp };
       }
     }
-    await api.put('/interfaces/config', {
+    const { data } = await api.put('/interfaces/config', {
       interfaces,
       dns_enabled: dnsEnabled.value,
       dhcp_enabled: dhcpEnabled.value,
     });
-    toast.add({ severity: 'success', summary: 'Saved', detail: 'Interface configuration applied', life: 3000 });
+    if (data.dnsmasq === 'restart_failed') {
+      toast.add({ severity: 'warn', summary: 'Saved with warning', detail: 'Configuration saved but dnsmasq failed to restart. Check server logs.', life: 5000 });
+    } else {
+      toast.add({ severity: 'success', summary: 'Saved', detail: 'Configuration applied — dnsmasq restarted', life: 3000 });
+    }
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to save configuration', life: 3000 });
   } finally {

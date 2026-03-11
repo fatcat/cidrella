@@ -1,17 +1,19 @@
 # Project Prompt
 
-Build a single-container, self-hosted IP Address Management (IPAM) system with integrated DNS and DHCP services.
+Build a single-container, self-hosted IP Address Management (IPAM) system called **CIDRella** with integrated DNS and DHCP services. It should also support native (bare-metal/LXC) deployment via systemd.
 
 ## Tech Stack
 
 - **Backend:** Node.js with Express.js (ES modules)
 - **Frontend:** Vue 3 with PrimeVue component library, Pinia state management, Vue Router, Axios
-- **Database:** SQLite via better-sqlite3 (synchronous, no external DB)
-- **DNS/DHCP:** DNSmasq (bundled in container)
+- **Database:** SQLite via better-sqlite3 (synchronous, WAL mode, no external DB)
+- **DNS/DHCP:** DNSmasq (bundled in container, or system-installed for native)
 - **Build:** Vite for frontend, multi-stage Docker build
-- **Process Manager:** s6-overlay to supervise DNSmasq + Node.js
-- **Base Image:** Alpine Linux
-- **Deployment:** Docker Compose with host networking and a single `/data` volume for all persistent state (DB, certs, configs, backups, blocklists, GeoIP data)
+- **Process Manager:** s6-overlay (Docker) or systemd (native)
+- **Base Image:** Alpine Linux (Docker)
+- **Deployment:**
+  - **Docker:** Docker Compose with host networking, single `/data` volume for all persistent state
+  - **Native/LXC:** Install script for Debian/Ubuntu, systemd services, data at `/var/lib/cidrella`, app at `/opt/cidrella`
 
 ## Authentication & Authorization
 
@@ -24,12 +26,32 @@ Build a single-container, self-hosted IP Address Management (IPAM) system with i
 - HTTPS with self-signed certificate generation on first run; supports custom cert upload
 - Helmet.js security headers, CORS
 
+## Setup Wizard
+
+Three-step guided setup on first run:
+
+1. **Interface selection** — discover host network interfaces, bind DNS/DHCP services to selected interfaces
+2. **Network creation** — configure first subnet (CIDR, name, gateway, domain, DHCP scope, VLAN, scan enable)
+3. **Pi-hole import** (optional) — import DNS records, DHCP reservations, and settings from an existing Pi-hole instance
+
+Wizard can be skipped at any step. Completion tracked via `setup_wizard_completed` setting.
+
+## Network Interface Management
+
+- Enumerate host network interfaces via `os.networkInterfaces()` and `/sys/class/net/`
+- Filter out virtual/internal interfaces (lo, br*, veth*, docker*, virbr*, tun*, tap*)
+- Display interface state (up/down/missing) and MAC addresses
+- Global DNS and DHCP service toggles — when enabled, mirror to all available interfaces
+- Per-interface DNS and DHCP toggles (DHCP requires DNS; disabling DNS auto-disables DHCP)
+- DNSmasq integration: generates `listen-address=`, `no-dhcp-interface=`, and `port=0` directives
+- Loopback listening on both `127.0.0.1` and `::1` (when IPv6 available)
+
 ## Subnet Management
 
 - Hierarchical subnet tree with supernet/subnet relationships
 - Subnets have: CIDR, name, description, VLAN, gateway address, status (`allocated` / `unallocated`), depth, folder assignment
-- **Folders** for logical grouping of root subnets with sort order
-- **VLANs** defined per folder (IDs 1-4094, unique within folder)
+- **Folders** for optional logical grouping of root subnets with sort order and drag-and-drop reordering
+- **VLANs** defined per folder (IDs 1-4094, unique within folder); can be created without immediate subnet assignment
 - RFC1918 enforcement for supernets
 - Configurable name template with variable substitution (e.g., `%1.%2.%3.%4/%bitmask`)
 - Default gateway position setting (first or last usable IP)
@@ -83,6 +105,7 @@ Build a single-container, self-hosted IP Address Management (IPAM) system with i
   - Global option defaults table — values inherited by all scopes unless overridden
   - Per-scope option overrides table
   - Options include: Router (3), DNS Servers (6), Hostname (12), Domain Name (15), MTU (26), NTP Servers (42), WINS/NetBIOS (44, 46), Vendor Class (60), TFTP/PXE (66, 67, 150), Domain Search (119), Classless Static Routes (121), WPAD (252)
+  - Option 3 (Router/Gateway) override display — shows custom gateway when set, falls back to subnet gateway
 - MAC-based DHCP reservations with hostname and description
 - Lease tracking synced from dnsmasq.leases file (fs.watchFile)
 - Available ranges endpoint (DHCP Scope ranges without active scopes)
@@ -96,9 +119,19 @@ Build a single-container, self-hosted IP Address Management (IPAM) system with i
 - Prevents concurrent scans on the same subnet
 - Scan results: IP, MAC, responded (bool), conflict detection
 - Per-subnet configurable scan interval (5m, 15m, 30m, 1h, 4h)
+- **Scan enable inheritance:** global default → per-subnet override → per-IP override
 - Automatic scan scheduler
 - Scan history with completed/failed status and timing
 - Results merged into IP address view as non-blocking warnings
+
+## Pi-hole Import
+
+- Probe a Pi-hole instance by URL to detect available data
+- Parse Pi-hole TOML configuration and hosts/CNAME/DHCP files
+- Import DNS records (A, CNAME), DHCP reservations, and upstream DNS settings
+- URL scheme validation (http/https only) to prevent SSRF
+- MAC address format validation on DHCP reservation import
+- Available as setup wizard step 3 or standalone feature
 
 ## Domain Blocklists
 
@@ -128,16 +161,26 @@ Build a single-container, self-hosted IP Address Management (IPAM) system with i
 
 - Single tar.gz archive containing: SQLite DB, TLS certificates, DNSmasq configs
 - Manual backup creation and download
-- Scheduled backups (daily/weekly/monthly) with retention policy (count-based)
+- Scheduled backups (daily/weekly/monthly) with retention policy (count-based), automatic initial backup on schedule enable
 - Upload-based restore with validation
 - Backup listing with metadata (filename, size, timestamp)
+
+## Versioning & Updates
+
+- Version read from root `package.json` (e.g., `0.1.0`)
+- Version displayed in header bar
+- In-app update checker: polls GitHub releases API every 6 hours (can be disabled via `update_check_enabled` setting)
+- Update badge in header bar when new version available
+- **Native update script** (`cidrella-update` / `scripts/update.sh`): downloads release tarball, backs up current install, extracts, installs dependencies, updates systemd units if changed, restarts services
+- **Release build script** (`scripts/build-release.sh`): builds client, stages files, creates tarball, optionally tags and publishes GitHub release
 
 ## System & Operations
 
 - System health dashboard: CPU, memory, disk usage, service status (DNSmasq, Node.js)
+- Real-time log viewer with SSE streaming and pause/resume (buffers events while paused)
 - Audit log viewer: paginated, filterable by action type, entity type, user
 - TLS certificate management: view current cert info (subject, issuer, expiry, self-signed detection), upload custom PEM cert+key, reset to self-signed
-- Settings management: subnet name template, default gateway position, upstream DNS, backup schedule/retention, GeoIP config, default scan interval
+- Settings management: subnet name template, default gateway position, upstream DNS, backup schedule/retention, GeoIP config, default scan interval/enabled, interface config, DNS/DHCP enable, update check enable
 - Subnet calculator tool (CIDR validation, split preview)
 
 ## API Design
@@ -152,10 +195,10 @@ Key patterns:
 
 ## Data Persistence
 
-All state under `/data` volume:
-- `ipam.db` — SQLite database
+All state under a configurable data directory (`DATA_DIR` env var — `/data` for Docker, `/var/lib/cidrella` for native):
+- `cidrella.db` — SQLite database
 - `certs/` — TLS certificates (server.crt, server.key)
-- `dnsmasq/` — DNSmasq configuration and data files
+- `dnsmasq/` — DNSmasq configuration and data files (conf.d, hosts.d, dhcp-hosts.d)
 - `backups/` — Backup archives
 - `blocklists/` — Cached blocklist files
 - `geoip/` — MMDB country database
@@ -169,9 +212,10 @@ All state under `/data` volume:
 
 ## Key Architectural Principles
 
-- **Single container, no external dependencies.** Everything runs in one Docker container with host networking.
-- **Database-first.** SQLite with migrations for schema evolution. Transactions for consistency.
+- **Single container, no external dependencies.** Everything runs in one Docker container with host networking. Also deployable natively with systemd.
+- **Database-first.** SQLite with migrations for schema evolution. Transactions for consistency. WAL mode for concurrent reads.
 - **Atomic config writes.** Write to tmp file, then rename. Prevents partial writes.
 - **Fail-open.** GeoIP proxy continues if MMDB fails. Scans don't block operations. Warnings don't prevent assignments.
 - **Config migration on topology changes.** When dividing or merging subnets, DHCP scopes, ranges, DNS zones, and gateway assignments are migrated or preserved intelligently.
 - **Virtual IP generation.** IPs are not pre-populated in the database. They're generated on demand during pagination, merged with any persisted metadata.
+- **Safe process management.** PID validation before signaling dnsmasq (verify process name via `ps`). Systemctl preferred with PID fallback for Docker.
