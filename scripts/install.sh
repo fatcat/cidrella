@@ -16,6 +16,7 @@ INSTALL_DIR="/opt/cidrella"
 DATA_DIR="/var/lib/cidrella"
 SERVICE_USER="cidrella"
 REQUESTED_VERSION=""
+FORCE_INSTALL=false
 NODE_MAJOR=20
 
 # ─── Colors ───────────────────────────────────────────────
@@ -75,6 +76,7 @@ ask_choice() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) REQUESTED_VERSION="$2"; shift 2 ;;
+    --force) FORCE_INSTALL=true; shift ;;
     --update)
       echo "For updates, use: cidrella-update"
       echo "Or: /opt/cidrella/scripts/update.sh"
@@ -129,12 +131,18 @@ info "Architecture: $ARCH"
 
 # Check for existing installation
 if [ -d "$INSTALL_DIR" ]; then
-  warn "CIDRella is already installed at $INSTALL_DIR."
-  if [ -f "$INSTALL_DIR/scripts/update.sh" ]; then
-    info "To update, run: $INSTALL_DIR/scripts/update.sh"
-  fi
-  if ! ask_yn "Reinstall / overwrite?"; then
-    exit 0
+  if [ ! -f "$INSTALL_DIR/package.json" ]; then
+    warn "Partial installation detected at $INSTALL_DIR. Continuing install..."
+  elif [ "$FORCE_INSTALL" = true ]; then
+    warn "Overwriting existing installation at $INSTALL_DIR (--force)."
+  else
+    warn "CIDRella is already installed at $INSTALL_DIR."
+    if [ -f "$INSTALL_DIR/scripts/update.sh" ]; then
+      info "To update, run: $INSTALL_DIR/scripts/update.sh"
+    fi
+    if ! ask_yn "Reinstall / overwrite?"; then
+      exit 0
+    fi
   fi
 fi
 
@@ -227,7 +235,7 @@ fi
 # ═══════════════════════════════════════════════════════════
 
 info "Installing system dependencies..."
-apt-get install -y -qq build-essential nmap arping openssl curl dnsutils sudo >/dev/null 2>&1
+apt-get install -y -qq build-essential nmap arping openssl curl dnsutils rsync sudo >/dev/null 2>&1
 ok "System packages installed."
 
 # ═══════════════════════════════════════════════════════════

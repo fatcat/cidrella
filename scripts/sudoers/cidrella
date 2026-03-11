@@ -1,4 +1,6 @@
 # CIDRella — allow cidrella user to signal dnsmasq and run network scans
 cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*
+cidrella ALL=(root) NOPASSWD: /usr/bin/kill -TERM [0-9]*
+cidrella ALL=(root) NOPASSWD: /usr/bin/systemctl restart cidrella-dnsmasq
 cidrella ALL=(root) NOPASSWD: /usr/bin/nmap *
 cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *

@@ -1,6 +1,7 @@
 [Unit]
 Description=CIDRella DNSmasq (DNS/DHCP)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 Documentation=https://github.com/fatcat/cidrella
 
 [Service]

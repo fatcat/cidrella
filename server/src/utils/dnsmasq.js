@@ -212,6 +212,26 @@ export function signalDnsmasq() {
   }
 }
 
+export function restartDnsmasq() {
+  try {
+    // Native installs: use systemctl
+    execFileSync('sudo', ['systemctl', 'restart', 'cidrella-dnsmasq'], { stdio: 'pipe' });
+    console.log('dnsmasq restarted via systemctl');
+    return;
+  } catch { /* not a systemd environment */ }
+
+  try {
+    // Docker / other: kill the process and let the supervisor restart it
+    const pid = parseInt(fs.readFileSync(DNSMASQ_PID, 'utf-8').trim(), 10);
+    if (pid) {
+      execFileSync('sudo', ['kill', '-TERM', String(pid)]);
+      console.log('dnsmasq terminated (supervisor will restart)');
+    }
+  } catch {
+    console.warn('Could not restart dnsmasq');
+  }
+}
+
 export function applyInterfaceConfig(db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return;
 

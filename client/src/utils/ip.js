@@ -26,6 +26,8 @@ export function parseCidr(cidr) {
   return {
     network: longToIp(network),
     broadcast: longToIp(broadcast),
+    firstUsable: longToIp(network + 1),
+    lastUsable: longToIp(broadcast - 1),
     prefix,
     networkLong: network,
     broadcastLong: broadcast,

@@ -3,7 +3,7 @@ import os from 'os';
 import fs from 'fs';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
-import { applyInterfaceConfig, signalDnsmasq } from '../utils/dnsmasq.js';
+import { applyInterfaceConfig, restartDnsmasq } from '../utils/dnsmasq.js';
 
 const router = Router();
 
@@ -115,9 +115,9 @@ router.put('/config', requirePerm('subnets:write'), (req, res) => {
     }
   })();
 
-  // Regenerate dnsmasq config and signal
+  // Regenerate dnsmasq config and restart (interface changes require full restart)
   applyInterfaceConfig(db);
-  signalDnsmasq();
+  restartDnsmasq();
 
   audit(req.user.id, 'interface_config_updated', 'setting', null, {
     interfaces, dns_enabled, dhcp_enabled

@@ -61,8 +61,8 @@
             <span class="info-bar-sep"></span>
             <span class="info-bar-pair"><span class="info-bar-label">Lease</span> <span class="info-bar-val">{{ selectedScope.lease_time }}</span></span>
             <span class="info-bar-sep"></span>
-            <span v-if="selectedScope.gateway || selectedScope.subnet_gateway" class="info-bar-pair"><span class="info-bar-label">Gateway</span> <span class="info-bar-val">{{ selectedScope.gateway || selectedScope.subnet_gateway }}</span></span>
-            <span v-if="selectedScope.gateway || selectedScope.subnet_gateway" class="info-bar-sep"></span>
+            <span v-if="scopeGateway" class="info-bar-pair"><span class="info-bar-label">Gateway</span> <span class="info-bar-val">{{ scopeGateway }}</span></span>
+            <span v-if="scopeGateway" class="info-bar-sep"></span>
             <span v-if="selectedScope.domain_name || selectedScope.subnet_domain_name" class="info-bar-pair"><span class="info-bar-label">Domain</span> <span class="info-bar-val">{{ selectedScope.domain_name || selectedScope.subnet_domain_name }}</span></span>
             <span v-if="selectedScope.domain_name || selectedScope.subnet_domain_name" class="info-bar-sep"></span>
             <span class="info-bar-pair"><span class="info-bar-label">Status</span> <span class="info-bar-val">{{ selectedScope.enabled ? 'enabled' : 'disabled' }}</span></span>
@@ -339,6 +339,13 @@ const deletingReservation = ref(null);
 const filteredScopes = computed(() => store.scopes);
 
 const filteredLeases = computed(() => store.leases);
+
+const scopeGateway = computed(() => {
+  const s = selectedScope.value;
+  if (!s) return null;
+  const opt3 = s.options?.find(o => o.option_code === 3);
+  return opt3?.value || s.gateway || s.subnet_gateway || null;
+});
 
 // Filter leases for selected scope
 const scopeLeases = computed(() => {
