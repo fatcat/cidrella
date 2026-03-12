@@ -1,0 +1,11 @@
+.claude
+node_modules/
+dist/
+data/
+*.db
+.env
+PLAN.md
+PROMPT.md
+REVIEW.md
+tmp/
+.mcp.json

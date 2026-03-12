@@ -7,6 +7,10 @@
     "dev:server": "cd server && node src/index.js",
     "dev:client": "cd client && npx vite --host",
     "build:client": "cd client && npx vite build",
-    "start": "node server/src/index.js"
+    "start": "node server/src/index.js",
+    "test": "npm run test:server && npm run test:client",
+    "test:server": "cd server && npx vitest run",
+    "test:client": "cd client && npx vitest run",
+    "test:watch": "cd server && npx vitest"
   }
 }

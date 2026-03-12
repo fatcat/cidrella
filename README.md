@@ -31,7 +31,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 - **In-app update checker** — Periodic check against GitHub releases with UI notification
 - **Setup wizard** — Guided first-run setup for interface binding, network creation, and Pi-hole import
 
-![CIDRella Networks Page](/client/public/networks.png)
+![CIDRella Networks Page](https://raw.githubusercontent.com/fatcat/cidrella/main/client/public/networks.png)
 
 ## Installation
 
