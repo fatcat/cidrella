@@ -72,13 +72,13 @@
 
     <div class="settings-actions">
       <Button label="Save Configuration" icon="pi pi-save" data-track="iface-save"
-              @click="saveConfig" :loading="saving" />
+              @click="saveConfig" :loading="saving" :disabled="!configDirty" />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import api from '../api/client.js';
 import DataTable from 'primevue/datatable';
@@ -95,6 +95,23 @@ const dhcpEnabled = ref(true);
 const discoveredInterfaces = ref([]);
 const savedConfig = ref({});
 const mergedInterfaces = ref([]);
+const configSnapshot = ref('');
+
+const configDirty = computed(() => {
+  if (!configSnapshot.value) return false;
+  const current = JSON.stringify({
+    dns: dnsEnabled.value, dhcp: dhcpEnabled.value,
+    ifaces: mergedInterfaces.value.map(i => ({ n: i.name, d: i.dns, h: i.dhcp }))
+  });
+  return current !== configSnapshot.value;
+});
+
+function snapshotConfig() {
+  configSnapshot.value = JSON.stringify({
+    dns: dnsEnabled.value, dhcp: dhcpEnabled.value,
+    ifaces: mergedInterfaces.value.map(i => ({ n: i.name, d: i.dns, h: i.dhcp }))
+  });
+}
 
 function mergeData() {
   const map = new Map();
@@ -140,6 +157,7 @@ async function loadInterfaces() {
     dnsEnabled.value = configRes.data.dns_enabled !== false;
     dhcpEnabled.value = configRes.data.dhcp_enabled !== false;
     mergeData();
+    snapshotConfig();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to load interfaces', life: 3000 });
   } finally {
@@ -202,6 +220,7 @@ async function saveConfig() {
       dns_enabled: dnsEnabled.value,
       dhcp_enabled: dhcpEnabled.value,
     });
+    snapshotConfig();
     if (data.dnsmasq === 'restart_failed') {
       toast.add({ severity: 'warn', summary: 'Saved with warning', detail: 'Configuration saved but dnsmasq failed to restart. Check server logs.', life: 5000 });
     } else {

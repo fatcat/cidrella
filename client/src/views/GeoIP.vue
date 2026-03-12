@@ -34,6 +34,10 @@
     <!-- Settings Row -->
     <div class="settings-row">
       <div class="schedule-group">
+        <label class="schedule-label">Enabled:</label>
+        <ToggleSwitch v-model="settingsForm.geoip_enabled" />
+      </div>
+      <div class="schedule-group">
         <label class="schedule-label">Mode:</label>
         <Select v-model="settingsForm.geoip_mode" :options="modeOptions" optionLabel="label"
                 optionValue="value" size="small" style="width: 16rem" />
@@ -43,7 +47,7 @@
         <Select v-model="settingsForm.geoip_update_schedule" :options="scheduleOptions"
                 optionLabel="label" optionValue="value" size="small" style="width: 10rem" />
       </div>
-      <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" />
+      <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" :disabled="!settingsDirty" />
       <Button label="Update DB" icon="pi pi-download" size="small" severity="secondary"
               @click="doRefreshDb" :loading="refreshingDb" />
       <Button label="Add Countries" icon="pi pi-plus" size="small" severity="secondary" @click="openAddCountries" />
@@ -125,6 +129,7 @@ import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
 import Toast from 'primevue/toast';
+import ToggleSwitch from 'primevue/toggleswitch';
 import { useGeoipStore } from '../stores/geoip.js';
 import { COUNTRIES, countryFlag } from '../utils/countries.js';
 
@@ -135,7 +140,16 @@ const status = ref(null);
 
 // Settings form
 const settingsForm = ref({ geoip_enabled: false, geoip_mode: 'blocklist', geoip_proxy_port: 5353, geoip_update_schedule: 'monthly' });
+const savedSettings = ref(null);
 const savingSettings = ref(false);
+
+const settingsDirty = computed(() => {
+  if (!savedSettings.value) return false;
+  const s = savedSettings.value;
+  const f = settingsForm.value;
+  return f.geoip_enabled !== s.geoip_enabled || f.geoip_mode !== s.geoip_mode ||
+    f.geoip_proxy_port !== s.geoip_proxy_port || f.geoip_update_schedule !== s.geoip_update_schedule;
+});
 const refreshingDb = ref(false);
 
 const modeOptions = [
@@ -276,12 +290,14 @@ async function doRefreshDb() {
 async function refreshStatus() {
   const s = await store.fetchStatus();
   status.value = s;
-  settingsForm.value = {
+  const vals = {
     geoip_enabled: s.enabled,
     geoip_mode: s.mode,
     geoip_proxy_port: s.port,
     geoip_update_schedule: s.updateSchedule || 'monthly'
   };
+  settingsForm.value = { ...vals };
+  savedSettings.value = { ...vals };
 }
 
 onMounted(async () => {

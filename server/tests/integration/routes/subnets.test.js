@@ -98,10 +98,11 @@ describe('GET /api/subnets', () => {
     const res = await request(app).get('/api/subnets');
 
     expect(res.status).toBe(200);
-    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.folders).toBeDefined();
+    expect(Array.isArray(res.body.folders)).toBe(true);
 
-    // Find our test subnets in the response (may be nested in folders)
-    const allSubnets = res.body.flatMap(folder => folder.subnets || []);
+    // Find our test subnets in the response (nested in folders)
+    const allSubnets = res.body.folders.flatMap(folder => folder.subnets || []);
     const testSubnet = allSubnets.find(s => s.cidr === '10.0.0.0/16');
     expect(testSubnet).toBeDefined();
     expect(testSubnet.name).toBe('Test Supernet');
@@ -112,7 +113,7 @@ describe('GET /api/subnets/:id', () => {
   it('returns a subnet by ID', async () => {
     // First find the ID
     const listRes = await request(app).get('/api/subnets');
-    const allSubnets = listRes.body.flatMap(f => f.subnets || []);
+    const allSubnets = listRes.body.folders.flatMap(f => f.subnets || []);
     const subnet = allSubnets.find(s => s.cidr === '10.0.0.0/16');
 
     const res = await request(app).get(`/api/subnets/${subnet.id}`);

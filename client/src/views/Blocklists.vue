@@ -23,11 +23,15 @@
     <!-- Settings Row -->
     <div class="settings-row">
       <div class="schedule-group">
+        <label class="schedule-label">Enabled:</label>
+        <ToggleSwitch v-model="blocklistEnabled" />
+      </div>
+      <div class="schedule-group">
         <label class="schedule-label">Update Schedule:</label>
         <Select v-model="settings.blocklist_update_schedule" :options="scheduleOptions"
                 optionLabel="label" optionValue="value" size="small" style="width: 10rem" />
       </div>
-      <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" />
+      <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" :disabled="!settingsDirty" />
       <Button label="Refresh All" icon="pi pi-refresh" size="small" severity="secondary"
               @click="doRefreshAll" :loading="refreshingAll" />
     </div>
@@ -185,6 +189,7 @@ import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
+import ToggleSwitch from 'primevue/toggleswitch';
 import { useBlocklistStore } from '../stores/blocklists.js';
 
 const store = useBlocklistStore();
@@ -192,6 +197,14 @@ const toast = useToast();
 
 const stats = ref({ enabled_categories: 0, total_domains: 0, whitelist_count: 0, last_update: null });
 const settings = reactive({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily' });
+const blocklistEnabled = ref(true);
+const savedBlocklistEnabled = ref(true);
+const savedSchedule = ref('daily');
+
+const settingsDirty = computed(() => {
+  return blocklistEnabled.value !== savedBlocklistEnabled.value ||
+    settings.blocklist_update_schedule !== savedSchedule.value;
+});
 
 const scheduleOptions = [
   { label: 'Off', value: 'off' },
@@ -344,10 +357,12 @@ async function doSaveSettings() {
   savingSettings.value = true;
   try {
     await store.updateSettings({
-      blocklist_enabled: 'true',
+      blocklist_enabled: blocklistEnabled.value ? 'true' : 'false',
       blocklist_redirect_ip: settings.blocklist_redirect_ip,
       blocklist_update_schedule: settings.blocklist_update_schedule
     });
+    savedBlocklistEnabled.value = blocklistEnabled.value;
+    savedSchedule.value = settings.blocklist_update_schedule;
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -406,6 +421,9 @@ onMounted(async () => {
     store.fetchStats().then(s => stats.value = s)
   ]);
   Object.assign(settings, fetchedSettings);
+  blocklistEnabled.value = fetchedSettings.blocklist_enabled !== 'false';
+  savedBlocklistEnabled.value = blocklistEnabled.value;
+  savedSchedule.value = settings.blocklist_update_schedule;
 });
 </script>
 

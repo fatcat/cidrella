@@ -19,7 +19,7 @@ const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
 
 function resolveDbPath() {
-  const p = resolveDbPath();
+  const p = getSetting('geoip_db_path');
   return (!p || p === 'auto') ? DEFAULT_MMDB : p;
 }
 
@@ -126,7 +126,7 @@ export function startProxy(port) {
     return;
   }
 
-  proxyPort = port || parseInt(getSetting('geoip_proxy_port'), 10);
+  proxyPort = port || parseInt(getSetting('geoip_proxy_port'), 10) || 5353;
 
   // Create upstream socket for forwarding
   upstreamSocket = dgram.createSocket('udp4');
@@ -268,7 +268,7 @@ export async function startProxyIfEnabled() {
     console.warn('GeoIP enabled but MMDB not available — proxy will start without filtering');
   }
 
-  const port = parseInt(getSetting('geoip_proxy_port'), 10);
+  const port = parseInt(getSetting('geoip_proxy_port'), 10) || 5353;
   startProxy(port);
 }
 

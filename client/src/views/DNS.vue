@@ -16,7 +16,7 @@
             <Button label="Add Forwarder" icon="pi pi-plus" size="small" severity="secondary"
                     @click="addForwarder" />
             <Button label="Save" icon="pi pi-save" size="small" data-track="dns-save-forwarders"
-                    @click="saveForwarders" :loading="savingForwarders" />
+                    @click="saveForwarders" :loading="savingForwarders" :disabled="!forwardersDirty" />
           </div>
           <p class="forwarder-hint">
             Forwarders are tested via DNS resolution on entry and every 15 minutes.
@@ -58,7 +58,7 @@
           </div>
           <div class="forwarder-actions">
             <Button label="Save" icon="pi pi-save" size="small" data-track="dns-save-soa-defaults"
-                    @click="saveSoaDefaults" :loading="savingSoa" />
+                    @click="saveSoaDefaults" :loading="savingSoa" :disabled="!soaDirty" />
           </div>
         </div>
       </div>
@@ -67,7 +67,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
@@ -78,14 +78,32 @@ const store = useDnsStore();
 const toast = useToast();
 
 const forwarders = ref([]);
+const savedForwarders = ref([]);
 const savingForwarders = ref(false);
 let pollTimer = null;
+
+const forwardersDirty = computed(() => {
+  const current = forwarders.value.map(f => f.ip.trim()).filter(Boolean);
+  const saved = savedForwarders.value;
+  if (current.length !== saved.length) return true;
+  return current.some((ip, i) => ip !== saved[i]);
+});
 
 const soaForm = ref({
   soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
   soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 900
 });
+const savedSoa = ref(null);
 const savingSoa = ref(false);
+
+const soaDirty = computed(() => {
+  if (!savedSoa.value) return false;
+  const f = soaForm.value;
+  const s = savedSoa.value;
+  return f.soa_primary_ns !== s.soa_primary_ns || f.soa_admin_email !== s.soa_admin_email ||
+    f.soa_refresh !== s.soa_refresh || f.soa_retry !== s.soa_retry ||
+    f.soa_expire !== s.soa_expire || f.soa_minimum_ttl !== s.soa_minimum_ttl;
+});
 
 const ipv4Re = /^(\d{1,3}\.){3}\d{1,3}$/;
 
@@ -139,6 +157,7 @@ async function saveForwarders() {
   try {
     const servers = forwarders.value.map(f => f.ip.trim()).filter(Boolean);
     await store.updateForwarders(servers);
+    savedForwarders.value = [...servers];
     toast.add({ severity: 'success', summary: 'Forwarders saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -151,6 +170,7 @@ async function saveSoaDefaults() {
   savingSoa.value = true;
   try {
     await store.updateSoaDefaults(soaForm.value);
+    savedSoa.value = { ...soaForm.value };
     toast.add({ severity: 'success', summary: 'SOA defaults saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
@@ -163,14 +183,17 @@ onMounted(async () => {
   try {
     const servers = await store.getForwarders();
     forwarders.value = servers.map(ip => ({ ip, status: null }));
+    savedForwarders.value = [...servers];
   } catch {
     forwarders.value = [];
+    savedForwarders.value = [];
   }
   testAllForwarders();
   pollTimer = setInterval(testAllForwarders, 15 * 60 * 1000);
   try {
     const defaults = await store.getSoaDefaults();
     soaForm.value = defaults;
+    savedSoa.value = { ...defaults };
   } catch { /* use local defaults */ }
 });
 

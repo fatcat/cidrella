@@ -27,7 +27,7 @@ sudo bash install.sh   # run it
 
 ### Method C: One-line install
 
-> **Warning**: This pipes a script directly into a root shell. Review Method B above if you prefer to inspect first.
+> **Warning**: This pipes a script directly into a root shell. Review Method B above if you prefer to inspect first. Very strongly recommend using method A or B as they both provide an opportunity to review the install script and the source code of the project before running anything.
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh | sudo bash

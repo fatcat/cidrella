@@ -25,10 +25,12 @@ router.get('/status', requirePerm('dns:read'), (req, res) => {
   const mode = db.prepare("SELECT value FROM settings WHERE key = 'geoip_mode'").get();
   const enabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get();
   const updateSchedule = db.prepare("SELECT value FROM settings WHERE key = 'geoip_update_schedule'").get();
+  const configuredPort = db.prepare("SELECT value FROM settings WHERE key = 'geoip_proxy_port'").get();
   const ruleCount = db.prepare('SELECT COUNT(*) as c FROM geoip_rules WHERE enabled = 1').get().c;
 
   res.json({
     ...status,
+    port: parseInt(configuredPort?.value, 10) || status.port || 5353,
     enabled: enabled?.value === 'true',
     mode: mode?.value || 'blocklist',
     updateSchedule: updateSchedule?.value || 'monthly',
@@ -143,17 +145,19 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
 
   // Handle proxy start/stop/restart
   try {
-    if (nowEnabled && !wasEnabled) {
-      // Enabling
-      await loadMmdb();
-      startProxy(parseInt(newPort, 10));
-    } else if (!nowEnabled && wasEnabled) {
+    if (!nowEnabled && wasEnabled) {
       // Disabling
       stopProxy();
-    } else if (nowEnabled && geoip_proxy_port !== undefined && String(geoip_proxy_port) !== oldPort) {
-      // Port changed while enabled — restart
-      stopProxy();
-      startProxy(parseInt(newPort, 10));
+    } else if (nowEnabled) {
+      const proxyRunning = getProxyStatus().running;
+      const portChanged = geoip_proxy_port !== undefined && String(geoip_proxy_port) !== oldPort;
+
+      if (!proxyRunning || !wasEnabled || portChanged) {
+        // Start or restart: enabling, recovering from crash, or port changed
+        stopProxy();
+        await loadMmdb();
+        startProxy(parseInt(newPort, 10));
+      }
     }
 
     // Regenerate dnsmasq config to route through proxy or direct upstream

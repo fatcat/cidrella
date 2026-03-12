@@ -5,7 +5,7 @@
       <Button label="Add Custom Option" icon="pi pi-plus" size="small" severity="secondary"
               @click="customOptionForm = { code: null, label: '', name: '', type: 'text', description: '' }; showCustomOptionDialog = true" />
       <Button label="Apply Config" icon="pi pi-refresh" size="small" data-track="sys-apply-dhcp-config" @click="applyConfig" />
-      <Button label="Save Defaults" icon="pi pi-save" size="small" data-track="dhcp-save-defaults" @click="saveDefaults" :loading="savingDefaults" />
+      <Button label="Save Defaults" icon="pi pi-save" size="small" data-track="dhcp-save-defaults" @click="saveDefaults" :loading="savingDefaults" :disabled="!defaultsDirty" />
     </div>
     <DataTable :value="optionDefaultRows" size="small" :loading="loadingOptions"
                emptyMessage="No DHCP options available."
@@ -120,6 +120,17 @@ const defaultValues = reactive({});
 const defaultEnabled = reactive({});
 const loadingOptions = ref(false);
 const savingDefaults = ref(false);
+const savedDefaultsSnapshot = ref('');
+
+const defaultsDirty = computed(() => {
+  if (!savedDefaultsSnapshot.value) return false;
+  const current = JSON.stringify({ v: defaultValues, e: defaultEnabled });
+  return current !== savedDefaultsSnapshot.value;
+});
+
+function snapshotDefaults() {
+  savedDefaultsSnapshot.value = JSON.stringify({ v: { ...defaultValues }, e: { ...defaultEnabled } });
+}
 const optionGroupOrder = ref([]);
 
 const optionGroups = computed(() => {
@@ -210,6 +221,7 @@ async function loadOptions() {
     for (const code of (res.data.enabledDefaults || [])) {
       defaultEnabled[Number(code)] = true;
     }
+    snapshotDefaults();
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
   } finally {
@@ -258,6 +270,7 @@ async function saveDefaults() {
     }
     const enabledDefaults = Object.keys(defaultEnabled).filter(k => defaultEnabled[k]).map(Number);
     await api.put('/dhcp/options/defaults', { options, enabledDefaults });
+    snapshotDefaults();
     toast.add({ severity: 'success', summary: 'Defaults saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });

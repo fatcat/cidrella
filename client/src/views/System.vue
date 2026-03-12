@@ -61,7 +61,7 @@
               <small class="field-help">Probe all scannable IPs in the selected network.</small>
             </div>
             <div class="settings-actions">
-              <Button label="Save Settings" icon="pi pi-save" @click="saveSettings" :loading="savingSettings" />
+              <Button label="Save Settings" icon="pi pi-save" @click="saveSettings" :loading="savingSettings" :disabled="!settingsDirty" />
             </div>
           </div>
 
@@ -565,6 +565,16 @@ const settings = ref({
   default_scan_interval: 'off',
   default_scan_enabled: true
 });
+const savedSettings = ref(null);
+
+const settingsDirty = computed(() => {
+  if (!savedSettings.value) return false;
+  const s = savedSettings.value;
+  const c = settings.value;
+  return c.subnet_name_template !== s.subnet_name_template ||
+    c.default_scan_interval !== s.default_scan_interval ||
+    c.default_scan_enabled !== s.default_scan_enabled;
+});
 const scanIntervalOptions = [
   { label: 'Off', value: 'off' },
   { label: 'Every 5 minutes', value: '5m' },
@@ -626,11 +636,13 @@ onMounted(async () => {
       loadBackupSettings(),
       store.folders.length === 0 ? store.fetchTree() : Promise.resolve()
     ]);
-    settings.value = {
+    const vals = {
       subnet_name_template: data.subnet_name_template || '%1.%2.%3.%4/%bitmask',
       default_scan_interval: data.default_scan_interval || 'off',
       default_scan_enabled: data.default_scan_enabled === '1' || data.default_scan_enabled === true
     };
+    settings.value = { ...vals };
+    savedSettings.value = { ...vals };
   } catch { /* use defaults */ }
   loadingSettings.value = false;
   if (activeTab.value === LOGGING_TAB_INDEX) { loadAuditFilterOptions(); loadAuditLog(); }
@@ -914,6 +926,7 @@ async function saveSettings() {
       store.updateSetting('default_scan_interval', settings.value.default_scan_interval === 'off' ? '' : settings.value.default_scan_interval),
       store.updateSetting('default_scan_enabled', settings.value.default_scan_enabled ? '1' : '0')
     ]);
+    savedSettings.value = { ...settings.value };
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
