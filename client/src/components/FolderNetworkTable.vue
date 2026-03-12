@@ -17,6 +17,7 @@
         <span class="col col-vlan">VLAN</span>
         <span class="col col-desc">Description</span>
         <span class="col col-status">Status</span>
+        <span class="col col-actions"></span>
       </div>
       <div v-for="item in flatRows" :key="item.node.key"
            class="table-row"
@@ -45,6 +46,13 @@
         <span class="col col-status">
           <span class="status-badge" :class="statusClass(item.node)">{{ statusLabel(item.node) }}</span>
         </span>
+        <span class="col col-actions" v-if="item.node.data.status === 'allocated'">
+          <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                  @click.stop="$emit('edit-subnet', item.node)" data-track="folder-net-edit" />
+          <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                  @click.stop="$emit('delete-subnet', item.node)" data-track="folder-net-delete" />
+        </span>
+        <span class="col col-actions" v-else></span>
       </div>
       <div v-if="flatRows.length === 0" class="empty-state">
         No networks in this folder.
@@ -55,6 +63,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue';
+import Button from 'primevue/button';
 import { useSubnetStore } from '../stores/subnets.js';
 
 const props = defineProps({
@@ -62,7 +71,7 @@ const props = defineProps({
   mergeSelectedIds: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(['select-subnet', 'context-menu', 'merge-toggle']);
+const emit = defineEmits(['select-subnet', 'context-menu', 'merge-toggle', 'edit-subnet', 'delete-subnet']);
 const store = useSubnetStore();
 
 const expanded = ref({});
@@ -241,6 +250,7 @@ function statusLabel(node) {
 .col-vlan { width: 5rem; }
 .col-desc { flex: 1; }
 .col-status { width: 6rem; }
+.col-actions { width: 4.5rem; display: flex; gap: 0.15rem; flex-shrink: 0; justify-content: flex-end; overflow: visible; white-space: normal; }
 
 .cidr-cell {
   display: inline-flex;

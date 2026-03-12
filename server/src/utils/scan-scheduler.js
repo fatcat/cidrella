@@ -16,13 +16,15 @@ function checkScheduledScans() {
   if (!db) return;
 
   const subnets = db.prepare(`
-    SELECT s.* FROM subnets s
-    WHERE s.scan_interval IS NOT NULL AND s.status = 'allocated' AND s.prefix_length > 20
+    SELECT s.*,
+      COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
+    FROM subnets s
+    WHERE s.status = 'allocated' AND s.prefix_length > 20
       AND COALESCE(s.scan_enabled, (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'default_scan_enabled'), 1) = 1
   `).all();
 
   for (const subnet of subnets) {
-    const intervalMs = INTERVAL_MS[subnet.scan_interval];
+    const intervalMs = INTERVAL_MS[subnet.effective_scan_interval];
     if (!intervalMs) continue;
 
     // Check if a scan is already running for this subnet
@@ -47,7 +49,7 @@ function checkScheduledScans() {
       INSERT INTO network_scans (subnet_id, status, initiated_by) VALUES (?, 'pending', 'scheduler')
     `).run(subnet.id);
 
-    console.log(`[scan-scheduler] Starting scheduled scan for ${subnet.cidr} (interval: ${subnet.scan_interval})`);
+    console.log(`[scan-scheduler] Starting scheduled scan for ${subnet.cidr} (interval: ${subnet.effective_scan_interval})`);
     startScan(db, result.lastInsertRowid, subnet.id);
   }
 }

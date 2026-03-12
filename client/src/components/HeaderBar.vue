@@ -9,11 +9,17 @@
           <i class="pi pi-arrow-up"></i>
         </a>
       </span>
+      <nav class="header-nav">
+        <router-link to="/dashboard" class="nav-link" :class="{ active: route.path === '/dashboard' }" data-track="nav-dashboard">Dashboard</router-link>
+        <router-link to="/networks" class="nav-link" :class="{ active: route.path === '/networks' || route.path === '/' }" data-track="nav-networks">Networks</router-link>
+        <router-link to="/system" class="nav-link" :class="{ active: route.path === '/system' }" data-track="nav-system">System</router-link>
+      </nav>
     </div>
 
     <div class="header-cards-wrapper">
       <div class="header-cards">
       <div class="dash-card" :class="health?.services?.dnsmasq ? 'card-ok' : 'card-err'" data-track="header-card-dnsmasq">
+        <span class="card-dot" :class="health?.services?.dnsmasq ? 'dot-up' : 'dot-down'"></span>
         <div class="card-body">
           <span class="card-value">{{ health?.services?.dnsmasq ? 'Running' : 'Down' }}</span>
           <span class="card-label">DNSmasq</span>
@@ -21,6 +27,7 @@
       </div>
 
       <div class="dash-card" :class="cpuStatusClass" data-track="header-card-cpu">
+        <span class="card-dot" :class="cpuStatusClass === 'card-err' ? 'dot-down' : cpuStatusClass === 'card-ok' ? 'dot-up' : 'dot-ok'"></span>
         <div class="card-body">
           <span class="card-value">{{ cpuDisplay }}</span>
           <span class="card-label">CPU Load</span>
@@ -28,6 +35,7 @@
       </div>
 
       <div class="dash-card" :class="ramStatusClass" data-track="header-card-ram">
+        <span class="card-dot" :class="ramStatusClass === 'card-err' ? 'dot-down' : ramStatusClass === 'card-ok' ? 'dot-up' : 'dot-ok'"></span>
         <div class="card-body">
           <span class="card-value">{{ ramDisplay }}</span>
           <span class="card-label">RAM</span>
@@ -35,6 +43,7 @@
       </div>
 
       <div class="dash-card" :class="diskStatusClass" data-track="header-card-disk">
+        <span class="card-dot" :class="diskStatusClass === 'card-err' ? 'dot-down' : diskStatusClass === 'card-ok' ? 'dot-up' : 'dot-ok'"></span>
         <div class="card-body">
           <span class="card-value">{{ diskDisplay }}</span>
           <span class="card-label">Disk</span>
@@ -70,6 +79,7 @@
       </div>
 
       <div class="dash-card" :class="activeScan ? 'card-ok' : ''" data-track="header-card-scan">
+        <span class="card-dot" :class="activeScan ? 'dot-up' : 'dot-ok'"></span>
         <div class="card-body">
           <span class="card-value">{{ scanDisplay }}</span>
           <span class="card-label">Scan</span>
@@ -96,7 +106,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import Button from 'primevue/button';
 import { useAuthStore } from '../stores/auth.js';
 import { useSubnetStore } from '../stores/subnets.js';
@@ -104,6 +114,7 @@ import PiholeImport from './PiholeImport.vue';
 import api from '../api/client.js';
 
 const router = useRouter();
+const route = useRoute();
 
 const auth = useAuthStore();
 const subnetStore = useSubnetStore();
@@ -253,6 +264,30 @@ onUnmounted(() => {
   letter-spacing: 0.02em;
 }
 
+.header-nav {
+  display: flex;
+  gap: 0.25rem;
+  margin-left: 0.5rem;
+}
+.nav-link {
+  text-decoration: none;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--p-text-muted-color);
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.nav-link:hover {
+  color: var(--p-text-color);
+  background: var(--p-surface-ground);
+}
+.nav-link.active {
+  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--p-primary-color) 10%, transparent);
+  font-weight: 600;
+}
+
 .header-cards-wrapper {
   flex: 1;
   display: flex;
@@ -304,6 +339,16 @@ onUnmounted(() => {
   letter-spacing: 0.03em;
   line-height: 1.2;
 }
+
+.card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.card-dot.dot-up { background: var(--p-green-500); }
+.card-dot.dot-down { background: var(--p-red-500); }
+.card-dot.dot-ok { background: var(--p-surface-400); }
 
 .dash-card.card-ok { border-left: 3px solid var(--p-primary-color); }
 .dash-card.card-err { border-left: 3px solid var(--p-red-500); }

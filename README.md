@@ -9,20 +9,16 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 ## Features
 
-- **Hierarchical subnet tree** — Create supernets and divide into smaller subnets with an interactive tree view
-- **Divide & merge** — Split subnets with a slider preview; merge adjacent siblings back into larger CIDRs
-- **Config migration** — Dividing an allocated subnet migrates gateway, DHCP scopes, and ranges to the inheriting child
-- **Reconsolidation** — Deleting subnets buddy-merges adjacent unallocated blocks
-- **Functional ranges** — Define IP ranges (DHCP scopes, static, custom) with overlap detection and color coding
-- **IP address grid** — Color-coded visual map with drag-select, shift-click range select, and context menu
-- **DNS zones** — Forward and reverse zones with A, CNAME, MX, TXT, SRV records and auto-incrementing SOA serial
-- **Automatic PTR sync** — A records auto-create/update corresponding PTR records in reverse zones
+- **DNS Management** — Forward and reverse zones with A, CNAME, MX, TXT, SRV records and auto-incrementing SOA serial. Automatic generation of PTR reverse-DNS zones
 - **DHCP management** — Scopes, options (global defaults + per-scope overrides), MAC reservations, lease tracking
-- **DNSmasq integration** — Atomic config writes, hostsdir hot-reload, conf.d for complex records, SIGHUP signaling
-- **Network scanning** — ARP/ping-based liveness scans with configurable intervals and per-subnet/per-IP enable inheritance
-- **Interface management** — Bind DNS/DHCP services to specific network interfaces
 - **Domain blocklists** — Ad/malware blocking with multiple sources, deduplication, and auto-updates
 - **GeoIP DNS filtering** — Country-based DNS filtering with blocklist/allowlist modes
+- **Hierarchical subnet tree** — Create supernets and divide into smaller subnets with an interactive tree view
+- **Network & Domain Inheritance** — Dividing an allocated subnet migrates gateway, DHCP scopes, and ranges to the inheriting child
+- **Functional ranges** — Define IP ranges (DHCP scopes, static, custom) with overlap detection and color coding
+- **IP address grid** — Color-coded visual map with drag-select, shift-click range select, and context menu
+- **DNSmasq integration** — Atomic config writes, hostsdir hot-reload, conf.d for complex records, SIGHUP signaling
+- **Network scanning & Rogue Detection** — ARP/ping-based liveness scans with configurable intervals and per-subnet/per-IP enable inheritance
 - **Pi-hole import** — Import DNS records, DHCP reservations, and settings from Pi-hole
 - **Backup & restore** — Scheduled backups with retention policy, manual download, and upload restore
 - **JWT authentication** — Role-based access control with admin, dns_admin, dhcp_admin, and readonly roles

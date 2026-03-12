@@ -29,10 +29,12 @@ const routes = [
     path: '/',
     component: AppLayout,
     children: [
-      { path: '', name: 'Subnets', component: () => import('../views/SubnetsLayoutB.vue') },
+      { path: '', redirect: '/dashboard' },
+      { path: 'dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue') },
+      { path: 'networks', name: 'Networks', component: () => import('../views/SubnetsLayoutB.vue') },
       { path: 'system', name: 'System', component: () => import('../views/System.vue') },
       // Redirects for old bookmarks
-      { path: 'subnets', redirect: '/' },
+      { path: 'subnets', redirect: '/networks' },
       { path: 'dns', redirect: '/' },
       { path: 'dhcp', redirect: '/' },
       { path: 'blocklists', redirect: '/system' },

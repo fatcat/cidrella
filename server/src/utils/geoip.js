@@ -31,6 +31,8 @@ let proxyPort = 0;
 let statsTotal = 0;
 let statsBlocked = 0;
 let statsAllowed = 0;
+let blockedDelta = 0;
+let countryHits = new Map();
 let updateTimer = null;
 
 // Pending queries: maps internal ID -> { address, port, originalId, timer }
@@ -157,7 +159,11 @@ export function startProxy(port) {
         if (countryCodes.length > 0 && shouldBlock(countryCodes)) {
           // Blocked — send NXDOMAIN back to client
           statsBlocked++;
+          blockedDelta++;
           statsTotal++;
+          for (const cc of countryCodes) {
+            countryHits.set(cc, (countryHits.get(cc) || 0) + 1);
+          }
           const nxResponse = createNxdomainResponse({ id: pending.originalId, questions: response.questions });
           proxyServer.send(nxResponse, pending.port, pending.address);
           return;
@@ -349,6 +355,20 @@ export function resetStats() {
   statsTotal = 0;
   statsBlocked = 0;
   statsAllowed = 0;
+}
+
+// Get and reset blocked count delta (for metrics aggregator)
+export function getBlockedDelta() {
+  const val = blockedDelta;
+  blockedDelta = 0;
+  return val;
+}
+
+// Get and reset per-country hit counts (for metrics aggregator)
+export function getAndResetCountryHits() {
+  const copy = new Map(countryHits);
+  countryHits = new Map();
+  return copy;
 }
 
 // Map schedule setting to interval in days

@@ -62,6 +62,12 @@
                      @contextmenu.prevent="openSubnetContextMenuById($event, subnet)">
                   <div class="tree-item-row">
                     <span class="item-name">{{ subnet.cidr }}</span>
+                    <span class="tree-item-actions">
+                      <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                              @click.stop="openSubnetEditById(subnet)" data-track="sidebar-net-edit" />
+                      <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                              @click.stop="openSubnetDeleteById(subnet)" data-track="sidebar-net-delete" />
+                    </span>
                   </div>
                   <div class="tree-item-meta">
                     <span v-if="subnet.name">{{ subnet.name }}</span>
@@ -96,6 +102,12 @@
                  @contextmenu.prevent="openSubnetContextMenuById($event, subnet)">
               <div class="tree-item-row">
                 <span class="item-name">{{ subnet.cidr }}</span>
+                <span class="tree-item-actions">
+                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                          @click.stop="openSubnetEditById(subnet)" data-track="sidebar-net-edit" />
+                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                          @click.stop="openSubnetDeleteById(subnet)" data-track="sidebar-net-delete" />
+                </span>
               </div>
               <div class="tree-item-meta">
                 <span v-if="subnet.name">{{ subnet.name }}</span>
@@ -169,7 +181,9 @@
             :merge-selected-ids="mergeSelectedIdsRaw"
             @select-subnet="onFolderTableSelectSubnet"
             @merge-toggle="toggleMergeSelect"
-            @context-menu="openSubnetContextMenu" />
+            @context-menu="openSubnetContextMenu"
+            @edit-subnet="node => dialogs.value.openEdit(node)"
+            @delete-subnet="node => dialogs.value.openDelete(node)" />
         <div v-else class="empty-detail">
           <i class="pi pi-sitemap" style="font-size: 2rem; opacity: 0.3"></i>
           <span>Select a network to view details</span>
@@ -360,6 +374,18 @@ function selectSubnetById(subnet) {
 function openSubnetContextMenuById(event, subnet) {
   const node = findNodeInTrees(subnet.id) || { data: subnet, key: `subnet-${subnet.id}`, children: [] };
   openSubnetContextMenu(event, node);
+}
+
+function subnetToNode(subnet) {
+  return findNodeInTrees(subnet.id) || { data: subnet, key: `subnet-${subnet.id}`, children: [] };
+}
+
+function openSubnetEditById(subnet) {
+  dialogs.value.openEdit(subnetToNode(subnet));
+}
+
+function openSubnetDeleteById(subnet) {
+  dialogs.value.openDelete(subnetToNode(subnet));
 }
 
 // ── Subnet selection ──
@@ -1005,6 +1031,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 0.25rem;
+}
+.tree-item-actions {
+  display: flex;
+  gap: 0.1rem;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 .item-name {
   font-size: 0.85rem;

@@ -43,6 +43,8 @@ import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
 import { startPassiveLivenessWatcher } from './utils/passive-liveness.js';
+import { startMetricsAggregator } from './utils/metrics-aggregator.js';
+import metricsRoutes from './routes/metrics.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -98,6 +100,9 @@ async function main() {
 
   // Start update checker (checks GitHub releases periodically)
   startUpdateScheduler();
+
+  // Start metrics aggregator (collects stats every 60s for dashboard)
+  startMetricsAggregator(getDb());
 
   // Audit log retention
   function pruneAuditLog() {
@@ -179,6 +184,7 @@ async function main() {
   app.use('/api/logs', logRoutes);
   app.use('/api/pihole', piholeRoutes);
   app.use('/api/interfaces', interfaceRoutes);
+  app.use('/api/metrics', metricsRoutes);
   app.use('/api/version', versionRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
 
