@@ -13,6 +13,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '.
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
 const AGGREGATE_INTERVAL_MS = 60_000;
+const MAX_READ_BYTES = 10 * 1024 * 1024; // 10MB max per cycle
 const RETENTION_DAYS = 30;
 const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
@@ -51,7 +52,8 @@ function readNewLines() {
   if (size < logOffset) logOffset = 0; // truncated
   if (size === logOffset) return [];
 
-  const buf = Buffer.alloc(size - logOffset);
+  const bytesToRead = Math.min(size - logOffset, MAX_READ_BYTES);
+  const buf = Buffer.alloc(bytesToRead);
   const fd = fs.openSync(LOG_FILE, 'r');
   try {
     fs.readSync(fd, buf, 0, buf.length, logOffset);
@@ -59,7 +61,7 @@ function readNewLines() {
     fs.closeSync(fd);
   }
 
-  logOffset = size;
+  logOffset = logOffset + bytesToRead;
   return buf.toString('utf-8').split('\n').filter(l => l.trim());
 }
 
@@ -124,18 +126,17 @@ function aggregate() {
     const geoipBlocks = getBlockedDelta();
     const geoipCountryHits = getAndResetCountryHits();
 
-    // Insert main metrics row
-    insertMetrics.run(ts, dnsQueries, dhcpRequests, blocklistBlocks, geoipBlocks);
-
-    // Insert blocklist category hits
-    for (const [category, count] of categoryCounts) {
-      insertBlocklistHit.run(ts, category, count);
-    }
-
-    // Insert geoip country hits
-    for (const [country, count] of geoipCountryHits) {
-      insertGeoipHit.run(ts, country, count);
-    }
+    // Insert all metrics in a single transaction
+    const insertAll = db.transaction(() => {
+      insertMetrics.run(ts, dnsQueries, dhcpRequests, blocklistBlocks, geoipBlocks);
+      for (const [category, count] of categoryCounts) {
+        insertBlocklistHit.run(ts, category, count);
+      }
+      for (const [country, count] of geoipCountryHits) {
+        insertGeoipHit.run(ts, country, count);
+      }
+    });
+    insertAll();
 
     // Periodic retention cleanup
     cycleCount++;
