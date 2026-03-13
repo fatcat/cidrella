@@ -602,7 +602,7 @@ function computeIpState(data) {
 
   // Rogue: scanner flagged as conflict, OR responded but has no assignment/reservation/lease/DNS
   const hasActiveLease = data.dhcp_expires_at && !isLeaseExpired;
-  if (data.scan_conflict) {
+  if (data.scan_conflict && (data.is_online || data.scan_responded)) {
     return {
       status: 'in use', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger',
       tooltip: data.scan_conflict_reason || null
@@ -745,8 +745,8 @@ const ipGrid = computed(() => {
       vendor: assignInfo?.vendor || null,
       isOnline: assignInfo?.is_online === 1,
       lastSeen: assignInfo?.last_seen_at || null,
-      isConflict: conflictMap.has(addr),
-      conflictReason: conflictMap.get(addr) || null
+      isConflict: conflictMap.has(addr) && assignInfo?.is_online === 1,
+      conflictReason: (conflictMap.has(addr) && assignInfo?.is_online === 1) ? conflictMap.get(addr) : null
     });
   }
 
