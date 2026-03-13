@@ -8,6 +8,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => !!token.value);
   const mustChangePassword = computed(() => user.value?.must_change_password ?? false);
+  const preferences = computed(() => user.value?.preferences || {});
+  const timeFormat = computed(() => preferences.value.time_format || 'locale');
 
   async function login(username, password) {
     const res = await api.post('/auth/login', { username, password });
@@ -37,11 +39,19 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  async function updatePreferences(prefs) {
+    const res = await api.put('/auth/preferences', prefs);
+    if (user.value) {
+      user.value = { ...user.value, preferences: res.data };
+    }
+    return res.data;
+  }
+
   function logout() {
     token.value = null;
     user.value = null;
     localStorage.removeItem('ipam_token');
   }
 
-  return { token, user, isAuthenticated, mustChangePassword, login, changePassword, fetchUser, logout };
+  return { token, user, isAuthenticated, mustChangePassword, preferences, timeFormat, login, changePassword, fetchUser, updatePreferences, logout };
 });

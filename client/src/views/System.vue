@@ -1,7 +1,6 @@
 <template>
   <div class="system-page">
     <aside class="sys-sidebar">
-      <Button label="IP Management" icon="pi pi-arrow-left" size="small" text class="back-btn" data-track="sys-back-to-ipam" @click="$router.push('/')" />
       <nav class="sys-nav">
         <template v-for="group in navGroups" :key="group.label">
           <div class="nav-group-label">{{ group.label }}</div>
@@ -481,6 +480,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
+import { formatDateTime } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
@@ -898,11 +898,7 @@ async function loadAuditLog() {
   }
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr + 'Z');
-  return d.toLocaleString();
-}
+const formatDate = formatDateTime;
 
 function actionColor(action) {
   // Direct matches → global badge color class names
@@ -990,7 +986,7 @@ const nextBackupLabel = computed(() => {
   if (!lastRun) return 'Pending — will run within 15 minutes';
   const nextTime = new Date(lastRun + interval);
   if (nextTime.getTime() <= Date.now()) return 'Pending — will run within 15 minutes';
-  return nextTime.toLocaleString();
+  return formatDateTime(nextTime.toISOString());
 });
 
 async function loadBackupSettings() {
@@ -1229,10 +1225,6 @@ async function doResetCert() {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-}
-.back-btn {
-  margin: 0.5rem;
-  justify-content: flex-start !important;
 }
 .sys-nav {
   display: flex;

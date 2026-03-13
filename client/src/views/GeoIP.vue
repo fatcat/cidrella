@@ -121,6 +121,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { formatDateTime } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
@@ -192,11 +193,7 @@ function formatNumber(n) {
   return n.toLocaleString();
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr + (dateStr.includes('Z') ? '' : 'Z'));
-  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
+const formatDate = formatDateTime;
 
 function openAddCountries() {
   countrySearch.value = '';

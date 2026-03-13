@@ -49,13 +49,17 @@ router.post('/login', async (req, res) => {
   const token = generateToken(user);
   audit(user.id, 'login', 'user', user.id, null);
 
+  let preferences = {};
+  try { preferences = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
+
   res.json({
     token,
     user: {
       id: user.id,
       username: user.username,
       role: user.role,
-      must_change_password: !!user.must_change_password
+      must_change_password: !!user.must_change_password,
+      preferences
     }
   });
 });
@@ -110,19 +114,59 @@ router.post('/change-password', async (req, res) => {
 // GET /api/auth/me
 router.get('/me', (req, res) => {
   const db = getDb();
-  const user = db.prepare('SELECT id, username, role, must_change_password, created_at FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, username, role, must_change_password, preferences, created_at FROM users WHERE id = ?').get(req.user.id);
 
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
+
+  let preferences = {};
+  try { preferences = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
 
   res.json({
     id: user.id,
     username: user.username,
     role: user.role,
     must_change_password: !!user.must_change_password,
+    preferences,
     created_at: user.created_at
   });
+});
+
+// PUT /api/auth/preferences — update current user's preferences
+router.put('/preferences', (req, res) => {
+  const ALLOWED_KEYS = ['time_format'];
+  const VALID_TIME_FORMATS = ['locale', 'ampm', '24h'];
+
+  const updates = req.body;
+  if (!updates || typeof updates !== 'object') {
+    return res.status(400).json({ error: 'Request body must be an object' });
+  }
+
+  // Validate keys
+  for (const key of Object.keys(updates)) {
+    if (!ALLOWED_KEYS.includes(key)) {
+      return res.status(400).json({ error: `Unknown preference: ${key}` });
+    }
+  }
+
+  if (updates.time_format && !VALID_TIME_FORMATS.includes(updates.time_format)) {
+    return res.status(400).json({ error: `time_format must be one of: ${VALID_TIME_FORMATS.join(', ')}` });
+  }
+
+  const db = getDb();
+  const user = db.prepare('SELECT preferences FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+
+  let prefs = {};
+  try { prefs = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
+
+  Object.assign(prefs, updates);
+
+  db.prepare("UPDATE users SET preferences = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(JSON.stringify(prefs), req.user.id);
+
+  res.json(prefs);
 });
 
 export default router;

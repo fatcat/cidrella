@@ -238,6 +238,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
+import { formatDateTime } from '../utils/dateFormat.js';
 
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
@@ -388,12 +389,7 @@ function selectScope(scope) {
   try { localStorage.setItem('ipam_dhcp_selected_scope_id', JSON.stringify(scope?.id || null)); } catch {}
 }
 
-function formatDate(iso) {
-  if (!iso) return '—';
-  try {
-    return new Date(iso).toLocaleString();
-  } catch { return iso; }
-}
+const formatDate = formatDateTime;
 
 // Scope dialog methods
 async function openScopeDialog(scope = null) {

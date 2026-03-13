@@ -185,6 +185,29 @@ export async function startScan(db, scanId, subnetId) {
   `).all(subnetId);
   const assignmentMap = new Map(assignments.map(a => [a.ip_address, a]));
 
+  // Also include DHCP reservations — an IP with a reservation is not rogue
+  // (covers cases where ip_addresses wasn't synced yet)
+  const reservations = db.prepare(`
+    SELECT ip_address, mac_address, hostname FROM dhcp_reservations
+    WHERE subnet_id = ?
+  `).all(subnetId);
+  for (const r of reservations) {
+    if (!assignmentMap.has(r.ip_address)) {
+      assignmentMap.set(r.ip_address, { ip_address: r.ip_address, mac_address: r.mac_address, hostname: r.hostname, status: 'dhcp' });
+    }
+  }
+
+  // Also include IPs with hostnames (set by DNS sync) — not rogue
+  const dnsAssigned = db.prepare(`
+    SELECT ip_address, mac_address, hostname, status FROM ip_addresses
+    WHERE subnet_id = ? AND hostname IS NOT NULL AND hostname != ''
+  `).all(subnetId);
+  for (const d of dnsAssigned) {
+    if (!assignmentMap.has(d.ip_address)) {
+      assignmentMap.set(d.ip_address, d);
+    }
+  }
+
   const insertResult = db.prepare(`
     INSERT INTO scan_results (scan_id, ip_address, mac_address, responded, is_conflict, conflict_reason)
     VALUES (?, ?, ?, ?, ?, ?)

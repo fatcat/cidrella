@@ -396,6 +396,7 @@
 
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue';
+import { formatDateTime } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
@@ -678,11 +679,7 @@ function longToIp(long) {
   return [(long >>> 24) & 255, (long >>> 16) & 255, (long >>> 8) & 255, long & 255].join('.');
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return '—';
-  const d = new Date(dateStr + (dateStr.endsWith('Z') ? '' : 'Z'));
-  return d.toLocaleString();
-}
+const formatDate = formatDateTime;
 
 function displayHostname(hostname) {
   if (!hostname) return '—';

@@ -92,12 +92,26 @@
     <div class="header-right">
       <Button icon="pi pi-download" severity="secondary" text rounded size="small"
               title="Import" data-track="header-import" @click="piholeImportRef?.open()" />
-      <div class="user-info">
+      <button class="user-menu-trigger" data-track="header-user-menu" @click="toggleUserMenu">
         <span class="username">{{ auth.user?.username }}</span>
         <span class="role-badge">{{ auth.user?.role }}</span>
-      </div>
-      <Button icon="pi pi-sign-out" severity="secondary" text rounded size="small"
-              title="Sign out" data-track="header-logout" @click="handleLogout" />
+        <i class="pi pi-chevron-down user-chevron"></i>
+      </button>
+      <Popover ref="userMenuRef">
+        <div class="user-menu-panel">
+          <div class="user-menu-section">
+            <label class="user-menu-label">Time Format</label>
+            <Select v-model="selectedTimeFormat" :options="timeFormatOptions" optionLabel="label"
+                    optionValue="value" data-track="user-pref-time-format" class="w-full"
+                    @change="onTimeFormatChange" />
+          </div>
+          <div class="user-menu-divider"></div>
+          <button class="user-menu-item" data-track="header-logout" @click="handleLogout">
+            <i class="pi pi-sign-out"></i>
+            <span>Sign out</span>
+          </button>
+        </div>
+      </Popover>
     </div>
 
     <PiholeImport ref="piholeImportRef" @imported="fetchHealth" />
@@ -106,11 +120,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import Button from 'primevue/button';
+import Popover from 'primevue/popover';
+import Select from 'primevue/select';
 import { useAuthStore } from '../stores/auth.js';
 import { useSubnetStore } from '../stores/subnets.js';
+import { formatScanDate } from '../utils/dateFormat.js';
 import PiholeImport from './PiholeImport.vue';
 import api from '../api/client.js';
 
@@ -120,6 +137,7 @@ const route = useRoute();
 const auth = useAuthStore();
 const subnetStore = useSubnetStore();
 const piholeImportRef = ref(null);
+const userMenuRef = ref(null);
 const health = ref(null);
 const activeScans = ref([]);
 const nextScanTime = ref(null);
@@ -127,7 +145,27 @@ const updateInfo = ref(null);
 let pollInterval = null;
 let scanPollInterval = null;
 
+const timeFormatOptions = [
+  { label: 'Locale Default', value: 'locale' },
+  { label: 'AM / PM', value: 'ampm' },
+  { label: '24 Hour', value: '24h' }
+];
+
+const selectedTimeFormat = ref(auth.timeFormat);
+watch(() => auth.timeFormat, (v) => { selectedTimeFormat.value = v; });
+
+function toggleUserMenu(event) {
+  userMenuRef.value.toggle(event);
+}
+
+async function onTimeFormatChange(event) {
+  try {
+    await auth.updatePreferences({ time_format: event.value });
+  } catch { /* ignore */ }
+}
+
 function handleLogout() {
+  userMenuRef.value.hide();
   auth.logout();
   router.push('/login');
 }
@@ -179,17 +217,6 @@ const diskStatusClass = computed(() => {
   if (!disk) return 'card-ok';
   return disk.percent >= 90 ? 'card-err' : 'card-ok';
 });
-
-function formatScanDate(dateStr) {
-  if (!dateStr) return null;
-  const d = new Date(dateStr + (dateStr.endsWith('Z') ? '' : 'Z'));
-  if (isNaN(d)) return null;
-  const mon = d.toLocaleString('en-US', { month: 'short' });
-  const day = d.getDate();
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${mon} ${day} - ${hh}:${mm}`;
-}
 
 const scanDisplay = computed(() => {
   const scans = activeScans.value;
@@ -394,12 +421,23 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.user-info {
+.user-menu-trigger {
   display: flex;
   align-items: center;
   gap: 0.35rem;
   font-size: 0.8rem;
   margin-left: 0.5rem;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+  cursor: pointer;
+  color: var(--p-text-color);
+  transition: background 0.15s, border-color 0.15s;
+}
+.user-menu-trigger:hover {
+  background: var(--p-surface-ground);
+  border-color: var(--p-surface-border);
 }
 
 .username {
@@ -413,6 +451,54 @@ onUnmounted(() => {
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
   text-transform: uppercase;
+}
+
+.user-chevron {
+  font-size: 0.6rem;
+  color: var(--p-text-muted-color);
+}
+
+.user-menu-panel {
+  min-width: 200px;
+  padding: 0.5rem;
+}
+
+.user-menu-section {
+  padding: 0.25rem 0;
+}
+
+.user-menu-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--p-text-muted-color);
+  margin-bottom: 0.35rem;
+  letter-spacing: 0.03em;
+}
+
+.user-menu-divider {
+  height: 1px;
+  background: var(--p-surface-border);
+  margin: 0.5rem 0;
+}
+
+.user-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--p-text-color);
+  transition: background 0.15s;
+}
+.user-menu-item:hover {
+  background: var(--p-surface-ground);
 }
 
 .version-tag {

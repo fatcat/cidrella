@@ -308,8 +308,10 @@ export function setRogue(db, subnetId, ip, reason) {
  */
 export function clearRogue(db, subnetId, ip) {
   const existing = db.prepare(
-    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
+
+  if (!existing || !existing.is_rogue) return { changes: 0 };
 
   const result = db.prepare(`
     UPDATE ip_addresses SET
@@ -318,9 +320,7 @@ export function clearRogue(db, subnetId, ip) {
     WHERE subnet_id = ? AND ip_address = ?
   `).run(subnetId, ip);
 
-  if (existing) {
-    emit(db, existing.id, subnetId, ip, 'rogue_cleared');
-  }
+  emit(db, existing.id, subnetId, ip, 'rogue_cleared');
   return result;
 }
 
@@ -355,8 +355,25 @@ export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
  */
 export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, conflictReason }) {
   const existing = db.prepare(
-    'SELECT id, is_online, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_online, is_rogue, status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
+
+  // Re-check: if scanner says conflict but the IP now has a static assignment
+  // (reservation/DNS added after the assignment map was built), don't mark rogue
+  let effectiveConflict = isConflict;
+  let effectiveReason = conflictReason;
+  if (isConflict && existing && existing.status !== 'available') {
+    effectiveConflict = 0;
+    effectiveReason = null;
+  } else if (isConflict) {
+    const hasReservation = db.prepare(
+      'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? LIMIT 1'
+    ).get(subnetId, ip);
+    if (hasReservation) {
+      effectiveConflict = 0;
+      effectiveReason = null;
+    }
+  }
 
   if (existing) {
     const updates = [
@@ -380,9 +397,9 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     }
 
     updates.push('is_rogue = ?');
-    params.push(isConflict ? 1 : 0);
+    params.push(effectiveConflict ? 1 : 0);
     updates.push('rogue_reason = ?');
-    params.push(isConflict ? conflictReason : null);
+    params.push(effectiveConflict ? effectiveReason : null);
 
     params.push(existing.id);
     db.prepare(`UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`).run(...params);
@@ -394,13 +411,23 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     } else if (!responded && existing.is_online) {
       emit(db, existing.id, subnetId, ip, 'offline', { source: 'scanner' });
     }
-    if (isConflict && !existing.is_rogue) {
-      emit(db, existing.id, subnetId, ip, 'rogue_detected', { newValue: conflictReason, source: 'scanner' });
-    } else if (!isConflict && existing.is_rogue) {
+    if (effectiveConflict && !existing.is_rogue) {
+      emit(db, existing.id, subnetId, ip, 'rogue_detected', { newValue: effectiveReason, source: 'scanner' });
+    } else if (!effectiveConflict && existing.is_rogue) {
       emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'scanner' });
     }
   } else if (responded) {
     // Rogue device with no existing record — create one
+    // Re-check for reservation before inserting as rogue
+    if (effectiveConflict) {
+      const hasReservation = db.prepare(
+        'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? LIMIT 1'
+      ).get(subnetId, ip);
+      if (hasReservation) {
+        effectiveConflict = 0;
+        effectiveReason = null;
+      }
+    }
     db.prepare(`
       INSERT INTO ip_addresses (
         subnet_id, ip_address, status, is_online,
@@ -416,15 +443,15 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     `).run(
       subnetId, ip,
       mac || null, mac || null,
-      isConflict ? 1 : 0, isConflict ? conflictReason : null
+      effectiveConflict ? 1 : 0, effectiveConflict ? effectiveReason : null
     );
     const newId = db.prepare(
       'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
     ).get(subnetId, ip).id;
     emit(db, newId, subnetId, ip, 'scanned', { newValue: 'responded', source: 'scanner' });
     emit(db, newId, subnetId, ip, 'online', { source: 'scanner' });
-    if (isConflict) {
-      emit(db, newId, subnetId, ip, 'rogue_detected', { newValue: conflictReason, source: 'scanner' });
+    if (effectiveConflict) {
+      emit(db, newId, subnetId, ip, 'rogue_detected', { newValue: effectiveReason, source: 'scanner' });
     }
   }
   // If no existing row and didn't respond, nothing to record

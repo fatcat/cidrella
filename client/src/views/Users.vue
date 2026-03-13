@@ -110,6 +110,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { formatDateOnly } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
@@ -141,11 +142,7 @@ function roleLabel(role) {
   return ROLE_LABELS[role] || role;
 }
 
-function formatDate(dateStr) {
-  if (!dateStr) return '—';
-  const d = new Date(dateStr + (dateStr.includes('Z') ? '' : 'Z'));
-  return d.toLocaleDateString();
-}
+const formatDate = formatDateOnly;
 
 const users = ref([]);
 const loading = ref(false);

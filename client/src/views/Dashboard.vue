@@ -58,6 +58,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { formatEpoch } from '../utils/dateFormat.js';
 import Select from 'primevue/select';
 import Button from 'primevue/button';
 import {
@@ -98,16 +99,7 @@ const geoipDotClass = computed(() => {
 });
 
 function formatTs(epoch) {
-  const d = new Date(epoch * 1000);
-  const range = selectedRange.value;
-  if (range === '1h' || range === '4h') {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  if (range === '12h' || range === '24h') {
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
-         d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return formatEpoch(epoch, selectedRange.value);
 }
 
 const lineData = computed(() => {

@@ -44,6 +44,7 @@ export function syncDnsToIp(db, recordName, ip, zoneName) {
 
   const fqdn = recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
   IpAddress.upsert(db, subnet.id, ip, { hostname: fqdn, detection_source: 'dns' });
+  IpAddress.clearRogue(db, subnet.id, ip);
   IpAddress.emitEvent(db, subnet.id, ip, 'dns_added', { newValue: fqdn, source: 'dns' });
 }
 
@@ -76,6 +77,7 @@ export function syncDhcpReservationToIp(db, subnetId, ip, { hostname, mac_addres
     status: 'dhcp',
     detection_source: 'dhcp_reservation'
   });
+  IpAddress.clearRogue(db, subnetId, ip);
 }
 
 /**
@@ -106,6 +108,7 @@ export function syncLeasesToIps(db, leases) {
       last_seen_mac: l.mac || undefined,
       detection_source: 'dhcp_lease'
     });
+    IpAddress.clearRogue(db, l.subnetId, l.ip);
     // Only emit lease_obtained on new leases (not already DHCP status)
     if (!before || before.status !== 'dhcp') {
       IpAddress.emitEvent(db, l.subnetId, l.ip, 'lease_obtained', { newValue: l.mac || null, source: 'dhcp_lease' });

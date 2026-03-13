@@ -51,6 +51,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { formatTimeWithSeconds } from '../utils/dateFormat.js';
 import { version as vueVersion } from 'vue';
 import { useDebugStore } from '../stores/debug.js';
 
@@ -75,9 +76,7 @@ const sessionDuration = computed(() => {
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 });
 
-function formatTime(date) {
-  return date.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
+const formatTime = formatTimeWithSeconds;
 
 function formatDetail(detail) {
   if (typeof detail === 'string') return detail;
