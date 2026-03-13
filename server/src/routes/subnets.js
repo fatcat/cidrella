@@ -1722,6 +1722,20 @@ router.put('/:id/ips/:ip/scan-enabled', requirePerm('subnets:write'), asyncHandl
   res.json({ ip_address: ipAddress, scan_enabled: scanEn });
 }));
 
+// GET /:id/ips/:ip/events — IP lifecycle event history
+router.get('/:id/ips/:ip/events', requirePerm('subnets:read'), asyncHandler((req, res) => {
+  const db = getDb();
+  const subnet = db.prepare('SELECT id FROM subnets WHERE id = ?').get(req.params.id);
+  if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+
+  const existing = IpAddress.findBySubnetAndIp(db, subnet.id, req.params.ip);
+  if (!existing) return res.json({ events: [] });
+
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
+  const events = IpAddress.getEvents(db, existing.id, { limit });
+  res.json({ events });
+}));
+
 // Error handler for all subnet routes
 router.use((err, req, res, _next) => {
   console.error(`Subnet route error [${req.method} ${req.originalUrl}]:`, err);

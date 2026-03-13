@@ -185,20 +185,30 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
 }
 
 /**
+ * Check whether an IP record should be kept when going offline.
+ * Persistent reasons: manual status (locked/assigned), DNS hostname,
+ * DHCP reservation, or per-IP scan override.
+ */
+function shouldKeepOffline(db, row) {
+  if (row.status === 'locked' || row.status === 'assigned') return true;
+  if (row.hostname) return true;
+  if (row.scan_enabled !== null && row.scan_enabled !== undefined) return true;
+  const hasReservation = db.prepare(
+    'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? LIMIT 1'
+  ).get(row.subnet_id, row.ip_address);
+  if (hasReservation) return true;
+  return false;
+}
+
+/**
  * Mark a single IP as offline. Also clears rogue status.
+ * Ephemeral IPs (dynamic leases, rogues, scan-only) are deleted.
  */
 export function markOffline(db, subnetId, ip) {
   const existing = db.prepare(
-    'SELECT id, is_online, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_online, is_rogue, status, hostname, scan_enabled, subnet_id, ip_address FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
   if (!existing) return { changes: 0 };
-
-  const result = db.prepare(`
-    UPDATE ip_addresses SET
-      is_online = 0, is_rogue = 0, rogue_reason = NULL,
-      updated_at = datetime('now')
-    WHERE id = ?
-  `).run(existing.id);
 
   if (existing.is_online) {
     emit(db, existing.id, subnetId, ip, 'offline');
@@ -207,37 +217,63 @@ export function markOffline(db, subnetId, ip) {
     emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'offline' });
   }
 
-  return result;
+  if (!shouldKeepOffline(db, existing)) {
+    return db.prepare('DELETE FROM ip_addresses WHERE id = ?').run(existing.id);
+  }
+
+  return db.prepare(`
+    UPDATE ip_addresses SET
+      is_online = 0, is_rogue = 0, rogue_reason = NULL,
+      updated_at = datetime('now')
+    WHERE id = ?
+  `).run(existing.id);
 }
 
 /**
  * Bulk staleness sweep: mark IPs offline if not seen within staleMinutes.
+ * Ephemeral IPs are deleted; persistent IPs are marked offline.
  * Also clears rogue status for stale IPs (rogue device went away).
  */
 export function bulkMarkStale(db, staleMinutes) {
   const offset = `-${staleMinutes} minutes`;
 
-  // Capture IPs about to go stale for event recording
   const staleIps = db.prepare(`
-    SELECT id, subnet_id, ip_address, is_rogue FROM ip_addresses
+    SELECT id, subnet_id, ip_address, is_rogue, status, hostname, scan_enabled
+    FROM ip_addresses
     WHERE is_online = 1 AND last_seen_at < datetime('now', ?)
   `).all(offset);
 
-  const result = db.prepare(`
-    UPDATE ip_addresses SET
-      is_online = 0, is_rogue = 0, rogue_reason = NULL,
-      updated_at = datetime('now')
-    WHERE is_online = 1 AND last_seen_at < datetime('now', ?)
-  `).run(offset);
+  const toDelete = [];
+  const toUpdate = [];
 
   for (const row of staleIps) {
     emit(db, row.id, row.subnet_id, row.ip_address, 'offline', { source: 'stale' });
     if (row.is_rogue) {
       emit(db, row.id, row.subnet_id, row.ip_address, 'rogue_cleared', { source: 'stale' });
     }
+    if (shouldKeepOffline(db, row)) {
+      toUpdate.push(row.id);
+    } else {
+      toDelete.push(row.id);
+    }
   }
 
-  return result;
+  if (toUpdate.length > 0) {
+    const updateStmt = db.prepare(`
+      UPDATE ip_addresses SET
+        is_online = 0, is_rogue = 0, rogue_reason = NULL,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    for (const id of toUpdate) updateStmt.run(id);
+  }
+
+  if (toDelete.length > 0) {
+    const deleteStmt = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
+    for (const id of toDelete) deleteStmt.run(id);
+  }
+
+  return { changes: toUpdate.length + toDelete.length, deleted: toDelete.length, updated: toUpdate.length };
 }
 
 /**

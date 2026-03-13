@@ -452,7 +452,10 @@ const savingRecord = ref(false);
 const recordForm = ref({ name: '', type: 'A', value: '', priority: null, weight: null, port: null, ttl: null, enabled: true });
 const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
 
-const dnsSearch = ref('');
+const dnsSearch = ref(loadJson('ipam_dns_search', ''));
+watch(dnsSearch, (val) => {
+  try { localStorage.setItem('ipam_dns_search', JSON.stringify(val)); } catch {}
+});
 const filteredRecords = computed(() => {
   const q = dnsSearch.value.trim().toLowerCase();
   if (!q) return records.value;

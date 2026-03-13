@@ -277,8 +277,10 @@ const savingReservation = ref(false);
 const reservationForm = ref({ subnet_id: null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true });
 const allocatedSubnets = ref([]);
 
-const dhcpSearch = ref('');
-const dhcpAllSearch = ref('');
+const dhcpSearch = ref(loadJson('ipam_dhcp_search', ''));
+const dhcpAllSearch = ref(loadJson('ipam_dhcp_all_search', ''));
+watch(dhcpSearch, (val) => { try { localStorage.setItem('ipam_dhcp_search', JSON.stringify(val)); } catch {} });
+watch(dhcpAllSearch, (val) => { try { localStorage.setItem('ipam_dhcp_all_search', JSON.stringify(val)); } catch {} });
 
 // Lease context menu
 const leaseContextMenuRef = ref();

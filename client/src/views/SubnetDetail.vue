@@ -375,6 +375,19 @@
       </template>
     </Dialog>
 
+    <!-- IP Lifecycle Events Dialog -->
+    <Dialog v-model:visible="showEventsDialog" :header="`Lifecycle — ${eventsIp}`" modal :style="{ width: '38rem' }" data-track="dialog-ip-events">
+      <div v-if="eventsLoading" class="events-loading">Loading events...</div>
+      <div v-else-if="eventsData.length === 0" class="events-empty">No events recorded for this IP.</div>
+      <div v-else class="events-list">
+        <div v-for="evt in eventsData" :key="evt.id" class="event-row">
+          <span class="event-time">{{ formatDate(evt.created_at) }}</span>
+          <Tag :severity="eventSeverity(evt.event_type)" :value="eventLabel(evt.event_type)" class="event-tag" />
+          <span class="event-detail">{{ eventDetail(evt) }}</span>
+        </div>
+      </div>
+    </Dialog>
+
     <Toast />
   </div>
   <div v-else-if="loading" class="loading">Loading network...</div>
@@ -432,6 +445,65 @@ const showStaticDhcpDialog = ref(false);
 const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', description: '' });
 const staticDhcpScanEnabled = ref(null);
 
+// IP Lifecycle Events dialog
+const showEventsDialog = ref(false);
+const eventsIp = ref('');
+const eventsData = ref([]);
+const eventsLoading = ref(false);
+
+async function openEventsDialog(ipAddress) {
+  eventsIp.value = ipAddress;
+  eventsData.value = [];
+  eventsLoading.value = true;
+  showEventsDialog.value = true;
+  try {
+    const { data } = await api.get(`/subnets/${subnet.value.id}/ips/${ipAddress}/events`);
+    eventsData.value = data.events || [];
+  } catch {
+    eventsData.value = [];
+  } finally {
+    eventsLoading.value = false;
+  }
+}
+
+function eventLabel(type) {
+  const labels = {
+    online: 'Online', offline: 'Offline', scanned: 'Scanned',
+    rogue_detected: 'Rogue', rogue_cleared: 'Rogue Cleared',
+    dns_added: 'DNS Added', dns_removed: 'DNS Removed',
+    lease_obtained: 'Lease', hostname_changed: 'Hostname',
+    mac_changed: 'MAC Changed', status_changed: 'Status',
+    scan_enabled_changed: 'Scan Toggle',
+  };
+  return labels[type] || type;
+}
+
+function eventSeverity(type) {
+  if (type === 'online' || type === 'dns_added' || type === 'lease_obtained') return 'success';
+  if (type === 'offline' || type === 'dns_removed') return 'secondary';
+  if (type === 'rogue_detected') return 'danger';
+  if (type === 'rogue_cleared') return 'warn';
+  return 'info';
+}
+
+function sourceLabel(source) {
+  const labels = {
+    scanner: 'active scan', passive: 'passive (DNS log)', stale: 'staleness timeout',
+    dns: 'DNS', dhcp_reservation: 'DHCP reservation', dhcp_lease: 'DHCP lease',
+    manual: 'manual', offline: 'went offline',
+  };
+  return labels[source] || source || '';
+}
+
+function eventDetail(evt) {
+  const parts = [];
+  if (evt.old_value && evt.new_value) parts.push(`${evt.old_value} → ${evt.new_value}`);
+  else if (evt.new_value) parts.push(evt.new_value);
+  else if (evt.old_value) parts.push(evt.old_value);
+  if (evt.source) parts.push(`(${sourceLabel(evt.source)})`);
+  return parts.join(' ');
+}
+
 // Resolve the effective scan_enabled for this subnet (subnet → folder → default true)
 const resolvedSubnetScanEnabled = computed(() => {
   if (!subnet.value) return true;
@@ -441,7 +513,40 @@ const resolvedSubnetScanEnabled = computed(() => {
   return folder ? !!folder.scan_enabled : true;
 });
 
-// Server-side pagination state
+// Server-side pagination state — persisted per-subnet
+function loadTableState() {
+  const saved = loadJson('ipam_ip_table_state', {});
+  return saved;
+}
+function saveTableState() {
+  try {
+    const key = `${props.subnetId}`;
+    const all = loadJson('ipam_ip_table_state', {});
+    all[key] = {
+      page: currentPage.value,
+      pageSize: currentPageSize.value,
+      sortField: sortField.value,
+      sortOrder: sortOrder.value,
+    };
+    localStorage.setItem('ipam_ip_table_state', JSON.stringify(all));
+  } catch {}
+}
+function restoreTableState() {
+  const all = loadTableState();
+  const saved = all[`${props.subnetId}`];
+  if (saved) {
+    currentPage.value = saved.page || 1;
+    currentPageSize.value = saved.pageSize || 256;
+    sortField.value = saved.sortField || null;
+    sortOrder.value = saved.sortOrder ?? 1;
+  } else {
+    currentPage.value = 1;
+    currentPageSize.value = 256;
+    sortField.value = null;
+    sortOrder.value = 1;
+  }
+}
+
 const currentPage = ref(1);
 const currentPageSize = ref(256);
 const totalIps = ref(0);
@@ -480,6 +585,14 @@ watch(ipSearch, (val) => {
 const showLoadingOverlay = ref(false);
 
 const rowsPerPageOptions = [64, 128, 256, 512];
+
+/** Pick the largest page size that fits totalIps, or 512 if totalIps >= 512 */
+function bestPageSize(total) {
+  for (let i = rowsPerPageOptions.length - 1; i >= 0; i--) {
+    if (total >= rowsPerPageOptions[i]) return rowsPerPageOptions[i];
+  }
+  return rowsPerPageOptions[0];
+}
 
 const showRangeDialog = ref(false);
 const showOverlapDialog = ref(false);
@@ -907,20 +1020,25 @@ function buildContextMenuItems(selectedIps) {
       });
     }
 
-    // Liveness scan toggle
+    // Liveness scan toggle — resolve effective state (IP override → subnet default)
     items.push({ separator: true });
     const ipData = ips.value.find(a => a.ip_address === ip.address);
-    const currentScanEnabled = ipData?.scan_enabled ?? null;
-    if (currentScanEnabled === 1) {
-      items.push({ label: 'Disable Scanning', icon: 'pi pi-eye-slash', command: () => toggleIpScan(ip.address, false) });
-      items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
-    } else if (currentScanEnabled === 0) {
-      items.push({ label: 'Enable Scanning', icon: 'pi pi-eye', command: () => toggleIpScan(ip.address, true) });
-      items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
+    const ipOverride = ipData?.scan_enabled ?? null;
+    const effectivelyEnabled = ipOverride !== null ? !!ipOverride : resolvedSubnetScanEnabled.value;
+    const hasOverride = ipOverride !== null;
+
+    if (effectivelyEnabled) {
+      items.push({ label: `Disable Scanning of ${ip.address}`, icon: 'pi pi-eye-slash', command: () => toggleIpScan(ip.address, false) });
     } else {
-      items.push({ label: 'Enable Scanning', icon: 'pi pi-eye', command: () => toggleIpScan(ip.address, true) });
-      items.push({ label: 'Disable Scanning', icon: 'pi pi-eye-slash', command: () => toggleIpScan(ip.address, false) });
+      items.push({ label: `Enable Scanning of ${ip.address}`, icon: 'pi pi-eye', command: () => toggleIpScan(ip.address, true) });
     }
+    if (hasOverride) {
+      items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
+    }
+
+    // IP lifecycle history
+    items.push({ separator: true });
+    items.push({ label: `Lifecycle of ${ip.address}`, icon: 'pi pi-history', command: () => openEventsDialog(ip.address) });
   } else {
     // Multi-select
     items.push({
@@ -1067,13 +1185,23 @@ async function loadData({ skipCache = false } = {}) {
   }
 
   try {
-    currentPage.value = 1;
+    restoreTableState();
     // Load IPs and address types in parallel
     const [, rt] = await Promise.all([
-      loadIpPage(1, currentPageSize.value, { skipCache }),
+      loadIpPage(currentPage.value, currentPageSize.value, { skipCache }),
       store.getRangeTypes()
     ]);
     rangeTypes.value = rt;
+
+    // Auto-select best page size if no saved state
+    const all = loadTableState();
+    if (!all[`${props.subnetId}`]) {
+      const ideal = bestPageSize(totalIps.value);
+      if (ideal !== currentPageSize.value) {
+        currentPageSize.value = ideal;
+        await loadIpPage(1, ideal, { skipCache });
+      }
+    }
 
     // Reset scan state
     activeScan.value = null;
@@ -1101,6 +1229,7 @@ function onLazyPage(event) {
   const newPage = Math.floor(event.first / event.rows) + 1;
   currentPageSize.value = event.rows;
   loadIpPage(newPage, event.rows);
+  saveTableState();
 }
 
 function onLazySort(event) {
@@ -1108,6 +1237,7 @@ function onLazySort(event) {
   sortOrder.value = event.sortOrder ?? 1;
   currentPage.value = 1;
   loadIpPage(1, currentPageSize.value);
+  saveTableState();
 }
 
 // Watch for subnetId changes — debounce rapid clicks
@@ -1115,8 +1245,6 @@ let _loadTimer = null;
 watch(() => props.subnetId, (newId, oldId) => {
   gridSelection.value = new Set();
   ipSearch.value = '';
-  sortField.value = null;
-  sortOrder.value = 1;
   if (_loadTimer) clearTimeout(_loadTimer);
   if (!newId) {
     subnet.value = null;
@@ -1337,6 +1465,43 @@ onUnmounted(() => {
 
 
 <style scoped>
+/* ── IP Lifecycle Events Dialog ── */
+.events-loading, .events-empty {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--p-text-muted-color);
+  font-size: 0.85rem;
+}
+.events-list {
+  max-height: 24rem;
+  overflow-y: auto;
+}
+.event-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
+  font-size: 0.8rem;
+}
+.event-time {
+  width: 9rem;
+  flex-shrink: 0;
+  color: var(--p-text-muted-color);
+  font-family: monospace;
+  font-size: 0.75rem;
+}
+.event-tag {
+  flex-shrink: 0;
+}
+.event-detail {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--p-text-color);
+}
+
 .ip-search-bar {
   display: flex;
   align-items: center;

@@ -83,7 +83,10 @@ const rangeOptions = [
   { label: 'Last 2 days', value: '2d' },
   { label: 'Last 1 week', value: '1w' },
 ];
-const selectedRange = ref('24h');
+const selectedRange = ref((() => {
+  try { const v = JSON.parse(localStorage.getItem('ipam_dashboard_range')); return v || '24h'; } catch { return '24h'; }
+})());
+
 
 let refreshTimer = null;
 
@@ -222,6 +225,7 @@ async function refreshAll() {
 }
 
 function onRangeChange() {
+  try { localStorage.setItem('ipam_dashboard_range', JSON.stringify(selectedRange.value)); } catch {}
   refreshAll();
 }
 
