@@ -45,12 +45,16 @@ function checkScheduledScans() {
     }
 
     // Create and start a new scan
-    const result = db.prepare(`
-      INSERT INTO network_scans (subnet_id, status, initiated_by) VALUES (?, 'pending', 'scheduler')
-    `).run(subnet.id);
+    try {
+      const result = db.prepare(`
+        INSERT INTO network_scans (subnet_id, status) VALUES (?, 'pending')
+      `).run(subnet.id);
 
-    console.log(`[scan-scheduler] Starting scheduled scan for ${subnet.cidr} (interval: ${subnet.effective_scan_interval})`);
-    startScan(db, result.lastInsertRowid, subnet.id);
+      console.log(`[scan-scheduler] Starting scheduled scan for ${subnet.cidr} (interval: ${subnet.effective_scan_interval})`);
+      startScan(db, result.lastInsertRowid, subnet.id);
+    } catch (err) {
+      console.error(`[scan-scheduler] Failed to start scan for ${subnet.cidr}:`, err.message);
+    }
   }
 }
 

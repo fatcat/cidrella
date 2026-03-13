@@ -2,11 +2,12 @@
  * Sync IP metadata (hostname, MAC, status) to the ip_addresses table
  * from DNS records and DHCP reservations/leases.
  *
- * Called from dns.js, dhcp.js, and pihole.js whenever records change.
+ * All writes go through the IpAddress model.
  */
 
 import { ipToLong } from './ip.js';
 import { generateFallbackHostname } from './mac-vendor.js';
+import * as IpAddress from '../models/ip-address.js';
 
 /**
  * Find the subnet that contains a given IP address.
@@ -31,54 +32,6 @@ export function findSubnetForIp(db, ip) {
 }
 
 /**
- * Ensure an ip_addresses row exists for the given IP, then update its metadata.
- * Only updates fields that are provided (non-undefined).
- */
-function upsertIpMeta(db, subnetId, ip, { hostname, mac_address, status, is_online, last_seen_mac } = {}) {
-  const existing = db.prepare(
-    'SELECT id, hostname, mac_address, status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
-
-  if (existing) {
-    const updates = [];
-    const params = [];
-
-    if (hostname !== undefined && hostname !== existing.hostname) {
-      updates.push('hostname = ?');
-      params.push(hostname);
-    }
-    if (mac_address !== undefined && mac_address !== existing.mac_address) {
-      updates.push('mac_address = ?');
-      params.push(mac_address);
-    }
-    if (status !== undefined && status !== existing.status) {
-      updates.push('status = ?');
-      params.push(status);
-    }
-    if (is_online !== undefined) {
-      updates.push('is_online = ?');
-      params.push(is_online);
-      updates.push("last_seen_at = datetime('now')");
-    }
-    if (last_seen_mac !== undefined) {
-      updates.push('last_seen_mac = ?');
-      params.push(last_seen_mac);
-    }
-
-    if (updates.length > 0) {
-      updates.push("updated_at = datetime('now')");
-      params.push(existing.id);
-      db.prepare(`UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`).run(...params);
-    }
-  } else {
-    db.prepare(`
-      INSERT INTO ip_addresses (subnet_id, ip_address, hostname, mac_address, status, is_online, last_seen_at, last_seen_mac)
-      VALUES (?, ?, ?, ?, ?, ?, ${is_online ? "datetime('now')" : 'NULL'}, ?)
-    `).run(subnetId, ip, hostname || null, mac_address || null, status || 'assigned', is_online || 0, last_seen_mac || null);
-  }
-}
-
-/**
  * Sync hostname from a DNS A record to ip_addresses.
  * Called when an A record is created or updated.
  * @param {string} recordName - The DNS record name (e.g. "server1")
@@ -90,7 +43,7 @@ export function syncDnsToIp(db, recordName, ip, zoneName) {
   if (!subnet) return;
 
   const fqdn = recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
-  upsertIpMeta(db, subnet.id, ip, { hostname: fqdn });
+  IpAddress.upsert(db, subnet.id, ip, { hostname: fqdn, detection_source: 'dns' });
 }
 
 /**
@@ -102,12 +55,10 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
   if (!subnet) return;
 
   const fqdn = recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
-  const existing = db.prepare(
-    'SELECT id, hostname FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnet.id, ip);
+  const existing = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
 
   if (existing && existing.hostname === fqdn) {
-    db.prepare("UPDATE ip_addresses SET hostname = NULL, updated_at = datetime('now') WHERE id = ?").run(existing.id);
+    IpAddress.upsert(db, subnet.id, ip, { hostname: null });
   }
 }
 
@@ -117,7 +68,12 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
  */
 export function syncDhcpReservationToIp(db, subnetId, ip, { hostname, mac_address } = {}) {
   const effectiveHostname = hostname || generateFallbackHostname(mac_address) || undefined;
-  upsertIpMeta(db, subnetId, ip, { hostname: effectiveHostname, mac_address, status: 'dhcp' });
+  IpAddress.upsert(db, subnetId, ip, {
+    hostname: effectiveHostname,
+    mac_address,
+    status: 'dhcp',
+    detection_source: 'dhcp_reservation'
+  });
 }
 
 /**
@@ -125,14 +81,10 @@ export function syncDhcpReservationToIp(db, subnetId, ip, { hostname, mac_addres
  * Resets status to 'available' and clears MAC. Preserves hostname if set by DNS.
  */
 export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
-  const existing = db.prepare(
-    'SELECT id, mac_address, status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = IpAddress.findBySubnetAndIp(db, subnetId, ip);
 
   if (existing && existing.mac_address === mac_address) {
-    db.prepare(
-      "UPDATE ip_addresses SET mac_address = NULL, status = 'available', updated_at = datetime('now') WHERE id = ?"
-    ).run(existing.id);
+    IpAddress.upsert(db, subnetId, ip, { mac_address: null, status: 'available' });
   }
 }
 
@@ -143,12 +95,13 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
 export function syncLeasesToIps(db, leases) {
   for (const l of leases) {
     if (!l.subnetId) continue;
-    upsertIpMeta(db, l.subnetId, l.ip, {
+    IpAddress.upsert(db, l.subnetId, l.ip, {
       hostname: l.hostname || undefined,
       mac_address: l.mac || undefined,
       status: 'dhcp',
       is_online: 1,
-      last_seen_mac: l.mac || undefined
+      last_seen_mac: l.mac || undefined,
+      detection_source: 'dhcp_lease'
     });
   }
 }

@@ -4,6 +4,7 @@ import os from 'os';
 import ping from 'net-ping';
 import { parseCidr, longToIp, isIpInSubnet } from './ip.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
+import * as IpAddress from '../models/ip-address.js';
 
 /**
  * Run arping on a single IP (Layer 2 — local subnets only).
@@ -258,31 +259,31 @@ export async function startScan(db, scanId, subnetId) {
         .run(scannedCount, conflictsFound, scanId);
     }
 
-    // Update ip_addresses with online/offline status from scan results
-    const updateIpOnline = db.prepare(`
-      UPDATE ip_addresses SET
-        is_online = ?,
-        last_seen_at = CASE WHEN ? = 1 THEN datetime('now') ELSE last_seen_at END,
-        last_seen_mac = CASE WHEN ? IS NOT NULL THEN ? ELSE last_seen_mac END,
-        mac_address = CASE WHEN ? IS NOT NULL AND (mac_address IS NULL OR mac_address = '') THEN ? ELSE mac_address END,
-        updated_at = datetime('now')
-      WHERE subnet_id = ? AND ip_address = ?
-    `);
+    // Update ip_addresses via model — liveness, MAC, rogue state, lifecycle fields
+    const scanResults = db.prepare(
+      'SELECT ip_address, responded, mac_address, is_conflict, conflict_reason FROM scan_results WHERE scan_id = ?'
+    ).all(scanId);
 
-    const scanResults = db.prepare('SELECT ip_address, responded, mac_address FROM scan_results WHERE scan_id = ?').all(scanId);
+    const conflictIps = new Set();
     for (const sr of scanResults) {
-      updateIpOnline.run(
-        sr.responded ? 1 : 0,
-        sr.responded ? 1 : 0,
-        sr.mac_address, sr.mac_address,
-        sr.mac_address, sr.mac_address,
-        subnetId, sr.ip_address
-      );
+      IpAddress.updateFromScan(db, subnetId, sr.ip_address, {
+        responded: sr.responded,
+        mac: sr.mac_address,
+        isConflict: sr.is_conflict,
+        conflictReason: sr.conflict_reason
+      });
+      if (sr.is_conflict) conflictIps.add(sr.ip_address);
     }
+
+    // Clear rogue on IPs in this subnet that weren't flagged in this scan
+    IpAddress.clearRogueForSubnet(db, subnetId, conflictIps);
 
     // Mark completed
     db.prepare("UPDATE network_scans SET status = 'completed', scanned_ips = ?, conflicts_found = ?, completed_at = datetime('now') WHERE id = ?")
       .run(scannedCount, conflictsFound, scanId);
+
+    // Prune old scan_results — keep only this scan
+    IpAddress.pruneOldScanResults(db, subnetId, scanId);
   } catch (err) {
     db.prepare("UPDATE network_scans SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?")
       .run(err.message, scanId);

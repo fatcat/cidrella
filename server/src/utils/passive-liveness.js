@@ -11,6 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 import { findSubnetForIp } from './ip-sync.js';
+import * as IpAddress from '../models/ip-address.js';
 import {
   PASSIVE_LIVENESS_POLL_MS,
   PASSIVE_LIVENESS_DEBOUNCE_MS,
@@ -66,16 +67,6 @@ export function startPassiveLivenessWatcher(db) {
     offset = fs.statSync(LOG_FILE).size;
   } catch { /* file may not exist yet */ }
 
-  const updateStmt = db.prepare(`
-    UPDATE ip_addresses SET is_online = 1, last_seen_at = datetime('now'), updated_at = datetime('now')
-    WHERE subnet_id = ? AND ip_address = ?
-  `);
-
-  const staleStmt = db.prepare(`
-    UPDATE ip_addresses SET is_online = 0, updated_at = datetime('now')
-    WHERE is_online = 1 AND last_seen_at < datetime('now', ?)
-  `);
-
   function poll() {
     const { lines, newOffset } = readNewLines(offset);
     offset = newOffset;
@@ -101,14 +92,14 @@ export function startPassiveLivenessWatcher(db) {
       if (!subnet) continue;
 
       // UPDATE only — don't create rows for unknown IPs
-      updateStmt.run(subnet.id, ip);
+      IpAddress.markOnline(db, subnet.id, ip, { source: 'passive' });
       lastSeen.set(ip, now);
     }
 
-    // Staleness sweep (every ~60 seconds)
+    // Staleness sweep (every ~60 seconds) — also clears rogue on stale IPs
     if (now - lastStaleCheck >= 60000) {
-      const staleMinutes = `-${Math.round(PASSIVE_LIVENESS_STALE_MS / 60000)} minutes`;
-      staleStmt.run(staleMinutes);
+      const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
+      IpAddress.bulkMarkStale(db, staleMinutes);
       lastStaleCheck = now;
 
       // Prune debounce map entries older than 2x debounce window

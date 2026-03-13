@@ -10,6 +10,7 @@ import { generateReverseNames, regenerateConfigs } from '../utils/dnsmasq.js';
 import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
+import * as IpAddress from '../models/ip-address.js';
 
 const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 function isValidDomainName(name) {
@@ -686,22 +687,14 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
 
     // Release old gateway IP (set to available) if it was persisted
     if (subnet.gateway_address) {
-      const oldGwIp = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, subnet.gateway_address);
+      const oldGwIp = IpAddress.findBySubnetAndIp(db, subnet.id, subnet.gateway_address);
       if (oldGwIp) {
-        db.prepare("UPDATE ip_addresses SET status = 'available', reservation_note = NULL, updated_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?")
-          .run(subnet.id, subnet.gateway_address);
+        IpAddress.setStatus(db, subnet.id, subnet.gateway_address, 'available', null);
       }
     }
 
     // Reserve new gateway IP
-    const newGwIp = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, gateway_address);
-    if (newGwIp) {
-      db.prepare("UPDATE ip_addresses SET status = 'locked', reservation_note = 'Default gateway', updated_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?")
-        .run(subnet.id, gateway_address);
-    } else {
-      db.prepare("INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, 'locked', 'Default gateway')")
-        .run(subnet.id, gateway_address);
-    }
+    IpAddress.setStatus(db, subnet.id, gateway_address, 'locked', 'Default gateway');
   }
 
   // Regenerate DHCP configs if gateway changed (scope fallback uses subnet gateway)
@@ -1417,38 +1410,15 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   if (search) {
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
 
-    const lastScan = db.prepare(`
-      SELECT id FROM network_scans WHERE subnet_id = ? AND status = 'completed'
-      ORDER BY completed_at DESC LIMIT 1
-    `).get(req.params.id);
-
-    let allPersisted;
-    if (lastScan) {
-      allPersisted = db.prepare(`
-        SELECT ip.*,
-          sr.responded as scan_responded, sr.mac_address as scan_mac,
-          sr.is_conflict as scan_conflict, sr.conflict_reason as scan_conflict_reason,
-          CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-          dl.expires_at as dhcp_expires_at
-        FROM ip_addresses ip
-        LEFT JOIN scan_results sr ON sr.scan_id = ? AND sr.ip_address = ip.ip_address
-        LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-        LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
-        WHERE ip.subnet_id = ?
-      `).all(lastScan.id, req.params.id);
-    } else {
-      allPersisted = db.prepare(`
-        SELECT ip.*,
-          NULL as scan_responded, NULL as scan_mac,
-          NULL as scan_conflict, NULL as scan_conflict_reason,
-          CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-          dl.expires_at as dhcp_expires_at
-        FROM ip_addresses ip
-        LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-        LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
-        WHERE ip.subnet_id = ?
-      `).all(req.params.id);
-    }
+    const allPersisted = db.prepare(`
+      SELECT ip.*,
+        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+        dl.expires_at as dhcp_expires_at
+      FROM ip_addresses ip
+      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+      LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+      WHERE ip.subnet_id = ?
+    `).all(req.params.id);
 
     // Load ranges
     const ranges = db.prepare(`
@@ -1462,13 +1432,13 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     })).sort((a, b) => a.startLong - b.startLong);
 
     // Vendor lookup
-    const allMacs = allPersisted.map(ip => ip.mac_address || ip.last_seen_mac || ip.scan_mac).filter(Boolean);
+    const allMacs = allPersisted.map(ip => ip.mac_address || ip.last_seen_mac).filter(Boolean);
     const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
 
     // Filter and enrich
     const matched = [];
     for (const ip of allPersisted) {
-      const mac = ip.mac_address || ip.last_seen_mac || ip.scan_mac;
+      const mac = ip.mac_address || ip.last_seen_mac;
       ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
       const ipLong = ipToLong(ip.ip_address);
       const range = rangeLookup.find(r => ipLong >= r.startLong && ipLong <= r.endLong);
@@ -1480,7 +1450,6 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
           (ip.hostname && ip.hostname.toLowerCase().includes(search)) ||
           (ip.mac_address && ip.mac_address.toLowerCase().includes(search)) ||
           (ip.last_seen_mac && ip.last_seen_mac.toLowerCase().includes(search)) ||
-          (ip.scan_mac && ip.scan_mac.toLowerCase().includes(search)) ||
           (ip.vendor && ip.vendor.toLowerCase().includes(search)) ||
           (ip.status && ip.status.toLowerCase().includes(search))) {
         matched.push(ip);
@@ -1503,38 +1472,15 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   if (reqSortField && reqSortField !== 'ip_address') {
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
 
-    const lastScan = db.prepare(`
-      SELECT id FROM network_scans WHERE subnet_id = ? AND status = 'completed'
-      ORDER BY completed_at DESC LIMIT 1
-    `).get(req.params.id);
-
-    let allPersisted;
-    if (lastScan) {
-      allPersisted = db.prepare(`
-        SELECT ip.*,
-          sr.responded as scan_responded, sr.mac_address as scan_mac,
-          sr.is_conflict as scan_conflict, sr.conflict_reason as scan_conflict_reason,
-          CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-          dl.expires_at as dhcp_expires_at
-        FROM ip_addresses ip
-        LEFT JOIN scan_results sr ON sr.scan_id = ? AND sr.ip_address = ip.ip_address
-        LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-        LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
-        WHERE ip.subnet_id = ?
-      `).all(lastScan.id, req.params.id);
-    } else {
-      allPersisted = db.prepare(`
-        SELECT ip.*,
-          NULL as scan_responded, NULL as scan_mac,
-          NULL as scan_conflict, NULL as scan_conflict_reason,
-          CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-          dl.expires_at as dhcp_expires_at
-        FROM ip_addresses ip
-        LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-        LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
-        WHERE ip.subnet_id = ?
-      `).all(req.params.id);
-    }
+    const allPersisted = db.prepare(`
+      SELECT ip.*,
+        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+        dl.expires_at as dhcp_expires_at
+      FROM ip_addresses ip
+      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+      LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+      WHERE ip.subnet_id = ?
+    `).all(req.params.id);
 
     // Ranges
     const ranges = db.prepare(`
@@ -1548,10 +1494,10 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     })).sort((a, b) => a.startLong - b.startLong);
 
     // Vendor lookup + range enrichment
-    const allMacs = allPersisted.map(ip => ip.mac_address || ip.last_seen_mac || ip.scan_mac).filter(Boolean);
+    const allMacs = allPersisted.map(ip => ip.mac_address || ip.last_seen_mac).filter(Boolean);
     const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
     for (const ip of allPersisted) {
-      const mac = ip.mac_address || ip.last_seen_mac || ip.scan_mac;
+      const mac = ip.mac_address || ip.last_seen_mac;
       ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
       const ipLong = ipToLong(ip.ip_address);
       const range = rangeLookup.find(r => ipLong >= r.startLong && ipLong <= r.endLong);
@@ -1585,38 +1531,15 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
 
   // Load persisted ip_addresses for this subnet and filter to page range in JS
   // (ip_address is text so SQL string comparison on dotted-decimal is unreliable)
-  const lastScan = db.prepare(`
-    SELECT id FROM network_scans WHERE subnet_id = ? AND status = 'completed'
-    ORDER BY completed_at DESC LIMIT 1
-  `).get(req.params.id);
-
-  let allPersisted;
-  if (lastScan) {
-    allPersisted = db.prepare(`
-      SELECT ip.*,
-        sr.responded as scan_responded, sr.mac_address as scan_mac,
-        sr.is_conflict as scan_conflict, sr.conflict_reason as scan_conflict_reason,
-        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-        dl.expires_at as dhcp_expires_at
-      FROM ip_addresses ip
-      LEFT JOIN scan_results sr ON sr.scan_id = ? AND sr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
-      WHERE ip.subnet_id = ?
-    `).all(lastScan.id, req.params.id);
-  } else {
-    allPersisted = db.prepare(`
-      SELECT ip.*,
-        NULL as scan_responded, NULL as scan_mac,
-        NULL as scan_conflict, NULL as scan_conflict_reason,
-        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-        dl.expires_at as dhcp_expires_at
-      FROM ip_addresses ip
-      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
-      WHERE ip.subnet_id = ?
-    `).all(req.params.id);
-  }
+  const allPersisted = db.prepare(`
+    SELECT ip.*,
+      CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+      dl.expires_at as dhcp_expires_at
+    FROM ip_addresses ip
+    LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+    LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+    WHERE ip.subnet_id = ?
+  `).all(req.params.id);
 
   // Build lookup of persisted IPs by long value, filtering to page range
   const persistedMap = new Map();
@@ -1654,17 +1577,6 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     }
   }
 
-  // Build scan results lookup for virtual IPs (rogue device detection)
-  const scanResultMap = new Map();
-  if (lastScan) {
-    const scanRows = db.prepare(
-      'SELECT ip_address, responded, mac_address FROM scan_results WHERE scan_id = ?'
-    ).all(lastScan.id);
-    for (const sr of scanRows) {
-      scanResultMap.set(sr.ip_address, sr);
-    }
-  }
-
   // Generate virtual IPs for this page, merging with persisted data
   const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
   const ips = [];
@@ -1679,9 +1591,8 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       persisted.range_type_color = match?.range_type_color || null;
       ips.push(persisted);
     } else {
-      // Virtual IP entry — check scan results for rogue detection
+      // Virtual IP entry — no persisted record
       const addr = longToIp(ipLong);
-      const sr = scanResultMap.get(addr);
       const isGw = gwLong !== null && ipLong === gwLong;
       const isNetwork = ipLong === parsed.networkLong;
       const isBroadcast = ipLong === parsed.broadcastLong;
@@ -1691,13 +1602,11 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
         status: (isGw || isNetwork || isBroadcast) ? 'locked' : 'available',
         hostname: null,
         mac_address: null,
-        is_online: sr?.responded ? 1 : 0,
+        is_online: 0,
         last_seen_at: null,
-        last_seen_mac: sr?.mac_address || null,
-        scan_responded: sr?.responded ?? null,
-        scan_mac: sr?.mac_address || null,
-        scan_conflict: sr?.is_conflict ?? null,
-        scan_conflict_reason: sr?.conflict_reason || null,
+        last_seen_mac: null,
+        is_rogue: 0,
+        rogue_reason: null,
         has_dhcp_reservation: 0,
         dhcp_expires_at: null,
         range_type_id: match?.range_type_id || null,
@@ -1708,10 +1617,10 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   }
 
   // Batch vendor lookup for all MACs on this page
-  const allMacs = ips.map(ip => ip.mac_address || ip.last_seen_mac || ip.scan_mac).filter(Boolean);
+  const allMacs = ips.map(ip => ip.mac_address || ip.last_seen_mac).filter(Boolean);
   const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
   for (const ip of ips) {
-    const mac = ip.mac_address || ip.last_seen_mac || ip.scan_mac;
+    const mac = ip.mac_address || ip.last_seen_mac;
     ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
   }
 
@@ -1738,21 +1647,14 @@ router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((r
   const reservationNote = status === 'locked' ? (note || null) : null;
   const updated = [];
 
-  const upsert = db.transaction(() => {
+  const bulkUpdate = db.transaction(() => {
     for (let long = startLong; long <= endLong; long++) {
       const ip = longToIp(long);
-      const existing = db.prepare('SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, ip);
-      if (existing) {
-        db.prepare("UPDATE ip_addresses SET status = ?, reservation_note = ?, updated_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?")
-          .run(status, reservationNote, subnet.id, ip);
-      } else {
-        db.prepare('INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, ?, ?)')
-          .run(subnet.id, ip, status, reservationNote);
-      }
+      IpAddress.setStatus(db, subnet.id, ip, status, reservationNote);
       updated.push(ip);
     }
   });
-  upsert();
+  bulkUpdate();
 
   audit(req.user.id, 'ip_status_changed', 'ip_address', subnet.id, { start_ip, end_ip, count: updated.length, status, note: reservationNote });
   res.json({ count: updated.length, status, reservation_note: reservationNote });
@@ -1773,15 +1675,7 @@ router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((re
   // When locking, store the note; when unlocking, clear it
   const reservationNote = status === 'locked' ? (note || null) : null;
 
-  // Check if IP exists in persisted table
-  const existing = db.prepare('SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, ipAddress);
-  if (existing) {
-    db.prepare('UPDATE ip_addresses SET status = ?, reservation_note = ?, updated_at = datetime(\'now\') WHERE subnet_id = ? AND ip_address = ?')
-      .run(status, reservationNote, subnet.id, ipAddress);
-  } else {
-    db.prepare('INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note) VALUES (?, ?, ?, ?)')
-      .run(subnet.id, ipAddress, status, reservationNote);
-  }
+  IpAddress.setStatus(db, subnet.id, ipAddress, status, reservationNote);
 
   audit(req.user.id, 'ip_status_changed', 'ip_address', subnet.id, { ip_address: ipAddress, status, note: reservationNote });
   res.json({ ip_address: ipAddress, status, reservation_note: reservationNote });
@@ -1797,14 +1691,7 @@ router.put('/:id/ips/:ip/scan-enabled', requirePerm('subnets:write'), asyncHandl
   const { scan_enabled } = req.body;
   const scanEn = scan_enabled === null ? null : scan_enabled ? 1 : 0;
 
-  const existing = db.prepare('SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?').get(subnet.id, ipAddress);
-  if (existing) {
-    db.prepare('UPDATE ip_addresses SET scan_enabled = ?, updated_at = datetime(\'now\') WHERE subnet_id = ? AND ip_address = ?')
-      .run(scanEn, subnet.id, ipAddress);
-  } else {
-    db.prepare('INSERT INTO ip_addresses (subnet_id, ip_address, status, scan_enabled) VALUES (?, ?, \'available\', ?)')
-      .run(subnet.id, ipAddress, scanEn);
-  }
+  IpAddress.setScanEnabled(db, subnet.id, ipAddress, scanEn);
 
   res.json({ ip_address: ipAddress, scan_enabled: scanEn });
 }));

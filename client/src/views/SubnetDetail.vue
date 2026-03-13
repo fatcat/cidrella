@@ -119,7 +119,7 @@
             <template #body="{ data }">{{ displayHostname(data.hostname) }}</template>
           </Column>
           <Column header="MAC Address" sortable style="width: 10rem" :sortField="'mac_address'">
-            <template #body="{ data }">{{ data.mac_address || data.last_seen_mac || data.scan_mac || '—' }}</template>
+            <template #body="{ data }">{{ data.mac_address || data.last_seen_mac || '—' }}</template>
           </Column>
           <Column field="vendor" header="Vendor" sortable style="width: 10rem">
             <template #body="{ data }">{{ data.vendor || '—' }}</template>
@@ -526,7 +526,7 @@ const tableContextMenuItems = computed(() => {
     rangeId: range?.id || null,
     rangeType: row.range_type_name || null,
     status: row.status || 'available',
-    mac: row.mac_address || row.last_seen_mac || row.scan_mac || null,
+    mac: row.mac_address || row.last_seen_mac || null,
     hostname: row.hostname || null
   };
 
@@ -585,7 +585,7 @@ function displayHostname(hostname) {
  * Returns { status, statusSeverity, type, typeSeverity, tooltip? }
  */
 function computeIpState(data) {
-  const mac = data.mac_address || data.last_seen_mac || data.scan_mac;
+  const mac = data.mac_address || data.last_seen_mac;
   const isDhcpScope = data.range_type_name === 'DHCP Scope';
   const isLeaseExpired = data.dhcp_expires_at && data.dhcp_expires_at !== 'infinite'
     && new Date(data.dhcp_expires_at) < new Date();
@@ -600,15 +600,15 @@ function computeIpState(data) {
     return { status: 'in use', statusSeverity: 'danger', type: 'gateway', typeSeverity: 'warn' };
   }
 
-  // Rogue: scanner flagged as conflict, OR responded but has no assignment/reservation/lease/DNS
+  // Rogue: model flagged as rogue, OR online but has no assignment/reservation/lease/DNS
   const hasActiveLease = data.dhcp_expires_at && !isLeaseExpired;
-  if (data.scan_conflict && (data.is_online || data.scan_responded)) {
+  if (data.is_rogue) {
     return {
       status: 'in use', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger',
-      tooltip: data.scan_conflict_reason || null
+      tooltip: data.rogue_reason || null
     };
   }
-  if ((data.is_online || data.scan_responded)
+  if (data.is_online
       && data.status === 'available' && !data.has_dhcp_reservation && !data.hostname && !hasActiveLease) {
     return { status: 'in use', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger' };
   }
@@ -678,8 +678,8 @@ function gridTooltip(ip) {
   const pseudoData = {
     status: ip.status, range_type_name: ip.rangeType, reservation_note: ip.reservationNote,
     has_dhcp_reservation: ip.hasDhcpReservation, hostname: ip.hostname,
-    mac_address: ip.mac, last_seen_mac: null, scan_mac: null,
-    is_online: ip.isOnline ? 1 : 0, scan_responded: null,
+    mac_address: ip.mac, last_seen_mac: null,
+    is_online: ip.isOnline ? 1 : 0, is_rogue: ip.isConflict ? 1 : 0, rogue_reason: ip.conflictReason,
     dhcp_expires_at: ip.dhcpExpiresAt || null
   };
   const state = computeIpState(pseudoData);
@@ -717,13 +717,6 @@ const ipGrid = computed(() => {
     ipAssignMap.set(ipToLong(ip.ip_address), ip);
   }
 
-  const conflictMap = new Map();
-  for (const r of scanResults.value) {
-    if (r.is_conflict) {
-      conflictMap.set(r.ip_address, r.conflict_reason);
-    }
-  }
-
   for (let i = net; i <= bcast; i++) {
     const addr = longToIp(i);
     const rangeInfo = ipRangeMap.get(i);
@@ -737,7 +730,7 @@ const ipGrid = computed(() => {
       rangeType: rangeInfo?.rangeType || null,
       rangeId: rangeInfo?.rangeId || null,
       hostname: assignInfo?.hostname || null,
-      mac: assignInfo?.mac_address || assignInfo?.last_seen_mac || assignInfo?.scan_mac || null,
+      mac: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
       status: assignInfo?.status || 'available',
       reservationNote: assignInfo?.reservation_note || null,
       hasDhcpReservation: assignInfo?.has_dhcp_reservation || 0,
@@ -745,8 +738,8 @@ const ipGrid = computed(() => {
       vendor: assignInfo?.vendor || null,
       isOnline: assignInfo?.is_online === 1,
       lastSeen: assignInfo?.last_seen_at || null,
-      isConflict: conflictMap.has(addr) && assignInfo?.is_online === 1,
-      conflictReason: (conflictMap.has(addr) && assignInfo?.is_online === 1) ? conflictMap.get(addr) : null
+      isConflict: assignInfo?.is_rogue === 1,
+      conflictReason: assignInfo?.rogue_reason || null
     });
   }
 
