@@ -35,6 +35,7 @@ export const DEFAULTS = {
   geoip_last_updated:      '',
   geoip_update_schedule:   'monthly',
   update_check_enabled:    'true',
+  ip_history_retention_days: '7',
 };
 
 // ─── Shared constants (not in DB — implementation details) ───────

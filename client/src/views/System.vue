@@ -49,6 +49,12 @@
                       class="w-full" style="max-width: 16rem;" />
               <small class="field-help">Applied to newly configured networks.</small>
             </div>
+            <div class="field">
+              <label>IP Lifecycle History Retention</label>
+              <Select v-model="settings.ip_history_retention_days" :options="historyRetentionOptions" optionLabel="label" optionValue="value"
+                      class="w-full" style="max-width: 16rem;" />
+              <small class="field-help">How long to keep IP lifecycle events (online/offline, rogue, status changes). Events older than this are automatically purged.</small>
+            </div>
             <hr style="border: none; border-top: 1px solid var(--p-surface-border); margin: 0.75rem 0;" />
             <div class="field">
               <label>On-Demand Scan</label>
@@ -563,7 +569,8 @@ const savingSettings = ref(false);
 const settings = ref({
   subnet_name_template: '%1.%2.%3.%4/%bitmask',
   default_scan_interval: 'off',
-  default_scan_enabled: true
+  default_scan_enabled: true,
+  ip_history_retention_days: '7'
 });
 const savedSettings = ref(null);
 
@@ -573,7 +580,8 @@ const settingsDirty = computed(() => {
   const c = settings.value;
   return c.subnet_name_template !== s.subnet_name_template ||
     c.default_scan_interval !== s.default_scan_interval ||
-    c.default_scan_enabled !== s.default_scan_enabled;
+    c.default_scan_enabled !== s.default_scan_enabled ||
+    c.ip_history_retention_days !== s.ip_history_retention_days;
 });
 const scanIntervalOptions = [
   { label: 'Off', value: 'off' },
@@ -582,6 +590,14 @@ const scanIntervalOptions = [
   { label: 'Every 30 minutes', value: '30m' },
   { label: 'Every 1 hour', value: '1h' },
   { label: 'Every 4 hours', value: '4h' },
+];
+const historyRetentionOptions = [
+  { label: '3 days', value: '3' },
+  { label: '7 days', value: '7' },
+  { label: '10 days', value: '10' },
+  { label: '14 days', value: '14' },
+  { label: '21 days', value: '21' },
+  { label: '30 days', value: '30' },
 ];
 
 // On-demand scan
@@ -639,7 +655,8 @@ onMounted(async () => {
     const vals = {
       subnet_name_template: data.subnet_name_template || '%1.%2.%3.%4/%bitmask',
       default_scan_interval: data.default_scan_interval || 'off',
-      default_scan_enabled: data.default_scan_enabled === '1' || data.default_scan_enabled === true
+      default_scan_enabled: data.default_scan_enabled === '1' || data.default_scan_enabled === true,
+      ip_history_retention_days: data.ip_history_retention_days || '7'
     };
     settings.value = { ...vals };
     savedSettings.value = { ...vals };
@@ -924,7 +941,8 @@ async function saveSettings() {
     await Promise.all([
       store.updateSetting('subnet_name_template', settings.value.subnet_name_template),
       store.updateSetting('default_scan_interval', settings.value.default_scan_interval === 'off' ? '' : settings.value.default_scan_interval),
-      store.updateSetting('default_scan_enabled', settings.value.default_scan_enabled ? '1' : '0')
+      store.updateSetting('default_scan_enabled', settings.value.default_scan_enabled ? '1' : '0'),
+      store.updateSetting('ip_history_retention_days', settings.value.ip_history_retention_days)
     ]);
     savedSettings.value = { ...settings.value };
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });

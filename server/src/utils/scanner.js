@@ -215,15 +215,15 @@ export async function startScan(db, scanId, subnetId) {
 
       const results = await Promise.all(promises);
 
-      // For ICMP scans, read the ARP cache to capture MACs the kernel learned
+      // Read the ARP cache to capture MACs the kernel learned from ping/arping responses
       let arpCache = null;
-      if (!local && results.some(r => r.responded)) {
+      if (results.some(r => r.responded && !r.mac)) {
         arpCache = await readArpCache();
       }
 
       for (const result of results) {
-        // Enrich ICMP results with ARP cache MAC
-        if (!local && result.responded && !result.mac && arpCache) {
+        // Enrich results with ARP cache MAC when probe didn't return one
+        if (result.responded && !result.mac && arpCache) {
           result.mac = arpCache.get(result.ip) || null;
         }
 

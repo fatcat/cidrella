@@ -107,7 +107,7 @@
               <Tag :severity="computeIpState(data).statusSeverity" :value="computeIpState(data).status" />
             </template>
           </Column>
-          <Column header="Type" style="width: 9rem">
+          <Column header="Type" sortable :sortField="'computed_type'" style="width: 9rem">
             <template #body="{ data }">
               <Tag v-if="computeIpState(data).type" :severity="computeIpState(data).typeSeverity"
                    :value="computeIpState(data).type"

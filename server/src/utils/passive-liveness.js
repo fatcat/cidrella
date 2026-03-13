@@ -100,6 +100,7 @@ export function startPassiveLivenessWatcher(db) {
     if (now - lastStaleCheck >= 60000) {
       const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
       IpAddress.bulkMarkStale(db, staleMinutes);
+      IpAddress.pruneEvents(db);
       lastStaleCheck = now;
 
       // Prune debounce map entries older than 2x debounce window

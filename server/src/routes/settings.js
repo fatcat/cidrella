@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
+import { pruneEvents } from '../models/ip-address.js';
 
 const router = Router();
 
@@ -17,7 +18,7 @@ function requirePerm(permission) {
 const SECRET_KEYS = new Set(['jwt_secret']);
 
 // Keys that are allowed to be updated
-const EDITABLE_KEYS = new Set(['default_gateway_position', 'subnet_name_template', 'dns_upstream_servers', 'backup_schedule', 'backup_retention_count', 'backup_last_run', 'geoip_enabled', 'geoip_mode', 'geoip_proxy_port', 'default_scan_interval', 'default_scan_enabled', 'setup_wizard_completed', 'interface_config', 'dns_enabled', 'dhcp_enabled', 'update_check_enabled']);
+const EDITABLE_KEYS = new Set(['default_gateway_position', 'subnet_name_template', 'dns_upstream_servers', 'backup_schedule', 'backup_retention_count', 'backup_last_run', 'geoip_enabled', 'geoip_mode', 'geoip_proxy_port', 'default_scan_interval', 'default_scan_enabled', 'setup_wizard_completed', 'interface_config', 'dns_enabled', 'dhcp_enabled', 'update_check_enabled', 'ip_history_retention_days']);
 
 // GET /api/settings — return all non-secret settings
 router.get('/', requirePerm('subnets:read'), (req, res) => {
@@ -51,6 +52,11 @@ router.put('/:key', requirePerm('subnets:write'), (req, res) => {
     db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(String(value), key);
   } else {
     db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(key, String(value));
+  }
+
+  // Immediately purge events when retention is changed
+  if (key === 'ip_history_retention_days') {
+    pruneEvents(db);
   }
 
   audit(req.user.id, 'setting_updated', 'setting', null, { key, value: String(value) });

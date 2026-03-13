@@ -44,6 +44,7 @@ export function syncDnsToIp(db, recordName, ip, zoneName) {
 
   const fqdn = recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
   IpAddress.upsert(db, subnet.id, ip, { hostname: fqdn, detection_source: 'dns' });
+  IpAddress.emitEvent(db, subnet.id, ip, 'dns_added', { newValue: fqdn, source: 'dns' });
 }
 
 /**
@@ -59,6 +60,7 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
 
   if (existing && existing.hostname === fqdn) {
     IpAddress.upsert(db, subnet.id, ip, { hostname: null });
+    IpAddress.emitEvent(db, subnet.id, ip, 'dns_removed', { oldValue: fqdn, source: 'dns' });
   }
 }
 
@@ -95,6 +97,7 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
 export function syncLeasesToIps(db, leases) {
   for (const l of leases) {
     if (!l.subnetId) continue;
+    const before = IpAddress.findBySubnetAndIp(db, l.subnetId, l.ip);
     IpAddress.upsert(db, l.subnetId, l.ip, {
       hostname: l.hostname || undefined,
       mac_address: l.mac || undefined,
@@ -103,5 +106,9 @@ export function syncLeasesToIps(db, leases) {
       last_seen_mac: l.mac || undefined,
       detection_source: 'dhcp_lease'
     });
+    // Only emit lease_obtained on new leases (not already DHCP status)
+    if (!before || before.status !== 'dhcp') {
+      IpAddress.emitEvent(db, l.subnetId, l.ip, 'lease_obtained', { newValue: l.mac || null, source: 'dhcp_lease' });
+    }
   }
 }

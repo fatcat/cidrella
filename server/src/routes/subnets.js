@@ -1369,6 +1369,29 @@ router.post('/calculate', requirePerm('subnets:read'), asyncHandler((req, res) =
   }
 }));
 
+/**
+ * Compute the display type for an IP address (mirrors client computeIpState logic).
+ * Returns a sortable string: system, gateway, rogue, reservation, dynamic, dhcp, locked, dns assigned, or available.
+ */
+function computeIpType(ip) {
+  if (ip.range_type_name === 'Network' || ip.range_type_name === 'Broadcast') return 'system';
+  if (ip.range_type_name === 'Gateway') return 'gateway';
+  const isDhcpScope = ip.range_type_name === 'DHCP Scope';
+  const isLeaseExpired = ip.dhcp_expires_at && ip.dhcp_expires_at !== 'infinite'
+    && new Date(ip.dhcp_expires_at) < new Date();
+  const hasActiveLease = ip.dhcp_expires_at && !isLeaseExpired;
+  if (ip.is_rogue) return 'rogue';
+  if (ip.is_online && ip.status === 'available' && !ip.has_dhcp_reservation && !ip.hostname && !hasActiveLease) return 'rogue';
+  if (ip.has_dhcp_reservation) return 'reservation';
+  if (isDhcpScope) {
+    if (ip.dhcp_expires_at && !isLeaseExpired) return 'dynamic';
+    return 'dhcp';
+  }
+  if (ip.status === 'locked') return 'locked';
+  if ((ip.status === 'assigned' || ip.hostname) && !isDhcpScope) return 'dns assigned';
+  return 'available';
+}
+
 // GET /api/subnets/:id/ips — IP addresses with server-side pagination and virtual IPs
 router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
@@ -1380,7 +1403,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const search = (req.query.search || '').trim().toLowerCase();
 
   // Sort params
-  const SORTABLE_FIELDS = new Set(['ip_address', 'status', 'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at', 'dhcp_expires_at']);
+  const SORTABLE_FIELDS = new Set(['ip_address', 'status', 'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at', 'dhcp_expires_at', 'computed_type']);
   const reqSortField = SORTABLE_FIELDS.has(req.query.sortField) ? req.query.sortField : null;
   const reqSortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
 
@@ -1445,6 +1468,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       ip.range_type_id = range?.range_type_id || null;
       ip.range_type_name = range?.range_type_name || null;
       ip.range_type_color = range?.range_type_color || null;
+      ip.computed_type = computeIpType(ip);
 
       if (ip.ip_address.includes(search) ||
           (ip.hostname && ip.hostname.toLowerCase().includes(search)) ||
@@ -1504,6 +1528,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       ip.range_type_id = range?.range_type_id || null;
       ip.range_type_name = range?.range_type_name || null;
       ip.range_type_color = range?.range_type_color || null;
+      ip.computed_type = computeIpType(ip);
     }
 
     sortIps(allPersisted, reqSortField, reqSortOrder);
@@ -1622,6 +1647,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   for (const ip of ips) {
     const mac = ip.mac_address || ip.last_seen_mac;
     ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
+    ip.computed_type = computeIpType(ip);
   }
 
   res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });

@@ -16,6 +16,7 @@
         <span class="col col-name">Name</span>
         <span class="col col-vlan">VLAN</span>
         <span class="col col-desc">Description</span>
+        <span class="col col-scan">Scan</span>
         <span class="col col-status">Status</span>
         <span class="col col-actions"></span>
       </div>
@@ -43,6 +44,10 @@
         <span class="col col-name">{{ item.node.data.name || '—' }}</span>
         <span class="col col-vlan">{{ item.node.data.vlan_id || '—' }}</span>
         <span class="col col-desc">{{ item.node.data.description || '—' }}</span>
+        <span class="col col-scan">
+          <span v-if="item.node.data.status === 'allocated'" class="scan-badge" :class="scanClass(item.node)">{{ scanLabel(item.node) }}</span>
+          <span v-else>—</span>
+        </span>
         <span class="col col-status">
           <span class="status-badge" :class="statusClass(item.node)">{{ statusLabel(item.node) }}</span>
         </span>
@@ -148,6 +153,20 @@ function onDragStart(event, node) {
   event.dataTransfer.effectAllowed = 'move';
 }
 
+function scanLabel(node) {
+  const v = node.data.scan_enabled;
+  if (v === 1) return 'enabled';
+  if (v === 0) return 'disabled';
+  return 'inherit';
+}
+
+function scanClass(node) {
+  const v = node.data.scan_enabled;
+  if (v === 1) return 'scan-on';
+  if (v === 0) return 'scan-off';
+  return 'scan-inherit';
+}
+
 function statusClass(node) {
   const d = node.data;
   if (d.status === 'allocated') return 'st-allocated';
@@ -249,6 +268,7 @@ function statusLabel(node) {
 .col-name { flex: 1; }
 .col-vlan { width: 5rem; }
 .col-desc { flex: 1; }
+.col-scan { width: 5rem; }
 .col-status { width: 6rem; }
 .col-actions { width: 4.5rem; display: flex; gap: 0.15rem; flex-shrink: 0; justify-content: flex-end; overflow: visible; white-space: normal; }
 
@@ -290,6 +310,25 @@ function statusLabel(node) {
 .st-divided {
   background: color-mix(in srgb, var(--p-blue-500) 15%, transparent);
   color: var(--p-blue-500);
+}
+
+.scan-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+.scan-on {
+  background: color-mix(in srgb, var(--p-green-500) 20%, transparent);
+  color: var(--p-green-500);
+}
+.scan-off {
+  background: color-mix(in srgb, var(--p-red-500) 15%, transparent);
+  color: var(--p-red-500);
+}
+.scan-inherit {
+  color: var(--p-text-muted-color);
 }
 
 .empty-state {
