@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { startScan } from '../utils/scanner.js';
+import { getNextScanTime } from '../utils/scan-scheduler.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
 
 const router = Router();
@@ -34,6 +35,11 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
 
   query += ' ORDER BY ns.created_at DESC LIMIT 50';
   res.json(db.prepare(query).all(...params));
+});
+
+// GET /api/scans/next — next scheduled scan time
+router.get('/next', requirePerm('subnets:read'), (req, res) => {
+  res.json({ next_scan_at: getNextScanTime() });
 });
 
 // GET /api/scans/:id — get scan with results

@@ -82,7 +82,8 @@
         <span class="card-dot" :class="activeScan ? 'dot-up' : 'dot-ok'"></span>
         <div class="card-body">
           <span class="card-value">{{ scanDisplay }}</span>
-          <span class="card-label">Scan</span>
+          <span class="card-label">{{ activeScan ? 'Scan' : 'Next Scan' }}</span>
+          <span v-if="!activeScan" class="card-label">{{ nextScanFormatted }}</span>
         </div>
       </div>
       </div>
@@ -121,6 +122,7 @@ const subnetStore = useSubnetStore();
 const piholeImportRef = ref(null);
 const health = ref(null);
 const activeScan = ref(null);
+const nextScanTime = ref(null);
 const updateInfo = ref(null);
 let pollInterval = null;
 let scanPollInterval = null;
@@ -178,15 +180,31 @@ const diskStatusClass = computed(() => {
   return disk.percent >= 90 ? 'card-err' : 'card-ok';
 });
 
+function formatScanDate(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + (dateStr.endsWith('Z') ? '' : 'Z'));
+  if (isNaN(d)) return null;
+  const mon = d.toLocaleString('en-US', { month: 'short' });
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${mon} ${day} - ${hh}:${mm}`;
+}
+
 const scanDisplay = computed(() => {
-  if (!activeScan.value) return 'No Scan';
-  const s = activeScan.value;
-  if (s.status === 'pending') return 'Pending';
-  if (s.status === 'running' && s.total_ips > 0) {
-    return `${Math.round((s.scanned_ips / s.total_ips) * 100)}%`;
+  if (activeScan.value) {
+    const s = activeScan.value;
+    if (s.status === 'pending') return 'Pending';
+    if (s.status === 'running' && s.total_ips > 0) {
+      return `${Math.round((s.scanned_ips / s.total_ips) * 100)}%`;
+    }
+    if (s.status === 'running') return 'Running';
   }
-  if (s.status === 'running') return 'Running';
-  return 'No Scan';
+  return 'Scanner Idle';
+});
+
+const nextScanFormatted = computed(() => {
+  return formatScanDate(nextScanTime.value) || '--';
 });
 
 async function fetchActiveScan() {
@@ -203,6 +221,13 @@ async function fetchActiveScan() {
       clearInterval(scanPollInterval);
       scanPollInterval = null;
     }
+  } catch { /* ignore */ }
+}
+
+async function fetchNextScan() {
+  try {
+    const res = await api.get('/scans/next');
+    nextScanTime.value = res.data.next_scan_at || null;
   } catch { /* ignore */ }
 }
 
@@ -223,8 +248,9 @@ async function fetchUpdateInfo() {
 onMounted(() => {
   fetchHealth();
   fetchActiveScan();
+  fetchNextScan();
   fetchUpdateInfo();
-  pollInterval = setInterval(() => { fetchHealth(); fetchActiveScan(); }, 60000);
+  pollInterval = setInterval(() => { fetchHealth(); fetchActiveScan(); fetchNextScan(); }, 60000);
   window.addEventListener('ipam:stats-changed', fetchHealth);
   window.addEventListener('ipam:scan-started', fetchActiveScan);
 });
