@@ -127,6 +127,7 @@ body {
 .badge-green-light  { background: color-mix(in srgb, var(--p-green-500) 15%, transparent);  color: var(--p-green-500); }
 .badge-red-light    { background: color-mix(in srgb, var(--p-red-500) 15%, transparent);    color: var(--p-red-500); }
 .badge-yellow-light { background: color-mix(in srgb, var(--p-yellow-500) 15%, transparent); color: var(--p-yellow-500); }
+.badge-blue-light   { background: color-mix(in srgb, var(--p-blue-500) 15%, transparent);   color: var(--p-blue-500); }
 
 /* Shared active menubar item styling */
 .menubar-active-item {

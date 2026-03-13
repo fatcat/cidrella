@@ -124,10 +124,18 @@ describe('markOnline', () => {
 });
 
 describe('markOffline', () => {
-  it('clears is_online and rogue status', () => {
+  it('deletes ephemeral IPs (no hostname, not locked/assigned, no reservation)', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.22', { is_online: 1, is_rogue: 1, rogue_reason: 'test' });
     IpAddress.markOffline(db, subnetId, '10.0.1.22');
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.22');
+
+    expect(row).toBeUndefined();
+  });
+
+  it('keeps persistent IPs (with hostname) and clears rogue', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.23', { is_online: 1, is_rogue: 1, rogue_reason: 'test', hostname: 'server1' });
+    IpAddress.markOffline(db, subnetId, '10.0.1.23');
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.23');
 
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
@@ -138,25 +146,38 @@ describe('markOffline', () => {
 // ── bulkMarkStale ───────────────────────────────────────
 
 describe('bulkMarkStale', () => {
-  it('marks stale IPs offline and clears rogue', () => {
-    // Insert an IP that was last seen 2 hours ago
+  it('deletes stale ephemeral IPs', () => {
+    // Ephemeral IP last seen 2 hours ago — should be deleted
     IpAddress.upsert(db, subnetId, '10.0.1.30', { is_online: 1, is_rogue: 1, rogue_reason: 'rogue' });
     db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.30'")
       .run(subnetId);
 
-    // Insert an IP seen just now
+    // Fresh IP — should remain online
     IpAddress.upsert(db, subnetId, '10.0.1.31', { is_online: 1 });
 
-    IpAddress.bulkMarkStale(db, 60); // 60 minutes stale threshold
+    IpAddress.bulkMarkStale(db, 60);
 
     const stale = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.30');
     const fresh = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.31');
 
-    expect(stale.is_online).toBe(0);
-    expect(stale.is_rogue).toBe(0);
-    expect(stale.rogue_reason).toBeNull();
-
+    expect(stale).toBeUndefined();
     expect(fresh.is_online).toBe(1);
+  });
+
+  it('keeps stale persistent IPs and clears rogue', () => {
+    // Persistent IP (has hostname) last seen 2 hours ago — should be kept but marked offline
+    IpAddress.upsert(db, subnetId, '10.0.1.32', { is_online: 1, is_rogue: 1, rogue_reason: 'rogue', hostname: 'db-server' });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.32'")
+      .run(subnetId);
+
+    IpAddress.bulkMarkStale(db, 60);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.32');
+
+    expect(row.is_online).toBe(0);
+    expect(row.is_rogue).toBe(0);
+    expect(row.rogue_reason).toBeNull();
+    expect(row.hostname).toBe('db-server');
   });
 });
 
@@ -358,7 +379,7 @@ describe('pruneOldScanResults', () => {
 // ── lifecycle: rogue cleared on offline ─────────────────
 
 describe('rogue device goes offline', () => {
-  it('bulkMarkStale clears rogue when device becomes stale', () => {
+  it('bulkMarkStale deletes ephemeral rogue when device becomes stale', () => {
     // Simulate: rogue device detected by scan, then goes silent
     IpAddress.upsert(db, subnetId, '10.0.1.80', {
       is_online: 1, is_rogue: 1, rogue_reason: 'Rogue device (IP not assigned)',
@@ -369,16 +390,31 @@ describe('rogue device goes offline', () => {
     db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.80'")
       .run(subnetId);
 
-    // Staleness sweep with 60-minute threshold
+    // Staleness sweep with 60-minute threshold — ephemeral rogue gets deleted
     IpAddress.bulkMarkStale(db, 60);
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.80');
+    expect(row).toBeUndefined();
+  });
+
+  it('bulkMarkStale keeps persistent rogue (with hostname) and clears rogue status', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.82', {
+      is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch',
+      hostname: 'known-host', detection_source: 'scanner'
+    });
+
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.82'")
+      .run(subnetId);
+
+    IpAddress.bulkMarkStale(db, 60);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.82');
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
     expect(row.rogue_reason).toBeNull();
   });
 
-  it('markOffline clears rogue on explicit offline', () => {
+  it('markOffline deletes ephemeral rogue', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.81', {
       is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch'
     });
@@ -386,6 +422,17 @@ describe('rogue device goes offline', () => {
     IpAddress.markOffline(db, subnetId, '10.0.1.81');
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.81');
+    expect(row).toBeUndefined();
+  });
+
+  it('markOffline keeps persistent rogue (locked status) and clears rogue', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.83', {
+      is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch', status: 'locked'
+    });
+
+    IpAddress.markOffline(db, subnetId, '10.0.1.83');
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.83');
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
     expect(row.rogue_reason).toBeNull();

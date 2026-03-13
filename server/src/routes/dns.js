@@ -162,7 +162,11 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
-    SELECT * FROM dns_records WHERE zone_id = ? ORDER BY type, name
+    SELECT r.*, ip.is_online
+    FROM dns_records r
+    LEFT JOIN ip_addresses ip ON r.type = 'A' AND ip.ip_address = r.value
+    WHERE r.zone_id = ?
+    ORDER BY r.type, r.name
   `).all(zone.id);
 
   res.json({ ...zone, records });
@@ -276,7 +280,11 @@ router.get('/zones/:zoneId/records', requirePerm('dns:read'), (req, res) => {
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
-    SELECT * FROM dns_records WHERE zone_id = ? ORDER BY type, name
+    SELECT r.*, ip.is_online
+    FROM dns_records r
+    LEFT JOIN ip_addresses ip ON r.type = 'A' AND ip.ip_address = r.value
+    WHERE r.zone_id = ?
+    ORDER BY r.type, r.name
   `).all(zone.id);
   res.json(records);
 });

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
 import { regenerateConfigs } from '../utils/dnsmasq.js';
+import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 import http from 'http';
 import https from 'https';
 import { ipToLong } from '../utils/ip.js';
@@ -484,8 +485,11 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(?) WHERE id = ?')
     .run(new Date().toISOString(), zoneId);
 
-  // Regenerate dnsmasq configs
+  // Regenerate dnsmasq configs (DNS + DHCP reservations)
   regenerateConfigs(db);
+  if (results.dhcp.created > 0) {
+    regenerateDhcpConfigs(db);
+  }
 
   audit(req.user.id, 'pihole_import', 'dns_zone', zoneId, { zone: zone.name, results });
 

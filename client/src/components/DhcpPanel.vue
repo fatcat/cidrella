@@ -78,14 +78,16 @@
 
           <DataTable :value="searchedScopeLeases" :loading="loadingLeases" stripedRows
                      emptyMessage="No leases or reservations for this scope." size="small"
-                     paginator :rows="100"
+                     scrollable scrollHeight="flex"
+                     paginator :rows="100" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
+                     removableSort
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
             <Column header="Status" sortable field="status" style="width: 7rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
+                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Online' : 'Offline' }}</span>
               </template>
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
@@ -126,14 +128,16 @@
 
           <DataTable :value="searchedAllLeases" :loading="loadingLeases" stripedRows
                      emptyMessage="No DHCP leases or reservations." size="small"
-                     paginator :rows="100"
+                     scrollable scrollHeight="flex"
+                     paginator :rows="100" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
+                     removableSort
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
             <Column header="Status" sortable field="status" style="width: 7rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Active' : 'Offline' }}</span>
+                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Online' : 'Offline' }}</span>
               </template>
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
@@ -233,7 +237,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
@@ -567,9 +571,11 @@ defineExpose({ openScopeDialog });
 .dhcp-layout {
   display: grid;
   grid-template-columns: 320px 1fr;
+  grid-template-rows: 1fr;
   gap: 1.5rem;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 /* ── Scope Sidebar ── */
@@ -646,8 +652,11 @@ defineExpose({ openScopeDialog });
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 1rem;
+  overflow: hidden;
+}
+.leases-panel > :deep(.p-datatable) {
+  flex: 1;
+  min-height: 0;
 }
 
 .dhcp-toolbar {
@@ -700,7 +709,7 @@ defineExpose({ openScopeDialog });
 .badge-reserved { background: color-mix(in srgb, var(--p-primary-color) 15%, transparent); color: var(--p-primary-color); }
 .badge-dynamic { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-color); }
 
-.search-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; }
+.search-bar { display: flex; align-items: center; gap: 0.25rem; padding: 0.4rem 0; flex-shrink: 0; }
 .search-input { width: 22rem; }
 
 .text-sm { font-size: 0.8rem; }

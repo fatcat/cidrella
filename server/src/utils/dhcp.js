@@ -314,7 +314,7 @@ function syncDhcpDnsRecords(db, leases) {
   }
 
   // Merge leases with reservations (reservations take priority for same IP)
-  const entries = [...leases];
+  const entries = leases.map(l => ({ ...l, source: 'dhcp' }));
   const leaseIps = new Set(leases.map(l => l.ip));
 
   let reservations = [];
@@ -335,7 +335,8 @@ function syncDhcpDnsRecords(db, leases) {
       entries.push({
         ip: r.ip_address,
         hostname: r.hostname,
-        subnetId: r.subnet_id
+        subnetId: r.subnet_id,
+        source: 'reservation'
       });
     }
   }
@@ -355,7 +356,7 @@ function syncDhcpDnsRecords(db, leases) {
 
   const insertDhcp = db.prepare(`
     INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
-    VALUES (?, ?, 'A', ?, 'dhcp', 1)
+    VALUES (?, ?, 'A', ?, ?, 1)
   `);
 
   const touchDhcp = db.prepare(`
@@ -379,13 +380,19 @@ function syncDhcpDnsRecords(db, leases) {
 
     const existing = findRecord.get(zone.id, recordName, l.ip);
     if (existing) {
-      // Don't overwrite manual records; just track DHCP ones as active
-      if (existing.source === 'dhcp') {
-        touchDhcp.run(existing.id);
+      // Don't overwrite manual records; just track DHCP/reservation ones as active
+      if (existing.source === 'dhcp' || existing.source === 'reservation') {
+        // Update source if it changed (e.g. lease became reservation)
+        if (existing.source !== (l.source || 'dhcp')) {
+          db.prepare('UPDATE dns_records SET source = ?, updated_at = datetime(\'now\') WHERE id = ?')
+            .run(l.source || 'dhcp', existing.id);
+        } else {
+          touchDhcp.run(existing.id);
+        }
         activeRecordIds.add(existing.id);
       }
     } else {
-      const result = insertDhcp.run(zone.id, recordName, l.ip);
+      const result = insertDhcp.run(zone.id, recordName, l.ip, l.source || 'dhcp');
       activeRecordIds.add(result.lastInsertRowid);
       configChanged = true;
     }
@@ -395,7 +402,7 @@ function syncDhcpDnsRecords(db, leases) {
   // Only prune if we actually processed entries — avoids wiping all records
   // when all zones are disabled (activeRecordIds would be empty).
   if (entries.length > 0 || forwardZones.length > 0) {
-    const staleRecords = db.prepare("SELECT id FROM dns_records WHERE source = 'dhcp'").all();
+    const staleRecords = db.prepare("SELECT id FROM dns_records WHERE source IN ('dhcp', 'reservation')").all();
     for (const r of staleRecords) {
       if (!activeRecordIds.has(r.id)) {
         db.prepare('DELETE FROM dns_records WHERE id = ?').run(r.id);

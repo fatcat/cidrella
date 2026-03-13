@@ -11,7 +11,7 @@
       </span>
       <nav class="header-nav">
         <router-link to="/dashboard" class="nav-link" :class="{ active: route.path === '/dashboard' }" data-track="nav-dashboard">Dashboard</router-link>
-        <router-link to="/networks" class="nav-link" :class="{ active: route.path === '/networks' || route.path === '/' }" data-track="nav-networks">Networks</router-link>
+        <router-link to="/networks" class="nav-link" :class="{ active: route.path === '/networks' || route.path === '/' }" data-track="nav-networks">IP Management</router-link>
         <router-link to="/system" class="nav-link" :class="{ active: route.path === '/system' }" data-track="nav-system">System</router-link>
       </nav>
     </div>
@@ -78,12 +78,12 @@
         </div>
       </div>
 
-      <div class="dash-card" :class="activeScan ? 'card-ok' : ''" data-track="header-card-scan">
-        <span class="card-dot" :class="activeScan ? 'dot-up' : 'dot-ok'"></span>
+      <div class="dash-card" :class="activeScans.length ? 'card-ok' : ''" data-track="header-card-scan">
+        <span class="card-dot" :class="activeScans.length ? 'dot-up' : 'dot-ok'"></span>
         <div class="card-body">
           <span class="card-value">{{ scanDisplay }}</span>
-          <span class="card-label">{{ activeScan ? 'Scan' : 'Next Scan' }}</span>
-          <span v-if="!activeScan" class="card-label">{{ nextScanFormatted }}</span>
+          <span class="card-label">{{ scanLabel }}</span>
+          <span v-if="!activeScans.length" class="card-label">{{ nextScanFormatted }}</span>
         </div>
       </div>
       </div>
@@ -121,7 +121,7 @@ const auth = useAuthStore();
 const subnetStore = useSubnetStore();
 const piholeImportRef = ref(null);
 const health = ref(null);
-const activeScan = ref(null);
+const activeScans = ref([]);
 const nextScanTime = ref(null);
 const updateInfo = ref(null);
 let pollInterval = null;
@@ -192,15 +192,22 @@ function formatScanDate(dateStr) {
 }
 
 const scanDisplay = computed(() => {
-  if (activeScan.value) {
-    const s = activeScan.value;
-    if (s.status === 'pending') return 'Pending';
-    if (s.status === 'running' && s.total_ips > 0) {
-      return `${Math.round((s.scanned_ips / s.total_ips) * 100)}%`;
-    }
-    if (s.status === 'running') return 'Running';
-  }
-  return 'Scanner Idle';
+  const scans = activeScans.value;
+  if (!scans.length) return 'Scanner Idle';
+
+  const running = scans.filter(s => s.status === 'running');
+  if (!running.length) return 'Pending';
+
+  const totalIps = running.reduce((sum, s) => sum + (s.total_ips || 0), 0);
+  const scannedIps = running.reduce((sum, s) => sum + (s.scanned_ips || 0), 0);
+  if (totalIps > 0) return `${Math.round((scannedIps / totalIps) * 100)}%`;
+  return 'Running';
+});
+
+const scanLabel = computed(() => {
+  const n = activeScans.value.length;
+  if (!n) return 'Next Scan';
+  return n === 1 ? 'Scanning 1 network' : `Scanning ${n} networks`;
 });
 
 const nextScanFormatted = computed(() => {
@@ -209,15 +216,14 @@ const nextScanFormatted = computed(() => {
 
 async function fetchActiveScan() {
   try {
-    // Always use the list endpoint (lightweight — no results array)
     const res = await api.get('/scans');
-    const active = res.data.find(s => s.status === 'running' || s.status === 'pending');
-    activeScan.value = active || null;
+    const active = res.data.filter(s => s.status === 'running' || s.status === 'pending');
+    activeScans.value = active;
 
     // Start/stop fast polling based on scan state
-    if (active && !scanPollInterval) {
+    if (active.length && !scanPollInterval) {
       scanPollInterval = setInterval(fetchActiveScan, 2000);
-    } else if (!active && scanPollInterval) {
+    } else if (!active.length && scanPollInterval) {
       clearInterval(scanPollInterval);
       scanPollInterval = null;
     }

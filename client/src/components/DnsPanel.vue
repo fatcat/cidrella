@@ -142,12 +142,14 @@
 
           <DataTable :key="'records-' + selectedZone?.type" :value="filteredRecords" :loading="loadingRecords" stripedRows
                      emptyMessage="No records in this zone." size="small"
+                     scrollable scrollHeight="flex"
                      :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
-                     paginator :rows="100"
+                     removableSort
+                     paginator :rows="100" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
                      @row-contextmenu="onRecordRightClick"
                      :contextMenu="true">
-            <Column field="name" :header="isReverse ? 'Name' : 'Name'" sortable style="min-width: 8rem">
+            <Column field="name" :header="isReverse ? 'Name' : 'Name'" sortable style="width: 12rem">
               <template #body="{ data }">
                 {{ isReverse ? `${data.name}.${selectedZone.name}` : data.name }}
               </template>
@@ -157,7 +159,7 @@
                 <span class="type-badge">{{ data.type }}</span>
               </template>
             </Column>
-            <Column field="value" :header="isReverse ? 'Hostname' : 'Value'" sortable style="min-width: 10rem">
+            <Column field="value" :header="isReverse ? 'Hostname' : 'Value'" sortable style="width: 12rem">
             </Column>
             <Column header="Priority" style="width: 5rem" v-if="!isReverse">
               <template #body="{ data }">{{ data.priority ?? '—' }}</template>
@@ -177,7 +179,16 @@
             </Column>
             <Column header="Source" style="width: 5rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.source === 'dhcp' ? 'badge-yellow-light' : 'badge-muted']">{{ data.source === 'dhcp' ? 'DHCP' : 'Manual' }}</span>
+                <span :class="['type-badge', data.source === 'dhcp' ? 'badge-yellow-light' : data.source === 'reservation' ? 'badge-blue-light' : 'badge-muted']">{{ data.source === 'dhcp' ? 'DHCP' : data.source === 'reservation' ? 'Reservation' : 'Manual' }}</span>
+              </template>
+            </Column>
+            <Column header="Status" sortable field="is_online" style="width: 5rem" v-if="!isReverse">
+              <template #body="{ data }">
+                <span v-if="data.type === 'A' && data.is_online !== null && data.is_online !== undefined"
+                      :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">
+                  {{ data.is_online ? 'Online' : 'Offline' }}
+                </span>
+                <span v-else>—</span>
               </template>
             </Column>
           </DataTable>
@@ -684,9 +695,11 @@ defineExpose({ openZoneDialog });
 .dns-layout {
   display: grid;
   grid-template-columns: 320px 1fr;
+  grid-template-rows: 1fr;
   gap: 1.5rem;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .zone-panel {
@@ -766,8 +779,11 @@ defineExpose({ openZoneDialog });
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
-  padding-bottom: 1rem;
+  overflow: hidden;
+}
+.records-panel > :deep(.p-datatable) {
+  flex: 1;
+  min-height: 0;
 }
 
 .dns-toolbar {
@@ -787,8 +803,6 @@ defineExpose({ openZoneDialog });
 .type-badge {
   font-size: 0.75rem;
   font-weight: 600;
-  background: var(--p-surface-ground);
-  color: var(--p-text-color);
   padding: 0.15rem 0.4rem;
   border-radius: 3px;
   font-family: monospace;
@@ -798,7 +812,7 @@ defineExpose({ openZoneDialog });
 
 .action-buttons { display: flex; gap: 0.25rem; }
 
-.search-bar { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0; }
+.search-bar { display: flex; align-items: center; gap: 0.25rem; padding: 0.4rem 0; flex-shrink: 0; }
 .search-input { width: 22rem; }
 
 .empty-state {

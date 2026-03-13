@@ -238,9 +238,13 @@ export function bulkMarkStale(db, staleMinutes) {
   const offset = `-${staleMinutes} minutes`;
 
   const staleIps = db.prepare(`
-    SELECT id, subnet_id, ip_address, is_rogue, status, hostname, scan_enabled
-    FROM ip_addresses
-    WHERE is_online = 1 AND last_seen_at < datetime('now', ?)
+    SELECT ip.id, ip.subnet_id, ip.ip_address, ip.is_rogue, ip.status,
+           ip.hostname, ip.scan_enabled,
+           (dr.id IS NOT NULL) AS has_reservation
+    FROM ip_addresses ip
+    LEFT JOIN dhcp_reservations dr
+      ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+    WHERE ip.is_online = 1 AND ip.last_seen_at < datetime('now', ?)
   `).all(offset);
 
   const toDelete = [];
@@ -251,7 +255,9 @@ export function bulkMarkStale(db, staleMinutes) {
     if (row.is_rogue) {
       emit(db, row.id, row.subnet_id, row.ip_address, 'rogue_cleared', { source: 'stale' });
     }
-    if (shouldKeepOffline(db, row)) {
+    const keep = row.status === 'locked' || row.status === 'assigned'
+      || row.hostname || row.scan_enabled !== null || row.has_reservation;
+    if (keep) {
       toUpdate.push(row.id);
     } else {
       toDelete.push(row.id);
