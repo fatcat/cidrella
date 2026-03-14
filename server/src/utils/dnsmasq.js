@@ -4,6 +4,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
+import { isProxyBypassed } from './geoip.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
@@ -184,7 +185,7 @@ export function regenerateDnsmasqConf(db) {
   // If GeoIP proxy is enabled, route through local proxy instead of direct upstream
   const geoipEnabled = getSetting('geoip_enabled');
   const geoipPort = getSetting('geoip_proxy_port');
-  if (geoipEnabled === 'true' && geoipPort) {
+  if (geoipEnabled === 'true' && geoipPort && !isProxyBypassed()) {
     servers = [`127.0.0.1#${geoipPort}`];
   }
 

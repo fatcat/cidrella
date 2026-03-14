@@ -6,6 +6,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const timeseries = ref([]);
   const blocklistHits = ref([]);
   const geoipHits = ref([]);
+  const proxyPerf = ref([]);
   const services = ref(null);
   const loading = ref(false);
 
@@ -27,6 +28,12 @@ export const useDashboardStore = defineStore('dashboard', () => {
     return res.data;
   }
 
+  async function fetchProxyPerf(range = '24h') {
+    const res = await api.get(`/metrics/proxy-perf?range=${range}`);
+    proxyPerf.value = res.data;
+    return res.data;
+  }
+
   async function fetchServices() {
     const res = await api.get('/metrics/services');
     services.value = res.data;
@@ -40,6 +47,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         fetchTimeseries(range),
         fetchBlocklistHits(range),
         fetchGeoipHits(range),
+        fetchProxyPerf(range),
         fetchServices(),
       ]);
     } finally {
@@ -48,7 +56,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   return {
-    timeseries, blocklistHits, geoipHits, services, loading,
-    fetchTimeseries, fetchBlocklistHits, fetchGeoipHits, fetchServices, fetchAll,
+    timeseries, blocklistHits, geoipHits, proxyPerf, services, loading,
+    fetchTimeseries, fetchBlocklistHits, fetchGeoipHits, fetchProxyPerf, fetchServices, fetchAll,
   };
 });

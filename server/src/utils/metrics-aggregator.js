@@ -7,7 +7,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { getBlockedDelta, getAndResetCountryHits } from './geoip.js';
+import { getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics } from './geoip.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
@@ -29,13 +29,20 @@ let timer = null;
 let logOffset = 0;
 let cycleCount = 0;
 
+// CPU tracking for delta computation
+let lastCpuUsage = process.cpuUsage();
+let lastCpuTs = Date.now();
+let startupRecorded = false;
+
 // Prepared statements (initialized on start)
 let insertMetrics = null;
 let insertBlocklistHit = null;
 let insertGeoipHit = null;
+let insertProxyPerf = null;
 let deleteOldMetrics = null;
 let deleteOldBlocklistHits = null;
 let deleteOldGeoipHits = null;
+let deleteOldProxyPerf = null;
 let lookupCategory = null;
 
 /**
@@ -126,6 +133,28 @@ function aggregate() {
     const geoipBlocks = getBlockedDelta();
     const geoipCountryHits = getAndResetCountryHits();
 
+    // Proxy performance metrics
+    const perf = getAndResetPerformanceMetrics();
+
+    // Process-level CPU (delta since last cycle)
+    const now = Date.now();
+    const cpu = process.cpuUsage(lastCpuUsage);
+    const wallMs = now - lastCpuTs;
+    const cpuPercent = wallMs > 0
+      ? Math.round(((cpu.user + cpu.system) / 1000) / wallMs * 100 * 100) / 100
+      : 0;
+    lastCpuUsage = process.cpuUsage();
+    lastCpuTs = now;
+
+    // Process-level memory
+    const mem = process.memoryUsage();
+    const rssMb = Math.round(mem.rss / 1048576 * 10) / 10;
+    const heapMb = Math.round(mem.heapUsed / 1048576 * 10) / 10;
+
+    // Record startup_ms only once
+    const startupMs = (!startupRecorded && perf.startupMs != null) ? perf.startupMs : null;
+    if (perf.startupMs != null) startupRecorded = true;
+
     // Insert all metrics in a single transaction
     const insertAll = db.transaction(() => {
       insertMetrics.run(ts, dnsQueries, dhcpRequests, blocklistBlocks, geoipBlocks);
@@ -135,6 +164,13 @@ function aggregate() {
       for (const [country, count] of geoipCountryHits) {
         insertGeoipHit.run(ts, country, count);
       }
+      insertProxyPerf.run(
+        ts, perf.queryCount,
+        perf.latencyMin, perf.latencyAvg, perf.latencyMax, perf.latencyP95,
+        perf.cacheHits, perf.cacheMisses,
+        perf.timeouts, perf.pendingQueries,
+        cpuPercent, rssMb, heapMb, startupMs
+      );
     });
     insertAll();
 
@@ -145,6 +181,7 @@ function aggregate() {
       deleteOldMetrics.run(cutoff);
       deleteOldBlocklistHits.run(cutoff);
       deleteOldGeoipHits.run(cutoff);
+      deleteOldProxyPerf.run(cutoff);
     }
   } catch (err) {
     console.error('[metrics-aggregator] Error:', err.message);
@@ -167,9 +204,17 @@ export function startMetricsAggregator(database) {
   insertGeoipHit = db.prepare(
     'INSERT INTO metrics_geoip_hits (ts, country, count) VALUES (?, ?, ?)'
   );
+  insertProxyPerf = db.prepare(
+    `INSERT INTO metrics_proxy_perf
+     (ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
+      cache_hits, cache_misses, timeouts, pending_queries,
+      cpu_percent, rss_mb, heap_mb, startup_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
   deleteOldMetrics = db.prepare('DELETE FROM metrics WHERE ts < ?');
   deleteOldBlocklistHits = db.prepare('DELETE FROM metrics_blocklist_hits WHERE ts < ?');
   deleteOldGeoipHits = db.prepare('DELETE FROM metrics_geoip_hits WHERE ts < ?');
+  deleteOldProxyPerf = db.prepare('DELETE FROM metrics_proxy_perf WHERE ts < ?');
 
   // Category lookup for blocked domains
   try {

@@ -12,6 +12,7 @@ import { regenerateDnsmasqConf, signalDnsmasq } from './dnsmasq.js';
 import {
   GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
   GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
+  PROXY_HEALTH_CHECK_MS, PROXY_MAX_RESTART_ATTEMPTS, PROXY_RESTART_DELAY_MS,
 } from '../config/defaults.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
@@ -21,6 +22,16 @@ const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
 function resolveDbPath() {
   const p = getSetting('geoip_db_path');
   return (!p || p === 'auto') ? DEFAULT_MMDB : p;
+}
+
+// Structured logging helper
+function proxyLog(level, msg, extra) {
+  const ts = new Date().toISOString();
+  const prefix = `[dns-proxy] ${ts}`;
+  const suffix = extra ? ` ${JSON.stringify(extra)}` : '';
+  if (level === 'error') console.error(`${prefix} ERROR: ${msg}${suffix}`);
+  else if (level === 'warn') console.warn(`${prefix} WARN: ${msg}${suffix}`);
+  else console.log(`${prefix} ${msg}${suffix}`);
 }
 
 // Module state
@@ -34,6 +45,18 @@ let statsAllowed = 0;
 let blockedDelta = 0;
 let countryHits = new Map();
 let updateTimer = null;
+
+// Bypass mode — when proxy dies and can't restart, DNS goes direct to upstream
+let bypassMode = false;
+let healthTimer = null;
+
+// Performance instrumentation
+let latencySamples = [];
+let cacheHits = 0;
+let cacheMisses = 0;
+let timeoutCount = 0;
+let proxyStartedAt = null;
+let proxyStartupMs = null;
 
 // Pending queries: maps internal ID -> { address, port, originalId, timer }
 let pendingQueries = new Map();
@@ -49,17 +72,17 @@ function setSetting(key, value) {
 export async function loadMmdb() {
   const dbPath = resolveDbPath();
   if (!fs.existsSync(dbPath)) {
-    console.warn('GeoIP MMDB file not found:', dbPath);
+    proxyLog('warn', 'MMDB file not found', { path: dbPath });
     mmdbReader = null;
     return false;
   }
   try {
     mmdbReader = await maxmind.open(dbPath);
     geoCache = new LRUCache({ max: GEOIP_CACHE_MAX, ttl: GEOIP_CACHE_TTL_MS });
-    console.log('GeoIP MMDB loaded:', dbPath);
+    proxyLog('info', 'MMDB loaded', { path: dbPath });
     return true;
   } catch (err) {
-    console.error('Failed to load MMDB:', err.message);
+    proxyLog('error', 'Failed to load MMDB', { error: err.message });
     mmdbReader = null;
     return false;
   }
@@ -70,12 +93,13 @@ export function lookupCountry(ip) {
   if (!mmdbReader) return null;
 
   const cached = geoCache?.get(ip);
-  if (cached !== undefined) return cached;
+  if (cached !== undefined) { cacheHits++; return cached; }
 
   try {
     const result = mmdbReader.get(ip);
     const code = result?.country?.iso_code || null;
     geoCache?.set(ip, code);
+    cacheMisses++;
     return code;
   } catch {
     return null;
@@ -124,16 +148,17 @@ function createNxdomainResponse(query) {
 // Start the GeoIP DNS proxy
 export function startProxy(port) {
   if (proxyServer) {
-    console.warn('GeoIP proxy already running');
+    proxyLog('warn', 'Proxy already running');
     return;
   }
 
+  proxyStartedAt = Date.now();
   proxyPort = port || parseInt(getSetting('geoip_proxy_port'), 10) || 5353;
 
   // Create upstream socket for forwarding
   upstreamSocket = dgram.createSocket('udp4');
   upstreamSocket.on('error', (err) => {
-    console.error('GeoIP upstream socket error:', err.message);
+    proxyLog('error', 'Upstream socket error', { error: err.message });
   });
 
   // Handle upstream responses
@@ -166,6 +191,7 @@ export function startProxy(port) {
           }
           const nxResponse = createNxdomainResponse({ id: pending.originalId, questions: response.questions });
           proxyServer.send(nxResponse, pending.port, pending.address);
+          latencySamples.push(Number(process.hrtime.bigint() - pending.startNs) / 1000);
           return;
         }
       }
@@ -176,8 +202,9 @@ export function startProxy(port) {
       const buf = Buffer.from(msg);
       buf.writeUInt16BE(pending.originalId, 0);
       proxyServer.send(buf, pending.port, pending.address);
+      latencySamples.push(Number(process.hrtime.bigint() - pending.startNs) / 1000);
     } catch (err) {
-      console.error('GeoIP response processing error:', err.message);
+      proxyLog('error', 'Response processing error', { error: err.message });
     }
   });
 
@@ -186,6 +213,7 @@ export function startProxy(port) {
 
   proxyServer.on('message', (msg, rinfo) => {
     try {
+      const startNs = process.hrtime.bigint();
       const query = dnsPacket.decode(msg);
       const upstreams = getUpstreamServers();
       if (upstreams.length === 0) return;
@@ -202,6 +230,8 @@ export function startProxy(port) {
           pendingQueries.delete(internalId);
           statsAllowed++;
           statsTotal++;
+          timeoutCount++;
+          latencySamples.push(Number(process.hrtime.bigint() - p.startNs) / 1000);
           try {
             const servfail = dnsPacket.encode({
               id: p.originalId, type: 'response', rcode: 'SERVFAIL',
@@ -216,7 +246,8 @@ export function startProxy(port) {
         address: rinfo.address,
         port: rinfo.port,
         originalId: query.id,
-        timer
+        timer,
+        startNs
       });
 
       // Rewrite query ID and forward to upstream
@@ -229,20 +260,27 @@ export function startProxy(port) {
         : [upstream, 53];
       upstreamSocket.send(fwdBuf, upstreamPort, upstreamHost);
     } catch (err) {
-      console.error('GeoIP query processing error:', err.message);
+      proxyLog('error', 'Query processing error', { error: err.message });
     }
   });
 
   proxyServer.on('error', (err) => {
-    console.error('GeoIP proxy error:', err.message);
+    proxyLog('error', 'Proxy socket error', { error: err.message, code: err.code });
     if (err.code === 'EADDRINUSE') {
-      console.error(`Port ${proxyPort} is already in use`);
+      proxyLog('error', 'Port already in use, stopping proxy', { port: proxyPort });
       stopProxy();
     }
   });
 
+  proxyServer.on('close', () => {
+    proxyLog('warn', 'Proxy socket closed unexpectedly');
+    proxyServer = null;
+  });
+
   proxyServer.bind(proxyPort, '127.0.0.1', () => {
-    console.log(`GeoIP DNS proxy listening on 127.0.0.1:${proxyPort}`);
+    proxyStartupMs = Date.now() - proxyStartedAt;
+    proxyLog('info', 'Proxy listening', { address: `127.0.0.1:${proxyPort}`, startupMs: proxyStartupMs });
+    startHealthMonitor();
   });
 }
 
@@ -261,7 +299,71 @@ export function stopProxy() {
     clearTimeout(pending.timer);
   }
   pendingQueries.clear();
-  console.log('GeoIP DNS proxy stopped');
+  stopHealthMonitor();
+  proxyLog('info', 'Proxy stopped');
+}
+
+// Health monitor — detects proxy death, attempts restart, fails open if unrecoverable
+function startHealthMonitor() {
+  stopHealthMonitor();
+  healthTimer = setInterval(async () => {
+    if (proxyServer !== null) return; // proxy is alive
+    if (bypassMode) return; // already bypassed, nothing to do
+
+    proxyLog('warn', 'Proxy appears dead, attempting restart');
+
+    for (let attempt = 1; attempt <= PROXY_MAX_RESTART_ATTEMPTS; attempt++) {
+      try {
+        const port = parseInt(getSetting('geoip_proxy_port'), 10) || 5353;
+        startProxy(port);
+        // Give the socket a moment to bind
+        await new Promise(r => setTimeout(r, 500));
+        if (proxyServer !== null) {
+          proxyLog('info', 'Proxy restarted successfully', { attempt });
+          if (bypassMode) {
+            bypassMode = false;
+            proxyLog('info', 'Bypass deactivated — proxy recovered');
+            regenerateDnsmasqConf(getDb());
+            signalDnsmasq();
+          }
+          return;
+        }
+      } catch (err) {
+        proxyLog('error', 'Restart attempt failed', { attempt, error: err.message });
+      }
+      if (attempt < PROXY_MAX_RESTART_ATTEMPTS) {
+        await new Promise(r => setTimeout(r, PROXY_RESTART_DELAY_MS));
+      }
+    }
+
+    // All restart attempts failed — activate bypass
+    activateBypass();
+  }, PROXY_HEALTH_CHECK_MS);
+}
+
+function stopHealthMonitor() {
+  if (healthTimer) {
+    clearInterval(healthTimer);
+    healthTimer = null;
+  }
+}
+
+function activateBypass() {
+  if (bypassMode) return;
+  bypassMode = true;
+  proxyLog('error', 'All restart attempts failed — activating bypass mode (DNS goes direct to upstream)');
+  try {
+    regenerateDnsmasqConf(getDb());
+    signalDnsmasq();
+    proxyLog('info', 'dnsmasq reconfigured with direct upstream servers');
+  } catch (err) {
+    proxyLog('error', 'Failed to reconfigure dnsmasq for bypass', { error: err.message });
+  }
+}
+
+// Check if proxy is in bypass mode (used by dnsmasq.js)
+export function isProxyBypassed() {
+  return bypassMode;
 }
 
 // Start proxy if geoip_enabled=true (called on server startup)
@@ -271,7 +373,7 @@ export async function startProxyIfEnabled() {
 
   const loaded = await loadMmdb();
   if (!loaded) {
-    console.warn('GeoIP enabled but MMDB not available — proxy will start without filtering');
+    proxyLog('warn', 'GeoIP enabled but MMDB not available — proxy will start without filtering');
   }
 
   const port = parseInt(getSetting('geoip_proxy_port'), 10) || 5353;
@@ -290,7 +392,7 @@ export async function downloadMmdb() {
   const dbPath = resolveDbPath();
   const tmpPath = dbPath + '.tmp.' + process.pid;
 
-  console.log('Downloading GeoIP database from:', url);
+  proxyLog('info', 'Downloading GeoIP database', { url });
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), GEOIP_DOWNLOAD_TIMEOUT_MS);
@@ -317,7 +419,7 @@ export async function downloadMmdb() {
     fs.renameSync(tmpPath, dbPath);
 
     setSetting('geoip_last_updated', new Date().toISOString());
-    console.log('GeoIP database downloaded successfully');
+    proxyLog('info', 'GeoIP database downloaded successfully');
 
     // Reload the MMDB reader
     await loadMmdb();
@@ -339,6 +441,7 @@ export function getProxyStatus() {
 
   return {
     running: proxyServer !== null,
+    bypassed: bypassMode,
     port: proxyPort,
     dbLoaded: mmdbReader !== null,
     dbExists,
@@ -369,6 +472,45 @@ export function getAndResetCountryHits() {
   const copy = new Map(countryHits);
   countryHits = new Map();
   return copy;
+}
+
+// Get and reset performance metrics (for metrics aggregator)
+export function getAndResetPerformanceMetrics() {
+  const samples = latencySamples;
+  latencySamples = [];
+
+  const hits = cacheHits;
+  const misses = cacheMisses;
+  cacheHits = 0;
+  cacheMisses = 0;
+
+  const timeouts = timeoutCount;
+  timeoutCount = 0;
+
+  const pending = pendingQueries.size;
+
+  if (samples.length === 0) {
+    return {
+      queryCount: 0,
+      latencyMin: null, latencyAvg: null, latencyMax: null, latencyP95: null,
+      cacheHits: hits, cacheMisses: misses,
+      timeouts, pendingQueries: pending, startupMs: proxyStartupMs,
+    };
+  }
+
+  samples.sort((a, b) => a - b);
+  const sum = samples.reduce((a, b) => a + b, 0);
+  const p95Idx = Math.floor(samples.length * 0.95);
+
+  return {
+    queryCount: samples.length,
+    latencyMin: Math.round(samples[0]),
+    latencyAvg: Math.round(sum / samples.length),
+    latencyMax: Math.round(samples[samples.length - 1]),
+    latencyP95: Math.round(samples[p95Idx]),
+    cacheHits: hits, cacheMisses: misses,
+    timeouts, pendingQueries: pending, startupMs: proxyStartupMs,
+  };
 }
 
 // Map schedule setting to interval in days
@@ -402,15 +544,15 @@ export function startGeoipScheduler() {
       const daysSinceUpdate = (Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24);
 
       if (daysSinceUpdate >= intervalDays) {
-        console.log(`GeoIP database is older than ${intervalDays} days, downloading update...`);
+        proxyLog('info', `GeoIP database is older than ${intervalDays} days, downloading update`);
         try {
           await downloadMmdb();
         } catch (err) {
-          console.error('GeoIP auto-update failed:', err.message);
+          proxyLog('error', 'GeoIP auto-update failed', { error: err.message });
         }
       }
     } catch (err) {
-      console.error('GeoIP scheduler error:', err.message);
+      proxyLog('error', 'GeoIP scheduler error', { error: err.message });
     }
   }, GEOIP_CHECK_INTERVAL_MS);
 
@@ -421,11 +563,11 @@ export function startGeoipScheduler() {
 
     const dbPath = resolveDbPath();
     if (!fs.existsSync(dbPath)) {
-      console.log('GeoIP enabled but no MMDB found, downloading...');
+      proxyLog('info', 'GeoIP enabled but no MMDB found, downloading');
       try {
         await downloadMmdb();
       } catch (err) {
-        console.error('GeoIP initial download failed:', err.message);
+        proxyLog('error', 'GeoIP initial download failed', { error: err.message });
       }
     }
   }, GEOIP_STARTUP_DELAY_MS);

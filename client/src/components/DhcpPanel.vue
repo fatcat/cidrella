@@ -9,6 +9,10 @@
           </TabList>
           <TabPanels>
             <TabPanel value="scopes">
+              <div class="sidebar-search">
+                <i class="pi pi-search search-icon"></i>
+                <input type="text" v-model="scopeFilterText" placeholder="Filter scopes..." class="sidebar-filter" data-track="dhcp-sidebar-filter" />
+              </div>
               <div class="scope-list" v-if="!store.loading">
                 <div v-for="scope in filteredScopes" :key="scope.id"
                      class="scope-item"
@@ -81,7 +85,7 @@
                      scrollable scrollHeight="flex"
                      paginator :rows="100" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
-                     removableSort
+                     removableSort :nullSortOrder="0"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
@@ -95,14 +99,14 @@
                 <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reservation' : 'Dynamic' }}</span>
               </template>
             </Column>
+            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
+              <template #body="{ data }">{{ displayHostname(data.hostname, selectedScope?.subnet_domain_name) }}</template>
+            </Column>
             <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
               <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
             </Column>
             <Column field="vendor" header="Vendor" sortable style="min-width: 8rem">
               <template #body="{ data }">{{ data.vendor || '—' }}</template>
-            </Column>
-            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ displayHostname(data.hostname, selectedScope?.subnet_domain_name) }}</template>
             </Column>
             <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
               <template #body="{ data }">
@@ -129,6 +133,7 @@
           <DataTable :value="searchedAllLeases" :loading="loadingLeases" stripedRows
                      emptyMessage="No DHCP leases or reservations." size="small"
                      scrollable scrollHeight="flex"
+                     :nullSortOrder="0"
                      paginator :rows="100" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
                      removableSort
@@ -145,14 +150,14 @@
                 <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reservation' : 'Dynamic' }}</span>
               </template>
             </Column>
+            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
+              <template #body="{ data }">{{ displayHostname(data.hostname, data.subnet_domain_name) }}</template>
+            </Column>
             <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
               <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
             </Column>
             <Column field="vendor" header="Vendor" sortable style="min-width: 8rem">
               <template #body="{ data }">{{ data.vendor || '—' }}</template>
-            </Column>
-            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ displayHostname(data.hostname, data.subnet_domain_name) }}</template>
             </Column>
             <Column header="Network" style="min-width: 8rem">
               <template #body="{ data }">{{ data.subnet_name || data.subnet_cidr || '—' }}</template>
@@ -267,6 +272,7 @@ const store = useDhcpStore();
 const toast = useToast();
 
 const scopeTab = ref('scopes');
+const scopeFilterText = ref('');
 const selectedScope = ref(null);
 const syncing = ref(false);
 const loadingLeases = ref(false);
@@ -318,6 +324,7 @@ function dhcpMatchSearch(item, query) {
   return (item.ip_address && item.ip_address.toLowerCase().includes(query)) ||
     (item.mac_address && item.mac_address.toLowerCase().includes(query)) ||
     (item.hostname && item.hostname.toLowerCase().includes(query)) ||
+    (item.vendor && item.vendor.toLowerCase().includes(query)) ||
     (item.type && item.type.toLowerCase().includes(query)) ||
     (item.status && item.status.toLowerCase().includes(query));
 }
@@ -335,7 +342,7 @@ const searchedAllLeases = computed(() => {
 });
 
 function displayHostname(hostname, domainName) {
-  if (!hostname) return '—';
+  if (!hostname || !hostname.trim()) return '—';
   if (domainName && hostname.endsWith('.' + domainName)) {
     return hostname.slice(0, -(domainName.length + 1));
   }
@@ -349,9 +356,18 @@ const showDeleteReservationDialog = ref(false);
 const deletingReservation = ref(null);
 
 // All scopes and leases
-const filteredScopes = computed(() => store.scopes);
+const filteredScopes = computed(() => {
+  const q = scopeFilterText.value.trim().toLowerCase();
+  if (!q) return store.scopes;
+  return store.scopes.filter(s =>
+    (s.subnet_name && s.subnet_name.toLowerCase().includes(q)) ||
+    (s.subnet_cidr && s.subnet_cidr.toLowerCase().includes(q)) ||
+    (s.start_ip && s.start_ip.includes(q)) ||
+    (s.end_ip && s.end_ip.includes(q))
+  );
+});
 
-const filteredLeases = computed(() => store.leases);
+const filteredLeases = computed(() => store.leases.map(l => ({ ...l, hostname: l.hostname || ' ' })));
 
 const scopeGateway = computed(() => {
   const s = selectedScope.value;
@@ -374,7 +390,7 @@ const scopeLeaseTime = computed(() => {
 // Filter leases for selected scope
 const scopeLeases = computed(() => {
   if (!selectedScope.value) return [];
-  return store.leases.filter(l => l.subnet_id === selectedScope.value.subnet_id);
+  return store.leases.filter(l => l.subnet_id === selectedScope.value.subnet_id).map(l => ({ ...l, hostname: l.hostname || ' ' }));
 });
 
 function loadJson(key, fallback) {
@@ -587,6 +603,32 @@ defineExpose({ openScopeDialog });
 }
 .scope-panel :deep(.p-tablist) {
   background: var(--p-surface-ground);
+}
+
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  padding: 0 0.6rem;
+  border-bottom: 1px solid var(--p-surface-border);
+  gap: 0.4rem;
+  height: 2.4rem;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.search-icon {
+  font-size: 0.8rem;
+  color: var(--p-text-muted-color);
+}
+.sidebar-filter {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--p-text-color);
+  font-size: 0.8rem;
+  outline: none;
+}
+.sidebar-filter::placeholder {
+  color: var(--p-text-muted-color);
 }
 
 .scope-list {

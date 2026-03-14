@@ -11,8 +11,12 @@
           <TabPanels>
             <!-- Forward Zones Tab -->
             <TabPanel value="forward">
+              <div class="sidebar-search">
+                <i class="pi pi-search search-icon"></i>
+                <input type="text" v-model="zoneFilterText" placeholder="Filter zones..." class="sidebar-filter" data-track="dns-sidebar-filter" />
+              </div>
               <div class="zone-list" v-if="!store.loading">
-                <div v-for="zone in forwardZones" :key="zone.id"
+                <div v-for="zone in filteredForwardZones" :key="zone.id"
                      class="zone-item"
                      :class="{ active: selectedZone?.id === zone.id }"
                      @click="selectZone(zone)">
@@ -33,7 +37,7 @@
                             @click.stop="confirmDeleteZone(zone)" />
                   </div>
                 </div>
-                <div v-if="forwardZones.length === 0" class="empty-state">
+                <div v-if="filteredForwardZones.length === 0" class="empty-state">
                   No forward zones configured.
                 </div>
               </div>
@@ -44,8 +48,12 @@
 
             <!-- Reverse Zones Tab -->
             <TabPanel value="reverse">
+              <div class="sidebar-search">
+                <i class="pi pi-search search-icon"></i>
+                <input type="text" v-model="zoneFilterText" placeholder="Filter zones..." class="sidebar-filter" data-track="dns-sidebar-filter-reverse" />
+              </div>
               <div class="zone-list" v-if="!store.loading">
-                <template v-for="entry in groupedReverseZones" :key="entry.key">
+                <template v-for="entry in filteredGroupedReverseZones" :key="entry.key">
                   <!-- Standalone reverse zone -->
                   <div v-if="!entry.isGroup" class="zone-item"
                        :class="{ active: selectedZone?.id === entry.zone.id }"
@@ -100,7 +108,7 @@
                     </template>
                   </template>
                 </template>
-                <div v-if="groupedReverseZones.length === 0" class="empty-state">
+                <div v-if="filteredGroupedReverseZones.length === 0" class="empty-state">
                   No reverse zones configured.
                 </div>
               </div>
@@ -385,6 +393,7 @@ function loadJson(key, fallback) {
 }
 
 // Zone state
+const zoneFilterText = ref('');
 const selectedZone = ref(null);
 const isReverse = computed(() => selectedZone.value?.type === 'reverse');
 const records = ref([]);
@@ -396,6 +405,12 @@ const zoneTab = ref(loadJson('ipam_dns_zone_tab', 'forward'));
 const forwardZones = computed(() =>
   store.zones.filter(z => z.type === 'forward').sort((a, b) => a.name.localeCompare(b.name))
 );
+
+const filteredForwardZones = computed(() => {
+  const q = zoneFilterText.value.trim().toLowerCase();
+  if (!q) return forwardZones.value;
+  return forwardZones.value.filter(z => z.name.toLowerCase().includes(q));
+});
 
 // Group reverse zones that share a subnet_id (multiple /24 zones for one supernet)
 const groupedReverseZones = computed(() => {
@@ -438,6 +453,18 @@ const groupedReverseZones = computed(() => {
   return result;
 });
 
+const filteredGroupedReverseZones = computed(() => {
+  const q = zoneFilterText.value.trim().toLowerCase();
+  if (!q) return groupedReverseZones.value;
+  return groupedReverseZones.value.filter(entry => {
+    if (entry.isGroup) {
+      return entry.description.toLowerCase().includes(q) ||
+        entry.zones.some(z => z.name.toLowerCase().includes(q));
+    }
+    return entry.zone.name.toLowerCase().includes(q);
+  });
+});
+
 function toggleGroup(key) {
   expandedGroups.value = { ...expandedGroups.value, [key]: !expandedGroups.value[key] };
 }
@@ -468,9 +495,10 @@ watch(dnsSearch, (val) => {
   try { localStorage.setItem('ipam_dns_search', JSON.stringify(val)); } catch {}
 });
 const filteredRecords = computed(() => {
+  const base = records.value.filter(r => r.source !== 'dhcp');
   const q = dnsSearch.value.trim().toLowerCase();
-  if (!q) return records.value;
-  return records.value.filter(r =>
+  if (!q) return base;
+  return base.filter(r =>
     (r.name && r.name.toLowerCase().includes(q)) ||
     (r.type && r.type.toLowerCase().includes(q)) ||
     (r.value && r.value.toLowerCase().includes(q))
@@ -486,7 +514,7 @@ const recordContextMenu = ref();
 const selectedRecord = ref(null);
 const recordContextMenuItems = computed(() => {
   const r = selectedRecord.value;
-  if (!r || r.source === 'dhcp') return [];
+  if (!r) return [];
   return [
     { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
     { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
@@ -742,6 +770,32 @@ defineExpose({ openZoneDialog });
 .info-bar-pair { display: flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
 .info-bar-label { font-size: 0.65rem; text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.04em; }
 .info-bar-val { font-size: 0.8rem; font-weight: 600; }
+
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  padding: 0 0.6rem;
+  border-bottom: 1px solid var(--p-surface-border);
+  gap: 0.4rem;
+  height: 2.4rem;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+.search-icon {
+  font-size: 0.8rem;
+  color: var(--p-text-muted-color);
+}
+.sidebar-filter {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--p-text-color);
+  font-size: 0.8rem;
+  outline: none;
+}
+.sidebar-filter::placeholder {
+  color: var(--p-text-muted-color);
+}
 
 .zone-list { max-height: 500px; overflow-y: auto; }
 

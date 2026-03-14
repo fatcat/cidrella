@@ -9,7 +9,7 @@
       </div>
       <div class="service-item">
         <span class="status-dot" :class="geoipDotClass"></span>
-        <span class="service-label">GeoIP Proxy</span>
+        <span class="service-label">GeoIP Proxy{{ services?.geoip_bypassed ? ' (Bypassed)' : '' }}</span>
       </div>
       <template v-if="services?.forwarders?.length">
         <div v-for="fwd in services.forwarders" :key="fwd.ip" class="service-item">
@@ -50,6 +50,44 @@
           <Bar :data="geoipBarData" :options="barOptions" />
         </div>
         <p v-else class="empty-chart">No GeoIP hits in this range.</p>
+      </div>
+    </div>
+
+    <!-- Proxy Performance -->
+    <div class="bar-charts-row">
+      <div class="chart-card half">
+        <h4>Proxy Query Latency</h4>
+        <div v-if="latencyData" class="chart-wrap" style="height: 240px">
+          <Line :data="latencyData" :options="latencyOptions" />
+        </div>
+        <p v-else class="empty-chart">No proxy latency data in this range.</p>
+      </div>
+      <div class="chart-card half">
+        <h4>Process Resources</h4>
+        <div v-if="resourceData" class="chart-wrap" style="height: 240px">
+          <Line :data="resourceData" :options="resourceOptions" />
+        </div>
+        <p v-else class="empty-chart">No resource data in this range.</p>
+      </div>
+    </div>
+
+    <!-- Proxy Stats Summary -->
+    <div v-if="proxyStats" class="stats-row">
+      <div class="stat-card">
+        <span class="stat-label">Cache Hit Rate</span>
+        <span class="stat-value">{{ proxyStats.cacheHitRate }}%</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Avg Latency</span>
+        <span class="stat-value">{{ proxyStats.avgLatency }} µs</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Timeouts</span>
+        <span class="stat-value">{{ proxyStats.timeouts }}</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Startup Time</span>
+        <span class="stat-value">{{ proxyStats.startupMs != null ? proxyStats.startupMs + ' ms' : '—' }}</span>
       </div>
     </div>
     </div>
@@ -95,6 +133,7 @@ const services = computed(() => store.services);
 
 const geoipDotClass = computed(() => {
   if (!services.value) return 'dot-unknown';
+  if (services.value.geoip_bypassed) return 'dot-bypass';
   return services.value.geoip_proxy ? 'dot-up' : 'dot-down';
 });
 
@@ -212,6 +251,138 @@ const barOptions = {
   },
 };
 
+// Proxy performance charts
+const latencyData = computed(() => {
+  const pp = store.proxyPerf;
+  if (!pp.length) return null;
+  return {
+    labels: pp.map(r => formatTs(r.ts)),
+    datasets: [
+      {
+        label: 'Avg',
+        data: pp.map(r => r.latency_avg),
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.1)',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0,
+      },
+      {
+        label: 'P95',
+        data: pp.map(r => r.latency_p95),
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245,158,11,0.1)',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0,
+      },
+      {
+        label: 'Max',
+        data: pp.map(r => r.latency_max),
+        borderColor: '#ef4444',
+        borderDash: [4, 4],
+        backgroundColor: 'rgba(239,68,68,0.1)',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0,
+      },
+    ],
+  };
+});
+
+const latencyOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: 'index', intersect: false },
+  plugins: {
+    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
+    tooltip: { mode: 'index', intersect: false,
+      callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toLocaleString() ?? '—'} µs` }
+    },
+  },
+  scales: {
+    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
+    y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'µs' } },
+  },
+};
+
+const resourceData = computed(() => {
+  const pp = store.proxyPerf;
+  if (!pp.length) return null;
+  return {
+    labels: pp.map(r => formatTs(r.ts)),
+    datasets: [
+      {
+        label: 'RSS',
+        data: pp.map(r => r.rss_mb),
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.1)',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0,
+        yAxisID: 'y',
+      },
+      {
+        label: 'Heap',
+        data: pp.map(r => r.heap_mb),
+        borderColor: '#10b981',
+        backgroundColor: 'rgba(16,185,129,0.1)',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0,
+        yAxisID: 'y',
+      },
+      {
+        label: 'CPU %',
+        data: pp.map(r => r.cpu_percent),
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245,158,11,0.1)',
+        fill: false,
+        tension: 0.3,
+        pointRadius: 0,
+        yAxisID: 'y1',
+      },
+    ],
+  };
+});
+
+const resourceOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: 'index', intersect: false },
+  plugins: {
+    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
+    tooltip: { mode: 'index', intersect: false },
+  },
+  scales: {
+    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
+    y: { position: 'left', beginAtZero: true, title: { display: true, text: 'MB' } },
+    y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'CPU %' }, grid: { drawOnChartArea: false } },
+  },
+};
+
+const proxyStats = computed(() => {
+  const pp = store.proxyPerf;
+  if (!pp.length) return null;
+
+  const totalHits = pp.reduce((s, r) => s + (r.cache_hits || 0), 0);
+  const totalMisses = pp.reduce((s, r) => s + (r.cache_misses || 0), 0);
+  const totalLookups = totalHits + totalMisses;
+  const cacheHitRate = totalLookups > 0 ? Math.round(totalHits / totalLookups * 100) : 0;
+
+  const withLatency = pp.filter(r => r.latency_avg != null);
+  const avgLatency = withLatency.length > 0
+    ? Math.round(withLatency.reduce((s, r) => s + r.latency_avg, 0) / withLatency.length)
+    : 0;
+
+  const timeouts = pp.reduce((s, r) => s + (r.timeouts || 0), 0);
+
+  const startupRow = [...pp].reverse().find(r => r.startup_ms != null);
+  const startupMs = startupRow?.startup_ms ?? null;
+
+  return { cacheHitRate, avgLatency, timeouts, startupMs };
+});
+
 async function refreshAll() {
   await store.fetchAll(selectedRange.value);
 }
@@ -274,6 +445,7 @@ onUnmounted(() => {
 }
 .dot-up { background: var(--p-green-500); }
 .dot-down { background: var(--p-red-500); }
+.dot-bypass { background: var(--p-yellow-500); }
 .dot-unknown { background: var(--p-surface-400); }
 
 .range-bar {
@@ -310,6 +482,34 @@ onUnmounted(() => {
   font-size: 0.8rem;
   text-align: center;
   padding: 2rem 0;
+}
+
+.stats-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.stat-card {
+  flex: 1;
+  min-width: 8rem;
+  background: var(--p-surface-ground);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+}
+.stat-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--p-text-muted-color);
+  letter-spacing: 0.04em;
+}
+.stat-value {
+  font-size: 1.1rem;
+  font-weight: 700;
 }
 
 @media (max-width: 768px) {

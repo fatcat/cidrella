@@ -61,6 +61,19 @@ router.get('/geoip-hits', requirePerm('settings:read'), (req, res) => {
   res.json(rows);
 });
 
+// GET /api/metrics/proxy-perf?range=24h
+router.get('/proxy-perf', requirePerm('settings:read'), (req, res) => {
+  const db = getDb();
+  const cutoff = parseCutoff(req.query.range);
+  const rows = db.prepare(
+    `SELECT ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
+            cache_hits, cache_misses, timeouts, pending_queries,
+            cpu_percent, rss_mb, heap_mb, startup_ms
+     FROM metrics_proxy_perf WHERE ts >= ? ORDER BY ts`
+  ).all(cutoff);
+  res.json(rows);
+});
+
 // GET /api/metrics/services
 router.get('/services', requirePerm('settings:read'), async (req, res) => {
   // dnsmasq status
@@ -89,6 +102,7 @@ router.get('/services', requirePerm('settings:read'), async (req, res) => {
   res.json({
     dnsmasq,
     geoip_proxy: geoipStatus.running,
+    geoip_bypassed: geoipStatus.bypassed,
     forwarders,
   });
 });
