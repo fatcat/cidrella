@@ -5,7 +5,7 @@ import { regenerateDnsmasqConf, signalDnsmasq } from '../utils/dnsmasq.js';
 import {
   getProxyStatus, startProxy, stopProxy, loadMmdb,
   downloadMmdb, resetStats
-} from '../utils/geoip.js';
+} from '../utils/dns-proxy.js';
 
 const router = Router();
 

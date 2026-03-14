@@ -36,7 +36,7 @@ import { ensureCerts, setHttpsServer } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler } from './utils/backup.js';
-import { startGeoipScheduler, startProxyIfEnabled } from './utils/geoip.js';
+import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { applyInterfaceConfig } from './utils/dnsmasq.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
@@ -154,6 +154,10 @@ async function main() {
 
   // Setup routes (pre-auth — accessible before installation is complete)
   app.use('/api/setup', setupRoutes);
+
+  // API browser (pre-auth — self-service login via UI)
+  const { default: apiBrowserRoutes } = await import('./routes/api-browser.js');
+  app.use('/api-browser', apiBrowserRoutes);
 
   // Auth middleware for API routes
   app.use(authMiddleware);

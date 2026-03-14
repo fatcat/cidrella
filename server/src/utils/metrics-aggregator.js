@@ -7,7 +7,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics } from './geoip.js';
+import { getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics } from './dns-proxy.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
@@ -140,7 +140,7 @@ function aggregate() {
     const now = Date.now();
     const cpu = process.cpuUsage(lastCpuUsage);
     const wallMs = now - lastCpuTs;
-    const cpuPercent = wallMs > 0
+    const cpuPercent = (wallMs > 0 && cpu)
       ? Math.round(((cpu.user + cpu.system) / 1000) / wallMs * 100 * 100) / 100
       : 0;
     lastCpuUsage = process.cpuUsage();

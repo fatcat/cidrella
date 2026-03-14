@@ -53,6 +53,37 @@
       </div>
     </div>
 
+    <!-- Proxy Status Panel -->
+    <div v-if="services" class="proxy-status-panel">
+      <h4>DNS Proxy</h4>
+      <div class="proxy-status-grid">
+        <div class="proxy-status-item">
+          <span class="proxy-status-label">State</span>
+          <span class="proxy-status-value" :class="proxyStateClass">{{ proxyStateLabel }}</span>
+        </div>
+        <div class="proxy-status-item">
+          <span class="proxy-status-label">Port</span>
+          <span class="proxy-status-value">{{ services.geoip_port || '—' }}</span>
+        </div>
+        <div class="proxy-status-item">
+          <span class="proxy-status-label">MMDB</span>
+          <span class="proxy-status-value">{{ services.geoip_db_loaded ? 'Loaded' : 'Not loaded' }}</span>
+        </div>
+        <div class="proxy-status-item">
+          <span class="proxy-status-label">DB Updated</span>
+          <span class="proxy-status-value">{{ services.geoip_db_last_updated ? new Date(services.geoip_db_last_updated).toLocaleDateString() : '—' }}</span>
+        </div>
+        <div class="proxy-status-item">
+          <span class="proxy-status-label">Total Queries</span>
+          <span class="proxy-status-value">{{ (services.geoip_stats_total || 0).toLocaleString() }}</span>
+        </div>
+        <div class="proxy-status-item">
+          <span class="proxy-status-label">Blocked</span>
+          <span class="proxy-status-value">{{ (services.geoip_stats_blocked || 0).toLocaleString() }}</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Proxy Performance -->
     <div class="bar-charts-row">
       <div class="chart-card half">
@@ -71,8 +102,29 @@
       </div>
     </div>
 
+    <div class="bar-charts-row">
+      <div class="chart-card half">
+        <h4>Query Throughput</h4>
+        <div v-if="throughputData" class="chart-wrap" style="height: 240px">
+          <Line :data="throughputData" :options="throughputOptions" />
+        </div>
+        <p v-else class="empty-chart">No query throughput data in this range.</p>
+      </div>
+      <div class="chart-card half">
+        <h4>Cache Performance</h4>
+        <div v-if="cacheData" class="chart-wrap" style="height: 240px">
+          <Line :data="cacheData" :options="cacheOptions" />
+        </div>
+        <p v-else class="empty-chart">No cache data in this range.</p>
+      </div>
+    </div>
+
     <!-- Proxy Stats Summary -->
     <div v-if="proxyStats" class="stats-row">
+      <div class="stat-card">
+        <span class="stat-label">Queries / min</span>
+        <span class="stat-value">{{ proxyStats.queriesPerMin }}</span>
+      </div>
       <div class="stat-card">
         <span class="stat-label">Cache Hit Rate</span>
         <span class="stat-value">{{ proxyStats.cacheHitRate }}%</span>
@@ -80,6 +132,10 @@
       <div class="stat-card">
         <span class="stat-label">Avg Latency</span>
         <span class="stat-value">{{ proxyStats.avgLatency }} µs</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-label">Peak Pending</span>
+        <span class="stat-value">{{ proxyStats.peakPending }}</span>
       </div>
       <div class="stat-card">
         <span class="stat-label">Timeouts</span>
@@ -361,6 +417,105 @@ const resourceOptions = {
   },
 };
 
+// Proxy state label + class
+const proxyStateLabel = computed(() => {
+  if (!services.value) return 'Unknown';
+  if (services.value.geoip_bypassed) return 'Bypassed';
+  return services.value.geoip_proxy ? 'Running' : 'Stopped';
+});
+
+const proxyStateClass = computed(() => {
+  if (!services.value) return '';
+  if (services.value.geoip_bypassed) return 'state-bypass';
+  return services.value.geoip_proxy ? 'state-up' : 'state-down';
+});
+
+// Query throughput chart
+const throughputData = computed(() => {
+  const pp = store.proxyPerf;
+  if (!pp.length) return null;
+  return {
+    labels: pp.map(r => formatTs(r.ts)),
+    datasets: [
+      {
+        label: 'Queries / min',
+        data: pp.map(r => r.query_count || 0),
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.15)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+      },
+      {
+        label: 'Timeouts',
+        data: pp.map(r => r.timeouts || 0),
+        borderColor: '#ef4444',
+        backgroundColor: 'rgba(239,68,68,0.1)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+      },
+    ],
+  };
+});
+
+const throughputOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: 'index', intersect: false },
+  plugins: {
+    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
+    tooltip: { mode: 'index', intersect: false },
+  },
+  scales: {
+    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
+    y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'count' } },
+  },
+};
+
+// Cache hits/misses chart
+const cacheData = computed(() => {
+  const pp = store.proxyPerf;
+  if (!pp.length) return null;
+  return {
+    labels: pp.map(r => formatTs(r.ts)),
+    datasets: [
+      {
+        label: 'Hits',
+        data: pp.map(r => r.cache_hits || 0),
+        borderColor: '#10b981',
+        backgroundColor: 'rgba(16,185,129,0.15)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+      },
+      {
+        label: 'Misses',
+        data: pp.map(r => r.cache_misses || 0),
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245,158,11,0.15)',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+      },
+    ],
+  };
+});
+
+const cacheOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  interaction: { mode: 'index', intersect: false },
+  plugins: {
+    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
+    tooltip: { mode: 'index', intersect: false },
+  },
+  scales: {
+    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
+    y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'lookups' } },
+  },
+};
+
 const proxyStats = computed(() => {
   const pp = store.proxyPerf;
   if (!pp.length) return null;
@@ -380,7 +535,11 @@ const proxyStats = computed(() => {
   const startupRow = [...pp].reverse().find(r => r.startup_ms != null);
   const startupMs = startupRow?.startup_ms ?? null;
 
-  return { cacheHitRate, avgLatency, timeouts, startupMs };
+  const totalQueries = pp.reduce((s, r) => s + (r.query_count || 0), 0);
+  const queriesPerMin = pp.length > 0 ? Math.round(totalQueries / pp.length) : 0;
+  const peakPending = Math.max(0, ...pp.map(r => r.pending_queries || 0));
+
+  return { cacheHitRate, avgLatency, timeouts, startupMs, queriesPerMin, peakPending };
 });
 
 async function refreshAll() {
@@ -511,6 +670,40 @@ onUnmounted(() => {
   font-size: 1.1rem;
   font-weight: 700;
 }
+
+.proxy-status-panel {
+  background: var(--p-surface-ground);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
+  padding: 1rem;
+}
+.proxy-status-panel h4 {
+  margin: 0 0 0.75rem;
+  font-size: 0.9rem;
+}
+.proxy-status-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+  gap: 0.75rem;
+}
+.proxy-status-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.proxy-status-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  color: var(--p-text-muted-color);
+  letter-spacing: 0.04em;
+}
+.proxy-status-value {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+.state-up { color: var(--p-green-500); }
+.state-down { color: var(--p-red-500); }
+.state-bypass { color: var(--p-yellow-500); }
 
 @media (max-width: 768px) {
   .bar-charts-row {

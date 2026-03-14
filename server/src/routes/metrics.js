@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { execSync } from 'child_process';
 import { getDb, getSetting } from '../db/init.js';
 import { hasPermission } from '../auth/roles.js';
-import { getProxyStatus } from '../utils/geoip.js';
+import { getProxyStatus } from '../utils/dns-proxy.js';
 import { DNS_TEST_TIMEOUT_MS, DNS_TEST_RETRY_DELAY_MS } from '../config/defaults.js';
 
 const router = Router();
@@ -103,6 +103,12 @@ router.get('/services', requirePerm('settings:read'), async (req, res) => {
     dnsmasq,
     geoip_proxy: geoipStatus.running,
     geoip_bypassed: geoipStatus.bypassed,
+    geoip_port: geoipStatus.port,
+    geoip_db_loaded: geoipStatus.dbLoaded,
+    geoip_db_last_updated: geoipStatus.dbLastUpdated,
+    geoip_stats_total: geoipStatus.statsTotal,
+    geoip_stats_blocked: geoipStatus.statsBlocked,
+    geoip_stats_allowed: geoipStatus.statsAllowed,
     forwarders,
   });
 });

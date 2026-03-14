@@ -4,7 +4,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
-import { isProxyBypassed } from './geoip.js';
+import { isProxyBypassed } from './dns-proxy.js';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
