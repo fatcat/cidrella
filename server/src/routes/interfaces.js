@@ -2,19 +2,11 @@ import { Router } from 'express';
 import os from 'os';
 import fs from 'fs';
 import { getDb, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 import { applyInterfaceConfig, restartDnsmasq } from '../utils/dnsmasq.js';
+import { rebindProxy } from '../utils/dns-proxy.js';
 
 const router = Router();
-
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
 
 // Interface name prefixes to exclude
 const EXCLUDED_PREFIXES = ['br', 'veth', 'docker', 'virbr', 'tun', 'tap'];
@@ -123,6 +115,13 @@ router.put('/config', requirePerm('subnets:write'), (req, res) => {
     restartDnsmasq();
   } catch {
     dnsmasqStatus = 'restart_failed';
+  }
+
+  // Rebind proxy sockets to updated interface addresses
+  try {
+    rebindProxy();
+  } catch (err) {
+    console.warn('Failed to rebind proxy:', err.message);
   }
 
   audit(req.user.id, 'interface_config_updated', 'setting', null, {

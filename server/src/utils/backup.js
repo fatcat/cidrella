@@ -2,8 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { getDb } from '../db/init.js';
-
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
+import { DATA_DIR } from '../config/defaults.js';
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 
 /**

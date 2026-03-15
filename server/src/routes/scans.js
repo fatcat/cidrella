@@ -1,20 +1,11 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 import { startScan } from '../utils/scanner.js';
 import { getNextScanTime } from '../utils/scan-scheduler.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
 
 const router = Router();
-
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
 
 // GET /api/scans — list scans (optionally filtered by subnet_id)
 router.get('/', requirePerm('subnets:read'), (req, res) => {

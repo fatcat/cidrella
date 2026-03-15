@@ -1,17 +1,8 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 
 const router = Router();
-
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!req.user || !hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
 
 // GET /api/folders — list all folders with subnet counts
 router.get('/', requirePerm('subnets:read'), (req, res) => {

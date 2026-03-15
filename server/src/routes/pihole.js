@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 import { regenerateConfigs } from '../utils/dnsmasq.js';
 import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 import http from 'http';
@@ -10,15 +10,6 @@ import { syncDnsToIp, syncDhcpReservationToIp } from '../utils/ip-sync.js';
 import express from 'express';
 
 const router = Router();
-
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

@@ -17,6 +17,7 @@ mkdir -p /data/dnsmasq/hosts.d
 mkdir -p /data/dnsmasq/dhcp-hosts.d
 mkdir -p /data/dnsmasq/conf.d
 mkdir -p /data/blocklists
+mkdir -p /data/anomaly/models
 
 # Copy default dnsmasq config if not present
 if [ ! -f /data/dnsmasq/dnsmasq.conf ]; then

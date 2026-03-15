@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 import {
   parseCidr, normalizeCidr, isValidCidr, calculateSubnets,
   ipToLong, longToIp, isIpInSubnet, subtractCidr, isSubnetOf, cidrsOverlap,
@@ -11,6 +11,7 @@ import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
+import { invalidateSubnetCache } from '../utils/ip-sync.js';
 
 const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 function isValidDomainName(name) {
@@ -19,21 +20,20 @@ function isValidDomainName(name) {
 
 const router = Router();
 
+// Invalidate subnet cache after any mutating request
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => { if (res.statusCode < 400) invalidateSubnetCache(); });
+  }
+  next();
+});
+
 /**
  * Get gateway position from global setting, falling back to 'first'.
  */
 function getGatewayPosition(db) {
   const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
   return gwPref?.value || 'first';
-}
-
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
 }
 
 // Wrap route handlers to catch sync/async errors and return informative 500s

@@ -8,9 +8,8 @@ import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { syncLeasesToIps } from './ip-sync.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { regenerateConfigs } from './dnsmasq.js';
-import { FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
-
-const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
+import { isValidIpv4 } from './ip.js';
 
 /**
  * Resolve a hostname to an IPv4 address. Returns the IP string, or null on failure.
@@ -18,13 +17,13 @@ const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
  */
 const dnsCache = new Map();
 function resolveToIp(value) {
-  if (IPV4_RE.test(value)) return value;
+  if (isValidIpv4(value)) return value;
   if (dnsCache.has(value)) return dnsCache.get(value);
   try {
     const out = execFileSync('getent', ['ahostsv4', value], { timeout: 3000, encoding: 'utf-8' });
     const firstLine = out.split('\n')[0];
     const ip = firstLine?.split(/\s+/)[0];
-    const result = ip && IPV4_RE.test(ip) ? ip : null;
+    const result = ip && isValidIpv4(ip) ? ip : null;
     dnsCache.set(value, result);
     return result;
   } catch {
@@ -32,8 +31,6 @@ function resolveToIp(value) {
     return null;
   }
 }
-
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
 const LEASE_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.leases');

@@ -23,7 +23,7 @@ ProtectHome=true
 PrivateTmp=true
 
 # Network scanning requires sudo for arping/nmap (NoNewPrivileges must be off)
-AmbientCapabilities=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

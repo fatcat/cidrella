@@ -29,11 +29,13 @@ const routes = [
     path: '/',
     component: AppLayout,
     children: [
-      { path: '', redirect: '/dashboard' },
-      { path: 'dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue') },
+      { path: '', redirect: '/analytics' },
+      { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
       { path: 'networks', name: 'Networks', component: () => import('../views/SubnetsLayoutB.vue') },
       { path: 'system', name: 'System', component: () => import('../views/System.vue') },
       // Redirects for old bookmarks
+      { path: 'dashboard', redirect: '/analytics' },
+      { path: 'anomalies', redirect: '/analytics' },
       { path: 'subnets', redirect: '/networks' },
       { path: 'dns', redirect: '/' },
       { path: 'dhcp', redirect: '/' },

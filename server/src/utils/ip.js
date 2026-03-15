@@ -229,6 +229,24 @@ export function isValidIp(ip) {
   }
 }
 
+const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
+
+/**
+ * Validate IPv4 address string (regex + octet range check).
+ */
+export function isValidIpv4(ip) {
+  if (!IPV4_RE.test(ip)) return false;
+  return ip.split('.').every(o => { const n = parseInt(o, 10); return n >= 0 && n <= 255; });
+}
+
+/**
+ * Validate MAC address string (colon-separated hex).
+ */
+export function isValidMac(mac) {
+  return MAC_RE.test(mac);
+}
+
 /**
  * Validate that a CIDR string is well-formed.
  */

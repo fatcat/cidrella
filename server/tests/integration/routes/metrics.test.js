@@ -7,7 +7,8 @@ vi.mock('../../../src/utils/dns-proxy.js', () => ({
   getProxyStatus: vi.fn(() => ({
     running: true,
     bypassed: false,
-    port: 5353,
+    port: 53,
+    listenAddresses: ['192.168.1.1'],
     dbLoaded: true,
     dbExists: true,
     dbPath: '/data/geoip/dbip-country-lite.mmdb',
@@ -15,6 +16,8 @@ vi.mock('../../../src/utils/dns-proxy.js', () => ({
     statsTotal: 1000,
     statsBlocked: 42,
     statsAllowed: 958,
+    blocklistLoaded: true,
+    blocklistDomainCount: 741000,
   })),
 }));
 
@@ -165,7 +168,7 @@ describe('GET /api/metrics/services', () => {
     const res = await request(app).get('/api/metrics/services');
     expect(res.body.geoip_proxy).toBe(true);
     expect(res.body.geoip_bypassed).toBe(false);
-    expect(res.body.geoip_port).toBe(5353);
+    expect(res.body.geoip_port).toBe(53);
     expect(res.body.geoip_stats_total).toBe(1000);
     expect(res.body.geoip_stats_blocked).toBe(42);
   });

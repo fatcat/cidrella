@@ -1,0 +1,18 @@
+[Unit]
+Description=CIDRella Anomaly Detection
+After=cidrella.service
+Requires=cidrella.service
+PartOf=cidrella.service
+
+[Service]
+Type=simple
+User=cidrella
+Group=cidrella
+WorkingDirectory=/opt/cidrella/server/anomaly
+ExecStart=/usr/bin/python3 /opt/cidrella/server/anomaly/anomaly_detector.py
+Environment=DATA_DIR=/var/lib/cidrella
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

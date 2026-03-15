@@ -46,11 +46,13 @@ RUN echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*' > /etc/sudoer
 WORKDIR /app
 
 # Install server dependencies (raw-socket needs python3/make/g++ to build)
+# and Python ML dependencies for anomaly detection sidecar
 COPY server/package.json server/package-lock.json* ./server/
-RUN apk add --no-cache --virtual .build-deps python3 make g++ && \
-    cd server && npm install --production && \
+RUN apk add --no-cache python3 py3-pip py3-scikit-learn py3-numpy py3-joblib && \
+    apk add --no-cache --virtual .build-deps py3-setuptools make g++ && \
+    cd server && npm install --production && cd .. && \
     apk del .build-deps && \
-    setcap cap_net_raw+ep $(readlink -f $(which node))
+    setcap cap_net_raw,cap_net_bind_service+ep $(readlink -f $(which node))
 
 # Copy application code
 COPY package.json ./

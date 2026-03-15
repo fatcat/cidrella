@@ -13,13 +13,13 @@ import path from 'path';
 import { findSubnetForIp } from './ip-sync.js';
 import * as IpAddress from '../models/ip-address.js';
 import {
+  DATA_DIR,
   PASSIVE_LIVENESS_POLL_MS,
   PASSIVE_LIVENESS_DEBOUNCE_MS,
   PASSIVE_LIVENESS_STALE_MS
 } from '../config/defaults.js';
-
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
+const MAX_READ_BYTES = 10 * 1024 * 1024; // 10MB max per cycle (consistent with metrics-aggregator)
 
 // Matches: "query[A] example.com from 192.168.1.100"
 const QUERY_FROM_RE = /\bquery\[.+?\]\s+\S+\s+from\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/;
@@ -39,7 +39,8 @@ function readNewLines(offset) {
   if (size < offset) offset = 0; // truncated
   if (size === offset) return { lines: [], newOffset: offset };
 
-  const buf = Buffer.alloc(size - offset);
+  const bytesToRead = Math.min(size - offset, MAX_READ_BYTES);
+  const buf = Buffer.alloc(bytesToRead);
   const fd = fs.openSync(LOG_FILE, 'r');
   try {
     fs.readSync(fd, buf, 0, buf.length, offset);
@@ -49,7 +50,7 @@ function readNewLines(offset) {
 
   const text = buf.toString('utf-8');
   const lines = text.split('\n').filter(l => l.trim());
-  return { lines, newOffset: size };
+  return { lines, newOffset: offset + bytesToRead };
 }
 
 /**

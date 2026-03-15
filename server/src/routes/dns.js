@@ -1,31 +1,17 @@
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 import { regenerateConfigs, regenerateDnsmasqConf, signalDnsmasq } from '../utils/dnsmasq.js';
 import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
 import { DNS_TEST_TIMEOUT_MS, DNS_TEST_RETRY_DELAY_MS } from '../config/defaults.js';
 
 const router = Router();
 
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
-
 // Validation helpers
-const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+import { isValidIpv4 } from '../utils/ip.js';
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
 const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
-
-function isValidIpv4(ip) {
-  if (!IPV4_RE.test(ip)) return false;
-  return ip.split('.').every(o => { const n = parseInt(o, 10); return n >= 0 && n <= 255; });
-}
 
 function isValidHostname(name) {
   return name === '@' || HOSTNAME_RE.test(name);

@@ -1,19 +1,11 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig } from '../utils/blocklist.js';
+import { loadBlocklist } from '../utils/dns-proxy.js';
 
 const router = Router();
-
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!req.user || !hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
 
 // GET /api/blocklists/categories — all categories with state
 router.get('/categories', requirePerm('dns:read'), (req, res) => {
@@ -165,7 +157,7 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
     }
   }
 
-  // Regenerate config in case enabled state changed
+  // Reload blocklist in proxy (proxy always runs — just loads/clears data)
   generateBlocklistConfig(db);
 
   audit(req.user.id, 'update', 'blocklist_settings', null, req.body);

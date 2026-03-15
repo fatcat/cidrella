@@ -467,6 +467,9 @@
       <div v-if="activeTab === 12" class="content-card">
         <InterfacePanel />
       </div>
+      <div v-if="activeTab === 13" class="padded-tab">
+        <AnomalyDetectionPanel />
+      </div>
     </div>
 
     <!-- Context Menus -->
@@ -510,6 +513,7 @@ const GeoipPanel = defineAsyncComponent(() => import('./GeoIP.vue'));
 const UsersPanel = defineAsyncComponent(() => import('./Users.vue'));
 const LogViewer = defineAsyncComponent(() => import('../components/LogViewer.vue'));
 const InterfacePanel = defineAsyncComponent(() => import('../components/InterfacePanel.vue'));
+const AnomalyDetectionPanel = defineAsyncComponent(() => import('./AnomalyDetection.vue'));
 
 const dnsPanelRef = ref(null);
 
@@ -555,12 +559,13 @@ const allMenuItems = [
   { tabIndex: 10, label: 'Themes', icon: 'pi pi-palette', dataTrack: 'sys-tab-themes', command: () => { activeTab.value = 10; } },
   { tabIndex: 11, label: 'Logging', icon: 'pi pi-file', dataTrack: 'sys-tab-logging', command: () => { activeTab.value = 11; } },
   { tabIndex: 12, label: 'Interfaces', icon: 'pi pi-sitemap', dataTrack: 'sys-tab-interfaces', command: () => { activeTab.value = 12; } },
+  { tabIndex: 13, label: 'Anomaly Detection', icon: 'pi pi-exclamation-circle', dataTrack: 'sys-tab-anomaly', command: () => { activeTab.value = 13; } },
 ];
 
 const navGroups = [
   { label: 'Network', items: allMenuItems.filter(i => [0, 1, 2, 12].includes(i.tabIndex)) },
   { label: 'Services', items: allMenuItems.filter(i => [5, 6].includes(i.tabIndex)) },
-  { label: 'Security', items: allMenuItems.filter(i => [7, 8].includes(i.tabIndex)) },
+  { label: 'Security', items: allMenuItems.filter(i => [7, 8, 13].includes(i.tabIndex)) },
   { label: 'System', items: allMenuItems.filter(i => [3, 4, 9, 10, 11].includes(i.tabIndex)) },
 ];
 

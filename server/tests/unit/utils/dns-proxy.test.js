@@ -2,14 +2,21 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 
 // Mock dnsmasq.js before importing dns-proxy (avoids circular dep issues)
 vi.mock('../../../src/utils/dnsmasq.js', () => ({
-  regenerateDnsmasqConf: vi.fn(),
-  signalDnsmasq: vi.fn(),
+  applyInterfaceConfig: vi.fn(),
+  restartDnsmasq: vi.fn(),
+}));
+
+// Mock duckdb.js to avoid DuckDB dependency in unit tests
+vi.mock('../../../src/db/duckdb.js', () => ({
+  logDnsQuery: vi.fn(),
 }));
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { getDb } from '../../../src/db/init.js';
 import {
   lookupCountry, getProxyStatus, resetStats, isProxyBypassed,
   getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics,
+  loadBlocklist, getAndResetBlocklistHits,
 } from '../../../src/utils/dns-proxy.js';
 
 let tmpDir;
@@ -28,6 +35,8 @@ beforeAll(async () => {
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_mode', 'blocklist')").run();
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_enabled', 'false')").run();
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_proxy_port', '5353')").run();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')").run();
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', '')").run();
 });
 
 afterAll(() => {
@@ -42,6 +51,7 @@ describe('getProxyStatus', () => {
     expect(status).toHaveProperty('running');
     expect(status).toHaveProperty('bypassed');
     expect(status).toHaveProperty('port');
+    expect(status).toHaveProperty('listenAddresses');
     expect(status).toHaveProperty('dbLoaded');
     expect(status).toHaveProperty('dbExists');
     expect(status).toHaveProperty('dbPath');
@@ -49,6 +59,8 @@ describe('getProxyStatus', () => {
     expect(status).toHaveProperty('statsTotal');
     expect(status).toHaveProperty('statsBlocked');
     expect(status).toHaveProperty('statsAllowed');
+    expect(status).toHaveProperty('blocklistLoaded');
+    expect(status).toHaveProperty('blocklistDomainCount');
   });
 
   it('reports not running when proxy has not been started', () => {
@@ -161,5 +173,78 @@ describe('getAndResetPerformanceMetrics', () => {
     expect(m).toHaveProperty('timeouts');
     expect(m).toHaveProperty('pendingQueries');
     expect(m).toHaveProperty('startupMs');
+  });
+});
+
+// ── loadBlocklist ────────────────────────────────────────────────
+
+describe('loadBlocklist', () => {
+  it('loads nothing when blocklist is disabled', () => {
+    loadBlocklist();
+    const status = getProxyStatus();
+    expect(status.blocklistLoaded).toBe(false);
+    expect(status.blocklistDomainCount).toBe(0);
+  });
+
+  it('loads domains when blocklist is enabled with seeded data', () => {
+    const db = getDb();
+
+    // Enable blocklist and seed a category + domain
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
+    db.exec(`
+      INSERT OR IGNORE INTO blocklist_categories (slug, enabled) VALUES ('malware', 1);
+      INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('evil.example.com', 'malware');
+      INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('bad.example.com', 'malware');
+    `);
+
+    loadBlocklist();
+    const status = getProxyStatus();
+    expect(status.blocklistLoaded).toBe(true);
+    expect(status.blocklistDomainCount).toBe(2);
+
+    // Clean up
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')").run();
+    db.exec("DELETE FROM blocklist_domains WHERE category_slug = 'malware'");
+    loadBlocklist();
+  });
+
+  it('excludes whitelisted domains', () => {
+    const db = getDb();
+
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
+    db.exec(`
+      INSERT OR IGNORE INTO blocklist_categories (slug, enabled) VALUES ('malware', 1);
+      INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('evil.example.com', 'malware');
+      INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('good.example.com', 'malware');
+      INSERT OR IGNORE INTO blocklist_whitelist (domain) VALUES ('good.example.com');
+    `);
+
+    loadBlocklist();
+    const status = getProxyStatus();
+    expect(status.blocklistDomainCount).toBe(1); // good.example.com excluded
+
+    // Clean up
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')").run();
+    db.exec("DELETE FROM blocklist_domains WHERE category_slug = 'malware'");
+    db.exec("DELETE FROM blocklist_whitelist");
+    loadBlocklist();
+  });
+});
+
+// ── getAndResetBlocklistHits ─────────────────────────────────────
+
+describe('getAndResetBlocklistHits', () => {
+  it('returns zero delta and empty map when no blocks', () => {
+    const result = getAndResetBlocklistHits();
+    expect(result.delta).toBe(0);
+    expect(result.categoryHits).toBeInstanceOf(Map);
+    expect(result.categoryHits.size).toBe(0);
+  });
+
+  it('resets after read (drain semantics)', () => {
+    getAndResetBlocklistHits();
+    const result = getAndResetBlocklistHits();
+    expect(result.delta).toBe(0);
+    expect(result.categoryHits.size).toBe(0);
   });
 });

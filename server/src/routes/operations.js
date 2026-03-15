@@ -8,8 +8,9 @@ import { requireRole } from '../auth/roles.js';
 import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup } from '../utils/backup.js';
 import { reloadTlsCerts } from '../utils/cert.js';
 
+import { DATA_DIR } from '../config/defaults.js';
+
 const router = Router();
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 
 // All operations routes require admin
 router.use(requireRole('admin'));

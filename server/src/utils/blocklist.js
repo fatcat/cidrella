@@ -2,10 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/init.js';
 import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
+import { loadBlocklist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
-import { BLOCKLIST_DOWNLOAD_TIMEOUT_MS } from '../config/defaults.js';
-
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
+import { DATA_DIR, BLOCKLIST_DOWNLOAD_TIMEOUT_MS } from '../config/defaults.js';
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const BLOCKLIST_CONF = path.join(CONF_DIR, 'blocklist.conf');
 
@@ -134,49 +133,21 @@ export async function refreshAllEnabled(db) {
 }
 
 /**
- * Generate /data/dnsmasq/conf.d/blocklist.conf from enabled category domains minus whitelist
+ * Reload blocklist — updates the proxy's in-memory Set and clears the old dnsmasq conf.
+ * All blocking now happens in the DNS proxy, not via dnsmasq address= directives.
  */
 export function generateBlocklistConfig(db) {
-  const enabled = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_enabled'").get();
-  if (!enabled || enabled.value !== 'true') {
+  // Reload the proxy's in-memory blocklist
+  loadBlocklist();
+
+  // Clean up legacy blocklist.conf — proxy handles blocking now
+  try {
     const existing = fs.existsSync(BLOCKLIST_CONF) ? fs.readFileSync(BLOCKLIST_CONF, 'utf-8') : '';
     if (existing !== '') {
       atomicWrite(BLOCKLIST_CONF, '');
       signalDnsmasq();
     }
-    return;
-  }
-
-  const redirectIp = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_redirect_ip'").get();
-  const targetIp = redirectIp?.value || '';
-
-  const domains = db.prepare(`
-    SELECT DISTINCT bd.domain
-    FROM blocklist_domains bd
-    JOIN blocklist_categories bc ON bd.category_slug = bc.slug
-    WHERE bc.enabled = 1
-      AND bd.domain NOT IN (SELECT domain FROM blocklist_whitelist)
-    ORDER BY bd.domain
-  `).all();
-
-  const lines = ['# Auto-generated blocklist — do not edit manually'];
-  for (const row of domains) {
-    if (targetIp) {
-      lines.push(`address=/${row.domain}/${targetIp}`);
-    } else {
-      lines.push(`address=/${row.domain}/`);
-    }
-  }
-  lines.push('');
-
-  const newContent = lines.join('\n');
-  const existing = fs.existsSync(BLOCKLIST_CONF) ? fs.readFileSync(BLOCKLIST_CONF, 'utf-8') : '';
-
-  if (newContent !== existing) {
-    atomicWrite(BLOCKLIST_CONF, newContent);
-    signalDnsmasq();
-    console.log(`Blocklist config updated: ${domains.length} domains blocked`);
-  }
+  } catch { /* ignore cleanup errors */ }
 }
 
 /**

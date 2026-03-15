@@ -1,19 +1,10 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 import { ipToLong, isIpInSubnet, rangesOverlap } from '../utils/ip.js';
 import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 
 const router = Router({ mergeParams: true });
-
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
 
 // GET /api/subnets/:subnetId/ranges
 router.get('/', requirePerm('subnets:read'), (req, res) => {

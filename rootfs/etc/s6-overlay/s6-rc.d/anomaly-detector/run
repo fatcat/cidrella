@@ -1,0 +1,3 @@
+#!/command/execlineb -P
+s6-setuidgid cidrella
+python3 /app/server/anomaly/anomaly_detector.py

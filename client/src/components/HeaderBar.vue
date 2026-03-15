@@ -10,7 +10,10 @@
         </a>
       </span>
       <nav class="header-nav">
-        <router-link to="/dashboard" class="nav-link" :class="{ active: route.path === '/dashboard' }" data-track="nav-dashboard">Dashboard</router-link>
+        <router-link to="/analytics" class="nav-link" :class="{ active: route.path === '/analytics' }" data-track="nav-analytics">
+          Analytics
+          <span v-if="anomalyCount > 0" class="anomaly-badge">{{ anomalyCount }}</span>
+        </router-link>
         <router-link to="/networks" class="nav-link" :class="{ active: route.path === '/networks' || route.path === '/' }" data-track="nav-networks">IP Management</router-link>
         <router-link to="/system" class="nav-link" :class="{ active: route.path === '/system' }" data-track="nav-system">System</router-link>
       </nav>
@@ -47,34 +50,6 @@
         <div class="card-body">
           <span class="card-value">{{ diskDisplay }}</span>
           <span class="card-label">Disk</span>
-        </div>
-      </div>
-
-      <div class="dash-card" data-track="header-card-networks">
-        <div class="card-body">
-          <span class="card-value">{{ health?.stats?.subnets ?? subnetStore.subnetCount }}</span>
-          <span class="card-label">Networks</span>
-        </div>
-      </div>
-
-      <div class="dash-card" data-track="header-card-dns-zones">
-        <div class="card-body">
-          <span class="card-value">{{ health?.stats?.dns_zones ?? '--' }}</span>
-          <span class="card-label">DNS Zones</span>
-        </div>
-      </div>
-
-      <div class="dash-card" data-track="header-card-dhcp-scopes">
-        <div class="card-body">
-          <span class="card-value">{{ health?.stats?.dhcp_scopes ?? '--' }}</span>
-          <span class="card-label">DHCP Scopes</span>
-        </div>
-      </div>
-
-      <div class="dash-card" data-track="header-card-leases">
-        <div class="card-body">
-          <span class="card-value">{{ health?.stats?.dhcp_leases ?? '--' }}</span>
-          <span class="card-label">Leases</span>
         </div>
       </div>
 
@@ -139,6 +114,7 @@ const subnetStore = useSubnetStore();
 const piholeImportRef = ref(null);
 const userMenuRef = ref(null);
 const health = ref(null);
+const anomalyCount = ref(0);
 const activeScans = ref([]);
 const nextScanTime = ref(null);
 const updateInfo = ref(null);
@@ -271,6 +247,13 @@ async function fetchHealth() {
   } catch { /* health endpoint may not be available */ }
 }
 
+async function fetchAnomalySummary() {
+  try {
+    const res = await api.get('/anomalies/summary');
+    anomalyCount.value = res.data.total_active || 0;
+  } catch { /* ignore */ }
+}
+
 async function fetchUpdateInfo() {
   try {
     const res = await api.get('/version');
@@ -283,7 +266,8 @@ onMounted(() => {
   fetchActiveScan();
   fetchNextScan();
   fetchUpdateInfo();
-  pollInterval = setInterval(() => { fetchHealth(); fetchActiveScan(); fetchNextScan(); }, 60000);
+  fetchAnomalySummary();
+  pollInterval = setInterval(() => { fetchHealth(); fetchActiveScan(); fetchNextScan(); fetchAnomalySummary(); }, 60000);
   window.addEventListener('ipam:stats-changed', fetchHealth);
   window.addEventListener('ipam:scan-started', fetchActiveScan);
 });
@@ -345,6 +329,22 @@ onUnmounted(() => {
   color: var(--p-primary-color);
   background: color-mix(in srgb, var(--p-primary-color) 10%, transparent);
   font-weight: 600;
+}
+
+.anomaly-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--p-red-500);
+  color: white;
+  font-size: 0.6rem;
+  font-weight: 700;
+  margin-left: 4px;
+  line-height: 1;
 }
 
 .header-cards-wrapper {

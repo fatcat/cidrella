@@ -3,6 +3,14 @@
 // initial values (see db/init.js ensureDefaults). Server code imports
 // either the DB-backed getter or the constant directly — never both.
 
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ─── Data directory (single source of truth) ─────────────
+export const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
+
 // ─── DB-seeded settings (user-configurable via UI / API) ─────────
 
 export const DEFAULTS = {
@@ -30,12 +38,19 @@ export const DEFAULTS = {
   audit_log_retention_days: 7,
   geoip_enabled:           'false',
   geoip_mode:              'blocklist',
-  geoip_proxy_port:        '5353',
+  geoip_proxy_port:        '5353',     // legacy — kept for migration compat
   geoip_db_path:           'auto',
   geoip_last_updated:      '',
   geoip_update_schedule:   'monthly',
   update_check_enabled:    'true',
   ip_history_retention_days: '7',
+  analytics_retention_days: '7',
+  anomaly_detection_enabled: 'false',
+  anomaly_scoring_interval_min: '15',
+  anomaly_training_interval_hours: '6',
+  anomaly_min_training_hours: '48',
+  anomaly_sensitivity: 'medium',
+  anomaly_retention_days: '30',
 };
 
 // ─── Shared constants (not in DB — implementation details) ───────
@@ -64,6 +79,10 @@ export const BLOCKLIST_DOWNLOAD_TIMEOUT_MS = 60000;
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const UPDATE_CHECK_DELAY_MS    = 30000;               // 30 seconds
 export const GITHUB_REPO              = 'fatcat/cidrella';    // owner/repo for update checks
+
+export const DNSMASQ_INTERNAL_PORT     = 5353;                  // dnsmasq DNS port (proxy-fronted)
+export const ANALYTICS_FLUSH_INTERVAL_MS  = 5000;              // 5 seconds
+export const ANALYTICS_RETENTION_CLEANUP_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // Secondary DNS server used when auto-populating DHCP option 6
 export const FALLBACK_SECONDARY_DNS   = '9.9.9.9';

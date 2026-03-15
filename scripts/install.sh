@@ -235,7 +235,7 @@ fi
 # ═══════════════════════════════════════════════════════════
 
 info "Installing system dependencies..."
-apt-get install -y -qq build-essential nmap arping openssl curl dnsutils rsync sudo >/dev/null 2>&1
+apt-get install -y -qq build-essential nmap arping openssl curl dnsutils rsync sudo python3 python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
 ok "System packages installed."
 
 # ═══════════════════════════════════════════════════════════
@@ -291,7 +291,7 @@ else
 fi
 
 # Create data directories
-mkdir -p "$DATA_DIR"/{certs,backups,dnsmasq/{hosts.d,dhcp-hosts.d,conf.d},blocklists,geoip}
+mkdir -p "$DATA_DIR"/{certs,backups,dnsmasq/{hosts.d,dhcp-hosts.d,conf.d},blocklists,geoip,anomaly/models}
 chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 ok "Data directory: $DATA_DIR"
 
@@ -409,6 +409,9 @@ info "Installing systemd services..."
 cp "$INSTALL_DIR/scripts/systemd/cidrella.service" /etc/systemd/system/
 ok "Installed cidrella.service"
 
+cp "$INSTALL_DIR/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/
+ok "Installed cidrella-anomaly.service"
+
 if [ "$DNSMASQ_MODE" = "own" ]; then
   cp "$INSTALL_DIR/scripts/systemd/cidrella-dnsmasq.service" /etc/systemd/system/
   ok "Installed cidrella-dnsmasq.service"
@@ -419,8 +422,8 @@ cp "$INSTALL_DIR/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella
 chmod 440 /etc/sudoers.d/cidrella
 ok "Installed sudoers rules."
 
-# Set Node.js capabilities for raw socket access
-setcap cap_net_raw+ep "$(readlink -f "$(which node)")" 2>/dev/null || warn "Could not set capabilities on node binary."
+# Set Node.js capabilities for raw socket access + binding port 53
+setcap cap_net_raw,cap_net_bind_service+ep "$(readlink -f "$(which node)")" 2>/dev/null || warn "Could not set capabilities on node binary."
 
 systemctl daemon-reload
 
@@ -451,6 +454,10 @@ fi
 systemctl enable cidrella 2>/dev/null
 systemctl start cidrella
 ok "cidrella started."
+
+systemctl enable cidrella-anomaly 2>/dev/null
+systemctl start cidrella-anomaly
+ok "cidrella-anomaly started."
 
 # Wait briefly for startup
 sleep 3

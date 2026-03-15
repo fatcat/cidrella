@@ -7,7 +7,7 @@
           <span :class="status.running ? 'indicator-on' : 'indicator-off'"></span>
           {{ status.running ? 'Running' : 'Stopped' }}
         </span>
-        <span class="stat-label">Proxy Status</span>
+      <span class="stat-label">Proxy Status</span>
       </div>
       <div class="stat">
         <span class="stat-value">{{ status.mode === 'allowlist' ? 'Allowlist' : 'Blocklist' }}</span>

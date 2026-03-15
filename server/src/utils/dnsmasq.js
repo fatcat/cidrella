@@ -4,9 +4,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
-import { isProxyBypassed } from './dns-proxy.js';
-
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
+import { DATA_DIR, DNSMASQ_INTERNAL_PORT } from '../config/defaults.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DNSMASQ_CONF = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.conf');
@@ -180,14 +178,8 @@ export function regenerateConfDir(db) {
 export function regenerateDnsmasqConf(db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return;
 
-  let servers = getSetting('dns_upstream_servers');
-
-  // If GeoIP proxy is enabled, route through local proxy instead of direct upstream
-  const geoipEnabled = getSetting('geoip_enabled');
-  const geoipPort = getSetting('geoip_proxy_port');
-  if (geoipEnabled === 'true' && geoipPort && !isProxyBypassed()) {
-    servers = [`127.0.0.1#${geoipPort}`];
-  }
+  // dnsmasq always uses real upstream servers — proxy sits in front, not behind
+  const servers = getSetting('dns_upstream_servers');
 
   const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
   const lines = content.split('\n');
@@ -245,7 +237,7 @@ export function applyInterfaceConfig(db) {
     if (/^interface=/.test(line)) return false;
     if (/^no-dhcp-interface=/.test(line)) return false;
     if (/^bind-dynamic$/.test(line)) return false;
-    if (/^port=0$/.test(line)) return false;
+    if (/^port=/.test(line)) return false;
     return true;
   });
 
@@ -269,59 +261,63 @@ export function applyInterfaceConfig(db) {
     if (row?.value === 'false') dhcpEnabled = false;
   } catch { /* use default */ }
 
-  // Enumerate current system interfaces for IP lookup
+  // Check for proxy bypass mode — dnsmasq takes over port 53 on LAN IPs
+  let proxyBypass = false;
+  try {
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_proxy_bypass'").get();
+    if (row?.value === 'true') proxyBypass = true;
+  } catch { /* use default */ }
+
   const sysIfaces = os.networkInterfaces();
 
-  // bind-dynamic allows mixing interface= and listen-address= directives
-  // and handles interfaces that may appear/disappear
-  const newDirectives = ['bind-dynamic', 'listen-address=127.0.0.1'];
+  // Normal mode: dnsmasq DNS listens on localhost:5353 only — proxy handles LAN-facing DNS on port 53.
+  // Bypass mode: proxy is dead — dnsmasq listens on port 53 + LAN IPs directly.
+  // DHCP always needs interface= directives for LAN interfaces.
+  const dnsPort = !dnsEnabled ? 0 : proxyBypass ? 53 : DNSMASQ_INTERNAL_PORT;
+  const newDirectives = [
+    'bind-dynamic',
+    'listen-address=127.0.0.1',
+    `port=${dnsPort}`,
+  ];
   if (sysIfaces.lo?.some(a => a.family === 'IPv6')) {
     newDirectives.push('listen-address=::1');
   }
   const hasExplicitConfig = Object.keys(ifaceConfig).length > 0;
 
   if (hasExplicitConfig) {
-    // User has configured specific interfaces — use those.
-    // Every active interface gets interface= so dnsmasq listens on it
-    // (bind-dynamic restricts to interface= list when any are present).
-    // no-dhcp-interface= selectively disables DHCP per interface.
     for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
       if (!cfg.dns && !cfg.dhcp) continue;
-
-      const addrs = sysIfaces[ifName];
-      if (addrs) {
-        for (const addr of addrs) {
-          if (addr.family === 'IPv4') {
-            newDirectives.push(`listen-address=${addr.address}`);
+      // interface= needed for DHCP binding (and DNS in bypass mode)
+      newDirectives.push(`interface=${ifName}`);
+      // In bypass mode, dnsmasq also needs listen-address for DNS on LAN IPs
+      if (proxyBypass && cfg.dns && dnsEnabled) {
+        const addrs = sysIfaces[ifName];
+        if (addrs) {
+          for (const a of addrs) {
+            if (a.family === 'IPv4') newDirectives.push(`listen-address=${a.address}`);
           }
         }
       }
-
-      newDirectives.push(`interface=${ifName}`);
       if (!cfg.dhcp || !dhcpEnabled) {
         newDirectives.push(`no-dhcp-interface=${ifName}`);
       }
     }
   } else {
-    // No interface config yet (fresh deploy) — listen on all real interfaces
+    // Fresh deploy — bind DHCP to all real interfaces
     for (const [ifName, addrs] of Object.entries(sysIfaces)) {
       if (ifName === 'lo') continue;
-      for (const addr of addrs) {
-        if (addr.family === 'IPv4') {
-          newDirectives.push(`listen-address=${addr.address}`);
-        }
-      }
       if (dhcpEnabled) {
         newDirectives.push(`interface=${ifName}`);
       } else {
         newDirectives.push(`no-dhcp-interface=${ifName}`);
       }
+      // In bypass mode, add listen-address for DNS on LAN IPs
+      if (proxyBypass && dnsEnabled) {
+        for (const a of addrs) {
+          if (a.family === 'IPv4') newDirectives.push(`listen-address=${a.address}`);
+        }
+      }
     }
-  }
-
-  // Global DNS off → port=0
-  if (!dnsEnabled) {
-    newDirectives.push('port=0');
   }
 
   // Append directives at the end

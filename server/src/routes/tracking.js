@@ -1,9 +1,9 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
+import { DATA_DIR } from '../config/defaults.js';
 
 const router = express.Router();
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const TRACKING_FILE = path.join(DATA_DIR, '.cidrella-tracking.json');
 const MAX_ENTRIES = 100;
 

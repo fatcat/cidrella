@@ -1,10 +1,9 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
+import { DATA_DIR } from '../config/defaults.js';
 
 const router = Router();
-
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
 // DHCP log patterns

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requirePerm } from '../auth/require-perm.js';
 import { isIpInSubnet, ipToLong, getServerIpForSubnet } from '../utils/ip.js';
 import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
@@ -9,27 +9,8 @@ import { lookupVendorBatch } from '../utils/mac-vendor.js';
 
 const router = Router();
 
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
-
-const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
-const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+import { isValidIpv4, isValidMac } from '../utils/ip.js';
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
-
-function isValidMac(mac) {
-  return MAC_RE.test(mac);
-}
-
-function isValidIpv4(ip) {
-  if (!IPV4_RE.test(ip)) return false;
-  return ip.split('.').every(o => { const n = parseInt(o, 10); return n >= 0 && n <= 255; });
-}
 
 // ─── Scopes ──────────────────────────────────────────────
 

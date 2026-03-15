@@ -9,7 +9,7 @@ import morgan from 'morgan';
 import { fileURLToPath } from 'url';
 
 import { initDb, getDb, getSetting } from './db/init.js';
-import { AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
+import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { authMiddleware } from './auth/middleware.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
@@ -38,17 +38,19 @@ import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
-import { applyInterfaceConfig } from './utils/dnsmasq.js';
+import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq } from './utils/dnsmasq.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
 import { startPassiveLivenessWatcher } from './utils/passive-liveness.js';
 import { startMetricsAggregator } from './utils/metrics-aggregator.js';
 import metricsRoutes from './routes/metrics.js';
+import analyticsRoutes from './routes/analytics.js';
+import anomalyRoutes from './routes/anomalies.js';
+import { initAnalyticsDb, closeAnalyticsDb } from './db/duckdb.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '8443', 10);
 const HTTP_PORT = parseInt(process.env.HTTP_PORT || '8080', 10);
 
@@ -78,18 +80,21 @@ async function main() {
   // Start passive liveness watcher (DNS query log → is_online)
   startPassiveLivenessWatcher(getDb());
 
-  // Start blocklist auto-update scheduler
-  startBlocklistScheduler();
+  // 1. Configure dnsmasq for port 5353 + DHCP interfaces, then restart
+  applyInterfaceConfig(getDb());
+  regenerateDnsmasqConf(getDb());
+  try { restartDnsmasq(); } catch { console.warn('dnsmasq restart failed (may not be installed)'); }
 
-  // Start backup scheduler
-  startBackupScheduler();
+  // 2. Initialize DuckDB analytics
+  await initAnalyticsDb(DATA_DIR);
 
-  // Start GeoIP scheduler and proxy (if enabled)
-  startGeoipScheduler();
+  // 3. Load blocklist + GeoIP data, then start proxy on port 53 (LAN IPs)
   await startProxyIfEnabled();
 
-  // Apply saved interface config to dnsmasq.conf
-  applyInterfaceConfig(getDb());
+  // 3. Start schedulers
+  startBlocklistScheduler();
+  startBackupScheduler();
+  startGeoipScheduler();
 
   // Resume any scans interrupted by server restart, then start scheduler
   resumeInterruptedScans(getDb());
@@ -109,7 +114,7 @@ async function main() {
     try {
       const db = getDb();
       const days = getSetting('audit_log_retention_days');
-      const result = db.prepare(`DELETE FROM audit_log WHERE created_at < datetime('now', '-${days} days')`).run();
+      const result = db.prepare(`DELETE FROM audit_log WHERE created_at < datetime('now', ?)`).run(`-${parseInt(days, 10) || 7} days`);
       if (result.changes > 0) {
         console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
       }
@@ -159,6 +164,10 @@ async function main() {
   const { default: apiBrowserRoutes } = await import('./routes/api-browser.js');
   app.use('/api-browser', apiBrowserRoutes);
 
+  // Internal API for anomaly detection sidecar (pre-auth, localhost-only)
+  const { default: internalAnalyticsRoutes } = await import('./routes/internal-analytics.js');
+  app.use('/api/internal/analytics', internalAnalyticsRoutes);
+
   // Auth middleware for API routes
   app.use(authMiddleware);
 
@@ -189,6 +198,8 @@ async function main() {
   app.use('/api/pihole', piholeRoutes);
   app.use('/api/interfaces', interfaceRoutes);
   app.use('/api/metrics', metricsRoutes);
+  app.use('/api/analytics', analyticsRoutes);
+  app.use('/api/anomalies', anomalyRoutes);
   app.use('/api/version', versionRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
 
@@ -251,7 +262,8 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
 
   // HTTP redirect to HTTPS (non-fatal if port is in use)
   const httpServer = http.createServer((req, res) => {
-    const host = `localhost:${HTTPS_PORT}`;
+    const reqHost = (req.headers.host || '').replace(/:\d+$/, '') || 'localhost';
+    const host = `${reqHost}:${HTTPS_PORT}`;
     res.writeHead(301, { Location: `https://${host}${req.url}` });
     res.end();
   });

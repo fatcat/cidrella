@@ -9,22 +9,39 @@ import { ipToLong } from './ip.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
 
+// Cached leaf subnets — invalidated on subnet CRUD via invalidateSubnetCache()
+let leafSubnetCache = null;
+
+/**
+ * Invalidate the cached leaf subnet list.
+ * Call this after any subnet create/update/delete/divide/merge operation.
+ */
+export function invalidateSubnetCache() {
+  leafSubnetCache = null;
+}
+
 /**
  * Find the subnet that contains a given IP address.
  * Returns the most specific (longest prefix) match.
+ * Uses a cached leaf subnet list to avoid per-call DB queries.
  */
 export function findSubnetForIp(db, ip) {
   const ipLong = ipToLong(ip);
-  const subnets = db.prepare(`
-    SELECT id, network_address, prefix_length FROM subnets
-    WHERE (SELECT COUNT(*) FROM subnets c WHERE c.parent_id = subnets.id) = 0
-  `).all();
+
+  if (!leafSubnetCache) {
+    leafSubnetCache = db.prepare(`
+      SELECT id, network_address, prefix_length FROM subnets
+      WHERE (SELECT COUNT(*) FROM subnets c WHERE c.parent_id = subnets.id) = 0
+    `).all().map(s => ({
+      ...s,
+      netLong: ipToLong(s.network_address),
+      size: Math.pow(2, 32 - s.prefix_length),
+    }));
+  }
 
   let best = null;
-  for (const s of subnets) {
-    const netLong = ipToLong(s.network_address);
-    const size = Math.pow(2, 32 - s.prefix_length);
-    if (ipLong >= netLong && ipLong < netLong + size) {
+  for (const s of leafSubnetCache) {
+    if (ipLong >= s.netLong && ipLong < s.netLong + s.size) {
       if (!best || s.prefix_length > best.prefix_length) best = s;
     }
   }

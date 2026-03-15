@@ -1,22 +1,12 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
-import { regenerateDnsmasqConf, signalDnsmasq } from '../utils/dnsmasq.js';
+import { requirePerm } from '../auth/require-perm.js';
 import {
-  getProxyStatus, startProxy, stopProxy, loadMmdb,
+  getProxyStatus, loadMmdb, loadGeoipRules,
   downloadMmdb, resetStats
 } from '../utils/dns-proxy.js';
 
 const router = Router();
-
-function requirePerm(permission) {
-  return (req, res, next) => {
-    if (!req.user || !hasPermission(req.user.role, permission)) {
-      return res.status(403).json({ error: 'Insufficient permissions' });
-    }
-    next();
-  };
-}
 
 // GET /api/geoip/status
 router.get('/status', requirePerm('dns:read'), (req, res) => {
@@ -25,12 +15,10 @@ router.get('/status', requirePerm('dns:read'), (req, res) => {
   const mode = db.prepare("SELECT value FROM settings WHERE key = 'geoip_mode'").get();
   const enabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get();
   const updateSchedule = db.prepare("SELECT value FROM settings WHERE key = 'geoip_update_schedule'").get();
-  const configuredPort = db.prepare("SELECT value FROM settings WHERE key = 'geoip_proxy_port'").get();
   const ruleCount = db.prepare('SELECT COUNT(*) as c FROM geoip_rules WHERE enabled = 1').get().c;
 
   res.json({
     ...status,
-    port: parseInt(configuredPort?.value, 10) || status.port || 5353,
     enabled: enabled?.value === 'true',
     mode: mode?.value || 'blocklist',
     updateSchedule: updateSchedule?.value || 'monthly',
@@ -71,6 +59,7 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
   })();
 
   if (added.length > 0) {
+    loadGeoipRules();
     audit(req.user.id, 'create', 'geoip_rules', null, { countries: added });
   }
 
@@ -87,6 +76,7 @@ router.put('/rules/:id', requirePerm('dns:write'), (req, res) => {
   if (enabled === undefined) return res.status(400).json({ error: 'enabled field is required' });
 
   db.prepare('UPDATE geoip_rules SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, rule.id);
+  loadGeoipRules();
   audit(req.user.id, 'update', 'geoip_rule', rule.id, { country_code: rule.country_code, enabled });
   res.json({ ok: true });
 });
@@ -98,6 +88,7 @@ router.delete('/rules/:id', requirePerm('dns:write'), (req, res) => {
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
 
   db.prepare('DELETE FROM geoip_rules WHERE id = ?').run(rule.id);
+  loadGeoipRules();
   audit(req.user.id, 'delete', 'geoip_rule', rule.id, { country_code: rule.country_code });
   res.json({ ok: true });
 });
@@ -105,17 +96,10 @@ router.delete('/rules/:id', requirePerm('dns:write'), (req, res) => {
 // PUT /api/geoip/settings — update GeoIP settings
 router.put('/settings', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
-  const { geoip_enabled, geoip_mode, geoip_proxy_port, geoip_update_schedule } = req.body;
+  const { geoip_enabled, geoip_mode, geoip_update_schedule } = req.body;
 
   if (geoip_mode !== undefined && !['blocklist', 'allowlist'].includes(geoip_mode)) {
     return res.status(400).json({ error: 'Mode must be blocklist or allowlist' });
-  }
-
-  if (geoip_proxy_port !== undefined) {
-    const port = parseInt(geoip_proxy_port, 10);
-    if (isNaN(port) || port < 1024 || port > 65535) {
-      return res.status(400).json({ error: 'Port must be between 1024 and 65535' });
-    }
   }
 
   if (geoip_update_schedule !== undefined && !['off', 'weekly', 'biweekly', 'monthly'].includes(geoip_update_schedule)) {
@@ -123,14 +107,10 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
   }
 
   const wasEnabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get()?.value === 'true';
-  const oldPort = db.prepare("SELECT value FROM settings WHERE key = 'geoip_proxy_port'").get()?.value;
 
   // Update settings
   if (geoip_mode !== undefined) {
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_mode', ?)").run(geoip_mode);
-  }
-  if (geoip_proxy_port !== undefined) {
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_proxy_port', ?)").run(String(geoip_proxy_port));
   }
   if (geoip_update_schedule !== undefined) {
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_update_schedule', ?)").run(geoip_update_schedule);
@@ -141,34 +121,18 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_enabled', ?)").run(nowEnabled ? 'true' : 'false');
   }
 
-  const newPort = geoip_proxy_port !== undefined ? String(geoip_proxy_port) : oldPort;
-
-  // Handle proxy start/stop/restart
+  // Proxy always runs — just load/unload MMDB data and refresh rule cache
   try {
-    if (!nowEnabled && wasEnabled) {
-      // Disabling
-      stopProxy();
-    } else if (nowEnabled) {
-      const proxyRunning = getProxyStatus().running;
-      const portChanged = geoip_proxy_port !== undefined && String(geoip_proxy_port) !== oldPort;
-
-      if (!proxyRunning || !wasEnabled || portChanged) {
-        // Start or restart: enabling, recovering from crash, or port changed
-        stopProxy();
-        await loadMmdb();
-        startProxy(parseInt(newPort, 10));
-      }
+    loadGeoipRules();
+    if (nowEnabled && !wasEnabled) {
+      await loadMmdb();
     }
-
-    // Regenerate dnsmasq config to route through proxy or direct upstream
-    regenerateDnsmasqConf(db);
-    signalDnsmasq();
   } catch (err) {
-    return res.status(500).json({ error: 'Failed to update proxy: ' + err.message });
+    return res.status(500).json({ error: 'Failed to load GeoIP database: ' + err.message });
   }
 
   audit(req.user.id, 'update', 'geoip_settings', null, {
-    geoip_enabled: nowEnabled, geoip_mode, geoip_proxy_port: newPort
+    geoip_enabled: nowEnabled, geoip_mode
   });
 
   res.json({ ok: true });

@@ -2,14 +2,14 @@
  * Metrics aggregator — collects DNS, DHCP, blocklist, and GeoIP stats
  * every 60 seconds and persists them to the metrics tables.
  *
- * Dnsmasq log parsing reuses the offset-tracking pattern from passive-liveness.js.
+ * Blocklist and GeoIP block counts come from in-memory proxy counters.
+ * DNS query and DHCP counts come from dnsmasq log parsing.
  */
 
 import fs from 'fs';
 import path from 'path';
-import { getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics } from './dns-proxy.js';
-
-const DATA_DIR = process.env.DATA_DIR || path.join(import.meta.dirname, '..', '..', 'data');
+import { getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics, getAndResetBlocklistHits } from './dns-proxy.js';
+import { DATA_DIR } from '../config/defaults.js';
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
 const AGGREGATE_INTERVAL_MS = 60_000;
@@ -19,8 +19,6 @@ const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
 // Matches: "query[A] example.com from 192.168.1.100"
 const QUERY_RE = /\bquery\[.+?\]\s+\S+\s+from\s+/;
-// Matches dnsmasq blocklist replies: "config <domain> is <ip>"
-const BLOCK_RE = /\bconfig\s+(\S+)\s+is\s+/;
 // Matches DHCP request events: DHCPACK, DHCPREQUEST, DHCPDISCOVER
 const DHCP_RE = /\bDHCP(?:ACK|REQUEST|DISCOVER)\b/;
 
@@ -43,7 +41,6 @@ let deleteOldMetrics = null;
 let deleteOldBlocklistHits = null;
 let deleteOldGeoipHits = null;
 let deleteOldProxyPerf = null;
-let lookupCategory = null;
 
 /**
  * Read new bytes appended to the log file since the given offset.
@@ -73,12 +70,11 @@ function readNewLines() {
 }
 
 /**
- * Parse new log lines and return { dnsQueries, dhcpRequests, blockedDomains[] }
+ * Parse new log lines and return { dnsQueries, dhcpRequests }
  */
 function parseLogLines(lines) {
   let dnsQueries = 0;
   let dhcpRequests = 0;
-  const blockedDomains = [];
 
   for (const line of lines) {
     if (QUERY_RE.test(line)) {
@@ -87,31 +83,9 @@ function parseLogLines(lines) {
     if (DHCP_RE.test(line)) {
       dhcpRequests++;
     }
-    const blockMatch = line.match(BLOCK_RE);
-    if (blockMatch) {
-      blockedDomains.push(blockMatch[1]);
-    }
   }
 
-  return { dnsQueries, dhcpRequests, blockedDomains };
-}
-
-/**
- * Look up categories for blocked domains in batch.
- * Returns Map<category, count>.
- */
-function categorizeBlocks(blockedDomains) {
-  const categoryCounts = new Map();
-  if (!blockedDomains.length || !lookupCategory) return categoryCounts;
-
-  for (const domain of blockedDomains) {
-    const row = lookupCategory.get(domain);
-    if (!row?.category_slug) continue; // skip domains not in blocklist DB
-    const cat = row.category_slug;
-    categoryCounts.set(cat, (categoryCounts.get(cat) || 0) + 1);
-  }
-
-  return categoryCounts;
+  return { dnsQueries, dhcpRequests };
 }
 
 /**
@@ -121,13 +95,14 @@ function aggregate() {
   try {
     const ts = Math.floor(Date.now() / 60_000) * 60; // minute-aligned epoch seconds
 
-    // Parse dnsmasq log
+    // Parse dnsmasq log for DNS query and DHCP counts
     const lines = readNewLines();
-    const { dnsQueries, dhcpRequests, blockedDomains } = parseLogLines(lines);
+    const { dnsQueries, dhcpRequests } = parseLogLines(lines);
 
-    // Blocklist blocks from log
-    const blocklistBlocks = blockedDomains.length;
-    const categoryCounts = categorizeBlocks(blockedDomains);
+    // Blocklist blocks from in-memory proxy counters
+    const blocklistData = getAndResetBlocklistHits();
+    const blocklistBlocks = blocklistData.delta;
+    const categoryCounts = blocklistData.categoryHits;
 
     // GeoIP blocks from in-memory counters
     const geoipBlocks = getBlockedDelta();
@@ -215,14 +190,6 @@ export function startMetricsAggregator(database) {
   deleteOldBlocklistHits = db.prepare('DELETE FROM metrics_blocklist_hits WHERE ts < ?');
   deleteOldGeoipHits = db.prepare('DELETE FROM metrics_geoip_hits WHERE ts < ?');
   deleteOldProxyPerf = db.prepare('DELETE FROM metrics_proxy_perf WHERE ts < ?');
-
-  // Category lookup for blocked domains
-  try {
-    lookupCategory = db.prepare('SELECT category_slug FROM blocklist_domains WHERE domain = ?');
-  } catch {
-    // Table may not exist if blocklists aren't set up
-    lookupCategory = null;
-  }
 
   // Start from end of log file (don't process historical lines)
   try {

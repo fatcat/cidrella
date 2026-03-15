@@ -32,10 +32,6 @@ export function getDefaultCategoryUrl(slug) {
   return `https://blocklistproject.github.io/Lists/alt-version/${slug}-nl.txt`;
 }
 
-export function getCategoryUrl(slug) {
-  return getDefaultCategoryUrl(slug);
-}
-
 export function getCategoryBySlug(slug) {
   return BLOCKLIST_CATEGORIES.find(c => c.slug === slug);
 }

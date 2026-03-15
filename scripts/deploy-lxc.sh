@@ -78,7 +78,7 @@ fi
 # ═══════════════════════════════════════════════════════════
 
 info "Stopping services on LXC..."
-ssh "$SSH_TARGET" "systemctl stop cidrella cidrella-dnsmasq 2>/dev/null || true"
+ssh "$SSH_TARGET" "systemctl stop cidrella-anomaly cidrella cidrella-dnsmasq 2>/dev/null || true"
 ok "Services stopped."
 
 # ═══════════════════════════════════════════════════════════
@@ -114,8 +114,26 @@ ok "Files synced."
 # ═══════════════════════════════════════════════════════════
 
 info "Installing server dependencies..."
-ssh "$SSH_TARGET" "cd ${INSTALL_DIR}/server && npm install --omit=dev 2>&1 | tail -3"
+ssh "$SSH_TARGET" "
+  # Ensure DNS works while dnsmasq is down
+  if ! host -W 2 registry.npmjs.org >/dev/null 2>&1; then
+    echo 'nameserver 9.9.9.9' > /etc/resolv.conf
+  fi
+  cd ${INSTALL_DIR}/server && npm install --omit=dev --no-audit --no-fund 2>&1 | tail -3
+"
 ok "Dependencies installed."
+
+info "Installing Python ML dependencies..."
+ssh "$SSH_TARGET" "
+  if [ -f ${INSTALL_DIR}/server/anomaly/requirements.txt ]; then
+    # Ensure pip is available
+    if ! command -v pip3 &>/dev/null; then
+      apt-get update -qq && apt-get install -y -qq python3-pip python3-dev >/dev/null 2>&1
+    fi
+    pip3 install --break-system-packages --root-user-action=ignore -q -r ${INSTALL_DIR}/server/anomaly/requirements.txt 2>&1 | tail -5
+  fi
+"
+ok "Python dependencies installed."
 
 # ═══════════════════════════════════════════════════════════
 # FIX PERMISSIONS
@@ -125,6 +143,9 @@ info "Fixing permissions..."
 ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${INSTALL_DIR} ${DATA_DIR}"
 ok "Permissions set."
 
+# Ensure Node.js has required capabilities
+ssh "$SSH_TARGET" "setcap cap_net_raw,cap_net_bind_service+ep \$(readlink -f \$(which node)) 2>/dev/null || true"
+
 # ═══════════════════════════════════════════════════════════
 # UPDATE SYSTEMD & SUDOERS
 # ═══════════════════════════════════════════════════════════
@@ -132,7 +153,7 @@ ok "Permissions set."
 UNITS_UPDATED=false
 
 # Compare and update systemd units
-for UNIT in cidrella.service cidrella-dnsmasq.service; do
+for UNIT in cidrella.service cidrella-dnsmasq.service cidrella-anomaly.service; do
   SRC="${INSTALL_DIR}/scripts/systemd/${UNIT}"
   DST="/etc/systemd/system/${UNIT}"
   CHANGED=$(ssh "$SSH_TARGET" "
@@ -169,18 +190,33 @@ ssh "$SSH_TARGET" "
 
 info "Starting services..."
 ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella"
+
+# Enable and start anomaly service if the unit file exists
+ssh "$SSH_TARGET" "
+  if [ -f /etc/systemd/system/cidrella-anomaly.service ]; then
+    systemctl enable cidrella-anomaly 2>/dev/null || true
+    systemctl start cidrella-anomaly 2>/dev/null || true
+  fi
+"
 sleep 2
 
 # Verify
 CIDRELLA_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella 2>/dev/null || echo failed")
 DNSMASQ_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-dnsmasq 2>/dev/null || echo failed")
+ANOMALY_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-anomaly 2>/dev/null || echo failed")
 
 if [ "$CIDRELLA_STATUS" = "active" ] && [ "$DNSMASQ_STATUS" = "active" ]; then
-  ok "Both services running."
+  ok "Core services running."
 else
   [ "$CIDRELLA_STATUS" != "active" ] && warn "cidrella: ${CIDRELLA_STATUS}"
   [ "$DNSMASQ_STATUS" != "active" ] && warn "cidrella-dnsmasq: ${DNSMASQ_STATUS}"
   warn "Check logs: ssh ${SSH_TARGET} journalctl -u cidrella -n 30"
+fi
+
+if [ "$ANOMALY_STATUS" = "active" ]; then
+  ok "Anomaly detection service running."
+else
+  warn "cidrella-anomaly: ${ANOMALY_STATUS}"
 fi
 
 # ═══════════════════════════════════════════════════════════
@@ -195,4 +231,5 @@ echo -e "${BOLD}  Deployed CIDRella v${VERSION} to ${LXC_HOST}${NC}"
 echo -e "${BOLD}═══════════════════════════════════════════${NC}"
 echo -e "  cidrella:         ${CIDRELLA_STATUS}"
 echo -e "  cidrella-dnsmasq: ${DNSMASQ_STATUS}"
+echo -e "  cidrella-anomaly: ${ANOMALY_STATUS}"
 echo ""

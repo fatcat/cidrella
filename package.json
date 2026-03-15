@@ -12,5 +12,9 @@
     "test:server": "cd server && npx vitest run",
     "test:client": "cd client && npx vitest run",
     "test:watch": "cd server && npx vitest"
+  },
+  "dependencies": {
+    "agent-team": "^0.2.0",
+    "chrome-devtools-mcp-for-brave": "^0.4.2"
   }
 }
