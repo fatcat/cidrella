@@ -3,6 +3,20 @@
     <!-- Stats Bar -->
     <div class="stats-bar" v-if="store.services">
       <div class="stat">
+        <span class="stat-value">
+          <span :class="store.services.dnsmasq ? 'indicator-on' : 'indicator-off'"></span>
+          {{ store.services.dnsmasq ? 'Running' : 'Stopped' }}
+        </span>
+        <span class="stat-label">DNSMASQ</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">
+          <span :class="store.services.geoip_proxy ? 'indicator-on' : 'indicator-off'"></span>
+          {{ store.services.geoip_bypassed ? 'Bypassed' : store.services.geoip_proxy ? 'Running' : 'Stopped' }}
+        </span>
+        <span class="stat-label">DNS Proxy</span>
+      </div>
+      <div class="stat">
         <span class="stat-value" :class="{ 'text-danger': summary.blocklistBlocks > 0 }">
           {{ formatNumber(summary.blocklistBlocks) }}
         </span>
@@ -314,6 +328,8 @@ onUnmounted(() => {
 .stat { display: flex; flex-direction: column; }
 .stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
 .stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
+.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
+.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
 .text-danger { color: var(--p-red-500); }
 
 .dashboard-content {

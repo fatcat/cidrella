@@ -7,7 +7,7 @@
           <span :class="services.dnsmasq ? 'indicator-on' : 'indicator-off'"></span>
           {{ services.dnsmasq ? 'Running' : 'Stopped' }}
         </span>
-        <span class="stat-label">DNS Server</span>
+        <span class="stat-label">DNSMASQ</span>
       </div>
       <div class="stat">
         <span class="stat-value">

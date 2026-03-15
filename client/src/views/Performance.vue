@@ -3,6 +3,20 @@
     <!-- Stats Bar -->
     <div class="stats-bar" v-if="services">
       <div class="stat">
+        <span class="stat-value">
+          <span :class="services.dnsmasq ? 'indicator-on' : 'indicator-off'"></span>
+          {{ services.dnsmasq ? 'Running' : 'Stopped' }}
+        </span>
+        <span class="stat-label">DNSMASQ</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">
+          <span :class="services.geoip_proxy ? 'indicator-on' : 'indicator-off'"></span>
+          {{ services.geoip_bypassed ? 'Bypassed' : services.geoip_proxy ? 'Running' : 'Stopped' }}
+        </span>
+        <span class="stat-label">DNS Proxy</span>
+      </div>
+      <div class="stat">
         <span class="stat-value">{{ proxyStats?.queriesPerMin ?? '—' }}</span>
         <span class="stat-label">Queries / min</span>
       </div>
@@ -11,7 +25,7 @@
         <span class="stat-label">Cache Hit Rate</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ proxyStats ? proxyStats.avgLatency + ' µs' : '—' }}</span>
+        <span class="stat-value">{{ proxyStats ? (proxyStats.avgLatency / 1000).toFixed(2) + ' ms' : '—' }}</span>
         <span class="stat-label">Avg Latency</span>
       </div>
       <div class="stat">
@@ -258,17 +272,17 @@ const latencyData = computed(() => {
     datasets: [
       {
         label: 'Avg',
-        data: pp.map(r => r.latency_avg),
+        data: pp.map(r => (r.latency_avg || 0) / 1000),
         borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 0,
       },
       {
         label: 'P95',
-        data: pp.map(r => r.latency_p95),
+        data: pp.map(r => (r.latency_p95 || 0) / 1000),
         borderColor: '#f59e0b', fill: false, tension: 0.3, pointRadius: 0,
       },
       {
         label: 'Max',
-        data: pp.map(r => r.latency_max),
+        data: pp.map(r => (r.latency_max || 0) / 1000),
         borderColor: '#ef4444', borderDash: [4, 4],
         fill: false, tension: 0.3, pointRadius: 0,
       },
@@ -282,12 +296,12 @@ const latencyOptions = {
   plugins: {
     legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
     tooltip: { mode: 'index', intersect: false,
-      callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toLocaleString() ?? '—'} µs` }
+      callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? '—'} ms` }
     },
   },
   scales: {
     x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-    y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'µs' } },
+    y: { beginAtZero: true, title: { display: true, text: 'ms' } },
   },
 };
 
@@ -570,6 +584,8 @@ onUnmounted(() => {
 .stat { display: flex; flex-direction: column; }
 .stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
 .stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
+.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
+.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
 .text-danger { color: var(--p-red-500); }
 
 .dashboard-content {
