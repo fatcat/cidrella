@@ -89,6 +89,7 @@ const VALID_INTERVALS = new Map();
 for (const n of [1, 5, 10, 15, 30, 60]) VALID_INTERVALS.set(`${n}m`, `${n} MINUTES`);
 for (const n of [1, 2, 4, 6, 12, 24, 48, 72]) VALID_INTERVALS.set(`${n}h`, `${n} HOURS`);
 for (const n of [1, 2, 3, 7, 14, 30, 90]) VALID_INTERVALS.set(`${n}d`, `${n} DAYS`);
+VALID_INTERVALS.set('1w', '7 DAYS');
 
 function rangeToInterval(range) {
   return VALID_INTERVALS.get(range || '24h') || '24 HOURS';

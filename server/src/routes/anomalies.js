@@ -6,7 +6,7 @@ import { isValidIpv4 } from '../utils/ip.js';
 const router = Router();
 
 // GET /api/anomalies/active — active (unresolved) anomalies
-router.get('/active', requirePerm('settings:read'), (req, res) => {
+router.get('/active', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const { severity } = req.query;
   const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
@@ -23,78 +23,53 @@ router.get('/active', requirePerm('settings:read'), (req, res) => {
   sql += ` ORDER BY scored_at DESC LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
-  try {
-    const rows = db.prepare(sql).all(...params);
-    res.json(rows.map(parseScoreRow));
-  } catch (err) {
-    if (err.message.includes('no such table')) {
-      return res.json([]);
-    }
-    throw err;
-  }
+  const rows = db.prepare(sql).all(...params);
+  res.json(rows.map(parseScoreRow));
 });
 
 // GET /api/anomalies/summary — dashboard summary
-router.get('/summary', requirePerm('settings:read'), (req, res) => {
+router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
 
-  try {
-    const active = db.prepare(
-      `SELECT severity, COUNT(*) as count FROM anomaly_scores
-       WHERE is_anomaly = 1 AND resolved = 0
-       GROUP BY severity`
-    ).all();
+  const active = db.prepare(
+    `SELECT severity, COUNT(*) as count FROM anomaly_scores
+     WHERE is_anomaly = 1 AND resolved = 0
+     GROUP BY severity`
+  ).all();
 
-    const totalActive = active.reduce((sum, r) => sum + r.count, 0);
-    const bySeverity = {};
-    for (const r of active) {
-      bySeverity[r.severity || 'unknown'] = r.count;
-    }
-
-    let clientsMonitored = 0;
-    let clientsLearning = 0;
-    try {
-      clientsMonitored = db.prepare(
-        `SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'active'`
-      ).get()?.count || 0;
-      clientsLearning = db.prepare(
-        `SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'learning'`
-      ).get()?.count || 0;
-    } catch { /* table may not exist yet */ }
-
-    const enabled = getSetting('anomaly_detection_enabled') === 'true';
-
-    let daemon = null;
-    try {
-      const raw = getSetting('anomaly_daemon_status');
-      if (raw) daemon = JSON.parse(raw);
-    } catch { /* ignore parse errors */ }
-
-    res.json({
-      enabled,
-      total_active: totalActive,
-      by_severity: bySeverity,
-      clients_monitored: clientsMonitored,
-      clients_learning: clientsLearning,
-      daemon,
-    });
-  } catch (err) {
-    if (err.message.includes('no such table')) {
-      return res.json({
-        enabled: getSetting('anomaly_detection_enabled') === 'true',
-        total_active: 0,
-        by_severity: {},
-        clients_monitored: 0,
-        clients_learning: 0,
-        daemon: null,
-      });
-    }
-    throw err;
+  const totalActive = active.reduce((sum, r) => sum + r.count, 0);
+  const bySeverity = {};
+  for (const r of active) {
+    bySeverity[r.severity || 'unknown'] = r.count;
   }
+
+  const clientsMonitored = db.prepare(
+    `SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'active'`
+  ).get()?.count || 0;
+  const clientsLearning = db.prepare(
+    `SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'learning'`
+  ).get()?.count || 0;
+
+  const enabled = getSetting('anomaly_detection_enabled') === 'true';
+
+  let daemon = null;
+  try {
+    const raw = getSetting('anomaly_daemon_status');
+    if (raw) daemon = JSON.parse(raw);
+  } catch { /* ignore parse errors */ }
+
+  res.json({
+    enabled,
+    total_active: totalActive,
+    by_severity: bySeverity,
+    clients_monitored: clientsMonitored,
+    clients_learning: clientsLearning,
+    daemon,
+  });
 });
 
 // GET /api/anomalies/client/:ip — anomaly history for a client
-router.get('/client/:ip', requirePerm('settings:read'), (req, res) => {
+router.get('/client/:ip', requirePerm('analytics:read'), (req, res) => {
   const { ip } = req.params;
   if (!isValidIpv4(ip)) {
     return res.status(400).json({ error: 'Invalid IP address' });
@@ -103,42 +78,27 @@ router.get('/client/:ip', requirePerm('settings:read'), (req, res) => {
   const db = getDb();
   const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
 
-  try {
-    const rows = db.prepare(
-      `SELECT * FROM anomaly_scores
-       WHERE client_ip = ?
-       ORDER BY window_start DESC
-       LIMIT ?`
-    ).all(ip, limit);
-    res.json(rows.map(parseScoreRow));
-  } catch (err) {
-    if (err.message.includes('no such table')) {
-      return res.json([]);
-    }
-    throw err;
-  }
+  const rows = db.prepare(
+    `SELECT * FROM anomaly_scores
+     WHERE client_ip = ?
+     ORDER BY window_start DESC
+     LIMIT ?`
+  ).all(ip, limit);
+  res.json(rows.map(parseScoreRow));
 });
 
 // GET /api/anomalies/client/:ip/model — model metadata
-router.get('/client/:ip/model', requirePerm('settings:read'), (req, res) => {
+router.get('/client/:ip/model', requirePerm('analytics:read'), (req, res) => {
   const { ip } = req.params;
   if (!isValidIpv4(ip)) {
     return res.status(400).json({ error: 'Invalid IP address' });
   }
 
   const db = getDb();
-
-  try {
-    const row = db.prepare(
-      `SELECT * FROM anomaly_models WHERE client_ip = ?`
-    ).get(ip);
-    res.json(row || null);
-  } catch (err) {
-    if (err.message.includes('no such table')) {
-      return res.json(null);
-    }
-    throw err;
-  }
+  const row = db.prepare(
+    `SELECT * FROM anomaly_models WHERE client_ip = ?`
+  ).get(ip);
+  res.json(row || null);
 });
 
 // POST /api/anomalies/:id/dismiss — mark anomaly as resolved
@@ -149,22 +109,15 @@ router.post('/:id/dismiss', requirePerm('settings:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid ID' });
   }
 
-  try {
-    const result = db.prepare(
-      `UPDATE anomaly_scores SET resolved = 1, resolved_at = datetime('now')
-       WHERE id = ? AND resolved = 0`
-    ).run(id);
+  const result = db.prepare(
+    `UPDATE anomaly_scores SET resolved = 1, resolved_at = datetime('now')
+     WHERE id = ? AND resolved = 0`
+  ).run(id);
 
-    if (result.changes === 0) {
-      return res.status(404).json({ error: 'Anomaly not found or already resolved' });
-    }
-    res.json({ ok: true });
-  } catch (err) {
-    if (err.message.includes('no such table')) {
-      return res.status(404).json({ error: 'Anomaly detection not initialized' });
-    }
-    throw err;
+  if (result.changes === 0) {
+    return res.status(404).json({ error: 'Anomaly not found or already resolved' });
   }
+  res.json({ ok: true });
 });
 
 // GET /api/anomalies/settings — anomaly detection settings

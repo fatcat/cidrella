@@ -135,6 +135,13 @@ export async function ensureDefaults() {
   }
 }
 
+/**
+ * Upsert a setting. Standardized across the codebase.
+ */
+export function setSetting(key, value) {
+  getDb().prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, String(value));
+}
+
 export function audit(userId, action, entityType, entityId, details) {
   const detailsJson = details ? JSON.stringify(details) : null;
   db.prepare(

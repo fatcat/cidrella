@@ -573,6 +573,18 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
     entry.vendor = entry.mac_address ? (vendorMap.get(entry.mac_address) || null) : null;
   }
 
+  // Enrich with is_online from ip_addresses
+  const allIps = unified.map(e => e.ip_address).filter(Boolean);
+  if (allIps.length) {
+    const ipRows = db.prepare(
+      `SELECT ip_address, is_online FROM ip_addresses WHERE ip_address IN (${allIps.map(() => '?').join(',')})`
+    ).all(...allIps);
+    const onlineMap = new Map(ipRows.map(r => [r.ip_address, !!r.is_online]));
+    for (const entry of unified) {
+      entry.is_online = onlineMap.get(entry.ip_address) ?? null;
+    }
+  }
+
   res.json(unified);
 });
 

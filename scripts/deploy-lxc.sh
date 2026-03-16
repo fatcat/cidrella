@@ -66,7 +66,7 @@ ok "SSH connection verified."
 if [ "$SKIP_BUILD" = false ]; then
   info "Building client locally..."
   cd "$PROJECT_DIR/client"
-  npx vite build --emptyOutDir 2>&1 | tail -3
+  npx vite build --emptyOutDir 2>&1 | grep -v 'chunks are larger\|dynamic import()\|manualChunks\|chunkSizeWarningLimit' | tail -3
   ok "Client built."
   cd "$PROJECT_DIR"
 else

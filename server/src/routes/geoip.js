@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
   getProxyStatus, loadMmdb, loadGeoipRules,
@@ -110,15 +110,15 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
 
   // Update settings
   if (geoip_mode !== undefined) {
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_mode', ?)").run(geoip_mode);
+    setSetting('geoip_mode', geoip_mode);
   }
   if (geoip_update_schedule !== undefined) {
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_update_schedule', ?)").run(geoip_update_schedule);
+    setSetting('geoip_update_schedule', geoip_update_schedule);
   }
 
   const nowEnabled = geoip_enabled !== undefined ? geoip_enabled : wasEnabled;
   if (geoip_enabled !== undefined) {
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_enabled', ?)").run(nowEnabled ? 'true' : 'false');
+    setSetting('geoip_enabled', nowEnabled ? 'true' : 'false');
   }
 
   // Proxy always runs — just load/unload MMDB data and refresh rule cache

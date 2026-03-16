@@ -28,10 +28,20 @@
 import { ref, watch, defineAsyncComponent, onMounted, onUnmounted } from 'vue';
 import api from '../api/client.js';
 
-const DashboardPanel = defineAsyncComponent(() => import('./Dashboard.vue'));
-const PerformancePanel = defineAsyncComponent(() => import('./Performance.vue'));
-const IntelligencePanel = defineAsyncComponent(() => import('./Intelligence.vue'));
-const AnomaliesPanel = defineAsyncComponent(() => import('./Anomalies.vue'));
+const AsyncLoader = defineAsyncComponent(() => import('../components/AsyncLoader.vue'));
+
+function asyncTab(loader) {
+  return defineAsyncComponent({
+    loader,
+    loadingComponent: AsyncLoader,
+    delay: 200,
+  });
+}
+
+const DashboardPanel = asyncTab(() => import('./Dashboard.vue'));
+const PerformancePanel = asyncTab(() => import('./Performance.vue'));
+const IntelligencePanel = asyncTab(() => import('./Intelligence.vue'));
+const AnomaliesPanel = asyncTab(() => import('./Anomalies.vue'));
 
 const anomalyCount = ref(0);
 

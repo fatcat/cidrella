@@ -3,7 +3,7 @@ import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { regenerateConfigs, regenerateDnsmasqConf, signalDnsmasq } from '../utils/dnsmasq.js';
 import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
-import { DNS_TEST_TIMEOUT_MS, DNS_TEST_RETRY_DELAY_MS } from '../config/defaults.js';
+import { testDnsForwarder } from '../utils/dns-test.js';
 
 const router = Router();
 
@@ -519,33 +519,8 @@ router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
     return res.status(400).json({ error: 'Valid IPv4 address required' });
   }
 
-  async function tryResolve() {
-    const dns = await import('dns');
-    const resolver = new dns.Resolver();
-    resolver.setServers([ip]);
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('Timeout')), DNS_TEST_TIMEOUT_MS);
-      resolver.resolve4('google.com', (err, addresses) => {
-        clearTimeout(timeout);
-        if (err) reject(err);
-        else resolve(addresses);
-      });
-    });
-  }
-
-  try {
-    const result = await tryResolve();
-    res.json({ ip, reachable: true, resolved: result });
-  } catch {
-    // Retry once after delay
-    await new Promise(r => setTimeout(r, DNS_TEST_RETRY_DELAY_MS));
-    try {
-      const result = await tryResolve();
-      res.json({ ip, reachable: true, resolved: result });
-    } catch (err) {
-      res.json({ ip, reachable: false, error: err.message || err.code });
-    }
-  }
+  const result = await testDnsForwarder(ip);
+  res.json({ ip, ...result });
 });
 
 // GET /api/dns/resolve?name=hostname — resolve hostname to IPs

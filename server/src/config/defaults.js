@@ -55,6 +55,9 @@ export const DEFAULTS = {
 
 // ─── Shared constants (not in DB — implementation details) ───────
 
+// Valid time range keys — single source of truth for metrics + analytics
+export const VALID_RANGE_KEYS = ['1h', '4h', '12h', '24h', '2d', '1w'];
+
 export const DNS_TEST_TIMEOUT_MS      = 5000;
 export const DNS_TEST_RETRY_DELAY_MS  = 5000;
 export const SCAN_BATCH_SIZE          = 10;

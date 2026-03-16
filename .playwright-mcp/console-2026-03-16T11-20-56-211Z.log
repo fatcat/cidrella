@@ -1,0 +1,34 @@
+[      99ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[     119ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[     131ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/timeseries?range=24h:0
+[     132ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/blocklist-hits?range=24h:0
+[     137ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/geoip-hits?range=24h:0
+[     140ms] AxiosError: Request failed with status code 403
+    at Pp (https://cidrella.the-mcnultys.org:8443/assets/index-B1Ou6lCn.js:589:1087)
+    at XMLHttpRequest.k (https://cidrella.the-mcnultys.org:8443/assets/index-B1Ou6lCn.js:589:5927)
+    at Qn.request (https://cidrella.the-mcnultys.org:8443/assets/index-B1Ou6lCn.js:591:2094)
+    at async b (https://cidrella.the-mcnultys.org:8443/assets/chart-config-fs_aDfr3.js:1:443)
+    at async Promise.all (index 0)
+    at async Proxy._ (https://cidrella.the-mcnultys.org:8443/assets/chart-config-fs_aDfr3.js:1:1773)
+    at async Promise.all (index 0)
+    at async v (https://cidrella.the-mcnultys.org:8443/assets/Dashboard-DOoids0l.js:1:2499)
+[     139ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/services:0
+[     140ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/proxy-perf?range=24h:0
+[     140ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/top-clients?range=24h&limit=10:0
+[     141ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/top-domains?range=24h&limit=10:0
+[     142ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-clients?range=24h&limit=10:0
+[     144ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/geoip/top-domains?range=24h&limit=10:0
+[     145ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-categories?range=24h&limit=10:0
+[     146ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-domains?range=24h&limit=10:0
+[     147ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/geoip/top-clients?range=24h&limit=10:0
+[   60089ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[  120088ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[  180089ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[  192112ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
+[  194113ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
+[  196113ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
+[  198112ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
+[  200112ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
+[  202112ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
+[  204112ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
+[  206112ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0

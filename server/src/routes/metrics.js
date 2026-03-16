@@ -3,19 +3,21 @@ import { execSync } from 'child_process';
 import { getDb, getSetting } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getProxyStatus } from '../utils/dns-proxy.js';
-import { DNS_TEST_TIMEOUT_MS, DNS_TEST_RETRY_DELAY_MS } from '../config/defaults.js';
+import { testDnsForwarder } from '../utils/dns-test.js';
+import { VALID_RANGE_KEYS } from '../config/defaults.js';
 
 const router = Router();
 
-// Range string to seconds
-const RANGE_MAP = {
-  '1h': 3600,
-  '4h': 4 * 3600,
-  '12h': 12 * 3600,
-  '24h': 24 * 3600,
-  '2d': 2 * 86400,
-  '1w': 7 * 86400,
-};
+// Range string to seconds — derived from VALID_RANGE_KEYS
+const RANGE_MAP = {};
+for (const key of VALID_RANGE_KEYS) {
+  const m = key.match(/^(\d+)(h|d|w)$/);
+  if (m) {
+    const n = parseInt(m[1], 10);
+    const unit = m[2];
+    RANGE_MAP[key] = n * (unit === 'h' ? 3600 : unit === 'd' ? 86400 : 604800);
+  }
+}
 
 function parseCutoff(range) {
   const seconds = RANGE_MAP[range] || RANGE_MAP['24h'];
@@ -23,7 +25,7 @@ function parseCutoff(range) {
 }
 
 // GET /api/metrics/timeseries?range=24h
-router.get('/timeseries', requirePerm('settings:read'), (req, res) => {
+router.get('/timeseries', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const cutoff = parseCutoff(req.query.range);
   const rows = db.prepare(
@@ -33,7 +35,7 @@ router.get('/timeseries', requirePerm('settings:read'), (req, res) => {
 });
 
 // GET /api/metrics/blocklist-hits?range=24h
-router.get('/blocklist-hits', requirePerm('settings:read'), (req, res) => {
+router.get('/blocklist-hits', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const cutoff = parseCutoff(req.query.range);
   const rows = db.prepare(
@@ -43,7 +45,7 @@ router.get('/blocklist-hits', requirePerm('settings:read'), (req, res) => {
 });
 
 // GET /api/metrics/geoip-hits?range=24h
-router.get('/geoip-hits', requirePerm('settings:read'), (req, res) => {
+router.get('/geoip-hits', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const cutoff = parseCutoff(req.query.range);
   const rows = db.prepare(
@@ -53,7 +55,7 @@ router.get('/geoip-hits', requirePerm('settings:read'), (req, res) => {
 });
 
 // GET /api/metrics/proxy-perf?range=24h
-router.get('/proxy-perf', requirePerm('settings:read'), (req, res) => {
+router.get('/proxy-perf', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const cutoff = parseCutoff(req.query.range);
   const rows = db.prepare(
@@ -66,7 +68,7 @@ router.get('/proxy-perf', requirePerm('settings:read'), (req, res) => {
 });
 
 // GET /api/metrics/services
-router.get('/services', requirePerm('settings:read'), async (req, res) => {
+router.get('/services', requirePerm('analytics:read'), async (req, res) => {
   // dnsmasq status
   let dnsmasq = false;
   try {
@@ -86,8 +88,8 @@ router.get('/services', requirePerm('settings:read'), async (req, res) => {
 
   const forwarders = [];
   for (const ip of upstreams) {
-    const reachable = await testForwarder(ip);
-    forwarders.push({ ip, reachable });
+    const result = await testDnsForwarder(ip);
+    forwarders.push({ ip, reachable: result.reachable });
   }
 
   res.json({
@@ -103,28 +105,5 @@ router.get('/services', requirePerm('settings:read'), async (req, res) => {
     forwarders,
   });
 });
-
-async function testForwarder(ip) {
-  const dns = await import('dns');
-  const resolver = new dns.Resolver();
-  resolver.setServers([ip]);
-
-  function tryResolve() {
-    return new Promise((resolve) => {
-      const timeout = setTimeout(() => resolve(false), DNS_TEST_TIMEOUT_MS);
-      resolver.resolve4('google.com', (err) => {
-        clearTimeout(timeout);
-        resolve(!err);
-      });
-    });
-  }
-
-  let ok = await tryResolve();
-  if (!ok) {
-    await new Promise(r => setTimeout(r, DNS_TEST_RETRY_DELAY_MS));
-    ok = await tryResolve();
-  }
-  return ok;
-}
 
 export default router;

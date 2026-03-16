@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { pruneEvents } from '../models/ip-address.js';
 
@@ -37,13 +37,7 @@ router.put('/:key', requirePerm('subnets:write'), (req, res) => {
     return res.status(400).json({ error: 'Value is required' });
   }
 
-  const db = getDb();
-  const existing = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-  if (existing) {
-    db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(String(value), key);
-  } else {
-    db.prepare("INSERT INTO settings (key, value) VALUES (?, ?)").run(key, String(value));
-  }
+  setSetting(key, value);
 
   // Immediately purge events when retention is changed
   if (key === 'ip_history_retention_days') {

@@ -190,7 +190,7 @@
                 <span :class="['type-badge', data.source === 'dhcp' ? 'badge-yellow-light' : data.source === 'reservation' ? 'badge-blue-light' : 'badge-muted']">{{ data.source === 'dhcp' ? 'DHCP' : data.source === 'reservation' ? 'Reservation' : 'Manual' }}</span>
               </template>
             </Column>
-            <Column header="Status" sortable field="is_online" style="width: 5rem" v-if="!isReverse">
+            <Column header="Online" sortable field="is_online" style="width: 5rem" v-if="!isReverse">
               <template #body="{ data }">
                 <span v-if="data.type === 'A' && data.is_online !== null && data.is_online !== undefined"
                       :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">

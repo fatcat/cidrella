@@ -10,6 +10,16 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const services = ref(null);
   const loading = ref(false);
 
+  // Shared time range across all analytics tabs
+  const selectedRange = ref((() => {
+    try { const v = JSON.parse(localStorage.getItem('ipam_analytics_range')); return v || '24h'; } catch { return '24h'; }
+  })());
+
+  function setRange(value) {
+    selectedRange.value = value;
+    try { localStorage.setItem('ipam_analytics_range', JSON.stringify(value)); } catch {}
+  }
+
   // Analytics top-N data
   const topClients = ref([]);
   const topDomains = ref([]);
@@ -108,6 +118,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   return {
     timeseries, blocklistHits, geoipHits, proxyPerf, services, loading,
+    selectedRange, setRange,
     topClients, topDomains,
     blocklistTopClients, blocklistTopDomains, blocklistTopCategories,
     geoipTopClients, geoipTopDomains,

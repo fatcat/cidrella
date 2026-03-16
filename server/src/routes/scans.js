@@ -3,6 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { startScan } from '../utils/scanner.js';
 import { getNextScanTime } from '../utils/scan-scheduler.js';
+import { isValidIpv4 } from '../utils/ip.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
 
 const router = Router();
@@ -86,6 +87,59 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 
   const scan = db.prepare('SELECT * FROM network_scans WHERE id = ?').get(scanId);
   res.status(201).json(scan);
+});
+
+// POST /api/scans/probe — probe a single IP (or list) for liveness using startScan
+router.post('/probe', requirePerm('subnets:read'), async (req, res) => {
+  const { ip, subnet_id } = req.body;
+  if (!ip || !isValidIpv4(ip)) {
+    return res.status(400).json({ error: 'Valid IP address is required' });
+  }
+
+  const db = getDb();
+
+  // Find the subnet — either from explicit subnet_id or by searching
+  let resolvedSubnetId = subnet_id;
+  if (!resolvedSubnetId) {
+    const subnets = db.prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'").all();
+    const { isIpInSubnet } = await import('../utils/ip.js');
+    for (const s of subnets) {
+      if (isIpInSubnet(ip, s.cidr)) { resolvedSubnetId = s.id; break; }
+    }
+  }
+  if (!resolvedSubnetId) {
+    return res.status(404).json({ error: 'No matching subnet found for this IP' });
+  }
+
+  try {
+    // Create a scan record for this targeted probe
+    const result = db.prepare("INSERT INTO network_scans (subnet_id, status) VALUES (?, 'pending')").run(resolvedSubnetId);
+    const scanId = result.lastInsertRowid;
+
+    // Run the scan synchronously with targeted IP
+    const scanResult = await startScan(db, scanId, resolvedSubnetId, { targetIps: [ip] });
+
+    // Read the scan result for this IP
+    const sr = db.prepare('SELECT * FROM scan_results WHERE scan_id = ? AND ip_address = ?').get(scanId, ip);
+
+    // Clean up the probe scan record (don't clutter scan history)
+    db.prepare('DELETE FROM network_scans WHERE id = ?').run(scanId);
+
+    if (!sr) {
+      return res.status(500).json({ error: 'Probe completed but no result recorded' });
+    }
+
+    res.json({
+      ip,
+      responded: !!sr.responded,
+      mac: sr.mac_address,
+      method: scanResult?.method || 'unknown',
+      is_conflict: !!sr.is_conflict,
+      conflict_reason: sr.conflict_reason
+    });
+  } catch (err) {
+    res.status(500).json({ error: `Probe failed: ${err.message}` });
+  }
 });
 
 // DELETE /api/scans/:id — delete scan and results

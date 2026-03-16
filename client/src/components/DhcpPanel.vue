@@ -89,9 +89,15 @@
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
-            <Column header="Status" sortable field="status" style="width: 7rem">
+            <Column field="is_online" header="Online" sortable style="width: 5rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Online' : 'Offline' }}</span>
+                <span v-if="data.is_online != null" :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
+                <span v-else class="text-muted">—</span>
+              </template>
+            </Column>
+            <Column header="Lease" sortable field="status" style="width: 6rem">
+              <template #body="{ data }">
+                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Active' : 'Inactive' }}</span>
               </template>
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
@@ -140,9 +146,15 @@
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
             </Column>
-            <Column header="Status" sortable field="status" style="width: 7rem">
+            <Column field="is_online" header="Online" sortable style="width: 5rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Online' : 'Offline' }}</span>
+                <span v-if="data.is_online != null" :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
+                <span v-else class="text-muted">—</span>
+              </template>
+            </Column>
+            <Column header="Lease" sortable field="status" style="width: 6rem">
+              <template #body="{ data }">
+                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Active' : 'Inactive' }}</span>
               </template>
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
@@ -299,20 +311,51 @@ const selectedLease = ref(null);
 const leaseContextMenuItems = computed(() => {
   const r = selectedLease.value;
   if (!r) return [];
+  const items = [];
   if (r.type === 'reserved') {
-    return [
+    items.push(
       { label: 'Edit Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
       { label: 'Delete Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
-    ];
-  }
-  // Active lease — offer conversion to reservation
-  if (r.mac_address && r.ip_address) {
-    return [
+    );
+  } else if (r.mac_address && r.ip_address) {
+    items.push(
       { label: 'Convert to Reservation', icon: 'pi pi-lock', command: () => convertLeaseToReservation(r) }
-    ];
+    );
   }
-  return [];
+  if (r.ip_address) {
+    if (items.length) items.push({ separator: true });
+    items.push({ label: 'Probe Now', icon: 'pi pi-wifi', command: () => probeIp(r) });
+  }
+  return items;
 });
+
+async function probeIp(lease) {
+  const ip = lease.ip_address;
+  toast.add({ severity: 'info', summary: 'Probing...', detail: `Sending probe to ${ip}`, life: 2000 });
+  try {
+    const res = await api.post('/scans/probe', { ip, subnet_id: lease.subnet_id });
+    const r = res.data;
+    if (r.responded) {
+      toast.add({
+        severity: 'success',
+        summary: `${ip} is Online`,
+        detail: `Method: ${r.method.toUpperCase()}${r.mac ? ` · MAC: ${r.mac}` : ''}`,
+        life: 5000
+      });
+    } else {
+      toast.add({
+        severity: 'warn',
+        summary: `${ip} is Offline`,
+        detail: `No response via ${r.method.toUpperCase()}`,
+        life: 5000
+      });
+    }
+    // Refetch leases so the Online badge updates
+    await store.fetchLeases();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Probe Failed', detail: err.response?.data?.error || err.message, life: 5000 });
+  }
+}
 function onLeaseRightClick(event) {
   selectedLease.value = event.data;
   if (leaseContextMenuItems.value.length) {

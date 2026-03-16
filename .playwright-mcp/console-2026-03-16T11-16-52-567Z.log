@@ -1,0 +1,61 @@
+[     208ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[     224ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[     284ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/active:0
+[     287ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[     292ms] AxiosError: Request failed with status code 403
+    at Pp (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:589:1087)
+    at XMLHttpRequest.k (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:589:5927)
+    at Qn.request (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:591:2094)
+    at async v (https://cidrella.the-mcnultys.org:8443/assets/anomalies-CGGrg2_8.js:1:200)
+    at async Promise.all (index 0)
+    at async Proxy.h (https://cidrella.the-mcnultys.org:8443/assets/anomalies-CGGrg2_8.js:1:1147)
+    at async w (https://cidrella.the-mcnultys.org:8443/assets/Anomalies-CWPhAdyY.js:1:2009)
+[   12215ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/blocklist-hits?range=24h:0
+[   12216ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/timeseries?range=24h:0
+[   12222ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/geoip-hits?range=24h:0
+[   12225ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/proxy-perf?range=24h:0
+[   12226ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/services:0
+[   12228ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/top-clients?range=24h&limit=10:0
+[   12229ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/top-domains?range=24h&limit=10:0
+[   12235ms] AxiosError: Request failed with status code 403
+    at Pp (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:589:1087)
+    at XMLHttpRequest.k (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:589:5927)
+    at Qn.request (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:591:2094)
+    at async T (https://cidrella.the-mcnultys.org:8443/assets/chart-config-Ujve8wLv.js:1:665)
+    at async Promise.all (index 2)
+    at async Proxy._ (https://cidrella.the-mcnultys.org:8443/assets/chart-config-Ujve8wLv.js:1:1773)
+    at async Promise.all (index 0)
+    at async h (https://cidrella.the-mcnultys.org:8443/assets/Dashboard-D7yNukIY.js:1:2492)
+[   12229ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-clients?range=24h&limit=10:0
+[   12229ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-domains?range=24h&limit=10:0
+[   12230ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-categories?range=24h&limit=10:0
+[   12231ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/geoip/top-clients?range=24h&limit=10:0
+[   12237ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/geoip/top-domains?range=24h&limit=10:0
+[   60201ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[   60206ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[   72219ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/proxy-perf?range=24h:0
+[   72220ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/blocklist-hits?range=24h:0
+[   72223ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/timeseries?range=24h:0
+[   72226ms] AxiosError: Request failed with status code 403
+    at Pp (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:589:1087)
+    at XMLHttpRequest.k (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:589:5927)
+    at Qn.request (https://cidrella.the-mcnultys.org:8443/assets/index-Bqss8tu6.js:591:2094)
+    at async w (https://cidrella.the-mcnultys.org:8443/assets/chart-config-Ujve8wLv.js:1:774)
+    at async Promise.all (index 3)
+    at async Proxy._ (https://cidrella.the-mcnultys.org:8443/assets/chart-config-Ujve8wLv.js:1:1773)
+    at async Promise.all (index 0)
+    at async h (https://cidrella.the-mcnultys.org:8443/assets/Dashboard-D7yNukIY.js:1:2492)
+[   72224ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/geoip-hits?range=24h:0
+[   72225ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/metrics/services:0
+[   72225ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/top-clients?range=24h&limit=10:0
+[   72226ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/top-domains?range=24h&limit=10:0
+[   72228ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-clients?range=24h&limit=10:0
+[   72229ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-domains?range=24h&limit=10:0
+[   72230ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/blocklist/top-categories?range=24h&limit=10:0
+[   72234ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/geoip/top-clients?range=24h&limit=10:0
+[   72234ms] [ERROR] Failed to load resource: the server responded with a status of 403 (Forbidden) @ https://cidrella.the-mcnultys.org:8443/api/analytics/geoip/top-domains?range=24h&limit=10:0
+[  120177ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
+[  120178ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/health/system:0
+[  120179ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
+[  120179ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans/next:0
+[  120179ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0

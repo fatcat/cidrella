@@ -1033,8 +1033,9 @@ function buildContextMenuItems(selectedIps) {
       items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
     }
 
-    // IP lifecycle history
+    // Probe and lifecycle
     items.push({ separator: true });
+    items.push({ label: `Probe ${ip.address}`, icon: 'pi pi-wifi', command: () => probeIpNow(ip.address) });
     items.push({ label: `Lifecycle of ${ip.address}`, icon: 'pi pi-history', command: () => openEventsDialog(ip.address) });
   } else {
     // Multi-select
@@ -1068,6 +1069,33 @@ async function toggleIpScan(ipAddress, enabled) {
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+  }
+}
+
+async function probeIpNow(ipAddress) {
+  toast.add({ severity: 'info', summary: 'Probing...', detail: `Sending probe to ${ipAddress}`, life: 2000 });
+  try {
+    const res = await api.post('/scans/probe', { ip: ipAddress, subnet_id: subnet.value.id });
+    const r = res.data;
+    if (r.responded) {
+      toast.add({
+        severity: 'success',
+        summary: `${ipAddress} is Online`,
+        detail: `Method: ${r.method.toUpperCase()}${r.mac ? ` · MAC: ${r.mac}` : ''}`,
+        life: 5000
+      });
+    } else {
+      toast.add({
+        severity: 'warn',
+        summary: `${ipAddress} is Offline`,
+        detail: `No response via ${r.method.toUpperCase()}`,
+        life: 5000
+      });
+    }
+    // Refetch IPs so the Online badge updates
+    await loadIpPage(currentPage.value, currentPageSize.value, { skipCache: true });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Probe Failed', detail: err.response?.data?.error || err.message, life: 5000 });
   }
 }
 

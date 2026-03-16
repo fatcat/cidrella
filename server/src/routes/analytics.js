@@ -35,7 +35,7 @@ function enrichWithHostnames(rows) {
 }
 
 // GET /api/analytics/top-clients?range=24h&limit=20
-router.get('/top-clients', requirePerm('settings:read'), async (req, res) => {
+router.get('/top-clients', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '20' } = req.query;
     const rows = await queryTopClients(range, parseInt(limit, 10));
@@ -46,7 +46,7 @@ router.get('/top-clients', requirePerm('settings:read'), async (req, res) => {
 });
 
 // GET /api/analytics/top-domains?range=24h&limit=20
-router.get('/top-domains', requirePerm('settings:read'), async (req, res) => {
+router.get('/top-domains', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '20' } = req.query;
     const rows = await queryTopDomains(range, parseInt(limit, 10));
@@ -57,7 +57,7 @@ router.get('/top-domains', requirePerm('settings:read'), async (req, res) => {
 });
 
 // GET /api/analytics/top-blocked?range=24h&limit=20
-router.get('/top-blocked', requirePerm('settings:read'), async (req, res) => {
+router.get('/top-blocked', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '20' } = req.query;
     const rows = await queryTopBlocked(range, parseInt(limit, 10));
@@ -68,7 +68,7 @@ router.get('/top-blocked', requirePerm('settings:read'), async (req, res) => {
 });
 
 // GET /api/analytics/query-volume?range=24h&interval=5m
-router.get('/query-volume', requirePerm('settings:read'), async (req, res) => {
+router.get('/query-volume', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', interval = '5m' } = req.query;
     const rows = await queryVolume(range, interval);
@@ -79,7 +79,7 @@ router.get('/query-volume', requirePerm('settings:read'), async (req, res) => {
 });
 
 // GET /api/analytics/action-breakdown?range=24h
-router.get('/action-breakdown', requirePerm('settings:read'), async (req, res) => {
+router.get('/action-breakdown', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h' } = req.query;
     const rows = await queryActionBreakdown(range);
@@ -90,7 +90,7 @@ router.get('/action-breakdown', requirePerm('settings:read'), async (req, res) =
 });
 
 // GET /api/analytics/client/:ip/domains?range=24h&limit=50
-router.get('/client/:ip/domains', requirePerm('settings:read'), async (req, res) => {
+router.get('/client/:ip/domains', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '50' } = req.query;
     const rows = await queryClientDomains(req.params.ip, range, parseInt(limit, 10));
@@ -101,7 +101,7 @@ router.get('/client/:ip/domains', requirePerm('settings:read'), async (req, res)
 });
 
 // GET /api/analytics/domain/:name/clients?range=24h&limit=50
-router.get('/domain/:name/clients', requirePerm('settings:read'), async (req, res) => {
+router.get('/domain/:name/clients', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '50' } = req.query;
     const rows = await queryDomainClients(req.params.name, range, parseInt(limit, 10));
@@ -112,7 +112,7 @@ router.get('/domain/:name/clients', requirePerm('settings:read'), async (req, re
 });
 
 // GET /api/analytics/blocklist/top-clients?range=24h&limit=10
-router.get('/blocklist/top-clients', requirePerm('settings:read'), async (req, res) => {
+router.get('/blocklist/top-clients', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '10' } = req.query;
     const rows = await queryTopClientsByAction(range, 'blocked_blocklist', parseInt(limit, 10));
@@ -123,7 +123,7 @@ router.get('/blocklist/top-clients', requirePerm('settings:read'), async (req, r
 });
 
 // GET /api/analytics/blocklist/top-domains?range=24h&limit=10
-router.get('/blocklist/top-domains', requirePerm('settings:read'), async (req, res) => {
+router.get('/blocklist/top-domains', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '10' } = req.query;
     const rows = await queryTopDomainsByAction(range, 'blocked_blocklist', parseInt(limit, 10));
@@ -134,7 +134,7 @@ router.get('/blocklist/top-domains', requirePerm('settings:read'), async (req, r
 });
 
 // GET /api/analytics/blocklist/top-categories?range=24h&limit=10
-router.get('/blocklist/top-categories', requirePerm('settings:read'), async (req, res) => {
+router.get('/blocklist/top-categories', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '10' } = req.query;
     const rows = await queryTopBlockReasons(range, 'blocked_blocklist', parseInt(limit, 10));
@@ -145,7 +145,7 @@ router.get('/blocklist/top-categories', requirePerm('settings:read'), async (req
 });
 
 // GET /api/analytics/geoip/top-clients?range=24h&limit=10
-router.get('/geoip/top-clients', requirePerm('settings:read'), async (req, res) => {
+router.get('/geoip/top-clients', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '10' } = req.query;
     const rows = await queryTopClientsByAction(range, 'blocked_geoip', parseInt(limit, 10));
@@ -156,7 +156,7 @@ router.get('/geoip/top-clients', requirePerm('settings:read'), async (req, res) 
 });
 
 // GET /api/analytics/geoip/top-domains?range=24h&limit=10
-router.get('/geoip/top-domains', requirePerm('settings:read'), async (req, res) => {
+router.get('/geoip/top-domains', requirePerm('analytics:read'), async (req, res) => {
   try {
     const { range = '24h', limit = '10' } = req.query;
     const rows = await queryTopDomainsByAction(range, 'blocked_geoip', parseInt(limit, 10));

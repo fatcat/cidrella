@@ -110,8 +110,15 @@ export function resumeInterruptedScans(db) {
  * After ICMP scanning, reads the OS ARP cache to capture MAC addresses.
  * Resumes from where it left off if scan_results already exist for some IPs.
  * Updates the database with progress and results as it goes.
+ *
+ * @param {Object} [options]
+ * @param {string[]} [options.targetIps] — scan only these IPs (bypasses scan_enabled checks)
+ * @param {boolean} [options.updateModel=true] — update ip_addresses model after scan
+ * @returns {Promise<{ method: 'arp'|'icmp' }>}
  */
-export async function startScan(db, scanId, subnetId) {
+export async function startScan(db, scanId, subnetId, options = {}) {
+  const { targetIps = null, updateModel = true } = options;
+  const isTargeted = Array.isArray(targetIps) && targetIps.length > 0;
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
   if (!subnet) {
     db.prepare("UPDATE network_scans SET status = 'failed', error = 'Subnet not found', completed_at = datetime('now') WHERE id = ?").run(scanId);
@@ -121,10 +128,10 @@ export async function startScan(db, scanId, subnetId) {
   // Resolve scan method based on network locality
   const local = isLocalSubnet(subnet.cidr);
   let icmpSession = null;
-  let probeIp;
+  let probeFn;
 
   if (local) {
-    probeIp = (ip) => arpingIp(ip);
+    probeFn = (ip) => arpingIp(ip);
   } else {
     try {
       icmpSession = createPingSession();
@@ -133,30 +140,45 @@ export async function startScan(db, scanId, subnetId) {
         .run(`Failed to create ICMP session: ${err.message}`, scanId);
       return;
     }
-    probeIp = (ip) => pingIp(icmpSession, ip);
+    probeFn = (ip) => pingIp(icmpSession, ip);
   }
 
   console.log(`[scanner] Subnet ${subnet.cidr} — using ${local ? 'ARP (arping)' : 'ICMP (net-ping)'} probes`);
 
   // Resolve subnet-level scan default from inheritance chain (subnet → global setting)
   let subnetDefault = true;
-  if (subnet.scan_enabled !== null && subnet.scan_enabled !== undefined) {
-    subnetDefault = !!subnet.scan_enabled;
-  } else {
-    const setting = db.prepare("SELECT value FROM settings WHERE key = 'default_scan_enabled'").get();
-    subnetDefault = setting ? setting.value === '1' : true;
+  let overrideMap = new Map();
+  if (!isTargeted) {
+    if (subnet.scan_enabled !== null && subnet.scan_enabled !== undefined) {
+      subnetDefault = !!subnet.scan_enabled;
+    } else {
+      const setting = db.prepare("SELECT value FROM settings WHERE key = 'default_scan_enabled'").get();
+      subnetDefault = setting ? setting.value === '1' : true;
+    }
+
+    // Pre-load per-IP scan_enabled overrides
+    const ipOverrides = db.prepare(
+      'SELECT ip_address, scan_enabled FROM ip_addresses WHERE subnet_id = ? AND scan_enabled IS NOT NULL'
+    ).all(subnetId);
+    overrideMap = new Map(ipOverrides.map(r => [r.ip_address, r.scan_enabled]));
   }
 
-  // Pre-load per-IP scan_enabled overrides
-  const ipOverrides = db.prepare(
-    'SELECT ip_address, scan_enabled FROM ip_addresses WHERE subnet_id = ? AND scan_enabled IS NOT NULL'
-  ).all(subnetId);
-  const overrideMap = new Map(ipOverrides.map(r => [r.ip_address, r.scan_enabled]));
-
-  const parsed = parseCidr(subnet.cidr);
-  const startIp = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
-  const endIp = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
-  const totalIps = endIp - startIp + 1;
+  // Build IP list — either from targetIps or from subnet CIDR range
+  let ipsToScan;
+  let totalIps;
+  if (isTargeted) {
+    ipsToScan = targetIps;
+    totalIps = targetIps.length;
+  } else {
+    const parsed = parseCidr(subnet.cidr);
+    const startIpLong = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
+    const endIpLong = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
+    totalIps = endIpLong - startIpLong + 1;
+    ipsToScan = [];
+    for (let ipLong = startIpLong; ipLong <= endIpLong; ipLong++) {
+      ipsToScan.push(longToIp(ipLong));
+    }
+  }
 
   // Check for already-scanned IPs (resume support)
   const alreadyScanned = new Set(
@@ -215,23 +237,23 @@ export async function startScan(db, scanId, subnetId) {
 
   try {
     // Scan in batches for reasonable speed
-    for (let batchStart = startIp; batchStart <= endIp; batchStart += SCAN_BATCH_SIZE) {
-      const batchEnd = Math.min(batchStart + SCAN_BATCH_SIZE - 1, endIp);
+    for (let i = 0; i < ipsToScan.length; i += SCAN_BATCH_SIZE) {
+      const batch = ipsToScan.slice(i, i + SCAN_BATCH_SIZE);
       const promises = [];
 
-      for (let ipLong = batchStart; ipLong <= batchEnd; ipLong++) {
-        const ip = longToIp(ipLong);
-
+      for (const ip of batch) {
         // Skip IPs already scanned in a previous partial run
         if (alreadyScanned.has(ip)) continue;
 
-        // Check scan_enabled for this IP
-        const override = overrideMap.get(ip);
-        if (!shouldScanIp(override !== undefined ? override : null, subnetDefault)) {
-          continue; // skip — scanning disabled for this IP
+        // Check scan_enabled for this IP (skip for targeted probes)
+        if (!isTargeted) {
+          const override = overrideMap.get(ip);
+          if (!shouldScanIp(override !== undefined ? override : null, subnetDefault)) {
+            continue; // skip — scanning disabled for this IP
+          }
         }
 
-        promises.push(probeIp(ip).then(result => ({ ip, ...result })));
+        promises.push(probeFn(ip).then(result => ({ ip, ...result })));
       }
 
       if (promises.length === 0) continue;
@@ -283,30 +305,37 @@ export async function startScan(db, scanId, subnetId) {
     }
 
     // Update ip_addresses via model — liveness, MAC, rogue state, lifecycle fields
-    const scanResults = db.prepare(
-      'SELECT ip_address, responded, mac_address, is_conflict, conflict_reason FROM scan_results WHERE scan_id = ?'
-    ).all(scanId);
+    if (updateModel) {
+      const scanResults = db.prepare(
+        'SELECT ip_address, responded, mac_address, is_conflict, conflict_reason FROM scan_results WHERE scan_id = ?'
+      ).all(scanId);
 
-    const conflictIps = new Set();
-    for (const sr of scanResults) {
-      IpAddress.updateFromScan(db, subnetId, sr.ip_address, {
-        responded: sr.responded,
-        mac: sr.mac_address,
-        isConflict: sr.is_conflict,
-        conflictReason: sr.conflict_reason
-      });
-      if (sr.is_conflict) conflictIps.add(sr.ip_address);
+      const conflictIps = new Set();
+      for (const sr of scanResults) {
+        IpAddress.updateFromScan(db, subnetId, sr.ip_address, {
+          responded: sr.responded,
+          mac: sr.mac_address,
+          isConflict: sr.is_conflict,
+          conflictReason: sr.conflict_reason
+        });
+        if (sr.is_conflict) conflictIps.add(sr.ip_address);
+      }
+
+      // Clear rogue on IPs in this subnet that weren't flagged in this scan
+      // (only for full subnet scans — targeted probes shouldn't clear other IPs)
+      if (!isTargeted) {
+        IpAddress.clearRogueForSubnet(db, subnetId, conflictIps);
+      }
     }
-
-    // Clear rogue on IPs in this subnet that weren't flagged in this scan
-    IpAddress.clearRogueForSubnet(db, subnetId, conflictIps);
 
     // Mark completed
     db.prepare("UPDATE network_scans SET status = 'completed', scanned_ips = ?, conflicts_found = ?, completed_at = datetime('now') WHERE id = ?")
       .run(scannedCount, conflictsFound, scanId);
 
-    // Prune old scan_results — keep only this scan
-    IpAddress.pruneOldScanResults(db, subnetId, scanId);
+    // Prune old scan_results — keep only this scan (skip for targeted probes)
+    if (!isTargeted) {
+      IpAddress.pruneOldScanResults(db, subnetId, scanId);
+    }
   } catch (err) {
     db.prepare("UPDATE network_scans SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?")
       .run(err.message, scanId);
@@ -316,4 +345,6 @@ export async function startScan(db, scanId, subnetId) {
       try { icmpSession.close(); } catch { /* ignore */ }
     }
   }
+
+  return { method: local ? 'arp' : 'icmp' };
 }

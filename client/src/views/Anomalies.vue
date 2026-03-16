@@ -1,5 +1,5 @@
 <template>
-  <div class="anomalies-page">
+  <div class="analytics-tab">
     <div class="page-header">
       <h1>Anomaly Detection</h1>
       <div class="header-actions">
@@ -175,6 +175,7 @@ import {
 } from 'chart.js';
 import { Line } from 'vue-chartjs';
 import { useAnomalyStore } from '../stores/anomalies.js';
+import '../assets/analytics-layout.css';
 import { formatDateTime } from '../utils/dateFormat.js';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
@@ -302,9 +303,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.anomalies-page {
-  padding: 1rem 7%;
-}
+/* Page-specific styles only — shared styles come from analytics-layout.css */
 
 .page-header {
   display: flex;
@@ -328,24 +327,6 @@ onUnmounted(() => {
 .severity-select {
   width: 180px;
 }
-
-.stats-bar {
-  display: flex;
-  gap: 2rem;
-  padding: 1rem 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  margin-bottom: 1.25rem;
-  flex-wrap: wrap;
-}
-.stat { display: flex; flex-direction: column; }
-.stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
-.stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
-.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
-.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
-.text-danger { color: var(--p-red-500); }
-.text-warning { color: var(--p-orange-500); }
 
 .empty-state {
   text-align: center;

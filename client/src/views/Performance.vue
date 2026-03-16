@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard-page">
+  <div class="analytics-tab">
     <!-- Stats Bar -->
     <div class="stats-bar" v-if="services">
       <div class="stat">
@@ -162,7 +162,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted, onUnmounted } from 'vue';
 import { formatEpoch } from '../utils/dateFormat.js';
 import Select from 'primevue/select';
 import Button from 'primevue/button';
@@ -173,6 +173,8 @@ import {
 } from 'chart.js';
 import { Line, Doughnut } from 'vue-chartjs';
 import { useDashboardStore } from '../stores/dashboard.js';
+import { RANGE_OPTIONS } from '../utils/chart-config.js';
+import '../assets/analytics-layout.css';
 
 ChartJS.register(
   CategoryScale, LinearScale, PointElement, LineElement,
@@ -181,18 +183,8 @@ ChartJS.register(
 ChartJS.defaults.elements.line.borderWidth = 1;
 
 const store = useDashboardStore();
-
-const rangeOptions = [
-  { label: 'Last 1 hour', value: '1h' },
-  { label: 'Last 4 hours', value: '4h' },
-  { label: 'Last 12 hours', value: '12h' },
-  { label: 'Last 24 hours', value: '24h' },
-  { label: 'Last 2 days', value: '2d' },
-  { label: 'Last 1 week', value: '1w' },
-];
-const selectedRange = ref((() => {
-  try { const v = JSON.parse(localStorage.getItem('ipam_perf_range')); return v || '24h'; } catch { return '24h'; }
-})());
+const rangeOptions = RANGE_OPTIONS;
+const selectedRange = computed({ get: () => store.selectedRange, set: (v) => store.setRange(v) });
 
 let refreshTimer = null;
 
@@ -550,7 +542,6 @@ async function refreshAll() {
 }
 
 function onRangeChange() {
-  try { localStorage.setItem('ipam_perf_range', JSON.stringify(selectedRange.value)); } catch {}
   refreshAll();
 }
 
@@ -565,70 +556,7 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.dashboard-page {
-  padding: 1rem 7%;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.stats-bar {
-  display: flex;
-  gap: 2rem;
-  padding: 1rem 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  flex-wrap: wrap;
-}
-.stat { display: flex; flex-direction: column; }
-.stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
-.stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
-.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
-.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
-.text-danger { color: var(--p-red-500); }
-
-.dashboard-content {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.range-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.card-row {
-  display: flex;
-  gap: 1rem;
-}
-
-.card-row .chart-card {
-  flex: 1;
-  min-width: 0;
-}
-
-.chart-card {
-  background: var(--p-surface-ground);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  padding: 1rem;
-}
-
-.chart-wrap {
-  position: relative;
-}
-
-.chart-card h4 {
-  margin: 0 0 0.75rem;
-  font-size: 0.9rem;
-}
+/* Page-specific styles only — shared styles come from analytics-layout.css */
 
 .gauge-card {
   display: flex;
@@ -685,17 +613,7 @@ onUnmounted(() => {
   margin-top: 0.25rem;
 }
 
-.empty-chart {
-  color: var(--p-text-muted-color);
-  font-size: 0.8rem;
-  text-align: center;
-  padding: 2rem 0;
-}
-
 @media (max-width: 768px) {
-  .card-row {
-    flex-direction: column;
-  }
   .gauge-card {
     max-width: none;
   }
