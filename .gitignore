@@ -9,3 +9,4 @@ PROMPT.md
 REVIEW.md
 tmp/
 .mcp.json
+.playwright-mcp
