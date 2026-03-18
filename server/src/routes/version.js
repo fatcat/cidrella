@@ -29,13 +29,17 @@ router.post('/check', async (req, res) => {
     return res.status(403).json({ error: 'Admin access required' });
   }
 
-  const result = await checkForUpdates();
-  res.json({
-    version: APP_VERSION,
-    updateAvailable: result?.version || null,
-    updateUrl: result?.url || null,
-    lastChecked: new Date().toISOString(),
-  });
+  try {
+    const result = await checkForUpdates();
+    res.json({
+      version: APP_VERSION,
+      updateAvailable: result?.version || null,
+      updateUrl: result?.url || null,
+      lastChecked: new Date().toISOString(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Update check failed' });
+  }
 });
 
 export default router;

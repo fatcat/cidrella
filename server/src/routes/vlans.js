@@ -99,7 +99,12 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     if (dup) return res.status(409).json({ error: `VLAN ${newVlanId} already exists` });
   }
 
-  db.prepare('UPDATE vlans SET vlan_id = ?, name = ? WHERE id = ?').run(newVlanId, newName, vlan.id);
+  db.transaction(() => {
+    db.prepare('UPDATE vlans SET vlan_id = ?, name = ? WHERE id = ?').run(newVlanId, newName, vlan.id);
+    if (newVlanId !== vlan.vlan_id) {
+      db.prepare('UPDATE subnets SET vlan_id = ? WHERE vlan_id = ?').run(newVlanId, vlan.vlan_id);
+    }
+  })();
   audit(req.user.id, 'vlan_updated', 'vlan', vlan.id, { vlan_id: newVlanId, name: newName });
   const updated = db.prepare('SELECT * FROM vlans WHERE id = ?').get(vlan.id);
   res.json(updated);

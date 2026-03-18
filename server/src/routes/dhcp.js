@@ -576,10 +576,15 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
   // Enrich with is_online from ip_addresses
   const allIps = unified.map(e => e.ip_address).filter(Boolean);
   if (allIps.length) {
-    const ipRows = db.prepare(
-      `SELECT ip_address, is_online FROM ip_addresses WHERE ip_address IN (${allIps.map(() => '?').join(',')})`
-    ).all(...allIps);
-    const onlineMap = new Map(ipRows.map(r => [r.ip_address, !!r.is_online]));
+    const CHUNK_SIZE = 900;
+    const onlineMap = new Map();
+    for (let i = 0; i < allIps.length; i += CHUNK_SIZE) {
+      const chunk = allIps.slice(i, i + CHUNK_SIZE);
+      const ipRows = db.prepare(
+        `SELECT ip_address, is_online FROM ip_addresses WHERE ip_address IN (${chunk.map(() => '?').join(',')})`
+      ).all(...chunk);
+      for (const r of ipRows) onlineMap.set(r.ip_address, !!r.is_online);
+    }
     for (const entry of unified) {
       entry.is_online = onlineMap.get(entry.ip_address) ?? null;
     }

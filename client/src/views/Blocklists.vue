@@ -145,8 +145,8 @@
       <TabPanel header="Search">
         <div class="settings-row">
           <InputText v-model="searchQuery" placeholder="Search blocked domains..." style="width: 20rem"
-                     @keyup.enter="doSearch" />
-          <Button label="Search" icon="pi pi-search" size="small" @click="doSearch" :loading="searching" />
+                     @keyup.enter="doSearch()" />
+          <Button label="Search" icon="pi pi-search" size="small" @click="doSearch()" :loading="searching" />
         </div>
         <DataTable v-if="searchResults.items.length > 0 || searchPerformed" :value="searchResults.items"
                    stripedRows size="small" emptyMessage="No matching domains found."

@@ -182,8 +182,8 @@
             @select-subnet="onFolderTableSelectSubnet"
             @merge-toggle="toggleMergeSelect"
             @context-menu="openSubnetContextMenu"
-            @edit-subnet="node => dialogs.value.openEdit(node)"
-            @delete-subnet="node => dialogs.value.openDelete(node)" />
+            @edit-subnet="node => dialogs.openEdit(node)"
+            @delete-subnet="node => dialogs.openDelete(node)" />
         <div v-else class="empty-detail">
           <i class="pi pi-sitemap" style="font-size: 2rem; opacity: 0.3"></i>
           <span>Select a network to view details</span>

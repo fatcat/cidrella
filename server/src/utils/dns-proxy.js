@@ -485,7 +485,7 @@ export function startProxy() {
       if (bindCount === addresses.length) {
         proxyStartupMs = Date.now() - proxyStartedAt;
         proxyLog('info', 'Proxy fully started', { sockets: bindCount, startupMs: proxyStartupMs });
-        startHealthMonitor();
+        if (!healthTimer) startHealthMonitor();
       }
     });
 
