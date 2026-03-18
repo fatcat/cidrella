@@ -1,8 +1,0 @@
-[ 2880121ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/health/system:0
-[ 2880123ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
-[ 2880123ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans/next:0
-[ 2880124ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
-[ 3540120ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/health/system:0
-[ 3540121ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans:0
-[ 3540122ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/scans/next:0
-[ 3540123ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ https://cidrella.the-mcnultys.org:8443/api/anomalies/summary:0
