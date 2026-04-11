@@ -452,6 +452,9 @@
       <div v-if="activeTab === 13" class="padded-tab">
         <AnomalyDetectionPanel />
       </div>
+      <div v-if="activeTab === 14" class="padded-tab">
+        <UpdatePanel />
+      </div>
     </div>
 
     <!-- Context Menus -->
@@ -465,6 +468,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch, defineAsyncComponent } from 'vue';
+import { useRoute } from 'vue-router';
 import { formatDateTime } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
 import TabView from 'primevue/tabview';
@@ -498,9 +502,10 @@ const UsersPanel = defineAsyncComponent(() => import('./Users.vue'));
 const LogViewer = defineAsyncComponent(() => import('../components/LogViewer.vue'));
 const InterfacePanel = defineAsyncComponent(() => import('../components/InterfacePanel.vue'));
 const AnomalyDetectionPanel = defineAsyncComponent(() => import('./AnomalyDetection.vue'));
+const UpdatePanel = defineAsyncComponent(() => import('./UpdatePanel.vue'));
 
 const dnsPanelRef = ref(null);
-
+const route = useRoute();
 
 const store = useSubnetStore();
 const opsStore = useOperationsStore();
@@ -525,7 +530,12 @@ function getThemeDesc(t) {
 
 // Persist active tab across refreshes
 const LOGGING_TAB_INDEX = 11;
-const activeTab = ref(parseInt(localStorage.getItem('cidrella_system_tab') || '0', 10));
+const TAB_NAME_MAP = { updates: 14, backup: 3, certificates: 4, logging: 11 };
+const queryTab = route.query.tab;
+const initialTab = queryTab && TAB_NAME_MAP[queryTab] !== undefined
+  ? TAB_NAME_MAP[queryTab]
+  : parseInt(localStorage.getItem('cidrella_system_tab') || '0', 10);
+const activeTab = ref(initialTab);
 watch(activeTab, (val) => {
   localStorage.setItem('cidrella_system_tab', String(val));
   if (val === LOGGING_TAB_INDEX) { loadAuditFilterOptions(); loadAuditLog(); }
@@ -546,13 +556,14 @@ const allMenuItems = [
   { tabIndex: 11, label: 'Logging', icon: 'pi pi-file', dataTrack: 'sys-tab-logging', command: () => { activeTab.value = 11; } },
   { tabIndex: 12, label: 'Interfaces', icon: 'pi pi-sitemap', dataTrack: 'sys-tab-interfaces', command: () => { activeTab.value = 12; } },
   { tabIndex: 13, label: 'Anomaly Detection', icon: 'pi pi-exclamation-circle', dataTrack: 'sys-tab-anomaly', command: () => { activeTab.value = 13; } },
+  { tabIndex: 14, label: 'Updates', icon: 'pi pi-cloud-download', dataTrack: 'sys-tab-updates', command: () => { activeTab.value = 14; } },
 ];
 
 const navGroups = [
   { label: 'Network', items: allMenuItems.filter(i => [0, 1, 2, 12].includes(i.tabIndex)) },
   { label: 'Services', items: allMenuItems.filter(i => [5, 6].includes(i.tabIndex)) },
   { label: 'Security', items: allMenuItems.filter(i => [7, 8, 13].includes(i.tabIndex)) },
-  { label: 'System', items: allMenuItems.filter(i => [3, 4, 9, 10, 11].includes(i.tabIndex)) },
+  { label: 'System', items: allMenuItems.filter(i => [3, 4, 9, 10, 11, 14].includes(i.tabIndex)) },
 ];
 
 const loadingSettings = ref(true);

@@ -79,8 +79,8 @@ export const PROXY_HEALTH_CHECK_MS        = 3000;              // 3 seconds
 export const PROXY_MAX_RESTART_ATTEMPTS   = 3;
 export const PROXY_RESTART_DELAY_MS       = 2000;              // 2 seconds between restart attempts
 export const BLOCKLIST_DOWNLOAD_TIMEOUT_MS = 60000;
-export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
-export const UPDATE_CHECK_DELAY_MS    = 30000;               // 30 seconds
+export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;      // 1 hour
+export const UPDATE_CHECK_DELAY_MS    = 0;                    // check immediately on startup
 export const GITHUB_REPO              = 'fatcat/cidrella';    // owner/repo for update checks
 
 export const DNSMASQ_INTERNAL_PORT     = 5353;                  // dnsmasq DNS port (proxy-fronted)

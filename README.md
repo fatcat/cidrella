@@ -40,6 +40,26 @@ Choose your deployment method:
 - **[Docker](INSTALL-DOCKER.md)** — Quick start for development and testing
 - **[Native (Debian/Ubuntu)](INSTALL-NATIVE.md)** — Recommended for production on bare metal or LXC
 
+## Upgrading
+
+CIDRella checks for new releases on startup and every hour. When an update is available, a blue badge appears in the header bar.
+
+**In-app (native deployments):**
+Navigate to **System > Updates** and click **Install Update**. CIDRella will download, verify, and install the release automatically — including a backup of the current installation.
+
+**Command line:**
+```bash
+sudo cidrella-update               # update to latest
+sudo cidrella-update --version 0.5.0  # update to specific version
+```
+
+The update script (`/opt/cidrella/update.sh`) backs up the current installation, downloads and verifies the release tarball, installs dependencies, and restarts services. Database migrations run automatically on startup.
+
+**Docker:**
+```bash
+docker compose pull && docker compose up -d
+```
+
 ## Architecture
 
 | Layer | Technology |

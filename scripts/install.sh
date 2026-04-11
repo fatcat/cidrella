@@ -79,7 +79,7 @@ while [[ $# -gt 0 ]]; do
     --force) FORCE_INSTALL=true; shift ;;
     --update)
       echo "For updates, use: cidrella-update"
-      echo "Or: /opt/cidrella/scripts/update.sh"
+      echo "Or: /opt/cidrella/update.sh"
       exit 0
       ;;
     *) err "Unknown argument: $1"; exit 1 ;;
@@ -137,8 +137,8 @@ if [ -d "$INSTALL_DIR" ]; then
     warn "Overwriting existing installation at $INSTALL_DIR (--force)."
   else
     warn "CIDRella is already installed at $INSTALL_DIR."
-    if [ -f "$INSTALL_DIR/scripts/update.sh" ]; then
-      info "To update, run: $INSTALL_DIR/scripts/update.sh"
+    if [ -f "$INSTALL_DIR/update.sh" ]; then
+      info "To update, run: $INSTALL_DIR/update.sh"
     fi
     if ! ask_yn "Reinstall / overwrite?"; then
       exit 0
@@ -235,7 +235,7 @@ fi
 # ═══════════════════════════════════════════════════════════
 
 info "Installing system dependencies..."
-apt-get install -y -qq build-essential nmap arping openssl curl dnsutils rsync sudo python3 python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
+apt-get install -y -qq build-essential nmap arping openssl curl dnsutils rsync sudo minisign python3 python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
 ok "System packages installed."
 
 # ═══════════════════════════════════════════════════════════
@@ -431,9 +431,9 @@ systemctl daemon-reload
 # CREATE UPDATE SYMLINK
 # ═══════════════════════════════════════════════════════════
 
-if [ -f "$INSTALL_DIR/scripts/update.sh" ]; then
-  ln -sf "$INSTALL_DIR/scripts/update.sh" /usr/local/bin/cidrella-update
-  chmod +x "$INSTALL_DIR/scripts/update.sh"
+if [ -f "$INSTALL_DIR/update.sh" ]; then
+  ln -sf "$INSTALL_DIR/update.sh" /usr/local/bin/cidrella-update
+  chmod +x "$INSTALL_DIR/update.sh"
   ok "Update command: cidrella-update"
 fi
 

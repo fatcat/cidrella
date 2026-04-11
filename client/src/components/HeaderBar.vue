@@ -4,10 +4,11 @@
       <router-link to="/" class="logo" data-track="header-logo">CIDRella</router-link>
       <span v-if="health?.version" class="version-tag">
         v{{ health.version }}
-        <a v-if="updateInfo?.updateAvailable" :href="updateInfo.updateUrl" target="_blank"
+        <router-link v-if="updateInfo?.updateAvailable && !updateInfo?.isDocker"
+           to="/system?tab=updates"
            class="update-badge" :title="`Update available: v${updateInfo.updateAvailable}`">
           <i class="pi pi-arrow-up"></i>
-        </a>
+        </router-link>
       </span>
       <nav class="header-nav">
         <router-link to="/analytics" class="nav-link" :class="{ active: route.path === '/analytics' }" data-track="nav-analytics">
@@ -518,7 +519,7 @@ onUnmounted(() => {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--p-orange-500);
+  background: var(--p-blue-500);
   color: white;
   font-size: 0.55rem;
   text-decoration: none;
@@ -526,12 +527,12 @@ onUnmounted(() => {
   animation: pulse-update 2s ease-in-out infinite;
 }
 .update-badge:hover {
-  background: var(--p-orange-600);
+  background: var(--p-blue-600);
 }
 
 @keyframes pulse-update {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(var(--p-orange-500), 0.4); }
-  50% { box-shadow: 0 0 0 4px transparent; }
+  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(59, 130, 246, 0); }
 }
 
 </style>

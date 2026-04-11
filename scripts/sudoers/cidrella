@@ -4,3 +4,5 @@ cidrella ALL=(root) NOPASSWD: /usr/bin/pkill -TERM -x dnsmasq
 cidrella ALL=(root) NOPASSWD: /usr/bin/systemctl restart cidrella-dnsmasq
 cidrella ALL=(root) NOPASSWD: /usr/bin/nmap *
 cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *
+# In-app updates — run update script in its own systemd scope
+cidrella ALL=(root) NOPASSWD: /usr/bin/systemd-run --scope --unit=cidrella-update /opt/cidrella/update.sh *

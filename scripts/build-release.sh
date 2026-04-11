@@ -41,6 +41,12 @@ if [ "$DRY_RUN" = true ]; then
   echo ""
 fi
 
+# Check minisign is installed (needed for all modes)
+if ! command -v minisign &>/dev/null; then
+  echo "Error: 'minisign' is required for signing. Install: apt install minisign"
+  exit 1
+fi
+
 if [ "$BUILD_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
   # Check gh is installed
   if ! command -v gh &>/dev/null; then
@@ -79,7 +85,7 @@ fi
 
 # ─── Step 1: Build client ────────────────────────────────
 
-echo "[1/5] Building client..."
+echo "[1/6] Building client..."
 if [ "$DRY_RUN" = false ]; then
   cd "$PROJECT_DIR/client"
   npm ci --silent
@@ -91,7 +97,7 @@ fi
 
 # ─── Step 2: Stage files ─────────────────────────────────
 
-echo "[2/5] Staging release files..."
+echo "[2/6] Staging release files..."
 if [ "$DRY_RUN" = false ]; then
   rm -rf "$STAGING_DIR"
   mkdir -p "$STAGING_DIR"
@@ -106,8 +112,11 @@ if [ "$DRY_RUN" = false ]; then
   # dnsmasq config templates
   cp -a "$PROJECT_DIR/dnsmasq" "$STAGING_DIR/dnsmasq"
 
-  # Scripts (install, update, systemd, sudoers)
+  # Scripts (install, systemd, sudoers)
   cp -a "$PROJECT_DIR/scripts" "$STAGING_DIR/scripts"
+
+  # Update script (root level for visibility)
+  cp "$PROJECT_DIR/update.sh" "$STAGING_DIR/update.sh"
 
   # Root package.json (version source)
   cp "$PROJECT_DIR/package.json" "$STAGING_DIR/package.json"
@@ -120,7 +129,7 @@ fi
 
 # ─── Step 3: Create tarball ──────────────────────────────
 
-echo "[3/5] Creating tarball..."
+echo "[3/6] Creating tarball..."
 if [ "$DRY_RUN" = false ]; then
   mkdir -p "$DIST_DIR"
   cd "$DIST_DIR"
@@ -133,21 +142,32 @@ else
   echo "  [DRY RUN] Would create dist/$TARBALL"
 fi
 
+# ─── Step 4: Sign tarball ────────────────────────────────
+
+echo "[4/6] Signing tarball..."
+if [ "$DRY_RUN" = false ]; then
+  minisign -Sm "$DIST_DIR/$TARBALL"
+  echo "  Signature: dist/${TARBALL}.minisig"
+else
+  echo "  [DRY RUN] Would run: minisign -Sm dist/$TARBALL"
+fi
+
 if [ "$BUILD_ONLY" = true ]; then
   echo ""
   echo "=== Build complete (--build-only) ==="
-  echo "  Tarball: dist/$TARBALL"
+  echo "  Tarball:   dist/$TARBALL"
+  echo "  Signature: dist/${TARBALL}.minisig"
   echo ""
   echo "To publish manually:"
   echo "  git tag -a $TAG -m 'Release $TAG'"
   echo "  git push origin $TAG"
-  echo "  gh release create $TAG dist/$TARBALL --title 'CIDRella $TAG' --generate-notes"
+  echo "  gh release create $TAG dist/$TARBALL dist/${TARBALL}.minisig --title 'CIDRella $TAG' --generate-notes"
   exit 0
 fi
 
-# ─── Step 4: Create and push git tag ─────────────────────
+# ─── Step 5: Create and push git tag ─────────────────────
 
-echo "[4/5] Creating git tag $TAG..."
+echo "[5/6] Creating git tag $TAG..."
 if [ "$DRY_RUN" = false ]; then
   git tag -a "$TAG" -m "Release $TAG"
   echo "  Tag $TAG created locally."
@@ -159,23 +179,25 @@ else
   echo "  [DRY RUN] Would run: git tag -a $TAG -m 'Release $TAG' && git push origin $TAG"
 fi
 
-# ─── Step 5: Create GitHub release ───────────────────────
+# ─── Step 6: Create GitHub release ───────────────────────
 
-echo "[5/5] Creating GitHub release..."
+echo "[6/6] Creating GitHub release..."
 if [ "$DRY_RUN" = false ]; then
   gh release create "$TAG" \
     "$DIST_DIR/$TARBALL" \
+    "$DIST_DIR/${TARBALL}.minisig" \
     --title "CIDRella $TAG" \
     --generate-notes
 
   RELEASE_URL=$(gh release view "$TAG" --json url -q '.url')
   echo ""
   echo "=== Release published ==="
-  echo "  Tag:     $TAG"
-  echo "  Tarball: dist/$TARBALL"
-  echo "  URL:     $RELEASE_URL"
+  echo "  Tag:       $TAG"
+  echo "  Tarball:   dist/$TARBALL"
+  echo "  Signature: dist/${TARBALL}.minisig"
+  echo "  URL:       $RELEASE_URL"
 else
-  echo "  [DRY RUN] Would run: gh release create $TAG dist/$TARBALL --title 'CIDRella $TAG' --generate-notes"
+  echo "  [DRY RUN] Would run: gh release create $TAG dist/$TARBALL dist/${TARBALL}.minisig --title 'CIDRella $TAG' --generate-notes"
   echo ""
   echo "=== Dry run complete ==="
 fi

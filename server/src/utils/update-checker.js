@@ -61,8 +61,13 @@ let timer = null;
 export function startUpdateScheduler() {
   if (timer) return;
 
-  setTimeout(() => {
+  if (UPDATE_CHECK_DELAY_MS > 0) {
+    setTimeout(() => {
+      checkForUpdates();
+      timer = setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
+    }, UPDATE_CHECK_DELAY_MS);
+  } else {
     checkForUpdates();
     timer = setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
-  }, UPDATE_CHECK_DELAY_MS);
+  }
 }
