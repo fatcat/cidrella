@@ -33,19 +33,40 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 ## Installation
 
-> **Warning**: While no known vulnerabilities exist in this application it would be unwise to expose its open ports on a public network. Always secure your infrastructure.
+> **Use caution**: While no known vulnerabilities exist in this application, it would be unwise to expose its open ports on a public network. Always secure your infrastructure.
 
-Choose your deployment method:
+> **Only install CIDRella from the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Starting with v0.4.1, every release tarball is cryptographically signed using [minisign](https://jedisct1.github.io/minisign/). Both the install script and the update script automatically verify the signature before applying changes. This ensures the tarball you are installing was built by the project maintainer and has not been modified. **Do not install or update using a tarball obtained from any other source** — there is no way to verify its authenticity or integrity.
 
-- **[Docker](INSTALL-DOCKER.md)** — Quick start for development and testing
-- **[Native (Debian/Ubuntu)](INSTALL-NATIVE.md)** — Recommended for production on bare metal or LXC
+**Cloning the repository** is suitable for development and code review. For production deployments, use the install script or a release tarball — these include the pre-built frontend and are signature-verified.
+
+### Option 1: Automated install (Debian/Ubuntu)
+
+Download and review the install script, then run it:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh -o install.sh
+less install.sh    # review before running
+sudo bash install.sh
+```
+
+The script installs all dependencies (Node.js, dnsmasq, minisign, etc.), downloads the latest signed release from GitHub, verifies the signature, and configures systemd services. See **[INSTALL-NATIVE.md](INSTALL-NATIVE.md)** for full details.
+
+### Option 2: Docker
+
+For development and testing:
+
+```bash
+docker compose up -d
+```
+
+See **[INSTALL-DOCKER.md](INSTALL-DOCKER.md)** for full details. Note: in-app updates are not available in Docker — update by pulling the latest image.
 
 ## Upgrading
 
 CIDRella checks for new releases on startup and every hour. When an update is available, a blue badge appears in the header bar.
 
 **In-app (native deployments):**
-Navigate to **System > Updates** and click **Install Update**. CIDRella will download, verify, and install the release automatically — including a backup of the current installation.
+Navigate to **System > Updates** and click **Install Update**. CIDRella will download the release from GitHub, verify the signature, back up the current installation, and apply the update automatically.
 
 **Command line:**
 ```bash
@@ -53,12 +74,14 @@ sudo cidrella-update               # update to latest
 sudo cidrella-update --version 0.5.0  # update to specific version
 ```
 
-The update script (`/opt/cidrella/update.sh`) backs up the current installation, downloads and verifies the release tarball, installs dependencies, and restarts services. Database migrations run automatically on startup.
+The update script (`/opt/cidrella/update.sh`) backs up the current installation, downloads and verifies the signed release tarball, installs dependencies, and restarts services. Database migrations run automatically on startup.
 
 **Docker:**
 ```bash
 docker compose pull && docker compose up -d
 ```
+
+> **Do not apply updates using tarballs downloaded from sources other than the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Manually extracting an unverified tarball bypasses signature verification and could compromise your network infrastructure.
 
 ## Architecture
 

@@ -16,6 +16,7 @@ INSTALL_DIR="/opt/cidrella"
 DATA_DIR="/var/lib/cidrella"
 SERVICE_USER="cidrella"
 REQUESTED_VERSION=""
+MINISIGN_PUBKEY="RWT6J/NrAcT9LsHz9fQG8sAbcsfp58uRxiYx3YbZUpm28lFwjaVi4wQe"
 FORCE_INSTALL=false
 NODE_MAJOR=22
 
@@ -334,6 +335,30 @@ TMPDIR=$(mktemp -d)
 trap "rm -rf '$TMPDIR'" EXIT
 
 curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
+
+# Download and verify signature
+MINISIG_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.minisig"' | sed 's/"$//' | head -1)
+if [ -z "$MINISIG_URL" ]; then
+  MINISIG_URL="${TARBALL_URL}.minisig"
+fi
+
+if command -v minisign &>/dev/null; then
+  curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" || {
+    err "Failed to download signature file. Aborting."
+    exit 1
+  }
+  PUBKEY_TMP="$TMPDIR/cidrella.pub"
+  printf 'untrusted comment: minisign public key\n%s\n' "$MINISIGN_PUBKEY" > "$PUBKEY_TMP"
+  if minisign -Vm "$TMPDIR/cidrella.tar.gz" -p "$PUBKEY_TMP" >/dev/null 2>&1; then
+    ok "Signature verified."
+  else
+    err "Signature verification failed! The download may be corrupted or tampered with."
+    exit 1
+  fi
+else
+  warn "minisign not installed — skipping signature verification."
+fi
+
 mkdir -p "$INSTALL_DIR"
 tar -xzf "$TMPDIR/cidrella.tar.gz" -C "$TMPDIR"
 
