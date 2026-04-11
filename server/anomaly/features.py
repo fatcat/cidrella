@@ -28,9 +28,17 @@ def _parse_ts(s):
     return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
 
-def _query(sql, params=None):
-    """Execute a SELECT query against DuckDB via the Node.js internal API."""
-    body = json.dumps({"sql": sql, "params": params or []}).encode()
+def _serialize(val):
+    """Convert Python objects to JSON-safe types."""
+    if isinstance(val, datetime):
+        return val.isoformat()
+    return val
+
+
+def _query(query_name, **params):
+    """Execute a named query against DuckDB via the Node.js internal API."""
+    safe_params = {k: _serialize(v) for k, v in params.items()}
+    body = json.dumps({"query": query_name, **safe_params}).encode()
     req = urllib.request.Request(
         _API_URL,
         data=body,
@@ -41,9 +49,9 @@ def _query(sql, params=None):
         return result.get("rows", [])
 
 
-def _query_one(sql, params=None):
-    """Execute a query and return the first row."""
-    rows = _query(sql, params)
+def _query_one(query_name, **params):
+    """Execute a named query and return the first row."""
+    rows = _query(query_name, **params)
     return rows[0] if rows else None
 
 
@@ -60,21 +68,13 @@ def _shannon_entropy(s):
 
 def get_active_clients(hours=24):
     """Return list of distinct client IPs seen in the last N hours."""
-    hours = int(hours)
-    rows = _query(
-        f"SELECT DISTINCT client_ip FROM dns_queries "
-        f"WHERE ts >= NOW() - INTERVAL '{hours} HOURS'",
-    )
+    rows = _query("anomaly-active-clients", hours=int(hours))
     return [r["client_ip"] for r in rows]
 
 
 def get_client_history_hours(client_ip):
     """How many hours of data exist for this client."""
-    row = _query_one(
-        "SELECT EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) / 3600.0 AS hours "
-        "FROM dns_queries WHERE client_ip = ?",
-        [client_ip],
-    )
+    row = _query_one("anomaly-client-history-hours", client_ip=client_ip)
     return row["hours"] if row and row.get("hours") else 0.0
 
 
@@ -84,11 +84,10 @@ def extract_features(client_ip, window_start, window_end):
     Returns a numpy array matching FEATURE_NAMES order, or None if no data.
     """
     rows = _query(
-        "SELECT ts, domain, query_type, response_code, action, resolved_ip "
-        "FROM dns_queries "
-        "WHERE client_ip = ? AND ts >= ? AND ts < ? "
-        "ORDER BY ts",
-        [client_ip, window_start, window_end],
+        "anomaly-client-window-events",
+        client_ip=client_ip,
+        window_start=window_start,
+        window_end=window_end,
     )
 
     if not rows:
@@ -190,9 +189,10 @@ def extract_features_with_history(client_ip, window_start, window_end,
     # Compute new domain ratio
     window_domains = set(
         r["domain"] for r in _query(
-            "SELECT DISTINCT domain FROM dns_queries "
-            "WHERE client_ip = ? AND ts >= ? AND ts < ?",
-            [client_ip, window_start, window_end],
+            "anomaly-client-window-domains",
+            client_ip=client_ip,
+            window_start=window_start,
+            window_end=window_end,
         )
     )
 
@@ -201,12 +201,12 @@ def extract_features_with_history(client_ip, window_start, window_end,
         new_ratio = new_count / len(window_domains)
     elif window_domains:
         # Fallback: query historical domains (used during single-window scoring)
-        days = int(lookback_days)
         hist = set(
             r["domain"] for r in _query(
-                "SELECT DISTINCT domain FROM dns_queries "
-                f"WHERE client_ip = ? AND ts >= ? - INTERVAL '{days} DAYS' AND ts < ?",
-                [client_ip, window_start, window_start],
+                "anomaly-client-historical-domains",
+                client_ip=client_ip,
+                window_start=window_start,
+                lookback_days=int(lookback_days),
             )
         )
         new_count = sum(1 for d in window_domains if d not in hist)
@@ -227,9 +227,9 @@ def extract_training_data(client_ip, lookback_days=7):
     # Get time range
     days = int(lookback_days)
     row = _query_one(
-        "SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts FROM dns_queries "
-        f"WHERE client_ip = ? AND ts >= NOW() - INTERVAL '{days} DAYS'",
-        [client_ip],
+        "anomaly-client-training-range",
+        client_ip=client_ip,
+        lookback_days=days,
     )
 
     if not row or not row.get("min_ts"):
@@ -252,10 +252,9 @@ def extract_training_data(client_ip, lookback_days=7):
     # Pre-fetch ALL historical domains for this client in the lookback period.
     # This avoids the O(N^2) per-window historical query.
     all_historical = _query(
-        "SELECT DISTINCT domain, MIN(ts) AS first_seen FROM dns_queries "
-        f"WHERE client_ip = ? AND ts >= NOW() - INTERVAL '{days} DAYS' "
-        "GROUP BY domain",
-        [client_ip],
+        "anomaly-client-domain-first-seen",
+        client_ip=client_ip,
+        lookback_days=days,
     )
     # Build a dict: domain → first_seen timestamp
     domain_first_seen = {r["domain"]: _parse_ts(r["first_seen"]) for r in all_historical}
