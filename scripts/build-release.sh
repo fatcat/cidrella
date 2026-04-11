@@ -146,7 +146,8 @@ fi
 
 echo "[4/6] Signing tarball..."
 if [ "$DRY_RUN" = false ]; then
-  minisign -Sm "$DIST_DIR/$TARBALL"
+  MINISIGN_KEY="${MINISIGN_KEY:-$HOME/.minisign/cidrella.key}"
+  minisign -Sm "$DIST_DIR/$TARBALL" -s "$MINISIGN_KEY"
   echo "  Signature: dist/${TARBALL}.minisig"
 else
   echo "  [DRY RUN] Would run: minisign -Sm dist/$TARBALL"
