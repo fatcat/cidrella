@@ -4,6 +4,7 @@ import PrimeVue from 'primevue/config';
 import { updatePreset, updateSurfacePalette } from '@primeuix/themes';
 import Aura from '@primevue/themes/aura';
 import ToastService from 'primevue/toastservice';
+import ConfirmationService from 'primevue/confirmationservice';
 import Tooltip from 'primevue/tooltip';
 import 'primeicons/primeicons.css';
 
@@ -38,6 +39,7 @@ app.use(PrimeVue, {
   }
 });
 app.use(ToastService);
+app.use(ConfirmationService);
 app.directive('tooltip', Tooltip);
 
 // Theme switching — listen for theme change events and update PrimeVue preset

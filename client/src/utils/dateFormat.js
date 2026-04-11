@@ -7,11 +7,14 @@ function hourOption() {
   return {}; // locale default
 }
 
+/** True if the string already carries a timezone indicator (Z or ±HH:MM) */
+const hasTZ = (s) => /Z|[+-]\d{2}:\d{2}$/.test(String(s));
+
 /** Full date + time (replaces most formatDate functions) */
 export function formatDateTime(dateStr) {
   if (!dateStr) return '—';
   try {
-    const d = new Date(dateStr + (String(dateStr).includes('Z') ? '' : 'Z'));
+    const d = new Date(dateStr + (hasTZ(dateStr) ? '' : 'Z'));
     if (isNaN(d)) return '—';
     return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...hourOption() });
   } catch { return String(dateStr); }
@@ -21,7 +24,7 @@ export function formatDateTime(dateStr) {
 export function formatDateOnly(dateStr) {
   if (!dateStr) return '—';
   try {
-    const d = new Date(dateStr + (String(dateStr).includes('Z') ? '' : 'Z'));
+    const d = new Date(dateStr + (hasTZ(dateStr) ? '' : 'Z'));
     if (isNaN(d)) return '—';
     return d.toLocaleDateString();
   } catch { return String(dateStr); }
@@ -31,7 +34,7 @@ export function formatDateOnly(dateStr) {
 export function formatTimeOnly(dateStr) {
   if (!dateStr) return '—';
   try {
-    const d = new Date(dateStr + (String(dateStr).includes('Z') ? '' : 'Z'));
+    const d = new Date(dateStr + (hasTZ(dateStr) ? '' : 'Z'));
     if (isNaN(d)) return '—';
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...hourOption() });
   } catch { return String(dateStr); }
@@ -48,7 +51,7 @@ export function formatTimeWithSeconds(date) {
 /** Short date + time for scan display (e.g. "Mar 5 - 14:30") */
 export function formatScanDate(dateStr) {
   if (!dateStr) return null;
-  const d = new Date(dateStr + (String(dateStr).endsWith('Z') ? '' : 'Z'));
+  const d = new Date(dateStr + (hasTZ(dateStr) ? '' : 'Z'));
   if (isNaN(d)) return null;
   const mon = d.toLocaleString('en-US', { month: 'short' });
   const day = d.getDate();

@@ -96,10 +96,13 @@ def explain_anomaly(model, feature_vector, client_median):
     for name, contrib in contributions[:3]:
         if contrib <= 0:
             break  # no more positive contributors
+        idx = FEATURE_NAMES.index(name)
         top3.append({
             "feature": name,
             "label": FEATURE_LABELS.get(name, name),
             "contribution": round(contrib, 4),
+            "observed": round(float(feature_vector[idx]), 4),
+            "baseline": round(float(client_median[idx]), 4),
         })
 
     return top3

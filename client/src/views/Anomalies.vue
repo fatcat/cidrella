@@ -107,47 +107,75 @@
         </template>
       </Column>
 
-      <Column field="top_features" header="Factors" style="min-width: 180px">
-        <template #body="{ data }">
-          <div v-if="data.top_features?.length" class="factor-cell">
-            <Tag :value="topFactor(data).label" severity="info" class="feature-tag" />
-            <Button v-if="data.top_features.length > 1"
-                    :label="`+${data.top_features.length - 1}`"
-                    severity="secondary" text size="small" rounded
-                    class="factor-more-btn"
-                    @click="toggleFactors($event, data)"
-                    data-track="anomalies-factors-expand" />
-          </div>
-          <span v-else class="text-muted">--</span>
-        </template>
-      </Column>
-
-      <Column header="Actions" style="width: 100px; text-align: center">
+      <Column header="" style="width: 130px; text-align: center">
         <template #body="{ data }">
           <div class="action-btns">
+            <Button icon="pi pi-info-circle" severity="secondary" text rounded size="small"
+                    title="View details" data-track="anomalies-details"
+                    @click="toggleFactorPopover($event, data)" />
             <Button icon="pi pi-shield" severity="secondary" text rounded size="small"
                     title="Whitelist client" data-track="anomalies-whitelist"
                     @click="handleWhitelist(data)" />
             <Button icon="pi pi-trash" severity="danger" text rounded size="small"
                     title="Delete" data-track="anomalies-delete"
-                    @click="handleDelete(data.id)" />
+                    @click="confirmDelete($event, data.id)" />
           </div>
         </template>
       </Column>
     </DataTable>
 
     <!-- Factor Detail Popover -->
-    <Popover ref="factorPopoverRef">
-      <div class="factor-popover">
-        <div v-for="f in factorPopoverData" :key="f.feature" class="factor-row">
-          <Tag :value="f.label" severity="info" class="feature-tag" />
-          <div class="factor-bar-track">
-            <div class="factor-bar-fill" :style="{ width: Math.min(f.contribution * 100, 100) + '%' }"></div>
+    <Popover ref="factorPopoverRef" class="factor-popover-panel" data-track="anomalies-factor-popover">
+      <div v-if="popoverData" class="factor-popover">
+        <div class="popover-header">
+          <Tag :value="popoverData.severity" :severity="severityColor(popoverData.severity)" />
+          <span class="popover-score">Score: {{ popoverData.anomaly_score?.toFixed(3) }}</span>
+        </div>
+        <div class="popover-client">
+          {{ popoverData.client_ip }}
+          <span v-if="popoverData.hostname" class="text-muted">({{ popoverData.hostname }})</span>
+        </div>
+        <div class="popover-time text-muted">Detected: {{ formatTime(popoverData.scored_at) }}</div>
+
+        <div class="factor-list" v-if="popoverFactors.length">
+          <div v-for="(f, i) in popoverFactors" :key="f.feature" class="factor-item">
+            <div class="factor-item-header">
+              <span class="factor-rank">{{ i + 1 }}.</span>
+              <span class="factor-name">{{ f.label }}</span>
+              <span v-if="f.observed != null" class="factor-direction"
+                    :class="f.observed > f.baseline ? 'dir-up' : 'dir-down'">
+                {{ f.observed > f.baseline ? '\u25B2' : '\u25BC' }}
+              </span>
+              <span class="factor-contrib">{{ Math.round(f.contribution * 100) }}%</span>
+            </div>
+            <div v-if="f.observed != null" class="factor-values">
+              Observed: <strong>{{ formatFeatureValue(f.feature, f.observed) }}</strong>
+              <span class="text-muted"> / Baseline: {{ formatFeatureValue(f.feature, f.baseline) }}</span>
+            </div>
+            <div class="factor-bar">
+              <div class="factor-bar-fill" :class="contribBarClass(f.contribution)"
+                   :style="{ width: Math.min(f.contribution * 100, 100) + '%' }"></div>
+            </div>
+            <div class="factor-desc text-muted">{{ FACTOR_DESCRIPTIONS[f.label] || '' }}</div>
           </div>
-          <span class="factor-pct">{{ Math.round(f.contribution * 100) }}%</span>
+        </div>
+        <div v-else class="text-muted" style="font-size: 0.85rem; padding: 0.5rem 0;">
+          No contributing factor data available.
+        </div>
+
+        <div class="popover-actions">
+          <Button label="Whitelist" icon="pi pi-shield" severity="secondary" text size="small"
+                  data-track="anomalies-popover-whitelist"
+                  @click="handleWhitelist(popoverData); factorPopoverRef.hide()" />
+          <Button label="View History" icon="pi pi-history" severity="secondary" text size="small"
+                  data-track="anomalies-popover-history"
+                  @click="openClientDetail(popoverData.client_ip); factorPopoverRef.hide()" />
         </div>
       </div>
     </Popover>
+
+    <!-- Delete Confirmation -->
+    <ConfirmPopup />
 
     <!-- Whitelist Confirmation Dialog -->
     <Dialog v-model:visible="whitelistDialogVisible" header="Whitelist Client" :modal="true"
@@ -221,6 +249,7 @@ import Button from 'primevue/button';
 import Dialog from 'primevue/dialog';
 import Select from 'primevue/select';
 import Popover from 'primevue/popover';
+import ConfirmPopup from 'primevue/confirmpopup';
 import InputText from 'primevue/inputtext';
 import {
   Chart as ChartJS,
@@ -233,20 +262,76 @@ import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import '../assets/analytics-layout.css';
 import { formatDateTime } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
+import { useConfirm } from 'primevue/useconfirm';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 ChartJS.defaults.elements.line.borderWidth = 1;
 
 const store = useAnomalyStore();
 const toast = useToast();
+const confirm = useConfirm();
 
 const severityFilter = ref(null);
 const clientDialogVisible = ref(false);
 const selectedClient = ref('');
 
-// Factor popover state
+// Factor detail popover
 const factorPopoverRef = ref(null);
-const factorPopoverData = ref([]);
+const popoverData = ref(null);
+
+const popoverFactors = computed(() => {
+  if (!popoverData.value?.top_features?.length) return [];
+  return [...popoverData.value.top_features].sort((a, b) => b.contribution - a.contribution);
+});
+
+const FACTOR_DESCRIPTIONS = {
+  "Unusual time of day": "DNS queries are happening at hours this client doesn't normally generate traffic.",
+  "Unusual day of week": "Query patterns differ from this client's typical day-of-week behavior.",
+  "Abnormal query volume": "The total number of DNS queries is significantly different from this client's learned baseline.",
+  "Bursty query pattern": "Queries are arriving in sharp bursts rather than the client's normal steady pattern.",
+  "Unusual number of distinct domains": "The client is querying far more or fewer unique domains than usual.",
+  "High ratio of never-before-seen domains": "A large proportion of queried domains have never been seen before from this client.",
+  "High-entropy domains (possible DGA)": "Domain names have unusually random character patterns, which can indicate domain generation algorithms used by malware.",
+  "Unusually long domain names": "Queries include abnormally long domain names, sometimes used for DNS tunneling or data exfiltration.",
+  "Deep subdomain nesting": "Domains have more subdomain levels than typical, which can indicate tunneling.",
+  "Unusual TLD diversity": "The client is querying an unusual variety of top-level domains compared to its baseline.",
+  "High NXDOMAIN rate": "A large fraction of queries are returning NXDOMAIN (non-existent domain), which can indicate scanning or DGA activity.",
+  "High blocked query rate": "An unusually high percentage of this client's queries are being blocked by the blocklist.",
+  "Unusual A record ratio": "The proportion of A (IPv4) record queries differs significantly from this client's normal mix.",
+  "Unusual AAAA record ratio": "The proportion of AAAA (IPv6) record queries differs significantly from this client's normal mix.",
+  "Unusual non-A/AAAA query types": "The client is making an unusual number of non-standard query types (MX, TXT, SRV, etc.).",
+  "Unusual query type diversity": "The variety of DNS query types is different from this client's typical behavior.",
+  "Unusual number of resolved IPs": "Queries are resolving to a significantly different number of unique IP addresses than expected.",
+  "High unresolved query ratio": "A large fraction of queries are failing to resolve, which can indicate probing or misconfiguration.",
+};
+
+// Features that are counts (display as integers), rest are ratios (display as decimals)
+const COUNT_FEATURES = new Set([
+  'query_count', 'unique_domain_count', 'max_domain_length', 'unique_resolved_ips',
+]);
+const RATIO_FEATURES = new Set([
+  'burst_ratio', 'new_domain_ratio', 'nxdomain_ratio', 'block_ratio',
+  'type_a_ratio', 'type_aaaa_ratio', 'type_other_ratio', 'null_resolved_ratio',
+]);
+
+function formatFeatureValue(feature, value) {
+  if (value == null) return '--';
+  if (COUNT_FEATURES.has(feature)) return Math.round(value).toLocaleString();
+  if (RATIO_FEATURES.has(feature)) return (value * 100).toFixed(1) + '%';
+  return value.toFixed(2); // entropy, diversity, depth
+}
+
+function contribBarClass(contribution) {
+  const pct = contribution * 100;
+  if (pct >= 30) return 'bar-high';
+  if (pct >= 15) return 'bar-medium';
+  return 'bar-low';
+}
+
+function toggleFactorPopover(event, row) {
+  popoverData.value = row;
+  factorPopoverRef.value.toggle(event);
+}
 
 // Whitelist dialog state
 const whitelistDialogVisible = ref(false);
@@ -264,15 +349,6 @@ function severityColor(severity) {
   if (severity === 'high') return 'danger';
   if (severity === 'medium') return 'warn';
   return 'info';
-}
-
-function topFactor(row) {
-  return [...row.top_features].sort((a, b) => b.contribution - a.contribution)[0];
-}
-
-function toggleFactors(event, row) {
-  factorPopoverData.value = [...row.top_features].sort((a, b) => b.contribution - a.contribution);
-  factorPopoverRef.value.toggle(event);
 }
 
 function timeAgo(iso) {
@@ -300,12 +376,23 @@ async function refreshAll() {
   await store.fetchAll(severityFilter.value);
 }
 
-async function handleDelete(id) {
-  try {
-    await store.deleteAnomaly(id);
-  } catch {
-    toast.add({ severity: 'error', summary: 'Failed to delete anomaly', life: 3000 });
-  }
+function confirmDelete(event, id) {
+  confirm.require({
+    target: event.currentTarget,
+    message: 'Delete this anomaly? This cannot be undone.',
+    icon: 'pi pi-exclamation-triangle',
+    rejectLabel: 'Cancel',
+    acceptLabel: 'Delete',
+    acceptClass: 'p-button-danger p-button-sm',
+    rejectClass: 'p-button-text p-button-sm',
+    accept: async () => {
+      try {
+        await store.deleteAnomaly(id);
+      } catch {
+        toast.add({ severity: 'error', summary: 'Failed to delete anomaly', life: 3000 });
+      }
+    },
+  });
 }
 
 function handleWhitelist(row) {
@@ -435,66 +522,124 @@ useAutoRefresh(refreshAll);
   text-decoration: underline;
 }
 
-/* Contributing factors — inline top factor + popover */
-.factor-cell {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.feature-tag {
-  font-size: 0.7rem;
-}
-
-.factor-more-btn {
-  font-size: 0.7rem;
-  padding: 0.15rem 0.4rem;
-  min-width: unset;
-}
-
-/* Factor popover detail */
-.factor-popover {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  min-width: 240px;
-  max-width: 320px;
-}
-
-.factor-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.factor-bar-track {
-  flex: 1;
-  height: 4px;
-  background: var(--p-surface-200);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.factor-bar-fill {
-  height: 100%;
-  background: var(--p-primary-color);
-  border-radius: 2px;
-  transition: width 0.2s ease;
-}
-
-.factor-pct {
-  font-size: 0.7rem;
-  color: var(--p-text-muted-color);
-  min-width: 2rem;
-  text-align: right;
-}
-
 /* Action buttons */
 .action-btns {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.25rem;
+  gap: 0.15rem;
+}
+
+/* Factor detail popover */
+.factor-popover {
+  max-width: 380px;
+  min-width: 320px;
+}
+
+.popover-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.popover-score {
+  font-family: monospace;
+  font-size: 0.85rem;
+  color: var(--p-text-muted-color);
+}
+
+.popover-client {
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.15rem;
+}
+
+.popover-time {
+  font-size: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid var(--p-surface-border);
+}
+
+.factor-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.factor-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.factor-item-header {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.factor-rank {
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--p-text-muted-color);
+  min-width: 1.2rem;
+}
+
+.factor-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  flex: 1;
+}
+
+.factor-direction {
+  font-size: 0.75rem;
+}
+.dir-up { color: var(--p-red-500); }
+.dir-down { color: var(--p-blue-500); }
+
+.factor-contrib {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--p-text-muted-color);
+}
+
+.factor-values {
+  font-size: 0.78rem;
+  font-family: monospace;
+  padding-left: 1.2rem;
+}
+
+.factor-bar {
+  height: 4px;
+  background: var(--p-surface-200);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 0.15rem 0 0.1rem 1.2rem;
+}
+
+.factor-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+.bar-high { background: var(--p-red-500); }
+.bar-medium { background: var(--p-orange-500); }
+.bar-low { background: var(--p-blue-500); }
+
+.factor-desc {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  padding-left: 1.2rem;
+}
+
+.popover-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--p-surface-border);
 }
 
 .text-muted {
