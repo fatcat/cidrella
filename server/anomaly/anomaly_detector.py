@@ -83,6 +83,9 @@ def train_all_clients():
     sensitivity = get_sensitivity()
     min_hours = get_min_training_hours()
     active_clients = features.get_active_clients(hours=24)
+    whitelisted = storage.get_whitelisted_clients()
+    if whitelisted:
+        active_clients = [c for c in active_clients if c not in whitelisted]
     log.info("Training models for %d active clients (sensitivity=%s)", len(active_clients), sensitivity)
 
     trained = 0
@@ -140,6 +143,9 @@ def score_all_clients():
     window_start = window_end - timedelta(hours=FEATURE_WINDOW_HOURS)
 
     active_clients = features.get_active_clients(hours=24)
+    whitelisted = storage.get_whitelisted_clients()
+    if whitelisted:
+        active_clients = [c for c in active_clients if c not in whitelisted]
     scored = 0
     anomalies = 0
 

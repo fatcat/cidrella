@@ -75,49 +75,102 @@
         </div>
       </template>
 
-      <Column field="client_ip" header="Client IP" sortable style="min-width: 140px">
+      <Column field="client_ip" header="Client IP" sortable style="min-width: 120px">
         <template #body="{ data }">
           <a href="#" class="client-link" data-track="anomalies-client-click"
              @click.prevent="openClientDetail(data.client_ip)">{{ data.client_ip }}</a>
         </template>
       </Column>
 
-      <Column field="severity" header="Severity" sortable style="min-width: 100px">
+      <Column field="hostname" header="Hostname" sortable style="min-width: 120px">
+        <template #body="{ data }">
+          <span v-if="data.hostname">{{ data.hostname }}</span>
+          <span v-else class="text-muted">--</span>
+        </template>
+      </Column>
+
+      <Column field="severity" header="Severity" sortable style="min-width: 90px">
         <template #body="{ data }">
           <Tag :value="data.severity" :severity="severityColor(data.severity)" />
         </template>
       </Column>
 
-      <Column field="anomaly_score" header="Score" sortable style="min-width: 90px">
+      <Column field="anomaly_score" header="Score" sortable style="min-width: 80px">
         <template #body="{ data }">
           {{ data.anomaly_score.toFixed(3) }}
         </template>
       </Column>
 
-      <Column field="scored_at" header="Detected" sortable style="min-width: 160px">
+      <Column field="scored_at" header="Detected" sortable style="min-width: 140px">
         <template #body="{ data }">
           {{ formatTime(data.scored_at) }}
         </template>
       </Column>
 
-      <Column field="top_features" header="Contributing Factors" style="min-width: 250px">
+      <Column field="top_features" header="Factors" style="min-width: 180px">
         <template #body="{ data }">
-          <div v-if="data.top_features?.length" class="feature-tags">
-            <Tag v-for="f in data.top_features" :key="f.feature"
-                 :value="f.label" severity="info" class="feature-tag" />
+          <div v-if="data.top_features?.length" class="factor-cell">
+            <Tag :value="topFactor(data).label" severity="info" class="feature-tag" />
+            <Button v-if="data.top_features.length > 1"
+                    :label="`+${data.top_features.length - 1}`"
+                    severity="secondary" text size="small" rounded
+                    class="factor-more-btn"
+                    @click="toggleFactors($event, data)"
+                    data-track="anomalies-factors-expand" />
           </div>
           <span v-else class="text-muted">--</span>
         </template>
       </Column>
 
-      <Column header="" style="width: 80px">
+      <Column header="Actions" style="width: 100px; text-align: center">
         <template #body="{ data }">
-          <Button icon="pi pi-times" severity="secondary" text rounded size="small"
-                  title="Dismiss" data-track="anomalies-dismiss"
-                  @click="handleDismiss(data.id)" />
+          <div class="action-btns">
+            <Button icon="pi pi-shield" severity="secondary" text rounded size="small"
+                    title="Whitelist client" data-track="anomalies-whitelist"
+                    @click="handleWhitelist(data)" />
+            <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                    title="Delete" data-track="anomalies-delete"
+                    @click="handleDelete(data.id)" />
+          </div>
         </template>
       </Column>
     </DataTable>
+
+    <!-- Factor Detail Popover -->
+    <Popover ref="factorPopoverRef">
+      <div class="factor-popover">
+        <div v-for="f in factorPopoverData" :key="f.feature" class="factor-row">
+          <Tag :value="f.label" severity="info" class="feature-tag" />
+          <div class="factor-bar-track">
+            <div class="factor-bar-fill" :style="{ width: Math.min(f.contribution * 100, 100) + '%' }"></div>
+          </div>
+          <span class="factor-pct">{{ Math.round(f.contribution * 100) }}%</span>
+        </div>
+      </div>
+    </Popover>
+
+    <!-- Whitelist Confirmation Dialog -->
+    <Dialog v-model:visible="whitelistDialogVisible" header="Whitelist Client" :modal="true"
+            :closable="true" :style="{ width: '26rem' }">
+      <p>
+        Whitelist <strong>{{ whitelistTarget?.client_ip }}</strong>
+        <span v-if="whitelistTarget?.hostname"> ({{ whitelistTarget.hostname }})</span>
+        from anomaly detection?
+      </p>
+      <p class="text-muted" style="font-size: 0.85rem;">
+        This will stop monitoring this client and delete all existing anomaly scores and model data for it.
+      </p>
+      <div class="field" style="margin-top: 0.75rem;">
+        <label style="font-size: 0.85rem;">Reason (optional)</label>
+        <InputText v-model="whitelistReason" placeholder="e.g. Known scanner, expected behavior"
+                   fluid style="margin-top: 0.25rem;" />
+      </div>
+      <template #footer>
+        <Button label="Cancel" text @click="whitelistDialogVisible = false" />
+        <Button label="Whitelist" icon="pi pi-shield" severity="warn"
+                data-track="anomalies-whitelist-confirm" @click="confirmWhitelist" />
+      </template>
+    </Dialog>
 
     <!-- Client Detail Dialog -->
     <Dialog v-model:visible="clientDialogVisible" :header="`Anomaly History: ${selectedClient}`"
@@ -167,6 +220,8 @@ import Tag from 'primevue/tag';
 import Button from 'primevue/button';
 import Dialog from 'primevue/dialog';
 import Select from 'primevue/select';
+import Popover from 'primevue/popover';
+import InputText from 'primevue/inputtext';
 import {
   Chart as ChartJS,
   CategoryScale, LinearScale, PointElement, LineElement,
@@ -177,15 +232,26 @@ import { useAnomalyStore } from '../stores/anomalies.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import '../assets/analytics-layout.css';
 import { formatDateTime } from '../utils/dateFormat.js';
+import { useToast } from 'primevue/usetoast';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 ChartJS.defaults.elements.line.borderWidth = 1;
 
 const store = useAnomalyStore();
+const toast = useToast();
 
 const severityFilter = ref(null);
 const clientDialogVisible = ref(false);
 const selectedClient = ref('');
+
+// Factor popover state
+const factorPopoverRef = ref(null);
+const factorPopoverData = ref([]);
+
+// Whitelist dialog state
+const whitelistDialogVisible = ref(false);
+const whitelistTarget = ref(null);
+const whitelistReason = ref('');
 
 const severityOptions = [
   { label: 'All Severities', value: null },
@@ -198,6 +264,15 @@ function severityColor(severity) {
   if (severity === 'high') return 'danger';
   if (severity === 'medium') return 'warn';
   return 'info';
+}
+
+function topFactor(row) {
+  return [...row.top_features].sort((a, b) => b.contribution - a.contribution)[0];
+}
+
+function toggleFactors(event, row) {
+  factorPopoverData.value = [...row.top_features].sort((a, b) => b.contribution - a.contribution);
+  factorPopoverRef.value.toggle(event);
 }
 
 function timeAgo(iso) {
@@ -225,8 +300,29 @@ async function refreshAll() {
   await store.fetchAll(severityFilter.value);
 }
 
-async function handleDismiss(id) {
-  await store.dismissAnomaly(id);
+async function handleDelete(id) {
+  try {
+    await store.deleteAnomaly(id);
+  } catch {
+    toast.add({ severity: 'error', summary: 'Failed to delete anomaly', life: 3000 });
+  }
+}
+
+function handleWhitelist(row) {
+  whitelistTarget.value = row;
+  whitelistReason.value = '';
+  whitelistDialogVisible.value = true;
+}
+
+async function confirmWhitelist() {
+  try {
+    await store.whitelistClient(whitelistTarget.value.client_ip, whitelistReason.value || null);
+    whitelistDialogVisible.value = false;
+    toast.add({ severity: 'success', summary: 'Client whitelisted', detail: whitelistTarget.value.client_ip, life: 3000 });
+  } catch (err) {
+    const msg = err.response?.data?.error || 'Failed to whitelist client';
+    toast.add({ severity: 'error', summary: msg, life: 4000 });
+  }
 }
 
 async function openClientDetail(ip) {
@@ -238,7 +334,7 @@ async function openClientDetail(ip) {
   ]);
 }
 
-// Pre-sorted client history for chart (avoids re-sorting on every hover)
+// Pre-sorted client history for chart
 const sortedHistory = computed(() => {
   if (!store.clientHistory.length) return [];
   return [...store.clientHistory].sort((a, b) => a.window_start.localeCompare(b.window_start));
@@ -339,14 +435,66 @@ useAutoRefresh(refreshAll);
   text-decoration: underline;
 }
 
-.feature-tags {
+/* Contributing factors — inline top factor + popover */
+.factor-cell {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
+  align-items: center;
+  gap: 0.35rem;
 }
 
 .feature-tag {
   font-size: 0.7rem;
+}
+
+.factor-more-btn {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.4rem;
+  min-width: unset;
+}
+
+/* Factor popover detail */
+.factor-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 240px;
+  max-width: 320px;
+}
+
+.factor-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.factor-bar-track {
+  flex: 1;
+  height: 4px;
+  background: var(--p-surface-200);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.factor-bar-fill {
+  height: 100%;
+  background: var(--p-primary-color);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.factor-pct {
+  font-size: 0.7rem;
+  color: var(--p-text-muted-color);
+  min-width: 2rem;
+  text-align: right;
+}
+
+/* Action buttons */
+.action-btns {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
 }
 
 .text-muted {
@@ -364,9 +512,5 @@ useAutoRefresh(refreshAll);
 .client-chart {
   height: 200px;
   margin-bottom: 1rem;
-}
-
-.settings-link {
-  text-decoration: none;
 }
 </style>

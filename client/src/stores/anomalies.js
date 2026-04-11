@@ -35,13 +35,29 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     return res.data;
   }
 
+  async function deleteAnomaly(id) {
+    const removed = active.value.find(a => a.id === id);
+    await api.delete(`/anomalies/${id}`);
+    active.value = active.value.filter(a => a.id !== id);
+    if (summary.value && removed?.is_anomaly) {
+      summary.value.total_active = Math.max(0, summary.value.total_active - 1);
+      const sev = removed?.severity;
+      if (sev && summary.value.by_severity[sev]) {
+        summary.value.by_severity[sev] = Math.max(0, summary.value.by_severity[sev] - 1);
+        if (summary.value.by_severity[sev] === 0) {
+          delete summary.value.by_severity[sev];
+        }
+      }
+    }
+  }
+
+  // Kept for backwards compat
   async function dismissAnomaly(id) {
     const dismissed = active.value.find(a => a.id === id);
     await api.post(`/anomalies/${id}/dismiss`);
     active.value = active.value.filter(a => a.id !== id);
     if (summary.value) {
       summary.value.total_active = Math.max(0, summary.value.total_active - 1);
-      // Update severity breakdown
       const sev = dismissed?.severity;
       if (sev && summary.value.by_severity[sev]) {
         summary.value.by_severity[sev] = Math.max(0, summary.value.by_severity[sev] - 1);
@@ -49,6 +65,15 @@ export const useAnomalyStore = defineStore('anomalies', () => {
           delete summary.value.by_severity[sev];
         }
       }
+    }
+  }
+
+  async function whitelistClient(clientIp, reason) {
+    await api.post('/anomalies/whitelist', { client_ip: clientIp, reason });
+    // Remove all entries for this client from the active list
+    active.value = active.value.filter(a => a.client_ip !== clientIp);
+    if (summary.value) {
+      await fetchSummary();
     }
   }
 
@@ -78,6 +103,7 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   return {
     active, summary, clientHistory, clientModel, settings, loading,
     fetchActive, fetchSummary, fetchClientHistory, fetchClientModel,
-    dismissAnomaly, fetchSettings, updateSettings, fetchAll,
+    deleteAnomaly, dismissAnomaly, whitelistClient,
+    fetchSettings, updateSettings, fetchAll,
   };
 });

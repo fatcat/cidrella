@@ -54,6 +54,19 @@ def ensure_tables():
         con.close()
 
 
+def get_whitelisted_clients():
+    """Return set of whitelisted client IPs."""
+    con = _connect()
+    try:
+        rows = con.execute("SELECT client_ip FROM anomaly_whitelist").fetchall()
+        return {row["client_ip"] for row in rows}
+    except sqlite3.OperationalError:
+        # Table may not exist yet (pre-migration)
+        return set()
+    finally:
+        con.close()
+
+
 def is_enabled():
     """Check if anomaly detection is enabled in settings."""
     con = _connect()
