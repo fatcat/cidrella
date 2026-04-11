@@ -3,17 +3,10 @@ import { useAuthStore } from '../stores/auth.js';
 
 import Login from '../views/Login.vue';
 import ChangePassword from '../views/ChangePassword.vue';
-import SetupWizard from '../views/SetupWizard.vue';
 import NotFound from '../views/NotFound.vue';
 import AppLayout from '../components/AppLayout.vue';
 
 const routes = [
-  {
-    path: '/setup',
-    name: 'Setup',
-    component: SetupWizard,
-    meta: { public: true }
-  },
   {
     path: '/login',
     name: 'Login',
@@ -59,13 +52,8 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const auth = useAuthStore();
 
-  // Setup wizard disabled — always skip
-  if (to.name === 'Setup') {
-    return { name: 'Login' };
-  }
-
   // Allow public routes (login page)
-  if (to.meta.public && to.name !== 'Setup') {
+  if (to.meta.public) {
     return true;
   }
 

@@ -30,6 +30,7 @@ import { useAuthStore } from '../stores/auth.js';
 import Password from 'primevue/password';
 import Button from 'primevue/button';
 import Message from 'primevue/message';
+import { apiError } from '../utils/format.js';
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -48,8 +49,8 @@ async function handleChange() {
     return;
   }
 
-  if (newPassword.value.length < 4) {
-    error.value = 'Password must be at least 4 characters';
+  if (newPassword.value.length < 8) {
+    error.value = 'Password must be at least 8 characters';
     return;
   }
 
@@ -58,52 +59,20 @@ async function handleChange() {
     await auth.changePassword(currentPassword.value, newPassword.value);
     router.push('/');
   } catch (err) {
-    error.value = err.response?.data?.error || 'Failed to change password';
+    error.value = apiError(err);
   } finally {
     loading.value = false;
   }
 }
 </script>
 
+<style>
+@import '../assets/auth-layout.css';
+</style>
+
 <style scoped>
-.login-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  background: var(--p-surface-ground);
-}
-.login-card {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 12px;
-  padding: 2.5rem;
-  width: 100%;
-  max-width: 400px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-}
+/* ChangePassword-specific: font-size override on the h1 title */
 .login-card h1 {
-  margin: 0 0 0.25rem 0;
-  text-align: center;
   font-size: 1.5rem;
-}
-.subtitle {
-  text-align: center;
-  color: var(--p-text-muted-color);
-  margin: 0 0 1.5rem 0;
-}
-.field {
-  margin-bottom: 1rem;
-}
-.field label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 500;
-}
-.w-full {
-  width: 100%;
-}
-.mb-3 {
-  margin-bottom: 0.75rem;
 }
 </style>

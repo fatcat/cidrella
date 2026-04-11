@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, getSetting, audit } from '../db/init.js';
+import { getDb, getSetting, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { regenerateConfigs, regenerateDnsmasqConf, signalDnsmasq } from '../utils/dnsmasq.js';
 import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
@@ -8,18 +8,14 @@ import { testDnsForwarder } from '../utils/dns-test.js';
 const router = Router();
 
 // Validation helpers
-import { isValidIpv4 } from '../utils/ip.js';
+import { isValidIpv4, isValidDomain } from '../utils/ip.js';
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
-const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
 function isValidHostname(name) {
   return name === '@' || HOSTNAME_RE.test(name);
 }
 
-function isValidDomain(name) {
-  return DOMAIN_RE.test(name) && name.length <= 253;
-}
 
 function validateRecord(type, { name, value, priority, weight, port }) {
   switch (type) {
@@ -424,10 +420,10 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
   db.prepare('DELETE FROM dns_records WHERE id = ?').run(record.id);
 
   // Increment zone SOA serial on record change
-  db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(\'now\') WHERE id = ?').run(parseInt(req.params.zoneId, 10));
+  db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(\'now\') WHERE id = ?').run(record.zone_id);
 
   // Clear PTR and IP hostname when A record is deleted from a forward zone
-  const delZone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(parseInt(req.params.zoneId, 10));
+  const delZone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(record.zone_id);
   if (record.type === 'A' && delZone?.type === 'forward') {
     clearPtrForIp(db, record.value);
     clearDnsFromIp(db, record.name, record.value, delZone.name);
@@ -479,7 +475,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const oldRow = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
 
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dns_upstream_servers', ?)").run(JSON.stringify(servers));
+  setSetting('dns_upstream_servers', JSON.stringify(servers));
 
   regenerateDnsmasqConf(db);
   signalDnsmasq();
@@ -506,8 +502,7 @@ router.put('/soa-defaults', requirePerm('dns:write'), (req, res) => {
     soa_expire: soa_expire ?? current.soa_expire, soa_minimum_ttl: soa_minimum_ttl ?? current.soa_minimum_ttl,
     soa_primary_ns: soa_primary_ns || current.soa_primary_ns, soa_admin_email: soa_admin_email || current.soa_admin_email
   };
-  const db = getDb();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dns_soa_defaults', ?)").run(JSON.stringify(defaults));
+  setSetting('dns_soa_defaults', JSON.stringify(defaults));
   audit(req.user.id, 'configure', 'dns_soa_defaults', null, defaults);
   res.json(defaults);
 });

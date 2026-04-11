@@ -1,15 +1,14 @@
 import { Router } from 'express';
 import { getDb } from '../db/init.js';
-import { hasPermission } from '../auth/roles.js';
+import { requireRole } from '../auth/roles.js';
 
 const router = Router();
 
+// All audit routes require admin
+router.use(requireRole('admin'));
+
 // GET /api/audit — paginated audit log (admin only)
 router.get('/', (req, res) => {
-  if (!hasPermission(req.user.role, '*')) {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
   const db = getDb();
   const page = Math.max(1, parseInt(req.query.page || '1', 10));
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || '50', 10)));
@@ -70,9 +69,6 @@ router.get('/', (req, res) => {
 
 // GET /api/audit/actions — list distinct action types
 router.get('/actions', (req, res) => {
-  if (!hasPermission(req.user.role, '*')) {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
   const db = getDb();
   const actions = db.prepare('SELECT DISTINCT action FROM audit_log ORDER BY action').all();
   res.json(actions.map(a => a.action));
@@ -80,9 +76,6 @@ router.get('/actions', (req, res) => {
 
 // GET /api/audit/entities — list distinct entity types
 router.get('/entities', (req, res) => {
-  if (!hasPermission(req.user.role, '*')) {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
   const db = getDb();
   const entities = db.prepare('SELECT DISTINCT entity_type FROM audit_log ORDER BY entity_type').all();
   res.json(entities.map(e => e.entity_type));

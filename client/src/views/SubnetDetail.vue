@@ -104,19 +104,19 @@
           </Column>
           <Column field="status" header="Status" sortable style="width: 7rem">
             <template #body="{ data }">
-              <Tag :severity="computeIpState(data).statusSeverity" :value="computeIpState(data).status" />
+              <Tag :severity="getIpState(data).statusSeverity" :value="getIpState(data).status" />
             </template>
           </Column>
           <Column header="Type" sortable :sortField="'computed_type'" style="width: 9rem">
             <template #body="{ data }">
-              <Tag v-if="computeIpState(data).type" :severity="computeIpState(data).typeSeverity"
-                   :value="computeIpState(data).type"
-                   v-tooltip.top="computeIpState(data).tooltip || null" />
+              <Tag v-if="getIpState(data).type" :severity="getIpState(data).typeSeverity"
+                   :value="getIpState(data).type"
+                   v-tooltip.top="getIpState(data).tooltip || null" />
               <span v-else>—</span>
             </template>
           </Column>
           <Column field="hostname" header="Hostname" sortable style="width: 10rem">
-            <template #body="{ data }">{{ displayHostname(data.hostname) }}</template>
+            <template #body="{ data }">{{ displayHost(data.hostname) }}</template>
           </Column>
           <Column header="MAC Address" sortable style="width: 10rem" :sortField="'mac_address'">
             <template #body="{ data }">{{ data.mac_address || data.last_seen_mac || '—' }}</template>
@@ -307,22 +307,7 @@
           <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Reason (max 16 characters)</label>
           <InputText v-model="reserveNote" class="w-full" :maxlength="16" placeholder="e.g. MGMT, PRINTER" @keyup.enter="confirmReserve" />
         </div>
-        <div class="field">
-          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Liveness Scanning</label>
-          <div class="scan-toggle-group">
-            <button type="button" :class="['scan-toggle-btn', 'scan-inherit', { active: reserveScanEnabled === null }]"
-                    @click="reserveScanEnabled = null">Inherit</button>
-            <button type="button" :class="['scan-toggle-btn', 'scan-enabled', { active: reserveScanEnabled === true, resolved: reserveScanEnabled === null && resolvedSubnetScanEnabled }]"
-                    @click="reserveScanEnabled = true">Enabled</button>
-            <button type="button" :class="['scan-toggle-btn', 'scan-disabled', { active: reserveScanEnabled === false, resolved: reserveScanEnabled === null && !resolvedSubnetScanEnabled }]"
-                    @click="reserveScanEnabled = false">Disabled</button>
-          </div>
-          <small v-if="reserveScanEnabled === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
-            Inherits from subnet — scanning is {{ resolvedSubnetScanEnabled ? 'enabled' : 'disabled' }} for this network
-          </small>
-          <small v-else-if="reserveScanEnabled === true" style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is enabled for this network</small>
-          <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is disabled for this network</small>
-        </div>
+        <ScanToggle v-model="reserveScanEnabled" :resolved-enabled="resolvedSubnetScanEnabled" />
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
@@ -352,22 +337,7 @@
           <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Description</label>
           <InputText v-model="staticDhcpForm.description" class="w-full" placeholder="Optional" />
         </div>
-        <div class="field">
-          <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Liveness Scanning</label>
-          <div class="scan-toggle-group">
-            <button type="button" :class="['scan-toggle-btn', 'scan-inherit', { active: staticDhcpScanEnabled === null }]"
-                    @click="staticDhcpScanEnabled = null">Inherit</button>
-            <button type="button" :class="['scan-toggle-btn', 'scan-enabled', { active: staticDhcpScanEnabled === true, resolved: staticDhcpScanEnabled === null && resolvedSubnetScanEnabled }]"
-                    @click="staticDhcpScanEnabled = true">Enabled</button>
-            <button type="button" :class="['scan-toggle-btn', 'scan-disabled', { active: staticDhcpScanEnabled === false, resolved: staticDhcpScanEnabled === null && !resolvedSubnetScanEnabled }]"
-                    @click="staticDhcpScanEnabled = false">Disabled</button>
-          </div>
-          <small v-if="staticDhcpScanEnabled === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
-            Inherits from subnet — scanning is {{ resolvedSubnetScanEnabled ? 'enabled' : 'disabled' }} for this network
-          </small>
-          <small v-else-if="staticDhcpScanEnabled === true" style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is enabled for this network</small>
-          <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is disabled for this network</small>
-        </div>
+        <ScanToggle v-model="staticDhcpScanEnabled" :resolved-enabled="resolvedSubnetScanEnabled" />
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showStaticDhcpDialog = false" />
@@ -412,9 +382,13 @@ import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
 import Tag from 'primevue/tag';
 import ScopeDialog from '../components/ScopeDialog.vue';
+import ScanToggle from '../components/ScanToggle.vue';
 import { useSubnetStore } from '../stores/subnets.js';
+import { loadJson } from '../utils/storage.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
+import { ipToLong, longToIp } from '../utils/ip.js';
+import { apiError, displayHostname } from '../utils/format.js';
 
 const props = defineProps({
   subnetId: { type: [Number, String], default: null },
@@ -516,20 +490,20 @@ const resolvedSubnetScanEnabled = computed(() => {
 
 // Server-side pagination state — persisted per-subnet
 function loadTableState() {
-  const saved = loadJson('ipam_ip_table_state', {});
+  const saved = loadJson('cidrella_ip_table_state', {});
   return saved;
 }
 function saveTableState() {
   try {
     const key = `${props.subnetId}`;
-    const all = loadJson('ipam_ip_table_state', {});
+    const all = loadJson('cidrella_ip_table_state', {});
     all[key] = {
       page: currentPage.value,
       pageSize: currentPageSize.value,
       sortField: sortField.value,
       sortOrder: sortOrder.value,
     };
-    localStorage.setItem('ipam_ip_table_state', JSON.stringify(all));
+    localStorage.setItem('cidrella_ip_table_state', JSON.stringify(all));
   } catch {}
 }
 function restoreTableState() {
@@ -556,18 +530,10 @@ const sortField = ref(null);
 const sortOrder = ref(1);
 const loadingPage = ref(false);
 
-// Persistence helper
-function loadJson(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch { return fallback; }
-}
-
 // Active tab (IP Addresses = 0, Grid View = 1)
-const activeTabIndex = ref(loadJson('ipam_subnet_detail_tab', 0));
+const activeTabIndex = ref(loadJson('cidrella_subnet_detail_tab', 0));
 watch(activeTabIndex, (val) => {
-  try { localStorage.setItem('ipam_subnet_detail_tab', JSON.stringify(val)); } catch {}
+  try { localStorage.setItem('cidrella_subnet_detail_tab', JSON.stringify(val)); } catch {}
 });
 
 // Search / filter
@@ -670,31 +636,15 @@ function findRangeForIp(ipAddress) {
   return ranges.value.find(r => long >= ipToLong(r.start_ip) && long <= ipToLong(r.end_ip));
 }
 
-function ipToLong(ip) {
-  const parts = ip.split('.').map(Number);
-  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-}
-
-function longToIp(long) {
-  return [(long >>> 24) & 255, (long >>> 16) & 255, (long >>> 8) & 255, long & 255].join('.');
-}
-
 const formatDate = formatDateTime;
 
-function displayHostname(hostname) {
-  if (!hostname) return '—';
-  const domain = subnet.value?.domain_name;
-  if (domain && hostname.endsWith('.' + domain)) {
-    return hostname.slice(0, -(domain.length + 1));
-  }
-  return hostname;
-}
+const displayHost = (hostname) => displayHost(hostname, subnet.value?.domain_name) || '—';
 
 /**
  * Compute unified status + type for an IP row.
  * Returns { status, statusSeverity, type, typeSeverity, tooltip? }
  */
-function computeIpState(data) {
+function getIpState(data) {
   const mac = data.mac_address || data.last_seen_mac;
   const isDhcpScope = data.range_type_name === 'DHCP Scope';
   const isLeaseExpired = data.dhcp_expires_at && data.dhcp_expires_at !== 'infinite'
@@ -792,12 +742,12 @@ function gridTooltip(ip) {
     is_online: ip.isOnline ? 1 : 0, is_rogue: ip.isConflict ? 1 : 0, rogue_reason: ip.conflictReason,
     dhcp_expires_at: ip.dhcpExpiresAt || null
   };
-  const state = computeIpState(pseudoData);
+  const state = getIpState(pseudoData);
   lines.push(`Status: ${state.status}`);
   if (state.type) {
     lines.push(`Type: ${state.type}${state.tooltip ? ` (${state.tooltip})` : ''}`);
   }
-  if (ip.hostname) lines.push(`Host: ${displayHostname(ip.hostname)}`);
+  if (ip.hostname) lines.push(`Host: ${displayHost(ip.hostname)}`);
   if (ip.mac) lines.push(`MAC: ${ip.mac}`);
   if (ip.vendor) lines.push(`Vendor: ${ip.vendor}`);
   lines.push(ip.isOnline ? 'Online' : 'Offline');
@@ -1068,7 +1018,7 @@ async function toggleIpScan(ipAddress, enabled) {
     toast.add({ severity: 'success', summary: enabled === null ? 'Scan reset to inherit' : enabled ? 'Scanning enabled' : 'Scanning disabled', life: 3000 });
     await reloadData();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -1095,7 +1045,7 @@ async function probeIpNow(ipAddress) {
     // Refetch IPs so the Online badge updates
     await loadIpPage(currentPage.value, currentPageSize.value, { skipCache: true });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Probe Failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Probe Failed', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -1115,7 +1065,7 @@ async function confirmReserve() {
       toast.add({ severity: 'success', summary: `${result.count} IPs locked`, life: 3000 });
       await reloadData();
     } catch (err) {
-      toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+      toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
     }
   }
 }
@@ -1126,7 +1076,7 @@ async function setIpReservation(ipAddress, status, note) {
     toast.add({ severity: 'success', summary: status === 'locked' ? 'IP locked' : 'IP unlocked', life: 3000 });
     await reloadData();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -1157,7 +1107,7 @@ async function confirmStaticDhcp() {
     toast.add({ severity: 'success', summary: 'Static DHCP reservation created', life: 3000 });
     await reloadData();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -1333,7 +1283,7 @@ async function saveRange(force = false) {
       pendingRangeForm.value = { ...rangeForm.value };
       showOverlapDialog.value = true;
     } else {
-      toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+      toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
     }
   } finally {
     saving.value = false;
@@ -1384,7 +1334,7 @@ async function removeIpFromPool(range, ipAddress) {
     }
     await reloadData();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
@@ -1403,7 +1353,7 @@ async function doDeleteRange() {
     toast.add({ severity: 'success', summary: 'Range deleted', life: 3000 });
     await reloadData();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
@@ -1420,7 +1370,7 @@ async function editDhcpScope(range) {
     }
     scopeDialogRef.value.openEdit(scope);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -1434,7 +1384,7 @@ async function doStartScan() {
     startPollingScan(result.scan_id);
     window.dispatchEvent(new Event('ipam:scan-started'));
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Scan Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Scan Error', detail: apiError(err), life: 5000 });
   } finally {
     startingScan.value = false;
   }

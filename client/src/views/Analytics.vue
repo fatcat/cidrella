@@ -52,10 +52,10 @@ const menuItems = [
   { tabIndex: 3, label: 'Anomalies', icon: 'pi pi-exclamation-triangle', dataTrack: 'ana-tab-anomalies', get badge() { return anomalyCount.value > 0 ? anomalyCount.value : null; } },
 ];
 
-const activeTab = ref(parseInt(localStorage.getItem('ipam_analytics_tab') || '0', 10));
+const activeTab = ref(parseInt(localStorage.getItem('cidrella_analytics_tab') || '0', 10));
 
 watch(activeTab, (val) => {
-  localStorage.setItem('ipam_analytics_tab', String(val));
+  localStorage.setItem('cidrella_analytics_tab', String(val));
 });
 
 async function fetchAnomalyCount() {

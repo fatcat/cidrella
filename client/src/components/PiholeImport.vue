@@ -101,6 +101,7 @@ import Tab from 'primevue/tab';
 import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import api from '../api/client.js';
+import { apiError } from '../utils/format.js';
 
 const emit = defineEmits(['imported']);
 const toast = useToast();
@@ -151,7 +152,7 @@ async function probe() {
     }
   } catch (err) {
     probeStatus.value = 'fail';
-    probeError.value = err.response?.data?.error || err.message;
+    probeError.value = apiError(err);
   }
 }
 
@@ -174,7 +175,7 @@ async function fetchConfig() {
     preview.value = res.data;
     importResults.value = null;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Fetch failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Fetch failed', detail: apiError(err), life: 5000 });
   } finally { fetching.value = false; }
 }
 
@@ -195,7 +196,7 @@ async function parseFile() {
     preview.value = res.data;
     importResults.value = null;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Parse failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Parse failed', detail: apiError(err), life: 5000 });
   } finally { parsing.value = false; }
 }
 
@@ -227,7 +228,7 @@ async function executeImport() {
     toast.add({ severity: 'success', summary: 'Pi-hole import complete', life: 3000 });
     emit('imported');
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Import failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Import failed', detail: apiError(err), life: 5000 });
   } finally { importing.value = false; }
 }
 

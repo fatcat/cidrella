@@ -34,7 +34,7 @@
           <InputNumber v-else-if="data.type === 'number'" v-model="defaultValues[data.code]"
                        class="w-full" size="small" :useGrouping="false" placeholder="—" />
           <InputText v-else v-model="defaultValues[data.code]" class="w-full" size="small"
-                     :placeholder="data.code === 1 ? 'Defaults to network\'s mask' : data.code === 3 ? 'Defaults to network\'s gateway' : data.code === 15 ? 'Defaults to network\'s domain' : data.code === 119 ? 'Defaults to network\'s domain' : placeholderForType(data.type)"
+                     :placeholder="getOptionPlaceholder(data.code, data.type)"
                      @blur="data.type === 'ip-list' || data.type === 'ip' ? resolveDefaultHostname(data.code) : null" />
         </template>
       </Column>
@@ -110,6 +110,19 @@ import Select from 'primevue/select';
 import Popover from 'primevue/popover';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
+import { IP_RE, resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
+import { apiError } from '../utils/format.js';
+
+const DHCP_PLACEHOLDERS = {
+  1: "Defaults to network's mask",
+  3: "Defaults to network's gateway",
+  15: "Defaults to network's domain",
+  119: "Defaults to network's domain"
+};
+
+function getOptionPlaceholder(code, type) {
+  return DHCP_PLACEHOLDERS[code] || placeholderForType(type);
+}
 
 const store = useDhcpStore();
 const toast = useToast();
@@ -191,7 +204,7 @@ async function createCustomOption() {
     toast.add({ severity: 'success', summary: 'Custom option created', life: 3000 });
     await loadOptions();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingCustomOption.value = false;
   }
@@ -203,7 +216,7 @@ async function deleteCustomOption(code) {
     toast.add({ severity: 'success', summary: 'Custom option deleted', life: 3000 });
     await loadOptions();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -229,32 +242,13 @@ async function loadOptions() {
   }
 }
 
-const IP_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
-async function resolveHostname(value) {
-  if (!value || IP_RE.test(value.trim())) return value;
-  const parts = value.split(',').map(s => s.trim()).filter(Boolean);
-  const resolved = [];
-  for (const part of parts) {
-    if (IP_RE.test(part)) {
-      resolved.push(part);
-    } else {
-      try {
-        const res = await api.get(`/dns/resolve?name=${encodeURIComponent(part)}`);
-        resolved.push(...res.data.ips);
-      } catch {
-        toast.add({ severity: 'warn', summary: `Could not resolve "${part}"`, life: 3000 });
-        resolved.push(part);
-      }
-    }
-  }
-  return resolved.join(',');
-}
+
 
 async function resolveDefaultHostname(code) {
   const val = defaultValues[code];
   if (!val) return;
-  const resolved = await resolveHostname(val);
+  const resolved = await resolveHostname(val, api, toast);
   if (resolved !== val) defaultValues[code] = resolved;
 }
 
@@ -273,22 +267,13 @@ async function saveDefaults() {
     snapshotDefaults();
     toast.add({ severity: 'success', summary: 'Defaults saved', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingDefaults.value = false;
   }
 }
 
-function placeholderForType(type) {
-  switch (type) {
-    case 'ip': return 'e.g. 192.168.1.1';
-    case 'ip-list': return 'e.g. 192.168.1.1, 192.168.1.2';
-    case 'text': return 'Value';
-    case 'text-list': return 'e.g. domain1.com, domain2.com';
-    case 'number': return '0';
-    default: return '';
-  }
-}
+
 
 async function applyConfig() {
   try {
@@ -298,7 +283,7 @@ async function applyConfig() {
       setTimeout(() => window.dispatchEvent(new Event('ipam:stats-changed')), (i + 1) * 2000);
     }
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 

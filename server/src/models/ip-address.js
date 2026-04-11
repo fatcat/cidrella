@@ -5,6 +5,8 @@
  * go through this module rather than writing inline SQL.
  */
 
+import { getSetting } from '../db/init.js';
+
 /**
  * Record an IP lifecycle event.
  */
@@ -20,8 +22,8 @@ function emit(db, ipAddressId, subnetId, ip, eventType, { oldValue, newValue, so
  * Reads ip_history_retention_days from settings (default 7).
  */
 export function pruneEvents(db) {
-  const row = db.prepare("SELECT value FROM settings WHERE key = 'ip_history_retention_days'").get();
-  const retentionDays = parseInt(row?.value, 10) || 7;
+  const val = getSetting('ip_history_retention_days');
+  const retentionDays = parseInt(val, 10) || 7;
   const offset = `-${retentionDays} days`;
   return db.prepare(`
     DELETE FROM ip_events WHERE created_at < datetime('now', ?)

@@ -122,6 +122,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
+import { formatNumber, apiError } from '../utils/format.js';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
@@ -188,10 +189,6 @@ function isRuleAdded(code) {
   return store.rules.some(r => r.country_code === code);
 }
 
-function formatNumber(n) {
-  if (n === null || n === undefined) return '0';
-  return n.toLocaleString();
-}
 
 const formatDate = formatDateTime;
 
@@ -223,7 +220,7 @@ async function doAddCountries() {
     toast.add({ severity: 'success', summary: `${toAdd.length} country rule(s) added`, life: 3000 });
     await refreshStatus();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     addingCountries.value = false;
   }
@@ -235,7 +232,7 @@ async function doToggleRule(rule) {
     toast.add({ severity: 'success', summary: `${rule.country_name} ${rule.enabled ? 'disabled' : 'enabled'}`, life: 3000 });
     await refreshStatus();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -252,7 +249,7 @@ async function doDeleteRule() {
     toast.add({ severity: 'success', summary: 'Rule deleted', life: 3000 });
     await refreshStatus();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     deleting.value = false;
   }
@@ -265,7 +262,7 @@ async function doSaveSettings() {
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
     await refreshStatus();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingSettings.value = false;
   }
@@ -278,7 +275,7 @@ async function doRefreshDb() {
     toast.add({ severity: 'success', summary: 'GeoIP database updated', life: 3000 });
     await refreshStatus();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Download failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Download failed', detail: apiError(err), life: 5000 });
   } finally {
     refreshingDb.value = false;
   }
@@ -306,44 +303,13 @@ onMounted(async () => {
 });
 </script>
 
+<style>
+@import '../assets/analytics-layout.css';
+</style>
+
 <style scoped>
 .geoip-page h2 {
   margin: 0 0 1rem 0;
-}
-.stats-bar {
-  display: flex;
-  gap: 2rem;
-  padding: 1rem 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-.stat { display: flex; flex-direction: column; }
-.stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
-.stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
-.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
-.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
-.settings-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  margin-bottom: 0.75rem;
-  flex-wrap: wrap;
-}
-.schedule-group {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.schedule-label {
-  font-size: 0.85rem;
-  color: var(--p-text-muted-color);
 }
 .country-flag { font-size: 1.1rem; }
 .action-buttons { display: flex; gap: 0.25rem; }

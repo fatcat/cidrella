@@ -23,6 +23,20 @@
       <Column header="Created" field="created_at" sortable style="width: 10rem">
         <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
       </Column>
+      <Column header="Actions" style="width: 120px">
+        <template #body="{ data }">
+          <div style="display: flex; gap: 0.25rem;">
+            <Button icon="pi pi-pencil" severity="info" text rounded size="small"
+              @click="openEditDialog(data)" v-tooltip.top="'Edit Role'"
+              :disabled="data.id === currentUserId" />
+            <Button icon="pi pi-key" severity="warning" text rounded size="small"
+              @click="confirmResetPassword(data)" v-tooltip.top="'Reset Password'" />
+            <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+              @click="confirmDelete(data)" v-tooltip.top="'Delete'"
+              :disabled="data.id === currentUserId" />
+          </div>
+        </template>
+      </Column>
     </DataTable>
 
     <!-- User Context Menu -->
@@ -122,6 +136,7 @@ import Select from 'primevue/select';
 import Toast from 'primevue/toast';
 import { useAuthStore } from '../stores/auth.js';
 import api from '../api/client.js';
+import { apiError } from '../utils/format.js';
 
 const toast = useToast();
 const auth = useAuthStore();
@@ -190,7 +205,7 @@ async function loadUsers() {
     const res = await api.get('/users');
     users.value = res.data;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     loading.value = false;
   }
@@ -211,7 +226,7 @@ async function createUser() {
     toast.add({ severity: 'success', summary: 'User created', life: 3000 });
     await loadUsers();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
@@ -231,7 +246,7 @@ async function updateUser() {
     toast.add({ severity: 'success', summary: 'User updated', life: 3000 });
     await loadUsers();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
@@ -252,7 +267,7 @@ async function resetPassword() {
     toast.add({ severity: 'success', summary: 'Password reset', life: 3000 });
     await loadUsers();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
@@ -271,7 +286,7 @@ async function deleteUser() {
     toast.add({ severity: 'success', summary: 'User deleted', life: 3000 });
     await loadUsers();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }

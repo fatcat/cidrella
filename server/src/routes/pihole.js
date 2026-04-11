@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { parse as parseToml } from 'smol-toml';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { regenerateConfigs } from '../utils/dnsmasq.js';
@@ -7,52 +8,32 @@ import http from 'http';
 import https from 'https';
 import { ipToLong } from '../utils/ip.js';
 import { syncDnsToIp, syncDhcpReservationToIp } from '../utils/ip-sync.js';
-import express from 'express';
+import { text as textParser } from 'express';
 
 const router = Router();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Fetch JSON from a URL (http or https), returns { ok, status, data } or { ok, error } */
-function fetchJson(url, options = {}) {
-  return new Promise((resolve) => {
-    const mod = url.startsWith('https') ? https : http;
-    const reqOpts = { timeout: 5000, ...options };
-
-    try {
-      const req = mod.get(url, reqOpts, (resp) => {
-        let body = '';
-        resp.on('data', (chunk) => { body += chunk; });
-        resp.on('end', () => {
-          try {
-            resolve({ ok: resp.statusCode >= 200 && resp.statusCode < 300, status: resp.statusCode, data: JSON.parse(body) });
-          } catch {
-            resolve({ ok: false, error: 'Invalid JSON response' });
-          }
-        });
-      });
-      req.on('error', (err) => resolve({ ok: false, error: err.message }));
-      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Connection timed out' }); });
-    } catch (err) {
-      resolve({ ok: false, error: err.message });
-    }
-  });
-}
-
-/** POST JSON to a URL, returns same shape as fetchJson */
-function postJson(url, body, options = {}) {
+/**
+ * Make an HTTP/HTTPS request and parse JSON response.
+ * Returns { ok, status, data } on success or { ok: false, error } on failure.
+ * @param {string} url
+ * @param {{ method?: string, body?: object, timeout?: number }} [opts]
+ */
+function httpRequest(url, { method = 'GET', body = null, timeout = 5000 } = {}) {
   return new Promise((resolve) => {
     const mod = url.startsWith('https') ? https : http;
     const parsed = new URL(url);
-    const data = JSON.stringify(body);
+    const data = body ? JSON.stringify(body) : null;
     const reqOpts = {
       hostname: parsed.hostname,
-      port: parsed.port,
-      path: parsed.pathname,
-      method: 'POST',
-      timeout: 5000,
-      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) },
-      ...options,
+      port: parsed.port || undefined,
+      path: parsed.pathname + (parsed.search || ''),
+      method,
+      timeout,
+      headers: data
+        ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+        : {},
     };
 
     try {
@@ -69,13 +50,19 @@ function postJson(url, body, options = {}) {
       });
       req.on('error', (err) => resolve({ ok: false, error: err.message }));
       req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Connection timed out' }); });
-      req.write(data);
+      if (data) req.write(data);
       req.end();
     } catch (err) {
       resolve({ ok: false, error: err.message });
     }
   });
 }
+
+/** GET JSON from a URL — thin wrapper around httpRequest */
+function fetchJson(url) { return httpRequest(url); }
+
+/** POST JSON to a URL — thin wrapper around httpRequest */
+function postJson(url, body) { return httpRequest(url, { method: 'POST', body }); }
 
 /** Parse Pi-hole config object into normalized arrays */
 function parsePiholeConfig(cfg) {
@@ -140,6 +127,16 @@ function recordName(hostname, zoneName) {
   return hostname.endsWith(suffix) ? hostname.slice(0, -suffix.length) : hostname;
 }
 
+/**
+ * Validate and normalize a Pi-hole base URL.
+ * Returns the trimmed URL string, or null if invalid.
+ */
+function normalizeUrl(url) {
+  if (!url || !/^https?:\/\//i.test(url)) return null;
+  return url.replace(/\/+$/, '');
+}
+
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 /**
@@ -149,10 +146,8 @@ function recordName(hostname, zoneName) {
  */
 router.post('/probe', requirePerm('dns:write'), async (req, res) => {
   const { url, password } = req.body;
-  if (!url) return res.status(400).json({ error: 'URL is required' });
-  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'URL must start with http:// or https://' });
-
-  const baseUrl = url.replace(/\/+$/, '');
+  const baseUrl = normalizeUrl(url);
+  if (!baseUrl) return res.status(400).json({ error: 'URL must start with http:// or https://' });
   const authResult = await fetchJson(`${baseUrl}/api/auth`);
 
   if (!authResult.ok) {
@@ -185,10 +180,8 @@ router.post('/probe', requirePerm('dns:write'), async (req, res) => {
  */
 router.post('/fetch', requirePerm('dns:write'), async (req, res) => {
   const { url, password } = req.body;
-  if (!url) return res.status(400).json({ error: 'URL is required' });
-  if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'URL must start with http:// or https://' });
-
-  const baseUrl = url.replace(/\/+$/, '');
+  const baseUrl = normalizeUrl(url);
+  if (!baseUrl) return res.status(400).json({ error: 'URL must start with http:// or https://' });
 
   // Authenticate if password provided
   let sid = null;
@@ -229,7 +222,7 @@ router.post('/fetch', requirePerm('dns:write'), async (req, res) => {
  * Parse an uploaded pihole.toml file.
  * Multipart form with file field "file".
  */
-router.post('/parse', requirePerm('dns:write'), express.text({ type: '*/*', limit: '512kb' }), async (req, res) => {
+router.post('/parse', requirePerm('dns:write'), textParser({ type: '*/*', limit: '512kb' }), async (req, res) => {
   const content = typeof req.body === 'string' ? req.body : '';
   if (!content) return res.status(400).json({ error: 'No file content provided' });
 
@@ -249,93 +242,6 @@ router.post('/parse', requirePerm('dns:write'), express.text({ type: '*/*', limi
     res.status(400).json({ error: `Failed to parse TOML: ${err.message}` });
   }
 });
-
-/**
- * Minimal TOML parser sufficient for pihole.toml.
- * Handles: sections, nested sections, string values, arrays of strings, booleans, numbers.
- */
-function parseToml(content) {
-  const result = {};
-  let currentSection = result;
-  let currentPath = [];
-  let inArray = false;
-  let arrayKey = null;
-  let arrayValues = [];
-
-  for (const rawLine of content.split('\n')) {
-    const line = rawLine.split('#')[0].trimEnd(); // strip comments (but not inside strings)
-    const trimmed = line.trim();
-
-    if (!trimmed) continue;
-
-    // Collecting array values
-    if (inArray) {
-      if (trimmed === ']' || trimmed === '] ### CHANGED, default = []') {
-        currentSection[arrayKey] = arrayValues;
-        inArray = false;
-        arrayKey = null;
-        arrayValues = [];
-        continue;
-      }
-      // Match quoted string value, possibly with trailing comma
-      const m = trimmed.match(/^"((?:[^"\\]|\\.)*)"[, ]*$/);
-      if (m) {
-        arrayValues.push(m[1]);
-      }
-      continue;
-    }
-
-    // Section header [foo.bar]
-    const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
-    if (sectionMatch) {
-      const parts = sectionMatch[1].split('.');
-      currentPath = parts;
-      currentSection = result;
-      for (const part of parts) {
-        if (!currentSection[part]) currentSection[part] = {};
-        currentSection = currentSection[part];
-      }
-      continue;
-    }
-
-    // Key = value
-    const kvMatch = trimmed.match(/^(\w+)\s*=\s*(.+)$/);
-    if (kvMatch) {
-      const [, key, rawVal] = kvMatch;
-      const val = rawVal.replace(/\s*###.*$/, '').trim(); // strip ### CHANGED comments
-
-      if (val === '[') {
-        // Start of multi-line array
-        inArray = true;
-        arrayKey = key;
-        arrayValues = [];
-      } else if (val.startsWith('[') && val.endsWith(']')) {
-        // Single-line array
-        const inner = val.slice(1, -1).trim();
-        if (!inner) {
-          currentSection[key] = [];
-        } else {
-          currentSection[key] = inner.split(',').map(s => {
-            const m = s.trim().match(/^"((?:[^"\\]|\\.)*)"$/);
-            return m ? m[1] : s.trim();
-          });
-        }
-      } else if (val.startsWith('"') && val.endsWith('"')) {
-        currentSection[key] = val.slice(1, -1);
-      } else if (val === 'true') {
-        currentSection[key] = true;
-      } else if (val === 'false') {
-        currentSection[key] = false;
-      } else if (/^-?\d+(\.\d+)?$/.test(val)) {
-        currentSection[key] = parseFloat(val);
-      } else {
-        currentSection[key] = val;
-      }
-    }
-  }
-
-  return result;
-}
 
 /**
  * POST /api/pihole/import

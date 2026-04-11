@@ -81,6 +81,7 @@
 import { ref, computed, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import api from '../api/client.js';
+import { apiError } from '../utils/format.js';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import ToggleSwitch from 'primevue/toggleswitch';
@@ -227,7 +228,7 @@ async function saveConfig() {
       toast.add({ severity: 'success', summary: 'Saved', detail: 'Configuration applied — dnsmasq restarted', life: 3000 });
     }
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to save configuration', life: 3000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 3000 });
   } finally {
     saving.value = false;
   }

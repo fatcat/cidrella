@@ -8,6 +8,7 @@ const router = Router();
 
 const requireAdmin = requireRole('admin');
 const VALID_ROLES = Object.keys(ROLES);
+const USERNAME_RE = /^[a-zA-Z0-9._-]+$/;
 
 // GET /api/users — list all users (no password hashes)
 router.get('/', requireAdmin, (req, res) => {
@@ -24,6 +25,12 @@ router.post('/', requireAdmin, async (req, res) => {
 
   if (!username || !username.trim()) {
     return res.status(400).json({ error: 'Username is required' });
+  }
+  if (username.trim().length > 64) {
+    return res.status(400).json({ error: 'Username must be 64 characters or fewer' });
+  }
+  if (!USERNAME_RE.test(username.trim())) {
+    return res.status(400).json({ error: 'Username may only contain letters, numbers, dots, hyphens, and underscores' });
   }
   if (!role || !VALID_ROLES.includes(role)) {
     return res.status(400).json({ error: `Role must be one of: ${VALID_ROLES.join(', ')}` });
@@ -90,9 +97,18 @@ router.delete('/:id', requireAdmin, (req, res) => {
     return res.status(400).json({ error: 'Cannot delete your own account' });
   }
 
-  db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
-  audit(req.user.id, 'user_deleted', 'user', user.id, { username: user.username });
-  res.json({ ok: true });
+  try {
+    const deleteUser = db.transaction(() => {
+      db.prepare('UPDATE audit_log SET user_id = NULL WHERE user_id = ?').run(user.id);
+      db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    });
+    deleteUser();
+    audit(req.user.id, 'user_deleted', 'user', user.id, { username: user.username });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
 });
 
 // POST /api/users/:id/reset-password — admin resets password

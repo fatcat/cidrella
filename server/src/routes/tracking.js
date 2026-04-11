@@ -2,10 +2,14 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { DATA_DIR } from '../config/defaults.js';
+import { requirePerm } from '../auth/require-perm.js';
 
 const router = express.Router();
 const TRACKING_FILE = path.join(DATA_DIR, '.cidrella-tracking.json');
 const MAX_ENTRIES = 100;
+
+// All tracking routes require a logged-in user with basic read access
+router.use(requirePerm('subnets:read'));
 
 function readTracking() {
   try {

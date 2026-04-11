@@ -145,6 +145,44 @@ export function canMergeCidrs(cidrs) {
   return { valid: true, merged_cidr: mergedCidr };
 }
 
+export function nearestPow2(n) {
+  if (n <= 1) return 1;
+  const lower = Math.pow(2, Math.floor(Math.log2(n)));
+  const upper = lower * 2;
+  return (n - lower) <= (upper - n) ? lower : upper;
+}
+
+export function dhcpRangeDefaults(p, gw) {
+  const size = p.broadcastLong - p.networkLong + 1;
+  const prefix = Math.round(32 - Math.log2(size));
+  // Only auto-fill for /21 through /26
+  if (prefix < 21 || prefix > 26) return { start: '', end: '' };
+  const gwLong = gw ? ipToLong(gw) : null;
+  let poolEnd, poolSize;
+  if (prefix <= 23) {
+    // /21, /22, /23: cap end at network + 128, pool size = 64
+    poolEnd = p.networkLong + 128;
+    poolSize = 64;
+  } else {
+    // /24, /25, /26: use power-of-2 formula
+    poolEnd = p.networkLong + nearestPow2(size * 0.35);
+    poolSize = nearestPow2(size * 0.15);
+  }
+  let poolStart = poolEnd - poolSize + 1;
+  // Ensure within usable range
+  poolStart = Math.max(poolStart, p.networkLong + 1);
+  poolEnd = Math.min(poolEnd, p.broadcastLong - 1);
+  if (gwLong === poolStart) poolStart++;
+  else if (gwLong === poolEnd) poolEnd--;
+  return { start: longToIp(poolStart), end: longToIp(poolEnd) };
+}
+
+export function gatewayIpFromPosition(cidr, position) {
+  if (!position || position === 'none') return null;
+  const p = parseCidr(cidr);
+  return position === 'last' ? p.lastUsable : p.firstUsable;
+}
+
 export function subtractCidr(parentCidr, childCidr) {
   const parent = parseCidr(parentCidr);
   const child = parseCidr(childCidr);

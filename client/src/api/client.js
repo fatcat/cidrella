@@ -32,7 +32,8 @@ api.interceptors.response.use(
       const msg = error.response?.data?.error || error.message;
       debug.logError(`${error.config?.method?.toUpperCase()} ${error.config?.url} → ${status}`, msg);
     } catch { /* store may not be ready */ }
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
+      sessionStorage.setItem('cidrella_session_expired', '1');
       const auth = useAuthStore();
       auth.logout();
       router.push('/login');

@@ -84,22 +84,14 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
-import { useRouter } from 'vue-router';
 import ToggleSwitch from 'primevue/toggleswitch';
 import Select from 'primevue/select';
 import InputNumber from 'primevue/inputnumber';
 import Button from 'primevue/button';
 import { useAnomalyStore } from '../stores/anomalies.js';
 
-const router = useRouter();
-
 const store = useAnomalyStore();
 const saving = ref(false);
-
-function goToAnomalies() {
-  localStorage.setItem('ipam_analytics_tab', '3');
-  router.push('/analytics');
-}
 
 const sensitivityOptions = [
   { label: 'Low (fewer alerts)', value: 'low' },
@@ -168,6 +160,10 @@ onMounted(async () => {
 watch(() => store.settings, loadFromSettings);
 </script>
 
+<style>
+@import '../assets/analytics-layout.css';
+</style>
+
 <style scoped>
 .anomaly-settings-page {
   display: flex;
@@ -175,78 +171,10 @@ watch(() => store.settings, loadFromSettings);
   gap: 0.75rem;
 }
 
-.stats-bar {
-  display: flex;
-  gap: 2rem;
-  padding: 1rem 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  flex-wrap: wrap;
-}
 
-.stat {
-  display: flex;
-  flex-direction: column;
-}
 
-.stat-value {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 1.25rem;
-  font-weight: 700;
-  font-family: monospace;
-}
 
-.stat-label {
-  font-size: 0.75rem;
-  color: var(--p-text-muted-color);
-  text-transform: uppercase;
-}
 
-.indicator-on {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--p-green-500);
-}
-
-.indicator-off {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--p-red-500);
-}
-
-.text-danger {
-  color: var(--p-red-500);
-}
-
-.settings-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  flex-wrap: wrap;
-}
-
-.setting-inline {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.setting-inline-label {
-  font-size: 0.85rem;
-  color: var(--p-text-muted-color);
-  white-space: nowrap;
-}
 
 .settings-grid {
   display: grid;
@@ -273,15 +201,6 @@ watch(() => store.settings, loadFromSettings);
 
 .setting-field-action {
   justify-content: flex-end;
-}
-
-.view-link {
-  margin-left: auto;
-  font-size: 0.85rem;
-  white-space: nowrap;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
 }
 
 .info-section {
@@ -312,11 +231,4 @@ watch(() => store.settings, loadFromSettings);
   line-height: 1.8;
 }
 
-.link {
-  color: var(--p-primary-color);
-  text-decoration: none;
-}
-.link:hover {
-  text-decoration: underline;
-}
 </style>

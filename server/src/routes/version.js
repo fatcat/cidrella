@@ -2,15 +2,13 @@ import { Router } from 'express';
 import { getSetting } from '../db/init.js';
 import { APP_VERSION } from '../utils/version.js';
 import { checkForUpdates } from '../utils/update-checker.js';
+import { requirePerm } from '../auth/require-perm.js';
+import { requireRole } from '../auth/roles.js';
 
 const router = Router();
 
 // GET /api/version — current version and update status
-router.get('/', (req, res) => {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-
+router.get('/', requirePerm('subnets:read'), (req, res) => {
   res.json({
     version: APP_VERSION,
     updateAvailable: getSetting('update_available_version') || null,
@@ -21,14 +19,7 @@ router.get('/', (req, res) => {
 });
 
 // POST /api/version/check — trigger immediate update check (admin only)
-router.post('/check', async (req, res) => {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-  if (req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
+router.post('/check', requireRole('admin'), async (req, res) => {
   try {
     const result = await checkForUpdates();
     res.json({

@@ -44,48 +44,17 @@
       <!-- Time Range -->
       <div class="range-bar">
         <Select v-model="selectedRange" :options="rangeOptions" optionLabel="label" optionValue="value"
-                size="small" style="width: 10rem" @change="onRangeChange" />
+                size="small" style="width: 10rem" @change="refreshAll" />
         <Button icon="pi pi-refresh" size="small" text rounded @click="refreshAll" :loading="store.loading" title="Refresh" />
       </div>
 
-      <!-- DNS Requests Over Time -->
-      <div class="chart-card">
-        <h4>DNS Requests Over Time</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="dnsRequestsData" class="chart-wrap" style="height: 240px">
-              <Line :data="dnsRequestsData" :options="dnsRequestsOptions" />
-            </div>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <LineChartCard title="DNS Requests Over Time" :data="dnsRequestsData" :options="dnsRequestsOptions" />
 
-      <!-- Proxy Query Latency -->
-      <div class="chart-card">
-        <h4>Proxy Query Latency</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="latencyData" class="chart-wrap" style="height: 240px">
-              <Line :data="latencyData" :options="latencyOptions" />
-            </div>
-            <p v-else class="empty-chart">No proxy latency data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <LineChartCard title="Proxy Query Latency" :data="latencyData" :options="latencyOptions"
+                     emptyText="No proxy latency data in this range." />
 
-      <!-- Query Throughput -->
-      <div class="chart-card">
-        <h4>Query Throughput</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="throughputData" class="chart-wrap" style="height: 240px">
-              <Line :data="throughputData" :options="throughputOptions" />
-            </div>
-            <p v-else class="empty-chart">No query throughput data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <LineChartCard title="Query Throughput" :data="throughputData" :options="throughputOptions"
+                     emptyText="No query throughput data in this range." />
 
       <!-- Process Resources -->
       <div class="chart-card">
@@ -118,51 +87,21 @@
         </div>
       </div>
 
-      <!-- Cache Performance -->
-      <div class="chart-card">
-        <h4>Cache Performance</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="cacheData" class="chart-wrap" style="height: 240px">
-              <Line :data="cacheData" :options="cacheOptions" />
-            </div>
-            <p v-else class="empty-chart">No cache data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <LineChartCard title="Cache Performance" :data="cacheData" :options="cacheOptions"
+                     emptyText="No cache data in this range." />
 
-      <!-- Memory Consumption -->
-      <div class="chart-card">
-        <h4>Memory Consumption</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="memoryData" class="chart-wrap" style="height: 240px">
-              <Line :data="memoryData" :options="memoryOptions" />
-            </div>
-            <p v-else class="empty-chart">No memory data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <LineChartCard title="Memory Consumption" :data="memoryData" :options="memoryOptions"
+                     emptyText="No memory data in this range." />
 
-      <!-- CPU Usage -->
-      <div class="chart-card">
-        <h4>CPU Usage</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="cpuData" class="chart-wrap" style="height: 240px">
-              <Line :data="cpuData" :options="cpuOptions" />
-            </div>
-            <p v-else class="empty-chart">No CPU data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <LineChartCard title="CPU Usage" :data="cpuData" :options="cpuOptions"
+                     emptyText="No CPU data in this range." />
 
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import { formatEpoch } from '../utils/dateFormat.js';
 import Select from 'primevue/select';
 import Button from 'primevue/button';
@@ -173,7 +112,9 @@ import {
 } from 'chart.js';
 import { Line, Doughnut } from 'vue-chartjs';
 import { useDashboardStore } from '../stores/dashboard.js';
-import { RANGE_OPTIONS } from '../utils/chart-config.js';
+import { RANGE_OPTIONS, makeLineOptions } from '../utils/chart-config.js';
+import { useAutoRefresh } from '../composables/useAutoRefresh.js';
+import LineChartCard from '../components/LineChartCard.vue';
 import '../assets/analytics-layout.css';
 
 ChartJS.register(
@@ -185,8 +126,6 @@ ChartJS.defaults.elements.line.borderWidth = 1;
 const store = useDashboardStore();
 const rangeOptions = RANGE_OPTIONS;
 const selectedRange = computed({ get: () => store.selectedRange, set: (v) => store.setRange(v) });
-
-let refreshTimer = null;
 
 const services = computed(() => store.services);
 
@@ -242,18 +181,7 @@ const dnsRequestsData = computed(() => {
   };
 });
 
-const dnsRequestsOptions = {
-  responsive: true, maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
-    tooltip: { mode: 'index', intersect: false },
-  },
-  scales: {
-    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-    y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'count' } },
-  },
-};
+const dnsRequestsOptions = makeLineOptions({ yLabel: 'count' });
 
 // ── Proxy Query Latency ────────────────────────────────
 const latencyData = computed(() => {
@@ -282,20 +210,7 @@ const latencyData = computed(() => {
   };
 });
 
-const latencyOptions = {
-  responsive: true, maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
-    tooltip: { mode: 'index', intersect: false,
-      callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? '—'} ms` }
-    },
-  },
-  scales: {
-    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-    y: { beginAtZero: true, title: { display: true, text: 'ms' } },
-  },
-};
+const latencyOptions = makeLineOptions({ yLabel: 'ms', tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? '—'} ms` });
 
 // ── Query Throughput ───────────────────────────────────
 const throughputData = computed(() => {
@@ -320,18 +235,7 @@ const throughputData = computed(() => {
   };
 });
 
-const throughputOptions = {
-  responsive: true, maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
-    tooltip: { mode: 'index', intersect: false },
-  },
-  scales: {
-    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-    y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'count' } },
-  },
-};
+const throughputOptions = makeLineOptions({ yLabel: 'count' });
 
 // ── Process Resources (combined line chart) ────────────
 const resourceData = computed(() => {
@@ -359,19 +263,12 @@ const resourceData = computed(() => {
   };
 });
 
-const resourceOptions = {
-  responsive: true, maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
-    tooltip: { mode: 'index', intersect: false },
-  },
-  scales: {
-    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-    y: { position: 'left', beginAtZero: true, title: { display: true, text: 'MB' } },
+const resourceOptions = makeLineOptions({
+  yLabel: 'MB',
+  extraScales: {
     y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'CPU %' }, grid: { drawOnChartArea: false } },
   },
-};
+});
 
 // ── Gauges (current CPU & Memory) ──────────────────────
 const latestPerf = computed(() => {
@@ -444,18 +341,7 @@ const cacheData = computed(() => {
   };
 });
 
-const cacheOptions = {
-  responsive: true, maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
-    tooltip: { mode: 'index', intersect: false },
-  },
-  scales: {
-    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-    y: { beginAtZero: true, ticks: { precision: 0 }, title: { display: true, text: 'lookups' } },
-  },
-};
+const cacheOptions = makeLineOptions({ yLabel: 'lookups' });
 
 // ── Memory Consumption ─────────────────────────────────
 const memoryData = computed(() => {
@@ -480,20 +366,7 @@ const memoryData = computed(() => {
   };
 });
 
-const memoryOptions = {
-  responsive: true, maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
-    tooltip: { mode: 'index', intersect: false,
-      callbacks: { label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? '—'} MB` }
-    },
-  },
-  scales: {
-    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-    y: { beginAtZero: true, title: { display: true, text: 'MB' } },
-  },
-};
+const memoryOptions = makeLineOptions({ yLabel: 'MB', tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? '—'} MB` });
 
 // ── CPU Usage ──────────────────────────────────────────
 const cpuData = computed(() => {
@@ -512,20 +385,7 @@ const cpuData = computed(() => {
   };
 });
 
-const cpuOptions = {
-  responsive: true, maintainAspectRatio: false,
-  interaction: { mode: 'index', intersect: false },
-  plugins: {
-    legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
-    tooltip: { mode: 'index', intersect: false,
-      callbacks: { label: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? '—'}%` }
-    },
-  },
-  scales: {
-    x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
-    y: { beginAtZero: true, title: { display: true, text: '%' } },
-  },
-};
+const cpuOptions = makeLineOptions({ yLabel: '%', tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? '—'}%` });
 
 // ── Data fetching ──────────────────────────────────────
 async function refreshAll() {
@@ -541,18 +401,11 @@ async function refreshAll() {
   }
 }
 
-function onRangeChange() {
-  refreshAll();
-}
-
 onMounted(() => {
   refreshAll();
-  refreshTimer = setInterval(refreshAll, 60_000);
 });
 
-onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer);
-});
+useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>

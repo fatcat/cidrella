@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import { execSync } from 'child_process';
 import { getDb, getSetting } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getProxyStatus } from '../utils/dns-proxy.js';
+import { isDnsmasqRunning } from '../utils/dnsmasq.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
 import { VALID_RANGE_KEYS } from '../config/defaults.js';
 
@@ -70,11 +70,7 @@ router.get('/proxy-perf', requirePerm('analytics:read'), (req, res) => {
 // GET /api/metrics/services
 router.get('/services', requirePerm('analytics:read'), async (req, res) => {
   // dnsmasq status
-  let dnsmasq = false;
-  try {
-    execSync('pidof dnsmasq', { stdio: 'ignore' });
-    dnsmasq = true;
-  } catch { /* not running */ }
+  const dnsmasq = isDnsmasqRunning();
 
   // GeoIP proxy status
   const geoipStatus = getProxyStatus();

@@ -84,6 +84,7 @@ import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
 import Toast from 'primevue/toast';
 import { useSubnetStore } from '../stores/subnets.js';
+import { apiError } from '../utils/format.js';
 
 const store = useSubnetStore();
 const toast = useToast();
@@ -131,7 +132,7 @@ async function save() {
     closeDialog();
     await loadTypes();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
@@ -150,7 +151,7 @@ async function doDelete() {
     toast.add({ severity: 'success', summary: 'Range type deleted', life: 3000 });
     await loadTypes();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }

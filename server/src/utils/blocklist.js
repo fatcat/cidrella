@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { getDb } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
 import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
 import { loadBlocklist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
@@ -172,8 +172,7 @@ export function startBlocklistScheduler() {
     try {
       const db = getDb();
 
-      const schedSetting = db.prepare("SELECT value FROM settings WHERE key = 'blocklist_update_schedule'").get();
-      const schedule = schedSetting?.value || 'daily';
+      const schedule = getSetting('blocklist_update_schedule') || 'daily';
       if (schedule === 'off') return;
 
       const intervalHours = scheduleToHours(schedule);

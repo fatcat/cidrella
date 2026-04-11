@@ -137,7 +137,7 @@
                          'merge-selected': isMergeSelected(item.node.data.id),
                          'tree-item-unallocated': item.node.data.status === 'unallocated',
                        }"
-                       @click="selectBrowseNode(item.node)"
+                       @click="selectNode(item.node)"
                        @contextmenu.prevent="openSubnetContextMenu($event, item.node)">
                     <div class="tree-item-row">
                       <i v-if="item.node.children && item.node.children.length > 0"
@@ -243,6 +243,9 @@ import { defineAsyncComponent } from 'vue';
 const DnsPanel = defineAsyncComponent(() => import('../components/DnsPanel.vue'));
 const DhcpPanel = defineAsyncComponent(() => import('../components/DhcpPanel.vue'));
 import { useSubnetStore } from '../stores/subnets.js';
+import { loadJson } from '../utils/storage.js';
+import { collectAllocatedSubnets } from '../utils/tree.js';
+import { apiError } from '../utils/format.js';
 import { applyNameTemplate, canMergeCidrs } from '../utils/ip.js';
 
 const store = useSubnetStore();
@@ -253,7 +256,7 @@ const dnsPanelRef = ref(null);
 const dhcpPanelRef = ref(null);
 
 // ── Top-level tab state ──
-const activeTab = ref(loadJson('ipam_b_active_tab', 'networks'));
+const activeTab = ref(loadJson('cidrella_b_active_tab', 'networks'));
 
 const menuItems = computed(() => [
   { key: 'networks', label: 'Networks', icon: 'pi pi-sitemap', dataTrack: 'tab-networks', command: () => { activeTab.value = 'networks'; } },
@@ -262,26 +265,19 @@ const menuItems = computed(() => [
 ]);
 
 // ── Persistence helpers ──
-function loadJson(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch { return fallback; }
-}
-
 let _persistTimer = null;
 function persistState() {
   if (_persistTimer) clearTimeout(_persistTimer);
   _persistTimer = setTimeout(() => {
     _persistTimer = null;
     try {
-      localStorage.setItem('ipam_b_selected_subnet_id', JSON.stringify(selectedSubnetId.value));
-      localStorage.setItem('ipam_b_selected_folder_id', JSON.stringify(selectedFolder.value?.id || null));
-      localStorage.setItem('ipam_b_sidebar_mode', JSON.stringify(sidebarMode.value));
-      localStorage.setItem('ipam_b_expanded_folders', JSON.stringify(expandedFolders.value));
-      localStorage.setItem('ipam_b_browse_expanded', JSON.stringify(browseExpanded.value));
-      localStorage.setItem('ipam_b_expanded_unallocated', JSON.stringify(expandedUnallocated.value));
-      localStorage.setItem('ipam_b_active_tab', JSON.stringify(activeTab.value));
+      localStorage.setItem('cidrella_b_selected_subnet_id', JSON.stringify(selectedSubnetId.value));
+      localStorage.setItem('cidrella_b_selected_folder_id', JSON.stringify(selectedFolder.value?.id || null));
+      localStorage.setItem('cidrella_b_sidebar_mode', JSON.stringify(sidebarMode.value));
+      localStorage.setItem('cidrella_b_expanded_folders', JSON.stringify(expandedFolders.value));
+      localStorage.setItem('cidrella_b_browse_expanded', JSON.stringify(browseExpanded.value));
+      localStorage.setItem('cidrella_b_expanded_unallocated', JSON.stringify(expandedUnallocated.value));
+      localStorage.setItem('cidrella_b_active_tab', JSON.stringify(activeTab.value));
     } catch { /* */ }
   }, 300);
 }
@@ -297,11 +293,11 @@ async function loadSettings() {
 }
 
 // ── Sidebar state ──
-const sidebarMode = ref(loadJson('ipam_b_sidebar_mode', 'folders'));
+const sidebarMode = ref(loadJson('cidrella_b_sidebar_mode', 'folders'));
 const filterText = ref('');
-const expandedFolders = ref(loadJson('ipam_b_expanded_folders', {}));
-const browseExpanded = ref(loadJson('ipam_b_browse_expanded', {}));
-const expandedUnallocated = ref(loadJson('ipam_b_expanded_unallocated', false));
+const expandedFolders = ref(loadJson('cidrella_b_expanded_folders', {}));
+const browseExpanded = ref(loadJson('cidrella_b_browse_expanded', {}));
+const expandedUnallocated = ref(loadJson('cidrella_b_expanded_unallocated', false));
 
 watch(activeTab, persistState);
 watch(sidebarMode, persistState);
@@ -310,7 +306,7 @@ watch(browseExpanded, persistState, { deep: true });
 watch(expandedUnallocated, persistState);
 
 // ── Selection state ──
-const selectedSubnetId = ref(loadJson('ipam_b_selected_subnet_id', null));
+const selectedSubnetId = ref(loadJson('cidrella_b_selected_subnet_id', null));
 const selectedNode = ref(null);
 const selectedFolder = ref(null);
 
@@ -344,20 +340,7 @@ function onFolderTableSelectSubnet(node) {
 
 function allocatedSubnetsForFolder(folder) {
   if (!folder.subnets) return [];
-  const q = filterText.value.toLowerCase().trim();
-  const result = [];
-  function collect(nodes) {
-    for (const s of nodes) {
-      if (s.status === 'allocated') {
-        if (!q || s.cidr.includes(q) || s.name?.toLowerCase().includes(q)) {
-          result.push(s);
-        }
-      }
-      if (s.children && s.children.length > 0) collect(s.children);
-    }
-  }
-  collect(folder.subnets);
-  return result;
+  return collectAllocatedSubnets(folder.subnets, filterText.value.trim());
 }
 
 function selectSubnetById(subnet) {
@@ -389,7 +372,7 @@ function openSubnetDeleteById(subnet) {
 }
 
 // ── Subnet selection ──
-function selectSubnet(node) {
+function selectNode(node) {
   if (ctrlHeld.value && node.data.id) {
     toggleMergeSelect(node.data.id);
     return;
@@ -397,18 +380,6 @@ function selectSubnet(node) {
   clearMergeSelection();
   selectedNode.value = node;
   // Only show detail for allocated subnets (unallocated have no IP data)
-  if (node.data.status === 'allocated') {
-    selectedSubnetId.value = node.data.id;
-  }
-}
-
-function selectBrowseNode(node) {
-  if (ctrlHeld.value && node.data.id) {
-    toggleMergeSelect(node.data.id);
-    return;
-  }
-  clearMergeSelection();
-  selectedNode.value = node;
   if (node.data.status === 'allocated') {
     selectedSubnetId.value = node.data.id;
   }
@@ -436,20 +407,7 @@ const filteredFolders = computed(() => {
 const ungroupedSubnets = computed(() => {
   const ungroupedFolder = store.folders.find(f => f.id === null);
   if (!ungroupedFolder?.subnets) return [];
-  const q = filterText.value.toLowerCase().trim();
-  const result = [];
-  function collect(nodes) {
-    for (const s of nodes) {
-      if (s.status === 'allocated') {
-        if (!q || s.cidr.includes(q) || s.name?.toLowerCase().includes(q)) {
-          result.push(s);
-        }
-      }
-      if (s.children) collect(s.children);
-    }
-  }
-  collect(ungroupedFolder.subnets);
-  return result;
+  return collectAllocatedSubnets(ungroupedFolder.subnets, filterText.value.trim());
 });
 
 // Unallocated subnets: all non-allocated networks across all folders
@@ -689,7 +647,7 @@ async function onDropSubnet(event, folderId) {
     const folder = store.folders.find(f => f.id === folderId);
     toast.add({ severity: 'success', summary: 'Moved', detail: `${subnet.cidr} moved to ${folder?.name || 'folder'}`, life: 2000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 3000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 3000 });
   }
 }
 
@@ -718,7 +676,7 @@ async function onDropUngrouped(event) {
     await store.updateSubnet(subnet.id, { folder_id: null });
     toast.add({ severity: 'success', summary: 'Moved', detail: `${subnet.cidr} moved to ungrouped`, life: 2000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.message, life: 3000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 3000 });
   }
 }
 
@@ -860,7 +818,7 @@ onMounted(async () => {
 
   // Restore folder selection
   if (!selectedSubnetId.value) {
-    const savedFolderId = loadJson('ipam_b_selected_folder_id', null);
+    const savedFolderId = loadJson('cidrella_b_selected_folder_id', null);
     if (savedFolderId) {
       const folder = store.folders.find(f => f.id === savedFolderId);
       if (folder) selectedFolder.value = folder;

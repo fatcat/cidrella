@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb, getSetting } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
+import { requireRole } from '../auth/roles.js';
 import { isValidIpv4 } from '../utils/ip.js';
 
 const router = Router();
@@ -102,7 +103,7 @@ router.get('/client/:ip/model', requirePerm('analytics:read'), (req, res) => {
 });
 
 // POST /api/anomalies/:id/dismiss — mark anomaly as resolved
-router.post('/:id/dismiss', requirePerm('settings:write'), (req, res) => {
+router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) {
@@ -121,7 +122,7 @@ router.post('/:id/dismiss', requirePerm('settings:write'), (req, res) => {
 });
 
 // GET /api/anomalies/settings — anomaly detection settings
-router.get('/settings', requirePerm('settings:read'), (req, res) => {
+router.get('/settings', requirePerm('analytics:read'), (req, res) => {
   res.json({
     anomaly_detection_enabled: getSetting('anomaly_detection_enabled') || 'false',
     anomaly_scoring_interval_min: getSetting('anomaly_scoring_interval_min') || '15',
@@ -133,7 +134,7 @@ router.get('/settings', requirePerm('settings:read'), (req, res) => {
 });
 
 // PUT /api/anomalies/settings — update anomaly detection settings
-router.put('/settings', requirePerm('settings:write'), (req, res) => {
+router.put('/settings', requireRole('admin'), (req, res) => {
   const db = getDb();
   const allowedKeys = [
     'anomaly_detection_enabled',
@@ -152,14 +153,20 @@ router.put('/settings', requirePerm('settings:write'), (req, res) => {
       const val = String(req.body[key]);
 
       // Validate specific fields
-      if (key === 'anomaly_detection_enabled' && !['true', 'false'].includes(val)) continue;
-      if (key === 'anomaly_sensitivity' && !validSensitivities.includes(val)) continue;
+      if (key === 'anomaly_detection_enabled' && !['true', 'false'].includes(val)) {
+        return res.status(400).json({ error: 'anomaly_detection_enabled must be a boolean (true or false)' });
+      }
+      if (key === 'anomaly_sensitivity' && !validSensitivities.includes(val)) {
+        return res.status(400).json({ error: `anomaly_sensitivity must be one of: ${validSensitivities.join(', ')}` });
+      }
 
       // Numeric fields must be positive integers
       if (['anomaly_scoring_interval_min', 'anomaly_training_interval_hours',
            'anomaly_min_training_hours', 'anomaly_retention_days'].includes(key)) {
         const n = parseInt(val, 10);
-        if (isNaN(n) || n < 1) continue;
+        if (isNaN(n) || n < 1) {
+          return res.status(400).json({ error: `${key} must be a positive integer` });
+        }
       }
 
       updates[key] = val;

@@ -325,3 +325,9 @@ export function subtractCidr(parentCidr, childCidr) {
 
   return remainder;
 }
+
+// Domain name validation — shared by dns.js and subnets.js
+const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
+export function isValidDomain(name) {
+  return typeof name === 'string' && name.length > 0 && name.length <= 253 && DOMAIN_RE.test(name);
+}

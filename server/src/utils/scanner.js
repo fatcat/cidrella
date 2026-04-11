@@ -4,6 +4,7 @@ import os from 'os';
 import ping from 'net-ping';
 import { parseCidr, longToIp, isIpInSubnet } from './ip.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
+import { getSetting } from '../db/init.js';
 import * as IpAddress from '../models/ip-address.js';
 
 /**
@@ -152,8 +153,8 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     if (subnet.scan_enabled !== null && subnet.scan_enabled !== undefined) {
       subnetDefault = !!subnet.scan_enabled;
     } else {
-      const setting = db.prepare("SELECT value FROM settings WHERE key = 'default_scan_enabled'").get();
-      subnetDefault = setting ? setting.value === '1' : true;
+      const val = getSetting('default_scan_enabled');
+      subnetDefault = val != null ? val === '1' : true;
     }
 
     // Pre-load per-IP scan_enabled overrides

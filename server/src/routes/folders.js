@@ -4,6 +4,10 @@ import { requirePerm } from '../auth/require-perm.js';
 
 const router = Router();
 
+function sanitizeName(name) {
+  return name.replace(/<[^>]*>/g, '').trim();
+}
+
 // GET /api/folders — list all folders with subnet counts
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
@@ -21,6 +25,10 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   const { name, description } = req.body;
   if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
 
+  const cleanName = sanitizeName(name);
+  if (!cleanName) return res.status(400).json({ error: 'Name is required (no HTML allowed)' });
+  if (cleanName.length > 255) return res.status(400).json({ error: 'Name must be 255 characters or fewer' });
+
   const db = getDb();
 
   try {
@@ -29,9 +37,9 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 
     const result = db.prepare(
       'INSERT INTO folders (name, description, sort_order) VALUES (?, ?, ?)'
-    ).run(name.trim(), description || null, sortOrder);
+    ).run(cleanName, description || null, sortOrder);
 
-    audit(req.user.id, 'folder_created', 'folder', result.lastInsertRowid, { name: name.trim() });
+    audit(req.user.id, 'folder_created', 'folder', result.lastInsertRowid, { name: cleanName });
     const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(folder);
   } catch (err) {
@@ -48,16 +56,23 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 
   const { name, description, sort_order } = req.body;
 
+  let cleanName = folder.name;
+  if (name !== undefined) {
+    cleanName = sanitizeName(name);
+    if (!cleanName) return res.status(400).json({ error: 'Name is required (no HTML allowed)' });
+    if (cleanName.length > 255) return res.status(400).json({ error: 'Name must be 255 characters or fewer' });
+  }
+
   db.prepare(`
     UPDATE folders SET name = ?, description = ?, sort_order = ? WHERE id = ?
   `).run(
-    name ?? folder.name,
+    cleanName,
     description !== undefined ? description : folder.description,
     sort_order !== undefined ? sort_order : folder.sort_order,
     folder.id
   );
 
-  audit(req.user.id, 'folder_updated', 'folder', folder.id, { name: name ?? folder.name });
+  audit(req.user.id, 'folder_updated', 'folder', folder.id, { name: cleanName });
   const updated = db.prepare('SELECT * FROM folders WHERE id = ?').get(folder.id);
   res.json(updated);
 });

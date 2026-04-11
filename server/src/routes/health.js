@@ -1,10 +1,27 @@
 import { Router } from 'express';
 import os from 'os';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { getDb } from '../db/init.js';
 import { APP_VERSION } from '../utils/version.js';
+import { isDnsmasqRunning } from '../utils/dnsmasq.js';
+import { requirePerm } from '../auth/require-perm.js';
 
 const router = Router();
+
+function parseDf(target) {
+  const dfOutput = execFileSync('df', ['-B1', target], { encoding: 'utf-8' });
+  const lines = dfOutput.trim().split('\n');
+  if (lines.length >= 2) {
+    const parts = lines[1].split(/\s+/);
+    return {
+      total: parseInt(parts[1], 10) || 0,
+      used: parseInt(parts[2], 10) || 0,
+      available: parseInt(parts[3], 10) || 0,
+      percent: parseInt(parts[4], 10) || 0
+    };
+  }
+  return { total: 0, used: 0, available: 0, percent: 0 };
+}
 
 // GET /api/health — basic health check (unauthenticated)
 router.get('/', (req, res) => {
@@ -18,11 +35,7 @@ router.get('/', (req, res) => {
 });
 
 // GET /api/health/system — detailed system metrics (authenticated)
-router.get('/system', (req, res) => {
-  if (!req.user) {
-    return res.status(401).json({ error: 'Authentication required' });
-  }
-
+router.get('/system', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
 
   // CPU
@@ -37,26 +50,12 @@ router.get('/system', (req, res) => {
   // Disk usage for data directory
   const dataDir = process.env.DATA_DIR || '/data';
   let disk = { total: 0, used: 0, available: 0, percent: 0 };
-  try {
-    const dfOutput = execSync(`df -B1 ${dataDir} 2>/dev/null || df -B1 / 2>/dev/null`, { encoding: 'utf-8' });
-    const lines = dfOutput.trim().split('\n');
-    if (lines.length >= 2) {
-      const parts = lines[1].split(/\s+/);
-      disk = {
-        total: parseInt(parts[1], 10) || 0,
-        used: parseInt(parts[2], 10) || 0,
-        available: parseInt(parts[3], 10) || 0,
-        percent: parseInt(parts[4], 10) || 0
-      };
-    }
-  } catch { /* ignore */ }
+  try { disk = parseDf(dataDir); } catch {
+    try { disk = parseDf('/'); } catch { /* ignore */ }
+  }
 
   // Services
-  let dnsmasqRunning = false;
-  try {
-    execSync('pidof dnsmasq', { stdio: 'ignore' });
-    dnsmasqRunning = true;
-  } catch { /* not running */ }
+  const dnsmasqRunning = isDnsmasqRunning();
 
   // Uptime
   const systemUptime = os.uptime();

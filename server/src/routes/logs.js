@@ -1,10 +1,25 @@
 import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { DATA_DIR } from '../config/defaults.js';
+import { requirePerm } from '../auth/require-perm.js';
+import { requireRole } from '../auth/roles.js';
 
 const router = Router();
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
+
+// Short-lived SSE stream tickets — key: token string, value: expiry timestamp
+const streamTickets = new Map();
+const TICKET_TTL_MS = 30_000; // 30 seconds
+
+// Periodically purge expired tickets
+setInterval(() => {
+  const now = Date.now();
+  for (const [token, expiry] of streamTickets) {
+    if (now > expiry) streamTickets.delete(token);
+  }
+}, 60_000);
 
 // DHCP log patterns
 const DHCP_PATTERNS = [
@@ -57,11 +72,32 @@ function readNewLines(offset) {
 }
 
 /**
- * GET /api/logs/stream?filter=all|dns|dhcp&token=<jwt>
+ * POST /api/logs/stream-token
+ * Issues a short-lived ticket (30s) that can be used as ?ticket= on the SSE stream.
+ * Requires authentication — this lets EventSource (which can't set headers) authenticate.
+ */
+router.post('/stream-token', requirePerm('dns:read'), (req, res) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  streamTickets.set(token, Date.now() + TICKET_TTL_MS);
+  res.json({ ticket: token, ttl: TICKET_TTL_MS });
+});
+
+/**
+ * GET /api/logs/stream?filter=all|dns|dhcp&ticket=<one-time-token>
  * SSE endpoint that watches the dnsmasq log file.
+ * Auth via JWT (req.user set by authMiddleware) OR a valid ?ticket= param.
  */
 router.get('/stream', (req, res) => {
-  if (!req.user) {
+  // Accept a short-lived ticket as an alternative to the JWT (EventSource can't set headers)
+  const ticket = req.query.ticket;
+  if (ticket) {
+    const expiry = streamTickets.get(ticket);
+    if (!expiry || Date.now() > expiry) {
+      return res.status(401).json({ error: 'Invalid or expired stream ticket' });
+    }
+    // Consume the ticket — single use
+    streamTickets.delete(ticket);
+  } else if (!req.user || !req.user.role) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
@@ -128,11 +164,7 @@ router.get('/stream', (req, res) => {
  * POST /api/logs/clear
  * Truncate the log file.
  */
-router.post('/clear', (req, res) => {
-  if (!req.user || req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Admin access required' });
-  }
-
+router.post('/clear', requireRole('admin'), (req, res) => {
   try {
     fs.writeFileSync(LOG_FILE, '');
     res.json({ ok: true });

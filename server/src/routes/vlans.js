@@ -76,6 +76,10 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     const vlan = db.prepare('SELECT * FROM vlans WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(vlan);
   } catch (err) {
+    // Race condition: another request assigned the VLAN between our pre-check and transaction
+    if (err.message && err.message.includes('Network already has a VLAN assigned')) {
+      return res.status(409).json({ error: err.message });
+    }
     res.status(500).json({ error: err.message || 'Internal server error' });
   }
 });

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import os from 'os';
 import fs from 'fs';
-import { getDb, audit } from '../db/init.js';
+import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { applyInterfaceConfig, restartDnsmasq } from '../utils/dnsmasq.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
@@ -67,20 +67,12 @@ router.get('/config', requirePerm('subnets:read'), (req, res) => {
   let dnsEnabled = true;
   let dhcpEnabled = true;
 
-  try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'interface_config'").get();
-    if (row?.value) interfaces = JSON.parse(row.value);
-  } catch { /* default */ }
-
-  try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_enabled'").get();
-    if (row?.value === 'false') dnsEnabled = false;
-  } catch { /* default */ }
-
-  try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'dhcp_enabled'").get();
-    if (row?.value === 'false') dhcpEnabled = false;
-  } catch { /* default */ }
+  const ifaceConfigRaw = getSetting('interface_config');
+  if (ifaceConfigRaw) {
+    try { interfaces = JSON.parse(ifaceConfigRaw); } catch { /* default */ }
+  }
+  if (getSetting('dns_enabled') === 'false') dnsEnabled = false;
+  if (getSetting('dhcp_enabled') === 'false') dhcpEnabled = false;
 
   res.json({ interfaces, dns_enabled: dnsEnabled, dhcp_enabled: dhcpEnabled });
 });

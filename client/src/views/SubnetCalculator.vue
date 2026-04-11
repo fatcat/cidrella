@@ -69,22 +69,16 @@ import Column from 'primevue/column';
 import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useSubnetStore } from '../stores/subnets.js';
+import { apiError } from '../utils/format.js';
+import { loadJson } from '../utils/storage.js';
 
-const STORAGE_KEY = 'ipam-subnet-calc';
+const STORAGE_KEY = 'cidrella-subnet-calc';
 const store = useSubnetStore();
 const toast = useToast();
 const contextMenuRef = ref(null);
 const contextRow = ref(null);
 
-function loadSaved() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return null;
-}
-
-const saved = loadSaved();
+const saved = loadJson(STORAGE_KEY, null);
 const cidr = ref(saved?.cidr || '');
 const newPrefix = ref(saved?.newPrefix ?? 24);
 const parent = ref(saved?.parent || null);
@@ -105,7 +99,7 @@ async function calculate() {
       parent: result.parent, subnets: result.subnets
     }));
   } catch (err) {
-    error.value = err.response?.data?.error || err.message;
+    error.value = apiError(err);
     parent.value = null;
     subnets.value = [];
   } finally {
@@ -136,7 +130,7 @@ async function addNetwork(row) {
     await store.createSupernet({ cidr: networkCidr });
     toast.add({ severity: 'success', summary: 'Network added', detail: networkCidr, life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 </script>

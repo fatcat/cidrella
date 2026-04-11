@@ -34,155 +34,53 @@
       <!-- Time Range -->
       <div class="range-bar">
         <Select v-model="selectedRange" :options="rangeOptions" optionLabel="label" optionValue="value"
-                size="small" style="width: 10rem" @change="onRangeChange" />
+                size="small" style="width: 10rem" @change="refreshAll" />
         <Button icon="pi pi-refresh" size="small" text rounded @click="refreshAll" :loading="store.loading" title="Refresh" />
       </div>
 
-      <!-- Blocklist: Top 10 Blocked Domains -->
-      <div class="chart-card">
-        <h4>Top 10 Blocked Domains</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="store.blocklistTopDomains.length" class="doughnut-wrap">
-              <Doughnut :data="blockedDomainsChartData" :options="doughnutWithLabelsOptions" :plugins="[ChartDataLabels]" />
-            </div>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
+      <DoughnutTableCard title="Top 10 Blocked Domains" :items="store.blocklistTopDomains"
+                         :chartData="blockedDomainsChartData" labelField="domain" labelHeader="Domain" />
 
-          <div class="chart-card">
-            <DataTable v-if="store.blocklistTopDomains.length" :value="store.blocklistTopDomains" size="small" style="margin: 0 10%">
-              <Column field="domain" header="Domain" />
-              <Column field="count" header="Count">
-                <template #body="{ data }">{{ Number(data.count).toLocaleString() }}</template>
-              </Column>
-            </DataTable>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <DoughnutTableCard title="Top 10 Blocked Categories" :items="store.blocklistTopCategories"
+                         :chartData="blockedCategoriesChartData" labelField="block_reason" labelHeader="Category" />
 
-      <!-- Blocklist: Top 10 Blocked Categories -->
-      <div class="chart-card">
-        <h4>Top 10 Blocked Categories</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="store.blocklistTopCategories.length" class="doughnut-wrap">
-              <Doughnut :data="blockedCategoriesChartData" :options="doughnutWithLabelsOptions" :plugins="[ChartDataLabels]" />
-            </div>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
+      <DoughnutTableCard title="Top 10 GeoIP Blocked Hosts" :items="store.geoipTopClients"
+                         :chartData="geoipHostsChartData" labelHeader="Host">
+        <template #label="{ data }">{{ data.hostname || data.client_ip }}</template>
+      </DoughnutTableCard>
 
-          <div class="chart-card">
-            <DataTable v-if="store.blocklistTopCategories.length" :value="store.blocklistTopCategories" size="small" style="margin: 0 10%">
-              <Column field="block_reason" header="Category" />
-              <Column field="count" header="Count">
-                <template #body="{ data }">{{ Number(data.count).toLocaleString() }}</template>
-              </Column>
-            </DataTable>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <DoughnutTableCard title="Top 10 GeoIP Blocked Domains" :items="store.geoipTopDomains"
+                         :chartData="geoipDomainsChartData" labelField="domain" labelHeader="Domain" />
 
-      <!-- GeoIP: Top 10 Blocked Hosts -->
-      <div class="chart-card">
-        <h4>Top 10 GeoIP Blocked Hosts</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="store.geoipTopClients.length" class="doughnut-wrap">
-              <Doughnut :data="geoipHostsChartData" :options="doughnutWithLabelsOptions" :plugins="[ChartDataLabels]" />
-            </div>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-
-          <div class="chart-card">
-            <DataTable v-if="store.geoipTopClients.length" :value="store.geoipTopClients" size="small" style="margin: 0 10%">
-              <Column header="Host">
-                <template #body="{ data }">{{ data.hostname || data.client_ip }}</template>
-              </Column>
-              <Column field="count" header="Count">
-                <template #body="{ data }">{{ Number(data.count).toLocaleString() }}</template>
-              </Column>
-            </DataTable>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- GeoIP: Top 10 Blocked Domains -->
-      <div class="chart-card">
-        <h4>Top 10 GeoIP Blocked Domains</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="store.geoipTopDomains.length" class="doughnut-wrap">
-              <Doughnut :data="geoipDomainsChartData" :options="doughnutWithLabelsOptions" :plugins="[ChartDataLabels]" />
-            </div>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-
-          <div class="chart-card">
-            <DataTable v-if="store.geoipTopDomains.length" :value="store.geoipTopDomains" size="small" style="margin: 0 10%">
-              <Column field="domain" header="Domain" />
-              <Column field="count" header="Count">
-                <template #body="{ data }">{{ Number(data.count).toLocaleString() }}</template>
-              </Column>
-            </DataTable>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-        </div>
-      </div>
-
-     <!-- Blocklist: Top 10 Blocked Hosts -->
-      <div class="chart-card">
-        <h4>Top 10 Blocked Hosts</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="store.blocklistTopClients.length" class="doughnut-wrap">
-              <Doughnut :data="blockedHostsChartData" :options="doughnutWithLabelsOptions" :plugins="[ChartDataLabels]" />
-            </div>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-
-          <div class="chart-card">
-            <DataTable v-if="store.blocklistTopClients.length" :value="store.blocklistTopClients" size="small" style="margin: 0 10%">
-              <Column header="Host">
-                <template #body="{ data }">{{ data.hostname || data.client_ip }}</template>
-              </Column>
-              <Column field="count" header="Count">
-                <template #body="{ data }">{{ Number(data.count).toLocaleString() }}</template>
-              </Column>
-            </DataTable>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <DoughnutTableCard title="Top 10 Blocked Hosts" :items="store.blocklistTopClients"
+                         :chartData="blockedHostsChartData" labelHeader="Host">
+        <template #label="{ data }">{{ data.hostname || data.client_ip }}</template>
+      </DoughnutTableCard>
 
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import Select from 'primevue/select';
 import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
 import {
   Chart as ChartJS, ArcElement, Tooltip, Legend,
 } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
-import { Doughnut } from 'vue-chartjs';
 import { useDashboardStore } from '../stores/dashboard.js';
-import { CHART_COLORS, RANGE_OPTIONS, DOUGHNUT_OPTIONS } from '../utils/chart-config.js';
+import { RANGE_OPTIONS, makeDoughnutData } from '../utils/chart-config.js';
+import { formatNumber } from '../utils/format.js';
+import { useAutoRefresh } from '../composables/useAutoRefresh.js';
+import DoughnutTableCard from '../components/DoughnutTableCard.vue';
 import '../assets/analytics-layout.css';
 
-ChartJS.register(ArcElement, Tooltip, Legend);
+ChartJS.register(ArcElement, Tooltip, Legend, ChartDataLabels);
 
 const store = useDashboardStore();
 const rangeOptions = RANGE_OPTIONS;
 const selectedRange = computed({ get: () => store.selectedRange, set: (v) => store.setRange(v) });
-
-let refreshTimer = null;
 
 const summary = computed(() => {
   const ts = store.timeseries;
@@ -192,88 +90,25 @@ const summary = computed(() => {
   };
 });
 
-function formatNumber(n) {
-  return (n || 0).toLocaleString();
-}
+const blockedHostsChartData = computed(() => makeDoughnutData(store.blocklistTopClients, r => r.hostname || r.client_ip || 'unknown'));
 
-const blockedHostsChartData = computed(() => {
-  const d = store.blocklistTopClients;
-  return {
-    labels: d.map(r => r.hostname || r.client_ip || 'unknown'),
-    datasets: [{
-      data: d.map(r => Number(r.count)),
-      backgroundColor: d.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
-      borderWidth: 0,
-    }],
-  };
-});
+const blockedDomainsChartData = computed(() => makeDoughnutData(store.blocklistTopDomains, r => r.domain || 'unknown'));
 
-const blockedDomainsChartData = computed(() => {
-  const d = store.blocklistTopDomains;
-  return {
-    labels: d.map(r => r.domain || 'unknown'),
-    datasets: [{
-      data: d.map(r => Number(r.count)),
-      backgroundColor: d.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
-      borderWidth: 0,
-    }],
-  };
-});
+const blockedCategoriesChartData = computed(() => makeDoughnutData(store.blocklistTopCategories, r => r.block_reason || 'unknown'));
 
-const blockedCategoriesChartData = computed(() => {
-  const d = store.blocklistTopCategories;
-  return {
-    labels: d.map(r => r.block_reason || 'unknown'),
-    datasets: [{
-      data: d.map(r => Number(r.count)),
-      backgroundColor: d.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
-      borderWidth: 0,
-    }],
-  };
-});
+const geoipHostsChartData = computed(() => makeDoughnutData(store.geoipTopClients, r => r.hostname || r.client_ip || 'unknown'));
 
-const geoipHostsChartData = computed(() => {
-  const d = store.geoipTopClients;
-  return {
-    labels: d.map(r => r.hostname || r.client_ip || 'unknown'),
-    datasets: [{
-      data: d.map(r => Number(r.count)),
-      backgroundColor: d.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
-      borderWidth: 0,
-    }],
-  };
-});
-
-const geoipDomainsChartData = computed(() => {
-  const d = store.geoipTopDomains;
-  return {
-    labels: d.map(r => r.domain || 'unknown'),
-    datasets: [{
-      data: d.map(r => Number(r.count)),
-      backgroundColor: d.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
-      borderWidth: 0,
-    }],
-  };
-});
-
-const doughnutWithLabelsOptions = DOUGHNUT_OPTIONS;
+const geoipDomainsChartData = computed(() => makeDoughnutData(store.geoipTopDomains, r => r.domain || 'unknown'));
 
 async function refreshAll() {
   await store.fetchAll(selectedRange.value);
 }
 
-function onRangeChange() {
-  refreshAll();
-}
-
 onMounted(() => {
   refreshAll();
-  refreshTimer = setInterval(refreshAll, 60_000);
 });
 
-onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer);
-});
+useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>

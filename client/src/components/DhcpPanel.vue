@@ -57,6 +57,7 @@
           <Button label="Sync Now" icon="pi pi-sync" size="small" text data-track="dhcp-sync-leases" @click="doSyncLeases" :loading="syncing" />
         </div>
 
+        <!-- Scope info bar — only shown when a scope is selected -->
         <template v-if="selectedScope">
           <div class="info-bar">
             <span class="info-bar-name">{{ selectedScope.subnet_name || selectedScope.subnet_cidr }}</span>
@@ -71,64 +72,25 @@
             <span v-if="selectedScope.domain_name || selectedScope.subnet_domain_name" class="info-bar-sep"></span>
             <span class="info-bar-pair"><span class="info-bar-label">Status</span> <span class="info-bar-val">{{ selectedScope.enabled ? 'enabled' : 'disabled' }}</span></span>
           </div>
+        </template>
 
-          <div class="search-bar">
+        <!-- All-leases header — only shown when no scope is selected and leases exist -->
+        <template v-else-if="filteredLeases.length > 0">
+          <div class="panel-header">
+            <h3>All Leases</h3>
+          </div>
+        </template>
+
+        <!-- Search bar and shared leases table (scope-filtered or all-leases) -->
+        <template v-if="selectedScope || filteredLeases.length > 0">
+          <div v-if="selectedScope" class="search-bar">
             <IconField>
               <InputIcon class="pi pi-search" />
               <InputText v-model="dhcpSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
             </IconField>
             <Button v-if="dhcpSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpSearch = ''" />
           </div>
-
-          <DataTable :value="searchedScopeLeases" :loading="loadingLeases" stripedRows
-                     emptyMessage="No leases or reservations for this scope." size="small"
-                     scrollable scrollHeight="flex"
-                     paginator :rows="100" paginatorPosition="bottom"
-                     :rowsPerPageOptions="[50, 100, 250, 500]"
-                     removableSort :nullSortOrder="0"
-                     @row-contextmenu="onLeaseRightClick" contextMenu>
-            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
-            </Column>
-            <Column field="is_online" header="Online" sortable style="width: 5rem">
-              <template #body="{ data }">
-                <span v-if="data.is_online != null" :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
-                <span v-else class="text-muted">—</span>
-              </template>
-            </Column>
-            <Column header="Lease" sortable field="status" style="width: 6rem">
-              <template #body="{ data }">
-                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Active' : 'Inactive' }}</span>
-              </template>
-            </Column>
-            <Column header="Type" sortable field="type" style="width: 7rem">
-              <template #body="{ data }">
-                <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reservation' : 'Dynamic' }}</span>
-              </template>
-            </Column>
-            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ displayHostname(data.hostname, selectedScope?.subnet_domain_name) }}</template>
-            </Column>
-            <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
-              <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
-            </Column>
-            <Column field="vendor" header="Vendor" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ data.vendor || '—' }}</template>
-            </Column>
-            <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
-              <template #body="{ data }">
-                <template v-if="data.type === 'reserved'">never</template>
-                <template v-else>{{ data.expires_at === 'infinite' ? 'Never' : formatDate(data.expires_at) }}</template>
-              </template>
-            </Column>
-          </DataTable>
-        </template>
-
-        <template v-else-if="filteredLeases.length > 0">
-          <div class="panel-header">
-            <h3>All Leases</h3>
-          </div>
-
-          <div class="search-bar">
+          <div v-else class="search-bar">
             <IconField>
               <InputIcon class="pi pi-search" />
               <InputText v-model="dhcpAllSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
@@ -136,16 +98,15 @@
             <Button v-if="dhcpAllSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpAllSearch = ''" />
           </div>
 
-          <DataTable :value="searchedAllLeases" :loading="loadingLeases" stripedRows
-                     emptyMessage="No DHCP leases or reservations." size="small"
-                     scrollable scrollHeight="flex"
-                     :nullSortOrder="0"
+          <DataTable :value="selectedScope ? searchedScopeLeases : searchedAllLeases"
+                     :loading="loadingLeases" stripedRows
+                     :emptyMessage="selectedScope ? 'No leases or reservations for this scope.' : 'No DHCP leases or reservations.'"
+                     size="small" scrollable scrollHeight="flex"
                      paginator :rows="100" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
-                     removableSort
+                     removableSort :nullSortOrder="0"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
-            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
-            </Column>
+            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem" />
             <Column field="is_online" header="Online" sortable style="width: 5rem">
               <template #body="{ data }">
                 <span v-if="data.is_online != null" :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
@@ -163,7 +124,7 @@
               </template>
             </Column>
             <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ displayHostname(data.hostname, data.subnet_domain_name) }}</template>
+              <template #body="{ data }">{{ displayHostname(data.hostname, selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name) }}</template>
             </Column>
             <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
               <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
@@ -171,7 +132,7 @@
             <Column field="vendor" header="Vendor" sortable style="min-width: 8rem">
               <template #body="{ data }">{{ data.vendor || '—' }}</template>
             </Column>
-            <Column header="Network" style="min-width: 8rem">
+            <Column v-if="!selectedScope" header="Network" style="min-width: 8rem">
               <template #body="{ data }">{{ data.subnet_name || data.subnet_cidr || '—' }}</template>
             </Column>
             <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
@@ -276,6 +237,8 @@ import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
+import { apiError, displayHostname as _displayHostname } from '../utils/format.js';
+import { loadJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
 
 // No props needed — shows all scopes globally
@@ -300,10 +263,10 @@ const savingReservation = ref(false);
 const reservationForm = ref({ subnet_id: null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true });
 const allocatedSubnets = ref([]);
 
-const dhcpSearch = ref(loadJson('ipam_dhcp_search', ''));
-const dhcpAllSearch = ref(loadJson('ipam_dhcp_all_search', ''));
-watch(dhcpSearch, (val) => { try { localStorage.setItem('ipam_dhcp_search', JSON.stringify(val)); } catch {} });
-watch(dhcpAllSearch, (val) => { try { localStorage.setItem('ipam_dhcp_all_search', JSON.stringify(val)); } catch {} });
+const dhcpSearch = ref(loadJson('cidrella_dhcp_search', ''));
+const dhcpAllSearch = ref(loadJson('cidrella_dhcp_all_search', ''));
+watch(dhcpSearch, (val) => { try { localStorage.setItem('cidrella_dhcp_search', JSON.stringify(val)); } catch {} });
+watch(dhcpAllSearch, (val) => { try { localStorage.setItem('cidrella_dhcp_all_search', JSON.stringify(val)); } catch {} });
 
 // Lease context menu
 const leaseContextMenuRef = ref();
@@ -353,7 +316,7 @@ async function probeIp(lease) {
     // Refetch leases so the Online badge updates
     await store.fetchLeases();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Probe Failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Probe Failed', detail: apiError(err), life: 5000 });
   }
 }
 function onLeaseRightClick(event) {
@@ -385,11 +348,7 @@ const searchedAllLeases = computed(() => {
 });
 
 function displayHostname(hostname, domainName) {
-  if (!hostname || !hostname.trim()) return '—';
-  if (domainName && hostname.endsWith('.' + domainName)) {
-    return hostname.slice(0, -(domainName.length + 1));
-  }
-  return hostname;
+  return _displayHostname(hostname, domainName) || '—';
 }
 
 // Delete dialogs
@@ -436,16 +395,10 @@ const scopeLeases = computed(() => {
   return store.leases.filter(l => l.subnet_id === selectedScope.value.subnet_id).map(l => ({ ...l, hostname: l.hostname || ' ' }));
 });
 
-function loadJson(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch { return fallback; }
-}
 
 function selectScope(scope) {
   selectedScope.value = scope;
-  try { localStorage.setItem('ipam_dhcp_selected_scope_id', JSON.stringify(scope?.id || null)); } catch {}
+  try { localStorage.setItem('cidrella_dhcp_selected_scope_id', JSON.stringify(scope?.id || null)); } catch {}
 }
 
 const formatDate = formatDateTime;
@@ -486,7 +439,7 @@ async function doDeleteScope() {
     toast.add({ severity: 'success', summary: 'Scope deleted', life: 3000 });
     window.dispatchEvent(new Event('ipam:stats-changed'));
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingScope.value = false;
   }
@@ -562,7 +515,7 @@ async function saveReservation() {
     }
     showReservationDialog.value = false;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingReservation.value = false;
   }
@@ -581,7 +534,7 @@ async function doDeleteReservation() {
     showDeleteReservationDialog.value = false;
     toast.add({ severity: 'success', summary: 'Reservation deleted', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingReservation.value = false;
   }
@@ -594,7 +547,7 @@ async function doSyncLeases() {
     const result = await store.syncLeases();
     toast.add({ severity: 'success', summary: 'Leases synced', detail: `${result.synced} leases`, life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     syncing.value = false;
   }
@@ -606,7 +559,7 @@ onMounted(async () => {
     store.fetchLeases()
   ]);
   // Restore previously selected scope, or auto-select first
-  const savedScopeId = loadJson('ipam_dhcp_selected_scope_id', null);
+  const savedScopeId = loadJson('cidrella_dhcp_selected_scope_id', null);
   if (savedScopeId) {
     const scope = filteredScopes.value.find(s => s.id === savedScopeId);
     if (scope) {

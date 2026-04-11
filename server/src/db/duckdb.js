@@ -114,63 +114,46 @@ export function queryRaw(sql, params = []) {
   });
 }
 
-// Top clients by query count
-export function queryTopClients(range, limit = 20) {
+// Generic top-N query by column (no action filter)
+function queryTopBy(column, range, limit = 20) {
   const interval = rangeToInterval(range);
   return queryRaw(
-    `SELECT client_ip, COUNT(*) as count
+    `SELECT ${column}, COUNT(*) as count
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
-     GROUP BY client_ip
+     GROUP BY ${column}
      ORDER BY count DESC
      LIMIT ?`,
     [limit]
   );
 }
+
+// Generic top-N query by column filtered by action
+function queryTopByAction(column, range, action, limit = 10) {
+  const interval = rangeToInterval(range);
+  return queryRaw(
+    `SELECT ${column}, COUNT(*) as count
+     FROM dns_queries
+     WHERE ts >= NOW() - INTERVAL '${interval}'
+       AND action = ?
+     GROUP BY ${column}
+     ORDER BY count DESC
+     LIMIT ?`,
+    [action, limit]
+  );
+}
+
+// Top clients by query count
+export function queryTopClients(range, limit = 20) { return queryTopBy('client_ip', range, limit); }
 
 // Top queried domains
-export function queryTopDomains(range, limit = 20) {
-  const interval = rangeToInterval(range);
-  return queryRaw(
-    `SELECT domain, COUNT(*) as count
-     FROM dns_queries
-     WHERE ts >= NOW() - INTERVAL '${interval}'
-     GROUP BY domain
-     ORDER BY count DESC
-     LIMIT ?`,
-    [limit]
-  );
-}
+export function queryTopDomains(range, limit = 20) { return queryTopBy('domain', range, limit); }
 
-// Top clients by query count, optionally filtered by action
-export function queryTopClientsByAction(range, action, limit = 10) {
-  const interval = rangeToInterval(range);
-  return queryRaw(
-    `SELECT client_ip, COUNT(*) as count
-     FROM dns_queries
-     WHERE ts >= NOW() - INTERVAL '${interval}'
-       AND action = ?
-     GROUP BY client_ip
-     ORDER BY count DESC
-     LIMIT ?`,
-    [action, limit]
-  );
-}
+// Top clients filtered by action
+export function queryTopClientsByAction(range, action, limit = 10) { return queryTopByAction('client_ip', range, action, limit); }
 
-// Top domains by query count, optionally filtered by action
-export function queryTopDomainsByAction(range, action, limit = 10) {
-  const interval = rangeToInterval(range);
-  return queryRaw(
-    `SELECT domain, COUNT(*) as count
-     FROM dns_queries
-     WHERE ts >= NOW() - INTERVAL '${interval}'
-       AND action = ?
-     GROUP BY domain
-     ORDER BY count DESC
-     LIMIT ?`,
-    [action, limit]
-  );
-}
+// Top domains filtered by action
+export function queryTopDomainsByAction(range, action, limit = 10) { return queryTopByAction('domain', range, action, limit); }
 
 // Top block reasons (category slugs or country codes) for a given action
 export function queryTopBlockReasons(range, action, limit = 10) {

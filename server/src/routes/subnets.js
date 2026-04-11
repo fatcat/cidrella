@@ -4,7 +4,7 @@ import { requirePerm } from '../auth/require-perm.js';
 import {
   parseCidr, normalizeCidr, isValidCidr, calculateSubnets,
   ipToLong, longToIp, isIpInSubnet, subtractCidr, isSubnetOf, cidrsOverlap,
-  validateSupernet, applyNameTemplate, canMergeCidrs, getServerIpForSubnet
+  validateSupernet, applyNameTemplate, canMergeCidrs, getServerIpForSubnet, isValidDomain
 } from '../utils/ip.js';
 import { generateReverseNames, regenerateConfigs } from '../utils/dnsmasq.js';
 import { regenerateDhcpConfigs } from '../utils/dhcp.js';
@@ -12,11 +12,6 @@ import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
-
-const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
-function isValidDomainName(name) {
-  return typeof name === 'string' && DOMAIN_RE.test(name) && name.length <= 253;
-}
 
 const router = Router();
 
@@ -28,13 +23,6 @@ router.use((req, res, next) => {
   next();
 });
 
-/**
- * Get gateway position from global setting, falling back to 'first'.
- */
-function getGatewayPosition(db) {
-  const gwPref = db.prepare("SELECT value FROM settings WHERE key = 'default_gateway_position'").get();
-  return gwPref?.value || 'first';
-}
 
 // Wrap route handlers to catch sync/async errors and return informative 500s
 function asyncHandler(fn) {
@@ -124,6 +112,30 @@ function dhcpRangeDefaults(parsed) {
   return { startLong: poolStart, endLong: poolEnd };
 }
 
+// Helper: populate dhcp_scope_options from dhcp_option_defaults for a new scope
+function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
+  const enabledRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1').all();
+  const optionValues = new Map();
+  for (const row of enabledRows) {
+    optionValues.set(row.option_code, row.value != null ? row.value : null);
+  }
+  if (gateway) optionValues.set(3, gateway);
+  optionValues.set(1, parsed.mask);
+  optionValues.set(28, parsed.broadcast);
+  if (domain) {
+    if (!optionValues.has(15) || !optionValues.get(15)) optionValues.set(15, domain);
+    if (!optionValues.has(119) || !optionValues.get(119)) optionValues.set(119, domain);
+  }
+  const serverIp = getServerIpForSubnet(cidr);
+  if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
+    optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
+  }
+  const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
+  for (const [code, value] of optionValues) {
+    if (value != null && value !== '') insertOpt.run(scopeId, code, String(value));
+  }
+}
+
 // Helper: auto-create DHCP scope for a subnet if no existing hosts/leases/scopes
 function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
   const defaults = dhcpRangeDefaults(parsed);
@@ -162,26 +174,7 @@ function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
 
   // Populate scope options from defaults
   const scopeId = scopeResult.lastInsertRowid;
-  const enabledRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1').all();
-  const optionValues = new Map();
-  for (const row of enabledRows) {
-    optionValues.set(row.option_code, row.value != null ? row.value : null);
-  }
-  if (gateway) optionValues.set(3, gateway);
-  optionValues.set(1, parsed.mask);
-  optionValues.set(28, parsed.broadcast);
-  if (effectiveDomain) {
-    if (!optionValues.has(15) || !optionValues.get(15)) optionValues.set(15, effectiveDomain);
-    if (!optionValues.has(119) || !optionValues.get(119)) optionValues.set(119, effectiveDomain);
-  }
-  const serverIp = getServerIpForSubnet(parsed.network + '/' + parsed.prefix);
-  if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
-    optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
-  }
-  const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
-  for (const [code, value] of optionValues) {
-    if (value != null && value !== '') insertOpt.run(scopeId, code, String(value));
-  }
+  insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, effectiveDomain, parsed.network + '/' + parsed.prefix);
 }
 
 // Helper: insert a subnet row
@@ -266,10 +259,11 @@ function buddyMerge(db, parentId) {
 
           // Check if combined CIDR equals the parent — if so, just delete children
           const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
+          // Delete the two merging siblings regardless of branch
+          db.prepare('DELETE FROM subnets WHERE id IN (?, ?)').run(a.id, b.id);
           if (parent && combinedCidr === parent.cidr) {
-            db.prepare('DELETE FROM subnets WHERE id IN (?, ?)').run(a.id, b.id);
+            // Merged back to parent — parent already exists, no insert needed
           } else {
-            db.prepare('DELETE FROM subnets WHERE id IN (?, ?)').run(a.id, b.id);
             insertSubnet(db, {
               cidr: combinedCidr,
               name: combinedCidr,
@@ -400,8 +394,7 @@ router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
   // Auto-generate name from template if not provided
   let subnetName = name;
   if (!subnetName) {
-    const templateRow = db.prepare("SELECT value FROM settings WHERE key = 'subnet_name_template'").get();
-    const template = templateRow?.value || '%1.%2.%3.%4/%bitmask';
+    const template = getSetting('subnet_name_template');
     subnetName = applyNameTemplate(template, normalized);
   }
 
@@ -498,8 +491,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const gatewaySubnet = allocated.find(s => s.gateway_address);
 
   // Get name template
-  const templateRow = db.prepare("SELECT value FROM settings WHERE key = 'subnet_name_template'").get();
-  const template = templateRow?.value || '%1.%2.%3.%4/%bitmask';
+  const template = getSetting('subnet_name_template');
 
   try {
     const txn = db.transaction(() => {
@@ -507,7 +499,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
       const mergedParsed = parseCidr(mergeResult.merged_cidr);
 
       // Determine correct gateway for the merged network
-      const gwPosition = getGatewayPosition(db);
+      const gwPosition = getSetting('default_gateway_position');
       const mergedGateway = gwPosition === 'last' ? mergedParsed.lastUsable
         : gwPosition === 'none' ? null : mergedParsed.firstUsable;
 
@@ -519,8 +511,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
         // Just delete the children — parent becomes a leaf again
         for (const s of subnets) {
           cleanupSubnetZones(db, s.id);
-          db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
-          db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(s.id);
+          cleanupSubnetData(db, s.id);
           db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
         }
 
@@ -548,8 +539,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
       // Delete all selected subnets and their data
       for (const s of subnets) {
         cleanupSubnetZones(db, s.id);
-        db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
-        db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(s.id);
+        cleanupSubnetData(db, s.id);
         db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
       }
 
@@ -600,8 +590,7 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
   }
 
   const db = getDb();
-  const templateRow = db.prepare("SELECT value FROM settings WHERE key = 'subnet_name_template'").get();
-  const template = templateRow?.value;
+  const template = getSetting('subnet_name_template');
   if (!template) {
     return res.status(400).json({ error: 'No name template configured' });
   }
@@ -628,8 +617,16 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
 
 // PUT /api/subnets/:id — update subnet config
 router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name, scan_enabled } = req.body;
-  if (domain_name && !isValidDomainName(domain_name)) {
+  const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name, scan_enabled, cidr } = req.body;
+
+  // Reject invalid CIDR if provided
+  if (cidr !== undefined) {
+    if (!isValidCidr(cidr)) {
+      return res.status(400).json({ error: 'Invalid CIDR notation' });
+    }
+  }
+
+  if (domain_name && !isValidDomain(domain_name)) {
     return res.status(400).json({ error: 'Invalid domain name format' });
   }
   const db = getDb();
@@ -836,6 +833,12 @@ function migrateConfigToChild(db, parentId, childId, childParsed, parentGateway,
   }
 }
 
+// Helper: delete ranges and IP addresses for a subnet (used in merge/delete teardown)
+function cleanupSubnetData(db, subnetId) {
+  db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(subnetId);
+  db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnetId);
+}
+
 // Helper: delete DNS zones owned by a subnet (records cascade via FK)
 function cleanupSubnetZones(db, subnetId) {
   db.prepare('DELETE FROM dns_zones WHERE subnet_id = ?').run(subnetId);
@@ -855,8 +858,7 @@ function cleanupSubtreeZones(db, parentId) {
 
 // Helper: clear parent config after division
 function clearParentConfig(db, parentId) {
-  db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(parentId);
-  db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(parentId);
+  cleanupSubnetData(db, parentId);
   cleanupSubnetZones(db, parentId);
   db.prepare(`
     UPDATE subnets SET status = 'unallocated', description = NULL, vlan_id = NULL,
@@ -889,8 +891,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
   const parentParsed = parseCidr(parent.cidr);
 
   // Get name template
-  const templateRow = db.prepare("SELECT value FROM settings WHERE key = 'subnet_name_template'").get();
-  const template = templateRow?.value || '%1.%2.%3.%4/%bitmask';
+  const template = getSetting('subnet_name_template');
 
   try {
     // Equal division mode
@@ -924,7 +925,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         }
 
         // Determine default gateway position for non-inheriting children
-        const gwPosition = getGatewayPosition(db);
+        const gwPosition = getSetting('default_gateway_position');
 
         const childIds = [];
         for (let i = 0; i < subnets.length; i++) {
@@ -1015,7 +1016,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       }
 
       // Determine default gateway position for non-inheriting children
-      const gwPosition = getGatewayPosition(db);
+      const gwPosition = getSetting('default_gateway_position');
 
       // All children in the division
       const allCidrs = [normalized, ...remainder];
@@ -1080,7 +1081,7 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id, domain_name, dhcp_start_ip, dhcp_end_ip } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Name is required' });
-  if (domain_name && !isValidDomainName(domain_name)) {
+  if (domain_name && !isValidDomain(domain_name)) {
     return res.status(400).json({ error: 'Invalid domain name format' });
   }
 
@@ -1094,7 +1095,7 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   let gw = gateway_address;
   if (!gw) {
     const targetFolder = folder_id || subnet.folder_id;
-    const gwPosition = getGatewayPosition(db);
+    const gwPosition = getSetting('default_gateway_position');
     gw = gwPosition === 'none' ? null
       : gwPosition === 'last' ? parsed.lastUsable : parsed.firstUsable;
   }
@@ -1121,7 +1122,8 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     const sysTypes = db.prepare("SELECT id FROM range_types WHERE is_system = 1 AND name IN ('Network', 'Gateway', 'Broadcast')").all();
     const sysTypeIds = sysTypes.map(t => t.id);
     if (sysTypeIds.length > 0) {
-      db.prepare(`DELETE FROM ranges WHERE subnet_id = ? AND range_type_id IN (${sysTypeIds.join(',')})`).run(subnet.id);
+      const placeholders = sysTypeIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM ranges WHERE subnet_id = ? AND range_type_id IN (${placeholders})`).run(subnet.id, ...sysTypeIds);
     }
     createSystemRanges(db, subnet.id, parsed, gw);
 
@@ -1235,32 +1237,7 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
 
           // Populate scope options from enabled defaults + network-derived values
           const scopeId = scopeResult.lastInsertRowid;
-          const enabledRows = db.prepare(
-            'SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1'
-          ).all();
-          const optionValues = new Map();
-          for (const row of enabledRows) {
-            if (row.value != null) optionValues.set(row.option_code, row.value);
-            else optionValues.set(row.option_code, null); // enabled but no explicit default
-          }
-          // Network-derived values
-          if (gw) optionValues.set(3, gw);                         // Router/Gateway
-          optionValues.set(1, parsed.mask);                        // Subnet Mask
-          optionValues.set(28, parsed.broadcast);                  // Broadcast
-          if (effectiveDomain) {
-            if (!optionValues.has(15) || !optionValues.get(15)) optionValues.set(15, effectiveDomain);
-            if (!optionValues.has(119) || !optionValues.get(119)) optionValues.set(119, effectiveDomain);
-          }
-          const serverIp = getServerIpForSubnet(subnet.cidr);
-          if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
-            optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
-          }
-          const insertOpt = db.prepare(
-            'INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)'
-          );
-          for (const [code, value] of optionValues) {
-            if (value != null && value !== '') insertOpt.run(scopeId, code, String(value));
-          }
+          insertScopeOptionsFromDefaults(db, scopeId, parsed, gw, effectiveDomain, subnet.cidr);
         }
       }
     }
@@ -1301,8 +1278,7 @@ router.delete('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
       }
 
       cleanupSubnetZones(db, subnet.id);
-      db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(subnet.id);
-      db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnet.id);
+      cleanupSubnetData(db, subnet.id);
       db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ?').run(subnet.id);
       db.prepare(`
         UPDATE subnets SET status = 'unallocated', name = ?, description = NULL,

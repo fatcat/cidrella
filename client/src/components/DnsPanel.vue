@@ -378,19 +378,14 @@ import TabPanel from 'primevue/tabpanel';
 import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
+import { apiError } from '../utils/format.js';
+import { loadJson } from '../utils/storage.js';
 
 // No props needed — shows all zones globally
 
 const store = useDnsStore();
 const toast = useToast();
 
-// Persistence helper
-function loadJson(key, fallback) {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
-  } catch { return fallback; }
-}
 
 // Zone state
 const zoneFilterText = ref('');
@@ -399,7 +394,7 @@ const isReverse = computed(() => selectedZone.value?.type === 'reverse');
 const records = ref([]);
 const loadingRecords = ref(false);
 const expandedGroups = ref({});
-const zoneTab = ref(loadJson('ipam_dns_zone_tab', 'forward'));
+const zoneTab = ref(loadJson('cidrella_dns_zone_tab', 'forward'));
 
 // Forward zones (simple list)
 const forwardZones = computed(() =>
@@ -490,9 +485,9 @@ const savingRecord = ref(false);
 const recordForm = ref({ name: '', type: 'A', value: '', priority: null, weight: null, port: null, ttl: null, enabled: true });
 const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
 
-const dnsSearch = ref(loadJson('ipam_dns_search', ''));
+const dnsSearch = ref(loadJson('cidrella_dns_search', ''));
 watch(dnsSearch, (val) => {
-  try { localStorage.setItem('ipam_dns_search', JSON.stringify(val)); } catch {}
+  try { localStorage.setItem('cidrella_dns_search', JSON.stringify(val)); } catch {}
 });
 const filteredRecords = computed(() => {
   const base = records.value.filter(r => r.source !== 'dhcp');
@@ -548,12 +543,12 @@ const valuePlaceholder = computed(() => {
 
 // Persist zone tab selection
 watch(zoneTab, (val) => {
-  try { localStorage.setItem('ipam_dns_zone_tab', JSON.stringify(val)); } catch {}
+  try { localStorage.setItem('cidrella_dns_zone_tab', JSON.stringify(val)); } catch {}
 });
 
 async function selectZone(zone) {
   selectedZone.value = zone;
-  try { localStorage.setItem('ipam_dns_selected_zone_id', JSON.stringify(zone?.id || null)); } catch {}
+  try { localStorage.setItem('cidrella_dns_selected_zone_id', JSON.stringify(zone?.id || null)); } catch {}
   loadingRecords.value = true;
   try {
     const fetched = await store.getRecords(zone.id);
@@ -562,7 +557,7 @@ async function selectZone(zone) {
     }
     records.value = fetched;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     loadingRecords.value = false;
   }
@@ -610,7 +605,7 @@ async function saveZone() {
     }
     showZoneDialog.value = false;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingZone.value = false;
   }
@@ -632,7 +627,7 @@ async function doDeleteZone() {
     showDeleteZoneDialog.value = false;
     toast.add({ severity: 'success', summary: 'Zone deleted', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingZone.value = false;
   }
@@ -668,7 +663,7 @@ async function saveRecord() {
     records.value = await store.getRecords(selectedZone.value.id);
     await store.fetchZones(); // refresh record counts
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingRecord.value = false;
   }
@@ -688,7 +683,7 @@ async function doDeleteRecord() {
     records.value = await store.getRecords(selectedZone.value.id);
     await store.fetchZones();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingRecord.value = false;
   }
@@ -697,7 +692,7 @@ async function doDeleteRecord() {
 onMounted(async () => {
   await store.fetchZones();
   // Restore previously selected zone
-  const savedZoneId = loadJson('ipam_dns_selected_zone_id', null);
+  const savedZoneId = loadJson('cidrella_dns_selected_zone_id', null);
   if (savedZoneId) {
     const zone = store.zones.find(z => z.id === savedZoneId);
     if (zone) {

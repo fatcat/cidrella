@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 import api from '../api/client.js';
+import { ipToLong } from '../utils/ip.js';
 
 export const useSubnetStore = defineStore('subnets', () => {
   const folders = ref([]);
@@ -22,11 +23,6 @@ export const useSubnetStore = defineStore('subnets', () => {
     }
     return total;
   });
-
-  function ipToLong(ip) {
-    const parts = ip.split('.').map(Number);
-    return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-  }
 
   // Convert subnet nodes to PrimeVue Tree format
   function toSubnetNodes(nodes) {
@@ -191,14 +187,9 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  async function configureSubnet(id, config) {
+  async function configureSubnet(id, config, { refresh = true } = {}) {
     const res = await api.post(`/subnets/${id}/configure`, config);
-    await fetchTree();
-    return res.data;
-  }
-
-  async function configureSubnetNoRefresh(id, config) {
-    const res = await api.post(`/subnets/${id}/configure`, config);
+    if (refresh) await fetchTree();
     return res.data;
   }
 
@@ -369,7 +360,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     folders, tree, treeNodes, allocatedTreeNodes, unallocatedTreeNodes, loading, subnetCount, toSubnetNodes,
     fetchTree, createFolder, updateFolder, deleteFolder, fetchFolders,
     createSupernet, updateSubnet, deleteSubnet,
-    divideSubnet, configureSubnet, configureSubnetNoRefresh,
+    divideSubnet, configureSubnet,
     getSubnetDetail, invalidateDetailCache, previewMerge, mergeSubnets, applyTemplate,
     getSettings, updateSetting,
     getRanges, createRange, updateRange, deleteRange, setIpStatus, bulkSetIpStatus,

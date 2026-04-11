@@ -137,6 +137,13 @@
           <Column field="created_at" header="Added" style="width: 10rem">
             <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
           </Column>
+          <Column header="Actions" style="width: 80px">
+            <template #body="{ data }">
+              <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                @click="doRemoveWhitelist(data)"
+                v-tooltip.top="'Remove'" />
+            </template>
+          </Column>
         </DataTable>
         <ContextMenu ref="whitelistContextMenuRef" :model="whitelistContextMenuItems" />
       </TabPanel>
@@ -180,6 +187,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
+import { formatNumber, apiError } from '../utils/format.js';
 import { useToast } from 'primevue/usetoast';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
@@ -235,6 +243,10 @@ function startEditUrl(cat) {
   editingUrlValue.value = cat.source_url;
 }
 
+async function refreshStats() {
+  stats.value = await store.fetchStats();
+}
+
 async function doSaveUrl(slug) {
   savingUrl.value = true;
   try {
@@ -242,7 +254,7 @@ async function doSaveUrl(slug) {
     editingUrlSlug.value = null;
     toast.add({ severity: 'success', summary: 'URL updated', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingUrl.value = false;
   }
@@ -254,7 +266,7 @@ async function doResetUrl(slug) {
     await store.updateCategoryUrl(slug, '');
     toast.add({ severity: 'success', summary: 'URL reset to default', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingUrl.value = false;
   }
@@ -288,10 +300,6 @@ const searchLimit = 50;
 const searching = ref(false);
 const searchPerformed = ref(false);
 
-function formatNumber(n) {
-  if (n === null || n === undefined) return '0';
-  return n.toLocaleString();
-}
 
 const formatDate = formatDateTime;
 
@@ -299,10 +307,10 @@ async function doToggleCategory(cat, enabled) {
   togglingSlug.value = cat.slug;
   try {
     await store.toggleCategory(cat.slug, enabled);
-    await store.fetchStats().then(s => stats.value = s);
+    await refreshStats();
     toast.add({ severity: 'success', summary: `${cat.name} ${enabled ? 'enabled' : 'disabled'}`, life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     togglingSlug.value = null;
   }
@@ -317,10 +325,10 @@ async function doToggleAll(enabled) {
     }
     toast.add({ severity: 'success', summary: `All categories ${enabled ? 'enabled' : 'disabled'}`, life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     togglingAll.value = false;
-    await store.fetchStats().then(s => stats.value = s).catch(() => {});
+    await refreshStats().catch(() => {});
   }
 }
 
@@ -328,10 +336,10 @@ async function doRefreshCategory(cat) {
   refreshingSlug.value = cat.slug;
   try {
     await store.refreshCategory(cat.slug);
-    await store.fetchStats().then(s => stats.value = s);
+    await refreshStats();
     toast.add({ severity: 'success', summary: `${cat.name} refreshed`, life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Refresh failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Refresh failed', detail: apiError(err), life: 5000 });
   } finally {
     refreshingSlug.value = null;
   }
@@ -341,10 +349,10 @@ async function doRefreshAll() {
   refreshingAll.value = true;
   try {
     await store.refreshAll();
-    await store.fetchStats().then(s => stats.value = s);
+    await refreshStats();
     toast.add({ severity: 'success', summary: 'All categories refreshed', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Refresh failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Refresh failed', detail: apiError(err), life: 5000 });
   } finally {
     refreshingAll.value = false;
   }
@@ -362,7 +370,7 @@ async function doSaveSettings() {
     savedSchedule.value = settings.blocklist_update_schedule;
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingSettings.value = false;
   }
@@ -377,9 +385,9 @@ async function doAddWhitelist() {
     newWhitelistDomain.value = '';
     newWhitelistReason.value = '';
     toast.add({ severity: 'success', summary: 'Domain whitelisted', life: 3000 });
-    await store.fetchStats().then(s => stats.value = s);
+    await refreshStats();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     addingWhitelist.value = false;
   }
@@ -389,9 +397,9 @@ async function doRemoveWhitelist(entry) {
   try {
     await store.removeWhitelist(entry.id);
     toast.add({ severity: 'success', summary: 'Removed from whitelist', life: 3000 });
-    await store.fetchStats().then(s => stats.value = s);
+    await refreshStats();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -404,7 +412,7 @@ async function doSearch(fromPagination = false) {
   try {
     searchResults.value = await store.searchDomains(searchQuery.value.trim(), searchPage.value, searchLimit);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Search failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Search failed', detail: apiError(err), life: 5000 });
   } finally {
     searching.value = false;
   }
@@ -415,7 +423,7 @@ onMounted(async () => {
     store.fetchCategories(),
     store.fetchWhitelist(),
     store.fetchSettings(),
-    store.fetchStats().then(s => stats.value = s)
+    refreshStats(),
   ]);
   Object.assign(settings, fetchedSettings);
   blocklistEnabled.value = fetchedSettings.blocklist_enabled !== 'false';
@@ -424,6 +432,10 @@ onMounted(async () => {
 });
 </script>
 
+<style>
+@import '../assets/analytics-layout.css';
+</style>
+
 <style scoped>
 .blocklists-page { }
 .blocklists-page :deep(.p-tabview) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
@@ -431,40 +443,6 @@ onMounted(async () => {
 .blocklists-page :deep(.p-tabview-panel) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .blocklists-page h2 {
   margin: 0 0 1rem 0;
-}
-.stats-bar {
-  display: flex;
-  gap: 2rem;
-  padding: 1rem 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  margin-bottom: 1.5rem;
-  flex-wrap: wrap;
-}
-.stat { display: flex; flex-direction: column; }
-.stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
-.stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
-
-.settings-row {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  padding: 0.75rem 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 8px;
-  margin-bottom: 0.75rem;
-  flex-wrap: wrap;
-}
-.schedule-group {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.schedule-label {
-  font-size: 0.85rem;
-  color: var(--p-text-muted-color);
 }
 
 .text-sm { font-size: 0.8rem; }

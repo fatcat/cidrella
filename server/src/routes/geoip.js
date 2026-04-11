@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, setSetting, audit } from '../db/init.js';
+import { getDb, getSetting, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
   getProxyStatus, loadMmdb, loadGeoipRules,
@@ -12,16 +12,16 @@ const router = Router();
 router.get('/status', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   const status = getProxyStatus();
-  const mode = db.prepare("SELECT value FROM settings WHERE key = 'geoip_mode'").get();
-  const enabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get();
-  const updateSchedule = db.prepare("SELECT value FROM settings WHERE key = 'geoip_update_schedule'").get();
+  const mode = getSetting('geoip_mode');
+  const enabled = getSetting('geoip_enabled');
+  const updateSchedule = getSetting('geoip_update_schedule');
   const ruleCount = db.prepare('SELECT COUNT(*) as c FROM geoip_rules WHERE enabled = 1').get().c;
 
   res.json({
     ...status,
-    enabled: enabled?.value === 'true',
-    mode: mode?.value || 'blocklist',
-    updateSchedule: updateSchedule?.value || 'monthly',
+    enabled: enabled === 'true',
+    mode: mode || 'blocklist',
+    updateSchedule: updateSchedule || 'monthly',
     ruleCount
   });
 });
@@ -43,6 +43,21 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
   }
 
   const CC_RE = /^[A-Z]{2}$/;
+
+  // Validate all country codes before inserting
+  const invalid = countries.filter(c => !c.code || !CC_RE.test(c.code));
+  if (invalid.length > 0) {
+    return res.status(400).json({ error: `Invalid country codes: ${invalid.map(c => c.code || '(empty)').join(', ')}` });
+  }
+
+  // Check for duplicates
+  const existing = countries.filter(c => {
+    return db.prepare('SELECT id FROM geoip_rules WHERE country_code = ?').get(c.code);
+  });
+  if (existing.length > 0 && existing.length === countries.length) {
+    return res.status(409).json({ error: `All specified country rules already exist: ${existing.map(c => c.code).join(', ')}` });
+  }
+
   const added = [];
 
   db.transaction(() => {
@@ -50,7 +65,6 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
       'INSERT OR IGNORE INTO geoip_rules (country_code, country_name) VALUES (?, ?)'
     );
     for (const c of countries) {
-      if (!c.code || !CC_RE.test(c.code)) continue;
       const result = insert.run(c.code, c.name || c.code);
       if (result.changes > 0) {
         added.push(c.code);
@@ -98,6 +112,10 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
   const { geoip_enabled, geoip_mode, geoip_update_schedule } = req.body;
 
+  if (geoip_enabled !== undefined && typeof geoip_enabled !== 'boolean') {
+    return res.status(400).json({ error: 'geoip_enabled must be a boolean' });
+  }
+
   if (geoip_mode !== undefined && !['blocklist', 'allowlist'].includes(geoip_mode)) {
     return res.status(400).json({ error: 'Mode must be blocklist or allowlist' });
   }
@@ -106,7 +124,7 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     return res.status(400).json({ error: 'Update schedule must be off, weekly, biweekly, or monthly' });
   }
 
-  const wasEnabled = db.prepare("SELECT value FROM settings WHERE key = 'geoip_enabled'").get()?.value === 'true';
+  const wasEnabled = getSetting('geoip_enabled') === 'true';
 
   // Update settings
   if (geoip_mode !== undefined) {

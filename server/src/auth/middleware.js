@@ -7,6 +7,21 @@ const PUBLIC_PATHS = ['/api/auth/login', '/api/health'];
 // Paths allowed when must_change_password is true
 const PASSWORD_CHANGE_PATHS = ['/api/auth/change-password', '/api/auth/me'];
 
+// Cached JWT secret — loaded on first use, cleared on key rotation
+let _cachedJwtSecret = null;
+
+function getJwtSecret(db) {
+  if (!_cachedJwtSecret) {
+    _cachedJwtSecret = db.prepare("SELECT value FROM settings WHERE key = 'jwt_secret'").get()?.value;
+  }
+  return _cachedJwtSecret;
+}
+
+/** Call this after rotating the JWT secret so the cache is refreshed on next request. */
+export function clearJwtSecretCache() {
+  _cachedJwtSecret = null;
+}
+
 export function authMiddleware(req, res, next) {
   // Skip auth for non-API routes (static files)
   if (!req.path.startsWith('/api/')) {
@@ -20,28 +35,35 @@ export function authMiddleware(req, res, next) {
   }
 
   const authHeader = req.headers.authorization;
-  // Support token as query param for SSE (EventSource can't set headers)
-  const queryToken = req.query.token;
-  if (!authHeader?.startsWith('Bearer ') && !queryToken) {
+  if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: 'No token provided' });
   }
 
-  const token = authHeader ? authHeader.slice(7) : queryToken;
+  const token = authHeader.slice(7);
   const db = getDb();
-  const settings = db.prepare("SELECT value FROM settings WHERE key = 'jwt_secret'").get();
+  const secret = getJwtSecret(db);
 
-  if (!settings) {
+  if (!secret) {
     return res.status(500).json({ error: 'Server configuration error' });
   }
 
   try {
-    const decoded = jwt.verify(token, settings.value);
+    const decoded = jwt.verify(token, secret);
 
     // Re-validate user from DB to catch deletions/role changes
-    const user = db.prepare('SELECT id, role, must_change_password FROM users WHERE id = ?').get(decoded.id);
+    const user = db.prepare('SELECT id, role, must_change_password, updated_at FROM users WHERE id = ?').get(decoded.id);
     if (!user) {
       return res.status(401).json({ error: 'User no longer exists' });
     }
+
+    // Check if token was issued before last user update (password change, role change, etc.)
+    if (user.updated_at) {
+      const updatedAt = Math.floor(new Date(user.updated_at + 'Z').getTime() / 1000);
+      if (decoded.iat < updatedAt) {
+        return res.status(401).json({ error: 'Token invalidated. Please log in again.' });
+      }
+    }
+
     req.user = { ...decoded, role: user.role, must_change_password: !!user.must_change_password };
 
     // If user must change password, only allow specific endpoints

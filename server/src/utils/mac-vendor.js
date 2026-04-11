@@ -10,6 +10,46 @@ const REFRESH_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
 
 let refreshTimer = null;
 
+// ── Shared MAC prefix helpers ──────────────────────────────────────────────────
+
+/**
+ * Parse a MAC address string into an array of 6 uppercase octet strings.
+ * Returns null if the format is not valid (must be XX:XX:XX:XX:XX:XX).
+ */
+function parseMacOctets(mac) {
+  if (!mac) return null;
+  const upper = mac.toUpperCase();
+  const octets = upper.split(':');
+  if (octets.length !== 6) return null;
+  return octets;
+}
+
+/**
+ * Build the 24-bit, 28-bit, and 36-bit OUI prefix strings from parsed octets.
+ * All three are in the colon-separated format used by mac_vendors.prefix.
+ */
+function buildPrefixes(octets) {
+  const prefix24 = `${octets[0]}:${octets[1]}:${octets[2]}`;
+  const prefix28 = `${octets[0]}:${octets[1]}:${octets[2]}:${octets[3].charAt(0)}0`;
+  const prefix36 = `${octets[0]}:${octets[1]}:${octets[2]}:${octets[3]}:${octets[4].charAt(0)}0`;
+  return { prefix24, prefix28, prefix36 };
+}
+
+/**
+ * Look up a single column value by trying 36-bit, 28-bit, then 24-bit prefixes.
+ * Returns the matched value or null.
+ */
+function lookupByPrefixes(db, prefixes, column) {
+  const r36 = db.prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 36`).get(prefixes.prefix36);
+  if (r36?.[column]) return r36[column];
+
+  const r28 = db.prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 28`).get(prefixes.prefix28);
+  if (r28?.[column]) return r28[column];
+
+  const r24 = db.prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 24`).get(prefixes.prefix24);
+  return r24?.[column] ?? null;
+}
+
 /**
  * Parse the Wireshark manuf file into an array of vendor entries.
  */
@@ -93,31 +133,9 @@ async function refreshVendorDb() {
  * @returns {string|null} Vendor name or null
  */
 export function lookupVendor(mac) {
-  if (!mac) return null;
-
-  const db = getDb();
-  const upper = mac.toUpperCase();
-  const octets = upper.split(':');
-  if (octets.length !== 6) return null;
-
-  // Try 36-bit (first 5 octets, last nibble zeroed): AA:BB:CC:DD:E0
-  const nibble36 = octets[4].charAt(0) + '0';
-  const prefix36 = `${octets[0]}:${octets[1]}:${octets[2]}:${octets[3]}:${nibble36}`;
-  const match36 = db.prepare('SELECT vendor_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 36').get(prefix36);
-  if (match36) return match36.vendor_name;
-
-  // Try 28-bit (first 4 octets, last nibble zeroed): AA:BB:CC:D0
-  const nibble28 = octets[3].charAt(0) + '0';
-  const prefix28 = `${octets[0]}:${octets[1]}:${octets[2]}:${nibble28}`;
-  const match28 = db.prepare('SELECT vendor_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 28').get(prefix28);
-  if (match28) return match28.vendor_name;
-
-  // Try 24-bit (first 3 octets): AA:BB:CC
-  const prefix24 = `${octets[0]}:${octets[1]}:${octets[2]}`;
-  const match24 = db.prepare('SELECT vendor_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 24').get(prefix24);
-  if (match24) return match24.vendor_name;
-
-  return null;
+  const octets = parseMacOctets(mac);
+  if (!octets) return null;
+  return lookupByPrefixes(getDb(), buildPrefixes(octets), 'vendor_name');
 }
 
 /**
@@ -127,28 +145,9 @@ export function lookupVendor(mac) {
  * @returns {string|null} Short vendor name or null
  */
 export function lookupShortName(mac) {
-  if (!mac) return null;
-
-  const db = getDb();
-  const upper = mac.toUpperCase();
-  const octets = upper.split(':');
-  if (octets.length !== 6) return null;
-
-  const nibble36 = octets[4].charAt(0) + '0';
-  const prefix36 = `${octets[0]}:${octets[1]}:${octets[2]}:${octets[3]}:${nibble36}`;
-  const m36 = db.prepare('SELECT short_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 36').get(prefix36);
-  if (m36?.short_name) return m36.short_name;
-
-  const nibble28 = octets[3].charAt(0) + '0';
-  const prefix28 = `${octets[0]}:${octets[1]}:${octets[2]}:${nibble28}`;
-  const m28 = db.prepare('SELECT short_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 28').get(prefix28);
-  if (m28?.short_name) return m28.short_name;
-
-  const prefix24 = `${octets[0]}:${octets[1]}:${octets[2]}`;
-  const m24 = db.prepare('SELECT short_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 24').get(prefix24);
-  if (m24?.short_name) return m24.short_name;
-
-  return null;
+  const octets = parseMacOctets(mac);
+  if (!octets) return null;
+  return lookupByPrefixes(getDb(), buildPrefixes(octets), 'short_name');
 }
 
 /**
@@ -179,32 +178,11 @@ export function lookupVendorBatch(macs) {
   const count = db.prepare('SELECT COUNT(*) as cnt FROM mac_vendors').get();
   if (!count || count.cnt === 0) return result;
 
-  const stmt24 = db.prepare('SELECT vendor_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 24');
-  const stmt28 = db.prepare('SELECT vendor_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 28');
-  const stmt36 = db.prepare('SELECT vendor_name FROM mac_vendors WHERE prefix = ? AND prefix_length = 36');
-
   for (const mac of macs) {
-    if (!mac) continue;
-    const upper = mac.toUpperCase();
-    const octets = upper.split(':');
-    if (octets.length !== 6) continue;
-
-    // 36-bit
-    const nibble36 = octets[4].charAt(0) + '0';
-    const prefix36 = `${octets[0]}:${octets[1]}:${octets[2]}:${octets[3]}:${nibble36}`;
-    const m36 = stmt36.get(prefix36);
-    if (m36) { result.set(mac, m36.vendor_name); continue; }
-
-    // 28-bit
-    const nibble28 = octets[3].charAt(0) + '0';
-    const prefix28 = `${octets[0]}:${octets[1]}:${octets[2]}:${nibble28}`;
-    const m28 = stmt28.get(prefix28);
-    if (m28) { result.set(mac, m28.vendor_name); continue; }
-
-    // 24-bit
-    const prefix24 = `${octets[0]}:${octets[1]}:${octets[2]}`;
-    const m24 = stmt24.get(prefix24);
-    if (m24) { result.set(mac, m24.vendor_name); }
+    const octets = parseMacOctets(mac);
+    if (!octets) continue;
+    const vendor = lookupByPrefixes(db, buildPrefixes(octets), 'vendor_name');
+    if (vendor) result.set(mac, vendor);
   }
 
   return result;

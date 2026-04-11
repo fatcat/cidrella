@@ -12,6 +12,10 @@ import router from './router/index.js';
 import api from './api/client.js';
 import { useDebugStore } from './stores/debug.js';
 import { useThemeStore } from './stores/theme.js';
+import { migrateStorageKeys } from './utils/storage.js';
+
+// One-time migration from ipam_ to cidrella_ localStorage keys
+migrateStorageKeys();
 
 const app = createApp(App);
 const pinia = createPinia();

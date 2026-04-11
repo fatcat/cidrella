@@ -4,7 +4,7 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import helmet from 'helmet';
-import cors from 'cors';
+
 import morgan from 'morgan';
 import { fileURLToPath } from 'url';
 
@@ -153,7 +153,6 @@ async function main() {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     next();
   });
-  app.use(cors());
   app.use(morgan('short'));
   app.use(express.json());
 

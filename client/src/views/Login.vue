@@ -27,6 +27,7 @@ import InputText from 'primevue/inputtext';
 import Password from 'primevue/password';
 import Button from 'primevue/button';
 import Message from 'primevue/message';
+import { apiError } from '../utils/format.js';
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -47,52 +48,20 @@ async function handleLogin() {
       router.push('/');
     }
   } catch (err) {
-    error.value = err.response?.data?.error || 'Login failed';
+    error.value = apiError(err);
   } finally {
     loading.value = false;
   }
 }
 </script>
 
+<style>
+@import '../assets/auth-layout.css';
+</style>
+
 <style scoped>
-.login-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100vh;
-  background: var(--p-surface-ground);
-}
-.login-card {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
-  border-radius: 12px;
-  padding: 2.5rem;
-  width: 100%;
-  max-width: 400px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
-}
+/* Login-specific: primary color on the h1 title */
 .login-card h1 {
-  margin: 0 0 0.25rem 0;
-  text-align: center;
   color: var(--p-primary-color);
-}
-.subtitle {
-  text-align: center;
-  color: var(--p-text-muted-color);
-  margin: 0 0 1.5rem 0;
-}
-.field {
-  margin-bottom: 1rem;
-}
-.field label {
-  display: block;
-  margin-bottom: 0.5rem;
-  font-weight: 500;
-}
-.w-full {
-  width: 100%;
-}
-.mb-3 {
-  margin-bottom: 0.75rem;
 }
 </style>

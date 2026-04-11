@@ -73,6 +73,7 @@ import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import { useDnsStore } from '../stores/dns.js';
+import { apiError } from '../utils/format.js';
 
 const store = useDnsStore();
 const toast = useToast();
@@ -121,9 +122,7 @@ function removeForwarder(i) {
   forwarders.value.splice(i, 1);
 }
 
-async function onForwarderBlur(i) {
-  const fwd = forwarders.value[i];
-  if (!fwd) return;
+async function testForwarder(fwd) {
   const ip = fwd.ip.trim();
   if (!ip || !ipv4Re.test(ip)) {
     fwd.status = null;
@@ -138,17 +137,15 @@ async function onForwarderBlur(i) {
   }
 }
 
+async function onForwarderBlur(i) {
+  const fwd = forwarders.value[i];
+  if (!fwd) return;
+  await testForwarder(fwd);
+}
+
 async function testAllForwarders() {
   for (const fwd of forwarders.value) {
-    const ip = fwd.ip.trim();
-    if (!ip || !ipv4Re.test(ip)) continue;
-    fwd.status = 'testing';
-    try {
-      const result = await store.testForwarder(ip);
-      fwd.status = result.reachable ? 'reachable' : 'unreachable';
-    } catch {
-      fwd.status = 'unreachable';
-    }
+    await testForwarder(fwd);
   }
 }
 
@@ -160,7 +157,7 @@ async function saveForwarders() {
     savedForwarders.value = [...servers];
     toast.add({ severity: 'success', summary: 'Forwarders saved', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingForwarders.value = false;
   }
@@ -173,7 +170,7 @@ async function saveSoaDefaults() {
     savedSoa.value = { ...soaForm.value };
     toast.add({ severity: 'success', summary: 'SOA defaults saved', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingSoa.value = false;
   }

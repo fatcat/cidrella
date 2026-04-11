@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { getDb } from '../db/init.js';
+import { getDb, getSetting, setSetting } from '../db/init.js';
 import { DATA_DIR } from '../config/defaults.js';
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 
@@ -65,6 +65,16 @@ export function restoreBackup(archivePath) {
     throw new Error('Invalid backup: missing database file');
   }
 
+  // Validate that every entry resolves within DATA_DIR to prevent path traversal
+  const resolvedDataDir = path.resolve(DATA_DIR);
+  const entries = listing.split('\n').map(e => e.trim()).filter(Boolean);
+  for (const entry of entries) {
+    const resolved = path.resolve(DATA_DIR, entry);
+    if (!resolved.startsWith(resolvedDataDir + path.sep) && resolved !== resolvedDataDir) {
+      throw new Error('Invalid archive: path traversal detected');
+    }
+  }
+
   // Extract to DATA_DIR, overwriting existing files
   execFileSync('tar', ['xzf', archivePath, '-C', DATA_DIR], {
     stdio: 'pipe',
@@ -114,8 +124,7 @@ export function deleteBackup(db, id) {
  * Enforce backup retention limit
  */
 function enforceRetention(db) {
-  const setting = db.prepare("SELECT value FROM settings WHERE key = 'backup_retention_count'").get();
-  const maxCount = parseInt(setting?.value || '7', 10);
+  const maxCount = parseInt(getSetting('backup_retention_count') || '7', 10);
 
   const backups = db.prepare('SELECT * FROM backups ORDER BY created_at DESC').all();
   if (backups.length <= maxCount) return;
@@ -155,27 +164,22 @@ export function startBackupScheduler() {
   return setInterval(() => {
     try {
       const db = getDb();
-      const schedule = db.prepare("SELECT value FROM settings WHERE key = 'backup_schedule'").get();
-      if (!schedule || schedule.value === 'off') return;
+      const scheduleValue = getSetting('backup_schedule');
+      if (!scheduleValue || scheduleValue === 'off') return;
 
-      const interval = INTERVAL_MAP[schedule.value];
+      const interval = INTERVAL_MAP[scheduleValue];
       if (!interval) return;
 
-      const lastRun = db.prepare("SELECT value FROM settings WHERE key = 'backup_last_run'").get();
-      const lastRunTime = lastRun ? new Date(lastRun.value).getTime() : 0;
+      const lastRunValue = getSetting('backup_last_run');
+      const lastRunTime = lastRunValue ? new Date(lastRunValue).getTime() : 0;
       const now = Date.now();
 
       if (now - lastRunTime >= interval) {
-        console.log(`Scheduled backup (${schedule.value})...`);
+        console.log(`Scheduled backup (${scheduleValue})...`);
         createBackup(db);
 
         // Update last run time
-        const nowStr = new Date().toISOString();
-        if (lastRun) {
-          db.prepare("UPDATE settings SET value = ? WHERE key = 'backup_last_run'").run(nowStr);
-        } else {
-          db.prepare("INSERT INTO settings (key, value) VALUES ('backup_last_run', ?)").run(nowStr);
-        }
+        setSetting('backup_last_run', new Date().toISOString());
         console.log('Scheduled backup completed');
       }
     } catch (err) {

@@ -30,10 +30,6 @@ export const useOperationsStore = defineStore('operations', () => {
     await fetchBackups();
   }
 
-  function downloadBackupUrl(id) {
-    return `/api/operations/backups/${id}/download`;
-  }
-
   async function downloadBackup(id, filename) {
     const res = await api.get(`/operations/backups/${id}/download`, { responseType: 'blob' });
     const url = URL.createObjectURL(res.data);
@@ -84,7 +80,7 @@ export const useOperationsStore = defineStore('operations', () => {
 
   return {
     backups, certInfo, loading,
-    createBackup, fetchBackups, deleteBackup, downloadBackupUrl, downloadBackup, restoreBackup,
+    createBackup, fetchBackups, deleteBackup, downloadBackup, restoreBackup,
     fetchCertInfo, uploadCert, resetCert,
     getSetupStatus, completeSetup
   };

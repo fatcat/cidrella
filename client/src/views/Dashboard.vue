@@ -50,80 +50,40 @@
       <!-- Time Range -->
       <div class="range-bar">
         <Select v-model="selectedRange" :options="rangeOptions" optionLabel="label" optionValue="value" size="small"
-          style="width: 10rem" @change="onRangeChange" />
+          style="width: 10rem" @change="refreshAll" />
         <Button icon="pi pi-refresh" size="small" text rounded @click="refreshAll" :loading="store.loading"
           title="Refresh" />
       </div>
 
-      <div class="chart-card">
-        <h4>DNS Queries by Host</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="store.topClients.length" class="doughnut-wrap">
-              <Doughnut :data="hostChartData" :options="doughnutWithLabelsOptions" :plugins="[ChartDataLabels]" />
-            </div>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
+      <DoughnutTableCard title="DNS Queries by Host" :items="store.topClients" :chartData="hostChartData" labelHeader="Host">
+        <template #label="{ data }">{{ data.hostname || data.client_ip }}</template>
+      </DoughnutTableCard>
 
-          <div class="chart-card">
-            <DataTable v-if="store.topClients.length" :value="store.topClients" size="small" style="margin: 0 10%">
-              <Column header="Host">
-                <template #body="{ data }">{{ data.hostname || data.client_ip }}</template>
-              </Column>
-              <Column field="count" header="Count">
-                <template #body="{ data }">{{ Number(data.count).toLocaleString() }}</template>
-              </Column>
-            </DataTable>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-        </div>
-
-      </div>
-
-      <div class="chart-card">
-        <h4>Top 10 Domains Queried</h4>
-        <div class="card-row">
-          <div class="chart-card">
-            <div v-if="store.topDomains.length" class="doughnut-wrap">
-              <Doughnut :data="domainChartData" :options="doughnutWithLabelsOptions" :plugins="[ChartDataLabels]" />
-            </div>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-
-          <div class="chart-card">
-            <DataTable v-if="store.topDomains.length" :value="store.topDomains" size="small" style="margin: 0 10%">
-              <Column field="domain" header="Domain" />
-              <Column field="count" header="Count">
-                <template #body="{ data }">{{ Number(data.count).toLocaleString() }}</template>
-              </Column>
-            </DataTable>
-            <p v-else class="empty-chart">No data in this range.</p>
-          </div>
-        </div>
-      </div>
+      <DoughnutTableCard title="Top 10 Domains Queried" :items="store.topDomains" :chartData="domainChartData"
+                         labelField="domain" labelHeader="Domain" />
 
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import Select from 'primevue/select';
 import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
 import {
   Chart as ChartJS, ArcElement, Tooltip, Legend,
 } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
-import { Doughnut } from 'vue-chartjs';
 import { useDashboardStore } from '../stores/dashboard.js';
-import { CHART_COLORS, RANGE_OPTIONS, DOUGHNUT_OPTIONS } from '../utils/chart-config.js';
+import { RANGE_OPTIONS, makeDoughnutData } from '../utils/chart-config.js';
+import { formatNumber } from '../utils/format.js';
+import { useAutoRefresh } from '../composables/useAutoRefresh.js';
+import DoughnutTableCard from '../components/DoughnutTableCard.vue';
 import '../assets/analytics-layout.css';
 import api from '../api/client.js';
 
-ChartJS.register(ArcElement, Tooltip, Legend);
+ChartJS.register(ArcElement, Tooltip, Legend, ChartDataLabels);
 
 const store = useDashboardStore();
 const router = useRouter();
@@ -145,8 +105,6 @@ async function fetchSystemStats() {
   } catch { /* ignore */ }
 }
 
-let refreshTimer = null;
-
 const services = computed(() => store.services);
 
 const summary = computed(() => {
@@ -159,40 +117,14 @@ const summary = computed(() => {
   };
 });
 
-function formatNumber(n) {
-  return (n || 0).toLocaleString();
-}
-
 function goToTab(tab) {
-  localStorage.setItem('ipam_b_active_tab', JSON.stringify(tab));
+  localStorage.setItem('cidrella_b_active_tab', JSON.stringify(tab));
   router.push('/networks');
 }
 
-const hostChartData = computed(() => {
-  const d = store.topClients;
-  return {
-    labels: d.map(r => r.hostname || r.client_ip || 'unknown'),
-    datasets: [{
-      data: d.map(r => Number(r.count)),
-      backgroundColor: d.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
-      borderWidth: 0,
-    }],
-  };
-});
+const hostChartData = computed(() => makeDoughnutData(store.topClients, r => r.hostname || r.client_ip || 'unknown'));
 
-const domainChartData = computed(() => {
-  const d = store.topDomains;
-  return {
-    labels: d.map(r => r.domain || 'unknown'),
-    datasets: [{
-      data: d.map(r => Number(r.count)),
-      backgroundColor: d.map((_, i) => CHART_COLORS[i % CHART_COLORS.length]),
-      borderWidth: 0,
-    }],
-  };
-});
-
-const doughnutWithLabelsOptions = DOUGHNUT_OPTIONS;
+const domainChartData = computed(() => makeDoughnutData(store.topDomains, r => r.domain || 'unknown'));
 
 async function refreshAll() {
   await Promise.all([
@@ -201,18 +133,11 @@ async function refreshAll() {
   ]);
 }
 
-function onRangeChange() {
-  refreshAll();
-}
-
 onMounted(() => {
   refreshAll();
-  refreshTimer = setInterval(refreshAll, 60_000);
 });
 
-onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer);
-});
+useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>

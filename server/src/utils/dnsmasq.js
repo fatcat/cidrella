@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
 import { DATA_DIR, DNSMASQ_INTERNAL_PORT } from '../config/defaults.js';
@@ -15,7 +15,7 @@ export function atomicWrite(filePath, content) {
   fs.renameSync(tmpPath, filePath);
 }
 
-function cleanStaleFiles(dir, prefix, suffix, activeIds) {
+export function cleanStaleFiles(dir, prefix, suffix, activeIds) {
   if (!fs.existsSync(dir)) return false;
   let removed = false;
   const pattern = new RegExp(`^${prefix}(\\d+)${suffix.replace('.', '\\.')}$`);
@@ -160,17 +160,7 @@ export function regenerateConfDir(db) {
     }
   }
 
-  // Clean stale files
-  if (fs.existsSync(CONF_DIR)) {
-    const pattern = /^zone-(\d+)\.conf$/;
-    for (const file of fs.readdirSync(CONF_DIR)) {
-      const match = file.match(pattern);
-      if (match && !activeIds.has(parseInt(match[1], 10))) {
-        fs.unlinkSync(path.join(CONF_DIR, file));
-        changed = true;
-      }
-    }
-  }
+  if (cleanStaleFiles(CONF_DIR, 'zone-', '.conf', activeIds)) changed = true;
 
   return changed;
 }
@@ -192,6 +182,15 @@ export function regenerateDnsmasqConf(db) {
   filtered.splice(insertIdx, 0, ...serverLines);
 
   atomicWrite(DNSMASQ_CONF, filtered.join('\n'));
+}
+
+export function isDnsmasqRunning() {
+  try {
+    execSync('pidof dnsmasq', { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const DNSMASQ_PID = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.pid');
@@ -247,25 +246,25 @@ export function applyInterfaceConfig(db) {
   let dhcpEnabled = true;
 
   try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'interface_config'").get();
-    if (row?.value) ifaceConfig = JSON.parse(row.value);
+    const raw = getSetting('interface_config');
+    if (raw) ifaceConfig = JSON.parse(raw);
   } catch { /* use default */ }
 
   try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_enabled'").get();
-    if (row?.value === 'false') dnsEnabled = false;
+    const val = getSetting('dns_enabled');
+    if (val === 'false') dnsEnabled = false;
   } catch { /* use default */ }
 
   try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'dhcp_enabled'").get();
-    if (row?.value === 'false') dhcpEnabled = false;
+    const val = getSetting('dhcp_enabled');
+    if (val === 'false') dhcpEnabled = false;
   } catch { /* use default */ }
 
   // Check for proxy bypass mode — dnsmasq takes over port 53 on LAN IPs
   let proxyBypass = false;
   try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'dns_proxy_bypass'").get();
-    if (row?.value === 'true') proxyBypass = true;
+    const val = getSetting('dns_proxy_bypass');
+    if (val === 'true') proxyBypass = true;
   } catch { /* use default */ }
 
   const sysIfaces = os.networkInterfaces();

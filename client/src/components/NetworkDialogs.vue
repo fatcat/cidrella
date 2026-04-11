@@ -589,7 +589,8 @@ import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
-import { validateSupernet, isValidCidr, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp } from '../utils/ip.js';
+import { apiError } from '../utils/format.js';
+import { validateSupernet, isValidCidr, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp, nearestPow2, dhcpRangeDefaults, gatewayIpFromPosition } from '../utils/ip.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -702,44 +703,6 @@ const wizardPrefixLength = computed(() => {
   return 32;
 });
 
-function nearestPow2(n) {
-  if (n <= 1) return 1;
-  const lower = Math.pow(2, Math.floor(Math.log2(n)));
-  const upper = lower * 2;
-  return (n - lower) <= (upper - n) ? lower : upper;
-}
-
-function dhcpRangeDefaults(p, gw) {
-  const size = p.broadcastLong - p.networkLong + 1;
-  const prefix = Math.round(32 - Math.log2(size));
-  // Only auto-fill for /21 through /26
-  if (prefix < 21 || prefix > 26) return { start: '', end: '' };
-  const gwLong = gw ? ipToLong(gw) : null;
-  let poolEnd, poolSize;
-  if (prefix <= 23) {
-    // /21, /22, /23: cap end at network + 128, pool size = 64
-    poolEnd = p.networkLong + 128;
-    poolSize = 64;
-  } else {
-    // /24, /25, /26: use power-of-2 formula
-    poolEnd = p.networkLong + nearestPow2(size * 0.35);
-    poolSize = nearestPow2(size * 0.15);
-  }
-  let poolStart = poolEnd - poolSize + 1;
-  // Ensure within usable range
-  poolStart = Math.max(poolStart, p.networkLong + 1);
-  poolEnd = Math.min(poolEnd, p.broadcastLong - 1);
-  if (gwLong === poolStart) poolStart++;
-  else if (gwLong === poolEnd) poolEnd--;
-  return { start: longToIp(poolStart), end: longToIp(poolEnd) };
-}
-
-function gatewayIpFromPosition(cidr, position) {
-  if (!position || position === 'none') return null;
-  const p = parseCidr(cidr);
-  return position === 'last' ? p.lastUsable : p.firstUsable;
-}
-
 const wizardDhcpDefaults = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
   if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
@@ -781,24 +744,29 @@ function onWizardNewVlanIdInput(val) {
   }
 }
 
-async function createVlanFromWizard() {
+async function createVlan(form, onSuccess) {
   saving.value = true;
   try {
     const res = await api.post('/vlans', {
-      vlan_id: wizardNewVlanForm.value.vlan_id,
-      name: wizardNewVlanForm.value.name,
+      vlan_id: form.value.vlan_id,
+      name: form.value.name,
     });
-    const created = res.data;
+    onSuccess(res.data);
+    toast.add({ severity: 'success', summary: 'VLAN created', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally { saving.value = false; }
+}
+
+function createVlanFromWizard() {
+  return createVlan(wizardNewVlanForm, (created) => {
     wizardNet.value.vlan_id = created.vlan_id;
     wizardVlanSelection.value = { ...created, display: `VLAN ${created.vlan_id} — ${created.name}` };
     wizardCreatedVlanId.value = created.id;
     showWizardCreateVlan.value = false;
     wizardNewVlanForm.value = { vlan_id: null, name: '' };
     wizardNewVlanNameManual.value = false;
-    toast.add({ severity: 'success', summary: 'VLAN created', life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally { saving.value = false; }
+  });
 }
 
 async function wizardSkip() {
@@ -841,7 +809,7 @@ async function wizardCreateAndContinue() {
     toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
     wizardStep.value = 3;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -903,7 +871,7 @@ async function probePihole() {
     }
   } catch (err) {
     piholeProbeStatus.value = 'fail';
-    piholeProbeError.value = err.response?.data?.error || err.message;
+    piholeProbeError.value = apiError(err);
   }
 }
 
@@ -927,7 +895,7 @@ async function fetchPiholeConfig() {
     piholePreview.value = res.data;
     piholeImportResults.value = null;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Fetch failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Fetch failed', detail: apiError(err), life: 5000 });
   } finally { piholeFetching.value = false; }
 }
 
@@ -948,7 +916,7 @@ async function parsePiholeFile() {
     piholePreview.value = res.data;
     piholeImportResults.value = null;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Parse failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Parse failed', detail: apiError(err), life: 5000 });
   } finally { piholeParsing.value = false; }
 }
 
@@ -980,7 +948,7 @@ async function executePiholeImport() {
     piholeImportResults.value = res.data.results;
     toast.add({ severity: 'success', summary: 'Pi-hole import complete', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Import failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Import failed', detail: apiError(err), life: 5000 });
   } finally { piholeImporting.value = false; }
 }
 
@@ -1038,7 +1006,7 @@ async function saveFolder() {
     showFolderDialog.value = false;
     editingFolder.value = null;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1050,7 +1018,7 @@ async function executeDeleteFolder() {
     toast.add({ severity: 'success', summary: 'Folder deleted', life: 3000 });
     emit('folder-deleted', deletingFolder.value.id);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1090,7 +1058,7 @@ async function createSupernet() {
     toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
     emit('network-created');
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1168,7 +1136,7 @@ async function executeDivide() {
     toast.add({ severity: 'success', summary: 'Network divided', life: 3000 });
     emit('network-divided', nodeId);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1182,7 +1150,7 @@ async function executeCarve() {
     toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
     emit('network-divided', nodeId);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1190,10 +1158,7 @@ async function executeCarve() {
 const showNetworkDialog = ref(false);
 const networkDialogMode = ref('edit'); // 'create', 'configure', or 'edit'
 const networkForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '', scan_enabled: null });
-const resolvedGlobalScanEnabled = computed(() => {
-  // Read from settings cache if available, default true
-  return true; // Will be resolved from settings when dialog opens
-});
+const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialog opens
 const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
 
@@ -1239,7 +1204,16 @@ const dhcpDefaults = computed(() => {
   return dhcpRangeDefaults(parseCidr(d.cidr), networkForm.value.gateway_address || null);
 });
 
-watch(showNetworkDialog, (val) => { if (!val) dropTargetFolderIdForConfigure.value = null; });
+watch(showNetworkDialog, async (val) => {
+  if (!val) {
+    dropTargetFolderIdForConfigure.value = null;
+  } else {
+    try {
+      const settings = await store.getSettings();
+      resolvedGlobalScanEnabled.value = settings.default_scan_enabled !== '0';
+    } catch { /* best effort — keep default true */ }
+  }
+});
 watch(() => networkForm.value.create_dhcp_scope, (checked) => {
   if (checked && !networkForm.value.dhcp_start_ip && !networkForm.value.dhcp_end_ip) {
     const d = dhcpDefaults.value;
@@ -1267,7 +1241,7 @@ async function searchVlans(event) {
     vlanSuggestions.value = res.data.map(v => ({ ...v, display: `VLAN ${v.vlan_id} — ${v.name}` }));
   } catch (err) {
     vlanSuggestions.value = [];
-    const detail = err.response?.data?.error || err.message;
+    const detail = apiError(err);
     toast.add({ severity: 'error', summary: 'VLAN lookup failed', detail, life: 5000 });
   }
 }
@@ -1308,24 +1282,15 @@ function onVlanClear() {
   editVlanSelection.value = null;
 }
 
-async function createVlanFromEdit() {
-  saving.value = true;
-  try {
-    const res = await api.post('/vlans', {
-      vlan_id: newVlanForm.value.vlan_id,
-      name: newVlanForm.value.name,
-    });
-    const created = res.data;
+function createVlanFromEdit() {
+  return createVlan(newVlanForm, (created) => {
     networkForm.value.vlan_id = created.vlan_id;
     if (!networkForm.value.name) networkForm.value.name = created.name;
     editVlanSelection.value = { ...created, display: `VLAN ${created.vlan_id} — ${created.name}` };
     showCreateVlanFromEdit.value = false;
     newVlanForm.value = { vlan_id: null, name: '' };
     newVlanNameManual.value = false;
-    toast.add({ severity: 'success', summary: 'VLAN created', life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
-  } finally { saving.value = false; }
+  });
 }
 
 function applyTemplateToEdit() {
@@ -1390,7 +1355,7 @@ async function executeNetworkSave() {
       emit('network-updated', id);
     }
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1405,7 +1370,7 @@ async function executeDelete() {
     toast.add({ severity: 'success', summary: 'Network deleted', life: 3000 });
     emit('network-deleted', props.selectedNode.data.id);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1420,7 +1385,7 @@ async function executeDeallocate() {
     toast.add({ severity: 'success', summary: 'Network deallocated', life: 3000 });
     emit('network-deleted', props.selectedNode.data.id);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1437,7 +1402,7 @@ async function executeMerge() {
     toast.add({ severity: 'success', summary: 'Networks merged', life: 3000 });
     emit('networks-merged');
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1454,12 +1419,12 @@ async function executeGroupConfigure() {
       const subnet = findSubnetInTree(id);
       if (!subnet) continue;
       const autoName = applyNameTemplate(props.nameTemplate, subnet.cidr);
-      await store.configureSubnetNoRefresh(id, {
+      await store.configureSubnet(id, {
         name: autoName, description: '', vlan_id: null,
         gateway_address: '', create_dhcp_scope: false,
         create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '',
         folder_id: groupDropFolderId.value,
-      });
+      }, { refresh: false });
     }
     await store.fetchTree();
     showGroupConfigure.value = false;
@@ -1468,7 +1433,7 @@ async function executeGroupConfigure() {
     toast.add({ severity: 'success', summary: `${count} networks allocated`, life: 3000 });
     emit('group-configured');
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1497,7 +1462,7 @@ async function executeApplyTemplate(ids) {
     await store.applyTemplate(ids);
     toast.add({ severity: 'success', summary: 'Template applied', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
@@ -1599,7 +1564,7 @@ function openEdit(node, folderId) {
       else editVlanSelection.value = `VLAN ${d.vlan_id}`;
     }).catch((err) => {
       editVlanSelection.value = `VLAN ${d.vlan_id}`;
-      const detail = err.response?.data?.error || err.message;
+      const detail = apiError(err);
       toast.add({ severity: 'error', summary: 'VLAN lookup failed', detail, life: 5000 });
     });
   } else {
@@ -1626,7 +1591,7 @@ async function openMergeConfirm(ids) {
     mergePreview.value = preview;
     showMerge.value = true;
   } catch (err) {
-    mergeError.value = err.response?.data?.error || err.message;
+    mergeError.value = apiError(err);
     showMerge.value = true;
   }
 }

@@ -1,13 +1,9 @@
-import { getDb, getSetting } from '../db/init.js';
+import { getSetting, setSetting } from '../db/init.js';
 import { APP_VERSION } from './version.js';
 import {
   UPDATE_CHECK_INTERVAL_MS, UPDATE_CHECK_DELAY_MS, GITHUB_REPO,
 } from '../config/defaults.js';
 
-function setSetting(key, value) {
-  const db = getDb();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, String(value));
-}
 
 function compareSemver(a, b) {
   const pa = a.replace(/^v/, '').split('.').map(Number);

@@ -1,55 +1,53 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, reactive, toRefs } from 'vue';
 import api from '../api/client.js';
+import { loadJson, saveJson } from '../utils/storage.js';
+
+const METRIC_CONFIG = [
+  { key: 'timeseries',            url: '/metrics/timeseries' },
+  { key: 'blocklistHits',         url: '/metrics/blocklist-hits' },
+  { key: 'geoipHits',             url: '/metrics/geoip-hits' },
+  { key: 'proxyPerf',             url: '/metrics/proxy-perf' },
+  { key: 'topClients',            url: '/analytics/top-clients',          params: { limit: 10 } },
+  { key: 'topDomains',            url: '/analytics/top-domains',          params: { limit: 10 } },
+  { key: 'blocklistTopClients',   url: '/analytics/blocklist/top-clients', params: { limit: 10 } },
+  { key: 'blocklistTopDomains',   url: '/analytics/blocklist/top-domains', params: { limit: 10 } },
+  { key: 'blocklistTopCategories',url: '/analytics/blocklist/top-categories', params: { limit: 10 } },
+  { key: 'geoipTopClients',       url: '/analytics/geoip/top-clients',    params: { limit: 10 } },
+  { key: 'geoipTopDomains',       url: '/analytics/geoip/top-domains',    params: { limit: 10 } },
+];
 
 export const useDashboardStore = defineStore('dashboard', () => {
-  const timeseries = ref([]);
-  const blocklistHits = ref([]);
-  const geoipHits = ref([]);
-  const proxyPerf = ref([]);
+  const metrics = reactive({
+    timeseries: [],
+    blocklistHits: [],
+    geoipHits: [],
+    proxyPerf: [],
+    topClients: [],
+    topDomains: [],
+    blocklistTopClients: [],
+    blocklistTopDomains: [],
+    blocklistTopCategories: [],
+    geoipTopClients: [],
+    geoipTopDomains: [],
+  });
+
   const services = ref(null);
   const loading = ref(false);
 
   // Shared time range across all analytics tabs
-  const selectedRange = ref((() => {
-    try { const v = JSON.parse(localStorage.getItem('ipam_analytics_range')); return v || '24h'; } catch { return '24h'; }
-  })());
+  const selectedRange = ref(loadJson('cidrella_analytics_range', '24h'));
 
   function setRange(value) {
     selectedRange.value = value;
-    try { localStorage.setItem('ipam_analytics_range', JSON.stringify(value)); } catch {}
+    saveJson('cidrella_analytics_range', value);
   }
 
-  // Analytics top-N data
-  const topClients = ref([]);
-  const topDomains = ref([]);
-  const blocklistTopClients = ref([]);
-  const blocklistTopDomains = ref([]);
-  const blocklistTopCategories = ref([]);
-  const geoipTopClients = ref([]);
-  const geoipTopDomains = ref([]);
-
-  async function fetchTimeseries(range = '24h') {
-    const res = await api.get(`/metrics/timeseries?range=${range}`);
-    timeseries.value = res.data;
-    return res.data;
-  }
-
-  async function fetchBlocklistHits(range = '24h') {
-    const res = await api.get(`/metrics/blocklist-hits?range=${range}`);
-    blocklistHits.value = res.data;
-    return res.data;
-  }
-
-  async function fetchGeoipHits(range = '24h') {
-    const res = await api.get(`/metrics/geoip-hits?range=${range}`);
-    geoipHits.value = res.data;
-    return res.data;
-  }
-
-  async function fetchProxyPerf(range = '24h') {
-    const res = await api.get(`/metrics/proxy-perf?range=${range}`);
-    proxyPerf.value = res.data;
+  async function fetchMetric(key, range = '24h') {
+    const cfg = METRIC_CONFIG.find(c => c.key === key);
+    if (!cfg) return;
+    const res = await api.get(cfg.url, { params: { range, ...cfg.params } });
+    metrics[key] = res.data;
     return res.data;
   }
 
@@ -59,57 +57,25 @@ export const useDashboardStore = defineStore('dashboard', () => {
     return res.data;
   }
 
-  async function fetchTopClients(range = '24h') {
-    const res = await api.get(`/analytics/top-clients?range=${range}&limit=10`);
-    topClients.value = res.data;
-  }
-
-  async function fetchTopDomains(range = '24h') {
-    const res = await api.get(`/analytics/top-domains?range=${range}&limit=10`);
-    topDomains.value = res.data;
-  }
-
-  async function fetchBlocklistTopClients(range = '24h') {
-    const res = await api.get(`/analytics/blocklist/top-clients?range=${range}&limit=10`);
-    blocklistTopClients.value = res.data;
-  }
-
-  async function fetchBlocklistTopDomains(range = '24h') {
-    const res = await api.get(`/analytics/blocklist/top-domains?range=${range}&limit=10`);
-    blocklistTopDomains.value = res.data;
-  }
-
-  async function fetchBlocklistTopCategories(range = '24h') {
-    const res = await api.get(`/analytics/blocklist/top-categories?range=${range}&limit=10`);
-    blocklistTopCategories.value = res.data;
-  }
-
-  async function fetchGeoipTopClients(range = '24h') {
-    const res = await api.get(`/analytics/geoip/top-clients?range=${range}&limit=10`);
-    geoipTopClients.value = res.data;
-  }
-
-  async function fetchGeoipTopDomains(range = '24h') {
-    const res = await api.get(`/analytics/geoip/top-domains?range=${range}&limit=10`);
-    geoipTopDomains.value = res.data;
-  }
+  // Thin wrappers kept for backward compatibility with existing callers
+  const fetchTimeseries            = (range) => fetchMetric('timeseries', range);
+  const fetchBlocklistHits         = (range) => fetchMetric('blocklistHits', range);
+  const fetchGeoipHits             = (range) => fetchMetric('geoipHits', range);
+  const fetchProxyPerf             = (range) => fetchMetric('proxyPerf', range);
+  const fetchTopClients            = (range) => fetchMetric('topClients', range);
+  const fetchTopDomains            = (range) => fetchMetric('topDomains', range);
+  const fetchBlocklistTopClients   = (range) => fetchMetric('blocklistTopClients', range);
+  const fetchBlocklistTopDomains   = (range) => fetchMetric('blocklistTopDomains', range);
+  const fetchBlocklistTopCategories= (range) => fetchMetric('blocklistTopCategories', range);
+  const fetchGeoipTopClients       = (range) => fetchMetric('geoipTopClients', range);
+  const fetchGeoipTopDomains       = (range) => fetchMetric('geoipTopDomains', range);
 
   async function fetchAll(range = '24h') {
     loading.value = true;
     try {
       await Promise.all([
-        fetchTimeseries(range),
-        fetchBlocklistHits(range),
-        fetchGeoipHits(range),
-        fetchProxyPerf(range),
+        ...METRIC_CONFIG.map(c => fetchMetric(c.key, range)),
         fetchServices(),
-        fetchTopClients(range),
-        fetchTopDomains(range),
-        fetchBlocklistTopClients(range),
-        fetchBlocklistTopDomains(range),
-        fetchBlocklistTopCategories(range),
-        fetchGeoipTopClients(range),
-        fetchGeoipTopDomains(range),
       ]);
     } finally {
       loading.value = false;
@@ -117,11 +83,11 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   return {
-    timeseries, blocklistHits, geoipHits, proxyPerf, services, loading,
+    metrics,
+    ...toRefs(metrics),  // live-linked refs so store.timeseries stays in sync with metrics.timeseries
+    services, loading,
     selectedRange, setRange,
-    topClients, topDomains,
-    blocklistTopClients, blocklistTopDomains, blocklistTopCategories,
-    geoipTopClients, geoipTopDomains,
+    fetchMetric,
     fetchTimeseries, fetchBlocklistHits, fetchGeoipHits, fetchProxyPerf, fetchServices,
     fetchTopClients, fetchTopDomains,
     fetchBlocklistTopClients, fetchBlocklistTopDomains, fetchBlocklistTopCategories,

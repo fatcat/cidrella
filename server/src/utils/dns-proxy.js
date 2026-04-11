@@ -8,7 +8,7 @@ import { Readable } from 'stream';
 import dnsPacket from 'dns-packet';
 import maxmind from 'maxmind';
 import { LRUCache } from 'lru-cache';
-import { getDb, getSetting } from '../db/init.js';
+import { getDb, getSetting, setSetting } from '../db/init.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyInterfaceConfig, restartDnsmasq } from './dnsmasq.js';
 import {
@@ -63,10 +63,19 @@ let blocklistRedirectIp = '';
 let blocklistBlockedDelta = 0;
 let blocklistCategoryHits = new Map();
 
-// Performance instrumentation
-const MAX_LATENCY_SAMPLES = 60000;  // Cap at ~1 minute of 1K qps
+// Performance instrumentation — reservoir sampling caps memory at 1000 samples
+const RESERVOIR_SIZE = 1000;
 let latencySamples = [];
-function recordLatency(us) { if (latencySamples.length < MAX_LATENCY_SAMPLES) latencySamples.push(us); }
+let latencySampleCount = 0;
+function recordLatency(us) {
+  latencySampleCount++;
+  if (latencySamples.length < RESERVOIR_SIZE) {
+    latencySamples.push(us);
+  } else {
+    const j = Math.floor(Math.random() * latencySampleCount);
+    if (j < RESERVOIR_SIZE) latencySamples[j] = us;
+  }
+}
 let cacheHits = 0;
 let cacheMisses = 0;
 let timeoutCount = 0;
@@ -79,10 +88,17 @@ let pendingQueries = new Map();
 let dnsmasqSocket = null;      // UDP socket for forwarding to dnsmasq on 127.0.0.1:5353
 let nextQueryId = 1;
 
-function setSetting(key, value) {
-  const db = getDb();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, String(value));
+// Linear scan of full 16-bit ID space for a free slot.
+// Returns null if all IDs are in-flight (caller should SERVFAIL).
+function allocateQueryId() {
+  const startId = nextQueryId;
+  do {
+    nextQueryId = (nextQueryId + 1) & 0xFFFF;
+    if (!pendingQueries.has(nextQueryId)) return nextQueryId;
+  } while (nextQueryId !== startId);
+  return null; // all 65536 IDs in-flight
 }
+
 
 // Load MMDB database file
 export async function loadMmdb() {
@@ -151,8 +167,8 @@ function getListenAddresses() {
   const db = getDb();
   let ifaceConfig = {};
   try {
-    const row = db.prepare("SELECT value FROM settings WHERE key = 'interface_config'").get();
-    if (row?.value) ifaceConfig = JSON.parse(row.value);
+    const raw = getSetting('interface_config');
+    if (raw) ifaceConfig = JSON.parse(raw);
   } catch { /* use default */ }
 
   const sysIfaces = os.networkInterfaces();
@@ -318,13 +334,17 @@ function handleQuery(msg, rinfo, sock) {
       return;
     }
 
-    // Assign internal query ID to track pending responses (skip collisions)
-    let internalId = nextQueryId++ & 0xFFFF;
-    if (nextQueryId > 0xFFFF) nextQueryId = 1;
-    let tries = 0;
-    while (pendingQueries.has(internalId) && tries++ < 10) {
-      internalId = nextQueryId++ & 0xFFFF;
-      if (nextQueryId > 0xFFFF) nextQueryId = 1;
+    // Assign internal query ID to track pending responses
+    const internalId = allocateQueryId();
+    if (internalId === null) {
+      // All 65536 IDs exhausted — drop query with SERVFAIL
+      statsTotal++;
+      const servfail = dnsPacket.encode({
+        id: query.id, type: 'response', rcode: 'SERVFAIL',
+        questions: query.questions || [], answers: [], authorities: [], additionals: []
+      });
+      sock.send(servfail, rinfo.port, rinfo.address);
+      return;
     }
 
     // Store pending query mapping (includes the socket that received the query + query metadata)
@@ -566,10 +586,9 @@ function activateBypass() {
   bypassMode = true;
   proxyLog('error', 'All restart attempts failed — activating bypass mode (dnsmasq takes port 53)');
   try {
-    const db = getDb();
     // Temporarily override: dnsmasq listens on port 53 + LAN IPs
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dns_proxy_bypass', 'true')").run();
-    applyInterfaceConfig(db);
+    setSetting('dns_proxy_bypass', 'true');
+    applyInterfaceConfig(getDb());
     restartDnsmasq();
     proxyLog('info', 'dnsmasq reconfigured for bypass mode (port 53 on LAN)');
   } catch (err) {
@@ -716,6 +735,7 @@ export function getAndResetCountryHits() {
 export function getAndResetPerformanceMetrics() {
   const samples = latencySamples;
   latencySamples = [];
+  latencySampleCount = 0;
 
   const hits = cacheHits;
   const misses = cacheMisses;

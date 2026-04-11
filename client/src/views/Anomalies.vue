@@ -160,8 +160,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useRouter } from 'vue-router';
+import { ref, computed, onMounted } from 'vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Tag from 'primevue/tag';
@@ -175,19 +174,18 @@ import {
 } from 'chart.js';
 import { Line } from 'vue-chartjs';
 import { useAnomalyStore } from '../stores/anomalies.js';
+import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import '../assets/analytics-layout.css';
 import { formatDateTime } from '../utils/dateFormat.js';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 ChartJS.defaults.elements.line.borderWidth = 1;
 
-const router = useRouter();
 const store = useAnomalyStore();
 
 const severityFilter = ref(null);
 const clientDialogVisible = ref(false);
 const selectedClient = ref('');
-let refreshTimer = null;
 
 const severityOptions = [
   { label: 'All Severities', value: null },
@@ -195,11 +193,6 @@ const severityOptions = [
   { label: 'Medium', value: 'medium' },
   { label: 'Low', value: 'low' },
 ];
-
-function goToSettings() {
-  localStorage.setItem('ipam_system_tab', '13');
-  router.push('/system');
-}
 
 function severityColor(severity) {
   if (severity === 'high') return 'danger';
@@ -294,12 +287,9 @@ const chartOptions = computed(() => ({
 
 onMounted(() => {
   refreshAll();
-  refreshTimer = setInterval(refreshAll, 60_000);
 });
 
-onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer);
-});
+useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>

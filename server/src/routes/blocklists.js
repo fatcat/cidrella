@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb, audit, getSetting } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig } from '../utils/blocklist.js';
@@ -136,12 +136,10 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
 
 // GET /api/blocklists/settings
 router.get('/settings', requirePerm('dns:read'), (req, res) => {
-  const db = getDb();
   const keys = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule'];
   const settings = {};
   for (const key of keys) {
-    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
-    settings[key] = row?.value || '';
+    settings[key] = getSetting(key) || '';
   }
   res.json(settings);
 });
@@ -150,6 +148,19 @@ router.get('/settings', requirePerm('dns:read'), (req, res) => {
 router.put('/settings', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const allowed = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule'];
+
+  // Validate blocklist_enabled must be a boolean
+  if (req.body.blocklist_enabled !== undefined && typeof req.body.blocklist_enabled !== 'boolean') {
+    return res.status(400).json({ error: 'blocklist_enabled must be a boolean' });
+  }
+
+  // Validate blocklist_update_schedule must be a non-negative integer (minutes)
+  if (req.body.blocklist_update_schedule !== undefined) {
+    const interval = parseInt(req.body.blocklist_update_schedule, 10);
+    if (isNaN(interval) || interval < 0) {
+      return res.status(400).json({ error: 'blocklist_update_schedule must be a non-negative integer' });
+    }
+  }
 
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
@@ -176,6 +187,11 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const { domain, reason } = req.body;
   if (!domain) return res.status(400).json({ error: 'Domain is required' });
+
+  const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$/;
+  if (!DOMAIN_RE.test(domain.trim())) {
+    return res.status(400).json({ error: 'Invalid domain name' });
+  }
 
   const normalized = domain.toLowerCase().trim();
   const existing = db.prepare('SELECT id FROM blocklist_whitelist WHERE domain = ?').get(normalized);

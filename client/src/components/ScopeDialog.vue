@@ -124,6 +124,8 @@ import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
 import { parseCidr, longToIp } from '../utils/ip.js';
 import api from '../api/client.js';
+import { IP_RE, resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
+import { apiError } from '../utils/format.js';
 
 const toast = useToast();
 const dhcpStore = useDhcpStore();
@@ -209,45 +211,17 @@ async function reloadOptions() {
   await loadOptions();
 }
 
-const IP_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
 
-async function resolveHostname(value) {
-  if (!value || IP_RE.test(value.trim())) return value;
-  const parts = value.split(',').map(s => s.trim()).filter(Boolean);
-  const resolved = [];
-  for (const part of parts) {
-    if (IP_RE.test(part)) {
-      resolved.push(part);
-    } else {
-      try {
-        const res = await api.get(`/dns/resolve?name=${encodeURIComponent(part)}`);
-        resolved.push(...res.data.ips);
-      } catch {
-        toast.add({ severity: 'warn', summary: `Could not resolve "${part}"`, life: 3000 });
-        resolved.push(part);
-      }
-    }
-  }
-  return resolved.join(',');
-}
+
 
 async function resolveHostnameField(code) {
   const val = form.value.optionValues[code];
   if (!val) return;
-  const resolved = await resolveHostname(val);
+  const resolved = await resolveHostname(val, api, toast);
   if (resolved !== val) form.value.optionValues[code] = resolved;
 }
 
-function placeholderForType(type) {
-  switch (type) {
-    case 'ip': return 'e.g. 192.168.1.1';
-    case 'ip-list': return 'e.g. 192.168.1.1, 192.168.1.2';
-    case 'text': return 'Value';
-    case 'text-list': return 'e.g. domain1.com, domain2.com';
-    case 'number': return '0';
-    default: return '';
-  }
-}
+
 
 function toggleOption(code, checked) {
   if (checked) {
@@ -487,7 +461,7 @@ async function save() {
     window.dispatchEvent(new Event('ipam:stats-changed'));
     emit('saved');
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }

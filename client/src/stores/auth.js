@@ -3,7 +3,7 @@ import { ref, computed } from 'vue';
 import api from '../api/client.js';
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem('ipam_token') || null);
+  const token = ref(localStorage.getItem('cidrella_token') || null);
   const user = ref(null);
 
   const isAuthenticated = computed(() => !!token.value);
@@ -15,7 +15,7 @@ export const useAuthStore = defineStore('auth', () => {
     const res = await api.post('/auth/login', { username, password });
     token.value = res.data.token;
     user.value = res.data.user;
-    localStorage.setItem('ipam_token', res.data.token);
+    localStorage.setItem('cidrella_token', res.data.token);
     return res.data;
   }
 
@@ -26,7 +26,7 @@ export const useAuthStore = defineStore('auth', () => {
     });
     token.value = res.data.token;
     user.value = res.data.user;
-    localStorage.setItem('ipam_token', res.data.token);
+    localStorage.setItem('cidrella_token', res.data.token);
     return res.data;
   }
 
@@ -50,7 +50,7 @@ export const useAuthStore = defineStore('auth', () => {
   function logout() {
     token.value = null;
     user.value = null;
-    localStorage.removeItem('ipam_token');
+    localStorage.removeItem('cidrella_token');
   }
 
   return { token, user, isAuthenticated, mustChangePassword, preferences, timeFormat, login, changePassword, fetchUser, updatePreferences, logout };

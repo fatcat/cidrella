@@ -28,11 +28,9 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import api from '../api/client.js';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
-import { useAuthStore } from '../stores/auth.js';
-
-const auth = useAuthStore();
 const logPre = ref(null);
 const lines = ref([]);
 const connected = ref(false);
@@ -58,12 +56,20 @@ function lineClass(line) {
   return '';
 }
 
-function connect() {
+async function connect() {
   if (eventSource) {
     eventSource.close();
   }
 
-  const url = `/api/logs/stream?filter=${activeFilter.value}&token=${encodeURIComponent(auth.token)}`;
+  let ticket = '';
+  try {
+    const { data } = await api.post('/logs/stream-token');
+    ticket = data.ticket;
+  } catch {
+    // proceed without ticket — server will reject unauthenticated SSE
+  }
+
+  const url = `/api/logs/stream?filter=${activeFilter.value}&ticket=${encodeURIComponent(ticket)}`;
   eventSource = new EventSource(url);
 
   eventSource.addEventListener('connected', () => {

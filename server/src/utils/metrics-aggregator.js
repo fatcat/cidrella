@@ -8,12 +8,12 @@
 
 import fs from 'fs';
 import path from 'path';
+import { readLogTail } from './log-reader.js';
 import { getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics, getAndResetBlocklistHits } from './dns-proxy.js';
 import { DATA_DIR } from '../config/defaults.js';
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
 const AGGREGATE_INTERVAL_MS = 60_000;
-const MAX_READ_BYTES = 10 * 1024 * 1024; // 10MB max per cycle
 const RETENTION_DAYS = 30;
 const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
@@ -43,33 +43,6 @@ let deleteOldGeoipHits = null;
 let deleteOldProxyPerf = null;
 
 /**
- * Read new bytes appended to the log file since the given offset.
- */
-function readNewLines() {
-  let size;
-  try {
-    size = fs.statSync(LOG_FILE).size;
-  } catch {
-    return [];
-  }
-
-  if (size < logOffset) logOffset = 0; // truncated
-  if (size === logOffset) return [];
-
-  const bytesToRead = Math.min(size - logOffset, MAX_READ_BYTES);
-  const buf = Buffer.alloc(bytesToRead);
-  const fd = fs.openSync(LOG_FILE, 'r');
-  try {
-    fs.readSync(fd, buf, 0, buf.length, logOffset);
-  } finally {
-    fs.closeSync(fd);
-  }
-
-  logOffset = logOffset + bytesToRead;
-  return buf.toString('utf-8').split('\n').filter(l => l.trim());
-}
-
-/**
  * Parse new log lines and return { dnsQueries, dhcpRequests }
  */
 function parseLogLines(lines) {
@@ -96,7 +69,8 @@ function aggregate() {
     const ts = Math.floor(Date.now() / 60_000) * 60; // minute-aligned epoch seconds
 
     // Parse dnsmasq log for DNS query and DHCP counts
-    const lines = readNewLines();
+    const { lines, newOffset: newLogOffset } = readLogTail(LOG_FILE, logOffset);
+    logOffset = newLogOffset;
     const { dnsQueries, dhcpRequests } = parseLogLines(lines);
 
     // Blocklist blocks from in-memory proxy counters

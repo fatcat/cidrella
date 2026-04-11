@@ -70,7 +70,7 @@ export const colorSwatches = {
 };
 
 export const useThemeStore = defineStore('theme', () => {
-  const currentThemeId = ref(localStorage.getItem('ipam-theme') || 'dark-emerald-zinc');
+  const currentThemeId = ref(localStorage.getItem('cidrella-theme') || 'dark-emerald-zinc');
 
   const currentTheme = computed(() => themes.find(t => t.id === currentThemeId.value) || themes[0]);
 
@@ -79,7 +79,7 @@ export const useThemeStore = defineStore('theme', () => {
     if (!theme) return;
 
     currentThemeId.value = themeId;
-    localStorage.setItem('ipam-theme', themeId);
+    localStorage.setItem('cidrella-theme', themeId);
 
     // Toggle dark mode class
     if (theme.group === 'dark') {

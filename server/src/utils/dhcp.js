@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
+import { atomicWrite, signalDnsmasq, cleanStaleFiles } from './dnsmasq.js';
 import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { syncLeasesToIps } from './ip-sync.js';
@@ -176,16 +176,7 @@ export function regenerateScopeConfigs(db) {
   }
 
   // Clean stale scope config files
-  if (fs.existsSync(CONF_DIR)) {
-    const pattern = /^dhcp-scope-(\d+)\.conf$/;
-    for (const file of fs.readdirSync(CONF_DIR)) {
-      const match = file.match(pattern);
-      if (match && !activeIds.has(parseInt(match[1], 10))) {
-        fs.unlinkSync(path.join(CONF_DIR, file));
-        changed = true;
-      }
-    }
-  }
+  if (cleanStaleFiles(CONF_DIR, 'dhcp-scope-', '.conf', activeIds)) changed = true;
 
   return changed;
 }
@@ -234,6 +225,9 @@ export function syncLeases(db) {
   const lines = content.trim().split('\n').filter(l => l.trim());
   const leases = [];
 
+  // Load allocated subnets once before the loop to avoid N+1 queries
+  const allocatedSubnets = db.prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'").all();
+
   for (const line of lines) {
     const parts = line.split(/\s+/);
     if (parts.length < 4) continue;
@@ -242,10 +236,8 @@ export function syncLeases(db) {
     const expiry = parseInt(expiryStr, 10);
     const expiresAt = expiry === 0 ? 'infinite' : new Date(expiry * 1000).toISOString();
 
-    // Find matching subnet
-    const subnet = db.prepare(`
-      SELECT id, cidr FROM subnets WHERE status = 'allocated'
-    `).all().find(s => isIpInSubnet(ip, s.cidr));
+    // Find matching subnet (using pre-loaded list)
+    const subnet = allocatedSubnets.find(s => isIpInSubnet(ip, s.cidr));
 
     leases.push({
       ip,
@@ -345,6 +337,8 @@ function syncDhcpDnsRecords(db, leases) {
 
   // Track which DHCP dns_record IDs are still active
   const activeRecordIds = new Set();
+  // Track which zone IDs were touched in this sync (to scope stale-record pruning)
+  const processedZoneIds = new Set();
   let configChanged = false;
 
   const findRecord = db.prepare(`
@@ -368,6 +362,8 @@ function syncDhcpDnsRecords(db, leases) {
 
     const zone = zoneByName.get(domain);
     if (!zone) continue;
+
+    processedZoneIds.add(zone.id);
 
     // Use the hostname as the record name (strip the domain suffix if present)
     let recordName = l.hostname;
@@ -396,10 +392,13 @@ function syncDhcpDnsRecords(db, leases) {
   }
 
   // Clean up DHCP records that no longer have a matching lease/reservation.
-  // Only prune if we actually processed entries — avoids wiping all records
-  // when all zones are disabled (activeRecordIds would be empty).
-  if (entries.length > 0 || forwardZones.length > 0) {
-    const staleRecords = db.prepare("SELECT id FROM dns_records WHERE source IN ('dhcp', 'reservation')").all();
+  // Only prune records in zones that were part of this sync — avoids cross-subnet
+  // record deletion and wiping records when all zones are disabled.
+  if (processedZoneIds.size > 0) {
+    const zoneIdList = [...processedZoneIds].join(',');
+    const staleRecords = db.prepare(
+      `SELECT id FROM dns_records WHERE source IN ('dhcp', 'reservation') AND zone_id IN (${zoneIdList})`
+    ).all();
     for (const r of staleRecords) {
       if (!activeRecordIds.has(r.id)) {
         db.prepare('DELETE FROM dns_records WHERE id = ?').run(r.id);

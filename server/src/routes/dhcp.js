@@ -1,16 +1,49 @@
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { isIpInSubnet, ipToLong, getServerIpForSubnet } from '../utils/ip.js';
+import { isIpInSubnet, ipToLong, getServerIpForSubnet, isValidIpv4, isValidMac } from '../utils/ip.js';
 import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
 import { syncDhcpReservationToIp, clearDhcpReservationFromIp } from '../utils/ip-sync.js';
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
 
 const router = Router();
-
-import { isValidIpv4, isValidMac } from '../utils/ip.js';
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
+
+
+
+// Helper: parse and validate a JSON IP array field
+// Returns { servers } on success or { error } on failure
+function parseIpList(jsonStr, fieldName) {
+  try {
+    const servers = JSON.parse(jsonStr);
+    if (!Array.isArray(servers) || !servers.every(isValidIpv4)) {
+      return { error: `${fieldName} must be a JSON array of valid IPs` };
+    }
+    return { servers };
+  } catch {
+    return { error: `${fieldName} must be a valid JSON array` };
+  }
+}
+
+// Helper: compute DHCP option values that are inherited from the subnet.
+// These are skipped when saving explicit scope options to avoid redundant storage.
+function computeInheritedOptions(subnet) {
+  const inherited = {};
+  if (subnet?.gateway_address) inherited[3] = subnet.gateway_address;
+  if (subnet?.cidr) {
+    const pfx = parseInt(subnet.cidr.split('/')[1], 10);
+    if (pfx >= 0 && pfx <= 32) {
+      const m = pfx === 0 ? 0 : (0xFFFFFFFF << (32 - pfx)) >>> 0;
+      inherited[1] = [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255].join('.');
+    }
+  }
+  if (subnet?.domain_name) {
+    inherited[15] = subnet.domain_name;
+    inherited[119] = subnet.domain_name;
+  }
+  return inherited;
+}
 
 // ─── Scopes ──────────────────────────────────────────────
 
@@ -74,14 +107,8 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
   // Validate DNS servers
   if (dns_servers) {
-    try {
-      const servers = JSON.parse(dns_servers);
-      if (!Array.isArray(servers) || !servers.every(isValidIpv4)) {
-        return res.status(400).json({ error: 'dns_servers must be a JSON array of valid IPs' });
-      }
-    } catch {
-      return res.status(400).json({ error: 'dns_servers must be a valid JSON array' });
-    }
+    const { error: dnsErr } = parseIpList(dns_servers, 'dns_servers');
+    if (dnsErr) return res.status(400).json({ error: dnsErr });
   }
 
   // Validate gateway
@@ -91,14 +118,8 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
   // Validate NTP servers
   if (ntp_servers) {
-    try {
-      const servers = JSON.parse(ntp_servers);
-      if (!Array.isArray(servers) || !servers.every(isValidIpv4)) {
-        return res.status(400).json({ error: 'ntp_servers must be a JSON array of valid IPs' });
-      }
-    } catch {
-      return res.status(400).json({ error: 'ntp_servers must be a valid JSON array' });
-    }
+    const { error: ntpErr } = parseIpList(ntp_servers, 'ntp_servers');
+    if (ntpErr) return res.status(400).json({ error: ntpErr });
   }
 
   const { options } = req.body;
@@ -122,20 +143,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
     // Save scope options — skip values that match subnet defaults (inherited dynamically)
     if (Array.isArray(options) && options.length > 0) {
-      const inherited = {};
-      if (subnet.gateway_address) inherited[3] = subnet.gateway_address;
-      if (subnet.cidr) {
-        const pfx = parseInt(subnet.cidr.split('/')[1], 10);
-        if (pfx >= 0 && pfx <= 32) {
-          const m = pfx === 0 ? 0 : (0xFFFFFFFF << (32 - pfx)) >>> 0;
-          inherited[1] = [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255].join('.');
-        }
-      }
-      if (subnet.domain_name) {
-        inherited[15] = subnet.domain_name;
-        inherited[119] = subnet.domain_name;
-      }
-
+      const inherited = computeInheritedOptions(subnet);
       const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
       for (const opt of options) {
         if (opt.code && opt.value != null && opt.value !== '') {
@@ -180,14 +188,8 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   }
 
   if (dns_servers !== undefined && dns_servers !== null) {
-    try {
-      const servers = JSON.parse(dns_servers);
-      if (!Array.isArray(servers) || !servers.every(isValidIpv4)) {
-        return res.status(400).json({ error: 'dns_servers must be a JSON array of valid IPs' });
-      }
-    } catch {
-      return res.status(400).json({ error: 'dns_servers must be a valid JSON array' });
-    }
+    const { error: dnsErr } = parseIpList(dns_servers, 'dns_servers');
+    if (dnsErr) return res.status(400).json({ error: dnsErr });
   }
 
   if (gateway !== undefined && gateway !== null && gateway !== '' && !isValidIpv4(gateway)) {
@@ -195,14 +197,8 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   }
 
   if (ntp_servers !== undefined && ntp_servers !== null) {
-    try {
-      const servers = JSON.parse(ntp_servers);
-      if (!Array.isArray(servers) || !servers.every(isValidIpv4)) {
-        return res.status(400).json({ error: 'ntp_servers must be a JSON array of valid IPs' });
-      }
-    } catch {
-      return res.status(400).json({ error: 'ntp_servers must be a valid JSON array' });
-    }
+    const { error: ntpErr } = parseIpList(ntp_servers, 'ntp_servers');
+    if (ntpErr) return res.status(400).json({ error: ntpErr });
   }
 
   // Validate start_ip / end_ip if provided
@@ -259,21 +255,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       const subnet = db.prepare('SELECT gateway_address, cidr, domain_name FROM subnets WHERE id = ?').get(scope.subnet_id);
       db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scope.id);
       const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
-
-      // Compute inherited values from subnet
-      const inherited = {};
-      if (subnet?.gateway_address) inherited[3] = subnet.gateway_address;
-      if (subnet?.cidr) {
-        const pfx = parseInt(subnet.cidr.split('/')[1], 10);
-        if (pfx >= 0 && pfx <= 32) {
-          const m = pfx === 0 ? 0 : (0xFFFFFFFF << (32 - pfx)) >>> 0;
-          inherited[1] = [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255].join('.');
-        }
-      }
-      if (subnet?.domain_name) {
-        inherited[15] = subnet.domain_name;
-        inherited[119] = subnet.domain_name;
-      }
+      const inherited = computeInheritedOptions(subnet);
 
       for (const opt of options) {
         if (opt.code && opt.value != null && opt.value !== '') {
@@ -560,11 +542,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
   }
 
   // Sort by IP address
-  unified.sort((a, b) => {
-    const aLong = a.ip_address.split('.').reduce((acc, o) => (acc << 8) + parseInt(o), 0);
-    const bLong = b.ip_address.split('.').reduce((acc, o) => (acc << 8) + parseInt(o), 0);
-    return aLong - bLong;
-  });
+  unified.sort((a, b) => ipToLong(a.ip_address) - ipToLong(b.ip_address));
 
   // Vendor lookup
   const allMacs = unified.map(e => e.mac_address).filter(Boolean);

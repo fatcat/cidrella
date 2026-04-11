@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
+import { requireRole } from '../auth/roles.js';
 import { pruneEvents } from '../models/ip-address.js';
 
 const router = Router();
@@ -24,6 +25,37 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   res.json(settings);
 });
 
+// PUT /api/settings/bulk — update multiple settings in one transaction (admin only)
+router.put('/bulk', requireRole('admin'), (req, res) => {
+  const { settings } = req.body;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    return res.status(400).json({ error: 'settings object required' });
+  }
+
+  const entries = Object.entries(settings);
+  const invalid = entries.filter(([key]) => !EDITABLE_KEYS.has(key));
+  if (invalid.length > 0) {
+    return res.status(400).json({ error: `Settings cannot be modified: ${invalid.map(([k]) => k).join(', ')}` });
+  }
+
+  const db = getDb();
+  const stmt = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
+  const saveAll = db.transaction((pairs) => {
+    for (const [key, value] of pairs) {
+      stmt.run(key, typeof value === 'object' ? JSON.stringify(value) : String(value));
+    }
+  });
+  saveAll(entries);
+
+  // Purge events if retention setting was included
+  if (settings.ip_history_retention_days !== undefined) {
+    pruneEvents(db);
+  }
+
+  audit(req.user.id, 'settings_bulk_updated', 'setting', null, { keys: entries.map(([k]) => k) });
+  res.json({ ok: true });
+});
+
 // PUT /api/settings/:key — update a setting
 router.put('/:key', requirePerm('subnets:write'), (req, res) => {
   const { key } = req.params;
@@ -41,6 +73,7 @@ router.put('/:key', requirePerm('subnets:write'), (req, res) => {
 
   // Immediately purge events when retention is changed
   if (key === 'ip_history_retention_days') {
+    const db = getDb();
     pruneEvents(db);
   }
 

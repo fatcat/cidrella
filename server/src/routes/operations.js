@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
-import { getDb, audit } from '../db/init.js';
+import { getDb, audit, ensureDefaults } from '../db/init.js';
 import { requireRole } from '../auth/roles.js';
 import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup } from '../utils/backup.js';
 import { reloadTlsCerts } from '../utils/cert.js';
@@ -40,6 +40,13 @@ router.get('/backups/:id/download', (req, res) => {
   if (!row) return res.status(404).json({ error: 'Backup not found' });
 
   const filePath = getBackupPath(row.filename);
+
+  // Validate the resolved path is within the backup directory
+  const backupDir = path.join(DATA_DIR, 'backups');
+  if (!path.resolve(filePath).startsWith(path.resolve(backupDir) + path.sep)) {
+    return res.status(400).json({ error: 'Invalid backup file' });
+  }
+
   if (!fs.existsSync(filePath)) {
     return res.status(404).json({ error: 'Backup file missing from disk' });
   }
@@ -234,7 +241,6 @@ router.post('/reset-database', async (req, res) => {
     db.prepare("INSERT INTO folders (name, description, sort_order) VALUES ('Default', 'Default folder', 0)").run();
 
     // Re-run ensureDefaults to recreate admin user, JWT secret, and default settings
-    const { ensureDefaults } = await import('../db/init.js');
     await ensureDefaults();
 
     res.json({ ok: true, message: 'Database reset complete.' });

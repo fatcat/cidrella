@@ -380,26 +380,10 @@
         <div class="themes-page">
           <p class="field-help" style="margin-bottom: 1.25rem">Choose a color theme. The active theme is highlighted.</p>
 
-          <div class="theme-group">
-            <h3>Dark Themes</h3>
+          <div v-for="group in themeGroups" :key="group.label" class="theme-group">
+            <h3>{{ group.label }}</h3>
             <div class="theme-card-grid">
-              <div v-for="t in darkThemes" :key="t.id"
-                   class="theme-card" :class="{ 'theme-active': themeStore.currentThemeId === t.id }"
-                   @click="themeStore.applyTheme(t.id)">
-                <span class="theme-swatch-dot" :style="{ background: getThemeSwatch(t) }"></span>
-                <div class="theme-card-info">
-                  <span class="theme-card-name">{{ t.name }}</span>
-                  <span class="theme-card-desc">{{ getThemeDesc(t) }}</span>
-                </div>
-                <i v-if="themeStore.currentThemeId === t.id" class="pi pi-check theme-check"></i>
-              </div>
-            </div>
-          </div>
-
-          <div class="theme-group">
-            <h3>Light Themes</h3>
-            <div class="theme-card-grid">
-              <div v-for="t in lightThemes" :key="t.id"
+              <div v-for="t in group.themes" :key="t.id"
                    class="theme-card" :class="{ 'theme-active': themeStore.currentThemeId === t.id }"
                    @click="themeStore.applyTheme(t.id)">
                 <span class="theme-swatch-dot" :style="{ background: getThemeSwatch(t) }"></span>
@@ -429,8 +413,6 @@
               </div>
               <DataTable :value="auditLog.items" :loading="loadingAudit" stripedRows size="small"
                          emptyMessage="No audit entries found."
-                         :paginator="auditLog.items.length > 256" :rows="256"
-                         :rowsPerPageOptions="[64, 128, 256, 512]"
                          scrollable scrollHeight="flex">
                 <Column field="created_at" header="Time" style="width: 11rem">
                   <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
@@ -502,7 +484,9 @@ import SubnetCalculator from './SubnetCalculator.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import { useOperationsStore } from '../stores/operations.js';
 import { applyNameTemplate } from '../utils/ip.js';
+import { apiError } from '../utils/format.js';
 import api from '../api/client.js';
+import { collectAllocatedSubnets } from '../utils/tree.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes, colorSwatches } from '../stores/theme.js';
 
@@ -524,8 +508,10 @@ const authStore = useAuthStore();
 const themeStore = useThemeStore();
 const toast = useToast();
 
-const darkThemes = themes.filter(t => t.group === 'dark');
-const lightThemes = themes.filter(t => t.group === 'light');
+const themeGroups = [
+  { label: 'Dark Themes',  themes: themes.filter(t => t.group === 'dark') },
+  { label: 'Light Themes', themes: themes.filter(t => t.group === 'light') },
+];
 
 function getThemeSwatch(t) {
   if (t.primary) return colorSwatches[t.primary];
@@ -539,9 +525,9 @@ function getThemeDesc(t) {
 
 // Persist active tab across refreshes
 const LOGGING_TAB_INDEX = 11;
-const activeTab = ref(parseInt(localStorage.getItem('ipam_system_tab') || '0', 10));
+const activeTab = ref(parseInt(localStorage.getItem('cidrella_system_tab') || '0', 10));
 watch(activeTab, (val) => {
-  localStorage.setItem('ipam_system_tab', String(val));
+  localStorage.setItem('cidrella_system_tab', String(val));
   if (val === LOGGING_TAB_INDEX) { loadAuditFilterOptions(); loadAuditLog(); }
 });
 
@@ -613,15 +599,9 @@ const allocatedSubnets = computed(() => {
   const result = [];
   for (const f of store.folders) {
     if (!f.subnets) continue;
-    function collect(nodes) {
-      for (const s of nodes) {
-        if (s.status === 'allocated') {
-          result.push({ label: `${s.cidr} — ${s.name}`, value: s.id });
-        }
-        if (s.children) collect(s.children);
-      }
+    for (const s of collectAllocatedSubnets(f.subnets)) {
+      result.push({ label: `${s.cidr} — ${s.name}`, value: s.id });
     }
-    collect(f.subnets);
   }
   return result;
 });
@@ -634,7 +614,7 @@ async function doStartScan() {
     window.dispatchEvent(new Event('ipam:scan-started'));
     toast.add({ severity: 'success', summary: 'Scan started', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Scan Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Scan Error', detail: apiError(err), life: 5000 });
   } finally {
     startingScan.value = false;
   }
@@ -711,7 +691,7 @@ async function saveRangeType() {
     closeRangeTypeDialog();
     await loadRangeTypes();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { savingRangeType.value = false; }
 }
 
@@ -728,7 +708,7 @@ async function doDeleteRangeType() {
     toast.add({ severity: 'success', summary: 'Range type deleted', life: 3000 });
     await loadRangeTypes();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { savingRangeType.value = false; }
 }
 
@@ -828,7 +808,7 @@ async function saveVlan() {
     await loadVlans();
     if (!isEditing) await store.fetchTree();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { savingVlan.value = false; }
 }
 
@@ -845,7 +825,7 @@ async function doDeleteVlan() {
     toast.add({ severity: 'success', summary: 'VLAN deleted', life: 3000 });
     await loadVlans();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { savingVlan.value = false; }
 }
 
@@ -897,7 +877,7 @@ async function loadAuditLog() {
     const res = await api.get('/audit', { params });
     auditLog.value = res.data;
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     loadingAudit.value = false;
   }
@@ -939,16 +919,18 @@ function formatDetails(details) {
 async function saveSettings() {
   savingSettings.value = true;
   try {
-    await Promise.all([
-      store.updateSetting('subnet_name_template', settings.value.subnet_name_template),
-      store.updateSetting('default_scan_interval', settings.value.default_scan_interval === 'off' ? '' : settings.value.default_scan_interval),
-      store.updateSetting('default_scan_enabled', settings.value.default_scan_enabled ? '1' : '0'),
-      store.updateSetting('ip_history_retention_days', settings.value.ip_history_retention_days)
-    ]);
+    await api.put('/settings/bulk', {
+      settings: {
+        subnet_name_template: settings.value.subnet_name_template,
+        default_scan_interval: settings.value.default_scan_interval === 'off' ? '' : settings.value.default_scan_interval,
+        default_scan_enabled: settings.value.default_scan_enabled ? '1' : '0',
+        ip_history_retention_days: settings.value.ip_history_retention_days,
+      }
+    });
     savedSettings.value = { ...settings.value };
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingSettings.value = false;
   }
@@ -1006,10 +988,12 @@ async function loadBackupSettings() {
 async function saveBackupSettings() {
   const previousSchedule = backupSchedule.value;
   try {
-    await Promise.all([
-      store.updateSetting('backup_schedule', backupSchedule.value),
-      store.updateSetting('backup_retention_count', String(backupRetention.value))
-    ]);
+    await api.put('/settings/bulk', {
+      settings: {
+        backup_schedule: backupSchedule.value,
+        backup_retention_count: String(backupRetention.value),
+      }
+    });
     toast.add({ severity: 'success', summary: 'Backup settings saved', life: 3000 });
 
     // If enabling a schedule and no backups exist, create one immediately
@@ -1022,13 +1006,13 @@ async function saveBackupSettings() {
         toast.add({ severity: 'success', summary: `Initial backup created: ${backup.filename}`, life: 5000 });
         await loadBackupSettings();
       } catch (err) {
-        toast.add({ severity: 'error', summary: 'Initial backup failed', detail: err.response?.data?.error || err.message, life: 5000 });
+        toast.add({ severity: 'error', summary: 'Initial backup failed', detail: apiError(err), life: 5000 });
       } finally {
         creatingBackup.value = false;
       }
     }
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -1038,7 +1022,7 @@ async function doCreateBackup() {
     const backup = await opsStore.createBackup();
     toast.add({ severity: 'success', summary: `Backup created: ${backup.filename}`, life: 5000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Backup failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Backup failed', detail: apiError(err), life: 5000 });
   } finally {
     creatingBackup.value = false;
   }
@@ -1056,7 +1040,7 @@ async function doDeleteBackup() {
     showDeleteBackupDialog.value = false;
     toast.add({ severity: 'success', summary: 'Backup deleted', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     deletingBackupLoading.value = false;
   }
@@ -1090,7 +1074,7 @@ async function doRestore() {
     showRestoreDialog.value = false;
     toast.add({ severity: 'warn', summary: 'Restore complete', detail: result.message, life: 10000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Restore failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Restore failed', detail: apiError(err), life: 5000 });
   } finally {
     restoring.value = false;
   }
@@ -1103,7 +1087,7 @@ async function doResetDatabase() {
     authStore.logout();
     window.location.href = '/login';
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Reset failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Reset failed', detail: apiError(err), life: 5000 });
   } finally {
     resettingDb.value = false;
     showResetDbDialog.value = false;
@@ -1194,7 +1178,7 @@ async function doUploadCert() {
     toast.add({ severity: 'warn', summary: 'Certificate installed', detail: result.message, life: 10000 });
     await opsStore.fetchCertInfo().then(c => certInfo.value = c);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Upload failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Upload failed', detail: apiError(err), life: 5000 });
   } finally {
     uploadingCert.value = false;
   }
@@ -1207,7 +1191,7 @@ async function doResetCert() {
     toast.add({ severity: 'warn', summary: 'Certificate reset', detail: result.message, life: 10000 });
     await opsStore.fetchCertInfo().then(c => certInfo.value = c);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Reset failed', detail: err.response?.data?.error || err.message, life: 5000 });
+    toast.add({ severity: 'error', summary: 'Reset failed', detail: apiError(err), life: 5000 });
   } finally {
     resettingCert.value = false;
   }
