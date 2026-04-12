@@ -2,9 +2,9 @@ import { Router } from 'express';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { getSetting, audit } from '../db/init.js';
+import { getSetting, setSetting, audit } from '../db/init.js';
 import { APP_VERSION } from '../utils/version.js';
-import { checkForUpdates } from '../utils/update-checker.js';
+import { checkForUpdates, compareSemver } from '../utils/update-checker.js';
 import { isDockerEnvironment } from '../utils/environment.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
@@ -37,12 +37,34 @@ function isUpdateRunning() {
   }
 }
 
+// Resolve a real pending update by cross-checking the stored value against
+// the currently running code. The stored value can become stale when:
+//  - the background check ran before an out-of-band upgrade (manual deploy)
+//  - the running code was rolled back but the DB setting wasn't
+//  - the user is on a newer version than what's published (development build)
+// In all cases we should report "no update" instead of surfacing the stale value.
+function resolvePendingUpdate() {
+  const stored = getSetting('update_available_version') || '';
+  if (!stored) return null;
+  if (compareSemver(stored, APP_VERSION) <= 0) {
+    // Stored target is same as or older than running — stale, clear it
+    setSetting('update_available_version', '');
+    setSetting('update_release_url', '');
+    return null;
+  }
+  return {
+    version: stored,
+    url: getSetting('update_release_url') || null,
+  };
+}
+
 // GET /api/version — current version and update status
 router.get('/', requirePerm('subnets:read'), (req, res) => {
+  const pending = resolvePendingUpdate();
   res.json({
     version: APP_VERSION,
-    updateAvailable: getSetting('update_available_version') || null,
-    updateUrl: getSetting('update_release_url') || null,
+    updateAvailable: pending?.version || null,
+    updateUrl: pending?.url || null,
     lastChecked: getSetting('update_checked_at') || null,
     updateCheckEnabled: getSetting('update_check_enabled') !== 'false',
     isDocker: isDockerEnvironment(),
@@ -75,10 +97,11 @@ router.post('/install', requireRole('admin'), (req, res) => {
     return res.status(400).json({ error: 'Auto-update is not available in Docker deployments. Pull the latest image to update.' });
   }
 
-  const targetVersion = getSetting('update_available_version');
-  if (!targetVersion) {
+  const pending = resolvePendingUpdate();
+  if (!pending) {
     return res.status(400).json({ error: 'No update available.' });
   }
+  const targetVersion = pending.version;
 
   if (isUpdateRunning()) {
     return res.status(409).json({ error: 'An update is already in progress.' });

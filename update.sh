@@ -235,10 +235,49 @@ fi
 TAG_NAME=$(echo "$RELEASE_JSON" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' | head -1)
 NEW_VERSION="${TAG_NAME#v}"
 
+# Compare semver. Returns 0 if $1 < $2, 1 otherwise.
+semver_lt() {
+  local a b
+  a="$1"
+  b="$2"
+  if [ "$(printf '%s\n%s' "$a" "$b" | sort -V | head -1)" = "$a" ] && [ "$a" != "$b" ]; then
+    return 0
+  fi
+  return 1
+}
+
 if [ "$NEW_VERSION" = "$CURRENT_VERSION" ]; then
   ok "Already running the latest version (v${CURRENT_VERSION})."
   write_progress "completed" 100 "Already up to date" "null"
   exit 0
+fi
+
+# Prevent accidental downgrade via the update path. Downgrades must go
+# through cidrella-rollback, which is the only path that also restores
+# the DB snapshot — otherwise old code will crash on a newer schema.
+if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
+  err "Refusing to downgrade: v${CURRENT_VERSION} → v${NEW_VERSION}"
+  err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot)."
+  write_progress "failed" 5 "Downgrade not allowed via update" "Requested v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
+  exit 1
+fi
+
+# Warn if jumping multiple minor versions — migrations and data format
+# changes may accumulate. The update will still run, but the admin should
+# read intermediate release notes.
+CURRENT_MAJOR_MINOR=$(echo "$CURRENT_VERSION" | awk -F. '{print $1"."$2}')
+NEW_MAJOR_MINOR=$(echo "$NEW_VERSION" | awk -F. '{print $1"."$2}')
+if [ "$CURRENT_MAJOR_MINOR" != "$NEW_MAJOR_MINOR" ] && [ "$CURRENT_VERSION" != "unknown" ]; then
+  # Count minor-version gap
+  CURRENT_MINOR=$(echo "$CURRENT_VERSION" | awk -F. '{print $2}')
+  NEW_MINOR=$(echo "$NEW_VERSION" | awk -F. '{print $2}')
+  CURRENT_MAJOR=$(echo "$CURRENT_VERSION" | awk -F. '{print $1}')
+  NEW_MAJOR=$(echo "$NEW_VERSION" | awk -F. '{print $1}')
+  if [ "$CURRENT_MAJOR" -ne "$NEW_MAJOR" ] 2>/dev/null || [ $((NEW_MINOR - CURRENT_MINOR)) -gt 1 ] 2>/dev/null; then
+    warn "Skipping versions: v${CURRENT_VERSION} → v${NEW_VERSION}"
+    warn "We recommend reading release notes for all intermediate versions:"
+    warn "  https://github.com/${GITHUB_REPO}/releases"
+  fi
 fi
 
 info "New version available: v${CURRENT_VERSION} → v${NEW_VERSION}"
