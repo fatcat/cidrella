@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { getSetting, setSetting, audit } from '../db/init.js';
+import { getSetting, audit } from '../db/init.js';
 import { APP_VERSION } from '../utils/version.js';
 import { checkForUpdates, compareSemver } from '../utils/update-checker.js';
 import { isDockerEnvironment } from '../utils/environment.js';
@@ -38,20 +38,16 @@ function isUpdateRunning() {
 }
 
 // Resolve a real pending update by cross-checking the stored value against
-// the currently running code. The stored value can become stale when:
+// the currently running code. Pure read — stale entries are cleared by
+// clearStaleUpdateFlag() on boot and by checkForUpdates() on its next pass.
+// The stored value can become stale when:
 //  - the background check ran before an out-of-band upgrade (manual deploy)
 //  - the running code was rolled back but the DB setting wasn't
 //  - the user is on a newer version than what's published (development build)
-// In all cases we should report "no update" instead of surfacing the stale value.
 function resolvePendingUpdate() {
   const stored = getSetting('update_available_version') || '';
   if (!stored) return null;
-  if (compareSemver(stored, APP_VERSION) <= 0) {
-    // Stored target is same as or older than running — stale, clear it
-    setSetting('update_available_version', '');
-    setSetting('update_release_url', '');
-    return null;
-  }
+  if (compareSemver(stored, APP_VERSION) <= 0) return null;
   return {
     version: stored,
     url: getSetting('update_release_url') || null,
