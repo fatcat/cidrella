@@ -38,6 +38,26 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
+# Minimal inline JSONL event emitter — rollback MUST stay standalone, so
+# we deliberately do not source scripts/lib/log.sh here. This produces the
+# same JSONL format as lib/log.sh for consistent downstream parsing.
+emit_event() {
+  local phase="${1:-unknown}" event="${2:-unknown}"
+  shift 2 2>/dev/null || true
+  local ts data="" sep="" kv k v v_esc
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  for kv in "$@"; do
+    k="${kv%%=*}"; v="${kv#*=}"
+    v_esc=$(printf '%s' "$v" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
+    data="${data}${sep}\"${k}\":\"${v_esc}\""; sep=","
+  done
+  local line="{\"ts\":\"${ts}\",\"phase\":\"${phase}\",\"event\":\"${event}\",\"data\":{${data}}}"
+  local dir="${CIDRELLA_EVENT_LOG_DIR:-/var/lib/cidrella}"
+  if [ -d "$dir" ] && [ -w "$dir" ]; then
+    printf '%s\n' "$line" >> "$dir/events.jsonl" 2>/dev/null || true
+  fi
+}
+
 # ─── Node resolver ────────────────────────────────────────
 # Rollback must be standalone — no dependence on the installation being
 # rolled back. Inline the bundled-runtime check so this script stays
@@ -154,12 +174,13 @@ if [ "$AUTO_YES" = false ]; then
   yn="${yn:-n}"
   case "$yn" in
     [Yy]*) ;;
-    *) info "Rollback cancelled."; exit 0 ;;
+    *) info "Rollback cancelled."; emit_event rollback skip reason=user-cancel; exit 0 ;;
   esac
 fi
 
 # ─── Execute rollback ─────────────────────────────────────
 
+emit_event rollback start "from=$ACTIVE_VERSION" "to=$INACTIVE_VERSION" "has_snapshot=$HAS_SNAPSHOT"
 info "Stopping CIDRella..."
 systemctl stop cidrella || warn "cidrella service was not running"
 
@@ -173,10 +194,12 @@ if [ "$HAS_SNAPSHOT" = true ]; then
   [ -f "$SNAPSHOT_DIR/analytics.duckdb" ] && cp -a "$SNAPSHOT_DIR/analytics.duckdb" "$DATA_DIR/analytics.duckdb"
   chown -R cidrella:cidrella "$DATA_DIR/cidrella.db"* "$DATA_DIR/analytics.duckdb" 2>/dev/null || true
   ok "Database snapshot restored."
+  emit_event rollback pass phase=db-restore "dir=$SNAPSHOT_DIR"
 fi
 
 info "Swapping symlink: $INSTALL_LINK -> $INACTIVE_SLOT"
 ln -sfn "$INACTIVE_SLOT" "$INSTALL_LINK"
+emit_event rollback pass phase=symlink-swap "active_slot=$INACTIVE_SLOT"
 
 info "Reloading systemd..."
 systemctl daemon-reload
@@ -201,8 +224,10 @@ if systemctl is-active --quiet cidrella; then
   echo -e "  ${BOLD}Version:${NC}      v${INACTIVE_VERSION}"
   echo -e "  ${BOLD}Logs:${NC}         journalctl -u cidrella -f"
   echo ""
+  emit_event rollback end result=success "restored_version=$INACTIVE_VERSION"
 else
   err "CIDRella failed to start after rollback!"
   err "Check: journalctl -u cidrella -n 50"
+  emit_event rollback end result=service-not-active "restored_version=$INACTIVE_VERSION"
   exit 1
 fi

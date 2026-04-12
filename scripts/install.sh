@@ -35,6 +35,28 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 
+# Minimal inline JSONL event emitter — this script runs via curl|bash
+# before any tarball exists on disk, so we can't source scripts/lib/log.sh
+# until after extraction. This inline version produces the same JSONL
+# format as lib/log.sh so the install and update event streams are
+# homogeneous when tailed together.
+emit_event() {
+  local phase="${1:-unknown}" event="${2:-unknown}"
+  shift 2 2>/dev/null || true
+  local ts data="" sep="" kv k v v_esc
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  for kv in "$@"; do
+    k="${kv%%=*}"; v="${kv#*=}"
+    v_esc=$(printf '%s' "$v" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\000-\037')
+    data="${data}${sep}\"${k}\":\"${v_esc}\""; sep=","
+  done
+  local line="{\"ts\":\"${ts}\",\"phase\":\"${phase}\",\"event\":\"${event}\",\"data\":{${data}}}"
+  local dir="${CIDRELLA_EVENT_LOG_DIR:-/var/lib/cidrella}"
+  if [ -d "$dir" ] && [ -w "$dir" ]; then
+    printf '%s\n' "$line" >> "$dir/events.jsonl" 2>/dev/null || true
+  fi
+}
+
 ask_yn() {
   local prompt="$1"
   local default="${2:-n}"
@@ -94,10 +116,12 @@ done
 # ═══════════════════════════════════════════════════════════
 
 echo -e "\n${BOLD}═══ CIDRella Installer ═══${NC}\n"
+emit_event install start "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" "pid=$$"
 
 # Must be root
 if [ "$(id -u)" -ne 0 ]; then
   err "This script must be run as root (or with sudo)."
+  emit_event install fail reason=not-root
   exit 1
 fi
 
@@ -353,12 +377,15 @@ if command -v minisign &>/dev/null; then
   printf 'untrusted comment: minisign public key\n%s\n' "$MINISIGN_PUBKEY" > "$PUBKEY_TMP"
   if minisign -Vm "$TMPDIR/cidrella.tar.gz" -p "$PUBKEY_TMP" >/dev/null 2>&1; then
     ok "Signature verified."
+    emit_event verify pass
   else
     err "Signature verification failed! The download may be corrupted or tampered with."
+    emit_event verify fail reason=bad-signature
     exit 1
   fi
 else
   warn "minisign not installed — skipping signature verification."
+  emit_event verify skip reason=no-minisign
 fi
 
 # ═══════════════════════════════════════════════════════════
@@ -388,10 +415,24 @@ fi
 # Copy extracted files into slot A
 rsync -a "$EXTRACTED/" "$INSTALL_DIR/"
 ok "Extracted to $INSTALL_DIR"
+emit_event extract pass "target_slot=$INSTALL_DIR" "version=$VERSION"
 
 # Create the /opt/cidrella symlink -> slot A
 ln -sfn "$INSTALL_DIR" "$INSTALL_LINK"
 ok "Symlink: $INSTALL_LINK -> $INSTALL_DIR"
+
+# ─── Source shared library helpers (now that the slot is populated) ──
+# From here on we can use lib/systemd-install.sh. lib/log.sh's emit_event
+# will redefine our inline stub — since both produce the same JSONL line
+# format, the event stream stays homogeneous across the transition.
+if [ -f "$INSTALL_DIR/scripts/lib/systemd-install.sh" ]; then
+  # shellcheck source=scripts/lib/systemd-install.sh
+  source "$INSTALL_DIR/scripts/lib/systemd-install.sh"
+fi
+if [ -f "$INSTALL_DIR/scripts/lib/log.sh" ]; then
+  # shellcheck source=scripts/lib/log.sh
+  source "$INSTALL_DIR/scripts/lib/log.sh"
+fi
 
 # ═══════════════════════════════════════════════════════════
 # INSTALL NODE DEPENDENCIES (only if not bundled in tarball)
@@ -462,15 +503,28 @@ if [ -f "$INSTALL_DIR/scripts/cidrella-node" ]; then
   ok "Installed /usr/local/bin/cidrella-node wrapper"
 fi
 
-cp "$INSTALL_DIR/scripts/systemd/cidrella.service" /etc/systemd/system/
-ok "Installed cidrella.service"
+# install_systemd_unit is sourced from scripts/lib/systemd-install.sh above;
+# fall back to plain cp if sourcing failed (pre-v0.4.4 tarballs).
+_install_unit() {
+  local src="$1" dst="$2"
+  if command -v install_systemd_unit >/dev/null 2>&1; then
+    install_systemd_unit "$src" "$dst" >/dev/null && return 0
+  fi
+  cp "$src" "$dst"
+}
 
-cp "$INSTALL_DIR/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/
+_install_unit "$INSTALL_DIR/scripts/systemd/cidrella.service" /etc/systemd/system/cidrella.service
+ok "Installed cidrella.service"
+emit_event systemd pass unit=cidrella.service
+
+_install_unit "$INSTALL_DIR/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/cidrella-anomaly.service
 ok "Installed cidrella-anomaly.service"
+emit_event systemd pass unit=cidrella-anomaly.service
 
 if [ "$DNSMASQ_MODE" = "own" ]; then
-  cp "$INSTALL_DIR/scripts/systemd/cidrella-dnsmasq.service" /etc/systemd/system/
+  _install_unit "$INSTALL_DIR/scripts/systemd/cidrella-dnsmasq.service" /etc/systemd/system/cidrella-dnsmasq.service
   ok "Installed cidrella-dnsmasq.service"
+  emit_event systemd pass unit=cidrella-dnsmasq.service
 fi
 
 # Install sudoers
@@ -530,9 +584,11 @@ sleep 3
 
 if systemctl is-active --quiet cidrella; then
   ok "CIDRella is running!"
+  emit_event install end result=success "version=$VERSION"
 else
   warn "CIDRella service may not have started correctly."
   warn "Check logs: journalctl -u cidrella -f"
+  emit_event install end result=service-not-active "version=$VERSION"
 fi
 
 # ═══════════════════════════════════════════════════════════
