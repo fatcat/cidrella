@@ -35,12 +35,38 @@ export function createBackup(db) {
     includes: [],
   };
 
-  // Build list of files/dirs to include (relative to DATA_DIR)
+  // Build list of files/dirs to include (relative to DATA_DIR).
+  //
+  // Prior to v0.4.5 this only captured cidrella.db + certs + dnsmasq, which
+  // silently lost two things on restore: (1) analytics.duckdb, which holds
+  // historical DNS query metrics and perf data that aren't in cidrella.db and
+  // aren't re-derivable; (2) anomaly/models/, which holds per-client ML
+  // models that take ~48 hours of DNS traffic each to retrain. Both were
+  // already being captured by the pre-restore snapshot code below — the
+  // normal backup was just forgotten.
   const includes = [];
   if (fs.existsSync(path.join(DATA_DIR, 'cidrella.db'))) includes.push('cidrella.db');
   else if (fs.existsSync(path.join(DATA_DIR, 'ipam.db'))) includes.push('ipam.db');
   if (fs.existsSync(path.join(DATA_DIR, 'certs'))) includes.push('certs');
   if (fs.existsSync(path.join(DATA_DIR, 'dnsmasq'))) includes.push('dnsmasq');
+
+  // analytics.duckdb + its WAL/shm sidecars. DuckDB may not have a WAL at
+  // rest, so the sidecar loop is existence-gated. We don't checkpoint the
+  // DuckDB WAL here — there's no equivalent pragma exposed to better-sqlite3
+  // and the duckdb addon isn't loaded in this route. If the WAL exists, we
+  // capture it alongside the main file so the restore side is self-consistent.
+  if (fs.existsSync(path.join(DATA_DIR, 'analytics.duckdb'))) {
+    includes.push('analytics.duckdb');
+    for (const name of fs.readdirSync(DATA_DIR)) {
+      if (name.startsWith('analytics.duckdb.') && name !== 'analytics.duckdb') {
+        includes.push(name);
+      }
+    }
+  }
+
+  // Trained anomaly detection models. Each client's model represents 48+
+  // hours of DNS training data; losing them forces a full re-learn cycle.
+  if (fs.existsSync(path.join(DATA_DIR, 'anomaly'))) includes.push('anomaly');
 
   if (includes.length === 0) {
     throw new Error('No data files found to backup');
