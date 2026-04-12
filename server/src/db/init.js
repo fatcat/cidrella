@@ -67,13 +67,41 @@ function runMigrations() {
     applied_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
-  const applied = new Set(
-    db.prepare('SELECT version FROM schema_version').all().map(r => r.version)
-  );
-
   const migrationFiles = fs.readdirSync(MIGRATIONS_DIR)
     .filter(f => f.endsWith('.sql'))
     .sort();
+
+  // Max version this code version ships with
+  const codeMaxVersion = migrationFiles.reduce((max, file) => {
+    const v = parseInt(file.split('_')[0], 10);
+    return v > max ? v : max;
+  }, 0);
+
+  // Check for schema-too-new — prevents running old code against a new DB
+  // (which happens after an unsafe rollback that didn't restore the DB snapshot).
+  const dbMaxVersion = db.prepare('SELECT MAX(version) AS v FROM schema_version').get()?.v ?? 0;
+  if (dbMaxVersion > codeMaxVersion) {
+    console.error('');
+    console.error('========================================');
+    console.error('  DATABASE SCHEMA INCOMPATIBLE');
+    console.error('========================================');
+    console.error(`  DB schema version:   ${dbMaxVersion}`);
+    console.error(`  Code max supported:  ${codeMaxVersion}`);
+    console.error('');
+    console.error('  This code is older than the database schema.');
+    console.error('  This usually means a rollback occurred without');
+    console.error('  restoring the database snapshot.');
+    console.error('');
+    console.error('  Fix: run cidrella-rollback --restore-db');
+    console.error('  Or:  update to a newer CIDRella version');
+    console.error('========================================');
+    console.error('');
+    throw new Error(`Schema v${dbMaxVersion} is newer than code max v${codeMaxVersion}`);
+  }
+
+  const applied = new Set(
+    db.prepare('SELECT version FROM schema_version').all().map(r => r.version)
+  );
 
   // Run each migration in a transaction so partial applies can't corrupt the schema
   const applyMigration = db.transaction((sql, version) => {

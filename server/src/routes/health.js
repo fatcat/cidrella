@@ -1,7 +1,9 @@
 import { Router } from 'express';
 import os from 'os';
 import { execFileSync } from 'child_process';
+import bcrypt from 'bcrypt';
 import { getDb } from '../db/init.js';
+import { queryRaw } from '../db/duckdb.js';
 import { APP_VERSION } from '../utils/version.js';
 import { isDnsmasqRunning } from '../utils/dnsmasq.js';
 import { requirePerm } from '../auth/require-perm.js';
@@ -32,6 +34,71 @@ router.get('/', (req, res) => {
   } catch {
     res.status(503).json({ status: 'error', message: 'Database unavailable' });
   }
+});
+
+// Restrict /deep to localhost only — exposes subsystem details useful for pre-flight probes
+function requireLocalhost(req, res, next) {
+  const ip = req.ip || req.socket?.remoteAddress || '';
+  const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  if (!isLocal) return res.status(403).json({ status: 'error', message: 'localhost only' });
+  next();
+}
+
+// GET /api/health/deep — deep health check for pre-flight validation
+// Verifies every critical subsystem: SQLite, DuckDB, bcrypt, schema version, fs paths
+// Used by update.sh to validate a new version before switching to it.
+// Returns 200 only if ALL checks pass. Returns 503 with per-subsystem details otherwise.
+router.get('/deep', requireLocalhost, async (req, res) => {
+  const checks = {};
+  let allOk = true;
+
+  // SQLite — open + query + schema version
+  try {
+    const db = getDb();
+    db.prepare('SELECT 1').get();
+    const row = db.prepare('SELECT MAX(version) AS v FROM schema_version').get();
+    checks.sqlite = { ok: true, schema_version: row?.v ?? 0 };
+  } catch (err) {
+    checks.sqlite = { ok: false, error: err.message };
+    allOk = false;
+  }
+
+  // DuckDB — query analytics DB
+  try {
+    const rows = await queryRaw('SELECT 1 AS ok');
+    checks.duckdb = { ok: Array.isArray(rows) && rows.length > 0 };
+    if (!checks.duckdb.ok) allOk = false;
+  } catch (err) {
+    checks.duckdb = { ok: false, error: err.message };
+    allOk = false;
+  }
+
+  // bcrypt — module loads and runs a minimal operation
+  try {
+    const hash = await bcrypt.hash('x', 4);
+    checks.bcrypt = { ok: typeof hash === 'string' && hash.startsWith('$2') };
+    if (!checks.bcrypt.ok) allOk = false;
+  } catch (err) {
+    checks.bcrypt = { ok: false, error: err.message };
+    allOk = false;
+  }
+
+  // net-ping / raw-socket — module loads (don't actually send packets)
+  try {
+    await import('raw-socket');
+    checks.raw_socket = { ok: true };
+  } catch (err) {
+    checks.raw_socket = { ok: false, error: err.message };
+    allOk = false;
+  }
+
+  const status = allOk ? 'ok' : 'error';
+  res.status(allOk ? 200 : 503).json({
+    status,
+    version: APP_VERSION,
+    checks,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // GET /api/health/system — detailed system metrics (authenticated)

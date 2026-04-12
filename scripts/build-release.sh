@@ -25,13 +25,16 @@ done
 # Read version from package.json
 VERSION=$(node -e "console.log(require('./package.json').version)")
 TAG="v${VERSION}"
-TARBALL="cidrella-${TAG}.tar.gz"
+# Architecture suffix — bundled native binaries are tied to the build arch
+BUILD_ARCH="${BUILD_ARCH:-linux-x64}"
+TARBALL="cidrella-${TAG}-${BUILD_ARCH}.tar.gz"
 DIST_DIR="$PROJECT_DIR/dist"
-STAGING_DIR="$DIST_DIR/cidrella-${TAG}"
+STAGING_DIR="$DIST_DIR/cidrella-${TAG}-${BUILD_ARCH}"
 
 echo "=== CIDRella Release Builder ==="
 echo "Version: $VERSION"
 echo "Tag:     $TAG"
+echo "Arch:    $BUILD_ARCH"
 echo ""
 
 # ─── Preflight checks ────────────────────────────────────
@@ -46,6 +49,24 @@ if ! command -v minisign &>/dev/null; then
   echo "Error: 'minisign' is required for signing. Install: apt install minisign"
   exit 1
 fi
+
+# Check Python has setuptools (node-gyp needs distutils, removed in Python 3.12+)
+# If this is missing, native module compilation during npm ci will fail.
+if ! python3 -c "import setuptools" &>/dev/null; then
+  echo "Error: python3-setuptools is required for node-gyp to compile native modules."
+  echo "  Install: sudo apt-get install python3-setuptools"
+  echo "  (Python 3.12+ removed distutils; setuptools provides it.)"
+  exit 1
+fi
+
+# Check build tools exist
+for tool in gcc g++ make; do
+  if ! command -v "$tool" &>/dev/null; then
+    echo "Error: '$tool' is required for native module compilation."
+    echo "  Install: sudo apt-get install build-essential"
+    exit 1
+  fi
+done
 
 if [ "$BUILD_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
   # Check gh is installed
@@ -85,7 +106,7 @@ fi
 
 # ─── Step 1: Build client ────────────────────────────────
 
-echo "[1/6] Building client..."
+echo "[1/7] Building client..."
 if [ "$DRY_RUN" = false ]; then
   cd "$PROJECT_DIR/client"
   npm ci --silent
@@ -97,12 +118,12 @@ fi
 
 # ─── Step 2: Stage files ─────────────────────────────────
 
-echo "[2/6] Staging release files..."
+echo "[2/7] Staging release files..."
 if [ "$DRY_RUN" = false ]; then
   rm -rf "$STAGING_DIR"
   mkdir -p "$STAGING_DIR"
 
-  # Server source (no node_modules)
+  # Server source (node_modules added in step 3)
   rsync -a --exclude='node_modules' "$PROJECT_DIR/server/" "$STAGING_DIR/server/"
 
   # Built client (dist only)
@@ -118,6 +139,11 @@ if [ "$DRY_RUN" = false ]; then
   # Update script (root level for visibility)
   cp "$PROJECT_DIR/update.sh" "$STAGING_DIR/update.sh"
 
+  # Rollback script (root level — installed as cidrella-rollback)
+  if [ -f "$PROJECT_DIR/scripts/rollback.sh" ]; then
+    cp "$PROJECT_DIR/scripts/rollback.sh" "$STAGING_DIR/rollback.sh"
+  fi
+
   # Root package.json (version source)
   cp "$PROJECT_DIR/package.json" "$STAGING_DIR/package.json"
 
@@ -127,13 +153,47 @@ else
   echo "  [DRY RUN] Would stage server/, client/dist/, dnsmasq/, scripts/, package.json, README.md"
 fi
 
-# ─── Step 3: Create tarball ──────────────────────────────
+# ─── Step 3: Bundle server node_modules (production) ─────
 
-echo "[3/6] Creating tarball..."
+echo "[3/7] Bundling server node_modules for $BUILD_ARCH..."
+if [ "$DRY_RUN" = false ]; then
+  # Run npm ci in the staging dir so we get a clean production install
+  # that's independent of whatever's in the dev server/node_modules
+  cp "$PROJECT_DIR/server/package.json" "$STAGING_DIR/server/package.json"
+  cp "$PROJECT_DIR/server/package-lock.json" "$STAGING_DIR/server/package-lock.json" 2>/dev/null || true
+
+  cd "$STAGING_DIR/server"
+  npm ci --omit=dev --silent 2>&1 | tail -3
+
+  # Verify native bindings exist — we don't want to ship a tarball that
+  # will fail at runtime because a native binary is missing.
+  MISSING=""
+  [ ! -f "$STAGING_DIR/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
+  [ ! -f "$STAGING_DIR/server/node_modules/duckdb/lib/binding/duckdb.node" ] && MISSING="$MISSING duckdb"
+  [ -z "$(find "$STAGING_DIR/server/node_modules/bcrypt/lib/binding" -name '*.node' 2>/dev/null | head -1)" ] && MISSING="$MISSING bcrypt"
+  [ ! -f "$STAGING_DIR/server/node_modules/raw-socket/build/Release/raw.node" ] && MISSING="$MISSING raw-socket"
+
+  if [ -n "$MISSING" ]; then
+    echo "  ERROR: missing native bindings:$MISSING"
+    echo "  These native modules must be present in the release tarball."
+    echo "  Check that build tools are installed and npm install succeeded."
+    exit 1
+  fi
+
+  NODE_MODULES_SIZE=$(du -sh "$STAGING_DIR/server/node_modules" | cut -f1)
+  echo "  Bundled node_modules: $NODE_MODULES_SIZE"
+  cd "$PROJECT_DIR"
+else
+  echo "  [DRY RUN] Would run: npm ci --omit=dev in staging dir and verify native bindings"
+fi
+
+# ─── Step 4: Create tarball ──────────────────────────────
+
+echo "[4/7] Creating tarball..."
 if [ "$DRY_RUN" = false ]; then
   mkdir -p "$DIST_DIR"
   cd "$DIST_DIR"
-  tar -czf "$TARBALL" "cidrella-${TAG}"
+  tar -czf "$TARBALL" "cidrella-${TAG}-${BUILD_ARCH}"
   rm -rf "$STAGING_DIR"
 
   SIZE=$(du -h "$DIST_DIR/$TARBALL" | cut -f1)
@@ -142,9 +202,9 @@ else
   echo "  [DRY RUN] Would create dist/$TARBALL"
 fi
 
-# ─── Step 4: Sign tarball ────────────────────────────────
+# ─── Step 5: Sign tarball ────────────────────────────────
 
-echo "[4/6] Signing tarball..."
+echo "[5/7] Signing tarball..."
 if [ "$DRY_RUN" = false ]; then
   MINISIGN_KEY="${MINISIGN_KEY:-$HOME/.minisign/cidrella.key}"
   minisign -Sm "$DIST_DIR/$TARBALL" -s "$MINISIGN_KEY"
@@ -166,9 +226,9 @@ if [ "$BUILD_ONLY" = true ]; then
   exit 0
 fi
 
-# ─── Step 5: Create and push git tag ─────────────────────
+# ─── Step 6: Create and push git tag ─────────────────────
 
-echo "[5/6] Creating git tag $TAG..."
+echo "[6/7] Creating git tag $TAG..."
 if [ "$DRY_RUN" = false ]; then
   git tag -a "$TAG" -m "Release $TAG"
   echo "  Tag $TAG created locally."
@@ -180,9 +240,9 @@ else
   echo "  [DRY RUN] Would run: git tag -a $TAG -m 'Release $TAG' && git push origin $TAG"
 fi
 
-# ─── Step 6: Create GitHub release ───────────────────────
+# ─── Step 7: Create GitHub release ───────────────────────
 
-echo "[6/6] Creating GitHub release..."
+echo "[7/7] Creating GitHub release..."
 if [ "$DRY_RUN" = false ]; then
   gh release create "$TAG" \
     "$DIST_DIR/$TARBALL" \

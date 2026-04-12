@@ -2,7 +2,7 @@ import jwt from 'jsonwebtoken';
 import { getDb } from '../db/init.js';
 
 // Paths that don't require authentication
-const PUBLIC_PATHS = ['/api/auth/login', '/api/health'];
+const PUBLIC_PATHS = ['/api/auth/login', '/api/health', '/api/health/deep'];
 
 // Paths allowed when must_change_password is true
 const PASSWORD_CHANGE_PATHS = ['/api/auth/change-password', '/api/auth/me'];

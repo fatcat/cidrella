@@ -2,28 +2,49 @@
 set -euo pipefail
 
 # ═══════════════════════════════════════════════════════════
-# CIDRella Updater
-# Updates an existing native CIDRella installation
+# CIDRella Updater (A/B slot with auto-rollback)
 #
 # Usage:
 #   cidrella-update                            # update to latest
-#   cidrella-update --version 0.2.0            # update to specific version
+#   cidrella-update --version 0.5.0            # update to specific version
 #   cidrella-update --progress-file /path.json # write progress for API consumers
 #   cidrella-update --from-api                 # suppress interactive output
+#
+# Flow:
+#   1. Preflight: root, disk space, existing install, detect A/B slots
+#   2. Download + verify signature (old version still running)
+#   3. Extract to inactive slot (old version still running)
+#   4. Pre-flight validate new slot: syntax + spawn on temp port + /api/health/deep
+#   5. Snapshot DB (SQLite WAL-checkpointed + DuckDB)
+#   6. Install standalone rollback script
+#   7. Atomic switchover: swap symlink, daemon-reload, restart
+#   8. Verify health — auto-rollback on failure
+#
+# dnsmasq is NEVER restarted by this script. DNS/DHCP stay up throughout.
 # ═══════════════════════════════════════════════════════════
 
 GITHUB_REPO="fatcat/cidrella"
-INSTALL_DIR="/opt/cidrella"
+INSTALL_LINK="/opt/cidrella"
+SLOT_A="/opt/cidrella-a"
+SLOT_B="/opt/cidrella-b"
 DATA_DIR="/var/lib/cidrella"
+SNAPSHOT_DIR="${DATA_DIR}/snapshots/pre-update"
+BUILD_ARCH="linux-x64"
+PREFLIGHT_PORT=18443
+HEALTH_POLL_SECONDS=20
+MIN_FREE_MB=400   # Require 400MB free on /opt for bundled tarballs
+
 REQUESTED_VERSION=""
 PROGRESS_FILE=""
 FROM_API=false
 STARTED_AT=""
 CURRENT_VERSION="unknown"
 NEW_VERSION=""
-BACKUP_DIR=""
+TMPDIR=""
+RESOLV_BACKUP=""
+PREFLIGHT_PID=""
 
-# ─── Colors (suppressed in API mode) ─────────────────────
+# ─── Colors ───────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -41,42 +62,19 @@ err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 write_progress() {
   local state="$1" pct="$2" message="$3" error="${4:-null}"
   [ -z "$PROGRESS_FILE" ] && return 0
-
-  # Quote strings, pass null literally
   local error_json
   if [ "$error" = "null" ]; then
     error_json="null"
   else
-    # Escape quotes and backslashes in error message
     local escaped
     escaped=$(printf '%s' "$error" | sed 's/\\/\\\\/g; s/"/\\"/g')
     error_json="\"$escaped\""
   fi
-
-  local backup_json
-  if [ -n "$BACKUP_DIR" ]; then
-    backup_json="\"$BACKUP_DIR\""
-  else
-    backup_json="null"
-  fi
-
   cat > "$PROGRESS_FILE" <<PEOF
-{"state":"$state","from_version":"$CURRENT_VERSION","to_version":"${NEW_VERSION:-unknown}","started_at":"$STARTED_AT","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","progress_pct":$pct,"message":"$message","error":$error_json,"backup_path":$backup_json,"pid":$$}
+{"state":"$state","from_version":"$CURRENT_VERSION","to_version":"${NEW_VERSION:-unknown}","started_at":"$STARTED_AT","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","progress_pct":$pct,"message":"$message","error":$error_json,"pid":$$}
 PEOF
   chown cidrella:cidrella "$PROGRESS_FILE" 2>/dev/null || true
 }
-
-# ─── Error trap ───────────────────────────────────────────
-
-on_error() {
-  local exit_code=$?
-  local line_no="${BASH_LINENO[0]}"
-  local error_msg="Update failed at line $line_no (exit code $exit_code)"
-  err "$error_msg"
-  write_progress "failed" "${LAST_PCT:-0}" "Update failed" "$error_msg"
-  exit "$exit_code"
-}
-trap on_error ERR
 
 LAST_PCT=0
 track_progress() {
@@ -84,7 +82,40 @@ track_progress() {
   write_progress "$1" "$2" "$3"
 }
 
+# ─── Cleanup trap ─────────────────────────────────────────
+
+cleanup() {
+  # Kill preflight process if still alive
+  if [ -n "$PREFLIGHT_PID" ] && kill -0 "$PREFLIGHT_PID" 2>/dev/null; then
+    kill -TERM "$PREFLIGHT_PID" 2>/dev/null || true
+    sleep 1
+    kill -KILL "$PREFLIGHT_PID" 2>/dev/null || true
+  fi
+  # Restore resolv.conf if we modified it
+  if [ -n "$RESOLV_BACKUP" ] && [ -f "$RESOLV_BACKUP" ]; then
+    mv "$RESOLV_BACKUP" /etc/resolv.conf
+  fi
+  # Clean up temp dir
+  [ -n "$TMPDIR" ] && [ -d "$TMPDIR" ] && rm -rf "$TMPDIR"
+  # Clean up preflight data dir
+  rm -rf /tmp/cidrella-preflight 2>/dev/null || true
+}
+
+on_error() {
+  local exit_code=$?
+  local line_no="${BASH_LINENO[0]}"
+  local error_msg="Update failed at line $line_no (exit code $exit_code)"
+  err "$error_msg"
+  write_progress "failed" "${LAST_PCT:-0}" "Update failed" "$error_msg"
+  cleanup
+  exit "$exit_code"
+}
+
+trap on_error ERR
+trap cleanup EXIT
+
 # ─── Parse arguments ──────────────────────────────────────
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) REQUESTED_VERSION="$2"; shift 2 ;;
@@ -97,7 +128,7 @@ done
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # ═══════════════════════════════════════════════════════════
-# PREFLIGHT
+# PHASE 1: PREFLIGHT (old version still running)
 # ═══════════════════════════════════════════════════════════
 
 [ "$FROM_API" = false ] && echo -e "\n${BOLD}═══ CIDRella Updater ═══${NC}\n"
@@ -108,22 +139,82 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
-if [ ! -d "$INSTALL_DIR" ]; then
-  err "CIDRella is not installed at $INSTALL_DIR."
-  write_progress "failed" 0 "Update failed" "CIDRella not installed at $INSTALL_DIR"
+if [ ! -e "$INSTALL_LINK" ]; then
+  err "CIDRella is not installed at $INSTALL_LINK."
+  write_progress "failed" 0 "Update failed" "CIDRella not installed at $INSTALL_LINK"
   exit 1
 fi
 
-# Current version
-if [ -f "$INSTALL_DIR/package.json" ]; then
-  CURRENT_VERSION=$(node -e "console.log(require('$INSTALL_DIR/package.json').version)" 2>/dev/null || echo "unknown")
+track_progress "preflight" 2 "Detecting installation layout..."
+
+# ─── Detect / migrate installation layout ─────────────────
+# The A/B layout uses /opt/cidrella as a symlink to /opt/cidrella-a or -b.
+# Pre-A/B installations have /opt/cidrella as a plain directory — we migrate
+# on the first A/B update to avoid a flag-day transition.
+if [ ! -L "$INSTALL_LINK" ]; then
+  info "Migrating to A/B layout (first-time transition)..."
+  # Move current directory to slot A, create symlink
+  if [ -d "$SLOT_A" ]; then
+    err "Cannot migrate: $SLOT_A already exists but $INSTALL_LINK is not a symlink."
+    err "Please resolve manually."
+    exit 1
+  fi
+  mv "$INSTALL_LINK" "$SLOT_A"
+  ln -sfn "$SLOT_A" "$INSTALL_LINK"
+  systemctl daemon-reload
+  ok "Migrated $INSTALL_LINK to A/B layout (active: slot-a)."
+fi
+
+# Determine active and target slot
+ACTIVE_SLOT="$(readlink -f "$INSTALL_LINK")"
+case "$ACTIVE_SLOT" in
+  "$SLOT_A") TARGET_SLOT="$SLOT_B" ;;
+  "$SLOT_B") TARGET_SLOT="$SLOT_A" ;;
+  *)
+    err "Active slot is not slot-a or slot-b: $ACTIVE_SLOT"
+    exit 1
+    ;;
+esac
+
+info "Active slot:  $ACTIVE_SLOT"
+info "Target slot:  $TARGET_SLOT"
+
+# Read current version
+if [ -f "$INSTALL_LINK/package.json" ]; then
+  CURRENT_VERSION=$(node -e "console.log(require('$INSTALL_LINK/package.json').version)" 2>/dev/null || echo "unknown")
 fi
 info "Current version: v${CURRENT_VERSION}"
+
+# ─── Disk space check ────────────────────────────────────
+# Need room for: tarball download + extracted tarball + populated target slot
+AVAILABLE_MB=$(df -BM /opt | tail -1 | awk '{print $4}' | tr -d 'M')
+if [ "$AVAILABLE_MB" -lt "$MIN_FREE_MB" ]; then
+  err "Insufficient disk space on /opt: ${AVAILABLE_MB}MB free, need at least ${MIN_FREE_MB}MB."
+  write_progress "failed" 2 "Update failed" "Insufficient disk space: ${AVAILABLE_MB}MB free"
+  exit 1
+fi
+info "Disk space: ${AVAILABLE_MB}MB free on /opt (ok)"
+
+# ─── DNS fallback injection ──────────────────────────────
+# If /etc/resolv.conf points at localhost (CIDRella itself), we may lose DNS
+# if anything in the update flow needs it. Inject a public fallback and
+# restore on exit (via cleanup trap).
+if grep -qE '^nameserver\s+(127\.|::1|0\.0\.0\.0)' /etc/resolv.conf 2>/dev/null; then
+  info "Detected local DNS resolver — injecting fallback (8.8.8.8, 1.1.1.1)..."
+  RESOLV_BACKUP="/etc/resolv.conf.cidrella-update.bak"
+  cp /etc/resolv.conf "$RESOLV_BACKUP"
+  {
+    cat "$RESOLV_BACKUP"
+    echo "# CIDRella update temporary fallback"
+    echo "nameserver 8.8.8.8"
+    echo "nameserver 1.1.1.1"
+  } > /etc/resolv.conf
+fi
 
 track_progress "downloading" 5 "Checking for updates..."
 
 # ═══════════════════════════════════════════════════════════
-# FETCH LATEST RELEASE
+# PHASE 2: FETCH + DOWNLOAD + VERIFY (old version running)
 # ═══════════════════════════════════════════════════════════
 
 if [ -n "$REQUESTED_VERSION" ]; then
@@ -153,183 +244,341 @@ fi
 info "New version available: v${CURRENT_VERSION} → v${NEW_VERSION}"
 track_progress "downloading" 10 "Downloading v${NEW_VERSION}..."
 
-# Find tarball URL
-TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.tar\.gz"' | sed 's/"$//' | head -1)
+# Find arch-specific tarball URL (new format: cidrella-vX.Y.Z-linux-x64.tar.gz)
+TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*'"${BUILD_ARCH}"'\.tar\.gz"' | sed 's/"$//' | head -1)
 if [ -z "$TARBALL_URL" ]; then
-  TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/cidrella-${TAG_NAME}.tar.gz"
+  # Fall back to generic name (pre-bundled-deps releases)
+  TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.tar\.gz"' | sed 's/"$//' | head -1)
 fi
-
-# Find minisig URL (signature file)
-MINISIG_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.minisig"' | sed 's/"$//' | head -1)
-if [ -z "$MINISIG_URL" ]; then
-  MINISIG_URL="${TARBALL_URL}.minisig"
+if [ -z "$TARBALL_URL" ]; then
+  TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/cidrella-${TAG_NAME}-${BUILD_ARCH}.tar.gz"
 fi
+MINISIG_URL="${TARBALL_URL}.minisig"
 
-# ═══════════════════════════════════════════════════════════
-# DOWNLOAD
-# ═══════════════════════════════════════════════════════════
-
-info "Downloading v${NEW_VERSION}..."
+# Download
+info "Downloading: $TARBALL_URL"
 TMPDIR=$(mktemp -d)
-trap "rm -rf '$TMPDIR'; on_error" ERR
-trap "rm -rf '$TMPDIR'" EXIT
-
 curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
-track_progress "downloading" 25 "Download complete"
+TARBALL_SIZE=$(du -h "$TMPDIR/cidrella.tar.gz" | cut -f1)
+ok "Downloaded $TARBALL_SIZE"
+track_progress "downloading" 25 "Download complete ($TARBALL_SIZE)"
 
-# Download signature file
 curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
 
-# ═══════════════════════════════════════════════════════════
-# VERIFY SIGNATURE
-# ═══════════════════════════════════════════════════════════
-
-PUBKEY_FILE="$INSTALL_DIR/scripts/cidrella.pub"
-
+# ─── Verify signature ───────────────────────────────────
+PUBKEY_FILE="$INSTALL_LINK/scripts/cidrella.pub"
 if [ -f "$TMPDIR/cidrella.tar.gz.minisig" ] && [ -f "$PUBKEY_FILE" ] && command -v minisign &>/dev/null; then
   track_progress "verifying" 30 "Verifying signature..."
   if minisign -Vm "$TMPDIR/cidrella.tar.gz" -p "$PUBKEY_FILE" >/dev/null 2>&1; then
     ok "Signature verified."
-    track_progress "verifying" 35 "Signature verified"
   else
     err "Signature verification failed! The download may be corrupted or tampered with."
-    write_progress "failed" 30 "Signature verification failed" "minisign verification failed — tarball may be corrupted or tampered"
+    write_progress "failed" 30 "Signature verification failed" "minisign verification failed"
     exit 1
   fi
 elif [ -f "$PUBKEY_FILE" ] && command -v minisign &>/dev/null; then
   warn "No signature file found for this release. Proceeding without verification."
-  track_progress "verifying" 35 "No signature file — skipping verification"
 else
   warn "minisign not available or no public key — skipping signature verification."
-  track_progress "verifying" 35 "Signature verification not available"
 fi
 
 # ═══════════════════════════════════════════════════════════
-# BACKUP
+# PHASE 3: EXTRACT TO TARGET SLOT (old version still running)
 # ═══════════════════════════════════════════════════════════
 
-track_progress "backing_up" 40 "Creating backup..."
+track_progress "extracting" 40 "Extracting to target slot..."
+info "Extracting to $TARGET_SLOT..."
 
-BACKUP_DIR="${INSTALL_DIR}.bak-$(date +%Y%m%d%H%M)"
-info "Backing up current installation to ${BACKUP_DIR}..."
-cp -a "$INSTALL_DIR" "$BACKUP_DIR"
-ok "Backup created."
-
-track_progress "backing_up" 45 "Backup created at ${BACKUP_DIR}"
-
-# ═══════════════════════════════════════════════════════════
-# EXTRACT
-# ═══════════════════════════════════════════════════════════
-
-track_progress "extracting" 50 "Extracting files..."
+rm -rf "$TARGET_SLOT"
+mkdir -p "$TARGET_SLOT"
 
 tar -xzf "$TMPDIR/cidrella.tar.gz" -C "$TMPDIR"
-
 EXTRACTED=$(find "$TMPDIR" -maxdepth 1 -type d -name "cidrella*" | head -1)
 if [ -z "$EXTRACTED" ] || [ "$EXTRACTED" = "$TMPDIR" ]; then
-  EXTRACTED="$TMPDIR"
+  err "Unexpected tarball layout — no cidrella-* directory found."
+  exit 1
+fi
+# Copy all files from the extracted directory into the target slot
+rsync -a "$EXTRACTED/" "$TARGET_SLOT/"
+chown -R cidrella:cidrella "$TARGET_SLOT"
+ok "Extracted to $TARGET_SLOT"
+track_progress "extracting" 50 "Files extracted"
+
+# ═══════════════════════════════════════════════════════════
+# PHASE 4: PRE-FLIGHT VALIDATION (old version still running)
+# ═══════════════════════════════════════════════════════════
+
+track_progress "validating" 55 "Validating new version..."
+info "Pre-flight validation..."
+
+# Syntax check
+if ! node --check "$TARGET_SLOT/server/src/index.js" 2>/dev/null; then
+  err "Pre-flight failed: new server/src/index.js has syntax errors"
+  exit 1
+fi
+ok "Syntax check passed"
+
+# Verify bundled node_modules exist — the new build pipeline bundles them
+if [ ! -d "$TARGET_SLOT/server/node_modules/express" ]; then
+  warn "Bundled node_modules not found in tarball — running npm install as fallback"
+  cd "$TARGET_SLOT/server"
+  npm install --omit=dev --silent 2>&1 | tail -3
+  cd - >/dev/null
 fi
 
-rsync -a --delete "$EXTRACTED/" "$INSTALL_DIR/"
-ok "Extracted to $INSTALL_DIR"
+# Verify key native bindings
+MISSING=""
+[ ! -f "$TARGET_SLOT/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
+[ ! -f "$TARGET_SLOT/server/node_modules/duckdb/lib/binding/duckdb.node" ] && MISSING="$MISSING duckdb"
+[ -z "$(find "$TARGET_SLOT/server/node_modules/bcrypt/lib/binding" -name '*.node' 2>/dev/null | head -1)" ] && MISSING="$MISSING bcrypt"
+[ ! -f "$TARGET_SLOT/server/node_modules/raw-socket/build/Release/raw.node" ] && MISSING="$MISSING raw-socket"
+if [ -n "$MISSING" ]; then
+  err "Pre-flight failed: missing native bindings:$MISSING"
+  exit 1
+fi
+ok "Native bindings present"
 
-track_progress "extracting" 60 "Files extracted"
+# ─── Deep health probe: spawn new version on temp port with isolated data dir ─
+track_progress "validating" 60 "Probing new version..."
+info "Starting preflight probe on port $PREFLIGHT_PORT (isolated data dir)..."
+PREFLIGHT_DATA="/tmp/cidrella-preflight"
+rm -rf "$PREFLIGHT_DATA"
+mkdir -p "$PREFLIGHT_DATA"
+chown cidrella:cidrella "$PREFLIGHT_DATA"
+
+# Start new version on temp port with throwaway data dir — so it doesn't
+# touch production DB and we can verify all subsystems come up clean.
+sudo -u cidrella env \
+  HTTPS_PORT=$PREFLIGHT_PORT \
+  HTTP_PORT=$((PREFLIGHT_PORT + 1)) \
+  DATA_DIR="$PREFLIGHT_DATA" \
+  NODE_ENV=production \
+  /usr/bin/node "$TARGET_SLOT/server/src/index.js" \
+  > "$TMPDIR/preflight.log" 2>&1 &
+PREFLIGHT_PID=$!
+
+# Wait for the probe endpoint to respond (up to 30 seconds)
+PROBE_OK=false
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do
+  if ! kill -0 "$PREFLIGHT_PID" 2>/dev/null; then
+    err "Preflight process died during startup"
+    tail -30 "$TMPDIR/preflight.log" >&2 || true
+    exit 1
+  fi
+  if curl -sfk "https://127.0.0.1:${PREFLIGHT_PORT}/api/health/deep" -o "$TMPDIR/health.json" 2>/dev/null; then
+    if grep -q '"status":"ok"' "$TMPDIR/health.json"; then
+      PROBE_OK=true
+      break
+    fi
+  fi
+  sleep 1
+done
+
+# Kill the preflight process
+if kill -0 "$PREFLIGHT_PID" 2>/dev/null; then
+  kill -TERM "$PREFLIGHT_PID" 2>/dev/null || true
+  sleep 1
+  kill -KILL "$PREFLIGHT_PID" 2>/dev/null || true
+fi
+PREFLIGHT_PID=""
+rm -rf "$PREFLIGHT_DATA"
+
+if [ "$PROBE_OK" != true ]; then
+  err "Pre-flight health probe failed — new version did not come up cleanly"
+  echo "--- preflight log ---" >&2
+  tail -30 "$TMPDIR/preflight.log" >&2 || true
+  echo "--- health response ---" >&2
+  cat "$TMPDIR/health.json" 2>/dev/null || echo "(no response)" >&2
+  exit 1
+fi
+ok "Pre-flight health probe passed"
+track_progress "validating" 70 "Pre-flight validated"
 
 # ═══════════════════════════════════════════════════════════
-# INSTALL DEPENDENCIES
+# PHASE 5: SNAPSHOT DATABASES + INSTALL ROLLBACK (old version running)
 # ═══════════════════════════════════════════════════════════
 
-track_progress "installing_deps" 65 "Installing dependencies..."
+track_progress "snapshotting" 75 "Snapshotting databases..."
+info "Snapshotting databases..."
 
-info "Installing dependencies..."
-cd "$INSTALL_DIR/server"
-npm install --production --silent 2>&1 | tail -5
-ok "Dependencies installed."
+# Make snapshot dir (fresh — discard any previous snapshot)
+rm -rf "$SNAPSHOT_DIR"
+mkdir -p "$SNAPSHOT_DIR"
 
-track_progress "installing_deps" 75 "Dependencies installed"
+# SQLite: checkpoint WAL so the .db file is up to date, then copy
+if [ -f "$DATA_DIR/cidrella.db" ]; then
+  sudo -u cidrella /usr/bin/node -e "
+    const Database = require('$INSTALL_LINK/server/node_modules/better-sqlite3');
+    const db = new Database('$DATA_DIR/cidrella.db');
+    db.pragma('wal_checkpoint(TRUNCATE)');
+    db.close();
+  " 2>/dev/null || warn "WAL checkpoint failed (may be ok if DB was not in WAL mode)"
+  cp -a "$DATA_DIR/cidrella.db" "$SNAPSHOT_DIR/cidrella.db"
+  [ -f "$DATA_DIR/cidrella.db-wal" ] && cp -a "$DATA_DIR/cidrella.db-wal" "$SNAPSHOT_DIR/cidrella.db-wal"
+  [ -f "$DATA_DIR/cidrella.db-shm" ] && cp -a "$DATA_DIR/cidrella.db-shm" "$SNAPSHOT_DIR/cidrella.db-shm"
+fi
+
+if [ -f "$DATA_DIR/analytics.duckdb" ]; then
+  cp -a "$DATA_DIR/analytics.duckdb" "$SNAPSHOT_DIR/analytics.duckdb"
+fi
+
+# Record metadata
+cat > "$SNAPSHOT_DIR/metadata.json" <<META
+{
+  "from_version": "$CURRENT_VERSION",
+  "to_version": "$NEW_VERSION",
+  "snapshot_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "previous_slot": "$ACTIVE_SLOT"
+}
+META
+ok "Database snapshots created in $SNAPSHOT_DIR"
+
+# ─── Install standalone rollback script ─────────────────
+# Copy the rollback script from the CURRENT (running) version, not the new one.
+# This ensures the rollback script is always known-good code.
+if [ -f "$ACTIVE_SLOT/scripts/rollback.sh" ]; then
+  cp "$ACTIVE_SLOT/scripts/rollback.sh" /usr/local/bin/cidrella-rollback
+  chmod +x /usr/local/bin/cidrella-rollback
+  ok "Rollback script installed at /usr/local/bin/cidrella-rollback"
+else
+  # First time upgrading to a version that has rollback.sh — use the new one
+  if [ -f "$TARGET_SLOT/scripts/rollback.sh" ]; then
+    cp "$TARGET_SLOT/scripts/rollback.sh" /usr/local/bin/cidrella-rollback
+    chmod +x /usr/local/bin/cidrella-rollback
+    warn "Installed rollback.sh from NEW version (current version did not have one)"
+  fi
+fi
+
+track_progress "snapshotting" 80 "Snapshot complete"
 
 # ═══════════════════════════════════════════════════════════
-# UPDATE SYSTEMD UNITS
+# PHASE 6: ATOMIC SWITCHOVER (brief Node.js downtime)
 # ═══════════════════════════════════════════════════════════
 
-track_progress "updating_services" 80 "Updating system services..."
+track_progress "switching" 85 "Switching to new version..."
+info "Switching to new version..."
 
-UNITS_UPDATED=false
-
-if [ -f "$INSTALL_DIR/scripts/systemd/cidrella.service" ]; then
-  if ! diff -q "$INSTALL_DIR/scripts/systemd/cidrella.service" /etc/systemd/system/cidrella.service &>/dev/null; then
-    cp "$INSTALL_DIR/scripts/systemd/cidrella.service" /etc/systemd/system/
-    UNITS_UPDATED=true
+# Update systemd unit files if they changed
+if [ -f "$TARGET_SLOT/scripts/systemd/cidrella.service" ]; then
+  if ! diff -q "$TARGET_SLOT/scripts/systemd/cidrella.service" /etc/systemd/system/cidrella.service &>/dev/null; then
+    cp "$TARGET_SLOT/scripts/systemd/cidrella.service" /etc/systemd/system/
     ok "Updated cidrella.service"
   fi
 fi
-
-if [ -f "$INSTALL_DIR/scripts/systemd/cidrella-dnsmasq.service" ] && [ -f /etc/systemd/system/cidrella-dnsmasq.service ]; then
-  if ! diff -q "$INSTALL_DIR/scripts/systemd/cidrella-dnsmasq.service" /etc/systemd/system/cidrella-dnsmasq.service &>/dev/null; then
-    cp "$INSTALL_DIR/scripts/systemd/cidrella-dnsmasq.service" /etc/systemd/system/
-    UNITS_UPDATED=true
-    ok "Updated cidrella-dnsmasq.service"
+if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" ] && [ -f /etc/systemd/system/cidrella-anomaly.service ]; then
+  if ! diff -q "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/cidrella-anomaly.service &>/dev/null; then
+    cp "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/
   fi
 fi
-
-if [ "$UNITS_UPDATED" = true ]; then
-  systemctl daemon-reload
-fi
+# Note: cidrella-dnsmasq.service is deliberately NOT touched — dnsmasq keeps running.
 
 # Update sudoers if present
-if [ -f "$INSTALL_DIR/scripts/sudoers/cidrella" ]; then
-  cp "$INSTALL_DIR/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella
+if [ -f "$TARGET_SLOT/scripts/sudoers/cidrella" ]; then
+  cp "$TARGET_SLOT/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella
   chmod 440 /etc/sudoers.d/cidrella
 fi
 
-track_progress "updating_services" 85 "System services updated"
-
-# ═══════════════════════════════════════════════════════════
-# RESTART SERVICES
-# ═══════════════════════════════════════════════════════════
-
-track_progress "restarting" 90 "Restarting services..."
-
-info "Restarting services..."
-
-if systemctl is-enabled --quiet cidrella-dnsmasq 2>/dev/null; then
-  systemctl restart cidrella-dnsmasq
-  ok "cidrella-dnsmasq restarted."
+# Update cidrella-update symlink to the target slot's update.sh
+if [ -f "$TARGET_SLOT/update.sh" ]; then
+  chmod +x "$TARGET_SLOT/update.sh"
+  ln -sf "$INSTALL_LINK/update.sh" /usr/local/bin/cidrella-update
 fi
 
-# Write near-final progress before restarting the main service
-# (after this point, the Node.js process will be killed)
-track_progress "restarting" 95 "Restarting CIDRella..."
+# ATOMIC SWITCHOVER: swap symlink
+ln -sfn "$TARGET_SLOT" "$INSTALL_LINK"
 
+# Reload systemd so it sees the new target (unit files are absolute paths
+# through the symlink, but daemon-reload is cheap insurance).
+systemctl daemon-reload
+
+track_progress "switching" 90 "Restarting CIDRella..."
+info "Restarting cidrella service (dnsmasq stays running)..."
 systemctl restart cidrella
 
-# Wait for startup
-sleep 2
+# ═══════════════════════════════════════════════════════════
+# PHASE 7: VERIFY HEALTH — auto-rollback on failure
+# ═══════════════════════════════════════════════════════════
 
-if systemctl is-active --quiet cidrella; then
-  ok "CIDRella is running!"
-  write_progress "completed" 100 "Updated to v${NEW_VERSION}"
-else
-  warn "CIDRella may not have started correctly."
-  warn "Check logs: journalctl -u cidrella -f"
-  warn "To rollback: cp -a ${BACKUP_DIR}/* ${INSTALL_DIR}/ && systemctl restart cidrella"
-  write_progress "failed" 95 "Service failed to start after update" "CIDRella did not start after restart. Rollback: cp -a ${BACKUP_DIR}/* ${INSTALL_DIR}/ && systemctl restart cidrella"
-  exit 1
+track_progress "verifying" 93 "Verifying new version..."
+info "Verifying new version..."
+
+VERIFY_OK=false
+for i in $(seq 1 "$HEALTH_POLL_SECONDS"); do
+  if systemctl is-active --quiet cidrella; then
+    # Service is up; probe /api/health/deep via loopback
+    if curl -sfk https://127.0.0.1:8443/api/health/deep -o "$TMPDIR/verify.json" 2>/dev/null; then
+      if grep -q '"status":"ok"' "$TMPDIR/verify.json"; then
+        VERIFY_OK=true
+        break
+      fi
+    fi
+  fi
+  sleep 1
+done
+
+if [ "$VERIFY_OK" = true ]; then
+  ok "New version healthy."
+  track_progress "completed" 100 "Updated to v${NEW_VERSION}"
+
+  if [ "$FROM_API" = false ]; then
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════${NC}"
+    echo -e "${BOLD}  CIDRella updated: v${CURRENT_VERSION} → v${NEW_VERSION}${NC}"
+    echo -e "${BOLD}═══════════════════════════════════════════${NC}"
+    echo ""
+    echo -e "  ${BOLD}Active slot:${NC}  $TARGET_SLOT"
+    echo -e "  ${BOLD}Previous:${NC}    $ACTIVE_SLOT (rollback target)"
+    echo -e "  ${BOLD}Rollback:${NC}    cidrella-rollback"
+    echo -e "  ${BOLD}Logs:${NC}        journalctl -u cidrella -f"
+    echo ""
+  fi
+  exit 0
 fi
 
 # ═══════════════════════════════════════════════════════════
-# SUMMARY
+# AUTO-ROLLBACK — new version failed to come up
 # ═══════════════════════════════════════════════════════════
 
-if [ "$FROM_API" = false ]; then
-  echo ""
-  echo -e "${BOLD}═══════════════════════════════════════════${NC}"
-  echo -e "${BOLD}  CIDRella updated: v${CURRENT_VERSION} → v${NEW_VERSION}${NC}"
-  echo -e "${BOLD}═══════════════════════════════════════════${NC}"
-  echo ""
-  echo -e "  ${BOLD}Backup:${NC} ${BACKUP_DIR}"
-  echo -e "  ${BOLD}Logs:${NC}   journalctl -u cidrella -f"
-  echo ""
-  info "Database migrations run automatically on startup."
-  echo ""
+err "New version failed health check — auto-rolling back to v${CURRENT_VERSION}"
+write_progress "rolling_back" 95 "New version failed — auto-rolling back..." "Health check failed"
+
+# Swap symlink back
+ln -sfn "$ACTIVE_SLOT" "$INSTALL_LINK"
+
+# Restore DB snapshots
+if [ -f "$SNAPSHOT_DIR/cidrella.db" ]; then
+  cp -a "$SNAPSHOT_DIR/cidrella.db" "$DATA_DIR/cidrella.db"
+  [ -f "$SNAPSHOT_DIR/cidrella.db-wal" ] && cp -a "$SNAPSHOT_DIR/cidrella.db-wal" "$DATA_DIR/cidrella.db-wal" || rm -f "$DATA_DIR/cidrella.db-wal"
+  [ -f "$SNAPSHOT_DIR/cidrella.db-shm" ] && cp -a "$SNAPSHOT_DIR/cidrella.db-shm" "$DATA_DIR/cidrella.db-shm" || rm -f "$DATA_DIR/cidrella.db-shm"
+  chown -R cidrella:cidrella "$DATA_DIR/cidrella.db"* 2>/dev/null || true
+fi
+if [ -f "$SNAPSHOT_DIR/analytics.duckdb" ]; then
+  cp -a "$SNAPSHOT_DIR/analytics.duckdb" "$DATA_DIR/analytics.duckdb"
+  chown cidrella:cidrella "$DATA_DIR/analytics.duckdb" 2>/dev/null || true
+fi
+
+systemctl daemon-reload
+systemctl restart cidrella
+
+# Verify rollback worked
+ROLLBACK_OK=false
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  if systemctl is-active --quiet cidrella; then
+    ROLLBACK_OK=true
+    break
+  fi
+  sleep 1
+done
+
+if [ "$ROLLBACK_OK" = true ]; then
+  err "Update FAILED — automatically rolled back to v${CURRENT_VERSION}."
+  err "Check logs: journalctl -u cidrella -n 100"
+  write_progress "failed" 100 "Update failed — rolled back to v${CURRENT_VERSION}" "Health check failed after update. Automatic rollback succeeded."
+  exit 1
+else
+  err "CRITICAL: rollback FAILED too! CIDRella is not running."
+  err "Run: cidrella-rollback --yes"
+  err "Or manually: ln -sfn $ACTIVE_SLOT $INSTALL_LINK && systemctl restart cidrella"
+  write_progress "failed" 100 "Update AND rollback failed" "Update failed health check. Automatic rollback also failed."
+  exit 1
 fi

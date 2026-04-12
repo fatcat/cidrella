@@ -12,13 +12,15 @@ set -euo pipefail
 # ═══════════════════════════════════════════════════════════
 
 GITHUB_REPO="fatcat/cidrella"
-INSTALL_DIR="/opt/cidrella"
+INSTALL_LINK="/opt/cidrella"
+INSTALL_DIR="/opt/cidrella-a"   # first slot in the A/B layout; INSTALL_LINK -> here
 DATA_DIR="/var/lib/cidrella"
 SERVICE_USER="cidrella"
 REQUESTED_VERSION=""
 MINISIGN_PUBKEY="RWT6J/NrAcT9LsHz9fQG8sAbcsfp58uRxiYx3YbZUpm28lFwjaVi4wQe"
 FORCE_INSTALL=false
 NODE_MAJOR=22
+BUILD_ARCH="linux-x64"
 
 # ─── Colors ───────────────────────────────────────────────
 RED='\033[0;31m'
@@ -130,16 +132,16 @@ case "$ARCH" in
 esac
 info "Architecture: $ARCH"
 
-# Check for existing installation
-if [ -d "$INSTALL_DIR" ]; then
-  if [ ! -f "$INSTALL_DIR/package.json" ]; then
-    warn "Partial installation detected at $INSTALL_DIR. Continuing install..."
+# Check for existing installation (via the symlink path users know)
+if [ -e "$INSTALL_LINK" ]; then
+  if [ ! -f "$INSTALL_LINK/package.json" ]; then
+    warn "Partial installation detected at $INSTALL_LINK. Continuing install..."
   elif [ "$FORCE_INSTALL" = true ]; then
-    warn "Overwriting existing installation at $INSTALL_DIR (--force)."
+    warn "Overwriting existing installation at $INSTALL_LINK (--force)."
   else
-    warn "CIDRella is already installed at $INSTALL_DIR."
-    if [ -f "$INSTALL_DIR/update.sh" ]; then
-      info "To update, run: $INSTALL_DIR/update.sh"
+    warn "CIDRella is already installed at $INSTALL_LINK."
+    if [ -f "$INSTALL_LINK/update.sh" ]; then
+      info "To update, run: cidrella-update"
     fi
     if ! ask_yn "Reinstall / overwrite?"; then
       exit 0
@@ -236,7 +238,7 @@ fi
 # ═══════════════════════════════════════════════════════════
 
 info "Installing system dependencies..."
-apt-get install -y -qq build-essential nmap arping openssl curl dnsutils rsync sudo minisign python3 python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
+apt-get install -y -qq build-essential nmap arping openssl curl dnsutils rsync sudo minisign python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
 ok "System packages installed."
 
 # ═══════════════════════════════════════════════════════════
@@ -359,28 +361,50 @@ else
   warn "minisign not installed — skipping signature verification."
 fi
 
+# ═══════════════════════════════════════════════════════════
+# EXTRACT TO A/B LAYOUT
+# ═══════════════════════════════════════════════════════════
+# /opt/cidrella-a/   (slot A — fresh install goes here)
+# /opt/cidrella-b/   (slot B — reserved, populated by first update)
+# /opt/cidrella      (symlink -> /opt/cidrella-a)
+
+# If /opt/cidrella exists as a plain directory (legacy install), remove it
+# so we can replace with the symlink.
+if [ -d "$INSTALL_LINK" ] && [ ! -L "$INSTALL_LINK" ]; then
+  # Move the legacy install aside; the rest of this script will replace it.
+  rm -rf "$INSTALL_LINK"
+fi
+
+rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 tar -xzf "$TMPDIR/cidrella.tar.gz" -C "$TMPDIR"
 
 # Find the extracted directory (might be nested)
 EXTRACTED=$(find "$TMPDIR" -maxdepth 1 -type d -name "cidrella*" | head -1)
 if [ -z "$EXTRACTED" ] || [ "$EXTRACTED" = "$TMPDIR" ]; then
-  # Tarball might extract files directly
   EXTRACTED="$TMPDIR"
 fi
 
-# Copy to install directory
-rsync -a --delete "$EXTRACTED/" "$INSTALL_DIR/"
+# Copy extracted files into slot A
+rsync -a "$EXTRACTED/" "$INSTALL_DIR/"
 ok "Extracted to $INSTALL_DIR"
 
+# Create the /opt/cidrella symlink -> slot A
+ln -sfn "$INSTALL_DIR" "$INSTALL_LINK"
+ok "Symlink: $INSTALL_LINK -> $INSTALL_DIR"
+
 # ═══════════════════════════════════════════════════════════
-# INSTALL NODE DEPENDENCIES
+# INSTALL NODE DEPENDENCIES (only if not bundled in tarball)
 # ═══════════════════════════════════════════════════════════
 
-info "Installing Node.js dependencies (this may take a moment)..."
-cd "$INSTALL_DIR/server"
-npm install --production --silent 2>&1 | tail -5
-ok "Dependencies installed."
+if [ -d "$INSTALL_DIR/server/node_modules/express" ]; then
+  ok "Bundled node_modules present — skipping npm install"
+else
+  info "Installing Node.js dependencies (this may take a moment)..."
+  cd "$INSTALL_DIR/server"
+  npm install --omit=dev --silent 2>&1 | tail -5
+  ok "Dependencies installed."
+fi
 
 # ═══════════════════════════════════════════════════════════
 # CONFIGURE DNSMASQ
@@ -453,13 +477,23 @@ setcap cap_net_raw,cap_net_bind_service+ep "$(readlink -f "$(which node)")" 2>/d
 systemctl daemon-reload
 
 # ═══════════════════════════════════════════════════════════
-# CREATE UPDATE SYMLINK
+# CREATE UPDATE + ROLLBACK SYMLINKS
 # ═══════════════════════════════════════════════════════════
 
-if [ -f "$INSTALL_DIR/update.sh" ]; then
-  ln -sf "$INSTALL_DIR/update.sh" /usr/local/bin/cidrella-update
-  chmod +x "$INSTALL_DIR/update.sh"
+if [ -f "$INSTALL_LINK/update.sh" ]; then
+  # Point symlink through /opt/cidrella (follows active slot)
+  ln -sf "$INSTALL_LINK/update.sh" /usr/local/bin/cidrella-update
+  chmod +x "$INSTALL_LINK/update.sh"
   ok "Update command: cidrella-update"
+fi
+
+if [ -f "$INSTALL_LINK/scripts/rollback.sh" ]; then
+  # Copy (not symlink) the rollback script so it survives if /opt/cidrella
+  # gets corrupted — rollback must never depend on the installation it is
+  # rolling back.
+  cp "$INSTALL_LINK/scripts/rollback.sh" /usr/local/bin/cidrella-rollback
+  chmod +x /usr/local/bin/cidrella-rollback
+  ok "Rollback command: cidrella-rollback"
 fi
 
 # ═══════════════════════════════════════════════════════════
@@ -516,8 +550,9 @@ echo -e "${BOLD}═════════════════════�
 echo ""
 echo -e "  ${BOLD}Web UI:${NC}      https://${SERVER_IP}:8443"
 echo -e "  ${BOLD}Data dir:${NC}    ${DATA_DIR}"
-echo -e "  ${BOLD}Install dir:${NC} ${INSTALL_DIR}"
+echo -e "  ${BOLD}Install dir:${NC} ${INSTALL_LINK} (-> ${INSTALL_DIR})"
 echo -e "  ${BOLD}Update:${NC}      cidrella-update"
+echo -e "  ${BOLD}Rollback:${NC}    cidrella-rollback"
 echo ""
 if [ -n "$ADMIN_PASSWORD" ]; then
   echo -e "  ${BOLD}Admin login:${NC}"
