@@ -1,0 +1,47 @@
+#!/bin/sh
+# cidrella-dnsmasq-hup — send SIGHUP to the CIDRella dnsmasq process so it
+# reloads its configuration without dropping leases.
+#
+# Installed at /usr/local/bin/cidrella-dnsmasq-hup by install.sh. Sudoers
+# only allows the cidrella user to run THIS exact path, which means the
+# service can no longer send signals to arbitrary PIDs the way the old
+# `kill -HUP [0-9]*` sudoers rule let it.
+#
+# We read the PID from dnsmasq's own pidfile and sanity-check it before
+# signalling. Exits nonzero on any problem so the caller sees the failure.
+
+set -eu
+
+PIDFILE="${CIDRELLA_DNSMASQ_PIDFILE:-/var/lib/cidrella/dnsmasq/dnsmasq.pid}"
+
+if [ ! -f "$PIDFILE" ]; then
+  echo "cidrella-dnsmasq-hup: pidfile not found: $PIDFILE" >&2
+  exit 1
+fi
+
+PID=$(tr -d '[:space:]' < "$PIDFILE" 2>/dev/null || true)
+if [ -z "$PID" ]; then
+  echo "cidrella-dnsmasq-hup: empty pidfile" >&2
+  exit 1
+fi
+
+# Pidfile must contain only digits — reject anything else (shell injection,
+# line noise, accidental output).
+case "$PID" in
+  ''|*[!0-9]*)
+    echo "cidrella-dnsmasq-hup: invalid pid '$PID'" >&2
+    exit 1
+    ;;
+esac
+
+# Confirm the PID is actually a dnsmasq process before signalling. Prevents
+# the case where a stale pidfile happens to match an unrelated process.
+if [ -r "/proc/$PID/comm" ]; then
+  COMM=$(cat "/proc/$PID/comm" 2>/dev/null || true)
+  if [ "$COMM" != "dnsmasq" ]; then
+    echo "cidrella-dnsmasq-hup: pid $PID is '$COMM', not dnsmasq — refusing" >&2
+    exit 1
+  fi
+fi
+
+exec kill -HUP "$PID"

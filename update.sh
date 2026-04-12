@@ -654,6 +654,13 @@ if [ -f "$TARGET_SLOT/scripts/cidrella-node" ]; then
   ok "Installed /usr/local/bin/cidrella-node wrapper"
 fi
 
+# Install cidrella-dnsmasq-hup wrapper from new slot (v0.4.6+). Pairs with
+# the narrowed sudoers rule that replaced the old permissive kill -HUP rule.
+if [ -f "$TARGET_SLOT/scripts/cidrella-dnsmasq-hup" ]; then
+  install -m 0755 -o root -g root "$TARGET_SLOT/scripts/cidrella-dnsmasq-hup" /usr/local/bin/cidrella-dnsmasq-hup
+  ok "Installed /usr/local/bin/cidrella-dnsmasq-hup wrapper"
+fi
+
 # Update systemd unit files if they changed (install_systemd_unit is idempotent).
 if [ -f "$TARGET_SLOT/scripts/systemd/cidrella.service" ]; then
   if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella.service" /etc/systemd/system/cidrella.service)" = "changed" ]; then

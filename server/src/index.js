@@ -159,9 +159,16 @@ async function main() {
   // Setup routes (pre-auth — accessible before installation is complete)
   app.use('/api/setup', setupRoutes);
 
-  // API browser (pre-auth — self-service login via UI)
-  const { default: apiBrowserRoutes } = await import('./routes/api-browser.js');
-  app.use('/api-browser', apiBrowserRoutes);
+  // API browser — developer tool only. Mounts /api-browser which enumerates
+  // every registered route and offers an interactive client. In a release
+  // audit the validator flagged that it was (a) pre-auth, (b) exposed a
+  // full route inventory to unauthenticated callers, and (c) relaxed CSP
+  // with `unsafe-inline`. Gate it to non-production explicitly so it never
+  // mounts in a real deployment. The systemd unit sets NODE_ENV=production.
+  if (process.env.NODE_ENV !== 'production') {
+    const { default: apiBrowserRoutes } = await import('./routes/api-browser.js');
+    app.use('/api-browser', apiBrowserRoutes);
+  }
 
   // Internal API for anomaly detection sidecar (pre-auth, localhost-only)
   const { default: internalAnalyticsRoutes } = await import('./routes/internal-analytics.js');

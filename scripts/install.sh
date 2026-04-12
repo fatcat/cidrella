@@ -514,6 +514,14 @@ if [ -f "$INSTALL_DIR/scripts/cidrella-node" ]; then
   ok "Installed /usr/local/bin/cidrella-node wrapper"
 fi
 
+# Install cidrella-dnsmasq-hup wrapper (v0.4.6+). The wrapper replaces the
+# previous overly-broad `kill -HUP [0-9]*` sudoers rule with a narrow, audited
+# path that only signals dnsmasq. Sudoers only permits this exact binary.
+if [ -f "$INSTALL_DIR/scripts/cidrella-dnsmasq-hup" ]; then
+  install -m 0755 -o root -g root "$INSTALL_DIR/scripts/cidrella-dnsmasq-hup" /usr/local/bin/cidrella-dnsmasq-hup
+  ok "Installed /usr/local/bin/cidrella-dnsmasq-hup wrapper"
+fi
+
 # install_systemd_unit is sourced from scripts/lib/systemd-install.sh above;
 # fall back to plain cp if sourcing failed (pre-v0.4.4 tarballs).
 _install_unit() {

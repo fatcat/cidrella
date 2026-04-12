@@ -1,8 +1,19 @@
-# CIDRella — allow cidrella user to signal dnsmasq and run network scans
-cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*
+# CIDRella — allow cidrella user to signal dnsmasq and run network scans.
+#
+# The dnsmasq HUP rule went through a narrowing pass in v0.4.6: the previous
+# rule was `/usr/bin/kill -HUP [0-9]*`, which allowed the service account to
+# send SIGHUP to ANY process on the host — including PID 1 (systemd re-exec)
+# and sshd. The validator agent flagged this in a release-hygiene audit.
+# Replaced with a dedicated wrapper script that reads dnsmasq's own pidfile,
+# verifies the target is actually dnsmasq via /proc/<pid>/comm, and then
+# sends the signal. Sudoers now allows only that exact binary.
+#
+# The nmap rule was also removed — it granted full `sudo nmap *` to the
+# service account but no code path in the project actually invokes nmap.
+# Dead rule, overly broad. Gone.
+cidrella ALL=(root) NOPASSWD: /usr/local/bin/cidrella-dnsmasq-hup
 cidrella ALL=(root) NOPASSWD: /usr/bin/pkill -TERM -x dnsmasq
 cidrella ALL=(root) NOPASSWD: /usr/bin/systemctl restart cidrella-dnsmasq
-cidrella ALL=(root) NOPASSWD: /usr/bin/nmap *
 cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *
 # In-app updates — run update script as a TRANSIENT systemd service (not a
 # scope). A scope would inherit cidrella.service's ProtectSystem/ReadWritePaths,

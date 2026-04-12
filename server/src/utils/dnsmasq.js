@@ -196,6 +196,22 @@ export function isDnsmasqRunning() {
 const DNSMASQ_PID = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.pid');
 
 export function signalDnsmasq() {
+  // Use the cidrella-dnsmasq-hup wrapper installed by install.sh. The wrapper
+  // reads dnsmasq's pidfile, verifies the target is actually dnsmasq, and
+  // sends SIGHUP. The wrapper replaced the previous `sudo kill -HUP <pid>`
+  // call in v0.4.6 — the old sudoers rule allowed signalling any PID on the
+  // host, which was flagged by the release-hygiene audit.
+  try {
+    execFileSync('sudo', ['/usr/local/bin/cidrella-dnsmasq-hup'], { stdio: 'pipe' });
+    return;
+  } catch {
+    // Fall through to the legacy direct-kill path for environments where the
+    // wrapper isn't installed (pre-0.4.6 installs still running, Docker
+    // without install.sh, local dev). The legacy path will fail at the sudo
+    // layer on v0.4.6+ hosts because the permissive kill rule was removed —
+    // that's the intended outcome: the wrapper is the only sanctioned path.
+  }
+
   try {
     const pid = parseInt(fs.readFileSync(DNSMASQ_PID, 'utf-8').trim(), 10);
     if (pid) execFileSync('sudo', ['kill', '-HUP', String(pid)]);
