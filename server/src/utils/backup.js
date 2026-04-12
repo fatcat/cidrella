@@ -182,8 +182,14 @@ function takePreRestoreSnapshot(db) {
     const src = path.join(DATA_DIR, side);
     if (fs.existsSync(src)) fs.copyFileSync(src, path.join(PRE_RESTORE_DIR, side));
   }
-  const analytics = path.join(DATA_DIR, 'analytics.duckdb');
-  if (fs.existsSync(analytics)) fs.copyFileSync(analytics, path.join(PRE_RESTORE_DIR, 'analytics.duckdb'));
+  // DuckDB keeps a .wal sidecar for uncommitted writes. Copy the main file
+  // and any sidecars so the snapshot isn't silently truncated to the last
+  // checkpoint. Glob-style match on analytics.duckdb* catches .wal, .tmp, etc.
+  for (const name of fs.readdirSync(DATA_DIR)) {
+    if (name === 'analytics.duckdb' || name.startsWith('analytics.duckdb.')) {
+      fs.copyFileSync(path.join(DATA_DIR, name), path.join(PRE_RESTORE_DIR, name));
+    }
+  }
 
   // Copy certs + dnsmasq (matching what's in a backup) so the pre-restore
   // state is a complete undo target.
@@ -216,8 +222,11 @@ function takePreRestoreSnapshot(db) {
  * running server's open file descriptors would point at orphaned inodes
  * and any writes it made before restart would be silently lost.
  */
-export function restoreBackup(archivePath, { allowIncompatible = false } = {}) {
-  const inspection = inspectBackup(archivePath);
+export function restoreBackup(archivePath, { allowIncompatible = false, inspection: preInspection = null } = {}) {
+  // 1. Compatibility check. Reuse the caller's inspection if they already
+  //    ran one (e.g., the API route inspects to audit before the restore);
+  //    otherwise inspect here. Avoids a second tar parse for large backups.
+  const inspection = preInspection || inspectBackup(archivePath);
   if (!inspection.compatible && !allowIncompatible) {
     const err = new Error(inspection.reason || 'Backup is not compatible with this instance');
     err.code = 'BACKUP_INCOMPATIBLE';
@@ -227,10 +236,9 @@ export function restoreBackup(archivePath, { allowIncompatible = false } = {}) {
 
   const db = getDb();
 
-  // 1. Pre-restore snapshot (safety net — not managed by cidrella-rollback)
+  // 2. Pre-restore snapshot (safety net — not managed by cidrella-rollback)
   takePreRestoreSnapshot(db);
 
-  // 2. Stage the extraction
   // 3. Stage extraction to /tmp — if anything goes wrong here, DATA_DIR is untouched
   const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-restore-'));
   try {

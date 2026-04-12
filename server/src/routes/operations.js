@@ -113,7 +113,8 @@ router.post('/restore', (req, res) => {
       // Send response BEFORE restoreBackup exits the process, so the client
       // sees a successful acknowledgement. The restore path spins a 500ms
       // timer before exit specifically so Express can flush the response.
-      const result = restoreBackup(tmpPath, { allowIncompatible });
+      // Pass the inspection through so restoreBackup doesn't re-parse the tarball.
+      const result = restoreBackup(tmpPath, { allowIncompatible, inspection });
       // Clean up the uploaded tarball — we're about to exit, but be explicit
       // so a second restore within RestartSec doesn't find a stale tmp copy.
       try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }

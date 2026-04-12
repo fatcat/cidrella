@@ -424,15 +424,19 @@ Every restore (via API or UI) takes a snapshot of the pre-restore state to `/var
 ```bash
 sudo systemctl stop cidrella
 cd /var/lib/cidrella
-# Restore the pre-restore snapshot
+# Restore the pre-restore snapshot — SQLite + DuckDB + config
 sudo cp -a snapshots/pre-restore/cidrella.db cidrella.db
 sudo cp -a snapshots/pre-restore/cidrella.db-wal cidrella.db-wal 2>/dev/null || sudo rm -f cidrella.db-wal
 sudo cp -a snapshots/pre-restore/cidrella.db-shm cidrella.db-shm 2>/dev/null || sudo rm -f cidrella.db-shm
-sudo cp -a snapshots/pre-restore/analytics.duckdb analytics.duckdb
+# DuckDB main file + any .wal / .tmp sidecars
+sudo rm -f analytics.duckdb analytics.duckdb.*
+for f in snapshots/pre-restore/analytics.duckdb*; do
+  [ -f "$f" ] && sudo cp -a "$f" "./$(basename "$f")"
+done
 sudo rm -rf certs dnsmasq
 sudo cp -a snapshots/pre-restore/certs certs
 sudo cp -a snapshots/pre-restore/dnsmasq dnsmasq
-sudo chown -R cidrella:cidrella cidrella.db* analytics.duckdb certs dnsmasq
+sudo chown -R cidrella:cidrella cidrella.db* analytics.duckdb* certs dnsmasq
 sudo systemctl start cidrella
 ```
 
