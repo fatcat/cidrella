@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+# Anchor CWD to / so we never depend on the invoker's working directory.
+# Rollback wipes slots in the same way update.sh does, so the same CWD
+# unlinking risk applies. See the note in update.sh for the incident.
+cd / 2>/dev/null || true
+
 # ═══════════════════════════════════════════════════════════
 # CIDRella Rollback
 # Standalone rollback script — does NOT depend on CIDRella code,

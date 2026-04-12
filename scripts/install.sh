@@ -1,6 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
+# Anchor CWD to / so we never depend on the invoker's working directory.
+# See the note in update.sh — same reasoning: if the caller is cd'd into a
+# directory this script ends up removing (slot wipe, data dir cleanup, etc),
+# child processes like rsync will fail on getcwd() at startup. Immunizing
+# here is a one-line fix.
+cd / 2>/dev/null || true
+
 # ═══════════════════════════════════════════════════════════
 # CIDRella Installer
 # Interactive installer for Debian/Ubuntu (bare-metal or LXC)

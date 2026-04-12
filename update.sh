@@ -1,6 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
+# Anchor CWD to / so we never depend on the invoker's working directory.
+# Prior incident (2026-04-12): user ran /opt/cidrella/update.sh while cd'd
+# inside /opt/cidrella-a; update.sh later rm -rf'd that slot during the
+# target-slot wipe, which unlinked the running process's CWD inode. rsync
+# then called getcwd() during startup and failed with "No such file or
+# directory (code 3)", killing the update at line 380 of v0.4.4. cd / makes
+# the script immune to invoker CWD regardless of where it gets called from.
+cd / 2>/dev/null || true
+
 # ═══════════════════════════════════════════════════════════
 # CIDRella Updater (A/B slot with auto-rollback)
 #
@@ -143,8 +152,14 @@ on_error() {
   local line_no="${BASH_LINENO[0]}"
   local phase="${LAST_PHASE:-unknown}"
 
-  # Grab the tail of the update log (if --from-api mode, we redirected stdout/
-  # stderr to $UPDATE_LOG earlier; otherwise the log may be empty).
+  # Tiny sleep to let any in-flight tee/stdbuf output flush to the log file
+  # before we read its tail. Without this the background tee process can be
+  # holding the last few lines in a pipe buffer.
+  sleep 0.1
+
+  # Grab the tail of the update log. In --from-api mode we exec'd directly
+  # into the file; in CLI mode we exec'd through a tee process so both the
+  # terminal and the file see the stream.
   local log_tail=""
   if [ -f "$UPDATE_LOG" ]; then
     log_tail=$(tail -n 12 "$UPDATE_LOG" 2>/dev/null || true)
@@ -188,15 +203,29 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# When invoked from the server (--from-api), the parent spawns us with
-# stdio: 'ignore', so everything we print vanishes. Redirect stdout and stderr
-# to a per-run log file so the ERR trap can read the tail and surface it in
-# the progress file's `error` field. Truncated per run. Directory may not
-# exist on very first install (unlikely here since --from-api implies the
-# data dir is already populated) — mkdir -p is idempotent.
+# Always capture stdout and stderr to $UPDATE_LOG so the ERR trap can read
+# the tail and surface it in the progress file's `error` field. Two modes:
+#   --from-api: server spawns with stdio: 'ignore', so we redirect only
+#               (no tee needed — there's no terminal to write to anyway).
+#   CLI mode:   tee to both the terminal AND the log file so the user still
+#               sees interactive progress AND the on_error handler has a
+#               log to read from. Prior to v0.4.6 CLI mode didn't populate
+#               the log at all, so the rich ERR-trap message was empty on
+#               direct invocations — specifically the rsync getcwd() failure
+#               from the 2026-04-12 prod incident would have been lost.
+mkdir -p "$(dirname "$UPDATE_LOG")" 2>/dev/null || true
+: > "$UPDATE_LOG" 2>/dev/null || true
 if [ "$FROM_API" = true ]; then
-  mkdir -p "$(dirname "$UPDATE_LOG")" 2>/dev/null || true
   exec > "$UPDATE_LOG" 2>&1
+else
+  # stdbuf -oL forces line-buffered output on tee so the log file sees each
+  # line as it happens, not after a 4KB buffer fills. Without line buffering
+  # the ERR trap can race tee and read an empty/partial log.
+  if command -v stdbuf >/dev/null 2>&1; then
+    exec > >(stdbuf -oL tee -a "$UPDATE_LOG") 2>&1
+  else
+    exec > >(tee -a "$UPDATE_LOG") 2>&1
+  fi
 fi
 
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
