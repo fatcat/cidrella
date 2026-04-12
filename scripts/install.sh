@@ -455,6 +455,13 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 
 info "Installing systemd services..."
 
+# Install cidrella-node wrapper first — v0.4.3+ systemd units reference it
+# as ExecStart, so it must exist before daemon-reload runs.
+if [ -f "$INSTALL_DIR/scripts/cidrella-node" ]; then
+  install -m 0755 "$INSTALL_DIR/scripts/cidrella-node" /usr/local/bin/cidrella-node
+  ok "Installed /usr/local/bin/cidrella-node wrapper"
+fi
+
 cp "$INSTALL_DIR/scripts/systemd/cidrella.service" /etc/systemd/system/
 ok "Installed cidrella.service"
 

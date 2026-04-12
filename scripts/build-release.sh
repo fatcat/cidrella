@@ -147,8 +147,26 @@ if [ "$DRY_RUN" = false ]; then
 
   # Documentation
   cp "$PROJECT_DIR/README.md" "$STAGING_DIR/README.md" 2>/dev/null || true
+
+  # RELEASE.json — signed-payload source of truth for the version, commit,
+  # and bundled node version. update.sh uses the `version` field here
+  # (after minisign verification) as the authoritative downgrade-guard
+  # input, not the GitHub API's tag_name (which is on the attacker's
+  # side of the trust boundary).
+  BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  COMMIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+  # bundled_node_version is null until Phase 2 (v0.4.5) actually bundles Node.
+  cat > "$STAGING_DIR/RELEASE.json" <<RELEASE_JSON
+{
+  "version": "${VERSION}",
+  "built_at": "${BUILT_AT}",
+  "commit_sha": "${COMMIT_SHA}",
+  "bundled_node_version": null
+}
+RELEASE_JSON
+  echo "  Wrote RELEASE.json (version=${VERSION}, commit=${COMMIT_SHA:0:12})"
 else
-  echo "  [DRY RUN] Would stage server/, client/dist/, dnsmasq/, scripts/, package.json, README.md"
+  echo "  [DRY RUN] Would stage server/, client/dist/, dnsmasq/, scripts/, package.json, README.md, RELEASE.json"
 fi
 
 # ─── Step 3: Bundle server node_modules (production) ─────

@@ -57,6 +57,24 @@ ok()    { [ "$FROM_API" = true ] && return; echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { [ "$FROM_API" = true ] && return; echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
+# ─── Node binary resolver ─────────────────────────────────
+# Phase 0 plumbing for Phase 2's bundled-Node release. Prefers a
+# slot-local bundled runtime if present; falls back to /usr/bin/node.
+# Pass the slot directory whose bundled runtime you want (the
+# target slot for preflight, the active slot for DB maintenance).
+resolve_node() {
+  local slot="${1:-}"
+  if [ -n "$slot" ] && [ -x "$slot/runtime/node/bin/node" ]; then
+    printf '%s\n' "$slot/runtime/node/bin/node"
+    return 0
+  fi
+  if [ -x "/opt/cidrella/runtime/node/bin/node" ]; then
+    printf '%s\n' "/opt/cidrella/runtime/node/bin/node"
+    return 0
+  fi
+  printf '%s\n' "/usr/bin/node"
+}
+
 # ─── Progress file helpers ────────────────────────────────
 
 write_progress() {
@@ -179,9 +197,10 @@ esac
 info "Active slot:  $ACTIVE_SLOT"
 info "Target slot:  $TARGET_SLOT"
 
-# Read current version
+# Read current version (via active slot's node, which may be bundled in future)
 if [ -f "$INSTALL_LINK/package.json" ]; then
-  CURRENT_VERSION=$(node -e "console.log(require('$INSTALL_LINK/package.json').version)" 2>/dev/null || echo "unknown")
+  ACTIVE_NODE=$(resolve_node "$INSTALL_LINK")
+  CURRENT_VERSION=$("$ACTIVE_NODE" -e "console.log(require('$INSTALL_LINK/package.json').version)" 2>/dev/null || echo "unknown")
 fi
 info "Current version: v${CURRENT_VERSION}"
 
@@ -343,6 +362,35 @@ chown -R cidrella:cidrella "$TARGET_SLOT"
 ok "Extracted to $TARGET_SLOT"
 track_progress "extracting" 50 "Files extracted"
 
+# ─── Verify RELEASE.json and authoritative version ──────
+# The GitHub API's tag_name is on the attacker's side of the trust boundary —
+# any early version checks we did were advisory. The signed tarball contains
+# a RELEASE.json whose version field is the ONLY authoritative version.
+# Re-run the downgrade guard here with that value.
+RELEASE_META="$TARGET_SLOT/RELEASE.json"
+if [ -f "$RELEASE_META" ]; then
+  VERIFIED_VERSION=$(grep -oP '"version"\s*:\s*"\K[^"]+' "$RELEASE_META" | head -1 || true)
+  if [ -z "$VERIFIED_VERSION" ]; then
+    err "RELEASE.json present but missing/malformed 'version' field — aborting"
+    exit 1
+  fi
+  if [ "$VERIFIED_VERSION" != "$NEW_VERSION" ]; then
+    warn "RELEASE.json version ($VERIFIED_VERSION) differs from GitHub tag ($NEW_VERSION)"
+    warn "Using signed RELEASE.json value as authoritative"
+    NEW_VERSION="$VERIFIED_VERSION"
+  fi
+  # Authoritative downgrade guard — runs on signed data.
+  if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
+    err "Refusing to downgrade (verified from signed RELEASE.json): v${CURRENT_VERSION} → v${NEW_VERSION}"
+    err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot)."
+    write_progress "failed" 50 "Downgrade not allowed via update" "Signed RELEASE.json v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
+    exit 1
+  fi
+  ok "RELEASE.json verified: v${VERIFIED_VERSION}"
+else
+  warn "Tarball has no RELEASE.json — pre-v0.4.3 release; using unverified GitHub tag for version"
+fi
+
 # ═══════════════════════════════════════════════════════════
 # PHASE 4: PRE-FLIGHT VALIDATION (old version still running)
 # ═══════════════════════════════════════════════════════════
@@ -387,12 +435,13 @@ chown cidrella:cidrella "$PREFLIGHT_DATA"
 
 # Start new version on temp port with throwaway data dir — so it doesn't
 # touch production DB and we can verify all subsystems come up clean.
+PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT")
 sudo -u cidrella env \
   HTTPS_PORT=$PREFLIGHT_PORT \
   HTTP_PORT=$((PREFLIGHT_PORT + 1)) \
   DATA_DIR="$PREFLIGHT_DATA" \
   NODE_ENV=production \
-  /usr/bin/node "$TARGET_SLOT/server/src/index.js" \
+  "$PREFLIGHT_NODE" "$TARGET_SLOT/server/src/index.js" \
   > "$TMPDIR/preflight.log" 2>&1 &
 PREFLIGHT_PID=$!
 
@@ -446,7 +495,8 @@ mkdir -p "$SNAPSHOT_DIR"
 
 # SQLite: checkpoint WAL so the .db file is up to date, then copy
 if [ -f "$DATA_DIR/cidrella.db" ]; then
-  sudo -u cidrella /usr/bin/node -e "
+  ACTIVE_NODE=$(resolve_node "$INSTALL_LINK")
+  sudo -u cidrella "$ACTIVE_NODE" -e "
     const Database = require('$INSTALL_LINK/server/node_modules/better-sqlite3');
     const db = new Database('$DATA_DIR/cidrella.db');
     db.pragma('wal_checkpoint(TRUNCATE)');
@@ -496,6 +546,14 @@ track_progress "snapshotting" 80 "Snapshot complete"
 
 track_progress "switching" 85 "Switching to new version..."
 info "Switching to new version..."
+
+# Install cidrella-node wrapper from new slot BEFORE systemd unit update.
+# v0.4.3+ systemd units use /usr/local/bin/cidrella-node as ExecStart — the
+# wrapper must exist before daemon-reload or the restart will fail.
+if [ -f "$TARGET_SLOT/scripts/cidrella-node" ]; then
+  install -m 0755 "$TARGET_SLOT/scripts/cidrella-node" /usr/local/bin/cidrella-node
+  ok "Installed /usr/local/bin/cidrella-node wrapper"
+fi
 
 # Update systemd unit files if they changed
 if [ -f "$TARGET_SLOT/scripts/systemd/cidrella.service" ]; then

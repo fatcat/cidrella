@@ -1,0 +1,42 @@
+#!/bin/sh
+# CIDRella node resolver — prefers a bundled runtime if present,
+# falls back to the system node binary. Installed at
+# /usr/local/bin/cidrella-node and used by:
+#   - cidrella.service (ExecStart)
+#   - update.sh (when operating on the active slot)
+#   - rollback.sh
+#
+# Phase 0 (v0.4.3): bundled runtime does not exist yet — this wrapper
+# is plumbing for Phase 2 (v0.4.5), which will ship a pinned Node.
+# Until then, every call falls through to /usr/bin/node.
+#
+# Resolution order:
+#   1. $CIDRELLA_NODE (explicit override for testing)
+#   2. /opt/cidrella/runtime/node/bin/node (bundled, via active symlink)
+#   3. /usr/bin/node  (Debian/Ubuntu default)
+#   4. /usr/local/bin/node (manually installed)
+#   5. `node` from PATH (last resort)
+
+set -eu
+
+if [ -n "${CIDRELLA_NODE:-}" ] && [ -x "${CIDRELLA_NODE}" ]; then
+  exec "${CIDRELLA_NODE}" "$@"
+fi
+
+for candidate in \
+  /opt/cidrella/runtime/node/bin/node \
+  /usr/bin/node \
+  /usr/local/bin/node
+do
+  if [ -x "$candidate" ]; then
+    exec "$candidate" "$@"
+  fi
+done
+
+# Final fallback: whatever is on PATH. If nothing, fail with a clear error.
+if command -v node >/dev/null 2>&1; then
+  exec node "$@"
+fi
+
+echo "cidrella-node: no usable node binary found (checked bundled runtime and system paths)" >&2
+exit 127

@@ -38,6 +38,23 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
+# ─── Node resolver ────────────────────────────────────────
+# Rollback must be standalone — no dependence on the installation being
+# rolled back. Inline the bundled-runtime check so this script stays
+# self-contained even if /usr/local/bin/cidrella-node was wiped.
+resolve_node() {
+  local slot="${1:-}"
+  if [ -n "$slot" ] && [ -x "$slot/runtime/node/bin/node" ]; then
+    printf '%s\n' "$slot/runtime/node/bin/node"
+    return 0
+  fi
+  if [ -x "/opt/cidrella/runtime/node/bin/node" ]; then
+    printf '%s\n' "/opt/cidrella/runtime/node/bin/node"
+    return 0
+  fi
+  printf '%s\n' "/usr/bin/node"
+}
+
 AUTO_YES=false
 LIST_ONLY=false
 
@@ -92,7 +109,9 @@ fi
 read_version() {
   local dir="$1"
   if [ -f "$dir/package.json" ]; then
-    node -e "console.log(require('$dir/package.json').version)" 2>/dev/null || echo "unknown"
+    local node_bin
+    node_bin=$(resolve_node "$dir")
+    "$node_bin" -e "console.log(require('$dir/package.json').version)" 2>/dev/null || echo "unknown"
   else
     echo "unknown"
   fi
