@@ -44,18 +44,32 @@ TMPDIR=""
 RESOLV_BACKUP=""
 PREFLIGHT_PID=""
 
-# ─── Colors ───────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
+# ─── Shared library ───────────────────────────────────────
+# Source the per-slot bash helpers. Scripts live in the active slot at
+# $INSTALL_LINK/scripts/lib/. Resolving $0 via readlink -f lets us find
+# the lib whether we're invoked as /usr/local/bin/cidrella-update (symlink)
+# or as /opt/cidrella/update.sh directly.
+_UPDATE_SH_REAL="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+_UPDATE_SLOT_DIR="$(dirname "$_UPDATE_SH_REAL")"
+LIB_DIR="$_UPDATE_SLOT_DIR/scripts/lib"
+if [ ! -d "$LIB_DIR" ] || [ ! -f "$LIB_DIR/log.sh" ]; then
+  echo "[ERROR] shared library not found at $LIB_DIR — aborting" >&2
+  exit 1
+fi
+# Must export FROM_API before sourcing log.sh so color/output guards work.
+export FROM_API
+# shellcheck source=scripts/lib/log.sh
+source "$LIB_DIR/log.sh"
+# shellcheck source=scripts/lib/slots.sh
+source "$LIB_DIR/slots.sh"
+# shellcheck source=scripts/lib/verify.sh
+source "$LIB_DIR/verify.sh"
+# shellcheck source=scripts/lib/systemd-install.sh
+source "$LIB_DIR/systemd-install.sh"
 
-info()  { [ "$FROM_API" = true ] && return; echo -e "${BLUE}[INFO]${NC} $*"; }
-ok()    { [ "$FROM_API" = true ] && return; echo -e "${GREEN}[OK]${NC} $*"; }
-warn()  { [ "$FROM_API" = true ] && return; echo -e "${YELLOW}[WARN]${NC} $*"; }
-err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+# Legacy aliases for escape codes still used inline below (bold banners).
+BOLD=$'\033[1m'
+NC=$'\033[0m'
 
 # ─── Node binary resolver ─────────────────────────────────
 # Phase 0 plumbing for Phase 2's bundled-Node release. Prefers a
@@ -144,6 +158,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+emit_event update start "started_at=$STARTED_AT" "pid=$$"
 
 # ═══════════════════════════════════════════════════════════
 # PHASE 1: PREFLIGHT (old version still running)
@@ -203,6 +218,7 @@ if [ -f "$INSTALL_LINK/package.json" ]; then
   CURRENT_VERSION=$("$ACTIVE_NODE" -e "console.log(require('$INSTALL_LINK/package.json').version)" 2>/dev/null || echo "unknown")
 fi
 info "Current version: v${CURRENT_VERSION}"
+emit_event preflight pass "from_version=$CURRENT_VERSION" "active_slot=$ACTIVE_SLOT" "target_slot=$TARGET_SLOT"
 
 # ─── Disk space check ────────────────────────────────────
 # Need room for: tarball download + extracted tarball + populated target slot
@@ -254,16 +270,7 @@ fi
 TAG_NAME=$(echo "$RELEASE_JSON" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' | head -1)
 NEW_VERSION="${TAG_NAME#v}"
 
-# Compare semver. Returns 0 if $1 < $2, 1 otherwise.
-semver_lt() {
-  local a b
-  a="$1"
-  b="$2"
-  if [ "$(printf '%s\n%s' "$a" "$b" | sort -V | head -1)" = "$a" ] && [ "$a" != "$b" ]; then
-    return 0
-  fi
-  return 1
-}
+# semver_lt / semver_gt / semver_eq come from scripts/lib/slots.sh.
 
 if [ "$NEW_VERSION" = "$CURRENT_VERSION" ]; then
   ok "Already running the latest version (v${CURRENT_VERSION})."
@@ -319,25 +326,38 @@ TMPDIR=$(mktemp -d)
 curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
 TARBALL_SIZE=$(du -h "$TMPDIR/cidrella.tar.gz" | cut -f1)
 ok "Downloaded $TARBALL_SIZE"
+emit_event download pass "tag=$TAG_NAME" "size=$TARBALL_SIZE"
 track_progress "downloading" 25 "Download complete ($TARBALL_SIZE)"
 
 curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
 
 # ─── Verify signature ───────────────────────────────────
 PUBKEY_FILE="$INSTALL_LINK/scripts/cidrella.pub"
-if [ -f "$TMPDIR/cidrella.tar.gz.minisig" ] && [ -f "$PUBKEY_FILE" ] && command -v minisign &>/dev/null; then
+_sig_file="$TMPDIR/cidrella.tar.gz.minisig"
+if [ -f "$_sig_file" ] && [ -f "$PUBKEY_FILE" ]; then
   track_progress "verifying" 30 "Verifying signature..."
-  if minisign -Vm "$TMPDIR/cidrella.tar.gz" -p "$PUBKEY_FILE" >/dev/null 2>&1; then
+  emit_event verify start "tarball=$TMPDIR/cidrella.tar.gz"
+  if verify_minisign "$TMPDIR/cidrella.tar.gz" "$_sig_file" "$PUBKEY_FILE"; then
     ok "Signature verified."
+    emit_event verify pass
   else
-    err "Signature verification failed! The download may be corrupted or tampered with."
-    write_progress "failed" 30 "Signature verification failed" "minisign verification failed"
-    exit 1
+    _rc=$?
+    if [ "$_rc" -eq 2 ]; then
+      warn "minisign not installed — skipping signature verification."
+      emit_event verify skip reason=no-minisign
+    else
+      err "Signature verification failed! The download may be corrupted or tampered with."
+      emit_event verify fail reason=bad-signature
+      write_progress "failed" 30 "Signature verification failed" "minisign verification failed"
+      exit 1
+    fi
   fi
-elif [ -f "$PUBKEY_FILE" ] && command -v minisign &>/dev/null; then
+elif [ -f "$PUBKEY_FILE" ]; then
   warn "No signature file found for this release. Proceeding without verification."
+  emit_event verify skip reason=no-sig-file
 else
   warn "minisign not available or no public key — skipping signature verification."
+  emit_event verify skip reason=no-pubkey
 fi
 
 # ═══════════════════════════════════════════════════════════
@@ -360,6 +380,7 @@ fi
 rsync -a "$EXTRACTED/" "$TARGET_SLOT/"
 chown -R cidrella:cidrella "$TARGET_SLOT"
 ok "Extracted to $TARGET_SLOT"
+emit_event extract pass "target_slot=$TARGET_SLOT"
 track_progress "extracting" 50 "Files extracted"
 
 # ─── Verify RELEASE.json and authoritative version ──────
@@ -369,26 +390,31 @@ track_progress "extracting" 50 "Files extracted"
 # Re-run the downgrade guard here with that value.
 RELEASE_META="$TARGET_SLOT/RELEASE.json"
 if [ -f "$RELEASE_META" ]; then
-  VERIFIED_VERSION=$(grep -oP '"version"\s*:\s*"\K[^"]+' "$RELEASE_META" | head -1 || true)
+  VERIFIED_VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RELEASE_META" | head -1)
   if [ -z "$VERIFIED_VERSION" ]; then
     err "RELEASE.json present but missing/malformed 'version' field — aborting"
+    emit_event verify fail reason=release-json-malformed
     exit 1
   fi
   if [ "$VERIFIED_VERSION" != "$NEW_VERSION" ]; then
     warn "RELEASE.json version ($VERIFIED_VERSION) differs from GitHub tag ($NEW_VERSION)"
     warn "Using signed RELEASE.json value as authoritative"
+    emit_event verify warn reason=tag-mismatch "tag=$NEW_VERSION" "release_json=$VERIFIED_VERSION"
     NEW_VERSION="$VERIFIED_VERSION"
   fi
   # Authoritative downgrade guard — runs on signed data.
   if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
     err "Refusing to downgrade (verified from signed RELEASE.json): v${CURRENT_VERSION} → v${NEW_VERSION}"
     err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot)."
+    emit_event verify fail reason=downgrade "from=$CURRENT_VERSION" "to=$NEW_VERSION"
     write_progress "failed" 50 "Downgrade not allowed via update" "Signed RELEASE.json v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
     exit 1
   fi
   ok "RELEASE.json verified: v${VERIFIED_VERSION}"
+  emit_event verify pass "release_json_version=$VERIFIED_VERSION"
 else
   warn "Tarball has no RELEASE.json — pre-v0.4.3 release; using unverified GitHub tag for version"
+  emit_event verify warn reason=no-release-json
 fi
 
 # ═══════════════════════════════════════════════════════════
@@ -480,6 +506,7 @@ if [ "$PROBE_OK" != true ]; then
   exit 1
 fi
 ok "Pre-flight health probe passed"
+emit_event preflight pass probe=deep-health "port=$PREFLIGHT_PORT"
 track_progress "validating" 70 "Pre-flight validated"
 
 # ═══════════════════════════════════════════════════════════
@@ -521,6 +548,7 @@ cat > "$SNAPSHOT_DIR/metadata.json" <<META
 }
 META
 ok "Database snapshots created in $SNAPSHOT_DIR"
+emit_event snapshot pass "dir=$SNAPSHOT_DIR"
 
 # ─── Install standalone rollback script ─────────────────
 # Copy the rollback script from the CURRENT (running) version, not the new one.
@@ -555,16 +583,16 @@ if [ -f "$TARGET_SLOT/scripts/cidrella-node" ]; then
   ok "Installed /usr/local/bin/cidrella-node wrapper"
 fi
 
-# Update systemd unit files if they changed
+# Update systemd unit files if they changed (install_systemd_unit is idempotent).
 if [ -f "$TARGET_SLOT/scripts/systemd/cidrella.service" ]; then
-  if ! diff -q "$TARGET_SLOT/scripts/systemd/cidrella.service" /etc/systemd/system/cidrella.service &>/dev/null; then
-    cp "$TARGET_SLOT/scripts/systemd/cidrella.service" /etc/systemd/system/
+  if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella.service" /etc/systemd/system/cidrella.service)" = "changed" ]; then
     ok "Updated cidrella.service"
+    emit_event switchover pass unit=cidrella.service
   fi
 fi
 if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" ] && [ -f /etc/systemd/system/cidrella-anomaly.service ]; then
-  if ! diff -q "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/cidrella-anomaly.service &>/dev/null; then
-    cp "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/
+  if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/cidrella-anomaly.service)" = "changed" ]; then
+    emit_event switchover pass unit=cidrella-anomaly.service
   fi
 fi
 # Note: cidrella-dnsmasq.service is deliberately NOT touched — dnsmasq keeps running.
@@ -583,6 +611,7 @@ fi
 
 # ATOMIC SWITCHOVER: swap symlink
 ln -sfn "$TARGET_SLOT" "$INSTALL_LINK"
+emit_event switchover pass "active_slot=$TARGET_SLOT"
 
 # Reload systemd so it sees the new target (unit files are absolute paths
 # through the symlink, but daemon-reload is cheap insurance).
@@ -615,6 +644,8 @@ done
 
 if [ "$VERIFY_OK" = true ]; then
   ok "New version healthy."
+  emit_event health pass "version=$NEW_VERSION"
+  emit_event update end "from=$CURRENT_VERSION" "to=$NEW_VERSION" result=success
   track_progress "completed" 100 "Updated to v${NEW_VERSION}"
 
   if [ "$FROM_API" = false ]; then
@@ -637,6 +668,8 @@ fi
 # ═══════════════════════════════════════════════════════════
 
 err "New version failed health check — auto-rolling back to v${CURRENT_VERSION}"
+emit_event health fail "version=$NEW_VERSION"
+emit_event rollback start "from=$NEW_VERSION" "to=$CURRENT_VERSION"
 write_progress "rolling_back" 95 "New version failed — auto-rolling back..." "Health check failed"
 
 # Swap symlink back
@@ -670,12 +703,16 @@ done
 if [ "$ROLLBACK_OK" = true ]; then
   err "Update FAILED — automatically rolled back to v${CURRENT_VERSION}."
   err "Check logs: journalctl -u cidrella -n 100"
+  emit_event rollback pass "restored_version=$CURRENT_VERSION"
+  emit_event update end result=rolled-back "from=$CURRENT_VERSION" "to=$NEW_VERSION"
   write_progress "failed" 100 "Update failed — rolled back to v${CURRENT_VERSION}" "Health check failed after update. Automatic rollback succeeded."
   exit 1
 else
   err "CRITICAL: rollback FAILED too! CIDRella is not running."
   err "Run: cidrella-rollback --yes"
   err "Or manually: ln -sfn $ACTIVE_SLOT $INSTALL_LINK && systemctl restart cidrella"
+  emit_event rollback fail reason=service-down
+  emit_event update end result=catastrophic-failure "from=$CURRENT_VERSION" "to=$NEW_VERSION"
   write_progress "failed" 100 "Update AND rollback failed" "Update failed health check. Automatic rollback also failed."
   exit 1
 fi
