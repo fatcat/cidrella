@@ -123,18 +123,29 @@ if [ "$DRY_RUN" = false ]; then
   rm -rf "$STAGING_DIR"
   mkdir -p "$STAGING_DIR"
 
-  # Server source (node_modules added in step 3)
-  rsync -a --exclude='node_modules' "$PROJECT_DIR/server/" "$STAGING_DIR/server/"
+  # .buildignore holds the shared exclude list for anything we rsync into
+  # staging. This is how we keep dev databases (server/data/), tests,
+  # vitest config, and dev-only scripts out of the release tarball.
+  BUILDIGNORE="$PROJECT_DIR/.buildignore"
+  if [ ! -f "$BUILDIGNORE" ]; then
+    echo "Error: $BUILDIGNORE missing — release would ship dev data. Aborting."
+    exit 1
+  fi
 
-  # Built client (dist only)
+  # Server source (node_modules added fresh in step 3 via `npm ci --omit=dev`)
+  rsync -a --exclude-from="$BUILDIGNORE" "$PROJECT_DIR/server/" "$STAGING_DIR/server/"
+
+  # Built client (dist only — we never ship client/src or client/node_modules)
   mkdir -p "$STAGING_DIR/client"
   cp -a "$PROJECT_DIR/client/dist" "$STAGING_DIR/client/dist"
 
-  # dnsmasq config templates
+  # dnsmasq config templates (no dev cruft in this dir, cp -a is fine)
   cp -a "$PROJECT_DIR/dnsmasq" "$STAGING_DIR/dnsmasq"
 
-  # Scripts (install, systemd, sudoers)
-  cp -a "$PROJECT_DIR/scripts" "$STAGING_DIR/scripts"
+  # Scripts (install, systemd, sudoers, lib, cidrella-node wrapper, pubkey).
+  # Switched from `cp -a` to rsync so we can apply .buildignore and strip
+  # dev-only helpers like build-release.sh, deploy-lxc.sh, test-dns-blocking.sh.
+  rsync -a --exclude-from="$BUILDIGNORE" "$PROJECT_DIR/scripts/" "$STAGING_DIR/scripts/"
 
   # Update script (root level for visibility)
   cp "$PROJECT_DIR/update.sh" "$STAGING_DIR/update.sh"

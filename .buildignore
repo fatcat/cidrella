@@ -1,0 +1,30 @@
+# .buildignore — patterns excluded from release tarballs by scripts/build-release.sh.
+#
+# Passed to `rsync --exclude-from` when staging server/ and scripts/ into the
+# tarball. Patterns are relative to each rsync source root, not the repo root,
+# so `data/` matches server/data/ (any `data/` directory at any depth).
+# See rsync(1) FILTER RULES for syntax.
+
+# Dev database and local state — would leak dev credentials and audit log
+# contents into every shipped tarball. All of server/data/ is never-ship.
+data/
+*.db
+*.db-wal
+*.db-shm
+analytics.duckdb*
+ipam.db
+
+# Test scaffolding — not needed at runtime
+tests/
+vitest.config.js
+
+# Dev-only scripts — users can't usefully run these on a production box
+build-release.sh
+deploy-lxc.sh
+test-dns-blocking.sh
+
+# Dependencies — already handled by the build pipeline (server/node_modules
+# is cleaned and re-installed via `npm ci --omit=dev` later), but excluded
+# here as belt-and-suspenders so the dev tree's node_modules never
+# accidentally makes it into staging.
+node_modules/
