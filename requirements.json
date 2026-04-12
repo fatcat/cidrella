@@ -1,0 +1,8 @@
+{
+  "min_debian": "12",
+  "min_glibc": "2.36",
+  "min_dnsmasq": "2.87",
+  "min_ram_mb": 512,
+  "min_disk_mb": 2000,
+  "bundled_node_version": null
+}

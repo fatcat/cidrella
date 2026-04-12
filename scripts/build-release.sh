@@ -145,6 +145,10 @@ if [ "$DRY_RUN" = false ]; then
   # Root package.json (version source)
   cp "$PROJECT_DIR/package.json" "$STAGING_DIR/package.json"
 
+  # requirements.json — single source of truth for minimum host requirements.
+  # Consumed by scripts/lib/preflight.sh at install/update time.
+  cp "$PROJECT_DIR/requirements.json" "$STAGING_DIR/requirements.json"
+
   # Documentation
   cp "$PROJECT_DIR/README.md" "$STAGING_DIR/README.md" 2>/dev/null || true
 
