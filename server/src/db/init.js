@@ -92,7 +92,7 @@ function runMigrations() {
     console.error('  This usually means a rollback occurred without');
     console.error('  restoring the database snapshot.');
     console.error('');
-    console.error('  Fix: run cidrella-rollback --restore-db');
+    console.error('  Fix: run cidrella-rollback --yes  (restores DB snapshot too)');
     console.error('  Or:  update to a newer CIDRella version');
     console.error('========================================');
     console.error('');

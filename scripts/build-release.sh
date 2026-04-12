@@ -139,10 +139,8 @@ if [ "$DRY_RUN" = false ]; then
   # Update script (root level for visibility)
   cp "$PROJECT_DIR/update.sh" "$STAGING_DIR/update.sh"
 
-  # Rollback script (root level — installed as cidrella-rollback)
-  if [ -f "$PROJECT_DIR/scripts/rollback.sh" ]; then
-    cp "$PROJECT_DIR/scripts/rollback.sh" "$STAGING_DIR/rollback.sh"
-  fi
+  # Note: scripts/rollback.sh is already included via the scripts/ rsync above.
+  # update.sh and install.sh look for it at scripts/rollback.sh.
 
   # Root package.json (version source)
   cp "$PROJECT_DIR/package.json" "$STAGING_DIR/package.json"
