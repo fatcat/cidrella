@@ -104,7 +104,7 @@
         <i class="pi pi-times-circle"></i>
         <div>
           <strong>Update failed</strong>
-          <p>{{ updateStatus.error || 'An unknown error occurred.' }}</p>
+          <pre class="error-detail">{{ updateStatus.error || 'An unknown error occurred.' }}</pre>
           <p v-if="updateStatus.backup_path" class="rollback-hint">
             Rollback available at: <code>{{ updateStatus.backup_path }}</code>
           </p>
@@ -535,6 +535,19 @@ onUnmounted(() => {
 .update-result.error > i { color: var(--red-500); font-size: 1.25rem; }
 .update-result div { flex: 1; }
 .update-result p { margin: 0.25rem 0 0; font-size: 0.9rem; }
+.error-detail {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.8rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: rgba(255, 0, 0, 0.08);
+  border-left: 3px solid var(--red-500);
+  border-radius: 3px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 20rem;
+  overflow-y: auto;
+}
 .rollback-hint { font-size: 0.85rem; color: var(--text-color-secondary); }
 .rollback-hint code {
   background: var(--surface-ground);

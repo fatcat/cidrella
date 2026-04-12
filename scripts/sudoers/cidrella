@@ -4,5 +4,9 @@ cidrella ALL=(root) NOPASSWD: /usr/bin/pkill -TERM -x dnsmasq
 cidrella ALL=(root) NOPASSWD: /usr/bin/systemctl restart cidrella-dnsmasq
 cidrella ALL=(root) NOPASSWD: /usr/bin/nmap *
 cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *
-# In-app updates — run update script in its own systemd scope
-cidrella ALL=(root) NOPASSWD: /usr/bin/systemd-run --scope --unit=cidrella-update /opt/cidrella/update.sh *
+# In-app updates — run update script as a TRANSIENT systemd service (not a
+# scope). A scope would inherit cidrella.service's ProtectSystem/ReadWritePaths,
+# which makes /opt read-only in the child and breaks update.sh. A transient
+# service gets a fresh mount namespace. --collect garbage-collects the unit
+# on exit so the same name can be reused across runs.
+cidrella ALL=(root) NOPASSWD: /usr/bin/systemd-run --unit=cidrella-update --collect /opt/cidrella/update.sh *

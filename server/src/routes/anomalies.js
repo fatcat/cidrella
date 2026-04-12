@@ -77,11 +77,54 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
 
   const enabled = getSetting('anomaly_detection_enabled') === 'true';
 
+  // Daemon status reported here is whatever the python daemon last wrote to
+  // the anomaly_daemon_status setting. The daemon writes this on every scoring
+  // and training cycle — so if it stops writing, we know the daemon is dead
+  // even though the cached values look fine. We must NOT pass the stale
+  // snapshot through to the UI as "healthy"; instead, compare the last
+  // heartbeat timestamp against the expected scoring interval and mark the
+  // daemon as stale when it exceeds the threshold.
+  //
+  // This is why the System tab's Anomaly Detection indicator stayed green on
+  // prod on 2026-04-12 while the systemd service had been dead for 5h36m —
+  // the API was reading a six-hour-old snapshot without checking freshness.
   let daemon = null;
   try {
     const raw = getSetting('anomaly_daemon_status');
     if (raw) daemon = JSON.parse(raw);
   } catch { /* ignore parse errors */ }
+
+  if (daemon && enabled) {
+    // Most recent heartbeat is whichever of {last_score, last_train, last_seen}
+    // is most recent. The daemon writes last_score on every scoring cycle and
+    // last_train on every training cycle (training is less frequent). If the
+    // daemon wrote neither, it never reported cycle completion — treat as stale.
+    const heartbeats = [daemon.last_score, daemon.last_train, daemon.last_seen]
+      .filter(Boolean)
+      .map(s => Date.parse(s))
+      .filter(n => Number.isFinite(n));
+
+    if (heartbeats.length === 0) {
+      daemon.stale = true;
+      daemon.stale_reason = 'no_heartbeat';
+    } else {
+      const lastHeartbeatMs = Math.max(...heartbeats);
+      const ageSec = Math.max(0, Math.round((Date.now() - lastHeartbeatMs) / 1000));
+
+      // Threshold: 2× the scoring interval (min 60s floor, min 5min ceiling
+      // for the "ok" window so a misconfigured interval=1min doesn't flap).
+      const scoringMin = parseInt(getSetting('anomaly_scoring_interval_min'), 10);
+      const scoringSec = Number.isFinite(scoringMin) && scoringMin > 0
+        ? scoringMin * 60
+        : 600; // 10min default to match the anomaly_detector default
+      const thresholdSec = Math.max(300, scoringSec * 2);
+
+      daemon.heartbeat_age_sec = ageSec;
+      daemon.heartbeat_threshold_sec = thresholdSec;
+      daemon.stale = ageSec > thresholdSec;
+      if (daemon.stale) daemon.stale_reason = 'heartbeat_too_old';
+    }
+  }
 
   res.json({
     enabled,

@@ -52,6 +52,10 @@ emit_event() {
   done
   local line="{\"ts\":\"${ts}\",\"phase\":\"${phase}\",\"event\":\"${event}\",\"data\":{${data}}}"
   local dir="${CIDRELLA_EVENT_LOG_DIR:-/var/lib/cidrella}"
+  # Auto-create the log dir so the very first event of a fresh install isn't
+  # silently dropped. mkdir -p is idempotent; 2>/dev/null swallows the "exists"
+  # noise; || true prevents a failure here from killing install.sh under set -e.
+  mkdir -p "$dir" 2>/dev/null || true
   if [ -d "$dir" ] && [ -w "$dir" ]; then
     printf '%s\n' "$line" >> "$dir/events.jsonl" 2>/dev/null || true
   fi

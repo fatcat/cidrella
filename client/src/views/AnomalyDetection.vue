@@ -4,10 +4,11 @@
     <div class="stats-bar" v-if="store.summary">
       <div class="stat">
         <span class="stat-value">
-          <span :class="store.summary.enabled ? 'indicator-on' : 'indicator-off'"></span>
-          {{ store.summary.enabled ? 'Enabled' : 'Disabled' }}
+          <span :class="statusIndicatorClass"></span>
+          {{ statusLabel }}
         </span>
         <span class="stat-label">Status</span>
+        <span v-if="statusSubLabel" class="stat-sublabel">{{ statusSubLabel }}</span>
       </div>
       <div class="stat">
         <span class="stat-value">{{ store.summary.clients_monitored }}</span>
@@ -110,6 +111,45 @@ const form = reactive({
 
 // Track original values for dirty detection
 const original = reactive({ ...form });
+
+// Status indicator resolves the combined state of the user-toggled setting
+// AND the daemon's actual liveness. Prior to v0.4.5 this was just
+// `summary.enabled`, which lied green when the daemon was dead — the server
+// now includes `daemon.stale` when heartbeats have gone silent past the
+// expected interval, and we surface that as a warning state distinct from
+// "disabled".
+const statusIndicatorClass = computed(() => {
+  const s = store.summary;
+  if (!s || !s.enabled) return 'indicator-off';
+  if (s.daemon && s.daemon.stale) return 'indicator-warn';
+  if (s.daemon && !s.daemon.stale) return 'indicator-on';
+  return 'indicator-warn';
+});
+
+const statusLabel = computed(() => {
+  const s = store.summary;
+  if (!s) return '—';
+  if (!s.enabled) return 'Disabled';
+  if (s.daemon && s.daemon.stale) return 'Stalled';
+  if (s.daemon) return 'Running';
+  return 'Unknown';
+});
+
+const statusSubLabel = computed(() => {
+  const s = store.summary;
+  if (!s || !s.enabled) return null;
+  if (s.daemon && s.daemon.stale) {
+    if (s.daemon.stale_reason === 'no_heartbeat') return 'no heartbeat recorded';
+    const age = s.daemon.heartbeat_age_sec;
+    if (Number.isFinite(age)) {
+      if (age < 120) return `last heartbeat ${age}s ago`;
+      if (age < 7200) return `last heartbeat ${Math.round(age / 60)}min ago`;
+      return `last heartbeat ${Math.round(age / 3600)}h ago`;
+    }
+    return 'heartbeat too old';
+  }
+  return null;
+});
 
 const isDirty = computed(() => {
   return form.enabled !== original.enabled

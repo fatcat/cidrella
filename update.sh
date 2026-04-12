@@ -43,6 +43,8 @@ NEW_VERSION=""
 TMPDIR=""
 RESOLV_BACKUP=""
 PREFLIGHT_PID=""
+LAST_PHASE="init"
+UPDATE_LOG="/var/lib/cidrella/update.log"
 
 # ─── Shared library ───────────────────────────────────────
 # Source the per-slot bash helpers. Scripts live in the active slot at
@@ -110,6 +112,7 @@ PEOF
 
 LAST_PCT=0
 track_progress() {
+  LAST_PHASE="$1"
   LAST_PCT="$2"
   write_progress "$1" "$2" "$3"
 }
@@ -134,11 +137,39 @@ cleanup() {
 }
 
 on_error() {
+  # Capture $BASH_COMMAND FIRST before any command in this handler overwrites it.
   local exit_code=$?
+  local failed_cmd="${BASH_COMMAND}"
   local line_no="${BASH_LINENO[0]}"
-  local error_msg="Update failed at line $line_no (exit code $exit_code)"
+  local phase="${LAST_PHASE:-unknown}"
+
+  # Grab the tail of the update log (if --from-api mode, we redirected stdout/
+  # stderr to $UPDATE_LOG earlier; otherwise the log may be empty).
+  local log_tail=""
+  if [ -f "$UPDATE_LOG" ]; then
+    log_tail=$(tail -n 12 "$UPDATE_LOG" 2>/dev/null || true)
+  fi
+
+  # Build a multi-line error string. The UI UpdatePanel renders `error` as a
+  # <p> with white-space: pre-wrap so newlines and indentation survive. The
+  # goal: any failure should tell you WHAT failed, WHERE, and WHY without
+  # SSHing to the box. See feedback_error_reporting.md for the rationale.
+  local error_msg
+  error_msg="Update failed during ${phase} phase (line ${line_no}, exit ${exit_code})"$'\n'
+  error_msg="${error_msg}Command: ${failed_cmd}"
+  if [ -n "$log_tail" ]; then
+    error_msg="${error_msg}"$'\n'"Last output:"$'\n'"${log_tail}"
+  fi
+
   err "$error_msg"
   write_progress "failed" "${LAST_PCT:-0}" "Update failed" "$error_msg"
+  if command -v emit_event >/dev/null 2>&1; then
+    emit_event update fail \
+      "phase=${phase}" \
+      "line=${line_no}" \
+      "exit_code=${exit_code}" \
+      "command=${failed_cmd}"
+  fi
   cleanup
   exit "$exit_code"
 }
@@ -156,6 +187,17 @@ while [[ $# -gt 0 ]]; do
     *) err "Unknown argument: $1"; exit 1 ;;
   esac
 done
+
+# When invoked from the server (--from-api), the parent spawns us with
+# stdio: 'ignore', so everything we print vanishes. Redirect stdout and stderr
+# to a per-run log file so the ERR trap can read the tail and surface it in
+# the progress file's `error` field. Truncated per run. Directory may not
+# exist on very first install (unlikely here since --from-api implies the
+# data dir is already populated) — mkdir -p is idempotent.
+if [ "$FROM_API" = true ]; then
+  mkdir -p "$(dirname "$UPDATE_LOG")" 2>/dev/null || true
+  exec > "$UPDATE_LOG" 2>&1
+fi
 
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 emit_event update start "started_at=$STARTED_AT" "pid=$$"
@@ -620,6 +662,22 @@ systemctl daemon-reload
 track_progress "switching" 90 "Restarting CIDRella..."
 info "Restarting cidrella service (dnsmasq stays running)..."
 systemctl restart cidrella
+
+# Restore any enabled-but-inactive auxiliary services after the switchover.
+# On 2026-04-12 prod had cidrella-anomaly stopped (cause unknown) and the
+# prior update path left it that way — the UI showed stale-green health and
+# anomaly detection was silently dead. Explicitly check each auxiliary unit
+# that ships with CIDRella: if the unit is enabled but not active, start it.
+# Missing units (e.g. dnsmasq mode=include) are silently skipped.
+for _aux in cidrella-anomaly; do
+  if systemctl list-unit-files "${_aux}.service" >/dev/null 2>&1 \
+     && systemctl is-enabled --quiet "$_aux" 2>/dev/null \
+     && ! systemctl is-active --quiet "$_aux" 2>/dev/null; then
+    info "Starting $_aux (was enabled but inactive)..."
+    systemctl start "$_aux" || warn "Failed to start $_aux (non-fatal)"
+    emit_event switchover pass "unit=${_aux}.service" action=started
+  fi
+done
 
 # ═══════════════════════════════════════════════════════════
 # PHASE 7: VERIFY HEALTH — auto-rollback on failure

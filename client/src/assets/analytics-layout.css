@@ -23,6 +23,8 @@
 
 .indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
 .indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
+.indicator-warn { width: 8px; height: 8px; border-radius: 50%; background: var(--p-orange-500); display: inline-block; }
+.stat-sublabel { font-size: 0.65rem; color: var(--p-text-muted-color); font-style: italic; margin-top: 2px; }
 
 .text-danger { color: var(--p-red-500); }
 .text-warning { color: var(--p-orange-500); }

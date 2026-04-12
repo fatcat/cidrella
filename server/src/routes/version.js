@@ -123,9 +123,15 @@ router.post('/install', requireRole('admin'), (req, res) => {
     return res.status(500).json({ error: 'Failed to initialize update status file.' });
   }
 
-  // Spawn update in its own systemd scope so it survives cidrella.service restart
+  // Spawn update as a transient systemd service (NOT a scope). A scope inherits
+  // the invoker's mount namespace, so it would carry cidrella.service's
+  // ProtectSystem=strict + ReadWritePaths=/var/lib/cidrella restrictions into
+  // the child — making /opt read-only and breaking `rm -rf /opt/cidrella-b` in
+  // update.sh. A transient service unit gets a fresh namespace with no
+  // inherited hardening, and still survives cidrella.service restart because
+  // it's a separate unit with its own lifecycle.
   const child = spawn('sudo', [
-    'systemd-run', '--scope', '--unit=cidrella-update',
+    'systemd-run', '--unit=cidrella-update', '--collect',
     `${INSTALL_DIR}/update.sh`,
     '--version', targetVersion,
     '--progress-file', STATUS_FILE,
