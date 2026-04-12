@@ -297,6 +297,7 @@ CIDRella has a **separate** backup mechanism that complements the rollback syste
 
 A backup archive is a gzipped tar of:
 
+- `cidrella-backup-manifest.json` — metadata: CIDRella version, schema version, creation time, included files
 - `cidrella.db` — main SQLite database (settings, subnets, DNS/DHCP records, users, audit log)
 - `dnsmasq/` — dnsmasq config, hosts files, dhcp-hosts files, lease file
 - `certs/` — TLS certificates (the self-signed or imported cert that the web UI serves)
@@ -307,6 +308,9 @@ It does **not** include:
 - `geoip/` — GeoIP database. Regenerated on next scheduled update.
 - `backups/` — obviously. Avoids recursive backup-of-backups.
 - `snapshots/pre-update/` — the rollback snapshots, tied to a specific slot.
+- `snapshots/pre-restore/` — the pre-restore safety snapshot, tied to the host.
+
+**Backups from before v0.5.0 (legacy backups)** have no manifest. Restore still works, but CIDRella cannot verify version compatibility — you get a warning and the restore proceeds at your own risk.
 
 ### Creating a backup
 
@@ -365,17 +369,35 @@ Keep backups off-host. If the server disk dies, the backups die with it.
 
 ### Restoring a backup
 
+**Safety net**: Before any restore (via API or CLI), CIDRella takes a **pre-restore snapshot** of your current state to `/var/lib/cidrella/snapshots/pre-restore/`. If the restore brings in a bad or wrong backup, you can recover by restoring that snapshot manually. Unlike rollback snapshots, this one is not managed by `cidrella-rollback` — see [Recovering from a bad restore](#recovering-from-a-bad-restore).
+
+**Version safety**: The restore path checks the backup's manifest and refuses to restore a backup from a **newer** version of CIDRella than the one currently running. The old code cannot handle a newer schema; it would just fail to start after the restore. Upgrade CIDRella first, then restore.
+
 **Over an existing install** (same host, roll back to an earlier state):
 
-Via UI: **System → Backups** → select a backup → **Restore**. The server will overwrite the current state and prompt you to restart.
+Via UI: **System → Backups** → select a backup → **Restore**. The server takes a pre-restore snapshot, swaps files, and exits. systemd restarts it automatically.
 
 Via API:
 
 ```bash
-# Upload a backup file and restore it
+# Inspect first (no changes made)
 curl -sk -X POST -H "Authorization: Bearer $TOKEN" \
-  -F "backup=@/path/to/cidrella-backup.tar.gz" \
-  https://SERVER:8443/api/operations/restore
+  -H "Content-Type: application/gzip" \
+  --data-binary @/path/to/cidrella-backup.tar.gz \
+  "https://SERVER:8443/api/operations/restore?inspect=1"
+
+# If compatible, restore (server will restart mid-response)
+curl -sk -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/gzip" \
+  --data-binary @/path/to/cidrella-backup.tar.gz \
+  "https://SERVER:8443/api/operations/restore"
+
+# Force restore of a newer backup (NOT recommended — will cause schema
+# version incompatibility and the service will refuse to start):
+curl -sk -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/gzip" \
+  --data-binary @/path/to/cidrella-backup.tar.gz \
+  "https://SERVER:8443/api/operations/restore?allowIncompatible=1"
 ```
 
 Via command line (for when the UI or API is unreachable):
@@ -385,6 +407,7 @@ sudo systemctl stop cidrella
 cd /var/lib/cidrella
 # Extract — this overwrites cidrella.db, certs/, dnsmasq/
 sudo tar -xzf /path/to/cidrella-backup.tar.gz
+sudo rm -f cidrella.db-wal cidrella.db-shm  # stale WAL would confuse SQLite
 sudo chown -R cidrella:cidrella cidrella.db* dnsmasq certs
 sudo systemctl start cidrella
 ```
@@ -393,6 +416,27 @@ After a restore, the database may not match the schema your currently running co
 
 - If the backup is **older** than the current schema version, startup migrations will run forward to bring it up to the current schema.
 - If the backup is **newer** than what your current code supports (e.g., you installed an older version and restored a backup from a newer one), the schema version compatibility check will refuse to start. Install a version equal to or newer than what created the backup.
+
+### Recovering from a bad restore
+
+Every restore (via API or UI) takes a snapshot of the pre-restore state to `/var/lib/cidrella/snapshots/pre-restore/`. If the restored backup was wrong, corrupted, or from the wrong host, you can undo it:
+
+```bash
+sudo systemctl stop cidrella
+cd /var/lib/cidrella
+# Restore the pre-restore snapshot
+sudo cp -a snapshots/pre-restore/cidrella.db cidrella.db
+sudo cp -a snapshots/pre-restore/cidrella.db-wal cidrella.db-wal 2>/dev/null || sudo rm -f cidrella.db-wal
+sudo cp -a snapshots/pre-restore/cidrella.db-shm cidrella.db-shm 2>/dev/null || sudo rm -f cidrella.db-shm
+sudo cp -a snapshots/pre-restore/analytics.duckdb analytics.duckdb
+sudo rm -rf certs dnsmasq
+sudo cp -a snapshots/pre-restore/certs certs
+sudo cp -a snapshots/pre-restore/dnsmasq dnsmasq
+sudo chown -R cidrella:cidrella cidrella.db* analytics.duckdb certs dnsmasq
+sudo systemctl start cidrella
+```
+
+The pre-restore snapshot is overwritten by the next restore operation. If you take a second restore before recovering, the first pre-restore state is gone. `cidrella-rollback` does **not** touch pre-restore snapshots — they're a separate recovery mechanism from the pre-update rollback system.
 
 **On a new host** (disaster recovery — server died, setting up a replacement):
 
@@ -571,7 +615,8 @@ The minisign signature on the downloaded tarball does not match the public key a
 | `/var/lib/cidrella/cidrella.db` | Main SQLite database |
 | `/var/lib/cidrella/cidrella.db-wal` | SQLite write-ahead log |
 | `/var/lib/cidrella/analytics.duckdb` | DuckDB analytics database (DNS queries, metrics) |
-| `/var/lib/cidrella/snapshots/pre-update/` | Database snapshot taken by last update |
+| `/var/lib/cidrella/snapshots/pre-update/` | Database snapshot taken by last update (restored by `cidrella-rollback`) |
+| `/var/lib/cidrella/snapshots/pre-restore/` | Safety snapshot taken before last backup restore (manual recovery only) |
 | `/var/lib/cidrella/backups/` | Daily full backups |
 | `/var/lib/cidrella/dnsmasq/` | dnsmasq config, hosts files, lease file |
 | `/var/lib/cidrella/update-status.json` | Current update progress (read by UI) |

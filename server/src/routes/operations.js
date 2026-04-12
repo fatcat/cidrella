@@ -5,7 +5,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { getDb, audit, ensureDefaults } from '../db/init.js';
 import { requireRole } from '../auth/roles.js';
-import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup } from '../utils/backup.js';
+import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup, inspectBackup } from '../utils/backup.js';
 import { reloadTlsCerts } from '../utils/cert.js';
 
 import { DATA_DIR } from '../config/defaults.js';
@@ -69,32 +69,63 @@ router.delete('/backups/:id', (req, res) => {
 });
 
 // POST /api/operations/restore — restore from uploaded backup
+// Query params:
+//   ?inspect=1           — just return the manifest + compatibility, don't restore
+//   ?allowIncompatible=1 — bypass version safety check (admin escape hatch)
 router.post('/restore', (req, res) => {
   const contentType = req.headers['content-type'] || '';
+  const inspectOnly = req.query.inspect === '1' || req.query.inspect === 'true';
+  const allowIncompatible = req.query.allowIncompatible === '1' || req.query.allowIncompatible === 'true';
 
-  // Accept raw tar.gz upload
   if (!contentType.includes('application/gzip') && !contentType.includes('application/octet-stream')) {
     return res.status(400).json({ error: 'Content-Type must be application/gzip or application/octet-stream' });
   }
 
   const tmpPath = path.join(os.tmpdir(), `cidrella-restore-${Date.now()}.tar.gz`);
-
   const writeStream = fs.createWriteStream(tmpPath);
   req.pipe(writeStream);
 
   writeStream.on('finish', () => {
     try {
-      const result = restoreBackup(tmpPath);
-      fs.unlinkSync(tmpPath);
-      audit(req.user.id, 'restore', 'backup', null, {});
+      if (inspectOnly) {
+        const info = inspectBackup(tmpPath);
+        fs.unlinkSync(tmpPath);
+        return res.json(info);
+      }
+
+      // Check compatibility FIRST — if we bail here we don't want an
+      // audit entry for a restore that never happened.
+      const inspection = inspectBackup(tmpPath);
+      if (!inspection.compatible && !allowIncompatible) {
+        fs.unlinkSync(tmpPath);
+        const err = new Error(inspection.reason || 'Backup is not compatible with this instance');
+        err.code = 'BACKUP_INCOMPATIBLE';
+        err.manifest = inspection.manifest;
+        throw err;
+      }
+
+      // Audit BEFORE restoreBackup closes the DB handle. If we called
+      // audit() after, it would hit a closed connection and throw.
+      audit(req.user.id, 'restore', 'backup', null, {
+        manifest: inspection.manifest,
+      });
+
+      // Send response BEFORE restoreBackup exits the process, so the client
+      // sees a successful acknowledgement. The restore path spins a 500ms
+      // timer before exit specifically so Express can flush the response.
+      const result = restoreBackup(tmpPath, { allowIncompatible });
+      // Clean up the uploaded tarball — we're about to exit, but be explicit
+      // so a second restore within RestartSec doesn't find a stale tmp copy.
+      try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
       res.json(result);
     } catch (err) {
       try { fs.unlinkSync(tmpPath); } catch {}
-      res.status(400).json({ error: err.message });
+      const status = err.code === 'BACKUP_INCOMPATIBLE' ? 409 : 400;
+      res.status(status).json({ error: err.message, manifest: err.manifest });
     }
   });
 
-  writeStream.on('error', (err) => {
+  writeStream.on('error', () => {
     try { fs.unlinkSync(tmpPath); } catch {}
     res.status(500).json({ error: 'Failed to save uploaded file' });
   });
