@@ -36,12 +36,19 @@ esac
 
 # Confirm the PID is actually a dnsmasq process before signalling. Prevents
 # the case where a stale pidfile happens to match an unrelated process.
-if [ -r "/proc/$PID/comm" ]; then
-  COMM=$(cat "/proc/$PID/comm" 2>/dev/null || true)
-  if [ "$COMM" != "dnsmasq" ]; then
-    echo "cidrella-dnsmasq-hup: pid $PID is '$COMM', not dnsmasq — refusing" >&2
-    exit 1
-  fi
+# FAIL CLOSED: if /proc isn't readable for any reason, we can't verify the
+# target, so we refuse rather than sending the signal unverified. The whole
+# point of this wrapper is to narrow the sudoers grant — bypassing the check
+# on a filesystem error would defeat that narrowing.
+if [ ! -r "/proc/$PID/comm" ]; then
+  echo "cidrella-dnsmasq-hup: cannot verify pid $PID — /proc/$PID/comm not readable" >&2
+  exit 1
+fi
+
+COMM=$(cat "/proc/$PID/comm" 2>/dev/null || true)
+if [ "$COMM" != "dnsmasq" ]; then
+  echo "cidrella-dnsmasq-hup: pid $PID is '$COMM', not dnsmasq — refusing" >&2
+  exit 1
 fi
 
 exec kill -HUP "$PID"

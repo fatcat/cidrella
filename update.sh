@@ -179,11 +179,21 @@ on_error() {
   err "$error_msg"
   write_progress "failed" "${LAST_PCT:-0}" "Update failed" "$error_msg"
   if command -v emit_event >/dev/null 2>&1; then
+    # `failed_cmd` may contain quotes, backslashes, or other characters that
+    # break emit_event's naive JSON string building. Strip or replace the
+    # problematic chars here so the events.jsonl line stays parseable — the
+    # one log line a consumer most needs to read (the failing command) must
+    # not produce a JSON parse error. Quotes become single quotes, backslashes
+    # become forward slashes, control chars and newlines get stripped.
+    local safe_cmd
+    safe_cmd="${failed_cmd//\"/\'}"
+    safe_cmd="${safe_cmd//\\//}"
+    safe_cmd=$(printf '%s' "$safe_cmd" | tr -d '\000-\037')
     emit_event update fail \
       "phase=${phase}" \
       "line=${line_no}" \
       "exit_code=${exit_code}" \
-      "command=${failed_cmd}"
+      "command=${safe_cmd}"
   fi
   cleanup
   exit "$exit_code"
@@ -661,6 +671,12 @@ if [ -f "$TARGET_SLOT/scripts/cidrella-dnsmasq-hup" ]; then
   ok "Installed /usr/local/bin/cidrella-dnsmasq-hup wrapper"
 fi
 
+# Install cidrella-reset-password wrapper (v0.4.8+). Root-only (0700).
+if [ -f "$TARGET_SLOT/scripts/cidrella-reset-password" ]; then
+  install -m 0700 -o root -g root "$TARGET_SLOT/scripts/cidrella-reset-password" /usr/local/bin/cidrella-reset-password
+  ok "Installed /usr/local/bin/cidrella-reset-password wrapper"
+fi
+
 # Apply capabilities to the bundled Node binary in the TARGET slot before
 # the symlink swap. v0.4.7+ ships Node in runtime/node/bin/node inside each
 # slot; tar doesn't preserve security.capability xattrs, so we re-apply here
@@ -758,6 +774,33 @@ done
 if [ "$VERIFY_OK" = true ]; then
   ok "New version healthy."
   emit_event health pass "version=$NEW_VERSION"
+
+  # Tighten secret file permissions (v0.4.8+). Idempotent — safe to run on
+  # every update. Fixes pre-v0.4.8 installs that had 644 cidrella.db and
+  # server.key on disk. Only touches files that already exist; new files
+  # are created by the cidrella service with default 644 mode but get
+  # tightened here on the next update pass. See install.sh for rationale.
+  chmod 600 "$DATA_DIR/cidrella.db" 2>/dev/null || true
+  chmod 600 "$DATA_DIR/cidrella.db-wal" 2>/dev/null || true
+  chmod 600 "$DATA_DIR/cidrella.db-shm" 2>/dev/null || true
+  chmod 600 "$DATA_DIR/analytics.duckdb" 2>/dev/null || true
+  for f in "$DATA_DIR"/analytics.duckdb.*; do
+    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
+  done
+  chmod 700 "$DATA_DIR/certs" 2>/dev/null || true
+  chmod 600 "$DATA_DIR/certs/server.key" 2>/dev/null || true
+  chmod 700 "$DATA_DIR/backups" 2>/dev/null || true
+  for f in "$DATA_DIR"/backups/*.tar.gz "$DATA_DIR"/backups/*.tar.gz.enc; do
+    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
+  done
+  chmod 700 "$DATA_DIR/anomaly" 2>/dev/null || true
+  chmod 700 "$DATA_DIR/anomaly/models" 2>/dev/null || true
+  for f in "$DATA_DIR"/anomaly/models/*; do
+    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
+  done
+  ok "Tightened secret file permissions"
+  emit_event switchover pass action=tightened-secrets
+
   emit_event update end "from=$CURRENT_VERSION" "to=$NEW_VERSION" result=success
   track_progress "completed" 100 "Updated to v${NEW_VERSION}"
 

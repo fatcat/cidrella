@@ -284,6 +284,47 @@ sudo systemctl start cidrella
 
 Your data in `/var/lib/cidrella/` is untouched by this procedure.
 
+### 7. Forgotten admin password
+
+Available on v0.4.8 and later. If you've forgotten your admin password — particularly after restoring a legacy backup onto a fresh install, where the restored credentials are from the original install and may not be what you remember — the CLI reset tool can set a new random password for any user:
+
+```bash
+sudo cidrella-reset-password           # resets 'admin'
+sudo cidrella-reset-password someuser  # resets 'someuser'
+```
+
+The output prints the new password exactly once. Log in with it, and CIDRella will force you through the Change Password flow before you can access anything else.
+
+**What the reset does:**
+
+- Generates a fresh random base64url password
+- bcrypt-hashes it and writes `users.password_hash`
+- Sets `users.must_change_password = 1`
+- Sets `users.password_reset_by = "cli:<os-user>@<hostname>"` — so on the next successful login, the Change Password page shows a red banner identifying who performed the reset
+- Writes an `audit_log` entry with `action = password_reset_cli`
+
+**Security note**: the wrapper requires `sudo` (root). The actual filesystem access that lets it work is the `600 cidrella:cidrella` mode on `/var/lib/cidrella/cidrella.db`. If you're on a pre-v0.4.8 install where the DB is still `644` (world-readable), ANY local user could reproduce the effect by calling `sqlite3` directly — the wrapper isn't a security boundary, the file permissions are. Upgrade to v0.4.8+ first so the DB is not world-readable, then use the wrapper.
+
+**If the reset is unexpected**: the banner on next login tells the legitimate owner that their password was reset. If the owner did not perform the reset, someone with root shell access to the host ran the tool (or an equivalent SQL update). Treat the host as potentially compromised and investigate who has shell access — the password reset is the least of what a host-level attacker can do.
+
+### Secret file permissions (v0.4.8+)
+
+v0.4.8 tightens the mode on the following paths to `600 cidrella:cidrella` so they're only readable by the cidrella service user and root:
+
+| Path | Mode | Why |
+|---|---|---|
+| `/var/lib/cidrella/cidrella.db` | 600 | SQLite DB with users, audit log, settings (including the JWT signing secret) |
+| `/var/lib/cidrella/cidrella.db-wal`, `.db-shm` | 600 | SQLite WAL/shm sidecars |
+| `/var/lib/cidrella/analytics.duckdb`, `.wal` | 600 | DuckDB analytics data |
+| `/var/lib/cidrella/certs/` (dir) | 700 | |
+| `/var/lib/cidrella/certs/server.key` | 600 | TLS private key (critical) |
+| `/var/lib/cidrella/backups/` (dir) | 700 | Full DB dumps |
+| `/var/lib/cidrella/anomaly/` (dir) | 700 | Per-client DNS behavior profiles |
+
+The `dnsmasq/` subtree stays at the default `755` because the dnsmasq process drops to the `nobody` user after startup and needs to read its own state files on SIGHUP reload — tightening it would break DNS/DHCP config reload.
+
+This tightening applies automatically on upgrade to v0.4.8 — no user action required. Existing files have their mode fixed during the post-health-check phase of `update.sh`. New files created by the service after the upgrade land with default 644 mode and are retightened on the next update pass.
+
 ---
 
 ## Backup and Restore

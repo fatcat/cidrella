@@ -142,16 +142,32 @@ Native installs bind directly to these ports.
 
 ### Reset Admin Password
 
-```bash
-cd /opt/cidrella
-sudo -u cidrella DATA_DIR=/var/lib/cidrella node server/src/reset-password.js
-```
-
-To reset a specific user:
+If you've forgotten the admin password — or need to rotate credentials for any user — run the CLI reset wrapper as root:
 
 ```bash
-sudo -u cidrella DATA_DIR=/var/lib/cidrella node server/src/reset-password.js <username>
+sudo cidrella-reset-password           # resets 'admin'
+sudo cidrella-reset-password someuser  # resets 'someuser'
 ```
+
+The wrapper prints a fresh random password once, sets `must_change_password=1`, writes an `audit_log` entry with `action=password_reset_cli`, and records who performed the reset in `users.password_reset_by` (e.g. `cli:root@cidrella-prod`). On next successful login the user sees a red warning banner on the Change Password page identifying the reset — so if the legitimate owner sees that banner and didn't do the reset, they know someone with root shell access to the host ran it and should investigate immediately.
+
+**Security notes**:
+
+- The wrapper is `/usr/local/bin/cidrella-reset-password`, mode `0700 root:root` — only root can execute it.
+- The actual filesystem security comes from `/var/lib/cidrella/cidrella.db` being mode `600 cidrella:cidrella` on v0.4.8+ installs. Anyone with root or cidrella shell access can bypass the wrapper and manipulate the DB directly; this is not a bug, it's the correct security boundary. Host access is total access.
+- Every reset is audited and visible on next login. **This is the primary defense against unauthorized resets** — they can't be silent.
+
+**Legacy installs (pre-v0.4.8)**: the wrapper is installed starting in v0.4.8. If you're on an older version, you can still run the underlying script directly, but note that v0.4.7+ installs no longer have system `node` — use the bundled runtime:
+
+```bash
+# Pre-v0.4.8 on v0.4.7+:
+sudo -u cidrella DATA_DIR=/var/lib/cidrella /usr/local/bin/cidrella-node /opt/cidrella/server/src/reset-password.js admin
+
+# Pre-v0.4.7 (system node present):
+sudo -u cidrella DATA_DIR=/var/lib/cidrella node /opt/cidrella/server/src/reset-password.js admin
+```
+
+The behavior is the same; you just skip the wrapper. Upgrade to v0.4.8+ to get the audit + banner features.
 
 ### Database Reset
 

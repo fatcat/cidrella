@@ -3,6 +3,20 @@
     <div class="login-card">
       <h1>Change Password</h1>
       <p class="subtitle">You must change your password before continuing.</p>
+      <Message v-if="auth.passwordResetBy" severity="warn" :closable="false" class="mb-3">
+        <div class="reset-warning">
+          <strong>Your password was reset via the command line.</strong>
+          <div class="reset-actor">
+            Actor recorded: <code>{{ auth.passwordResetBy }}</code>
+          </div>
+          <div class="reset-hint">
+            If you did not perform this reset, someone with root access to this
+            host ran <code>cidrella-reset-password</code> (or an equivalent SQL
+            update) on your account. Treat this host as potentially compromised
+            and investigate who has shell access.
+          </div>
+        </div>
+      </Message>
       <form @submit.prevent="handleChange">
         <div class="field">
           <label for="current">Current Password</label>
@@ -75,4 +89,10 @@ async function handleChange() {
 .login-card h1 {
   font-size: 1.5rem;
 }
+.reset-warning { font-size: 0.85rem; }
+.reset-warning strong { display: block; margin-bottom: 0.4rem; }
+.reset-actor { margin-bottom: 0.4rem; }
+.reset-actor code,
+.reset-hint code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.8rem; background: rgba(0,0,0,0.08); padding: 1px 4px; border-radius: 3px; }
+.reset-hint { line-height: 1.4; }
 </style>

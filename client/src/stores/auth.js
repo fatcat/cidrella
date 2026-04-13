@@ -8,6 +8,11 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => !!token.value);
   const mustChangePassword = computed(() => user.value?.must_change_password ?? false);
+  // Set if the current password was installed via a CLI reset rather than a
+  // normal first-time login. The string is the actor label recorded by
+  // reset-password.js, e.g. "cli:root@cidrella-prod". Cleared after a
+  // successful /auth/change-password.
+  const passwordResetBy = computed(() => user.value?.password_reset_by || null);
   const preferences = computed(() => user.value?.preferences || {});
   const timeFormat = computed(() => preferences.value.time_format || 'locale');
 
@@ -53,5 +58,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('cidrella_token');
   }
 
-  return { token, user, isAuthenticated, mustChangePassword, preferences, timeFormat, login, changePassword, fetchUser, updatePreferences, logout };
+  return { token, user, isAuthenticated, mustChangePassword, passwordResetBy, preferences, timeFormat, login, changePassword, fetchUser, updatePreferences, logout };
 });

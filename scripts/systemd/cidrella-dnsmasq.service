@@ -41,7 +41,12 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN CAP_SETUID 
 # would cause dnsmasq's internal drop to fail because it already runs as
 # a non-root user.
 ProtectSystem=strict
-ReadWritePaths=/var/lib/cidrella/dnsmasq /run
+# Only the dnsmasq state directory needs to be writable. An earlier draft
+# also included /run as a defensive hedge, but testerella validation
+# confirmed dnsmasq never writes outside its configured state dir — the
+# pidfile, lease file, and logfile all live under /var/lib/cidrella/dnsmasq.
+# Keep the writable surface as narrow as possible.
+ReadWritePaths=/var/lib/cidrella/dnsmasq
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true

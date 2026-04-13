@@ -21,7 +21,14 @@ Copy-paste into an SSH session on the v0.4.6 host:
 curl -sk https://127.0.0.1:8443/api/health
 # Expected: {"status":"ok","version":"0.4.6",...}
 
-# 2. Back up update.sh so you can revert if anything goes wrong
+# 2a. Baseline check — confirm the broken bcrypt line ACTUALLY exists in your
+#     update.sh before we try to remove it. This must print 1. If it prints 0,
+#     your update.sh has different wording than v0.4.6 ships by default and
+#     the sed-based patch below won't match — STOP and investigate manually.
+grep -c 'bcrypt.*binding' /opt/cidrella/update.sh
+# Expected: 1
+
+# 2b. Back up update.sh so you can revert if anything goes wrong
 cp /opt/cidrella/update.sh /opt/cidrella/update.sh.bak-v046
 
 # 3a. Remove the bcrypt native-binding check
@@ -38,9 +45,12 @@ if [ -x "$TARGET_SLOT/runtime/node/bin/node" ]; then\
   setcap cap_net_raw,cap_net_bind_service+ep "$TARGET_SLOT/runtime/node/bin/node" 2>/dev/null || true\
 fi' /opt/cidrella/update.sh
 
-# 4. Sanity-check the patch
+# 4. Sanity-check the patch — note the POSITIVE assertions. Each of these
+#    checks that the patch did what it was supposed to, not just that the
+#    end-state looks quiet. All three must hold or the patch didn't apply.
 bash -n /opt/cidrella/update.sh && echo "syntax OK"
-grep -c 'bcrypt.*binding' /opt/cidrella/update.sh   # must print 0
+grep -c 'bcrypt.*binding' /opt/cidrella/update.sh       # must print 0 (line removed)
+grep -c 'cap_net_raw,cap_net_bind_service' /opt/cidrella/update.sh  # must print >= 1 (setcap inserted)
 grep -A1 'Native bindings present' /opt/cidrella/update.sh | tail -3  # should show setcap
 
 # 5. Run the upgrade
@@ -59,10 +69,19 @@ After a successful upgrade the new slot's `update.sh` (from v0.4.7's tarball) be
 
 ## If the upgrade fails
 
-Auto-rollback should revert to v0.4.6 automatically. If it doesn't, restore the backup and use the standalone rollback:
+Auto-rollback should revert to v0.4.6 automatically. If it doesn't, find the backup and use the standalone rollback.
+
+**Note on the backup location**: step 2b saved the backup at `/opt/cidrella/update.sh.bak-v046`. `/opt/cidrella` is a symlink to the currently active A/B slot. If the update attempt managed to swap the symlink before failing (and auto-rollback didn't fire), the backup file lives in the OTHER slot now and `/opt/cidrella/update.sh.bak-v046` won't exist. The backup is still there — just reach it by slot path:
 
 ```bash
-cp /opt/cidrella/update.sh.bak-v046 /opt/cidrella/update.sh
+# Find the backup — it exists in exactly one of the two slots
+ls /opt/cidrella-a/update.sh.bak-v046 /opt/cidrella-b/update.sh.bak-v046 2>/dev/null
+
+# Restore from whichever slot has it, using the FULL slot path
+# (replace -a with -b if that's where the backup was found)
+cp /opt/cidrella-a/update.sh.bak-v046 /opt/cidrella-a/update.sh
+
+# Then roll back
 sudo cidrella-rollback --yes
 ```
 

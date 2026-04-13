@@ -1,0 +1,13 @@
+-- Track password resets performed via the CLI (cidrella-reset-password wrapper).
+--
+-- When the reset-password.js script runs, it writes a non-null value here in
+-- the form `cli:<os-user>@<hostname>`. On successful login, the API returns
+-- this value so the client can render a warning banner: "Your password was
+-- reset via the command line by <value>. If this wasn't you, investigate."
+-- The value is cleared when the user completes the mandatory password change.
+--
+-- This is defense-in-depth for the case where an attacker with root-or-
+-- cidrella-level shell access uses the reset wrapper (or any equivalent SQL)
+-- to silently reset a password and log in. The legitimate owner sees the
+-- trail on next login and can take action.
+ALTER TABLE users ADD COLUMN password_reset_by TEXT;

@@ -25,6 +25,7 @@ DATA_DIR="/var/lib/cidrella"
 SERVICE_USER="cidrella"
 REQUESTED_VERSION=""
 MINISIGN_PUBKEY="RWT6J/NrAcT9LsHz9fQG8sAbcsfp58uRxiYx3YbZUpm28lFwjaVi4wQe"
+BREAKGLASS_PUBKEY="RWRO6YFjR0VEbOr73Kjk9WNdUFgaVrZ/de+/S3bGYaroJaMLrxN7nLQK"
 FORCE_INSTALL=false
 NODE_MAJOR=22
 BUILD_ARCH="linux-x64"
@@ -516,6 +517,16 @@ if [ -f "$INSTALL_DIR/scripts/cidrella-dnsmasq-hup" ]; then
   ok "Installed /usr/local/bin/cidrella-dnsmasq-hup wrapper"
 fi
 
+# Install cidrella-reset-password wrapper (v0.4.8+). Root-only (0700). Wraps
+# server/src/reset-password.js so admins can recover from a forgotten admin
+# password after a fresh install + legacy backup restore. Every reset writes
+# an audit_log row and populates users.password_reset_by, so the legit owner
+# sees a banner on next login if the reset was unauthorized.
+if [ -f "$INSTALL_DIR/scripts/cidrella-reset-password" ]; then
+  install -m 0700 -o root -g root "$INSTALL_DIR/scripts/cidrella-reset-password" /usr/local/bin/cidrella-reset-password
+  ok "Installed /usr/local/bin/cidrella-reset-password wrapper"
+fi
+
 # install_systemd_unit is sourced from scripts/lib/systemd-install.sh above;
 # fall back to plain cp if sourcing failed (pre-v0.4.4 tarballs).
 _install_unit() {
@@ -621,6 +632,49 @@ else
   warn "Check logs: journalctl -u cidrella -f"
   emit_event install end result=service-not-active "version=$VERSION"
 fi
+
+# ═══════════════════════════════════════════════════════════
+# TIGHTEN SECRET FILE PERMISSIONS (v0.4.8+)
+# ═══════════════════════════════════════════════════════════
+#
+# Default umask left cidrella.db, analytics.duckdb, and server.key at 644 —
+# world-readable. That means any local OS user could read the SQLite file
+# (getting bcrypt password hashes + audit log) and the TLS private key. The
+# real boundary for CIDRella secrets is "host access == total access", but
+# leaving these world-readable violated least privilege. v0.4.8 tightens
+# them to 600 cidrella:cidrella so only the cidrella service and root can
+# read. dnsmasq subtree stays at 755 because dnsmasq drops to nobody and
+# needs to read its own state files on SIGHUP reload.
+#
+# The chmod is idempotent and only tightens (never loosens), so running it
+# on subsequent updates is safe even when the files are already 600.
+tighten_secrets() {
+  # SQLite DB and its WAL/shm sidecars
+  chmod 600 "$DATA_DIR/cidrella.db" 2>/dev/null || true
+  chmod 600 "$DATA_DIR/cidrella.db-wal" 2>/dev/null || true
+  chmod 600 "$DATA_DIR/cidrella.db-shm" 2>/dev/null || true
+  # DuckDB analytics + sidecars
+  chmod 600 "$DATA_DIR/analytics.duckdb" 2>/dev/null || true
+  for f in "$DATA_DIR"/analytics.duckdb.*; do
+    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
+  done
+  # TLS material — cert is public but the key absolutely is not
+  chmod 700 "$DATA_DIR/certs" 2>/dev/null || true
+  chmod 600 "$DATA_DIR/certs/server.key" 2>/dev/null || true
+  # Backups directory — contains full DB dumps, strictly admin-only
+  chmod 700 "$DATA_DIR/backups" 2>/dev/null || true
+  for f in "$DATA_DIR"/backups/*.tar.gz "$DATA_DIR"/backups/*.tar.gz.enc; do
+    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
+  done
+  # Trained anomaly models — reveal per-client DNS behavior profiles
+  chmod 700 "$DATA_DIR/anomaly" 2>/dev/null || true
+  chmod 700 "$DATA_DIR/anomaly/models" 2>/dev/null || true
+  for f in "$DATA_DIR"/anomaly/models/*; do
+    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
+  done
+}
+tighten_secrets
+ok "Tightened secret file permissions (DB, certs, backups, anomaly models → 600/700)"
 
 # ═══════════════════════════════════════════════════════════
 # EXTRACT ADMIN PASSWORD

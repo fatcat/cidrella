@@ -158,6 +158,57 @@ if [ "$DRY_RUN" = false ]; then
   # dev-only helpers like build-release.sh, deploy-lxc.sh, test-dns-blocking.sh.
   rsync -a --exclude-from="$BUILDIGNORE" "$PROJECT_DIR/scripts/" "$STAGING_DIR/scripts/"
 
+  # ─── Pubkey staging assertion ────────────────────────
+  #
+  # Per BREAK-GLASS-CEREMONY.md step 5, both minisign public keys must ship
+  # inside every release tarball at fixed canonical paths so update.sh can
+  # verify the next release's signature AND apply rotation announcements
+  # signed by the break-glass key. The rsync above already copies both
+  # files along with the rest of scripts/ — this block is an explicit
+  # post-staging assertion so a future change (e.g. someone adds *.pub to
+  # .buildignore, or someone deletes the committed file) hard-fails the
+  # build instead of silently producing a tarball that can't verify itself
+  # or accept a key rotation.
+  for pubkey in cidrella.pub cidrella-break-glass.pub; do
+    if [ ! -f "$STAGING_DIR/scripts/$pubkey" ]; then
+      echo "  ERROR: required pubkey not staged: scripts/$pubkey"
+      echo "  Every release tarball must ship both the primary pubkey"
+      echo "  (scripts/cidrella.pub) and the break-glass pubkey"
+      echo "  (scripts/cidrella-break-glass.pub). Check that the file"
+      echo "  exists in the source tree and isn't excluded by .buildignore."
+      exit 1
+    fi
+  done
+
+  # Verify the embedded pubkey strings in install.sh match the staged pub
+  # files. These two sources of truth must never drift — if they do, new
+  # installs verify correctly against install.sh's constant but the running
+  # service's scripts/cidrella.pub disagrees, breaking the next update.
+  #
+  # Compare the base64 line from each .pub file (second line — first line
+  # is the minisign `untrusted comment: ...` header) against the constant
+  # in install.sh. Hard-fail on mismatch.
+  check_pubkey_constant() {
+    local constant_name="$1" pub_file="$2"
+    local embedded file_key
+    embedded=$(grep "^${constant_name}=" "$STAGING_DIR/scripts/install.sh" \
+      | sed 's/^[^=]*="\(.*\)"$/\1/')
+    file_key=$(sed -n '2p' "$STAGING_DIR/scripts/$pub_file")
+    if [ -z "$embedded" ]; then
+      echo "  ERROR: $constant_name constant not found in install.sh"
+      exit 1
+    fi
+    if [ "$embedded" != "$file_key" ]; then
+      echo "  ERROR: $constant_name in install.sh does not match scripts/$pub_file"
+      echo "    install.sh: $embedded"
+      echo "    $pub_file:  $file_key"
+      exit 1
+    fi
+  }
+  check_pubkey_constant MINISIGN_PUBKEY cidrella.pub
+  check_pubkey_constant BREAKGLASS_PUBKEY cidrella-break-glass.pub
+  echo "  Pubkey consistency verified (primary + break-glass)"
+
   # Update script (root level for visibility)
   cp "$PROJECT_DIR/update.sh" "$STAGING_DIR/update.sh"
 
@@ -237,11 +288,20 @@ if [ "$DRY_RUN" = false ]; then
   echo "  SHA-256 OK: ${ACTUAL_SHA:0:16}..."
 
   # Extract to runtime/node/ with --strip-components=1 so the top-level
-  # node-vX.Y.Z-linux-x64/ dir is unwrapped.
+  # node-vX.Y.Z-linux-x64/ dir is unwrapped. Fail loudly on extract errors
+  # (disk full, corrupted archive, truncated download) rather than letting
+  # the script continue to the binary-existence check — a partial extract
+  # can leave bin/node present while include/ headers are missing, which
+  # would break the subsequent npm ci against bundled Node.
   RUNTIME_DIR="$STAGING_DIR/runtime/node"
   rm -rf "$RUNTIME_DIR"
   mkdir -p "$RUNTIME_DIR"
-  tar -xJf "$NODE_CACHED_TARBALL" -C "$RUNTIME_DIR" --strip-components=1
+  if ! tar -xJf "$NODE_CACHED_TARBALL" -C "$RUNTIME_DIR" --strip-components=1; then
+    echo "  ERROR: tar extraction of $NODE_TARBALL failed"
+    echo "  The cached archive at $NODE_CACHED_TARBALL may be corrupt."
+    echo "  Delete it and re-run to force a fresh download."
+    exit 1
+  fi
 
   BUNDLED_NODE_BIN="$RUNTIME_DIR/bin/node"
   if [ ! -x "$BUNDLED_NODE_BIN" ]; then
@@ -373,8 +433,29 @@ if [ "$DRY_RUN" = false ]; then
   MINISIGN_KEY="${MINISIGN_KEY:-$HOME/.minisign/cidrella.key}"
   minisign -Sm "$DIST_DIR/$TARBALL" -s "$MINISIGN_KEY"
   echo "  Signature: dist/${TARBALL}.minisig"
+
+  # Post-sign verification: confirm that the signature we just produced
+  # actually verifies against the committed scripts/cidrella.pub. This
+  # catches the silent-drift failure mode where the local private key
+  # (~/.minisign/cidrella.key) has rotated but scripts/cidrella.pub was
+  # not updated — in which case the tarball would be signed but no running
+  # CIDRella would be able to verify it. Fail the build here rather than
+  # publishing a DOA release.
+  if ! minisign -Vm "$DIST_DIR/$TARBALL" -p "$PROJECT_DIR/scripts/cidrella.pub" >/dev/null 2>&1; then
+    echo "  ERROR: signature verification against scripts/cidrella.pub FAILED"
+    echo "  The signing key ($MINISIGN_KEY) does not match the committed"
+    echo "  scripts/cidrella.pub. Either:"
+    echo "    - Update scripts/cidrella.pub (and install.sh's MINISIGN_PUBKEY"
+    echo "      constant) to match the current signing key, OR"
+    echo "    - Point MINISIGN_KEY at the private key that matches the"
+    echo "      current scripts/cidrella.pub."
+    echo "  Delete dist/$TARBALL and dist/${TARBALL}.minisig before retrying."
+    exit 1
+  fi
+  echo "  Signature verified against scripts/cidrella.pub — build is self-consistent"
 else
   echo "  [DRY RUN] Would run: minisign -Sm dist/$TARBALL"
+  echo "  [DRY RUN] Would verify signature against scripts/cidrella.pub"
 fi
 
 if [ "$BUILD_ONLY" = true ]; then

@@ -62,7 +62,13 @@ router.post('/login', loginLimiter, async (req, res) => {
   let preferences = {};
   try { preferences = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
 
-  res.json({
+  // If users.password_reset_by is non-null, the current password was set by
+  // a CLI reset (via cidrella-reset-password). Surface the actor label in
+  // the login response so the client can render a warning banner before the
+  // mandatory password change. The column is cleared when the password is
+  // successfully changed via /api/auth/change-password. If the DB is pre-v0.4.8
+  // the column doesn't exist and the field is just absent — clients ignore it.
+  const payload = {
     token,
     user: {
       id: user.id,
@@ -71,7 +77,11 @@ router.post('/login', loginLimiter, async (req, res) => {
       must_change_password: !!user.must_change_password,
       preferences
     }
-  });
+  };
+  if (user.password_reset_by) {
+    payload.user.password_reset_by = user.password_reset_by;
+  }
+  res.json(payload);
 });
 
 // POST /api/auth/change-password
@@ -99,9 +109,20 @@ router.post('/change-password', async (req, res) => {
   }
 
   const hash = await bcrypt.hash(new_password, 10);
-  db.prepare(
-    "UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = datetime('now') WHERE id = ?"
-  ).run(hash, user.id);
+  // Clear password_reset_by at the same time so the warning banner from a
+  // CLI reset disappears after the legit owner successfully changes it. The
+  // column is guarded — if the DB is pre-v0.4.8 it doesn't exist and the
+  // UPDATE would fail; we detect that up front and skip the column.
+  const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
+  if (userCols.includes('password_reset_by')) {
+    db.prepare(
+      "UPDATE users SET password_hash = ?, must_change_password = 0, password_reset_by = NULL, updated_at = datetime('now') WHERE id = ?"
+    ).run(hash, user.id);
+  } else {
+    db.prepare(
+      "UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = datetime('now') WHERE id = ?"
+    ).run(hash, user.id);
+  }
 
   audit(user.id, 'password_changed', 'user', user.id, null);
 
@@ -124,7 +145,18 @@ router.post('/change-password', async (req, res) => {
 // GET /api/auth/me
 router.get('/me', (req, res) => {
   const db = getDb();
-  const user = db.prepare('SELECT id, username, role, must_change_password, preferences, created_at FROM users WHERE id = ?').get(req.user.id);
+  // password_reset_by is included so the auth store's fetchUser() path (hit
+  // on page reload + token refresh) preserves the CLI-reset indicator across
+  // navigation. Without this, reloading the page between login and the
+  // Change Password screen would replace user.value with a payload that
+  // doesn't carry password_reset_by, and the warning banner would disappear.
+  // The column is guarded in case the DB pre-dates migration 044.
+  const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
+  const hasResetByCol = userCols.includes('password_reset_by');
+  const cols = hasResetByCol
+    ? 'id, username, role, must_change_password, preferences, password_reset_by, created_at'
+    : 'id, username, role, must_change_password, preferences, created_at';
+  const user = db.prepare(`SELECT ${cols} FROM users WHERE id = ?`).get(req.user.id);
 
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
@@ -133,14 +165,18 @@ router.get('/me', (req, res) => {
   let preferences = {};
   try { preferences = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
 
-  res.json({
+  const payload = {
     id: user.id,
     username: user.username,
     role: user.role,
     must_change_password: !!user.must_change_password,
     preferences,
     created_at: user.created_at
-  });
+  };
+  if (user.password_reset_by) {
+    payload.password_reset_by = user.password_reset_by;
+  }
+  res.json(payload);
 });
 
 // PUT /api/auth/preferences — update current user's preferences

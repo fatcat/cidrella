@@ -36,7 +36,7 @@ The break-glass key will *not* recover:
   - A fresh ephemeral VM with networking disabled from the host — acceptable for threat model bronze, not gold
 - [ ] `minisign` installed on the air-gapped machine. On Debian/Ubuntu: `apt install minisign`. Verify version: `minisign -v`.
 - [ ] A USB stick (brand new or wiped — do not reuse). Ideally two of them for redundancy.
-- [ ] A physical safe or safety deposit box for final storage.
+- [ ] A physical safe or safe deposit box for final storage.
 - [ ] A printer for QR/text backup, and a laminator if you have one.
 - [ ] A notebook to record everything — timestamps, fingerprints, passphrase hints, chain of custody.
 - [ ] 30-60 minutes of uninterrupted time.
@@ -134,9 +134,9 @@ This is where the private key gets committed to physical storage. You need **at 
    qrencode -r cidrella-break-glass.key -o privkey.png -s 10
    ```
 3. Print the QR code. Label it the same way as the text printout.
-4. Test the QR code before trusting it: on a different offline machine, scan it back and `diff` against the original:
+4. Test the QR code before trusting it: on a different offline machine, scan it back and `diff` against the original. The `--raw` flag is important — without it, `zbarimg` prefixes the decoded text with the code type (e.g. `QR-Code:...`), which makes the `diff` always show a mismatch even for a valid backup.
    ```bash
-   zbarimg privkey.png > recovered.key
+   zbarimg --raw privkey.png > recovered.key
    diff cidrella-break-glass.key recovered.key
    # should show no output
    ```
@@ -179,10 +179,13 @@ The break-glass **public** key goes into the source tree. This is safe — it's 
    MINISIGN_PUBKEY="RWT6J/NrAcT9LsHz9fQG8sAbcsfp58uRxiYx3YbZUpm28lFwjaVi4wQe"
    BREAKGLASS_PUBKEY="RWR... (the line from cidrella-break-glass.pub, minus the untrusted comment line)"
    ```
-4. Edit `scripts/build-release.sh` to ensure both pubkeys are staged into every release tarball at known canonical paths:
-   - `scripts/cidrella.pub` (primary, already exists)
-   - `scripts/cidrella-break-glass.pub` (new)
-5. Commit both additions. The break-glass **private** key NEVER leaves the air-gapped machine and the physical backups.
+4. `scripts/build-release.sh` does NOT need a hardcoded pubkey constant of its own. It already rsyncs the entire `scripts/` directory into the release tarball staging, which means dropping `scripts/cidrella-break-glass.pub` into the repo automatically causes it to ship at `scripts/cidrella-break-glass.pub` inside every release tarball, at the canonical path `update.sh` expects to find it.
+
+   The build script DOES have an explicit assertion block (added as part of landing the break-glass pubkey in-tree) that hard-fails the build if either `scripts/cidrella.pub` or `scripts/cidrella-break-glass.pub` is missing from the staging directory after the rsync — protection against a future regression where someone accidentally excludes `*.pub` from `.buildignore` or deletes one of the committed files. The assertion also checks that the `MINISIGN_PUBKEY` and `BREAKGLASS_PUBKEY` constants in `install.sh` match the base64 line in the corresponding `.pub` file, catching silent drift between the embedded-string source of truth and the committed-file source of truth. And after signing, it verifies the freshly-signed tarball against `scripts/cidrella.pub` as an end-to-end proof that the private key used for signing matches the public key the release will be verified against.
+
+   You don't need to touch any of that — it's already in place. Just commit `scripts/cidrella-break-glass.pub` and the `BREAKGLASS_PUBKEY` constant in `install.sh` (step 3 above), and the next build will automatically pick up both and pass the checks.
+
+5. Commit the pubkey file (`scripts/cidrella-break-glass.pub`) and the `install.sh` constant. The break-glass **private** key NEVER leaves the air-gapped machine and the physical backups.
 
 ## Step 6 — Destroy the working copy
 
@@ -256,27 +259,115 @@ Copy this to a notebook page and check off during the ceremony:
 
 ## Rotation playbook (for reference — you won't need this on ceremony day)
 
-When the primary key is compromised or due for scheduled rotation:
+There are two things that can rotate: the **primary** signing key (the common case, used any time the primary leaks or is due for scheduled hygiene) and the **break-glass** key itself (the rarer and stricter case). Both follow the same JSON schema and the same signing mechanism, distinguished by the `rotation_target` field.
 
-1. On the air-gapped machine, draft `rotation-announcement-N.json`:
+### Unified schema: `rotation-announcement-N.json`
+
+```json
+{
+  "type": "cidrella-key-rotation",
+  "version": 1,
+  "sequence_number": 1,
+  "issued_at": "2026-08-01T00:00:00Z",
+  "not_before": "2026-08-01T00:00:00Z",
+  "rotation_target": "primary",
+  "new_pubkey": "RWR<new pubkey contents>",
+  "revoked_pubkey": "RWT6J/NrAcT9LsHz9fQG8sAbcsfp58uRxiYx3YbZUpm28lFwjaVi4wQe",
+  "reason": "planned rotation"
+}
+```
+
+**Field semantics**:
+- `type` — must equal `cidrella-key-rotation`. Fixed string so clients can filter announcements from other signed payloads.
+- `version` — schema version. Start at 1. Bump only if the field set changes. Unrelated to sequence_number.
+- `sequence_number` — monotonically increasing integer, shared across both primary and break-glass rotations (a single counter, not one per target). Each install persists `max_seen_sequence_number` and refuses any announcement with `sequence_number <= max_seen`. This is the replay defense — an attacker who captures an old announcement cannot re-apply it, and the counter is global so you can't replay a primary rotation by reusing a break-glass rotation's sequence number either.
+- `issued_at` — ISO8601 UTC timestamp of when you signed the announcement. Informational; not used for enforcement.
+- `not_before` — ISO8601 UTC. Installs reject the announcement if `now < not_before`. Lets you sign today and cut in later (staged rollout) or defend against clock-skew-based early-apply attacks. Typically set equal to `issued_at`.
+- `rotation_target` — either `"primary"` or `"break-glass"`. Tells the install which trusted pubkey is being replaced. Everything else in the schema is interpreted in the context of this field.
+- `new_pubkey` — the base64 minisign pubkey (single line, no `untrusted comment:` header) that replaces the current trusted pubkey for `rotation_target`. Persisted in `/var/lib/cidrella/.key-state.json`.
+- `revoked_pubkey` — the base64 pubkey being retired. Installs verify this matches their currently-trusted pubkey for `rotation_target` before accepting the replacement — prevents an attacker with a leaked break-glass key from swapping in a rogue pubkey on an install whose trusted key has already rotated to something else.
+- `reason` — free-text. Goes into the audit log. Values like `planned rotation`, `emergency - key compromised`, `test`.
+
+**Deliberately NOT in this schema**:
+- `not_after` / any kind of expiry — a key rotation is a permanent state transition, not a time-limited assertion. Adding an expiry would cause long-offline installs (13+ months without an update) to refuse the rotation and stay stuck on a revoked key. Replay protection comes from `sequence_number`, not from a window.
+
+**Signing rule (for both rotation types)**: any rotation-announcement, regardless of `rotation_target`, is signed with the **currently-trusted break-glass private key**. That is the only key an install will accept a rotation signature from. The primary key never signs rotation announcements, because a compromised primary would then be able to rotate itself away from the legitimate one.
+
+---
+
+### Case A: Rotating the PRIMARY key
+
+This is the routine case — scheduled hygiene or response to a primary-key compromise.
+
+1. On the air-gapped machine, draft `rotation-announcement-N.json` with `rotation_target: "primary"`, `new_pubkey` = the new primary pubkey, `revoked_pubkey` = the current primary pubkey. `sequence_number` = `max_seen_sequence_number + 1` (start at 1 for the first-ever rotation).
+2. Restore the break-glass private key from backup onto the air-gapped machine.
+3. Sign the announcement: `minisign -S -s cidrella-break-glass.key -m rotation-announcement-N.json`.
+4. Copy `rotation-announcement-N.json` + `.minisig` off the air-gapped machine.
+5. Upload both as release assets on the next signed release.
+6. Destroy the restored break-glass private key copy on the air-gapped machine (it lives only in the physical backups from then on).
+7. Update `scripts/cidrella.pub` and `install.sh`'s `MINISIGN_PUBKEY` constant on the dev machine to the new primary pubkey, so FUTURE FRESH INSTALLS land on the new key directly without needing to apply the announcement. Commit and include in the next release.
+8. Every already-installed CIDRella picks up the announcement on next `cidrella-update`, verifies it with its embedded break-glass pubkey, applies the primary-pubkey replacement, and persists the new state in `/var/lib/cidrella/.key-state.json`. No user action required on the CIDRella hosts.
+
+The break-glass key is unchanged throughout.
+
+---
+
+### Case B: Rotating the BREAK-GLASS key
+
+This is the stricter case. The break-glass key is effectively rotating *itself*, which means the CURRENT break-glass key must sign its own successor into trust before being retired. Think of it as the last official act of the outgoing break-glass key.
+
+**Why you'd do this**:
+- Scheduled hygiene (recommended every 2-5 years as a standing practice)
+- Suspected exposure of the private key material (a physical backup goes missing, a safe is compromised, you spot an ink smudge on the printed QR that might indicate a photo was taken)
+- Immediately after using the break-glass for a primary rotation, if your threat model considers any use of the key a use-once event (most threat models don't require this — the break-glass is *designed* to be reusable — but some stricter ones do)
+- Post-ceremony key-material doubt (you have reason to suspect the key generation itself was observed or the air gap was imperfect)
+
+**Two parts, both required**:
+
+**Part 1 — Ship a release with the new break-glass pubkey baked in.** This is what your question was pointing at. Steps:
+
+1. On the air-gapped machine, perform the Generate-keypair steps from **Step 2** of this same runbook to create a fresh break-glass keypair. Pick a new passphrase. Do NOT reuse the old one.
+2. Run the sign/verify test from **Step 3** on the new keypair to confirm it works.
+3. Take the new backups (Step 4) — printed text, QR, optional encrypted USB. Label them clearly so they cannot be confused with the old backups during the retention window.
+4. Copy the new `cidrella-break-glass.pub` off the air-gapped machine.
+5. On the dev machine, replace `scripts/cidrella-break-glass.pub` with the new file.
+6. Update `install.sh`'s `BREAKGLASS_PUBKEY` constant to the new base64 value.
+7. Commit both changes. The next signed release (call it `vN.N+1`) will now carry the new break-glass pubkey at `scripts/cidrella-break-glass.pub` and in the embedded `install.sh` constant. `build-release.sh`'s pubkey-consistency assertion will catch any drift between the two automatically.
+8. At this point, every **future fresh install** will trust the new break-glass key. But **existing installs** still have the OLD break-glass pubkey baked in from the release they originally installed — so Part 2 is needed to propagate the new trust to them.
+
+**Part 2 — Sign a break-glass rotation announcement with the OLD break-glass key.** This is the final use of the outgoing key.
+
+1. On the air-gapped machine, draft a rotation announcement with:
    ```json
    {
      "type": "cidrella-key-rotation",
      "version": 1,
-     "sequence_number": 1,
-     "issued_at": "2026-08-01T00:00:00Z",
-     "not_before": "2026-08-01T00:00:00Z",
-     "not_after": "2027-08-01T00:00:00Z",
-     "new_primary_pubkey": "RWR<new pubkey contents>",
-     "revoked_primary_pubkey": "RWT6J/NrAcT9LsHz9fQG8sAbcsfp58uRxiYx3YbZUpm28lFwjaVi4wQe",
-     "reason": "planned rotation"
+     "sequence_number": N,
+     "issued_at": "2028-08-01T00:00:00Z",
+     "not_before": "2028-08-01T00:00:00Z",
+     "rotation_target": "break-glass",
+     "new_pubkey": "RWR<new break-glass pubkey>",
+     "revoked_pubkey": "RWR<current/outgoing break-glass pubkey>",
+     "reason": "planned break-glass rotation (scheduled 2028)"
    }
    ```
-2. Restore the break-glass private key from backup onto the air-gapped machine.
-3. Sign the announcement: `minisign -S -s cidrella-break-glass.key -m rotation-announcement-1.json`.
-4. Copy `rotation-announcement-1.json` + `.minisig` off the air-gapped machine.
-5. Upload both as release assets on the next signed release.
-6. Destroy the restored private key copy on the air-gapped machine (it lives only in the physical backups from then on).
-7. Every installed CIDRella picks up the announcement on next `cidrella-update`, verifies it with the embedded break-glass pubkey, applies the primary-pubkey replacement, and persists the new state in `/var/lib/cidrella/.key-state.json`. No user action required on the CIDRella hosts themselves.
+   `sequence_number` uses the SAME counter as primary rotations — it must be higher than any previously-issued announcement.
+2. Restore the OUTGOING break-glass private key from backup onto the air-gapped machine.
+3. Sign the announcement with the OUTGOING key: `minisign -S -s cidrella-break-glass.key -m rotation-announcement-N.json`.
+4. Copy the announcement + signature off the air-gapped machine.
+5. Upload as release assets alongside the release built in Part 1 (or on a later signed release — installs will pick it up on their next update regardless).
+6. **Destroy the outgoing break-glass private key** on the air-gapped machine. The printed/QR backups of the outgoing key should be kept for a retention window (6 months is a reasonable default) in case something goes wrong with the new key and you need to rollback the rotation, then destroyed too.
+7. Every existing install applies the announcement on its next `cidrella-update`, verifies the signature against its currently-embedded break-glass pubkey (which IS the outgoing one — it matches), confirms `revoked_pubkey` equals that currently-trusted value, and replaces its trusted break-glass pubkey with the new one in `/var/lib/cidrella/.key-state.json`.
 
-This rotation code path will be built in v0.4.8 after the ceremony is complete.
+**After Part 2 completes on a given install**, the install trusts only the new break-glass key. The old break-glass private key cannot be used against it again, even if recovered.
+
+**The uncomfortable truth about break-glass rotation**: there is a transition window during which some installs have already applied the announcement (trust new) and others have not yet (still trust old). During that window, both old and new break-glass keys are valid against some subset of the fleet. If the outgoing key is compromised WHILE the window is open, an attacker could push a rival primary-rotation announcement against the not-yet-updated installs. Mitigations:
+
+- Do Part 2 BEFORE destroying the outgoing private key, and monitor fleet rollout before destroying
+- Keep the window short — push Part 1's release and Part 2's announcement together
+- Consider also rotating the primary key at the same time, so any rival announcement an attacker could push with the old break-glass also has to include a valid primary that matches (it can't, so the attack becomes implausible)
+- For emergency (compromise-response) break-glass rotation, the outgoing key is already assumed compromised, so the "some installs still trust it" window is the actual attack window — not a new risk introduced by the rotation
+
+---
+
+This rotation code path will be built in v0.4.9+ after the ceremony is complete. The `update.sh` side will need to fetch `rotation-announcement-*.json` from each new release, verify the signature, validate `sequence_number > max_seen`, branch on `rotation_target`, update `/var/lib/cidrella/.key-state.json`, and rewrite the persisted copy of the appropriate `install.sh` constant.

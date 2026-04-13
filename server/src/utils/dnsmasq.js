@@ -204,7 +204,14 @@ export function signalDnsmasq() {
   try {
     execFileSync('sudo', ['/usr/local/bin/cidrella-dnsmasq-hup'], { stdio: 'pipe' });
     return;
-  } catch {
+  } catch (wrapperErr) {
+    // Log the wrapper's diagnostic output BEFORE falling through to the
+    // legacy path, so operational failures (stale pidfile, dnsmasq not
+    // running, pid recycled to wrong process) aren't lost. Without this,
+    // the subsequent legacy-path failure would show a less informative
+    // sudoers denial and the original cause would be invisible.
+    const stderr = wrapperErr?.stderr?.toString?.().trim();
+    if (stderr) console.warn('cidrella-dnsmasq-hup wrapper failed:', stderr);
     // Fall through to the legacy direct-kill path for environments where the
     // wrapper isn't installed (pre-0.4.6 installs still running, Docker
     // without install.sh, local dev). The legacy path will fail at the sudo

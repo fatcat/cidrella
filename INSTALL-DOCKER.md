@@ -103,15 +103,28 @@ Docker runs with `network_mode: host` for DHCP broadcast support.
 
 ### Reset Admin Password
 
+Run the reset script inside the container **as the cidrella user** so the updated database file stays owned by `cidrella:cidrella` and doesn't get chowned to root by accident:
+
 ```bash
-docker compose exec -e DATA_DIR=/data cidrella node /app/server/src/reset-password.js
+docker compose exec --user cidrella -e DATA_DIR=/data cidrella \
+  node /app/server/src/reset-password.js
 ```
 
 To reset a specific user:
 
 ```bash
-docker compose exec -e DATA_DIR=/data cidrella node /app/server/src/reset-password.js <username>
+docker compose exec --user cidrella -e DATA_DIR=/data cidrella \
+  node /app/server/src/reset-password.js someuser
 ```
+
+The reset generates a random password (printed once to stdout), sets `must_change_password=1`, writes an `audit_log` entry, and — on v0.4.8+ — populates `users.password_reset_by` with the actor label (`cli:<os-user>@<container-hostname>`). On the next successful login, the legitimate account owner sees a red warning banner on the Change Password page identifying who performed the reset. If they didn't do it, they know a host-level actor did and should investigate.
+
+**Docker-specific notes**:
+
+- The native-install wrapper at `/usr/local/bin/cidrella-reset-password` is **not** present in the Docker image. It's installed only by `scripts/install.sh`, which Docker images don't run. The direct `node` invocation above is the Docker-native equivalent.
+- The Docker image uses the base `node:22-alpine` Node runtime, not the bundled runtime that native installs get from v0.4.7+ onward. That's intentional — in Docker, container image updates already handle the runtime versioning.
+- The audit trail and Change Password banner work the same way in Docker as in native installs — the logic is in `reset-password.js` itself, not in the native wrapper.
+- There's no equivalent to the v0.4.8 file permission tightening (`600 cidrella:cidrella` on `cidrella.db`, etc.) inside the Docker image. The container's isolation is your security boundary — if an attacker has `docker exec` access, the permissions inside the container are moot anyway.
 
 ### Database Reset
 
