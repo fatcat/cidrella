@@ -648,6 +648,27 @@ if [ -f "$INSTALL_DIR/scripts/lib/tighten-secrets.sh" ]; then
 fi
 
 # ═══════════════════════════════════════════════════════════
+# POST-INSTALL HOOK (v0.4.9+)
+# ═══════════════════════════════════════════════════════════
+#
+# Run the release's post-install hook — same convention update.sh uses for
+# the upgrade path. For a fresh install, PREV_SLOT is empty and
+# IS_FRESH_INSTALL=1 so the hook can branch on install-vs-update if it
+# needs to. Non-fatal on error.
+POST_INSTALL_HOOK="$INSTALL_DIR/scripts/post-install.sh"
+if [ -f "$POST_INSTALL_HOOK" ]; then
+  info "Running post-install hook..."
+  if TARGET_SLOT="$INSTALL_DIR" PREV_SLOT="" \
+     DATA_DIR="$DATA_DIR" NEW_VERSION="$VERSION" \
+     OLD_VERSION="" IS_FRESH_INSTALL=1 \
+     bash "$POST_INSTALL_HOOK"; then
+    ok "Post-install hook completed"
+  else
+    warn "Post-install hook exited non-zero (install continues)"
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════
 # EXTRACT ADMIN PASSWORD
 # ═══════════════════════════════════════════════════════════
 

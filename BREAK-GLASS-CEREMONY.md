@@ -370,4 +370,25 @@ This is the stricter case. The break-glass key is effectively rotating *itself*,
 
 ---
 
-This rotation code path will be built in v0.4.9+ after the ceremony is complete. The `update.sh` side will need to fetch `rotation-announcement-*.json` from each new release, verify the signature, validate `sequence_number > max_seen`, branch on `rotation_target`, update `/var/lib/cidrella/.key-state.json`, and rewrite the persisted copy of the appropriate `install.sh` constant.
+This rotation code path **landed in v0.4.9**. At update time, `update.sh` (via `scripts/lib/rotation.sh`) walks the GitHub release asset list for any file matching `rotation-announcement-*.json`, downloads each with its `.minisig`, verifies the signature against the currently-trusted break-glass pubkey (from `/var/lib/cidrella/.key-state.json` if rotated, or from the shipped `scripts/cidrella-break-glass.pub` otherwise), sorts by `sequence_number` ascending, and applies each in order:
+
+- Replay protection: `sequence_number <= max_seen_sequence_number` is silently skipped.
+- Time window: `not_before` in the future defers the announcement to a future update.
+- Revoked-pubkey sanity: the announcement's `revoked_pubkey` must match the current trusted pubkey for the `rotation_target` — otherwise the announcement is either stale (replay) or aimed at a different install, and is rejected.
+- Signature failure: hard-fail the update with `verify fail reason=bad-signature` and refuse to proceed. This is the canary that would fire on an active supply-chain attack.
+
+The AFTER-rotation tarball signature verify in `update.sh` resolves the primary pubkey via `current_primary_pubkey_file` — which consults `.key-state.json` first and falls back to the shipped file. So the first release that rotates the primary key away from the shipped value will:
+1. Be signed by the NEW primary key
+2. Carry a `rotation-announcement-N.json` asset declaring the rotation
+3. On the install, `update.sh` applies the announcement BEFORE verifying the tarball
+4. The tarball verify then succeeds against the newly-trusted primary pubkey
+5. `.key-state.json` persists the new primary pubkey so subsequent updates continue working
+
+**Uploading announcements to a release**: during the ceremony (Case A or B above), you `minisign -S -s cidrella-break-glass.key -m rotation-announcement-N.json` on the air-gapped machine, copy both files off, and attach them as release assets on the NEXT signed release (or any later release — they persist as long as the assets stay uploaded). The build-release.sh pipeline doesn't currently know about rotation announcements; you attach them via `gh release upload vX.Y.Z rotation-announcement-N.json rotation-announcement-N.json.minisig` after publishing.
+
+**Carry-forward across releases**: if a long-offline install jumps multiple versions at once, it only sees the announcements attached to the LATEST release it upgrades to. If you need an announcement to be reachable by installs that jump past it, upload it to every subsequent release until the rotation is believed to have propagated. For scheduled hygiene rotations, one release is usually enough; for emergency compromise response, carry forward for several releases to catch any long-offline installs.
+
+**What's NOT implemented yet** (future work, recorded in PLAN.md):
+- Fresh `install.sh` does not fetch rotation announcements. If a user installs with an install.sh from a pre-rotation release and the primary has rotated, the fresh install's tarball verify will fail. Mitigation: always fetch install.sh from main branch (which is kept in sync with the current primary pubkey constant) or from a post-rotation release.
+- build-release.sh does not automatically carry rotation announcements forward from release to release. Admin responsibility during the ceremony.
+- No test harness scenario exercises a real rotation end-to-end.

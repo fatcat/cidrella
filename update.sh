@@ -77,6 +77,12 @@ source "$LIB_DIR/slots.sh"
 source "$LIB_DIR/verify.sh"
 # shellcheck source=scripts/lib/systemd-install.sh
 source "$LIB_DIR/systemd-install.sh"
+# rotation.sh is optional — pre-v0.4.9 slots don't ship it. The rotation
+# step is gated on this check at every call site.
+if [ -f "$LIB_DIR/rotation.sh" ]; then
+  # shellcheck source=scripts/lib/rotation.sh
+  source "$LIB_DIR/rotation.sh"
+fi
 
 # Legacy aliases for escape codes still used inline below (bold banners).
 BOLD=$'\033[1m'
@@ -412,8 +418,54 @@ track_progress "downloading" 25 "Download complete ($TARBALL_SIZE)"
 
 curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
 
+# ─── Fetch + apply rotation announcements (v0.4.9+) ─────
+#
+# Before verifying the tarball, check whether the release carries any new
+# rotation announcements signed by the break-glass key. Apply them to the
+# local key state so that the subsequent tarball verify uses the CURRENT
+# (possibly rotated) primary pubkey. This makes key rotation a transparent
+# part of the update flow — existing installs pick up rotation on their
+# next update without any admin action.
+#
+# Gated on rotation.sh being present (pre-v0.4.9 slots don't have it —
+# the library was sourced at the top of this script if available).
+if declare -F load_key_state >/dev/null 2>&1; then
+  load_key_state
+
+  BG_PUB_TMP="$TMPDIR/break-glass.pub"
+  if current_break_glass_pubkey_file "$BG_PUB_TMP" >/dev/null; then
+    ROT_DIR="$TMPDIR/rotations"
+    mkdir -p "$ROT_DIR"
+    _rot_names=$(fetch_rotation_announcements "$RELEASE_JSON" "$ROT_DIR" 2>/dev/null || true)
+    if [ -n "$_rot_names" ]; then
+      info "Found rotation announcements in this release — applying"
+      if ! apply_rotation_announcements "$ROT_DIR" "$BG_PUB_TMP"; then
+        err "Rotation announcement verification failed — aborting update"
+        write_progress "failed" 28 "Rotation verify failed" "A rotation announcement in this release failed signature verification against the break-glass key. This is a security event. Aborting update."
+        exit 1
+      fi
+    fi
+  else
+    warn "Break-glass pubkey not available — skipping rotation check"
+  fi
+fi
+
 # ─── Verify signature ───────────────────────────────────
+#
+# Resolve the primary pubkey the update.sh was originally hardcoded to
+# $INSTALL_LINK/scripts/cidrella.pub, which is the pubkey shipped with the
+# CURRENT slot — i.e. the pubkey install.sh had embedded when THIS version
+# was installed. That still works for the common no-rotation case, but
+# rotation changes the effective trust anchor. Use the resolver from
+# rotation.sh if available (which consults .key-state.json first); fall
+# back to the shipped file for pre-v0.4.9 slots.
 PUBKEY_FILE="$INSTALL_LINK/scripts/cidrella.pub"
+if declare -F current_primary_pubkey_file >/dev/null 2>&1; then
+  _resolved_pub="$TMPDIR/primary.pub"
+  if current_primary_pubkey_file "$_resolved_pub" >/dev/null; then
+    PUBKEY_FILE="$_resolved_pub"
+  fi
+fi
 _sig_file="$TMPDIR/cidrella.tar.gz.minisig"
 if [ -f "$_sig_file" ] && [ -f "$PUBKEY_FILE" ]; then
   track_progress "verifying" 30 "Verifying signature..."
@@ -785,6 +837,32 @@ if [ "$VERIFY_OK" = true ]; then
     tighten_secrets "$DATA_DIR"
     ok "Tightened secret file permissions"
     emit_event switchover pass action=tightened-secrets
+  fi
+
+  # Run the incoming release's post-install hook (v0.4.9+). The hook is
+  # authored by THIS release (the one whose slot we just switched to) and
+  # handles any one-shot setup specific to the new version — wrapper
+  # installs, chmod passes, setting seeds, etc. This breaks the recurring
+  # pattern where new post-install steps in the incoming update.sh got
+  # silently skipped because the outgoing update.sh predated them.
+  #
+  # The hook is called AFTER the symlink swap and health check passes, so
+  # TARGET_SLOT is now the active slot and errors here don't trigger
+  # auto-rollback (rollback is harder at this point). The hook is expected
+  # to be idempotent and to warn-and-continue on non-fatal errors.
+  POST_INSTALL_HOOK="$TARGET_SLOT/scripts/post-install.sh"
+  if [ -f "$POST_INSTALL_HOOK" ]; then
+    info "Running post-install hook from new slot..."
+    if TARGET_SLOT="$TARGET_SLOT" PREV_SLOT="$ACTIVE_SLOT" \
+       DATA_DIR="$DATA_DIR" NEW_VERSION="$NEW_VERSION" \
+       OLD_VERSION="$CURRENT_VERSION" IS_FRESH_INSTALL=0 \
+       bash "$POST_INSTALL_HOOK"; then
+      ok "Post-install hook completed"
+      emit_event switchover pass action=post-install-hook
+    else
+      warn "Post-install hook exited non-zero (update continues)"
+      emit_event switchover warn action=post-install-hook-failed
+    fi
   fi
 
   emit_event update end "from=$CURRENT_VERSION" "to=$NEW_VERSION" result=success
