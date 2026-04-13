@@ -239,41 +239,35 @@ if ss -tlnp 2>/dev/null | grep -q ':53 '; then
 fi
 
 # ═══════════════════════════════════════════════════════════
-# NODE.JS
+# NODE.JS — bundled runtime
 # ═══════════════════════════════════════════════════════════
-
-info "Checking Node.js..."
-CURRENT_NODE_MAJOR=0
-if command -v node &>/dev/null; then
-  CURRENT_NODE_MAJOR=$(node -v | sed 's/v//' | cut -d. -f1)
-fi
-
-if [ "$CURRENT_NODE_MAJOR" -ge "$NODE_MAJOR" ]; then
-  ok "Node.js $(node -v) found."
+#
+# Starting in v0.4.7 CIDRella ships its own Node runtime inside the release
+# tarball at $SLOT/runtime/node/bin/node. The cidrella-node wrapper resolves
+# to that path before falling through to the system binary, and the systemd
+# unit's ExecStart points at /usr/local/bin/cidrella-node — so we don't need
+# a system Node at all. The previous NodeSource install block was removed.
+#
+# If the user already has a system Node installed (from an earlier install
+# or their own apt install), we leave it alone — harmless, just unused.
+if command -v node >/dev/null 2>&1; then
+  info "System Node.js $(node -v) present (will be unused — runtime ships bundled)"
 else
-  if [ "$CURRENT_NODE_MAJOR" -gt 0 ]; then
-    warn "Node.js v${CURRENT_NODE_MAJOR} found, but v${NODE_MAJOR}+ is required."
-  else
-    info "Node.js not found."
-  fi
-
-  info "Installing Node.js ${NODE_MAJOR}.x via NodeSource..."
-  apt-get update -qq
-  apt-get install -y -qq ca-certificates curl gnupg >/dev/null
-  mkdir -p /etc/apt/keyrings
-  curl -fsSL "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
-  echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" > /etc/apt/sources.list.d/nodesource.list
-  apt-get update -qq
-  apt-get install -y -qq nodejs >/dev/null
-  ok "Node.js $(node -v) installed."
+  info "No system Node.js — using bundled runtime from release tarball"
 fi
 
 # ═══════════════════════════════════════════════════════════
 # SYSTEM PACKAGES
 # ═══════════════════════════════════════════════════════════
+#
+# Dropped from this list in v0.4.7: nmap (never called by the app — was in
+# the prior apt list unused), nodejs (bundled now). build-essential and
+# python3-setuptools are kept because some users may still want to `npm
+# rebuild` manually. arping is kept because the scanner actually uses it.
+# The python packages are for the anomaly detection daemon.
 
 info "Installing system dependencies..."
-apt-get install -y -qq build-essential nmap arping openssl curl dnsutils rsync sudo minisign python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
+apt-get install -y -qq build-essential arping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
 ok "System packages installed."
 
 # ═══════════════════════════════════════════════════════════
@@ -551,8 +545,26 @@ cp "$INSTALL_DIR/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella
 chmod 440 /etc/sudoers.d/cidrella
 ok "Installed sudoers rules."
 
-# Set Node.js capabilities for raw socket access + binding port 53
-setcap cap_net_raw,cap_net_bind_service+ep "$(readlink -f "$(which node)")" 2>/dev/null || warn "Could not set capabilities on node binary."
+# Set capabilities on the BUNDLED Node binary so the cidrella service can
+# open raw sockets (for arping/ping scans) and bind port 53 for DNS. The
+# caps are xattrs on the binary itself, which means they survive the tarball
+# extraction BUT tar doesn't preserve them in the archive, so we always
+# re-apply here. Target the real file inside the active slot, not a symlink —
+# setcap follows symlinks, but being explicit avoids surprises.
+BUNDLED_NODE_BIN="$INSTALL_DIR/runtime/node/bin/node"
+if [ -x "$BUNDLED_NODE_BIN" ]; then
+  setcap cap_net_raw,cap_net_bind_service+ep "$BUNDLED_NODE_BIN" 2>/dev/null \
+    && ok "Capabilities set on bundled Node ($BUNDLED_NODE_BIN)" \
+    || warn "Could not set capabilities on $BUNDLED_NODE_BIN"
+elif command -v node >/dev/null 2>&1; then
+  # Fallback for pre-v0.4.7 tarballs without bundled runtime — use system Node.
+  SYS_NODE=$(readlink -f "$(command -v node)")
+  setcap cap_net_raw,cap_net_bind_service+ep "$SYS_NODE" 2>/dev/null \
+    && ok "Capabilities set on system Node ($SYS_NODE — legacy fallback)" \
+    || warn "Could not set capabilities on $SYS_NODE"
+else
+  warn "No Node binary found — capabilities not set. Raw socket scans and port 53 binding will fail."
+fi
 
 systemctl daemon-reload
 

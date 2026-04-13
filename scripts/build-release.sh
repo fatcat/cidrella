@@ -31,6 +31,17 @@ TARBALL="cidrella-${TAG}-${BUILD_ARCH}.tar.gz"
 DIST_DIR="$PROJECT_DIR/dist"
 STAGING_DIR="$DIST_DIR/cidrella-${TAG}-${BUILD_ARCH}"
 
+# Bundled Node runtime — pinned LTS version shipped inside every release.
+# The tarball extracts to $SLOT/runtime/node/{bin,include,lib,share}/ and the
+# cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
+# through to /usr/bin/node. Bumping this version requires a release + testerella
+# validation, not a hot swap.
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-22.22.2}"
+NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
+NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
+NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
+NODE_CACHE_DIR="$DIST_DIR/.node-cache"
+
 echo "=== CIDRella Release Builder ==="
 echo "Version: $VERSION"
 echo "Tag:     $TAG"
@@ -170,18 +181,89 @@ if [ "$DRY_RUN" = false ]; then
   # side of the trust boundary).
   BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   COMMIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-  # bundled_node_version is null until Phase 2 (v0.4.5) actually bundles Node.
   cat > "$STAGING_DIR/RELEASE.json" <<RELEASE_JSON
 {
   "version": "${VERSION}",
   "built_at": "${BUILT_AT}",
   "commit_sha": "${COMMIT_SHA}",
-  "bundled_node_version": null
+  "bundled_node_version": "${BUNDLED_NODE_VERSION}"
 }
 RELEASE_JSON
-  echo "  Wrote RELEASE.json (version=${VERSION}, commit=${COMMIT_SHA:0:12})"
+  echo "  Wrote RELEASE.json (version=${VERSION}, commit=${COMMIT_SHA:0:12}, node=${BUNDLED_NODE_VERSION})"
 else
   echo "  [DRY RUN] Would stage server/, client/dist/, dnsmasq/, scripts/, package.json, README.md, RELEASE.json"
+fi
+
+# ─── Step 2.5: Stage bundled Node runtime ────────────────
+#
+# Download node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz from nodejs.org,
+# verify against the official SHASUMS256.txt, and stage into runtime/node/.
+# The tarball is cached under dist/.node-cache so subsequent local builds
+# don't re-download — invalidated only on version bump.
+
+echo "[2.5/7] Staging bundled Node ${BUNDLED_NODE_VERSION}..."
+if [ "$DRY_RUN" = false ]; then
+  mkdir -p "$NODE_CACHE_DIR"
+  NODE_CACHED_TARBALL="$NODE_CACHE_DIR/$NODE_TARBALL"
+
+  if [ ! -f "$NODE_CACHED_TARBALL" ]; then
+    echo "  Downloading $NODE_TARBALL..."
+    curl -fsSL "$NODE_DOWNLOAD_URL" -o "$NODE_CACHED_TARBALL"
+  else
+    echo "  Using cached $NODE_TARBALL"
+  fi
+
+  # Verify SHA-256 against the official checksum file. We intentionally do
+  # NOT verify the checksum file's GPG signature — that would need
+  # nodejs.org's release keys on the build box. SHA verification against the
+  # live file is sufficient against tarball tampering at rest or in transit,
+  # which is the threat model here. A stronger defense (GPG sig check against
+  # pinned keys) is tracked in PLAN.md.
+  echo "  Verifying SHA-256 against nodejs.org SHASUMS256.txt..."
+  EXPECTED_SHA=$(curl -fsSL "$NODE_SHASUMS_URL" | awk -v f="$NODE_TARBALL" '$2 == f {print $1}')
+  if [ -z "$EXPECTED_SHA" ]; then
+    echo "  ERROR: $NODE_TARBALL not found in $NODE_SHASUMS_URL"
+    echo "  (Is BUNDLED_NODE_VERSION=$BUNDLED_NODE_VERSION still published?)"
+    exit 1
+  fi
+  ACTUAL_SHA=$(sha256sum "$NODE_CACHED_TARBALL" | awk '{print $1}')
+  if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+    echo "  ERROR: SHA-256 mismatch for $NODE_TARBALL"
+    echo "    expected: $EXPECTED_SHA"
+    echo "    actual:   $ACTUAL_SHA"
+    echo "  Delete $NODE_CACHED_TARBALL and re-run to re-download."
+    exit 1
+  fi
+  echo "  SHA-256 OK: ${ACTUAL_SHA:0:16}..."
+
+  # Extract to runtime/node/ with --strip-components=1 so the top-level
+  # node-vX.Y.Z-linux-x64/ dir is unwrapped.
+  RUNTIME_DIR="$STAGING_DIR/runtime/node"
+  rm -rf "$RUNTIME_DIR"
+  mkdir -p "$RUNTIME_DIR"
+  tar -xJf "$NODE_CACHED_TARBALL" -C "$RUNTIME_DIR" --strip-components=1
+
+  BUNDLED_NODE_BIN="$RUNTIME_DIR/bin/node"
+  if [ ! -x "$BUNDLED_NODE_BIN" ]; then
+    echo "  ERROR: bundled node binary missing or not executable at $BUNDLED_NODE_BIN"
+    exit 1
+  fi
+
+  # Smoke test: bundled node --version must match the pinned version
+  SMOKE_VERSION=$("$BUNDLED_NODE_BIN" --version 2>/dev/null)
+  if [ "$SMOKE_VERSION" != "v${BUNDLED_NODE_VERSION}" ]; then
+    echo "  ERROR: bundled node reports $SMOKE_VERSION, expected v${BUNDLED_NODE_VERSION}"
+    exit 1
+  fi
+  echo "  Bundled Node $SMOKE_VERSION staged at runtime/node/ ($(du -sh "$RUNTIME_DIR" | cut -f1))"
+
+  # Note: the full runtime (~90MB unpacked, ~25MB compressed) is shipped
+  # as-is. Stripping include/, share/, npm, and corepack would shave a few
+  # MB but would break install.sh's fallback path that runs `npm install`
+  # when bundled node_modules are missing. Backlog item: minimize further
+  # once we drop the npm fallback unconditionally. See PLAN.md.
+else
+  echo "  [DRY RUN] Would download + verify + stage Node ${BUNDLED_NODE_VERSION}"
 fi
 
 # ─── Step 3: Bundle server node_modules (production) ─────
@@ -189,19 +271,37 @@ fi
 echo "[3/7] Bundling server node_modules for $BUILD_ARCH..."
 if [ "$DRY_RUN" = false ]; then
   # Run npm ci in the staging dir so we get a clean production install
-  # that's independent of whatever's in the dev server/node_modules
+  # that's independent of whatever's in the dev server/node_modules.
+  #
+  # CRITICAL: we run npm with the BUNDLED node on PATH, not the system node.
+  # Reason: native modules (better-sqlite3, duckdb, raw-socket) compile
+  # against whatever node headers node-gyp sees. If we used system node
+  # (say, v22.22.0) and then shipped the bundled runtime (v22.22.2), the
+  # native bindings would be compiled for the wrong ABI and could fail to
+  # load at runtime on any Node version mismatch. Forcing $PATH to prefer
+  # the bundled bin/ makes npm → bundled node → node-gyp → bundled headers,
+  # so the .node files match the runtime we ship.
   cp "$PROJECT_DIR/server/package.json" "$STAGING_DIR/server/package.json"
   cp "$PROJECT_DIR/server/package-lock.json" "$STAGING_DIR/server/package-lock.json" 2>/dev/null || true
 
   cd "$STAGING_DIR/server"
-  npm ci --omit=dev --silent 2>&1 | tail -3
+  PATH="$STAGING_DIR/runtime/node/bin:$PATH" \
+    npm ci --omit=dev --silent 2>&1 | tail -3
+  # Sanity check: which node did npm actually use?
+  REBUILD_NODE=$(PATH="$STAGING_DIR/runtime/node/bin:$PATH" node --version)
+  if [ "$REBUILD_NODE" != "v${BUNDLED_NODE_VERSION}" ]; then
+    echo "  WARNING: node on PATH during npm ci was $REBUILD_NODE, expected v${BUNDLED_NODE_VERSION}"
+  else
+    echo "  Native modules compiled against bundled $REBUILD_NODE"
+  fi
 
   # Verify native bindings exist — we don't want to ship a tarball that
-  # will fail at runtime because a native binary is missing.
+  # will fail at runtime because a native binary is missing. In v0.4.7 the
+  # bcrypt native module was replaced with bcryptjs (pure JS), so that check
+  # is gone. Three native bindings remain: better-sqlite3, duckdb, raw-socket.
   MISSING=""
   [ ! -f "$STAGING_DIR/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
   [ ! -f "$STAGING_DIR/server/node_modules/duckdb/lib/binding/duckdb.node" ] && MISSING="$MISSING duckdb"
-  [ -z "$(find "$STAGING_DIR/server/node_modules/bcrypt/lib/binding" -name '*.node' 2>/dev/null | head -1)" ] && MISSING="$MISSING bcrypt"
   [ ! -f "$STAGING_DIR/server/node_modules/raw-socket/build/Release/raw.node" ] && MISSING="$MISSING raw-socket"
 
   if [ -n "$MISSING" ]; then

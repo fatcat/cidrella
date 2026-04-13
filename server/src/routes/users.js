@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import crypto from 'crypto';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { getDb, audit } from '../db/init.js';
 import { ROLES, requireRole } from '../auth/roles.js';
 

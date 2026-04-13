@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import crypto from 'crypto';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';

@@ -510,11 +510,11 @@ if [ ! -d "$TARGET_SLOT/server/node_modules/express" ]; then
   cd - >/dev/null
 fi
 
-# Verify key native bindings
+# Verify key native bindings. v0.4.7 dropped bcrypt in favor of bcryptjs
+# (pure JS), so that check is gone. Three native bindings remain.
 MISSING=""
 [ ! -f "$TARGET_SLOT/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
 [ ! -f "$TARGET_SLOT/server/node_modules/duckdb/lib/binding/duckdb.node" ] && MISSING="$MISSING duckdb"
-[ -z "$(find "$TARGET_SLOT/server/node_modules/bcrypt/lib/binding" -name '*.node' 2>/dev/null | head -1)" ] && MISSING="$MISSING bcrypt"
 [ ! -f "$TARGET_SLOT/server/node_modules/raw-socket/build/Release/raw.node" ] && MISSING="$MISSING raw-socket"
 if [ -n "$MISSING" ]; then
   err "Pre-flight failed: missing native bindings:$MISSING"
@@ -659,6 +659,25 @@ fi
 if [ -f "$TARGET_SLOT/scripts/cidrella-dnsmasq-hup" ]; then
   install -m 0755 -o root -g root "$TARGET_SLOT/scripts/cidrella-dnsmasq-hup" /usr/local/bin/cidrella-dnsmasq-hup
   ok "Installed /usr/local/bin/cidrella-dnsmasq-hup wrapper"
+fi
+
+# Apply capabilities to the bundled Node binary in the TARGET slot before
+# the symlink swap. v0.4.7+ ships Node in runtime/node/bin/node inside each
+# slot; tar doesn't preserve security.capability xattrs, so we re-apply here
+# at every update. Target the slot explicitly (not /opt/cidrella) so the
+# caps are set on the NEW binary before it becomes active. If the tarball
+# has no bundled runtime (pre-0.4.7 release used on a v0.4.7+ host), fall
+# through to the existing system-node path — which will only exist on
+# legacy installs since v0.4.7 drops system Node from the apt list.
+TARGET_NODE_BIN="$TARGET_SLOT/runtime/node/bin/node"
+if [ -x "$TARGET_NODE_BIN" ]; then
+  if setcap cap_net_raw,cap_net_bind_service+ep "$TARGET_NODE_BIN" 2>/dev/null; then
+    ok "Set capabilities on bundled Node ($TARGET_NODE_BIN)"
+    emit_event switchover pass setcap=bundled-node "path=$TARGET_NODE_BIN"
+  else
+    warn "Could not set capabilities on $TARGET_NODE_BIN"
+    emit_event switchover warn setcap=failed "path=$TARGET_NODE_BIN"
+  fi
 fi
 
 # Update systemd unit files if they changed (install_systemd_unit is idempotent).

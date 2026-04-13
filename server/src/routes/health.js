@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import os from 'os';
 import { execFileSync } from 'child_process';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { getDb } from '../db/init.js';
 import { queryRaw } from '../db/duckdb.js';
 import { APP_VERSION } from '../utils/version.js';
