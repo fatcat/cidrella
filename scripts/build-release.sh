@@ -188,14 +188,45 @@ if [ "$DRY_RUN" = false ]; then
   # Compare the base64 line from each .pub file (second line — first line
   # is the minisign `untrusted comment: ...` header) against the constant
   # in install.sh. Hard-fail on mismatch.
+  #
+  # Hardening notes (from code-quality review of v0.4.8):
+  # - Anchor the regex with `="` so `MINISIGN_PUBKEY_OLD=...` (a plausible
+  #   future historical comment) doesn't match.
+  # - Refuse ambiguous matches: if two lines in install.sh start with the
+  #   same constant name, abort. Prevents a stray copy-paste from silently
+  #   picking one of two conflicting values.
+  # - Strip CR and all whitespace from both sides of the comparison so a
+  #   Windows line ending anywhere in the pipeline doesn't produce a false
+  #   mismatch.
+  # - Use `grep -m 1` as belt-and-suspenders even though ambiguous-match is
+  #   already guarded above.
   check_pubkey_constant() {
     local constant_name="$1" pub_file="$2"
-    local embedded file_key
-    embedded=$(grep "^${constant_name}=" "$STAGING_DIR/scripts/install.sh" \
-      | sed 's/^[^=]*="\(.*\)"$/\1/')
-    file_key=$(sed -n '2p' "$STAGING_DIR/scripts/$pub_file")
-    if [ -z "$embedded" ]; then
+    local match_count embedded file_key
+
+    match_count=$(grep -c "^${constant_name}=\"" "$STAGING_DIR/scripts/install.sh")
+    if [ "$match_count" -eq 0 ]; then
       echo "  ERROR: $constant_name constant not found in install.sh"
+      exit 1
+    fi
+    if [ "$match_count" -gt 1 ]; then
+      echo "  ERROR: $constant_name defined more than once in install.sh ($match_count matches)"
+      echo "  Ambiguous constant — refusing to guess which is authoritative."
+      exit 1
+    fi
+
+    embedded=$(grep -m 1 "^${constant_name}=\"" "$STAGING_DIR/scripts/install.sh" \
+      | sed -E 's/^[^=]+="([^"]*)".*/\1/' \
+      | tr -d '\r' | tr -d '[:space:]')
+    file_key=$(sed -n '2p' "$STAGING_DIR/scripts/$pub_file" \
+      | tr -d '\r' | tr -d '[:space:]')
+
+    if [ -z "$embedded" ]; then
+      echo "  ERROR: $constant_name value empty after parse (install.sh formatting changed?)"
+      exit 1
+    fi
+    if [ -z "$file_key" ]; then
+      echo "  ERROR: $pub_file has no base64 line (line 2 empty after whitespace strip)"
       exit 1
     fi
     if [ "$embedded" != "$file_key" ]; then

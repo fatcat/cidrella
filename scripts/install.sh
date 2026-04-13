@@ -637,44 +637,15 @@ fi
 # TIGHTEN SECRET FILE PERMISSIONS (v0.4.8+)
 # ═══════════════════════════════════════════════════════════
 #
-# Default umask left cidrella.db, analytics.duckdb, and server.key at 644 —
-# world-readable. That means any local OS user could read the SQLite file
-# (getting bcrypt password hashes + audit log) and the TLS private key. The
-# real boundary for CIDRella secrets is "host access == total access", but
-# leaving these world-readable violated least privilege. v0.4.8 tightens
-# them to 600 cidrella:cidrella so only the cidrella service and root can
-# read. dnsmasq subtree stays at 755 because dnsmasq drops to nobody and
-# needs to read its own state files on SIGHUP reload.
-#
-# The chmod is idempotent and only tightens (never loosens), so running it
-# on subsequent updates is safe even when the files are already 600.
-tighten_secrets() {
-  # SQLite DB and its WAL/shm sidecars
-  chmod 600 "$DATA_DIR/cidrella.db" 2>/dev/null || true
-  chmod 600 "$DATA_DIR/cidrella.db-wal" 2>/dev/null || true
-  chmod 600 "$DATA_DIR/cidrella.db-shm" 2>/dev/null || true
-  # DuckDB analytics + sidecars
-  chmod 600 "$DATA_DIR/analytics.duckdb" 2>/dev/null || true
-  for f in "$DATA_DIR"/analytics.duckdb.*; do
-    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
-  done
-  # TLS material — cert is public but the key absolutely is not
-  chmod 700 "$DATA_DIR/certs" 2>/dev/null || true
-  chmod 600 "$DATA_DIR/certs/server.key" 2>/dev/null || true
-  # Backups directory — contains full DB dumps, strictly admin-only
-  chmod 700 "$DATA_DIR/backups" 2>/dev/null || true
-  for f in "$DATA_DIR"/backups/*.tar.gz "$DATA_DIR"/backups/*.tar.gz.enc; do
-    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
-  done
-  # Trained anomaly models — reveal per-client DNS behavior profiles
-  chmod 700 "$DATA_DIR/anomaly" 2>/dev/null || true
-  chmod 700 "$DATA_DIR/anomaly/models" 2>/dev/null || true
-  for f in "$DATA_DIR"/anomaly/models/*; do
-    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
-  done
-}
-tighten_secrets
-ok "Tightened secret file permissions (DB, certs, backups, anomaly models → 600/700)"
+# The actual chmod logic lives in scripts/lib/tighten-secrets.sh so it can
+# be shared with update.sh and reused without drift. See that file for the
+# rationale and the list of tightened paths.
+if [ -f "$INSTALL_DIR/scripts/lib/tighten-secrets.sh" ]; then
+  # shellcheck source=scripts/lib/tighten-secrets.sh
+  source "$INSTALL_DIR/scripts/lib/tighten-secrets.sh"
+  tighten_secrets "$DATA_DIR"
+  ok "Tightened secret file permissions (DB, certs, backups, anomaly models → 600/700)"
+fi
 
 # ═══════════════════════════════════════════════════════════
 # EXTRACT ADMIN PASSWORD

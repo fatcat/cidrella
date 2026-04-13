@@ -110,19 +110,12 @@ router.post('/change-password', async (req, res) => {
 
   const hash = await bcrypt.hash(new_password, 10);
   // Clear password_reset_by at the same time so the warning banner from a
-  // CLI reset disappears after the legit owner successfully changes it. The
-  // column is guarded — if the DB is pre-v0.4.8 it doesn't exist and the
-  // UPDATE would fail; we detect that up front and skip the column.
-  const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
-  if (userCols.includes('password_reset_by')) {
-    db.prepare(
-      "UPDATE users SET password_hash = ?, must_change_password = 0, password_reset_by = NULL, updated_at = datetime('now') WHERE id = ?"
-    ).run(hash, user.id);
-  } else {
-    db.prepare(
-      "UPDATE users SET password_hash = ?, must_change_password = 0, updated_at = datetime('now') WHERE id = ?"
-    ).run(hash, user.id);
-  }
+  // CLI reset disappears after the legit owner successfully changes it.
+  // Migration 044 is unconditional in v0.4.8+, so the column always exists
+  // on a running server — no need for runtime introspection.
+  db.prepare(
+    "UPDATE users SET password_hash = ?, must_change_password = 0, password_reset_by = NULL, updated_at = datetime('now') WHERE id = ?"
+  ).run(hash, user.id);
 
   audit(user.id, 'password_changed', 'user', user.id, null);
 
@@ -150,13 +143,10 @@ router.get('/me', (req, res) => {
   // navigation. Without this, reloading the page between login and the
   // Change Password screen would replace user.value with a payload that
   // doesn't carry password_reset_by, and the warning banner would disappear.
-  // The column is guarded in case the DB pre-dates migration 044.
-  const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
-  const hasResetByCol = userCols.includes('password_reset_by');
-  const cols = hasResetByCol
-    ? 'id, username, role, must_change_password, preferences, password_reset_by, created_at'
-    : 'id, username, role, must_change_password, preferences, created_at';
-  const user = db.prepare(`SELECT ${cols} FROM users WHERE id = ?`).get(req.user.id);
+  // Migration 044 is unconditional in v0.4.8+ so we select it directly.
+  const user = db.prepare(
+    'SELECT id, username, role, must_change_password, preferences, password_reset_by, created_at FROM users WHERE id = ?'
+  ).get(req.user.id);
 
   if (!user) {
     return res.status(404).json({ error: 'User not found' });

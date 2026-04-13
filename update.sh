@@ -775,31 +775,17 @@ if [ "$VERIFY_OK" = true ]; then
   ok "New version healthy."
   emit_event health pass "version=$NEW_VERSION"
 
-  # Tighten secret file permissions (v0.4.8+). Idempotent — safe to run on
-  # every update. Fixes pre-v0.4.8 installs that had 644 cidrella.db and
-  # server.key on disk. Only touches files that already exist; new files
-  # are created by the cidrella service with default 644 mode but get
-  # tightened here on the next update pass. See install.sh for rationale.
-  chmod 600 "$DATA_DIR/cidrella.db" 2>/dev/null || true
-  chmod 600 "$DATA_DIR/cidrella.db-wal" 2>/dev/null || true
-  chmod 600 "$DATA_DIR/cidrella.db-shm" 2>/dev/null || true
-  chmod 600 "$DATA_DIR/analytics.duckdb" 2>/dev/null || true
-  for f in "$DATA_DIR"/analytics.duckdb.*; do
-    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
-  done
-  chmod 700 "$DATA_DIR/certs" 2>/dev/null || true
-  chmod 600 "$DATA_DIR/certs/server.key" 2>/dev/null || true
-  chmod 700 "$DATA_DIR/backups" 2>/dev/null || true
-  for f in "$DATA_DIR"/backups/*.tar.gz "$DATA_DIR"/backups/*.tar.gz.enc; do
-    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
-  done
-  chmod 700 "$DATA_DIR/anomaly" 2>/dev/null || true
-  chmod 700 "$DATA_DIR/anomaly/models" 2>/dev/null || true
-  for f in "$DATA_DIR"/anomaly/models/*; do
-    [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
-  done
-  ok "Tightened secret file permissions"
-  emit_event switchover pass action=tightened-secrets
+  # Tighten secret file permissions (v0.4.8+). Logic lives in
+  # scripts/lib/tighten-secrets.sh so install.sh and update.sh share one
+  # source of truth. Idempotent — safe to run on every update. Fixes pre-
+  # v0.4.8 installs that had 644 cidrella.db and server.key on disk.
+  if [ -f "$INSTALL_LINK/scripts/lib/tighten-secrets.sh" ]; then
+    # shellcheck source=scripts/lib/tighten-secrets.sh
+    source "$INSTALL_LINK/scripts/lib/tighten-secrets.sh"
+    tighten_secrets "$DATA_DIR"
+    ok "Tightened secret file permissions"
+    emit_event switchover pass action=tightened-secrets
+  fi
 
   emit_event update end "from=$CURRENT_VERSION" "to=$NEW_VERSION" result=success
   track_progress "completed" 100 "Updated to v${NEW_VERSION}"

@@ -110,15 +110,23 @@ const hostname = os.hostname();
 const tty = process.env.SSH_TTY || (process.stdin.isTTY ? 'tty' : 'no-tty');
 const actorLabel = `cli:${osUser}@${hostname}`;
 
-// Apply the reset + audit log atomically. If the audit insert fails for any
-// schema-compat reason (e.g. running against a pre-044 DB), we still update
-// the password but warn loudly. The password_reset_by column is guarded the
-// same way — if it doesn't exist, we skip the update and warn.
-const reset = db.transaction(() => {
-  // Detect v0.4.8+ schema by checking for the password_reset_by column
-  const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
-  const hasResetByCol = userCols.includes('password_reset_by');
+// Detect whether the DB has the v0.4.8 password_reset_by column. On pre-v0.4.8
+// DBs (which a user might hit if they're resetting a password on a legacy
+// install that was never upgraded), the column doesn't exist and we gracefully
+// skip writing it — the password reset itself still succeeds, just without
+// the banner trail. This is the ONLY place in reset-password.js that needs
+// runtime schema introspection; elsewhere we use the known canonical schema
+// directly. Do the check once, up front, outside the transaction.
+const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
+const hasResetByCol = userCols.includes('password_reset_by');
 
+// Apply the reset + audit log atomically. The audit_log schema is canonical
+// (created by migration 001 and stable since): id, user_id, action,
+// entity_type, entity_id, details, created_at. There's no need to introspect
+// it — we're in a codebase where migrations always run before any non-CLI
+// code, and this CLI opens the DB without running migrations, but the
+// audit_log has existed since day one so the CLI can assume it.
+const reset = db.transaction(() => {
   if (hasResetByCol) {
     db.prepare(`
       UPDATE users
@@ -138,42 +146,29 @@ const reset = db.transaction(() => {
     `).run(newHash, username);
   }
 
-  // Audit log insert. Detect the audit_log schema — the columns vary across
-  // older installs, so we introspect first and insert only what exists.
-  const auditCols = db.prepare('PRAGMA table_info(audit_log)').all().map(r => r.name);
-  if (auditCols.length === 0) {
-    return { hasResetByCol, auditInserted: false };
-  }
+  // Audit log INSERT uses the canonical schema. user_id is NULL because the
+  // actor is not a CIDRella user — it's an OS-level root with shell access.
+  // The actor label goes into details.
   const details = JSON.stringify({
     os_user: osUser,
     hostname,
     tty,
     target_user_id: user.id,
     target_username: username,
+    actor_label: actorLabel,
   });
   try {
-    // Preferred shape (auditColumns guaranteed in v0.4.x): action, resource_type, details, created_at
-    const cols = ['action', 'resource_type', 'details', 'created_at'];
-    const vals = ['password_reset_cli', 'user', details, new Date().toISOString()];
-    // Some schemas have user_id (the actor); set to NULL for CLI actions
-    if (auditCols.includes('user_id')) {
-      cols.unshift('user_id');
-      vals.unshift(null);
-    }
-    // Some schemas have resource_id — set to the target user id
-    if (auditCols.includes('resource_id')) {
-      cols.push('resource_id');
-      vals.push(String(user.id));
-    }
-    const placeholders = cols.map(() => '?').join(',');
-    db.prepare(`INSERT INTO audit_log (${cols.join(',')}) VALUES (${placeholders})`).run(...vals);
-    return { hasResetByCol, auditInserted: true };
+    db.prepare(
+      'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)'
+    ).run(null, 'password_reset_cli', 'user', user.id, details);
+    return { auditInserted: true };
   } catch (err) {
-    return { hasResetByCol, auditInserted: false, auditError: err.message };
+    return { auditInserted: false, auditError: err.message };
   }
 });
 
 const result = reset();
+result.hasResetByCol = hasResetByCol;
 db.close();
 
 console.log('');
