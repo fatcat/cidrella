@@ -123,6 +123,12 @@ Before a large jump, read the release notes for each intermediate version on Git
 - **DuckDB major version changes** — DuckDB on-disk format is **not backward compatible** across major versions. Once an update runs migrations that touch `analytics.duckdb`, a rollback to the previous DuckDB version will lose analytics data (the snapshot is restored, but it was written by the older DuckDB, so it is readable again).
 - **Minisign key rotation** — if the public signing key ever rotates, you will need to update `/opt/cidrella/scripts/cidrella.pub` manually before `cidrella-update` can verify new releases.
 
+### Version-specific upgrade notes
+
+Some releases have introduced changes that require a one-time manual step when upgrading through them. These live in their own files so they stay findable and don't clutter the main upgrade flow:
+
+- **[v0.4.6 → v0.4.7](./UPGRADING-0.4.6-to-0.4.7.md)** — requires an `update.sh` hot-patch. v0.4.6's hardcoded binding check expected `bcrypt` (replaced by `bcryptjs` in v0.4.7) and its preflight probe spawns the new Node binary without capabilities (v0.4.7 ships a bundled Node that needs `setcap` before the raw-socket health check can run).
+
 ### Triggering from the API
 
 ```
