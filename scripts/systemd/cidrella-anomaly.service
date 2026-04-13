@@ -14,5 +14,43 @@ Environment=DATA_DIR=/var/lib/cidrella
 Restart=on-failure
 RestartSec=30
 
+# ─── Security hardening (added in v0.4.8) ──────────────
+#
+# The anomaly daemon is a python process that reads DNS query windows from
+# cidrella.db, trains scikit-learn Isolation Forest models, and writes the
+# resulting model files under /var/lib/cidrella/anomaly/. It does NOT need:
+#   - privileged capabilities (zero network binding, zero raw sockets)
+#   - writable filesystem outside /var/lib/cidrella
+#   - access to any subsystem beyond its own data dir
+#
+# Aggressive sandboxing is safe here because the daemon is pure Python+
+# native extensions with well-understood syscall surface.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cidrella
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectClock=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+NoNewPrivileges=true
+RemoveIPC=true
+
+# Drop ALL capabilities from the bounding set — the anomaly daemon needs
+# none of them.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# NOT enabled:
+#   MemoryDenyWriteExecute=true — numpy / scipy / scikit-learn may use
+#     SIMD code paths that rely on W+X mappings in some builds. Risk of
+#     silent runtime breakage, not worth it for the marginal gain.
+
 [Install]
 WantedBy=multi-user.target

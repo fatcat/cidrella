@@ -22,14 +22,47 @@ RestartSec=5
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
-# Security hardening
+# ─── Security hardening ─────────────────────────────────
+#
+# Filesystem sandboxing (existing since v0.4.2):
 ProtectSystem=strict
 ReadWritePaths=/var/lib/cidrella
 ProtectHome=true
 PrivateTmp=true
 
-# Network scanning requires sudo for arping/nmap (NoNewPrivileges must be off)
+# Additional filesystem isolation added in v0.4.8:
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectClock=true
+
+# Process / behavior restrictions added in v0.4.8:
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RemoveIPC=true
+
+# Capabilities: bound the process to exactly what we need, no more.
+# CAP_NET_RAW is used by the scanner's raw-socket ICMP pings; CAP_NET_BIND_SERVICE
+# lets the process bind privileged ports if needed. CapabilityBoundingSet
+# strips every other capability even from the bounding set, so a child
+# process can't escalate via any other cap.
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
+
+# NOT enabled (would break functionality):
+#   NoNewPrivileges=true — blocks sudo setuid escalation, which we use for
+#     arping and the cidrella-dnsmasq-hup wrapper. Without sudo, raw-socket
+#     scans and dnsmasq reloads fail.
+#   PrivateUsers=true — same reason (creates a user namespace, breaks sudo).
+#   MemoryDenyWriteExecute=true — breaks V8's JIT compiler (Node uses W+X
+#     mappings for generated code).
+#   SystemCallFilter=@system-service — too broad to adopt blindly; would
+#     need a syscall-by-syscall audit against better-sqlite3, duckdb, and
+#     raw-socket before turning on.
 
 [Install]
 WantedBy=multi-user.target

@@ -314,8 +314,41 @@ if [ "$DRY_RUN" = false ]; then
   NODE_MODULES_SIZE=$(du -sh "$STAGING_DIR/server/node_modules" | cut -f1)
   echo "  Bundled node_modules: $NODE_MODULES_SIZE"
   cd "$PROJECT_DIR"
+
+  # ─── Step 3.5: Shrink bundled Node runtime ─────────────
+  #
+  # At this point npm ci has finished and node-gyp has already compiled
+  # the native modules against the bundled Node headers under include/.
+  # We no longer need the headers, manpages, or docs for runtime execution,
+  # so strip them out before the tarball is created. corepack is also dead
+  # weight (it's a pnpm/yarn shim the service never calls). npm IS kept
+  # because install.sh has a fallback path that runs `npm install` if the
+  # bundled server/node_modules is missing (edge case but supported).
+  #
+  # Savings: ~20 MB unpacked, ~6-8 MB compressed in the gzip tarball.
+  RUNTIME_DIR="$STAGING_DIR/runtime/node"
+  if [ -d "$RUNTIME_DIR" ]; then
+    BEFORE_SIZE=$(du -sh "$RUNTIME_DIR" | cut -f1)
+    rm -rf "$RUNTIME_DIR/include"
+    rm -rf "$RUNTIME_DIR/share/doc"
+    rm -rf "$RUNTIME_DIR/share/man"
+    rm -rf "$RUNTIME_DIR/share/systemtap"
+    rm -rf "$RUNTIME_DIR/lib/node_modules/corepack"
+    # Remove corepack's bin symlinks too
+    rm -f "$RUNTIME_DIR/bin/corepack"
+    rm -f "$RUNTIME_DIR/bin/pnpm"
+    rm -f "$RUNTIME_DIR/bin/yarn"
+    AFTER_SIZE=$(du -sh "$RUNTIME_DIR" | cut -f1)
+    echo "  Runtime shrunk: $BEFORE_SIZE → $AFTER_SIZE (removed include/, share/doc/, share/man/, corepack)"
+    # Smoke test: bundled node must still run after the shrink
+    SHRUNK_SMOKE=$("$RUNTIME_DIR/bin/node" --version 2>/dev/null)
+    if [ "$SHRUNK_SMOKE" != "v${BUNDLED_NODE_VERSION}" ]; then
+      echo "  ERROR: bundled node broken after shrink (reports: '$SHRUNK_SMOKE')"
+      exit 1
+    fi
+  fi
 else
-  echo "  [DRY RUN] Would run: npm ci --omit=dev in staging dir and verify native bindings"
+  echo "  [DRY RUN] Would run: npm ci --omit=dev in staging dir, verify native bindings, shrink runtime"
 fi
 
 # ─── Step 4: Create tarball ──────────────────────────────
