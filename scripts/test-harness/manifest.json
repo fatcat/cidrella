@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "description": "CIDRella integration test harness — agent-readable scenario catalog. Read this before running scenarios so you know what each one tests, and prefer harness results over code-reading when both are available.",
+  "runner": "scripts/test-harness/run.sh",
+  "results_dir": "scripts/test-harness/results",
+  "default_host": "10.0.0.8",
+  "scenarios": [
+    {
+      "name": "fresh-install",
+      "file": "scripts/test-harness/scenarios/fresh-install.sh",
+      "description": "Fresh install of the latest release + full post-install state verification. Baseline scenario every future feature should either extend or keep passing.",
+      "catches": [
+        "install.sh regressions",
+        "missing wrappers in /usr/local/bin/",
+        "missing v0.4.9+ lib files (rotation.sh, tighten-secrets.sh)",
+        "deep-health subsystem failures",
+        "bundled Node runtime missing or wrong version",
+        "events.jsonl not populated during install"
+      ],
+      "expected_duration_sec": 90,
+      "requires_fresh_host": true
+    },
+    {
+      "name": "secret-file-perms",
+      "file": "scripts/test-harness/scenarios/secret-file-perms.sh",
+      "description": "Verify v0.4.8+ secret-file-permission tightening after fresh install. Catches regressions where cidrella.db, analytics.duckdb, server.key, or their dirs get created with world-readable modes.",
+      "catches": [
+        "regression to 644 on cidrella.db or server.key (v0.4.7 bug)",
+        "install.sh tighten_secrets block not running",
+        "update.sh tighten_secrets block not running on upgrades",
+        "accidental tightening of dnsmasq subtree (breaks DNS/DHCP reload)"
+      ],
+      "expected_duration_sec": 90,
+      "requires_fresh_host": true
+    },
+    {
+      "name": "post-install-hook",
+      "file": "scripts/test-harness/scenarios/post-install-hook.sh",
+      "description": "Post-install hook convention: shipped, executable, invoked on fresh install, receives the documented env contract. Anchors the v0.4.9 hook mechanism.",
+      "catches": [
+        "post-install.sh missing from release tarball",
+        "install.sh invoker block removed or broken",
+        ".buildignore accidentally excluding scripts/post-install.sh"
+      ],
+      "does_not_catch": [
+        "env contract drift (TARGET_SLOT/DATA_DIR/NEW_VERSION/IS_FRESH_INSTALL): the env-capture sub-assertion only proves the sentinel wrapper itself sees the vars the scenario explicitly sets, not that install.sh exports them. True env-contract verification would need to intercept install.sh's actual invocation — not feasible without restructuring the scenario."
+      ],
+      "expected_duration_sec": 100,
+      "requires_fresh_host": true
+    }
+  ],
+  "result_schema": {
+    "scenario": "string (scenario name)",
+    "description": "string (human-readable summary)",
+    "status": "string (pass | fail)",
+    "hostname": "string (remote host that ran the scenario)",
+    "started_at_unix_ms": "number",
+    "duration_ms": "number",
+    "assert_pass": "number (count of passing assertions)",
+    "assert_fail": "number (count of failing assertions)",
+    "assertions": [
+      {
+        "name": "string (assertion label)",
+        "status": "string (pass | fail)",
+        "detail": "string (optional, failure info)"
+      }
+    ],
+    "captures": "object (string-keyed observables: config files, command output, log tails)"
+  },
+  "agent_usage_notes": [
+    "Read manifest.json first to know what scenarios exist and what each catches. Agents should not need to re-read scenario source code to understand coverage.",
+    "Run specific scenarios with: scripts/test-harness/run.sh --scenario <name>",
+    "Run all with: scripts/test-harness/run.sh",
+    "Results land in scripts/test-harness/results/<scenario>-<timestamp>.json — one JSON object per file, parseable directly.",
+    "Each scenario wipes the target host before running (on by default). Runner refuses to run if the host is unreachable.",
+    "The harness targets testerella (10.0.0.8) by default. DO NOT point it at the production host — scenarios wipe state aggressively.",
+    "A scenario 'pass' means every assertion passed; a 'fail' means at least one assertion failed AND the captures object contains the observed state at the moment of failure.",
+    "When a scenario fails, read the captures object before hypothesizing a fix. The captures answer 'what was the actual state when this assertion fired?' which is usually enough to narrow the fault.",
+    "To add a scenario: copy an existing one in scripts/test-harness/scenarios/, define SCENARIO_NAME and SCENARIO_DESCRIPTION, implement scenario_setup/run/assert/capture, then add an entry here in manifest.json."
+  ]
+}

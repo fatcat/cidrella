@@ -27,6 +27,16 @@
 #     /usr/local/bin/cidrella-node if node is needed for anything. Do NOT
 #     assume jq, sqlite3, or other dev tools are present.
 #
+# IMPORTANT for future maintainers:
+#   `set -eu` is active below. That means any unhandled non-zero exit or
+#   unset variable reference terminates the script immediately, which
+#   directly conflicts with the "warn and continue on non-fatal errors"
+#   contract above. When adding version-specific steps, you MUST wrap any
+#   command that can fail non-fatally with `|| warn "..."` or `|| true`.
+#   Unguarded `chmod`, `mkdir`, `install`, etc. will hard-fail the hook.
+#   Only commands whose failure is a genuine stop-the-upgrade condition
+#   should be left unguarded.
+#
 # Convention:
 #   - Every release's post-install.sh is responsible for ANY one-shot setup
 #     the new version needs: new wrapper installs, file permission changes,

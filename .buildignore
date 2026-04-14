@@ -54,6 +54,11 @@ build-release.sh
 deploy-lxc.sh
 test-dns-blocking.sh
 
+# Integration test harness — dev-only, runs against throwaway LXCs via SSH.
+# Primary consumer is Claude Code review agents. Never needed on a production
+# box and shipping it would expose a runner that wipes host state.
+test-harness/
+
 # Dev-only source files that don't belong in production. The api-browser
 # route is also gated at mount time by NODE_ENV !== 'production' in
 # server/src/index.js, but excluding the file here means an admin can't

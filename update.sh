@@ -1,6 +1,14 @@
 #!/bin/bash
 set -euo pipefail
 
+# Resolve $0 to an absolute path BEFORE the `cd /` below. Order matters:
+# if $0 is a relative path like `./update.sh` (user ran it via cd + ./),
+# then `readlink -f` evaluates it against the current cwd. Resolving after
+# `cd /` would yield `/update.sh`, and the library-path derivation below
+# would produce `//scripts/lib` — the cryptic failure mode that bit prod
+# on the v0.4.6→v0.4.8 transition. Capture the realpath first.
+_UPDATE_SH_REAL="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+
 # Anchor CWD to / so we never depend on the invoker's working directory.
 # Prior incident (2026-04-12): user ran /opt/cidrella/update.sh while cd'd
 # inside /opt/cidrella-a; update.sh later rm -rf'd that slot during the
@@ -57,14 +65,22 @@ UPDATE_LOG="/var/lib/cidrella/update.log"
 
 # ─── Shared library ───────────────────────────────────────
 # Source the per-slot bash helpers. Scripts live in the active slot at
-# $INSTALL_LINK/scripts/lib/. Resolving $0 via readlink -f lets us find
-# the lib whether we're invoked as /usr/local/bin/cidrella-update (symlink)
-# or as /opt/cidrella/update.sh directly.
-_UPDATE_SH_REAL="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+# $INSTALL_LINK/scripts/lib/. $0 was resolved above (before `cd /`) so
+# _UPDATE_SH_REAL is an absolute path regardless of how we were invoked:
+# `./update.sh`, `/opt/cidrella/update.sh`, or `/usr/local/bin/cidrella-update`
+# (a symlink — readlink -f follows it).
 _UPDATE_SLOT_DIR="$(dirname "$_UPDATE_SH_REAL")"
 LIB_DIR="$_UPDATE_SLOT_DIR/scripts/lib"
+# Fallback: if the $0-derived path somehow doesn't point at a valid lib
+# (cwd anomaly, broken symlink, future refactor regression), try the
+# well-known stable path. INSTALL_LINK is the always-current slot symlink.
 if [ ! -d "$LIB_DIR" ] || [ ! -f "$LIB_DIR/log.sh" ]; then
-  echo "[ERROR] shared library not found at $LIB_DIR — aborting" >&2
+  LIB_DIR="$INSTALL_LINK/scripts/lib"
+fi
+if [ ! -d "$LIB_DIR" ] || [ ! -f "$LIB_DIR/log.sh" ]; then
+  echo "[ERROR] shared library not found at $LIB_DIR" >&2
+  echo "[ERROR]   \$0=$0  resolved=$_UPDATE_SH_REAL  INSTALL_LINK=$INSTALL_LINK" >&2
+  echo "[ERROR] Try running the absolute path: $INSTALL_LINK/update.sh" >&2
   exit 1
 fi
 # Must export FROM_API before sourcing log.sh so color/output guards work.
@@ -82,6 +98,20 @@ source "$LIB_DIR/systemd-install.sh"
 if [ -f "$LIB_DIR/rotation.sh" ]; then
   # shellcheck source=scripts/lib/rotation.sh
   source "$LIB_DIR/rotation.sh"
+fi
+
+# ─── Canonical invocation nudge ──────────────────────────
+# If the user ran update.sh directly (either by path or `./update.sh`)
+# rather than through the `cidrella-update` wrapper symlink, point them
+# at the canonical command. Both entry points work identically — the
+# wrapper is just a symlink to this file — but the wrapper path is what
+# install.sh and the docs advertise, and it's the invocation that the
+# $0-vs-cwd corner case in pre-v0.4.10 releases handled most reliably.
+# Suppress the nudge when running under the API (FROM_API=true), when
+# $0 IS already the wrapper path, or when the invocation shape can't be
+# determined.
+if [ "$FROM_API" != "true" ] && [ "$0" != "/usr/local/bin/cidrella-update" ]; then
+  info "Tip: the canonical update command is 'cidrella-update' (a wrapper for this script)."
 fi
 
 # Legacy aliases for escape codes still used inline below (bold banners).
@@ -436,7 +466,7 @@ if declare -F load_key_state >/dev/null 2>&1; then
   if current_break_glass_pubkey_file "$BG_PUB_TMP" >/dev/null; then
     ROT_DIR="$TMPDIR/rotations"
     mkdir -p "$ROT_DIR"
-    _rot_names=$(fetch_rotation_announcements "$RELEASE_JSON" "$ROT_DIR" 2>/dev/null || true)
+    _rot_names=$(fetch_rotation_announcements "$RELEASE_JSON" "$ROT_DIR" || true)
     if [ -n "$_rot_names" ]; then
       info "Found rotation announcements in this release — applying"
       if ! apply_rotation_announcements "$ROT_DIR" "$BG_PUB_TMP"; then

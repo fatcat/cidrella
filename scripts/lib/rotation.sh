@@ -71,18 +71,23 @@ load_key_state() {
   local node_bin
   node_bin=$(_rotation_node) || return 0
 
+  # Emit one value per line (no prefix, no shell-quoting) and read with the
+  # `read` builtin, so no `eval`. Pubkey/date/integer values never contain
+  # embedded newlines, so line-per-field is unambiguous. A malicious
+  # .key-state.json that stuffed shell metacharacters into `primary_pubkey`
+  # cannot escape `read` because `read` treats its input as literal bytes.
   local parsed
   parsed=$(KEY_STATE_PATH="$KEY_STATE_FILE" "$node_bin" -e "
     try {
       const fs = require('fs');
       const s = JSON.parse(fs.readFileSync(process.env.KEY_STATE_PATH, 'utf8'));
-      const out = [
-        'KEY_STATE_MAX_SEEN=' + JSON.stringify(String(s.max_seen_sequence_number || 0)),
-        'KEY_STATE_PRIMARY=' + JSON.stringify(String(s.primary_pubkey || '')),
-        'KEY_STATE_BREAK_GLASS=' + JSON.stringify(String(s.break_glass_pubkey || '')),
-        'KEY_STATE_LAST_APPLIED=' + JSON.stringify(String(s.last_rotation_applied_at || '')),
-      ];
-      process.stdout.write(out.join('\n'));
+      const clean = v => String(v == null ? '' : v).replace(/[\r\n]/g, '');
+      process.stdout.write(
+        clean(s.max_seen_sequence_number || 0) + '\n' +
+        clean(s.primary_pubkey) + '\n' +
+        clean(s.break_glass_pubkey) + '\n' +
+        clean(s.last_rotation_applied_at) + '\n'
+      );
     } catch (e) {
       process.stderr.write('key-state parse error: ' + e.message);
       process.exit(1);
@@ -91,7 +96,12 @@ load_key_state() {
     warn "Could not parse $KEY_STATE_FILE — using shipped pubkeys"
     return 0
   }
-  eval "$parsed"
+  {
+    IFS= read -r KEY_STATE_MAX_SEEN
+    IFS= read -r KEY_STATE_PRIMARY
+    IFS= read -r KEY_STATE_BREAK_GLASS
+    IFS= read -r KEY_STATE_LAST_APPLIED
+  } <<< "$parsed"
 }
 
 # save_key_state <max_seen> <primary_pubkey_or_empty> <break_glass_pubkey_or_empty>
@@ -234,11 +244,14 @@ fetch_rotation_announcements() {
     [ -z "$url" ] && continue
     name=$(basename "$url")
     base="${name%.json}"
-    if ! curl -fsSL "$url" -o "$out_dir/$name" 2>/dev/null; then
+    # --proto '=https' + --proto-redir '=https' reject any non-HTTPS URL
+    # even if a crafted release JSON tries to smuggle file://, ftp://, etc.
+    # into browser_download_url. GitHub never does this, but defense in depth.
+    if ! curl --proto '=https' --proto-redir '=https' -fsSL "$url" -o "$out_dir/$name" 2>/dev/null; then
       warn "Failed to download $name (continuing without it)"
       continue
     fi
-    if ! curl -fsSL "${url}.minisig" -o "$out_dir/${name}.minisig" 2>/dev/null; then
+    if ! curl --proto '=https' --proto-redir '=https' -fsSL "${url}.minisig" -o "$out_dir/${name}.minisig" 2>/dev/null; then
       warn "No signature file for $name — skipping (unsigned announcements are rejected)"
       rm -f "$out_dir/$name"
       continue
@@ -263,8 +276,14 @@ _parse_announcement() {
       if (a.type !== 'cidrella-key-rotation') throw new Error('type mismatch');
       if (!Number.isInteger(a.sequence_number)) throw new Error('sequence_number missing or not integer');
       if (!['primary', 'break-glass'].includes(a.rotation_target)) throw new Error('invalid rotation_target');
-      if (typeof a.new_pubkey !== 'string' || !a.new_pubkey) throw new Error('new_pubkey missing');
-      if (typeof a.revoked_pubkey !== 'string' || !a.revoked_pubkey) throw new Error('revoked_pubkey missing');
+      // Minisign pubkeys are fixed-length (~56 chars, all base64) with no
+      // whitespace. Reject anything outside that shape — both because
+      // malformed values would shift \`read\`-based field-splitting in the
+      // caller, and because a legitimate rotation announcement will never
+      // contain such a value.
+      const okKey = s => typeof s === 'string' && /^[A-Za-z0-9+/=]{40,128}$/.test(s);
+      if (!okKey(a.new_pubkey)) throw new Error('new_pubkey missing or malformed');
+      if (!okKey(a.revoked_pubkey)) throw new Error('revoked_pubkey missing or malformed');
       if (typeof a.not_before !== 'string') throw new Error('not_before missing');
       process.stdout.write([
         a.sequence_number,
@@ -376,15 +395,13 @@ apply_rotation_announcements() {
         ;;
     esac
 
-    if [ "$revoked_pubkey_strict_check" != "off" ]; then
-      if [ "$current_for_target" != "$revoked_pk" ]; then
-        warn "$name: revoked_pubkey in announcement does not match currently-trusted $target key"
-        warn "  announcement claims to retire: $revoked_pk"
-        warn "  current trusted $target key:   $current_for_target"
-        warn "  Rejecting as stale/mismatched — investigate before manually applying."
-        emit_event rotation fail "announcement=$name" reason=revoked-mismatch
-        continue
-      fi
+    if [ "$current_for_target" != "$revoked_pk" ]; then
+      warn "$name: revoked_pubkey in announcement does not match currently-trusted $target key"
+      warn "  announcement claims to retire: $revoked_pk"
+      warn "  current trusted $target key:   $current_for_target"
+      warn "  Rejecting as stale/mismatched — investigate before manually applying."
+      emit_event rotation fail "announcement=$name" reason=revoked-mismatch
+      continue
     fi
 
     # Apply
