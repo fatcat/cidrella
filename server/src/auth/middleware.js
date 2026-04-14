@@ -1,8 +1,17 @@
 import jwt from 'jsonwebtoken';
 import { getDb } from '../db/init.js';
 
-// Paths that don't require authentication
-const PUBLIC_PATHS = ['/api/auth/login', '/api/health', '/api/health/deep'];
+// Paths that don't require authentication.
+//
+// `/api/logs/stream` is allowed through without a Bearer token NOT because
+// it's truly public, but because EventSource (used by the live log viewer)
+// cannot set custom HTTP headers. The route handler at server/src/routes/logs.js
+// enforces ticket-or-jwt itself: a one-time, 30s, single-use stream ticket
+// minted via POST /api/logs/stream-token (which still requires a valid JWT
+// + dns:read permission). Skipping the global middleware here lets the
+// route handler's ticket validation actually run — without this exemption
+// the SSE GET is rejected at the middleware before the ticket is ever read.
+const PUBLIC_PATHS = ['/api/auth/login', '/api/health', '/api/health/deep', '/api/logs/stream'];
 
 // Paths allowed when must_change_password is true
 const PASSWORD_CHANGE_PATHS = ['/api/auth/change-password', '/api/auth/me'];

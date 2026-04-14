@@ -16,6 +16,19 @@ export function initAnalyticsDb(dataDir) {
     db = new duckdb.Database(dbPath, (err) => {
       if (err) return reject(err);
 
+      // Cap DuckDB's buffer-pool memory before any query can run.
+      // Default is ~80% of system RAM (≈819MB on a 1GB LXC), which combined
+      // with the Node heap, the in-memory blocklist, and the Python anomaly
+      // daemon's resident set will push the cgroup over its limit and trigger
+      // the kernel OOM-killer on cidrella.service. The 17MB on-disk analytics
+      // dataset doesn't need a 256MB working set today, but headroom is cheap
+      // and a future ~10× growth still fits. threads=2 caps per-thread scratch
+      // so a single heavy GROUP BY can't spike RSS on a small box. duckdb-node
+      // serializes db.run calls per Database instance, so these PRAGMAs are
+      // guaranteed to apply before the CREATE TABLE below executes.
+      db.run("PRAGMA memory_limit='256MB'");
+      db.run("PRAGMA threads=2");
+
       db.run(`
         CREATE TABLE IF NOT EXISTS dns_queries (
           ts TIMESTAMP NOT NULL,

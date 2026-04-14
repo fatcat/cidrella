@@ -28,7 +28,6 @@ RUN apk add --no-cache \
     dnsmasq \
     openssl \
     arping \
-    nmap \
     bind-tools \
     sudo \
     tzdata \
@@ -38,10 +37,12 @@ RUN apk add --no-cache \
 RUN addgroup -g 65532 cidrella && \
     adduser -D -u 65532 -G cidrella -H -s /sbin/nologin cidrella
 
-# Allow cidrella user to send signals to dnsmasq and run network scans
+# Allow cidrella user to send signals to dnsmasq and run network scans.
+# nmap was in this allowlist historically but the app never called it;
+# removed in v0.4.10 to drop both the unused binary and its wildcard
+# sudoers rule. arping is kept because the scanner actually uses it.
 RUN echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*' > /etc/sudoers.d/cidrella-dnsmasq && \
     echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/pkill -TERM -x dnsmasq' >> /etc/sudoers.d/cidrella-dnsmasq && \
-    echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/nmap *' >> /etc/sudoers.d/cidrella-dnsmasq && \
     echo 'cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *' >> /etc/sudoers.d/cidrella-dnsmasq && \
     chmod 440 /etc/sudoers.d/cidrella-dnsmasq
 

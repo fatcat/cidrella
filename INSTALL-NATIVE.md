@@ -4,8 +4,30 @@ Recommended for production deployments on bare metal or LXC containers.
 
 ## Prerequisites
 
-- Debian or Ubuntu (or derivative)
-- Root access
+- Debian or Ubuntu (or derivative) on `amd64` or `arm64`
+- Root access (or sudo)
+- Network access to github.com (release download + signature verification)
+
+> **Note on `arm64`**: the installer and bundled runtime *should* work on arm64 (the release tarballs are built for it and the Node binary + native modules are compiled for both architectures), but arm64 is **not tested** — all development and release validation runs on `amd64`. If you hit arm64-specific issues, please open a GitHub issue with the output of `uname -a`, `dpkg --print-architecture`, and the install.sh log.
+
+**You do not need to install any system packages yourself.** The installer calls `apt-get` and pulls everything CIDRella needs. It is listed here only so you know what will land on the host:
+
+| Package | Why |
+|---|---|
+| `dnsmasq` | DNS + DHCP engine |
+| `openssl` | Self-signed TLS cert generation |
+| `minisign` | Release tarball signature verification |
+| `curl` | Release + GeoIP database downloads |
+| `rsync` | A/B slot extraction during updates |
+| `arping` | Network scanner (IP conflict detection) |
+| `dnsutils` | `dig` / `nslookup` for DNS forwarder health checks |
+| `libcap2-bin` | `setcap` for `CAP_NET_RAW` / `CAP_NET_BIND_SERVICE` on the bundled Node binary |
+| `sudo` | Allowlisted privilege escalation for the `cidrella` service user |
+| `build-essential` | Retained for users who want to `npm rebuild` manually; not used by the default install |
+| `python3`, `python3-setuptools` | Anomaly detection daemon runtime |
+| `python3-sklearn`, `python3-numpy`, `python3-joblib` | Anomaly detection ML libraries |
+
+Node.js is **not** a prerequisite — a Node 22.x runtime is bundled inside the release tarball and installed under `/opt/cidrella-<slot>/runtime/node/`. No system Node required.
 
 ## Installation
 

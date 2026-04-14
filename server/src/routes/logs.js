@@ -115,12 +115,39 @@ router.get('/stream', (req, res) => {
   // Send initial connected event
   res.write('event: connected\ndata: ok\n\n');
 
-  // Send last 200 lines as initial backlog
+  // Send last 200 lines as initial backlog.
+  //
+  // CRITICAL: read only the TAIL of the log file, never the whole thing.
+  // dnsmasq.log on long-running installs without log rotation can be
+  // 1+ GB. The previous version did `fs.readFileSync(LOG_FILE, 'utf-8')`
+  // which allocated the entire file into a Buffer, then a String, then a
+  // 15M-element Array — V8 attempted ~3 GB of heap and the cidrella service
+  // OOM-killed itself every time anyone opened the Logging tab. Read a
+  // bounded tail instead. 64 KB comfortably holds ~200 lines of dnsmasq
+  // output (~150-200 bytes/line) with headroom.
   let offset = 0;
   try {
-    const content = fs.readFileSync(LOG_FILE, 'utf-8');
-    offset = Buffer.byteLength(content, 'utf-8');
-    const lines = content.split('\n').filter(l => l.trim());
+    const stat = fs.statSync(LOG_FILE);
+    const size = stat.size;
+    const tailBytes = Math.min(64 * 1024, size);
+    const tailStart = size - tailBytes;
+    const buf = Buffer.alloc(tailBytes);
+    const fd = fs.openSync(LOG_FILE, 'r');
+    try {
+      fs.readSync(fd, buf, 0, tailBytes, tailStart);
+    } finally {
+      fs.closeSync(fd);
+    }
+    offset = size; // resume incremental tail from EOF, no double-reads
+    const text = buf.toString('utf-8');
+    // If we didn't start the read at a newline boundary, the first
+    // partial line is unusable — drop it. Skip this trim only when we
+    // happened to read the entire file (tailStart === 0).
+    const firstNewline = text.indexOf('\n');
+    const usable = (tailStart > 0 && firstNewline >= 0)
+      ? text.slice(firstNewline + 1)
+      : text;
+    const lines = usable.split('\n').filter(l => l.trim());
     const backlog = lines.slice(-200);
     for (const line of backlog) {
       if (matchesFilter(line, filter)) {
