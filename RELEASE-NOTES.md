@@ -6,7 +6,7 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
-## v0.4.11 — 2026-04-15 [PLANNED]
+## v0.4.11 — 2026-04-15
 
 ```yaml
 min_from: ""

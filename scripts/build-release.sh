@@ -257,21 +257,47 @@ if [ "$DRY_RUN" = false ]; then
   cp "$PROJECT_DIR/README.md" "$STAGING_DIR/README.md" 2>/dev/null || true
 
   # RELEASE.json — signed-payload source of truth for the version, commit,
-  # and bundled node version. update.sh uses the `version` field here
-  # (after minisign verification) as the authoritative downgrade-guard
-  # input, not the GitHub API's tag_name (which is on the attacker's
-  # side of the trust boundary).
+  # bundled node version, and (as of v0.4.12) the min_from gate. update.sh
+  # uses these fields AFTER minisign verification: version as the
+  # authoritative downgrade-guard input (not the GitHub API's tag_name,
+  # which is on the attacker's side of the trust boundary), and min_from
+  # as the skip-upgrade floor.
   BUILT_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   COMMIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+
+  # Extract this release's min_from from RELEASE-NOTES.md. The linter has
+  # already validated the file, so we can afford a lightweight grep — but
+  # we still route it through build-releases-manifest.js to avoid two
+  # parsers in the project. If extraction fails, fall back to empty string
+  # (equivalent to "any predecessor may jump here") and emit a warning —
+  # build proceeds so that missing metadata doesn't block an emergency
+  # release, but the warning is loud enough for a human to notice.
+  MIN_FROM=$(node "$PROJECT_DIR/scripts/build-releases-manifest.js" 2>/dev/null \
+    | node -e '
+        let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{
+          try {
+            const m=JSON.parse(s);
+            const r=m.releases.find(r=>r.version==="'"${VERSION}"'");
+            if (r && r.min_from) process.stdout.write(r.min_from);
+          } catch(e){}
+        });
+      ' 2>/dev/null || echo "")
+  if [ -z "$MIN_FROM" ]; then
+    MIN_FROM_JSON="null"
+  else
+    MIN_FROM_JSON="\"${MIN_FROM}\""
+  fi
+
   cat > "$STAGING_DIR/RELEASE.json" <<RELEASE_JSON
 {
   "version": "${VERSION}",
   "built_at": "${BUILT_AT}",
   "commit_sha": "${COMMIT_SHA}",
-  "bundled_node_version": "${BUNDLED_NODE_VERSION}"
+  "bundled_node_version": "${BUNDLED_NODE_VERSION}",
+  "min_from": ${MIN_FROM_JSON}
 }
 RELEASE_JSON
-  echo "  Wrote RELEASE.json (version=${VERSION}, commit=${COMMIT_SHA:0:12}, node=${BUNDLED_NODE_VERSION})"
+  echo "  Wrote RELEASE.json (version=${VERSION}, commit=${COMMIT_SHA:0:12}, node=${BUNDLED_NODE_VERSION}, min_from=${MIN_FROM:-<none>})"
 else
   echo "  [DRY RUN] Would stage server/, client/dist/, dnsmasq/, scripts/, package.json, README.md, RELEASE.json"
 fi
@@ -489,16 +515,66 @@ else
   echo "  [DRY RUN] Would verify signature against scripts/cidrella.pub"
 fi
 
+# ─── Step 5.5: Build + sign releases.json manifest ───────
+#
+# releases.json is the machine-readable view of RELEASE-NOTES.md, consumed
+# by the server-side update checker (v0.4.12+) to compute skip-upgrade
+# reachability. We sign it with the same primary minisign key as the
+# tarball so its authenticity chains from the same trust root. The verifier
+# side (server/src/utils/update-checker.js in v0.4.12+) will treat the
+# manifest as an advisory index — cryptographically verified but lower
+# trust weight than the tarball signature, which is still the authoritative
+# install gate. The break-glass composition gap raised by the architect
+# review is addressed on the verifier side via a keyring pattern, not here
+# on the producer side.
+#
+# Lint is wired in: a broken RELEASE-NOTES.md fails the build before the
+# tarball gets published, catching malformed metadata that would otherwise
+# silently break the consumer-side reachability computation.
+
+echo "[5.5/7] Building releases.json manifest..."
+if [ "$DRY_RUN" = false ]; then
+  # Lint first — fails the build on any schema violation
+  if ! node "$PROJECT_DIR/scripts/build-releases-manifest.js" --lint; then
+    echo "  ERROR: RELEASE-NOTES.md failed lint. Fix the issues above before releasing."
+    exit 1
+  fi
+  node "$PROJECT_DIR/scripts/build-releases-manifest.js" \
+    --out "$DIST_DIR/releases.json"
+  echo "  Manifest: dist/releases.json"
+
+  # Sign with the primary minisign key (same as the tarball).
+  minisign -Sm "$DIST_DIR/releases.json" -s "$MINISIGN_KEY"
+  echo "  Signature: dist/releases.json.minisig"
+
+  # Verify against the committed primary pubkey for consistency, matching
+  # the tarball's post-sign verify pattern. A failure here catches the
+  # same class of drift (local key rotated without updating the pubkey).
+  if ! minisign -Vm "$DIST_DIR/releases.json" -p "$PROJECT_DIR/scripts/cidrella.pub" >/dev/null 2>&1; then
+    echo "  ERROR: releases.json signature verification against scripts/cidrella.pub FAILED"
+    echo "  Delete dist/releases.json and dist/releases.json.minisig and retry."
+    exit 1
+  fi
+  echo "  Manifest signature verified against scripts/cidrella.pub"
+else
+  echo "  [DRY RUN] Would lint RELEASE-NOTES.md and emit dist/releases.json"
+  echo "  [DRY RUN] Would run: minisign -Sm dist/releases.json"
+fi
+
 if [ "$BUILD_ONLY" = true ]; then
   echo ""
   echo "=== Build complete (--build-only) ==="
   echo "  Tarball:   dist/$TARBALL"
   echo "  Signature: dist/${TARBALL}.minisig"
+  echo "  Manifest:  dist/releases.json + .minisig"
   echo ""
   echo "To publish manually:"
   echo "  git tag -a $TAG -m 'Release $TAG'"
   echo "  git push origin $TAG"
-  echo "  gh release create $TAG dist/$TARBALL dist/${TARBALL}.minisig --title 'CIDRella $TAG' --generate-notes"
+  echo "  gh release create $TAG \\"
+  echo "    dist/$TARBALL dist/${TARBALL}.minisig \\"
+  echo "    dist/releases.json dist/releases.json.minisig \\"
+  echo "    --title 'CIDRella $TAG' --generate-notes"
   exit 0
 fi
 
@@ -520,9 +596,16 @@ fi
 
 echo "[7/7] Creating GitHub release..."
 if [ "$DRY_RUN" = false ]; then
+  # Uploading releases.json + .minisig alongside the tarball means a
+  # client fetching `/releases/latest/download/releases.json` gets the
+  # manifest cut at the moment this tag was published. The manifest file
+  # name is stable across releases — every new release re-publishes the
+  # latest-known state — so there's no collision issue.
   gh release create "$TAG" \
     "$DIST_DIR/$TARBALL" \
     "$DIST_DIR/${TARBALL}.minisig" \
+    "$DIST_DIR/releases.json" \
+    "$DIST_DIR/releases.json.minisig" \
     --title "CIDRella $TAG" \
     --generate-notes
 
@@ -532,9 +615,10 @@ if [ "$DRY_RUN" = false ]; then
   echo "  Tag:       $TAG"
   echo "  Tarball:   dist/$TARBALL"
   echo "  Signature: dist/${TARBALL}.minisig"
+  echo "  Manifest:  dist/releases.json + .minisig"
   echo "  URL:       $RELEASE_URL"
 else
-  echo "  [DRY RUN] Would run: gh release create $TAG dist/$TARBALL dist/${TARBALL}.minisig --title 'CIDRella $TAG' --generate-notes"
+  echo "  [DRY RUN] Would run: gh release create $TAG dist/$TARBALL dist/${TARBALL}.minisig dist/releases.json dist/releases.json.minisig --title 'CIDRella $TAG' --generate-notes"
   echo ""
   echo "=== Dry run complete ==="
 fi

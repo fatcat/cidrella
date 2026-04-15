@@ -47,6 +47,56 @@
       ],
       "expected_duration_sec": 100,
       "requires_fresh_host": true
+    },
+    {
+      "name": "skip-upgrade",
+      "file": "scripts/test-harness/scenarios/skip-upgrade.sh",
+      "description": "CLI cidrella-update runs end-to-end on a bundled-Node-only host without hitting the bare-`node` preflight bug fixed in v0.4.11. Regression test for the silent CLI recovery failure that made v0.4.8/v0.4.9 hosts effectively unrecoverable via `cidrella-update` on clean bundled-Node installs.",
+      "catches": [
+        "update.sh preflight syntax check using bare `node` instead of the resolved bundled binary",
+        "cidrella-update failing on hosts with no system Node installed",
+        "resolve_node helper returning a path that doesn't resolve to an executable",
+        "CLI update exiting non-zero when there's nothing newer to install"
+      ],
+      "does_not_catch": [
+        "a real multi-release jump — testerella's installed version is always `latest` via install_latest_release, so until v0.4.12+ ships, this scenario only exercises the 'already up to date' path. Once a newer release is published, the same scenario automatically becomes a real jump test."
+      ],
+      "expected_duration_sec": 120,
+      "requires_fresh_host": true
+    },
+    {
+      "name": "min-from-blocked",
+      "file": "scripts/test-harness/scenarios/min-from-blocked.sh",
+      "description": "v0.4.12+ min_from gate in update.sh correctly refuses installs when the running version is below the required intermediate. Unit-style: sources slots.sh and reproduces the exact gate logic against synthetic RELEASE.json fixtures covering satisfied, unmet, null, absent, and unknown-current cases.",
+      "catches": [
+        "sed pattern for min_from extraction silently returning empty on valid input",
+        "semver_lt comparator treating X.Y.Z and X.Y.Z as unequal (off-by-one version bug)",
+        "min_from gate skipping the comparison entirely (refactor that accidentally dropped the check)",
+        "gate firing on pre-v0.4.3 no-RELEASE.json hosts where CURRENT_VERSION is 'unknown'",
+        "update.sh losing the `preflight fail reason=min_from_unmet` event emission"
+      ],
+      "does_not_catch": [
+        "end-to-end behavior against a real signed tarball whose RELEASE.json has min_from set. That would require committing a fixture tarball or arranging for a test release. The probe reproduces the gate's logic exactly but doesn't exercise update.sh's extraction phase as a side effect."
+      ],
+      "expected_duration_sec": 100,
+      "requires_fresh_host": true
+    },
+    {
+      "name": "manifest-fallback",
+      "file": "scripts/test-harness/scenarios/manifest-fallback.sh",
+      "description": "Server-side manifest verification failure falls back to GitHub API and surfaces manifestAvailable: false in /api/version. Replaces the primary minisign pubkey with a deterministic wrong key, restarts cidrella, and asserts the /api/version response reflects the degraded state instead of silently succeeding.",
+      "catches": [
+        "fetchReleasesManifest not returning null on signature verification failure",
+        "checkForUpdates not routing to the GitHub API fallback path when the manifest is unavailable",
+        "/api/version exposing manifestAvailable: true even when verification failed",
+        "release-manifest warnings missing from the cidrella server log (silent degradation)",
+        "manifest cache not being invalidated on restart"
+      ],
+      "does_not_catch": [
+        "network-level fetch failures (DNS, TCP, TLS). The scenario forces failure at the verification layer only. A dedicated network-fault scenario would require iptables-level manipulation, which we've held off on due to testerella's single-interface setup."
+      ],
+      "expected_duration_sec": 130,
+      "requires_fresh_host": true
     }
   ],
   "result_schema": {

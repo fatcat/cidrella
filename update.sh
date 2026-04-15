@@ -573,8 +573,33 @@ if [ -f "$RELEASE_META" ]; then
     write_progress "failed" 50 "Downgrade not allowed via update" "Signed RELEASE.json v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
     exit 1
   fi
-  ok "RELEASE.json verified: v${VERIFIED_VERSION}"
-  emit_event verify pass "release_json_version=$VERIFIED_VERSION"
+
+  # ─── min_from gate (v0.4.12+) ────────────────────────────
+  # Reads the min_from field from the signed RELEASE.json. If set and the
+  # current version is strictly less than it, this release requires an
+  # intermediate stop — refuse and surface the required intermediate in the
+  # error so the user knows exactly what to install first.
+  #
+  # The field is authoritative (signed), and missing/null is treated as "no
+  # gate." Pre-v0.4.12 tarballs have no min_from field, so sed returns
+  # empty and the gate is skipped — backward compatible. JSON null is also
+  # unquoted so the sed pattern doesn't match it, giving the same result.
+  #
+  # If the gate fires we wipe the target slot so a subsequent retry against
+  # a different target doesn't inherit the refused payload.
+  MIN_FROM=$(sed -n 's/.*"min_from"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RELEASE_META" | head -1)
+  if [ -n "$MIN_FROM" ] && [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$CURRENT_VERSION" "$MIN_FROM"; then
+    err "Refusing to install v${NEW_VERSION}: requires running at least v${MIN_FROM}, you're on v${CURRENT_VERSION}."
+    err "Install v${MIN_FROM} (or a later intermediate listed in RELEASE-NOTES.md) first, then retry."
+    emit_event preflight fail reason=min_from_unmet "from=$CURRENT_VERSION" "required_min=$MIN_FROM" "target=$NEW_VERSION"
+    write_progress "failed" 50 "Skip-upgrade gate: intermediate version required" "v${NEW_VERSION} requires min_from v${MIN_FROM}; running v${CURRENT_VERSION}"
+    # Wipe the inactive slot so the refused payload doesn't sit on disk.
+    rm -rf "$TARGET_SLOT"
+    exit 1
+  fi
+
+  ok "RELEASE.json verified: v${VERIFIED_VERSION}${MIN_FROM:+ (min_from=v$MIN_FROM)}"
+  emit_event verify pass "release_json_version=$VERIFIED_VERSION" "min_from=${MIN_FROM:-none}"
 else
   warn "Tarball has no RELEASE.json — pre-v0.4.3 release; using unverified GitHub tag for version"
   emit_event verify warn reason=no-release-json

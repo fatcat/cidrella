@@ -71,13 +71,22 @@ function isStaleInProgress(status) {
 // state and gives the user a Dismiss button — both of which are better UX
 // than the file simply disappearing (which would let the user start a new
 // update without ever seeing what went wrong).
+//
+// The error message here is deliberately generic. An earlier version named
+// the v0.4.8/v0.4.9 sudo-NoNewPrivileges trap explicitly, but that text
+// survives unchanged into every future reaped record and misleads users
+// hitting unrelated causes (a disk full, a polkit misconfig, a systemd
+// failure the UI surfaces after the fact). Generic message + a pointer to
+// the journal + the reason code is enough for an admin to diagnose; the
+// historical context lives in RELEASE-NOTES.md where it belongs.
 function reapStaleStatus(status) {
   const reaped = {
     ...status,
     state: 'failed',
     progress_pct: status.progress_pct || 0,
-    message: 'Update worker died before reporting progress',
-    error: status.error || 'The update worker process exited (or never started) before recording any progress. This is most often caused by a privilege/escalation failure when starting the update worker. Check `journalctl -u cidrella-update@*.service` and the cidrella server log for spawn errors. See UPGRADING-FROM-0.4.9.md for the v0.4.8/v0.4.9 sudo-under-NoNewPrivileges trap.',
+    message: 'Update worker did not report progress within the grace window',
+    error: status.error || 'The update worker did not record any progress for 180 seconds after starting. It may have exited, crashed, or never launched. Check the server log and `journalctl -u cidrella-update@*.service` for spawn or execution errors. If the update actually did succeed, the version shown above the panel will already be current.',
+    reason_code: 'worker_silent',
     updated_at: new Date().toISOString(),
     pid: null,
   };
@@ -124,9 +133,52 @@ function resolvePendingUpdate() {
   const stored = getSetting('update_available_version') || '';
   if (!stored) return null;
   if (compareSemver(stored, APP_VERSION) <= 0) return null;
+
+  // Parse chain + manifest availability from stored settings. Both were
+  // persisted by checkForUpdates() on its last successful run. Defensively
+  // handle missing/corrupt values so a partial-write never crashes the
+  // /api/version endpoint.
+  let chain = [stored]; // default: direct one-hop
+  try {
+    const raw = getSetting('update_chain');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) chain = parsed;
+    }
+  } catch { /* fall through to direct one-hop */ }
+
+  // Next-hop semantics: `version` is what the install handler will actually
+  // install when the user clicks Install — i.e. chain[0], the first hop
+  // the current version can reach. `chainTarget` is the eventual
+  // destination (chain[chain.length - 1]). For a single-hop update these
+  // are the same; for a multi-hop chain they differ, and the UI shows both
+  // so the user understands "installing v0.5.0 now (step 1 of 2), en route
+  // to v0.5.5 (latest)".
+  //
+  // After step 1 completes and the service restarts, the new running
+  // version re-runs checkForUpdates() against a fresh manifest, which
+  // produces a new chain starting at whatever is reachable from the new
+  // current version. So "chain[0]" is always the right thing to install
+  // right now, regardless of how deep we are in a multi-hop sequence.
+  const nextHop = chain[0];
+  const chainTarget = chain[chain.length - 1];
+
+  let intermediateNotes = [];
+  try {
+    const raw = getSetting('update_intermediate_notes');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) intermediateNotes = parsed;
+    }
+  } catch { /* empty array fallback */ }
+
   return {
-    version: stored,
+    version: nextHop,
+    chainTarget,
     url: getSetting('update_release_url') || null,
+    chain,
+    manifestAvailable: getSetting('update_manifest_available') === 'true',
+    intermediateNotes,
   };
 }
 
@@ -135,8 +187,19 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   const pending = resolvePendingUpdate();
   res.json({
     version: APP_VERSION,
+    // updateAvailable is the NEXT hop — the version that clicking Install
+    // will actually install. For a direct jump this equals chainTarget;
+    // for a multi-hop chain, it's the first reachable intermediate.
     updateAvailable: pending?.version || null,
     updateUrl: pending?.url || null,
+    // Skip-upgrade fields (v0.4.12+). updateChain is always non-empty when
+    // updateAvailable is non-null; a direct one-hop jump has length 1, a
+    // multi-hop skip has length > 1. chainTarget is the final destination
+    // — the highest version reachable by walking the chain.
+    updateChain: pending?.chain || [],
+    chainTarget: pending?.chainTarget || null,
+    manifestAvailable: pending?.manifestAvailable ?? null,
+    intermediateNotes: pending?.intermediateNotes || [],
     lastChecked: getSetting('update_checked_at') || null,
     updateCheckEnabled: getSetting('update_check_enabled') !== 'false',
     isDocker: isDockerEnvironment(),
@@ -144,9 +207,11 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
 });
 
 // POST /api/version/check — trigger immediate update check (admin only)
+// Always bypasses the manifest cache so a user clicking Check Now sees the
+// absolute latest state, not a 1-hour-old cached view.
 router.post('/check', requireRole('admin'), async (req, res) => {
   try {
-    const result = await checkForUpdates();
+    const result = await checkForUpdates({ forceFresh: true });
     res.json({
       version: APP_VERSION,
       updateAvailable: result?.version || null,

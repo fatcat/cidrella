@@ -15,6 +15,19 @@
           <Button label="Check Now" icon="pi pi-refresh" size="small" text
                   data-track="update-check-now"
                   :loading="checking" @click="checkForUpdate" />
+          <!-- Always-visible recovery affordance. Defense-in-depth for the
+               class of bug where the update-status record gets stuck in a
+               non-idle state and the normal Dismiss button (scoped to the
+               progress card, which only renders for completed/failed) is
+               not reachable. Clicking this is equivalent to the server
+               rm'ing /var/lib/cidrella/update-status.json — safe at any
+               time; worst case it clears an active update's progress UI,
+               not the underlying update process. -->
+          <Button icon="pi pi-ellipsis-v" size="small" text
+                  title="Reset update state"
+                  aria-label="Reset update state"
+                  data-track="update-reset-state"
+                  @click="showResetConfirm = true" />
         </div>
       </div>
     </div>
@@ -36,13 +49,52 @@
           <p class="update-version">
             v{{ versionInfo.version }} <i class="pi pi-arrow-right"></i> v{{ versionInfo.updateAvailable }}
           </p>
+          <!-- Multi-hop skip-upgrade context: explain why this is step N of M
+               and what the ultimate destination is. Read-only — no auto-chain
+               in v0.4.12. User clicks Install once per hop; after each
+               successful completion + restart, this card will re-render with
+               the next hop as the new "updateAvailable". -->
+          <div v-if="isMultiHopChain" class="chain-info">
+            <p class="chain-summary">
+              <i class="pi pi-info-circle"></i>
+              <span>
+                Step <strong>1 of {{ versionInfo.updateChain.length }}</strong> —
+                the latest version <strong>v{{ versionInfo.chainTarget }}</strong> requires going
+                through intermediate versions first.
+              </span>
+            </p>
+            <p class="chain-steps">
+              <span class="chain-path">
+                <span>v{{ versionInfo.version }}</span>
+                <template v-for="(hop, idx) in versionInfo.updateChain" :key="hop">
+                  <i class="pi pi-arrow-right"></i>
+                  <span :class="{ 'chain-current-hop': idx === 0, 'chain-final-hop': idx === versionInfo.updateChain.length - 1 }">
+                    v{{ hop }}
+                  </span>
+                </template>
+              </span>
+            </p>
+            <p class="chain-hint">
+              After this update completes, return to this panel and click <strong>Install</strong>
+              again to continue the chain.
+            </p>
+          </div>
+          <!-- Manifest degraded: surface the fact that skip-upgrade info is
+               unavailable so the user knows a direct jump may not be the whole
+               story. Silent degradation was an explicit anti-goal for this phase. -->
+          <p v-if="versionInfo.manifestAvailable === false" class="manifest-fallback-note">
+            <i class="pi pi-exclamation-triangle"></i>
+            Skip-upgrade information unavailable (release manifest unreachable).
+            Additional updates may be required after this one.
+          </p>
         </div>
         <div class="update-actions">
           <a v-if="versionInfo.updateUrl" :href="versionInfo.updateUrl" target="_blank"
              class="release-link" data-track="update-release-notes">
             <i class="pi pi-external-link"></i> Release Notes
           </a>
-          <Button label="Install Update" icon="pi pi-download" severity="success"
+          <Button :label="isMultiHopChain ? 'Install Step 1' : 'Install Update'"
+                  icon="pi pi-download" severity="success"
                   data-track="update-install"
                   :loading="installing" @click="confirmInstall" />
         </div>
@@ -125,17 +177,52 @@
     </div>
 
     <!-- Confirmation Dialog -->
-    <Dialog v-model:visible="showConfirmDialog" header="Install Update" :modal="true"
-            :closable="true" :style="{ width: '28rem' }">
+    <Dialog v-model:visible="showConfirmDialog"
+            :header="isMultiHopChain ? 'Install Step 1 of ' + versionInfo.updateChain.length : 'Install Update'"
+            :modal="true" :closable="true" :style="{ width: '32rem' }">
       <p>
         This will update CIDRella from <strong>v{{ versionInfo?.version }}</strong> to
         <strong>v{{ versionInfo?.updateAvailable }}</strong>.
       </p>
+      <div v-if="isMultiHopChain" class="chain-confirm-note">
+        <p>
+          The latest version <strong>v{{ versionInfo.chainTarget }}</strong> requires upgrading
+          through {{ versionInfo.updateChain.length }} intermediate versions due to version
+          compatibility rules. After this step completes, return to the Updates panel and
+          click <strong>Install</strong> again to continue toward v{{ versionInfo.chainTarget }}.
+        </p>
+        <p class="chain-confirm-steps">
+          Full path:
+          <span>v{{ versionInfo.version }}</span>
+          <template v-for="hop in versionInfo.updateChain" :key="hop">
+            <i class="pi pi-arrow-right"></i><span>v{{ hop }}</span>
+          </template>
+        </p>
+      </div>
       <p>The server will restart during the update. You may briefly lose connectivity.</p>
       <template #footer>
         <Button label="Cancel" text @click="showConfirmDialog = false" />
-        <Button label="Install" icon="pi pi-download" severity="success"
+        <Button :label="isMultiHopChain ? 'Install Step 1' : 'Install'"
+                icon="pi pi-download" severity="success"
                 data-track="update-confirm-install" @click="startInstall" />
+      </template>
+    </Dialog>
+
+    <!-- Reset-update-state Confirmation -->
+    <Dialog v-model:visible="showResetConfirm" header="Reset update state" :modal="true"
+            :closable="true" :style="{ width: '28rem' }">
+      <p>
+        This clears the in-progress update status record on the server. Use this only if the
+        update panel appears stuck and you can't otherwise dismiss it.
+      </p>
+      <p>
+        It does <strong>not</strong> affect the actual cidrella service, the installed version,
+        or any update process that may still be running in the background.
+      </p>
+      <template #footer>
+        <Button label="Cancel" text @click="showResetConfirm = false" />
+        <Button label="Reset state" icon="pi pi-refresh" severity="warn"
+                data-track="update-reset-state-confirm" @click="resetUpdateState" />
       </template>
     </Dialog>
   </div>
@@ -158,6 +245,7 @@ const checking = ref(false);
 const installing = ref(false);
 const reconnecting = ref(false);
 const showConfirmDialog = ref(false);
+const showResetConfirm = ref(false);
 const updateCheckEnabled = ref(true);
 
 let pollTimer = null;
@@ -178,6 +266,18 @@ const stepOrder = updateSteps.map(s => s.key);
 const isUpdating = computed(() => {
   const s = updateStatus.value?.state;
   return s && s !== 'idle' && s !== 'completed' && s !== 'failed';
+});
+
+// True when the available update is part of a multi-hop skip-upgrade
+// chain. When false, `updateAvailable` and `chainTarget` are the same
+// version and the standard single-hop flow applies. When true, the user
+// is looking at step 1 of the chain and must click Install, wait for it
+// to complete, return to this panel, and click again for each subsequent
+// step. No automatic continuation — that was explicitly cut from v0.4.12
+// per the pre-implementation agent review.
+const isMultiHopChain = computed(() => {
+  const chain = versionInfo.value?.updateChain;
+  return Array.isArray(chain) && chain.length > 1;
 });
 
 function stepIndex(key) {
@@ -277,6 +377,28 @@ async function dismissStatus() {
     updateStatus.value = { state: 'idle' };
     await fetchVersionInfo();
   } catch { /* ignore */ }
+}
+
+// Header-level defense-in-depth: always reachable even when state is stuck
+// in a non-idle phase that would normally hide the Dismiss button. Wraps
+// the same /version/update-dismiss endpoint as dismissStatus() but is
+// callable from the Version card header regardless of updateStatus shape.
+async function resetUpdateState() {
+  showResetConfirm.value = false;
+  try {
+    await api.post('/version/update-dismiss');
+    updateStatus.value = { state: 'idle' };
+    stopPolling();
+    await fetchVersionInfo();
+    toast.add({ severity: 'success', summary: 'Update state cleared', life: 2500 });
+  } catch (err) {
+    toast.add({
+      severity: 'error',
+      summary: 'Could not clear update state',
+      detail: err.response?.data?.error || 'Server did not accept the request',
+      life: 4000,
+    });
+  }
 }
 
 async function saveSettings() {
@@ -433,6 +555,92 @@ onUnmounted(() => {
   font-size: 0.9rem;
 }
 .release-link:hover { text-decoration: underline; }
+
+/* Multi-hop skip-upgrade chain display */
+.chain-info {
+  margin-top: 0.75rem;
+  padding: 0.75rem 1rem;
+  background: var(--surface-100);
+  border-left: 3px solid var(--primary-color);
+  border-radius: 0 4px 4px 0;
+  font-size: 0.9rem;
+}
+.chain-summary {
+  margin: 0 0 0.5rem 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.chain-summary .pi-info-circle {
+  color: var(--primary-color);
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
+.chain-steps {
+  margin: 0.5rem 0;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85rem;
+}
+.chain-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.chain-path .pi-arrow-right {
+  font-size: 0.7rem;
+  color: var(--text-color-secondary);
+}
+.chain-current-hop {
+  color: var(--green-500);
+  font-weight: 600;
+}
+.chain-final-hop {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+.chain-hint {
+  margin: 0.5rem 0 0 0;
+  color: var(--text-color-secondary);
+  font-size: 0.85rem;
+}
+.chain-confirm-note {
+  background: var(--surface-100);
+  border-left: 3px solid var(--primary-color);
+  padding: 0.75rem 1rem;
+  border-radius: 0 4px 4px 0;
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+}
+.chain-confirm-steps {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.85rem;
+  margin: 0.5rem 0 0 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.chain-confirm-steps .pi-arrow-right {
+  font-size: 0.7rem;
+  color: var(--text-color-secondary);
+}
+.manifest-fallback-note {
+  margin: 0.75rem 0 0 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--yellow-50, #fef3c7);
+  color: var(--yellow-900, #78350f);
+  border-left: 3px solid var(--yellow-500, #f59e0b);
+  border-radius: 0 4px 4px 0;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+.manifest-fallback-note .pi-exclamation-triangle {
+  margin-top: 0.15rem;
+  flex-shrink: 0;
+}
 
 /* Up to date */
 .up-to-date {
