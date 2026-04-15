@@ -6,6 +6,31 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.4.13 — 2026-04-15
+
+```yaml
+min_from: ""
+breaking: false
+security: false
+```
+
+A defensive hotfix for three silent-failure modes that surfaced during real-world deployment of v0.4.12. None of these are regressions in v0.4.12 code — all three were latent gaps in how v0.4.11's polkit migration interacts with the upgrade path. None affected fresh installs. All three are fixed so that the class cannot recur.
+
+### Fixed
+- **`update.sh` now reconciles polkit state on every upgrade, and hard-fails if reconciliation fails.** v0.4.11 added a polkit dependency and set it up in `install.sh`, but never added the corresponding reconciliation to `update.sh`. Hosts that reached v0.4.11 via `cidrella-update` (not a fresh install) ended up with v0.4.11 code and systemd unit file but no polkit package, no `/etc/polkit-1/rules.d/49-cidrella.rules`, and no templated `/etc/systemd/system/cidrella-update@.service`. The first UI update attempt then failed with a systemd "Access denied" error. v0.4.13 adds a pre-switchover block to `update.sh` that: installs `polkitd` (or legacy `policykit-1`) if missing; refreshes the rule file from the shipped copy regardless of drift; ensures the polkit daemon is active (handles the Debian `polkit.service` / `polkitd.service` naming drift and the LXC `status=217/USER` NSS-cache race on first start); installs the templated worker unit if absent. Any failure in this block **aborts the update** with a diagnostic naming both package names, the exact recovery commands, and an explicit "your current version has not been modified" assurance. The block runs before the systemd unit-file install so a failure leaves the host's systemd state fully untouched.
+- **`build-release.sh` now hard-fails the build if `package.json.version` has no matching `## vX.Y.Z` header in `RELEASE-NOTES.md`.** v0.4.12 was initially built from a RELEASE-NOTES.md that did not yet contain a v0.4.12 entry, so the signed releases.json manifest published with v0.4.12 listed v0.4.11 as the newest release. Hosts fetching the manifest would have seen "up to date" and silently missed v0.4.12. Caught during validation and fixed post-hoc with a manifest re-upload to the existing v0.4.12 release (tarball and signature unchanged, only the manifest assets). v0.4.13 adds a pre-preflight guard that runs before any expensive build work — a missing entry exits 1 with the exact file name, header format, and date to add.
+- **`cidrella-update@.service` ExecStart no longer fails via systemd's variable expansion.** The inline `bash -c` wrapper that strips the timestamp suffix from `%i` used plain `$1` / `$instance` / `$version` references. systemd parses `$VARNAME` as its own environment-variable substitution before the string reaches bash — so systemd replaced those references with empty strings (env vars `1`, `instance`, `version` don't exist), and bash ran with `instance=""; version=""; exec update.sh --version ""`. update.sh's `--version` argument is optional and falls back to `releases/latest` when empty, which made this an accidental-success mode — v0.4.11 → v0.4.12 installed correctly only because `releases/latest` happened to be v0.4.12 at the moment. A release lag of one version would have silently installed the wrong thing. Fixed by escaping the dollar signs as `$$` so systemd passes them through to bash literally. Validated end-to-end by running `systemctl start cidrella-update@0.4.99_test.service` and verifying update.sh correctly tries to fetch `releases/tags/v0.4.99` (and fails at the network layer because that tag doesn't exist), proving the version arg is flowing through.
+
+### Changed
+- **`INSTALL-NATIVE.md` now documents the polkit requirement explicitly.** New package-table row, new prerequisites subsection explaining the sudo → polkit migration, full recovery procedure for stuck CLI-upgraded hosts, and an update to the "What the installer does" bullet list. The polkit requirement has been there since v0.4.11 but wasn't documented at the install-doc level — only inside individual commit messages and RELEASE-NOTES.md entries.
+
+### Upgrade notes
+- **If you're on a fresh-install v0.4.11 or v0.4.12 host**: UI update to v0.4.13 works normally.
+- **If you're on a CLI-upgraded v0.4.11 host** (upgraded via `cidrella-update` from v0.4.10 or earlier): you still need to run the manual polkit recovery procedure documented in `INSTALL-NATIVE.md` (or the v0.4.12 Known issues section of this file) **before** your first UI update. v0.4.13's improved reconciliation block only helps on the *next* upgrade *after* you're already running v0.4.13 — you cannot use the broken v0.4.11 UI updater to install the v0.4.13 update that fixes the updater. Alternative: run `cidrella-update` from a root shell; it bypasses the polkit requirement and works on every v0.4.11+ host regardless of how it got there.
+- **If you're on v0.4.12**: the update.sh shipping in v0.4.12 still lacks the polkit reconciliation block, but v0.4.12 hosts that upgraded cleanly already have polkit installed — the new block will be a no-op on the v0.4.12 → v0.4.13 hop. The reconciliation only matters for hosts that were missing state when they hit v0.4.13.
+
+---
+
 ## v0.4.12 — 2026-04-15
 
 ```yaml
