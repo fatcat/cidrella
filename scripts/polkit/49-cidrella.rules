@@ -1,0 +1,45 @@
+// CIDRella polkit rules — authorize the unprivileged `cidrella` service
+// account to manage a narrow set of systemd units via D-Bus, without
+// requiring sudo and therefore without depending on setuid escalation.
+//
+// Why this exists: v0.4.8 added a comprehensive systemd sandbox to
+// cidrella.service. Several of the directives in that sandbox (most
+// notably RestrictSUIDSGID=, ProtectKernelTunables=, ProtectKernelModules=,
+// ProtectKernelLogs=, ProtectClock=, PrivateDevices=, LockPersonality=)
+// implicitly set NoNewPrivileges=yes per systemd.exec(5). Under
+// NoNewPrivileges, sudo's setuid bit cannot escalate, so every sudo call
+// from the cidrella process fails with "sudo: unable to change to root
+// gid: Operation not permitted". v0.4.11 replaces the affected sudo
+// callsites with direct systemctl invocations gated by these polkit rules.
+//
+// The rules are deliberately narrow — only the exact units the server
+// needs to manage, only the exact verbs it needs.
+
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (subject.user !== "cidrella") {
+        return polkit.Result.NOT_HANDLED;
+    }
+
+    var unit = action.lookup("unit") || "";
+    var verb = action.lookup("verb") || "";
+
+    // In-app update worker. Templated so we never have to touch this rule
+    // when we cut a new release — the version is the instance name.
+    if (unit.indexOf("cidrella-update@") === 0 && unit.lastIndexOf(".service") === unit.length - 8) {
+        if (verb === "start") {
+            return polkit.Result.YES;
+        }
+    }
+
+    // dnsmasq reload (config changes) and restart (interface rebind).
+    if (unit === "cidrella-dnsmasq.service") {
+        if (verb === "reload" || verb === "restart") {
+            return polkit.Result.YES;
+        }
+    }
+
+    return polkit.Result.NOT_HANDLED;
+});

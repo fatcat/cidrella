@@ -8,6 +8,11 @@ Documentation=https://github.com/fatcat/cidrella
 Type=simple
 ExecStartPre=-/usr/bin/pkill -x dnsmasq
 ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/var/lib/cidrella/dnsmasq/dnsmasq.conf
+# ExecReload added in v0.4.11 so the cidrella server can reload dnsmasq via
+# `systemctl reload cidrella-dnsmasq` (gated by polkit) instead of going
+# through the sudo+setuid `cidrella-dnsmasq-hup` wrapper, which is broken
+# under the v0.4.8 NoNewPrivileges-implied hardening on cidrella.service.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=3
 

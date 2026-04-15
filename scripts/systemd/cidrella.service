@@ -53,16 +53,27 @@ RemoveIPC=true
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
 
+# NOTE on NoNewPrivileges: NOT set explicitly, but seven of the directives
+# above (RestrictSUIDSGID, ProtectKernelTunables, ProtectKernelModules,
+# ProtectKernelLogs, ProtectClock, PrivateDevices, LockPersonality) each
+# implicitly set NoNewPrivileges=yes per systemd.exec(5). This means sudo's
+# setuid escalation does NOT work from inside this unit. v0.4.8 / v0.4.9
+# shipped with this contradiction unresolved: the in-app updater spawned
+# `sudo systemd-run …` and it silently failed. v0.4.11 replaced every such
+# callsite with polkit-gated `systemctl` (D-Bus does not need setuid). See
+# scripts/polkit/49-cidrella.rules and server/src/routes/version.js. The
+# only remaining sudo path is /usr/sbin/arping, scoped narrowly in
+# /etc/sudoers.d/cidrella and slated for removal in a follow-up.
+#
 # NOT enabled (would break functionality):
-#   NoNewPrivileges=true — blocks sudo setuid escalation, which we use for
-#     arping and the cidrella-dnsmasq-hup wrapper. Without sudo, raw-socket
-#     scans and dnsmasq reloads fail.
-#   PrivateUsers=true — same reason (creates a user namespace, breaks sudo).
+#   PrivateUsers=true — creates a user namespace; interacts poorly with the
+#     bundled Node binary's file capabilities (cap_net_raw, cap_net_bind).
 #   MemoryDenyWriteExecute=true — breaks V8's JIT compiler (Node uses W+X
 #     mappings for generated code).
 #   SystemCallFilter=@system-service — too broad to adopt blindly; would
 #     need a syscall-by-syscall audit against better-sqlite3, duckdb, and
-#     raw-socket before turning on.
+#     raw-socket before turning on. Also implies NoNewPrivileges=yes, which
+#     is now fine (see note above) — adoption is purely a behavior risk.
 
 [Install]
 WantedBy=multi-user.target

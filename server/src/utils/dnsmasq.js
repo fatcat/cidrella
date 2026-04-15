@@ -196,50 +196,47 @@ export function isDnsmasqRunning() {
 const DNSMASQ_PID = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.pid');
 
 export function signalDnsmasq() {
-  // Use the cidrella-dnsmasq-hup wrapper installed by install.sh. The wrapper
-  // reads dnsmasq's pidfile, verifies the target is actually dnsmasq, and
-  // sends SIGHUP. The wrapper replaced the previous `sudo kill -HUP <pid>`
-  // call in v0.4.6 — the old sudoers rule allowed signalling any PID on the
-  // host, which was flagged by the release-hygiene audit.
+  // Reload dnsmasq via systemctl. cidrella-dnsmasq.service has
+  // ExecReload=/bin/kill -HUP $MAINPID (added in v0.4.11), and the cidrella
+  // service account is authorized to reload that exact unit by
+  // /etc/polkit-1/rules.d/49-cidrella.rules — no sudo, no setuid escalation.
+  //
+  // This path replaces the sudo+wrapper path (cidrella-dnsmasq-hup) which
+  // was broken from v0.4.8 onward by the systemd hardening on
+  // cidrella.service implicitly setting NoNewPrivileges=yes.
   try {
-    execFileSync('sudo', ['/usr/local/bin/cidrella-dnsmasq-hup'], { stdio: 'pipe' });
+    execFileSync('systemctl', ['reload', 'cidrella-dnsmasq'], { stdio: 'pipe' });
     return;
-  } catch (wrapperErr) {
-    // Log the wrapper's diagnostic output BEFORE falling through to the
-    // legacy path, so operational failures (stale pidfile, dnsmasq not
-    // running, pid recycled to wrong process) aren't lost. Without this,
-    // the subsequent legacy-path failure would show a less informative
-    // sudoers denial and the original cause would be invisible.
-    const stderr = wrapperErr?.stderr?.toString?.().trim();
-    if (stderr) console.warn('cidrella-dnsmasq-hup wrapper failed:', stderr);
-    // Fall through to the legacy direct-kill path for environments where the
-    // wrapper isn't installed (pre-0.4.6 installs still running, Docker
-    // without install.sh, local dev). The legacy path will fail at the sudo
-    // layer on v0.4.6+ hosts because the permissive kill rule was removed —
-    // that's the intended outcome: the wrapper is the only sanctioned path.
+  } catch (err) {
+    const stderr = err?.stderr?.toString?.().trim();
+    if (stderr) console.warn('systemctl reload cidrella-dnsmasq failed:', stderr);
   }
 
+  // Docker / dev fallback: try to send SIGHUP directly. This works inside
+  // the s6-supervised container where cidrella-dnsmasq.service doesn't
+  // exist and the cidrella process has the same uid as dnsmasq.
   try {
     const pid = parseInt(fs.readFileSync(DNSMASQ_PID, 'utf-8').trim(), 10);
-    if (pid) execFileSync('sudo', ['kill', '-HUP', String(pid)]);
+    if (pid) process.kill(pid, 'SIGHUP');
   } catch {
     console.warn('Could not send SIGHUP to dnsmasq (may not be running)');
   }
 }
 
 export function restartDnsmasq() {
+  // Native installs: polkit-gated systemctl restart (no sudo).
   try {
-    // Native installs: use systemctl
-    execFileSync('sudo', ['systemctl', 'restart', 'cidrella-dnsmasq'], { stdio: 'pipe' });
+    execFileSync('systemctl', ['restart', 'cidrella-dnsmasq'], { stdio: 'pipe' });
     console.log('dnsmasq restarted via systemctl');
     return;
-  } catch {
-    console.warn('systemctl restart failed, falling back to PID method');
+  } catch (err) {
+    const stderr = err?.stderr?.toString?.().trim();
+    if (stderr) console.warn('systemctl restart cidrella-dnsmasq failed:', stderr);
   }
 
+  // Docker / supervisor fallback: terminate and let the supervisor restart.
   try {
-    // Docker / other: kill the process and let the supervisor restart it
-    execFileSync('sudo', ['pkill', '-TERM', '-x', 'dnsmasq'], { stdio: 'pipe' });
+    execFileSync('pkill', ['-TERM', '-x', 'dnsmasq'], { stdio: 'pipe' });
     console.log('dnsmasq terminated (supervisor will restart)');
   } catch {
     console.warn('Could not restart dnsmasq');

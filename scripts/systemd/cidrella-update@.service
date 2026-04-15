@@ -1,0 +1,27 @@
+[Unit]
+Description=CIDRella in-app update to %i
+Documentation=https://github.com/fatcat/cidrella
+# %i is the target version (e.g. cidrella-update@0.4.11.service). Passed
+# through to update.sh as --version. The unit is templated so polkit can
+# allow the cidrella service account to start any version without granting
+# a wildcard "manage units" privilege.
+# CollectMode=inactive-or-failed lets the instance be cleaned up immediately
+# after exit so a subsequent start of the same instance gets a fresh slot.
+CollectMode=inactive-or-failed
+
+[Service]
+Type=oneshot
+# Intentionally NOT hardened. Runs as root. update.sh extracts new code into
+# /opt/cidrella-{a,b}, snapshots the database, manipulates symlinks, and
+# restarts cidrella.service — none of which is compatible with the sandbox
+# directives applied to cidrella.service itself. This unit is its own trust
+# boundary: it is invoked only by polkit-gated systemctl from the running
+# server, and the server's permission to start it is narrowed to this unit
+# template alone (see /etc/polkit-1/rules.d/49-cidrella.rules).
+#
+# %i is in the form "VERSION_EPOCH" (e.g. 0.4.11_1718000000). The wall-clock
+# suffix forces a fresh instance per launch attempt — a failed run of the
+# same target version would otherwise leave the instance in `failed` state
+# and refuse to relaunch. The bash one-liner strips the suffix before
+# passing --version to update.sh.
+ExecStart=/bin/bash -c 'instance="$1"; version="${instance%%_*}"; exec /opt/cidrella/update.sh --version "$version" --progress-file /var/lib/cidrella/update-status.json --from-api' bash %i

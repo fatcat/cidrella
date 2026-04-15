@@ -268,8 +268,49 @@ fi
 # The python packages are for the anomaly detection daemon.
 
 info "Installing system dependencies..."
+# polkit (a.k.a. policykit-1 on older Debian/Ubuntu, polkitd on newer) is a
+# HARD dependency as of v0.4.11. The cidrella server triggers the in-app
+# updater and dnsmasq reload via polkit-gated systemctl calls — without a
+# working polkit daemon and JS rules engine, those grants never apply and
+# the UI updater silently fails the same way the v0.4.8/v0.4.9 sudo path
+# did. Try the modern package name first, fall back to the legacy name.
 apt-get install -y -qq build-essential arping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
+if ! apt-get install -y -qq polkitd >/dev/null 2>&1; then
+  if ! apt-get install -y -qq policykit-1 >/dev/null 2>&1; then
+    err "Failed to install polkit (tried polkitd and policykit-1)."
+    err "polkit is required as of v0.4.11 to authorize the in-app updater"
+    err "and dnsmasq reload via polkit-gated systemctl. Install manually:"
+    err "    apt-get install polkitd    (Debian 12+ / Ubuntu 24.04+)"
+    err "    apt-get install policykit-1  (older releases)"
+    emit_event polkit fail reason=apt-install-failed
+    exit 1
+  fi
+fi
 ok "System packages installed."
+
+# Verify polkit is actually running and the JS rules engine works. The
+# .rules file format requires polkit ≥0.106 with the JS backend. On some
+# minimal Ubuntu 22.04 images, `policykit-1` is installed but the JS engine
+# is absent or polkitd isn't running, in which case our 49-cidrella.rules
+# file is silently ignored and the cidrella user gets PermissionDenied on
+# every systemctl call. Probe with `pkaction --version` and confirm at
+# least one of polkit/polkitd is active.
+if ! command -v pkaction >/dev/null 2>&1; then
+  err "polkit installed but pkaction missing. Cannot verify JS rules engine."
+  emit_event polkit fail reason=pkaction-missing
+  exit 1
+fi
+POLKIT_VER=$(pkaction --version 2>/dev/null | awk '{print $NF}' | head -1)
+ok "polkit version: ${POLKIT_VER:-unknown}"
+if ! systemctl is-active --quiet polkit 2>/dev/null && ! systemctl is-active --quiet polkitd 2>/dev/null; then
+  warn "polkit daemon is not currently active. Starting it..."
+  systemctl start polkit 2>/dev/null || systemctl start polkitd 2>/dev/null || {
+    err "Failed to start polkit. The in-app updater will not work."
+    emit_event polkit fail reason=daemon-start-failed
+    exit 1
+  }
+fi
+emit_event polkit pass "version=${POLKIT_VER:-unknown}"
 
 # ═══════════════════════════════════════════════════════════
 # DNSMASQ
@@ -545,13 +586,38 @@ _install_unit "$INSTALL_DIR/scripts/systemd/cidrella-anomaly.service" /etc/syste
 ok "Installed cidrella-anomaly.service"
 emit_event systemd pass unit=cidrella-anomaly.service
 
+# v0.4.11+: templated update worker unit. The cidrella server starts an
+# instance of this unit via polkit-gated systemctl when an in-app update is
+# triggered. See scripts/polkit/49-cidrella.rules and the comment block at
+# the top of the unit file for the full rationale.
+_install_unit "$INSTALL_DIR/scripts/systemd/cidrella-update@.service" /etc/systemd/system/cidrella-update@.service
+ok "Installed cidrella-update@.service"
+emit_event systemd pass unit=cidrella-update@.service
+
 if [ "$DNSMASQ_MODE" = "own" ]; then
   _install_unit "$INSTALL_DIR/scripts/systemd/cidrella-dnsmasq.service" /etc/systemd/system/cidrella-dnsmasq.service
   ok "Installed cidrella-dnsmasq.service"
   emit_event systemd pass unit=cidrella-dnsmasq.service
 fi
 
-# Install sudoers
+# v0.4.11+: polkit rule. Authorizes the cidrella service account to start
+# cidrella-update@*.service instances and reload/restart cidrella-dnsmasq
+# via D-Bus, replacing the sudo+setuid path that was broken by the v0.4.8
+# NoNewPrivileges-implied hardening on cidrella.service.
+mkdir -p /etc/polkit-1/rules.d
+install -m 0644 -o root -g root \
+  "$INSTALL_DIR/scripts/polkit/49-cidrella.rules" \
+  /etc/polkit-1/rules.d/49-cidrella.rules
+ok "Installed polkit rule (/etc/polkit-1/rules.d/49-cidrella.rules)"
+# Polkit picks up new rules on the next D-Bus call to logind/systemd1.
+# Modern polkitd uses inotify on the rules.d directory; older versions need
+# an explicit reload. Try the reload but don't fail on it — the next D-Bus
+# call will pick up the rule regardless.
+systemctl reload polkit 2>/dev/null || systemctl reload polkitd 2>/dev/null || true
+
+# Install sudoers (still needed for arping in scanner.js — see PLAN.md for
+# the follow-up work to remove this last sudo dependency by setting
+# CAP_NET_RAW on /usr/sbin/arping or replacing arping with a node raw socket).
 cp "$INSTALL_DIR/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella
 chmod 440 /etc/sudoers.d/cidrella
 ok "Installed sudoers rules."

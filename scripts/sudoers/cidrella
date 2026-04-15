@@ -1,23 +1,19 @@
-# CIDRella — allow cidrella user to signal dnsmasq and run network scans.
+# CIDRella — minimal sudoers for the service account.
 #
-# The dnsmasq HUP rule went through a narrowing pass in v0.4.6: the previous
-# rule was `/usr/bin/kill -HUP [0-9]*`, which allowed the service account to
-# send SIGHUP to ANY process on the host — including PID 1 (systemd re-exec)
-# and sshd. The validator agent flagged this in a release-hygiene audit.
-# Replaced with a dedicated wrapper script that reads dnsmasq's own pidfile,
-# verifies the target is actually dnsmasq via /proc/<pid>/comm, and then
-# sends the signal. Sudoers now allows only that exact binary.
+# As of v0.4.11, almost all sudo callsites have been replaced by polkit-gated
+# systemctl calls (see /etc/polkit-1/rules.d/49-cidrella.rules). The original
+# sudo-based path was broken by the v0.4.8 hardening on cidrella.service:
+# directives like RestrictSUIDSGID=, ProtectKernelTunables=, etc. implicitly
+# set NoNewPrivileges=yes per systemd.exec(5), which blocks setuid escalation
+# and breaks every sudo call from the cidrella process. polkit + D-Bus does
+# not depend on setuid, so it works under NoNewPrivileges.
 #
-# The nmap rule was also removed — it granted full `sudo nmap *` to the
-# service account but no code path in the project actually invokes nmap.
-# Dead rule, overly broad. Gone.
-cidrella ALL=(root) NOPASSWD: /usr/local/bin/cidrella-dnsmasq-hup
-cidrella ALL=(root) NOPASSWD: /usr/bin/pkill -TERM -x dnsmasq
-cidrella ALL=(root) NOPASSWD: /usr/bin/systemctl restart cidrella-dnsmasq
+# arping is the last remaining sudo dependency. The scanner uses
+# /usr/sbin/arping for ARP-layer host discovery and arping requires raw
+# sockets, which aren't reachable through any systemd unit pattern. The
+# follow-up plan (PLAN.md, v0.4.12 candidate) is to either:
+#   (a) setcap cap_net_raw+ep /usr/sbin/arping and call it without sudo, or
+#   (b) replace arping with a Node raw-socket library and drop the binary
+#       dependency entirely (the bundled Node already has cap_net_raw).
+# Option (b) is preferred because it removes a binary from the trust surface.
 cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *
-# In-app updates — run update script as a TRANSIENT systemd service (not a
-# scope). A scope would inherit cidrella.service's ProtectSystem/ReadWritePaths,
-# which makes /opt read-only in the child and breaks update.sh. A transient
-# service gets a fresh mount namespace. --collect garbage-collects the unit
-# on exit so the same name can be reused across runs.
-cidrella ALL=(root) NOPASSWD: /usr/bin/systemd-run --unit=cidrella-update --collect /opt/cidrella/update.sh *

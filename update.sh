@@ -587,12 +587,25 @@ fi
 track_progress "validating" 55 "Validating new version..."
 info "Pre-flight validation..."
 
-# Syntax check
-if ! node --check "$TARGET_SLOT/server/src/index.js" 2>/dev/null; then
-  err "Pre-flight failed: new server/src/index.js has syntax errors"
+# Syntax check using the bundled Node from the target slot. Bare `node` was
+# used in v0.4.3-v0.4.10 — the original Phase 0 resolver was added but this
+# callsite was missed. On systems installed from a v0.4.7+ tarball with no
+# system Node (the supported config), the bare invocation hit
+# command-not-found, and stderr was discarded by `2>/dev/null`, which the
+# script then misreported as "syntax errors". Result: CLI updates appeared
+# broken on bundled-Node-only hosts. Fixed in v0.4.11.
+PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT")
+SYNTAX_CHECK_OUTPUT=$("$PREFLIGHT_NODE" --check "$TARGET_SLOT/server/src/index.js" 2>&1)
+SYNTAX_CHECK_RC=$?
+if [ $SYNTAX_CHECK_RC -ne 0 ]; then
+  err "Pre-flight failed: server/src/index.js failed syntax check"
+  err "  Node binary: $PREFLIGHT_NODE"
+  err "  Exit code:   $SYNTAX_CHECK_RC"
+  err "  Output:      $SYNTAX_CHECK_OUTPUT"
+  emit_event preflight fail reason=syntax-check "node=$PREFLIGHT_NODE" "rc=$SYNTAX_CHECK_RC"
   exit 1
 fi
-ok "Syntax check passed"
+ok "Syntax check passed (using $PREFLIGHT_NODE)"
 
 # Verify bundled node_modules exist — the new build pipeline bundles them
 if [ ! -d "$TARGET_SLOT/server/node_modules/express" ]; then

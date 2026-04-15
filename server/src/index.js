@@ -31,7 +31,7 @@ import userRoutes from './routes/users.js';
 import logRoutes from './routes/logs.js';
 import piholeRoutes from './routes/pihole.js';
 import interfaceRoutes from './routes/interfaces.js';
-import versionRoutes from './routes/version.js';
+import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js';
 import { ensureCerts, setHttpsServer } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
@@ -102,6 +102,12 @@ async function main() {
 
   // Start MAC vendor database auto-refresh (every 24h)
   startVendorScheduler();
+
+  // Reap any update-status record left behind by a worker that died before
+  // reporting progress (e.g. the v0.4.8/v0.4.9 sudo-NoNewPrivileges trap).
+  // Runs before the update checker so the UI never sees a stuck "starting"
+  // state on a fresh boot.
+  reapStaleUpdateStatusOnBoot();
 
   // Start update checker (checks GitHub releases periodically)
   startUpdateScheduler();
