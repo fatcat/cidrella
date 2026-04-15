@@ -6,6 +6,33 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.4.12 — 2026-04-15
+
+```yaml
+min_from: ""
+breaking: false
+security: false
+```
+
+### New
+- **Skip-upgrade foundation.** Each release now ships a signed `releases.json` manifest as a GitHub release asset alongside the tarball. The manifest is the machine-readable view of this file, parsed from the YAML metadata blocks under each section. A new server-side fetcher downloads, signature-verifies, and caches the manifest; `GET /api/version` uses it to compute the highest reachable target from the currently-running version. Skip-upgrade comes alive starting here — future releases that declare a `min_from` will force users through the named intermediate instead of silently allowing a jump that would skip a load-bearing migration.
+- **`min_from` gate in `update.sh`.** After the post-minisign `RELEASE.json` read, a new gate checks the target release's `min_from` field against the running version. If the gate fires, the update refuses with a diagnostic-sufficient error naming both versions and the required intermediate, wipes the target slot so the refused payload doesn't sit on disk, and emits a `preflight fail reason=min_from_unmet` event. Backward compatible: pre-v0.4.12 tarballs without the field pass through unchanged.
+- **Multi-hop chain display in the Updates panel (read-only).** When the manifest indicates the user is more than one release behind the latest and the latest requires going through an intermediate, the Updates panel renders the full chain path (e.g. `v0.4.9 → v0.5.0 → v0.5.5`), labels the Install button "Install Step 1 of N", and hints that the user should return after each completion to continue the chain manually. No auto-chain, no Stop button, no cross-restart state machine — deferred to v0.5.x per agent-team consensus. The ~10 lines of state-machine complexity saved here are not worth the partial-success failure modes they'd introduce.
+- **`manifestAvailable` field in `GET /api/version`.** When the signed manifest can't be fetched or verified, the server falls back to the legacy GitHub API one-hop check and surfaces `manifestAvailable: false` in the response. The Updates panel shows a "skip-upgrade information unavailable" note under the Install button so the degradation is visible. The architect pre-implementation review flagged silent fallback as a repeat of exactly the class of bug v0.4.11 fixed — this closes that loop.
+- **`build-release.sh` manifest step.** Step 5.5 lints `RELEASE-NOTES.md` (hard-fails on any issue), generates `dist/releases.json`, signs it with the primary minisign key, and post-sign verifies against the committed `scripts/cidrella.pub`. Step 7 uploads the manifest and signature as release assets alongside the tarball.
+- **`RELEASE.json` inside each tarball gains a `min_from` field.** Authoritative after signature verification. update.sh uses it for the min_from gate and falls back to "no gate" when the field is absent.
+- **New harness scenarios.** `skip-upgrade` (CLI cidrella-update end-to-end on bundled-Node hosts — regression guard for the v0.4.11 bare-`node` preflight fix), `min-from-blocked` (unit-style reproduction of the gate logic against five synthetic RELEASE.json fixtures), `manifest-fallback` (forces signature verification failure via wrong-pubkey swap and asserts the API surfaces `manifestAvailable: false`).
+- **Defense-in-depth "Reset update state" affordance.** The Updates panel's Version card has a new always-visible three-dot button that opens a confirmation and clears the in-progress update-status record. Works regardless of the current state — insurance against any future stuck-state bug the reaper doesn't catch.
+
+### Fixed
+- **Reaper error message is generic.** v0.4.11's stale-status reaper baked the NNP-trap-specific diagnostic into every future reaped record, which would mislead users hitting unrelated causes. Now says "update worker did not report progress within the grace window" with a `reason_code: worker_silent` field, and the historical NNP context lives here in RELEASE-NOTES.md where it belongs.
+
+### Known issues
+- **Upgrades from v0.4.11 via `update.sh` leave polkit unconfigured on hosts installed before v0.4.11.** The v0.4.11 polkit setup (package install + rule drop + daemon start) lives in `install.sh`, not `update.sh`. Hosts that reached v0.4.11 via `cidrella-update` (not a fresh install) therefore have the new Node code and systemd unit but no polkit daemon and no rule file — the next UI update attempt fails with "Access denied" from systemctl. Recovery: install polkit manually (`apt-get install polkitd`), copy `/opt/cidrella/scripts/polkit/49-cidrella.rules` to `/etc/polkit-1/rules.d/`, start the daemon, clear `/var/lib/cidrella/update-status.json`, retry the update. v0.4.13 adds a polkit reconciliation block to `update.sh` that hard-fails the update with a diagnostic if polkit can't be installed or started — prevents a silent broken-updater handoff from recurring.
+- **Manifest shipped incomplete.** The initial v0.4.12 release was built from a RELEASE-NOTES.md that did not yet contain a v0.4.12 entry, so the signed releases.json manifest listed v0.4.11 as the latest version. Hosts fetching the manifest would see "up to date" and not offer v0.4.12 as an available update. Fixed post-hoc by regenerating the manifest with the v0.4.12 entry and re-uploading `releases.json` + `releases.json.minisig` to the v0.4.12 release (tarball and tarball signature unchanged). The v0.4.13 release adds a build-time guard that hard-fails the build if `package.json.version` doesn't have a matching entry in RELEASE-NOTES.md, so this class of bug can't recur.
+
+---
+
 ## v0.4.11 — 2026-04-15
 
 ```yaml

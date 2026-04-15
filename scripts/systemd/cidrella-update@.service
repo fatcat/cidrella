@@ -24,4 +24,13 @@ Type=oneshot
 # same target version would otherwise leave the instance in `failed` state
 # and refuse to relaunch. The bash one-liner strips the suffix before
 # passing --version to update.sh.
-ExecStart=/bin/bash -c 'instance="$1"; version="${instance%%_*}"; exec /opt/cidrella/update.sh --version "$version" --progress-file /var/lib/cidrella/update-status.json --from-api' bash %i
+#
+# The dollar signs are DOUBLED ($$) so systemd treats them as literal $
+# and passes the variable references through to bash unmodified. Without
+# the doubling, systemd interpolates $1 / $instance / $version as its own
+# environment variables (all empty), which then runs update.sh with
+# --version "". Empty --version silently falls back to `releases/latest`
+# in update.sh, producing an accidental-success mode where the installed
+# version can differ from what the UI promised. Found during v0.4.11
+# → v0.4.12 fresh-install validation on testerella.
+ExecStart=/bin/bash -c 'instance="$$1"; version="$${instance%%_*}"; exec /opt/cidrella/update.sh --version "$$version" --progress-file /var/lib/cidrella/update-status.json --from-api' bash %i

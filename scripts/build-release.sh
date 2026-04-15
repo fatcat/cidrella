@@ -48,6 +48,45 @@ echo "Tag:     $TAG"
 echo "Arch:    $BUILD_ARCH"
 echo ""
 
+# ─── Pre-preflight: RELEASE-NOTES.md has an entry for $VERSION ───
+#
+# The signed releases.json manifest published alongside each release is
+# derived from RELEASE-NOTES.md. If the current VERSION (from package.json)
+# has no entry in the file, the generator emits a manifest that DOES NOT
+# contain the version being built — and then the server-side update checker
+# on any host running a prior version will see the manifest as "latest =
+# previous release" and silently fail to surface the new release. This is
+# exactly the class of bug that shipped v0.4.12's initial manifest blank
+# about v0.4.12.
+#
+# Hard-fail early. The error names the exact file to edit so a human can
+# fix it in one minute without spelunking. This runs before anything else,
+# before preflight, before staging, before the expensive Node download — no
+# wasted work if the author forgot to update the notes.
+if [ -f "$PROJECT_DIR/RELEASE-NOTES.md" ]; then
+  if ! grep -q "^## v${VERSION} " "$PROJECT_DIR/RELEASE-NOTES.md"; then
+    echo "ERROR: RELEASE-NOTES.md has no entry for v${VERSION}."
+    echo ""
+    echo "  The release manifest is derived from RELEASE-NOTES.md. Building"
+    echo "  without a matching entry would publish a releases.json that does"
+    echo "  not list the version being built, silently breaking skip-upgrade"
+    echo "  for every host running a prior release."
+    echo ""
+    echo "  Fix: add a section to RELEASE-NOTES.md with this exact header:"
+    echo ""
+    echo "    ## v${VERSION} — $(date +%Y-%m-%d)"
+    echo ""
+    echo "  followed by a YAML metadata block and the usual New / Fixed /"
+    echo "  Known issues subsections. Then run the build again."
+    exit 1
+  fi
+  echo "  RELEASE-NOTES.md has v${VERSION} entry — OK"
+else
+  echo "WARNING: RELEASE-NOTES.md not found at $PROJECT_DIR/RELEASE-NOTES.md"
+  echo "  The v0.4.12+ skip-upgrade machinery requires this file. Build will"
+  echo "  continue but the resulting releases.json will be empty."
+fi
+
 # ─── Preflight checks ────────────────────────────────────
 
 if [ "$DRY_RUN" = true ]; then

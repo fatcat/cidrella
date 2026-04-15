@@ -816,6 +816,125 @@ if [ -x "$TARGET_NODE_BIN" ]; then
   fi
 fi
 
+# ─── v0.4.13+ polkit reconciliation (hard-fails the update) ─────
+# The v0.4.11 polkit migration relies on a system-wide polkit daemon being
+# installed AND /etc/polkit-1/rules.d/49-cidrella.rules existing AND the
+# daemon running. v0.4.11's install.sh handles all three on fresh installs,
+# but v0.4.11's update.sh did NOT — which meant any host that reached
+# v0.4.11 via `cidrella-update` (CLI path, not fresh install) ended up with
+# the new Node code and systemd units but no polkit at all. The first UI
+# update attempt on such a host then failed with "Access denied" from
+# systemctl, because systemd falls back to its default (deny) when no
+# authorization manager is installed.
+#
+# This block runs on every update from v0.4.13 forward. It's idempotent:
+# if polkit is already installed, apt-get is a no-op; if the rule file
+# already matches, `install` just overwrites; if the daemon is running,
+# systemctl start is a no-op. It does NOT run `apt-get update` — the
+# install is a targeted one-package install, relying on the host's apt
+# cache.
+#
+# Runs BEFORE the systemd unit-file update block so that a hard-fail here
+# leaves the host's systemd state completely unmodified. The target slot
+# is already extracted at this point but the symlink still points at the
+# OLD slot; the old slot is untouched, the service keeps running on the
+# old code, and the admin can re-run `cidrella-update` after fixing the
+# root cause.
+#
+# Polkit absence or daemon-start failure is a HARD FAIL, not a warning.
+# A successful update that leaves the UI updater silently broken is
+# exactly the failure class we've been killing — "warn and continue"
+# here would just ship the v0.4.11 bug forward one more release.
+if [ -f "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" ]; then
+  info "Reconciling polkit state..."
+
+  # Install polkit if it's missing. Try modern name first (polkitd),
+  # fall back to legacy name (policykit-1).
+  if ! command -v pkaction >/dev/null 2>&1; then
+    info "polkit not installed — installing polkitd (or policykit-1 on older releases)"
+    if ! apt-get install -y -qq polkitd >/dev/null 2>&1 && \
+       ! apt-get install -y -qq policykit-1 >/dev/null 2>&1; then
+      err "Pre-flight failed: polkit is required but could not be installed automatically."
+      err ""
+      err "  CIDRella v0.4.11+ uses polkit-gated systemctl to trigger the in-app"
+      err "  updater and dnsmasq reload. Without a working polkit daemon, the UI"
+      err "  updater would silently fail on the NEXT update attempt."
+      err ""
+      err "  Fix manually, then re-run the update:"
+      err "    apt-get update"
+      err "    apt-get install -y polkitd     # Debian 12+ / Ubuntu 24.04+"
+      err "    apt-get install -y policykit-1 # older releases"
+      err "    cidrella-update"
+      err ""
+      err "  Your current version has NOT been modified. The new release is"
+      err "  extracted at $TARGET_SLOT but the symlink still points at the"
+      err "  previous slot. The running service is unchanged."
+      emit_event polkit fail reason=install-failed "target=$NEW_VERSION"
+      write_progress "failed" 70 "polkit required but not installed" "apt-get install polkitd failed"
+      exit 1
+    fi
+    ok "polkit installed"
+    emit_event polkit pass reason=installed-during-update
+  fi
+
+  # Install / refresh the rule file. A mismatched rule file is a common
+  # drift mode (e.g. admin edited it), so always refresh from the shipped copy.
+  mkdir -p /etc/polkit-1/rules.d
+  install -m 0644 -o root -g root \
+    "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" \
+    /etc/polkit-1/rules.d/49-cidrella.rules
+  ok "polkit rule installed at /etc/polkit-1/rules.d/49-cidrella.rules"
+
+  # Ensure the daemon is active. Polkit's unit name has drifted across
+  # Debian versions (`polkit.service` on Debian 12+, `polkitd.service` on
+  # newer builds). Try both names. Some releases also hit a systemd cache
+  # race where the freshly-created polkitd user isn't visible to systemd's
+  # first start attempt (exit code 217/USER); `systemctl daemon-reload` +
+  # `reset-failed` clears that path.
+  systemctl daemon-reload 2>/dev/null || true
+  POLKIT_UNIT=""
+  if systemctl list-unit-files polkit.service >/dev/null 2>&1 && \
+     systemctl list-unit-files 2>/dev/null | grep -q '^polkit\.service'; then
+    POLKIT_UNIT="polkit.service"
+  elif systemctl list-unit-files polkitd.service >/dev/null 2>&1 && \
+       systemctl list-unit-files 2>/dev/null | grep -q '^polkitd\.service'; then
+    POLKIT_UNIT="polkitd.service"
+  fi
+
+  if [ -n "$POLKIT_UNIT" ]; then
+    systemctl reset-failed "$POLKIT_UNIT" 2>/dev/null || true
+    systemctl start "$POLKIT_UNIT" 2>/dev/null || systemctl restart "$POLKIT_UNIT" 2>/dev/null || true
+    systemctl reload "$POLKIT_UNIT" 2>/dev/null || true
+  fi
+
+  if systemctl is-active --quiet polkit 2>/dev/null || systemctl is-active --quiet polkitd 2>/dev/null; then
+    ok "polkit daemon active"
+    emit_event polkit pass reason=reconciled
+  else
+    err "Pre-flight failed: polkit daemon is not running after reconciliation."
+    err ""
+    err "  polkit is installed but the daemon failed to start. Check:"
+    err "    systemctl status polkit   # or: systemctl status polkitd"
+    err "    journalctl -u polkit -n 50"
+    err ""
+    err "  Without a running polkit daemon, the in-app UI updater will fail"
+    err "  with an 'Access denied' error on the next update attempt. This"
+    err "  update has been refused so the running service stays in its"
+    err "  current working state."
+    err ""
+    err "  After fixing the root cause (often a stale user-cache issue that"
+    err "  clears on 'systemctl daemon-reload && systemctl start polkit'),"
+    err "  re-run: cidrella-update"
+    err ""
+    err "  Your current version has NOT been modified. The new release is"
+    err "  extracted at $TARGET_SLOT but the symlink still points at the"
+    err "  previous slot."
+    emit_event polkit fail reason=daemon-not-active "target=$NEW_VERSION"
+    write_progress "failed" 70 "polkit daemon not running" "daemon-reload and systemctl start polkit, then retry"
+    exit 1
+  fi
+fi
+
 # Update systemd unit files if they changed (install_systemd_unit is idempotent).
 if [ -f "$TARGET_SLOT/scripts/systemd/cidrella.service" ]; then
   if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella.service" /etc/systemd/system/cidrella.service)" = "changed" ]; then
@@ -829,6 +948,15 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" ] && [ -f /etc/s
   fi
 fi
 # Note: cidrella-dnsmasq.service is deliberately NOT touched — dnsmasq keeps running.
+
+# v0.4.11+ templated update worker unit. install_systemd_unit is idempotent
+# so running this on every update is free.
+if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-update@.service" ]; then
+  if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-update@.service" /etc/systemd/system/cidrella-update@.service)" = "changed" ]; then
+    ok "Updated cidrella-update@.service"
+    emit_event switchover pass "unit=cidrella-update@.service"
+  fi
+fi
 
 # Update sudoers if present
 if [ -f "$TARGET_SLOT/scripts/sudoers/cidrella" ]; then

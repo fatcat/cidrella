@@ -22,12 +22,57 @@ Recommended for production deployments on bare metal or LXC containers.
 | `arping` | Network scanner (IP conflict detection) |
 | `dnsutils` | `dig` / `nslookup` for DNS forwarder health checks |
 | `libcap2-bin` | `setcap` for `CAP_NET_RAW` / `CAP_NET_BIND_SERVICE` on the bundled Node binary |
-| `sudo` | Allowlisted privilege escalation for the `cidrella` service user |
+| `sudo` | Allowlisted privilege escalation for the `cidrella` service user (limited to `arping` from v0.4.11 forward) |
+| `polkitd` (or `policykit-1` on older releases) | **Required from v0.4.11.** Authorizes the unprivileged `cidrella` service user to start the templated update worker and reload dnsmasq via D-Bus. Without a running polkit daemon the in-app UI updater cannot spawn its worker and fails with "Access denied." See the note below. |
 | `build-essential` | Retained for users who want to `npm rebuild` manually; not used by the default install |
 | `python3`, `python3-setuptools` | Anomaly detection daemon runtime |
 | `python3-sklearn`, `python3-numpy`, `python3-joblib` | Anomaly detection ML libraries |
 
 Node.js is **not** a prerequisite — a Node 22.x runtime is bundled inside the release tarball and installed under `/opt/cidrella-<slot>/runtime/node/`. No system Node required.
+
+### polkit (v0.4.11+)
+
+CIDRella v0.4.11 replaced the previous `sudo systemd-run` path for the in-app updater and dnsmasq reload with a polkit-gated `systemctl` path. The change was made because the v0.4.8 systemd hardening on `cidrella.service` implicitly enabled `NoNewPrivileges=yes` (via `RestrictSUIDSGID=` and several `Protect*` directives), which blocks sudo's setuid escalation from inside the service and silently broke the previous path. The polkit D-Bus path does not depend on setuid, so it works under the hardening.
+
+What the installer does:
+- Installs `polkitd` (preferred on Debian 12+ and Ubuntu 24.04+) or falls back to `policykit-1` (Debian 11, Ubuntu 22.04 and earlier)
+- Drops a narrow rule at `/etc/polkit-1/rules.d/49-cidrella.rules` authorizing `subject.user == "cidrella"` to `start cidrella-update@*.service` and to `reload`/`restart cidrella-dnsmasq.service` via D-Bus (no other actions, no other units)
+- Probes `pkaction --version` to confirm the JS rules engine is present, and verifies the polkit daemon is active before completing the install
+
+If any step fails, the installer aborts with a diagnostic message. A working polkit daemon is **not optional** on v0.4.11+ native installs — the in-app updater depends on it.
+
+**If you upgraded *to* v0.4.11 via `cidrella-update` from v0.4.10 or earlier**, your host is missing the polkit package, rule file, and templated unit because v0.4.11's `update.sh` did not reconcile that state on upgrade (only fresh installs via `install.sh` did). Symptom: the UI update panel fails with "Access denied" on every install click, or your stuck update status says `systemctl start cidrella-update@... failed: Access denied`. Recovery (run as root on the host):
+
+```bash
+# 1. Install polkit
+apt-get update
+apt-get install -y polkitd      # Debian 12+ / Ubuntu 24.04+
+# apt-get install -y policykit-1  # older releases, if polkitd is unavailable
+
+# 2. Install the rule file (shipped inside the tarball)
+install -m 0644 -o root -g root \
+  /opt/cidrella/scripts/polkit/49-cidrella.rules \
+  /etc/polkit-1/rules.d/49-cidrella.rules
+
+# 3. Install the templated update worker unit (also missing on CLI upgrades)
+install -m 0644 -o root -g root \
+  /opt/cidrella/scripts/systemd/cidrella-update@.service \
+  /etc/systemd/system/cidrella-update@.service
+systemctl daemon-reload
+
+# 4. Start polkit. On some LXC builds systemd hits a "status=217/USER" race
+#    on the first start attempt because the polkitd user was just created
+#    and the cache hasn't refreshed — a reset-failed + start clears it.
+systemctl reset-failed polkit 2>/dev/null || true
+systemctl start polkit
+
+# 5. Clear any stuck update-status record left behind by a failed attempt
+rm -f /var/lib/cidrella/update-status.json
+
+# 6. Retry the update via the UI (or run `cidrella-update` as root).
+```
+
+v0.4.13 moves this reconciliation into `update.sh` so the problem self-heals on the next upgrade. Until then, the manual procedure above is the only path — or use `cidrella-update` from a root shell, which bypasses the polkit requirement entirely.
 
 ## Installation
 
@@ -71,7 +116,8 @@ The installer is interactive and will:
 - Handle existing dnsmasq installations (replace config, include config, or skip)
 - Create a `cidrella` system user and data directory at `/var/lib/cidrella`
 - Download and extract the latest release to `/opt/cidrella`
-- Install and start systemd services
+- Install and start systemd services (`cidrella`, `cidrella-dnsmasq`, `cidrella-anomaly`, and the templated `cidrella-update@.service` worker on v0.4.11+)
+- Install the polkit rule at `/etc/polkit-1/rules.d/49-cidrella.rules` and ensure the polkit daemon is active (v0.4.11+)
 
 ## First Login
 
