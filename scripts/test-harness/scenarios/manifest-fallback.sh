@@ -62,17 +62,34 @@ WRONG_KEY
 
   # Capture the /api/version response. We need auth — the endpoint is
   # gated behind requirePerm('subnets:read'), so we log in as admin first.
-  # Testerella has a known admin password baked in by fresh install
-  # (testerella-specific setup puts it at /root/.cidrella-admin-pw in our
-  # test harness convention — fall back to 'admin' if that's not present).
-  ADMIN_PW="admin"
-  [ -f /root/.cidrella-admin-pw ] && ADMIN_PW=$(cat /root/.cidrella-admin-pw)
+  # Parse the generated password from install output. install.sh wraps it
+  # in ANSI color escapes (ESC[0;32m...ESC[0m). Strip the escapes first,
+  # then extract the password token after "Password: ".
+  ADMIN_PW=$(grep -a "Password:" /tmp/install-output.log \
+    | grep -v reset-password \
+    | sed 's/\x1b\[[0-9;]*m//g; s/.*Password:[[:space:]]*//' \
+    | tr -d '[:space:]' \
+    | head -1)
+  if [ -z "$ADMIN_PW" ]; then
+    ADMIN_PW="admin"
+  fi
   TOKEN=$(curl -sk -X POST https://127.0.0.1:8443/api/auth/login \
     -H "Content-Type: application/json" \
     -d "{\"username\":\"admin\",\"password\":\"${ADMIN_PW}\"}" 2>/dev/null \
     | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
   if [ -n "$TOKEN" ]; then
+    # Fresh installs require a password change on first login. Do it so the
+    # subsequent /api/version call isn't blocked with MUST_CHANGE_PASSWORD.
+    NEW_PW="test-scenario-pw-$(date +%s)"
+    CHANGE_RESP=$(curl -sk -X POST -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d "{\"current_password\":\"${ADMIN_PW}\",\"new_password\":\"${NEW_PW}\"}" \
+      https://localhost:8443/api/auth/change-password 2>/dev/null)
+    # If change succeeded, re-extract the new token from the change response.
+    NEW_TOKEN=$(echo "$CHANGE_RESP" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    [ -n "$NEW_TOKEN" ] && TOKEN="$NEW_TOKEN"
+
     curl -sk -H "Authorization: Bearer $TOKEN" \
       https://127.0.0.1:8443/api/version > /tmp/version-response.json 2>&1
   else
@@ -83,6 +100,12 @@ WRONG_KEY
   # wipes between scenarios but defensive cleanup is cheap.
   cp /tmp/cidrella.pub.real /opt/cidrella/scripts/cidrella.pub
   systemctl restart cidrella
+  # Wait for the service to settle after the second restart — the final
+  # health-check assertion needs the API to be responding.
+  for i in $(seq 1 20); do
+    if curl -sk https://127.0.0.1:8443/api/health >/dev/null 2>&1; then break; fi
+    sleep 0.5
+  done
 }
 
 scenario_assert() {

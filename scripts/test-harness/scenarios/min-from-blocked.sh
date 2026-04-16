@@ -100,19 +100,24 @@ probe_gate() {
 }
 
 # Case 1: satisfied (current 0.4.11 >= required 0.4.0)
-echo "case1: $(probe_gate /tmp/min-from-test/case1-satisfied.json 0.4.11; echo rc=$?)" > /tmp/min-from-test/results.txt
+RESULT=$(probe_gate /tmp/min-from-test/case1-satisfied.json 0.4.11); RC=$?
+echo "case1: $RESULT rc=$RC" > /tmp/min-from-test/results.txt
 
 # Case 2: unmet (current 0.4.11 < required 9.9.9)
-echo "case2: $(probe_gate /tmp/min-from-test/case2-unmet.json 0.4.11; echo rc=$?)" >> /tmp/min-from-test/results.txt
+RESULT=$(probe_gate /tmp/min-from-test/case2-unmet.json 0.4.11); RC=$?
+echo "case2: $RESULT rc=$RC" >> /tmp/min-from-test/results.txt
 
 # Case 3: min_from null (JSON null, sed doesn't match)
-echo "case3: $(probe_gate /tmp/min-from-test/case3-null.json 0.4.11; echo rc=$?)" >> /tmp/min-from-test/results.txt
+RESULT=$(probe_gate /tmp/min-from-test/case3-null.json 0.4.11); RC=$?
+echo "case3: $RESULT rc=$RC" >> /tmp/min-from-test/results.txt
 
 # Case 4: min_from field absent entirely
-echo "case4: $(probe_gate /tmp/min-from-test/case4-absent.json 0.4.11; echo rc=$?)" >> /tmp/min-from-test/results.txt
+RESULT=$(probe_gate /tmp/min-from-test/case4-absent.json 0.4.11); RC=$?
+echo "case4: $RESULT rc=$RC" >> /tmp/min-from-test/results.txt
 
 # Case 5: unknown current version (pre-v0.4.3 no-RELEASE.json fallback)
-echo "case5: $(probe_gate /tmp/min-from-test/case2-unmet.json unknown; echo rc=$?)" >> /tmp/min-from-test/results.txt
+RESULT=$(probe_gate /tmp/min-from-test/case2-unmet.json unknown); RC=$?
+echo "case5: $RESULT rc=$RC" >> /tmp/min-from-test/results.txt
 PROBE
 
   chmod +x /tmp/min-from-test/gate-probe.sh

@@ -13,7 +13,7 @@ import * as IpAddress from '../models/ip-address.js';
  */
 function arpingIp(ip) {
   return new Promise((resolve) => {
-    execFile('sudo', ['/usr/sbin/arping', '-c', '1', '-w', '1', ip], { timeout: ARPING_TIMEOUT_MS }, (error, stdout) => {
+    execFile('/usr/sbin/arping', ['-c', '1', '-w', '1', ip], { timeout: ARPING_TIMEOUT_MS }, (error, stdout) => {
       if (error) {
         resolve({ responded: false, mac: null });
         return;

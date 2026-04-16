@@ -1,19 +1,17 @@
-# CIDRella — minimal sudoers for the service account.
+# CIDRella — sudoers file for the cidrella service account.
 #
-# As of v0.4.11, almost all sudo callsites have been replaced by polkit-gated
-# systemctl calls (see /etc/polkit-1/rules.d/49-cidrella.rules). The original
-# sudo-based path was broken by the v0.4.8 hardening on cidrella.service:
-# directives like RestrictSUIDSGID=, ProtectKernelTunables=, etc. implicitly
-# set NoNewPrivileges=yes per systemd.exec(5), which blocks setuid escalation
-# and breaks every sudo call from the cidrella process. polkit + D-Bus does
-# not depend on setuid, so it works under NoNewPrivileges.
+# As of v0.4.14, this file is EMPTY. Every sudo callsite has been eliminated:
 #
-# arping is the last remaining sudo dependency. The scanner uses
-# /usr/sbin/arping for ARP-layer host discovery and arping requires raw
-# sockets, which aren't reachable through any systemd unit pattern. The
-# follow-up plan (PLAN.md, v0.4.12 candidate) is to either:
-#   (a) setcap cap_net_raw+ep /usr/sbin/arping and call it without sudo, or
-#   (b) replace arping with a Node raw-socket library and drop the binary
-#       dependency entirely (the bundled Node already has cap_net_raw).
-# Option (b) is preferred because it removes a binary from the trust surface.
-cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *
+# - v0.4.11: in-app updater and dnsmasq reload/restart replaced with
+#   polkit-gated systemctl (D-Bus, no setuid escalation needed).
+#
+# - v0.4.14: arping replaced with a direct execFile call. The cidrella
+#   service runs with AmbientCapabilities=CAP_NET_RAW (set by
+#   cidrella.service), which propagates to child processes on exec —
+#   including arping. No sudo, no setcap, no file capabilities on the
+#   arping binary. Verified on testerella via a transient systemd unit
+#   running as the cidrella user with AmbientCapabilities=CAP_NET_RAW.
+#
+# The file is kept (rather than deleted) so that install.sh's `cp ...
+# /etc/sudoers.d/cidrella` doesn't fail on upgrade, and so the empty
+# file actively overwrites any stale sudoers rules from prior versions.
