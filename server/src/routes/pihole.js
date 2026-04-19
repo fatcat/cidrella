@@ -2,12 +2,11 @@ import { Router } from 'express';
 import { parse as parseToml } from 'smol-toml';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { regenerateConfigs } from '../utils/dnsmasq.js';
-import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 import http from 'http';
 import https from 'https';
-import { ipToLong } from '../utils/ip.js';
-import { syncDnsToIp, syncDhcpReservationToIp } from '../utils/ip-sync.js';
+import { ipToLong, isClientMac, isValidMac, isValidIpv4, isValidDomain } from '../utils/ip.js';
+import { syncDnsToIp, syncDhcpReservationToIp, syncPtrForIp } from '../utils/ip-sync.js';
+import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 
 const router = Router();
@@ -346,10 +345,13 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
       'INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, description) VALUES (?, ?, ?, ?, ?)'
     );
 
-    const MAC_RE = /^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
-
     for (const d of dhcpHosts) {
-      if (!MAC_RE.test(d.mac)) { results.dhcp.failed++; continue; }
+      // Reuse the same validation gates as POST /api/dhcp/reservations so
+      // imports can't inject data the normal API path would refuse.
+      const mac = (d.mac || '').toLowerCase();
+      if (!isValidMac(mac) || !isClientMac(mac)) { results.dhcp.failed++; continue; }
+      if (!isValidIpv4(d.ip)) { results.dhcp.failed++; continue; }
+      if (d.hostname && !isValidDomain(d.hostname)) { results.dhcp.failed++; continue; }
 
       // Find best matching subnet
       const ipLong = ipToLong(d.ip);
@@ -364,13 +366,21 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
 
       if (!best) { results.dhcp.noSubnet++; continue; }
 
-      const macKey = `${best.id}|${d.mac}`;
+      if (reservationIpRejectionReason(db, best, d.ip)) { results.dhcp.failed++; continue; }
+
+      const macKey = `${best.id}|${mac}`;
       const ipKey = `${best.id}|${d.ip}`;
       if (existingMacs.has(macKey) || existingIps.has(ipKey)) { results.dhcp.skipped++; continue; }
 
       try {
-        insertRes.run(best.id, d.mac, d.ip, d.hostname, 'Imported from Pi-hole');
-        syncDhcpReservationToIp(db, best.id, d.ip, { hostname: d.hostname, mac_address: d.mac });
+        insertRes.run(best.id, mac, d.ip, d.hostname || null, 'Imported from Pi-hole');
+        syncDhcpReservationToIp(db, best.id, d.ip, { hostname: d.hostname, mac_address: mac });
+        // Populate PTR in the subnet's reverse zone (no-op if reverse zone
+        // doesn't exist). Mirrors the direct POST /api/dhcp/reservations path.
+        const ptrFqdn = d.hostname
+          ? (best.domain_name ? `${d.hostname}.${best.domain_name}` : d.hostname)
+          : '';
+        syncPtrForIp(db, best.id, d.ip, ptrFqdn);
         existingMacs.add(macKey);
         existingIps.add(ipKey);
         results.dhcp.created++;
@@ -382,10 +392,10 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(?) WHERE id = ?')
     .run(new Date().toISOString(), zoneId);
 
-  // Regenerate dnsmasq configs (DNS + DHCP reservations)
-  regenerateConfigs(db);
+  // Queue dnsmasq regen (fires once after response; DNS always, DHCP if any created)
+  req.afterCommit('regenerate_dns');
   if (results.dhcp.created > 0) {
-    regenerateDhcpConfigs(db);
+    req.afterCommit('regenerate_dhcp');
   }
 
   audit(req.user.id, 'pihole_import', 'dns_zone', zoneId, { zone: zone.name, results });

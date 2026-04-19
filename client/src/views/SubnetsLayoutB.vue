@@ -1,18 +1,18 @@
 <template>
   <div class="layout-b">
-    <!-- Menubar -->
-    <Menubar :model="menuItems">
-      <template #item="{ item, props: itemProps }">
-        <a v-bind="itemProps.action" :class="{ 'menubar-active-item': item.key === activeTab }" :data-track="item.dataTrack">
-          <span :class="item.icon" />
-          <span class="ml-1">{{ item.label }}</span>
+    <!-- Left rail — mirrors Analytics / System layout (user-requested 2026-04-18) -->
+    <aside class="ipam-sidebar">
+      <nav class="ipam-nav">
+        <a v-for="item in menuItems" :key="item.key"
+           class="ipam-nav-item" :class="{ active: item.key === activeTab }"
+           :data-track="item.dataTrack" @click="activeTab = item.key">
+          <i :class="item.icon"></i>
+          <span>{{ item.label }}</span>
         </a>
-      </template>
-      <template #end>
-        <Button label="Settings" icon="pi pi-cog" size="small" text data-track="toolbar-settings" @click="router.push('/system')" />
-      </template>
-    </Menubar>
+      </nav>
+    </aside>
 
+    <div class="ipam-content">
     <!-- Networks Tab -->
     <div class="content-area" v-if="activeTab === 'networks'">
       <!-- Left Sidebar -->
@@ -184,6 +184,14 @@
             @context-menu="openSubnetContextMenu"
             @edit-subnet="node => dialogs.openEdit(node)"
             @delete-subnet="node => dialogs.openDelete(node)" />
+        <EmptyState v-else-if="isFirstRunEmpty"
+          icon="pi-sitemap"
+          title="No networks yet"
+          description="Add a folder to organize subnets, or add a network directly to get started."
+          :actions="[
+            { label: 'Add Folder', icon: 'pi-folder-plus', severity: 'secondary', dataTrack: 'empty-add-folder', onClick: () => dialogs.openCreateFolder() },
+            { label: 'Add Network', icon: 'pi-plus', severity: 'primary', dataTrack: 'empty-add-network', onClick: () => dialogs.openQuickAddNetwork() }
+          ]" />
         <div v-else class="empty-detail">
           <i class="pi pi-sitemap" style="font-size: 2rem; opacity: 0.3"></i>
           <span>Select a network to view details</span>
@@ -199,6 +207,7 @@
     <!-- DHCP Tab -->
     <div v-else-if="activeTab === 'dhcp'" class="tab-content">
       <DhcpPanel ref="dhcpPanelRef" />
+    </div>
     </div>
 
     <!-- Context Menus -->
@@ -226,11 +235,10 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
-import { useRouter } from 'vue-router';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
-import Menubar from 'primevue/menubar';
 import ContextMenu from 'primevue/contextmenu';
+import EmptyState from '../components/EmptyState.vue';
 import Tabs from 'primevue/tabs';
 import TabList from 'primevue/tablist';
 import Tab from 'primevue/tab';
@@ -250,7 +258,6 @@ import { applyNameTemplate, canMergeCidrs } from '../utils/ip.js';
 
 const store = useSubnetStore();
 const toast = useToast();
-const router = useRouter();
 const dialogs = ref(null);
 const dnsPanelRef = ref(null);
 const dhcpPanelRef = ref(null);
@@ -364,11 +371,17 @@ function subnetToNode(subnet) {
 }
 
 function openSubnetEditById(subnet) {
-  dialogs.value.openEdit(subnetToNode(subnet));
+  const node = subnetToNode(subnet);
+  // NetworkDialogs reads from props.selectedNode on save, so keep parent state
+  // in sync with whichever row the pencil/trash icon was clicked on.
+  selectedNode.value = node;
+  dialogs.value.openEdit(node);
 }
 
 function openSubnetDeleteById(subnet) {
-  dialogs.value.openDelete(subnetToNode(subnet));
+  const node = subnetToNode(subnet);
+  selectedNode.value = node;
+  dialogs.value.openDelete(node);
 }
 
 // ── Subnet selection ──
@@ -408,6 +421,13 @@ const ungroupedSubnets = computed(() => {
   const ungroupedFolder = store.folders.find(f => f.id === null);
   if (!ungroupedFolder?.subnets) return [];
   return collectAllocatedSubnets(ungroupedFolder.subnets, filterText.value.trim());
+});
+
+// True empty state — zero real folders AND zero subnets anywhere.
+const isFirstRunEmpty = computed(() => {
+  const realFolders = store.folders.filter(f => f.id !== null);
+  const anySubnets = store.folders.some(f => f.subnets && f.subnets.length > 0);
+  return realFolders.length === 0 && !anySubnets;
 });
 
 // Unallocated subnets: all non-allocated networks across all folders
@@ -837,26 +857,62 @@ onBeforeUnmount(() => {
 <style scoped>
 .layout-b {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   height: 100%;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
-/* ── Menubar ── */
-.toolbar-right {
+/* ── IP Management left rail ── */
+.ipam-sidebar {
+  width: 180px;
+  flex-shrink: 0;
+  background: var(--p-surface-card);
+  border-right: 1px solid var(--p-surface-border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.ipam-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem 0;
+}
+.ipam-nav-item {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: var(--app-fs-sm);
+  color: var(--p-text-color);
+  text-decoration: none;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
 }
-.toolbar-divider {
-  width: 1px;
-  height: 1.2rem;
-  background: var(--p-surface-border);
+.ipam-nav-item:hover {
+  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
 }
-:deep(.p-menubar-item-content) {
-  padding: 0.45rem 0.65rem !important;
+.ipam-nav-item.active {
+  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
+  color: var(--p-primary-color);
+  font-weight: 600;
+  border-left-color: var(--p-primary-color);
+}
+.ipam-nav-item i {
+  width: 1.25rem;
+  text-align: center;
+  font-size: var(--app-fs-md);
 }
 
+.ipam-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 
 .tab-content {
   flex: 1;
@@ -880,12 +936,37 @@ onBeforeUnmount(() => {
   border-radius: 8px;
   overflow: hidden;
   color: var(--p-text-color);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+/* Force PrimeVue Tabs chain to participate in the flex column so .sidebar-tree
+   can own a bounded height and scroll. Without these, TabPanels grows to fit
+   the content and the parent panel's `overflow: hidden` just clips. */
+.sidebar-panel :deep(.p-tabs) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 .sidebar-panel :deep(.p-tabpanels) {
   padding: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sidebar-panel :deep(.p-tabpanel) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .sidebar-panel :deep(.p-tablist) {
   background: var(--p-surface-ground);
+  flex-shrink: 0;
 }
 
 .sidebar-search {
@@ -899,7 +980,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .search-icon {
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
 }
 .sidebar-filter {
@@ -907,7 +988,7 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   color: var(--p-text-color);
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   outline: none;
 }
 .sidebar-filter::placeholder {
@@ -921,7 +1002,7 @@ onBeforeUnmount(() => {
 .sidebar-empty {
   padding: 1rem;
   text-align: center;
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
 }
 
@@ -929,10 +1010,10 @@ onBeforeUnmount(() => {
 .tree-folder {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.5rem;
   padding: 0.5rem 1rem;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-md);
   color: var(--p-text-color);
   cursor: pointer;
   border-bottom: 1px solid var(--p-surface-border);
@@ -960,7 +1041,7 @@ onBeforeUnmount(() => {
   flex: 1;
 }
 .count-badge {
-  font-size: 0.7rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   font-weight: 400;
 }
@@ -997,16 +1078,19 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .item-name {
-  font-size: 0.85rem;
+  font-size: var(--app-fs-md);
   font-weight: 500;
   font-family: monospace;
+  color: var(--p-text-color);
 }
 .tree-item-meta {
   display: flex;
-  gap: 0.35rem;
-  font-size: 0.7rem;
+  gap: 0.5rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   margin-top: 0.15rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 .status-dot {
   width: 6px;
@@ -1051,7 +1135,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 0.75rem;
   color: var(--p-text-muted-color);
-  font-size: 0.9rem;
+  font-size: var(--app-fs-base);
 }
 
 /* Pulse animation for empty-state call to action */

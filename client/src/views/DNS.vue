@@ -210,7 +210,7 @@ onUnmounted(() => {
   margin: 0 0 0.5rem;
 }
 .section-hint {
-  font-size: 0.75rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   margin: 0 0 0.75rem;
   line-height: 1.4;
@@ -239,9 +239,9 @@ onUnmounted(() => {
 .dot-up { background: var(--p-green-500); }
 .dot-down { background: var(--p-red-500); }
 .dot-unknown { background: var(--p-surface-400); }
-.fwd-testing { color: var(--p-text-muted-color); font-size: 0.85rem; }
+.fwd-testing { color: var(--p-text-muted-color); font-size: var(--app-fs-sm); }
 .forwarder-hint {
-  font-size: 0.75rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   margin: 0.25rem 0 0;
   line-height: 1.4;
@@ -253,7 +253,7 @@ onUnmounted(() => {
 }
 .soa-defaults-form .field label {
   display: block;
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   font-weight: 600;
   margin-bottom: 0.25rem;
 }
@@ -271,7 +271,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--p-surface-200);
   color: var(--p-text-muted-color);
-  font-size: 0.65rem;
+  font-size: var(--app-fs-xs);
   font-weight: 700;
   cursor: help;
   margin-left: 0.25rem;
@@ -279,7 +279,7 @@ onUnmounted(() => {
 }
 .field-help {
   display: block;
-  font-size: 0.7rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   margin-top: 0.2rem;
 }

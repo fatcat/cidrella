@@ -152,24 +152,35 @@ export function nearestPow2(n) {
   return (n - lower) <= (upper - n) ? lower : upper;
 }
 
+// Auto-fill bounds for DHCP Start/End IP. Subnets outside this range either
+// can't carry a sensible pool (/30–/32) or are large enough to OOM a modest
+// host when CIDRella's per-IP tables populate (prefix < 16). For those, the
+// UI surfaces a warning and the user enters Start/End manually.
+export const DHCP_DEFAULT_MIN_PREFIX = 16;
+export const DHCP_DEFAULT_MAX_PREFIX = 29;
+
 export function dhcpRangeDefaults(p, gw) {
   const size = p.broadcastLong - p.networkLong + 1;
   const prefix = Math.round(32 - Math.log2(size));
-  // Only auto-fill for /21 through /26
-  if (prefix < 21 || prefix > 26) return { start: '', end: '' };
+  if (prefix < DHCP_DEFAULT_MIN_PREFIX || prefix > DHCP_DEFAULT_MAX_PREFIX) {
+    return { start: '', end: '' };
+  }
   const gwLong = gw ? ipToLong(gw) : null;
   let poolEnd, poolSize;
-  if (prefix <= 23) {
-    // /21, /22, /23: cap end at network + 128, pool size = 64
+  if (prefix >= 21 && prefix <= 23) {
+    // /21, /22, /23: cap end at network + 128, pool size = 64 — conservative
+    // default to keep the pool near the start so ops can use the rest for
+    // static allocations.
     poolEnd = p.networkLong + 128;
     poolSize = 64;
   } else {
-    // /24, /25, /26: use power-of-2 formula
+    // /16–/20 and /24–/29: pool sized at ~15% of the subnet, ending at ~35%.
     poolEnd = p.networkLong + nearestPow2(size * 0.35);
     poolSize = nearestPow2(size * 0.15);
+    if (poolSize < 2) poolSize = 2;
   }
   let poolStart = poolEnd - poolSize + 1;
-  // Ensure within usable range
+  // Clamp into the usable range (exclude network + broadcast).
   poolStart = Math.max(poolStart, p.networkLong + 1);
   poolEnd = Math.min(poolEnd, p.broadcastLong - 1);
   if (gwLong === poolStart) poolStart++;

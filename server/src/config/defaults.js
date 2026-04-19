@@ -83,7 +83,25 @@ export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;      // 1 hour
 export const UPDATE_CHECK_DELAY_MS    = 0;                    // check immediately on startup
 export const GITHUB_REPO              = 'fatcat/cidrella';    // owner/repo for update checks
 
-export const DNSMASQ_INTERNAL_PORT     = 5353;                  // dnsmasq DNS port (proxy-fronted)
+// Internal port dnsmasq binds on 127.0.0.1 when the proxy fronts it.
+// If the user picks this same port as their LAN-facing `dns_listen_port`,
+// callers should use `resolveDnsmasqInternalPort()` (below) which shifts
+// dnsmasq to a different internal port so the two never fight over the
+// same bind address. 5353 is the historical default.
+export const DNSMASQ_INTERNAL_PORT     = 5353;
+export const DNSMASQ_INTERNAL_PORT_ALT = 5354;
+
+/**
+ * Returns the port dnsmasq should bind internally, given the user's LAN
+ * DNS listen port. Shifts away from the default if the LAN port collides.
+ *
+ * @param {number|null|undefined} lanListenPort user-configured dns_listen_port
+ * @returns {number} internal port dnsmasq should use
+ */
+export function resolveDnsmasqInternalPort(lanListenPort) {
+  if (Number(lanListenPort) === DNSMASQ_INTERNAL_PORT) return DNSMASQ_INTERNAL_PORT_ALT;
+  return DNSMASQ_INTERNAL_PORT;
+}
 export const ANALYTICS_FLUSH_INTERVAL_MS  = 5000;              // 5 seconds
 export const ANALYTICS_RETENTION_CLEANUP_MS = 6 * 60 * 60 * 1000; // 6 hours
 

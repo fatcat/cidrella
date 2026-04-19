@@ -11,6 +11,7 @@ import { fileURLToPath } from 'url';
 import { initDb, getDb, getSetting } from './db/init.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { authMiddleware } from './auth/middleware.js';
+import { afterCommitMiddleware } from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import subnetRoutes from './routes/subnets.js';
@@ -161,6 +162,10 @@ async function main() {
   });
   app.use(morgan('short'));
   app.use(express.json());
+
+  // Attach req.afterCommit(hookName) for routes to queue dedup'd regen.
+  // Hooks fire on res.on('finish') so regen never blocks the HTTP response.
+  app.use(afterCommitMiddleware);
 
   // Setup routes (pre-auth — accessible before installation is complete)
   app.use('/api/setup', setupRoutes);

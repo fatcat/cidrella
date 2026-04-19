@@ -83,11 +83,79 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
 }
 
 /**
+ * Derive the reverse-zone name + record name for an IPv4 in a covering
+ * reverse zone stored in dns_zones. Looks up the matching /24 (or larger)
+ * reverse zone by subnet_id. Returns { zoneId, recordName } or null.
+ */
+function findPtrLocation(db, subnetId, ip) {
+  const octets = ip.split('.').map(Number);
+  if (octets.length !== 4) return null;
+  const candidates = [
+    // Prefer /24 reverse: "c.b.a.in-addr.arpa"
+    `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`,
+    `${octets[1]}.${octets[0]}.in-addr.arpa`,       // /16
+    `${octets[0]}.in-addr.arpa`,                    // /8
+  ];
+  for (const zoneName of candidates) {
+    const zone = db.prepare(
+      "SELECT id, name FROM dns_zones WHERE subnet_id = ? AND type = 'reverse' AND name = ?"
+    ).get(subnetId, zoneName);
+    if (!zone) continue;
+    const zoneParts = zoneName.replace('.in-addr.arpa', '').split('.');
+    let recordName;
+    if (zoneParts.length === 3) recordName = String(octets[3]);
+    else if (zoneParts.length === 2) recordName = `${octets[3]}.${octets[2]}`;
+    else recordName = `${octets[3]}.${octets[2]}.${octets[1]}`;
+    return { zoneId: zone.id, recordName };
+  }
+  return null;
+}
+
+/**
+ * Upsert the PTR record for a given IP inside a subnet's reverse zone.
+ * `hostname` should be a non-empty FQDN to set, or falsy to clear the PTR.
+ * If the target reverse zone doesn't exist (reverse DNS wasn't created for
+ * this subnet), this is a no-op.
+ */
+export function syncPtrForIp(db, subnetId, ip, hostname) {
+  const loc = findPtrLocation(db, subnetId, ip);
+  if (!loc) return;
+  const fqdn = (hostname || '').trim();
+  const existing = db.prepare(
+    "SELECT id FROM dns_records WHERE zone_id = ? AND name = ? AND type = 'PTR'"
+  ).get(loc.zoneId, loc.recordName);
+  if (existing) {
+    db.prepare("UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(fqdn, existing.id);
+  } else if (fqdn) {
+    db.prepare(
+      "INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, 'PTR', ?, 1)"
+    ).run(loc.zoneId, loc.recordName, fqdn);
+  }
+  db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?")
+    .run(loc.zoneId);
+}
+
+/**
  * Sync DHCP reservation data to ip_addresses.
  * Called when a reservation is created or updated.
+ *
+ * `hostname === null` is an EXPLICIT clear (user cleared the reservation
+ * hostname). `hostname === undefined` means "not set, use a fallback if we
+ * can derive one from the MAC." The distinction matters because a bare
+ * `||` check below used to overwrite an explicit clear with the fallback,
+ * leaving ip_addresses.hostname out of sync with dhcp_reservations.hostname.
  */
 export function syncDhcpReservationToIp(db, subnetId, ip, { hostname, mac_address } = {}) {
-  const effectiveHostname = hostname || generateFallbackHostname(mac_address) || undefined;
+  let effectiveHostname;
+  if (hostname === null) {
+    effectiveHostname = null;
+  } else if (hostname) {
+    effectiveHostname = hostname;
+  } else {
+    // undefined / empty string: fall back to vendor-derived name if possible.
+    effectiveHostname = generateFallbackHostname(mac_address) || undefined;
+  }
   IpAddress.upsert(db, subnetId, ip, {
     hostname: effectiveHostname,
     mac_address,
@@ -98,15 +166,37 @@ export function syncDhcpReservationToIp(db, subnetId, ip, { hostname, mac_addres
 }
 
 /**
- * Clear DHCP reservation data from ip_addresses when a reservation is deleted.
- * Resets status to 'available' and clears MAC. Preserves hostname if set by DNS.
+ * Clear DHCP reservation data from ip_addresses when a reservation is deleted
+ * or its IP address changes. The reservation being deleted is authoritative,
+ * so we always clear reservation-owned fields — even when the MAC drifted
+ * (e.g. a live lease retagged the row before delete arrived).
+ *
+ *   - If the row was written exclusively by the reservation
+ *     (detection_source = 'dhcp_reservation'), delete it entirely. Something
+ *     else will recreate it when it has data to record.
+ *   - Otherwise, clear just the reservation-owned fields (mac, status, and
+ *     the reservation's hostname). A later DNS/scan source can repopulate.
  */
 export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
   const existing = IpAddress.findBySubnetAndIp(db, subnetId, ip);
+  if (!existing) return;
 
-  if (existing && existing.mac_address === mac_address) {
-    IpAddress.upsert(db, subnetId, ip, { mac_address: null, status: 'available' });
+  if (existing.detection_source === 'dhcp_reservation') {
+    db.prepare('DELETE FROM ip_addresses WHERE id = ?').run(existing.id);
+    return;
   }
+
+  // For non-reservation-owned rows, only blow away MAC if it still matches
+  // what the reservation owned — otherwise something else (scan, live lease)
+  // overwrote the MAC and is the current owner. Hostname and status we clear
+  // regardless, since they were reservation-derived.
+  const clearMac = existing.mac_address === mac_address;
+  IpAddress.upsert(db, subnetId, ip, {
+    mac_address: clearMac ? null : existing.mac_address,
+    hostname: null,
+    status: 'available',
+    detection_source: null
+  });
 }
 
 /**

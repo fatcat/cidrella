@@ -1236,11 +1236,12 @@ async function doResetCert() {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-color);
   text-decoration: none;
   cursor: pointer;
-  transition: background 0.1s;
+  border-left: 3px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
 }
 .sys-nav-item:hover {
   background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
@@ -1249,19 +1250,25 @@ async function doResetCert() {
   background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
   color: var(--p-primary-color);
   font-weight: 600;
+  border-left-color: var(--p-primary-color);
 }
 .sys-nav-item i {
   width: 1.25rem;
   text-align: center;
-  font-size: 0.9rem;
+  font-size: var(--app-fs-md);
 }
 .nav-group-label {
-  padding: 0.6rem 1rem 0.25rem;
-  font-size: 0.65rem;
+  padding: 0 1rem 6px;
+  margin: 16px 0 8px;
+  font-size: var(--app-fs-xs);
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.08em;
   color: var(--p-text-muted-color);
+  border-bottom: 1px solid var(--p-surface-border);
+}
+.nav-group-label:first-child {
+  margin-top: 8px;
 }
 /* Inner TabView (Logging subtabs) */
 .system-page :deep(.logging-subtabs) {
@@ -1325,7 +1332,7 @@ async function doResetCert() {
 }
 .setting-group h3 {
   margin: 0 0 0.75rem 0;
-  font-size: 1rem;
+  font-size: var(--app-fs-lg);
   color: var(--p-text-color);
 }
 .field {
@@ -1333,28 +1340,30 @@ async function doResetCert() {
 }
 .field label {
   display: block;
-  margin-bottom: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 600;
+  margin-bottom: 0.4rem;
+  font-size: var(--app-fs-sm);
+  font-weight: 500;
 }
 .field-help {
   display: block;
   margin-top: 0.25rem;
-  font-size: 0.8rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
 }
 .template-preview {
   margin-top: 0.5rem;
   padding: 0.4rem 0.75rem;
-  background: var(--p-surface-ground);
+  background: var(--p-surface-content);
   border: 1px solid var(--p-surface-border);
   border-radius: 4px;
   font-family: monospace;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-color);
 }
 .settings-actions {
   margin-top: 1rem;
+  display: flex;
+  justify-content: flex-end;
 }
 .section-header {
   display: flex;
@@ -1363,10 +1372,10 @@ async function doResetCert() {
 }
 .color-swatch {
   display: inline-block;
-  width: 24px;
-  height: 24px;
-  border-radius: 4px;
-  border: 1px solid rgba(0,0,0,0.1);
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid var(--p-surface-border);
 }
 .action-buttons {
   display: flex;
@@ -1406,7 +1415,7 @@ async function doResetCert() {
   max-width: 22rem;
 }
 .audit-details {
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
   max-width: 30rem;
   overflow: hidden;
@@ -1422,7 +1431,7 @@ async function doResetCert() {
   margin-top: 0.5rem;
 }
 .page-info {
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
 }
 .range-types-section {
@@ -1434,11 +1443,25 @@ async function doResetCert() {
 .padded-tab {
   margin: 0 7%;
 }
+.content-card h3 {
+  font-size: var(--app-fs-lg);
+  margin: 0 0 0.75rem;
+  color: var(--p-text-color);
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.card-header h3 {
+  margin: 0;
+}
 .backup-section, .cert-section {
   max-width: 48rem;
 }
 .next-backup-value {
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
 }
 .restore-warning {
@@ -1455,7 +1478,7 @@ async function doResetCert() {
   border: 1px solid var(--p-surface-border);
   border-radius: 8px;
   padding: 1rem;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
 }
 .cert-row {
   padding: 0.25rem 0;
@@ -1491,7 +1514,7 @@ async function doResetCert() {
   justify-content: center;
   background: color-mix(in srgb, var(--p-primary-color) 10%, transparent);
   border-radius: 6px;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-md);
   font-weight: 600;
   color: var(--p-primary-color);
   pointer-events: none;
@@ -1500,7 +1523,7 @@ async function doResetCert() {
   width: 100%;
   height: 24rem;
   font-family: monospace;
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   padding: 0.5rem;
   border: 1px solid var(--p-surface-border);
   border-radius: 6px;
@@ -1517,8 +1540,8 @@ async function doResetCert() {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  margin-top: 0.35rem;
-  font-size: 0.75rem;
+  margin-top: 0.4rem;
+  font-size: var(--app-fs-xs);
 }
 .cert-status-ok { color: var(--p-green-500); }
 .cert-status-err { color: var(--p-red-500); }
@@ -1568,15 +1591,15 @@ async function doResetCert() {
 }
 .theme-card-name {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
 }
 .theme-card-desc {
-  font-size: 0.7rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
 }
 .theme-check {
   color: var(--p-primary-color);
-  font-size: 0.9rem;
+  font-size: var(--app-fs-md);
   flex-shrink: 0;
 }
 </style>

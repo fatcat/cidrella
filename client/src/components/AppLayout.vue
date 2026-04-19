@@ -4,12 +4,14 @@
     <main class="main-content">
       <router-view />
     </main>
+    <FooterBar />
     <DebugPanel />
   </div>
 </template>
 
 <script setup>
 import HeaderBar from './HeaderBar.vue';
+import FooterBar from './FooterBar.vue';
 import DebugPanel from './DebugPanel.vue';
 </script>
 

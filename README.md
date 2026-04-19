@@ -31,6 +31,10 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 ---
 
+## Host Sizing
+
+CIDRella targets 1–2 GB hosts. Per-IP bookkeeping in SQLite is the dominant memory cost, so very large allocated subnets (e.g. `/10`, `/8`) will outgrow modest hosts long before DHCP lease counts become the bottleneck. See [docs/SIZING.md](docs/SIZING.md) for the ceiling-per-host table and the math behind it.
+
 ## Installation
 
 > **Use caution**: While no known vulnerabilities exist in this application, it would be unwise to expose its open ports on a public network. Always secure your infrastructure.

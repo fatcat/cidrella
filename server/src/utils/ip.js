@@ -248,6 +248,22 @@ export function isValidMac(mac) {
 }
 
 /**
+ * Stricter check for a MAC that can belong to an actual DHCP client.
+ * Rejects MACs a client would never use:
+ *   - all-zero  (00:00:00:00:00:00)
+ *   - broadcast (ff:ff:ff:ff:ff:ff)
+ *   - multicast (first-octet LSB set — the I/G bit, RFC 5342)
+ */
+export function isClientMac(mac) {
+  if (!isValidMac(mac)) return false;
+  const octets = mac.toLowerCase().split(':').map(o => parseInt(o, 16));
+  if (octets.every(o => o === 0)) return false;
+  if (octets.every(o => o === 0xff)) return false;
+  if ((octets[0] & 0x01) !== 0) return false; // I/G bit set → multicast
+  return true;
+}
+
+/**
  * Validate that a CIDR string is well-formed.
  */
 export function isValidCidr(cidr) {

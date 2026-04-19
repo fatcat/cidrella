@@ -107,11 +107,12 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-color);
   text-decoration: none;
   cursor: pointer;
-  transition: background 0.1s;
+  border-left: 3px solid transparent;
+  transition: background 0.1s, border-color 0.1s;
 }
 
 .ana-nav-item:hover {
@@ -122,6 +123,8 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
   color: var(--p-primary-color);
   font-weight: 600;
+  border-left-color: var(--p-primary-color);
+  padding-left: calc(1rem - 0px); /* border replaces padding room */
 }
 
 .ana-nav-item i {

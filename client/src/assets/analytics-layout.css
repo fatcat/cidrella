@@ -18,13 +18,13 @@
 }
 
 .stat { display: flex; flex-direction: column; }
-.stat-value { font-size: 1.25rem; font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
-.stat-label { font-size: 0.75rem; color: var(--p-text-muted-color); text-transform: uppercase; }
+.stat-value { font-size: var(--app-fs-2xl); font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
+.stat-label { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); text-transform: uppercase; letter-spacing: 0.08em; }
 
 .indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
 .indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
 .indicator-warn { width: 8px; height: 8px; border-radius: 50%; background: var(--p-orange-500); display: inline-block; }
-.stat-sublabel { font-size: 0.65rem; color: var(--p-text-muted-color); font-style: italic; margin-top: 2px; }
+.stat-sublabel { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); font-style: italic; margin-top: 2px; }
 
 .text-danger { color: var(--p-red-500); }
 .text-warning { color: var(--p-orange-500); }
@@ -64,7 +64,7 @@
 
 .chart-card h4 {
   margin: 0 0 0.75rem;
-  font-size: 0.9rem;
+  font-size: var(--app-fs-md);
 }
 
 .chart-wrap {
@@ -78,7 +78,7 @@
 
 .empty-chart {
   color: var(--p-text-muted-color);
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   text-align: center;
   padding: 2rem 0;
 }
@@ -109,6 +109,6 @@
 }
 
 .schedule-label {
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
 }

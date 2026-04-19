@@ -464,7 +464,10 @@ const chartOptions = computed(() => ({
           return '';
         }
       }
-    }
+    },
+    // ChartDataLabels is globally registered by Dashboard/Intelligence; suppress
+    // on-point labels here — tooltip already covers that information.
+    datalabels: { display: false },
   },
 }));
 

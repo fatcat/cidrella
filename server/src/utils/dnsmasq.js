@@ -4,7 +4,7 @@ import os from 'os';
 import { execFileSync, execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
-import { DATA_DIR, DNSMASQ_INTERNAL_PORT } from '../config/defaults.js';
+import { DATA_DIR, DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort } from '../config/defaults.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DNSMASQ_CONF = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.conf');
@@ -289,10 +289,17 @@ export function applyInterfaceConfig(db) {
 
   const sysIfaces = os.networkInterfaces();
 
-  // Normal mode: dnsmasq DNS listens on localhost:5353 only — proxy handles LAN-facing DNS on port 53.
-  // Bypass mode: proxy is dead — dnsmasq listens on port 53 + LAN IPs directly.
+  // Normal mode: dnsmasq DNS listens on localhost:5353 only — proxy handles
+  //   LAN-facing DNS on the configured `dns_listen_port` (default 53).
+  // Bypass mode: proxy is dead — dnsmasq listens on `dns_listen_port` + LAN IPs directly.
   // DHCP always needs interface= directives for LAN interfaces.
-  const dnsPort = !dnsEnabled ? 0 : proxyBypass ? 53 : DNSMASQ_INTERNAL_PORT;
+  let configuredListenPort = 53;
+  try {
+    const p = Number(getSetting('dns_listen_port'));
+    if (Number.isInteger(p) && p >= 1 && p <= 65535) configuredListenPort = p;
+  } catch { /* default 53 */ }
+  const internalPort = resolveDnsmasqInternalPort(configuredListenPort);
+  const dnsPort = !dnsEnabled ? 0 : proxyBypass ? configuredListenPort : internalPort;
   const newDirectives = [
     'bind-dynamic',
     'listen-address=127.0.0.1',

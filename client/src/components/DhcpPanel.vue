@@ -109,18 +109,19 @@
             <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem" />
             <Column field="is_online" header="Online" sortable style="width: 5rem">
               <template #body="{ data }">
-                <span v-if="data.is_online != null" :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
-                <span v-else class="text-muted">—</span>
+                <span v-if="data.is_online != null" class="status-text" :class="data.is_online ? 'state-ok' : 'state-muted'">{{ data.is_online ? 'Online' : 'Offline' }}</span>
+                <span v-else class="cell-muted">—</span>
               </template>
             </Column>
             <Column header="Lease" sortable field="status" style="width: 6rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.status === 'active' ? 'badge-green-light' : 'badge-muted']">{{ data.status === 'active' ? 'Active' : 'Inactive' }}</span>
+                <span class="status-text" :class="data.status === 'active' ? 'state-ok' : 'state-muted'">{{ data.status === 'active' ? 'Active' : 'Inactive' }}</span>
               </template>
             </Column>
             <Column header="Type" sortable field="type" style="width: 7rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.type === 'reserved' ? 'badge-reserved' : 'badge-dynamic']">{{ data.type === 'reserved' ? 'Reservation' : 'Dynamic' }}</span>
+                <span v-if="data.type === 'reserved'" class="taxonomy-tag">Reservation</span>
+                <span v-else class="cell-muted">Dynamic</span>
               </template>
             </Column>
             <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
@@ -144,6 +145,13 @@
           </DataTable>
         </template>
 
+        <EmptyState v-else-if="store.scopes.length === 0"
+          icon="pi-server"
+          title="No DHCP scopes yet"
+          description="Add a scope to start handing out leases on a subnet."
+          :actions="[
+            { label: 'Add Scope', icon: 'pi-plus', severity: 'primary', dataTrack: 'empty-add-scope', onClick: () => openScopeDialog() }
+          ]" />
         <div v-else class="empty-state centered">
           <i class="pi pi-server" style="font-size: 2rem; opacity: 0.3"></i>
           <span>Select a scope to view leases</span>
@@ -165,7 +173,12 @@
         </div>
         <div class="field">
           <label>MAC Address *</label>
-          <InputText v-model="reservationForm.mac_address" class="w-full" placeholder="AA:BB:CC:DD:EE:FF" />
+          <InputText :modelValue="reservationForm.mac_address"
+                     @keydown="onMacKeydown"
+                     @paste="onMacPaste"
+                     @input="onMacInput"
+                     class="w-full" placeholder="AA:BB:CC:DD:EE:FF"
+                     maxlength="17" autocomplete="off" />
         </div>
         <div class="field">
           <label>IP Address *</label>
@@ -236,6 +249,7 @@ import Tab from 'primevue/tab';
 import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import { useDhcpStore } from '../stores/dhcp.js';
+import EmptyState from './EmptyState.vue';
 import api from '../api/client.js';
 import { apiError, displayHostname as _displayHostname } from '../utils/format.js';
 import { loadJson } from '../utils/storage.js';
@@ -262,6 +276,66 @@ const editingReservation = ref(null);
 const savingReservation = ref(false);
 const reservationForm = ref({ subnet_id: null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true });
 const allocatedSubnets = ref([]);
+
+// ── MAC Address input sanitization ──
+// Hex-only characters, colons auto-inserted every 2 hex chars, max 17 chars
+// (XX:XX:XX:XX:XX:XX). Invalid keystrokes are rejected + toast warn.
+const MAC_HEX_RE = /[0-9a-fA-F]/;
+const MAC_ALLOWED_RE = /^[0-9a-fA-F:]*$/;
+
+function formatMacFromHex(hex) {
+  // hex: only hex chars, no colons. Insert ':' every 2 chars up to 12.
+  const clean = hex.slice(0, 12).toUpperCase();
+  const pairs = [];
+  for (let i = 0; i < clean.length; i += 2) pairs.push(clean.slice(i, i + 2));
+  return pairs.join(':');
+}
+
+let _macInvalidToastTs = 0;
+function warnInvalidMac() {
+  // Debounce the toast — users holding a key shouldn't get flooded.
+  const now = Date.now();
+  if (now - _macInvalidToastTs < 1500) return;
+  _macInvalidToastTs = now;
+  toast.add({ severity: 'warn', summary: 'Invalid character for a MAC address', life: 2000 });
+}
+
+function onMacKeydown(event) {
+  // Allow nav / editing keys
+  const nav = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+               'Home', 'End', 'Tab', 'Enter', 'Escape'];
+  if (nav.includes(event.key)) return;
+  if (event.ctrlKey || event.metaKey) return; // Cut/Copy/Paste/Select-All
+  // Printable keys: must be hex or colon
+  if (event.key.length === 1 && !MAC_HEX_RE.test(event.key) && event.key !== ':') {
+    event.preventDefault();
+    warnInvalidMac();
+  }
+}
+
+function onMacPaste(event) {
+  const txt = (event.clipboardData || window.clipboardData)?.getData('text') || '';
+  if (!MAC_ALLOWED_RE.test(txt)) {
+    event.preventDefault();
+    warnInvalidMac();
+    return;
+  }
+  // Let the default paste happen, then onMacInput will re-format it.
+}
+
+function onMacInput(event) {
+  const raw = event.target.value;
+  // Strip anything non-hex-non-colon (catches any path that slipped through),
+  // then reformat colons deterministically.
+  const hexOnly = raw.replace(/[^0-9a-fA-F]/g, '');
+  const formatted = formatMacFromHex(hexOnly);
+  if (formatted !== raw) {
+    // Re-display the normalized form. Keep cursor at end of the field — most
+    // natural for sequential typing.
+    event.target.value = formatted;
+  }
+  reservationForm.value.mac_address = formatted;
+}
 
 const dhcpSearch = ref(loadJson('cidrella_dhcp_search', ''));
 const dhcpAllSearch = ref(loadJson('cidrella_dhcp_all_search', ''));
@@ -612,7 +686,7 @@ defineExpose({ openScopeDialog });
   flex-shrink: 0;
 }
 .search-icon {
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
 }
 .sidebar-filter {
@@ -620,7 +694,7 @@ defineExpose({ openScopeDialog });
   border: none;
   background: transparent;
   color: var(--p-text-color);
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   outline: none;
 }
 .sidebar-filter::placeholder {
@@ -655,7 +729,7 @@ defineExpose({ openScopeDialog });
 }
 .scope-name {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-md);
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -663,6 +737,7 @@ defineExpose({ openScopeDialog });
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--p-text-color);
+  font-family: monospace;
 }
 .scope-meta {
   display: flex;
@@ -671,8 +746,8 @@ defineExpose({ openScopeDialog });
   align-items: center;
 }
 .scope-range {
-  font-size: 0.75rem;
-  color: var(--p-surface-500);
+  font-size: var(--app-fs-xs);
+  color: var(--p-text-muted-color);
   font-family: monospace;
 }
 .scope-actions {
@@ -713,7 +788,7 @@ defineExpose({ openScopeDialog });
 }
 .panel-header h3 {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: var(--app-fs-md);
   font-weight: 600;
 }
 
@@ -727,18 +802,19 @@ defineExpose({ openScopeDialog });
   height: 2.4rem;
   box-sizing: border-box;
 }
-.info-bar-name { font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+.info-bar-name { font-weight: 700; font-size: var(--app-fs-md); color: var(--p-primary-color); font-family: monospace; white-space: nowrap; }
 .info-bar-sep { width: 1px; height: 1rem; background: var(--p-surface-border); flex-shrink: 0; }
-.info-bar-pair { display: flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
-.info-bar-label { font-size: 0.65rem; text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.04em; }
-.info-bar-val { font-size: 0.8rem; font-weight: 600; }
+.info-bar-pair { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.info-bar-label { font-size: var(--app-fs-xs); text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.08em; }
+.info-bar-val { font-size: var(--app-fs-sm); font-weight: 600; font-family: monospace; }
 
 .type-badge {
-  font-size: 0.75rem;
+  font-size: var(--app-fs-xs);
   font-weight: 600;
-  padding: 0.15rem 0.4rem;
-  border-radius: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
   font-family: monospace;
+  letter-spacing: 0.02em;
 }
 .badge-reserved { background: color-mix(in srgb, var(--p-primary-color) 15%, transparent); color: var(--p-primary-color); }
 .badge-dynamic { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-color); }
@@ -746,19 +822,19 @@ defineExpose({ openScopeDialog });
 .search-bar { display: flex; align-items: center; gap: 0.25rem; padding: 0.4rem 0; flex-shrink: 0; }
 .search-input { width: 22rem; }
 
-.text-sm { font-size: 0.8rem; }
+.text-sm { font-size: var(--app-fs-sm); }
 .muted { color: var(--p-text-muted-color); }
 
 code {
   font-family: monospace;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-sm);
 }
 
 .empty-state {
   padding: 2rem 1rem;
   text-align: center;
   color: var(--p-surface-400);
-  font-size: 0.9rem;
+  font-size: var(--app-fs-base);
 }
 .empty-state.centered {
   display: flex;
@@ -780,9 +856,9 @@ code {
 }
 .field label {
   display: block;
-  margin-bottom: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 600;
+  margin-bottom: 0.4rem;
+  font-size: var(--app-fs-sm);
+  font-weight: 500;
 }
 
 @media (max-width: 900px) {

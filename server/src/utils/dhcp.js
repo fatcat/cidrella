@@ -7,7 +7,7 @@ import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { syncLeasesToIps } from './ip-sync.js';
 import { generateFallbackHostname } from './mac-vendor.js';
-import { regenerateConfigs } from './dnsmasq.js';
+import { queueRegen } from './after-commit.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
 import { isValidIpv4 } from './ip.js';
 
@@ -337,8 +337,16 @@ function syncDhcpDnsRecords(db, leases) {
 
   // Track which DHCP dns_record IDs are still active
   const activeRecordIds = new Set();
-  // Track which zone IDs were touched in this sync (to scope stale-record pruning)
+  // Seed processedZoneIds with every zone that COULD have DHCP-sourced
+  // records for the currently-active scopes. Without this seeding, the only
+  // zones eligible for pruning are ones we touched this pass — so when the
+  // last lease for a subnet expires and its reservation is gone, the stale
+  // record lingers forever because the subnet's zone stops being "touched".
   const processedZoneIds = new Set();
+  for (const domain of subnetDomainMap.values()) {
+    const z = zoneByName.get(domain);
+    if (z) processedZoneIds.add(z.id);
+  }
   let configChanged = false;
 
   const findRecord = db.prepare(`
@@ -407,9 +415,11 @@ function syncDhcpDnsRecords(db, leases) {
     }
   }
 
-  // Regenerate dnsmasq config files if records changed
+  // Route DNS regen through the shared single-flight. An inline call here
+  // would race concurrent request-hook fires (both ultimately read dns_records
+  // and write hosts.d files), risking stale emits.
   if (configChanged) {
-    regenerateConfigs(db);
+    queueRegen('regenerate_dns');
   }
 }
 

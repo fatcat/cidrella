@@ -303,7 +303,7 @@ onMounted(async () => {
 
 .action-buttons { display: flex; gap: 0.25rem; }
 
-.text-sm { font-size: 0.8rem; }
+.text-sm { font-size: var(--app-fs-sm); }
 .muted { color: var(--p-text-muted-color); }
 
 .form-grid {
@@ -313,14 +313,14 @@ onMounted(async () => {
 }
 .field label {
   display: block;
-  margin-bottom: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 600;
+  margin-bottom: 0.4rem;
+  font-size: var(--app-fs-sm);
+  font-weight: 500;
 }
 
 /* Defaults table help icon */
 .option-help-icon {
-  font-size: 0.7rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   cursor: pointer;
   margin-left: 0.3rem;

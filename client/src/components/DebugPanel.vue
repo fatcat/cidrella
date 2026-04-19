@@ -96,7 +96,7 @@ onUnmounted(() => {
 <style scoped>
 .debug-container {
   position: fixed;
-  bottom: 1rem;
+  bottom: 38px; /* clears the 28px FooterBar with ~10px breathing room */
   right: 1rem;
   z-index: 9999;
 }

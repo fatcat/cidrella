@@ -79,7 +79,16 @@ router.get('/config', requirePerm('subnets:read'), (req, res) => {
 
 // PUT /api/interfaces/config — save interface config and apply
 router.put('/config', requirePerm('subnets:write'), (req, res) => {
-  const { interfaces, dns_enabled, dhcp_enabled } = req.body;
+  const { interfaces, dns_enabled, dhcp_enabled, dns_listen_port } = req.body;
+
+  // Validate port early so we can reject before persisting anything.
+  if (dns_listen_port !== undefined) {
+    const p = Number(dns_listen_port);
+    if (!Number.isInteger(p) || p < 1 || p > 65535) {
+      return res.status(400).json({ error: 'dns_listen_port must be an integer 1–65535' });
+    }
+  }
+
   const db = getDb();
 
   const upsert = db.prepare(`
@@ -97,9 +106,16 @@ router.put('/config', requirePerm('subnets:write'), (req, res) => {
     if (dhcp_enabled !== undefined) {
       upsert.run('dhcp_enabled', String(dhcp_enabled));
     }
+    if (dns_listen_port !== undefined) {
+      upsert.run('dns_listen_port', String(Number(dns_listen_port)));
+    }
   })();
 
-  // Regenerate dnsmasq config and restart (interface changes require full restart)
+  // Regenerate dnsmasq config and restart (interface changes require full
+  // restart, not just SIGHUP). Must be synchronous: restartDnsmasq on the
+  // next line needs to pick up the freshly-written conf. Don't route this
+  // through queueRegen — the hook fires in a microtask AFTER the restart,
+  // which would leave dnsmasq running the old conf until the next regen.
   applyInterfaceConfig(db);
 
   let dnsmasqStatus = 'restarted';
@@ -117,7 +133,7 @@ router.put('/config', requirePerm('subnets:write'), (req, res) => {
   }
 
   audit(req.user.id, 'interface_config_updated', 'setting', null, {
-    interfaces, dns_enabled, dhcp_enabled
+    interfaces, dns_enabled, dhcp_enabled, dns_listen_port
   });
 
   res.json({ ok: true, dnsmasq: dnsmasqStatus });

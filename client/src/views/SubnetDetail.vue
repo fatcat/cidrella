@@ -104,7 +104,10 @@
           </Column>
           <Column field="status" header="Status" sortable style="width: 7rem">
             <template #body="{ data }">
-              <Tag :severity="getIpState(data).statusSeverity" :value="getIpState(data).status" />
+              <span class="status-text"
+                    :class="getIpState(data).statusSeverity === 'danger' ? 'state-err' : 'state-muted'">
+                {{ getIpState(data).status }}
+              </span>
             </template>
           </Column>
           <Column header="Type" sortable :sortField="'computed_type'" style="width: 9rem">
@@ -126,7 +129,9 @@
           </Column>
           <Column field="is_online" header="Online" sortable style="width: 5rem">
             <template #body="{ data }">
-              <span :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">{{ data.is_online ? 'Online' : 'Offline' }}</span>
+              <span class="status-text" :class="data.is_online ? 'state-ok' : 'state-muted'">
+                {{ data.is_online ? 'Online' : 'Offline' }}
+              </span>
             </template>
           </Column>
           <Column field="last_seen_at" header="Last Seen" sortable style="width: 10rem">
@@ -177,6 +182,10 @@
             <span v-for="rt in rangeTypeLegend" :key="rt.name" class="legend-item">
               <span class="legend-swatch" :style="{ background: rt.color }"></span>
               {{ rt.name }}
+            </span>
+            <span class="legend-item">
+              <span class="legend-swatch" style="background: var(--p-violet-500)"></span>
+              Locked
             </span>
             <span class="legend-item">
               <span class="legend-swatch" style="background: var(--p-surface-200)"></span>
@@ -638,7 +647,7 @@ function findRangeForIp(ipAddress) {
 
 const formatDate = formatDateTime;
 
-const displayHost = (hostname) => displayHost(hostname, subnet.value?.domain_name) || '—';
+const displayHost = (hostname) => displayHostname(hostname, subnet.value?.domain_name) || '—';
 
 /**
  * Compute unified status + type for an IP row.
@@ -782,11 +791,16 @@ const ipGrid = computed(() => {
     const rangeInfo = ipRangeMap.get(i);
     const assignInfo = ipAssignMap.get(i);
 
+    // "Locked" IPs (manually held) get a distinct violet fill so they stand out
+    // against range-type coloring. Users asked for a purple/violet cue.
+    const isLocked = assignInfo?.status === 'locked';
     grid.push({
       address: addr,
       ipLong: i,
       lastOctet: i & 255,
-      color: rangeInfo?.color || 'var(--p-surface-200)',
+      color: isLocked
+        ? 'var(--p-violet-500)'
+        : (rangeInfo?.color || 'var(--p-surface-200)'),
       rangeType: rangeInfo?.rangeType || null,
       rangeId: rangeInfo?.rangeId || null,
       hostname: assignInfo?.hostname || null,
@@ -1704,8 +1718,9 @@ onUnmounted(() => {
   background: var(--p-surface-card);
   border-radius: 6px;
   border: 1px dashed var(--p-surface-border);
-  font-size: 0.9rem;
+  font-size: var(--app-fs-sm);
 }
+
 .form-grid {
   display: flex;
   flex-direction: column;

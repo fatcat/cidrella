@@ -2,7 +2,6 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { ipToLong, isIpInSubnet, rangesOverlap } from '../utils/ip.js';
-import { regenerateDhcpConfigs } from '../utils/dhcp.js';
 
 const router = Router({ mergeParams: true });
 
@@ -161,9 +160,22 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
     return res.status(403).json({ error: 'Cannot delete Network or Broadcast ranges' });
   }
 
-  const hasDhcpScope = db.prepare('SELECT id FROM dhcp_scopes WHERE range_id = ?').get(range.id);
+  // Refuse deletion if a DHCP scope is attached to this range. The FK is
+  // ON DELETE SET NULL, so a blind delete would leave dhcp_scopes with
+  // range_id=NULL — a ghost row no UI surfaces but which breaks future
+  // scope creation on the same subnet. Force the user to delete the scope
+  // first.
+  const attachedScope = db.prepare(
+    'SELECT id FROM dhcp_scopes WHERE range_id = ?'
+  ).get(range.id);
+  if (attachedScope) {
+    return res.status(409).json({
+      error: 'This range has a DHCP scope attached. Delete the scope first, then remove the range.',
+      dhcp_scope_id: attachedScope.id
+    });
+  }
+
   db.prepare('DELETE FROM ranges WHERE id = ?').run(range.id);
-  if (hasDhcpScope) regenerateDhcpConfigs(db);
   audit(req.user.id, 'range_deleted', 'range', range.id, { subnet_id: req.params.subnetId, type: rangeType?.name });
   res.json({ message: 'Range deleted' });
 });

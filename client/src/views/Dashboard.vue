@@ -158,16 +158,17 @@ useAutoRefresh(refreshAll);
 }
 
 .summary-value {
-  font-size: 1.75rem;
+  font-size: var(--app-fs-3xl);
   font-weight: 700;
   font-family: monospace;
   color: var(--p-primary-color);
 }
 
 .summary-label {
-  font-size: 0.75rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   text-transform: uppercase;
+  letter-spacing: 0.08em;
   margin-top: 0.25rem;
 }
 

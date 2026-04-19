@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getDb, getSetting, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { regenerateConfigs, regenerateDnsmasqConf, signalDnsmasq } from '../utils/dnsmasq.js';
+import { queueRegen } from '../utils/after-commit.js';
 import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
 
@@ -172,27 +172,66 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
   const existing = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(name);
   if (existing) return res.status(409).json({ error: 'Zone already exists' });
 
+  let ownedSubnet = null;
   if (subnet_id) {
-    const subnet = db.prepare('SELECT id FROM subnets WHERE id = ?').get(subnet_id);
+    const subnet = db.prepare('SELECT id, domain_name FROM subnets WHERE id = ?').get(subnet_id);
     if (!subnet) return res.status(400).json({ error: 'Referenced subnet not found' });
+    ownedSubnet = subnet;
+
+    // Forward-zone ownership guard: a subnet can own at most one forward
+    // zone (schema 1:1). Back-door creation via this endpoint would defeat
+    // the 409 checks the subnet routes enforce.
+    if (type === 'forward') {
+      const existingFwd = db.prepare(
+        "SELECT id, name FROM dns_zones WHERE subnet_id = ? AND type = 'forward'"
+      ).get(subnet_id);
+      if (existingFwd) {
+        return res.status(409).json({
+          error: `Subnet already owns forward zone "${existingFwd.name}". Delete or detach it first.`
+        });
+      }
+
+      // If the subnet already has a domain_name that differs from the new
+      // zone name, the user has a real conflict — reject rather than
+      // silently overwrite. (NULL is fine; we'll sync it in.)
+      if (subnet.domain_name && subnet.domain_name !== name) {
+        return res.status(409).json({
+          error: `Subnet's domain_name is "${subnet.domain_name}", which doesn't match new zone name "${name}". Clear subnet.domain_name first or pick a matching zone name.`
+        });
+      }
+    }
   }
 
   // Load SOA defaults from settings
   const soaDefaults = getSetting('dns_soa_defaults');
 
-  const result = db.prepare(`
-    INSERT INTO dns_zones (name, type, subnet_id, description,
-      soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, type, subnet_id || null, description || null,
-    soa_primary_ns || soaDefaults.soa_primary_ns, soa_admin_email || soaDefaults.soa_admin_email,
-    soa_refresh ?? soaDefaults.soa_refresh, soa_retry ?? soaDefaults.soa_retry,
-    soa_expire ?? soaDefaults.soa_expire, soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl);
+  // Wrap the zone INSERT + the subnet domain_name mirror in a transaction
+  // so a partial failure doesn't leave dns_zones.subnet_id set while
+  // subnets.domain_name stays NULL (the exact split-brain R3 #7 tried to
+  // close from the DELETE side).
+  const ins = db.transaction(() => {
+    const result = db.prepare(`
+      INSERT INTO dns_zones (name, type, subnet_id, description,
+        soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(name, type, subnet_id || null, description || null,
+      soa_primary_ns || soaDefaults.soa_primary_ns, soa_admin_email || soaDefaults.soa_admin_email,
+      soa_refresh ?? soaDefaults.soa_refresh, soa_retry ?? soaDefaults.soa_retry,
+      soa_expire ?? soaDefaults.soa_expire, soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl);
 
-  const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(result.lastInsertRowid);
+    if (type === 'forward' && ownedSubnet && !ownedSubnet.domain_name) {
+      db.prepare(
+        "UPDATE subnets SET domain_name = ?, updated_at = datetime('now') WHERE id = ?"
+      ).run(name, ownedSubnet.id);
+    }
+    return result.lastInsertRowid;
+  });
+  const zoneId = ins();
+
+  const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(zoneId);
   audit(req.user.id, 'zone_created', 'dns_zone', zone.id, { name, type });
 
-  regenerateConfigs(db);
+  req.afterCommit('regenerate_dns');
   res.status(201).json(zone);
 });
 
@@ -205,7 +244,8 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
-  if (name && name !== zone.name) {
+  const renaming = name && name !== zone.name;
+  if (renaming) {
     const dup = db.prepare('SELECT id FROM dns_zones WHERE name = ? AND id != ?').get(name, zone.id);
     if (dup) return res.status(409).json({ error: 'Zone name already taken' });
   }
@@ -213,30 +253,43 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
   // Auto-increment SOA serial when zone is updated
   const newSerial = (zone.soa_serial || 0) + 1;
 
-  db.prepare(`
-    UPDATE dns_zones SET name = ?, description = ?, enabled = ?,
-      soa_primary_ns = ?, soa_admin_email = ?, soa_serial = ?,
-      soa_refresh = ?, soa_retry = ?, soa_expire = ?, soa_minimum_ttl = ?,
-      updated_at = datetime('now')
-    WHERE id = ?
-  `).run(
-    name ?? zone.name,
-    description !== undefined ? description : zone.description,
-    enabled !== undefined ? (enabled ? 1 : 0) : zone.enabled,
-    soa_primary_ns !== undefined ? soa_primary_ns : zone.soa_primary_ns,
-    soa_admin_email !== undefined ? soa_admin_email : zone.soa_admin_email,
-    newSerial,
-    soa_refresh !== undefined ? soa_refresh : zone.soa_refresh,
-    soa_retry !== undefined ? soa_retry : zone.soa_retry,
-    soa_expire !== undefined ? soa_expire : zone.soa_expire,
-    soa_minimum_ttl !== undefined ? soa_minimum_ttl : zone.soa_minimum_ttl,
-    zone.id
-  );
+  // Wrap the zone UPDATE and the subnets.domain_name mirror in a single txn
+  // so a rename either applies everywhere or nowhere. Without the mirror,
+  // subnets.domain_name keeps pointing at the OLD zone name — which breaks
+  // DHCP option 15/119 emission and DHCP-sourced A-record generation.
+  const upd = db.transaction(() => {
+    db.prepare(`
+      UPDATE dns_zones SET name = ?, description = ?, enabled = ?,
+        soa_primary_ns = ?, soa_admin_email = ?, soa_serial = ?,
+        soa_refresh = ?, soa_retry = ?, soa_expire = ?, soa_minimum_ttl = ?,
+        updated_at = datetime('now')
+      WHERE id = ?
+    `).run(
+      name ?? zone.name,
+      description !== undefined ? description : zone.description,
+      enabled !== undefined ? (enabled ? 1 : 0) : zone.enabled,
+      soa_primary_ns !== undefined ? soa_primary_ns : zone.soa_primary_ns,
+      soa_admin_email !== undefined ? soa_admin_email : zone.soa_admin_email,
+      newSerial,
+      soa_refresh !== undefined ? soa_refresh : zone.soa_refresh,
+      soa_retry !== undefined ? soa_retry : zone.soa_retry,
+      soa_expire !== undefined ? soa_expire : zone.soa_expire,
+      soa_minimum_ttl !== undefined ? soa_minimum_ttl : zone.soa_minimum_ttl,
+      zone.id
+    );
+
+    if (renaming && zone.type === 'forward' && zone.subnet_id != null) {
+      db.prepare(
+        "UPDATE subnets SET domain_name = ?, updated_at = datetime('now') WHERE id = ? AND domain_name = ?"
+      ).run(name, zone.subnet_id, zone.name);
+    }
+  });
+  upd();
 
   const updated = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(zone.id);
   audit(req.user.id, 'zone_updated', 'dns_zone', zone.id, { changes: req.body });
 
-  regenerateConfigs(db);
+  req.afterCommit('regenerate_dns');
   res.json(updated);
 });
 
@@ -246,10 +299,23 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
-  db.prepare('DELETE FROM dns_zones WHERE id = ?').run(zone.id);
+  const del = db.transaction(() => {
+    // If this is the forward zone backing an allocated subnet's domain_name,
+    // clear the subnet side too — otherwise subnet.domain_name stays pointing
+    // at a zone that no longer exists, and subsequent configure/rename flows
+    // see orphaned state.
+    if (zone.type === 'forward' && zone.subnet_id) {
+      db.prepare(
+        "UPDATE subnets SET domain_name = NULL, updated_at = datetime('now') WHERE id = ? AND domain_name = ?"
+      ).run(zone.subnet_id, zone.name);
+    }
+    db.prepare('DELETE FROM dns_zones WHERE id = ?').run(zone.id);
+  });
+  del();
+
   audit(req.user.id, 'zone_deleted', 'dns_zone', zone.id, { name: zone.name });
 
-  regenerateConfigs(db);
+  req.afterCommit('regenerate_dns');
   res.json({ message: 'Zone deleted' });
 });
 
@@ -339,7 +405,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     syncDnsToIp(db, name, value, zone.name);
   }
 
-  regenerateConfigs(db);
+  req.afterCommit('regenerate_dns');
   res.status(201).json(record);
 });
 
@@ -403,7 +469,7 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     syncDnsToIp(db, newName, newValue, zone.name);
   }
 
-  regenerateConfigs(db);
+  req.afterCommit('regenerate_dns');
   res.json(updated);
 });
 
@@ -431,17 +497,18 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
 
   audit(req.user.id, 'record_deleted', 'dns_record', record.id, { type: record.type, name: record.name });
 
-  regenerateConfigs(db);
+  req.afterCommit('regenerate_dns');
   res.json({ message: 'Record deleted' });
 });
 
 // ─── Utility ─────────────────────────────────────────────
 
-// POST /api/dns/apply — force regenerate all config files
+// POST /api/dns/apply — force regenerate all config files. Routes through
+// the shared single-flight so a concurrent lease watcher or request hook
+// doesn't race on hosts.d/*.hosts emission.
 router.post('/apply', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
-  regenerateConfigs(db);
-  signalDnsmasq();
+  queueRegen('regenerate_dns');
 
   const zoneCount = db.prepare('SELECT COUNT(*) as c FROM dns_zones WHERE enabled = 1').get().c;
   const recordCount = db.prepare(`
@@ -477,8 +544,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
 
   setSetting('dns_upstream_servers', JSON.stringify(servers));
 
-  regenerateDnsmasqConf(db);
-  signalDnsmasq();
+  req.afterCommit('regenerate_dnsmasq_conf');
 
   audit(req.user.id, 'dns_forwarders_updated', 'dns', null, {
     old: oldRow?.value,

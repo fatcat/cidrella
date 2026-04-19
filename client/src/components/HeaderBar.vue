@@ -54,27 +54,62 @@
         </div>
       </div>
 
-      <div class="dash-card" :class="activeScans.length ? 'card-ok' : ''" data-track="header-card-scan">
+      <div class="dash-card" :class="activeScans.length ? 'card-ok' : ''" data-track="header-card-scan"
+           :title="!activeScans.length && nextScanFormatted !== '--' ? `Next scan ${nextScanFormatted}` : null">
         <span class="card-dot" :class="activeScans.length ? 'dot-up' : 'dot-ok'"></span>
         <div class="card-body">
           <span class="card-value">{{ scanDisplay }}</span>
           <span class="card-label">{{ scanLabel }}</span>
-          <span v-if="!activeScans.length" class="card-label">{{ nextScanFormatted }}</span>
         </div>
       </div>
       </div>
     </div>
 
+    <!-- Compact health chip — shown below 1280px. Opens a Popover with the 5 stats. -->
+    <button class="health-chip-collapsed" data-track="header-card-chip"
+            :class="{ 'chip-err': anyServiceDown }"
+            @click="toggleHealthChip"
+            :title="`Services: ${anyServiceDown ? 'issue' : 'ok'}`">
+      <span class="card-dot" :class="anyServiceDown ? 'dot-down' : 'dot-up'"></span>
+      <span class="chip-label">Health</span>
+    </button>
+    <Popover ref="healthChipRef">
+      <div class="health-chip-panel">
+        <div class="hcp-row">
+          <span class="card-dot" :class="health?.services?.dnsmasq ? 'dot-up' : 'dot-down'"></span>
+          <span class="hcp-label">DNSmasq</span>
+          <span class="hcp-val">{{ health?.services?.dnsmasq ? 'Running' : 'Down' }}</span>
+        </div>
+        <div class="hcp-row"><span class="card-dot dot-ok"></span><span class="hcp-label">CPU Load</span><span class="hcp-val">{{ cpuDisplay }}</span></div>
+        <div class="hcp-row"><span class="card-dot dot-ok"></span><span class="hcp-label">RAM</span><span class="hcp-val">{{ ramDisplay }}</span></div>
+        <div class="hcp-row"><span class="card-dot dot-ok"></span><span class="hcp-label">Disk</span><span class="hcp-val">{{ diskDisplay }}</span></div>
+        <div class="hcp-row">
+          <span class="card-dot" :class="activeScans.length ? 'dot-up' : 'dot-ok'"></span>
+          <span class="hcp-label">{{ scanLabel }}</span>
+          <span class="hcp-val">{{ scanDisplay }}</span>
+        </div>
+        <div v-if="!activeScans.length && nextScanFormatted !== '--'" class="hcp-footer">Next scan {{ nextScanFormatted }}</div>
+      </div>
+    </Popover>
+
     <div class="header-right">
       <Button icon="pi pi-download" severity="secondary" text rounded size="small"
               title="Import" data-track="header-import" @click="piholeImportRef?.open()" />
       <button class="user-menu-trigger" data-track="header-user-menu" @click="toggleUserMenu">
+        <span class="user-avatar">{{ userInitials }}</span>
         <span class="username">{{ auth.user?.username }}</span>
-        <span class="role-badge">{{ auth.user?.role }}</span>
         <i class="pi pi-chevron-down user-chevron"></i>
       </button>
       <Popover ref="userMenuRef">
         <div class="user-menu-panel">
+          <div class="user-menu-identity">
+            <span class="user-avatar lg">{{ userInitials }}</span>
+            <div class="user-menu-id-text">
+              <div class="user-menu-name">{{ auth.user?.username }}</div>
+              <div v-if="auth.user?.role" class="user-menu-role">{{ auth.user.role }}</div>
+            </div>
+          </div>
+          <div class="user-menu-divider"></div>
           <div class="user-menu-section">
             <label class="user-menu-label">Time Format</label>
             <Select v-model="selectedTimeFormat" :options="timeFormatOptions" optionLabel="label"
@@ -114,6 +149,7 @@ const auth = useAuthStore();
 const subnetStore = useSubnetStore();
 const piholeImportRef = ref(null);
 const userMenuRef = ref(null);
+const healthChipRef = ref(null);
 const health = ref(null);
 const anomalyCount = ref(0);
 const activeScans = ref([]);
@@ -134,6 +170,22 @@ watch(() => auth.timeFormat, (v) => { selectedTimeFormat.value = v; });
 function toggleUserMenu(event) {
   userMenuRef.value.toggle(event);
 }
+
+function toggleHealthChip(event) {
+  healthChipRef.value?.toggle(event);
+}
+
+const userInitials = computed(() => {
+  const n = auth.user?.username || '';
+  return (n.slice(0, 2) || '—').toUpperCase();
+});
+
+const anyServiceDown = computed(() =>
+  !health.value?.services?.dnsmasq
+  || cpuStatusClass.value === 'card-err'
+  || ramStatusClass.value === 'card-err'
+  || diskStatusClass.value === 'card-err'
+);
 
 async function onTimeFormatChange(event) {
   try {
@@ -315,10 +367,11 @@ onUnmounted(() => {
 }
 .nav-link {
   text-decoration: none;
-  font-size: 0.8rem;
+  /* +30% over --app-fs-sm (12px) per 2026-04-18 user request for a larger top menubar */
+  font-size: calc(var(--app-fs-sm) * 1.3);
   font-weight: 500;
   color: var(--p-text-muted-color);
-  padding: 0.25rem 0.5rem;
+  padding: 0.3rem 0.6rem;
   border-radius: 4px;
   transition: color 0.15s, background 0.15s;
 }
@@ -342,7 +395,7 @@ onUnmounted(() => {
   border-radius: 8px;
   background: var(--p-red-500);
   color: white;
-  font-size: 0.6rem;
+  font-size: var(--app-fs-xs);
   font-weight: 700;
   margin-left: 4px;
   line-height: 1;
@@ -354,7 +407,10 @@ onUnmounted(() => {
   justify-content: center;
   overflow: hidden;
   background: transparent;
-  padding: 0.35rem;
+  padding: 0.4rem;
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
 }
 .header-cards {
   display: flex;
@@ -385,7 +441,7 @@ onUnmounted(() => {
 
 .card-value {
   font-weight: 700;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-md);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
@@ -393,10 +449,10 @@ onUnmounted(() => {
 }
 
 .card-label {
-  font-size: 0.65rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   text-transform: uppercase;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.08em;
   line-height: 1.2;
 }
 
@@ -425,8 +481,8 @@ onUnmounted(() => {
 .user-menu-trigger {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
+  gap: 4px;
+  font-size: var(--app-fs-sm);
   margin-left: 0.5rem;
   background: none;
   border: 1px solid transparent;
@@ -445,23 +501,56 @@ onUnmounted(() => {
   font-weight: 500;
 }
 
-.role-badge {
-  font-size: 0.65rem;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
-  padding: 0.1rem 0.35rem;
-  border-radius: 4px;
-  text-transform: uppercase;
+.user-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
+  color: var(--p-primary-color);
+  font-size: var(--app-fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid color-mix(in srgb, var(--p-primary-color) 35%, transparent);
+  flex-shrink: 0;
+}
+.user-avatar.lg {
+  width: 36px; height: 36px;
+  font-size: var(--app-fs-sm);
 }
 
 .user-chevron {
-  font-size: 0.6rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
 }
 
 .user-menu-panel {
-  min-width: 200px;
+  min-width: 220px;
   padding: 0.5rem;
+}
+.user-menu-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.25rem 0.25rem 0.5rem;
+}
+.user-menu-id-text { min-width: 0; }
+.user-menu-name {
+  font-size: var(--app-fs-sm);
+  font-weight: 600;
+  color: var(--p-text-color);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-menu-role {
+  font-size: var(--app-fs-xs);
+  color: var(--p-text-muted-color);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-top: 3px;
+  font-family: monospace;
 }
 
 .user-menu-section {
@@ -470,12 +559,12 @@ onUnmounted(() => {
 
 .user-menu-label {
   display: block;
-  font-size: 0.7rem;
+  font-size: var(--app-fs-xs);
   font-weight: 600;
   text-transform: uppercase;
   color: var(--p-text-muted-color);
-  margin-bottom: 0.35rem;
-  letter-spacing: 0.03em;
+  margin-bottom: 0.4rem;
+  letter-spacing: 0.08em;
 }
 
 .user-menu-divider {
@@ -494,7 +583,7 @@ onUnmounted(() => {
   border: none;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-color);
   transition: background 0.15s;
 }
@@ -506,10 +595,9 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0.3rem;
-  font-size: 0.6rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   font-weight: 500;
-  opacity: 0.7;
 }
 
 .update-badge {
@@ -521,7 +609,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--p-blue-500);
   color: white;
-  font-size: 0.55rem;
+  font-size: 9px;
   text-decoration: none;
   opacity: 1;
   animation: pulse-update 2s ease-in-out infinite;
@@ -533,6 +621,83 @@ onUnmounted(() => {
 @keyframes pulse-update {
   0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
   50% { box-shadow: 0 0 0 5px rgba(59, 130, 246, 0); }
+}
+
+/* ── Collapsed health chip — visible < 1280px only ── */
+.health-chip-collapsed {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  height: 28px;
+  background: var(--p-surface-card);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 6px;
+  color: var(--p-text-color);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--app-fs-sm);
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.health-chip-collapsed:hover {
+  background: var(--p-surface-ground);
+}
+.health-chip-collapsed.chip-err {
+  border-left: 3px solid var(--p-red-500);
+}
+.health-chip-collapsed .chip-label {
+  font-size: var(--app-fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--p-text-muted-color);
+  font-weight: 600;
+}
+
+/* ── Health-chip popover panel ── */
+.health-chip-panel {
+  min-width: 240px;
+  padding: 4px;
+}
+.hcp-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  font-family: monospace;
+  font-size: var(--app-fs-sm);
+}
+.hcp-row + .hcp-row { border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 60%, transparent); }
+.hcp-label {
+  color: var(--p-text-muted-color);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: var(--app-fs-xs);
+  font-family: inherit;
+  font-weight: 600;
+}
+.hcp-val {
+  color: var(--p-text-color);
+  font-weight: 600;
+}
+.hcp-footer {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--p-surface-border);
+  font-size: var(--app-fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--p-text-muted-color);
+  font-family: monospace;
+}
+
+/* ── Responsive collapse ── */
+@media (max-width: 1279px) {
+  .header-cards-wrapper { display: none; }
+  .health-chip-collapsed { display: inline-flex; }
+  .username { display: none; }
+  .user-menu-trigger { padding: 0.25rem 0.35rem; gap: 0.3rem; }
 }
 
 </style>

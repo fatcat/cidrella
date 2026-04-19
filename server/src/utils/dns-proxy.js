@@ -16,7 +16,7 @@ import {
   GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
   GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
   PROXY_HEALTH_CHECK_MS, PROXY_MAX_RESTART_ATTEMPTS, PROXY_RESTART_DELAY_MS,
-  DNSMASQ_INTERNAL_PORT,
+  DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort,
 } from '../config/defaults.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
@@ -386,7 +386,7 @@ function handleQuery(msg, rinfo, sock) {
     // Rewrite query ID and forward to dnsmasq on localhost:5353
     const fwdBuf = Buffer.from(msg);
     fwdBuf.writeUInt16BE(internalId, 0);
-    dnsmasqSocket.send(fwdBuf, DNSMASQ_INTERNAL_PORT, '127.0.0.1');
+    dnsmasqSocket.send(fwdBuf, resolveDnsmasqInternalPort(getSetting('dns_listen_port')), '127.0.0.1');
   } catch (err) {
     proxyLog('error', 'Query processing error', { error: err.message });
   }
@@ -470,12 +470,13 @@ export function startProxy() {
   });
   dnsmasqSocket.on('message', (msg) => handleDnsmasqResponse(msg));
 
-  // Bind one socket per LAN address on port 53
+  // Bind one socket per LAN address on the configured DNS listen port (default 53).
   const addresses = getListenAddresses();
   if (addresses.length === 0) {
     proxyLog('warn', 'No LAN addresses found — proxy has nothing to bind to');
     return;
   }
+  const listenPort = Number(getSetting('dns_listen_port')) || 53;
 
   let bindCount = 0;
   for (const addr of addresses) {
@@ -486,7 +487,7 @@ export function startProxy() {
     sock.on('error', (err) => {
       proxyLog('error', 'Proxy socket error', { address: addr, error: err.message, code: err.code });
       if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
-        proxyLog('error', 'Cannot bind port 53', { address: addr });
+        proxyLog('error', `Cannot bind port ${listenPort}`, { address: addr });
       }
     });
 
@@ -499,9 +500,9 @@ export function startProxy() {
       }
     });
 
-    sock.bind(53, addr, () => {
+    sock.bind(listenPort, addr, () => {
       bindCount++;
-      proxyLog('info', 'Proxy socket bound', { address: `${addr}:53` });
+      proxyLog('info', 'Proxy socket bound', { address: `${addr}:${listenPort}` });
       if (bindCount === addresses.length) {
         proxyStartupMs = Date.now() - proxyStartedAt;
         proxyLog('info', 'Proxy fully started', { sockets: bindCount, startupMs: proxyStartupMs });
@@ -586,7 +587,9 @@ function activateBypass() {
   bypassMode = true;
   proxyLog('error', 'All restart attempts failed — activating bypass mode (dnsmasq takes port 53)');
   try {
-    // Temporarily override: dnsmasq listens on port 53 + LAN IPs
+    // Temporarily override: dnsmasq listens on port 53 + LAN IPs.
+    // Must be synchronous before restartDnsmasq — queueRegen would defer
+    // the conf write into a microtask that fires AFTER the restart.
     setSetting('dns_proxy_bypass', 'true');
     applyInterfaceConfig(getDb());
     restartDnsmasq();

@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { isIpInSubnet, ipToLong, getServerIpForSubnet, isValidIpv4, isValidMac } from '../utils/ip.js';
-import { regenerateDhcpConfigs, syncLeases } from '../utils/dhcp.js';
+import { isIpInSubnet, ipToLong, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain } from '../utils/ip.js';
+import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
-import { syncDhcpReservationToIp, clearDhcpReservationFromIp } from '../utils/ip-sync.js';
+import { syncDhcpReservationToIp, clearDhcpReservationFromIp, syncPtrForIp } from '../utils/ip-sync.js';
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
 
 const router = Router();
@@ -171,7 +171,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   scope.options = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?').all(scopeId);
 
   audit(req.user.id, 'dhcp_scope_created', 'dhcp_scope', scope.id, { subnet: subnet.cidr, range_id });
-  regenerateDhcpConfigs(db);
+  req.afterCommit('regenerate_dhcp');
   res.status(201).json(scope);
 });
 
@@ -218,6 +218,18 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     }
     if (ipToLong(newStart) > ipToLong(newEnd)) {
       return res.status(400).json({ error: 'Start IP must be before or equal to end IP' });
+    }
+    // Symmetric to the PUT /api/subnets/:id gateway-in-pool guard: block a
+    // resize that would place the subnet's gateway inside the DHCP pool.
+    // dnsmasq would hand out the gateway IP as a dynamic lease otherwise.
+    if (subnet.gateway_address) {
+      const gwLong = ipToLong(subnet.gateway_address);
+      if (gwLong >= ipToLong(newStart) && gwLong <= ipToLong(newEnd)) {
+        return res.status(409).json({
+          error: `Pool ${newStart}–${newEnd} would include the subnet gateway ${subnet.gateway_address}. Shrink the pool or change the gateway first.`,
+          gateway_address: subnet.gateway_address
+        });
+      }
     }
   }
 
@@ -281,7 +293,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   updated.options = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?').all(scope.id);
 
   audit(req.user.id, 'dhcp_scope_updated', 'dhcp_scope', scope.id, { changes: req.body });
-  regenerateDhcpConfigs(db);
+  req.afterCommit('regenerate_dhcp');
   res.json(updated);
 });
 
@@ -295,7 +307,7 @@ router.delete('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   db.prepare('DELETE FROM dhcp_scopes WHERE id = ?').run(scope.id);
   db.prepare('DELETE FROM ranges WHERE id = ?').run(scope.range_id);
   audit(req.user.id, 'dhcp_scope_deleted', 'dhcp_scope', scope.id, { range_id: scope.range_id });
-  regenerateDhcpConfigs(db);
+  req.afterCommit('regenerate_dhcp');
   res.json({ message: 'Scope deleted' });
 });
 
@@ -322,6 +334,24 @@ router.get('/reservations', requirePerm('dhcp:read'), (req, res) => {
   res.json(db.prepare(query).all(...params));
 });
 
+// Returns null if the IP is safe to reserve, or a string error reason otherwise.
+// Blocks the subnet's network address, broadcast, gateway, and any IP marked
+// locked in ip_addresses. Callers have already validated format + subnet bounds.
+export function reservationIpRejectionReason(db, subnet, ipAddress) {
+  const parsed = parseCidr(subnet.cidr);
+  const ipLong = ipToLong(ipAddress);
+  if (ipLong === parsed.networkLong)   return 'Cannot reserve the network address';
+  if (ipLong === parsed.broadcastLong) return 'Cannot reserve the broadcast address';
+  if (subnet.gateway_address && ipAddress === subnet.gateway_address) {
+    return 'Cannot reserve the gateway address';
+  }
+  const row = db.prepare(
+    'SELECT status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+  ).get(subnet.id, ipAddress);
+  if (row && row.status === 'locked') return 'Cannot reserve a locked IP';
+  return null;
+}
+
 // POST /api/dhcp/reservations
 router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   const { subnet_id, mac_address, ip_address, hostname, description } = req.body;
@@ -335,9 +365,16 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   if (!isValidMac(mac)) {
     return res.status(400).json({ error: 'Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)' });
   }
+  if (!isClientMac(mac)) {
+    return res.status(400).json({ error: 'MAC address cannot be all-zero, broadcast, or multicast' });
+  }
 
   if (!isValidIpv4(ip_address)) {
     return res.status(400).json({ error: 'Invalid IP address' });
+  }
+
+  if (hostname && !isValidDomain(hostname)) {
+    return res.status(400).json({ error: 'Invalid hostname (letters, digits, dots, hyphens; 1–253 chars)' });
   }
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet_id);
@@ -346,6 +383,9 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   if (!isIpInSubnet(ip_address, subnet.cidr)) {
     return res.status(400).json({ error: 'IP address is not within the selected subnet' });
   }
+
+  const rejection = reservationIpRejectionReason(db, subnet, ip_address);
+  if (rejection) return res.status(400).json({ error: rejection });
 
   // Check duplicate MAC in this subnet
   const dupMac = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ?').get(subnet_id, mac);
@@ -368,8 +408,14 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   `).get(result.lastInsertRowid);
 
   syncDhcpReservationToIp(db, subnet_id, ip_address, { hostname: hostname || null, mac_address: mac });
+  // Populate the matching PTR record with the FQDN (hostname + domain), or
+  // blank it if no hostname was provided.
+  const fqdn = hostname
+    ? (subnet.domain_name ? `${hostname}.${subnet.domain_name}` : hostname)
+    : '';
+  syncPtrForIp(db, subnet_id, ip_address, fqdn);
   audit(req.user.id, 'dhcp_reservation_created', 'dhcp_reservation', reservation.id, { mac, ip: ip_address, subnet: subnet.cidr });
-  regenerateDhcpConfigs(db);
+  req.afterCommit('regenerate_dhcp');
   res.status(201).json(reservation);
 });
 
@@ -389,13 +435,25 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   if (mac_address && !isValidMac(newMac)) {
     return res.status(400).json({ error: 'Invalid MAC address format' });
   }
+  if (mac_address && !isClientMac(newMac)) {
+    return res.status(400).json({ error: 'MAC address cannot be all-zero, broadcast, or multicast' });
+  }
 
   if (ip_address && !isValidIpv4(ip_address)) {
     return res.status(400).json({ error: 'Invalid IP address' });
   }
 
+  if (hostname !== undefined && hostname && !isValidDomain(hostname)) {
+    return res.status(400).json({ error: 'Invalid hostname (letters, digits, dots, hyphens; 1–253 chars)' });
+  }
+
   if (ip_address && !isIpInSubnet(ip_address, subnet.cidr)) {
     return res.status(400).json({ error: 'IP address is not within the subnet' });
+  }
+
+  if (ip_address) {
+    const rejection = reservationIpRejectionReason(db, subnet, ip_address);
+    if (rejection) return res.status(400).json({ error: rejection });
   }
 
   // Check duplicate MAC (excluding self)
@@ -429,16 +487,22 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     WHERE dr.id = ?
   `).get(reservation.id);
 
-  // If IP changed, clear old IP's DHCP metadata
+  // If IP changed, clear old IP's DHCP metadata + PTR
   if (newIp !== reservation.ip_address) {
     clearDhcpReservationFromIp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
+    syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '');
   }
+  const newHostname = hostname !== undefined ? (hostname || null) : reservation.hostname;
   syncDhcpReservationToIp(db, reservation.subnet_id, newIp, {
-    hostname: hostname !== undefined ? (hostname || null) : reservation.hostname,
+    hostname: newHostname,
     mac_address: newMac
   });
+  const fqdn = newHostname
+    ? (subnet.domain_name ? `${newHostname}.${subnet.domain_name}` : newHostname)
+    : '';
+  syncPtrForIp(db, reservation.subnet_id, newIp, fqdn);
   audit(req.user.id, 'dhcp_reservation_updated', 'dhcp_reservation', reservation.id, { changes: req.body });
-  regenerateDhcpConfigs(db);
+  req.afterCommit('regenerate_dhcp');
   res.json(updated);
 });
 
@@ -450,10 +514,11 @@ router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
 
   db.prepare('DELETE FROM dhcp_reservations WHERE id = ?').run(reservation.id);
   clearDhcpReservationFromIp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
+  syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '');
   audit(req.user.id, 'dhcp_reservation_deleted', 'dhcp_reservation', reservation.id, {
     mac: reservation.mac_address, ip: reservation.ip_address
   });
-  regenerateDhcpConfigs(db);
+  req.afterCommit('regenerate_dhcp');
   res.json({ message: 'Reservation deleted' });
 });
 
@@ -583,7 +648,7 @@ router.post('/sync-leases', requirePerm('dhcp:write'), (req, res) => {
 // POST /api/dhcp/apply
 router.post('/apply', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
-  regenerateDhcpConfigs(db);
+  req.afterCommit('regenerate_dhcp');
 
   const scopeCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_scopes WHERE enabled = 1').get().c;
   const reservationCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_reservations WHERE enabled = 1').get().c;
@@ -717,7 +782,7 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
 
   txn();
   audit(req.user.id, 'dhcp_option_defaults_updated', 'dhcp', null, { count: options.length });
-  regenerateDhcpConfigs(db);
+  req.afterCommit('regenerate_dhcp');
 
   const rows = db.prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults').all();
   const defaults = Object.fromEntries(rows.filter(r => r.value != null).map(r => [r.option_code, r.value]));

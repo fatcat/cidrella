@@ -157,51 +157,86 @@
                      :rowsPerPageOptions="[50, 100, 250, 500]"
                      @row-contextmenu="onRecordRightClick"
                      :contextMenu="true">
-            <Column field="name" :header="isReverse ? 'Name' : 'Name'" sortable style="width: 12rem">
+            <!-- Reverse: Hostname, IP, arpa Name, Type, TTL -->
+            <Column v-if="isReverse" field="value" header="Hostname" sortable style="width: 16rem">
               <template #body="{ data }">
-                {{ isReverse ? `${data.name}.${selectedZone.name}` : data.name }}
+                <template v-if="data.value">{{ data.value }}</template>
+                <span v-else class="cell-muted">—</span>
               </template>
             </Column>
-            <Column field="type" header="Type" sortable style="width: 7rem" v-if="!isReverse">
+            <Column v-if="isReverse" header="IP Address" sortable :sortField="'_ip_long'" style="width: 10rem">
+              <template #body="{ data }">
+                <span v-if="data.value" class="ip-mono">{{ ptrRecordIp(data) }}</span>
+                <span v-else class="cell-muted">—</span>
+              </template>
+            </Column>
+            <Column v-if="isReverse" field="name" header="Name" sortable style="width: 14rem">
+              <template #body="{ data }">
+                <span class="ip-mono cell-muted">{{ data.name }}.{{ selectedZone.name }}</span>
+              </template>
+            </Column>
+            <Column v-if="isReverse" field="type" header="Type" sortable style="width: 6rem">
               <template #body="{ data }">
                 <span class="type-badge">{{ data.type }}</span>
               </template>
             </Column>
-            <Column field="value" :header="isReverse ? 'Hostname' : 'Value'" sortable style="width: 12rem">
+            <!-- Forward: Name, Type, Value, Priority, Port. Using v-if="!isReverse"
+                 (not v-else) so the reverse block above can be a separate group. -->
+            <Column v-if="!isReverse" field="name" header="Name" sortable style="width: 12rem">
+              <template #body="{ data }">{{ data.name }}</template>
             </Column>
-            <Column header="Priority" style="width: 5rem" v-if="!isReverse">
+            <Column v-if="!isReverse" field="type" header="Type" sortable style="width: 7rem">
+              <template #body="{ data }">
+                <span class="type-badge">{{ data.type }}</span>
+              </template>
+            </Column>
+            <Column v-if="!isReverse" field="value" header="Value" sortable style="width: 14rem" />
+            <Column v-if="!isReverse" header="Priority" style="width: 5rem">
               <template #body="{ data }">{{ data.priority ?? '—' }}</template>
             </Column>
-            <Column header="Port" style="width: 4rem" v-if="!isReverse">
+            <Column v-if="!isReverse" header="Port" style="width: 4rem">
               <template #body="{ data }">{{ data.port ?? '—' }}</template>
             </Column>
-            <Column header="TTL" style="width: 4rem">
-              <template #body="{ data }">{{ data.ttl ?? '—' }}</template>
+            <!-- TTL for both. Records without an explicit TTL inherit the
+                 zone's SOA minimum TTL (RFC 2308 negative-caching default). -->
+            <Column header="TTL" style="width: 6rem">
+              <template #body="{ data }">
+                <template v-if="data.ttl != null">{{ data.ttl }}</template>
+                <span v-else class="cell-muted">{{ selectedZone?.soa_minimum_ttl ?? '—' }}</span>
+              </template>
             </Column>
             <Column header="Enabled" style="width: 5rem">
               <template #body="{ data }">
-                <span :class="data.enabled ? 'badge-enabled' : 'badge-sm badge-red-light'">
+                <span class="status-text" :class="data.enabled ? 'state-ok' : 'state-muted'">
                   {{ data.enabled ? 'Yes' : 'No' }}
                 </span>
               </template>
             </Column>
             <Column header="Source" style="width: 5rem">
               <template #body="{ data }">
-                <span :class="['type-badge', data.source === 'dhcp' ? 'badge-yellow-light' : data.source === 'reservation' ? 'badge-blue-light' : 'badge-muted']">{{ data.source === 'dhcp' ? 'DHCP' : data.source === 'reservation' ? 'Reservation' : 'Manual' }}</span>
+                <span v-if="data.source === 'reservation'" class="taxonomy-tag">Reservation</span>
+                <span v-else class="cell-muted">{{ data.source === 'dhcp' ? 'DHCP' : 'Manual' }}</span>
               </template>
             </Column>
             <Column header="Online" sortable field="is_online" style="width: 5rem" v-if="!isReverse">
               <template #body="{ data }">
                 <span v-if="data.type === 'A' && data.is_online !== null && data.is_online !== undefined"
-                      :class="['type-badge', data.is_online ? 'badge-green-light' : 'badge-muted']">
+                      class="status-text" :class="data.is_online ? 'state-ok' : 'state-muted'">
                   {{ data.is_online ? 'Online' : 'Offline' }}
                 </span>
-                <span v-else>—</span>
+                <span v-else class="cell-muted">—</span>
               </template>
             </Column>
           </DataTable>
           <ContextMenu ref="recordContextMenu" :model="recordContextMenuItems" />
         </template>
+        <EmptyState v-else-if="store.zones.length === 0"
+          icon="pi-globe"
+          title="No DNS zones yet"
+          description="Add a forward or reverse zone to start managing DNS records for your networks."
+          :actions="[
+            { label: 'Add Zone', icon: 'pi-plus', severity: 'primary', dataTrack: 'empty-add-zone', onClick: () => openZoneDialog() }
+          ]" />
         <div v-else class="empty-state centered">
           <i class="pi pi-arrow-left" style="font-size: 2rem; opacity: 0.3;" />
           <p>Select a zone to view its records</p>
@@ -380,6 +415,7 @@ import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
 import { loadJson } from '../utils/storage.js';
+import EmptyState from './EmptyState.vue';
 
 // No props needed — shows all zones globally
 
@@ -391,6 +427,18 @@ const toast = useToast();
 const zoneFilterText = ref('');
 const selectedZone = ref(null);
 const isReverse = computed(() => selectedZone.value?.type === 'reverse');
+
+// Reconstruct the IPv4 address a PTR record points at, by concatenating the
+// record's host label(s) with the zone's arpa prefix and reversing. For zone
+// "0.10.in-addr.arpa" + record name "5.1" → "10.0.1.5".
+function ptrRecordIp(record) {
+  if (!selectedZone.value || selectedZone.value.type !== 'reverse') return record.name;
+  const zoneLabel = (selectedZone.value.name || '').replace(/\.?in-addr\.arpa\.?$/, '');
+  const recordLabel = record.name || '';
+  const combined = [recordLabel, zoneLabel].filter(Boolean).join('.');
+  // combined is reverse-octet order, e.g. "5.1.0.10"
+  return combined.split('.').reverse().join('.');
+}
 const records = ref([]);
 const loadingRecords = ref(false);
 const expandedGroups = ref({});
@@ -490,7 +538,21 @@ watch(dnsSearch, (val) => {
   try { localStorage.setItem('cidrella_dns_search', JSON.stringify(val)); } catch {}
 });
 const filteredRecords = computed(() => {
-  const base = records.value.filter(r => r.source !== 'dhcp');
+  let base = records.value.filter(r => r.source !== 'dhcp');
+  // For reverse zones, inject a numeric sort key so the IP Address and Name
+  // columns can maintain independent sort state. PrimeVue keys per-column
+  // sort on `sortField`; if two columns share the same field, they share a
+  // toggle. `_ip_long` gives IP Address its own.
+  if (isReverse.value) {
+    base = base.map(r => {
+      const ip = ptrRecordIp(r);
+      const parts = (ip || '').split('.').map(Number);
+      const ipLong = parts.length === 4 && parts.every(Number.isFinite)
+        ? ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
+        : null;
+      return { ...r, _ip_long: ipLong };
+    });
+  }
   const q = dnsSearch.value.trim().toLowerCase();
   if (!q) return base;
   return base.filter(r =>
@@ -748,7 +810,7 @@ defineExpose({ openZoneDialog });
   background: var(--p-surface-ground);
   color: var(--p-text-color);
 }
-.panel-header h3 { margin: 0; font-size: 0.9rem; color: var(--p-text-color); }
+.panel-header h3 { margin: 0; font-size: var(--app-fs-md); color: var(--p-text-color); }
 
 .info-bar {
   display: flex;
@@ -760,11 +822,11 @@ defineExpose({ openZoneDialog });
   height: 2.4rem;
   box-sizing: border-box;
 }
-.info-bar-name { font-weight: 700; font-size: 0.85rem; white-space: nowrap; }
+.info-bar-name { font-weight: 700; font-size: var(--app-fs-md); color: var(--p-primary-color); font-family: monospace; white-space: nowrap; }
 .info-bar-sep { width: 1px; height: 1rem; background: var(--p-surface-border); flex-shrink: 0; }
-.info-bar-pair { display: flex; align-items: baseline; gap: 0.35rem; white-space: nowrap; }
-.info-bar-label { font-size: 0.65rem; text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.04em; }
-.info-bar-val { font-size: 0.8rem; font-weight: 600; }
+.info-bar-pair { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.info-bar-label { font-size: var(--app-fs-xs); text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.08em; }
+.info-bar-val { font-size: var(--app-fs-sm); font-weight: 600; font-family: monospace; }
 
 .sidebar-search {
   display: flex;
@@ -777,7 +839,7 @@ defineExpose({ openZoneDialog });
   flex-shrink: 0;
 }
 .search-icon {
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
 }
 .sidebar-filter {
@@ -785,7 +847,7 @@ defineExpose({ openZoneDialog });
   border: none;
   background: transparent;
   color: var(--p-text-color);
-  font-size: 0.8rem;
+  font-size: var(--app-fs-sm);
   outline: none;
 }
 .sidebar-filter::placeholder {
@@ -809,7 +871,7 @@ defineExpose({ openZoneDialog });
 .zone-info { flex: 1; min-width: 0; }
 .zone-name {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-md);
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -817,10 +879,11 @@ defineExpose({ openZoneDialog });
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--p-text-color);
+  font-family: monospace;
 }
 .zone-meta { display: flex; gap: 0.4rem; margin-top: 0.2rem; align-items: center; }
 
-.record-count { font-size: 0.75rem; color: var(--p-surface-500); }
+.record-count { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); }
 
 .zone-actions { display: flex; gap: 0.15rem; flex-shrink: 0; }
 
@@ -850,14 +913,15 @@ defineExpose({ openZoneDialog });
 }
 
 .type-badge {
-  font-size: 0.75rem;
+  font-size: var(--app-fs-xs);
   font-weight: 600;
-  padding: 0.15rem 0.4rem;
-  border-radius: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
   font-family: monospace;
+  letter-spacing: 0.02em;
 }
 
-.badge-enabled { font-size: 0.75rem; color: var(--p-green-500); }
+.badge-enabled { font-size: var(--app-fs-xs); color: var(--p-green-500); }
 
 .action-buttons { display: flex; gap: 0.25rem; }
 
@@ -868,7 +932,7 @@ defineExpose({ openZoneDialog });
   padding: 2rem 1rem;
   text-align: center;
   color: var(--p-surface-400);
-  font-size: 0.9rem;
+  font-size: var(--app-fs-base);
 }
 .empty-state.centered {
   display: flex;
@@ -890,9 +954,9 @@ defineExpose({ openZoneDialog });
 }
 .field label {
   display: block;
-  margin-bottom: 0.35rem;
-  font-size: 0.85rem;
-  font-weight: 600;
+  margin-bottom: 0.4rem;
+  font-size: var(--app-fs-sm);
+  font-weight: 500;
 }
 
 .soa-section {
@@ -905,9 +969,10 @@ defineExpose({ openZoneDialog });
 }
 .soa-section h4 {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 .soa-grid {
   display: grid;
@@ -923,7 +988,7 @@ defineExpose({ openZoneDialog });
   border-radius: 50%;
   background: var(--p-surface-200);
   color: var(--p-text-muted-color);
-  font-size: 0.65rem;
+  font-size: var(--app-fs-xs);
   font-weight: 700;
   cursor: help;
   margin-left: 0.25rem;
@@ -932,12 +997,12 @@ defineExpose({ openZoneDialog });
 .soa-serial {
   font-family: monospace;
   font-weight: 600;
-  font-size: 0.9rem;
+  font-size: var(--app-fs-md);
 }
 .field-help {
   display: block;
   margin-top: 0.4rem;
-  font-size: 0.75rem;
+  font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
 }
 
@@ -948,7 +1013,7 @@ defineExpose({ openZoneDialog });
   padding: 0.5rem 1rem;
   cursor: pointer;
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-md);
   color: var(--p-text-color);
   background: var(--p-surface-ground);
   border-bottom: 1px solid var(--p-surface-border);
@@ -978,7 +1043,7 @@ defineExpose({ openZoneDialog });
 }
 .ptr-preview-value {
   font-family: monospace;
-  font-size: 0.85rem;
+  font-size: var(--app-fs-md);
   font-weight: 600;
   color: var(--p-text-color);
 }

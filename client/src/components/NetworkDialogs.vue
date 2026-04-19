@@ -1,6 +1,7 @@
 <template>
   <!-- Create/Edit Folder Dialog -->
-  <Dialog v-model:visible="showFolderDialog" :header="editingFolder ? 'Edit Folder' : 'Create Folder'" modal :style="{ width: '26rem' }" data-track="dialog-folder-edit">
+  <Dialog v-model:visible="showFolderDialog" :header="editingFolder ? 'Edit Folder' : 'Create Folder'" modal :style="{ width: '26rem' }" data-track="dialog-folder-edit"
+          @hide="folderCreateFromEdit = false">
     <div class="form-grid">
       <div class="field">
         <label>Name *</label>
@@ -75,6 +76,24 @@
           </tr>
         </tbody>
       </table>
+      <div class="field" style="margin-top: 0.75rem;">
+        <label style="display: block; margin-bottom: 0.3rem;">DNS listen port</label>
+        <!-- PrimeVue InputNumber only commits its model on blur/Enter, which delays
+             the "non-53" warning. Use a plain numeric <input> so the warning fires
+             on every keystroke. -->
+        <input type="number" min="1" max="65535" step="1"
+               :value="wizardDnsListenPort"
+               @input="wizardDnsListenPort = Number($event.target.value) || 0"
+               class="port-input port-input-plain" style="width: 6.5rem" />
+        <small class="field-help" style="display: block; margin-top: 0.4rem;">
+          Default 53. Change only if another DNS service holds that port.
+        </small>
+        <Message v-if="wizardDnsListenPort !== 53" severity="warn" :closable="false" class="mt-1">
+          Most DHCP clients (Windows, macOS, systemd-resolved, Android) ignore non-standard DNS ports and
+          will still try {{ resolverIpForHint }}:53.
+          Only change this if clients are statically configured or a port-53 redirect (iptables/NAT) is in place.
+        </Message>
+      </div>
       <small class="field-help" style="margin-top: 0.5rem; display: block;">
         DHCP can be enabled per-interface later from System &rarr; Interfaces once your network is fully configured.
       </small>
@@ -111,9 +130,15 @@
         </div>
       </div>
       <div class="field">
-        <label>Default Gateway Position</label>
-        <SelectButton v-model="wizardNet.gateway_position" :options="gatewayOptions"
-                      optionLabel="label" optionValue="value" size="small" />
+        <label>Gateway</label>
+        <div class="gateway-row">
+          <SelectButton v-model="wizardNet.gateway_position" :options="gatewayPositionOptions"
+                        optionLabel="label" optionValue="value" size="small" />
+        </div>
+        <InputText v-model="wizardNet.gateway_address"
+                   :placeholder="wizardGatewayPlaceholder"
+                   :disabled="wizardNet.gateway_position !== 'custom' && wizardNet.gateway_position !== 'none'"
+                   class="w-full" />
       </div>
       <div class="field">
         <label>Domain Name</label>
@@ -122,22 +147,6 @@
           No domain name entered — DNS features will be limited. Click "Create &amp; Continue" again to proceed anyway.
         </Message>
       </div>
-      <div class="field" v-if="wizardPrefixLength <= 29">
-        <label class="toggle-label">
-          <input type="checkbox" v-model="wizardNet.create_dhcp_scope" />
-          Create DHCP scope
-        </label>
-      </div>
-      <template v-if="wizardNet.create_dhcp_scope && wizardPrefixLength <= 29">
-        <div class="field">
-          <label>Start IP</label>
-          <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" />
-        </div>
-        <div class="field">
-          <label>End IP</label>
-          <InputText v-model="wizardNet.dhcp_end_ip" class="w-full" />
-        </div>
-      </template>
       <div class="field">
         <label class="toggle-label">
           <input type="checkbox" v-model="wizardNet.create_reverse_dns" />
@@ -150,6 +159,29 @@
           Include hosts in liveness scans by default
         </label>
       </div>
+      <div class="field" v-if="wizardPrefixLength <= 29">
+        <label class="toggle-label">
+          <input type="checkbox" v-model="wizardNet.create_dhcp_scope" />
+          Create DHCP scope
+        </label>
+      </div>
+      <template v-if="wizardNet.create_dhcp_scope && wizardPrefixLength <= 29">
+        <Message v-if="wizardDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
+          A /{{ wizardPrefixLength }} is larger than CIDRella will auto-size a DHCP pool for.
+          RAM is the primary concern — every IP in an allocated subnet gets a row in
+          <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB.
+          See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue —
+          just enter Start IP and End IP manually.
+        </Message>
+        <div class="field">
+          <label>Start IP</label>
+          <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" />
+        </div>
+        <div class="field">
+          <label>End IP</label>
+          <InputText v-model="wizardNet.dhcp_end_ip" class="w-full" />
+        </div>
+      </template>
     </div>
 
     <!-- Step 3: Pi-hole Import -->
@@ -390,12 +422,23 @@
           <InputText v-model="networkForm.cidr" placeholder="10.0.0.0/8" class="w-full" />
           <small v-if="createCidrError" class="field-error">{{ createCidrError }}</small>
         </div>
-        <div class="field">
-          <label>Folder (optional)</label>
-          <Select v-model="networkForm.folder_id" :options="folderOptions" optionLabel="name" optionValue="id"
-                  placeholder="None (ungrouped)" class="w-full" showClear />
-        </div>
       </template>
+
+      <div class="field">
+        <label>Folder (optional)</label>
+        <div style="display: flex; gap: 0.25rem; align-items: center">
+          <Select v-model="networkForm.folder_id" :options="selectableFolderOptions" optionLabel="name" optionValue="id"
+                  placeholder="None (ungrouped)" class="w-full" showClear
+                  :disabled="editingChildSubnet"
+                  :filter="selectableFolderOptions.length > 6" filterPlaceholder="Search folders…" />
+          <Button icon="pi pi-plus" text rounded size="small"
+                  title="Create folder" @click="openCreateFolderFromEdit"
+                  :disabled="editingChildSubnet" />
+        </div>
+        <small v-if="editingChildSubnet" class="field-help">
+          Sub-networks inherit their folder from the root network. Edit the root to change the folder.
+        </small>
+      </div>
       <div class="field">
         <label>Name *</label>
         <div class="name-with-template">
@@ -421,11 +464,27 @@
       </div>
       <div class="field">
         <label>Gateway</label>
-        <InputText v-model="networkForm.gateway_address" placeholder="Auto (system default)" class="w-full" />
+        <div class="gateway-row">
+          <SelectButton v-model="gatewayPosition" :options="gatewayPositionOptions"
+                        optionLabel="label" optionValue="value" size="small" />
+        </div>
+        <InputText v-model="networkForm.gateway_address"
+                   :placeholder="gatewayPlaceholder"
+                   :disabled="gatewayPosition !== 'custom' && gatewayPosition !== 'none'"
+                   class="w-full" />
       </div>
       <div class="field">
         <label>Domain Name</label>
-        <InputText v-model="networkForm.domain_name" placeholder="e.g. office.example.com" class="w-full" />
+        <div style="display: flex; gap: 0.25rem; align-items: center">
+          <AutoComplete v-model="editDomainSelection" :suggestions="domainSuggestions"
+                        @complete="searchDomains" optionLabel="name"
+                        placeholder="e.g. office.example.com" class="w-full"
+                        @item-select="onDomainSelect" @clear="onDomainClear"
+                        @change="onDomainChange"
+                        :forceSelection="false" dropdown />
+          <Button icon="pi pi-plus" text rounded size="small"
+                  title="Create DNS zone" @click="openCreateDomainFromEdit" />
+        </div>
       </div>
       <div class="field">
         <label>Liveness Scanning</label>
@@ -444,6 +503,12 @@
         <small class="field-help" v-else>Scanning is disabled for this network</small>
       </div>
       <template v-if="networkDialogMode === 'configure' || networkDialogMode === 'create'">
+        <div class="field">
+          <label class="toggle-label">
+            <input type="checkbox" v-model="networkForm.create_reverse_dns" />
+            Create reverse DNS zone
+          </label>
+        </div>
         <div class="field" v-if="effectivePrefixLength <= 29">
           <label class="toggle-label">
             <input type="checkbox" v-model="networkForm.create_dhcp_scope" />
@@ -451,6 +516,13 @@
           </label>
         </div>
         <template v-if="networkForm.create_dhcp_scope">
+          <Message v-if="editDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
+            A /{{ effectivePrefixLength }} is larger than CIDRella will auto-size a DHCP pool for.
+            RAM is the primary concern — every IP in an allocated subnet gets a row in
+            <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB.
+            See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue —
+            just enter Start IP and End IP manually.
+          </Message>
           <div class="field">
             <label>Start IP *</label>
             <InputText v-model="networkForm.dhcp_start_ip" class="w-full" />
@@ -460,12 +532,6 @@
             <InputText v-model="networkForm.dhcp_end_ip" class="w-full" />
           </div>
         </template>
-        <div class="field">
-          <label class="toggle-label">
-            <input type="checkbox" v-model="networkForm.create_reverse_dns" />
-            Create reverse DNS zone
-          </label>
-        </div>
       </template>
     </div>
     <template #footer>
@@ -492,6 +558,21 @@
       <Button label="Cancel" severity="secondary" @click="showCreateVlanFromEdit = false" />
       <Button label="Save" @click="createVlanFromEdit" :loading="saving"
               :disabled="!newVlanForm.vlan_id || !newVlanForm.name" />
+    </template>
+  </Dialog>
+
+  <!-- Create DNS Zone (domain) from Edit Dialog -->
+  <Dialog v-model:visible="showCreateDomainFromEdit" header="Create Forward DNS Zone" modal :style="{ width: '24rem' }">
+    <div class="form-grid">
+      <div class="field">
+        <label>Domain Name *</label>
+        <InputText v-model="newDomainForm.name" placeholder="e.g. office.example.com" class="w-full" autofocus />
+      </div>
+    </div>
+    <template #footer>
+      <Button label="Cancel" severity="secondary" @click="showCreateDomainFromEdit = false" />
+      <Button label="Save" @click="createDomainFromEdit" :loading="savingDomain"
+              :disabled="!newDomainForm.name?.trim()" />
     </template>
   </Dialog>
 
@@ -590,7 +671,7 @@ import TabPanel from 'primevue/tabpanel';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { validateSupernet, isValidCidr, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp, nearestPow2, dhcpRangeDefaults, gatewayIpFromPosition } from '../utils/ip.js';
+import { validateSupernet, isValidCidr, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp, nearestPow2, dhcpRangeDefaults, gatewayIpFromPosition, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -622,16 +703,30 @@ const showWizard = ref(false);
 const wizardStep = ref(1);
 const wizardNet = ref({
   cidr: '', name: '', description: '', vlan_id: null,
-  gateway_position: 'first', domain_name: '',
+  gateway_position: 'first', gateway_address: '', domain_name: '',
   create_dhcp_scope: false, create_reverse_dns: false,
   dhcp_start_ip: '', dhcp_end_ip: '',
   scan_enabled: true,
 });
-const gatewayOptions = [
-  { label: 'First Addr', value: 'first' },
-  { label: 'Last Addr', value: 'last' },
+// Gateway position options live here but watchers that reference `networkForm`
+// must wait until `networkForm` itself is declared — installed further below.
+const gatewayPositionOptions = [
+  { label: 'First IP', value: 'first' },
+  { label: 'Last IP', value: 'last' },
   { label: 'None', value: 'none' },
+  { label: 'Custom', value: 'custom' },
 ];
+const gatewayPosition = ref('custom');
+
+function inferGatewayPosition(cidr, address) {
+  const addr = (address || '').trim();
+  if (!addr) return 'none';
+  if (!cidr || !isValidCidr(cidr)) return 'custom';
+  if (addr === gatewayIpFromPosition(cidr, 'first')) return 'first';
+  if (addr === gatewayIpFromPosition(cidr, 'last'))  return 'last';
+  return 'custom';
+}
+
 const domainWarningShown = ref(false);
 const wizardVlanSelection = ref(null);
 const showWizardCreateVlan = ref(false);
@@ -645,6 +740,15 @@ const wizardIfaces = ref([]);
 const wizardIfaceLoading = ref(false);
 const wizardIfaceSaving = ref(false);
 const wizardHasSelectedIface = computed(() => wizardIfaces.value.some(i => i.dns));
+const wizardDnsListenPort = ref(53);
+
+// Used in the non-53 port warning — first DNS-enabled interface's IPv4, or a
+// placeholder if none picked yet.
+const resolverIpForHint = computed(() => {
+  const picked = wizardIfaces.value.find(i => i.dns);
+  const ip = picked?.addresses?.find(a => /^\d+\.\d+\.\d+\.\d+$/.test(a.address))?.address;
+  return ip || 'server';
+});
 
 async function loadWizardInterfaces() {
   wizardIfaceLoading.value = true;
@@ -674,6 +778,7 @@ async function wizardSaveInterfaces() {
       interfaces,
       dns_enabled: true,
       dhcp_enabled: false,
+      dns_listen_port: Number(wizardDnsListenPort.value) || 53,
     });
     wizardStep.value = 2;
   } catch {
@@ -703,11 +808,21 @@ const wizardPrefixLength = computed(() => {
   return 32;
 });
 
+// True when the wizard CIDR is outside the auto-fill sweet spot — either too
+// small (/30–/32, no sensible pool) or too large (/15 and up, RAM-dangerous
+// on modest hosts). UI shows a warning. See docs/SIZING.md for the numbers.
+const wizardDhcpRiskySize = computed(() => {
+  const p = wizardPrefixLength.value;
+  return p < DHCP_DEFAULT_MIN_PREFIX || p > DHCP_DEFAULT_MAX_PREFIX;
+});
+
 const wizardDhcpDefaults = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
   if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
   const p = parseCidr(cidr);
-  const gw = gatewayIpFromPosition(cidr, wizardNet.value.gateway_position);
+  // Use the effective gateway (handles 'custom' and 'none') so the default
+  // DHCP range correctly excludes a user-typed gateway address too.
+  const gw = wizardEffectiveGateway(cidr);
   return dhcpRangeDefaults(p, gw);
 });
 
@@ -719,13 +834,59 @@ watch(() => wizardNet.value.gateway_position, () => {
   }
 });
 
-watch(() => wizardNet.value.create_dhcp_scope, (checked) => {
-  if (checked && !wizardNet.value.dhcp_start_ip && !wizardNet.value.dhcp_end_ip) {
-    const d = wizardDhcpDefaults.value;
-    if (d.start) wizardNet.value.dhcp_start_ip = d.start;
-    if (d.end) wizardNet.value.dhcp_end_ip = d.end;
+// Wizard gateway: mirror the Edit-dialog sync. Position → address (First/Last/None
+// auto-fills; Custom leaves editable). Address → position (user-typed value flips
+// the toggle). CIDR change re-applies First/Last against the new range.
+const wizardGatewayPlaceholder = computed(() => {
+  const pos = wizardNet.value.gateway_position;
+  if (pos === 'none') return 'No gateway';
+  if (pos === 'first' || pos === 'last') return 'Auto-computed';
+  return '10.0.0.1';
+});
+function wizardEffectiveGateway(cidr) {
+  const pos = wizardNet.value.gateway_position;
+  if (pos === 'none') return null;
+  if (pos === 'custom') return (wizardNet.value.gateway_address || '').trim() || null;
+  return gatewayIpFromPosition(cidr, pos) || null;
+}
+watch(() => wizardNet.value.gateway_position, (pos) => {
+  if (pos === 'custom') return;
+  const cidr = (wizardNet.value.cidr || '').trim();
+  if (pos === 'none') {
+    if (wizardNet.value.gateway_address !== '') wizardNet.value.gateway_address = '';
+    return;
+  }
+  if (!cidr || !isValidCidr(cidr)) return;
+  const target = gatewayIpFromPosition(cidr, pos) || '';
+  if (wizardNet.value.gateway_address !== target) wizardNet.value.gateway_address = target;
+});
+watch(() => wizardNet.value.gateway_address, (addr) => {
+  const inferred = inferGatewayPosition(wizardNet.value.cidr, addr);
+  if (wizardNet.value.gateway_position !== inferred) wizardNet.value.gateway_position = inferred;
+});
+watch(() => wizardNet.value.cidr, (cidr) => {
+  const pos = wizardNet.value.gateway_position;
+  if (pos === 'first' || pos === 'last') {
+    if (cidr && isValidCidr(cidr)) {
+      const target = gatewayIpFromPosition(cidr, pos) || '';
+      if (wizardNet.value.gateway_address !== target) wizardNet.value.gateway_address = target;
+    }
   }
 });
+
+// Auto-populate DHCP Start/End IPs when "Create DHCP scope" is toggled on — mirrors
+// the Edit dialog. Only fills blank fields so the user's own input is never overwritten.
+function applyWizardDhcpDefaults() {
+  if (!wizardNet.value.create_dhcp_scope) return;
+  const d = wizardDhcpDefaults.value;
+  if (!d.start || !d.end) return;
+  if (!wizardNet.value.dhcp_start_ip) wizardNet.value.dhcp_start_ip = d.start;
+  if (!wizardNet.value.dhcp_end_ip)   wizardNet.value.dhcp_end_ip   = d.end;
+}
+watch(() => wizardNet.value.create_dhcp_scope, applyWizardDhcpDefaults);
+// Also fire when the CIDR arrives AFTER the checkbox was already ticked — e.g.
+// user enables DHCP before typing the CIDR, common in guided-setup flows.
+watch(() => wizardNet.value.cidr, applyWizardDhcpDefaults);
 
 function searchWizardVlans(event) {
   // Reuse the existing vlan search but scoped — wizard has no folder yet so search all
@@ -794,7 +955,7 @@ async function wizardCreateAndContinue() {
       name: wizardNet.value.name || wizardAutoName.value || cidr,
       description: wizardNet.value.description || undefined,
       vlan_id: wizardNet.value.vlan_id || undefined,
-      gateway_address: gatewayIpFromPosition(cidr, wizardNet.value.gateway_position) || undefined,
+      gateway_address: wizardEffectiveGateway(cidr) || undefined,
       domain_name: wizardNet.value.domain_name || undefined,
       create_dhcp_scope: wizardNet.value.create_dhcp_scope,
       create_reverse_dns: wizardNet.value.create_reverse_dns,
@@ -975,7 +1136,7 @@ async function onWizardClose() {
   wizardIfaces.value = [];
   wizardNet.value = {
     cidr: '', name: '', description: '', vlan_id: null,
-    gateway_position: 'first', domain_name: '',
+    gateway_position: 'first', gateway_address: '', domain_name: '',
     create_dhcp_scope: false, create_reverse_dns: false,
     dhcp_start_ip: '', dhcp_end_ip: '',
   };
@@ -999,12 +1160,18 @@ async function saveFolder() {
       toast.add({ severity: 'success', summary: 'Folder updated', life: 3000 });
       emit('folder-updated');
     } else {
-      await store.createFolder(folderForm.value);
+      const created = await store.createFolder(folderForm.value);
       toast.add({ severity: 'success', summary: 'Folder created', life: 3000 });
       emit('folder-created');
+      // If we opened this dialog from inside the Edit/Configure Network dialog,
+      // auto-select the new folder so the user doesn't have to re-pick.
+      if (folderCreateFromEdit.value && created?.id) {
+        networkForm.value.folder_id = created.id;
+      }
     }
     showFolderDialog.value = false;
     editingFolder.value = null;
+    folderCreateFromEdit.value = false;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
@@ -1027,6 +1194,31 @@ const showSubnetDialog = ref(false);
 const quickAddMode = ref(false);
 const supernetForm = ref({ cidr: '', name: '', folder_id: null });
 const folderOptions = computed(() => store.folders);
+// Exclude the virtual "Ungrouped" folder (id === null) from the Select so users
+// pick "None (ungrouped)" via the showClear button rather than a duplicate row.
+const selectableFolderOptions = computed(() =>
+  store.folders
+    .filter(f => f.id !== null && f.id !== undefined)
+    .slice()
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+);
+
+// Server blocks folder_id changes on non-root subnets (see routes/subnets.js:666).
+// Reflect that in the UI so users don't silently lose a picked value on save.
+const editingChildSubnet = computed(() => {
+  const d = props.selectedNode?.data;
+  return !!(d && d.parent_id);
+});
+
+// Track whether the folder-create dialog was opened from inside the Edit Network
+// dialog so we can auto-select the new folder on save instead of the usual flow.
+const folderCreateFromEdit = ref(false);
+function openCreateFolderFromEdit() {
+  folderCreateFromEdit.value = true;
+  editingFolder.value = null;
+  folderForm.value = { name: '', description: '' };
+  showFolderDialog.value = true;
+}
 
 const supernetValidationError = computed(() => {
   const cidr = supernetForm.value.cidr.trim();
@@ -1162,6 +1354,42 @@ const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialo
 const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
 
+// Gateway-position watchers + placeholder (live here because they reference
+// networkForm — declaring them earlier would hit a TDZ on the `networkForm`
+// const during watch() initial-dep tracking.)
+const gatewayPlaceholder = computed(() => {
+  if (gatewayPosition.value === 'none') return 'No gateway';
+  if (gatewayPosition.value === 'first' || gatewayPosition.value === 'last') return 'Auto-computed';
+  return '10.0.0.1';
+});
+// Position → address (when user picks first/last/none, compute and set).
+watch(gatewayPosition, (pos) => {
+  if (pos === 'custom') return;
+  const cidr = (networkForm.value.cidr || '').trim();
+  if (pos === 'none') {
+    if (networkForm.value.gateway_address !== '') networkForm.value.gateway_address = '';
+    return;
+  }
+  if (!cidr || !isValidCidr(cidr)) return;
+  const target = gatewayIpFromPosition(cidr, pos) || '';
+  if (networkForm.value.gateway_address !== target) networkForm.value.gateway_address = target;
+});
+// Address → position (user types a custom IP → toggle reflects state).
+watch(() => networkForm.value.gateway_address, (addr) => {
+  const inferred = inferGatewayPosition(networkForm.value.cidr, addr);
+  if (gatewayPosition.value !== inferred) gatewayPosition.value = inferred;
+});
+// CIDR changes in create mode: re-apply first/last position if set.
+watch(() => networkForm.value.cidr, (cidr) => {
+  const pos = gatewayPosition.value;
+  if (pos === 'first' || pos === 'last') {
+    if (cidr && isValidCidr(cidr)) {
+      const target = gatewayIpFromPosition(cidr, pos) || '';
+      if (networkForm.value.gateway_address !== target) networkForm.value.gateway_address = target;
+    }
+  }
+});
+
 const networkDialogHeader = computed(() => {
   if (networkDialogMode.value === 'create') return 'Add Network';
   if (networkDialogMode.value === 'configure') return 'Configure Network';
@@ -1191,6 +1419,14 @@ const effectivePrefixLength = computed(() => {
     return 32;
   }
   return props.selectedNode?.data?.prefix_length ?? 32;
+});
+
+// Mirror of wizardDhcpRiskySize for the Edit/Create Network dialog. See
+// docs/SIZING.md. Flags either too-small (/30–/32) or too-large (/15 and up)
+// subnets so the user gets a RAM-sanity warning before saving.
+const editDhcpRiskySize = computed(() => {
+  const p = effectivePrefixLength.value;
+  return p < DHCP_DEFAULT_MIN_PREFIX || p > DHCP_DEFAULT_MAX_PREFIX;
 });
 
 const dhcpDefaults = computed(() => {
@@ -1228,6 +1464,76 @@ const pendingVlanSelection = ref(null);
 const showCreateVlanFromEdit = ref(false);
 const newVlanForm = ref({ vlan_id: null, name: '' });
 const newVlanNameManual = ref(false);
+
+// ── Domain (forward DNS zone) AutoComplete state ──
+// Allows the user to pick an existing forward zone as the network's domain_name,
+// free-text a new value, or create a zone inline via the "+" button.
+const editDomainSelection = ref(null);   // string or zone object
+const domainSuggestions = ref([]);
+const forwardZones = ref([]);            // cached forward zones for suggestions
+const showCreateDomainFromEdit = ref(false);
+const newDomainForm = ref({ name: '' });
+const savingDomain = ref(false);
+
+async function loadForwardZones() {
+  try {
+    const { useDnsStore } = await import('../stores/dns.js');
+    const dnsStore = useDnsStore();
+    if (!dnsStore.zones?.length) await dnsStore.fetchZones();
+    // Alphabetical: shortest path for a user skimming a long zone list.
+    forwardZones.value = dnsStore.zones
+      .filter(z => z.type === 'forward')
+      .slice()
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  } catch { /* non-fatal — field still works as free-text */ }
+}
+
+function searchDomains(event) {
+  const q = (event.query || '').toLowerCase().trim();
+  if (!q) { domainSuggestions.value = forwardZones.value.slice(0, 50); return; }
+  domainSuggestions.value = forwardZones.value
+    .filter(z => z.name.toLowerCase().includes(q))
+    .slice(0, 50);
+}
+
+function onDomainSelect(event) {
+  const zone = event.value;
+  networkForm.value.domain_name = zone?.name || null;
+}
+function onDomainClear() {
+  networkForm.value.domain_name = null;
+}
+// Free-text mode: AutoComplete emits @change with a string when forceSelection=false
+function onDomainChange(event) {
+  const v = event?.value;
+  if (typeof v === 'string') networkForm.value.domain_name = v.trim() || null;
+}
+
+function openCreateDomainFromEdit() {
+  newDomainForm.value = { name: '' };
+  showCreateDomainFromEdit.value = true;
+}
+
+async function createDomainFromEdit() {
+  const name = newDomainForm.value.name.trim();
+  if (!name) return;
+  savingDomain.value = true;
+  try {
+    const { useDnsStore } = await import('../stores/dns.js');
+    const dnsStore = useDnsStore();
+    const created = await dnsStore.createZone({ name, type: 'forward' });
+    forwardZones.value = dnsStore.zones.filter(z => z.type === 'forward');
+    networkForm.value.domain_name = created?.name || name;
+    editDomainSelection.value = created || { name };
+    toast.add({ severity: 'success', summary: 'Zone created', detail: name, life: 3000 });
+    showCreateDomainFromEdit.value = false;
+    newDomainForm.value = { name: '' };
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Zone create failed', detail: apiError(err), life: 5000 });
+  } finally {
+    savingDomain.value = false;
+  }
+}
 
 function onNewVlanIdInput(val) {
   if (!newVlanNameManual.value) {
@@ -1512,6 +1818,10 @@ function openCreateNetwork(folderId) {
     dhcp_end_ip: '',
   };
   editVlanSelection.value = null;
+  editDomainSelection.value = null;
+  // Default to first-address gateway for new allocations — most common pattern.
+  gatewayPosition.value = 'first';
+  loadForwardZones();
   showNetworkDialog.value = true;
 }
 
@@ -1542,9 +1852,11 @@ function openEdit(node, folderId) {
 
   const autoName = isUnconfigured ? applyNameTemplate(props.nameTemplate, d.cidr) : null;
   networkForm.value = {
+    cidr: d.cidr || '',
     name: d.name || autoName || '',
     description: d.description || '',
     vlan_id: d.vlan_id || null,
+    folder_id: d.folder_id ?? folderId ?? null,
     gateway_address: d.gateway_address || '',
     domain_name: d.domain_name || '',
     create_dhcp_scope: false,
@@ -1553,6 +1865,11 @@ function openEdit(node, folderId) {
     dhcp_end_ip: '',
     scan_enabled: d.scan_enabled === null || d.scan_enabled === undefined ? null : !!d.scan_enabled,
   };
+  // Seed the SelectButton from the stored address so it reflects reality on open.
+  gatewayPosition.value = inferGatewayPosition(d.cidr, d.gateway_address);
+  // Seed the domain autocomplete + load zones for suggestions.
+  editDomainSelection.value = d.domain_name || null;
+  loadForwardZones();
 
   if (folderId) dropTargetFolderIdForConfigure.value = folderId;
 
@@ -1656,6 +1973,26 @@ defineExpose({
   display: flex;
   gap: 0.25rem;
   align-items: center;
+}
+.gateway-row {
+  margin-bottom: 6px;
+}
+/* Wizard DNS listen-port plain <input>: match PrimeVue input styling so it
+   sits alongside sibling InputTexts without looking out of place. */
+.port-input-plain {
+  font-size: var(--app-fs-base);
+  font-family: inherit;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--p-surface-border);
+  border-radius: 6px;
+  background: var(--p-surface-card);
+  color: var(--p-text-color);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.port-input-plain:focus {
+  border-color: var(--p-primary-color);
+  box-shadow: 0 0 0 1px var(--p-primary-color);
 }
 .divide-mode-toggle {
   margin-bottom: 0.75rem;

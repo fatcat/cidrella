@@ -12,7 +12,9 @@ const loginLimiter = rateLimit({
   message: { error: 'Too many login attempts. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => req.ip,
+  // No explicit keyGenerator — let express-rate-limit use its built-in one,
+  // which now handles IPv6 subnet collapse correctly (v8+ would throw
+  // ERR_ERL_KEY_GEN_IPV6 on a naive `req => req.ip` custom generator).
 });
 
 function getJwtSecret() {
