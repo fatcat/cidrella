@@ -165,6 +165,18 @@ export async function ensureDefaults() {
     console.log('========================================');
     console.log('');
   }
+
+  // v0.4.15: once any user exists — whether freshly seeded above or preserved
+  // from a previous install — lock down the pre-auth setup endpoints by
+  // marking the installation complete. In v0.4.14 this flag was only flipped
+  // by POST /api/setup, which created a window where a fresh install could be
+  // hijacked by an unauthenticated attacker hitting the endpoint first.
+  const anyUser = db.prepare('SELECT 1 FROM users LIMIT 1').get();
+  if (anyUser) {
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('installation_complete', 'true')"
+    ).run();
+  }
 }
 
 /**

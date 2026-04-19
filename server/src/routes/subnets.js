@@ -4,7 +4,8 @@ import { requirePerm } from '../auth/require-perm.js';
 import {
   parseCidr, normalizeCidr, isValidCidr, calculateSubnets,
   ipToLong, longToIp, isIpInSubnet, subtractCidr, isSubnetOf, cidrsOverlap,
-  validateSupernet, applyNameTemplate, canMergeCidrs, getServerIpForSubnet, isValidDomain
+  validateSupernet, applyNameTemplate, canMergeCidrs, getServerIpForSubnet, isValidDomain,
+  validateDisplayString
 } from '../utils/ip.js';
 import { generateReverseNames } from '../utils/dnsmasq.js';
 import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
@@ -424,10 +425,32 @@ router.get('/:id', requirePerm('subnets:read'), asyncHandler((req, res) => {
 
 // POST /api/subnets — create root supernet
 router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { cidr, name, description, vlan_id, folder_id } = req.body;
+  const body = req.body || {};
+  const { cidr, name, description, vlan_id, folder_id } = body;
 
-  if (!cidr) return res.status(400).json({ error: 'CIDR is required' });
+  // v0.4.15 type guards: in v0.4.14, sending `vlan_id: true`, `vlan_id: []`,
+  // or `vlan_id: {x:1}` produced raw SQLite bind errors. Now we reject
+  // up front with clean 400s.
+  if (typeof cidr !== 'string' || !cidr) return res.status(400).json({ error: 'CIDR is required' });
   if (!isValidCidr(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
+  if (name !== undefined) {
+    const err = validateDisplayString(name, { maxLength: 255 });
+    if (err) return res.status(400).json({ error: `name ${err}` });
+  }
+  if (description !== undefined) {
+    const err = validateDisplayString(description, { maxLength: 1024 });
+    if (err) return res.status(400).json({ error: `description ${err}` });
+  }
+  if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
+    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
+      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
+    }
+  }
+  if (folder_id !== undefined && folder_id !== null) {
+    if (!Number.isInteger(folder_id) && typeof folder_id !== 'string') {
+      return res.status(400).json({ error: 'folder_id must be an integer or null' });
+    }
+  }
 
   const normalized = normalizeCidr(cidr);
   const db = getDb();
@@ -708,10 +731,41 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
 
 // PUT /api/subnets/:id — update subnet config
 router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name, scan_enabled, cidr } = req.body;
+  const body = req.body || {};
+  const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name, scan_enabled, cidr } = body;
 
-  if (domain_name && !isValidDomain(domain_name)) {
-    return res.status(400).json({ error: 'Invalid domain name format' });
+  // v0.4.15 type guards. gateway_address as a number in v0.4.14 crashed
+  // `ip.split is not a function`; the remaining fields fell into the same
+  // "raw err.message leaked" bucket from the API tester.
+  if (cidr !== undefined && cidr !== null && typeof cidr !== 'string') {
+    return res.status(400).json({ error: 'cidr must be a string' });
+  }
+  if (name !== undefined) {
+    const err = validateDisplayString(name, { maxLength: 255 });
+    if (err) return res.status(400).json({ error: `name ${err}` });
+  }
+  if (description !== undefined) {
+    const err = validateDisplayString(description, { maxLength: 1024 });
+    if (err) return res.status(400).json({ error: `description ${err}` });
+  }
+  if (gateway_address !== undefined && gateway_address !== null && typeof gateway_address !== 'string') {
+    return res.status(400).json({ error: 'gateway_address must be a string' });
+  }
+  if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
+    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
+      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
+    }
+  }
+  if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
+    if (typeof domain_name !== 'string') {
+      return res.status(400).json({ error: 'domain_name must be a string' });
+    }
+    if (!isValidDomain(domain_name)) {
+      return res.status(400).json({ error: 'Invalid domain name format' });
+    }
+  }
+  if (scan_enabled !== undefined && scan_enabled !== null && typeof scan_enabled !== 'boolean') {
+    return res.status(400).json({ error: 'scan_enabled must be boolean' });
   }
   const db = getDb();
 
@@ -1969,20 +2023,45 @@ router.delete('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   res.json({ message: 'Subnet deleted', action });
 }));
 
-// POST /api/subnets/calculate — standalone calculator (unchanged)
+// POST /api/subnets/calculate — standalone calculator.
+// v0.4.15: refuse divides that would return more than MAX_CALCULATE_CHILDREN
+// subnets. In v0.4.14 the endpoint would happily emit 1M+ rows (~60 MB JSON)
+// and block the event loop for 30s. The practical UI cap is much lower; this
+// bound (65k, a /16-into-/32 divide's worth) is generous but finite.
 router.post('/calculate', requirePerm('subnets:read'), asyncHandler((req, res) => {
-  const { cidr, new_prefix } = req.body;
+  const body = req.body || {};
+  const { cidr, new_prefix } = body;
 
-  if (!cidr || new_prefix === undefined) {
-    return res.status(400).json({ error: 'CIDR and new_prefix are required' });
+  if (typeof cidr !== 'string' || !cidr) {
+    return res.status(400).json({ error: 'cidr must be a non-empty string' });
+  }
+  if (!Number.isInteger(new_prefix) || new_prefix < 0 || new_prefix > 32) {
+    return res.status(400).json({ error: 'new_prefix must be an integer 0-32' });
   }
   if (!isValidCidr(cidr)) {
     return res.status(400).json({ error: 'Invalid CIDR notation' });
   }
 
+  const MAX_CALCULATE_CHILDREN = 65536;
+  let parent;
+  try {
+    parent = parseCidr(cidr);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (new_prefix <= parent.prefix) {
+    return res.status(400).json({ error: `new_prefix /${new_prefix} must be larger than /${parent.prefix}` });
+  }
+  const childCount = 1 << (new_prefix - parent.prefix);
+  if (childCount > MAX_CALCULATE_CHILDREN) {
+    return res.status(400).json({
+      error: `Would produce ${childCount} subnets; maximum is ${MAX_CALCULATE_CHILDREN}. Pick a narrower new_prefix or a smaller cidr.`
+    });
+  }
+
   try {
     const results = calculateSubnets(cidr, new_prefix);
-    res.json({ parent: parseCidr(cidr), subnets: results });
+    res.json({ parent, subnets: results });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

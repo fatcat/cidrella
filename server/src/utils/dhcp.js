@@ -10,6 +10,7 @@ import { generateFallbackHostname } from './mac-vendor.js';
 import { queueRegen } from './after-commit.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
 import { isValidIpv4 } from './ip.js';
+import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
 
 /**
  * Resolve a hostname to an IPv4 address. Returns the IP string, or null on failure.
@@ -109,7 +110,11 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
   mergedOptions.delete(1);
   mergedOptions.delete(28);
 
-  // Emit dhcp-option lines, resolving hostnames to IPs where needed
+  // Emit dhcp-option lines, resolving hostnames to IPs where needed.
+  // C3 fix: refuse to emit any option whose value would inject a directive
+  // (newlines, =, or — for non-list types — commas). Skipping silently is
+  // safer than crashing the whole regen; a bad row from a pre-v0.4.15
+  // install won't be honored, but the scope still comes up.
   for (const [code, value] of mergedOptions) {
     const optDef = DHCP_OPTIONS_BY_CODE[code];
     if (!optDef || !value) continue;
@@ -119,6 +124,11 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
       const resolved = parts.map(p => resolveToIp(p)).filter(Boolean);
       if (resolved.length === 0) continue;  // all failed to resolve
       emitValue = resolved.join(',');
+      if (validateDnsmasqConfigValue(emitValue, { allowComma: true }) != null) continue;
+    } else if (optDef.type === 'text-list') {
+      if (validateDnsmasqConfigValue(emitValue, { allowComma: true }) != null) continue;
+    } else {
+      if (validateDnsmasqConfigValue(emitValue) != null) continue;
     }
     lines.push(`dhcp-option=tag:${tag},${code},${emitValue}`);
   }

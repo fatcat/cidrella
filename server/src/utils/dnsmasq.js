@@ -5,6 +5,7 @@ import { execFileSync, execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
 import { DATA_DIR, DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort } from '../config/defaults.js';
+import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DNSMASQ_CONF = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.conf');
@@ -128,23 +129,34 @@ export function regenerateConfDir(db) {
       const fqdn = toFqdn(r.name, zone.name);
       switch (r.type) {
         case 'CNAME':
-          // dnsmasq cname supports TTL as third parameter
+          if (validateDnsmasqConfigValue(r.value) != null) break;
           lines.push(`cname=${fqdn},${r.value}${r.ttl ? ',' + r.ttl : ''}`);
           break;
         case 'MX':
+          if (validateDnsmasqConfigValue(r.value) != null) break;
           lines.push(`mx-host=${fqdn},${r.value},${r.priority || 10}`);
           break;
         case 'TXT':
+          // Belt-and-suspenders: reject any TXT value that would terminate
+          // the quoted span (newlines, control chars). The route validator
+          // already blocks these; a bad row in the DB from a pre-v0.4.15
+          // install is silently skipped rather than emitted.
+          if (validateTxtValue(r.value) != null) break;
           lines.push(`txt-record=${fqdn},"${r.value.replace(/"/g, '\\"')}"`);
           break;
         case 'SRV':
+          if (validateDnsmasqConfigValue(r.value) != null) break;
           lines.push(`srv-host=${fqdn},${r.value},${r.port},${r.priority || 0},${r.weight || 0}`);
           break;
       }
     }
 
-    // PTR records: ptr-record=<octet>.<zone>,<hostname>
+    // PTR records: ptr-record=<octet>.<zone>,<hostname>. Skip any row whose
+    // name or value doesn't pass the sanitizer — they would only emit if
+    // someone bypassed the route validator or edited the DB directly.
     for (const ptr of ptrRecords) {
+      if (!isValidPtrName(ptr.name)) continue;
+      if (validateDnsmasqConfigValue(ptr.value) != null) continue;
       lines.push(`ptr-record=${ptr.name}.${zone.name},${ptr.value}`);
     }
 

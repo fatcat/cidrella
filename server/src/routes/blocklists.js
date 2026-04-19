@@ -4,6 +4,7 @@ import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig } from '../utils/blocklist.js';
 import { loadBlocklist } from '../utils/dns-proxy.js';
+import { validateOutboundUrl } from '../utils/url-guard.js';
 
 const router = Router();
 
@@ -67,20 +68,28 @@ router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
 });
 
 // PUT /api/blocklists/categories/:slug/url — update source URL for a category
-router.put('/categories/:slug/url', requirePerm('dns:write'), (req, res) => {
+router.put('/categories/:slug/url', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
   const { slug } = req.params;
-  const { source_url } = req.body;
+  const { source_url } = req.body || {};
 
   const cat = BLOCKLIST_CATEGORIES.find(c => c.slug === slug);
   if (!cat) return res.status(404).json({ error: 'Unknown category' });
+
+  if (source_url !== undefined && source_url !== null && typeof source_url !== 'string') {
+    return res.status(400).json({ error: 'source_url must be a string or null' });
+  }
 
   ensureCategoryRows(db);
 
   // Empty or null resets to default
   const urlValue = source_url?.trim() || null;
-  if (urlValue && !/^https?:\/\//i.test(urlValue)) {
-    return res.status(400).json({ error: 'Source URL must be an HTTP(S) URL' });
+  if (urlValue) {
+    // v0.4.15: run the full SSRF guard here so a bad URL is rejected at
+    // save-time rather than at refresh-time. Refresh validates again in
+    // case DNS moves later, but storing a bogus URL is itself undesirable.
+    const check = await validateOutboundUrl(urlValue);
+    if (!check.ok) return res.status(400).json({ error: `Source URL refused: ${check.reason}` });
   }
   db.prepare('UPDATE blocklist_categories SET source_url = ? WHERE slug = ?')
     .run(urlValue, slug);

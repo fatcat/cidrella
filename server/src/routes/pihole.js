@@ -8,6 +8,7 @@ import { ipToLong, isClientMac, isValidMac, isValidIpv4, isValidDomain } from '.
 import { syncDnsToIp, syncDhcpReservationToIp, syncPtrForIp } from '../utils/ip-sync.js';
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
+import { validateOutboundUrl } from '../utils/url-guard.js';
 
 const router = Router();
 
@@ -128,11 +129,16 @@ function recordName(hostname, zoneName) {
 
 /**
  * Validate and normalize a Pi-hole base URL.
- * Returns the trimmed URL string, or null if invalid.
+ * v0.4.15: routes through the shared SSRF guard (loopback / RFC1918 /
+ * link-local / metadata blocked). Returns { baseUrl } on success or
+ * { error } on failure.
  */
-function normalizeUrl(url) {
-  if (!url || !/^https?:\/\//i.test(url)) return null;
-  return url.replace(/\/+$/, '');
+async function normalizeUrl(url) {
+  if (typeof url !== 'string' || !url) return { error: 'URL is required' };
+  const trimmed = url.replace(/\/+$/, '');
+  const check = await validateOutboundUrl(trimmed);
+  if (!check.ok) return { error: check.reason };
+  return { baseUrl: trimmed };
 }
 
 
@@ -144,9 +150,10 @@ function normalizeUrl(url) {
  * Body: { url: "http://pihole.local", password?: "optional" }
  */
 router.post('/probe', requirePerm('dns:write'), async (req, res) => {
-  const { url, password } = req.body;
-  const baseUrl = normalizeUrl(url);
-  if (!baseUrl) return res.status(400).json({ error: 'URL must start with http:// or https://' });
+  const { url, password } = req.body || {};
+  const norm = await normalizeUrl(url);
+  if (norm.error) return res.status(400).json({ error: norm.error });
+  const { baseUrl } = norm;
   const authResult = await fetchJson(`${baseUrl}/api/auth`);
 
   if (!authResult.ok) {
@@ -178,9 +185,10 @@ router.post('/probe', requirePerm('dns:write'), async (req, res) => {
  * Body: { url: "http://pihole.local", password?: "optional" }
  */
 router.post('/fetch', requirePerm('dns:write'), async (req, res) => {
-  const { url, password } = req.body;
-  const baseUrl = normalizeUrl(url);
-  if (!baseUrl) return res.status(400).json({ error: 'URL must start with http:// or https://' });
+  const { url, password } = req.body || {};
+  const norm = await normalizeUrl(url);
+  if (norm.error) return res.status(400).json({ error: norm.error });
+  const { baseUrl } = norm;
 
   // Authenticate if password provided
   let sid = null;

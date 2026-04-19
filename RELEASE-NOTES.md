@@ -6,6 +6,53 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.4.15 — 2026-04-19
+
+```yaml
+min_from: ""
+breaking: false
+security: true
+```
+
+**Security release. All running v0.4.14 hosts should upgrade.** This release closes every CRITICAL and HIGH finding from the post-ship pentest of v0.4.14 (three security agents + code audit), plus every MEDIUM/LOW that had a cheap fix. No schema change.
+
+The v0.4.14 release is also flagged on GitHub as deprecated in favor of this release; upgraders coming from v0.4.13 or earlier can hop straight to v0.4.15.
+
+### Fixed — Critical
+- **Unauthenticated process-crash DoS on `/api/auth/login`.** In v0.4.14, sending `{"username":"admin","password":{}}` (or any non-string shape for either field) triggered an unhandled promise rejection inside `bcrypt.compare`, which terminated the Node process. Systemd's 5 s restart loop meant one request every ~6 s kept the service 100 % offline. Fixed with strict `typeof` guards at the top of the login and change-password handlers, try/catch around every async code path, and a `process.on('unhandledRejection')` backstop so a future unprotected async handler can't kill the process either.
+- **Authenticated dnsmasq config injection via DNS PTR record `name`.** The PTR name was written unescaped into `conf.d/zone-<id>.conf`, so a payload containing `\naddress=/evil.com/6.6.6.6\n` in the name field turned into an arbitrary dnsmasq directive after the next reload — hijacking DNS for any domain served by the proxy. Fixed with a strict PTR-name regex (`^[0-9]+(\.[0-9]+)*$`) at the route validator and belt-and-suspenders at the config writer.
+- **Authenticated dnsmasq config injection via DHCP scope option values.** Symmetric problem on the DHCP side: `PUT /api/dhcp/scopes/:id` option values were interpolated raw into `dhcp-scope-N.conf`, letting any `dhcp:write` user push an attacker DNS server to every DHCP client via a newline-injected `dhcp-option=tag:scopeN,6,6.6.6.6`. Fixed with a shared `validateDnsmasqConfigValue()` sanitizer applied in both the route validator and the config writer. TXT record values get the same treatment (v0.4.14 also let a TXT value containing a newline break the zone file and kill DNS+DHCP via the dnsmasq restart loop).
+
+### Fixed — High
+- **Unauthenticated setup takeover on pre-first-login hosts.** `POST /api/setup` executed `DELETE FROM users; INSERT …` whenever the `installation_complete` setting wasn't the literal string `"true"`. On testerella that flag was `"false"` even though a seeded admin already existed, so any unauthenticated caller could swap in their own admin. `{"skip":true}` also silently flipped the flag unauthenticated. Fixed by marking the installation complete inside `ensureDefaults()` the moment any user row exists, re-checking the invariant inside the setup transaction (double-winner protection), and returning 409 Conflict when any user is present.
+- **DNS + DHCP service DoS via TXT-record newline.** Already covered under dnsmasq injection above.
+- **Authenticated DoS via `/api/subnets/calculate`.** Dividing `10.0.0.0/10` into `/30` returned ~60 MB of JSON in one response and hung the host for ~30 s. Now refuses any request that would produce more than 65 536 children with a 400 naming the limit. The child-count check runs before `calculateSubnets()`, so memory never spikes.
+- **Type-confusion 5xx leaks on every write endpoint.** Sending `{"mac_address":123,...}` returned `{"error":"mac_address.toLowerCase is not a function"}`; `{"vlan_id":true}` returned a raw SQLite bind error. The global error handler echoed `err.message` verbatim for every 5xx. Fixed two ways in parallel: (1) `typeof` guards at the top of every write handler (subnets POST/PUT, DHCP scopes + reservations, DNS zones + records, blocklists source_url, settings) reject with clean 400s before the crash-bait string methods run, and (2) the global 5xx handler now returns a fixed `"Internal server error"` — full `err.message` still lands in the server log. 4xx errors still surface their validation messages, because those are what the UI shows to the user. JSON-parse errors are collapsed to `"Invalid JSON body"`.
+- **`PUT /api/settings/:key` accepted any JSON shape.** Writing `{"value":{"a":1}}` for `dns_listen_port` persisted `"[object Object]"`, which would fail `parseInt()` at the next restart and bind to port 0. Fixed with a per-key schema (type + range/enum/regex for every editable setting). Invalid values return 400 with a diagnostic message. Bulk and single-key setters share the schema.
+- **Authenticated write rate-limiter added.** v0.4.14 had only a login rate-limiter, so a compromised token could fill the DB at unlimited rate. A per-user/IP write limiter now caps POST/PUT/PATCH/DELETE across all `/api/*` routes at 300/min (5 req/s sustained) — plenty for human use, too slow to brick the server. Reads are intentionally unlimited.
+- **SSRF in Pi-hole probe/fetch and blocklist source URLs.** Both paths let the server connect to any attacker-supplied URL without hostname-resolution + IP-range checks, enabling internal port scans and (for blocklist) response-body exfiltration. A shared `validateOutboundUrl()` helper now resolves the hostname, rejects loopback/link-local/RFC1918/CGNAT/AWS-metadata/TEST-NET ranges, and the blocklist fetch runs with `redirect: 'error'` so a redirect can't bypass the pre-check.
+- **JSON 404 for unknown `/api/*` paths.** v0.4.14 fell through to the HTML SPA index, breaking any API client parsing JSON. A catch-all `/api` 404 handler now returns `{"error":"Not found"}`.
+
+### Fixed — Medium / Low
+- **`/api/auth/change-password` now rate-limited.** 10/15 min/IP with `skipSuccessfulRequests:true` — prevents brute-forcing the current password from a stolen token.
+- **`/api/auth/login` limiter no longer locks out valid users.** `skipSuccessfulRequests:true` plus a raised burst of 20/15 min — a legitimate login after a mistyped attempt doesn't count against the lockout. Per-username lockouts were considered and rejected; they let an attacker lock the admin out of their own account.
+- **Bcrypt dummy-hash on unknown username.** Login now always runs a bcrypt compare (against a randomized dummy hash) even when the username is unknown, so response-time enumeration (valid ~80 ms vs missing ~10 ms in v0.4.14) no longer works.
+- **Unknown-user login attempts are audited.** Previously only wrong-password got an audit row; unknown-user attempts left no trace. Now logged as `login_failed` with `reason:unknown_user` and the truncated attempted username.
+- **CNAME self-loop accepted.** v0.4.14 let you create a CNAME whose value resolved back to itself (dnsmasq SERVFAILs but it's still a foot-gun). Now rejected at validation.
+- **Cross-forward-zone PTR overwrite.** Creating an A record whose IP already had a PTR pointing at a different forward zone silently rewrote the PTR. v0.4.15 refuses the write with a 409 and a `ptr_conflict` payload; callers can pass `force_ptr:true` to opt in explicitly.
+- **Display-string validator on subnet name/description.** Reject `<` `>` and control characters to keep stored data benign even if a future UI surface ever uses `v-html`. No v-html exists today, but the pentest flagged the latent risk.
+- **POST `/api/auth/logout`.** Bumps `users.updated_at` for the caller's user, which invalidates the caller's JWT via the existing iat-vs-updated_at check in the auth middleware. Not a true blacklist, but equivalent for a single-admin tool and doesn't grow unbounded.
+- **MX/SRV/TTL integer range validation.** `{"priority":"high"}` or `{"ttl":"forever"}` now return 400 at the route — v0.4.14 persisted them unchecked and let them reach the config writer.
+- **`PUT /api/dhcp/scopes/:id` / POST scope** now validates `domain_name` / `domain_search` / lease_time as strings with domain+escape checks.
+- **`ipToLong()` type guard.** Defense-in-depth — throws `"expected string, got <type>"` if anything non-string slips through a route.
+
+### Upgrade notes
+- **Clean upgrade from any prior v0.4.x** — no schema change, no config change. Login rate limiter state resets on restart (as always), so an in-progress lockout from the v0.4.14 pentest window clears immediately.
+- **v0.4.14 release page updated** to link to this security release. Users still on v0.4.13 or earlier can skip v0.4.14 entirely.
+- **No breaking API changes.** The only observable behavior change for well-behaved clients is that malformed bodies now return 400 with a clearer message instead of the v0.4.14 500-with-stack-trace-ish response. API clients that relied on parsing the raw error text must migrate to looking at the HTTP status.
+
+---
+
 ## v0.4.14 — 2026-04-19
 
 ```yaml

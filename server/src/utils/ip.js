@@ -6,6 +6,14 @@
 import os from 'os';
 
 export function ipToLong(ip) {
+  // Defense-in-depth: reject non-strings with a clean message rather than
+  // the opaque `ip.split is not a function` crash v0.4.14 exposed through
+  // the global error handler. Route handlers guard their own inputs, but
+  // this helper is called from many code paths (scheduler, lease watcher,
+  // DB-sourced rows) and has to be safe against bad data too.
+  if (typeof ip !== 'string') {
+    throw new Error(`Invalid IP address: expected string, got ${typeof ip}`);
+  }
   const parts = ip.split('.').map(Number);
   if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) {
     throw new Error(`Invalid IP address: ${ip}`);
@@ -346,4 +354,19 @@ export function subtractCidr(parentCidr, childCidr) {
 const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 export function isValidDomain(name) {
   return typeof name === 'string' && name.length > 0 && name.length <= 253 && DOMAIN_RE.test(name);
+}
+
+/**
+ * Validator for free-text display fields (subnet name, description,
+ * folder name, etc.). Refuses `<` `>` and control characters to keep
+ * stored data benign even if a future UI surface uses v-html.
+ * Returns null on success or an error string.
+ */
+export function validateDisplayString(value, { maxLength = 255, allowEmpty = true } = {}) {
+  if (value == null || value === '') return allowEmpty ? null : 'must not be empty';
+  if (typeof value !== 'string') return 'must be a string';
+  if (value.length > maxLength) return `must be ${maxLength} characters or fewer`;
+  if (/[<>]/.test(value)) return 'must not contain < or >';
+  if (/[\x00-\x08\x0b-\x1f\x7f]/.test(value)) return 'must not contain control characters';
+  return null;
 }

@@ -9,15 +9,25 @@ const router = Router();
 
 // Validation helpers
 import { isValidIpv4, isValidDomain } from '../utils/ip.js';
+import { isValidPtrName, validateTxtValue } from '../utils/dnsmasq-escape.js';
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
 function isValidHostname(name) {
-  return name === '@' || HOSTNAME_RE.test(name);
+  return name === '@' || (typeof name === 'string' && HOSTNAME_RE.test(name) && name.length <= 253);
 }
 
+function isIntInRange(v, lo, hi) {
+  return typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+}
 
-function validateRecord(type, { name, value, priority, weight, port }) {
+// Build the FQDN that a record name points at inside its zone. '@' means the
+// zone apex. Used for CNAME self-loop detection.
+function fqdnFor(name, zoneName) {
+  return name === '@' ? zoneName : `${name}.${zoneName}`;
+}
+
+function validateRecord(type, { name, value, priority, weight, port }, zoneName) {
   switch (type) {
     case 'A':
       if (!isValidHostname(name)) return 'Invalid hostname';
@@ -27,27 +37,40 @@ function validateRecord(type, { name, value, priority, weight, port }) {
       if (name === '@') return 'CNAME cannot be at zone apex (@)';
       if (!isValidHostname(name)) return 'Invalid hostname';
       if (!isValidDomain(value)) return 'Invalid target domain';
+      // Refuse a CNAME whose value resolves back to itself. dnsmasq handles
+      // the loop by returning SERVFAIL, but refusing at validation time
+      // catches obvious typos and makes the error message diagnostic.
+      if (zoneName && value.toLowerCase() === fqdnFor(name, zoneName).toLowerCase()) {
+        return 'CNAME target cannot reference itself';
+      }
       break;
     case 'MX':
       if (!isValidHostname(name)) return 'Invalid hostname';
       if (!isValidDomain(value)) return 'Invalid mail server domain';
-      if (priority === undefined || priority === null) return 'Priority is required for MX records';
-      if (priority < 0 || priority > 65535) return 'Priority must be 0-65535';
+      if (!isIntInRange(priority, 0, 65535)) return 'Priority must be an integer 0-65535';
       break;
     case 'TXT':
       if (!isValidHostname(name)) return 'Invalid hostname';
-      if (!value || value.length === 0) return 'TXT value is required';
+      // TXT values end up inside a quoted dnsmasq directive; a newline would
+      // terminate the quoted span and let an attacker append directives.
+      // validateTxtValue enforces string + no CR/LF/control chars.
+      {
+        const err = validateTxtValue(value);
+        if (err) return `TXT value ${err}`;
+      }
       break;
     case 'SRV':
       if (!SRV_NAME_RE.test(name)) return 'SRV name must be _service._protocol format';
       if (!isValidDomain(value)) return 'Invalid target domain';
-      if (port === undefined || port === null) return 'Port is required for SRV records';
-      if (port < 0 || port > 65535) return 'Port must be 0-65535';
-      if (priority === undefined || priority === null) return 'Priority is required for SRV records';
-      if (weight === undefined || weight === null) return 'Weight is required for SRV records';
+      if (!isIntInRange(port, 0, 65535)) return 'Port must be an integer 0-65535';
+      if (!isIntInRange(priority, 0, 65535)) return 'Priority must be an integer 0-65535';
+      if (!isIntInRange(weight, 0, 65535)) return 'Weight must be an integer 0-65535';
       break;
     case 'PTR':
-      if (!name) return 'PTR name is required (e.g., reversed IP octets)';
+      // PTR name is unreversed octets (e.g. "5" or "5.12"). Locking it to
+      // digits-and-dots means the generated ptr-record=<name>.<zone>,<value>
+      // line is safe by construction — no newline / "=" / "," injection.
+      if (!isValidPtrName(name)) return 'PTR name must be numeric-octets-and-dots (e.g., "5" or "5.12")';
       if (!isValidDomain(value)) return 'Invalid target hostname';
       break;
     default:
@@ -79,28 +102,44 @@ function findReverseZone(db, ip) {
 }
 
 /**
- * Create or update a PTR record for an A record's IP in the matching reverse zone.
+ * Create or update a PTR record for an A record's IP in the matching reverse
+ * zone. Returns { conflict } if an existing PTR already points at a different
+ * FQDN from another forward zone — callers can choose to honor or reject.
  */
-function syncPtrForARecord(db, recordName, ip, forwardZoneName) {
+function syncPtrForARecord(db, recordName, ip, forwardZoneName, { force = false } = {}) {
   const match = findReverseZone(db, ip);
-  if (!match) return; // No matching reverse zone
+  if (!match) return { updated: false }; // No matching reverse zone
 
   const { zone, ptrName } = match;
   const fqdn = recordName === '@' ? forwardZoneName : `${recordName}.${forwardZoneName}`;
 
-  // Check if PTR already exists for this octet
   const existing = db.prepare('SELECT * FROM dns_records WHERE zone_id = ? AND type = ? AND name = ?').get(zone.id, 'PTR', ptrName);
 
   if (existing) {
-    // Update existing PTR with the hostname
+    // M9 fix: if an existing PTR points at an FQDN in a DIFFERENT forward
+    // zone, don't silently overwrite it. In today's single-admin model the
+    // last-write-wins behavior is a foot-gun; the moment zone-level RBAC
+    // is added it becomes an IDOR. `force:true` lets callers opt in (the
+    // UI can surface a confirmation).
+    if (!force && existing.value && existing.value !== ip) {
+      const bareIp = /^\d+\.\d+\.\d+\.\d+$/.test(existing.value);
+      if (!bareIp && existing.value.toLowerCase() !== fqdn.toLowerCase()) {
+        // Different forward zone? Only block if the existing target isn't
+        // already part of THIS forward zone (catches the cross-zone case
+        // while still allowing name changes within the same zone).
+        if (!existing.value.toLowerCase().endsWith('.' + forwardZoneName.toLowerCase()) &&
+            existing.value.toLowerCase() !== forwardZoneName.toLowerCase()) {
+          return { conflict: { existing: existing.value, proposed: fqdn, reverseZone: zone.name } };
+        }
+      }
+    }
     db.prepare("UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?").run(fqdn, existing.id);
   } else {
-    // Create new PTR
     db.prepare('INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, ?, ?, 1)').run(zone.id, ptrName, 'PTR', fqdn);
   }
 
-  // Increment SOA serial
   db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?").run(zone.id);
+  return { updated: true };
 }
 
 /**
@@ -158,11 +197,12 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
 // can share a forward zone via matching `subnets.domain_name`, and any
 // reverse zone is queried by name derived from an IP at PTR time.
 router.post('/zones', requirePerm('dns:write'), (req, res) => {
+  const body = req.body || {};
   const { name, type, description,
-          soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl } = req.body;
+          soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl } = body;
 
-  if (!name) return res.status(400).json({ error: 'Zone name is required' });
-  if (!type || !['forward', 'reverse'].includes(type)) {
+  if (typeof name !== 'string' || !name) return res.status(400).json({ error: 'Zone name is required (string)' });
+  if (typeof type !== 'string' || !['forward', 'reverse'].includes(type)) {
     return res.status(400).json({ error: 'Zone type must be forward or reverse' });
   }
   if (!isValidDomain(name) && !name.endsWith('.in-addr.arpa')) {
@@ -292,12 +332,18 @@ router.get('/zones/:zoneId/records', requirePerm('dns:read'), (req, res) => {
 
 // POST /api/dns/zones/:zoneId/records
 router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
-  const { name, type, value, priority, weight, port, ttl, enabled } = req.body;
+  const body = req.body || {};
+  const { name, type, value, priority, weight, port, ttl, enabled, force_ptr } = body;
   const db = getDb();
 
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.zoneId);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
+  // String-type guards up front — otherwise `name.endsWith` / `value.split`
+  // calls later crash with `.foo is not a function` 500s (H6 in v0.4.14).
+  if (typeof name !== 'string' || typeof type !== 'string' || typeof value !== 'string') {
+    return res.status(400).json({ error: 'name, type, and value must be strings' });
+  }
   if (!name || !type || !value) {
     return res.status(400).json({ error: 'Name, type, and value are required' });
   }
@@ -312,11 +358,13 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: 'Reverse zones only support PTR records' });
   }
 
-  if (ttl !== undefined && ttl !== null && (ttl < 0 || ttl > 2147483647)) {
-    return res.status(400).json({ error: 'TTL must be between 0 and 2147483647' });
+  if (ttl !== undefined && ttl !== null) {
+    if (!isIntInRange(ttl, 0, 2147483647)) {
+      return res.status(400).json({ error: 'TTL must be an integer 0-2147483647' });
+    }
   }
 
-  const validationError = validateRecord(type, { name, value, priority, weight, port });
+  const validationError = validateRecord(type, { name, value, priority, weight, port }, zone.name);
   if (validationError) return res.status(400).json({ error: validationError });
 
   // Check for duplicate A records
@@ -352,9 +400,20 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ?').get(result.lastInsertRowid);
   audit(req.user.id, 'record_created', 'dns_record', record.id, { zone: zone.name, name, type, value });
 
-  // Auto-create/update PTR record when A record is added to a forward zone
+  // Auto-create/update PTR record when A record is added to a forward zone.
+  // If the PTR already points at a different forward zone's FQDN, refuse
+  // unless the caller passed force_ptr:true (M9 — cross-zone PTR hijack).
   if (type === 'A' && zone.type === 'forward') {
-    syncPtrForARecord(db, name, value, zone.name);
+    const ptrResult = syncPtrForARecord(db, name, value, zone.name, { force: !!force_ptr });
+    if (ptrResult?.conflict) {
+      // Undo the A record insert so the state is consistent with the 409.
+      db.prepare('DELETE FROM dns_records WHERE id = ?').run(result.lastInsertRowid);
+      return res.status(409).json({
+        error: 'PTR for this IP already points at a different forward zone',
+        ptr_conflict: ptrResult.conflict,
+        hint: 'Pass force_ptr:true to overwrite'
+      });
+    }
     syncDnsToIp(db, name, value, zone.name);
   }
 
@@ -364,7 +423,8 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
 
 // PUT /api/dns/zones/:zoneId/records/:id
 router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) => {
-  const { name, type, value, priority, weight, port, ttl, enabled } = req.body;
+  const body = req.body || {};
+  const { name, type, value, priority, weight, port, ttl, enabled } = body;
   const db = getDb();
 
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.zoneId);
@@ -377,6 +437,14 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     return res.status(403).json({ error: 'DHCP-managed records cannot be edited manually' });
   }
 
+  // Type guards for string fields: if the client sent one explicitly but as
+  // a non-string, refuse up front rather than crashing the writer.
+  for (const [k, v] of [['name', name], ['type', type], ['value', value]]) {
+    if (v !== undefined && typeof v !== 'string') {
+      return res.status(400).json({ error: `${k} must be a string` });
+    }
+  }
+
   const newType = type || record.type;
   const newName = name ?? record.name;
   const newValue = value ?? record.value;
@@ -385,14 +453,16 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const newPort = port !== undefined ? port : record.port;
   const newTtl = ttl !== undefined ? ttl : record.ttl;
 
-  if (newTtl !== null && (newTtl < 0 || newTtl > 2147483647)) {
-    return res.status(400).json({ error: 'TTL must be between 0 and 2147483647' });
+  if (newTtl !== null && newTtl !== undefined) {
+    if (!isIntInRange(newTtl, 0, 2147483647)) {
+      return res.status(400).json({ error: 'TTL must be an integer 0-2147483647' });
+    }
   }
 
   const validationError = validateRecord(newType, {
     name: newName, value: newValue,
     priority: newPriority, weight: newWeight, port: newPort
-  });
+  }, zone.name);
   if (validationError) return res.status(400).json({ error: validationError });
 
   db.prepare(`

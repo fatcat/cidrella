@@ -4,9 +4,24 @@ import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import helmet from 'helmet';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 import morgan from 'morgan';
 import { fileURLToPath } from 'url';
+
+// v0.4.15: backstop for any async handler that throws without a try/catch.
+// The primary fix for the v0.4.14 bcrypt crash is in-handler type guards +
+// try/catch; this is insurance so a *different* unprotected async handler
+// can't kill the process if one slips through.
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+  // Do not exit — the server is expected to stay up. If the error indicates
+  // corrupted state (e.g. DB closed), the operator still has cidrella-update
+  // and cidrella-rollback as escape hatches.
+});
 
 import { initDb, getDb, getSetting } from './db/init.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
@@ -202,6 +217,35 @@ async function main() {
   // Hooks fire on res.on('finish') so regen never blocks the HTTP response.
   app.use(afterCommitMiddleware);
 
+  // v0.4.15: authenticated write rate-limiter. v0.4.14 had only the login
+  // limiter, so a compromised/bought token could fill the DB, thrash dnsmasq
+  // regen, or spam audit_log at unlimited rates. This caps POST/PUT/PATCH/
+  // DELETE per user (fallback to IP for anon/unauthed preflight). Reads are
+  // intentionally unlimited — the calculate endpoint has its own cap, and
+  // the rest are cheap.
+  const writeLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 300,  // 5/sec sustained per user — plenty for a human, too slow to brick the server
+    message: { error: 'Too many write requests. Slow down or retry later.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req, res) => {
+      if (req.user?.id) return `u:${req.user.id}`;
+      // express-rate-limit v8+ insists on ipKeyGenerator for IPv6 safety.
+      return ipKeyGenerator(req, res);
+    },
+    skip: (req) => {
+      if (!req.path.startsWith('/api/')) return true;
+      if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return true;
+      // The login/change-password limiters cover their own paths at a
+      // stricter cadence; don't double-charge.
+      if (req.path.startsWith('/api/auth/login')) return true;
+      if (req.path.startsWith('/api/auth/change-password')) return true;
+      return false;
+    }
+  });
+  app.use(writeLimiter);
+
   // Setup routes (pre-auth — accessible before installation is complete)
   app.use('/api/setup', setupRoutes);
 
@@ -255,10 +299,17 @@ async function main() {
   app.use('/api/version', versionRoutes);
   app.use('/api/subnets/:subnetId/ranges', rangeRoutes);
 
+  // JSON 404 for unknown /api paths. v0.4.14 fell through to the HTML SPA
+  // fallback, breaking any API client parsing JSON. Mount AFTER all route
+  // registrations so real handlers still win, but BEFORE the SPA fallback.
+  app.use('/api', (req, res) => {
+    res.status(404).json({ error: 'Not found' });
+  });
+
   // Block page for filtered domains
   app.get('/blocked', (req, res) => {
     const rawDomain = req.query.domain || req.hostname;
-    const domain = rawDomain.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const domain = String(rawDomain).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     res.status(200).send(`<!DOCTYPE html>
 <html><head><title>Blocked</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}
@@ -270,10 +321,19 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
 </div></body></html>`);
   });
 
-  // Global API error handler
+  // Global API error handler.
+  // v0.4.15: generic response body for 5xx so raw err.message — which in
+  // v0.4.14 leaked SQLite bind errors, `.toLowerCase is not a function`, and
+  // JSON parser text — no longer reaches the client. Full detail stays in
+  // the server log. Explicit 4xx errors (thrown with err.status set) are
+  // passed through because routes use that path to surface validation
+  // messages to clients.
   app.use('/api', (err, req, res, next) => {
     const msg = err.message || 'Internal server error';
-    // Detect missing table errors from SQLite
+
+    // Detect missing table errors from SQLite — this one IS useful to the
+    // operator (tells them to restart so migrations apply) and doesn't leak
+    // anything attacker-controlled.
     if (msg.includes('no such table')) {
       const match = msg.match(/no such table:\s*(\S+)/);
       const table = match ? match[1] : 'unknown';
@@ -282,8 +342,22 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
         error: `Missing database table "${table}". Please restart the server to apply pending migrations.`
       });
     }
-    console.error('API error:', msg);
-    res.status(err.status || 500).json({ error: msg });
+
+    const status = err.status || 500;
+    if (status >= 500) {
+      console.error(`API 5xx [${req.method} ${req.originalUrl}]:`, msg);
+      return res.status(status).json({ error: 'Internal server error' });
+    }
+    // Body-parse errors from express.json() leak parser detail ("Expected
+    // ',' or '}' after ..."). Collapse those to a generic message.
+    if (err.type === 'entity.parse.failed' || (err instanceof SyntaxError && 'body' in err)) {
+      return res.status(400).json({ error: 'Invalid JSON body' });
+    }
+    if (err.type === 'entity.too.large') {
+      return res.status(413).json({ error: 'Request body too large' });
+    }
+    // 4xx errors — route code already wrote a clean message; trust it.
+    res.status(status).json({ error: msg });
   });
 
   // Serve Vue frontend (built files)

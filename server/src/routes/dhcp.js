@@ -3,12 +3,30 @@ import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { isIpInSubnet, ipToLong, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain } from '../utils/ip.js';
 import { syncLeases } from '../utils/dhcp.js';
-import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP } from '../utils/dhcp-options.js';
+import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { syncDhcpReservationToIp, clearDhcpReservationFromIp, syncPtrForIp } from '../utils/ip-sync.js';
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
+import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 
 const router = Router();
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
+
+// v0.4.15: validate each scope option value before it reaches the scope-
+// options table. The config writer (utils/dhcp.js) already drops bad rows
+// so a malformed row is non-exploitable, but catching it at write-time
+// surfaces a clear error and keeps the DB clean.
+function validateScopeOption(opt) {
+  if (!opt || typeof opt !== 'object') return 'option must be an object';
+  const code = Number(opt.code);
+  if (!Number.isInteger(code) || code < 1 || code > 254) return 'code must be an integer 1-254';
+  const value = opt.value;
+  if (value == null || value === '') return null; // caller skips empty values
+  if (typeof value !== 'string') return 'value must be a string';
+  const optDef = DHCP_OPTIONS_BY_CODE[code];
+  const type = optDef?.type || 'text';
+  const allowComma = type === 'ip-list' || type === 'text-list';
+  return validateDnsmasqConfigValue(value, { allowComma });
+}
 
 
 
@@ -74,11 +92,34 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
 
 // POST /api/dhcp/scopes
 router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
-  const { range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, description } = req.body;
+  const body = req.body || {};
+  const { range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, description } = body;
   const db = getDb();
 
   if (!range_id || !subnet_id) {
     return res.status(400).json({ error: 'range_id and subnet_id are required' });
+  }
+
+  // v0.4.15 type guards + injection guards. domain_name / domain_search land
+  // in dnsmasq config as dhcp-option=15 / 119 so newlines would inject
+  // directives; route them through the shared sanitizer.
+  if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
+    if (!isValidDomain(domain_name)) return res.status(400).json({ error: 'Invalid domain_name' });
+    if (validateDnsmasqConfigValue(domain_name) != null) {
+      return res.status(400).json({ error: 'domain_name contains disallowed characters' });
+    }
+  }
+  if (domain_search !== undefined && domain_search !== null && domain_search !== '') {
+    if (typeof domain_search !== 'string') return res.status(400).json({ error: 'domain_search must be a string' });
+    if (validateDnsmasqConfigValue(domain_search, { allowComma: true }) != null) {
+      return res.status(400).json({ error: 'domain_search contains disallowed characters' });
+    }
+  }
+  if (description !== undefined && description !== null && typeof description !== 'string') {
+    return res.status(400).json({ error: 'description must be a string' });
+  }
+  if (lease_time !== undefined && lease_time !== null && typeof lease_time !== 'string') {
+    return res.status(400).json({ error: 'lease_time must be a string' });
   }
 
   // Validate range exists and is a DHCP Scope type
@@ -122,7 +163,19 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     if (ntpErr) return res.status(400).json({ error: ntpErr });
   }
 
-  const { options } = req.body;
+  const { options } = body;
+
+  // Validate every scope option up front so a single bad entry doesn't leave
+  // a half-populated scope behind.
+  if (Array.isArray(options)) {
+    for (const opt of options) {
+      if (opt == null || opt.value == null || opt.value === '') continue;
+      const err = validateScopeOption(opt);
+      if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
+    }
+  } else if (options !== undefined) {
+    return res.status(400).json({ error: 'options must be an array' });
+  }
 
   const txn = db.transaction(() => {
     const result = db.prepare(`
@@ -177,11 +230,32 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
 // PUT /api/dhcp/scopes/:id
 router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
-  const { lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, enabled, description, start_ip, end_ip } = req.body;
+  const body = req.body || {};
+  const { lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, enabled, description, start_ip, end_ip } = body;
   const db = getDb();
 
   const scope = db.prepare('SELECT * FROM dhcp_scopes WHERE id = ?').get(req.params.id);
   if (!scope) return res.status(404).json({ error: 'Scope not found' });
+
+  // v0.4.15 type + injection guards, symmetric to POST.
+  if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
+    if (!isValidDomain(domain_name)) return res.status(400).json({ error: 'Invalid domain_name' });
+    if (validateDnsmasqConfigValue(domain_name) != null) {
+      return res.status(400).json({ error: 'domain_name contains disallowed characters' });
+    }
+  }
+  if (domain_search !== undefined && domain_search !== null && domain_search !== '') {
+    if (typeof domain_search !== 'string') return res.status(400).json({ error: 'domain_search must be a string' });
+    if (validateDnsmasqConfigValue(domain_search, { allowComma: true }) != null) {
+      return res.status(400).json({ error: 'domain_search contains disallowed characters' });
+    }
+  }
+  if (description !== undefined && description !== null && typeof description !== 'string') {
+    return res.status(400).json({ error: 'description must be a string' });
+  }
+  if (lease_time !== undefined && lease_time !== null && typeof lease_time !== 'string') {
+    return res.status(400).json({ error: 'lease_time must be a string' });
+  }
 
   if (lease_time && !LEASE_TIME_RE.test(lease_time)) {
     return res.status(400).json({ error: 'Invalid lease time format' });
@@ -233,7 +307,17 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     }
   }
 
-  const { options } = req.body;
+  const { options } = body;
+
+  if (Array.isArray(options)) {
+    for (const opt of options) {
+      if (opt == null || opt.value == null || opt.value === '') continue;
+      const err = validateScopeOption(opt);
+      if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
+    }
+  } else if (options !== undefined) {
+    return res.status(400).json({ error: 'options must be an array' });
+  }
 
   const txn = db.transaction(() => {
     db.prepare(`
@@ -354,11 +438,25 @@ export function reservationIpRejectionReason(db, subnet, ipAddress) {
 
 // POST /api/dhcp/reservations
 router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
-  const { subnet_id, mac_address, ip_address, hostname, description } = req.body;
+  const body = req.body || {};
+  const { subnet_id, mac_address, ip_address, hostname, description } = body;
   const db = getDb();
 
   if (!subnet_id || !mac_address || !ip_address) {
     return res.status(400).json({ error: 'subnet_id, mac_address, and ip_address are required' });
+  }
+
+  // Type guards BEFORE any string method is called — prevents the
+  // `mac_address.toLowerCase is not a function` 500 that v0.4.14's API
+  // fuzzer logged.
+  if (typeof mac_address !== 'string' || typeof ip_address !== 'string') {
+    return res.status(400).json({ error: 'mac_address and ip_address must be strings' });
+  }
+  if (hostname !== undefined && hostname !== null && typeof hostname !== 'string') {
+    return res.status(400).json({ error: 'hostname must be a string' });
+  }
+  if (description !== undefined && description !== null && typeof description !== 'string') {
+    return res.status(400).json({ error: 'description must be a string' });
   }
 
   const mac = mac_address.toLowerCase();
@@ -435,13 +533,28 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
 
 // PUT /api/dhcp/reservations/:id
 router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
-  const { mac_address, ip_address, hostname, description, enabled } = req.body;
+  const body = req.body || {};
+  const { mac_address, ip_address, hostname, description, enabled } = body;
   const db = getDb();
 
   const reservation = db.prepare('SELECT * FROM dhcp_reservations WHERE id = ?').get(req.params.id);
   if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(reservation.subnet_id);
+
+  // Type guards on every optional string field.
+  if (mac_address !== undefined && typeof mac_address !== 'string') {
+    return res.status(400).json({ error: 'mac_address must be a string' });
+  }
+  if (ip_address !== undefined && typeof ip_address !== 'string') {
+    return res.status(400).json({ error: 'ip_address must be a string' });
+  }
+  if (hostname !== undefined && hostname !== null && typeof hostname !== 'string') {
+    return res.status(400).json({ error: 'hostname must be a string' });
+  }
+  if (description !== undefined && description !== null && typeof description !== 'string') {
+    return res.status(400).json({ error: 'description must be a string' });
+  }
 
   const newMac = mac_address ? mac_address.toLowerCase() : reservation.mac_address;
   const newIp = ip_address ?? reservation.ip_address;

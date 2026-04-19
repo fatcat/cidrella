@@ -6,16 +6,40 @@ import { getDb, audit } from '../db/init.js';
 
 const router = Router();
 
+// v0.4.15: `skipSuccessfulRequests: true` so a legitimate login after a few
+// mistakes doesn't count against the lockout, closing the "1 bad IP DoSes
+// the admin" vector the auth-security-tester flagged in v0.4.14. Burst raised
+// from 10 → 20 for the same reason. Per-username counters were considered
+// and rejected — they let an attacker lock the admin out by spraying bad
+// passwords at the username, which is a worse foot-gun than the per-IP bound.
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // 10 attempts per window
+  windowMs: 15 * 60 * 1000,
+  max: 20,
   message: { error: 'Too many login attempts. Please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
-  // No explicit keyGenerator — let express-rate-limit use its built-in one,
-  // which now handles IPv6 subnet collapse correctly (v8+ would throw
-  // ERR_ERL_KEY_GEN_IPV6 on a naive `req => req.ip` custom generator).
+  skipSuccessfulRequests: true,
 });
+
+// New in v0.4.15: `/change-password` was unlimited in v0.4.14, letting a
+// stolen-token holder brute-force the current password and pivot to a
+// persistent takeover.
+const changePasswordLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many password change attempts. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+});
+
+// Dummy bcrypt hash used when the username is unknown so the response-time
+// shape matches the valid-user path (defeats ~80ms-vs-~10ms user enumeration).
+// Cost 10 matches the live password hash cost.
+const DUMMY_HASH = bcrypt.hashSync(
+  '__cidrella_dummy__' + Math.random().toString(36),
+  10
+);
 
 function getJwtSecret() {
   const db = getDb();
@@ -39,113 +63,150 @@ function generateToken(user) {
 
 // POST /api/auth/login
 router.post('/login', loginLimiter, async (req, res) => {
-  const { username, password } = req.body;
+  try {
+    const body = req.body || {};
+    const { username, password } = body;
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required' });
-  }
-
-  const db = getDb();
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-
-  if (!user) {
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-
-  const valid = await bcrypt.compare(password, user.password_hash);
-  if (!valid) {
-    audit(user.id, 'login_failed', 'user', user.id, { reason: 'invalid_password' });
-    return res.status(401).json({ error: 'Invalid credentials' });
-  }
-
-  const token = generateToken(user);
-  audit(user.id, 'login', 'user', user.id, null);
-
-  let preferences = {};
-  try { preferences = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
-
-  // If users.password_reset_by is non-null, the current password was set by
-  // a CLI reset (via cidrella-reset-password). Surface the actor label in
-  // the login response so the client can render a warning banner before the
-  // mandatory password change. The column is cleared when the password is
-  // successfully changed via /api/auth/change-password. If the DB is pre-v0.4.8
-  // the column doesn't exist and the field is just absent — clients ignore it.
-  const payload = {
-    token,
-    user: {
-      id: user.id,
-      username: user.username,
-      role: user.role,
-      must_change_password: !!user.must_change_password,
-      preferences
+    // Strict type check BEFORE any bcrypt or SQL call. Non-string values
+    // crashed the Node process in v0.4.14 via the unhandled bcrypt type
+    // error — this guard is the primary fix for the unauthenticated DoS.
+    if (typeof username !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: 'Username and password must be strings' });
     }
-  };
-  if (user.password_reset_by) {
-    payload.user.password_reset_by = user.password_reset_by;
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+    if (username.length > 255 || password.length > 1024) {
+      return res.status(400).json({ error: 'Username or password too long' });
+    }
+
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+
+    // Always run bcrypt, even on unknown users, so response timing doesn't
+    // leak whether the username exists.
+    const hash = user ? user.password_hash : DUMMY_HASH;
+    const valid = await bcrypt.compare(password, hash);
+
+    if (!user || !valid) {
+      if (user) {
+        audit(user.id, 'login_failed', 'user', user.id, { reason: 'invalid_password' });
+      } else {
+        // Audit unknown-user attempts so an operator watching the log can see
+        // enumeration probes. Truncate the submitted username to avoid giant
+        // entries from adversarial input.
+        audit(null, 'login_failed', 'user', null, {
+          reason: 'unknown_user',
+          attempted_username: username.slice(0, 64)
+        });
+      }
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = generateToken(user);
+    audit(user.id, 'login', 'user', user.id, null);
+
+    let preferences = {};
+    try { preferences = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
+
+    const payload = {
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        must_change_password: !!user.must_change_password,
+        preferences
+      }
+    };
+    if (user.password_reset_by) {
+      payload.user.password_reset_by = user.password_reset_by;
+    }
+    res.json(payload);
+  } catch (err) {
+    console.error('Login error:', err?.message || err);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  res.json(payload);
 });
 
 // POST /api/auth/change-password
-router.post('/change-password', async (req, res) => {
-  const { current_password, new_password } = req.body;
+router.post('/change-password', changePasswordLimiter, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const { current_password, new_password } = body;
 
-  if (!current_password || !new_password) {
-    return res.status(400).json({ error: 'Current password and new password are required' });
-  }
-
-  if (new_password.length < 8) {
-    return res.status(400).json({ error: 'New password must be at least 8 characters' });
-  }
-
-  const db = getDb();
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  const valid = await bcrypt.compare(current_password, user.password_hash);
-  if (!valid) {
-    return res.status(401).json({ error: 'Current password is incorrect' });
-  }
-
-  const hash = await bcrypt.hash(new_password, 10);
-  // Clear password_reset_by at the same time so the warning banner from a
-  // CLI reset disappears after the legit owner successfully changes it.
-  // Migration 044 is unconditional in v0.4.8+, so the column always exists
-  // on a running server — no need for runtime introspection.
-  db.prepare(
-    "UPDATE users SET password_hash = ?, must_change_password = 0, password_reset_by = NULL, updated_at = datetime('now') WHERE id = ?"
-  ).run(hash, user.id);
-
-  audit(user.id, 'password_changed', 'user', user.id, null);
-
-  // Issue new token without must_change_password flag
-  const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
-  const token = generateToken(updatedUser);
-
-  res.json({
-    message: 'Password changed successfully',
-    token,
-    user: {
-      id: updatedUser.id,
-      username: updatedUser.username,
-      role: updatedUser.role,
-      must_change_password: false
+    if (typeof current_password !== 'string' || typeof new_password !== 'string') {
+      return res.status(400).json({ error: 'Current and new passwords must be strings' });
     }
-  });
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+
+    if (new_password.length < 8) {
+      return res.status(400).json({ error: 'New password must be at least 8 characters' });
+    }
+    if (new_password.length > 1024) {
+      return res.status(400).json({ error: 'New password too long' });
+    }
+
+    const db = getDb();
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const valid = await bcrypt.compare(current_password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+
+    const hash = await bcrypt.hash(new_password, 10);
+    db.prepare(
+      "UPDATE users SET password_hash = ?, must_change_password = 0, password_reset_by = NULL, updated_at = datetime('now') WHERE id = ?"
+    ).run(hash, user.id);
+
+    audit(user.id, 'password_changed', 'user', user.id, null);
+
+    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+    const token = generateToken(updatedUser);
+
+    res.json({
+      message: 'Password changed successfully',
+      token,
+      user: {
+        id: updatedUser.id,
+        username: updatedUser.username,
+        role: updatedUser.role,
+        must_change_password: false
+      }
+    });
+  } catch (err) {
+    console.error('Change-password error:', err?.message || err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/auth/logout — invalidate the caller's token by bumping
+// users.updated_at; the auth middleware refuses tokens with iat < updated_at.
+// A proper blacklist would need persistent state; bumping updated_at is
+// equivalent for a single-admin tool and doesn't grow unbounded.
+router.post('/logout', (req, res) => {
+  try {
+    const db = getDb();
+    db.prepare("UPDATE users SET updated_at = datetime('now') WHERE id = ?")
+      .run(req.user.id);
+    audit(req.user.id, 'logout', 'user', req.user.id, null);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Logout error:', err?.message || err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // GET /api/auth/me
 router.get('/me', (req, res) => {
   const db = getDb();
-  // password_reset_by is included so the auth store's fetchUser() path (hit
-  // on page reload + token refresh) preserves the CLI-reset indicator across
-  // navigation. Without this, reloading the page between login and the
-  // Change Password screen would replace user.value with a payload that
-  // doesn't carry password_reset_by, and the warning banner would disappear.
-  // Migration 044 is unconditional in v0.4.8+ so we select it directly.
   const user = db.prepare(
     'SELECT id, username, role, must_change_password, preferences, password_reset_by, created_at FROM users WHERE id = ?'
   ).get(req.user.id);
@@ -177,11 +238,10 @@ router.put('/preferences', (req, res) => {
   const VALID_TIME_FORMATS = ['locale', 'ampm', '24h'];
 
   const updates = req.body;
-  if (!updates || typeof updates !== 'object') {
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) {
     return res.status(400).json({ error: 'Request body must be an object' });
   }
 
-  // Validate keys
   for (const key of Object.keys(updates)) {
     if (!ALLOWED_KEYS.includes(key)) {
       return res.status(400).json({ error: `Unknown preference: ${key}` });
