@@ -150,10 +150,14 @@ describe('POST /api/subnets/merge — data preservation', () => {
     const merge = await request(app).post('/api/subnets/merge').send({ subnet_ids: [c0.id, c1.id] });
     expect(merge.status).toBe(200);
 
+    // Post-decouple: the zone still exists, unmodified. Any subnet may
+    // reference it via domain_name — the merged parent continues to point
+    // at it.
     const zonesAfter = await request(app).get('/api/dns/zones');
     const survived = zonesAfter.body.find(z => z.id === fwd.id);
     expect(survived).toBeDefined();
-    expect(survived.subnet_id).toBe(parent.id);
+    const mergedParent = await request(app).get(`/api/subnets/${parent.id}`);
+    expect(mergedParent.body.domain_name).toBe('merge-dns.test');
   });
 });
 

@@ -727,36 +727,19 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     if (!folder) return res.status(400).json({ error: 'Folder not found' });
   }
 
-  // Forward-zone conflict check: if user is switching domain_name to one that
-  // already names a DIFFERENT forward zone, refuse. We do this BEFORE any
-  // UPDATE so a 409 leaves the row untouched. A detached zone (subnet_id
-  // NULL) with the same name is adopted instead of blocked — mirrors the
-  // configure endpoint's adoption behavior so detach+re-attach works as the
-  // user would expect.
-  let domainRename = null;  // { kind, oldZoneId?, newName? } | null
-  if (domain_name !== undefined && domain_name !== subnet.domain_name) {
-    const oldZone = subnet.domain_name
-      ? db.prepare("SELECT id FROM dns_zones WHERE name = ? AND type = 'forward' AND subnet_id = ?")
-          .get(subnet.domain_name, subnet.id)
-      : null;
-
-    if (domain_name) {
-      const clash = db.prepare("SELECT id, subnet_id FROM dns_zones WHERE name = ? AND type = 'forward'")
-        .get(domain_name);
-      if (clash && clash.subnet_id != null && clash.subnet_id !== subnet.id && (!oldZone || clash.id !== oldZone.id)) {
-        return res.status(409).json({
-          error: `A forward zone named "${domain_name}" already belongs to another subnet. Pick a different domain name or detach the existing zone first.`
-        });
+  // Post-decouple: `domain_name` is just a pointer to a forward zone by
+  // name. Multiple subnets may share the same value. If the zone doesn't
+  // exist yet, auto-create it on commit. Clearing `domain_name` does NOT
+  // delete the zone — other subnets may still reference it; the user must
+  // delete via the DNS UI if they want the zone gone.
+  const domainChange = (domain_name !== undefined && domain_name !== subnet.domain_name)
+    ? {
+        autoCreate: !!(domain_name && !db.prepare(
+          "SELECT id FROM dns_zones WHERE name = ? AND type = 'forward'"
+        ).get(domain_name)),
+        newName: domain_name
       }
-      if (clash && clash.subnet_id == null && (!oldZone || clash.id !== oldZone.id)) {
-        domainRename = { kind: 'adopt', adoptZoneId: clash.id, oldZoneId: oldZone?.id };
-      } else {
-        domainRename = { kind: oldZone ? 'rename' : 'create', oldZoneId: oldZone?.id, newName: domain_name };
-      }
-    } else if (oldZone) {
-      domainRename = { kind: 'detach', oldZoneId: oldZone.id };
-    }
-  }
+    : null;
 
   // Resolve scan_enabled: true→1, false→0, null→NULL, undefined→keep existing
   const scanEn = scan_enabled === undefined ? subnet.scan_enabled
@@ -833,31 +816,13 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
       IpAddress.setStatus(db, subnet.id, gateway_address, 'locked', 'Default gateway');
     }
 
-    // Apply the domain-rename decision computed above. RENAME preserves all
-    // records in the zone (dns_records.zone_id stays valid); DELETE would have
-    // cascaded them away.
-    if (domainRename) {
-      if (domainRename.kind === 'rename') {
-        db.prepare("UPDATE dns_zones SET name = ?, soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?")
-          .run(domainRename.newName, domainRename.oldZoneId);
-      } else if (domainRename.kind === 'create') {
-        db.prepare("INSERT INTO dns_zones (name, type, subnet_id, description, enabled) VALUES (?, 'forward', ?, ?, 1)")
-          .run(domainRename.newName, subnet.id, `Forward zone for ${subnet.cidr}`);
-      } else if (domainRename.kind === 'adopt') {
-        // Detached same-name zone exists — re-attach to this subnet. If the
-        // subnet had an oldZone (renaming TO the adopted zone's name), detach
-        // the old one first so we don't end up with two zones owned by this
-        // subnet.
-        if (domainRename.oldZoneId) {
-          db.prepare("UPDATE dns_zones SET subnet_id = NULL, updated_at = datetime('now') WHERE id = ?")
-            .run(domainRename.oldZoneId);
-        }
-        db.prepare("UPDATE dns_zones SET subnet_id = ?, soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?")
-          .run(subnet.id, domainRename.adoptZoneId);
-      } else if (domainRename.kind === 'detach') {
-        db.prepare("UPDATE dns_zones SET subnet_id = NULL, updated_at = datetime('now') WHERE id = ?")
-          .run(domainRename.oldZoneId);
-      }
+    // Auto-create a forward zone if the user set a new domain_name that
+    // doesn't resolve to an existing zone. Zones themselves are shared;
+    // clearing domain_name leaves any existing zone in place for other
+    // subnets that may reference it.
+    if (domainChange && domainChange.autoCreate) {
+      db.prepare("INSERT INTO dns_zones (name, type, description, enabled) VALUES (?, 'forward', ?, 1)")
+        .run(domainChange.newName, `Forward zone for ${domainChange.newName}`);
     }
   });
   txn();
@@ -865,7 +830,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   if (gatewayChanged) {
     req.afterCommit('regenerate_dhcp');
   }
-  if (domainRename) {
+  if (domainChange) {
     req.afterCommit('regenerate_dns');
   }
 
@@ -1012,15 +977,18 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     });
   }
 
-  // DNS A records in any forward zone owned by this subnet: if the record
-  // value lands on a boundary IP, the record stays queryable post-divide but
-  // points at an unusable target. The migrateParentZonesToChildren helper
-  // reassigns the zone but can't rewrite the values.
+  // DNS A records in the forward zone named by this subnet's domain_name:
+  // if the record value lands on a boundary IP, the record stays queryable
+  // post-divide but points at an unusable target. Post-decouple, the link
+  // from subnet → zone is via `subnets.domain_name = dns_zones.name`, so
+  // we join by name. A subnet with no domain_name simply has no records
+  // to flag here.
   const aRecords = db.prepare(`
     SELECT r.name AS name, r.value AS value, z.name AS zone_name
     FROM dns_records r
     JOIN dns_zones z ON r.zone_id = z.id
-    WHERE z.subnet_id = ? AND z.type = 'forward' AND r.type = 'A' AND r.enabled = 1
+    JOIN subnets s ON s.domain_name = z.name
+    WHERE s.id = ? AND z.type = 'forward' AND r.type = 'A' AND r.enabled = 1
   `).all(parentId);
   for (const rec of aRecords) {
     const cls = classify(rec.value, ipToLong(rec.value));
@@ -1176,26 +1144,12 @@ function cleanupSubnetData(db, subnetId) {
   db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnetId);
 }
 
-// Helper: delete DNS zones owned by a subnet (records cascade via FK).
-// Before deletion, if any sibling subnet (same parent) shares this subnet's
-// forward-zone domain_name, REASSIGN the forward zone to that sibling
-// instead of deleting it. Divide copies `domain_name` to every child so all
-// siblings share a zone, but only one owns it (schema 1:1 limitation).
-// Without this reassignment, deleting the owning child wipes the forward
-// zone for every sibling that was still using it via domain_name.
-function cleanupSubnetZones(db, subnetId) {
-  const subnet = db.prepare('SELECT parent_id, domain_name FROM subnets WHERE id = ?').get(subnetId);
-  if (subnet?.parent_id && subnet.domain_name) {
-    const heir = db.prepare(
-      `SELECT id FROM subnets WHERE parent_id = ? AND id != ? AND domain_name = ? ORDER BY network_address LIMIT 1`
-    ).get(subnet.parent_id, subnetId, subnet.domain_name);
-    if (heir) {
-      db.prepare(
-        "UPDATE dns_zones SET subnet_id = ?, updated_at = datetime('now') WHERE subnet_id = ? AND type = 'forward' AND name = ?"
-      ).run(heir.id, subnetId, subnet.domain_name);
-    }
-  }
-  db.prepare('DELETE FROM dns_zones WHERE subnet_id = ?').run(subnetId);
+// Historically this deleted dns_zones attached to a subnet and reassigned
+// to siblings that shared domain_name. Post-decouple, zones are subnet-
+// agnostic — nothing to do here. Kept as a named no-op so callers stay
+// readable and we can add per-subnet DNS cleanup later if needed.
+function cleanupSubnetZones(_db, _subnetId) {
+  // intentionally empty
 }
 
 // During divide: move per-IP rows (DHCP reservations, ip_addresses) from the
@@ -1225,16 +1179,20 @@ function transferPerIpArtifactsToChildren(db, parentId) {
   // ip_addresses: parent's row has the live state (hostname/mac/status/scan).
   // If a row already exists under the child for the same IP (auto-populated
   // after the child was inserted), prefer the parent's and drop the dup.
+  // We also rewrite `ip_events.subnet_id` for each moved row so history
+  // queries that filter by subnet_id return the new child's events.
   const ips = db.prepare('SELECT id, ip_address FROM ip_addresses WHERE subnet_id = ?').all(parentId);
   const findDup = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?');
   const delIp = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
   const updIp = db.prepare('UPDATE ip_addresses SET subnet_id = ? WHERE id = ?');
+  const updEvents = db.prepare('UPDATE ip_events SET subnet_id = ? WHERE ip_address_id = ?');
   for (const ip of ips) {
     const c = findChildForIp(ipToLong(ip.ip_address));
     if (!c) continue;
     const dup = findDup.get(c.id, ip.ip_address);
     if (dup && dup.id !== ip.id) delIp.run(dup.id);
     updIp.run(c.id, ip.id);
+    updEvents.run(c.id, ip.id);
   }
 }
 
@@ -1277,82 +1235,11 @@ function cleanupLossyArtifactsAfterDivide(db, lossy) {
   return { ips: [...ipSet], removed };
 }
 
-// Helper: during divide, transfer the parent's DNS zones (forward + reverse)
-// to the appropriate child instead of deleting them. Without this, a parent's
-// forward zone ("the-mcnultys.org") and every reverse /24 zone it owned get
-// wiped the moment it's divided, taking thousands of PTR records with them.
-//
-// Reverse zones are assigned to whichever child's CIDR fully contains the
-// /24 (or /16/etc) the zone represents. Forward zones default to the first
-// child (lowest network address) — good enough; users can reassign later.
-function migrateParentZonesToChildren(db, parentId) {
-  const zones = db.prepare('SELECT id, name, type FROM dns_zones WHERE subnet_id = ?').all(parentId);
-  if (zones.length === 0) return;
-
-  const children = db.prepare(
-    'SELECT id, cidr, network_address, gateway_address, domain_name FROM subnets WHERE parent_id = ? ORDER BY network_address'
-  ).all(parentId);
-  if (children.length === 0) return;
-
-  const childRanges = children.map(c => {
-    const p = parseCidr(c.cidr);
-    return {
-      id: c.id, cidr: c.cidr,
-      gateway_address: c.gateway_address, domain_name: c.domain_name,
-      networkLong: p.networkLong, broadcastLong: p.broadcastLong
-    };
-  });
-
-  const upd = db.prepare('UPDATE dns_zones SET subnet_id = ? WHERE id = ?');
-
-  for (const zone of zones) {
-    if (zone.type === 'forward') {
-      // Prefer the child whose domain_name matches the zone (the "inheriting"
-      // child also carried the parent's domain_name over during divide). If
-      // multiple children share the domain, that's the post-divide expected
-      // state; pick the one that inherited the parent's gateway first, else
-      // fall back to lowest-address. Without this targeting, the zone lands
-      // on an arbitrary child — so subsequent `PUT /api/subnets/:id` renames
-      // on the inheriting child fail because a different child owns the zone.
-      const byName = childRanges.filter(c => c.domain_name === zone.name);
-      const pool = byName.length > 0 ? byName : childRanges;
-      const owner = pool.find(c => c.gateway_address) || pool[0];
-      upd.run(owner.id, zone.id);
-      continue;
-    }
-    // Reverse: zone name is like "c.b.a.in-addr.arpa" (/24), "b.a.in-addr.arpa"
-    // (/16), or "a.in-addr.arpa" (/8). Compute the IP range it represents and
-    // find the child whose CIDR contains it.
-    const bare = zone.name.replace(/\.in-addr\.arpa\.?$/, '');
-    const octets = bare.split('.').map(Number).reverse(); // e.g. [a, b, c]
-    if (octets.some(o => !Number.isFinite(o) || o < 0 || o > 255)) continue;
-    let zoneNetLong, zoneBcastLong;
-    if (octets.length === 3) {
-      // /24
-      zoneNetLong = ((octets[0] << 24) | (octets[1] << 16) | (octets[2] << 8)) >>> 0;
-      zoneBcastLong = zoneNetLong | 0xFF;
-    } else if (octets.length === 2) {
-      // /16
-      zoneNetLong = ((octets[0] << 24) | (octets[1] << 16)) >>> 0;
-      zoneBcastLong = zoneNetLong | 0xFFFF;
-    } else if (octets.length === 1) {
-      // /8
-      zoneNetLong = (octets[0] << 24) >>> 0;
-      zoneBcastLong = zoneNetLong | 0xFFFFFF;
-    } else {
-      continue;
-    }
-
-    // Find the smallest child whose CIDR fully contains the zone's IP range.
-    let winner = childRanges.find(c =>
-      zoneNetLong >= c.networkLong && zoneBcastLong <= c.broadcastLong
-    );
-    // Fallback: if no child fully contains it (parent was subdivided smaller
-    // than the reverse-zone scope), keep it with the first child so records
-    // aren't lost. A human can clean it up.
-    if (!winner) winner = childRanges[0];
-    upd.run(winner.id, zone.id);
-  }
+// Post-decouple no-op. Zones are subnet-agnostic: they survive parent divide
+// automatically because no `subnet_id` reference to fix up. Retained as an
+// empty function so divide call sites stay readable and bisectable.
+function migrateParentZonesToChildren(_db, _parentId) {
+  // intentionally empty — see migration 045
 }
 
 // Inverse of transferPerIpArtifactsToChildren: during MERGE, move reservations
@@ -1391,29 +1278,27 @@ function transferPerIpArtifactsToParent(db, childIds, mergedId) {
 
   // For ip_addresses, the child's row has the live state. If the merged
   // subnet already has a row for the same IP (rare — merged was just
-  // created), dedup by preferring the child's row.
+  // created), dedup by preferring the child's row. Also rewrite
+  // `ip_events.subnet_id` so history queries filtered by subnet return
+  // events for the merged target, not the deleted children.
   const ips = db.prepare(
     `SELECT id, ip_address FROM ip_addresses WHERE subnet_id IN (${placeholders})`
   ).all(...childIds);
   const findDup = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?');
   const delIp = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
   const updIp = db.prepare('UPDATE ip_addresses SET subnet_id = ? WHERE id = ?');
+  const updEvents = db.prepare('UPDATE ip_events SET subnet_id = ? WHERE ip_address_id = ?');
   for (const ip of ips) {
     const dup = findDup.get(mergedId, ip.ip_address);
     if (dup && dup.id !== ip.id) delIp.run(dup.id);
     updIp.run(mergedId, ip.id);
+    updEvents.run(mergedId, ip.id);
   }
 }
 
-// Inverse of migrateParentZonesToChildren: during MERGE, move DNS zones
-// (forward + reverse) attached to any of the children to the merged subnet.
-// Records stay attached to their zone via zone_id, so no cascading loss.
-function migrateChildZonesToParent(db, childIds, mergedId) {
-  if (!Array.isArray(childIds) || childIds.length === 0) return;
-  const placeholders = childIds.map(() => '?').join(',');
-  db.prepare(
-    `UPDATE dns_zones SET subnet_id = ? WHERE subnet_id IN (${placeholders})`
-  ).run(mergedId, ...childIds);
+// Post-decouple no-op. See migrateParentZonesToChildren.
+function migrateChildZonesToParent(_db, _childIds, _mergedId) {
+  // intentionally empty — see migration 045
 }
 
 // During MERGE, move the configSource child's DHCP scope (+ its backing
@@ -1445,28 +1330,28 @@ function migrateChildScopesToParent(db, configSourceId, mergedId) {
   ).run(mergedId, configSourceId);
 }
 
-// Detect forward-zone domain conflicts among the subnets about to be merged.
-// If two children have forward zones with different names, merging them would
-// either collide (two rows with the same subnet_id but different names — fine
-// in the schema but the user certainly didn't intend it) or force us to pick
-// one and drop the other. Returns { conflict: bool, zones: [{subnet_id, name}] }.
+// Detect forward-zone domain conflicts among the subnets being merged.
+// Post-decouple we look at each subnet's `domain_name` (the pointer to its
+// forward zone) rather than at `dns_zones.subnet_id`. Two merging subnets
+// with different domain_names is still a real conflict — the merged subnet
+// can only hold one domain_name — so we surface it for user resolution.
 function detectForwardZoneConflict(db, childIds) {
   if (!Array.isArray(childIds) || childIds.length === 0) return { conflict: false, zones: [] };
   const placeholders = childIds.map(() => '?').join(',');
-  const zones = db.prepare(
-    `SELECT subnet_id, name FROM dns_zones WHERE type = 'forward' AND subnet_id IN (${placeholders})`
+  const rows = db.prepare(
+    `SELECT id AS subnet_id, domain_name AS name FROM subnets WHERE id IN (${placeholders}) AND domain_name IS NOT NULL`
   ).all(...childIds);
-  const names = new Set(zones.map(z => z.name));
-  return { conflict: names.size > 1, zones };
+  const names = new Set(rows.map(r => r.name));
+  return { conflict: names.size > 1, zones: rows };
 }
 
-// Helper: wipe all derivative state (zones, leases, scopes + options) for
-// every descendant of `parentId`. Called during subtree deletion. The
-// recursive CTE builds the descendant id set once; we reuse it for each
-// sub-table.
+// Helper: wipe subtree-scoped DHCP state (scopes + options + leases) for
+// every descendant of `parentId`. Zones are subnet-agnostic so they aren't
+// touched here — the user deletes zones explicitly via the DNS UI when
+// they're no longer wanted. The function is still named "cleanupSubtreeZones"
+// to avoid churning a lot of call sites; rename if it causes confusion.
 function cleanupSubtreeZones(db, parentId) {
   const tree = 'WITH RECURSIVE tree AS (SELECT id FROM subnets WHERE parent_id = ? UNION ALL SELECT s.id FROM subnets s JOIN tree t ON s.parent_id = t.id)';
-  db.prepare(`${tree} DELETE FROM dns_zones WHERE subnet_id IN (SELECT id FROM tree)`).run(parentId);
   db.prepare(`${tree} DELETE FROM dhcp_scope_options WHERE scope_id IN (SELECT id FROM dhcp_scopes WHERE subnet_id IN (SELECT id FROM tree))`).run(parentId);
   db.prepare(`${tree} DELETE FROM dhcp_scopes WHERE subnet_id IN (SELECT id FROM tree)`).run(parentId);
   db.prepare(`${tree} DELETE FROM dhcp_leases WHERE subnet_id IN (SELECT id FROM tree)`).run(parentId);
@@ -1826,22 +1711,9 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     if (!folder) return res.status(400).json({ error: 'Folder not found' });
   }
 
-  // Forward-zone conflict: if domain_name names an EXISTING zone owned by a
-  // different subnet, refuse. If it exists but is detached (subnet_id NULL),
-  // we'll adopt it inside the txn. This mirrors the PUT /:id rename logic.
-  let adoptForwardZoneId = null;
-  if (domain_name) {
-    const clash = db.prepare("SELECT id, subnet_id FROM dns_zones WHERE name = ? AND type = 'forward'")
-      .get(domain_name);
-    if (clash && clash.subnet_id !== null && clash.subnet_id !== subnet.id) {
-      return res.status(409).json({
-        error: `A forward zone named "${domain_name}" already belongs to another subnet. Pick a different domain name or detach the existing zone first.`
-      });
-    }
-    if (clash && clash.subnet_id === null) {
-      adoptForwardZoneId = clash.id;
-    }
-  }
+  // Post-decouple: no forward-zone ownership conflict possible. A subnet's
+  // domain_name is just a pointer; any number of subnets may share a zone.
+  // We auto-create the zone inside the txn if it doesn't exist yet.
 
   const txn = db.transaction(() => {
     db.prepare(`
@@ -1880,8 +1752,8 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
         let zoneId;
         if (!existingZone) {
           const zoneResult = db.prepare(`
-            INSERT INTO dns_zones (name, type, subnet_id, description) VALUES (?, 'reverse', ?, ?)
-          `).run(reverseName, subnet.id, `Reverse zone for ${subnet.cidr}`);
+            INSERT INTO dns_zones (name, type, description) VALUES (?, 'reverse', ?)
+          `).run(reverseName, `Reverse zone for ${subnet.cidr}`);
           zoneId = zoneResult.lastInsertRowid;
         } else {
           zoneId = existingZone.id;
@@ -1931,22 +1803,18 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
       }
     }
 
-    // Forward DNS zone: adopt a detached same-name zone if one exists,
-    // otherwise create. The conflict case (zone owned by a different subnet)
-    // was rejected upfront before the transaction opened.
+    // Forward DNS zone: create it if `domain_name` names a zone that
+    // doesn't exist yet. Otherwise reuse the existing one — zones are
+    // subnet-agnostic, any number of subnets may point at the same zone
+    // via `domain_name`.
     if (domain_name) {
-      if (adoptForwardZoneId) {
-        db.prepare("UPDATE dns_zones SET subnet_id = ?, updated_at = datetime('now') WHERE id = ?")
-          .run(subnet.id, adoptForwardZoneId);
-      } else {
-        const existingOwn = db.prepare(
-          "SELECT id FROM dns_zones WHERE name = ? AND type = 'forward' AND subnet_id = ?"
-        ).get(domain_name, subnet.id);
-        if (!existingOwn) {
-          db.prepare(
-            "INSERT INTO dns_zones (name, type, subnet_id, description, enabled) VALUES (?, 'forward', ?, ?, 1)"
-          ).run(domain_name, subnet.id, `Forward zone for ${subnet.cidr}`);
-        }
+      const existingFwd = db.prepare(
+        "SELECT id FROM dns_zones WHERE name = ? AND type = 'forward'"
+      ).get(domain_name);
+      if (!existingFwd) {
+        db.prepare(
+          "INSERT INTO dns_zones (name, type, description, enabled) VALUES (?, 'forward', ?, 1)"
+        ).run(domain_name, `Forward zone for ${domain_name}`);
       }
     }
 

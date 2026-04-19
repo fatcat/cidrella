@@ -85,9 +85,14 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
 /**
  * Derive the reverse-zone name + record name for an IPv4 in a covering
  * reverse zone stored in dns_zones. Looks up the matching /24 (or larger)
- * reverse zone by subnet_id. Returns { zoneId, recordName } or null.
+ * reverse zone by NAME only — zones are subnet-agnostic post-decouple, so
+ * any subnet's reservation writes into whichever reverse zone happens to
+ * cover the IP, regardless of who "owns" the zone.
+ *
+ * The `subnetId` argument is retained in the signature for call-site
+ * compatibility but deliberately unused.
  */
-function findPtrLocation(db, subnetId, ip) {
+function findPtrLocation(db, _subnetId, ip) {
   const octets = ip.split('.').map(Number);
   if (octets.length !== 4) return null;
   const candidates = [
@@ -98,8 +103,8 @@ function findPtrLocation(db, subnetId, ip) {
   ];
   for (const zoneName of candidates) {
     const zone = db.prepare(
-      "SELECT id, name FROM dns_zones WHERE subnet_id = ? AND type = 'reverse' AND name = ?"
-    ).get(subnetId, zoneName);
+      "SELECT id, name FROM dns_zones WHERE type = 'reverse' AND name = ?"
+    ).get(zoneName);
     if (!zone) continue;
     const zoneParts = zoneName.replace('.in-addr.arpa', '').split('.');
     let recordName;

@@ -130,11 +130,13 @@ describe('POST /api/subnets/:id/divide — data preservation', () => {
     const divRes = await divide(parent.id, { new_prefix: 24, force: true });
     expect(divRes.status).toBe(200);
 
-    // Zone still exists, reassigned to one of the children, records preserved.
+    // Post-decouple: zones are subnet-agnostic. The zone and its records
+    // survive the divide unchanged; nothing to "reassign" because no FK
+    // back to any subnet exists. The parent subnet's domain_name pointer
+    // is unchanged too (children inherit it via parent.domain_name copy).
     const zonesAfter = await request(app).get('/api/dns/zones');
     const stillThere = zonesAfter.body.find(z => z.id === fwd.id);
     expect(stillThere).toBeDefined();
-    expect(stillThere.subnet_id).not.toBe(parent.id); // migrated off parent
 
     const records = await request(app).get(`/api/dns/zones/${fwd.id}/records`);
     expect(records.body.find(r => r.name === 'survivor' && r.value === '10.11.0.50')).toBeDefined();

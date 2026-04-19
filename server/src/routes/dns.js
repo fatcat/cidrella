@@ -154,9 +154,11 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
   res.json({ ...zone, records });
 });
 
-// POST /api/dns/zones
+// POST /api/dns/zones — zones are subnet-agnostic. Any number of subnets
+// can share a forward zone via matching `subnets.domain_name`, and any
+// reverse zone is queried by name derived from an IP at PTR time.
 router.post('/zones', requirePerm('dns:write'), (req, res) => {
-  const { name, type, subnet_id, description,
+  const { name, type, description,
           soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl } = req.body;
 
   if (!name) return res.status(400).json({ error: 'Zone name is required' });
@@ -172,63 +174,18 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
   const existing = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(name);
   if (existing) return res.status(409).json({ error: 'Zone already exists' });
 
-  let ownedSubnet = null;
-  if (subnet_id) {
-    const subnet = db.prepare('SELECT id, domain_name FROM subnets WHERE id = ?').get(subnet_id);
-    if (!subnet) return res.status(400).json({ error: 'Referenced subnet not found' });
-    ownedSubnet = subnet;
-
-    // Forward-zone ownership guard: a subnet can own at most one forward
-    // zone (schema 1:1). Back-door creation via this endpoint would defeat
-    // the 409 checks the subnet routes enforce.
-    if (type === 'forward') {
-      const existingFwd = db.prepare(
-        "SELECT id, name FROM dns_zones WHERE subnet_id = ? AND type = 'forward'"
-      ).get(subnet_id);
-      if (existingFwd) {
-        return res.status(409).json({
-          error: `Subnet already owns forward zone "${existingFwd.name}". Delete or detach it first.`
-        });
-      }
-
-      // If the subnet already has a domain_name that differs from the new
-      // zone name, the user has a real conflict — reject rather than
-      // silently overwrite. (NULL is fine; we'll sync it in.)
-      if (subnet.domain_name && subnet.domain_name !== name) {
-        return res.status(409).json({
-          error: `Subnet's domain_name is "${subnet.domain_name}", which doesn't match new zone name "${name}". Clear subnet.domain_name first or pick a matching zone name.`
-        });
-      }
-    }
-  }
-
-  // Load SOA defaults from settings
   const soaDefaults = getSetting('dns_soa_defaults');
 
-  // Wrap the zone INSERT + the subnet domain_name mirror in a transaction
-  // so a partial failure doesn't leave dns_zones.subnet_id set while
-  // subnets.domain_name stays NULL (the exact split-brain R3 #7 tried to
-  // close from the DELETE side).
-  const ins = db.transaction(() => {
-    const result = db.prepare(`
-      INSERT INTO dns_zones (name, type, subnet_id, description,
-        soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(name, type, subnet_id || null, description || null,
-      soa_primary_ns || soaDefaults.soa_primary_ns, soa_admin_email || soaDefaults.soa_admin_email,
-      soa_refresh ?? soaDefaults.soa_refresh, soa_retry ?? soaDefaults.soa_retry,
-      soa_expire ?? soaDefaults.soa_expire, soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl);
+  const result = db.prepare(`
+    INSERT INTO dns_zones (name, type, description,
+      soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, type, description || null,
+    soa_primary_ns || soaDefaults.soa_primary_ns, soa_admin_email || soaDefaults.soa_admin_email,
+    soa_refresh ?? soaDefaults.soa_refresh, soa_retry ?? soaDefaults.soa_retry,
+    soa_expire ?? soaDefaults.soa_expire, soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl);
 
-    if (type === 'forward' && ownedSubnet && !ownedSubnet.domain_name) {
-      db.prepare(
-        "UPDATE subnets SET domain_name = ?, updated_at = datetime('now') WHERE id = ?"
-      ).run(name, ownedSubnet.id);
-    }
-    return result.lastInsertRowid;
-  });
-  const zoneId = ins();
-
-  const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(zoneId);
+  const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(result.lastInsertRowid);
   audit(req.user.id, 'zone_created', 'dns_zone', zone.id, { name, type });
 
   req.afterCommit('regenerate_dns');
@@ -250,13 +207,11 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
     if (dup) return res.status(409).json({ error: 'Zone name already taken' });
   }
 
-  // Auto-increment SOA serial when zone is updated
   const newSerial = (zone.soa_serial || 0) + 1;
 
-  // Wrap the zone UPDATE and the subnets.domain_name mirror in a single txn
-  // so a rename either applies everywhere or nowhere. Without the mirror,
-  // subnets.domain_name keeps pointing at the OLD zone name — which breaks
-  // DHCP option 15/119 emission and DHCP-sourced A-record generation.
+  // On rename, update every subnet whose `domain_name` references the old
+  // zone name — zones are now subnet-agnostic, so any number of subnets
+  // may point at this zone. Wrap in a txn so rename + sync are atomic.
   const upd = db.transaction(() => {
     db.prepare(`
       UPDATE dns_zones SET name = ?, description = ?, enabled = ?,
@@ -278,10 +233,10 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
       zone.id
     );
 
-    if (renaming && zone.type === 'forward' && zone.subnet_id != null) {
+    if (renaming && zone.type === 'forward') {
       db.prepare(
-        "UPDATE subnets SET domain_name = ?, updated_at = datetime('now') WHERE id = ? AND domain_name = ?"
-      ).run(name, zone.subnet_id, zone.name);
+        "UPDATE subnets SET domain_name = ?, updated_at = datetime('now') WHERE domain_name = ?"
+      ).run(name, zone.name);
     }
   });
   upd();
@@ -300,14 +255,12 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const del = db.transaction(() => {
-    // If this is the forward zone backing an allocated subnet's domain_name,
-    // clear the subnet side too — otherwise subnet.domain_name stays pointing
-    // at a zone that no longer exists, and subsequent configure/rename flows
-    // see orphaned state.
-    if (zone.type === 'forward' && zone.subnet_id) {
+    // Clear every subnet that was pointing at this forward zone — multiple
+    // subnets may reference it via `domain_name` post-decouple.
+    if (zone.type === 'forward') {
       db.prepare(
-        "UPDATE subnets SET domain_name = NULL, updated_at = datetime('now') WHERE id = ? AND domain_name = ?"
-      ).run(zone.subnet_id, zone.name);
+        "UPDATE subnets SET domain_name = NULL, updated_at = datetime('now') WHERE domain_name = ?"
+      ).run(zone.name);
     }
     db.prepare('DELETE FROM dns_zones WHERE id = ?').run(zone.id);
   });

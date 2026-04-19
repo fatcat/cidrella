@@ -82,100 +82,88 @@ async function findZone(name) {
 
 // --- Rename / adopt / detach -----------------------------------------
 
-describe('PUT /api/subnets/:id — forward-zone rename', () => {
-  it('renames the zone in place, preserving records', async () => {
-    const s = await mkSubnet({ cidr: '10.30.0.0/24', name: 'rename', status: 'allocated', gateway_address: '10.30.0.1' });
-    await configure(s.id, { name: 'rename', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'old.test' });
-    const zoneBefore = await findZone('old.test');
-    await request(app).post(`/api/dns/zones/${zoneBefore.id}/records`).send({ name: 'survivor', type: 'A', value: '10.30.0.50' });
+// Post-decouple (migration 045): zones are subnet-agnostic. `domain_name` on a
+// subnet is just a pointer to a forward zone by name. Multiple subnets may
+// share one zone; changing a subnet's domain_name doesn't touch the zone.
+describe('PUT /api/subnets/:id — domain_name pointer semantics', () => {
+  it('changing domain_name auto-creates the target forward zone if missing', async () => {
+    const s = await mkSubnet({ cidr: '10.30.0.0/24', name: 'ptr', status: 'allocated', gateway_address: '10.30.0.1' });
+    await configure(s.id, { name: 'ptr', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'old.test' });
 
-    const put = await request(app).put(`/api/subnets/${s.id}`).send({ domain_name: 'new.test' });
+    const put = await request(app).put(`/api/subnets/${s.id}`).send({ domain_name: 'fresh.test' });
     expect(put.status).toBe(200);
+    expect(put.body.domain_name).toBe('fresh.test');
 
-    const zoneAfter = await findZone('new.test');
-    expect(zoneAfter.id).toBe(zoneBefore.id);  // same row, renamed
-    const records = await request(app).get(`/api/dns/zones/${zoneAfter.id}/records`);
-    expect(records.body.find(r => r.name === 'survivor')).toBeDefined();
+    // The new zone exists...
+    const fresh = await findZone('fresh.test');
+    expect(fresh).toBeDefined();
+    // ...and the old zone is untouched (no other subnet is pointing at it,
+    // but the user can delete it explicitly from the DNS UI).
+    const old = await findZone('old.test');
+    expect(old).toBeDefined();
   });
 
-  it('rejects with 409 when the target name is owned by another subnet', async () => {
+  it('allows two subnets to share a forward zone via matching domain_name', async () => {
     const a = await mkSubnet({ cidr: '10.31.0.0/24', name: 'A', status: 'allocated', gateway_address: '10.31.0.1' });
     const b = await mkSubnet({ cidr: '10.31.1.0/24', name: 'B', status: 'allocated', gateway_address: '10.31.1.1' });
-    await configure(a.id, { name: 'A', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'owned.test' });
-    await configure(b.id, { name: 'B', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'other.test' });
+    await configure(a.id, { name: 'A', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'shared.test' });
 
-    const put = await request(app).put(`/api/subnets/${b.id}`).send({ domain_name: 'owned.test' });
-    expect(put.status).toBe(409);
-  });
-
-  it('adopts a detached (subnet_id NULL) same-name zone instead of 409 (R4 #3)', async () => {
-    const s = await mkSubnet({ cidr: '10.32.0.0/24', name: 'adopter', status: 'allocated', gateway_address: '10.32.0.1' });
-
-    // Create a forward zone with no subnet_id — e.g. left over from a prior detach.
-    const zoneRes = await request(app).post('/api/dns/zones').send({ name: 'orphan.test', type: 'forward' });
-    expect(zoneRes.status).toBe(201);
-    expect(zoneRes.body.subnet_id).toBeNull();
-
-    const put = await request(app).put(`/api/subnets/${s.id}`).send({ domain_name: 'orphan.test' });
+    // B pointing at the same zone is allowed — no 409.
+    const put = await request(app).put(`/api/subnets/${b.id}`).send({ domain_name: 'shared.test' });
     expect(put.status).toBe(200);
-
-    const adopted = await findZone('orphan.test');
-    expect(adopted.id).toBe(zoneRes.body.id);
-    expect(adopted.subnet_id).toBe(s.id);
+    expect(put.body.domain_name).toBe('shared.test');
   });
 
-  it('detaches the zone (subnet_id NULL) when domain_name is cleared', async () => {
-    const s = await mkSubnet({ cidr: '10.33.0.0/24', name: 'detacher', status: 'allocated', gateway_address: '10.33.0.1' });
-    await configure(s.id, { name: 'detacher', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'attached.test' });
-    const zoneBefore = await findZone('attached.test');
-    expect(zoneBefore.subnet_id).toBe(s.id);
+  it('clearing domain_name leaves the zone in place (other subnets may need it)', async () => {
+    const s = await mkSubnet({ cidr: '10.33.0.0/24', name: 'clearer', status: 'allocated', gateway_address: '10.33.0.1' });
+    await configure(s.id, { name: 'clearer', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'still-here.test' });
 
     const put = await request(app).put(`/api/subnets/${s.id}`).send({ domain_name: null });
     expect(put.status).toBe(200);
+    expect(put.body.domain_name).toBeNull();
 
-    const zoneAfter = await findZone('attached.test');
-    expect(zoneAfter).toBeDefined();
-    expect(zoneAfter.subnet_id).toBeNull();
+    // The zone is deliberately NOT deleted — zones are shared state.
+    const zone = await findZone('still-here.test');
+    expect(zone).toBeDefined();
   });
 });
 
-// --- Bidirectional zone ↔ subnet.domain_name sync (R4) -----------------
-
+// Post-decouple: zones are subnet-agnostic. The only zone→subnet link is
+// `subnets.domain_name` (a name pointer). PUT-rename propagates to every
+// subnet pointing at the zone. DELETE clears all such pointers. POST sets
+// no pointer (user's DNS UI is independent of the IPAM side).
 describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
-  it('POST /api/dns/zones sets subnets.domain_name when attaching to an empty-domain subnet (R4 #2)', async () => {
-    const s = await mkSubnet({ cidr: '10.34.0.0/24', name: 'zone-post', status: 'allocated', gateway_address: '10.34.0.1' });
-
-    const zoneRes = await request(app).post('/api/dns/zones').send({
-      name: 'post-synced.test', type: 'forward', subnet_id: s.id
-    });
-    expect(zoneRes.status).toBe(201);
-
-    const get = await request(app).get(`/api/subnets/${s.id}`);
-    expect(get.body.domain_name).toBe('post-synced.test');
-  });
-
-  it('PUT /api/dns/zones/:id rename syncs subnets.domain_name (R4 #1)', async () => {
-    const s = await mkSubnet({ cidr: '10.35.0.0/24', name: 'zone-put', status: 'allocated', gateway_address: '10.35.0.1' });
-    await configure(s.id, { name: 'zone-put', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'before.test' });
+  it('PUT /api/dns/zones/:id rename updates every subnet whose domain_name matched', async () => {
+    const a = await mkSubnet({ cidr: '10.35.0.0/24', name: 'zone-put-a', status: 'allocated', gateway_address: '10.35.0.1' });
+    const b = await mkSubnet({ cidr: '10.35.1.0/24', name: 'zone-put-b', status: 'allocated', gateway_address: '10.35.1.1' });
+    await configure(a.id, { name: 'zone-put-a', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'before.test' });
+    // b shares the zone via domain_name pointer.
+    await request(app).put(`/api/subnets/${b.id}`).send({ domain_name: 'before.test' });
     const zone = await findZone('before.test');
 
     const put = await request(app).put(`/api/dns/zones/${zone.id}`).send({ name: 'after.test' });
     expect(put.status).toBe(200);
 
-    const get = await request(app).get(`/api/subnets/${s.id}`);
-    expect(get.body.domain_name).toBe('after.test');
+    const getA = await request(app).get(`/api/subnets/${a.id}`);
+    const getB = await request(app).get(`/api/subnets/${b.id}`);
+    expect(getA.body.domain_name).toBe('after.test');
+    expect(getB.body.domain_name).toBe('after.test');
   });
 
-  it('DELETE /api/dns/zones/:id clears subnets.domain_name when it backed the subnet (R3 #7)', async () => {
-    const s = await mkSubnet({ cidr: '10.36.0.0/24', name: 'zone-del', status: 'allocated', gateway_address: '10.36.0.1' });
-    await configure(s.id, { name: 'zone-del', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'gone.test' });
+  it('DELETE /api/dns/zones/:id clears every subnet that pointed at it', async () => {
+    const a = await mkSubnet({ cidr: '10.36.0.0/24', name: 'zone-del-a', status: 'allocated', gateway_address: '10.36.0.1' });
+    const b = await mkSubnet({ cidr: '10.36.1.0/24', name: 'zone-del-b', status: 'allocated', gateway_address: '10.36.1.1' });
+    await configure(a.id, { name: 'zone-del-a', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'gone.test' });
+    await request(app).put(`/api/subnets/${b.id}`).send({ domain_name: 'gone.test' });
     const zone = await findZone('gone.test');
 
     const del = await request(app).delete(`/api/dns/zones/${zone.id}`);
     expect(del.status).toBe(200);
 
-    const get = await request(app).get(`/api/subnets/${s.id}`);
-    expect(get.body.domain_name).toBeNull();
+    const getA = await request(app).get(`/api/subnets/${a.id}`);
+    const getB = await request(app).get(`/api/subnets/${b.id}`);
+    expect(getA.body.domain_name).toBeNull();
+    expect(getB.body.domain_name).toBeNull();
   });
 });
 
@@ -303,6 +291,41 @@ describe('Folder assignment on child subnets', () => {
     const fAGroup2 = tree2.body.folders.find(f => f.id === fA.id);
     const parentAfter = fAGroup2.subnets.find(s => s.id === parent.id);
     expect(parentAfter.children.some(c => c.id === child.id)).toBe(true);
+  });
+});
+
+// --- Reservation leaf-only guard (R-audit MEDIUM) ---------------------
+
+describe('POST /api/dhcp/reservations — subnet target must be an allocated leaf', () => {
+  it('rejects a reservation on a subnet that has children (not a leaf)', async () => {
+    const fA = (await request(app).post('/api/folders').send({ name: 'ResvLeafA' })).body;
+    void fA;
+    const parent = await mkSubnet({
+      cidr: '10.60.0.0/23', name: 'resv-leaf', status: 'allocated', gateway_address: '10.60.0.1'
+    });
+    // Divide so the parent becomes a non-leaf container.
+    const div = await request(app).post(`/api/subnets/${parent.id}/divide`).send({ new_prefix: 24, force: true });
+    expect(div.status).toBe(200);
+
+    // Parent is now a non-leaf. Reservation targeting it must 400.
+    const resv = await request(app).post('/api/dhcp/reservations').send({
+      subnet_id: parent.id, ip_address: '10.60.0.50',
+      mac_address: 'aa:bb:cc:00:ee:01', hostname: 'nolock'
+    });
+    expect(resv.status).toBe(400);
+    expect(resv.body.error).toMatch(/leaf|child subnets/i);
+  });
+
+  it('rejects a reservation on an unallocated subnet', async () => {
+    const s = await mkSubnet({
+      cidr: '10.61.0.0/24', name: 'resv-unalloc', status: 'unallocated'
+    });
+    const resv = await request(app).post('/api/dhcp/reservations').send({
+      subnet_id: s.id, ip_address: '10.61.0.50',
+      mac_address: 'aa:bb:cc:00:ee:02', hostname: 'nolock'
+    });
+    expect(resv.status).toBe(400);
+    expect(resv.body.error).toMatch(/allocated/i);
   });
 });
 

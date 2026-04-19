@@ -380,6 +380,20 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet_id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
+  // Reservations only make sense on an allocated leaf subnet. Refusing
+  // non-leaf / unallocated targets closes a race where a POST commits after
+  // a concurrent divide turns the target into an intermediate container,
+  // which would leave the row invisible from any leaf's DHCP surface.
+  // Check "has children" first so a post-divide parent (which becomes
+  // unallocated AND non-leaf) gets the clearer "not a leaf" message.
+  const hasChildren = db.prepare('SELECT 1 FROM subnets WHERE parent_id = ? LIMIT 1').get(subnet.id);
+  if (hasChildren) {
+    return res.status(400).json({ error: 'Subnet has child subnets — reservations must be placed on a leaf.' });
+  }
+  if (subnet.status !== 'allocated') {
+    return res.status(400).json({ error: 'Subnet is not allocated — reservations require an allocated subnet.' });
+  }
+
   if (!isIpInSubnet(ip_address, subnet.cidr)) {
     return res.status(400).json({ error: 'IP address is not within the selected subnet' });
   }
