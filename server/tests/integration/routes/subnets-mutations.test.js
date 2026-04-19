@@ -294,6 +294,38 @@ describe('Folder assignment on child subnets', () => {
   });
 });
 
+// --- VLAN collision warning -------------------------------------------
+
+describe('VLAN collision warning', () => {
+  it('returns vlan_warning when POST creates a subnet with a VLAN already in use', async () => {
+    await mkSubnet({ cidr: '10.70.0.0/24', name: 'vlan-a', vlan_id: 42, status: 'unallocated' });
+    const res = await request(app).post('/api/subnets').send({
+      cidr: '10.70.1.0/24', name: 'vlan-b', vlan_id: 42
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.vlan_warning).toBeDefined();
+    expect(res.body.vlan_warning.vlan_id).toBe(42);
+    expect(res.body.vlan_warning.peers.some(p => p.cidr === '10.70.0.0/24')).toBe(true);
+  });
+
+  it('does NOT return vlan_warning when VLAN is unique', async () => {
+    const res = await request(app).post('/api/subnets').send({
+      cidr: '10.71.0.0/24', name: 'vlan-unique', vlan_id: 99
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.vlan_warning).toBeUndefined();
+  });
+
+  it('returns vlan_warning when PUT sets a conflicting VLAN', async () => {
+    await mkSubnet({ cidr: '10.72.0.0/24', name: 'vlan-existing', vlan_id: 55, status: 'unallocated' });
+    const target = await mkSubnet({ cidr: '10.72.1.0/24', name: 'vlan-target', status: 'unallocated' });
+    const res = await request(app).put(`/api/subnets/${target.id}`).send({ vlan_id: 55 });
+    expect(res.status).toBe(200);
+    expect(res.body.vlan_warning).toBeDefined();
+    expect(res.body.vlan_warning.vlan_id).toBe(55);
+  });
+});
+
 // --- Reservation leaf-only guard (R-audit MEDIUM) ---------------------
 
 describe('POST /api/dhcp/reservations — subnet target must be an allocated leaf', () => {

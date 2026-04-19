@@ -360,9 +360,17 @@ async function loadSubnetsList() {
   try {
     const res = await api.get('/subnets');
     const result = [];
+    // Only ALLOCATED LEAF subnets are valid targets for a DHCP scope:
+    //  - status == 'allocated'     → network is actively in use
+    //  - no children               → divided subnets become intermediate
+    //                                containers; scopes can only live on a
+    //                                leaf. Also filters out subnets that
+    //                                were "deleted" (deallocated) while
+    //                                their row survives as a tree node.
     const flattenNodes = (nodes) => {
       for (const n of nodes) {
-        if (n.type === 'subnet' || n.cidr) {
+        const isLeaf = !n.children || n.children.length === 0;
+        if (n.cidr && n.status === 'allocated' && isLeaf) {
           result.push({ ...n, _label: `${n.name} (${n.cidr})` });
         }
         if (n.children?.length) flattenNodes(n.children);

@@ -567,10 +567,15 @@ async function openReservationDialog(reservation = null) {
     reservationForm.value = { subnet_id: selectedScope.value?.subnet_id || null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true };
     try {
       const res = await api.get('/subnets');
+      // Only show subnets that can actually accept a reservation: allocated
+      // leaves. Non-leaves (divided supernets) and unallocated subnets are
+      // refused by the server anyway (R-audit MEDIUM #3), so hiding them
+      // keeps the UI honest instead of offering choices the user can't use.
       const flattenTree = (nodes) => {
         let result = [];
         for (const n of nodes) {
-          if (n.status === 'allocated') {
+          const isLeaf = !n.children || n.children.length === 0;
+          if (n.status === 'allocated' && isLeaf) {
             result.push({ ...n, _label: `${n.name} (${n.cidr})` });
           }
           if (n.children?.length) result.push(...flattenTree(n.children));

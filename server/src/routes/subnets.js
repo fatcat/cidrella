@@ -207,6 +207,20 @@ function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
   insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, effectiveDomain, parsed.network + '/' + parsed.prefix);
 }
 
+// Helper: detect whether the given `vlan_id` is already assigned to one or
+// more other subnets. Same VLAN on different L3 subnets is legal in some
+// topologies (e.g. a VLAN spanning multiple IP supernets), but in practice
+// it's almost always a misconfiguration — so we surface a non-blocking
+// warning to the caller. Returns `{ vlan_id, peers: [{id, cidr, name}] }`
+// when there's a conflict, or null when the VLAN is unique (or null).
+function detectVlanCollision(db, vlanId, currentSubnetId) {
+  if (vlanId == null) return null;
+  const rows = db.prepare(
+    'SELECT id, cidr, name FROM subnets WHERE vlan_id = ? AND id != ?'
+  ).all(vlanId, currentSubnetId || 0);
+  return rows.length > 0 ? { vlan_id: vlanId, peers: rows } : null;
+}
+
 // Helper: insert a subnet row
 function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, parent_id, folder_id, status, depth, domain_name }) {
   const parsed = parseCidr(cidr);
@@ -461,7 +475,8 @@ router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(result.lastInsertRowid);
   audit(req.user.id, 'subnet_created', 'subnet', subnet.id, { cidr: normalized });
-  res.status(201).json(subnet);
+  const vlan_warning = detectVlanCollision(db, subnet.vlan_id, subnet.id);
+  res.status(201).json({ ...subnet, ...(vlan_warning ? { vlan_warning } : {}) });
 }));
 
 // POST /api/subnets/merge/preview — validate merge without committing
@@ -836,7 +851,11 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
 
   const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);
   audit(req.user.id, 'subnet_updated', 'subnet', subnet.id, { changes: req.body });
-  res.json(updated);
+  // Surface a VLAN collision when the caller just assigned a VLAN that
+  // another subnet already uses. Non-blocking; client toasts as warning.
+  const vlan_warning = (vlan_id !== undefined && vlan_id !== null)
+    ? detectVlanCollision(db, vlan_id, subnet.id) : null;
+  res.json({ ...updated, ...(vlan_warning ? { vlan_warning } : {}) });
 }));
 
 // POST /api/subnets/:id/divide/preview — preview division without committing
@@ -1871,7 +1890,8 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   req.afterCommit('regenerate_dns');
 
   const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);
-  res.json(updated);
+  const vlan_warning = detectVlanCollision(db, updated.vlan_id, subnet.id);
+  res.json({ ...updated, ...(vlan_warning ? { vlan_warning } : {}) });
 }));
 
 // DELETE /api/subnets/:id — hierarchy-aware deletion with reconsolidation

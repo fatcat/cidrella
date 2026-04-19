@@ -991,7 +991,8 @@ async function wizardCreateAndContinue() {
       payload.dhcp_start_ip = wizardNet.value.dhcp_start_ip || wizardDhcpDefaults.value.start;
       payload.dhcp_end_ip = wizardNet.value.dhcp_end_ip || wizardDhcpDefaults.value.end;
     }
-    await store.configureSubnet(created.id, payload);
+    const configured = await store.configureSubnet(created.id, payload);
+    surfaceVlanWarning(configured);
 
     wizardCreatedSubnetId.value = created.id;
     toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
@@ -1738,6 +1739,23 @@ function applyTemplateToEdit() {
   }
 }
 
+// When a subnet mutation returns `vlan_warning`, show a non-blocking warn
+// toast so the user notices that the VLAN they just assigned is already in
+// use on another subnet. Same VLAN on multiple L3 subnets is legal but
+// almost always a mistake.
+function surfaceVlanWarning(resp) {
+  const w = resp?.vlan_warning;
+  if (!w || !Array.isArray(w.peers) || w.peers.length === 0) return;
+  const peerList = w.peers.slice(0, 3).map(p => p.cidr).join(', ')
+    + (w.peers.length > 3 ? `, +${w.peers.length - 3} more` : '');
+  toast.add({
+    severity: 'warn',
+    summary: `VLAN ${w.vlan_id} is already in use`,
+    detail: `Also assigned to ${peerList}. Same VLAN on different networks is occasionally intentional but usually a misconfiguration.`,
+    life: 8000
+  });
+}
+
 async function executeNetworkSave() {
   saving.value = true;
   try {
@@ -1748,7 +1766,9 @@ async function executeNetworkSave() {
         cidr,
         name: networkForm.value.name || undefined,
         folder_id: networkForm.value.folder_id || undefined,
+        vlan_id: networkForm.value.vlan_id || undefined,
       });
+      surfaceVlanWarning(created);
       // Now configure it with full options
       const payload = { ...networkForm.value };
       payload.name = payload.name || createAutoName.value || cidr;
@@ -1758,7 +1778,8 @@ async function executeNetworkSave() {
         payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
         payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
       }
-      await store.configureSubnet(created.id, payload);
+      const configured = await store.configureSubnet(created.id, payload);
+      surfaceVlanWarning(configured);
       showNetworkDialog.value = false;
       toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
       emit('network-created');
@@ -1773,14 +1794,16 @@ async function executeNetworkSave() {
         payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
         payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
       }
-      await store.configureSubnet(id, payload);
+      const configured = await store.configureSubnet(id, payload);
+      surfaceVlanWarning(configured);
       showNetworkDialog.value = false;
       toast.add({ severity: 'success', summary: 'Network configured', life: 3000 });
       emit('network-configured', id);
     } else {
       const id = props.selectedNode.data.id;
       const { create_dhcp_scope, create_reverse_dns, ...editPayload } = networkForm.value;
-      await store.updateSubnet(id, editPayload);
+      const updated = await store.updateSubnet(id, editPayload);
+      surfaceVlanWarning(updated);
       showNetworkDialog.value = false;
       toast.add({ severity: 'success', summary: 'Network updated', life: 3000 });
       emit('network-updated', id);
