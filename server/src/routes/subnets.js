@@ -695,14 +695,6 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
 router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name, scan_enabled, cidr } = req.body;
 
-  // CIDR changes aren't supported via PUT — use /divide or /merge. Rejecting
-  // explicitly avoids silently ignoring a field the client thought it set.
-  if (cidr !== undefined) {
-    return res.status(400).json({
-      error: 'CIDR cannot be changed via PUT. Use /api/subnets/:id/divide or /api/subnets/merge.'
-    });
-  }
-
   if (domain_name && !isValidDomain(domain_name)) {
     return res.status(400).json({ error: 'Invalid domain name format' });
   }
@@ -710,6 +702,16 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+
+  // CIDR can't be changed here — use /divide or /merge. The edit dialog
+  // echoes the current CIDR back in the body, so we only reject when the
+  // value actually DIFFERS from what's stored; a matching value is a
+  // harmless no-op.
+  if (cidr !== undefined && cidr !== subnet.cidr) {
+    return res.status(400).json({
+      error: 'CIDR cannot be changed via PUT. Use /api/subnets/:id/divide or /api/subnets/merge.'
+    });
+  }
 
   // Validate scan_interval if provided
   const validIntervals = [null, '5m', '15m', '30m', '1h', '4h'];

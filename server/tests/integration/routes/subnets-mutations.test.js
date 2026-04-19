@@ -182,11 +182,20 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
 // --- PUT /:id CIDR reject + gateway-in-pool guards --------------------
 
 describe('PUT /api/subnets/:id — structural guards', () => {
-  it('rejects CIDR change in the body (R2 #5)', async () => {
+  it('rejects CIDR change in the body when the value differs (R2 #5)', async () => {
     const s = await mkSubnet({ cidr: '10.40.0.0/24', name: 'cidr-fixed', status: 'allocated', gateway_address: '10.40.0.1' });
-    const put = await request(app).put(`/api/subnets/${s.id}`).send({ cidr: '10.40.1.0/24' });
-    expect(put.status).toBe(400);
-    expect(put.body.error).toMatch(/CIDR cannot be changed/i);
+
+    // Changing CIDR via PUT is still rejected.
+    const bad = await request(app).put(`/api/subnets/${s.id}`).send({ cidr: '10.40.1.0/24' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/CIDR cannot be changed/i);
+
+    // But echoing the existing CIDR back in the body is a harmless no-op —
+    // the edit dialog always sends the current value along with the other
+    // fields, so we must accept it.
+    const ok = await request(app).put(`/api/subnets/${s.id}`).send({ cidr: s.cidr, name: 'renamed' });
+    expect(ok.status).toBe(200);
+    expect(ok.body.name).toBe('renamed');
   });
 
   it('refuses a gateway change that lands inside an existing DHCP pool (R3 #2)', async () => {
