@@ -429,15 +429,10 @@
         <div style="display: flex; gap: 0.25rem; align-items: center">
           <Select v-model="networkForm.folder_id" :options="selectableFolderOptions" optionLabel="name" optionValue="id"
                   placeholder="None (ungrouped)" class="w-full" showClear
-                  :disabled="editingChildSubnet"
                   :filter="selectableFolderOptions.length > 6" filterPlaceholder="Search folders…" />
           <Button icon="pi pi-plus" text rounded size="small"
-                  title="Create folder" @click="openCreateFolderFromEdit"
-                  :disabled="editingChildSubnet" />
+                  title="Create folder" @click="openCreateFolderFromEdit" />
         </div>
-        <small v-if="editingChildSubnet" class="field-help">
-          Sub-networks inherit their folder from the root network. Edit the root to change the folder.
-        </small>
       </div>
       <div class="field">
         <label>Name *</label>
@@ -1202,13 +1197,6 @@ const selectableFolderOptions = computed(() =>
     .slice()
     .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
 );
-
-// Server blocks folder_id changes on non-root subnets (see routes/subnets.js:666).
-// Reflect that in the UI so users don't silently lose a picked value on save.
-const editingChildSubnet = computed(() => {
-  const d = props.selectedNode?.data;
-  return !!(d && d.parent_id);
-});
 
 // Track whether the folder-create dialog was opened from inside the Edit Network
 // dialog so we can auto-select the new folder on save instead of the usual flow.

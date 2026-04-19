@@ -11,9 +11,13 @@ function sanitizeName(name) {
 // GET /api/folders — list all folders with subnet counts
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
+  // Count every subnet explicitly tagged with this folder. Previously the
+  // count only included roots (parent_id IS NULL); children with their own
+  // folder_id are now first-class members of the folder in the tree view,
+  // so they count too.
   const folders = db.prepare(`
     SELECT f.*,
-      (SELECT COUNT(*) FROM subnets WHERE folder_id = f.id AND parent_id IS NULL) as subnet_count
+      (SELECT COUNT(*) FROM subnets WHERE folder_id = f.id) as subnet_count
     FROM folders f
     ORDER BY f.sort_order, f.name
   `).all();

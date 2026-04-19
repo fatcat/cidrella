@@ -41,6 +41,7 @@ const { default: subnetRouter } = await import('../../../src/routes/subnets.js')
 const { default: dnsRouter }    = await import('../../../src/routes/dns.js');
 const { default: dhcpRouter }   = await import('../../../src/routes/dhcp.js');
 const { default: rangeRouter }  = await import('../../../src/routes/ranges.js');
+const { default: folderRouter } = await import('../../../src/routes/folders.js');
 const { default: request } = await import('supertest');
 
 let tmpDir;
@@ -53,6 +54,7 @@ beforeAll(async () => {
     { prefix: '/api/subnets', router: subnetRouter },
     { prefix: '/api/dns',     router: dnsRouter },
     { prefix: '/api/dhcp',    router: dhcpRouter },
+    { prefix: '/api/folders', router: folderRouter },
     { prefix: '/api/subnets/:subnetId/ranges', router: rangeRouter },
   ]);
 });
@@ -224,6 +226,74 @@ describe('PUT /api/dhcp/scopes/:id — pool resize guard (R4 #4)', () => {
     // A valid resize still works.
     const ok = await request(app).put(`/api/dhcp/scopes/${scope.id}`).send({ start_ip: '10.42.0.50', end_ip: '10.42.0.200' });
     expect(ok.status).toBe(200);
+  });
+});
+
+// --- Child-folder assignment ------------------------------------------
+
+describe('Folder assignment on child subnets', () => {
+  it('allows moving a child subnet to its own folder (promoted in the tree)', async () => {
+    // Two folders.
+    const fA = (await request(app).post('/api/folders').send({ name: 'FolderA' })).body;
+    const fB = (await request(app).post('/api/folders').send({ name: 'FolderB' })).body;
+
+    // Parent /23 in folder A.
+    const parent = await mkSubnet({
+      cidr: '10.50.0.0/23', name: 'Parent', status: 'allocated', gateway_address: '10.50.0.1', folder_id: fA.id
+    });
+    // Divide into two /24 children.
+    const div = await request(app).post(`/api/subnets/${parent.id}/divide`).send({ new_prefix: 24, force: true });
+    expect(div.status).toBe(200);
+
+    // Grab a child via the tree.
+    const tree1 = await request(app).get('/api/subnets');
+    const fAGroup = tree1.body.folders.find(f => f.id === fA.id);
+    const p = fAGroup.subnets.find(s => s.id === parent.id);
+    const child = p.children[0];
+
+    // Move the child to folder B.
+    const put = await request(app).put(`/api/subnets/${child.id}`).send({ folder_id: fB.id });
+    expect(put.status).toBe(200);
+
+    // The child now appears as a root-level entry under folder B.
+    const tree2 = await request(app).get('/api/subnets');
+    const fBGroup = tree2.body.folders.find(f => f.id === fB.id);
+    expect(fBGroup).toBeDefined();
+    const promoted = fBGroup.subnets.find(s => s.id === child.id);
+    expect(promoted).toBeDefined();
+    expect(promoted.folder_id).toBe(fB.id);
+
+    // And it no longer nests under the parent in folder A.
+    const fAGroupAfter = tree2.body.folders.find(f => f.id === fA.id);
+    const parentAfter = fAGroupAfter.subnets.find(s => s.id === parent.id);
+    expect(parentAfter.children.some(c => c.id === child.id)).toBe(false);
+  });
+
+  it('clears folder_id on a child (inherits parent folder again)', async () => {
+    const fA = (await request(app).post('/api/folders').send({ name: 'FolderA2' })).body;
+    const fC = (await request(app).post('/api/folders').send({ name: 'FolderC' })).body;
+
+    const parent = await mkSubnet({
+      cidr: '10.51.0.0/23', name: 'Parent2', status: 'allocated', gateway_address: '10.51.0.1', folder_id: fA.id
+    });
+    await request(app).post(`/api/subnets/${parent.id}/divide`).send({ new_prefix: 24, force: true });
+
+    const tree1 = await request(app).get('/api/subnets');
+    const fAGroup = tree1.body.folders.find(f => f.id === fA.id);
+    const child = fAGroup.subnets.find(s => s.id === parent.id).children[0];
+
+    // Promote to fC, then clear.
+    await request(app).put(`/api/subnets/${child.id}`).send({ folder_id: fC.id });
+    const clr = await request(app).put(`/api/subnets/${child.id}`).send({ folder_id: null });
+    expect(clr.status).toBe(200);
+
+    // Child is back under the parent in fA, and fC no longer references it.
+    const tree2 = await request(app).get('/api/subnets');
+    const fCGroup = tree2.body.folders.find(f => f.id === fC.id);
+    expect(fCGroup.subnets.some(s => s.id === child.id)).toBe(false);
+    const fAGroup2 = tree2.body.folders.find(f => f.id === fA.id);
+    const parentAfter = fAGroup2.subnets.find(s => s.id === parent.id);
+    expect(parentAfter.children.some(c => c.id === child.id)).toBe(true);
   });
 });
 

@@ -46,19 +46,50 @@ function asyncHandler(fn) {
 }
 
 // Helper: build nested tree from flat rows
+// Build the subnet tree with folder-aware promotion.
+//
+// Folders are an overlay: a subnet inherits its parent's effective folder
+// unless it sets its own `folder_id` explicitly. If it does, it's PROMOTED
+// to a root-level node of that folder — detaching it from the CIDR parent
+// in the tree view. This lets a user put a /24 into a different folder
+// than its /22 parent without having to move the whole parent.
+//
+// A subnet `node` ends up as a root iff:
+//   (a) node.parent_id is NULL (traditional root), OR
+//   (b) node.folder_id is set AND differs from its parent's effective folder.
+// Otherwise it nests under its parent.
 function buildTree(flatRows) {
   const map = new Map();
-  const roots = [];
-
   for (const row of flatRows) {
     map.set(row.id, { ...row, children: [] });
   }
+
+  // Effective folder = explicit folder_id, else inherit from parent.
+  const effCache = new Map();
+  function effectiveFolder(id) {
+    if (effCache.has(id)) return effCache.get(id);
+    const node = map.get(id);
+    if (!node) return null;
+    let res;
+    if (node.folder_id != null) res = node.folder_id;
+    else if (node.parent_id && map.has(node.parent_id)) res = effectiveFolder(node.parent_id);
+    else res = null;
+    effCache.set(id, res);
+    return res;
+  }
+
+  const roots = [];
   for (const row of flatRows) {
     const node = map.get(row.id);
-    if (row.parent_id && map.has(row.parent_id)) {
-      map.get(row.parent_id).children.push(node);
-    } else {
+    if (!row.parent_id || !map.has(row.parent_id)) {
       roots.push(node);
+      continue;
+    }
+    const parentFolder = effectiveFolder(row.parent_id);
+    if (row.folder_id != null && row.folder_id !== parentFolder) {
+      roots.push(node);
+    } else {
+      map.get(row.parent_id).children.push(node);
     }
   }
   return roots;
@@ -686,12 +717,12 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     return res.status(400).json({ error: 'Invalid scan interval. Use: null, 5m, 15m, 30m, 1h, 4h' });
   }
 
-  // Validate folder_id if provided (only for root subnets)
-  if (folder_id !== undefined && !subnet.parent_id) {
-    if (folder_id !== null) {
-      const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
-      if (!folder) return res.status(400).json({ error: 'Folder not found' });
-    }
+  // Validate folder_id if provided. Any subnet (root or child) can be
+  // assigned to a folder — children in the tree view are promoted to a
+  // root-level node of the chosen folder, detached from their CIDR parent.
+  if (folder_id !== undefined && folder_id !== null) {
+    const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
+    if (!folder) return res.status(400).json({ error: 'Folder not found' });
   }
 
   // Forward-zone conflict check: if user is switching domain_name to one that
@@ -769,7 +800,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
       vlan_id !== undefined ? vlan_id : subnet.vlan_id,
       gateway_address ?? subnet.gateway_address,
       scan_interval !== undefined ? scan_interval : subnet.scan_interval,
-      folder_id !== undefined && !subnet.parent_id ? folder_id : subnet.folder_id,
+      folder_id !== undefined ? folder_id : subnet.folder_id,
       domain_name !== undefined ? domain_name : subnet.domain_name,
       scanEn,
       subnet.id
@@ -1696,8 +1727,9 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
       WHERE id = ?
     `).run(name, description || null, vlan_id || null, gw, create_reverse_dns ? 1 : 0, domain_name || null, subnet.id);
 
-    // Move to specified folder if provided (root subnets only)
-    if (folder_id !== undefined && !subnet.parent_id) {
+    // Move to specified folder if provided. Children are allowed too;
+    // the tree builder promotes them out of their CIDR parent's group.
+    if (folder_id !== undefined) {
       db.prepare('UPDATE subnets SET folder_id = ? WHERE id = ?').run(folder_id, subnet.id);
     }
 
