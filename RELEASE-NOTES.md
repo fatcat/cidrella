@@ -6,6 +6,57 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.4.14 — 2026-04-19
+
+```yaml
+min_from: ""
+breaking: false
+security: false
+```
+
+A large feature + hardening release centered on the subnet / DNS / DHCP interaction layer, plus a UI design-system refresh and a scanner permissions fix. Schema migrates forward to **version 45** (migration `045_dns_zones_decouple_subnet.sql`). The upgrade is transparent — existing subnets keep their DNS zones via a new pointer-style linkage — but this is the largest single schema change since the original DNS/DHCP tables landed.
+
+### New
+- **UI design-system pass.** New CSS token set (`--p-*` aligned with PrimeVue Aura), per-view type scale, normalized status pills, shared `EmptyState` and `FooterBar` components, collapsible page `HeaderBar`, grouped System rail, tweaked Dashboard donut palette, and optional Range Map tab on the Analytics view. Several follow-on tweaks from real use: nav font bumped +30%, IP Management moved to a persistent left rail, and line-chart data-label clutter suppressed by default.
+- **"Add DHCP Scope" right-click menu** on allocated-leaf subnets in IP Management → Networks. Opens the scope dialog pre-filled with the parent subnet's gateway / mask / domain, and suggested Start/End IPs derived from the subnet size via `dhcpRangeDefaults()`.
+- **VLAN collision warnings.** Saving or configuring a subnet with a VLAN ID that is already in use on another subnet now returns a `vlan_warning` payload naming the peer subnets. The UI surfaces a warn toast ("VLAN 42 is already used on 10.0.3.0/24, 10.2.0.0/24"). Not an error — sharing a VLAN across CIDRs is valid but rare, and the warning makes accidental re-use visible.
+- **Child subnets can have their own folder.** `subnets.folder_id` is now writable on children. `buildTree` promotes a child with its own folder to the root of that folder in the tree, so reorganization doesn't require detaching the child from its parent first. Drag-and-drop now works for child subnets too (the previous `:draggable="!subnet.parent_id"` gate was lifted).
+- **Grid view readability.** Sub-pixel rounding artifacts fixed by replacing container `gap` with per-cell `box-shadow`. Every 16th column gets a thicker inset shadow for easier visual counting. DHCP reservations render dark blue and DNS-configured IPs pale green (distinct from user-locked violet, gateway orange, and system-range gray). Tooltip now includes a `Role: network` / `Role: broadcast` line for boundary cells (their Type stays `system`). Legend always shows every possible color plus any user-defined range types.
+- **Multi-select bulk IP actions on the grid.** Right-click a rectangle of selected cells: **Unlock** (when any are user-locked), **Remove from Scope** (when the entire selection is inside one DHCP pool), and the existing Lock / Add to Scope entries. Middle-of-pool removal is refused client-side with a guidance toast ("can't split a DHCP pool") instead of hitting the server.
+- **Safe-divide with lossy-IP cleanup.** Dividing a subnet that contains reservations, DNS A records, leases, or locked IPs that would fall outside the new child prefixes now opens a confirmation dialog listing each flagged IP with its reason (`network` / `broadcast` / `outside_selection`), carrier (reservation / IP record / DNS A), hostname, and MAC. "Divide Anyway" retries with `force_lossy: true`, and the server returns a `lossy_cleanup` summary that the client surfaces as a toast ("Removed 3 reservations, 2 DNS records, 1 lease"). `force` and `force_lossy` are separate gates so the two failure modes stay distinguishable.
+- **Pool-shrink on divide.** When a child inherits a DHCP pool whose range includes the child's new gateway, the divide response carries a `pool_adjustments` entry and the client fires a warn toast per adjustment. The pool is resized to exclude the gateway rather than being deleted.
+- **DNS-in-pool warn toast.** Saving a DNS A record whose IP is inside an active DHCP pool fires a warn toast ("DHCP may reassign this address — consider creating a reservation instead"). The record still saves.
+- **Ranges table cleanup and Locked ranges.** Ranges now hides auto-generated system rows (Network / Broadcast / Gateway stay in the grid but not the table) and inserts contiguous `Locked` ranges for user-locked IPs so a span of locks shows as one row instead of N.
+- **Three startup self-heals** in `server/src/index.js`:
+  - `reconcileDnsOrphans` clears `ip_addresses.hostname` / `detection_source` on rows sourced from DNS that have no backing A record (cleans up artifacts from the record-rename bug fixed in this release).
+  - Gateway-range repair rewrites Gateway-type `ranges.start_ip` rows that disagree with `subnets.gateway_address` (legacy fallout from an earlier `migrateConfigToChild` bug).
+  - The pre-existing scope-options sweep stays.
+
+### Changed
+- **`dns_zones.subnet_id` dropped.** Migration 045 rebuilds `dns_zones` without the foreign key to `subnets`. Zones are now subnet-agnostic — the link is one-way via `subnets.domain_name` → `dns_zones.name`. Multiple subnets can share a zone; renaming a zone propagates the new name to every pointing subnet; deleting a zone clears `domain_name` on every pointing subnet. About 200 lines of compensating complexity (parent-zone migration on divide/merge, sibling zone reassignment on delete, the rename/adopt/detach state machine in subnet PUT) were removed as a result. Two HIGH architect-audit findings (partial-divide reverse-zone stranding, cross-sibling PTR lookup) evaporated structurally and need no further code.
+- **PTR lookup by zone name, not subnet.** `findPtrLocation` in `utils/ip-sync.js` no longer filters by `subnet_id`. Reservations on any subnet now write PTRs into whichever reverse zone covers the IP, regardless of which subnet nominally owns the zone. This makes shared-zone and cross-subnet PTR flows work correctly.
+- **Reservation POST guard.** `/api/dhcp/reservations` now rejects requests against subnets that are non-leaf or unallocated, closing a divide-then-insert race that could strand a reservation on an about-to-be-deleted parent.
+- **Gateway-in-pool guarded on both sides.** PUT `/api/subnets/:id` (subnet side) and PUT `/api/dhcp/scopes/:id` (scope side) both reject an edit that would place the gateway inside an active DHCP pool, with a symmetric error message.
+- **`ip_events.subnet_id` follows `ip_addresses.subnet_id`** on transfer during divide/merge, so historical event rows stay queryable under the current owning subnet.
+- **DNS record PUT clears old `ip_addresses.hostname`** on name-only renames (previously only on value-only changes), plugging the orphan leak that `reconcileDnsOrphans` now sweeps on startup.
+- **Scope / reservation dropdowns filter to allocated leaf subnets only.** Non-leaf and unallocated subnets no longer appear as pick targets in `ScopeDialog` or the DhcpPanel reservation dialog, matching the server-side guard.
+- **MAC input cursor preservation.** The MAC formatter in `DhcpPanel` now counts hex characters before the caret and restores the cursor to the equivalent position after reformatting. Backspace mid-string no longer looks like "last char deleted."
+- **"Delete Range" → "Delete DHCP Scope"** for scope-backed ranges. The range context menu relabels itself and routes the delete through `dhcpStore.deleteScope`, which atomically deletes the scope + options + range. Other range types keep the original "Delete Range" label and endpoint.
+- **`afterCommit` single-flight regeneration.** Three regen hooks (`regenerate_dns`, `regenerate_dhcp`, `regenerate_dnsmasq_conf`) coalesce concurrent writes. `queueRegen(name)` is the out-of-request entry point used by the lease watcher. Callers that need the regen to complete synchronously (e.g. `applyInterfaceConfig` → `restartDnsmasq`) call the underlying function inline — the post-commit hooks fire in a microtask after `res.on('finish')` and are not a synchronous-completion primitive.
+
+### Fixed
+- **`arping` no longer runs under `sudo`.** The subnet scanner was shelling out to `sudo arping` despite `cidrella.service` having `AmbientCapabilities=CAP_NET_RAW` set — which broke scanning on any host with `NoNewPrivileges=yes` (everything from v0.4.8 onward). The scanner now invokes `arping` directly, relying on the inherited capability. Matches the sudo-removal pattern established in v0.4.11 for systemctl paths.
+- **`PUT /api/subnets/:id` rejecting unchanged CIDR.** The guard was `if (cidr !== undefined)` which fired even when the body echoed the existing value — which the UI does on any subnet-edit submission. Now only rejects a *changed* CIDR. Dragging a subnet into a folder without editing anything else no longer errors.
+- **Lossy-divide detector missing non-boundary carriers.** Previously only caught gateway/boundary IPs. Now also catches reservations, `ip_addresses` rows with real state, DNS A records, and `outside_selection` for partial divides where one or more children don't cover an existing record.
+- **Stale gateway-range rows after child divides.** A previous version of `migrateConfigToChild` copied `parent.gateway_address` into children's Gateway-type `ranges` rows, leaving ranges pointing at IPs that weren't in the child's prefix. Now self-heals on startup.
+
+### Upgrade notes
+- **Schema migrates to version 45.** Migration is non-destructive — `subnets.domain_name` already held the linkage in a duplicated form; the migration just removes the `dns_zones.subnet_id` column. No user action required.
+- **Backups from v0.4.14 carry `schema_version: 45`.** v0.4.13 and earlier will refuse a v0.4.14 backup during restore (per the newer-than-running refusal added in the resilient-update work).
+- **Any direct SQL integrations against `dns_zones.subnet_id`** need to switch to joining via `subnets.domain_name = dns_zones.name`. CIDRella itself does not expose this column externally; the note is for anyone who was querying the DB directly.
+
+---
+
 ## v0.4.13 — 2026-04-15
 
 ```yaml
