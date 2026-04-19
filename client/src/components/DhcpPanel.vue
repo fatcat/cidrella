@@ -323,18 +323,37 @@ function onMacPaste(event) {
   // Let the default paste happen, then onMacInput will re-format it.
 }
 
+// Translate "N hex chars before cursor" into a cursor position inside the
+// formatted "XX:XX:XX:XX:XX:XX" string. Each completed pair contributes
+// a colon AFTER the pair, so N hex chars occupy N + colonsBefore positions.
+function macCursorFromHexCount(n) {
+  if (n <= 0) return 0;
+  if (n >= 12) return 17;
+  const colonsBefore = n % 2 === 0 ? (n / 2) - 1 : Math.floor(n / 2);
+  return n + Math.max(0, colonsBefore);
+}
+
 function onMacInput(event) {
-  const raw = event.target.value;
-  // Strip anything non-hex-non-colon (catches any path that slipped through),
-  // then reformat colons deterministically.
+  const input = event.target;
+  const raw = input.value;
+  // Count hex chars strictly before the caret in the raw string — that's
+  // our cursor anchor. We preserve "hex char index" across the reformat,
+  // so a mid-string edit stays mid-string instead of snapping to the end.
+  const caret = input.selectionStart ?? raw.length;
+  const hexBefore = raw.slice(0, caret).replace(/[^0-9a-fA-F]/g, '').length;
+
   const hexOnly = raw.replace(/[^0-9a-fA-F]/g, '');
   const formatted = formatMacFromHex(hexOnly);
-  if (formatted !== raw) {
-    // Re-display the normalized form. Keep cursor at end of the field — most
-    // natural for sequential typing.
-    event.target.value = formatted;
-  }
   reservationForm.value.mac_address = formatted;
+
+  if (formatted !== raw) {
+    input.value = formatted;
+    const newCaret = macCursorFromHexCount(hexBefore);
+    // Defer to after the value-assignment settles in the DOM.
+    requestAnimationFrame(() => {
+      try { input.setSelectionRange(newCaret, newCaret); } catch { /* detached */ }
+    });
+  }
 }
 
 const dhcpSearch = ref(loadJson('cidrella_dhcp_search', ''));

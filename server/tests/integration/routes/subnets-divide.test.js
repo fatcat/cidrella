@@ -237,3 +237,87 @@ describe('POST /api/subnets/:id/divide — lossy gate', () => {
     expect(prev.body.lossy).toEqual([]);
   });
 });
+
+describe('POST /api/subnets/:id/divide — lossy-artifact cleanup with force_lossy', () => {
+  it('deletes DHCP reservations, DNS A records, and reports counts', async () => {
+    const parent = await createSubnet({
+      cidr: '10.19.0.0/22', name: 'LossyCleanup', status: 'allocated', gateway_address: '10.19.0.1'
+    });
+    await configure(parent.id, {
+      name: 'LossyCleanup', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'lossy-cleanup.test'
+    });
+
+    // Reservation at 10.19.1.255 — becomes broadcast of 10.19.0.0/23.
+    const resvRes = await request(app).post('/api/dhcp/reservations').send({
+      subnet_id: parent.id, ip_address: '10.19.1.255', mac_address: 'aa:bb:cc:00:77:01', hostname: 'doomed'
+    });
+    expect(resvRes.status).toBe(201);
+
+    // DNS A record pointing at the same IP.
+    const zones = await request(app).get('/api/dns/zones');
+    const fwd = zones.body.find(z => z.name === 'lossy-cleanup.test');
+    await request(app).post(`/api/dns/zones/${fwd.id}/records`).send({
+      name: 'doomed', type: 'A', value: '10.19.1.255'
+    });
+
+    // Execute with both force flags.
+    const divRes = await divide(parent.id, { new_prefix: 23, force: true, force_lossy: true });
+    expect(divRes.status).toBe(200);
+
+    // Cleanup summary is echoed back.
+    expect(divRes.body.lossy_cleanup).toBeDefined();
+    expect(divRes.body.lossy_cleanup.ips).toContain('10.19.1.255');
+    expect(divRes.body.lossy_cleanup.removed.reservations).toBeGreaterThanOrEqual(1);
+    expect(divRes.body.lossy_cleanup.removed.dns_records).toBeGreaterThanOrEqual(1);
+
+    // The reservation is actually gone.
+    const resvListing = await request(app).get('/api/dhcp/reservations');
+    expect(resvListing.body.find(r => r.ip_address === '10.19.1.255')).toBeUndefined();
+
+    // The A record is actually gone.
+    const recs = await request(app).get(`/api/dns/zones/${fwd.id}/records`);
+    expect(recs.body.find(r => r.value === '10.19.1.255')).toBeUndefined();
+  });
+});
+
+describe('POST /api/subnets/:id/divide — gateway/pool conflict handling', () => {
+  it('shrinks the pool to exclude the child gateway and reports the adjustment', async () => {
+    // Parent /22 with gateway at .1 (firstUsable) and a pool spanning the
+    // FULL usable range of the parent. After divide into /23s, each child
+    // inherits a clipped slice of the pool that still contains the child's
+    // own gateway (.0.1 and .2.1). The server should shrink each child's
+    // pool to exclude its gateway and echo the adjustment back.
+    const parent = await createSubnet({
+      cidr: '10.18.0.0/22', name: 'GwInPool', status: 'allocated', gateway_address: '10.18.0.1'
+    });
+    await configure(parent.id, {
+      name: 'GwInPool', create_reverse_dns: false, create_dhcp_scope: true,
+      // Explicit wide pool that bleeds across the /23 boundary and covers
+      // each child's firstUsable.
+      dhcp_start_ip: '10.18.0.1', dhcp_end_ip: '10.18.3.254'
+    });
+
+    const divRes = await divide(parent.id, { new_prefix: 23, force: true });
+    expect(divRes.status).toBe(200);
+    expect(Array.isArray(divRes.body.pool_adjustments)).toBe(true);
+    expect(divRes.body.pool_adjustments.length).toBeGreaterThan(0);
+
+    // Each adjustment identifies the child cidr, the conflicting gateway,
+    // and the pool before/after so the client can toast it.
+    for (const a of divRes.body.pool_adjustments) {
+      expect(typeof a.child_cidr).toBe('string');
+      expect(typeof a.gateway).toBe('string');
+      expect(a.pool_was).toBeDefined();
+      // After adjustment, the gateway must not be in [start, end].
+      if (a.pool_now) {
+        const parts = a.gateway.split('.').map(Number);
+        const gwLong = (parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3]) >>> 0;
+        const sp = a.pool_now.start_ip.split('.').map(Number);
+        const ep = a.pool_now.end_ip.split('.').map(Number);
+        const s = (sp[0] << 24 | sp[1] << 16 | sp[2] << 8 | sp[3]) >>> 0;
+        const e = (ep[0] << 24 | ep[1] << 16 | ep[2] << 8 | ep[3]) >>> 0;
+        expect(gwLong >= s && gwLong <= e).toBe(false);
+      }
+    }
+  });
+});

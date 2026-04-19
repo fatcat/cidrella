@@ -56,7 +56,7 @@
                        active: selectedSubnetId === subnet.id,
                        'merge-selected': isMergeSelected(subnet.id),
                      }"
-                     :draggable="!subnet.parent_id"
+                     :draggable="true"
                      @dragstart="onFolderSubnetDragStart($event, subnet)"
                      @click="selectSubnetById(subnet)"
                      @contextmenu.prevent="openSubnetContextMenuById($event, subnet)">
@@ -96,7 +96,7 @@
                    active: selectedSubnetId === subnet.id,
                    'merge-selected': isMergeSelected(subnet.id),
                  }"
-                 :draggable="!subnet.parent_id"
+                 :draggable="true"
                  @dragstart="onUngroupedDragStart($event, subnet)"
                  @click="selectSubnetById(subnet)"
                  @contextmenu.prevent="openSubnetContextMenuById($event, subnet)">

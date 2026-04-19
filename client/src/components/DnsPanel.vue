@@ -413,14 +413,33 @@ import TabPanel from 'primevue/tabpanel';
 import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
+import { useDhcpStore } from '../stores/dhcp.js';
 import { apiError } from '../utils/format.js';
+import { ipToLong } from '../utils/ip.js';
 import { loadJson } from '../utils/storage.js';
 import EmptyState from './EmptyState.vue';
 
 // No props needed — shows all zones globally
 
 const store = useDnsStore();
+const dhcpStore = useDhcpStore();
 const toast = useToast();
+
+// Find the first DHCP scope whose pool contains `ip`. Returns { scope, cidr }
+// or null. Used to warn when a user points a DNS A record at an IP inside a
+// dynamic DHCP pool — DHCP may hand that IP to a different host tomorrow.
+function findDhcpScopeForIp(ip) {
+  if (!ip) return null;
+  let ipLong;
+  try { ipLong = ipToLong(ip); } catch { return null; }
+  for (const s of (dhcpStore.scopes || [])) {
+    if (!s.start_ip || !s.end_ip) continue;
+    if (ipLong >= ipToLong(s.start_ip) && ipLong <= ipToLong(s.end_ip)) {
+      return { scope: s, cidr: s.subnet_cidr };
+    }
+  }
+  return null;
+}
 
 
 // Zone state
@@ -721,6 +740,24 @@ async function saveRecord() {
       await store.createRecord(selectedZone.value.id, recordForm.value);
       toast.add({ severity: 'success', summary: 'Record created', life: 3000 });
     }
+
+    // Warn (but don't block) when an A record points at an IP that sits
+    // inside a DHCP dynamic pool — the DHCP server may hand that IP to a
+    // different host, breaking the A record until the next renewal. A
+    // reservation would be the right tool if the user wants a stable
+    // hostname for that MAC.
+    if (recordForm.value.type === 'A' && recordForm.value.value) {
+      const hit = findDhcpScopeForIp(recordForm.value.value);
+      if (hit) {
+        toast.add({
+          severity: 'warn',
+          summary: 'IP is inside a DHCP pool',
+          detail: `${recordForm.value.value} is inside the DHCP range on ${hit.cidr || 'a subnet'} (${hit.scope.start_ip}–${hit.scope.end_ip}). DHCP may reassign this address. Consider a reservation instead.`,
+          life: 8000
+        });
+      }
+    }
+
     showRecordDialog.value = false;
     records.value = await store.getRecords(selectedZone.value.id);
     await store.fetchZones(); // refresh record counts
@@ -753,6 +790,11 @@ async function doDeleteRecord() {
 
 onMounted(async () => {
   await store.fetchZones();
+  // Load DHCP scopes so we can warn when a new A record points at an IP
+  // inside a DHCP pool. Fire-and-forget — the panel is usable immediately.
+  if (!dhcpStore.scopes || dhcpStore.scopes.length === 0) {
+    dhcpStore.fetchScopes().catch(() => {});
+  }
   // Restore previously selected zone
   const savedZoneId = loadJson('cidrella_dns_selected_zone_id', null);
   if (savedZoneId) {

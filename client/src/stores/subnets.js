@@ -177,13 +177,17 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  async function divideSubnet(id, { new_prefix, cidr, force, selected_cidrs }) {
+  async function divideSubnet(id, { new_prefix, cidr, force, force_lossy, selected_cidrs }) {
     const payload = { force };
+    if (force_lossy) payload.force_lossy = true;
     if (new_prefix !== undefined) payload.new_prefix = new_prefix;
     if (cidr) payload.cidr = cidr;
     if (selected_cidrs?.length) payload.selected_cidrs = selected_cidrs;
     const res = await api.post(`/subnets/${id}/divide`, payload);
     await fetchTree();
+    // Response body carries `pool_adjustments` when the server had to shrink
+    // a child's DHCP pool to keep the gateway out — bubble it up to callers
+    // so they can surface a per-child warning toast.
     return res.data;
   }
 

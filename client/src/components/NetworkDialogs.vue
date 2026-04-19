@@ -413,6 +413,38 @@
     </template>
   </Dialog>
 
+  <!-- Lossy-IP confirmation dialog (shown when divide would place host data
+       on a new subnet's network/broadcast/outside-selection) -->
+  <Dialog v-model:visible="showLossyConfirm" header="Some host data will be lost"
+          modal :style="{ width: '40rem' }" data-track="dialog-divide-lossy">
+    <Message severity="warn" :closable="false">
+      After dividing, the IP addresses below will land on a new subnet's
+      <strong>network</strong>, <strong>broadcast</strong>, or
+      <strong>outside the selected children</strong> and will no longer be
+      usable. The division will still run, but these hosts will be stripped
+      from the database or lose routing.
+    </Message>
+
+    <div class="lossy-list">
+      <div v-for="row in lossyIps" :key="row.ip + '-' + row.carries" class="lossy-row">
+        <div class="lossy-primary">
+          <code>{{ row.ip }}</code>
+          <span class="lossy-reason">{{ lossyReasonLabel(row) }}</span>
+        </div>
+        <div class="lossy-meta">
+          <span class="lossy-carries">{{ lossyCarriesLabel(row.carries) }}</span>
+          <template v-if="row.hostname"><span>·</span><span>{{ row.hostname }}</span></template>
+          <template v-if="row.mac"><span>·</span><code>{{ row.mac }}</code></template>
+        </div>
+      </div>
+    </div>
+
+    <template #footer>
+      <Button label="Cancel" severity="secondary" @click="cancelLossyDivide" />
+      <Button label="Divide Anyway" severity="danger" @click="confirmLossyDivide" :loading="saving" />
+    </template>
+  </Dialog>
+
   <!-- Edit Network Dialog -->
   <Dialog v-model:visible="showNetworkDialog" :header="networkDialogHeader" modal :style="{ width: '30rem' }" data-track="dialog-network-edit">
     <div class="form-grid">
@@ -1306,32 +1338,137 @@ function onDivideCountInput(val) {
   divideCount.value = Math.pow(2, clamped);
 }
 
+// Lossy-divide confirmation dialog state. When the server returns 409 with
+// `can_force_lossy: true`, we capture the divide params here and open the
+// confirm dialog; on "Divide Anyway" we retry the same request with
+// `force_lossy: true`.
+const showLossyConfirm = ref(false);
+const lossyIps = ref([]);
+const pendingLossyDivide = ref(null);  // { mode: 'equal'|'carve', params, nodeId }
+
+function lossyReasonLabel(row) {
+  if (row.reason === 'network') return `becomes network of ${row.child_cidr}`;
+  if (row.reason === 'broadcast') return `becomes broadcast of ${row.child_cidr}`;
+  if (row.reason === 'outside_selection') return `outside the selected children`;
+  return row.reason;
+}
+function lossyCarriesLabel(carries) {
+  if (carries === 'dhcp_reservation') return 'DHCP reservation';
+  if (carries === 'ip_address') return 'IP record';
+  if (carries === 'dns_record') return 'DNS A record';
+  return carries;
+}
+
 async function executeDivide() {
+  const nodeId = props.selectedNode.data.id;
+  const isAllocated = props.selectedNode.data.status === 'allocated';
+  const params = { new_prefix: divideTargetPrefix.value, force: isAllocated };
+  await runDivide(nodeId, 'equal', params);
+}
+
+async function executeCarve() {
+  const nodeId = props.selectedNode.data.id;
+  const isAllocated = props.selectedNode.data.status === 'allocated';
+  const params = { cidr: normalizeCidr(carveCidr.value), force: isAllocated };
+  await runDivide(nodeId, 'carve', params);
+}
+
+// Per-child pool adjustments surfaced from the server — shown as warn
+// toasts so the user knows which gateways we pulled out of which pools.
+function surfacePoolAdjustments(resp) {
+  const adjustments = resp?.pool_adjustments;
+  if (!Array.isArray(adjustments) || adjustments.length === 0) return;
+  for (const a of adjustments) {
+    const poolBefore = `${a.pool_was.start_ip}–${a.pool_was.end_ip}`;
+    const poolAfter = a.pool_now
+      ? `${a.pool_now.start_ip}–${a.pool_now.end_ip}`
+      : 'empty (whole pool was the gateway)';
+    toast.add({
+      severity: 'warn',
+      summary: 'DHCP pool adjusted for gateway',
+      detail: `The default gateway ${a.gateway} for ${a.child_cidr} conflicted with a DHCP pool and was removed from the pool (${poolBefore} → ${poolAfter}).`,
+      life: 9000
+    });
+  }
+}
+
+// When divide runs with force_lossy, the server deletes DHCP reservations,
+// DNS A records, ip_addresses rows, and dhcp_leases for IPs that landed on
+// new boundaries. Surface the totals so the user knows what was cleaned up.
+function surfaceLossyCleanup(resp) {
+  const c = resp?.lossy_cleanup;
+  if (!c || !c.ips || c.ips.length === 0) return;
+  const r = c.removed || {};
+  const parts = [];
+  if (r.reservations) parts.push(`${r.reservations} reservation${r.reservations === 1 ? '' : 's'}`);
+  if (r.dns_records)  parts.push(`${r.dns_records} DNS A record${r.dns_records === 1 ? '' : 's'}`);
+  if (r.leases)       parts.push(`${r.leases} DHCP lease${r.leases === 1 ? '' : 's'}`);
+  if (r.ip_addresses) parts.push(`${r.ip_addresses} IP record${r.ip_addresses === 1 ? '' : 's'}`);
+  if (parts.length === 0) return;
+  const ipList = c.ips.slice(0, 5).join(', ') + (c.ips.length > 5 ? `, +${c.ips.length - 5} more` : '');
+  toast.add({
+    severity: 'warn',
+    summary: 'Removed lossy host data',
+    detail: `Deleted ${parts.join(', ')} on ${ipList}. Any active DHCP leases on these IPs will rebind to a valid address at next renewal.`,
+    life: 10000
+  });
+}
+
+// Shared handler for both divide modes — intercepts the lossy-IP 409 and
+// opens the confirm dialog instead of showing an opaque toast.
+async function runDivide(nodeId, mode, params) {
   saving.value = true;
   try {
-    const nodeId = props.selectedNode.data.id;
-    const isAllocated = props.selectedNode.data.status === 'allocated';
-    await store.divideSubnet(nodeId, { new_prefix: divideTargetPrefix.value, force: isAllocated });
+    const resp = await store.divideSubnet(nodeId, params);
     showDivide.value = false;
-    toast.add({ severity: 'success', summary: 'Network divided', life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: mode === 'equal' ? 'Network divided' : 'Network created',
+      life: 3000
+    });
+    surfacePoolAdjustments(resp);
+    surfaceLossyCleanup(resp);
     emit('network-divided', nodeId);
+  } catch (err) {
+    const body = err?.response?.data;
+    if (err?.response?.status === 409 && body?.can_force_lossy && Array.isArray(body.lossy)) {
+      // Surface the exact IPs; let the user confirm or cancel.
+      lossyIps.value = body.lossy;
+      pendingLossyDivide.value = { mode, params, nodeId };
+      showLossyConfirm.value = true;
+    } else {
+      toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+    }
+  } finally { saving.value = false; }
+}
+
+async function confirmLossyDivide() {
+  const p = pendingLossyDivide.value;
+  if (!p) { showLossyConfirm.value = false; return; }
+  saving.value = true;
+  try {
+    const resp = await store.divideSubnet(p.nodeId, { ...p.params, force_lossy: true });
+    showLossyConfirm.value = false;
+    showDivide.value = false;
+    pendingLossyDivide.value = null;
+    lossyIps.value = [];
+    toast.add({
+      severity: 'success',
+      summary: p.mode === 'equal' ? 'Network divided' : 'Network created',
+      life: 3000
+    });
+    surfacePoolAdjustments(resp);
+    surfaceLossyCleanup(resp);
+    emit('network-divided', p.nodeId);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
 }
 
-async function executeCarve() {
-  saving.value = true;
-  try {
-    const nodeId = props.selectedNode.data.id;
-    const isAllocated = props.selectedNode.data.status === 'allocated';
-    await store.divideSubnet(nodeId, { cidr: normalizeCidr(carveCidr.value), force: isAllocated });
-    showDivide.value = false;
-    toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
-    emit('network-divided', nodeId);
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+function cancelLossyDivide() {
+  showLossyConfirm.value = false;
+  pendingLossyDivide.value = null;
+  lossyIps.value = [];
 }
 
 // ── Unified Configure / Edit dialog ──
@@ -2256,4 +2393,42 @@ defineExpose({
   color: var(--p-blue-500);
   opacity: 0.7;
 }
+
+/* Lossy-divide confirmation list */
+.lossy-list {
+  margin-top: 1rem;
+  max-height: 18rem;
+  overflow-y: auto;
+  border: 1px solid var(--p-surface-border);
+  border-radius: 4px;
+}
+.lossy-row {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--p-surface-border);
+}
+.lossy-row:last-child { border-bottom: 0; }
+.lossy-primary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: var(--app-fs-sm);
+}
+.lossy-primary code {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--app-fs-md);
+  font-weight: 600;
+}
+.lossy-reason {
+  color: var(--p-surface-content-muted, var(--p-text-muted-color));
+  font-size: var(--app-fs-xs);
+}
+.lossy-meta {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+  font-size: var(--app-fs-xs);
+  color: var(--p-surface-content-muted, var(--p-text-muted-color));
+}
+.lossy-meta code { font-family: var(--font-mono, monospace); }
+.lossy-carries { text-transform: uppercase; letter-spacing: 0.06em; }
 </style>

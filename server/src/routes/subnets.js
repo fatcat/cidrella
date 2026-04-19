@@ -1037,9 +1037,32 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
   return lossy;
 }
 
-// Helper: migrate config from parent to inheriting child during division
-function migrateConfigToChild(db, parentId, childId, childParsed, parentGateway, parentHasReverseDns) {
-  createSystemRanges(db, childId, childParsed, parentGateway);
+// Helper: given a clipped pool range and the child's gateway, shrink the
+// pool to exclude the gateway IP. Returns { start, end, adjusted }. For the
+// rare case where the gateway sits strictly in the middle, truncate the
+// smaller side and keep the larger contiguous segment.
+function excludeGatewayFromPool(clippedStart, clippedEnd, gwLong) {
+  if (gwLong == null || gwLong < clippedStart || gwLong > clippedEnd) {
+    return { start: clippedStart, end: clippedEnd, adjusted: false };
+  }
+  if (gwLong === clippedStart) return { start: clippedStart + 1, end: clippedEnd, adjusted: true };
+  if (gwLong === clippedEnd)   return { start: clippedStart, end: clippedEnd - 1, adjusted: true };
+  // Strictly in the middle — keep the larger contiguous side.
+  const leftSize = gwLong - clippedStart;    // size of pool before gw
+  const rightSize = clippedEnd - gwLong;     // size of pool after gw
+  if (rightSize >= leftSize) return { start: gwLong + 1, end: clippedEnd, adjusted: true };
+  return { start: clippedStart, end: gwLong - 1, adjusted: true };
+}
+
+// Helper: migrate config from parent to inheriting child during division.
+// `childGw` is the new child's gateway IP (not the parent's — the divide
+// handler computes it per-child, e.g. firstUsable of each /24 after a /22
+// split). Returns a list of pool adjustments we had to make so the handler
+// can surface them in the response for user-facing warnings.
+function migrateConfigToChild(db, parentId, childId, childParsed, childGw, parentHasReverseDns) {
+  createSystemRanges(db, childId, childParsed, childGw);
+
+  const poolAdjustments = [];
 
   // Migrate DHCP scope ranges (and their scope config + options) if they fit
   // and child is >= /29. Previously only the range row was moved — the
@@ -1052,12 +1075,34 @@ function migrateConfigToChild(db, parentId, childId, childParsed, parentGateway,
       WHERE r.subnet_id = ? AND rt.name = 'DHCP Scope'
     `).all(parentId);
 
+    const gwLong = childGw ? ipToLong(childGw) : null;
+
     for (const dhcpRange of dhcpRanges) {
       const rStart = ipToLong(dhcpRange.start_ip);
       const rEnd = ipToLong(dhcpRange.end_ip);
-      const clippedStart = Math.max(rStart, childParsed.networkLong + 1);
-      const clippedEnd = Math.min(rEnd, childParsed.broadcastLong - 1);
+      let clippedStart = Math.max(rStart, childParsed.networkLong + 1);
+      let clippedEnd = Math.min(rEnd, childParsed.broadcastLong - 1);
       if (clippedStart > clippedEnd) continue;
+
+      // Exclude the child's gateway from the pool — dnsmasq would otherwise
+      // hand the gateway IP to a client and break routing for the subnet.
+      const beforeStart = clippedStart;
+      const beforeEnd = clippedEnd;
+      const adj = excludeGatewayFromPool(clippedStart, clippedEnd, gwLong);
+      clippedStart = adj.start;
+      clippedEnd = adj.end;
+      if (adj.adjusted) {
+        poolAdjustments.push({
+          child_id: childId,
+          child_cidr: `${childParsed.network}/${childParsed.prefix}`,
+          gateway: childGw,
+          pool_was: { start_ip: longToIp(beforeStart), end_ip: longToIp(beforeEnd) },
+          pool_now: clippedStart > clippedEnd
+            ? null
+            : { start_ip: longToIp(clippedStart), end_ip: longToIp(clippedEnd) },
+        });
+      }
+      if (clippedStart > clippedEnd) continue;  // gateway swallowed whole pool
 
       const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
       if (!dhcpType) continue;
@@ -1110,6 +1155,8 @@ function migrateConfigToChild(db, parentId, childId, childParsed, parentGateway,
   if (parentHasReverseDns) {
     db.prepare('UPDATE subnets SET has_reverse_dns = 1 WHERE id = ?').run(childId);
   }
+
+  return poolAdjustments;
 }
 
 // Helper: delete all subnet-scoped state during teardown. Covers ranges,
@@ -1189,6 +1236,45 @@ function transferPerIpArtifactsToChildren(db, parentId) {
     if (dup && dup.id !== ip.id) delIp.run(dup.id);
     updIp.run(c.id, ip.id);
   }
+}
+
+// After divide, when the user has consented via `force_lossy`, delete the
+// artifacts the lossy detector flagged. Their IPs are now on new children's
+// network/broadcast boundaries (or outside the selected children entirely)
+// and can't be valid hosts anymore.
+//
+//   - DHCP reservations on a boundary IP: delete. The reservation was for
+//     a host; the host can't live on a network/broadcast.
+//   - DNS A records pointing at a boundary IP: delete. The record resolves
+//     but the target is unusable.
+//   - ip_addresses rows on a boundary IP: delete. Next sync will recreate
+//     an appropriate 'locked' row via createSystemRanges.
+//   - dhcp_leases on a boundary IP: delete the DB row. dnsmasq's on-disk
+//     lease remains valid until its client renews; dnsmasq will then
+//     refuse (IP is now outside the active pool) and the client gets a
+//     fresh IP. No connection drop.
+//
+// `lossy` is the exact list returned by detectLossyIpsForDivision, so we
+// only touch rows that were surfaced (and user-acknowledged) upfront.
+// Returns a summary for the response body so the client can toast what
+// got removed.
+function cleanupLossyArtifactsAfterDivide(db, lossy) {
+  if (!Array.isArray(lossy) || lossy.length === 0) {
+    return { ips: [], removed: { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 } };
+  }
+  const ipSet = new Set(lossy.map(l => l.ip));
+  const removed = { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 };
+  const delRes = db.prepare('DELETE FROM dhcp_reservations WHERE ip_address = ?');
+  const delIp  = db.prepare('DELETE FROM ip_addresses WHERE ip_address = ?');
+  const delRec = db.prepare("DELETE FROM dns_records WHERE type = 'A' AND value = ?");
+  const delLease = db.prepare('DELETE FROM dhcp_leases WHERE ip_address = ?');
+  for (const ip of ipSet) {
+    removed.reservations += delRes.run(ip).changes;
+    removed.ip_addresses += delIp.run(ip).changes;
+    removed.dns_records  += delRec.run(ip).changes;
+    removed.leases       += delLease.run(ip).changes;
+  }
+  return { ips: [...ipSet], removed };
 }
 
 // Helper: during divide, transfer the parent's DNS zones (forward + reverse)
@@ -1474,6 +1560,10 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         });
       }
 
+      // Collected across child loop inside the txn so the response can
+      // surface "we shrank your pool to keep the gateway out" notices.
+      let txnPoolAdjustments = [];
+      let txnLossyCleanup = { ips: [], removed: { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 } };
       const txn = db.transaction(() => {
         // Infer the parent's gateway POSITION (first / last / custom / none)
         // so children can inherit the same relative choice — prior code only
@@ -1500,6 +1590,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         const fallbackPosition = inheritedPosition || getSetting('default_gateway_position') || 'first';
 
         const childIds = [];
+        const poolAdjustmentsAll = [];
         for (let i = 0; i < subnets.length; i++) {
           const s = subnets[i];
           const sCidr = `${s.network}/${s.prefix}`;
@@ -1530,7 +1621,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
           });
 
           if (isInheriting) {
-            migrateConfigToChild(db, parent.id, result.lastInsertRowid, s, parent.gateway_address, parent.has_reverse_dns);
+            const adj = migrateConfigToChild(db, parent.id, result.lastInsertRowid, s, childGw, parent.has_reverse_dns);
+            if (Array.isArray(adj) && adj.length) poolAdjustmentsAll.push(...adj);
           } else {
             // All children get Network/Broadcast/Gateway ranges
             createSystemRanges(db, result.lastInsertRowid, childParsed, childGw);
@@ -1541,11 +1633,23 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
           }
           childIds.push(result.lastInsertRowid);
         }
+        // Pool adjustments bubble up via a closure variable — the return
+        // value of txn() is the child id list, and we read the outer
+        // variable after.
+        txnPoolAdjustments = poolAdjustmentsAll;
 
         // Transfer parent's per-IP artifacts (reservations, ip_addresses) and
         // DNS zones to the children BEFORE tearing down the parent config.
         transferPerIpArtifactsToChildren(db, parent.id);
         migrateParentZonesToChildren(db, parent.id);
+
+        // Now that artifacts live under children, delete the ones the user
+        // acknowledged via force_lossy — their IPs sit on new boundaries
+        // and can't be valid hosts.
+        if (lossy.length > 0) {
+          txnLossyCleanup = cleanupLossyArtifactsAfterDivide(db, lossy);
+        }
+
         clearParentConfig(db, parent.id);
 
         // Consolidate: if all siblings of parent are also intermediaries, flatten
@@ -1562,12 +1666,18 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         mode: 'equal',
         new_prefix: targetPrefix,
         count: subnets.length,
-        config_migrated: parent.status === 'allocated'
+        config_migrated: parent.status === 'allocated',
+        lossy_cleanup: txnLossyCleanup
       });
 
       const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parent.id);
       const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ? ORDER BY network_address').all(parent.id);
-      return res.json({ ...updated, children });
+      return res.json({
+        ...updated,
+        children,
+        pool_adjustments: txnPoolAdjustments,
+        lossy_cleanup: txnLossyCleanup
+      });
     }
 
     // Legacy carve mode (single child CIDR)
@@ -1583,18 +1693,19 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
     const childParsed = parseCidr(normalized);
 
     // Lossy-IP gate: same guard as equal mode, gated on force_lossy (NOT force).
-    {
-      const lossy = detectLossyIpsForDivision(db, parent.id, [normalized, ...remainder]);
-      if (lossy.length > 0 && !force_lossy) {
-        return res.status(409).json({
-          error: `${lossy.length} host IP(s) would land on a new subnet's network/broadcast address and be unusable after divide.`,
-          requires_confirmation: true,
-          can_force_lossy: true,
-          lossy
-        });
-      }
+    // Capture the list so the transaction can delete the flagged artifacts.
+    const carveLossy = detectLossyIpsForDivision(db, parent.id, [normalized, ...remainder]);
+    if (carveLossy.length > 0 && !force_lossy) {
+      return res.status(409).json({
+        error: `${carveLossy.length} host IP(s) would land on a new subnet's network/broadcast address and be unusable after divide.`,
+        requires_confirmation: true,
+        can_force_lossy: true,
+        lossy: carveLossy
+      });
     }
 
+    let carvePoolAdjustments = [];
+    let carveLossyCleanup = { ips: [], removed: { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 } };
     const txn = db.transaction(() => {
       let inheritingCidr = null;
       if (parent.status === 'allocated' && parent.gateway_address) {
@@ -1637,7 +1748,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         });
 
         if (isInheriting) {
-          migrateConfigToChild(db, parent.id, result.lastInsertRowid, aParsed, parent.gateway_address, parent.has_reverse_dns);
+          const adj = migrateConfigToChild(db, parent.id, result.lastInsertRowid, aParsed, childGw, parent.has_reverse_dns);
+          if (Array.isArray(adj) && adj.length) carvePoolAdjustments.push(...adj);
         } else {
           // All children get Network/Broadcast/Gateway ranges
           createSystemRanges(db, result.lastInsertRowid, aParsed, childGw);
@@ -1650,6 +1762,9 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
 
       transferPerIpArtifactsToChildren(db, parent.id);
       migrateParentZonesToChildren(db, parent.id);
+      if (carveLossy.length > 0) {
+        carveLossyCleanup = cleanupLossyArtifactsAfterDivide(db, carveLossy);
+      }
       clearParentConfig(db, parent.id);
 
       // Consolidate: if all siblings of parent are also intermediaries, flatten
@@ -1664,12 +1779,18 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       mode: 'carve',
       carved_cidr: normalized,
       remainder,
-      config_migrated: parent.status === 'allocated'
+      config_migrated: parent.status === 'allocated',
+      lossy_cleanup: carveLossyCleanup
     });
 
     const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parent.id);
     const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ? ORDER BY network_address').all(parent.id);
-    res.json({ ...updated, children });
+    res.json({
+      ...updated,
+      children,
+      pool_adjustments: carvePoolAdjustments,
+      lossy_cleanup: carveLossyCleanup
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
