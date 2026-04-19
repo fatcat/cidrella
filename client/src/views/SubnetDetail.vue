@@ -184,6 +184,14 @@
               {{ rt.name }}
             </span>
             <span class="legend-item">
+              <span class="legend-swatch" style="background: var(--p-blue-700)"></span>
+              DHCP Reservation
+            </span>
+            <span class="legend-item">
+              <span class="legend-swatch" style="background: var(--p-green-300)"></span>
+              DNS Configured
+            </span>
+            <span class="legend-item">
               <span class="legend-swatch" style="background: var(--p-violet-500)"></span>
               Locked
             </span>
@@ -777,7 +785,12 @@ const ipGrid = computed(() => {
     const start = ipToLong(r.start_ip);
     const end = ipToLong(r.end_ip);
     for (let i = start; i <= end; i++) {
-      ipRangeMap.set(i, { color: r.range_type_color, rangeType: r.range_type_name, rangeId: r.id });
+      ipRangeMap.set(i, {
+        color: r.range_type_color,
+        rangeType: r.range_type_name,
+        rangeId: r.id,
+        isSystem: !!r.range_type_is_system
+      });
     }
   }
 
@@ -791,16 +804,35 @@ const ipGrid = computed(() => {
     const rangeInfo = ipRangeMap.get(i);
     const assignInfo = ipAssignMap.get(i);
 
-    // "Locked" IPs (manually held) get a distinct violet fill so they stand out
-    // against range-type coloring. Users asked for a purple/violet cue.
-    const isLocked = assignInfo?.status === 'locked';
+    // Color precedence (top wins):
+    //   1. System range (Network/Broadcast/Gateway) — uses the range's own
+    //      color so gateway is orange and network/broadcast are gray.
+    //   2. DHCP reservation — dark blue, stands out from the pale DHCP-pool
+    //      tint that normally covers reservation IPs.
+    //   3. DNS-configured host (A record backing, no reservation) — pale
+    //      green so users can see which IPs are claimed by DNS only.
+    //   4. User-locked (manually held, no system range) — violet.
+    //   5. Range color (DHCP Scope, user-defined ranges).
+    //   6. Unassigned (no range, no assignment) — surface-200.
+    const isSystemRange = !!rangeInfo?.isSystem;
+    const isDhcpReservation = !!assignInfo?.has_dhcp_reservation;
+    const isDnsConfigured = !isDhcpReservation
+      && assignInfo?.detection_source === 'dns'
+      && !!assignInfo?.hostname;
+    const isUserLocked = assignInfo?.status === 'locked' && !isSystemRange;
+
+    let cellColor;
+    if (isSystemRange) cellColor = rangeInfo.color;
+    else if (isDhcpReservation) cellColor = 'var(--p-blue-700)';
+    else if (isDnsConfigured)   cellColor = 'var(--p-green-300)';
+    else if (isUserLocked)      cellColor = 'var(--p-violet-500)';
+    else                        cellColor = rangeInfo?.color || 'var(--p-surface-200)';
+
     grid.push({
       address: addr,
       ipLong: i,
       lastOctet: i & 255,
-      color: isLocked
-        ? 'var(--p-violet-500)'
-        : (rangeInfo?.color || 'var(--p-surface-200)'),
+      color: cellColor,
       rangeType: rangeInfo?.rangeType || null,
       rangeId: rangeInfo?.rangeId || null,
       hostname: assignInfo?.hostname || null,
@@ -1677,20 +1709,32 @@ onUnmounted(() => {
 .ip-grid {
   display: grid;
   grid-template-columns: repeat(64, 1fr);
-  gap: 1px;
+  /* No gap — `gap: 1px` combined with `1fr` columns produces fractional
+     cell widths (e.g. 14.859–14.875 px) whose 1px gaps then get eaten by
+     sub-pixel rasterization, so grid lines randomly disappear. We draw
+     each cell's right + bottom edges with an inset box-shadow instead;
+     shadows snap to device pixels regardless of cell width. The grid
+     container frames its own top + left edges so the outer border is
+     complete. */
+  gap: 0;
   user-select: none;
+  border-top: 1px solid var(--p-surface-border);
+  border-left: 1px solid var(--p-surface-border);
 }
 .ip-cell {
   aspect-ratio: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 1px;
+  border-radius: 0;
   cursor: pointer;
   min-height: 6px;
   min-width: 0;
   position: relative;
   transition: outline 0.1s;
+  box-shadow:
+    inset -1px 0 0 var(--p-surface-border),
+    inset 0 -1px 0 var(--p-surface-border);
 }
 .ip-cell-selected {
   outline: 2px solid var(--p-primary-500);

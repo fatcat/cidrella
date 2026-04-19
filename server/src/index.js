@@ -72,6 +72,16 @@ async function main() {
   // Remove redundant gateway options that should be inherited from subnet
   cleanupRedundantGatewayOptions(getDb());
 
+  // Clear any ip_addresses rows whose DNS-sourced hostname no longer has a
+  // backing A record (historic orphans from pre-refactor cleanup paths).
+  try {
+    const { reconcileDnsOrphans } = await import('./utils/ip-sync.js');
+    const n = reconcileDnsOrphans(getDb());
+    if (n > 0) console.log(`Reconciled ${n} orphan DNS-sourced ip_addresses row(s)`);
+  } catch (err) {
+    console.warn('DNS orphan reconciliation skipped:', err?.message || err);
+  }
+
   // Sync server IP into DNS Servers default
   syncServerDnsDefault(getDb());
 

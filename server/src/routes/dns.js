@@ -411,11 +411,18 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const updated = db.prepare('SELECT * FROM dns_records WHERE id = ?').get(record.id);
   audit(req.user.id, 'record_updated', 'dns_record', record.id, { changes: req.body });
 
-  // Sync PTR when A record is updated in a forward zone
+  // Sync PTR + ip_addresses when an A record is updated in a forward zone.
+  // Clear the OLD hostname whenever NAME OR VALUE changed — the previous
+  // version would skip the clear when only the name changed, leaving an
+  // orphan entry pointing at the old hostname on the IP.
   if (newType === 'A' && zone.type === 'forward') {
-    // If IP changed, clear old PTR and old IP hostname
     if (record.value !== newValue) {
       clearPtrForIp(db, record.value);
+      clearDnsFromIp(db, record.name, record.value, zone.name);
+    } else if (record.name !== newName) {
+      // Name-only change on the same IP: the ip_addresses row still has the
+      // old FQDN. syncDnsToIp below will overwrite it, but we clear
+      // explicitly so the `dns_removed` event is recorded.
       clearDnsFromIp(db, record.name, record.value, zone.name);
     }
     syncPtrForARecord(db, newName, newValue, zone.name);

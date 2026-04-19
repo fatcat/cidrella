@@ -83,6 +83,45 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
 }
 
 /**
+ * Reconcile `ip_addresses` rows that were populated by `syncDnsToIp` against
+ * currently-enabled DNS A records. Any row marked `detection_source = 'dns'`
+ * whose hostname no longer corresponds to a real A record is an orphan — it
+ * happens when a DNS record was removed through a path that bypassed
+ * `clearDnsFromIp` (e.g. a bulk SQL edit, a historic code bug, or pre-refactor
+ * test data). Clears hostname + detection_source on each orphan so the lossy-
+ * IP detector and scan overlays stop treating them as real hosts.
+ *
+ * Runs at server startup (see index.js). Returns the number of rows cleared.
+ */
+export function reconcileDnsOrphans(db) {
+  const orphans = db.prepare(`
+    SELECT ip.id, ip.ip_address, ip.hostname
+    FROM ip_addresses ip
+    WHERE ip.detection_source = 'dns'
+      AND ip.hostname IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM dns_records r
+        JOIN dns_zones z ON r.zone_id = z.id
+        WHERE r.type = 'A'
+          AND r.enabled = 1
+          AND z.type = 'forward'
+          AND r.value = ip.ip_address
+          AND ( (r.name || '.' || z.name) = ip.hostname
+                OR (r.name = '@' AND z.name = ip.hostname) )
+      )
+  `).all();
+  if (orphans.length === 0) return 0;
+  const clearRow = db.prepare(
+    "UPDATE ip_addresses SET hostname = NULL, detection_source = NULL, updated_at = datetime('now') WHERE id = ?"
+  );
+  const cleared = db.transaction(() => {
+    for (const o of orphans) clearRow.run(o.id);
+    return orphans.length;
+  })();
+  return cleared;
+}
+
+/**
  * Derive the reverse-zone name + record name for an IPv4 in a covering
  * reverse zone stored in dns_zones. Looks up the matching /24 (or larger)
  * reverse zone by NAME only — zones are subnet-agnostic post-decouple, so

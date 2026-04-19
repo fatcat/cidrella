@@ -122,7 +122,7 @@ import Popover from 'primevue/popover';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
-import { parseCidr, longToIp } from '../utils/ip.js';
+import { parseCidr, longToIp, dhcpRangeDefaults } from '../utils/ip.js';
 import api from '../api/client.js';
 import { IP_RE, resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError } from '../utils/format.js';
@@ -550,11 +550,22 @@ async function openNewWithPicker(subnetCtx) {
   }
 
   // Network-dependent overrides from subnet context
+  let autoStartIp = '';
+  let autoEndIp = '';
   if (subnetCtx) {
     if (subnetCtx.gateway_address) autoValues[3] = subnetCtx.gateway_address;
     if (subnetCtx.cidr) {
       const mask = computeMask(subnetCtx.cidr);
       if (mask) autoValues[1] = mask;
+      // Pre-fill Start/End IP using the same size-based heuristic used by
+      // the network-create/configure flows. Empty strings for subnets
+      // outside /16–/29 (the user will enter their own).
+      try {
+        const parsed = parseCidr(subnetCtx.cidr);
+        const pool = dhcpRangeDefaults(parsed, subnetCtx.gateway_address || null);
+        autoStartIp = pool.start || '';
+        autoEndIp = pool.end || '';
+      } catch { /* invalid cidr — leave blank */ }
     }
     if (subnetCtx.domain_name) {
       autoValues[15] = subnetCtx.domain_name;
@@ -565,6 +576,8 @@ async function openNewWithPicker(subnetCtx) {
   form.value = {
     ...emptyForm(),
     subnet_id: subnetCtx?.id || null,
+    start_ip: autoStartIp,
+    end_ip: autoEndIp,
     description: (subnetCtx?.name || subnetCtx?.cidr) ? `${subnetCtx.name || subnetCtx.cidr} DHCP Scope` : '',
     selectedOptions: autoSelected,
     optionValues: autoValues
