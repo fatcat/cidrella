@@ -230,6 +230,11 @@
                     @network-deleted="onNetworkDeleted"
                     @networks-merged="onNetworksMerged"
                     @group-configured="onTreeChanged" />
+
+    <!-- Scope dialog shared by the "Add DHCP Scope" context menu item. The
+         subnet row is passed as `subnetCtx` so gateway, subnet-mask, and
+         domain-name options pre-populate from the network. -->
+    <ScopeDialog ref="scopeDialogRef" @saved="onTreeChanged" />
   </div>
 </template>
 
@@ -247,6 +252,7 @@ import TabPanel from 'primevue/tabpanel';
 import SubnetDetail from './SubnetDetail.vue';
 import FolderNetworkTable from '../components/FolderNetworkTable.vue';
 import NetworkDialogs from '../components/NetworkDialogs.vue';
+import ScopeDialog from '../components/ScopeDialog.vue';
 import { defineAsyncComponent } from 'vue';
 const DnsPanel = defineAsyncComponent(() => import('../components/DnsPanel.vue'));
 const DhcpPanel = defineAsyncComponent(() => import('../components/DhcpPanel.vue'));
@@ -322,6 +328,7 @@ watch(selectedSubnetId, persistState);
 // ── Context menu refs ──
 const subnetContextMenuRef = ref(null);
 const folderContextMenuRef = ref(null);
+const scopeDialogRef = ref(null);
 
 // ── Folder operations ──
 function toggleFolder(folderId) {
@@ -517,6 +524,18 @@ const subnetContextMenuItems = computed(() => {
     if (d.name !== expected) {
       items.push({ label: 'Apply Template', icon: 'pi pi-sync', command: () => dialogs.value.executeApplyTemplate([d.id]) });
     }
+  }
+
+  // Quick entry point to create a DHCP scope targeted at this subnet. Only
+  // makes sense for allocated leaves — divided subnets can't host a scope
+  // and unallocated ones have nothing to scope against. `openNewWithPicker`
+  // pre-selects subnet mask, gateway, and domain options from the subnet.
+  if (d.status === 'allocated' && isLeaf) {
+    items.push({
+      label: 'Add DHCP Scope',
+      icon: 'pi pi-server',
+      command: () => scopeDialogRef.value?.openNewWithPicker(d)
+    });
   }
 
   items.push({ separator: true });
