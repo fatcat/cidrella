@@ -115,7 +115,7 @@ describe('POST /api/subnets/:id/divide — data preservation', () => {
     expect(upperResv.body.find(r => r.ip_address === '10.10.1.50' && r.hostname === 'carrier')).toBeDefined();
   });
 
-  it('migrates forward DNS zones to a child (records survive)', async () => {
+  it('forward DNS zone and its records survive the divide (post-decouple: zone is subnet-agnostic)', async () => {
     const parent = await createSubnet({ cidr: '10.11.0.0/23', name: 'Divide-dns', status: 'allocated', gateway_address: '10.11.0.1' });
     await configure(parent.id, {
       name: 'Divide-dns', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'divide-dns.test'

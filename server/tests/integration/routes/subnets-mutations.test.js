@@ -167,6 +167,105 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
   });
 });
 
+// --- DNS record rename clears stale ip_addresses.hostname --------------
+//
+// Prior to the bug fix, PUT /api/dns/zones/:zoneId/records/:id only called
+// clearDnsFromIp when the record's VALUE changed. A name-only rename on the
+// same IP would leave the old FQDN on ip_addresses.hostname (still sort of
+// OK because syncDnsToIp then overwrites). The more dangerous path was
+// DELETE paths that skipped clearDnsFromIp (pre-refactor test data, SQL
+// edits), leaving orphan rows that later flagged as lossy on divide.
+// reconcileDnsOrphans on startup is the safety net.
+describe('ip-sync orphan cleanup', () => {
+  it('renaming a DNS A record updates the ip_addresses row hostname', async () => {
+    const s = await mkSubnet({
+      cidr: '10.80.0.0/24', name: 'dns-rename', status: 'allocated', gateway_address: '10.80.0.1'
+    });
+    await configure(s.id, {
+      name: 'dns-rename', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'dns-rename.test'
+    });
+    const zone = await findZone('dns-rename.test');
+
+    // Create A record, then rename (same IP, new name). The ip_addresses row
+    // for that IP should track the current FQDN, not the old one.
+    const create = await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'host-v1', type: 'A', value: '10.80.0.50'
+    });
+    expect(create.status).toBe(201);
+
+    const rename = await request(app).put(`/api/dns/zones/${zone.id}/records/${create.body.id}`).send({
+      name: 'host-v2', type: 'A', value: '10.80.0.50'
+    });
+    expect(rename.status).toBe(200);
+
+    const ips = await request(app).get(`/api/subnets/${s.id}/ips?page=1&pageSize=256`);
+    const row = ips.body.ips.find(r => r.ip_address === '10.80.0.50');
+    expect(row).toBeDefined();
+    expect(row.hostname).toBe('host-v2.dns-rename.test');
+  });
+
+  it('reconcileDnsOrphans clears hostname on ip_addresses rows without a backing DNS record', async () => {
+    const { reconcileDnsOrphans } = await import('../../../src/utils/ip-sync.js');
+    const { getDb } = await import('../../../src/db/init.js');
+    const db = getDb();
+
+    const s = await mkSubnet({
+      cidr: '10.81.0.0/24', name: 'orphan-src', status: 'allocated', gateway_address: '10.81.0.1'
+    });
+    await configure(s.id, {
+      name: 'orphan-src', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'orphan-src.test'
+    });
+
+    // Plant a phantom DNS-sourced row: hostname points at a zone-qualified
+    // FQDN that has no backing dns_records row. This simulates the pre-
+    // refactor orphan state.
+    db.prepare(`
+      INSERT OR REPLACE INTO ip_addresses
+        (subnet_id, ip_address, hostname, status, detection_source, updated_at)
+      VALUES (?, ?, ?, 'available', 'dns', datetime('now'))
+    `).run(s.id, '10.81.0.77', 'ghost.orphan-src.test');
+
+    const before = db.prepare('SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+      .get(s.id, '10.81.0.77');
+    expect(before.hostname).toBe('ghost.orphan-src.test');
+
+    const cleared = reconcileDnsOrphans(db);
+    expect(cleared).toBeGreaterThanOrEqual(1);
+
+    const after = db.prepare('SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+      .get(s.id, '10.81.0.77');
+    expect(after.hostname).toBeNull();
+    expect(after.detection_source).toBeNull();
+  });
+
+  it('reconcileDnsOrphans does NOT touch rows with a real backing A record', async () => {
+    const { reconcileDnsOrphans } = await import('../../../src/utils/ip-sync.js');
+    const { getDb } = await import('../../../src/db/init.js');
+    const db = getDb();
+
+    const s = await mkSubnet({
+      cidr: '10.82.0.0/24', name: 'orphan-keep', status: 'allocated', gateway_address: '10.82.0.1'
+    });
+    await configure(s.id, {
+      name: 'orphan-keep', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'orphan-keep.test'
+    });
+    const zone = await findZone('orphan-keep.test');
+    await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'keeper', type: 'A', value: '10.82.0.42'
+    });
+
+    // A-record create already wrote hostname='keeper.orphan-keep.test' with
+    // detection_source='dns' — that's a REAL mapping. Reconcile must leave it.
+    reconcileDnsOrphans(db);
+
+    const row = db.prepare(
+      'SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    ).get(s.id, '10.82.0.42');
+    expect(row.hostname).toBe('keeper.orphan-keep.test');
+    expect(row.detection_source).toBe('dns');
+  });
+});
+
 // --- PUT /:id CIDR reject + gateway-in-pool guards --------------------
 
 describe('PUT /api/subnets/:id — structural guards', () => {

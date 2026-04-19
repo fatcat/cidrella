@@ -82,6 +82,31 @@ async function main() {
     console.warn('DNS orphan reconciliation skipped:', err?.message || err);
   }
 
+  // Repair stale system "Gateway" range rows whose start_ip doesn't match
+  // the subnet's own `gateway_address`. An earlier version of
+  // migrateConfigToChild passed the PARENT's gateway IP to createSystemRanges
+  // for every child, so /22 → 4x/24 divides left all four children pointing
+  // at the parent's gateway IP — which falls outside the child's CIDR and
+  // breaks the Grid View's gateway coloring. New divides use the child's
+  // gateway; this heal fixes the ones that already landed.
+  try {
+    const repaired = getDb().prepare(`
+      UPDATE ranges
+         SET start_ip = (SELECT gateway_address FROM subnets WHERE id = ranges.subnet_id),
+             end_ip   = (SELECT gateway_address FROM subnets WHERE id = ranges.subnet_id),
+             updated_at = datetime('now')
+       WHERE range_type_id = (SELECT id FROM range_types WHERE name='Gateway' AND is_system=1)
+         AND EXISTS (
+           SELECT 1 FROM subnets WHERE id = ranges.subnet_id
+                                  AND gateway_address IS NOT NULL
+                                  AND gateway_address != ranges.start_ip
+         )
+    `).run();
+    if (repaired.changes > 0) console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
+  } catch (err) {
+    console.warn('Gateway range repair skipped:', err?.message || err);
+  }
+
   // Sync server IP into DNS Servers default
   syncServerDnsDefault(getDb());
 

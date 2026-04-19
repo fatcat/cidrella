@@ -152,7 +152,7 @@
         <!-- Ranges Table -->
         <div class="section">
           <h4 style="margin:0 0 0.5rem 0">Ranges</h4>
-          <DataTable :value="ranges" stripedRows size="small" emptyMessage="No ranges defined."
+          <DataTable :value="visibleRanges" stripedRows size="small" emptyMessage="No ranges defined."
                      :paginator="ranges.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
                      @row-contextmenu="onRangeRightClick" contextMenu
@@ -196,6 +196,12 @@
               Locked
             </span>
             <span class="legend-item">
+              <!-- Rogue is already rendered on the grid as a red outline +
+                   conflict dot; the swatch mirrors that with a red ring. -->
+              <span class="legend-swatch legend-swatch-rogue"></span>
+              Rogue
+            </span>
+            <span class="legend-item">
               <span class="legend-swatch" style="background: var(--p-surface-200)"></span>
               Unassigned
             </span>
@@ -210,7 +216,11 @@
                  v-tooltip.top="gridTooltip(ip)"
                  :style="{ background: gridSelection.has(idx) ? 'var(--p-primary-200)' : ip.color }"
                  :data-idx="idx"
-                 :class="{ 'ip-cell-selected': gridSelection.has(idx), 'ip-cell-conflict': ip.isConflict }">
+                 :class="{
+                   'ip-cell-selected': gridSelection.has(idx),
+                   'ip-cell-conflict': ip.isConflict,
+                   'ip-cell-section-right': ip.isSectionRight
+                 }">
               <span v-if="ip.isConflict" class="conflict-dot"></span>
             </div>
           </div>
@@ -638,7 +648,7 @@ const rangeContextMenuItems = computed(() => {
   if (!r || !isEditableRange(r)) return [];
   return [
     { label: r.range_type_name === 'DHCP Scope' ? 'Edit DHCP Scope' : 'Edit Range', icon: 'pi pi-pencil', command: () => r.range_type_name === 'DHCP Scope' ? editDhcpScope(r) : editRange(r) },
-    { label: 'Delete Range', icon: 'pi pi-trash', command: () => confirmDeleteRange(r) }
+    { label: r.range_type_name === 'DHCP Scope' ? 'Delete DHCP Scope' : 'Delete Range', icon: 'pi pi-trash', command: () => confirmDeleteRange(r) }
   ];
 });
 function onRangeRightClick(event) {
@@ -723,14 +733,106 @@ function getIpState(data) {
   return { status: 'available', statusSeverity: 'secondary', type: null, typeSeverity: null };
 }
 
+// The legend always shows every possible color so users can learn it
+// without needing a subnet that happens to have one of each. User-defined
+// range types (non-system) still appear dynamically — those are specific
+// to a deployment and only meaningful when they exist.
 const rangeTypeLegend = computed(() => {
-  const seen = new Map();
+  // Static baseline — always shown, in a deliberate order.
+  const baseline = [
+    { name: 'System',      color: '#6b7280' },          // network + broadcast
+    { name: 'Gateway',     color: '#f59e0b' },
+    { name: 'DHCP Scope',  color: '#3b82f6' },
+  ];
+
+  // Dynamic user-defined types pulled from range_types store (loaded on
+  // mount). Filter out the system types we already cover in baseline.
+  const dynamic = [];
+  const seen = new Set(['System', 'Gateway', 'DHCP Scope', 'Network', 'Broadcast']);
+  for (const rt of (rangeTypes.value || [])) {
+    if (rt.is_system) continue;
+    if (seen.has(rt.name)) continue;
+    seen.add(rt.name);
+    dynamic.push({ name: rt.name, color: rt.color });
+  }
+  return [...baseline, ...dynamic];
+});
+
+// Entries displayed in the Ranges table on the Grid View. System-range rows
+// (Network / Broadcast / Gateway) are hidden — they're implicit for every
+// allocated subnet and add noise. Locked IPs from `ip_addresses` are injected
+// as synthetic rows so users can see which addresses are manually held. We
+// collapse consecutive locked IPs into a single range (e.g. .5–.7 instead
+// of three separate rows) to keep the table tidy.
+const visibleRanges = computed(() => {
+  const filtered = ranges.value.filter(r => {
+    if (!r.range_type_is_system) return true;
+    return !['Network', 'Broadcast', 'Gateway'].includes(r.range_type_name);
+  });
+
+  // A locked IP that overlaps a system range (Network / Broadcast / Gateway)
+  // is not user-locked — createSystemRanges writes those rows automatically.
+  // The grid-cell coloring already applies this same filter; we mirror it
+  // here so the Ranges table doesn't list .0, .255, or the gateway IP as
+  // Locked. Build a set of system-range IPs for quick lookup.
+  const systemIpLongs = new Set();
   for (const r of ranges.value) {
-    if (!seen.has(r.range_type_name)) {
-      seen.set(r.range_type_name, { name: r.range_type_name, color: r.range_type_color });
+    if (!r.range_type_is_system) continue;
+    if (!['Network', 'Broadcast', 'Gateway'].includes(r.range_type_name)) continue;
+    const s = ipToLong(r.start_ip);
+    const e = ipToLong(r.end_ip);
+    for (let l = s; l <= e; l++) systemIpLongs.add(l);
+  }
+
+  // Group locked IPs into contiguous ranges.
+  const lockedIps = (ips.value || [])
+    .filter(ip => ip.status === 'locked')
+    .map(ip => ({ ip, long: ipToLong(ip.ip_address) }))
+    .filter(({ long }) => !systemIpLongs.has(long))
+    .sort((a, b) => a.long - b.long);
+
+  const lockedRows = [];
+  let run = null;  // { startIp, endIp, startLong, endLong, hostnames:[], notes:[] }
+  const flushRun = () => {
+    if (!run) return;
+    // Build the description from all hostnames + notes within the run.
+    const parts = [];
+    const noteSet = [...new Set(run.notes.filter(Boolean))];
+    const hostSet = [...new Set(run.hostnames.filter(Boolean))];
+    if (hostSet.length) parts.push(`Host${hostSet.length > 1 ? 's' : ''}: ${hostSet.join(', ')}`);
+    if (noteSet.length) parts.push(noteSet.join('; '));
+    lockedRows.push({
+      id: `locked-${run.startLong}`,
+      range_type_name: 'Locked',
+      range_type_color: 'var(--p-violet-500)',
+      range_type_is_system: 0,
+      start_ip: run.startIp,
+      end_ip: run.endIp,
+      description: parts.join(' · ') || null,
+      _synthetic: true
+    });
+  };
+  for (const { ip, long } of lockedIps) {
+    if (run && long === run.endLong + 1) {
+      run.endIp = ip.ip_address;
+      run.endLong = long;
+      if (ip.hostname) run.hostnames.push(ip.hostname);
+      if (ip.reservation_note) run.notes.push(ip.reservation_note);
+    } else {
+      flushRun();
+      run = {
+        startIp: ip.ip_address,
+        endIp: ip.ip_address,
+        startLong: long,
+        endLong: long,
+        hostnames: ip.hostname ? [ip.hostname] : [],
+        notes: ip.reservation_note ? [ip.reservation_note] : [],
+      };
     }
   }
-  return Array.from(seen.values());
+  flushRun();
+
+  return [...filtered, ...lockedRows];
 });
 
 const editableRangeTypes = computed(() => {
@@ -764,6 +866,10 @@ function gridTooltip(ip) {
   if (state.type) {
     lines.push(`Type: ${state.type}${state.tooltip ? ` (${state.tooltip})` : ''}`);
   }
+  // Network and Broadcast both resolve to Type = "system"; the Role line
+  // tells them apart for quick identification.
+  if (ip.rangeType === 'Network')   lines.push('Role: network');
+  if (ip.rangeType === 'Broadcast') lines.push('Role: broadcast');
   if (ip.hostname) lines.push(`Host: ${displayHost(ip.hostname)}`);
   if (ip.mac) lines.push(`MAC: ${ip.mac}`);
   if (ip.vendor) lines.push(`Vendor: ${ip.vendor}`);
@@ -828,11 +934,19 @@ const ipGrid = computed(() => {
     else if (isUserLocked)      cellColor = 'var(--p-violet-500)';
     else                        cellColor = rangeInfo?.color || 'var(--p-surface-200)';
 
+    // Column position within the 64-wide grid. Mark every 16th column's
+    // RIGHT edge with a thicker line so users can visually count IPs by
+    // octets of 16. Skip col 63 (that's the outer frame) and any cell
+    // that's the last rendered cell (subnet smaller than 64-wide).
+    const col = (i - net) % 64;
+    const isSectionRight = (col % 16) === 15 && col !== 63 && i !== bcast;
+
     grid.push({
       address: addr,
       ipLong: i,
       lastOctet: i & 255,
       color: cellColor,
+      isSectionRight,
       rangeType: rangeInfo?.rangeType || null,
       rangeId: rangeInfo?.rangeId || null,
       hostname: assignInfo?.hostname || null,
@@ -1034,17 +1148,51 @@ function buildContextMenuItems(selectedIps) {
     items.push({ label: `Probe ${ip.address}`, icon: 'pi pi-wifi', command: () => probeIpNow(ip.address) });
     items.push({ label: `Lifecycle of ${ip.address}`, icon: 'pi pi-history', command: () => openEventsDialog(ip.address) });
   } else {
-    // Multi-select
+    // Multi-select. Skip system-reserved IPs (network/broadcast/gateway) —
+    // they can't be locked/unlocked by the user. The server-side bulk-status
+    // endpoint also silently skips them, so this is just UX symmetry.
+    const unlockable = selectedIps.filter(ip => !isSystemReserved(ip));
+    const anyLocked = unlockable.some(ip => (ip.status || 'available') === 'locked');
+    const anyUnlocked = unlockable.some(ip => (ip.status || 'available') !== 'locked');
+
+    // If the contiguous selection is entirely inside ONE DHCP Scope range,
+    // offer a bulk "Remove from Scope" that shrinks/splits that scope. When
+    // the selection straddles two scopes or leaks outside any scope, we
+    // don't offer it — the user should remove per-scope.
+    const firstLong = ipToLong(firstIp.address);
+    const lastLong = ipToLong(lastIp.address);
+    const coveringScope = ranges.value.find(r =>
+      r.range_type_name === 'DHCP Scope'
+      && firstLong >= ipToLong(r.start_ip)
+      && lastLong <= ipToLong(r.end_ip)
+    );
+
     items.push({
       label: `Add DHCP Scope ${firstIp.address} – ${lastIp.address}`,
       icon: 'pi pi-plus',
       command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
     });
-    items.push({
-      label: `Lock ${firstIp.address} – ${lastIp.address}`,
-      icon: 'pi pi-lock',
-      command: () => openReserveDialog(firstIp.address, lastIp.address)
-    });
+    if (coveringScope) {
+      items.push({
+        label: `Remove ${firstIp.address} – ${lastIp.address} from Scope`,
+        icon: 'pi pi-minus',
+        command: () => removeRangeFromPool(coveringScope, firstIp.address, lastIp.address)
+      });
+    }
+    if (anyUnlocked) {
+      items.push({
+        label: `Lock ${firstIp.address} – ${lastIp.address}`,
+        icon: 'pi pi-lock',
+        command: () => openReserveDialog(firstIp.address, lastIp.address)
+      });
+    }
+    if (anyLocked) {
+      items.push({
+        label: `Unlock ${firstIp.address} – ${lastIp.address}`,
+        icon: 'pi pi-unlock',
+        command: () => bulkUnlock(firstIp.address, lastIp.address)
+      });
+    }
   }
 
   return items;
@@ -1120,6 +1268,25 @@ async function setIpReservation(ipAddress, status, note) {
   try {
     await store.setIpStatus(subnet.value.id, ipAddress, status, note);
     toast.add({ severity: 'success', summary: status === 'locked' ? 'IP locked' : 'IP unlocked', life: 3000 });
+    await reloadData();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  }
+}
+
+// Bulk-unlock a contiguous IP range via the same bulk endpoint used for lock.
+// Status 'available' clears any reservation note; system-reserved IPs in the
+// range (network/broadcast/gateway) are silently skipped server-side per the
+// ipStatusRejectionReason guard.
+async function bulkUnlock(startIp, endIp) {
+  try {
+    const result = await store.bulkSetIpStatus(subnet.value.id, startIp, endIp, 'available');
+    const skipped = result?.skipped ? ` (${result.skipped} skipped)` : '';
+    toast.add({
+      severity: 'success',
+      summary: `${result.count} IP${result.count === 1 ? '' : 's'} unlocked${skipped}`,
+      life: 3000
+    });
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1341,13 +1508,77 @@ async function forceCreateRange() {
   await saveRange(true);
 }
 
-async function removeIpFromPool(range, ipAddress) {
+// Shrink a DHCP scope range to exclude a contiguous sub-range [startIp,
+// endIp]. Caller guarantees [startIp, endIp] is fully inside `range`.
+// Three shapes are supported: whole pool, start trim, end trim. Middle-
+// split (two pools per subnet) is NOT supported today — dnsmasq can handle
+// multiple scopes per interface but CIDRella's data model and UI assume
+// one DHCP scope per subnet. Rather than throw a generic server-side
+// "ranges must be contiguous" error, refuse client-side with guidance.
+async function removeRangeFromPool(range, startIp, endIp) {
+  const poolStart = ipToLong(range.start_ip);
+  const poolEnd = ipToLong(range.end_ip);
+  const cutStart = ipToLong(startIp);
+  const cutEnd = ipToLong(endIp);
+
+  // Middle cut — would split the pool into two. Reject with guidance.
+  if (cutStart > poolStart && cutEnd < poolEnd) {
+    toast.add({
+      severity: 'warn',
+      summary: "Can't split a DHCP pool",
+      detail: `Removing ${startIp} – ${endIp} would leave two separate pools (${range.start_ip} – ${longToIp(cutStart - 1)} and ${longToIp(cutEnd + 1)} – ${range.end_ip}). A subnet can only have one DHCP scope. To carve out this range, resize the pool from the start or end, or delete the pool and recreate smaller ones by hand.`,
+      life: 9000
+    });
+    return;
+  }
+
   saving.value = true;
   try {
-    const startLong = ipToLong(range.start_ip);
-    const endLong = ipToLong(range.end_ip);
-    const ipLong = ipToLong(ipAddress);
+    if (cutStart <= poolStart && cutEnd >= poolEnd) {
+      // Whole pool carved out — drop it.
+      await store.deleteRange(subnet.value.id, range.id);
+      toast.add({ severity: 'success', summary: 'Pool deleted', life: 3000 });
+    } else if (cutStart <= poolStart) {
+      // Trim the start.
+      await store.updateRange(subnet.value.id, range.id, {
+        ...range, start_ip: longToIp(cutEnd + 1)
+      });
+      toast.add({ severity: 'success', summary: 'Pool start trimmed', life: 3000 });
+    } else {
+      // Trim the end.
+      await store.updateRange(subnet.value.id, range.id, {
+        ...range, end_ip: longToIp(cutStart - 1)
+      });
+      toast.add({ severity: 'success', summary: 'Pool end trimmed', life: 3000 });
+    }
+    await reloadData();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally {
+    saving.value = false;
+  }
+}
 
+async function removeIpFromPool(range, ipAddress) {
+  const startLong = ipToLong(range.start_ip);
+  const endLong = ipToLong(range.end_ip);
+  const ipLong = ipToLong(ipAddress);
+
+  // Middle cut would require two separate pools (one below, one above) —
+  // not supported today. Explain up front instead of hitting the generic
+  // contiguous-range error from the ranges POST endpoint.
+  if (startLong !== endLong && ipLong !== startLong && ipLong !== endLong) {
+    toast.add({
+      severity: 'warn',
+      summary: "Can't split a DHCP pool",
+      detail: `Removing ${ipAddress} would leave two separate pools (${range.start_ip} – ${longToIp(ipLong - 1)} and ${longToIp(ipLong + 1)} – ${range.end_ip}). A subnet can only have one DHCP scope. To free this IP, shrink the pool's start or end instead, or delete the pool and recreate it.`,
+      life: 9000
+    });
+    return;
+  }
+
+  saving.value = true;
+  try {
     if (startLong === endLong) {
       // Single-IP pool — just delete it
       await store.deleteRange(subnet.value.id, range.id);
@@ -1358,25 +1589,12 @@ async function removeIpFromPool(range, ipAddress) {
         ...range, start_ip: longToIp(startLong + 1)
       });
       toast.add({ severity: 'success', summary: 'IP removed from pool', life: 3000 });
-    } else if (ipLong === endLong) {
+    } else {
       // Remove from end
       await store.updateRange(subnet.value.id, range.id, {
         ...range, end_ip: longToIp(endLong - 1)
       });
       toast.add({ severity: 'success', summary: 'IP removed from pool', life: 3000 });
-    } else {
-      // Middle — shrink original to before the IP, create new range after
-      await store.updateRange(subnet.value.id, range.id, {
-        ...range, end_ip: longToIp(ipLong - 1)
-      });
-      await store.createRange(subnet.value.id, {
-        range_type_id: range.range_type_id,
-        start_ip: longToIp(ipLong + 1),
-        end_ip: range.end_ip,
-        description: range.description || '',
-        force: true
-      });
-      toast.add({ severity: 'success', summary: 'IP removed from pool (pool split)', life: 3000 });
     }
     await reloadData();
   } catch (err) {
@@ -1394,9 +1612,24 @@ function confirmDeleteRange(range) {
 async function doDeleteRange() {
   saving.value = true;
   try {
-    await store.deleteRange(subnet.value.id, deletingRange.value.id);
-    showDeleteRangeDialog.value = false;
-    toast.add({ severity: 'success', summary: 'Range deleted', life: 3000 });
+    const range = deletingRange.value;
+    // DHCP Scope ranges aren't deletable directly — the server refuses to
+    // avoid orphaning the attached `dhcp_scopes` row (range_id → SET NULL).
+    // The DHCP scope DELETE endpoint wipes scope + options + range together,
+    // which is what the user actually wants. Look up the scope by range_id
+    // and route through it.
+    if (range.range_type_name === 'DHCP Scope') {
+      const scopes = await dhcpStore.fetchScopes();
+      const scope = (scopes || dhcpStore.scopes || []).find(s => s.range_id === range.id);
+      if (!scope) throw new Error('DHCP scope metadata missing — refresh and retry.');
+      await dhcpStore.deleteScope(scope.id);
+      showDeleteRangeDialog.value = false;
+      toast.add({ severity: 'success', summary: 'DHCP scope deleted', life: 3000 });
+    } else {
+      await store.deleteRange(subnet.value.id, range.id);
+      showDeleteRangeDialog.value = false;
+      toast.add({ severity: 'success', summary: 'Range deleted', life: 3000 });
+    }
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1706,6 +1939,14 @@ onUnmounted(() => {
   border-radius: 2px;
   display: inline-block;
 }
+/* Rogue cells are drawn as a red outline + dot on the grid rather than a
+   solid fill; the legend swatch mirrors that so users can match what they
+   see. */
+.legend-swatch-rogue {
+  background: transparent;
+  outline: 2px solid var(--p-red-500);
+  outline-offset: -2px;
+}
 .ip-grid {
   display: grid;
   grid-template-columns: repeat(64, 1fr);
@@ -1744,6 +1985,15 @@ onUnmounted(() => {
 .ip-cell-conflict {
   outline: 2px solid var(--p-red-500) !important;
   outline-offset: -1px;
+}
+/* Every 16th column gets a thicker, slightly darker right edge so users
+   can count IPs by groups of 16 at a glance. Overrides the default
+   box-shadow (right + bottom) — we keep the bottom thin but widen and
+   darken the right edge. */
+.ip-cell-section-right {
+  box-shadow:
+    inset -2px 0 0 var(--p-surface-content),
+    inset 0 -1px 0 var(--p-surface-border);
 }
 .conflict-dot {
   position: absolute;
