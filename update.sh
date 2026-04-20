@@ -54,6 +54,7 @@ MIN_FREE_MB=400   # Require 400MB free on /opt for bundled tarballs
 REQUESTED_VERSION=""
 PROGRESS_FILE=""
 FROM_API=false
+FORCE=false
 STARTED_AT=""
 CURRENT_VERSION="unknown"
 NEW_VERSION=""
@@ -240,12 +241,97 @@ trap cleanup EXIT
 
 # ─── Parse arguments ──────────────────────────────────────
 
+show_help() {
+  cat <<'HELP'
+Update CIDRella to a newer version using the A/B slot + auto-rollback flow.
+
+USAGE
+    cidrella-update [OPTIONS]
+
+OPTIONS
+    --version VER      Install this specific version instead of the latest.
+                       Accepts a plain version string without the leading 'v':
+                         cidrella-update --version 0.4.15
+                         cidrella-update --version 0.4.15-pre.1
+                       Pre-release versions only resolve if the exact tag exists
+                       on GitHub (they are NOT surfaced via /releases/latest, so
+                       the default "latest" path skips them by design).
+
+    --progress-file F  Write JSON progress updates to F. Used by the UI updater
+                       so the admin panel can poll status during an in-app
+                       update. Contains state, percent, phase, error (if any).
+
+    --from-api         Suppress interactive output. The server spawns the
+                       updater this way when the admin clicks "Install" in
+                       the UI — there's no terminal to write to.
+
+    --force            Bypass the "already running this version" short-circuit
+                       and the downgrade guard. DOES NOT bypass signature
+                       verification, the deep-health preflight, or the
+                       min_from gate — those are safety checks, not policy.
+
+                       Use cases:
+                         - Iterate pre-releases: 0.4.15-pre.2 → 0.4.15-pre.1
+                         - Reinstall the same version after a bad install
+                         - Install an older tarball known to be good
+
+                       Normal downgrades should go through cidrella-rollback,
+                       which also restores the DB snapshot. --force skips the
+                       DB-snapshot restore, so any schema-newer data written
+                       since the target version shipped may trip the new
+                       (older) code on first boot. Exercise accordingly.
+
+    --help, -h         Show this help and exit.
+
+FLOW
+    1. Preflight: root, disk space, existing install, detect A/B slots.
+    2. Download + verify minisign signature (old version still running).
+    3. Extract to the INACTIVE slot (old version still serving traffic).
+    4. Deep-health preflight: syntax check + spawn on temp port 18443 +
+       /api/health/deep must return ok. dnsmasq is NEVER restarted.
+    5. Snapshot SQLite (WAL-checkpointed) + DuckDB to
+       /var/lib/cidrella/snapshots/pre-update/.
+    6. Install standalone cidrella-rollback script from the CURRENT slot.
+    7. Atomic switchover: swap the /opt/cidrella symlink, daemon-reload,
+       restart cidrella.service. Auto-rollback if post-switch health fails.
+
+EXAMPLES
+    # Update to the latest stable release
+    cidrella-update
+
+    # Install a specific version
+    cidrella-update --version 0.4.15
+
+    # Install a pre-release (only works if the tag exists on GitHub)
+    cidrella-update --version 0.4.15-pre.1
+
+    # Downgrade after a bad release — use cidrella-rollback instead of
+    # this script. --version DOES NOT allow downgrades; the downgrade
+    # guard in this script will refuse.
+
+RECOVERY
+    If the new slot fails health checks, the script automatically swaps
+    the symlink back to the old slot and restores DB snapshots. Manual:
+        cidrella-rollback
+    Full incident guide: /opt/cidrella/BREAK-GLASS-CEREMONY.md
+
+LOGS
+    /var/lib/cidrella/update.log     — Full stdout/stderr of the last run
+    /var/lib/cidrella/update-status.json — Current state (UI polls this)
+
+SEE ALSO
+    cidrella-rollback, RELEASE-NOTES.md inside /opt/cidrella
+HELP
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) REQUESTED_VERSION="$2"; shift 2 ;;
     --progress-file) PROGRESS_FILE="$2"; shift 2 ;;
     --from-api) FROM_API=true; shift ;;
-    *) err "Unknown argument: $1"; exit 1 ;;
+    --force) FORCE=true; shift ;;
+    --help|-h) show_help; exit 0 ;;
+    *) err "Unknown argument: $1"; err "Run 'cidrella-update --help' for usage."; exit 1 ;;
   esac
 done
 
@@ -390,19 +476,31 @@ NEW_VERSION="${TAG_NAME#v}"
 # semver_lt / semver_gt / semver_eq come from scripts/lib/slots.sh.
 
 if [ "$NEW_VERSION" = "$CURRENT_VERSION" ]; then
-  ok "Already running the latest version (v${CURRENT_VERSION})."
-  write_progress "completed" 100 "Already up to date" "null"
-  exit 0
+  if [ "$FORCE" = true ]; then
+    warn "Reinstalling current version v${CURRENT_VERSION} (--force)."
+  else
+    ok "Already running the latest version (v${CURRENT_VERSION})."
+    write_progress "completed" 100 "Already up to date" "null"
+    exit 0
+  fi
 fi
 
 # Prevent accidental downgrade via the update path. Downgrades must go
 # through cidrella-rollback, which is the only path that also restores
 # the DB snapshot — otherwise old code will crash on a newer schema.
+# --force bypasses this (pre-release iteration workflow). The user is
+# responsible for understanding the DB implication.
 if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
-  err "Refusing to downgrade: v${CURRENT_VERSION} → v${NEW_VERSION}"
-  err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot)."
-  write_progress "failed" 5 "Downgrade not allowed via update" "Requested v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
-  exit 1
+  if [ "$FORCE" = true ]; then
+    warn "Allowing downgrade v${CURRENT_VERSION} → v${NEW_VERSION} (--force)."
+    warn "No DB snapshot will be restored — schema newer than v${NEW_VERSION} may break on boot."
+  else
+    err "Refusing to downgrade: v${CURRENT_VERSION} → v${NEW_VERSION}"
+    err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot),"
+    err "or 'cidrella-update --force --version ${NEW_VERSION}' to proceed without snapshot restore."
+    write_progress "failed" 5 "Downgrade not allowed via update" "Requested v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
+    exit 1
+  fi
 fi
 
 # Warn if jumping multiple minor versions — migrations and data format
@@ -565,13 +663,19 @@ if [ -f "$RELEASE_META" ]; then
     emit_event verify warn reason=tag-mismatch "tag=$NEW_VERSION" "release_json=$VERIFIED_VERSION"
     NEW_VERSION="$VERIFIED_VERSION"
   fi
-  # Authoritative downgrade guard — runs on signed data.
+  # Authoritative downgrade guard — runs on signed data. --force bypasses
+  # (same rationale as the pre-signature-verify guard above).
   if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
-    err "Refusing to downgrade (verified from signed RELEASE.json): v${CURRENT_VERSION} → v${NEW_VERSION}"
-    err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot)."
-    emit_event verify fail reason=downgrade "from=$CURRENT_VERSION" "to=$NEW_VERSION"
-    write_progress "failed" 50 "Downgrade not allowed via update" "Signed RELEASE.json v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
-    exit 1
+    if [ "$FORCE" = true ]; then
+      warn "Allowing downgrade v${CURRENT_VERSION} → v${NEW_VERSION} (--force, verified from signed RELEASE.json)."
+    else
+      err "Refusing to downgrade (verified from signed RELEASE.json): v${CURRENT_VERSION} → v${NEW_VERSION}"
+      err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot),"
+      err "or 'cidrella-update --force --version ${NEW_VERSION}' to proceed without snapshot restore."
+      emit_event verify fail reason=downgrade "from=$CURRENT_VERSION" "to=$NEW_VERSION"
+      write_progress "failed" 50 "Downgrade not allowed via update" "Signed RELEASE.json v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
+      exit 1
+    fi
   fi
 
   # ─── min_from gate (v0.4.12+) ────────────────────────────
@@ -1011,16 +1115,57 @@ done
 track_progress "verifying" 93 "Verifying new version..."
 info "Verifying new version..."
 
+# Discover which port the new instance will be listening on. In v0.4.15+ this
+# can be 443 (fresh-install port probe), 8443 (default or probe fallback), or
+# anything set via the UI's Web Ports panel and persisted to the DB. Previous
+# versions hardcoded 8443 here, which silently broke post-switch health
+# verification on any host using a different HTTPS port — update.sh polled
+# the wrong port, saw no response, and auto-rolled back a perfectly healthy
+# new slot. v0.4.15 surfaced this on production where the fresh install had
+# moved to 443.
+#
+# Resolution order mirrors the server (utils/http-server.js):
+#   1. DB setting `https_port`  — UI-edited value, authoritative in v0.4.15+
+#   2. systemd Environment=HTTPS_PORT=... — from unit or drop-in override
+#   3. Fallback: probe 443 then 8443 in order
+discover_verify_port() {
+  local p
+  # DB (authoritative in v0.4.15+). sqlite3 is NOT guaranteed on the host
+  # — missing or unreadable DB silently falls through.
+  if command -v sqlite3 >/dev/null 2>&1 && [ -r "$DATA_DIR/cidrella.db" ]; then
+    p=$(sqlite3 "$DATA_DIR/cidrella.db" \
+          "SELECT value FROM settings WHERE key='https_port' AND value != '' LIMIT 1" 2>/dev/null)
+    if [ -n "$p" ] && [ "$p" -ge 1 ] 2>/dev/null && [ "$p" -le 65535 ] 2>/dev/null; then
+      printf '%s' "$p"; return
+    fi
+  fi
+  # systemd env — catches the install.sh drop-in override.
+  p=$(systemctl show cidrella -p Environment 2>/dev/null \
+        | grep -oE 'HTTPS_PORT=[0-9]+' | head -1 | sed 's/HTTPS_PORT=//')
+  if [ -n "$p" ]; then printf '%s' "$p"; return; fi
+  # Final fallback.
+  printf '8443'
+}
+VERIFY_PORT=$(discover_verify_port)
+info "Verify port: $VERIFY_PORT"
+
 VERIFY_OK=false
+# Candidate port list — start with the discovered port, but also probe the
+# two common defaults as a belt-and-suspenders. If the discovery logic
+# returned a stale or unreadable value but the server IS up on 443 or 8443,
+# we still succeed.
+VERIFY_PORT_CANDIDATES="$VERIFY_PORT 443 8443"
 for i in $(seq 1 "$HEALTH_POLL_SECONDS"); do
   if systemctl is-active --quiet cidrella; then
-    # Service is up; probe /api/health/deep via loopback
-    if curl -sfk https://127.0.0.1:8443/api/health/deep -o "$TMPDIR/verify.json" 2>/dev/null; then
-      if grep -q '"status":"ok"' "$TMPDIR/verify.json"; then
-        VERIFY_OK=true
-        break
+    for port in $VERIFY_PORT_CANDIDATES; do
+      if curl -sfk "https://127.0.0.1:${port}/api/health/deep" -o "$TMPDIR/verify.json" 2>/dev/null; then
+        if grep -q '"status":"ok"' "$TMPDIR/verify.json"; then
+          VERIFY_OK=true
+          VERIFY_PORT=$port
+          break 2
+        fi
       fi
-    fi
+    done
   fi
   sleep 1
 done
