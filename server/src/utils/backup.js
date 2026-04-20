@@ -78,7 +78,20 @@ export function createBackup(db) {
   const manifestPath = path.join(DATA_DIR, MANIFEST_NAME);
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   try {
-    execFileSync('tar', ['czf', archivePath, MANIFEST_NAME, ...includes], {
+    execFileSync('tar', [
+      // Exclude runtime files that dnsmasq actively writes. Including them
+      // caused tar to fail with "file changed as we read it" — they're also
+      // not useful for restore (logs are historic-only, pid files are
+      // rewritten by dnsmasq on startup).
+      '--exclude=*.log',
+      '--exclude=*.pid',
+      // dnsmasq.leases can still mutate mid-archive (slow but possible).
+      // Silence the "file changed" warning so tar exits 0 even if a lease
+      // is written between stat() and read(). The lease file content
+      // captured is still consistent — tar archives the bytes it read.
+      '--warning=no-file-changed',
+      'czf', archivePath, MANIFEST_NAME, ...includes,
+    ], {
       cwd: DATA_DIR,
       stdio: 'pipe',
       timeout: 60000
@@ -192,7 +205,23 @@ export function inspectBackup(archivePath) {
  * — it's purely a safety net the admin can restore manually.
  */
 function takePreRestoreSnapshot(db) {
-  fs.mkdirSync(PRE_RESTORE_DIR, { recursive: true });
+  // mkdirSync fails with EACCES if the parent snapshots/ directory was
+  // created earlier by update.sh running as root and never chown'd to
+  // cidrella. Translate the opaque errno into a diagnostic-sufficient
+  // message so the admin doesn't have to cross-reference the source tree.
+  try {
+    fs.mkdirSync(PRE_RESTORE_DIR, { recursive: true });
+  } catch (err) {
+    if (err.code === 'EACCES' || err.code === 'EPERM') {
+      const parent = path.dirname(PRE_RESTORE_DIR);
+      throw new Error(
+        `Cannot create pre-restore snapshot at ${PRE_RESTORE_DIR}: ${err.code}. ` +
+        `The snapshots/ directory is not writable by the cidrella service user. ` +
+        `Fix on the host: sudo chown -R cidrella:cidrella ${parent} && sudo systemctl restart cidrella`
+      );
+    }
+    throw err;
+  }
 
   // Checkpoint WAL so cidrella.db is fully current
   try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore */ }

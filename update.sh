@@ -717,9 +717,15 @@ track_progress "validating" 70 "Pre-flight validated"
 track_progress "snapshotting" 75 "Snapshotting databases..."
 info "Snapshotting databases..."
 
-# Make snapshot dir (fresh — discard any previous snapshot)
+# Make snapshot dir (fresh — discard any previous snapshot).
+# update.sh runs as root, so mkdir+chown here make the snapshots/ tree writable
+# by the cidrella service user. Without the chown, the restore route (running
+# as cidrella) can't mkdir its sibling snapshots/pre-restore/ and hits EACCES.
+# Fix one directory up as well in case this is the first time the parent is
+# being touched — chown of an already-correct tree is a no-op.
 rm -rf "$SNAPSHOT_DIR"
 mkdir -p "$SNAPSHOT_DIR"
+chown -R cidrella:cidrella "$DATA_DIR/snapshots"
 
 # SQLite: checkpoint WAL so the .db file is up to date, then copy
 if [ -f "$DATA_DIR/cidrella.db" ]; then

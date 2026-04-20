@@ -364,8 +364,12 @@ else
   ok "User $SERVICE_USER already exists."
 fi
 
-# Create data directories
-mkdir -p "$DATA_DIR"/{certs,backups,dnsmasq/{hosts.d,dhcp-hosts.d,conf.d},blocklists,geoip,anomaly/models}
+# Create data directories. `snapshots/` is explicitly listed — update.sh
+# later writes pre-update/ under it as root, and the running cidrella
+# service writes pre-restore/ under it at restore time. Pre-seeding the
+# parent dir with cidrella ownership avoids an EACCES in the restore path
+# the first time a restore runs on a v0.4.14 host that never saw a snapshot.
+mkdir -p "$DATA_DIR"/{certs,backups,dnsmasq/{hosts.d,dhcp-hosts.d,conf.d},blocklists,geoip,anomaly/models,snapshots}
 chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 ok "Data directory: $DATA_DIR"
 
