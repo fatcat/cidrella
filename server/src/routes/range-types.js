@@ -1,8 +1,14 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
+import { validateDisplayString } from '../utils/ip.js';
 
 const router = Router();
+
+// Hex color regex — #RGB or #RRGGBB. Refuses arbitrary strings like
+// "red; background: url(javascript:...)" that could leak into inline
+// style attributes in the UI (no v-html exists today, but keep it clean).
+const COLOR_RE = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;
 
 // GET /api/range-types
 router.get('/', requirePerm('subnets:read'), (req, res) => {
@@ -13,9 +19,21 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
 
 // POST /api/range-types
 router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { name, color, description } = req.body;
+  const body = req.body || {};
+  const { name, color, description } = body;
 
-  if (!name) return res.status(400).json({ error: 'Name is required' });
+  if (typeof name !== 'string' || !name) return res.status(400).json({ error: 'Name is required' });
+  const nameErr = validateDisplayString(name, { maxLength: 64, allowEmpty: false });
+  if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
+  if (color !== undefined && color !== null) {
+    if (typeof color !== 'string' || !COLOR_RE.test(color)) {
+      return res.status(400).json({ error: 'color must be a hex code like "#aabbcc"' });
+    }
+  }
+  if (description !== undefined) {
+    const derr = validateDisplayString(description, { maxLength: 1024 });
+    if (derr) return res.status(400).json({ error: `description ${derr}` });
+  }
 
   const db = getDb();
   const existing = db.prepare('SELECT id FROM range_types WHERE name = ?').get(name);
@@ -37,7 +55,23 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   if (!type) return res.status(404).json({ error: 'Range type not found' });
   if (type.is_system) return res.status(403).json({ error: 'Cannot modify system address types' });
 
-  const { name, color, description } = req.body;
+  const body = req.body || {};
+  const { name, color, description } = body;
+
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name) return res.status(400).json({ error: 'Name must be a non-empty string' });
+    const nameErr = validateDisplayString(name, { maxLength: 64, allowEmpty: false });
+    if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
+  }
+  if (color !== undefined && color !== null) {
+    if (typeof color !== 'string' || !COLOR_RE.test(color)) {
+      return res.status(400).json({ error: 'color must be a hex code like "#aabbcc"' });
+    }
+  }
+  if (description !== undefined) {
+    const derr = validateDisplayString(description, { maxLength: 1024 });
+    if (derr) return res.status(400).json({ error: `description ${derr}` });
+  }
 
   if (name && name !== type.name) {
     const dup = db.prepare('SELECT id FROM range_types WHERE name = ? AND id != ?').get(name, type.id);

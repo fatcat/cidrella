@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
+import { validateDisplayString } from '../utils/ip.js';
 
 const router = Router();
 
@@ -38,9 +39,12 @@ router.get('/search', requirePerm('subnets:read'), (req, res) => {
 
 // POST /api/vlans — create VLAN
 router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { vlan_id, name, subnet_id } = req.body;
-  if (!vlan_id || vlan_id < 1 || vlan_id > 4094) return res.status(400).json({ error: 'VLAN ID must be between 1 and 4094' });
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  const body = req.body || {};
+  const { vlan_id, name, subnet_id } = body;
+  if (!Number.isInteger(vlan_id) || vlan_id < 1 || vlan_id > 4094) return res.status(400).json({ error: 'VLAN ID must be an integer 1-4094' });
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  const nameErr = validateDisplayString(name.trim(), { maxLength: 255, allowEmpty: false });
+  if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
 
   const db = getDb();
 
@@ -90,9 +94,15 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const vlan = db.prepare('SELECT * FROM vlans WHERE id = ?').get(req.params.id);
   if (!vlan) return res.status(404).json({ error: 'VLAN not found' });
 
-  const { vlan_id, name } = req.body;
-  if (vlan_id !== undefined && (vlan_id < 1 || vlan_id > 4094)) {
-    return res.status(400).json({ error: 'VLAN ID must be between 1 and 4094' });
+  const body = req.body || {};
+  const { vlan_id, name } = body;
+  if (vlan_id !== undefined && (!Number.isInteger(vlan_id) || vlan_id < 1 || vlan_id > 4094)) {
+    return res.status(400).json({ error: 'VLAN ID must be an integer 1-4094' });
+  }
+  if (name !== undefined) {
+    if (typeof name !== 'string') return res.status(400).json({ error: 'name must be a string' });
+    const nameErr = validateDisplayString(name.trim(), { maxLength: 255, allowEmpty: false });
+    if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
   }
 
   const newVlanId = vlan_id !== undefined ? vlan_id : vlan.vlan_id;

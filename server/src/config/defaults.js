@@ -43,6 +43,14 @@ export const DEFAULTS = {
   geoip_last_updated:      '',
   geoip_update_schedule:   'monthly',
   update_check_enabled:    'true',
+  // v0.4.15 web-port settings. Empty string means "use the env var / fallback"
+  // — the server resolves to DB value if set, env var if set, hardcoded
+  // default otherwise. Edits via the Interfaces UI populate these; install.sh
+  // sets the env vars (via systemd drop-in) but does NOT touch the DB, so an
+  // unedited install always follows the env path.
+  http_redirect_enabled:   'true',
+  https_port:              '',
+  http_port:               '',
   ip_history_retention_days: '7',
   analytics_retention_days: '7',
   anomaly_detection_enabled: 'false',

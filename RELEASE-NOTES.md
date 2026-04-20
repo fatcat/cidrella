@@ -46,8 +46,21 @@ The v0.4.14 release is also flagged on GitHub as deprecated in favor of this rel
 - **`PUT /api/dhcp/scopes/:id` / POST scope** now validates `domain_name` / `domain_search` / lease_time as strings with domain+escape checks.
 - **`ipToLong()` type guard.** Defense-in-depth — throws `"expected string, got <type>"` if anything non-string slips through a route.
 
+### Additional fixes (caught during pre-release agent sweep)
+Re-running the three security agents against v0.4.15 code (before shipping the tarball) found a few items that the v0.4.14 diff introduced or glossed over:
+
+- **writeLimiter was effectively a no-op** — mounted BEFORE `authMiddleware`, so `req.user?.id` was always undefined in the keyGenerator and every request shared the same IP-fallback bucket that never seemed to increment. Moved the mount below `app.use(authMiddleware)` so user-id keying works and the 300-writes-per-minute cap is actually enforced. Verified live: rapid POSTs now decrement `RateLimit-Remaining` as expected.
+- **Logout token invalidation raced the 1-second SQLite timestamp granularity.** Login + immediate-same-second logout left `iat == updated_at`; the `iat < updated_at` middleware check then let the token keep working. Logout now writes `datetime('now','+1 second')` so the next request's token is guaranteed `iat < updated_at`.
+- **`routes/folders.js` had its own local `try/catch` that leaked `err.message`,** bypassing the global generic-5xx handler. Removed the local handler and replaced the silent-strip `sanitizeName` regex with `validateDisplayString` from `utils/ip.js` for both `name` and `description` (matches the convention used by subnets / vlans / dns zones / dhcp scopes).
+- **`validateDisplayString` now applied to** DNS zone `description`, DHCP scope `description`, VLAN `name`, range `description`, and range-type `name`/`description`. `color` on range-types gets a strict `#RGB`/`#RRGGBB` regex so a later UI that does inline-style binding can't be tricked.
+- **Ranges POST/PUT now type-guards `start_ip`/`end_ip`/`range_type_id`** before calling `ipToLong` — a non-string IP previously produced a 500 the generic handler masked; now returns a clean 400.
+- **Settings bulk prototype-key 500 fixed** — `SETTING_SCHEMA[key]` for `__proto__` / `toString` / `hasOwnProperty` returned `Object.prototype` and crashed the validator. Switched to `Object.hasOwn()`. No pollution was ever landed, but the 500s were noise and could have drowned real errors.
+
 ### Upgrade notes
 - **Clean upgrade from any prior v0.4.x** — no schema change, no config change. Login rate limiter state resets on restart (as always), so an in-progress lockout from the v0.4.14 pentest window clears immediately.
+- **Fresh installs probe port 443 and 80.** If both are free, `install.sh` writes a systemd drop-in at `/etc/systemd/system/cidrella.service.d/port-override.conf` binding the UI to 443/80 (so users browse to `https://cidrella.local` without a port suffix). If either port is in use, the default 8443/8080 stays. The cidrella service account already has `CAP_NET_BIND_SERVICE` in ambient capabilities, so no root-bind or iptables redirect is required.
+- **Upgrades NEVER touch the port configuration.** `update.sh` leaves the drop-in override alone, so an existing 8443 install stays on 8443 and an existing 443 install stays on 443. To change port numbers post-install, edit `/etc/systemd/system/cidrella.service.d/port-override.conf` manually and `systemctl daemon-reload && systemctl restart cidrella`.
+- **New System → Interfaces "Web Ports" section** shows the current HTTPS/HTTP ports (read-only) plus a live toggle to disable the HTTP-to-HTTPS redirect listener. Disabling it is useful when nginx/traefik fronts the UI, or when the operator simply doesn't want port 80 exposed.
 - **v0.4.14 release page updated** to link to this security release. Users still on v0.4.13 or earlier can skip v0.4.14 entirely.
 - **No breaking API changes.** The only observable behavior change for well-behaved clients is that malformed bodies now return 400 with a clearer message instead of the v0.4.14 500-with-stack-trace-ish response. API clients that relied on parsing the raw error text must migrate to looking at the HTTP status.
 

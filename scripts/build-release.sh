@@ -6,6 +6,27 @@ set -euo pipefail
 #   ./scripts/build-release.sh              # build + tag + push + create release
 #   ./scripts/build-release.sh --build-only # just build the tarball
 #   ./scripts/build-release.sh --dry-run    # show what would happen
+#   ./scripts/build-release.sh --pre        # pre-release (0.4.15 → 0.4.15-pre)
+#   ./scripts/build-release.sh --pre pre.1  # pre-release iteration 1 → 0.4.15-pre.1
+#   ./scripts/build-release.sh --pre rc.1   # release candidate → 0.4.15-rc.1
+#
+# Pre-release behavior:
+#   - Appends the given suffix to the version (default "pre"): 0.4.15-pre
+#   - Tarball filename + RELEASE.json + package.json inside the tarball all
+#     carry the -suffix, so the running server reports 0.4.15-pre. This is
+#     distinct from the final 0.4.15 so monitoring / the UI footer / audit
+#     logs don't blur the two.
+#   - GitHub release is flagged --prerelease, so /releases/latest skips it —
+#     other hosts' auto-update checks won't see it.
+#   - releases.json manifest is NOT uploaded, so hosts using the signed
+#     manifest path also won't see it. Only an explicit `cidrella-update
+#     --version 0.4.15-pre` pulls it.
+#   - No git tag is created locally; gh creates the remote tag when it
+#     publishes the release, so `gh release delete --cleanup-tag` is a
+#     one-command rollback.
+#   - For multi-iteration pre-releases, use dotted-numeric identifiers
+#     (pre.1, pre.2, pre.10) — per semver 2.0 they sort numerically.
+#     Plain "pre2" vs "pre10" compares lexically and orders wrong.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -13,17 +34,133 @@ cd "$PROJECT_DIR"
 
 BUILD_ONLY=false
 DRY_RUN=false
+PRE_RELEASE=false
+PRE_SUFFIX=""
+
+show_help() {
+  cat <<'HELP'
+Build + publish a CIDRella release tarball.
+
+USAGE
+    ./scripts/build-release.sh [OPTIONS]
+
+OPTIONS
+    --build-only       Build the tarball + signature locally, skip tag/push/
+                       GitHub release creation. Prints the exact commands to
+                       publish manually.
+
+    --dry-run          Walk through every step printing what WOULD happen
+                       without making network requests, writing files, or
+                       creating the GitHub release. Useful for sanity-checking
+                       version bumps and release-notes lookups.
+
+    --pre [SUFFIX]     Build a PRE-RELEASE. Takes an optional semver
+                       prerelease identifier (default "pre"). The version is
+                       spliced as <base>-<suffix>, e.g. 0.4.15-pre.1.
+
+                       Behavior:
+                         - Rewrites the staged package.json version so the
+                           running server reports the suffixed string in
+                           /api/health, the UI footer, and audit logs.
+                         - Tarball name + RELEASE.json + git-less GitHub tag
+                           all use the suffixed version.
+                         - RELEASE-NOTES.md lookup strips the suffix — same
+                           notes as the eventual real release.
+                         - Skips releases.json manifest generation + upload.
+                         - GitHub release is flagged --prerelease, so
+                           /releases/latest on other hosts skips it.
+                         - Skips local git tag creation. `gh release delete
+                           $TAG --cleanup-tag` cleans both release + tag.
+
+                       Reaching a pre-release requires an explicit
+                       `cidrella-update --version <base>-<suffix>` on each
+                       host. UI auto-update checks never surface it.
+
+                       Suffix must match [0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*
+                       per semver 2.0. For multi-iteration pre-releases,
+                       use dotted-numeric (pre.1, pre.2, pre.10) — these
+                       sort numerically. Plain pre2 vs pre10 sorts
+                       lexically and orders wrong.
+
+    --help, -h         Show this help and exit.
+
+EXAMPLES
+    # Build + publish the real release from the version in package.json
+    ./scripts/build-release.sh
+
+    # Preview what a release WOULD do without touching anything
+    ./scripts/build-release.sh --dry-run
+
+    # Build the tarball but skip publishing — handy before committing
+    ./scripts/build-release.sh --build-only
+
+    # Pre-release for testerella validation (becomes e.g. v0.4.15-pre)
+    ./scripts/build-release.sh --pre
+
+    # Multi-iteration pre-releases, keeping each on GitHub
+    ./scripts/build-release.sh --pre pre.1
+    ./scripts/build-release.sh --pre pre.2
+
+    # Iterate-in-place (one live pre-release at a time)
+    gh release delete v0.4.15-pre --cleanup-tag --yes
+    ./scripts/build-release.sh --pre
+
+    # After pre-release validation passes, promote to real:
+    ./scripts/build-release.sh
+
+ENVIRONMENT
+    BUILD_ARCH              Defaults to linux-x64. Change for other arches.
+    BUNDLED_NODE_VERSION    Pinned Node runtime version shipped in tarball.
+    MINISIGN_KEY            Path to the minisign private key used for signing.
+                            Defaults to ~/.minisign/cidrella.key.
+
+REQUIREMENTS
+    minisign, node, gcc/g++, make, python3-setuptools; gh (for non-build-only).
+
+SEE ALSO
+    RELEASE-NOTES.md, scripts/lib/slots.sh (semver helpers),
+    scripts/build-releases-manifest.js (manifest generator).
+HELP
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build-only) BUILD_ONLY=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
-    *) echo "Unknown argument: $1"; exit 1 ;;
+    --help|-h) show_help; exit 0 ;;
+    --pre)
+      PRE_RELEASE=true
+      # Accept an optional suffix as the next argument. If the next arg is
+      # missing or looks like another flag, fall back to the default "pre".
+      if [ $# -ge 2 ] && [[ "$2" != --* ]]; then
+        PRE_SUFFIX="$2"; shift 2
+      else
+        PRE_SUFFIX="pre"; shift
+      fi
+      # Sanity check — semver prerelease identifiers are [0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*
+      if ! [[ "$PRE_SUFFIX" =~ ^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]]; then
+        echo "Error: --pre suffix '$PRE_SUFFIX' is not a valid semver prerelease identifier."
+        echo "  Allowed: [0-9A-Za-z-] separated by dots. Examples: pre, pre.1, rc.2, beta"
+        exit 1
+      fi
+      ;;
+    *)
+      echo "Unknown argument: $1"
+      echo "Run './scripts/build-release.sh --help' for usage."
+      exit 1
+      ;;
   esac
 done
 
-# Read version from package.json
-VERSION=$(node -e "console.log(require('./package.json').version)")
+# Read version from package.json. For pre-releases, splice the suffix onto the
+# version for the duration of this build. The source package.json stays at
+# the base version; only the staged copy inside the tarball is rewritten.
+BASE_VERSION=$(node -e "console.log(require('./package.json').version)")
+if [ "$PRE_RELEASE" = true ]; then
+  VERSION="${BASE_VERSION}-${PRE_SUFFIX}"
+else
+  VERSION="${BASE_VERSION}"
+fi
 TAG="v${VERSION}"
 # Architecture suffix — bundled native binaries are tied to the build arch
 BUILD_ARCH="${BUILD_ARCH:-linux-x64}"
@@ -46,7 +183,32 @@ echo "=== CIDRella Release Builder ==="
 echo "Version: $VERSION"
 echo "Tag:     $TAG"
 echo "Arch:    $BUILD_ARCH"
+if [ "$PRE_RELEASE" = true ]; then
+  echo "Mode:    PRE-RELEASE (suffix=${PRE_SUFFIX}, base=${BASE_VERSION})"
+  echo ""
+  echo "If the build fails mid-run or you need to withdraw this pre-release:"
+  echo "  gh release delete $TAG --cleanup-tag --yes"
+fi
 echo ""
+
+# Print the cleanup hint again on ANY exit for pre-releases — banner-at-start
+# may have scrolled off screen by the time a mid-run failure surfaces, and
+# the end-of-run success path's own "To withdraw" line only fires if we got
+# that far. This trap covers both cases so the operator never has to dig the
+# command out of help text.
+if [ "$PRE_RELEASE" = true ]; then
+  _print_pre_cleanup() {
+    local rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo ""
+      echo "!! Build exited with code $rc. If a GitHub release was partially"
+      echo "!! created, remove it before retrying:"
+      echo "!!   gh release delete $TAG --cleanup-tag --yes"
+    fi
+    return $rc
+  }
+  trap _print_pre_cleanup EXIT
+fi
 
 # ─── Pre-preflight: RELEASE-NOTES.md has an entry for $VERSION ───
 #
@@ -64,8 +226,13 @@ echo ""
 # before preflight, before staging, before the expensive Node download — no
 # wasted work if the author forgot to update the notes.
 if [ -f "$PROJECT_DIR/RELEASE-NOTES.md" ]; then
-  if ! grep -q "^## v${VERSION} " "$PROJECT_DIR/RELEASE-NOTES.md"; then
-    echo "ERROR: RELEASE-NOTES.md has no entry for v${VERSION}."
+  # For pre-releases we look up the BASE version's header (0.4.15), not the
+  # full 0.4.15-pre — the pre-release ships the same notes as the version
+  # it's a preview of, and requiring a separate header per pre-release
+  # iteration would force duplicate notes.
+  NOTES_VERSION="${BASE_VERSION}"
+  if ! grep -q "^## v${NOTES_VERSION} " "$PROJECT_DIR/RELEASE-NOTES.md"; then
+    echo "ERROR: RELEASE-NOTES.md has no entry for v${NOTES_VERSION}."
     echo ""
     echo "  The release manifest is derived from RELEASE-NOTES.md. Building"
     echo "  without a matching entry would publish a releases.json that does"
@@ -74,13 +241,13 @@ if [ -f "$PROJECT_DIR/RELEASE-NOTES.md" ]; then
     echo ""
     echo "  Fix: add a section to RELEASE-NOTES.md with this exact header:"
     echo ""
-    echo "    ## v${VERSION} — $(date +%Y-%m-%d)"
+    echo "    ## v${NOTES_VERSION} — $(date +%Y-%m-%d)"
     echo ""
     echo "  followed by a YAML metadata block and the usual New / Fixed /"
     echo "  Known issues subsections. Then run the build again."
     exit 1
   fi
-  echo "  RELEASE-NOTES.md has v${VERSION} entry — OK"
+  echo "  RELEASE-NOTES.md has v${NOTES_VERSION} entry — OK"
 else
   echo "WARNING: RELEASE-NOTES.md not found at $PROJECT_DIR/RELEASE-NOTES.md"
   echo "  The v0.4.12+ skip-upgrade machinery requires this file. Build will"
@@ -139,17 +306,24 @@ if [ "$BUILD_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
     exit 1
   fi
 
-  # Check tag doesn't already exist
-  if git rev-parse "$TAG" &>/dev/null 2>&1; then
-    echo "Error: Tag $TAG already exists."
-    echo "  To delete it: git tag -d $TAG && git push origin :refs/tags/$TAG"
-    exit 1
+  # Pre-releases don't create a local git tag — the remote tag gets created
+  # by gh at release-create time and `gh release delete --cleanup-tag`
+  # removes both in one step. Only guard against a local tag collision for
+  # real releases.
+  if [ "$PRE_RELEASE" = false ]; then
+    if git rev-parse "$TAG" &>/dev/null 2>&1; then
+      echo "Error: Tag $TAG already exists."
+      echo "  To delete it: git tag -d $TAG && git push origin :refs/tags/$TAG"
+      exit 1
+    fi
   fi
 
-  # Check for existing GitHub release
+  # Check for existing GitHub release (applies to both real and pre).
+  # For pre-releases, the user explicitly deletes + re-uploads between
+  # iterations — this guard catches the forgotten-delete case.
   if gh release view "$TAG" &>/dev/null 2>&1; then
     echo "Error: GitHub release $TAG already exists."
-    echo "  To delete it: gh release delete $TAG --yes"
+    echo "  To delete it: gh release delete $TAG --cleanup-tag --yes"
     exit 1
   fi
 fi
@@ -285,8 +459,21 @@ if [ "$DRY_RUN" = false ]; then
   # Note: scripts/rollback.sh is already included via the scripts/ rsync above.
   # update.sh and install.sh look for it at scripts/rollback.sh.
 
-  # Root package.json (version source)
+  # Root package.json (version source). For pre-releases, rewrite the
+  # staged copy's version field so the running server reports the full
+  # suffixed version (e.g. 0.4.15-pre) — the source tree stays at the
+  # base version untouched. `APP_VERSION` is imported from here at
+  # runtime, so this is what shows up in /api/health and the UI footer.
   cp "$PROJECT_DIR/package.json" "$STAGING_DIR/package.json"
+  if [ "$PRE_RELEASE" = true ]; then
+    node -e "
+      const fs = require('fs');
+      const p = JSON.parse(fs.readFileSync('$STAGING_DIR/package.json','utf8'));
+      p.version = '$VERSION';
+      fs.writeFileSync('$STAGING_DIR/package.json', JSON.stringify(p, null, 2) + '\n');
+    "
+    echo "  Rewrote staged package.json version → ${VERSION}"
+  fi
 
   # requirements.json — single source of truth for minimum host requirements.
   # Consumed by scripts/lib/preflight.sh at install/update time.
@@ -572,7 +759,12 @@ fi
 # silently break the consumer-side reachability computation.
 
 echo "[5.5/7] Building releases.json manifest..."
-if [ "$DRY_RUN" = false ]; then
+if [ "$PRE_RELEASE" = true ]; then
+  echo "  SKIPPED for pre-release."
+  echo "  (Manifest not generated/uploaded — other hosts' update checker"
+  echo "  must not advertise pre-release versions. Only explicit"
+  echo "  'cidrella-update --version ${VERSION}' reaches this build.)"
+elif [ "$DRY_RUN" = false ]; then
   # Lint first — fails the build on any schema violation
   if ! node "$PROJECT_DIR/scripts/build-releases-manifest.js" --lint; then
     echo "  ERROR: RELEASE-NOTES.md failed lint. Fix the issues above before releasing."
@@ -605,22 +797,38 @@ if [ "$BUILD_ONLY" = true ]; then
   echo "=== Build complete (--build-only) ==="
   echo "  Tarball:   dist/$TARBALL"
   echo "  Signature: dist/${TARBALL}.minisig"
-  echo "  Manifest:  dist/releases.json + .minisig"
+  if [ "$PRE_RELEASE" = true ]; then
+    echo "  Manifest:  (not generated — pre-release)"
+  else
+    echo "  Manifest:  dist/releases.json + .minisig"
+  fi
   echo ""
   echo "To publish manually:"
-  echo "  git tag -a $TAG -m 'Release $TAG'"
-  echo "  git push origin $TAG"
-  echo "  gh release create $TAG \\"
-  echo "    dist/$TARBALL dist/${TARBALL}.minisig \\"
-  echo "    dist/releases.json dist/releases.json.minisig \\"
-  echo "    --title 'CIDRella $TAG' --generate-notes"
+  if [ "$PRE_RELEASE" = true ]; then
+    echo "  gh release create $TAG \\"
+    echo "    dist/$TARBALL dist/${TARBALL}.minisig \\"
+    echo "    --title 'CIDRella $TAG (pre-release)' --prerelease \\"
+    echo "    --notes 'Pre-release of ${BASE_VERSION} for validation. See RELEASE-NOTES.md.'"
+    echo ""
+    echo "To withdraw: gh release delete $TAG --cleanup-tag --yes"
+    echo "To promote:  rebuild without --pre, then gh release create v${BASE_VERSION} ..."
+  else
+    echo "  git tag -a $TAG -m 'Release $TAG'"
+    echo "  git push origin $TAG"
+    echo "  gh release create $TAG \\"
+    echo "    dist/$TARBALL dist/${TARBALL}.minisig \\"
+    echo "    dist/releases.json dist/releases.json.minisig \\"
+    echo "    --title 'CIDRella $TAG' --generate-notes"
+  fi
   exit 0
 fi
 
 # ─── Step 6: Create and push git tag ─────────────────────
 
 echo "[6/7] Creating git tag $TAG..."
-if [ "$DRY_RUN" = false ]; then
+if [ "$PRE_RELEASE" = true ]; then
+  echo "  SKIPPED for pre-release (gh will create the remote tag at release-create time)."
+elif [ "$DRY_RUN" = false ]; then
   git tag -a "$TAG" -m "Release $TAG"
   echo "  Tag $TAG created locally."
 
@@ -635,29 +843,55 @@ fi
 
 echo "[7/7] Creating GitHub release..."
 if [ "$DRY_RUN" = false ]; then
-  # Uploading releases.json + .minisig alongside the tarball means a
-  # client fetching `/releases/latest/download/releases.json` gets the
-  # manifest cut at the moment this tag was published. The manifest file
-  # name is stable across releases — every new release re-publishes the
-  # latest-known state — so there's no collision issue.
-  gh release create "$TAG" \
-    "$DIST_DIR/$TARBALL" \
-    "$DIST_DIR/${TARBALL}.minisig" \
-    "$DIST_DIR/releases.json" \
-    "$DIST_DIR/releases.json.minisig" \
-    --title "CIDRella $TAG" \
-    --generate-notes
+  if [ "$PRE_RELEASE" = true ]; then
+    # Pre-release: flagged --prerelease so /releases/latest skips it, and
+    # WITHOUT the releases.json manifest so auto-update on other hosts
+    # stays on the last real release. Only explicit --version $TAG reaches
+    # this build.
+    gh release create "$TAG" \
+      "$DIST_DIR/$TARBALL" \
+      "$DIST_DIR/${TARBALL}.minisig" \
+      --title "CIDRella $TAG (pre-release)" \
+      --prerelease \
+      --notes "Pre-release of v${BASE_VERSION} for validation. See RELEASE-NOTES.md for the v${BASE_VERSION} entry."
 
-  RELEASE_URL=$(gh release view "$TAG" --json url -q '.url')
-  echo ""
-  echo "=== Release published ==="
-  echo "  Tag:       $TAG"
-  echo "  Tarball:   dist/$TARBALL"
-  echo "  Signature: dist/${TARBALL}.minisig"
-  echo "  Manifest:  dist/releases.json + .minisig"
-  echo "  URL:       $RELEASE_URL"
+    RELEASE_URL=$(gh release view "$TAG" --json url -q '.url')
+    echo ""
+    echo "=== Pre-release published ==="
+    echo "  Tag:       $TAG"
+    echo "  Tarball:   dist/$TARBALL"
+    echo "  Signature: dist/${TARBALL}.minisig"
+    echo "  Manifest:  (skipped — pre-release)"
+    echo "  URL:       $RELEASE_URL"
+    echo ""
+    echo "To test:     ssh root@<host> cidrella-update --version ${BASE_VERSION}-${PRE_SUFFIX}"
+    echo "To withdraw: gh release delete $TAG --cleanup-tag --yes"
+    echo "To promote:  rebuild WITHOUT --pre, then publish v${BASE_VERSION} as the real release."
+  else
+    # Uploading releases.json + .minisig alongside the tarball means a
+    # client fetching `/releases/latest/download/releases.json` gets the
+    # manifest cut at the moment this tag was published. The manifest file
+    # name is stable across releases — every new release re-publishes the
+    # latest-known state — so there's no collision issue.
+    gh release create "$TAG" \
+      "$DIST_DIR/$TARBALL" \
+      "$DIST_DIR/${TARBALL}.minisig" \
+      "$DIST_DIR/releases.json" \
+      "$DIST_DIR/releases.json.minisig" \
+      --title "CIDRella $TAG" \
+      --generate-notes
+
+    RELEASE_URL=$(gh release view "$TAG" --json url -q '.url')
+    echo ""
+    echo "=== Release published ==="
+    echo "  Tag:       $TAG"
+    echo "  Tarball:   dist/$TARBALL"
+    echo "  Signature: dist/${TARBALL}.minisig"
+    echo "  Manifest:  dist/releases.json + .minisig"
+    echo "  URL:       $RELEASE_URL"
+  fi
 else
-  echo "  [DRY RUN] Would run: gh release create $TAG dist/$TARBALL dist/${TARBALL}.minisig dist/releases.json dist/releases.json.minisig --title 'CIDRella $TAG' --generate-notes"
+  echo "  [DRY RUN] Would run: gh release create $TAG …"
   echo ""
   echo "=== Dry run complete ==="
 fi

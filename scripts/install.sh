@@ -582,6 +582,44 @@ _install_unit "$INSTALL_DIR/scripts/systemd/cidrella.service" /etc/systemd/syste
 ok "Installed cidrella.service"
 emit_event systemd pass unit=cidrella.service
 
+# ═══════════════════════════════════════════════════════════
+# WEB PORT PROBE (v0.4.15+)
+#
+# The unit ships with HTTPS_PORT=8443 HTTP_PORT=8080 as a safe fallback.
+# On a FRESH install we prefer 443/80 so the user browses to
+# `https://cidrella.local` without a port suffix. If either port is
+# already bound (e.g. by nginx, another appliance), we leave the unit's
+# default in place. Upgrades never run this block — update.sh explicitly
+# skips unit reinstall when the existing unit is present, so any port
+# override the user set previously is preserved.
+# ═══════════════════════════════════════════════════════════
+
+PORT_OVERRIDE_FILE="/etc/systemd/system/cidrella.service.d/port-override.conf"
+# If an override already exists, don't touch it — upgrade path.
+if [ ! -f "$PORT_OVERRIDE_FILE" ]; then
+  port_free() {
+    # ss returns 0 whether or not it found anything; use grep to actually detect.
+    ! ss -tln 2>/dev/null | awk '{print $4}' | grep -E "[:.]${1}\$" >/dev/null
+  }
+  if port_free 443 && port_free 80; then
+    mkdir -p /etc/systemd/system/cidrella.service.d
+    cat > "$PORT_OVERRIDE_FILE" <<'EOF'
+# CIDRella web-server port override — written by install.sh at first install.
+# Upgrades never touch this file. To revert to the default 8443/8080, delete
+# this file and run `systemctl daemon-reload && systemctl restart cidrella`.
+[Service]
+Environment=HTTPS_PORT=443
+Environment=HTTP_PORT=80
+EOF
+    chmod 644 "$PORT_OVERRIDE_FILE"
+    ok "Web ports: 443/80 (standard HTTPS/HTTP — both free)"
+    emit_event systemd pass web_ports=443/80
+  else
+    info "Web ports 443 and/or 80 already in use — keeping defaults 8443/8080"
+    emit_event systemd pass web_ports=8443/8080
+  fi
+fi
+
 _install_unit "$INSTALL_DIR/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/cidrella-anomaly.service
 ok "Installed cidrella-anomaly.service"
 emit_event systemd pass unit=cidrella-anomaly.service

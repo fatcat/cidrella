@@ -144,6 +144,18 @@ const SETTING_SCHEMA = {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)
   },
+  http_redirect_enabled: {
+    validate: v => isBoolStr(v) ? null : 'must be true or false',
+    normalize: v => toBoolStr(v)
+  },
+  https_port: {
+    validate: v => (v === '' || v === null || isIntInRange(v, 1, 65535)) ? null : 'must be empty or an integer 1-65535',
+    normalize: v => (v === '' || v === null) ? '' : String(intOrNull(v))
+  },
+  http_port: {
+    validate: v => (v === '' || v === null || isIntInRange(v, 1, 65535)) ? null : 'must be empty or an integer 1-65535',
+    normalize: v => (v === '' || v === null) ? '' : String(intOrNull(v))
+  },
   ip_history_retention_days: {
     validate: v => isIntInRange(v, 1, 3650) ? null : 'must be an integer 1-3650',
     normalize: v => String(intOrNull(v))
@@ -153,8 +165,13 @@ const SETTING_SCHEMA = {
 const EDITABLE_KEYS = new Set(Object.keys(SETTING_SCHEMA));
 
 function validateSetting(key, value) {
+  // Use Object.hasOwn, not indexing: otherwise inherited-prototype keys like
+  // "__proto__", "toString", "hasOwnProperty" return Object.prototype and
+  // crash the validator (found by the injection agent's v0.4.15 rerun).
+  if (typeof key !== 'string' || !Object.hasOwn(SETTING_SCHEMA, key)) {
+    return { error: `Setting '${key}' cannot be modified` };
+  }
   const schema = SETTING_SCHEMA[key];
-  if (!schema) return { error: `Setting '${key}' cannot be modified` };
   if (value === undefined || value === null) return { error: 'Value is required' };
   const err = schema.validate(value);
   if (err) return { error: `${key}: ${err}` };

@@ -25,6 +25,7 @@ process.on('uncaughtException', (err) => {
 
 import { initDb, getDb, getSetting } from './db/init.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
+import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
 import { authMiddleware } from './auth/middleware.js';
 import { afterCommitMiddleware } from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
@@ -66,9 +67,6 @@ import anomalyRoutes from './routes/anomalies.js';
 import { initAnalyticsDb, closeAnalyticsDb } from './db/duckdb.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '8443', 10);
-const HTTP_PORT = parseInt(process.env.HTTP_PORT || '8080', 10);
 
 async function main() {
   // Ensure data directories exist
@@ -217,12 +215,39 @@ async function main() {
   // Hooks fire on res.on('finish') so regen never blocks the HTTP response.
   app.use(afterCommitMiddleware);
 
+  // Setup routes (pre-auth — accessible before installation is complete)
+  app.use('/api/setup', setupRoutes);
+
+  // API browser — developer tool only. Mounts /api-browser which enumerates
+  // every registered route and offers an interactive client. In a release
+  // audit the validator flagged that it was (a) pre-auth, (b) exposed a
+  // full route inventory to unauthenticated callers, and (c) relaxed CSP
+  // with `unsafe-inline`. Gate it to non-production explicitly so it never
+  // mounts in a real deployment. The systemd unit sets NODE_ENV=production.
+  if (process.env.NODE_ENV !== 'production') {
+    const { default: apiBrowserRoutes } = await import('./routes/api-browser.js');
+    app.use('/api-browser', apiBrowserRoutes);
+  }
+
+  // Internal API for anomaly detection sidecar (pre-auth, localhost-only)
+  const { default: internalAnalyticsRoutes } = await import('./routes/internal-analytics.js');
+  app.use('/api/internal/analytics', internalAnalyticsRoutes);
+
+  // Auth middleware for API routes
+  app.use(authMiddleware);
+
   // v0.4.15: authenticated write rate-limiter. v0.4.14 had only the login
   // limiter, so a compromised/bought token could fill the DB, thrash dnsmasq
   // regen, or spam audit_log at unlimited rates. This caps POST/PUT/PATCH/
   // DELETE per user (fallback to IP for anon/unauthed preflight). Reads are
   // intentionally unlimited — the calculate endpoint has its own cap, and
   // the rest are cheap.
+  //
+  // MUST be mounted AFTER authMiddleware — otherwise req.user is undefined
+  // and every request keys off the same IP-fallback bucket, silently
+  // short-circuiting the limiter (the v0.4.15 API agent caught this
+  // exact bug in the initial commit; the first post-release patch moved
+  // this mount below the auth middleware).
   const writeLimiter = rateLimit({
     windowMs: 60 * 1000,
     max: 300,  // 5/sec sustained per user — plenty for a human, too slow to brick the server
@@ -245,27 +270,6 @@ async function main() {
     }
   });
   app.use(writeLimiter);
-
-  // Setup routes (pre-auth — accessible before installation is complete)
-  app.use('/api/setup', setupRoutes);
-
-  // API browser — developer tool only. Mounts /api-browser which enumerates
-  // every registered route and offers an interactive client. In a release
-  // audit the validator flagged that it was (a) pre-auth, (b) exposed a
-  // full route inventory to unauthenticated callers, and (c) relaxed CSP
-  // with `unsafe-inline`. Gate it to non-production explicitly so it never
-  // mounts in a real deployment. The systemd unit sets NODE_ENV=production.
-  if (process.env.NODE_ENV !== 'production') {
-    const { default: apiBrowserRoutes } = await import('./routes/api-browser.js');
-    app.use('/api-browser', apiBrowserRoutes);
-  }
-
-  // Internal API for anomaly detection sidecar (pre-auth, localhost-only)
-  const { default: internalAnalyticsRoutes } = await import('./routes/internal-analytics.js');
-  app.use('/api/internal/analytics', internalAnalyticsRoutes);
-
-  // Auth middleware for API routes
-  app.use(authMiddleware);
 
   // Dev-only tracking endpoint (set DEV_TRACKING=1 to enable)
   if (process.env.DEV_TRACKING === '1') {
@@ -374,35 +378,17 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
     });
   }
 
-  // HTTPS server
-  const httpsOptions = {
-    key: fs.readFileSync(keyPath),
-    cert: fs.readFileSync(certPath)
-  };
+  // HTTPS server — utils/http-server.js owns the listen + live-swap. It
+  // reads the effective port from DB setting `https_port` first, falling
+  // through to process.env.HTTPS_PORT and finally 8443. A UI edit to
+  // `https_port` triggers a live port change via applyHttpsPortChange()
+  // without a service restart.
+  await startHttpsServer({ app, keyPath, certPath, setHttpsServer });
 
-  const server = https.createServer(httpsOptions, app);
-  setHttpsServer(server);
-  server.listen(HTTPS_PORT, () => {
-    console.log(`HTTPS server listening on port ${HTTPS_PORT}`);
-  });
-
-  // HTTP redirect to HTTPS (non-fatal if port is in use)
-  const httpServer = http.createServer((req, res) => {
-    const reqHost = (req.headers.host || '').replace(/:\d+$/, '') || 'localhost';
-    const host = `${reqHost}:${HTTPS_PORT}`;
-    res.writeHead(301, { Location: `https://${host}${req.url}` });
-    res.end();
-  });
-  httpServer.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.warn(`HTTP redirect port ${HTTP_PORT} already in use, skipping HTTP redirect server`);
-    } else {
-      console.error('HTTP server error:', err);
-    }
-  });
-  httpServer.listen(HTTP_PORT, () => {
-    console.log(`HTTP redirect server listening on port ${HTTP_PORT} -> ${HTTPS_PORT}`);
-  });
+  // HTTP redirect — same lifecycle pattern. v0.4.15 adds a UI toggle to
+  // disable it entirely (when TLS is fronted by nginx/traefik) and a UI
+  // editable port setting.
+  await applyHttpRedirectConfig();
 }
 
 main().catch(err => {

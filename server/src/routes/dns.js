@@ -8,7 +8,7 @@ import { testDnsForwarder } from '../utils/dns-test.js';
 const router = Router();
 
 // Validation helpers
-import { isValidIpv4, isValidDomain } from '../utils/ip.js';
+import { isValidIpv4, isValidDomain, validateDisplayString } from '../utils/ip.js';
 import { isValidPtrName, validateTxtValue } from '../utils/dnsmasq-escape.js';
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
@@ -209,6 +209,11 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid zone name' });
   }
 
+  if (description !== undefined) {
+    const err = validateDisplayString(description, { maxLength: 1024 });
+    if (err) return res.status(400).json({ error: `description ${err}` });
+  }
+
   const db = getDb();
 
   const existing = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(name);
@@ -240,6 +245,11 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
 
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
+
+  if (description !== undefined) {
+    const err = validateDisplayString(description, { maxLength: 1024 });
+    if (err) return res.status(400).json({ error: `description ${err}` });
+  }
 
   const renaming = name && name !== zone.name;
   if (renaming) {

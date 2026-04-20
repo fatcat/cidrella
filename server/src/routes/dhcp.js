@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { isIpInSubnet, ipToLong, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain } from '../utils/ip.js';
+import { isIpInSubnet, ipToLong, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
 import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { syncDhcpReservationToIp, clearDhcpReservationFromIp, syncPtrForIp } from '../utils/ip-sync.js';
@@ -115,8 +115,9 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
       return res.status(400).json({ error: 'domain_search contains disallowed characters' });
     }
   }
-  if (description !== undefined && description !== null && typeof description !== 'string') {
-    return res.status(400).json({ error: 'description must be a string' });
+  if (description !== undefined) {
+    const derr = validateDisplayString(description, { maxLength: 1024 });
+    if (derr) return res.status(400).json({ error: `description ${derr}` });
   }
   if (lease_time !== undefined && lease_time !== null && typeof lease_time !== 'string') {
     return res.status(400).json({ error: 'lease_time must be a string' });
@@ -250,8 +251,9 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       return res.status(400).json({ error: 'domain_search contains disallowed characters' });
     }
   }
-  if (description !== undefined && description !== null && typeof description !== 'string') {
-    return res.status(400).json({ error: 'description must be a string' });
+  if (description !== undefined) {
+    const derr = validateDisplayString(description, { maxLength: 1024 });
+    if (derr) return res.status(400).json({ error: `description ${derr}` });
   }
   if (lease_time !== undefined && lease_time !== null && typeof lease_time !== 'string') {
     return res.status(400).json({ error: 'lease_time must be a string' });

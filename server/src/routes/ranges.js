@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { ipToLong, isIpInSubnet, rangesOverlap } from '../utils/ip.js';
+import { ipToLong, isIpInSubnet, rangesOverlap, validateDisplayString } from '../utils/ip.js';
 
 const router = Router({ mergeParams: true });
 
@@ -20,11 +20,26 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
 
 // POST /api/subnets/:subnetId/ranges
 router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { range_type_id, start_ip, end_ip, description, force } = req.body;
+  const body = req.body || {};
+  const { range_type_id, start_ip, end_ip, description, force } = body;
   const subnetId = req.params.subnetId;
 
   if (!range_type_id || !start_ip || !end_ip) {
     return res.status(400).json({ error: 'range_type_id, start_ip, and end_ip are required' });
+  }
+
+  // v0.4.15: type-guard before any string operation — non-string IPs caused
+  // ipToLong to throw 500s that the generic handler then masked as
+  // "Internal server error". A 400 with the root cause is kinder.
+  if (typeof start_ip !== 'string' || typeof end_ip !== 'string') {
+    return res.status(400).json({ error: 'start_ip and end_ip must be strings' });
+  }
+  if (!Number.isInteger(range_type_id)) {
+    return res.status(400).json({ error: 'range_type_id must be an integer' });
+  }
+  if (description !== undefined) {
+    const derr = validateDisplayString(description, { maxLength: 1024 });
+    if (derr) return res.status(400).json({ error: `description ${derr}` });
   }
 
   const db = getDb();
@@ -105,7 +120,20 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     return res.status(403).json({ error: 'Cannot modify Network or Broadcast ranges' });
   }
 
-  const { range_type_id, start_ip, end_ip, description, force } = req.body;
+  const body = req.body || {};
+  const { range_type_id, start_ip, end_ip, description, force } = body;
+
+  if (start_ip !== undefined && typeof start_ip !== 'string') {
+    return res.status(400).json({ error: 'start_ip must be a string' });
+  }
+  if (end_ip !== undefined && typeof end_ip !== 'string') {
+    return res.status(400).json({ error: 'end_ip must be a string' });
+  }
+  if (description !== undefined) {
+    const derr = validateDisplayString(description, { maxLength: 1024 });
+    if (derr) return res.status(400).json({ error: `description ${derr}` });
+  }
+
   const newStart = start_ip ?? range.start_ip;
   const newEnd = end_ip ?? range.end_ip;
 

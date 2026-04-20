@@ -1,6 +1,48 @@
 <template>
   <div class="interface-panel">
     <div class="content-card settings-form">
+      <h3>Web Ports</h3>
+      <p class="field-help" style="margin-bottom: 0.75rem;">
+        Ports the CIDRella web UI binds to. Changes take effect immediately — no service
+        restart needed. You will be redirected to the new HTTPS port after saving.
+      </p>
+      <div class="web-ports-info">
+        <div class="field field-inline">
+          <label>HTTP Port</label>
+          <input type="number" min="1" max="65535" step="1" class="port-input"
+                 :class="{ 'port-input-invalid': httpRedirectEnabled && !httpPortValid }"
+                 v-model.number="httpPortEdit" data-track="iface-http-port"
+                 :disabled="!httpRedirectEnabled" />
+        </div>
+        <div class="field field-inline">
+          <label>HTTPS Port</label>
+          <input type="number" min="1" max="65535" step="1" class="port-input"
+                 :class="{ 'port-input-invalid': !httpsPortValid }"
+                 v-model.number="httpsPortEdit" data-track="iface-https-port" />
+        </div>
+        <div class="field field-inline">
+          <label>Redirect HTTP → HTTPS</label>
+          <ToggleSwitch v-model="httpRedirectEnabled" data-track="iface-http-redirect" />
+        </div>
+      </div>
+      <small v-if="portValidationError" class="field-help warn-text" style="margin-top: 0.5rem; display: block;">
+        {{ portValidationError }}
+      </small>
+      <small class="field-help" style="margin-top: 0.5rem; display: block;">
+        Standard ports are <strong>443</strong> (HTTPS) and <strong>80</strong> (HTTP redirect).
+        Ports under 1024 require <code>CAP_NET_BIND_SERVICE</code> on the cidrella service
+        (already set in the shipped systemd unit). When "Redirect" is off, port {{ webPorts.http_port }}
+        is not bound — use this if nginx/traefik fronts the UI or you don't want the redirect
+        port exposed.
+      </small>
+      <small class="field-help warn-text" style="margin-top: 0.25rem; display: block;">
+        Lockout recovery: if a port change makes the UI unreachable, run
+        <code>sudo sqlite3 /var/lib/cidrella/cidrella.db "UPDATE settings SET value='' WHERE key='https_port'"</code>
+        then <code>sudo systemctl restart cidrella</code> to revert to the systemd default.
+      </small>
+    </div>
+
+    <div class="content-card settings-form">
       <h3>Service Controls</h3>
       <p class="field-help" style="margin-bottom: 0.75rem;">
         Globally enable or disable DNS and DHCP services. When a service is disabled globally,
@@ -72,10 +114,17 @@
 
     <div class="settings-actions">
       <Button label="Save Configuration" icon="pi pi-save" data-track="iface-save"
-              @click="saveConfig" :loading="saving" :disabled="!configDirty" />
+              @click="saveConfig" :loading="saving" :disabled="saveDisabled" />
     </div>
   </div>
 </template>
+
+<!--
+  v0.4.15: added the "Web Ports" section above Service Controls. HTTPS/HTTP
+  port numbers are install-time-fixed (see the help text above) but the
+  HTTP redirect toggle is live — saving applies it without a service restart.
+-->
+
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
@@ -93,6 +142,10 @@ const loading = ref(false);
 const saving = ref(false);
 const dnsEnabled = ref(true);
 const dhcpEnabled = ref(true);
+const httpRedirectEnabled = ref(true);
+const webPorts = ref({ https_port: 0, http_port: 0, http_redirect_enabled: true });
+const httpsPortEdit = ref(443);
+const httpPortEdit = ref(80);
 const discoveredInterfaces = ref([]);
 const savedConfig = ref({});
 const mergedInterfaces = ref([]);
@@ -102,14 +155,52 @@ const configDirty = computed(() => {
   if (!configSnapshot.value) return false;
   const current = JSON.stringify({
     dns: dnsEnabled.value, dhcp: dhcpEnabled.value,
+    http: httpRedirectEnabled.value,
+    hps: httpsPortEdit.value, hpp: httpPortEdit.value,
     ifaces: mergedInterfaces.value.map(i => ({ n: i.name, d: i.dns, h: i.dhcp }))
   });
   return current !== configSnapshot.value;
 });
 
+// A port is valid when it's an integer in [1, 65535]. We check Number.isInteger
+// explicitly because v-model.number on `<input type="number">` can return NaN
+// (empty field) or a decimal (user typed "80.5"). The server backstops with
+// the same check, but doing it client-side avoids a round-trip and gives the
+// user immediate red-border feedback.
+const httpsPortValid = computed(() => {
+  const v = httpsPortEdit.value;
+  return Number.isInteger(v) && v >= 1 && v <= 65535;
+});
+const httpPortValid = computed(() => {
+  // HTTP port is only relevant when redirect is enabled; when disabled the
+  // field is visually disabled and we don't validate it.
+  if (!httpRedirectEnabled.value) return true;
+  const v = httpPortEdit.value;
+  return Number.isInteger(v) && v >= 1 && v <= 65535;
+});
+const portsValid = computed(() => {
+  if (!httpsPortValid.value || !httpPortValid.value) return false;
+  // HTTPS and HTTP must not collide — the server rejects this with a 400
+  // too, but catch it here so the user doesn't have to wait for the round
+  // trip.
+  if (httpRedirectEnabled.value && httpsPortEdit.value === httpPortEdit.value) return false;
+  return true;
+});
+const portValidationError = computed(() => {
+  if (!httpsPortValid.value) return 'HTTPS Port must be an integer between 1 and 65535.';
+  if (!httpPortValid.value)  return 'HTTP Port must be an integer between 1 and 65535.';
+  if (httpRedirectEnabled.value && httpsPortEdit.value === httpPortEdit.value) {
+    return 'HTTPS Port and HTTP Port must differ.';
+  }
+  return '';
+});
+const saveDisabled = computed(() => !configDirty.value || !portsValid.value);
+
 function snapshotConfig() {
   configSnapshot.value = JSON.stringify({
     dns: dnsEnabled.value, dhcp: dhcpEnabled.value,
+    http: httpRedirectEnabled.value,
+    hps: httpsPortEdit.value, hpp: httpPortEdit.value,
     ifaces: mergedInterfaces.value.map(i => ({ n: i.name, d: i.dns, h: i.dhcp }))
   });
 }
@@ -157,6 +248,14 @@ async function loadInterfaces() {
     savedConfig.value = configRes.data.interfaces || {};
     dnsEnabled.value = configRes.data.dns_enabled !== false;
     dhcpEnabled.value = configRes.data.dhcp_enabled !== false;
+    // v0.4.15: web_ports block. Absent on pre-v0.4.15 backends — keep
+    // sensible defaults if the field isn't there.
+    if (configRes.data.web_ports) {
+      webPorts.value = configRes.data.web_ports;
+      httpRedirectEnabled.value = configRes.data.web_ports.http_redirect_enabled !== false;
+      httpsPortEdit.value = configRes.data.web_ports.https_port || 443;
+      httpPortEdit.value  = configRes.data.web_ports.http_port  || 80;
+    }
     mergeData();
     snapshotConfig();
   } catch (err) {
@@ -216,19 +315,41 @@ async function saveConfig() {
         interfaces[iface.name] = { dns: iface.dns, dhcp: iface.dhcp };
       }
     }
+    const originalHttpsPort = webPorts.value.https_port;
     const { data } = await api.put('/interfaces/config', {
       interfaces,
       dns_enabled: dnsEnabled.value,
       dhcp_enabled: dhcpEnabled.value,
+      http_redirect_enabled: httpRedirectEnabled.value,
+      https_port: httpsPortEdit.value,
+      http_port: httpPortEdit.value,
     });
     snapshotConfig();
     if (data.dnsmasq === 'restart_failed') {
       toast.add({ severity: 'warn', summary: 'Saved with warning', detail: 'Configuration saved but dnsmasq failed to restart. Check server logs.', life: 5000 });
     } else {
-      toast.add({ severity: 'success', summary: 'Saved', detail: 'Configuration applied — dnsmasq restarted', life: 3000 });
+      toast.add({ severity: 'success', summary: 'Saved', detail: 'Configuration applied', life: 3000 });
+    }
+
+    // If the HTTPS port changed, the browser is still connected on the old
+    // port. Redirect to the new port after a brief settle so the live-swap
+    // new listener has accepted a connection or two. Keep the same path +
+    // query so the user lands back where they were.
+    const newHttpsPort = data?.web_ports?.https_port;
+    if (newHttpsPort && newHttpsPort !== originalHttpsPort) {
+      const host = window.location.hostname;
+      const target = `https://${host}${newHttpsPort === 443 ? '' : ':' + newHttpsPort}${window.location.pathname}${window.location.search}`;
+      toast.add({
+        severity: 'info',
+        summary: 'Reconnecting',
+        detail: `HTTPS moved to port ${newHttpsPort}. Redirecting…`,
+        life: 4000
+      });
+      // 1500ms gives the old in-flight toast a moment to render.
+      setTimeout(() => { window.location.assign(target); }, 1500);
     }
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 3000 });
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
@@ -242,6 +363,54 @@ onMounted(loadInterfaces);
   display: flex;
   gap: 2rem;
   align-items: center;
+}
+.web-ports-info {
+  display: flex;
+  gap: 2rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.port-readout {
+  font-weight: 600;
+  color: var(--p-text-color);
+}
+.port-input {
+  width: 6em;
+  padding: 0.375rem 0.5rem;
+  font-family: var(--font-mono, monospace);
+  background: var(--p-inputtext-background, var(--p-surface-0));
+  color: var(--p-inputtext-color, var(--p-text-color));
+  border: 1px solid var(--p-inputtext-border-color, var(--p-surface-300));
+  border-radius: var(--p-inputtext-border-radius, 4px);
+}
+.port-input:focus {
+  outline: 2px solid var(--p-primary-color);
+  outline-offset: -1px;
+}
+.port-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.port-input-invalid {
+  border-color: var(--p-red-500, #ef4444);
+  background: color-mix(in srgb, var(--p-red-500, #ef4444) 8%, transparent);
+}
+.port-input-invalid:focus {
+  outline-color: var(--p-red-500, #ef4444);
+}
+/* Hide the native up/down spinners — users requested plain entry fields. */
+.port-input::-webkit-outer-spin-button,
+.port-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.port-input {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+/* v0.4.15: small explicit spacer above Save button per user request. */
+.settings-actions {
+  margin-top: 4px;
 }
 .field-inline {
   display: flex;

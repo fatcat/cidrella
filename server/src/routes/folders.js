@@ -1,12 +1,9 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
+import { validateDisplayString } from '../utils/ip.js';
 
 const router = Router();
-
-function sanitizeName(name) {
-  return name.replace(/<[^>]*>/g, '').trim();
-}
 
 // GET /api/folders — list all folders with subnet counts
 router.get('/', requirePerm('subnets:read'), (req, res) => {
@@ -26,30 +23,39 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
 
 // POST /api/folders — create folder (grouping only)
 router.post('/', requirePerm('subnets:write'), (req, res) => {
-  const { name, description } = req.body;
-  if (!name || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  const body = req.body || {};
+  const { name, description } = body;
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'Name is required' });
+  }
 
-  const cleanName = sanitizeName(name);
-  if (!cleanName) return res.status(400).json({ error: 'Name is required (no HTML allowed)' });
-  if (cleanName.length > 255) return res.status(400).json({ error: 'Name must be 255 characters or fewer' });
+  // v0.4.15: replace the old sanitizeName regex (which silently stripped
+  // matched tag pairs but let unclosed `<` through) with explicit rejection
+  // via validateDisplayString. Keeps behavior predictable and matches
+  // the convention used by subnets / vlans / dns zones / dhcp scopes.
+  const cleanName = name.trim();
+  const nameErr = validateDisplayString(cleanName, { maxLength: 255, allowEmpty: false });
+  if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
+
+  if (description !== undefined) {
+    const descErr = validateDisplayString(description, { maxLength: 1024 });
+    if (descErr) return res.status(400).json({ error: `description ${descErr}` });
+  }
 
   const db = getDb();
+  // Let any DB error bubble through the asyncHandler path by returning next(err)
+  // instead of a local 500 that leaked err.message — the global handler in
+  // index.js collapses 5xx to a generic message.
+  const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM folders').get();
+  const sortOrder = (maxOrder?.m ?? -1) + 1;
 
-  try {
-    const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM folders').get();
-    const sortOrder = (maxOrder?.m ?? -1) + 1;
+  const result = db.prepare(
+    'INSERT INTO folders (name, description, sort_order) VALUES (?, ?, ?)'
+  ).run(cleanName, description || null, sortOrder);
 
-    const result = db.prepare(
-      'INSERT INTO folders (name, description, sort_order) VALUES (?, ?, ?)'
-    ).run(cleanName, description || null, sortOrder);
-
-    audit(req.user.id, 'folder_created', 'folder', result.lastInsertRowid, { name: cleanName });
-    const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(result.lastInsertRowid);
-    res.status(201).json(folder);
-  } catch (err) {
-    console.error('Create folder error:', err);
-    res.status(500).json({ error: err.message || 'Internal server error' });
-  }
+  audit(req.user.id, 'folder_created', 'folder', result.lastInsertRowid, { name: cleanName });
+  const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(folder);
 });
 
 // PUT /api/folders/:id — update folder
@@ -58,13 +64,26 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(req.params.id);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
-  const { name, description, sort_order } = req.body;
+  const body = req.body || {};
+  const { name, description, sort_order } = body;
 
   let cleanName = folder.name;
   if (name !== undefined) {
-    cleanName = sanitizeName(name);
-    if (!cleanName) return res.status(400).json({ error: 'Name is required (no HTML allowed)' });
-    if (cleanName.length > 255) return res.status(400).json({ error: 'Name must be 255 characters or fewer' });
+    if (typeof name !== 'string' || !name.trim()) {
+      return res.status(400).json({ error: 'Name is required' });
+    }
+    cleanName = name.trim();
+    const nameErr = validateDisplayString(cleanName, { maxLength: 255, allowEmpty: false });
+    if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
+  }
+
+  if (description !== undefined && description !== null) {
+    const descErr = validateDisplayString(description, { maxLength: 1024 });
+    if (descErr) return res.status(400).json({ error: `description ${descErr}` });
+  }
+
+  if (sort_order !== undefined && !Number.isInteger(sort_order)) {
+    return res.status(400).json({ error: 'sort_order must be an integer' });
   }
 
   db.prepare(`

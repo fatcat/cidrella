@@ -188,13 +188,17 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
 });
 
 // POST /api/auth/logout — invalidate the caller's token by bumping
-// users.updated_at; the auth middleware refuses tokens with iat < updated_at.
-// A proper blacklist would need persistent state; bumping updated_at is
+// users.updated_at PAST the token's iat. The auth middleware refuses
+// tokens with `iat < updated_at`; because SQLite datetime() is 1-second
+// granular, a login followed by an immediate logout in the same wall-
+// clock second would leave `iat == updated_at` and the token would
+// still verify. Bumping updated_at by 1 second closes the race.
+// A proper blacklist would need persistent state; this approach is
 // equivalent for a single-admin tool and doesn't grow unbounded.
 router.post('/logout', (req, res) => {
   try {
     const db = getDb();
-    db.prepare("UPDATE users SET updated_at = datetime('now') WHERE id = ?")
+    db.prepare("UPDATE users SET updated_at = datetime('now','+1 second') WHERE id = ?")
       .run(req.user.id);
     audit(req.user.id, 'logout', 'user', req.user.id, null);
     res.json({ ok: true });
