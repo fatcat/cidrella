@@ -94,15 +94,55 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
     https_port, http_port
   } = body;
 
+  // Port validator — STRICT type check first, then bounds. The previous
+  // implementation used `Number.isInteger(Number(v))` which coerces single-
+  // element arrays ([443]→443) and numeric strings ("443"→443) to integers,
+  // accepting payloads that should be rejected. Coercion on its own wouldn't
+  // be dangerous, but this endpoint executes a LIVE port swap on success,
+  // so a bogus-shape payload (e.g. a client bug sending `[443]`) silently
+  // rebinds the management listener. The sibling `/api/settings/:key`
+  // endpoint already validates correctly; we mirror its pattern here so
+  // there's exactly one port-validation behavior across the codebase.
+  //
+  // Caught by the api-security-tester in the v0.4.15-pre.1 ship-gate run.
+  function validPortOrError(v, field) {
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 65535) {
+      return `${field} must be an integer 1–65535`;
+    }
+    return null;
+  }
+
   // Validate port early so we can reject before persisting anything.
   if (dns_listen_port !== undefined) {
-    const p = Number(dns_listen_port);
-    if (!Number.isInteger(p) || p < 1 || p > 65535) {
-      return res.status(400).json({ error: 'dns_listen_port must be an integer 1–65535' });
-    }
+    const e = validPortOrError(dns_listen_port, 'dns_listen_port');
+    if (e) return res.status(400).json({ error: e });
   }
   if (http_redirect_enabled !== undefined && typeof http_redirect_enabled !== 'boolean') {
     return res.status(400).json({ error: 'http_redirect_enabled must be boolean' });
+  }
+
+  // Also validate the `interfaces` shape — keys must be real interface names.
+  // The settings-bulk endpoint validates this via validateInterfaceConfig;
+  // mirror the check here so an admin-token holder can't stash arbitrary
+  // data (including `__proto__`) in the settings table via this route.
+  if (interfaces !== undefined) {
+    if (!interfaces || typeof interfaces !== 'object' || Array.isArray(interfaces)) {
+      return res.status(400).json({ error: 'interfaces must be an object' });
+    }
+    for (const [ifName, cfg] of Object.entries(interfaces)) {
+      if (!/^[a-zA-Z0-9._-]{1,32}$/.test(ifName)) {
+        return res.status(400).json({ error: `invalid interface name: ${ifName}` });
+      }
+      if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+        return res.status(400).json({ error: `interface ${ifName}: config must be an object` });
+      }
+      if ('dns' in cfg && typeof cfg.dns !== 'boolean') {
+        return res.status(400).json({ error: `interface ${ifName}: dns must be boolean` });
+      }
+      if ('dhcp' in cfg && typeof cfg.dhcp !== 'boolean') {
+        return res.status(400).json({ error: `interface ${ifName}: dhcp must be boolean` });
+      }
+    }
   }
 
   // Web-port validation + preflight bind. We test-bind BEFORE writing to DB,
@@ -112,25 +152,21 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
   let httpsPortNum = null;
   let httpPortNum  = null;
   if (https_port !== undefined) {
-    const p = Number(https_port);
-    if (!Number.isInteger(p) || p < 1 || p > 65535) {
-      return res.status(400).json({ error: 'https_port must be an integer 1–65535' });
-    }
-    httpsPortNum = p;
-    if (p !== getHttpsPort()) {
-      const probeErr = await checkPortAvailable(p);
-      if (probeErr) return res.status(409).json({ error: `https_port ${p} not bindable: ${probeErr}` });
+    const e = validPortOrError(https_port, 'https_port');
+    if (e) return res.status(400).json({ error: e });
+    httpsPortNum = https_port;
+    if (https_port !== getHttpsPort()) {
+      const probeErr = await checkPortAvailable(https_port);
+      if (probeErr) return res.status(409).json({ error: `https_port ${https_port} not bindable: ${probeErr}` });
     }
   }
   if (http_port !== undefined) {
-    const p = Number(http_port);
-    if (!Number.isInteger(p) || p < 1 || p > 65535) {
-      return res.status(400).json({ error: 'http_port must be an integer 1–65535' });
-    }
-    httpPortNum = p;
-    if (p !== getHttpPort()) {
-      const probeErr = await checkPortAvailable(p);
-      if (probeErr) return res.status(409).json({ error: `http_port ${p} not bindable: ${probeErr}` });
+    const e = validPortOrError(http_port, 'http_port');
+    if (e) return res.status(400).json({ error: e });
+    httpPortNum = http_port;
+    if (http_port !== getHttpPort()) {
+      const probeErr = await checkPortAvailable(http_port);
+      if (probeErr) return res.status(409).json({ error: `http_port ${http_port} not bindable: ${probeErr}` });
     }
   }
   if (httpsPortNum !== null && httpPortNum !== null && httpsPortNum === httpPortNum) {
