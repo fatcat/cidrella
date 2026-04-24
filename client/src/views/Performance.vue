@@ -203,7 +203,7 @@ const latencyData = computed(() => {
       {
         label: 'Max',
         data: pp.map(r => (r.latency_max || 0) / 1000),
-        borderColor: '#ef4444', borderDash: [4, 4],
+        borderColor: '#ef4444',
         fill: false, tension: 0.3, pointRadius: 0,
       },
     ],

@@ -434,7 +434,14 @@ function findDhcpScopeForIp(ip) {
   try { ipLong = ipToLong(ip); } catch { return null; }
   for (const s of (dhcpStore.scopes || [])) {
     if (!s.start_ip || !s.end_ip) continue;
-    if (ipLong >= ipToLong(s.start_ip) && ipLong <= ipToLong(s.end_ip)) {
+    // Guard per-scope IP conversion: a malformed start/end in the store
+    // (import or migration edge case) would otherwise throw mid-loop,
+    // bubble up to saveRecord's catch, and fire an error toast AFTER the
+    // DNS A record has already been created — user thinks the save
+    // failed and retries, creating a duplicate record.
+    let startLong, endLong;
+    try { startLong = ipToLong(s.start_ip); endLong = ipToLong(s.end_ip); } catch { continue; }
+    if (ipLong >= startLong && ipLong <= endLong) {
       return { scope: s, cidr: s.subnet_cidr };
     }
   }

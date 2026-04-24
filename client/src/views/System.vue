@@ -520,7 +520,16 @@ const themeGroups = [
 
 function getThemeSwatch(t) {
   if (t.primary) return colorSwatches[t.primary];
-  return colorSwatches[t.name.toLowerCase()] || t.customPrimary?.[300] || '#888';
+  // Some themes have distinct light/dark palettes with different signature
+  // colors (e.g. Starry Night: green earth for light, yellow stars for
+  // dark). Prefer a group-scoped key if one exists; fall back to the
+  // name-only key, then the palette's own 300-shade.
+  const nameKey = t.name.toLowerCase();
+  const scopedKey = `${nameKey} ${t.group}`;
+  return colorSwatches[scopedKey]
+    || colorSwatches[nameKey]
+    || t.customPrimary?.[300]
+    || '#888';
 }
 
 function getThemeDesc(t) {

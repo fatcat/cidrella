@@ -200,7 +200,11 @@ export const colorSwatches = {
   gruvbox:     palettes.gruvbox.primary[300],
   one:         palettes.one.primary[300],
   'tokyo day': palettes.tokyoDay.primary[300],
-  'starry night': palettes.starryNight.primary[300],
+  // Starry Night has two distinct palettes — green for light, yellow for
+  // dark — so the picker needs two swatches, not one shared by name.
+  // System.vue branches on theme.group to pick the right key.
+  'starry night light': palettes.starryNightLight.primary[300],
+  'starry night':       palettes.starryNight.primary[300],
   nord:        palettes.nord.primary[300],
 };
 

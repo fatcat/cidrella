@@ -907,6 +907,17 @@ if [ -f "$TARGET_SLOT/scripts/cidrella-reset-password" ]; then
   ok "Installed /usr/local/bin/cidrella-reset-password wrapper"
 fi
 
+# v0.4.15+: logrotate for dnsmasq.log. install.sh adds this on fresh
+# installs; the upgrade path needs it too so existing hosts (e.g. the
+# v0.4.14 → v0.4.15 production hop) pick up log rotation instead of
+# continuing to grow dnsmasq.log without bound.
+if [ -f "$TARGET_SLOT/scripts/logrotate/cidrella-dnsmasq" ] && [ -d /etc/logrotate.d ]; then
+  install -m 0644 -o root -g root \
+    "$TARGET_SLOT/scripts/logrotate/cidrella-dnsmasq" \
+    /etc/logrotate.d/cidrella-dnsmasq
+  ok "Installed logrotate config (/etc/logrotate.d/cidrella-dnsmasq)"
+fi
+
 # Apply capabilities to the bundled Node binary in the TARGET slot before
 # the symlink swap. v0.4.7+ ships Node in runtime/node/bin/node inside each
 # slot; tar doesn't preserve security.capability xattrs, so we re-apply here

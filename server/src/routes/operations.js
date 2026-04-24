@@ -11,6 +11,17 @@ import { reloadTlsCerts } from '../utils/cert.js';
 
 import { DATA_DIR } from '../config/defaults.js';
 
+// Error codes set by our own throw sites in utils/backup.js. Node.js system
+// errors (ENOENT, EACCES, EPERM, etc.) also have a `.code` property, so a
+// truthy-check would let those through and leak staging paths in the 400
+// body. Matching against this set is the sanitization gate.
+const APP_ERROR_CODES = new Set([
+  'BACKUP_INCOMPATIBLE',
+  'BACKUP_TOO_LARGE',
+  'BACKUP_TOO_MANY_ENTRIES',
+  'INVALID_DATABASE_FILE',
+]);
+
 const router = Router();
 
 // All operations routes require admin
@@ -134,16 +145,15 @@ router.post('/restore', (req, res) => {
       else if (err.code === 'BACKUP_TOO_LARGE') status = 507;
       else if (err.code === 'BACKUP_TOO_MANY_ENTRIES') status = 413;
       else if (err.code === 'INVALID_DATABASE_FILE') status = 400;
-      // Sanitize the response body — subprocess errors from tar/gzip include
-      // absolute staging paths (DATA_DIR layout, upload-file timestamp) and
-      // openssl internal error codes. 5xx is already collapsed by the global
-      // handler in index.js, but these are 4xx-class errors so they bypass
-      // that filter. Preserve structured error codes; redact the raw message
-      // unless it came from our own throw sites (which explicitly set .code).
-      const message = err.code
-        ? err.message
-        : 'Failed to process uploaded archive';
-      res.status(status).json({ error: message, code: err.code, manifest: err.manifest });
+      // Sanitize the response body — subprocess errors from tar/gzip AND
+      // Node system errors (ENOENT/EACCES/EPERM) include absolute staging
+      // paths. 5xx is already collapsed by the global handler; 4xx bypass
+      // it. Surface messages only for our own application error codes; OS
+      // and third-party errors collapse to a generic message. The
+      // machine-readable `code` field stays so clients can still branch.
+      const isAppCode = APP_ERROR_CODES.has(err.code);
+      const message = isAppCode ? err.message : 'Failed to process uploaded archive';
+      res.status(status).json({ error: message, code: isAppCode ? err.code : undefined, manifest: err.manifest });
     }
   });
 

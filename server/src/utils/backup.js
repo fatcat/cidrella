@@ -104,16 +104,21 @@ export function createBackup(db) {
   const manifestPath = path.join(DATA_DIR, MANIFEST_NAME);
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   try {
-    execFileSync('tar', [
+    // Use spawnSync (not execFileSync) so we can inspect the exit code
+    // directly. dnsmasq.leases can mutate mid-archive when a DHCP client
+    // lease rolls over during the second or two tar is running; tar
+    // completes the archive but exits with status 1 ("some files
+    // differ"). --warning=no-file-changed ONLY suppresses stderr —
+    // despite the old comment's claim, it does NOT change the exit code,
+    // so execFileSync would throw on that benign race and fail the
+    // backup. The archive bytes captured are still self-consistent (tar
+    // archives what it read), so exit 1 is treated as a soft warning.
+    // Exit 2+ is still fatal (real tar failure).
+    const result = spawnSync('tar', [
       // Strip runtime artifacts — see RUNTIME_ARTIFACT_EXCLUDES at the top
-      // of this file. Including them caused tar to fail with "file changed
-      // as we read it" and bloated archives with multi-GB logs.
+      // of this file.
       ...RUNTIME_ARTIFACT_EXCLUDES,
       ...DEFENSIVE_EXCLUDES,
-      // dnsmasq.leases can still mutate mid-archive (slow but possible).
-      // Silence the "file changed" warning so tar exits 0 even if a lease
-      // is written between stat() and read(). The lease file content
-      // captured is still consistent — tar archives the bytes it read.
       '--warning=no-file-changed',
       // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
       // POSIX keyletter form doesn't coexist with long --exclude options
@@ -124,9 +129,21 @@ export function createBackup(db) {
       '-czf', archivePath, MANIFEST_NAME, ...includes,
     ], {
       cwd: DATA_DIR,
-      stdio: 'pipe',
-      timeout: 60000
+      timeout: 60000,
     });
+    if (result.error) throw result.error;
+    if (result.status === null) {
+      throw new Error('tar timed out while creating backup');
+    }
+    if (result.status > 1) {
+      const stderr = result.stderr?.toString()?.trim() || `tar exit ${result.status}`;
+      throw new Error(`tar failed (exit ${result.status}): ${stderr}`);
+    }
+    // status 0 = clean. status 1 = at least one file changed mid-read
+    // (typically dnsmasq.leases); archive is still valid, log + continue.
+    if (result.status === 1) {
+      console.warn('[backup] tar exited 1 (file changed during archive — expected for dnsmasq.leases); archive is valid');
+    }
   } finally {
     try { fs.unlinkSync(manifestPath); } catch { /* ignore */ }
   }
