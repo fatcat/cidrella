@@ -39,8 +39,16 @@ UMask=0022
 #                          create is the canary for this cap.
 #   CAP_CHOWN            — chown the pidfile + logfile to 'nobody' so the
 #                          dropped process can continue writing them.
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_CHOWN
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_CHOWN
+#   CAP_KILL             — ExecReload runs /bin/kill -HUP $MAINPID, but
+#                          dnsmasq has dropped itself to 'nobody' by then
+#                          and ExecReload's process (root inside the unit)
+#                          can't signal another UID without CAP_KILL.
+#                          Without this, `systemctl reload cidrella-dnsmasq`
+#                          fails with "Operation not permitted" — which
+#                          means every DNS/DHCP config regen since v0.4.11
+#                          silently failed to notify the running dnsmasq.
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_CHOWN CAP_KILL
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW CAP_NET_ADMIN CAP_SETUID CAP_SETGID CAP_DAC_OVERRIDE CAP_CHOWN CAP_KILL
 
 # ─── Security hardening (added in v0.4.8) ──────────────
 #

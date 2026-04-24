@@ -2,6 +2,13 @@
 Description=CIDRella IPAM Server
 After=network.target cidrella-dnsmasq.service
 Wants=cidrella-dnsmasq.service
+# StartLimit* belongs in [Unit], not [Service]. systemd 229+ silently
+# ignores these keys when placed under [Service] with an "Unknown key"
+# warning — which is where they used to live in this file. Result: the
+# flap-loop protection advertised below has never actually been in effect
+# on any modern distro. Moved here so it is.
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -15,12 +22,10 @@ Environment=HTTPS_PORT=8443
 Environment=HTTP_PORT=8080
 # Always restart — the service is critical infrastructure. We restart
 # on crash (on-failure semantics) AND on deliberate exit (triggered by
-# the restore endpoint after a DB file swap). StartLimitBurst protects
-# against flap loops if the service is genuinely broken on startup.
+# the restore endpoint after a DB file swap). StartLimit* above bounds
+# the retry rate so a genuinely-broken startup doesn't flap forever.
 Restart=always
 RestartSec=5
-StartLimitIntervalSec=60
-StartLimitBurst=5
 
 # ─── Security hardening ─────────────────────────────────
 #
