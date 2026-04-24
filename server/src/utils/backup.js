@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { DATA_DIR } from '../config/defaults.js';
 import { APP_VERSION } from './version.js';
-import { compareSemver } from './update-checker.js';
+import { compareSemver } from './semver.js';
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const PRE_RESTORE_DIR = path.join(DATA_DIR, 'snapshots', 'pre-restore');
 const MANIFEST_NAME = 'cidrella-backup-manifest.json';

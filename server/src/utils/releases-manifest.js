@@ -51,16 +51,12 @@ const MANIFEST_SIG_URL = `${MANIFEST_URL}.minisig`;
 
 const FETCH_TIMEOUT_MS = 10 * 1000;
 
-// ─── semver helpers (local, so this file has no circular dep on update-checker)
-export function compareSemver(a, b) {
-  const pa = String(a || '').replace(/^v/, '').split('.').map(Number);
-  const pb = String(b || '').replace(/^v/, '').split('.').map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
-    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
-  }
-  return 0;
-}
+// compareSemver lives in utils/semver.js — this file used to carry a
+// local copy to dodge the circular-import risk with update-checker.js,
+// but the duplicate got out of sync in v0.4.15 (only update-checker's
+// copy was rewritten for prerelease precedence) and caused the manifest
+// path to offer v0.4.14 as a "downgrade update" on v0.4.15-pre.2 hosts.
+import { compareSemver } from './semver.js';
 
 // ─── cache ─────────────────────────────────────────────────
 
