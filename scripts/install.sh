@@ -642,6 +642,16 @@ if [ "$DNSMASQ_MODE" = "own" ]; then
   emit_event systemd pass unit=cidrella-dnsmasq.service
 fi
 
+# v0.4.15+: logrotate for dnsmasq.log. Prevents the unbounded growth that
+# inflated every backup to >1 GB before the 2026-04-21 hardening work.
+# Config uses copytruncate, so no restart or SIGUSR2 is needed.
+if [ -d /etc/logrotate.d ]; then
+  install -m 0644 -o root -g root \
+    "$INSTALL_DIR/scripts/logrotate/cidrella-dnsmasq" \
+    /etc/logrotate.d/cidrella-dnsmasq
+  ok "Installed logrotate config (/etc/logrotate.d/cidrella-dnsmasq)"
+fi
+
 # v0.4.11+: polkit rule. Authorizes the cidrella service account to start
 # cidrella-update@*.service instances and reload/restart cidrella-dnsmasq
 # via D-Bus, replacing the sudo+setuid path that was broken by the v0.4.8

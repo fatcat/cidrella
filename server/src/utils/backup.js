@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { DATA_DIR } from '../config/defaults.js';
 import { APP_VERSION } from './version.js';
@@ -82,15 +82,28 @@ export function createBackup(db) {
       // Exclude runtime files that dnsmasq actively writes. Including them
       // caused tar to fail with "file changed as we read it" — they're also
       // not useful for restore (logs are historic-only, pid files are
-      // rewritten by dnsmasq on startup).
+      // rewritten by dnsmasq on startup). The explicit dnsmasq.log /
+      // dnsmasq.pid patterns are defense-in-depth in case a future tar
+      // version changes glob semantics; the *.log / *.pid patterns are
+      // what actually do the work today.
       '--exclude=*.log',
+      '--exclude=*.log.*',
+      '--exclude=*.log-*',
       '--exclude=*.pid',
+      '--exclude=dnsmasq.log',
+      '--exclude=dnsmasq.pid',
       // dnsmasq.leases can still mutate mid-archive (slow but possible).
       // Silence the "file changed" warning so tar exits 0 even if a lease
       // is written between stat() and read(). The lease file content
       // captured is still consistent — tar archives the bytes it read.
       '--warning=no-file-changed',
-      'czf', archivePath, MANIFEST_NAME, ...includes,
+      // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
+      // POSIX keyletter form doesn't coexist with long --exclude options
+      // in GNU tar 1.35 — it errors with "You must specify one of the
+      // '-Acdtrux'..." and produces no archive. This silently crippled
+      // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
+      // anyway because tar never got the action flag).
+      '-czf', archivePath, MANIFEST_NAME, ...includes,
     ], {
       cwd: DATA_DIR,
       stdio: 'pipe',
@@ -139,6 +152,53 @@ function readBackupManifest(archivePath) {
 }
 
 /**
+ * Parse `tar tzvf` output to compute the uncompressed size of an archive
+ * and return a summary of entries that would be skipped at extract time
+ * (log/pid files that our restore excludes). Size is used to preflight
+ * whether the target host can safely stage the extract.
+ *
+ * tzvf output format per line:
+ *   -rw-r--r-- owner/group  <bytes> <date> <time> <path>
+ *
+ * Returns { totalBytes, effectiveBytes, skippedBytes, entries }.
+ * effectiveBytes is what actually lands on disk after --exclude filters.
+ */
+export function analyzeArchive(archivePath) {
+  const verbose = execFileSync('tar', ['tzvf', archivePath], {
+    encoding: 'utf-8',
+    timeout: 60000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+
+  let totalBytes = 0;
+  let skippedBytes = 0;
+  const entries = [];
+  for (const line of verbose.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    // Split on whitespace, but the last field can contain spaces (symlinks
+    // use ' -> ' but we only care about regular files here). Paths with
+    // spaces are vanishingly rare in DATA_DIR so we treat them normally.
+    const parts = trimmed.split(/\s+/);
+    if (parts.length < 6) continue;
+    const size = parseInt(parts[2], 10);
+    if (!Number.isFinite(size)) continue;
+    const name = parts.slice(5).join(' ');
+    totalBytes += size;
+    entries.push({ name, size });
+    // Match what the --exclude patterns on restore skip: foo.log, foo.log.1,
+    // foo.log.1.gz, foo.log-20260421, foo.pid. Mirrors restoreBackup's tar args.
+    if (/\.log(\.|-|$)/i.test(name) || /\.pid$/i.test(name)) skippedBytes += size;
+  }
+  return {
+    totalBytes,
+    skippedBytes,
+    effectiveBytes: totalBytes - skippedBytes,
+    entries,
+  };
+}
+
+/**
  * Inspect a backup archive without modifying anything.
  * Returns { manifest, compatible, reason? }.
  */
@@ -147,7 +207,11 @@ export function inspectBackup(archivePath) {
     throw new Error('Backup file not found');
   }
 
-  const listing = execFileSync('tar', ['tzf', archivePath], { encoding: 'utf-8', timeout: 30000 });
+  const listing = execFileSync('tar', ['tzf', archivePath], {
+    encoding: 'utf-8',
+    timeout: 30000,
+    maxBuffer: 16 * 1024 * 1024,
+  });
   if (!listing.includes('cidrella.db') && !listing.includes('ipam.db')) {
     throw new Error('Invalid backup: missing database file');
   }
@@ -247,11 +311,36 @@ function takePreRestoreSnapshot(db) {
   }
 
   // Copy certs + dnsmasq (matching what's in a backup) so the pre-restore
-  // state is a complete undo target.
+  // state is a complete undo target. The dnsmasq directory contains a log
+  // file (dnsmasq.log) that's typically root-owned because the systemd
+  // unit starts dnsmasq as root before it drops to nobody. The cidrella
+  // service user can't read it, which made `cp -a` fail with EACCES and
+  // aborted the entire restore. We mirror the backup's exclude policy:
+  // logs and pids are runtime artifacts, not state, so the snapshot
+  // skips them. tar -c | tar -x with the same --exclude flags as
+  // createBackup keeps the two paths consistent.
   for (const sub of ['certs', 'dnsmasq']) {
     const src = path.join(DATA_DIR, sub);
-    if (fs.existsSync(src)) {
-      execFileSync('cp', ['-a', src, path.join(PRE_RESTORE_DIR, sub)]);
+    if (!fs.existsSync(src)) continue;
+    // Use tar pipe so excludes apply during the read pass; cp -a can't
+    // skip files based on glob patterns. spawnSync wires stdout->stdin
+    // between the two tars, no shell, no shell-injection surface.
+    const reader = spawnSync('tar', [
+      '--exclude=*.log',
+      '--exclude=*.log.*',
+      '--exclude=*.log-*',
+      '--exclude=*.pid',
+      '-cf', '-',
+      '-C', DATA_DIR, sub,
+    ]);
+    if (reader.status !== 0) {
+      throw new Error(`Pre-restore snapshot failed reading ${sub}: ${reader.stderr?.toString() || 'tar exit ' + reader.status}`);
+    }
+    const writer = spawnSync('tar', ['-xf', '-', '-C', PRE_RESTORE_DIR], {
+      input: reader.stdout,
+    });
+    if (writer.status !== 0) {
+      throw new Error(`Pre-restore snapshot failed writing ${sub}: ${writer.stderr?.toString() || 'tar exit ' + writer.status}`);
     }
   }
 
@@ -289,17 +378,76 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     throw err;
   }
 
+  // 1a. Preflight size/space check. A runaway dnsmasq.log inside the
+  //     archive (1.5 GB+ on prod before logrotate) combined with a small
+  //     target (e.g. 1 GB RAM LXC) caused a full-system freeze during
+  //     the 2026-04-21 incident. Refuse the restore up-front if the
+  //     uncompressed payload wouldn't fit comfortably on the staging
+  //     filesystem.
+  //
+  //     Staging goes alongside DATA_DIR, not /tmp — the default os.tmpdir()
+  //     is tmpfs on many LXC distros (Debian 13 / systemd 257), which
+  //     means extracting there consumes RAM instead of disk. statfs
+  //     against tmpfs reports deceivingly large free space (usually 50%
+  //     of host RAM, sometimes much more in nested virt). Same-filesystem
+  //     staging also lets the swap loop below use rename() instead of
+  //     cp -a, cutting I/O in half on the happy path. Also skip *.log
+  //     and *.pid at extract time so legacy backups can't re-trigger
+  //     the dnsmasq.log bloat.
+  const analysis = analyzeArchive(archivePath);
+  const stagingRoot = DATA_DIR;
+  let stagingFree = Infinity;
+  try {
+    const stat = fs.statfsSync(stagingRoot);
+    stagingFree = stat.bavail * stat.bsize;
+  } catch { /* statfs unsupported — skip the check */ }
+  const SAFETY_MARGIN = 512 * 1024 * 1024; // 512 MB headroom
+  if (analysis.effectiveBytes + SAFETY_MARGIN > stagingFree) {
+    const needMiB = Math.ceil(analysis.effectiveBytes / (1024 * 1024));
+    const freeMiB = Math.floor(stagingFree / (1024 * 1024));
+    const err = new Error(
+      `Restore refused: backup would need ${needMiB} MiB of staging space under ${stagingRoot} ` +
+      `but only ${freeMiB} MiB is free (512 MiB safety margin required). ` +
+      `Free disk space or resize the host before retrying.`
+    );
+    err.code = 'BACKUP_TOO_LARGE';
+    throw err;
+  }
+
   const db = getDb();
 
   // 2. Pre-restore snapshot (safety net — not managed by cidrella-rollback)
   takePreRestoreSnapshot(db);
 
-  // 3. Stage extraction to /tmp — if anything goes wrong here, DATA_DIR is untouched
-  const stagingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-restore-'));
+  // 3. Stage extraction to /tmp — if anything goes wrong here, DATA_DIR is untouched.
+  //    --exclude=*.log --exclude=*.pid catches log/pid files that slipped
+  //    into legacy backups (pre-2026-04-20) created before the create-side
+  //    exclude was in place. Without this, a legacy backup carrying a
+  //    multi-GB dnsmasq.log would thrash a resource-constrained host even
+  //    if the size preflight barely passed.
+  //
+  //    Tar timeout scales with uncompressed size: a 2 GB extract on a slow
+  //    LXC legitimately needs more than the old fixed 60s. Budget 30s per
+  //    100 MB effective payload, floor 60s, cap 30min.
+  const stagingDir = fs.mkdtempSync(path.join(DATA_DIR, '.restore-staging-'));
+  const tarTimeout = Math.min(
+    30 * 60 * 1000,
+    Math.max(60000, Math.ceil(analysis.effectiveBytes / (100 * 1024 * 1024)) * 30000)
+  );
   try {
-    execFileSync('tar', ['xzf', archivePath, '-C', stagingDir], {
+    execFileSync('tar', [
+      '--exclude=*.log',
+      '--exclude=*.log.*',
+      '--exclude=*.log-*',
+      '--exclude=*.pid',
+      '--exclude=dnsmasq.log',
+      '--exclude=dnsmasq.pid',
+      // Use '-xzf' (with dash), not bare 'xzf'. See create-side comment
+      // for why — same GNU tar parsing quirk applies here.
+      '-xzf', archivePath, '-C', stagingDir,
+    ], {
       stdio: 'pipe',
-      timeout: 60000,
+      timeout: tarTimeout,
     });
 
     // Legacy backups (pre-cidrella rename) contain ipam.db. Rename in-place
@@ -347,7 +495,17 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
         fs.rmSync(path.join(DATA_DIR, 'cidrella.db-wal'), { force: true });
         fs.rmSync(path.join(DATA_DIR, 'cidrella.db-shm'), { force: true });
       }
-      execFileSync('cp', ['-a', src, dst]);
+      // Prefer rename over cp -a when staging and DATA_DIR share a
+      // filesystem: near-instant, zero extra I/O, no page-cache pressure.
+      // Falls back to cp -a on EXDEV (different mounts). This halves the
+      // data-copy load during restore, which matters a lot on the small
+      // LXCs where the freeze incident happened.
+      try {
+        fs.renameSync(src, dst);
+      } catch (renameErr) {
+        if (renameErr.code !== 'EXDEV') throw renameErr;
+        execFileSync('cp', ['-a', src, dst]);
+      }
     }
   } catch (copyErr) {
     // Something went wrong during staging or copy. DATA_DIR may be partially

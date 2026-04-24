@@ -1,0 +1,26 @@
+# CIDRella dnsmasq log rotation
+#
+# Installed to /etc/logrotate.d/cidrella-dnsmasq by scripts/install.sh.
+#
+# Context: dnsmasq is configured with `log-queries` and `log-dhcp`, which
+# produces a high-volume append-only log at /var/lib/cidrella/dnsmasq/dnsmasq.log.
+# Without rotation this grows unbounded — on the 2026-04-21 incident the
+# prod log had reached 1.5 GB and was silently inflating every backup,
+# which froze a 1 GB RAM test instance during restore.
+#
+# copytruncate keeps it simple: logrotate copies the file off, then
+# truncates the original in-place. dnsmasq's open fd keeps writing to the
+# same inode (now 0 bytes), so no signal or restart is needed. A few log
+# lines written during the copy->truncate window may be lost; that's
+# acceptable for query telemetry.
+
+/var/lib/cidrella/dnsmasq/dnsmasq.log {
+    size 50M
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    dateext
+}

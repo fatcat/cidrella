@@ -19,8 +19,19 @@
 
 set -eu
 
+# Resolve $0 and $CIDRELLA_NODE to canonical paths so a self-reference
+# (CIDRELLA_NODE=/usr/local/bin/cidrella-node when this script IS that
+# path) is detected and skipped. Without the guard, calling this wrapper
+# with CIDRELLA_NODE set to itself produces a tight exec() loop with no
+# output — the exact trap that the v0.4.15 cidrella-reset-password
+# wrapper fell into. readlink -f resolves symlinks; if readlink is
+# missing we still fall through to the candidate list below.
 if [ -n "${CIDRELLA_NODE:-}" ] && [ -x "${CIDRELLA_NODE}" ]; then
-  exec "${CIDRELLA_NODE}" "$@"
+  _self="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+  _override="$(readlink -f "$CIDRELLA_NODE" 2>/dev/null || echo "$CIDRELLA_NODE")"
+  if [ "$_self" != "$_override" ]; then
+    exec "${CIDRELLA_NODE}" "$@"
+  fi
 fi
 
 for candidate in \

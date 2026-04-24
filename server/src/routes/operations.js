@@ -81,7 +81,14 @@ router.post('/restore', (req, res) => {
     return res.status(400).json({ error: 'Content-Type must be application/gzip or application/octet-stream' });
   }
 
-  const tmpPath = path.join(os.tmpdir(), `cidrella-restore-${Date.now()}.tar.gz`);
+  // Stage the upload next to DATA_DIR instead of /tmp. On LXCs with
+  // systemd 257+ (Debian 13), /tmp is tmpfs (RAM-backed), so uploading a
+  // multi-GB backup would consume RAM before the preflight size check can
+  // reject it. Writing under DATA_DIR uses the real disk and keeps the
+  // preflight's statfs estimate honest.
+  const uploadStagingDir = path.join(DATA_DIR, 'snapshots');
+  try { fs.mkdirSync(uploadStagingDir, { recursive: true }); } catch { /* handled below if it fails */ }
+  const tmpPath = path.join(uploadStagingDir, `.restore-upload-${Date.now()}.tar.gz`);
   const writeStream = fs.createWriteStream(tmpPath);
   req.pipe(writeStream);
 
@@ -121,7 +128,9 @@ router.post('/restore', (req, res) => {
       res.json(result);
     } catch (err) {
       try { fs.unlinkSync(tmpPath); } catch {}
-      const status = err.code === 'BACKUP_INCOMPATIBLE' ? 409 : 400;
+      let status = 400;
+      if (err.code === 'BACKUP_INCOMPATIBLE') status = 409;
+      else if (err.code === 'BACKUP_TOO_LARGE') status = 507;
       res.status(status).json({ error: err.message, manifest: err.manifest });
     }
   });
