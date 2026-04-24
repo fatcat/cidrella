@@ -4,7 +4,7 @@ import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { pruneEvents } from '../models/ip-address.js';
 import { isValidIpv4 } from '../utils/ip.js';
-import { validateInterfaceConfig } from '../utils/validation.js';
+import { validateInterfaceConfig, validPortOrError } from '../utils/validation.js';
 
 const router = Router();
 
@@ -95,8 +95,8 @@ const SETTING_SCHEMA = {
     normalize: v => v
   },
   geoip_proxy_port: {
-    validate: v => isIntInRange(v, 1, 65535) ? null : 'must be an integer 1-65535',
-    normalize: v => String(intOrNull(v))
+    validate: v => validPortOrError(v, 'geoip_proxy_port'),
+    normalize: v => String(v)
   },
   default_scan_interval: {
     validate: v => isIntInRange(v, 1, 10080) ? null : 'must be an integer 1-10080 (minutes)',
@@ -119,8 +119,8 @@ const SETTING_SCHEMA = {
     normalize: v => toBoolStr(v)
   },
   dns_listen_port: {
-    validate: v => isIntInRange(v, 1, 65535) ? null : 'must be an integer 1-65535',
-    normalize: v => String(intOrNull(v))
+    validate: v => validPortOrError(v, 'dns_listen_port'),
+    normalize: v => String(v)
   },
   dhcp_enabled: {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
@@ -134,13 +134,21 @@ const SETTING_SCHEMA = {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)
   },
+  // https_port / http_port can be empty ("" clears the override). Non-empty
+  // values go through the shared validPortOrError so the settings endpoint
+  // matches /api/interfaces/config — a mismatch here was HIGH-severity
+  // finding H1 from the pre.2 ship-gate trio: /api/settings/https_port
+  // accepted {"value": 22} (numeric string / privileged integer) with no
+  // bind preflight, which would brick the service on the next restart.
+  // The /api/settings route is admin-only so the blast radius was "authed
+  // admin can wedge the appliance", but the two endpoints must agree.
   https_port: {
-    validate: v => (v === '' || v === null || isIntInRange(v, 1, 65535)) ? null : 'must be empty or an integer 1-65535',
-    normalize: v => (v === '' || v === null) ? '' : String(intOrNull(v))
+    validate: v => (v === '' || v === null) ? null : validPortOrError(v, 'https_port'),
+    normalize: v => (v === '' || v === null) ? '' : String(v)
   },
   http_port: {
-    validate: v => (v === '' || v === null || isIntInRange(v, 1, 65535)) ? null : 'must be empty or an integer 1-65535',
-    normalize: v => (v === '' || v === null) ? '' : String(intOrNull(v))
+    validate: v => (v === '' || v === null) ? null : validPortOrError(v, 'http_port'),
+    normalize: v => (v === '' || v === null) ? '' : String(v)
   },
   ip_history_retention_days: {
     validate: v => isIntInRange(v, 1, 3650) ? null : 'must be an integer 1-3650',

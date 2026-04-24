@@ -196,6 +196,16 @@ async function main() {
 
   // Create Express app
   const app = express();
+  // Case-sensitive + strict routing. Without these, Express matches
+  // '/API/auth/login' to the '/api/auth' mount, but auth middleware
+  // compares `req.path.startsWith('/api/')` with a case-sensitive JS
+  // string — so uppercased paths skip auth entirely. The trio pentest
+  // (2026-04-24) found this pivot let unauthenticated callers burn the
+  // change-password rate limiter and produce unguarded 500s on
+  // `/API/auth/me`. Turning on case-sensitive routing forces the router
+  // to agree with the middleware.
+  app.set('case sensitive routing', true);
+  app.set('strict routing', true);
 
   // Middleware
   app.use(helmet({

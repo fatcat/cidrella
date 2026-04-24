@@ -175,10 +175,15 @@ function getListenAddresses() {
   const addresses = [];
 
   if (Object.keys(ifaceConfig).length > 0) {
-    // Explicit config — bind to IPs on configured interfaces
+    // Explicit config — bind to IPs on configured interfaces.
+    // Use Object.hasOwn to avoid prototype-chain lookups: if ifName is
+    // 'constructor' / '__proto__' / 'toString', naked indexing would
+    // return a non-array object and crash the for…of. The validator
+    // rejects these at write time, but this guard is defense-in-depth
+    // for any stored config that predates the validator fix.
     for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
       if (!cfg.dns) continue;
-      const addrs = sysIfaces[ifName];
+      const addrs = Object.hasOwn(sysIfaces, ifName) ? sysIfaces[ifName] : null;
       if (!addrs) continue;
       for (const a of addrs) {
         if (a.family === 'IPv4') addresses.push(a.address);

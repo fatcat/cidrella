@@ -325,6 +325,10 @@ export function applyInterfaceConfig(db) {
   if (hasExplicitConfig) {
     for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
       if (!cfg.dns && !cfg.dhcp) continue;
+      // Skip any stored ifName that isn't a real host interface — guards
+      // against prototype-chain lookups (constructor/__proto__/toString)
+      // in stored config that predates the validator fix for C1.
+      if (!Object.hasOwn(sysIfaces, ifName)) continue;
       // interface= needed for DHCP binding (and DNS in bypass mode)
       newDirectives.push(`interface=${ifName}`);
       // In bypass mode, dnsmasq also needs listen-address for DNS on LAN IPs

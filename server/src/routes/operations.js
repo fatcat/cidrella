@@ -5,6 +5,7 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { getDb, audit, ensureDefaults } from '../db/init.js';
 import { requireRole } from '../auth/roles.js';
+import { clearJwtSecretCache } from '../auth/middleware.js';
 import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup, inspectBackup } from '../utils/backup.js';
 import { reloadTlsCerts } from '../utils/cert.js';
 
@@ -131,7 +132,18 @@ router.post('/restore', (req, res) => {
       let status = 400;
       if (err.code === 'BACKUP_INCOMPATIBLE') status = 409;
       else if (err.code === 'BACKUP_TOO_LARGE') status = 507;
-      res.status(status).json({ error: err.message, manifest: err.manifest });
+      else if (err.code === 'BACKUP_TOO_MANY_ENTRIES') status = 413;
+      else if (err.code === 'INVALID_DATABASE_FILE') status = 400;
+      // Sanitize the response body — subprocess errors from tar/gzip include
+      // absolute staging paths (DATA_DIR layout, upload-file timestamp) and
+      // openssl internal error codes. 5xx is already collapsed by the global
+      // handler in index.js, but these are 4xx-class errors so they bypass
+      // that filter. Preserve structured error codes; redact the raw message
+      // unless it came from our own throw sites (which explicitly set .code).
+      const message = err.code
+        ? err.message
+        : 'Failed to process uploaded archive';
+      res.status(status).json({ error: message, code: err.code, manifest: err.manifest });
     }
   });
 
@@ -283,6 +295,15 @@ router.post('/reset-database', async (req, res) => {
 
     // Re-run ensureDefaults to recreate admin user, JWT secret, and default settings
     await ensureDefaults();
+
+    // `ensureDefaults` wrote a fresh jwt_secret to settings, but the auth
+    // middleware holds the OLD secret in a module-level cache populated on
+    // first request. Without this call, post-reset logins sign with the
+    // new secret but verify against the stale cached one → every new
+    // token fails with "Invalid token" until the process restarts. Trio
+    // finding M3 (2026-04-24): the admin locks themselves out of their
+    // own UI immediately after hitting Reset Database.
+    clearJwtSecretCache();
 
     res.json({ ok: true, message: 'Database reset complete.' });
   } catch (err) {

@@ -173,6 +173,22 @@ function readBackupManifest(archivePath) {
   }
 }
 
+// Hard caps on archive inspection. Both were reached by crafted inputs in
+// the 2026-04-24 ship-gate trio — a 3.7 MB zip-bomb with 500 k tiny entries
+// blew `tar tzvf`'s 16 MiB maxBuffer with ENOBUFS (HIGH H3), and a 12 GB
+// gzipped archive timed out `tar tzf` before the 507 preflight could fire
+// (MEDIUM M1). Size cap is on the ON-DISK gzipped size — below it, the
+// uncompressed-size refusal (BACKUP_TOO_LARGE inside restoreBackup) still
+// runs after the listing pass. Timeout scales with size so large legitimate
+// backups aren't rejected; entry-count buffer is sized for ~500 k entries
+// of typical verbose-listing length.
+const MAX_ARCHIVE_GZIP_BYTES = 2 * 1024 * 1024 * 1024;  // 2 GiB on-disk cap
+const MAX_LISTING_BUFFER_BYTES = 64 * 1024 * 1024;       // 64 MiB of tar output
+function tarListingTimeoutMs(archiveBytes) {
+  // 10 s floor, +10 s per 200 MiB gzipped. Caps at 10 min to bound worst case.
+  return Math.min(10 * 60 * 1000, Math.max(10_000, Math.ceil(archiveBytes / (200 * 1024 * 1024)) * 10_000));
+}
+
 /**
  * Parse `tar tzvf` output to compute the uncompressed size of an archive
  * and return a summary of entries that would be skipped at extract time
@@ -186,11 +202,39 @@ function readBackupManifest(archivePath) {
  * effectiveBytes is what actually lands on disk after --exclude filters.
  */
 export function analyzeArchive(archivePath) {
-  const verbose = execFileSync('tar', ['tzvf', archivePath], {
-    encoding: 'utf-8',
-    timeout: 60000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  const archiveBytes = fs.statSync(archivePath).size;
+  if (archiveBytes > MAX_ARCHIVE_GZIP_BYTES) {
+    const err = new Error(
+      `Archive is ${(archiveBytes / (1024 * 1024 * 1024)).toFixed(1)} GiB on disk, ` +
+      `larger than the ${(MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024))} GiB cap. ` +
+      `Refusing to analyze — a legitimate CIDRella backup is never this large.`
+    );
+    err.code = 'BACKUP_TOO_LARGE';
+    throw err;
+  }
+  let verbose;
+  try {
+    verbose = execFileSync('tar', ['tzvf', archivePath], {
+      encoding: 'utf-8',
+      timeout: tarListingTimeoutMs(archiveBytes),
+      maxBuffer: MAX_LISTING_BUFFER_BYTES,
+    });
+  } catch (err) {
+    // ENOBUFS = too many entries (zip bomb by count). ETIMEDOUT = too big
+    // to list in our scaled timeout. Both collapse to the same semantic
+    // refusal: the archive can't be safely processed on this host.
+    if (err.code === 'ENOBUFS' || /maxBuffer/i.test(err.message || '')) {
+      const e = new Error('Archive has too many entries to process safely');
+      e.code = 'BACKUP_TOO_MANY_ENTRIES';
+      throw e;
+    }
+    if (err.code === 'ETIMEDOUT' || /ETIMEDOUT/i.test(err.message || '')) {
+      const e = new Error('Archive is too large to list within the timeout budget');
+      e.code = 'BACKUP_TOO_LARGE';
+      throw e;
+    }
+    throw err;
+  }
 
   let totalBytes = 0;
   let skippedBytes = 0;
@@ -230,11 +274,45 @@ export function inspectBackup(archivePath) {
     throw new Error('Backup file not found');
   }
 
-  const listing = execFileSync('tar', ['tzf', archivePath], {
-    encoding: 'utf-8',
-    timeout: 30000,
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  // Size + entry-count preflight BEFORE running tar tzf. The previous
+  // implementation had a fixed 30-s timeout + 16-MiB buffer here, which
+  // made the 507 BACKUP_TOO_LARGE response unreachable for the exact
+  // inputs it was designed to catch (a 12 GiB archive ETIMEDOUT at 30 s
+  // before the size check in restoreBackup could fire) and let a 500 k-
+  // entry zip bomb ENOBUFS into a leaky 400. Both cases now surface as
+  // BACKUP_TOO_LARGE / BACKUP_TOO_MANY_ENTRIES with clean status codes.
+  const archiveBytes = fs.statSync(archivePath).size;
+  if (archiveBytes > MAX_ARCHIVE_GZIP_BYTES) {
+    const err = new Error(
+      `Backup is ${(archiveBytes / (1024 * 1024 * 1024)).toFixed(1)} GiB on disk; ` +
+      `refusing to process (cap ${MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024)} GiB).`
+    );
+    err.code = 'BACKUP_TOO_LARGE';
+    throw err;
+  }
+
+  let listing;
+  try {
+    listing = execFileSync('tar', ['tzf', archivePath], {
+      encoding: 'utf-8',
+      timeout: tarListingTimeoutMs(archiveBytes),
+      maxBuffer: MAX_LISTING_BUFFER_BYTES,
+    });
+  } catch (err) {
+    if (err.code === 'ENOBUFS' || /maxBuffer/i.test(err.message || '')) {
+      const e = new Error('Archive has too many entries to process safely');
+      e.code = 'BACKUP_TOO_MANY_ENTRIES';
+      throw e;
+    }
+    if (err.code === 'ETIMEDOUT' || /ETIMEDOUT/i.test(err.message || '')) {
+      const e = new Error('Archive is too large to list within the timeout budget');
+      e.code = 'BACKUP_TOO_LARGE';
+      throw e;
+    }
+    // Gzip/format errors are a normal bad-input case — keep them mapped to
+    // 400 by the caller (operations.js). Don't convert to 5xx.
+    throw err;
+  }
   if (!listing.includes('cidrella.db') && !listing.includes('ipam.db')) {
     throw new Error('Invalid backup: missing database file');
   }
@@ -487,6 +565,33 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   const legacyIpam = path.join(stagingDir, 'ipam.db');
   if (fs.existsSync(legacyIpam) && !fs.existsSync(path.join(stagingDir, 'cidrella.db'))) {
     fs.renameSync(legacyIpam, path.join(stagingDir, 'cidrella.db'));
+  }
+
+  // Verify the staged cidrella.db actually IS a SQLite 3 database before
+  // swapping it into DATA_DIR. A 5-byte "stub\n" file named cidrella.db
+  // satisfies every check up to this point (the filename-only validation
+  // in inspectBackup, the path-traversal check, the manifest/compat flow
+  // — legacy-backup-without-manifest is "compatible with warning"). But
+  // after swap+exit, systemd restarts into SQLITE_NOTADB on the pragma
+  // journal_mode call, crash-loops through StartLimitBurst, and finally
+  // stops the unit. Recovery needs shell access. Magic-byte check here
+  // catches this BEFORE the swap loop — any failure leaves DATA_DIR
+  // untouched and returns a clean error via the throw below.
+  const stagedDb = path.join(stagingDir, 'cidrella.db');
+  if (fs.existsSync(stagedDb)) {
+    const magic = Buffer.alloc(16);
+    const fd = fs.openSync(stagedDb, 'r');
+    let readLen = 0;
+    try { readLen = fs.readSync(fd, magic, 0, 16, 0); } finally { try { fs.closeSync(fd); } catch { /* ignore */ } }
+    if (readLen !== 16 || magic.toString('utf-8') !== 'SQLite format 3\x00') {
+      try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      const err = new Error(
+        `Invalid backup: staged cidrella.db is not a SQLite 3 database (magic bytes mismatch). ` +
+        `${DATA_DIR} was NOT modified. Service continues running.`
+      );
+      err.code = 'INVALID_DATABASE_FILE';
+      throw err;
+    }
   }
 
   // 4. Swap staged files into DATA_DIR.

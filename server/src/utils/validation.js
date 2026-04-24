@@ -26,10 +26,23 @@ export function validPortOrError(v, field) {
  * and `/api/interfaces/config`. Accepts either an object or a JSON-encoded
  * string (legacy settings-bulk path). Returns an error string or null.
  *
- * Keys must match `^[a-zA-Z0-9._-]{1,32}$` — this blocks prototype-key
- * injection (`__proto__`, `constructor`, etc.) because those don't match
- * the regex. Every entry's `dns` and `dhcp` must be booleans when present.
+ * Keys must match `^[a-zA-Z0-9._-]{1,32}$` AND not be a reserved JS
+ * property name. The regex alone is NOT sufficient — an earlier version
+ * of this function claimed in a comment that the regex blocked
+ * prototype-key injection, but keys like `constructor`, `__proto__`,
+ * `toString`, `hasOwnProperty` all match `[a-zA-Z0-9._-]`. The trio
+ * pentest (2026-04-24) confirmed that `{"interfaces":{"constructor":...}}`
+ * was accepted and then crashed the server on the next restart because
+ * `sysIfaces['constructor']` resolves via the prototype chain to the
+ * Object constructor, not undefined, and the downstream `for…of` threw.
+ * Consumers also use `Object.hasOwn` as defense-in-depth, but the
+ * validator is the correct place to reject the write.
  */
+const RESERVED_OBJECT_KEYS = new Set([
+  '__proto__', 'constructor', 'prototype',
+  'hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable',
+  'toString', 'toLocaleString', 'valueOf',
+]);
 export function validateInterfaceConfig(v) {
   let obj = v;
   if (typeof v === 'string') {
@@ -39,6 +52,9 @@ export function validateInterfaceConfig(v) {
   for (const [ifName, cfg] of Object.entries(obj)) {
     if (typeof ifName !== 'string' || !/^[a-zA-Z0-9._-]{1,32}$/.test(ifName)) {
       return `invalid interface name: ${ifName}`;
+    }
+    if (RESERVED_OBJECT_KEYS.has(ifName)) {
+      return `reserved interface name: ${ifName}`;
     }
     if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
       return `interface ${ifName}: config must be an object`;
