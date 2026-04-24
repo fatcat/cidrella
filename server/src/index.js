@@ -52,7 +52,7 @@ import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js'
 import { ensureCerts, setHttpsServer } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
-import { startBackupScheduler } from './utils/backup.js';
+import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq } from './utils/dnsmasq.js';
@@ -118,6 +118,17 @@ async function main() {
     if (repaired.changes > 0) console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
   } catch (err) {
     console.warn('Gateway range repair skipped:', err?.message || err);
+  }
+
+  // Sweep abandoned restore-staging files from a prior crashed restore.
+  // A SIGKILL/OOM between upload-start and cleanup strands multi-GB files
+  // under DATA_DIR, which then silently consume the very disk headroom
+  // the preflight size check is measuring.
+  try {
+    const swept = sweepStaleRestoreArtifacts();
+    if (swept > 0) console.log(`Swept ${swept} stale restore-staging artifact(s)`);
+  } catch (err) {
+    console.warn('Restore-staging sweep skipped:', err?.message || err);
   }
 
   // Sync server IP into DNS Servers default

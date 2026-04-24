@@ -4,6 +4,7 @@ import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { pruneEvents } from '../models/ip-address.js';
 import { isValidIpv4 } from '../utils/ip.js';
+import { validateInterfaceConfig } from '../utils/validation.js';
 
 const router = Router();
 
@@ -52,21 +53,6 @@ function validateDnsUpstreamServers(v) {
   if (arr.length > 16) return 'too many upstream servers (max 16)';
   for (const s of arr) {
     if (typeof s !== 'string' || !isValidIpv4(s)) return `${s} is not a valid IPv4 address`;
-  }
-  return null;
-}
-
-function validateInterfaceConfig(v) {
-  let obj = v;
-  if (typeof v === 'string') {
-    try { obj = JSON.parse(v); } catch { return 'must be a JSON object'; }
-  }
-  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return 'must be an object';
-  for (const [ifName, cfg] of Object.entries(obj)) {
-    if (typeof ifName !== 'string' || !/^[a-zA-Z0-9._-]{1,32}$/.test(ifName)) return `invalid interface name: ${ifName}`;
-    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return `interface ${ifName}: config must be an object`;
-    if ('dns' in cfg && typeof cfg.dns !== 'boolean') return `interface ${ifName}: dns must be boolean`;
-    if ('dhcp' in cfg && typeof cfg.dhcp !== 'boolean') return `interface ${ifName}: dhcp must be boolean`;
   }
   return null;
 }

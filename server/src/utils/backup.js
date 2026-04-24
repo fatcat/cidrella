@@ -11,6 +11,32 @@ const PRE_RESTORE_DIR = path.join(DATA_DIR, 'snapshots', 'pre-restore');
 const MANIFEST_NAME = 'cidrella-backup-manifest.json';
 const MANIFEST_TYPE = 'cidrella-backup';
 
+// Single source of truth for "files that must never ride along in a backup
+// or snapshot." dnsmasq log + pid files are runtime artifacts, not state;
+// including them triggered the 2026-04-21 freeze incident (1.5 GB log
+// inflated every archive). Used by createBackup, restoreBackup (defense
+// against legacy archives that slipped logs through), and
+// takePreRestoreSnapshot. The matcher `isRuntimeArtifact` is kept in
+// lockstep with the glob list so analyzeArchive's size accounting agrees
+// with what tar will actually skip at extract time.
+const RUNTIME_ARTIFACT_EXCLUDES = [
+  '--exclude=*.log',
+  '--exclude=*.log.*',
+  '--exclude=*.log-*',
+  '--exclude=*.pid',
+];
+// Defense-in-depth: explicit names for the two files known to be problematic,
+// in case a future tar changes glob semantics. Appended to the base list in
+// archive-producing paths (create + restore); the snapshot path doesn't need
+// these because the globs above fully cover DATA_DIR/dnsmasq/.
+const DEFENSIVE_EXCLUDES = [
+  '--exclude=dnsmasq.log',
+  '--exclude=dnsmasq.pid',
+];
+function isRuntimeArtifact(name) {
+  return /\.log(\.|-|$)/i.test(name) || /\.pid$/i.test(name);
+}
+
 /**
  * Create a backup archive of the CIDRella data
  */
@@ -79,19 +105,11 @@ export function createBackup(db) {
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   try {
     execFileSync('tar', [
-      // Exclude runtime files that dnsmasq actively writes. Including them
-      // caused tar to fail with "file changed as we read it" — they're also
-      // not useful for restore (logs are historic-only, pid files are
-      // rewritten by dnsmasq on startup). The explicit dnsmasq.log /
-      // dnsmasq.pid patterns are defense-in-depth in case a future tar
-      // version changes glob semantics; the *.log / *.pid patterns are
-      // what actually do the work today.
-      '--exclude=*.log',
-      '--exclude=*.log.*',
-      '--exclude=*.log-*',
-      '--exclude=*.pid',
-      '--exclude=dnsmasq.log',
-      '--exclude=dnsmasq.pid',
+      // Strip runtime artifacts — see RUNTIME_ARTIFACT_EXCLUDES at the top
+      // of this file. Including them caused tar to fail with "file changed
+      // as we read it" and bloated archives with multi-GB logs.
+      ...RUNTIME_ARTIFACT_EXCLUDES,
+      ...DEFENSIVE_EXCLUDES,
       // dnsmasq.leases can still mutate mid-archive (slow but possible).
       // Silence the "file changed" warning so tar exits 0 even if a lease
       // is written between stat() and read(). The lease file content
@@ -138,7 +156,11 @@ export function createBackup(db) {
  */
 function readBackupManifest(archivePath) {
   try {
-    const out = execFileSync('tar', ['xzf', archivePath, '-O', MANIFEST_NAME], {
+    // Use '-xzf' with leading dash — matches the convention everywhere else
+    // in this file. Bare 'xzf' works here today only because no --exclude
+    // precedes it, but if one is ever added the quirk from createBackup
+    // applies.
+    const out = execFileSync('tar', ['-xzf', archivePath, '-O', MANIFEST_NAME], {
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 30000,
       maxBuffer: 64 * 1024,
@@ -186,9 +208,10 @@ export function analyzeArchive(archivePath) {
     const name = parts.slice(5).join(' ');
     totalBytes += size;
     entries.push({ name, size });
-    // Match what the --exclude patterns on restore skip: foo.log, foo.log.1,
-    // foo.log.1.gz, foo.log-20260421, foo.pid. Mirrors restoreBackup's tar args.
-    if (/\.log(\.|-|$)/i.test(name) || /\.pid$/i.test(name)) skippedBytes += size;
+    // Mirror the tar --exclude policy (RUNTIME_ARTIFACT_EXCLUDES) via the
+    // shared isRuntimeArtifact matcher so the size accounting can never
+    // drift from what tar actually skips.
+    if (isRuntimeArtifact(name)) skippedBytes += size;
   }
   return {
     totalBytes,
@@ -326,10 +349,7 @@ function takePreRestoreSnapshot(db) {
     // skip files based on glob patterns. spawnSync wires stdout->stdin
     // between the two tars, no shell, no shell-injection surface.
     const reader = spawnSync('tar', [
-      '--exclude=*.log',
-      '--exclude=*.log.*',
-      '--exclude=*.log-*',
-      '--exclude=*.pid',
+      ...RUNTIME_ARTIFACT_EXCLUDES,
       '-cf', '-',
       '-C', DATA_DIR, sub,
     ]);
@@ -434,14 +454,15 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     30 * 60 * 1000,
     Math.max(60000, Math.ceil(analysis.effectiveBytes / (100 * 1024 * 1024)) * 30000)
   );
+
+  // Extract into staging. A failure here (corrupt archive, timeout, disk
+  // space during extract) leaves DATA_DIR untouched — the service is
+  // still healthy. Clean up the staging dir and surface a 500 via the
+  // normal error path; do NOT process.exit() for this class of failure.
   try {
     execFileSync('tar', [
-      '--exclude=*.log',
-      '--exclude=*.log.*',
-      '--exclude=*.log-*',
-      '--exclude=*.pid',
-      '--exclude=dnsmasq.log',
-      '--exclude=dnsmasq.pid',
+      ...RUNTIME_ARTIFACT_EXCLUDES,
+      ...DEFENSIVE_EXCLUDES,
       // Use '-xzf' (with dash), not bare 'xzf'. See create-side comment
       // for why — same GNU tar parsing quirk applies here.
       '-xzf', archivePath, '-C', stagingDir,
@@ -449,29 +470,41 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
       stdio: 'pipe',
       timeout: tarTimeout,
     });
+  } catch (extractErr) {
+    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    const wrapped = new Error(
+      `Restore extraction failed: ${extractErr.message}. ` +
+      `No changes were applied to ${DATA_DIR}. Service continues running.`
+    );
+    wrapped.cause = extractErr;
+    throw wrapped;
+  }
 
-    // Legacy backups (pre-cidrella rename) contain ipam.db. Rename in-place
-    // in staging so the file lands at DATA_DIR/cidrella.db. Otherwise the
-    // restored data would be silently ignored because CIDRella opens
-    // cidrella.db on startup, not ipam.db.
-    const legacyIpam = path.join(stagingDir, 'ipam.db');
-    if (fs.existsSync(legacyIpam) && !fs.existsSync(path.join(stagingDir, 'cidrella.db'))) {
-      fs.renameSync(legacyIpam, path.join(stagingDir, 'cidrella.db'));
-    }
+  // Legacy backups (pre-cidrella rename) contain ipam.db. Rename in-place
+  // in staging so the file lands at DATA_DIR/cidrella.db. Otherwise the
+  // restored data would be silently ignored because CIDRella opens
+  // cidrella.db on startup, not ipam.db.
+  const legacyIpam = path.join(stagingDir, 'ipam.db');
+  if (fs.existsSync(legacyIpam) && !fs.existsSync(path.join(stagingDir, 'cidrella.db'))) {
+    fs.renameSync(legacyIpam, path.join(stagingDir, 'cidrella.db'));
+  }
 
-    // 4. Swap staged files into DATA_DIR.
-    //    The DB handle is kept open during this loop. better-sqlite3 still
-    //    points at the original inode; Linux preserves it while the fd is
-    //    held even though we unlink the path. Any in-flight SQLite writes
-    //    during the loop are single-threaded with the handler, so they
-    //    cannot race the file swap. The handle is closed below, immediately
-    //    before we schedule the process exit.
-    //
-    //    If any copy step fails (ENOSPC, permission, etc.), DATA_DIR is
-    //    left in a partially-restored state. We MUST still close the DB
-    //    and exit so systemd restarts us — continuing to run with a
-    //    half-swapped DATA_DIR is worse than a brief outage, and the
-    //    pre-restore snapshot is the recovery path.
+  // 4. Swap staged files into DATA_DIR.
+  //    The DB handle is kept open during this loop. better-sqlite3 still
+  //    points at the original inode; Linux preserves it while the fd is
+  //    held even though we unlink the path. Any in-flight SQLite writes
+  //    during the loop are single-threaded with the handler, so they
+  //    cannot race the file swap. The handle is closed below, immediately
+  //    before we schedule the process exit.
+  //
+  //    If any copy step fails MID-LOOP (ENOSPC, permission, etc.), DATA_DIR
+  //    is left in a partially-restored state. We MUST close the DB and
+  //    exit so systemd restarts us — continuing to run with a half-swapped
+  //    DATA_DIR is worse than a brief outage, and the pre-restore snapshot
+  //    is the recovery path. The scope of this try/catch is deliberately
+  //    narrow: only failures during the actual file swap trigger the exit,
+  //    not the extract-side failures handled above.
+  try {
     const stagedItems = fs.readdirSync(stagingDir).filter(name => name !== MANIFEST_NAME);
 
     // If we just restored a cidrella.db from a legacy backup, remove any
@@ -508,9 +541,8 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
       }
     }
   } catch (copyErr) {
-    // Something went wrong during staging or copy. DATA_DIR may be partially
-    // swapped. Force an exit so systemd restarts us cleanly — continuing to
-    // run with inconsistent state would be worse. The admin can recover from
+    // Something went wrong mid-swap. DATA_DIR is partially restored. Force
+    // an exit so systemd restarts us cleanly. The admin can recover from
     // /var/lib/cidrella/snapshots/pre-restore/.
     try { db.close(); } catch { /* ignore */ }
     try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -597,6 +629,44 @@ function enforceRetention(db) {
       // Ignore cleanup errors
     }
   }
+}
+
+/**
+ * Sweep abandoned restore-staging artifacts from DATA_DIR and
+ * DATA_DIR/snapshots/. A process crash (OOM, SIGKILL, panic) between
+ * upload/extract start and cleanup leaves these multi-GB files on disk
+ * forever — which is especially likely on the resource-constrained hosts
+ * the restore path is designed to defend. Called on server boot.
+ *
+ * Names swept:
+ *   DATA_DIR/snapshots/.restore-upload-*.tar.gz   (operations.js upload stash)
+ *   DATA_DIR/.restore-staging-*                    (backup.js extract dir)
+ *
+ * Only entries older than MAX_AGE_MS are removed to avoid racing a restore
+ * started by a sibling request on boot.
+ */
+export function sweepStaleRestoreArtifacts() {
+  const MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+  const now = Date.now();
+  const targets = [
+    { dir: path.join(DATA_DIR, 'snapshots'), match: /^\.restore-upload-/ },
+    { dir: DATA_DIR, match: /^\.restore-staging-/ },
+  ];
+  let swept = 0;
+  for (const { dir, match } of targets) {
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir)) {
+      if (!match.test(name)) continue;
+      const fullPath = path.join(dir, name);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (now - stat.mtimeMs < MAX_AGE_MS) continue;
+        fs.rmSync(fullPath, { recursive: true, force: true });
+        swept++;
+      } catch { /* ignore — next boot will retry */ }
+    }
+  }
+  return swept;
 }
 
 /**

@@ -9,6 +9,7 @@ import {
   applyHttpRedirectConfig, applyHttpsPortChange, applyHttpPortChange,
   getWebPortInfo, checkPortAvailable, getHttpsPort, getHttpPort
 } from '../utils/http-server.js';
+import { validPortOrError, validateInterfaceConfig } from '../utils/validation.js';
 
 const router = Router();
 
@@ -94,25 +95,12 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
     https_port, http_port
   } = body;
 
-  // Port validator — STRICT type check first, then bounds. The previous
-  // implementation used `Number.isInteger(Number(v))` which coerces single-
-  // element arrays ([443]→443) and numeric strings ("443"→443) to integers,
-  // accepting payloads that should be rejected. Coercion on its own wouldn't
-  // be dangerous, but this endpoint executes a LIVE port swap on success,
-  // so a bogus-shape payload (e.g. a client bug sending `[443]`) silently
-  // rebinds the management listener. The sibling `/api/settings/:key`
-  // endpoint already validates correctly; we mirror its pattern here so
-  // there's exactly one port-validation behavior across the codebase.
-  //
-  // Caught by the api-security-tester in the v0.4.15-pre.1 ship-gate run.
-  function validPortOrError(v, field) {
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1 || v > 65535) {
-      return `${field} must be an integer 1–65535`;
-    }
-    return null;
-  }
-
-  // Validate port early so we can reject before persisting anything.
+  // Validators are the shared helpers in utils/validation.js — same
+  // implementation used by /api/settings/bulk and /api/settings/:key so
+  // the two endpoints can never drift. The original port validator in
+  // this route was hand-rolled and coerced single-element arrays
+  // ([443]→443), which executed a live port swap on a bogus-shape
+  // payload. Shared validator is strict: non-number → reject.
   if (dns_listen_port !== undefined) {
     const e = validPortOrError(dns_listen_port, 'dns_listen_port');
     if (e) return res.status(400).json({ error: e });
@@ -120,29 +108,9 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
   if (http_redirect_enabled !== undefined && typeof http_redirect_enabled !== 'boolean') {
     return res.status(400).json({ error: 'http_redirect_enabled must be boolean' });
   }
-
-  // Also validate the `interfaces` shape — keys must be real interface names.
-  // The settings-bulk endpoint validates this via validateInterfaceConfig;
-  // mirror the check here so an admin-token holder can't stash arbitrary
-  // data (including `__proto__`) in the settings table via this route.
   if (interfaces !== undefined) {
-    if (!interfaces || typeof interfaces !== 'object' || Array.isArray(interfaces)) {
-      return res.status(400).json({ error: 'interfaces must be an object' });
-    }
-    for (const [ifName, cfg] of Object.entries(interfaces)) {
-      if (!/^[a-zA-Z0-9._-]{1,32}$/.test(ifName)) {
-        return res.status(400).json({ error: `invalid interface name: ${ifName}` });
-      }
-      if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
-        return res.status(400).json({ error: `interface ${ifName}: config must be an object` });
-      }
-      if ('dns' in cfg && typeof cfg.dns !== 'boolean') {
-        return res.status(400).json({ error: `interface ${ifName}: dns must be boolean` });
-      }
-      if ('dhcp' in cfg && typeof cfg.dhcp !== 'boolean') {
-        return res.status(400).json({ error: `interface ${ifName}: dhcp must be boolean` });
-      }
-    }
+    const e = validateInterfaceConfig(interfaces);
+    if (e) return res.status(400).json({ error: `interfaces: ${e}` });
   }
 
   // Web-port validation + preflight bind. We test-bind BEFORE writing to DB,
