@@ -14,7 +14,9 @@ const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
 function isValidHostname(name) {
-  return name === '@' || (typeof name === 'string' && HOSTNAME_RE.test(name) && name.length <= 253);
+  if (name === '@') return true;
+  if (typeof name !== 'string' || name.length > 253) return false;
+  return HOSTNAME_RE.test(name.replace(/\.$/, ''));
 }
 
 function isIntInRange(v, lo, hi) {
@@ -26,14 +28,49 @@ function normalizeDnsName(name) {
 }
 
 function normalizeRecordNameForZone(name, zoneName) {
-  const normalized = normalizeDnsName(name);
+  const raw = String(name || '').trim().toLowerCase();
+  const normalized = raw.replace(/\.$/, '');
   const zone = normalizeDnsName(zoneName);
   if (normalized === '@') return '@';
   if (normalized === zone) return '@';
   if (normalized.endsWith(`.${zone}`)) {
     return normalized.slice(0, -(zone.length + 1));
   }
+  if (normalized.includes('.')) {
+    return raw.endsWith('.') ? raw : normalized;
+  }
   return normalized;
+}
+
+function findSubnetDomainForIp(db, ip) {
+  if (!isValidIpv4(ip)) return null;
+  const octets = ip.split('.').map(Number);
+  const ipLong = ((octets[0] << 24) >>> 0) + (octets[1] << 16) + (octets[2] << 8) + octets[3];
+
+  const subnets = db.prepare(`
+    SELECT id, network_address, prefix_length, domain_name
+    FROM subnets
+    WHERE status = 'allocated'
+      AND domain_name IS NOT NULL
+      AND domain_name != ''
+    ORDER BY prefix_length DESC
+  `).all();
+
+  for (const subnet of subnets) {
+    const netOctets = subnet.network_address.split('.').map(Number);
+    const netLong = ((netOctets[0] << 24) >>> 0) + (netOctets[1] << 16) + (netOctets[2] << 8) + netOctets[3];
+    const size = 2 ** (32 - subnet.prefix_length);
+    if (ipLong >= netLong && ipLong < netLong + size) {
+      return normalizeDnsName(subnet.domain_name);
+    }
+  }
+
+  return null;
+}
+
+function normalizeARecordName(db, name, ip, zoneName) {
+  const domainName = findSubnetDomainForIp(db, ip) || zoneName;
+  return normalizeRecordNameForZone(name, domainName);
 }
 
 function cnameNameErrorForZone(name, zoneName) {
@@ -49,10 +86,12 @@ function cnameNameErrorForZone(name, zoneName) {
 // Build the FQDN that a record name points at inside its zone. '@' means the
 // zone apex. Used for CNAME self-loop detection.
 function fqdnFor(name, zoneName) {
-  const normalized = normalizeDnsName(name);
+  const raw = String(name || '').trim().toLowerCase();
+  const normalized = raw.replace(/\.$/, '');
   const zone = normalizeDnsName(zoneName);
   if (normalized === '@' || normalized === zone) return zoneName;
   if (normalized.endsWith(`.${zone}`)) return normalized;
+  if (normalized.includes('.')) return raw.endsWith('.') ? raw : normalized;
   return `${normalized}.${zoneName}`;
 }
 
@@ -176,7 +215,7 @@ function syncPtrForARecord(db, recordName, ip, forwardZoneName, { force = false 
   if (!match) return { updated: false }; // No matching reverse zone
 
   const { zone, ptrName } = match;
-  const fqdn = recordName === '@' ? forwardZoneName : `${recordName}.${forwardZoneName}`;
+  const fqdn = fqdnFor(recordName, forwardZoneName);
 
   const existing = db.prepare('SELECT * FROM dns_records WHERE zone_id = ? AND type = ? AND name = ?').get(zone.id, 'PTR', ptrName);
 
@@ -439,9 +478,11 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     }
   }
 
-  const normalizedName = type === 'CNAME' && zone.type === 'forward'
-    ? normalizeRecordNameForZone(name, zone.name)
-    : name;
+  const normalizedName = type === 'A' && zone.type === 'forward'
+    ? normalizeARecordName(db, name, value, zone.name)
+    : type === 'CNAME' && zone.type === 'forward'
+      ? normalizeRecordNameForZone(name, zone.name)
+      : name;
   const normalizedValue = type === 'CNAME'
     ? normalizeDnsName(value)
     : value;
@@ -537,9 +578,11 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const newType = type || record.type;
   const rawNewName = name ?? record.name;
   const rawNewValue = value ?? record.value;
-  const newName = newType === 'CNAME' && zone.type === 'forward'
-    ? normalizeRecordNameForZone(rawNewName, zone.name)
-    : rawNewName;
+  const newName = newType === 'A' && zone.type === 'forward'
+    ? normalizeARecordName(db, rawNewName, rawNewValue, zone.name)
+    : newType === 'CNAME' && zone.type === 'forward'
+      ? normalizeRecordNameForZone(rawNewName, zone.name)
+      : rawNewName;
   const newValue = newType === 'CNAME'
     ? normalizeDnsName(rawNewValue)
     : rawNewValue;

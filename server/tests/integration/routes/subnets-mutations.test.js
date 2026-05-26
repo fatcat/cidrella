@@ -177,6 +177,34 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
 // edits), leaving orphan rows that later flagged as lossy on divide.
 // reconcileDnsOrphans on startup is the safety net.
 describe('ip-sync orphan cleanup', () => {
+  it('normalizes A-record names against the target IP subnet domain', async () => {
+    const s = await mkSubnet({
+      cidr: '10.83.0.0/24', name: 'dns-normalize', status: 'allocated', gateway_address: '10.83.0.1'
+    });
+    await configure(s.id, {
+      name: 'dns-normalize', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'dns-normalize.test'
+    });
+    const zone = await findZone('dns-normalize.test');
+
+    const fqdn = await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'Host-One.DNS-NORMALIZE.TEST.', type: 'A', value: '10.83.0.50'
+    });
+    expect(fqdn.status).toBe(201);
+    expect(fqdn.body.name).toBe('host-one');
+
+    const external = await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'Host-Two.Google.COM.', type: 'A', value: '10.83.0.51'
+    });
+    expect(external.status).toBe(201);
+    expect(external.body.name).toBe('host-two.google.com.');
+
+    const ips = await request(app).get(`/api/subnets/${s.id}/ips?page=1&pageSize=256`);
+    const one = ips.body.ips.find(r => r.ip_address === '10.83.0.50');
+    const two = ips.body.ips.find(r => r.ip_address === '10.83.0.51');
+    expect(one.hostname).toBe('host-one.dns-normalize.test');
+    expect(two.hostname).toBe('host-two.google.com.');
+  });
+
   it('renaming a DNS A record updates the ip_addresses row hostname', async () => {
     const s = await mkSubnet({
       cidr: '10.80.0.0/24', name: 'dns-rename', status: 'allocated', gateway_address: '10.80.0.1'

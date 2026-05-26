@@ -100,4 +100,14 @@ describe('regenerateConfigs reload behavior', () => {
     expect(conf).toContain('cname=checker.the-mcnultys.org,container-host.the-mcnultys.org');
     expect(conf).not.toContain('checker.the-mcnultys.org.the-mcnultys.org');
   });
+
+  it('preserves trailing dots for external absolute A-record names', () => {
+    regenerateConfigs(makeDb({
+      aRecords: [{ name: 'host.google.com.', value: '10.0.3.232' }],
+    }));
+
+    const hosts = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'hosts.d', 'zone-10.hosts'), 'utf-8');
+    expect(hosts).toContain('10.0.3.232 host.google.com.');
+    expect(hosts).not.toContain('host.google.com.the-mcnultys.org');
+  });
 });

@@ -31,11 +31,15 @@ export function cleanStaleFiles(dir, prefix, suffix, activeIds) {
 }
 
 function toFqdn(recordName, zoneName) {
-  const normalized = String(recordName || '').replace(/\.$/, '');
+  const raw = String(recordName || '').trim();
+  const normalized = raw.replace(/\.$/, '');
   const zone = String(zoneName || '').replace(/\.$/, '');
   if (normalized.toLowerCase() === zone.toLowerCase() ||
       normalized.toLowerCase().endsWith(`.${zone.toLowerCase()}`)) {
     return normalized;
+  }
+  if (normalized.includes('.')) {
+    return raw.endsWith('.') ? raw : normalized;
   }
   return recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
 }

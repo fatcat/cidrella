@@ -37,6 +37,7 @@ beforeEach(() => {
   db.prepare('DELETE FROM dhcp_reservations').run();
   db.prepare('DELETE FROM dns_records').run();
   db.prepare('DELETE FROM dns_zones').run();
+  db.prepare('UPDATE subnets SET domain_name = NULL').run();
 });
 
 describe('syncLeasesToIps', () => {
@@ -174,6 +175,21 @@ describe('reconcileDnsOrphans', () => {
     expect(row.detection_source).toBeNull();
   });
 
+  it('clears a stale unqualified hostname using the subnet domain as the zone', () => {
+    db.prepare("UPDATE subnets SET domain_name = 'example.test' WHERE id = ?").run(subnetId);
+    db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
+    IpAddress.upsert(db, subnetId, '10.0.1.63', {
+      hostname: 'old-short',
+      detection_source: 'scanner'
+    });
+
+    expect(reconcileDnsOrphans(db)).toBe(1);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.63');
+    expect(row.hostname).toBeNull();
+    expect(row.detection_source).toBeNull();
+  });
+
   it('keeps a scanner-touched hostname when a backing A record exists', () => {
     const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
     db.prepare(`
@@ -189,6 +205,25 @@ describe('reconcileDnsOrphans', () => {
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.61');
     expect(row.hostname).toBe('host.example.test');
+    expect(row.detection_source).toBe('scanner');
+  });
+
+  it('keeps an unqualified hostname when a backing A record exists in the subnet domain', () => {
+    db.prepare("UPDATE subnets SET domain_name = 'example.test' WHERE id = ?").run(subnetId);
+    const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, enabled)
+      VALUES (?, 'short-host', 'A', '10.0.1.64', 1)
+    `).run(zone.lastInsertRowid);
+    IpAddress.upsert(db, subnetId, '10.0.1.64', {
+      hostname: 'short-host',
+      detection_source: 'scanner'
+    });
+
+    expect(reconcileDnsOrphans(db)).toBe(0);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.64');
+    expect(row.hostname).toBe('short-host');
     expect(row.detection_source).toBe('scanner');
   });
 

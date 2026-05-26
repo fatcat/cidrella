@@ -48,6 +48,20 @@ export function findSubnetForIp(db, ip) {
   return best;
 }
 
+function normalizeDnsName(name) {
+  return String(name || '').trim().replace(/\.$/, '').toLowerCase();
+}
+
+function fqdnForRecordName(recordName, zoneName) {
+  const raw = String(recordName || '').trim().toLowerCase();
+  const normalized = raw.replace(/\.$/, '');
+  const zone = normalizeDnsName(zoneName);
+  if (normalized === '@' || normalized === zone) return zone;
+  if (normalized.endsWith(`.${zone}`)) return normalized;
+  if (normalized.includes('.')) return raw.endsWith('.') ? raw : normalized;
+  return `${normalized}.${zone}`;
+}
+
 /**
  * Sync hostname from a DNS A record to ip_addresses.
  * Called when an A record is created or updated.
@@ -59,7 +73,7 @@ export function syncDnsToIp(db, recordName, ip, zoneName) {
   const subnet = findSubnetForIp(db, ip);
   if (!subnet) return;
 
-  const fqdn = recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
+  const fqdn = fqdnForRecordName(recordName, zoneName);
   IpAddress.upsert(db, subnet.id, ip, { hostname: fqdn, detection_source: 'dns' });
   IpAddress.clearRogue(db, subnet.id, ip);
   IpAddress.emitEvent(db, subnet.id, ip, 'dns_added', { newValue: fqdn, source: 'dns' });
@@ -73,7 +87,7 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
   const subnet = findSubnetForIp(db, ip);
   if (!subnet) return;
 
-  const fqdn = recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
+  const fqdn = fqdnForRecordName(recordName, zoneName);
   const existing = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
 
   if (existing && existing.hostname === fqdn) {
@@ -86,8 +100,9 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
  * Reconcile `ip_addresses` rows that look like stale DNS hostnames against
  * currently-enabled DNS A records. Scanner updates used to overwrite
  * `detection_source = 'dns'`, so this deliberately checks hostname ownership
- * by data shape: a zone-qualified hostname, no backing A record, and no DHCP
- * row/reservation that should own the hostname.
+ * by data shape: a hostname that either is zone-qualified or can be qualified
+ * by the subnet domain, no backing A record, and no DHCP row/reservation that
+ * should own the hostname.
  *
  * Runs at server startup (see index.js). Returns the number of rows cleared.
  */
@@ -95,6 +110,7 @@ export function reconcileDnsOrphans(db) {
   const orphans = db.prepare(`
     SELECT ip.id, ip.ip_address, ip.hostname
     FROM ip_addresses ip
+    JOIN subnets s ON s.id = ip.subnet_id
     WHERE ip.hostname IS NOT NULL
       AND (ip.detection_source IS NULL OR ip.detection_source IN ('dns', 'scanner'))
       AND COALESCE(ip.status, 'available') != 'dhcp'
@@ -102,7 +118,11 @@ export function reconcileDnsOrphans(db) {
         SELECT 1 FROM dns_zones hz
         WHERE hz.type = 'forward'
           AND hz.enabled = 1
-          AND (ip.hostname = hz.name OR ip.hostname LIKE '%.' || hz.name)
+          AND (
+            ip.hostname = hz.name
+            OR ip.hostname LIKE '%.' || hz.name
+            OR (instr(ip.hostname, '.') = 0 AND s.domain_name = hz.name)
+          )
       )
       AND NOT EXISTS (
         SELECT 1 FROM dhcp_reservations dr
@@ -123,8 +143,11 @@ export function reconcileDnsOrphans(db) {
           AND r.enabled = 1
           AND z.type = 'forward'
           AND r.value = ip.ip_address
-          AND ( (r.name || '.' || z.name) = ip.hostname
-                OR (r.name = '@' AND z.name = ip.hostname) )
+          AND (
+            (r.name || '.' || z.name) = ip.hostname
+            OR (r.name = '@' AND z.name = ip.hostname)
+            OR (instr(ip.hostname, '.') = 0 AND z.name = s.domain_name AND r.name = ip.hostname)
+          )
       )
   `).all();
   if (orphans.length === 0) return 0;
