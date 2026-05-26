@@ -48,6 +48,17 @@
 
 set -eu
 
+# ─── Active-scan capability cleanup ────────────────────────
+#
+# CIDRella native installs now use systemd AmbientCapabilities exclusively.
+# Remove stale file capabilities from the bundled Node binary; if left in
+# place, Linux clears the ambient set when the wrapper execs Node, and child
+# arping probes lose CAP_NET_RAW.
+
+if [ -n "${TARGET_SLOT:-}" ] && [ -x "$TARGET_SLOT/runtime/node/bin/node" ]; then
+  setcap -r "$TARGET_SLOT/runtime/node/bin/node" 2>/dev/null || true
+fi
+
 # ─── v0.4.9 post-install work ──────────────────────────────
 #
 # v0.4.9 itself has nothing version-specific to do — the hook convention
@@ -58,5 +69,5 @@ set -eu
 # Keep the echo as evidence the hook actually ran. events.jsonl is the
 # durable record via the caller's emit_event call.
 
-echo "  post-install.sh: v${NEW_VERSION:-unknown} (no version-specific setup)"
+echo "  post-install.sh: v${NEW_VERSION:-unknown} (ambient capability cleanup complete)"
 exit 0

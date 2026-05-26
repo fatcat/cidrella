@@ -80,7 +80,7 @@
           </IconField>
           <Button v-if="ipSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="ipSearch = ''" />
         </div>
-        <DataTable :value="ips" stripedRows size="small"
+        <DataTable :value="displayIps" stripedRows size="small"
                    :loading="loadingPage"
                    emptyMessage="No IP addresses."
                    scrollable scrollHeight="flex"
@@ -97,24 +97,24 @@
                    removableSort
                    @page="onLazyPage"
                    @sort="onLazySort">
-          <Column field="ip_address" header="Address" sortable style="width: 10rem">
+          <Column field="ip_address" header="IP Address" sortable style="width: 10rem">
             <template #body="{ data }">
-              <span class="ip-mono">{{ data.ip_address }}</span>
+              <span class="ip-mono">{{ displayCell(data.ip_address) }}</span>
             </template>
           </Column>
           <Column field="status" header="Status" sortable style="width: 7rem">
             <template #body="{ data }">
               <span class="status-text"
-                    :class="getIpState(data).statusSeverity === 'danger' ? 'state-err' : 'state-muted'">
-                {{ getIpState(data).status }}
+                    :class="data._ipState.statusSeverity === 'danger' ? 'state-err' : 'state-muted'">
+                {{ data._ipState.status }}
               </span>
             </template>
           </Column>
           <Column header="Type" sortable :sortField="'computed_type'" style="width: 9rem">
             <template #body="{ data }">
-              <Tag v-if="getIpState(data).type" :severity="getIpState(data).typeSeverity"
-                   :value="getIpState(data).type"
-                   v-tooltip.top="getIpState(data).tooltip || null" />
+              <Tag v-if="data._ipState.type" :severity="data._ipState.typeSeverity"
+                   :value="data._ipState.type"
+                   v-tooltip.top="data._ipState.tooltip || null" />
               <span v-else>—</span>
             </template>
           </Column>
@@ -122,27 +122,24 @@
             <template #body="{ data }">{{ displayHost(data.hostname) }}</template>
           </Column>
           <Column header="MAC Address" sortable style="width: 10rem" :sortField="'mac_address'">
-            <template #body="{ data }">{{ data.mac_address || data.last_seen_mac || '—' }}</template>
+            <template #body="{ data }">
+              <code v-if="data.mac_address || data.last_seen_mac">{{ displayMac(data.mac_address || data.last_seen_mac) }}</code>
+              <span v-else class="cell-muted">—</span>
+            </template>
           </Column>
           <Column field="vendor" header="Vendor" sortable style="width: 10rem">
-            <template #body="{ data }">{{ data.vendor || '—' }}</template>
+            <template #body="{ data }">{{ displayCell(data.vendor) }}</template>
           </Column>
           <Column field="is_online" header="Online" sortable style="width: 5rem">
             <template #body="{ data }">
-              <span class="status-text" :class="data.is_online ? 'state-ok' : 'state-muted'">
-                {{ data.is_online ? 'Online' : 'Offline' }}
-              </span>
+              <span :class="onlineDisplay(data.is_online).className">{{ onlineDisplay(data.is_online).label }}</span>
             </template>
           </Column>
           <Column field="last_seen_at" header="Last Seen" sortable style="width: 10rem">
-            <template #body="{ data }">{{ data.last_seen_at ? formatDate(data.last_seen_at) : '—' }}</template>
+            <template #body="{ data }">{{ data.last_seen_at ? formatDate(data.last_seen_at) : EMPTY_CELL }}</template>
           </Column>
           <Column field="dhcp_expires_at" header="Expires" sortable style="width: 9rem">
-            <template #body="{ data }">
-              <template v-if="!data.dhcp_expires_at">—</template>
-              <template v-else-if="data.dhcp_expires_at === 'infinite'">Never</template>
-              <template v-else>{{ formatDate(data.dhcp_expires_at) }}</template>
-            </template>
+            <template #body="{ data }">{{ displayExpiry(data.dhcp_expires_at, formatDate) }}</template>
           </Column>
         </DataTable>
       </TabPanel>
@@ -415,7 +412,15 @@ import { loadJson } from '../utils/storage.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
 import { ipToLong, longToIp } from '../utils/ip.js';
-import { apiError, displayHostname } from '../utils/format.js';
+import {
+  EMPTY_CELL,
+  apiError,
+  displayCell,
+  displayExpiry,
+  displayHostnameCell,
+  displayMacAddress,
+  displayOnlineStatus
+} from '../utils/format.js';
 
 const props = defineProps({
   subnetId: { type: [Number, String], default: null },
@@ -430,6 +435,7 @@ const dhcpStore = useDhcpStore();
 
 const subnet = ref(null);
 const ips = ref([]);
+const displayIps = computed(() => ips.value.map(ip => ({ ...ip, _ipState: getIpState(ip) })));
 const ranges = ref([]);
 const rangeTypes = ref([]);
 const loading = ref(false);
@@ -665,7 +671,9 @@ function findRangeForIp(ipAddress) {
 
 const formatDate = formatDateTime;
 
-const displayHost = (hostname) => displayHostname(hostname, subnet.value?.domain_name) || '—';
+const displayHost = (hostname) => displayHostnameCell(hostname, subnet.value?.domain_name);
+const displayMac = displayMacAddress;
+const onlineDisplay = displayOnlineStatus;
 
 /**
  * Compute unified status + type for an IP row.

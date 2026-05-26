@@ -65,6 +65,7 @@ import metricsRoutes from './routes/metrics.js';
 import analyticsRoutes from './routes/analytics.js';
 import anomalyRoutes from './routes/anomalies.js';
 import { initAnalyticsDb, closeAnalyticsDb } from './db/duckdb.js';
+import { getCapabilityWarning } from './utils/capabilities.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -133,6 +134,15 @@ async function main() {
 
   // Sync server IP into DNS Servers default
   syncServerDnsDefault(getDb());
+
+  try {
+    const warning = getCapabilityWarning();
+    if (warning) {
+      console.warn(`[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`);
+    }
+  } catch (err) {
+    console.warn(`[capabilities] Unable to inspect process capabilities: ${err?.message || err}`);
+  }
 
   // Start DHCP lease file watcher
   startLeaseWatcher(getDb());

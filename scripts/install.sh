@@ -667,32 +667,22 @@ ok "Installed polkit rule (/etc/polkit-1/rules.d/49-cidrella.rules)"
 # call will pick up the rule regardless.
 systemctl reload polkit 2>/dev/null || systemctl reload polkitd 2>/dev/null || true
 
-# Install sudoers (still needed for arping in scanner.js — see PLAN.md for
-# the follow-up work to remove this last sudo dependency by setting
-# CAP_NET_RAW on /usr/sbin/arping or replacing arping with a node raw socket).
+# Install sudoers. This file is intentionally empty on current releases; it
+# overwrites stale sudo grants left by older CIDRella installs.
 cp "$INSTALL_DIR/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella
 chmod 440 /etc/sudoers.d/cidrella
 ok "Installed sudoers rules."
 
-# Set capabilities on the BUNDLED Node binary so the cidrella service can
-# open raw sockets (for arping/ping scans) and bind port 53 for DNS. The
-# caps are xattrs on the binary itself, which means they survive the tarball
-# extraction BUT tar doesn't preserve them in the archive, so we always
-# re-apply here. Target the real file inside the active slot, not a symlink —
-# setcap follows symlinks, but being explicit avoids surprises.
+# Native systemd installs use AmbientCapabilities from cidrella.service.
+# Do NOT set file capabilities on Node: executing a file-capability binary
+# clears the ambient set, so child arping probes do not inherit CAP_NET_RAW.
+# Remove stale caps from older installs/releases that used setcap.
 BUNDLED_NODE_BIN="$INSTALL_DIR/runtime/node/bin/node"
 if [ -x "$BUNDLED_NODE_BIN" ]; then
-  setcap cap_net_raw,cap_net_bind_service+ep "$BUNDLED_NODE_BIN" 2>/dev/null \
-    && ok "Capabilities set on bundled Node ($BUNDLED_NODE_BIN)" \
-    || warn "Could not set capabilities on $BUNDLED_NODE_BIN"
-elif command -v node >/dev/null 2>&1; then
-  # Fallback for pre-v0.4.7 tarballs without bundled runtime — use system Node.
-  SYS_NODE=$(readlink -f "$(command -v node)")
-  setcap cap_net_raw,cap_net_bind_service+ep "$SYS_NODE" 2>/dev/null \
-    && ok "Capabilities set on system Node ($SYS_NODE — legacy fallback)" \
-    || warn "Could not set capabilities on $SYS_NODE"
+  setcap -r "$BUNDLED_NODE_BIN" 2>/dev/null || true
+  ok "Using systemd ambient capabilities for active scans."
 else
-  warn "No Node binary found — capabilities not set. Raw socket scans and port 53 binding will fail."
+  warn "Bundled Node binary not found; active scans require cidrella.service AmbientCapabilities to be honored by the runtime."
 fi
 
 systemctl daemon-reload
@@ -744,6 +734,18 @@ sleep 3
 
 if systemctl is-active --quiet cidrella; then
   ok "CIDRella is running!"
+  CIDRELLA_PID=$(systemctl show cidrella -p MainPID --value 2>/dev/null || true)
+  if [ -n "${CIDRELLA_PID:-}" ] && [ "$CIDRELLA_PID" != "0" ] && [ -r "/proc/$CIDRELLA_PID/status" ]; then
+    CAP_AMB=$(awk '/^CapAmb:/ {print $2}' "/proc/$CIDRELLA_PID/status")
+    CAP_AMB_NET_RAW=0
+    if [[ "$CAP_AMB" =~ ^[0-9a-fA-F]+$ ]]; then
+      CAP_AMB_NET_RAW=$((16#$CAP_AMB & 0x2000))
+    fi
+    if [ "$CAP_AMB_NET_RAW" -eq 0 ]; then
+      warn "cidrella.service is running without ambient CAP_NET_RAW; active ARP scans will fail. Check whether this host/container supports AmbientCapabilities."
+      emit_event install warn reason=ambient-cap-net-raw-missing "pid=$CIDRELLA_PID"
+    fi
+  fi
   emit_event install end result=success "version=$VERSION"
 else
   warn "CIDRella service may not have started correctly."

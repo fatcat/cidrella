@@ -918,23 +918,15 @@ if [ -f "$TARGET_SLOT/scripts/logrotate/cidrella-dnsmasq" ] && [ -d /etc/logrota
   ok "Installed logrotate config (/etc/logrotate.d/cidrella-dnsmasq)"
 fi
 
-# Apply capabilities to the bundled Node binary in the TARGET slot before
-# the symlink swap. v0.4.7+ ships Node in runtime/node/bin/node inside each
-# slot; tar doesn't preserve security.capability xattrs, so we re-apply here
-# at every update. Target the slot explicitly (not /opt/cidrella) so the
-# caps are set on the NEW binary before it becomes active. If the tarball
-# has no bundled runtime (pre-0.4.7 release used on a v0.4.7+ host), fall
-# through to the existing system-node path — which will only exist on
-# legacy installs since v0.4.7 drops system Node from the apt list.
+# Native systemd installs use AmbientCapabilities from cidrella.service.
+# Do NOT set file capabilities on Node: executing a file-capability binary
+# clears the ambient set, so child arping probes do not inherit CAP_NET_RAW.
+# Remove stale caps from target-slot binaries that older releases set.
 TARGET_NODE_BIN="$TARGET_SLOT/runtime/node/bin/node"
 if [ -x "$TARGET_NODE_BIN" ]; then
-  if setcap cap_net_raw,cap_net_bind_service+ep "$TARGET_NODE_BIN" 2>/dev/null; then
-    ok "Set capabilities on bundled Node ($TARGET_NODE_BIN)"
-    emit_event switchover pass setcap=bundled-node "path=$TARGET_NODE_BIN"
-  else
-    warn "Could not set capabilities on $TARGET_NODE_BIN"
-    emit_event switchover warn setcap=failed "path=$TARGET_NODE_BIN"
-  fi
+  setcap -r "$TARGET_NODE_BIN" 2>/dev/null || true
+  ok "Using systemd ambient capabilities for active scans."
+  emit_event switchover pass capabilities=ambient "path=$TARGET_NODE_BIN"
 fi
 
 # ─── v0.4.13+ polkit reconciliation (hard-fails the update) ─────
@@ -1183,6 +1175,10 @@ done
 
 if [ "$VERIFY_OK" = true ]; then
   ok "New version healthy."
+  if grep -q '"cap_net_raw_ambient":false' "$TMPDIR/verify.json" 2>/dev/null; then
+    warn "cidrella.service is running without ambient CAP_NET_RAW; active ARP scans will fail. Check whether this host/container supports AmbientCapabilities."
+    emit_event health warn reason=ambient-cap-net-raw-missing
+  fi
   emit_event health pass "version=$NEW_VERSION"
 
   # Tighten secret file permissions (v0.4.8+). Logic lives in

@@ -160,13 +160,12 @@
             <!-- Reverse: Hostname, IP, arpa Name, Type, TTL -->
             <Column v-if="isReverse" field="value" header="Hostname" sortable style="width: 16rem">
               <template #body="{ data }">
-                <template v-if="data.value">{{ data.value }}</template>
-                <span v-else class="cell-muted">—</span>
+                {{ displayCell(data.value) }}
               </template>
             </Column>
             <Column v-if="isReverse" header="IP Address" sortable :sortField="'_ip_long'" style="width: 10rem">
               <template #body="{ data }">
-                <span v-if="data.value" class="ip-mono">{{ ptrRecordIp(data) }}</span>
+                <span v-if="data.value" class="ip-mono">{{ displayCell(ptrRecordIp(data)) }}</span>
                 <span v-else class="cell-muted">—</span>
               </template>
             </Column>
@@ -182,15 +181,20 @@
             </Column>
             <!-- Forward: Name, Type, Value, Priority, Port. Using v-if="!isReverse"
                  (not v-else) so the reverse block above can be a separate group. -->
-            <Column v-if="!isReverse" field="name" header="Name" sortable style="width: 12rem">
-              <template #body="{ data }">{{ data.name }}</template>
+            <Column v-if="!isReverse" field="name" header="Hostname" sortable style="width: 12rem">
+              <template #body="{ data }">{{ displayDnsName(data) }}</template>
             </Column>
             <Column v-if="!isReverse" field="type" header="Type" sortable style="width: 7rem">
               <template #body="{ data }">
                 <span class="type-badge">{{ data.type }}</span>
               </template>
             </Column>
-            <Column v-if="!isReverse" field="value" header="Value" sortable style="width: 14rem" />
+            <Column v-if="!isReverse" field="value" header="Value" sortable style="width: 14rem">
+              <template #body="{ data }">
+                <span v-if="data.type === 'A'" class="ip-mono">{{ displayCell(data.value) }}</span>
+                <template v-else>{{ displayCell(data.value) }}</template>
+              </template>
+            </Column>
             <Column v-if="!isReverse" header="Priority" style="width: 5rem">
               <template #body="{ data }">{{ data.priority ?? '—' }}</template>
             </Column>
@@ -221,8 +225,8 @@
             <Column header="Online" sortable field="is_online" style="width: 5rem" v-if="!isReverse">
               <template #body="{ data }">
                 <span v-if="data.type === 'A' && data.is_online !== null && data.is_online !== undefined"
-                      class="status-text" :class="data.is_online ? 'state-ok' : 'state-muted'">
-                  {{ data.is_online ? 'Online' : 'Offline' }}
+                      :class="onlineDisplay(data.is_online).className">
+                  {{ onlineDisplay(data.is_online).label }}
                 </span>
                 <span v-else class="cell-muted">—</span>
               </template>
@@ -414,7 +418,7 @@ import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
-import { apiError } from '../utils/format.js';
+import { apiError, displayCell, displayHostnameCell, displayOnlineStatus } from '../utils/format.js';
 import { ipToLong } from '../utils/ip.js';
 import { loadJson } from '../utils/storage.js';
 import EmptyState from './EmptyState.vue';
@@ -465,6 +469,12 @@ function ptrRecordIp(record) {
   // combined is reverse-octet order, e.g. "5.1.0.10"
   return combined.split('.').reverse().join('.');
 }
+function displayDnsName(record) {
+  if (!record?.name) return '—';
+  if (record.name === '@') return selectedZone.value?.name || '@';
+  return displayHostnameCell(`${record.name}.${selectedZone.value?.name || ''}`, selectedZone.value?.name);
+}
+const onlineDisplay = displayOnlineStatus;
 const records = ref([]);
 const loadingRecords = ref(false);
 const expandedGroups = ref({});

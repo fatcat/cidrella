@@ -106,11 +106,12 @@
                      :rowsPerPageOptions="[50, 100, 250, 500]"
                      removableSort :nullSortOrder="0"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
-            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem" />
+            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
+              <template #body="{ data }"><span class="ip-mono">{{ displayCell(data.ip_address) }}</span></template>
+            </Column>
             <Column field="is_online" header="Online" sortable style="width: 5rem">
               <template #body="{ data }">
-                <span v-if="data.is_online != null" class="status-text" :class="data.is_online ? 'state-ok' : 'state-muted'">{{ data.is_online ? 'Online' : 'Offline' }}</span>
-                <span v-else class="cell-muted">—</span>
+                <span :class="onlineDisplay(data.is_online).className">{{ onlineDisplay(data.is_online).label }}</span>
               </template>
             </Column>
             <Column header="Lease" sortable field="status" style="width: 6rem">
@@ -125,22 +126,22 @@
               </template>
             </Column>
             <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ displayHostname(data.hostname, selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name) }}</template>
+              <template #body="{ data }">{{ displayHost(data.hostname, selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name) }}</template>
             </Column>
             <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
-              <template #body="{ data }"><code>{{ data.mac_address }}</code></template>
+              <template #body="{ data }">
+                <code v-if="data.mac_address">{{ displayMac(data.mac_address) }}</code>
+                <span v-else class="cell-muted">—</span>
+              </template>
             </Column>
             <Column field="vendor" header="Vendor" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ data.vendor || '—' }}</template>
+              <template #body="{ data }">{{ displayCell(data.vendor) }}</template>
             </Column>
             <Column v-if="!selectedScope" header="Network" style="min-width: 8rem">
-              <template #body="{ data }">{{ data.subnet_name || data.subnet_cidr || '—' }}</template>
+              <template #body="{ data }">{{ displayCell(data.subnet_name || data.subnet_cidr) }}</template>
             </Column>
             <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
-              <template #body="{ data }">
-                <template v-if="data.type === 'reserved'">never</template>
-                <template v-else>{{ data.expires_at === 'infinite' ? 'Never' : formatDate(data.expires_at) }}</template>
-              </template>
+              <template #body="{ data }">{{ displayExpiry(data.expires_at, formatDate, { reserved: data.type === 'reserved' }) }}</template>
             </Column>
           </DataTable>
         </template>
@@ -251,7 +252,14 @@ import TabPanel from 'primevue/tabpanel';
 import { useDhcpStore } from '../stores/dhcp.js';
 import EmptyState from './EmptyState.vue';
 import api from '../api/client.js';
-import { apiError, displayHostname as _displayHostname } from '../utils/format.js';
+import {
+  apiError,
+  displayCell,
+  displayExpiry,
+  displayHostnameCell,
+  displayMacAddress,
+  displayOnlineStatus
+} from '../utils/format.js';
 import { loadJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
 
@@ -440,9 +448,9 @@ const searchedAllLeases = computed(() => {
   return filteredLeases.value.filter(r => dhcpMatchSearch(r, q));
 });
 
-function displayHostname(hostname, domainName) {
-  return _displayHostname(hostname, domainName) || '—';
-}
+const displayHost = displayHostnameCell;
+const displayMac = displayMacAddress;
+const onlineDisplay = displayOnlineStatus;
 
 // Delete dialogs
 const showDeleteScopeDialog = ref(false);

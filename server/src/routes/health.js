@@ -7,6 +7,7 @@ import { queryRaw } from '../db/duckdb.js';
 import { APP_VERSION } from '../utils/version.js';
 import { isDnsmasqRunning } from '../utils/dnsmasq.js';
 import { requirePerm } from '../auth/require-perm.js';
+import { getCapabilityWarning, readProcessCapabilities } from '../utils/capabilities.js';
 
 const router = Router();
 
@@ -90,6 +91,16 @@ router.get('/deep', requireLocalhost, async (req, res) => {
   } catch (err) {
     checks.raw_socket = { ok: false, error: err.message };
     allOk = false;
+  }
+
+  // Service capability inheritance. This is warning-only: CIDRella can still
+  // run DNS/DHCP/passive liveness without active ARP/ICMP scan support.
+  try {
+    const caps = readProcessCapabilities();
+    const warning = getCapabilityWarning(caps);
+    checks.capabilities = { ok: !warning, warning: warning || null, ...caps };
+  } catch (err) {
+    checks.capabilities = { ok: false, warning: `Unable to inspect process capabilities: ${err.message}` };
   }
 
   const status = allOk ? 'ok' : 'error';

@@ -25,3 +25,38 @@ export function displayHostname(hostname, domainName) {
   }
   return hostname;
 }
+
+export const EMPTY_CELL = '—';
+
+export function displayCell(value) {
+  if (value === null || value === undefined) return EMPTY_CELL;
+  const text = String(value).trim();
+  return text ? text : EMPTY_CELL;
+}
+
+export function displayHostnameCell(hostname, domainName) {
+  return displayHostname(hostname, domainName) || EMPTY_CELL;
+}
+
+export function displayMacAddress(mac) {
+  if (!mac || !String(mac).trim()) return EMPTY_CELL;
+  return String(mac).trim().toUpperCase();
+}
+
+export function displayOnlineStatus(isOnline) {
+  if (isOnline === null || isOnline === undefined) {
+    return { label: EMPTY_CELL, className: 'cell-muted', known: false };
+  }
+  return {
+    label: isOnline ? 'Online' : 'Offline',
+    className: isOnline ? 'status-text state-ok' : 'status-text state-muted',
+    known: true
+  };
+}
+
+export function displayExpiry(expiresAt, formatDate, { reserved = false } = {}) {
+  if (reserved) return 'Never';
+  if (!expiresAt) return EMPTY_CELL;
+  if (expiresAt === 'infinite') return 'Never';
+  return formatDate(expiresAt);
+}

@@ -141,6 +141,22 @@ describe('markOffline', () => {
     expect(row.is_rogue).toBe(0);
     expect(row.rogue_reason).toBeNull();
   });
+
+  it('keeps DHCP rows offline even without a hostname', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.24', {
+      status: 'dhcp',
+      mac_address: 'aa:bb:cc:dd:ee:24',
+      is_online: 1,
+      detection_source: 'dhcp_lease'
+    });
+
+    IpAddress.markOffline(db, subnetId, '10.0.1.24');
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.24');
+    expect(row).toBeTruthy();
+    expect(row.is_online).toBe(0);
+    expect(row.status).toBe('dhcp');
+  });
 });
 
 // ── bulkMarkStale ───────────────────────────────────────
@@ -178,6 +194,24 @@ describe('bulkMarkStale', () => {
     expect(row.is_rogue).toBe(0);
     expect(row.rogue_reason).toBeNull();
     expect(row.hostname).toBe('db-server');
+  });
+
+  it('keeps stale DHCP rows offline even without a hostname', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.33', {
+      status: 'dhcp',
+      mac_address: 'aa:bb:cc:dd:ee:33',
+      is_online: 1,
+      detection_source: 'dhcp_lease'
+    });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.33'")
+      .run(subnetId);
+
+    IpAddress.bulkMarkStale(db, 60);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.33');
+    expect(row).toBeTruthy();
+    expect(row.is_online).toBe(0);
+    expect(row.status).toBe('dhcp');
   });
 });
 
@@ -244,6 +278,22 @@ describe('updateFromScan', () => {
     expect(row.is_rogue).toBe(0);
     // Existing mac_address should not be overwritten
     expect(row.mac_address).toBe('aa:bb:cc:dd:ee:01');
+  });
+
+  it('preserves existing detection_source ownership on scan updates', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.56', {
+      hostname: 'dns-host.example.test',
+      detection_source: 'dns'
+    });
+
+    IpAddress.updateFromScan(db, subnetId, '10.0.1.56', {
+      responded: 0, mac: null, isConflict: 0, conflictReason: null
+    });
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.56');
+    expect(row.detection_source).toBe('dns');
+    expect(row.hostname).toBe('dns-host.example.test');
+    expect(row.last_scanned_at).toBeTruthy();
   });
 
   it('marks existing IP as rogue on conflict', () => {

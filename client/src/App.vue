@@ -164,6 +164,11 @@ body {
   font-size: var(--app-fs-base);
 }
 
+.ip-mono {
+  font-family: monospace;
+  font-size: var(--app-fs-base);
+}
+
 /* Taxonomy tag — tinted capsule for *categorical* flags only
    (Reservation, Gateway, Rogue, System, etc.). Never for state.
    Spec §3.4: primary-color tint, xs size, 4px radius, 2/6px padding. */

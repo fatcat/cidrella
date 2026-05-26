@@ -143,8 +143,10 @@ info "Fixing permissions..."
 ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${INSTALL_DIR} ${DATA_DIR}"
 ok "Permissions set."
 
-# Ensure Node.js has required capabilities
-ssh "$SSH_TARGET" "setcap cap_net_raw,cap_net_bind_service+ep \$(readlink -f \$(which node)) 2>/dev/null || true"
+# Native/LXC systemd deployments use cidrella.service AmbientCapabilities.
+# Remove stale Node file caps; file-cap exec clears ambient capabilities and
+# prevents child arping probes from inheriting CAP_NET_RAW.
+ssh "$SSH_TARGET" "if [ -x ${INSTALL_DIR}/runtime/node/bin/node ]; then setcap -r ${INSTALL_DIR}/runtime/node/bin/node 2>/dev/null || true; fi"
 
 # ═══════════════════════════════════════════════════════════
 # UPDATE SYSTEMD & SUDOERS

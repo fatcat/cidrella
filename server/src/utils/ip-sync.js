@@ -83,13 +83,11 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
 }
 
 /**
- * Reconcile `ip_addresses` rows that were populated by `syncDnsToIp` against
- * currently-enabled DNS A records. Any row marked `detection_source = 'dns'`
- * whose hostname no longer corresponds to a real A record is an orphan — it
- * happens when a DNS record was removed through a path that bypassed
- * `clearDnsFromIp` (e.g. a bulk SQL edit, a historic code bug, or pre-refactor
- * test data). Clears hostname + detection_source on each orphan so the lossy-
- * IP detector and scan overlays stop treating them as real hosts.
+ * Reconcile `ip_addresses` rows that look like stale DNS hostnames against
+ * currently-enabled DNS A records. Scanner updates used to overwrite
+ * `detection_source = 'dns'`, so this deliberately checks hostname ownership
+ * by data shape: a zone-qualified hostname, no backing A record, and no DHCP
+ * row/reservation that should own the hostname.
  *
  * Runs at server startup (see index.js). Returns the number of rows cleared.
  */
@@ -97,8 +95,27 @@ export function reconcileDnsOrphans(db) {
   const orphans = db.prepare(`
     SELECT ip.id, ip.ip_address, ip.hostname
     FROM ip_addresses ip
-    WHERE ip.detection_source = 'dns'
-      AND ip.hostname IS NOT NULL
+    WHERE ip.hostname IS NOT NULL
+      AND (ip.detection_source IS NULL OR ip.detection_source IN ('dns', 'scanner'))
+      AND COALESCE(ip.status, 'available') != 'dhcp'
+      AND EXISTS (
+        SELECT 1 FROM dns_zones hz
+        WHERE hz.type = 'forward'
+          AND hz.enabled = 1
+          AND (ip.hostname = hz.name OR ip.hostname LIKE '%.' || hz.name)
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM dhcp_reservations dr
+        WHERE dr.subnet_id = ip.subnet_id
+          AND dr.ip_address = ip.ip_address
+          AND dr.enabled = 1
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM dhcp_leases dl
+        WHERE dl.subnet_id = ip.subnet_id
+          AND dl.ip_address = ip.ip_address
+          AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+      )
       AND NOT EXISTS (
         SELECT 1 FROM dns_records r
         JOIN dns_zones z ON r.zone_id = z.id
@@ -250,6 +267,9 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
 export function syncLeasesToIps(db, leases) {
   for (const l of leases) {
     if (!l.subnetId) continue;
+    if (l.mac) {
+      IpAddress.removeOtherRowsForMac(db, l.subnetId, l.ip, l.mac);
+    }
     const before = IpAddress.findBySubnetAndIp(db, l.subnetId, l.ip);
     IpAddress.upsert(db, l.subnetId, l.ip, {
       hostname: l.hostname || undefined,

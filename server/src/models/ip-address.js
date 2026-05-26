@@ -188,11 +188,11 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
 
 /**
  * Check whether an IP record should be kept when going offline.
- * Persistent reasons: manual status (locked/assigned), DNS hostname,
- * DHCP reservation, or per-IP scan override.
+ * Persistent reasons: manual status (locked/assigned), DHCP host state,
+ * DNS hostname, DHCP reservation, or per-IP scan override.
  */
 function shouldKeepOffline(db, row) {
-  if (row.status === 'locked' || row.status === 'assigned') return true;
+  if (row.status === 'locked' || row.status === 'assigned' || row.status === 'dhcp') return true;
   if (row.hostname) return true;
   if (row.scan_enabled !== null && row.scan_enabled !== undefined) return true;
   const hasReservation = db.prepare(
@@ -257,7 +257,7 @@ export function bulkMarkStale(db, staleMinutes) {
     if (row.is_rogue) {
       emit(db, row.id, row.subnet_id, row.ip_address, 'rogue_cleared', { source: 'stale' });
     }
-    const keep = row.status === 'locked' || row.status === 'assigned'
+    const keep = row.status === 'locked' || row.status === 'assigned' || row.status === 'dhcp'
       || row.hostname || row.scan_enabled !== null || row.has_reservation;
     if (keep) {
       toUpdate.push(row.id);
@@ -327,6 +327,21 @@ export function clearRogue(db, subnetId, ip) {
 }
 
 /**
+ * Remove any IP address rows that belong to the same MAC but are not the
+ * current canonical DHCP lease row. DHCP leases are authoritative for a host's
+ * current IP, so stale rows from prior leases/scans should not linger.
+ */
+export function removeOtherRowsForMac(db, subnetId, ip, mac) {
+  if (!mac) return { changes: 0 };
+  const normalizedMac = String(mac).toLowerCase();
+  return db.prepare(`
+    DELETE FROM ip_addresses
+    WHERE (lower(mac_address) = ? OR lower(last_seen_mac) = ?)
+      AND NOT (subnet_id = ? AND ip_address = ?)
+  `).run(normalizedMac, normalizedMac, subnetId, ip);
+}
+
+/**
  * Bulk clear rogue for all IPs in a subnet, except those in the provided set.
  * Used after a scan to clear rogue on IPs that are no longer conflicting.
  */
@@ -381,7 +396,7 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     const updates = [
       'is_online = ?',
       "last_scanned_at = datetime('now')",
-      'detection_source = ?',
+      'detection_source = COALESCE(detection_source, ?)',
       "updated_at = datetime('now')"
     ];
     const params = [responded ? 1 : 0, 'scanner'];
