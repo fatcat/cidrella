@@ -89,11 +89,13 @@ async function main() {
   // Clear any ip_addresses rows whose DNS-sourced hostname no longer has a
   // backing A record (historic orphans from pre-refactor cleanup paths).
   try {
-    const { reconcileDnsOrphans, reconcileDuplicateDhcpMacRows } = await import('./utils/ip-sync.js');
+    const { reconcileDnsOrphans, reconcileDuplicateDhcpMacRows, pruneStaleDhcpHostRows } = await import('./utils/ip-sync.js');
     const n = reconcileDnsOrphans(getDb());
     const dhcpN = reconcileDuplicateDhcpMacRows(getDb());
+    const staleDhcpN = pruneStaleDhcpHostRows(getDb());
     if (n > 0) console.log(`Reconciled ${n} orphan DNS-sourced ip_addresses row(s)`);
     if (dhcpN > 0) console.log(`Reconciled ${dhcpN} duplicate DHCP ip_addresses row(s)`);
+    if (staleDhcpN > 0) console.log(`Pruned ${staleDhcpN} stale DHCP ip_addresses row(s)`);
   } catch (err) {
     console.warn('IP metadata reconciliation skipped:', err?.message || err);
   }

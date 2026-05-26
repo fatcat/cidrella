@@ -11,7 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 import { readLogTail } from './log-reader.js';
-import { findSubnetForIp } from './ip-sync.js';
+import { findSubnetForIp, pruneStaleDhcpHostRows } from './ip-sync.js';
 import * as IpAddress from '../models/ip-address.js';
 import {
   DATA_DIR,
@@ -71,6 +71,7 @@ export function startPassiveLivenessWatcher(db) {
     if (now - lastStaleCheck >= 60000) {
       const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
       IpAddress.bulkMarkStale(db, staleMinutes);
+      pruneStaleDhcpHostRows(db);
       IpAddress.pruneEvents(db);
       lastStaleCheck = now;
 

@@ -215,6 +215,46 @@ export function reconcileDuplicateDhcpMacRows(db) {
 }
 
 /**
+ * Remove stale DHCP host rows once they are no longer useful recent history.
+ *
+ * A DHCP row with no active lease/reservation is only a remembered lease. Keep
+ * it briefly so the UI can show where a device was seen, then clear it so the
+ * address returns to a reusable state.
+ */
+export function pruneStaleDhcpHostRows(db, maxAgeHours = 24) {
+  const hours = Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 24;
+  const offset = `-${hours} hours`;
+
+  const staleRows = db.prepare(`
+    SELECT ip.id
+    FROM ip_addresses ip
+    LEFT JOIN dhcp_leases dl
+      ON dl.subnet_id = ip.subnet_id
+     AND dl.ip_address = ip.ip_address
+     AND lower(dl.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
+     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+    LEFT JOIN dhcp_reservations dr
+      ON dr.subnet_id = ip.subnet_id
+     AND dr.ip_address = ip.ip_address
+     AND lower(dr.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
+     AND dr.enabled = 1
+    WHERE ip.status = 'dhcp'
+      AND ip.is_online = 0
+      AND dl.id IS NULL
+      AND dr.id IS NULL
+      AND datetime(COALESCE(ip.last_seen_at, ip.updated_at, ip.created_at)) < datetime('now', ?)
+  `).all(offset);
+
+  if (staleRows.length === 0) return 0;
+
+  const remove = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
+  db.transaction(() => {
+    for (const row of staleRows) remove.run(row.id);
+  })();
+  return staleRows.length;
+}
+
+/**
  * Derive the reverse-zone name + record name for an IPv4 in a covering
  * reverse zone stored in dns_zones. Looks up the matching /24 (or larger)
  * reverse zone by NAME only — zones are subnet-agnostic post-decouple, so
@@ -362,4 +402,5 @@ export function syncLeasesToIps(db, leases) {
     }
   }
   reconcileDuplicateDhcpMacRows(db);
+  pruneStaleDhcpHostRows(db);
 }
