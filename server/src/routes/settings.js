@@ -25,6 +25,7 @@ const SECRET_KEYS = new Set(['jwt_secret']);
 const BOOL_STR = new Set(['true', 'false']);
 const GEOIP_MODES = new Set(['off', 'block-country', 'log-only']);
 const BACKUP_SCHEDULES = new Set(['off', 'daily', 'weekly']);
+const SCAN_INTERVALS = new Set(['', 'off', '5m', '15m', '30m', '1h', '4h']);
 
 function isBoolStr(v) {
   return typeof v === 'string' ? BOOL_STR.has(v) : typeof v === 'boolean';
@@ -32,6 +33,12 @@ function isBoolStr(v) {
 function toBoolStr(v) {
   if (typeof v === 'boolean') return v ? 'true' : 'false';
   return v === 'true' ? 'true' : 'false';
+}
+function isBoolish01(v) {
+  return typeof v === 'boolean' || v === 1 || v === 0 || v === '1' || v === '0' || v === 'true' || v === 'false';
+}
+function toBool01(v) {
+  return (v === true || v === 1 || v === '1' || v === 'true') ? '1' : '0';
 }
 function isIntInRange(v, lo, hi) {
   const n = typeof v === 'number' ? v : (typeof v === 'string' && /^-?\d+$/.test(v) ? parseInt(v, 10) : NaN);
@@ -99,12 +106,12 @@ const SETTING_SCHEMA = {
     normalize: v => String(v)
   },
   default_scan_interval: {
-    validate: v => isIntInRange(v, 1, 10080) ? null : 'must be an integer 1-10080 (minutes)',
-    normalize: v => String(intOrNull(v))
+    validate: v => typeof v === 'string' && SCAN_INTERVALS.has(v) ? null : `must be one of: ${[...SCAN_INTERVALS].map(v => v || 'off').join(', ')}`,
+    normalize: v => v === 'off' ? '' : v
   },
   default_scan_enabled: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
+    validate: v => isBoolish01(v) ? null : 'must be true or false',
+    normalize: v => toBool01(v)
   },
   setup_wizard_completed: {
     validate: v => isBoolStr(v) ? null : 'must be true or false',

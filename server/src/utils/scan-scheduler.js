@@ -1,7 +1,10 @@
 import { getDb } from '../db/init.js';
 import { startScan } from './scanner.js';
+import { MAX_SCAN_SIZE } from '../config/defaults.js';
 
 const INTERVAL_MS = {
+  '': null,
+  'off': null,
   '5m': 5 * 60 * 1000,
   '15m': 15 * 60 * 1000,
   '30m': 30 * 60 * 1000,
@@ -11,6 +14,34 @@ const INTERVAL_MS = {
 
 let timer = null;
 
+function intervalToMs(value) {
+  if (value === null || value === undefined) return null;
+  const raw = String(value).trim();
+  if (Object.hasOwn(INTERVAL_MS, raw)) return INTERVAL_MS[raw];
+
+  // Backward compatibility for any installs that persisted the old
+  // integer-minutes shape before the UI/API contract was aligned.
+  if (/^\d+$/.test(raw)) {
+    const minutes = parseInt(raw, 10);
+    return minutes > 0 ? minutes * 60 * 1000 : null;
+  }
+
+  return null;
+}
+
+function scanEnabledSql() {
+  return `
+    COALESCE(
+      s.scan_enabled,
+      CASE
+        WHEN (SELECT value FROM settings WHERE key = 'default_scan_enabled') IN ('1', 'true') THEN 1
+        WHEN (SELECT value FROM settings WHERE key = 'default_scan_enabled') IN ('0', 'false') THEN 0
+        ELSE 1
+      END
+    ) = 1
+  `;
+}
+
 function checkScheduledScans() {
   const db = getDb();
   if (!db) return;
@@ -19,12 +50,12 @@ function checkScheduledScans() {
     SELECT s.*,
       COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
     FROM subnets s
-    WHERE s.status = 'allocated' AND s.prefix_length > 20
-      AND COALESCE(s.scan_enabled, (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'default_scan_enabled'), 1) = 1
+    WHERE s.status = 'allocated' AND s.total_addresses <= ${MAX_SCAN_SIZE}
+      AND ${scanEnabledSql()}
   `).all();
 
   for (const subnet of subnets) {
-    const intervalMs = INTERVAL_MS[subnet.effective_scan_interval];
+    const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
 
     // Check if a scan is already running for this subnet
@@ -62,6 +93,7 @@ export function startScanScheduler() {
   if (timer) return;
   // Check every 60 seconds
   timer = setInterval(checkScheduledScans, 60 * 1000);
+  checkScheduledScans();
   console.log('Scan scheduler started');
 }
 
@@ -77,14 +109,14 @@ export function getNextScanTime() {
     SELECT s.id,
       COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
     FROM subnets s
-    WHERE s.status = 'allocated' AND s.prefix_length > 20
-      AND COALESCE(s.scan_enabled, (SELECT CAST(value AS INTEGER) FROM settings WHERE key = 'default_scan_enabled'), 1) = 1
+    WHERE s.status = 'allocated' AND s.total_addresses <= ${MAX_SCAN_SIZE}
+      AND ${scanEnabledSql()}
   `).all();
 
   let earliest = null;
 
   for (const subnet of subnets) {
-    const intervalMs = INTERVAL_MS[subnet.effective_scan_interval];
+    const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
 
     const lastScan = db.prepare(`

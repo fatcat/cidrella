@@ -489,6 +489,28 @@ describe('H7 — settings per-key schema rejects shape abuse', () => {
     const res = await request(app).put('/api/settings/geoip_enabled').send({ value: 'maybe' });
     expect(res.status).toBe(400);
   });
+
+  it('accepts UI scan interval values', async () => {
+    const res = await request(app).put('/api/settings/default_scan_interval').send({ value: '15m' });
+    expect(res.status).toBe(200);
+    expect(res.body.value).toBe('15m');
+  });
+
+  it('normalizes off scan interval to empty string', async () => {
+    const res = await request(app).put('/api/settings/default_scan_interval').send({ value: 'off' });
+    expect(res.status).toBe(200);
+    expect(res.body.value).toBe('');
+  });
+
+  it('accepts UI scan enabled values and stores 1/0 for scanner code', async () => {
+    const enabled = await request(app).put('/api/settings/default_scan_enabled').send({ value: '1' });
+    expect(enabled.status).toBe(200);
+    expect(enabled.body.value).toBe('1');
+
+    const disabled = await request(app).put('/api/settings/default_scan_enabled').send({ value: false });
+    expect(disabled.status).toBe(200);
+    expect(disabled.body.value).toBe('0');
+  });
 });
 
 // -----------------------------------------------------------------------------

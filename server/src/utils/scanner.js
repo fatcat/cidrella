@@ -154,7 +154,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
       subnetDefault = !!subnet.scan_enabled;
     } else {
       const val = getSetting('default_scan_enabled');
-      subnetDefault = val != null ? val === '1' : true;
+      subnetDefault = val != null ? (val === '1' || val === 'true') : true;
     }
 
     // Pre-load per-IP scan_enabled overrides
