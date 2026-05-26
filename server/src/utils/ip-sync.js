@@ -139,6 +139,59 @@ export function reconcileDnsOrphans(db) {
 }
 
 /**
+ * Keep a single DHCP-owned ip_addresses row per MAC address.
+ *
+ * Active lease/reservation rows win. If a MAC has no current DHCP backing row
+ * at all, keep the row most recently seen/updated and delete older rows. This
+ * cleans up historic offline DHCP duplicates that were created before lease
+ * sync became authoritative per MAC.
+ */
+export function reconcileDuplicateDhcpMacRows(db) {
+  const rows = db.prepare(`
+    SELECT ip.id, ip.ip_address,
+           lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, ''))) AS mac_key,
+           CASE WHEN dl.id IS NOT NULL OR dr.id IS NOT NULL THEN 1 ELSE 0 END AS has_dhcp_backing,
+           ip.last_seen_at, ip.updated_at
+    FROM ip_addresses ip
+    LEFT JOIN dhcp_leases dl
+      ON dl.subnet_id = ip.subnet_id
+     AND dl.ip_address = ip.ip_address
+     AND lower(dl.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
+     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+    LEFT JOIN dhcp_reservations dr
+      ON dr.subnet_id = ip.subnet_id
+     AND dr.ip_address = ip.ip_address
+     AND lower(dr.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
+     AND dr.enabled = 1
+    WHERE ip.status = 'dhcp'
+      AND COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')) IS NOT NULL
+    ORDER BY mac_key,
+             has_dhcp_backing DESC,
+             datetime(ip.last_seen_at) DESC,
+             datetime(ip.updated_at) DESC,
+             ip.id DESC
+  `).all();
+
+  const seen = new Set();
+  const staleIds = [];
+  for (const row of rows) {
+    if (!row.mac_key) continue;
+    if (seen.has(row.mac_key)) {
+      staleIds.push(row.id);
+    } else {
+      seen.add(row.mac_key);
+    }
+  }
+
+  if (staleIds.length === 0) return 0;
+  const remove = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
+  db.transaction(() => {
+    for (const id of staleIds) remove.run(id);
+  })();
+  return staleIds.length;
+}
+
+/**
  * Derive the reverse-zone name + record name for an IPv4 in a covering
  * reverse zone stored in dns_zones. Looks up the matching /24 (or larger)
  * reverse zone by NAME only — zones are subnet-agnostic post-decouple, so
@@ -285,4 +338,5 @@ export function syncLeasesToIps(db, leases) {
       IpAddress.emitEvent(db, l.subnetId, l.ip, 'lease_obtained', { newValue: l.mac || null, source: 'dhcp_lease' });
     }
   }
+  reconcileDuplicateDhcpMacRows(db);
 }

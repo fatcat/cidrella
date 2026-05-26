@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
-import { reconcileDnsOrphans, syncLeasesToIps } from '../../../src/utils/ip-sync.js';
+import { reconcileDnsOrphans, reconcileDuplicateDhcpMacRows, syncLeasesToIps } from '../../../src/utils/ip-sync.js';
 import * as IpAddress from '../../../src/models/ip-address.js';
 
 let db;
@@ -100,6 +100,62 @@ describe('syncLeasesToIps', () => {
 
     expect(IpAddress.findBySubnetAndIp(db, otherSubnetId, '10.0.2.50')).toBeUndefined();
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.50')).toBeTruthy();
+  });
+});
+
+describe('reconcileDuplicateDhcpMacRows', () => {
+  it('removes older offline DHCP rows for the same MAC', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.10', {
+      hostname: 'old',
+      mac_address: 'aa:bb:cc:dd:ee:10',
+      last_seen_mac: 'aa:bb:cc:dd:ee:10',
+      status: 'dhcp',
+      is_online: 0,
+      detection_source: 'scanner'
+    });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-30 days'), updated_at = datetime('now', '-30 days') WHERE subnet_id = ? AND ip_address = '10.0.1.10'")
+      .run(subnetId);
+
+    IpAddress.upsert(db, subnetId, '10.0.1.20', {
+      hostname: 'new',
+      mac_address: 'aa:bb:cc:dd:ee:10',
+      last_seen_mac: 'aa:bb:cc:dd:ee:10',
+      status: 'dhcp',
+      is_online: 0,
+      detection_source: 'scanner'
+    });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-1 day') WHERE subnet_id = ? AND ip_address = '10.0.1.20'")
+      .run(subnetId);
+
+    expect(reconcileDuplicateDhcpMacRows(db)).toBe(1);
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.10')).toBeUndefined();
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.20')).toBeTruthy();
+  });
+
+  it('keeps the active lease row over a newer stale row for the same MAC', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.30', {
+      mac_address: 'aa:bb:cc:dd:ee:30',
+      status: 'dhcp',
+      is_online: 0
+    });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-10 days') WHERE subnet_id = ? AND ip_address = '10.0.1.30'")
+      .run(subnetId);
+    db.prepare(`
+      INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id)
+      VALUES ('10.0.1.30', 'aa:bb:cc:dd:ee:30', 'active', NULL, datetime('now', '+1 hour'), ?)
+    `).run(subnetId);
+
+    IpAddress.upsert(db, subnetId, '10.0.1.31', {
+      mac_address: 'aa:bb:cc:dd:ee:30',
+      status: 'dhcp',
+      is_online: 0
+    });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now') WHERE subnet_id = ? AND ip_address = '10.0.1.31'")
+      .run(subnetId);
+
+    expect(reconcileDuplicateDhcpMacRows(db)).toBe(1);
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.30')).toBeTruthy();
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.31')).toBeUndefined();
   });
 });
 
