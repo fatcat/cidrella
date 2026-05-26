@@ -164,12 +164,17 @@ describe('markOffline', () => {
 describe('bulkMarkStale', () => {
   it('deletes stale ephemeral IPs', () => {
     // Ephemeral IP last seen 2 hours ago — should be deleted
-    IpAddress.upsert(db, subnetId, '10.0.1.30', { is_online: 1, is_rogue: 1, rogue_reason: 'rogue' });
+    IpAddress.upsert(db, subnetId, '10.0.1.30', {
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'rogue',
+      detection_source: 'passive'
+    });
     db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.30'")
       .run(subnetId);
 
     // Fresh IP — should remain online
-    IpAddress.upsert(db, subnetId, '10.0.1.31', { is_online: 1 });
+    IpAddress.upsert(db, subnetId, '10.0.1.31', { is_online: 1, detection_source: 'passive' });
 
     IpAddress.bulkMarkStale(db, 60);
 
@@ -182,7 +187,13 @@ describe('bulkMarkStale', () => {
 
   it('keeps stale persistent IPs and clears rogue', () => {
     // Persistent IP (has hostname) last seen 2 hours ago — should be kept but marked offline
-    IpAddress.upsert(db, subnetId, '10.0.1.32', { is_online: 1, is_rogue: 1, rogue_reason: 'rogue', hostname: 'db-server' });
+    IpAddress.upsert(db, subnetId, '10.0.1.32', {
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'rogue',
+      hostname: 'db-server',
+      detection_source: 'passive'
+    });
     db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.32'")
       .run(subnetId);
 
@@ -196,7 +207,7 @@ describe('bulkMarkStale', () => {
     expect(row.hostname).toBe('db-server');
   });
 
-  it('keeps stale DHCP rows offline even without a hostname', () => {
+  it('ignores stale DHCP rows because lease sync owns their liveness', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.33', {
       status: 'dhcp',
       mac_address: 'aa:bb:cc:dd:ee:33',
@@ -210,7 +221,7 @@ describe('bulkMarkStale', () => {
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.33');
     expect(row).toBeTruthy();
-    expect(row.is_online).toBe(0);
+    expect(row.is_online).toBe(1);
     expect(row.status).toBe('dhcp');
   });
 });
@@ -308,7 +319,7 @@ describe('updateFromScan', () => {
     expect(row.rogue_reason).toBe('Rogue device');
   });
 
-  it('sets is_online=0 when IP did not respond', () => {
+  it('deletes ephemeral IPs when they do not respond', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.52', { is_online: 1 });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.52', {
@@ -316,7 +327,7 @@ describe('updateFromScan', () => {
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.52');
-    expect(row.is_online).toBe(0);
+    expect(row).toBeUndefined();
   });
 
   it('creates new row for responding rogue with no existing record', () => {
@@ -429,28 +440,41 @@ describe('pruneOldScanResults', () => {
 // ── lifecycle: rogue cleared on offline ─────────────────
 
 describe('rogue device goes offline', () => {
-  it('bulkMarkStale deletes ephemeral rogue when device becomes stale', () => {
-    // Simulate: rogue device detected by scan, then goes silent
+  it('bulkMarkStale ignores scanner-owned rows', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.80', {
       is_online: 1, is_rogue: 1, rogue_reason: 'Rogue device (IP not assigned)',
       detection_source: 'scanner'
     });
 
-    // Backdate last_seen_at to 2 hours ago
     db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.80'")
       .run(subnetId);
 
-    // Staleness sweep with 60-minute threshold — ephemeral rogue gets deleted
     IpAddress.bulkMarkStale(db, 60);
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.80');
+    expect(row.is_online).toBe(1);
+    expect(row.is_rogue).toBe(1);
+  });
+
+  it('bulkMarkStale deletes stale passive ephemeral rows', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.84', {
+      is_online: 1,
+      detection_source: 'passive'
+    });
+
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.84'")
+      .run(subnetId);
+
+    IpAddress.bulkMarkStale(db, 60);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.84');
     expect(row).toBeUndefined();
   });
 
-  it('bulkMarkStale keeps persistent rogue (with hostname) and clears rogue status', () => {
+  it('bulkMarkStale keeps stale passive persistent rows and clears rogue status', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.82', {
       is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch',
-      hostname: 'known-host', detection_source: 'scanner'
+      hostname: 'known-host', detection_source: 'passive'
     });
 
     db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.82'")

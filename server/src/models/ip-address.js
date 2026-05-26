@@ -232,7 +232,12 @@ export function markOffline(db, subnetId, ip) {
 }
 
 /**
- * Bulk staleness sweep: mark IPs offline if not seen within staleMinutes.
+ * Bulk passive staleness sweep: mark passively-seen IPs offline if not seen
+ * within staleMinutes.
+ *
+ * Active scanner and DHCP lease liveness are intentionally excluded here:
+ * scanner-owned rows should stay online until the next scan disproves them,
+ * and DHCP-owned rows are governed by lease sync/expiry.
  * Ephemeral IPs are deleted; persistent IPs are marked offline.
  * Also clears rogue status for stale IPs (rogue device went away).
  */
@@ -246,7 +251,9 @@ export function bulkMarkStale(db, staleMinutes) {
     FROM ip_addresses ip
     LEFT JOIN dhcp_reservations dr
       ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-    WHERE ip.is_online = 1 AND ip.last_seen_at < datetime('now', ?)
+    WHERE ip.is_online = 1
+      AND ip.detection_source = 'passive'
+      AND ip.last_seen_at < datetime('now', ?)
   `).all(offset);
 
   const toDelete = [];
@@ -372,7 +379,7 @@ export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
  */
 export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, conflictReason }) {
   const existing = db.prepare(
-    'SELECT id, is_online, is_rogue, status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_online, is_rogue, status, hostname, scan_enabled, subnet_id, ip_address FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
   // Re-check: if scanner says conflict but the IP now has a static assignment
@@ -393,6 +400,18 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
   }
 
   if (existing) {
+    if (!responded && !shouldKeepOffline(db, existing)) {
+      emit(db, existing.id, subnetId, ip, 'scanned', { newValue: 'no_response', source: 'scanner' });
+      if (existing.is_online) {
+        emit(db, existing.id, subnetId, ip, 'offline', { source: 'scanner' });
+      }
+      if (existing.is_rogue) {
+        emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'scanner' });
+      }
+      db.prepare('DELETE FROM ip_addresses WHERE id = ?').run(existing.id);
+      return;
+    }
+
     const updates = [
       'is_online = ?',
       "last_scanned_at = datetime('now')",
