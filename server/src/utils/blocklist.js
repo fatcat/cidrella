@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getDb, getSetting } from '../db/init.js';
-import { atomicWrite, signalDnsmasq } from './dnsmasq.js';
+import { atomicWrite, restartDnsmasq } from './dnsmasq.js';
 import { loadBlocklist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 import { DATA_DIR, BLOCKLIST_DOWNLOAD_TIMEOUT_MS } from '../config/defaults.js';
@@ -158,7 +158,7 @@ export function generateBlocklistConfig(db) {
     const existing = fs.existsSync(BLOCKLIST_CONF) ? fs.readFileSync(BLOCKLIST_CONF, 'utf-8') : '';
     if (existing !== '') {
       atomicWrite(BLOCKLIST_CONF, '');
-      signalDnsmasq();
+      restartDnsmasq();
     }
   } catch { /* ignore cleanup errors */ }
 }

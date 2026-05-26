@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { atomicWrite, signalDnsmasq, cleanStaleFiles } from './dnsmasq.js';
+import { atomicWrite, signalDnsmasq, restartDnsmasq, cleanStaleFiles } from './dnsmasq.js';
 import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { syncLeasesToIps } from './ip-sync.js';
@@ -139,7 +139,7 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
 /**
  * Regenerate all DHCP scope config files in conf.d/.
  * Clears the DNS resolution cache each pass.
- * Returns true if any file changed (needs SIGHUP).
+ * Returns true if any file changed (needs dnsmasq restart).
  */
 export function regenerateScopeConfigs(db) {
   dnsCache.clear();
@@ -442,7 +442,9 @@ export function regenerateDhcpConfigs(db) {
   // Sync DHCP hostnames (leases + reservations) into dns_records
   const leases = db.prepare('SELECT ip_address as ip, hostname, subnet_id as subnetId FROM dhcp_leases WHERE hostname IS NOT NULL').all();
   syncDhcpDnsRecords(db, leases);
-  if (confChanged || resChanged) {
+  if (confChanged) {
+    restartDnsmasq();
+  } else if (resChanged) {
     signalDnsmasq();
   }
 }

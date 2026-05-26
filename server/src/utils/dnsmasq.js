@@ -31,6 +31,12 @@ export function cleanStaleFiles(dir, prefix, suffix, activeIds) {
 }
 
 function toFqdn(recordName, zoneName) {
+  const normalized = String(recordName || '').replace(/\.$/, '');
+  const zone = String(zoneName || '').replace(/\.$/, '');
+  if (normalized.toLowerCase() === zone.toLowerCase() ||
+      normalized.toLowerCase().endsWith(`.${zone.toLowerCase()}`)) {
+    return normalized;
+  }
   return recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
 }
 
@@ -371,7 +377,14 @@ export function applyInterfaceConfig(db) {
 export function regenerateConfigs(db) {
   const hostsChanged = regenerateHostsDir(db);
   const confChanged = regenerateConfDir(db);
-  if (hostsChanged || confChanged) {
+
+  // dnsmasq rereads hostsdir/dhcp-hostsdir on SIGHUP, but it does not reread
+  // the main config file or conf-dir includes. CNAME/MX/TXT/SRV/PTR records
+  // live in conf.d/zone-*.conf, so those changes need a full restart to take
+  // effect. Hosts-only updates can keep using the cheaper reload path.
+  if (confChanged) {
+    restartDnsmasq();
+  } else if (hostsChanged) {
     signalDnsmasq();
   }
 }

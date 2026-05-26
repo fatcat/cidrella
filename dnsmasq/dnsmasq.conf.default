@@ -23,7 +23,7 @@ bind-dynamic
 hostsdir=/data/dnsmasq/hosts.d
 dhcp-hostsdir=/data/dnsmasq/dhcp-hosts.d
 
-# Additional config directory (requires SIGHUP for reload)
+# Additional config directory (requires dnsmasq restart for reload)
 conf-dir=/data/dnsmasq/conf.d
 
 # PID file for signaling

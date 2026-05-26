@@ -21,26 +21,91 @@ function isIntInRange(v, lo, hi) {
   return typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
 }
 
+function normalizeDnsName(name) {
+  return String(name || '').trim().replace(/\.$/, '').toLowerCase();
+}
+
+function normalizeRecordNameForZone(name, zoneName) {
+  const normalized = normalizeDnsName(name);
+  const zone = normalizeDnsName(zoneName);
+  if (normalized === '@') return '@';
+  if (normalized === zone) return '@';
+  if (normalized.endsWith(`.${zone}`)) {
+    return normalized.slice(0, -(zone.length + 1));
+  }
+  return normalized;
+}
+
+function cnameNameErrorForZone(name, zoneName) {
+  const normalized = normalizeDnsName(name);
+  const zone = normalizeDnsName(zoneName);
+  if (!normalized || normalized === '@' || normalized === zone) return 'CNAME cannot be at zone apex (@)';
+  if (normalized.includes('.') && !normalized.endsWith(`.${zone}`)) {
+    return `CNAME name must be inside ${zoneName}`;
+  }
+  return null;
+}
+
 // Build the FQDN that a record name points at inside its zone. '@' means the
 // zone apex. Used for CNAME self-loop detection.
 function fqdnFor(name, zoneName) {
-  return name === '@' ? zoneName : `${name}.${zoneName}`;
+  const normalized = normalizeDnsName(name);
+  const zone = normalizeDnsName(zoneName);
+  if (normalized === '@' || normalized === zone) return zoneName;
+  if (normalized.endsWith(`.${zone}`)) return normalized;
+  return `${normalized}.${zoneName}`;
 }
 
-function validateRecord(type, { name, value, priority, weight, port }, zoneName) {
+function cnameTargetError(db, target, zone) {
+  const normalized = normalizeDnsName(target);
+  const zoneName = normalizeDnsName(zone.name);
+
+  if (!isValidDomain(normalized)) return 'Invalid target domain';
+  if (!normalized.includes('.')) return 'CNAME target must be fully qualified';
+  if (!normalized.endsWith(`.${zoneName}`) && normalized !== zoneName) {
+    return `CNAME target must be inside ${zone.name}`;
+  }
+
+  const known = db.prepare(`
+    SELECT 1
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE z.enabled = 1
+      AND z.type = 'forward'
+      AND r.enabled = 1
+      AND r.type IN ('A', 'CNAME')
+      AND lower(CASE WHEN r.name = '@' THEN z.name ELSE r.name || '.' || z.name END) = ?
+    LIMIT 1
+  `).get(normalized);
+
+  if (!known) {
+    return `CNAME target must already exist as an enabled A or CNAME record in ${zone.name}`;
+  }
+  return null;
+}
+
+function validateRecord(type, { name, value, priority, weight, port }, zoneName, db = null, zone = null) {
   switch (type) {
     case 'A':
       if (!isValidHostname(name)) return 'Invalid hostname';
       if (!isValidIpv4(value)) return 'Invalid IPv4 address';
       break;
     case 'CNAME':
-      if (name === '@') return 'CNAME cannot be at zone apex (@)';
+      {
+        const nameErr = cnameNameErrorForZone(name, zoneName);
+        if (nameErr) return nameErr;
+      }
       if (!isValidHostname(name)) return 'Invalid hostname';
-      if (!isValidDomain(value)) return 'Invalid target domain';
+      if (db && zone) {
+        const targetErr = cnameTargetError(db, value, zone);
+        if (targetErr) return targetErr;
+      } else if (!isValidDomain(value)) {
+        return 'Invalid target domain';
+      }
       // Refuse a CNAME whose value resolves back to itself. dnsmasq handles
       // the loop by returning SERVFAIL, but refusing at validation time
       // catches obvious typos and makes the error message diagnostic.
-      if (zoneName && value.toLowerCase() === fqdnFor(name, zoneName).toLowerCase()) {
+      if (zoneName && normalizeDnsName(value) === fqdnFor(name, zoneName).toLowerCase()) {
         return 'CNAME target cannot reference itself';
       }
       break;
@@ -374,24 +439,38 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     }
   }
 
-  const validationError = validateRecord(type, { name, value, priority, weight, port }, zone.name);
+  const normalizedName = type === 'CNAME' && zone.type === 'forward'
+    ? normalizeRecordNameForZone(name, zone.name)
+    : name;
+  const normalizedValue = type === 'CNAME'
+    ? normalizeDnsName(value)
+    : value;
+
+  const validationError = validateRecord(type, {
+    name: normalizedName, value: normalizedValue, priority, weight, port
+  }, zone.name, db, zone);
   if (validationError) return res.status(400).json({ error: validationError });
 
   // Check for duplicate A records
   if (type === 'A') {
     const dup = db.prepare(
       'SELECT id FROM dns_records WHERE zone_id = ? AND name = ? AND type = ? AND value = ?'
-    ).get(zone.id, name, type, value);
+    ).get(zone.id, normalizedName, type, normalizedValue);
     if (dup) return res.status(409).json({ error: 'Duplicate A record (same name and value)' });
   }
 
   // Warn about CNAME conflicts
   if (type === 'CNAME') {
+    const dup = db.prepare(
+      'SELECT id FROM dns_records WHERE zone_id = ? AND name = ? AND type = ?'
+    ).get(zone.id, normalizedName, 'CNAME');
+    if (dup) return res.status(409).json({ error: `CNAME at "${normalizedName}" already exists` });
+
     const conflict = db.prepare(
       'SELECT id, type FROM dns_records WHERE zone_id = ? AND name = ? AND type != ?'
-    ).get(zone.id, name, 'CNAME');
+    ).get(zone.id, normalizedName, 'CNAME');
     if (conflict) {
-      return res.status(409).json({ error: `CNAME at "${name}" conflicts with existing ${conflict.type} record` });
+      return res.status(409).json({ error: `CNAME at "${normalizedName}" conflicts with existing ${conflict.type} record` });
     }
   }
 
@@ -399,7 +478,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     INSERT INTO dns_records (zone_id, name, type, value, priority, weight, port, ttl, enabled)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    zone.id, name, type, value,
+    zone.id, normalizedName, type, normalizedValue,
     priority ?? null, weight ?? null, port ?? null, ttl ?? null,
     enabled !== undefined ? (enabled ? 1 : 0) : 1
   );
@@ -408,13 +487,13 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(\'now\') WHERE id = ?').run(zone.id);
 
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ?').get(result.lastInsertRowid);
-  audit(req.user.id, 'record_created', 'dns_record', record.id, { zone: zone.name, name, type, value });
+  audit(req.user.id, 'record_created', 'dns_record', record.id, { zone: zone.name, name: normalizedName, type, value: normalizedValue });
 
   // Auto-create/update PTR record when A record is added to a forward zone.
   // If the PTR already points at a different forward zone's FQDN, refuse
   // unless the caller passed force_ptr:true (M9 — cross-zone PTR hijack).
   if (type === 'A' && zone.type === 'forward') {
-    const ptrResult = syncPtrForARecord(db, name, value, zone.name, { force: !!force_ptr });
+    const ptrResult = syncPtrForARecord(db, normalizedName, normalizedValue, zone.name, { force: !!force_ptr });
     if (ptrResult?.conflict) {
       // Undo the A record insert so the state is consistent with the 409.
       db.prepare('DELETE FROM dns_records WHERE id = ?').run(result.lastInsertRowid);
@@ -424,7 +503,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
         hint: 'Pass force_ptr:true to overwrite'
       });
     }
-    syncDnsToIp(db, name, value, zone.name);
+    syncDnsToIp(db, normalizedName, normalizedValue, zone.name);
   }
 
   req.afterCommit('regenerate_dns');
@@ -456,8 +535,14 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   }
 
   const newType = type || record.type;
-  const newName = name ?? record.name;
-  const newValue = value ?? record.value;
+  const rawNewName = name ?? record.name;
+  const rawNewValue = value ?? record.value;
+  const newName = newType === 'CNAME' && zone.type === 'forward'
+    ? normalizeRecordNameForZone(rawNewName, zone.name)
+    : rawNewName;
+  const newValue = newType === 'CNAME'
+    ? normalizeDnsName(rawNewValue)
+    : rawNewValue;
   const newPriority = priority !== undefined ? priority : record.priority;
   const newWeight = weight !== undefined ? weight : record.weight;
   const newPort = port !== undefined ? port : record.port;
@@ -472,8 +557,22 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const validationError = validateRecord(newType, {
     name: newName, value: newValue,
     priority: newPriority, weight: newWeight, port: newPort
-  }, zone.name);
+  }, zone.name, db, zone);
   if (validationError) return res.status(400).json({ error: validationError });
+
+  if (newType === 'CNAME') {
+    const dup = db.prepare(
+      'SELECT id FROM dns_records WHERE zone_id = ? AND name = ? AND type = ? AND id != ?'
+    ).get(zone.id, newName, 'CNAME', record.id);
+    if (dup) return res.status(409).json({ error: `CNAME at "${newName}" already exists` });
+
+    const conflict = db.prepare(
+      'SELECT id, type FROM dns_records WHERE zone_id = ? AND name = ? AND type != ? AND id != ?'
+    ).get(zone.id, newName, 'CNAME', record.id);
+    if (conflict) {
+      return res.status(409).json({ error: `CNAME at "${newName}" conflicts with existing ${conflict.type} record` });
+    }
+  }
 
   db.prepare(`
     UPDATE dns_records SET name = ?, type = ?, value = ?, priority = ?, weight = ?, port = ?, ttl = ?,

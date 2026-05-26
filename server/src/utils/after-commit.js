@@ -26,13 +26,13 @@
  */
 
 import { getDb } from '../db/init.js';
-import { regenerateConfigs as regenDnsConfigs, regenerateDnsmasqConf, signalDnsmasq } from './dnsmasq.js';
+import { regenerateConfigs as regenDnsConfigs, regenerateDnsmasqConf, restartDnsmasq } from './dnsmasq.js';
 import { regenerateDhcpConfigs } from './dhcp.js';
 
 // Hook name → function(db). All hooks must accept a db handle and return void.
 // Ordering matters when one artifact depends on another: DHCP scope emit reads
 // freshly synced reservations, so run DNS-side regen first, then DHCP. The
-// main dnsmasq.conf regen fires last and sends SIGHUP after.
+// main dnsmasq.conf regen fires last and restarts dnsmasq after.
 //
 // Note on ordering: hooks fire via queueMicrotask, AFTER res.on('finish').
 // Callers that must observe the hook's effect synchronously (e.g. before a
@@ -41,7 +41,7 @@ import { regenerateDhcpConfigs } from './dhcp.js';
 const HOOK_REGISTRY = {
   regenerate_dns:  (db) => regenDnsConfigs(db),
   regenerate_dhcp: (db) => regenerateDhcpConfigs(db),
-  regenerate_dnsmasq_conf: (db) => { regenerateDnsmasqConf(db); signalDnsmasq(); },
+  regenerate_dnsmasq_conf: (db) => { regenerateDnsmasqConf(db); restartDnsmasq(); },
 };
 
 const HOOK_ORDER = ['regenerate_dns', 'regenerate_dhcp', 'regenerate_dnsmasq_conf'];

@@ -246,6 +246,56 @@ describe('C2/H2 — DNS record config injection', () => {
     expect(res.status).toBe(400);
   });
 
+  it('accepts a CNAME alias entered as an FQDN inside the zone', async () => {
+    const a = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
+      name: 'target-host', type: 'A', value: '10.99.88.11'
+    });
+    expect(a.status).toBe(201);
+
+    const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
+      name: 'alias-fqdn.injtest.example',
+      type: 'CNAME',
+      value: 'target-host.injtest.example'
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.name).toBe('alias-fqdn');
+    expect(res.body.value).toBe('target-host.injtest.example');
+  });
+
+  it('rejects a CNAME alias FQDN outside the zone', async () => {
+    const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
+      name: 'wrong.example.net',
+      type: 'CNAME',
+      value: 'target-host.injtest.example'
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a CNAME target that dnsmasq does not know locally', async () => {
+    const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
+      name: 'missing-target',
+      type: 'CNAME',
+      value: 'does-not-exist.injtest.example'
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a duplicate CNAME alias', async () => {
+    const first = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
+      name: 'dupe-cname',
+      type: 'CNAME',
+      value: 'target-host.injtest.example'
+    });
+    expect(first.status).toBe(201);
+
+    const second = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
+      name: 'dupe-cname',
+      type: 'CNAME',
+      value: 'target-host.injtest.example'
+    });
+    expect(second.status).toBe(409);
+  });
+
   it('accepts a normal PTR record (regression guard — sanitizer is not over-strict)', async () => {
     const res = await request(app).post(`/api/dns/zones/${revZone.id}/records`).send({
       name: '7', type: 'PTR', value: 'clean.injtest.example'
