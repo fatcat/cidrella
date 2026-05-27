@@ -187,6 +187,47 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
 }
 
 /**
+ * Record passive activity for an IP address, such as a DNS query observed from
+ * the host. Existing rows are marked online. Unknown rows can optionally be
+ * created as rogue because the host proved it is using an address CIDRella did
+ * not assign.
+ */
+export function recordPassiveActivity(db, subnetId, ip, {
+  mac,
+  source = 'passive',
+  createRogue = false,
+  rogueReason = 'passive DNS query from unassigned address'
+} = {}) {
+  const existing = db.prepare(
+    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+  ).get(subnetId, ip);
+
+  if (existing) {
+    return markOnline(db, subnetId, ip, { mac, source });
+  }
+
+  if (!createRogue) return { changes: 0 };
+
+  const result = db.prepare(`
+    INSERT INTO ip_addresses (
+      subnet_id, ip_address, status, is_online,
+      last_seen_at, last_seen_mac,
+      is_rogue, rogue_reason,
+      first_seen_at, detection_source
+    ) VALUES (
+      ?, ?, 'available', 1,
+      datetime('now'), ?,
+      1, ?,
+      datetime('now'), ?
+    )
+  `).run(subnetId, ip, mac || null, rogueReason, source);
+
+  emit(db, result.lastInsertRowid, subnetId, ip, 'online', { source });
+  emit(db, result.lastInsertRowid, subnetId, ip, 'rogue_detected', { newValue: rogueReason, source });
+  return result;
+}
+
+/**
  * Check whether an IP record should be kept when going offline.
  * Persistent reasons: manual status (locked/assigned), DHCP host state,
  * DNS hostname, DHCP reservation, or per-IP scan override.
@@ -346,6 +387,101 @@ export function removeOtherRowsForMac(db, subnetId, ip, mac) {
     WHERE (lower(mac_address) = ? OR lower(last_seen_mac) = ?)
       AND NOT (subnet_id = ? AND ip_address = ?)
   `).run(normalizedMac, normalizedMac, subnetId, ip);
+}
+
+/**
+ * Clear DNS/hostname ownership for selected IP rows.
+ */
+export function clearHostnameByIds(db, ids) {
+  const uniqueIds = [...new Set((ids || []).filter(id => id !== null && id !== undefined))];
+  if (uniqueIds.length === 0) return { changes: 0 };
+
+  const clearRow = db.prepare(
+    "UPDATE ip_addresses SET hostname = NULL, detection_source = NULL, updated_at = datetime('now') WHERE id = ?"
+  );
+  let changes = 0;
+  db.transaction(() => {
+    for (const id of uniqueIds) changes += clearRow.run(id).changes;
+  })();
+  return { changes };
+}
+
+/**
+ * Delete selected IP rows.
+ */
+export function deleteByIds(db, ids) {
+  const uniqueIds = [...new Set((ids || []).filter(id => id !== null && id !== undefined))];
+  if (uniqueIds.length === 0) return { changes: 0 };
+
+  const remove = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
+  let changes = 0;
+  db.transaction(() => {
+    for (const id of uniqueIds) changes += remove.run(id).changes;
+  })();
+  return { changes };
+}
+
+export function deleteById(db, id) {
+  if (id === null || id === undefined) return { changes: 0 };
+  return deleteByIds(db, [id]);
+}
+
+export function deleteBySubnet(db, subnetId) {
+  return db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnetId);
+}
+
+export function deleteByIpAddress(db, ip) {
+  return db.prepare('DELETE FROM ip_addresses WHERE ip_address = ?').run(ip);
+}
+
+/**
+ * Move one IP row to another subnet. If the target subnet already has a row
+ * for the same IP, the existing target row is deleted and the moved row wins.
+ * Lifecycle events are retargeted to the new subnet for subnet-scoped history.
+ */
+export function moveToSubnet(db, id, ip, targetSubnetId) {
+  const dup = db.prepare(
+    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+  ).get(targetSubnetId, ip);
+
+  if (dup && dup.id !== id) deleteById(db, dup.id);
+
+  const moved = db.prepare(
+    "UPDATE ip_addresses SET subnet_id = ?, updated_at = datetime('now') WHERE id = ?"
+  ).run(targetSubnetId, id);
+
+  db.prepare('UPDATE ip_events SET subnet_id = ? WHERE ip_address_id = ?')
+    .run(targetSubnetId, id);
+
+  return moved;
+}
+
+export function ensureAddress(db, subnetId, ip, status = 'available') {
+  return db.prepare(
+    'INSERT OR IGNORE INTO ip_addresses (subnet_id, ip_address, status) VALUES (?, ?, ?)'
+  ).run(subnetId, ip, status);
+}
+
+/**
+ * Clear stale DHCP assignment ownership while keeping recent last-seen
+ * metadata for short-term display.
+ */
+export function clearDhcpAssignmentsByIds(db, ids) {
+  const uniqueIds = [...new Set((ids || []).filter(id => id !== null && id !== undefined))];
+  if (uniqueIds.length === 0) return { changes: 0 };
+
+  const clear = db.prepare(`
+    UPDATE ip_addresses
+       SET status = 'available',
+           is_online = 0,
+           updated_at = datetime('now')
+     WHERE id = ?
+  `);
+  let changes = 0;
+  db.transaction(() => {
+    for (const id of uniqueIds) changes += clear.run(id).changes;
+  })();
+  return { changes };
 }
 
 /**

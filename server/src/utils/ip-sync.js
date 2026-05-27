@@ -220,14 +220,7 @@ export function reconcileDnsOrphans(db) {
       )
   `).all();
   if (orphans.length === 0) return 0;
-  const clearRow = db.prepare(
-    "UPDATE ip_addresses SET hostname = NULL, detection_source = NULL, updated_at = datetime('now') WHERE id = ?"
-  );
-  const cleared = db.transaction(() => {
-    for (const o of orphans) clearRow.run(o.id);
-    return orphans.length;
-  })();
-  return cleared;
+  return IpAddress.clearHostnameByIds(db, orphans.map(o => o.id)).changes;
 }
 
 /**
@@ -275,11 +268,7 @@ export function reconcileDuplicateDhcpMacRows(db) {
   }
 
   if (staleIds.length === 0) return 0;
-  const remove = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
-  db.transaction(() => {
-    for (const id of staleIds) remove.run(id);
-  })();
-  return staleIds.length;
+  return IpAddress.deleteByIds(db, staleIds).changes;
 }
 
 /**
@@ -316,17 +305,7 @@ export function reconcileUnbackedDhcpLeaseRows(db, activeLeases = []) {
 
   if (rowsToClear.length === 0) return 0;
 
-  const clear = db.prepare(`
-    UPDATE ip_addresses
-       SET status = 'available',
-           is_online = 0,
-           updated_at = datetime('now')
-     WHERE id = ?
-  `);
-  db.transaction(() => {
-    for (const row of rowsToClear) clear.run(row.id);
-  })();
-  return rowsToClear.length;
+  return IpAddress.clearDhcpAssignmentsByIds(db, rowsToClear.map(row => row.id)).changes;
 }
 
 /**
@@ -360,11 +339,7 @@ export function pruneStaleDhcpHostRows(db, maxAgeHours = 24) {
 
   if (staleRows.length === 0) return 0;
 
-  const remove = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
-  db.transaction(() => {
-    for (const row of staleRows) remove.run(row.id);
-  })();
-  return staleRows.length;
+  return IpAddress.deleteByIds(db, staleRows.map(row => row.id)).changes;
 }
 
 /**
@@ -509,7 +484,7 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
       return;
     }
 
-    db.prepare('DELETE FROM ip_addresses WHERE id = ?').run(existing.id);
+    IpAddress.deleteById(db, existing.id);
     return;
   }
 

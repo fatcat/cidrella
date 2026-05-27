@@ -11,12 +11,12 @@
 import fs from 'fs';
 import path from 'path';
 import { readLogTail } from './log-reader.js';
-import { findSubnetForIp, pruneStaleDhcpHostRows } from './ip-sync.js';
+import { pruneStaleDhcpHostRows } from './ip-sync.js';
+import { recordDnsQueryLiveness } from './ip-liveness.js';
 import * as IpAddress from '../models/ip-address.js';
 import {
   DATA_DIR,
   PASSIVE_LIVENESS_POLL_MS,
-  PASSIVE_LIVENESS_DEBOUNCE_MS,
   PASSIVE_LIVENESS_STALE_MS
 } from '../config/defaults.js';
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
@@ -28,8 +28,6 @@ const QUERY_FROM_RE = /\bquery\[.+?\]\s+\S+\s+from\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\
  * Polls the dnsmasq log for DNS query source IPs and updates ip_addresses.
  */
 export function startPassiveLivenessWatcher(db) {
-  // In-memory debounce map: ip → Date.now() of last DB write
-  const lastSeen = new Map();
   let offset = 0;
   let lastStaleCheck = Date.now();
 
@@ -54,17 +52,10 @@ export function startPassiveLivenessWatcher(db) {
       ipsThisCycle.add(ip);
     }
 
-    // Update liveness for each IP (debounced)
+    // Update liveness for each IP. Unknown rows are not created here because
+    // dnsmasq may be logging proxy-originated queries in fallback paths.
     for (const ip of ipsThisCycle) {
-      const last = lastSeen.get(ip) || 0;
-      if (now - last < PASSIVE_LIVENESS_DEBOUNCE_MS) continue;
-
-      const subnet = findSubnetForIp(db, ip);
-      if (!subnet) continue;
-
-      // UPDATE only — don't create rows for unknown IPs
-      IpAddress.markOnline(db, subnet.id, ip, { source: 'passive' });
-      lastSeen.set(ip, now);
+      recordDnsQueryLiveness(db, ip, { createRogue: false, source: 'passive' });
     }
 
     // Staleness sweep (every ~60 seconds) — also clears rogue on stale IPs
@@ -75,16 +66,11 @@ export function startPassiveLivenessWatcher(db) {
       IpAddress.pruneEvents(db);
       lastStaleCheck = now;
 
-      // Prune debounce map entries older than 2x debounce window
-      const pruneThreshold = now - PASSIVE_LIVENESS_DEBOUNCE_MS * 2;
-      for (const [ip, ts] of lastSeen) {
-        if (ts < pruneThreshold) lastSeen.delete(ip);
-      }
     }
   }
 
   const interval = setInterval(poll, PASSIVE_LIVENESS_POLL_MS);
-  console.log(`[passive-liveness] Watching ${LOG_FILE} (poll ${PASSIVE_LIVENESS_POLL_MS / 1000}s, debounce ${PASSIVE_LIVENESS_DEBOUNCE_MS / 1000}s, stale ${PASSIVE_LIVENESS_STALE_MS / 60000}min)`);
+  console.log(`[passive-liveness] Watching ${LOG_FILE} (poll ${PASSIVE_LIVENESS_POLL_MS / 1000}s, stale ${PASSIVE_LIVENESS_STALE_MS / 60000}min)`);
 
   return interval; // for cleanup in tests
 }

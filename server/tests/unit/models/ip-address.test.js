@@ -127,6 +127,36 @@ describe('markOnline', () => {
   });
 });
 
+describe('recordPassiveActivity', () => {
+  it('marks existing rows online through the model', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.25', {});
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.25', { source: 'passive' });
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.25');
+
+    expect(row.is_online).toBe(1);
+    expect(row.last_seen_at).toBeTruthy();
+    expect(row.detection_source).toBe('passive');
+  });
+
+  it('does not create unknown rows unless requested', () => {
+    const result = IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.26');
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.26');
+
+    expect(result.changes).toBe(0);
+    expect(row).toBeUndefined();
+  });
+
+  it('creates unknown passive rows as rogue when requested', () => {
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.27', { createRogue: true });
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.27');
+
+    expect(row.is_online).toBe(1);
+    expect(row.is_rogue).toBe(1);
+    expect(row.status).toBe('available');
+    expect(row.rogue_reason).toBe('passive DNS query from unassigned address');
+  });
+});
+
 describe('markOffline', () => {
   it('deletes ephemeral IPs (no hostname, not locked/assigned, no reservation)', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.22', { is_online: 1, is_rogue: 1, rogue_reason: 'test' });

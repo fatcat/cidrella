@@ -1214,7 +1214,7 @@ function cleanupSubnetData(db, subnetId) {
   db.prepare('DELETE FROM dhcp_scopes WHERE subnet_id = ?').run(subnetId);
   db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ?').run(subnetId);
   db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(subnetId);
-  db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnetId);
+  IpAddress.deleteBySubnet(db, subnetId);
 }
 
 // Historically this deleted dns_zones attached to a subnet and reassigned
@@ -1255,17 +1255,10 @@ function transferPerIpArtifactsToChildren(db, parentId) {
   // We also rewrite `ip_events.subnet_id` for each moved row so history
   // queries that filter by subnet_id return the new child's events.
   const ips = db.prepare('SELECT id, ip_address FROM ip_addresses WHERE subnet_id = ?').all(parentId);
-  const findDup = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?');
-  const delIp = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
-  const updIp = db.prepare('UPDATE ip_addresses SET subnet_id = ? WHERE id = ?');
-  const updEvents = db.prepare('UPDATE ip_events SET subnet_id = ? WHERE ip_address_id = ?');
   for (const ip of ips) {
     const c = findChildForIp(ipToLong(ip.ip_address));
     if (!c) continue;
-    const dup = findDup.get(c.id, ip.ip_address);
-    if (dup && dup.id !== ip.id) delIp.run(dup.id);
-    updIp.run(c.id, ip.id);
-    updEvents.run(c.id, ip.id);
+    IpAddress.moveToSubnet(db, ip.id, ip.ip_address, c.id);
   }
 }
 
@@ -1296,12 +1289,11 @@ function cleanupLossyArtifactsAfterDivide(db, lossy) {
   const ipSet = new Set(lossy.map(l => l.ip));
   const removed = { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 };
   const delRes = db.prepare('DELETE FROM dhcp_reservations WHERE ip_address = ?');
-  const delIp  = db.prepare('DELETE FROM ip_addresses WHERE ip_address = ?');
   const delRec = db.prepare("DELETE FROM dns_records WHERE type = 'A' AND value = ?");
   const delLease = db.prepare('DELETE FROM dhcp_leases WHERE ip_address = ?');
   for (const ip of ipSet) {
     removed.reservations += delRes.run(ip).changes;
-    removed.ip_addresses += delIp.run(ip).changes;
+    removed.ip_addresses += IpAddress.deleteByIpAddress(db, ip).changes;
     removed.dns_records  += delRec.run(ip).changes;
     removed.leases       += delLease.run(ip).changes;
   }
@@ -1357,15 +1349,8 @@ function transferPerIpArtifactsToParent(db, childIds, mergedId) {
   const ips = db.prepare(
     `SELECT id, ip_address FROM ip_addresses WHERE subnet_id IN (${placeholders})`
   ).all(...childIds);
-  const findDup = db.prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?');
-  const delIp = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
-  const updIp = db.prepare('UPDATE ip_addresses SET subnet_id = ? WHERE id = ?');
-  const updEvents = db.prepare('UPDATE ip_events SET subnet_id = ? WHERE ip_address_id = ?');
   for (const ip of ips) {
-    const dup = findDup.get(mergedId, ip.ip_address);
-    if (dup && dup.id !== ip.id) delIp.run(dup.id);
-    updIp.run(mergedId, ip.id);
-    updEvents.run(mergedId, ip.id);
+    IpAddress.moveToSubnet(db, ip.id, ip.ip_address, mergedId);
   }
 }
 
@@ -1867,12 +1852,11 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     if (parsed.prefix >= 20) {
       const ipStart = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
       const ipEnd = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
-      const insertIp = db.prepare('INSERT OR IGNORE INTO ip_addresses (subnet_id, ip_address, status) VALUES (?, ?, ?)');
       const gwLong = gw ? ipToLong(gw) : null;
 
       for (let ipLong = ipStart; ipLong <= ipEnd; ipLong++) {
         const ipStatus = (gwLong !== null && ipLong === gwLong) ? 'locked' : 'available';
-        insertIp.run(subnet.id, longToIp(ipLong), ipStatus);
+        IpAddress.ensureAddress(db, subnet.id, longToIp(ipLong), ipStatus);
       }
     }
 

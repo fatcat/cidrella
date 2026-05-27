@@ -11,6 +11,7 @@ import { LRUCache } from 'lru-cache';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyInterfaceConfig, restartDnsmasq } from './dnsmasq.js';
+import { recordDnsQueryLiveness } from './ip-liveness.js';
 import {
   DATA_DIR,
   GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
@@ -305,6 +306,12 @@ function handleQuery(msg, rinfo, sock) {
     // Extract query metadata for analytics
     const queryName = query.questions?.[0]?.name;
     const queryType = query.questions?.[0]?.type || 'A';
+
+    try {
+      recordDnsQueryLiveness(getDb(), rinfo.address, { createRogue: true, source: 'passive' });
+    } catch (err) {
+      proxyLog('warn', 'Failed to record DNS-query liveness', { clientIp: rinfo.address, error: err.message });
+    }
 
     // Blocklist check — intercept before forwarding to dnsmasq
     if (queryName) {
