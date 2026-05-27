@@ -232,6 +232,55 @@ describe('ip-sync orphan cleanup', () => {
     expect(row.hostname).toBe('host-v2.dns-rename.test');
   });
 
+  it('rejects a second A hostname for the same IP and directs aliases to CNAME', async () => {
+    const s = await mkSubnet({
+      cidr: '10.84.0.0/24', name: 'dns-single-hostname', status: 'allocated', gateway_address: '10.84.0.1'
+    });
+    await configure(s.id, {
+      name: 'dns-single-hostname', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'single-hostname.test'
+    });
+    const zone = await findZone('single-hostname.test');
+
+    const create = await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'primary', type: 'A', value: '10.84.0.50'
+    });
+    expect(create.status).toBe(201);
+
+    const duplicateName = await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'secondary', type: 'A', value: '10.84.0.50'
+    });
+    expect(duplicateName.status).toBe(409);
+    expect(duplicateName.body.error).toMatch(/create a CNAME/i);
+
+    const cname = await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'secondary', type: 'CNAME', value: 'primary.single-hostname.test'
+    });
+    expect(cname.status).toBe(201);
+  });
+
+  it('does not allow reservation-sourced DNS records to be edited or deleted manually', async () => {
+    const s = await mkSubnet({
+      cidr: '10.85.0.0/24', name: 'dns-derived-records', status: 'allocated', gateway_address: '10.85.0.1'
+    });
+    await configure(s.id, {
+      name: 'dns-derived-records', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'derived-records.test'
+    });
+    const zone = await findZone('derived-records.test');
+    const db = (await import('../../../src/db/init.js')).getDb();
+    const recordId = db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'reserved-host', 'A', '10.85.0.50', 'reservation', 1)
+    `).run(zone.id).lastInsertRowid;
+
+    const edit = await request(app).put(`/api/dns/zones/${zone.id}/records/${recordId}`).send({
+      name: 'manual-edit', type: 'A', value: '10.85.0.50'
+    });
+    expect(edit.status).toBe(403);
+
+    const del = await request(app).delete(`/api/dns/zones/${zone.id}/records/${recordId}`);
+    expect(del.status).toBe(403);
+  });
+
   it('reconcileDnsOrphans clears hostname on ip_addresses rows without a backing DNS record', async () => {
     const { reconcileDnsOrphans } = await import('../../../src/utils/ip-sync.js');
     const { getDb } = await import('../../../src/db/init.js');
@@ -350,6 +399,53 @@ describe('PUT /api/dhcp/scopes/:id — pool resize guard (R4 #4)', () => {
     // A valid resize still works.
     const ok = await request(app).put(`/api/dhcp/scopes/${scope.id}`).send({ start_ip: '10.42.0.50', end_ip: '10.42.0.200' });
     expect(ok.status).toBe(200);
+  });
+});
+
+describe('GET /api/dhcp/scopes/:id/addresses — lifecycle state', () => {
+  it('includes ip_addresses lifecycle state for unassigned addresses in the scope', async () => {
+    const s = await mkSubnet({ cidr: '10.44.0.0/24', name: 'scope-lifecycle', status: 'allocated', gateway_address: '10.44.0.1' });
+    await configure(s.id, {
+      name: 'scope-lifecycle', create_reverse_dns: false, create_dhcp_scope: true,
+      dhcp_start_ip: '10.44.0.100', dhcp_end_ip: '10.44.0.110'
+    });
+
+    const scopes = await request(app).get('/api/dhcp/scopes');
+    const scope = scopes.body.find(sc => sc.subnet_id === s.id);
+    expect(scope).toBeDefined();
+
+    const { getDb } = await import('../../../src/db/init.js');
+    const db = getDb();
+    db.prepare(`
+      UPDATE ip_addresses
+         SET hostname = 'restored-prod-lease',
+             mac_address = 'aa:bb:cc:dd:ee:ff',
+             last_seen_mac = 'aa:bb:cc:dd:ee:ff',
+             status = 'available',
+             is_online = 1,
+             detection_source = 'dhcp_lease',
+             last_seen_at = datetime('now'),
+             last_scanned_at = datetime('now')
+       WHERE subnet_id = ? AND ip_address = '10.44.0.104'
+    `).run(s.id);
+
+    const res = await request(app).get(`/api/dhcp/scopes/${scope.id}/addresses`);
+    expect(res.status).toBe(200);
+
+    const row = res.body.find(addr => addr.ip_address === '10.44.0.104');
+    expect(row).toBeDefined();
+    expect(row).not.toHaveProperty('type');
+    expect(row).not.toHaveProperty('status');
+    expect(row.dhcp_assignment_type).toBeNull();
+    expect(row.lease_status).toBe('unavailable');
+    expect(row.ip_lifecycle_status).toBe('available');
+    expect(row.address_type).toBe('rogue');
+    expect(row.is_online).toBe(true);
+    expect(row.hostname).toBe('restored-prod-lease');
+    expect(row.mac_address).toBe('aa:bb:cc:dd:ee:ff');
+    expect(row.has_dhcp_reservation).toBe(0);
+    expect(row.has_static_dns).toBe(0);
+    expect(row.dhcp_expires_at).toBeNull();
   });
 });
 

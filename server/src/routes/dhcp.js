@@ -1,12 +1,12 @@
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { isIpInSubnet, ipToLong, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
+import { isIpInSubnet, ipToLong, longToIp, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
 import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { syncDhcpReservationToIp, clearDhcpReservationFromIp, syncPtrForIp } from '../utils/ip-sync.js';
-import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
+import { enrichIpViewRows } from '../models/ip-view.js';
 
 const router = Router();
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
@@ -653,25 +653,43 @@ router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
 
 // ─── Leases ──────────────────────────────────────────────
 
-// GET /api/dhcp/leases — unified view: dynamic leases + reservations
-router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
-  const db = getDb();
+function enrichDhcpRows(db, rows) {
+  for (const entry of rows) {
+    entry.has_dhcp_reservation = entry.dhcp_assignment_type === 'reserved' ? 1 : 0;
+    entry.dhcp_expires_at = entry.dhcp_assignment_type === 'dynamic' ? entry.expires_at : null;
+  }
+  enrichIpViewRows(db, rows, { fillFromIpAddress: true });
+  for (const entry of rows) {
+    if (!entry.dhcp_assignment_type && entry.address_type) {
+      entry.lease_status = 'unavailable';
+    }
+  }
+  return rows;
+}
+
+function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
+  const leaseWhere = subnetId ? 'WHERE dl.subnet_id = ?' : '';
+  const reservationWhere = subnetId ? 'WHERE dr.subnet_id = ?' : '';
+  const leaseArgs = subnetId ? [subnetId] : [];
+  const reservationArgs = subnetId ? [subnetId] : [];
 
   // Fetch all dynamic leases
   const leases = db.prepare(`
     SELECT dl.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.domain_name as subnet_domain_name, sub.folder_id
     FROM dhcp_leases dl
     LEFT JOIN subnets sub ON dl.subnet_id = sub.id
+    ${leaseWhere}
     ORDER BY dl.ip_address
-  `).all();
+  `).all(...leaseArgs);
 
   // Fetch all reservations
   const reservations = db.prepare(`
     SELECT dr.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.domain_name as subnet_domain_name, sub.folder_id
     FROM dhcp_reservations dr
     JOIN subnets sub ON dr.subnet_id = sub.id
+    ${reservationWhere}
     ORDER BY dr.ip_address
-  `).all();
+  `).all(...reservationArgs);
 
   // Build a map of leases by MAC+IP for matching
   const leaseMap = new Map();
@@ -688,7 +706,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
     const matchedLease = leaseMap.get(key);
     const entry = {
       id: r.id,
-      type: 'reserved',
+      dhcp_assignment_type: 'reserved',
       ip_address: r.ip_address,
       mac_address: r.mac_address,
       hostname: r.hostname,
@@ -699,7 +717,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
       subnet_domain_name: r.subnet_domain_name,
       folder_id: r.folder_id,
       enabled: r.enabled,
-      status: matchedLease ? 'active' : 'offline',
+      lease_status: matchedLease ? 'active' : 'offline',
       expires_at: matchedLease ? matchedLease.expires_at : null,
       reservation_id: r.id,
       created_at: r.created_at,
@@ -715,7 +733,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
     if (!matchedLeaseKeys.has(key)) {
       unified.push({
         id: l.id,
-        type: 'dynamic',
+        dhcp_assignment_type: 'dynamic',
         ip_address: l.ip_address,
         mac_address: l.mac_address,
         hostname: l.hostname,
@@ -726,7 +744,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
         subnet_domain_name: l.subnet_domain_name,
         folder_id: l.folder_id,
         enabled: true,
-        status: 'active',
+        lease_status: 'active',
         expires_at: l.expires_at,
         reservation_id: null,
         created_at: l.created_at,
@@ -738,31 +756,62 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
   // Sort by IP address
   unified.sort((a, b) => ipToLong(a.ip_address) - ipToLong(b.ip_address));
 
-  // Vendor lookup
-  const allMacs = unified.map(e => e.mac_address).filter(Boolean);
-  const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
-  for (const entry of unified) {
-    entry.vendor = entry.mac_address ? (vendorMap.get(entry.mac_address) || null) : null;
+  return enrichDhcpRows(db, unified);
+}
+
+// GET /api/dhcp/scopes/:id/addresses — every IP in a DHCP scope with lease/reservation overlays
+router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
+  const db = getDb();
+  const scope = db.prepare(`
+    SELECT s.*, r.start_ip, r.end_ip,
+      sub.cidr as subnet_cidr, sub.name as subnet_name, sub.domain_name as subnet_domain_name, sub.folder_id
+    FROM dhcp_scopes s
+    JOIN ranges r ON s.range_id = r.id
+    JOIN subnets sub ON s.subnet_id = sub.id
+    WHERE s.id = ?
+  `).get(req.params.id);
+  if (!scope) return res.status(404).json({ error: 'DHCP scope not found' });
+
+  const assignedByIp = new Map(getUnifiedDhcpRows(db, { subnetId: scope.subnet_id }).map(row => [row.ip_address, row]));
+  const start = ipToLong(scope.start_ip);
+  const end = ipToLong(scope.end_ip);
+  const rows = [];
+
+  for (let ipLong = start; ipLong <= end; ipLong++) {
+    const ip = longToIp(ipLong);
+    const assigned = assignedByIp.get(ip);
+    if (assigned) {
+      rows.push(assigned);
+    } else {
+      rows.push({
+        id: `available:${ip}`,
+        dhcp_assignment_type: null,
+        ip_address: ip,
+        mac_address: null,
+        hostname: null,
+        description: null,
+        subnet_id: scope.subnet_id,
+        subnet_cidr: scope.subnet_cidr,
+        subnet_name: scope.subnet_name,
+        subnet_domain_name: scope.subnet_domain_name,
+        folder_id: scope.folder_id,
+        enabled: true,
+        lease_status: 'available',
+        expires_at: null,
+        reservation_id: null,
+        created_at: null,
+        updated_at: null
+      });
+    }
   }
 
-  // Enrich with is_online from ip_addresses
-  const allIps = unified.map(e => e.ip_address).filter(Boolean);
-  if (allIps.length) {
-    const CHUNK_SIZE = 900;
-    const onlineMap = new Map();
-    for (let i = 0; i < allIps.length; i += CHUNK_SIZE) {
-      const chunk = allIps.slice(i, i + CHUNK_SIZE);
-      const ipRows = db.prepare(
-        `SELECT ip_address, is_online FROM ip_addresses WHERE ip_address IN (${chunk.map(() => '?').join(',')})`
-      ).all(...chunk);
-      for (const r of ipRows) onlineMap.set(r.ip_address, !!r.is_online);
-    }
-    for (const entry of unified) {
-      entry.is_online = onlineMap.get(entry.ip_address) ?? null;
-    }
-  }
+  res.json(enrichDhcpRows(db, rows));
+});
 
-  res.json(unified);
+// GET /api/dhcp/leases — unified view: dynamic leases + reservations
+router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
+  const db = getDb();
+  res.json(getUnifiedDhcpRows(db));
 });
 
 // POST /api/dhcp/sync-leases

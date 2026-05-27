@@ -62,6 +62,72 @@ function fqdnForRecordName(recordName, zoneName) {
   return `${normalized}.${zone}`;
 }
 
+function nonEmpty(value) {
+  return typeof value === 'string' && value.trim() !== '';
+}
+
+export function resolveCanonicalHostname(db, subnetId, ip) {
+  const reservation = db.prepare(`
+    SELECT hostname
+    FROM dhcp_reservations
+    WHERE subnet_id = ?
+      AND ip_address = ?
+      AND enabled = 1
+      AND hostname IS NOT NULL
+      AND trim(hostname) != ''
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(subnetId, ip);
+  if (nonEmpty(reservation?.hostname)) {
+    return { hostname: reservation.hostname.trim(), source: 'dhcp_reservation' };
+  }
+
+  const lease = db.prepare(`
+    SELECT hostname
+    FROM dhcp_leases
+    WHERE subnet_id = ?
+      AND ip_address = ?
+      AND hostname IS NOT NULL
+      AND trim(hostname) != ''
+      AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+    ORDER BY
+      CASE WHEN expires_at = 'infinite' THEN 1 ELSE 0 END DESC,
+      datetime(expires_at) DESC,
+      id DESC
+    LIMIT 1
+  `).get(subnetId, ip);
+  if (nonEmpty(lease?.hostname)) {
+    return { hostname: lease.hostname.trim(), source: 'dhcp_lease' };
+  }
+
+  const record = db.prepare(`
+    SELECT r.name, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE r.type = 'A'
+      AND r.enabled = 1
+      AND z.enabled = 1
+      AND z.type = 'forward'
+      AND r.value = ?
+      AND COALESCE(r.source, 'manual') = 'manual'
+    ORDER BY lower(z.name), lower(r.name), r.id
+    LIMIT 1
+  `).get(ip);
+  if (record) {
+    return { hostname: fqdnForRecordName(record.name, record.zone_name), source: 'dns' };
+  }
+
+  return { hostname: null, source: null };
+}
+
+function syncCanonicalHostname(db, subnetId, ip, { clearSource = false } = {}) {
+  const canonical = resolveCanonicalHostname(db, subnetId, ip);
+  const fields = { hostname: canonical.hostname };
+  if (canonical.source || clearSource) fields.detection_source = canonical.source;
+  IpAddress.upsert(db, subnetId, ip, fields);
+  return canonical;
+}
+
 /**
  * Sync hostname from a DNS A record to ip_addresses.
  * Called when an A record is created or updated.
@@ -74,7 +140,10 @@ export function syncDnsToIp(db, recordName, ip, zoneName) {
   if (!subnet) return;
 
   const fqdn = fqdnForRecordName(recordName, zoneName);
-  IpAddress.upsert(db, subnet.id, ip, { hostname: fqdn, detection_source: 'dns' });
+  const canonical = resolveCanonicalHostname(db, subnet.id, ip);
+  if (!canonical.hostname || canonical.source === 'dns' || canonical.hostname === fqdn) {
+    IpAddress.upsert(db, subnet.id, ip, { hostname: fqdn, detection_source: 'dns' });
+  }
   IpAddress.clearRogue(db, subnet.id, ip);
   IpAddress.emitEvent(db, subnet.id, ip, 'dns_added', { newValue: fqdn, source: 'dns' });
 }
@@ -91,7 +160,7 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
   const existing = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
 
   if (existing && existing.hostname === fqdn) {
-    IpAddress.upsert(db, subnet.id, ip, { hostname: null });
+    syncCanonicalHostname(db, subnet.id, ip, { clearSource: true });
     IpAddress.emitEvent(db, subnet.id, ip, 'dns_removed', { oldValue: fqdn, source: 'dns' });
   }
 }
@@ -184,7 +253,6 @@ export function reconcileDuplicateDhcpMacRows(db) {
     LEFT JOIN dhcp_reservations dr
       ON dr.subnet_id = ip.subnet_id
      AND dr.ip_address = ip.ip_address
-     AND lower(dr.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
      AND dr.enabled = 1
     WHERE ip.status = 'dhcp'
       AND COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')) IS NOT NULL
@@ -215,6 +283,53 @@ export function reconcileDuplicateDhcpMacRows(db) {
 }
 
 /**
+ * DHCP lease rows in ip_addresses are historical once there is no active
+ * lease or reservation backing them. Keep the recent last-seen metadata, but
+ * stop treating the address as DHCP-assigned.
+ */
+export function reconcileUnbackedDhcpLeaseRows(db, activeLeases = []) {
+  const activeKeys = new Set(activeLeases
+    .filter(l => l?.subnetId && l?.ip)
+    .map(l => `${l.subnetId}|${l.ip}|${String(l.mac || '').toLowerCase()}`));
+  const staleAssignments = db.prepare(`
+    SELECT ip.id, ip.subnet_id, ip.ip_address,
+           lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, ''))) AS mac_key
+    FROM ip_addresses ip
+    LEFT JOIN dhcp_leases dl
+      ON dl.subnet_id = ip.subnet_id
+     AND dl.ip_address = ip.ip_address
+     AND lower(dl.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
+     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+    LEFT JOIN dhcp_reservations dr
+      ON dr.subnet_id = ip.subnet_id
+     AND dr.ip_address = ip.ip_address
+     AND dr.enabled = 1
+    WHERE ip.status = 'dhcp'
+      AND ip.detection_source = 'dhcp_lease'
+      AND dl.id IS NULL
+      AND dr.id IS NULL
+  `).all();
+
+  const rowsToClear = activeKeys.size === 0
+    ? staleAssignments
+    : staleAssignments.filter(row => !activeKeys.has(`${row.subnet_id}|${row.ip_address}|${row.mac_key || ''}`));
+
+  if (rowsToClear.length === 0) return 0;
+
+  const clear = db.prepare(`
+    UPDATE ip_addresses
+       SET status = 'available',
+           is_online = 0,
+           updated_at = datetime('now')
+     WHERE id = ?
+  `);
+  db.transaction(() => {
+    for (const row of rowsToClear) clear.run(row.id);
+  })();
+  return rowsToClear.length;
+}
+
+/**
  * Remove stale DHCP host rows once they are no longer useful recent history.
  *
  * A DHCP row with no active lease/reservation is only a remembered lease. Keep
@@ -236,10 +351,8 @@ export function pruneStaleDhcpHostRows(db, maxAgeHours = 24) {
     LEFT JOIN dhcp_reservations dr
       ON dr.subnet_id = ip.subnet_id
      AND dr.ip_address = ip.ip_address
-     AND lower(dr.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
      AND dr.enabled = 1
-    WHERE ip.status = 'dhcp'
-      AND ip.is_online = 0
+    WHERE (ip.status = 'dhcp' OR ip.detection_source = 'dhcp_lease')
       AND dl.id IS NULL
       AND dr.id IS NULL
       AND datetime(COALESCE(ip.last_seen_at, ip.updated_at, ip.created_at)) < datetime('now', ?)
@@ -339,6 +452,7 @@ export function syncDhcpReservationToIp(db, subnetId, ip, { hostname, mac_addres
     status: 'dhcp',
     detection_source: 'dhcp_reservation'
   });
+  syncCanonicalHostname(db, subnetId, ip);
   IpAddress.clearRogue(db, subnetId, ip);
 }
 
@@ -359,6 +473,42 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
   if (!existing) return;
 
   if (existing.detection_source === 'dhcp_reservation') {
+    const lease = db.prepare(`
+      SELECT mac_address, hostname
+      FROM dhcp_leases
+      WHERE subnet_id = ?
+        AND ip_address = ?
+        AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+      ORDER BY
+        CASE WHEN expires_at = 'infinite' THEN 1 ELSE 0 END DESC,
+        datetime(expires_at) DESC,
+        id DESC
+      LIMIT 1
+    `).get(subnetId, ip);
+    if (lease) {
+      IpAddress.upsert(db, subnetId, ip, {
+        hostname: lease.hostname || undefined,
+        mac_address: lease.mac_address || undefined,
+        status: 'dhcp',
+        is_online: 1,
+        last_seen_mac: lease.mac_address || undefined,
+        detection_source: 'dhcp_lease'
+      });
+      syncCanonicalHostname(db, subnetId, ip);
+      return;
+    }
+
+    const canonical = resolveCanonicalHostname(db, subnetId, ip);
+    if (canonical.hostname) {
+      IpAddress.upsert(db, subnetId, ip, {
+        hostname: canonical.hostname,
+        mac_address: null,
+        status: 'available',
+        detection_source: canonical.source
+      });
+      return;
+    }
+
     db.prepare('DELETE FROM ip_addresses WHERE id = ?').run(existing.id);
     return;
   }
@@ -387,14 +537,27 @@ export function syncLeasesToIps(db, leases) {
       IpAddress.removeOtherRowsForMac(db, l.subnetId, l.ip, l.mac);
     }
     const before = IpAddress.findBySubnetAndIp(db, l.subnetId, l.ip);
+    const reservation = db.prepare(`
+      SELECT hostname
+      FROM dhcp_reservations
+      WHERE subnet_id = ?
+        AND ip_address = ?
+        AND enabled = 1
+        AND hostname IS NOT NULL
+        AND trim(hostname) != ''
+      LIMIT 1
+    `).get(l.subnetId, l.ip);
     IpAddress.upsert(db, l.subnetId, l.ip, {
-      hostname: l.hostname || undefined,
+      hostname: reservation ? undefined : (l.hostname || undefined),
       mac_address: l.mac || undefined,
       status: 'dhcp',
       is_online: 1,
       last_seen_mac: l.mac || undefined,
       detection_source: 'dhcp_lease'
     });
+    if (reservation) {
+      syncCanonicalHostname(db, l.subnetId, l.ip);
+    }
     IpAddress.clearRogue(db, l.subnetId, l.ip);
     // Only emit lease_obtained on new leases (not already DHCP status)
     if (!before || before.status !== 'dhcp') {
@@ -402,5 +565,6 @@ export function syncLeasesToIps(db, leases) {
     }
   }
   reconcileDuplicateDhcpMacRows(db);
+  reconcileUnbackedDhcpLeaseRows(db, leases);
   pruneStaleDhcpHostRows(db);
 }

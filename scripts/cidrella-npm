@@ -1,0 +1,23 @@
+#!/bin/sh
+# CIDRella npm resolver - runs npm from the active bundled runtime while
+# keeping node on PATH for npm's /usr/bin/env node shebang.
+#
+# Installed at /usr/local/bin/cidrella-npm. Prefer this over direct
+# /opt/cidrella-{a,b}/runtime references so A/B slot switches remain
+# transparent to admin commands and post-install maintenance.
+
+set -eu
+
+RUNTIME_BIN="/opt/cidrella/runtime/node/bin"
+NPM_BIN="$RUNTIME_BIN/npm"
+
+if [ -x "$NPM_BIN" ]; then
+  PATH="$RUNTIME_BIN:$PATH" exec "$NPM_BIN" "$@"
+fi
+
+if command -v npm >/dev/null 2>&1; then
+  exec npm "$@"
+fi
+
+echo "cidrella-npm: no usable npm binary found (checked bundled runtime and system PATH)" >&2
+exit 127

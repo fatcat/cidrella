@@ -259,6 +259,16 @@ export function syncLeases(db) {
     });
   }
 
+  // Persist the effective hostname used by DNS/IP sync. dnsmasq writes '*'
+  // when a client does not provide one; keep CIDRella's generated fallback in
+  // dhcp_leases too so later DHCP config regenerations do not treat the
+  // DHCP-sourced DNS record as stale.
+  for (const l of leases) {
+    if (!l.hostname && l.mac) {
+      l.hostname = generateFallbackHostname(l.mac) || null;
+    }
+  }
+
   // Replace all leases (simple approach — lease file is the source of truth)
   const txn = db.transaction(() => {
     db.prepare('DELETE FROM dhcp_leases').run();
@@ -272,13 +282,6 @@ export function syncLeases(db) {
   });
 
   txn();
-
-  // Generate fallback hostnames for leases without one
-  for (const l of leases) {
-    if (!l.hostname && l.mac) {
-      l.hostname = generateFallbackHostname(l.mac) || null;
-    }
-  }
 
   syncLeasesToIps(db, leases);
 
@@ -297,7 +300,7 @@ export function syncLeases(db) {
  * Matches entries to forward DNS zones via the DHCP scope's domain_name or subnet's domain_name.
  * Also cleans up stale DHCP records for IPs no longer in leases/reservations.
  */
-function syncDhcpDnsRecords(db, leases) {
+export function syncDhcpDnsRecords(db, leases) {
   // Build a map of subnet_id -> domain_name from DHCP scopes and subnets
   const scopes = db.prepare(`
     SELECT s.subnet_id, s.domain_name as scope_domain, sub.domain_name as subnet_domain
@@ -312,10 +315,6 @@ function syncDhcpDnsRecords(db, leases) {
     if (domain) subnetDomainMap.set(s.subnet_id, domain);
   }
 
-  // Merge leases with reservations (reservations take priority for same IP)
-  const entries = leases.map(l => ({ ...l, source: 'dhcp' }));
-  const leaseIps = new Set(leases.map(l => l.ip));
-
   let reservations = [];
   try {
     reservations = db.prepare(`
@@ -328,16 +327,20 @@ function syncDhcpDnsRecords(db, leases) {
     return;
   }
 
+  // Merge leases with reservations. Reservations take priority for the same
+  // IP so the static hostname wins over a client-provided dynamic hostname.
+  const reservationIps = new Set(reservations.map(r => r.ip_address));
+  const entries = leases
+    .filter(l => !reservationIps.has(l.ip))
+    .map(l => ({ ...l, source: 'dhcp' }));
+
   for (const r of reservations) {
-    // Only add reservations not already covered by a lease entry
-    if (!leaseIps.has(r.ip_address)) {
-      entries.push({
-        ip: r.ip_address,
-        hostname: r.hostname,
-        subnetId: r.subnet_id,
-        source: 'reservation'
-      });
-    }
+    entries.push({
+      ip: r.ip_address,
+      hostname: r.hostname,
+      subnetId: r.subnet_id,
+      source: 'reservation'
+    });
   }
 
   // Build a map of zone_name -> zone for forward zones
@@ -440,7 +443,11 @@ export function regenerateDhcpConfigs(db) {
   const confChanged = regenerateScopeConfigs(db);
   const resChanged = regenerateReservations(db);
   // Sync DHCP hostnames (leases + reservations) into dns_records
-  const leases = db.prepare('SELECT ip_address as ip, hostname, subnet_id as subnetId FROM dhcp_leases WHERE hostname IS NOT NULL').all();
+  const leases = db.prepare('SELECT ip_address as ip, hostname, mac_address as mac, subnet_id as subnetId FROM dhcp_leases').all()
+    .map(l => ({
+      ...l,
+      hostname: l.hostname || (l.mac ? generateFallbackHostname(l.mac) : null)
+    }));
   syncDhcpDnsRecords(db, leases);
   if (confChanged) {
     restartDnsmasq();

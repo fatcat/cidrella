@@ -22,6 +22,10 @@ afterAll(() => {
 
 beforeEach(() => {
   db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnetId);
+  db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ?').run(subnetId);
+  db.prepare('DELETE FROM dhcp_reservations WHERE subnet_id = ?').run(subnetId);
+  db.prepare('DELETE FROM dns_records').run();
+  db.prepare('DELETE FROM dns_zones').run();
   db.prepare('DELETE FROM scan_results').run();
   db.prepare('DELETE FROM network_scans').run();
 });
@@ -317,6 +321,74 @@ describe('updateFromScan', () => {
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.51');
     expect(row.is_rogue).toBe(1);
     expect(row.rogue_reason).toBe('Rogue device');
+  });
+
+  it('marks restored DHCP lease history as rogue when it responds without active backing', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.57', {
+      status: 'dhcp',
+      hostname: 'old-lease',
+      mac_address: 'aa:bb:cc:dd:ee:57',
+      detection_source: 'dhcp_lease'
+    });
+
+    IpAddress.updateFromScan(db, subnetId, '10.0.1.57', {
+      responded: 1,
+      mac: 'aa:bb:cc:dd:ee:57',
+      isConflict: 1,
+      conflictReason: 'Rogue device (IP not assigned)'
+    });
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.57');
+    expect(row.is_rogue).toBe(1);
+    expect(row.rogue_reason).toBe('Rogue device (IP not assigned)');
+  });
+
+  it('does not mark active DHCP leases as rogue on conflict re-check', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.58', {
+      status: 'dhcp',
+      hostname: 'active-lease',
+      mac_address: 'aa:bb:cc:dd:ee:58',
+      detection_source: 'dhcp_lease'
+    });
+    db.prepare(`
+      INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id)
+      VALUES ('10.0.1.58', 'aa:bb:cc:dd:ee:58', 'active-lease', NULL, datetime('now', '+1 hour'), ?)
+    `).run(subnetId);
+
+    IpAddress.updateFromScan(db, subnetId, '10.0.1.58', {
+      responded: 1,
+      mac: 'aa:bb:cc:dd:ee:58',
+      isConflict: 1,
+      conflictReason: 'Rogue device (IP not assigned)'
+    });
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.58');
+    expect(row.is_rogue).toBe(0);
+    expect(row.rogue_reason).toBeNull();
+  });
+
+  it('does not mark IPs with backing static DNS records as rogue when detection_source is stale', () => {
+    const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('stale-source.test', 'forward', 1)").run();
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'testerella', 'A', '10.0.1.59', 'manual', 1)
+    `).run(zone.lastInsertRowid);
+    IpAddress.upsert(db, subnetId, '10.0.1.59', {
+      status: 'available',
+      hostname: 'testerella.stale-source.test',
+      detection_source: 'scanner'
+    });
+
+    IpAddress.updateFromScan(db, subnetId, '10.0.1.59', {
+      responded: 1,
+      mac: 'aa:bb:cc:dd:ee:59',
+      isConflict: 1,
+      conflictReason: 'Rogue device (IP not assigned)'
+    });
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.59');
+    expect(row.is_rogue).toBe(0);
+    expect(row.rogue_reason).toBeNull();
   });
 
   it('deletes ephemeral IPs when they do not respond', () => {

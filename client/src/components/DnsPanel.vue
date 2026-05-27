@@ -146,6 +146,13 @@
               <InputText v-model="dnsSearch" placeholder="Search by name, type, value…" size="small" class="search-input" />
             </IconField>
             <Button v-if="dnsSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dnsSearch = ''" />
+            <ColumnChooserButton
+              tableName="DNS"
+              :allColumns="dnsTableColumns"
+              :visibleColumns="visibleDnsColumns"
+              @update:visibleColumns="setVisibleDnsColumns"
+              @reset="resetDnsColumns"
+            />
           </div>
 
           <DataTable :key="'records-' + selectedZone?.type" :value="filteredRecords" :loading="loadingRecords" stripedRows
@@ -153,82 +160,50 @@
                      scrollable scrollHeight="flex"
                      :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
                      removableSort
-                     paginator :rows="100" paginatorPosition="bottom"
+                     paginator :rows="dnsRows" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
+                     @page="onDnsPage"
                      @row-contextmenu="onRecordRightClick"
                      :contextMenu="true">
-            <!-- Reverse: Hostname, IP, arpa Name, Type, TTL -->
-            <Column v-if="isReverse" field="value" header="Hostname" sortable style="width: 16rem">
-              <template #body="{ data }">
-                {{ displayCell(data.value) }}
+            <Column
+              v-for="col in visibleDnsColumns"
+              :key="col.key"
+              :field="col.field"
+              :sortable="col.sortable"
+              :sortField="col.sortField || col.field"
+              :style="col.style"
+            >
+              <template #header>
+                <ColumnHeaderTooltip :column="col" />
               </template>
-            </Column>
-            <Column v-if="isReverse" header="IP Address" sortable :sortField="'_ip_long'" style="width: 10rem">
               <template #body="{ data }">
-                <span v-if="data.value" class="ip-mono">{{ displayCell(ptrRecordIp(data)) }}</span>
-                <span v-else class="cell-muted">—</span>
-              </template>
-            </Column>
-            <Column v-if="isReverse" field="name" header="Name" sortable style="width: 14rem">
-              <template #body="{ data }">
-                <span class="ip-mono cell-muted">{{ data.name }}.{{ selectedZone.name }}</span>
-              </template>
-            </Column>
-            <Column v-if="isReverse" field="type" header="Type" sortable style="width: 6rem">
-              <template #body="{ data }">
-                <span class="type-badge">{{ data.type }}</span>
-              </template>
-            </Column>
-            <!-- Forward: Name, Type, Value, Priority, Port. Using v-if="!isReverse"
-                 (not v-else) so the reverse block above can be a separate group. -->
-            <Column v-if="!isReverse" field="name" header="Hostname" sortable style="width: 12rem">
-              <template #body="{ data }">{{ displayDnsName(data) }}</template>
-            </Column>
-            <Column v-if="!isReverse" field="type" header="Type" sortable style="width: 7rem">
-              <template #body="{ data }">
-                <span class="type-badge">{{ data.type }}</span>
-              </template>
-            </Column>
-            <Column v-if="!isReverse" field="value" header="Value" sortable style="width: 14rem">
-              <template #body="{ data }">
-                <span v-if="data.type === 'A'" class="ip-mono">{{ displayCell(data.value) }}</span>
-                <template v-else>{{ displayCell(data.value) }}</template>
-              </template>
-            </Column>
-            <Column v-if="!isReverse" header="Priority" style="width: 5rem">
-              <template #body="{ data }">{{ data.priority ?? '—' }}</template>
-            </Column>
-            <Column v-if="!isReverse" header="Port" style="width: 4rem">
-              <template #body="{ data }">{{ data.port ?? '—' }}</template>
-            </Column>
-            <!-- TTL for both. Records without an explicit TTL inherit the
-                 zone's SOA minimum TTL (RFC 2308 negative-caching default). -->
-            <Column header="TTL" style="width: 6rem">
-              <template #body="{ data }">
-                <template v-if="data.ttl != null">{{ data.ttl }}</template>
-                <span v-else class="cell-muted">{{ selectedZone?.soa_minimum_ttl ?? '—' }}</span>
-              </template>
-            </Column>
-            <Column header="Enabled" style="width: 5rem">
-              <template #body="{ data }">
-                <span class="status-text" :class="data.enabled ? 'state-ok' : 'state-muted'">
-                  {{ data.enabled ? 'Yes' : 'No' }}
-                </span>
-              </template>
-            </Column>
-            <Column header="Source" style="width: 5rem">
-              <template #body="{ data }">
-                <span v-if="data.source === 'reservation'" class="taxonomy-tag">Reservation</span>
-                <span v-else class="cell-muted">{{ data.source === 'dhcp' ? 'DHCP' : 'Manual' }}</span>
-              </template>
-            </Column>
-            <Column header="Online" sortable field="is_online" style="width: 5rem" v-if="!isReverse">
-              <template #body="{ data }">
-                <span v-if="data.type === 'A' && data.is_online !== null && data.is_online !== undefined"
-                      :class="onlineDisplay(data.is_online).className">
-                  {{ onlineDisplay(data.is_online).label }}
-                </span>
-                <span v-else class="cell-muted">—</span>
+                <template v-if="col.key === 'hostname'">{{ displayDnsName(data) }}</template>
+                <template v-else-if="col.key === 'ptr_hostname'">{{ displayCell(data.value) }}</template>
+                <span v-else-if="col.key === 'ip_address' && data.value" class="ip-mono">{{ displayCell(ptrRecordIp(data)) }}</span>
+                <span v-else-if="col.key === 'ip_address'" class="cell-muted">—</span>
+                <span v-else-if="col.key === 'name'" class="ip-mono cell-muted">{{ data.name }}.{{ selectedZone.name }}</span>
+                <span v-else-if="col.key === 'record_type'" class="type-badge">{{ data.record_type }}</span>
+                <span v-else-if="col.key === 'value' && data.record_type === 'A'" class="ip-mono">{{ displayCell(data.value) }}</span>
+                <template v-else-if="col.key === 'value'">{{ displayCell(data.value) }}</template>
+                <template v-else-if="col.key === 'priority'">{{ data.priority ?? '—' }}</template>
+                <template v-else-if="col.key === 'port'">{{ data.port ?? '—' }}</template>
+                <template v-else-if="col.key === 'ttl'">
+                  <template v-if="data.ttl != null">{{ data.ttl }}</template>
+                  <span v-else class="cell-muted">{{ selectedZone?.soa_minimum_ttl ?? '—' }}</span>
+                </template>
+                <StatusText
+                  v-else-if="col.key === 'enabled'"
+                  :label="data.enabled ? 'Yes' : 'No'"
+                  :className="data.enabled ? 'state-ok' : 'state-muted'"
+                />
+                <AddressTypePill v-else-if="col.key === 'source'" :display="addressTypeForDnsSource(data.dns_source)" />
+                <template v-else-if="col.key === 'online'">
+                  <OnlineStatusCell
+                    v-if="data.record_type === 'A' && data.is_online !== null && data.is_online !== undefined"
+                    :value="data.is_online"
+                  />
+                  <span v-else class="cell-muted">—</span>
+                </template>
               </template>
             </Column>
           </DataTable>
@@ -384,7 +359,7 @@
 
     <!-- Delete Record Dialog -->
     <Dialog v-model:visible="showDeleteRecordDialog" header="Delete Record" modal :style="{ width: '24rem' }" data-track="dialog-dns-delete-record">
-      <p>Delete {{ deletingRecord?.type }} record <strong>{{ deletingRecord?.name }}</strong>?</p>
+      <p>Delete {{ deletingRecord?.record_type }} record <strong>{{ deletingRecord?.name }}</strong>?</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteRecordDialog = false" />
         <Button label="Delete" severity="danger" @click="doDeleteRecord" :loading="savingRecord" />
@@ -418,16 +393,25 @@ import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
-import { apiError, displayCell, displayHostnameCell, displayOnlineStatus } from '../utils/format.js';
+import { apiError, displayCell, displayHostnameCell } from '../utils/format.js';
 import { ipToLong } from '../utils/ip.js';
 import { loadJson } from '../utils/storage.js';
+import { addressTypeForDnsSource } from '../utils/ipLifecycleDisplay.js';
 import EmptyState from './EmptyState.vue';
+import AddressTypePill from './table/AddressTypePill.vue';
+import ColumnChooserButton from './table/ColumnChooserButton.vue';
+import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
+import OnlineStatusCell from './table/OnlineStatusCell.vue';
+import StatusText from './table/StatusText.vue';
+import { useColumnPreferences } from '../composables/useColumnPreferences.js';
+import { useRowsPreference } from '../composables/useRowsPreference.js';
 
 // No props needed — shows all zones globally
 
 const store = useDnsStore();
 const dhcpStore = useDhcpStore();
 const toast = useToast();
+const { rows: dnsRows, onPage: onDnsPage } = useRowsPreference('cidrella_dns_table_rows', 100);
 
 // Find the first DHCP scope whose pool contains `ip`. Returns { scope, cidr }
 // or null. Used to warn when a user points a DNS A record at an IP inside a
@@ -458,6 +442,52 @@ const zoneFilterText = ref('');
 const selectedZone = ref(null);
 const isReverse = computed(() => selectedZone.value?.type === 'reverse');
 
+const dnsForwardColumns = [
+  { key: 'hostname', header: 'Hostname', description: 'DNS record owner name, shown relative to the selected forward zone.', field: 'name', sortable: true, style: 'width: 12rem' },
+  { key: 'record_type', header: 'Record Type', description: 'DNS resource record type, such as A, CNAME, MX, TXT, or SRV.', field: 'record_type', sortable: true, style: 'width: 7rem' },
+  { key: 'value', header: 'Value', description: 'Record target value, such as an IP address, alias target, mail exchanger, or text payload.', field: 'value', sortable: true, style: 'width: 14rem' },
+  { key: 'priority', header: 'Priority', description: 'Priority value used by MX and SRV records.', field: 'priority', sortable: true, style: 'width: 5rem' },
+  { key: 'port', header: 'Port', description: 'Service port used by SRV records.', field: 'port', sortable: true, style: 'width: 4rem' },
+  { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
+  { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
+  { key: 'source', header: 'Type', description: 'How the DNS row was created: static DNS, dynamic DHCP, or reserved DHCP.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
+  { key: 'online', header: 'Online', description: 'Current liveness state for A records with a known IP address.', field: 'is_online', sortable: true, style: 'width: 5rem' },
+];
+
+const dnsReverseColumns = [
+  { key: 'ptr_hostname', header: 'Hostname', description: 'Hostname returned by this PTR record.', field: 'value', sortable: true, style: 'width: 16rem' },
+  { key: 'ip_address', header: 'IP Address', description: 'IPv4 address reconstructed from the PTR record name and selected reverse zone.', field: '_ip_long', sortable: true, sortField: '_ip_long', style: 'width: 10rem' },
+  { key: 'name', header: 'Name', description: 'PTR record owner name inside the selected reverse zone.', field: 'name', sortable: true, style: 'width: 14rem' },
+  { key: 'record_type', header: 'Record Type', description: 'DNS resource record type for the reverse-zone row.', field: 'record_type', sortable: true, style: 'width: 7rem' },
+  { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
+  { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
+  { key: 'source', header: 'Type', description: 'How the DNS row was created: static DNS, dynamic DHCP, or reserved DHCP.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
+];
+
+const {
+  visibleColumns: visibleDnsForwardColumns,
+  setVisibleColumns: setVisibleDnsForwardColumns,
+  resetColumns: resetDnsForwardColumns
+} = useColumnPreferences('cidrella_columns_dns_forward', dnsForwardColumns);
+const {
+  visibleColumns: visibleDnsReverseColumns,
+  setVisibleColumns: setVisibleDnsReverseColumns,
+  resetColumns: resetDnsReverseColumns
+} = useColumnPreferences('cidrella_columns_dns_reverse', dnsReverseColumns);
+
+const dnsTableColumns = computed(() => isReverse.value ? dnsReverseColumns : dnsForwardColumns);
+const visibleDnsColumns = computed(() => isReverse.value ? visibleDnsReverseColumns.value : visibleDnsForwardColumns.value);
+
+function setVisibleDnsColumns(columns) {
+  if (isReverse.value) setVisibleDnsReverseColumns(columns);
+  else setVisibleDnsForwardColumns(columns);
+}
+
+function resetDnsColumns() {
+  if (isReverse.value) resetDnsReverseColumns();
+  else resetDnsForwardColumns();
+}
+
 // Reconstruct the IPv4 address a PTR record points at, by concatenating the
 // record's host label(s) with the zone's arpa prefix and reversing. For zone
 // "0.10.in-addr.arpa" + record name "5.1" → "10.0.1.5".
@@ -474,7 +504,6 @@ function displayDnsName(record) {
   if (record.name === '@') return selectedZone.value?.name || '@';
   return displayHostnameCell(`${record.name}.${selectedZone.value?.name || ''}`, selectedZone.value?.name);
 }
-const onlineDisplay = displayOnlineStatus;
 const records = ref([]);
 const loadingRecords = ref(false);
 const expandedGroups = ref({});
@@ -574,7 +603,7 @@ watch(dnsSearch, (val) => {
   try { localStorage.setItem('cidrella_dns_search', JSON.stringify(val)); } catch {}
 });
 const filteredRecords = computed(() => {
-  let base = records.value.filter(r => r.source !== 'dhcp');
+  let base = [...records.value];
   // For reverse zones, inject a numeric sort key so the IP Address and Name
   // columns can maintain independent sort state. PrimeVue keys per-column
   // sort on `sortField`; if two columns share the same field, they share a
@@ -593,7 +622,7 @@ const filteredRecords = computed(() => {
   if (!q) return base;
   return base.filter(r =>
     (r.name && r.name.toLowerCase().includes(q)) ||
-    (r.type && r.type.toLowerCase().includes(q)) ||
+    (r.record_type && r.record_type.toLowerCase().includes(q)) ||
     (r.value && r.value.toLowerCase().includes(q))
   );
 });
@@ -608,6 +637,7 @@ const selectedRecord = ref(null);
 const recordContextMenuItems = computed(() => {
   const r = selectedRecord.value;
   if (!r) return [];
+  if (r.dns_source === 'dhcp' || r.dns_source === 'reservation') return [];
   return [
     { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
     { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
@@ -736,7 +766,7 @@ function openRecordDialog(record = null) {
   editingRecord.value = record;
   if (record) {
     recordForm.value = {
-      name: record.name, type: record.type, value: record.value,
+      name: record.name, type: record.record_type, value: record.value,
       priority: record.priority, weight: record.weight, port: record.port,
       ttl: record.ttl, enabled: !!record.enabled
     };
@@ -955,6 +985,8 @@ defineExpose({ openZoneDialog });
 .records-panel > :deep(.p-datatable) {
   flex: 1;
   min-height: 0;
+  padding-right: 0.5rem;
+  box-sizing: border-box;
 }
 
 .dns-toolbar {

@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
-import { pruneStaleDhcpHostRows, reconcileDnsOrphans, reconcileDuplicateDhcpMacRows, syncLeasesToIps } from '../../../src/utils/ip-sync.js';
+import {
+  clearDnsFromIp,
+  pruneStaleDhcpHostRows,
+  reconcileDnsOrphans,
+  reconcileDuplicateDhcpMacRows,
+  reconcileUnbackedDhcpLeaseRows,
+  syncDhcpReservationToIp,
+  syncDnsToIp,
+  syncLeasesToIps
+} from '../../../src/utils/ip-sync.js';
 import * as IpAddress from '../../../src/models/ip-address.js';
 
 let db;
@@ -101,6 +110,98 @@ describe('syncLeasesToIps', () => {
 
     expect(IpAddress.findBySubnetAndIp(db, otherSubnetId, '10.0.2.50')).toBeUndefined();
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.50')).toBeTruthy();
+  });
+
+  it('does not overwrite a reservation hostname with a dynamic lease hostname', () => {
+    db.prepare(`
+      INSERT INTO dhcp_reservations (subnet_id, ip_address, mac_address, hostname, enabled)
+      VALUES (?, '10.0.1.80', 'aa:bb:cc:dd:ee:80', 'reserved-name', 1)
+    `).run(subnetId);
+
+    syncDhcpReservationToIp(db, subnetId, '10.0.1.80', {
+      hostname: 'reserved-name',
+      mac_address: 'aa:bb:cc:dd:ee:80'
+    });
+
+    syncLeasesToIps(db, [{
+      subnetId,
+      ip: '10.0.1.80',
+      mac: 'aa:bb:cc:dd:ee:80',
+      hostname: 'lease-name'
+    }]);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.80');
+    expect(row.hostname).toBe('reserved-name');
+    expect(row.status).toBe('dhcp');
+    expect(row.is_online).toBe(1);
+  });
+});
+
+describe('canonical hostname sync', () => {
+  it('does not let a static DNS A record overwrite an active DHCP lease hostname', () => {
+    db.prepare(`
+      INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id)
+      VALUES ('10.0.1.90', 'aa:bb:cc:dd:ee:90', 'lease-name', NULL, datetime('now', '+1 hour'), ?)
+    `).run(subnetId);
+    syncLeasesToIps(db, [{
+      subnetId,
+      ip: '10.0.1.90',
+      mac: 'aa:bb:cc:dd:ee:90',
+      hostname: 'lease-name'
+    }]);
+
+    db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
+    syncDnsToIp(db, 'static-name', '10.0.1.90', 'example.test');
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.90');
+    expect(row.hostname).toBe('lease-name');
+  });
+
+  it('falls back to the static DNS hostname when a reservation hostname is cleared', () => {
+    const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'static-name', 'A', '10.0.1.91', 'manual', 1)
+    `).run(zone.lastInsertRowid);
+
+    db.prepare(`
+      INSERT INTO dhcp_reservations (subnet_id, ip_address, mac_address, hostname, enabled)
+      VALUES (?, '10.0.1.91', 'aa:bb:cc:dd:ee:91', 'reserved-name', 1)
+    `).run(subnetId);
+    syncDhcpReservationToIp(db, subnetId, '10.0.1.91', {
+      hostname: 'reserved-name',
+      mac_address: 'aa:bb:cc:dd:ee:91'
+    });
+
+    db.prepare("UPDATE dhcp_reservations SET hostname = NULL WHERE subnet_id = ? AND ip_address = '10.0.1.91'")
+      .run(subnetId);
+    syncDhcpReservationToIp(db, subnetId, '10.0.1.91', {
+      hostname: null,
+      mac_address: 'aa:bb:cc:dd:ee:91'
+    });
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.91');
+    expect(row.hostname).toBe('static-name.example.test');
+    expect(row.status).toBe('dhcp');
+  });
+
+  it('falls back to another canonical source when a DNS hostname is removed', () => {
+    const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'static-name', 'A', '10.0.1.92', 'manual', 1)
+    `).run(zone.lastInsertRowid);
+    syncDnsToIp(db, 'static-name', '10.0.1.92', 'example.test');
+
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'next-name', 'A', '10.0.1.92', 'manual', 1)
+    `).run(zone.lastInsertRowid);
+    db.prepare("DELETE FROM dns_records WHERE zone_id = ? AND name = 'static-name'").run(zone.lastInsertRowid);
+    clearDnsFromIp(db, 'static-name', '10.0.1.92', 'example.test');
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.92');
+    expect(row.hostname).toBe('next-name.example.test');
   });
 });
 
@@ -227,6 +328,58 @@ describe('pruneStaleDhcpHostRows', () => {
 
     expect(pruneStaleDhcpHostRows(db)).toBe(0);
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.73')).toBeTruthy();
+  });
+
+  it('removes stale DHCP lease history even if the imported row says online', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.74', {
+      hostname: 'imported-phone',
+      mac_address: '00:24:e4:ee:96:20',
+      status: 'dhcp',
+      is_online: 1,
+      detection_source: 'dhcp_lease'
+    });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.74'")
+      .run(subnetId);
+
+    expect(pruneStaleDhcpHostRows(db)).toBe(1);
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.74')).toBeUndefined();
+  });
+});
+
+describe('reconcileUnbackedDhcpLeaseRows', () => {
+  it('turns DHCP lease rows without active backing into available history', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.75', {
+      hostname: 'restored-lease',
+      mac_address: '00:24:e4:ee:96:21',
+      status: 'dhcp',
+      is_online: 1,
+      detection_source: 'dhcp_lease'
+    });
+
+    expect(reconcileUnbackedDhcpLeaseRows(db)).toBe(1);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.75');
+    expect(row.status).toBe('available');
+    expect(row.is_online).toBe(0);
+    expect(row.hostname).toBe('restored-lease');
+    expect(row.mac_address).toBe('00:24:e4:ee:96:21');
+  });
+
+  it('keeps DHCP lease rows with active lease backing assigned', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.76', {
+      hostname: 'active-lease',
+      mac_address: '00:24:e4:ee:96:22',
+      status: 'dhcp',
+      is_online: 1,
+      detection_source: 'dhcp_lease'
+    });
+    db.prepare(`
+      INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id)
+      VALUES ('10.0.1.76', '00:24:e4:ee:96:22', 'active-lease', NULL, datetime('now', '+1 hour'), ?)
+    `).run(subnetId);
+
+    expect(reconcileUnbackedDhcpLeaseRows(db)).toBe(0);
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.76').status).toBe('dhcp');
   });
 });
 

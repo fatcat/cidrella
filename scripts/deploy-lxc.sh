@@ -8,16 +8,15 @@ set -euo pipefail
 # Usage:
 #   ./scripts/deploy-lxc.sh              # full deploy
 #   ./scripts/deploy-lxc.sh --skip-build # skip client build (server-only changes)
-#   ./scripts/deploy-lxc.sh --host 10.0.3.100  # override target host
+#   ./scripts/deploy-lxc.sh --host cidrella-test.example.com  # override target host
 # ═══════════════════════════════════════════════════════════
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-LXC_HOST="10.0.3.250"
+LXC_HOST="testerella.the-mcnultys.org"
 LXC_USER="root"
 INSTALL_DIR="/opt/cidrella"
-DATA_DIR="/var/lib/cidrella"
 SKIP_BUILD=false
 
 # ─── Colors ───────────────────────────────────────────────
@@ -92,9 +91,11 @@ rsync -az --delete \
   --exclude='node_modules' \
   "$PROJECT_DIR/server/" "${SSH_TARGET}:${INSTALL_DIR}/server/"
 
-# Built client
+# Client source, manifest, and built output. Preserve remote node_modules so
+# local deploys do not force a client dependency reinstall.
 rsync -az --delete \
-  "$PROJECT_DIR/client/dist/" "${SSH_TARGET}:${INSTALL_DIR}/client/dist/"
+  --exclude='node_modules' \
+  "$PROJECT_DIR/client/" "${SSH_TARGET}:${INSTALL_DIR}/client/"
 
 # dnsmasq config templates
 rsync -az --delete \
@@ -104,8 +105,10 @@ rsync -az --delete \
 rsync -az --delete \
   "$PROJECT_DIR/scripts/" "${SSH_TARGET}:${INSTALL_DIR}/scripts/"
 
-# Root package.json (version source)
+# Root files used by the deployed app and maintenance commands.
 rsync -az "$PROJECT_DIR/package.json" "${SSH_TARGET}:${INSTALL_DIR}/package.json"
+rsync -az "$PROJECT_DIR/update.sh" "${SSH_TARGET}:${INSTALL_DIR}/update.sh"
+ssh "$SSH_TARGET" "chmod 0755 ${INSTALL_DIR}/update.sh"
 
 ok "Files synced."
 
@@ -119,7 +122,7 @@ ssh "$SSH_TARGET" "
   if ! host -W 2 registry.npmjs.org >/dev/null 2>&1; then
     echo 'nameserver 9.9.9.9' > /etc/resolv.conf
   fi
-  cd ${INSTALL_DIR}/server && npm install --omit=dev --no-audit --no-fund 2>&1 | tail -3
+  cd ${INSTALL_DIR}/server && PATH=${INSTALL_DIR}/runtime/node/bin:\$PATH npm install --omit=dev --no-audit --no-fund 2>&1 | tail -3
 "
 ok "Dependencies installed."
 
@@ -139,8 +142,8 @@ ok "Python dependencies installed."
 # FIX PERMISSIONS
 # ═══════════════════════════════════════════════════════════
 
-info "Fixing permissions..."
-ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${INSTALL_DIR} ${DATA_DIR}"
+info "Fixing code permissions..."
+ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${INSTALL_DIR}"
 ok "Permissions set."
 
 # Native/LXC systemd deployments use cidrella.service AmbientCapabilities.
@@ -186,6 +189,23 @@ ssh "$SSH_TARGET" "
   fi
 "
 
+# Update stable command wrappers. These resolve through /opt/cidrella and do
+# not point at a concrete A/B slot.
+ssh "$SSH_TARGET" "
+  if [ -f ${INSTALL_DIR}/scripts/cidrella-node ]; then
+    install -m 0755 ${INSTALL_DIR}/scripts/cidrella-node /usr/local/bin/cidrella-node
+  fi
+  if [ -f ${INSTALL_DIR}/scripts/cidrella-npm ]; then
+    install -m 0755 ${INSTALL_DIR}/scripts/cidrella-npm /usr/local/bin/cidrella-npm
+  fi
+  if [ -f ${INSTALL_DIR}/scripts/cidrella-dnsmasq-hup ]; then
+    install -m 0755 -o root -g root ${INSTALL_DIR}/scripts/cidrella-dnsmasq-hup /usr/local/bin/cidrella-dnsmasq-hup
+  fi
+  if [ -f ${INSTALL_DIR}/scripts/cidrella-reset-password ]; then
+    install -m 0700 -o root -g root ${INSTALL_DIR}/scripts/cidrella-reset-password /usr/local/bin/cidrella-reset-password
+  fi
+"
+
 # ═══════════════════════════════════════════════════════════
 # START SERVICES
 # ═══════════════════════════════════════════════════════════
@@ -225,7 +245,7 @@ fi
 # SUMMARY
 # ═══════════════════════════════════════════════════════════
 
-VERSION=$(ssh "$SSH_TARGET" "node -e \"console.log(require('${INSTALL_DIR}/package.json').version)\"" 2>/dev/null || echo "unknown")
+VERSION=$(ssh "$SSH_TARGET" "PATH=${INSTALL_DIR}/runtime/node/bin:\$PATH node -e \"console.log(require('${INSTALL_DIR}/package.json').version)\"" 2>/dev/null || echo "unknown")
 
 echo ""
 echo -e "${BOLD}═══════════════════════════════════════════${NC}"

@@ -95,6 +95,80 @@ function fqdnFor(name, zoneName) {
   return `${normalized}.${zoneName}`;
 }
 
+function hostnameMatches(candidate, proposed, domainName) {
+  const c = normalizeDnsName(candidate);
+  const p = normalizeDnsName(proposed);
+  const d = normalizeDnsName(domainName);
+  if (!c || !p) return false;
+  if (c === p) return true;
+  if (d && !c.includes('.') && `${c}.${d}` === p) return true;
+  if (d && !p.includes('.') && `${p}.${d}` === c) return true;
+  return false;
+}
+
+function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecordId = null) {
+  const proposed = fqdnFor(recordName, zoneName);
+
+  const reservation = db.prepare(`
+    SELECT r.hostname, s.domain_name
+    FROM dhcp_reservations r
+    JOIN subnets s ON s.id = r.subnet_id
+    WHERE r.ip_address = ?
+      AND r.enabled = 1
+      AND r.hostname IS NOT NULL
+      AND trim(r.hostname) != ''
+    ORDER BY s.prefix_length DESC, r.id DESC
+    LIMIT 1
+  `).get(ip);
+  if (reservation?.hostname && !hostnameMatches(reservation.hostname, proposed, reservation.domain_name)) {
+    return { hostname: reservation.hostname, source: 'reserved DHCP' };
+  }
+
+  const lease = db.prepare(`
+    SELECT l.hostname, s.domain_name
+    FROM dhcp_leases l
+    JOIN subnets s ON s.id = l.subnet_id
+    WHERE l.ip_address = ?
+      AND l.hostname IS NOT NULL
+      AND trim(l.hostname) != ''
+      AND (l.expires_at = 'infinite' OR datetime(l.expires_at) > datetime('now'))
+    ORDER BY
+      s.prefix_length DESC,
+      CASE WHEN l.expires_at = 'infinite' THEN 1 ELSE 0 END DESC,
+      datetime(l.expires_at) DESC,
+      l.id DESC
+    LIMIT 1
+  `).get(ip);
+  if (lease?.hostname && !hostnameMatches(lease.hostname, proposed, lease.domain_name)) {
+    return { hostname: lease.hostname, source: 'dynamic DHCP' };
+  }
+
+  const excludeClause = excludeRecordId ? 'AND r.id != ?' : '';
+  const params = excludeRecordId ? [ip, excludeRecordId] : [ip];
+  const existingRecords = db.prepare(`
+    SELECT r.name, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE r.type = 'A'
+      AND r.enabled = 1
+      AND z.enabled = 1
+      AND z.type = 'forward'
+      AND r.value = ?
+      AND COALESCE(r.source, 'manual') = 'manual'
+      ${excludeClause}
+    ORDER BY lower(z.name), lower(r.name), r.id
+  `).all(...params);
+
+  for (const record of existingRecords) {
+    const hostname = fqdnFor(record.name, record.zone_name);
+    if (!hostnameMatches(hostname, proposed, null)) {
+      return { hostname, source: 'static DNS' };
+    }
+  }
+
+  return null;
+}
+
 function cnameTargetError(db, target, zone) {
   const normalized = normalizeDnsName(target);
   const zoneName = normalizeDnsName(zone.name);
@@ -287,7 +361,7 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
-    SELECT r.*, ip.is_online
+    SELECT r.*, r.type AS record_type, r.source AS dns_source, ip.is_online
     FROM dns_records r
     LEFT JOIN ip_addresses ip ON r.type = 'A' AND ip.ip_address = r.value
     WHERE r.zone_id = ?
@@ -435,7 +509,7 @@ router.get('/zones/:zoneId/records', requirePerm('dns:read'), (req, res) => {
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
-    SELECT r.*, ip.is_online
+    SELECT r.*, r.type AS record_type, r.source AS dns_source, ip.is_online
     FROM dns_records r
     LEFT JOIN ip_addresses ip ON r.type = 'A' AND ip.ip_address = r.value
     WHERE r.zone_id = ?
@@ -491,6 +565,15 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     name: normalizedName, value: normalizedValue, priority, weight, port
   }, zone.name, db, zone);
   if (validationError) return res.status(400).json({ error: validationError });
+
+  if (type === 'A' && zone.type === 'forward') {
+    const conflict = findAHostnameConflict(db, normalizedValue, normalizedName, zone.name);
+    if (conflict) {
+      return res.status(409).json({
+        error: `IP already has hostname "${conflict.hostname}" from ${conflict.source}; create a CNAME pointing at that hostname instead`
+      });
+    }
+  }
 
   // Check for duplicate A records
   if (type === 'A') {
@@ -563,7 +646,7 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ? AND zone_id = ?').get(req.params.id, zone.id);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  if (record.source === 'dhcp') {
+  if (record.source === 'dhcp' || record.source === 'reservation') {
     return res.status(403).json({ error: 'DHCP-managed records cannot be edited manually' });
   }
 
@@ -602,6 +685,15 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     priority: newPriority, weight: newWeight, port: newPort
   }, zone.name, db, zone);
   if (validationError) return res.status(400).json({ error: validationError });
+
+  if (newType === 'A' && zone.type === 'forward') {
+    const conflict = findAHostnameConflict(db, newValue, newName, zone.name, record.id);
+    if (conflict) {
+      return res.status(409).json({
+        error: `IP already has hostname "${conflict.hostname}" from ${conflict.source}; create a CNAME pointing at that hostname instead`
+      });
+    }
+  }
 
   if (newType === 'CNAME') {
     const dup = db.prepare(
@@ -661,7 +753,7 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ? AND zone_id = ?').get(req.params.id, req.params.zoneId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  if (record.source === 'dhcp') {
+  if (record.source === 'dhcp' || record.source === 'reservation') {
     return res.status(403).json({ error: 'DHCP-managed records cannot be deleted manually' });
   }
 

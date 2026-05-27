@@ -13,6 +13,7 @@ const INTERVAL_MS = {
 };
 
 let timer = null;
+const SCHEDULER_TICK_MS = 60 * 1000;
 
 function intervalToMs(value) {
   if (value === null || value === undefined) return null;
@@ -92,7 +93,7 @@ function checkScheduledScans() {
 export function startScanScheduler() {
   if (timer) return;
   // Check every 60 seconds
-  timer = setInterval(checkScheduledScans, 60 * 1000);
+  timer = setInterval(checkScheduledScans, SCHEDULER_TICK_MS);
   checkScheduledScans();
   console.log('Scan scheduler started');
 }
@@ -118,19 +119,38 @@ export function getNextScanTime() {
   for (const subnet of subnets) {
     const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
+    let nextTime;
+
+    const activeScan = db.prepare(`
+      SELECT created_at, started_at FROM network_scans
+      WHERE subnet_id = ? AND status IN ('pending', 'running')
+      ORDER BY created_at DESC LIMIT 1
+    `).get(subnet.id);
+
+    if (activeScan) {
+      const base = activeScan.started_at || activeScan.created_at;
+      if (base) {
+        nextTime = new Date(base + 'Z').getTime() + intervalMs;
+      } else {
+        nextTime = Date.now() + intervalMs;
+      }
+      if (nextTime <= Date.now()) nextTime = Date.now() + SCHEDULER_TICK_MS;
+      if (earliest === null || nextTime < earliest) earliest = nextTime;
+      continue;
+    }
 
     const lastScan = db.prepare(`
       SELECT completed_at FROM network_scans WHERE subnet_id = ? AND status = 'completed'
       ORDER BY completed_at DESC LIMIT 1
     `).get(subnet.id);
 
-    let nextTime;
     if (lastScan) {
       nextTime = new Date(lastScan.completed_at + 'Z').getTime() + intervalMs;
     } else {
-      // No completed scan yet — next check cycle will trigger it
-      nextTime = Date.now();
+      // No completed scan yet — next scheduler check can trigger it.
+      nextTime = Date.now() + SCHEDULER_TICK_MS;
     }
+    if (nextTime <= Date.now()) nextTime = Date.now() + SCHEDULER_TICK_MS;
 
     if (earliest === null || nextTime < earliest) {
       earliest = nextTime;

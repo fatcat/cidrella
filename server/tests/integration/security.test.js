@@ -316,22 +316,24 @@ describe('C2/H2 — DNS record config injection', () => {
 // -----------------------------------------------------------------------------
 
 describe('M9 — PTR cross-zone conflict refuses silent overwrite', () => {
-  let zoneA;
   let zoneB;
+  let reverseZone;
 
   beforeAll(async () => {
     // A fresh reverse zone for this test's IP range so prior tests don't interfere.
-    await request(app).post('/api/dns/zones').send({ name: '77.66.10.in-addr.arpa', type: 'reverse' });
-    const a = await request(app).post('/api/dns/zones').send({ name: 'alpha.example', type: 'forward' });
-    zoneA = a.body;
+    const reverse = await request(app).post('/api/dns/zones').send({ name: '77.66.10.in-addr.arpa', type: 'reverse' });
+    reverseZone = reverse.body;
+    await request(app).post('/api/dns/zones').send({ name: 'alpha.example', type: 'forward' });
     const b = await request(app).post('/api/dns/zones').send({ name: 'beta.example', type: 'forward' });
     zoneB = b.body;
 
-    // Create the first A record (populates PTR in reverse zone).
-    const first = await request(app).post(`/api/dns/zones/${zoneA.id}/records`).send({
-      name: 'host1', type: 'A', value: '10.66.77.50'
+    // Seed a pre-existing PTR pointing at another forward zone. Duplicate A
+    // hostnames for one IP are now rejected before PTR sync, so this keeps
+    // the PTR hijack guard covered without relying on a second A record.
+    const ptr = await request(app).post(`/api/dns/zones/${reverseZone.id}/records`).send({
+      name: '50', type: 'PTR', value: 'host1.alpha.example'
     });
-    expect(first.status).toBe(201);
+    expect(ptr.status).toBe(201);
   });
 
   it('409 when a second forward zone tries to rewrite the PTR', async () => {

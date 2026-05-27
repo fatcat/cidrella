@@ -554,6 +554,14 @@ if [ -f "$INSTALL_DIR/scripts/cidrella-node" ]; then
   ok "Installed /usr/local/bin/cidrella-node wrapper"
 fi
 
+# Install cidrella-npm wrapper for admin/build commands that need npm from
+# the active bundled runtime. It resolves through /opt/cidrella, not a
+# concrete A/B slot, so slot switches do not leave stale PATH guidance behind.
+if [ -f "$INSTALL_DIR/scripts/cidrella-npm" ]; then
+  install -m 0755 "$INSTALL_DIR/scripts/cidrella-npm" /usr/local/bin/cidrella-npm
+  ok "Installed /usr/local/bin/cidrella-npm wrapper"
+fi
+
 # Install cidrella-dnsmasq-hup wrapper (v0.4.6+). The wrapper replaces the
 # previous overly-broad `kill -HUP [0-9]*` sudoers rule with a narrow, audited
 # path that only signals dnsmasq. Sudoers only permits this exact binary.

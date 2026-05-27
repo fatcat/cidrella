@@ -133,7 +133,7 @@ router.post('/probe', requirePerm('subnets:read'), async (req, res) => {
       ip,
       responded: !!sr.responded,
       mac: sr.mac_address,
-      method: scanResult?.method || 'unknown',
+      method: scanResult?.results?.[ip] || scanResult?.method || 'unknown',
       is_conflict: !!sr.is_conflict,
       conflict_reason: sr.conflict_reason
     });

@@ -379,14 +379,14 @@ export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
  */
 export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, conflictReason }) {
   const existing = db.prepare(
-    'SELECT id, is_online, is_rogue, status, hostname, scan_enabled, subnet_id, ip_address FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_online, is_rogue, status, hostname, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
   // Re-check: if scanner says conflict but the IP now has a static assignment
   // (reservation/DNS added after the assignment map was built), don't mark rogue
   let effectiveConflict = isConflict;
   let effectiveReason = conflictReason;
-  if (isConflict && existing && existing.status !== 'available') {
+  if (isConflict && existing && (existing.status === 'assigned' || existing.status === 'locked' || existing.detection_source === 'dns')) {
     effectiveConflict = 0;
     effectiveReason = null;
   } else if (isConflict) {
@@ -396,6 +396,35 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     if (hasReservation) {
       effectiveConflict = 0;
       effectiveReason = null;
+    } else {
+      const hasActiveLease = db.prepare(`
+        SELECT 1 FROM dhcp_leases
+        WHERE subnet_id = ?
+          AND ip_address = ?
+          AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+        LIMIT 1
+      `).get(subnetId, ip);
+      if (hasActiveLease) {
+        effectiveConflict = 0;
+        effectiveReason = null;
+      } else {
+        const hasStaticDns = db.prepare(`
+          SELECT 1
+          FROM dns_records r
+          JOIN dns_zones z ON z.id = r.zone_id
+          WHERE r.type = 'A'
+            AND r.enabled = 1
+            AND z.enabled = 1
+            AND z.type = 'forward'
+            AND r.value = ?
+            AND COALESCE(r.source, 'manual') = 'manual'
+          LIMIT 1
+        `).get(ip);
+        if (hasStaticDns) {
+          effectiveConflict = 0;
+          effectiveReason = null;
+        }
+      }
     }
   }
 

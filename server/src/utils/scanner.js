@@ -1,14 +1,14 @@
 import { execFile } from 'child_process';
 import { readFile } from 'fs/promises';
-import os from 'os';
 import ping from 'net-ping';
-import { parseCidr, longToIp, isIpInSubnet } from './ip.js';
+import { parseCidr, longToIp } from './ip.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
 import * as IpAddress from '../models/ip-address.js';
 
 /**
- * Run arping on a single IP (Layer 2 — local subnets only).
+ * Run arping on a single IP. It only responds for directly-reachable peers;
+ * off-link targets fall through to ICMP.
  * Returns { responded, mac } or { responded: false, mac: null }.
  */
 function arpingIp(ip) {
@@ -41,10 +41,39 @@ function createPingSession() {
 
 function pingIp(session, ip) {
   return new Promise((resolve) => {
+    if (!session) {
+      resolve({ responded: false, mac: null });
+      return;
+    }
     session.pingHost(ip, (error) => {
       resolve({ responded: !error, mac: null });
     });
   });
+}
+
+function fqdnForRecordName(recordName, zoneName) {
+  const raw = String(recordName || '').trim().toLowerCase();
+  const normalized = raw.replace(/\.$/, '');
+  const zone = String(zoneName || '').trim().replace(/\.$/, '').toLowerCase();
+  if (normalized === '@' || normalized === zone) return zone;
+  if (normalized.endsWith(`.${zone}`)) return normalized;
+  if (normalized.includes('.')) return raw.endsWith('.') ? raw : normalized;
+  return `${normalized}.${zone}`;
+}
+
+/**
+ * Probe an IP with ARP first, then ICMP if ARP gets no response.
+ * This is intentionally a single logical probe for lifecycle purposes:
+ * callers insert one scan_results row and emit one "scanned" event per IP.
+ * ARP is cheap and captures MAC addresses on directly-connected networks;
+ * ICMP is the fallback for hosts that do not answer ARP or are off-link.
+ */
+async function probeIp(icmpSession, ip) {
+  const arp = await arpingIp(ip);
+  if (arp.responded) return { ...arp, method: 'arp' };
+
+  const icmp = await pingIp(icmpSession, ip);
+  return { ...icmp, method: 'icmp' };
 }
 
 /**
@@ -64,21 +93,6 @@ async function readArpCache() {
     }
   } catch { /* /proc/net/arp may not exist on non-Linux */ }
   return arpMap;
-}
-
-/**
- * Check if a subnet is directly connected to one of the host's interfaces.
- */
-function isLocalSubnet(cidr) {
-  const ifaces = os.networkInterfaces();
-  for (const name of Object.keys(ifaces)) {
-    for (const iface of ifaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        if (isIpInSubnet(iface.address, cidr)) return true;
-      }
-    }
-  }
-  return false;
 }
 
 /**
@@ -107,15 +121,15 @@ export function resumeInterruptedScans(db) {
 
 /**
  * Start an async network scan for a subnet.
- * Uses arping (Layer 2) for local subnets, net-ping ICMP (Layer 3) for remote.
- * After ICMP scanning, reads the OS ARP cache to capture MAC addresses.
+ * Uses arping first, then net-ping ICMP when ARP gets no response.
+ * Reads the OS ARP cache to capture MAC addresses learned during probes.
  * Resumes from where it left off if scan_results already exist for some IPs.
  * Updates the database with progress and results as it goes.
  *
  * @param {Object} [options]
  * @param {string[]} [options.targetIps] — scan only these IPs (bypasses scan_enabled checks)
  * @param {boolean} [options.updateModel=true] — update ip_addresses model after scan
- * @returns {Promise<{ method: 'arp'|'icmp' }>}
+ * @returns {Promise<{ method: 'arp+icmp', results?: Object }>}
  */
 export async function startScan(db, scanId, subnetId, options = {}) {
   const { targetIps = null, updateModel = true } = options;
@@ -126,25 +140,16 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     return;
   }
 
-  // Resolve scan method based on network locality
-  const local = isLocalSubnet(subnet.cidr);
   let icmpSession = null;
-  let probeFn;
+  const probeMethods = new Map();
 
-  if (local) {
-    probeFn = (ip) => arpingIp(ip);
-  } else {
-    try {
-      icmpSession = createPingSession();
-    } catch (err) {
-      db.prepare("UPDATE network_scans SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?")
-        .run(`Failed to create ICMP session: ${err.message}`, scanId);
-      return;
-    }
-    probeFn = (ip) => pingIp(icmpSession, ip);
+  try {
+    icmpSession = createPingSession();
+  } catch (err) {
+    console.warn(`[scanner] ICMP fallback unavailable for ${subnet.cidr}: ${err.message}`);
   }
 
-  console.log(`[scanner] Subnet ${subnet.cidr} — using ${local ? 'ARP (arping)' : 'ICMP (net-ping)'} probes`);
+  console.log(`[scanner] Subnet ${subnet.cidr} — using ARP probes with ICMP fallback`);
 
   // Resolve subnet-level scan default from inheritance chain (subnet → global setting)
   let subnetDefault = true;
@@ -204,9 +209,23 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   // Get existing IP assignments for conflict detection
   const assignments = db.prepare(`
     SELECT ip_address, mac_address, hostname, status FROM ip_addresses
-    WHERE subnet_id = ? AND status != 'available'
+    WHERE subnet_id = ? AND status IN ('assigned', 'locked')
   `).all(subnetId);
   const assignmentMap = new Map(assignments.map(a => [a.ip_address, a]));
+
+  // Active DHCP leases are assigned. Historic ip_addresses rows with
+  // status='dhcp' are not enough; restored lease history may have no active
+  // lease on this instance.
+  const activeLeases = db.prepare(`
+    SELECT ip_address, mac_address, hostname FROM dhcp_leases
+    WHERE subnet_id = ?
+      AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+  `).all(subnetId);
+  for (const l of activeLeases) {
+    if (!assignmentMap.has(l.ip_address)) {
+      assignmentMap.set(l.ip_address, { ip_address: l.ip_address, mac_address: l.mac_address, hostname: l.hostname, status: 'dhcp' });
+    }
+  }
 
   // Also include DHCP reservations — an IP with a reservation is not rogue
   // (covers cases where ip_addresses wasn't synced yet)
@@ -220,14 +239,28 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     }
   }
 
-  // Also include IPs with hostnames (set by DNS sync) — not rogue
+  // Also include DNS-owned A records — not rogue. Do not trust stale
+  // ip_addresses.hostname alone; restored DHCP lease history can retain a
+  // hostname after the active lease is gone.
+  const ipsToScanSet = new Set(ipsToScan);
   const dnsAssigned = db.prepare(`
-    SELECT ip_address, mac_address, hostname, status FROM ip_addresses
-    WHERE subnet_id = ? AND hostname IS NOT NULL AND hostname != ''
-  `).all(subnetId);
+    SELECT r.value AS ip_address, r.name, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE r.type = 'A'
+      AND r.enabled = 1
+      AND z.enabled = 1
+      AND z.type = 'forward'
+      AND COALESCE(r.source, 'manual') = 'manual'
+  `).all().filter(r => ipsToScanSet.has(r.ip_address));
   for (const d of dnsAssigned) {
     if (!assignmentMap.has(d.ip_address)) {
-      assignmentMap.set(d.ip_address, d);
+      assignmentMap.set(d.ip_address, {
+        ip_address: d.ip_address,
+        mac_address: null,
+        hostname: fqdnForRecordName(d.name, d.zone_name),
+        status: 'assigned'
+      });
     }
   }
 
@@ -254,7 +287,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           }
         }
 
-        promises.push(probeFn(ip).then(result => ({ ip, ...result })));
+        promises.push(probeIp(icmpSession, ip).then(result => ({ ip, ...result })));
       }
 
       if (promises.length === 0) continue;
@@ -291,6 +324,8 @@ export async function startScan(db, scanId, subnetId, options = {}) {
         }
 
         if (isConflict) conflictsFound++;
+
+        probeMethods.set(result.ip, result.method);
 
         insertResult.run(
           scanId, result.ip, result.mac,
@@ -347,5 +382,5 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     }
   }
 
-  return { method: local ? 'arp' : 'icmp' };
+  return { method: 'arp+icmp', results: Object.fromEntries(probeMethods) };
 }

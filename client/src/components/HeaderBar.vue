@@ -54,8 +54,7 @@
         </div>
       </div>
 
-      <div class="dash-card" :class="activeScans.length ? 'card-ok' : ''" data-track="header-card-scan"
-           :title="!activeScans.length && nextScanFormatted !== '--' ? `Next scan ${nextScanFormatted}` : null">
+      <div class="dash-card scan-card" :class="activeScans.length ? 'scan-card-active' : 'scan-card-idle'" data-track="header-card-scan">
         <span class="card-dot" :class="activeScans.length ? 'dot-up' : 'dot-ok'"></span>
         <div class="card-body">
           <span class="card-value">{{ scanDisplay }}</span>
@@ -88,7 +87,7 @@
           <span class="hcp-label">{{ scanLabel }}</span>
           <span class="hcp-val">{{ scanDisplay }}</span>
         </div>
-        <div v-if="!activeScans.length && nextScanFormatted !== '--'" class="hcp-footer">Next scan {{ nextScanFormatted }}</div>
+        <div class="hcp-footer">next scan {{ nextScanTimeOnly }}</div>
       </div>
     </Popover>
 
@@ -138,7 +137,7 @@ import Popover from 'primevue/popover';
 import Select from 'primevue/select';
 import { useAuthStore } from '../stores/auth.js';
 import { useSubnetStore } from '../stores/subnets.js';
-import { formatScanDate } from '../utils/dateFormat.js';
+import { formatTimeOnly } from '../utils/dateFormat.js';
 import PiholeImport from './PiholeImport.vue';
 import api from '../api/client.js';
 
@@ -249,25 +248,23 @@ const diskStatusClass = computed(() => {
 
 const scanDisplay = computed(() => {
   const scans = activeScans.value;
-  if (!scans.length) return 'Scanner Idle';
+  if (!scans.length) return 'scanner idle';
 
   const running = scans.filter(s => s.status === 'running');
-  if (!running.length) return 'Pending';
+  if (!running.length) return 'Scanner Active';
 
   const totalIps = running.reduce((sum, s) => sum + (s.total_ips || 0), 0);
   const scannedIps = running.reduce((sum, s) => sum + (s.scanned_ips || 0), 0);
-  if (totalIps > 0) return `${Math.round((scannedIps / totalIps) * 100)}%`;
-  return 'Running';
+  if (totalIps > 0) return `Scanner Active: ${Math.round((scannedIps / totalIps) * 100)}%`;
+  return 'Scanner Active';
 });
 
 const scanLabel = computed(() => {
-  const n = activeScans.value.length;
-  if (!n) return 'Next Scan';
-  return n === 1 ? 'Scanning 1 network' : `Scanning ${n} networks`;
+  return `next scan ${nextScanTimeOnly.value}`;
 });
 
-const nextScanFormatted = computed(() => {
-  return formatScanDate(nextScanTime.value) || '--';
+const nextScanTimeOnly = computed(() => {
+  return formatTimeOnly(nextScanTime.value);
 });
 
 async function fetchActiveScan() {
@@ -282,6 +279,7 @@ async function fetchActiveScan() {
     } else if (!active.length && scanPollInterval) {
       clearInterval(scanPollInterval);
       scanPollInterval = null;
+      fetchNextScan();
     }
   } catch { /* ignore */ }
 }
@@ -291,6 +289,11 @@ async function fetchNextScan() {
     const res = await api.get('/scans/next');
     nextScanTime.value = res.data.next_scan_at || null;
   } catch { /* ignore */ }
+}
+
+function refreshScanHeader() {
+  fetchActiveScan();
+  fetchNextScan();
 }
 
 async function fetchHealth() {
@@ -316,20 +319,19 @@ async function fetchUpdateInfo() {
 
 onMounted(() => {
   fetchHealth();
-  fetchActiveScan();
-  fetchNextScan();
+  refreshScanHeader();
   fetchUpdateInfo();
   fetchAnomalySummary();
-  pollInterval = setInterval(() => { fetchHealth(); fetchActiveScan(); fetchNextScan(); fetchAnomalySummary(); }, 60000);
+  pollInterval = setInterval(() => { fetchHealth(); refreshScanHeader(); fetchAnomalySummary(); }, 60000);
   window.addEventListener('ipam:stats-changed', fetchHealth);
-  window.addEventListener('ipam:scan-started', fetchActiveScan);
+  window.addEventListener('ipam:scan-started', refreshScanHeader);
 });
 
 onUnmounted(() => {
   if (pollInterval) clearInterval(pollInterval);
   if (scanPollInterval) clearInterval(scanPollInterval);
   window.removeEventListener('ipam:stats-changed', fetchHealth);
-  window.removeEventListener('ipam:scan-started', fetchActiveScan);
+  window.removeEventListener('ipam:scan-started', refreshScanHeader);
 });
 </script>
 
@@ -470,6 +472,15 @@ onUnmounted(() => {
 .dash-card.card-err { border-left: 3px solid var(--p-red-500); }
 .card-ok .card-value { color: var(--p-primary-color); font-weight: 700; }
 .card-err .card-value { color: var(--p-red-500); font-weight: 700; }
+.scan-card-active {
+  border-left: 3px solid var(--p-green-500);
+}
+.scan-card-active .card-value {
+  color: var(--p-green-600);
+}
+.scan-card-idle .card-value {
+  color: var(--p-text-muted-color);
+}
 
 .header-right {
   display: flex;

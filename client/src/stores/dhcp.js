@@ -6,6 +6,7 @@ export const useDhcpStore = defineStore('dhcp', () => {
   const scopes = ref([]);
   const reservations = ref([]);
   const leases = ref([]);
+  const scopeAddresses = ref([]);
   const loading = ref(false);
 
   async function fetchScopes() {
@@ -73,6 +74,16 @@ export const useDhcpStore = defineStore('dhcp', () => {
     return res.data;
   }
 
+  async function fetchScopeAddresses(scopeId) {
+    if (!scopeId) {
+      scopeAddresses.value = [];
+      return [];
+    }
+    const res = await api.get(`/dhcp/scopes/${scopeId}/addresses`);
+    scopeAddresses.value = res.data;
+    return res.data;
+  }
+
   async function syncLeases() {
     const res = await api.post('/dhcp/sync-leases');
     await fetchLeases();
@@ -85,9 +96,9 @@ export const useDhcpStore = defineStore('dhcp', () => {
   }
 
   return {
-    scopes, reservations, leases, loading,
+    scopes, reservations, leases, scopeAddresses, loading,
     fetchScopes, createScope, updateScope, deleteScope, fetchAvailableRanges,
     fetchReservations, createReservation, updateReservation, deleteReservation,
-    fetchLeases, syncLeases, applyConfig
+    fetchLeases, fetchScopeAddresses, syncLeases, applyConfig
   };
 });

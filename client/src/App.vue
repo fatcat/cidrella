@@ -156,8 +156,7 @@ body {
 .badge-yellow-light { background: color-mix(in srgb, var(--p-yellow-500) 15%, transparent); color: var(--p-yellow-500); }
 .badge-blue-light   { background: color-mix(in srgb, var(--p-blue-500) 15%, transparent);   color: var(--p-blue-500); }
 
-/* Muted cell text — for taxonomy values that do NOT get a capsule
-   (per spec: Manual, Dynamic, DHCP in DNS source, and table em-dashes). */
+/* Muted cell text - for placeholders and non-highlighted dense-table text. */
 .cell-muted {
   color: var(--p-text-muted-color);
   font-family: monospace;
@@ -190,6 +189,44 @@ body {
 .taxonomy-tag.taxonomy-err    { background: color-mix(in srgb, var(--p-red-500) 16%, transparent);    color: var(--p-red-500); }
 .taxonomy-tag.taxonomy-info   { background: color-mix(in srgb, var(--p-blue-500) 16%, transparent);   color: var(--p-blue-500); }
 .taxonomy-tag.taxonomy-muted  { background: color-mix(in srgb, var(--p-surface-500) 16%, transparent); color: var(--p-text-muted-color); }
+
+.address-type-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-sans, inherit);
+  font-size: var(--app-fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.address-type-pill.type-static-dns {
+  background: color-mix(in srgb, var(--p-blue-500) 16%, transparent);
+  color: var(--p-blue-500);
+}
+.address-type-pill.type-dynamic-dhcp {
+  background: color-mix(in srgb, var(--p-green-500) 16%, transparent);
+  color: var(--p-green-500);
+}
+.address-type-pill.type-reserved-dhcp {
+  background: color-mix(in srgb, var(--p-primary-color) 18%, transparent);
+  color: var(--p-primary-color);
+}
+.address-type-pill.type-system {
+  background: color-mix(in srgb, var(--p-surface-500) 16%, transparent);
+  color: var(--p-text-muted-color);
+}
+.address-type-pill.type-gateway,
+.address-type-pill.type-locked {
+  background: color-mix(in srgb, var(--p-orange-500) 16%, transparent);
+  color: var(--p-orange-500);
+}
+.address-type-pill.type-rogue {
+  background: color-mix(in srgb, var(--p-red-500) 16%, transparent);
+  color: var(--p-red-500);
+}
 
 /* Status text — for "state" values in dense data tables.
    Spec rule: capsules are for taxonomy, text is for state. */

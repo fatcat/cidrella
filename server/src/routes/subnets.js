@@ -9,8 +9,8 @@ import {
 } from '../utils/ip.js';
 import { generateReverseNames } from '../utils/dnsmasq.js';
 import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
-import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
+import { applyIpView, enrichIpViewRows } from '../models/ip-view.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
 
 const router = Router();
@@ -2067,29 +2067,6 @@ router.post('/calculate', requirePerm('subnets:read'), asyncHandler((req, res) =
   }
 }));
 
-/**
- * Compute the display type for an IP address (mirrors client computeIpState logic).
- * Returns a sortable string: system, gateway, rogue, reservation, dynamic, dhcp, locked, dns assigned, or available.
- */
-function computeIpType(ip) {
-  if (ip.range_type_name === 'Network' || ip.range_type_name === 'Broadcast') return 'system';
-  if (ip.range_type_name === 'Gateway') return 'gateway';
-  const isDhcpScope = ip.range_type_name === 'DHCP Scope';
-  const isLeaseExpired = ip.dhcp_expires_at && ip.dhcp_expires_at !== 'infinite'
-    && new Date(ip.dhcp_expires_at) < new Date();
-  const hasActiveLease = ip.dhcp_expires_at && !isLeaseExpired;
-  if (ip.is_rogue) return 'rogue';
-  if (ip.is_online && ip.status === 'available' && !ip.has_dhcp_reservation && !ip.hostname && !hasActiveLease) return 'rogue';
-  if (ip.has_dhcp_reservation) return 'reservation';
-  if (isDhcpScope) {
-    if (ip.dhcp_expires_at && !isLeaseExpired) return 'dynamic';
-    return 'dhcp';
-  }
-  if (ip.status === 'locked') return 'locked';
-  if ((ip.status === 'assigned' || ip.hostname) && !isDhcpScope) return 'dns assigned';
-  return 'available';
-}
-
 // GET /api/subnets/:id/ips — IP addresses with server-side pagination and virtual IPs
 router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
@@ -2101,7 +2078,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const search = (req.query.search || '').trim().toLowerCase();
 
   // Sort params
-  const SORTABLE_FIELDS = new Set(['ip_address', 'status', 'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at', 'dhcp_expires_at', 'computed_type']);
+  const SORTABLE_FIELDS = new Set(['ip_address', 'ip_display_status', 'status', 'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at', 'dhcp_expires_at', 'computed_type']);
   const reqSortField = SORTABLE_FIELDS.has(req.query.sortField) ? req.query.sortField : null;
   const reqSortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
 
@@ -2134,10 +2111,24 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     const allPersisted = db.prepare(`
       SELECT ip.*,
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-        dl.expires_at as dhcp_expires_at
+        dl.expires_at as dhcp_expires_at,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM dns_records r
+          JOIN dns_zones z ON z.id = r.zone_id
+          WHERE r.type = 'A'
+            AND r.enabled = 1
+            AND z.enabled = 1
+            AND z.type = 'forward'
+            AND r.value = ip.ip_address
+            AND COALESCE(r.source, 'manual') = 'manual'
+        ) THEN 1 ELSE 0 END as has_static_dns
       FROM ip_addresses ip
       LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+      LEFT JOIN dhcp_leases dl
+        ON dl.subnet_id = ip.subnet_id
+       AND dl.ip_address = ip.ip_address
+       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
 
@@ -2152,27 +2143,24 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       ...r, startLong: ipToLong(r.start_ip), endLong: ipToLong(r.end_ip)
     })).sort((a, b) => a.startLong - b.startLong);
 
-    // Vendor lookup
-    const allMacs = allPersisted.map(ip => ip.mac_address || ip.last_seen_mac).filter(Boolean);
-    const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
-
     // Filter and enrich
+    enrichIpViewRows(db, allPersisted);
     const matched = [];
     for (const ip of allPersisted) {
-      const mac = ip.mac_address || ip.last_seen_mac;
-      ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
       const ipLong = ipToLong(ip.ip_address);
       const range = rangeLookup.find(r => ipLong >= r.startLong && ipLong <= r.endLong);
       ip.range_type_id = range?.range_type_id || null;
       ip.range_type_name = range?.range_type_name || null;
       ip.range_type_color = range?.range_type_color || null;
-      ip.computed_type = computeIpType(ip);
+      applyIpView(ip);
 
       if (ip.ip_address.includes(search) ||
           (ip.hostname && ip.hostname.toLowerCase().includes(search)) ||
           (ip.mac_address && ip.mac_address.toLowerCase().includes(search)) ||
           (ip.last_seen_mac && ip.last_seen_mac.toLowerCase().includes(search)) ||
           (ip.vendor && ip.vendor.toLowerCase().includes(search)) ||
+          (ip.ip_display_status && ip.ip_display_status.toLowerCase().includes(search)) ||
+          (ip.address_type && ip.address_type.toLowerCase().includes(search)) ||
           (ip.status && ip.status.toLowerCase().includes(search))) {
         matched.push(ip);
       }
@@ -2197,10 +2185,24 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     const allPersisted = db.prepare(`
       SELECT ip.*,
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-        dl.expires_at as dhcp_expires_at
+        dl.expires_at as dhcp_expires_at,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM dns_records r
+          JOIN dns_zones z ON z.id = r.zone_id
+          WHERE r.type = 'A'
+            AND r.enabled = 1
+            AND z.enabled = 1
+            AND z.type = 'forward'
+            AND r.value = ip.ip_address
+            AND COALESCE(r.source, 'manual') = 'manual'
+        ) THEN 1 ELSE 0 END as has_static_dns
       FROM ip_addresses ip
       LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+      LEFT JOIN dhcp_leases dl
+        ON dl.subnet_id = ip.subnet_id
+       AND dl.ip_address = ip.ip_address
+       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
 
@@ -2215,18 +2217,15 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       ...r, startLong: ipToLong(r.start_ip), endLong: ipToLong(r.end_ip)
     })).sort((a, b) => a.startLong - b.startLong);
 
-    // Vendor lookup + range enrichment
-    const allMacs = allPersisted.map(ip => ip.mac_address || ip.last_seen_mac).filter(Boolean);
-    const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
+    // Shared IP view + range enrichment
+    enrichIpViewRows(db, allPersisted);
     for (const ip of allPersisted) {
-      const mac = ip.mac_address || ip.last_seen_mac;
-      ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
       const ipLong = ipToLong(ip.ip_address);
       const range = rangeLookup.find(r => ipLong >= r.startLong && ipLong <= r.endLong);
       ip.range_type_id = range?.range_type_id || null;
       ip.range_type_name = range?.range_type_name || null;
       ip.range_type_color = range?.range_type_color || null;
-      ip.computed_type = computeIpType(ip);
+      applyIpView(ip);
     }
 
     sortIps(allPersisted, reqSortField, reqSortOrder);
@@ -2257,10 +2256,24 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const allPersisted = db.prepare(`
     SELECT ip.*,
       CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-      dl.expires_at as dhcp_expires_at
+      dl.expires_at as dhcp_expires_at,
+      CASE WHEN EXISTS (
+        SELECT 1
+        FROM dns_records r
+        JOIN dns_zones z ON z.id = r.zone_id
+        WHERE r.type = 'A'
+          AND r.enabled = 1
+          AND z.enabled = 1
+          AND z.type = 'forward'
+          AND r.value = ip.ip_address
+          AND COALESCE(r.source, 'manual') = 'manual'
+      ) THEN 1 ELSE 0 END as has_static_dns
     FROM ip_addresses ip
     LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-    LEFT JOIN dhcp_leases dl ON dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+    LEFT JOIN dhcp_leases dl
+      ON dl.subnet_id = ip.subnet_id
+     AND dl.ip_address = ip.ip_address
+     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
     WHERE ip.subnet_id = ?
   `).all(req.params.id);
 
@@ -2331,6 +2344,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
         is_rogue: 0,
         rogue_reason: null,
         has_dhcp_reservation: 0,
+        has_static_dns: 0,
         dhcp_expires_at: null,
         range_type_id: match?.range_type_id || null,
         range_type_name: match?.range_type_name || null,
@@ -2339,13 +2353,10 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     }
   }
 
-  // Batch vendor lookup for all MACs on this page
-  const allMacs = ips.map(ip => ip.mac_address || ip.last_seen_mac).filter(Boolean);
-  const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
+  // Shared IP view for all rows on this page
+  enrichIpViewRows(db, ips);
   for (const ip of ips) {
-    const mac = ip.mac_address || ip.last_seen_mac;
-    ip.vendor = mac ? (vendorMap.get(mac) || null) : null;
-    ip.computed_type = computeIpType(ip);
+    applyIpView(ip);
   }
 
   res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });

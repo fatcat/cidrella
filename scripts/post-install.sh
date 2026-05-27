@@ -59,6 +59,14 @@ if [ -n "${TARGET_SLOT:-}" ] && [ -x "$TARGET_SLOT/runtime/node/bin/node" ]; the
   setcap -r "$TARGET_SLOT/runtime/node/bin/node" 2>/dev/null || true
 fi
 
+# Install wrappers that older outgoing update.sh versions did not know about.
+# This hook runs from the newly-active slot, so use /opt/cidrella rather than
+# a concrete A/B slot in the installed wrapper behavior.
+if [ -f /opt/cidrella/scripts/cidrella-npm ]; then
+  install -m 0755 /opt/cidrella/scripts/cidrella-npm /usr/local/bin/cidrella-npm \
+    || echo "  post-install.sh: warning: could not install cidrella-npm wrapper" >&2
+fi
+
 # ─── v0.4.9 post-install work ──────────────────────────────
 #
 # v0.4.9 itself has nothing version-specific to do — the hook convention

@@ -89,6 +89,13 @@
               <InputText v-model="dhcpSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
             </IconField>
             <Button v-if="dhcpSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpSearch = ''" />
+            <ColumnChooserButton
+              tableName="DHCP"
+              :allColumns="dhcpTableColumns"
+              :visibleColumns="visibleDhcpColumns"
+              @update:visibleColumns="setVisibleDhcpColumns"
+              @reset="resetDhcpColumns"
+            />
           </div>
           <div v-else class="search-bar">
             <IconField>
@@ -96,52 +103,52 @@
               <InputText v-model="dhcpAllSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
             </IconField>
             <Button v-if="dhcpAllSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpAllSearch = ''" />
+            <ColumnChooserButton
+              tableName="DHCP"
+              :allColumns="dhcpTableColumns"
+              :visibleColumns="visibleDhcpColumns"
+              @update:visibleColumns="setVisibleDhcpColumns"
+              @reset="resetDhcpColumns"
+            />
           </div>
 
           <DataTable :value="selectedScope ? searchedScopeLeases : searchedAllLeases"
                      :loading="loadingLeases" stripedRows
-                     :emptyMessage="selectedScope ? 'No leases or reservations for this scope.' : 'No DHCP leases or reservations.'"
+                     :emptyMessage="selectedScope ? 'No addresses in this DHCP scope.' : 'No DHCP leases or reservations.'"
                      size="small" scrollable scrollHeight="flex"
-                     paginator :rows="100" paginatorPosition="bottom"
+                     paginator :rows="dhcpRows" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
+                     @page="onDhcpPage"
                      removableSort :nullSortOrder="0"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
-            <Column field="ip_address" header="IP Address" sortable style="min-width: 8rem">
-              <template #body="{ data }"><span class="ip-mono">{{ displayCell(data.ip_address) }}</span></template>
-            </Column>
-            <Column field="is_online" header="Online" sortable style="width: 5rem">
-              <template #body="{ data }">
-                <span :class="onlineDisplay(data.is_online).className">{{ onlineDisplay(data.is_online).label }}</span>
+            <Column
+              v-for="col in visibleDhcpColumns"
+              :key="col.key"
+              :field="col.field"
+              :sortable="col.sortable"
+              :style="col.style"
+            >
+              <template #header>
+                <ColumnHeaderTooltip :column="col" />
               </template>
-            </Column>
-            <Column header="Lease" sortable field="status" style="width: 6rem">
               <template #body="{ data }">
-                <span class="status-text" :class="data.status === 'active' ? 'state-ok' : 'state-muted'">{{ data.status === 'active' ? 'Active' : 'Inactive' }}</span>
+                <span v-if="col.key === 'ip_address'" class="ip-mono">{{ displayCell(data.ip_address) }}</span>
+                <OnlineStatusCell v-else-if="col.key === 'is_online'" :value="data.is_online" />
+                <StatusText
+                  v-else-if="col.key === 'lease'"
+                  :label="dhcpLeaseStatusLabel(data.lease_status)"
+                  :className="dhcpLeaseStatusClass(data.lease_status)"
+                />
+                <AddressTypePill v-else-if="col.key === 'type'" :display="dhcpAddressTypeDisplay(data)" />
+                <template v-else-if="col.key === 'hostname'">{{ displayHost(data.hostname, selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name) }}</template>
+                <template v-else-if="col.key === 'mac_address'">
+                  <code v-if="data.mac_address">{{ displayMac(data.mac_address) }}</code>
+                  <span v-else class="cell-muted">—</span>
+                </template>
+                <template v-else-if="col.key === 'vendor'">{{ displayCell(data.vendor) }}</template>
+                <template v-else-if="col.key === 'network'">{{ displayCell(data.subnet_name || data.subnet_cidr) }}</template>
+                <template v-else-if="col.key === 'expires_at'">{{ displayExpiry(data.expires_at, formatDate, { reserved: data.dhcp_assignment_type === 'reserved' }) }}</template>
               </template>
-            </Column>
-            <Column header="Type" sortable field="type" style="width: 7rem">
-              <template #body="{ data }">
-                <span v-if="data.type === 'reserved'" class="taxonomy-tag">Reservation</span>
-                <span v-else class="cell-muted">Dynamic</span>
-              </template>
-            </Column>
-            <Column field="hostname" header="Hostname" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ displayHost(data.hostname, selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name) }}</template>
-            </Column>
-            <Column field="mac_address" header="MAC Address" sortable style="min-width: 10rem">
-              <template #body="{ data }">
-                <code v-if="data.mac_address">{{ displayMac(data.mac_address) }}</code>
-                <span v-else class="cell-muted">—</span>
-              </template>
-            </Column>
-            <Column field="vendor" header="Vendor" sortable style="min-width: 8rem">
-              <template #body="{ data }">{{ displayCell(data.vendor) }}</template>
-            </Column>
-            <Column v-if="!selectedScope" header="Network" style="min-width: 8rem">
-              <template #body="{ data }">{{ displayCell(data.subnet_name || data.subnet_cidr) }}</template>
-            </Column>
-            <Column header="Expires" sortable field="expires_at" style="min-width: 9rem">
-              <template #body="{ data }">{{ displayExpiry(data.expires_at, formatDate, { reserved: data.type === 'reserved' }) }}</template>
             </Column>
           </DataTable>
         </template>
@@ -251,15 +258,22 @@ import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import { useDhcpStore } from '../stores/dhcp.js';
 import EmptyState from './EmptyState.vue';
+import AddressTypePill from './table/AddressTypePill.vue';
+import ColumnChooserButton from './table/ColumnChooserButton.vue';
+import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
+import OnlineStatusCell from './table/OnlineStatusCell.vue';
+import StatusText from './table/StatusText.vue';
+import { useColumnPreferences } from '../composables/useColumnPreferences.js';
+import { useRowsPreference } from '../composables/useRowsPreference.js';
 import api from '../api/client.js';
 import {
   apiError,
   displayCell,
   displayExpiry,
   displayHostnameCell,
-  displayMacAddress,
-  displayOnlineStatus
+  displayMacAddress
 } from '../utils/format.js';
+import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
 import { loadJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
 
@@ -267,6 +281,25 @@ import ScopeDialog from './ScopeDialog.vue';
 
 const store = useDhcpStore();
 const toast = useToast();
+const { rows: dhcpRows, onPage: onDhcpPage } = useRowsPreference('cidrella_dhcp_table_rows', 100);
+
+const dhcpTableColumns = [
+  { key: 'ip_address', header: 'IP Address', description: 'The address in the DHCP scope or global lease list.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
+  { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
+  { key: 'lease', header: 'Lease', description: 'Whether this DHCP scope address is actively leased, available, or inactive.', field: 'lease_status', sortable: true, style: 'width: 6rem' },
+  { key: 'type', header: 'Type', description: 'How the IP is instantiated, such as dynamic DHCP, reserved DHCP, static DNS, or rogue.', field: 'dhcp_assignment_type', sortable: true, style: 'width: 9rem' },
+  { key: 'hostname', header: 'Hostname', description: 'Hostname supplied by the lease or reservation, shown relative to the subnet domain when possible.', field: 'hostname', sortable: true, style: 'width: 10rem' },
+  { key: 'mac_address', header: 'MAC Address', description: 'Client hardware address associated with the lease or reservation.', field: 'mac_address', sortable: true, style: 'width: 10rem' },
+  { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
+  { key: 'network', header: 'Network', description: 'Network or subnet that contains this DHCP address.', field: 'subnet_name', sortable: true, style: 'width: 10rem' },
+  { key: 'expires_at', header: 'Expires', description: 'Lease expiration time; reservations do not expire.', field: 'expires_at', sortable: true, style: 'width: 9rem' },
+];
+
+const {
+  visibleColumns: visibleDhcpColumns,
+  setVisibleColumns: setVisibleDhcpColumns,
+  resetColumns: resetDhcpColumns
+} = useColumnPreferences('cidrella_columns_dhcp', dhcpTableColumns);
 
 const scopeTab = ref('scopes');
 const scopeFilterText = ref('');
@@ -376,7 +409,7 @@ const leaseContextMenuItems = computed(() => {
   const r = selectedLease.value;
   if (!r) return [];
   const items = [];
-  if (r.type === 'reserved') {
+  if (r.dhcp_assignment_type === 'reserved') {
     items.push(
       { label: 'Edit Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
       { label: 'Delete Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
@@ -428,12 +461,18 @@ function onLeaseRightClick(event) {
 }
 
 function dhcpMatchSearch(item, query) {
+  const lifecycle = ipLifecycleDisplayForDhcpRow(item);
   return (item.ip_address && item.ip_address.toLowerCase().includes(query)) ||
     (item.mac_address && item.mac_address.toLowerCase().includes(query)) ||
     (item.hostname && item.hostname.toLowerCase().includes(query)) ||
     (item.vendor && item.vendor.toLowerCase().includes(query)) ||
-    (item.type && item.type.toLowerCase().includes(query)) ||
-    (item.status && item.status.toLowerCase().includes(query));
+    (item.dhcp_assignment_type && item.dhcp_assignment_type.toLowerCase().includes(query)) ||
+    (item.lease_status && item.lease_status.toLowerCase().includes(query)) ||
+    (lifecycle.addressType?.label && lifecycle.addressType.label.toLowerCase().includes(query));
+}
+
+function dhcpAddressTypeDisplay(row) {
+  return ipLifecycleDisplayForDhcpRow(row).addressType;
 }
 
 const searchedScopeLeases = computed(() => {
@@ -450,7 +489,6 @@ const searchedAllLeases = computed(() => {
 
 const displayHost = displayHostnameCell;
 const displayMac = displayMacAddress;
-const onlineDisplay = displayOnlineStatus;
 
 // Delete dialogs
 const showDeleteScopeDialog = ref(false);
@@ -493,13 +531,38 @@ const scopeLeaseTime = computed(() => {
 // Filter leases for selected scope
 const scopeLeases = computed(() => {
   if (!selectedScope.value) return [];
-  return store.leases.filter(l => l.subnet_id === selectedScope.value.subnet_id).map(l => ({ ...l, hostname: l.hostname || ' ' }));
+  return store.scopeAddresses.map(l => ({ ...l, hostname: l.hostname || ' ' }));
 });
 
+function dhcpLeaseStatusLabel(status) {
+  if (status === 'active') return 'Active';
+  if (status === 'available') return 'Available';
+  if (status === 'unavailable') return 'Unavailable';
+  return 'Inactive';
+}
+
+function dhcpLeaseStatusClass(status) {
+  if (status === 'active') return 'state-ok';
+  if (status === 'unavailable') return 'state-err';
+  return 'state-muted';
+}
+
+async function reloadSelectedScopeAddresses() {
+  if (!selectedScope.value) return;
+  loadingLeases.value = true;
+  try {
+    await store.fetchScopeAddresses(selectedScope.value.id);
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally {
+    loadingLeases.value = false;
+  }
+}
 
 function selectScope(scope) {
   selectedScope.value = scope;
   try { localStorage.setItem('cidrella_dhcp_selected_scope_id', JSON.stringify(scope?.id || null)); } catch {}
+  reloadSelectedScopeAddresses();
 }
 
 const formatDate = formatDateTime;
@@ -546,52 +609,64 @@ async function doDeleteScope() {
   }
 }
 
+function reservationFormDefaults(overrides = {}) {
+  return {
+    subnet_id: selectedScope.value?.subnet_id || null,
+    mac_address: '',
+    ip_address: '',
+    hostname: '',
+    description: '',
+    enabled: true,
+    ...overrides
+  };
+}
+
+async function loadReservationNetworks() {
+  const res = await api.get('/subnets');
+  // Only show subnets that can actually accept a reservation: allocated
+  // leaves. Non-leaves (divided supernets) and unallocated subnets are
+  // refused by the server anyway (R-audit MEDIUM #3), so hiding them
+  // keeps the UI honest instead of offering choices the user can't use.
+  const flattenTree = (nodes) => {
+    let result = [];
+    for (const n of nodes) {
+      const isLeaf = !n.children || n.children.length === 0;
+      if (n.status === 'allocated' && isLeaf) {
+        result.push({ ...n, _label: `${n.name} (${n.cidr})` });
+      }
+      if (n.children?.length) result.push(...flattenTree(n.children));
+    }
+    return result;
+  };
+  const allSubnets = (res.data.folders || []).flatMap(f => f.subnets || []);
+  allocatedSubnets.value = flattenTree(allSubnets);
+}
+
 function convertLeaseToReservation(lease) {
-  editingReservation.value = null;
-  reservationForm.value = {
+  openReservationDialog(null, {
     subnet_id: lease.subnet_id,
     mac_address: lease.mac_address,
     ip_address: lease.ip_address,
     hostname: lease.hostname || '',
-    description: '',
-    enabled: true
-  };
-  showReservationDialog.value = true;
+  });
 }
 
 // Reservation CRUD
-async function openReservationDialog(reservation = null) {
+async function openReservationDialog(reservation = null, prefill = {}) {
   editingReservation.value = reservation;
   if (reservation) {
-    reservationForm.value = {
+    reservationForm.value = reservationFormDefaults({
       subnet_id: reservation.subnet_id,
       mac_address: reservation.mac_address,
       ip_address: reservation.ip_address,
       hostname: reservation.hostname || '',
       description: reservation.description || '',
       enabled: reservation.enabled !== undefined ? !!reservation.enabled : true
-    };
+    });
   } else {
-    reservationForm.value = { subnet_id: selectedScope.value?.subnet_id || null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true };
+    reservationForm.value = reservationFormDefaults(prefill);
     try {
-      const res = await api.get('/subnets');
-      // Only show subnets that can actually accept a reservation: allocated
-      // leaves. Non-leaves (divided supernets) and unallocated subnets are
-      // refused by the server anyway (R-audit MEDIUM #3), so hiding them
-      // keeps the UI honest instead of offering choices the user can't use.
-      const flattenTree = (nodes) => {
-        let result = [];
-        for (const n of nodes) {
-          const isLeaf = !n.children || n.children.length === 0;
-          if (n.status === 'allocated' && isLeaf) {
-            result.push({ ...n, _label: `${n.name} (${n.cidr})` });
-          }
-          if (n.children?.length) result.push(...flattenTree(n.children));
-        }
-        return result;
-      };
-      const allSubnets = (res.data.folders || []).flatMap(f => f.subnets || []);
-      allocatedSubnets.value = flattenTree(allSubnets);
+      await loadReservationNetworks();
     } catch { /* ignore */ }
   }
   showReservationDialog.value = true;
@@ -620,6 +695,7 @@ async function saveReservation() {
       toast.add({ severity: 'success', summary: 'Reservation created', life: 3000 });
     }
     showReservationDialog.value = false;
+    await reloadSelectedScopeAddresses();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
@@ -639,6 +715,7 @@ async function doDeleteReservation() {
     await store.deleteReservation(resId);
     showDeleteReservationDialog.value = false;
     toast.add({ severity: 'success', summary: 'Reservation deleted', life: 3000 });
+    await reloadSelectedScopeAddresses();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
@@ -651,6 +728,7 @@ async function doSyncLeases() {
   syncing.value = true;
   try {
     const result = await store.syncLeases();
+    await reloadSelectedScopeAddresses();
     toast.add({ severity: 'success', summary: 'Leases synced', detail: `${result.synced} leases`, life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -669,12 +747,12 @@ onMounted(async () => {
   if (savedScopeId) {
     const scope = filteredScopes.value.find(s => s.id === savedScopeId);
     if (scope) {
-      selectedScope.value = scope;
+      selectScope(scope);
       return;
     }
   }
   if (filteredScopes.value.length > 0 && !selectedScope.value) {
-    selectedScope.value = filteredScopes.value[0];
+    selectScope(filteredScopes.value[0]);
   }
 });
 
@@ -798,6 +876,8 @@ defineExpose({ openScopeDialog });
 .leases-panel > :deep(.p-datatable) {
   flex: 1;
   min-height: 0;
+  padding-right: 0.5rem;
+  box-sizing: border-box;
 }
 
 .dhcp-toolbar {

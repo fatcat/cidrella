@@ -79,6 +79,13 @@
             <InputText v-model="ipSearch" placeholder="Search by IP, hostname, MAC, vendor, status…" size="small" class="ip-search-input" />
           </IconField>
           <Button v-if="ipSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="ipSearch = ''" />
+          <ColumnChooserButton
+            tableName="Network IPs"
+            :allColumns="networkTableColumns"
+            :visibleColumns="visibleNetworkColumns"
+            @update:visibleColumns="setVisibleNetworkColumns"
+            @reset="resetNetworkColumns"
+          />
         </div>
         <DataTable :value="displayIps" stripedRows size="small"
                    :loading="loadingPage"
@@ -97,49 +104,35 @@
                    removableSort
                    @page="onLazyPage"
                    @sort="onLazySort">
-          <Column field="ip_address" header="IP Address" sortable style="width: 10rem">
-            <template #body="{ data }">
-              <span class="ip-mono">{{ displayCell(data.ip_address) }}</span>
+          <Column
+            v-for="col in visibleNetworkColumns"
+            :key="col.key"
+            :field="col.field"
+            :sortable="col.sortable"
+            :sortField="col.sortField || col.field"
+            :style="col.style"
+          >
+            <template #header>
+              <ColumnHeaderTooltip :column="col" />
             </template>
-          </Column>
-          <Column field="status" header="Status" sortable style="width: 7rem">
             <template #body="{ data }">
-              <span class="status-text"
-                    :class="data._ipState.statusSeverity === 'danger' ? 'state-err' : 'state-muted'">
-                {{ data._ipState.status }}
-              </span>
+              <span v-if="col.key === 'ip_address'" class="ip-mono">{{ displayCell(data.ip_address) }}</span>
+              <StatusText
+                v-else-if="col.key === 'status'"
+                :label="data._ipState.status"
+                :className="data._ipState.statusSeverity === 'danger' ? 'state-err' : 'state-muted'"
+              />
+              <AddressTypePill v-else-if="col.key === 'type'" :display="data._ipState.addressType" :tooltip="data._ipState.tooltip" />
+              <template v-else-if="col.key === 'hostname'">{{ displayHost(data.hostname) }}</template>
+              <template v-else-if="col.key === 'mac_address'">
+                <code v-if="data.mac_address || data.last_seen_mac">{{ displayMac(data.mac_address || data.last_seen_mac) }}</code>
+                <span v-else class="cell-muted">—</span>
+              </template>
+              <template v-else-if="col.key === 'vendor'">{{ displayCell(data.vendor) }}</template>
+              <OnlineStatusCell v-else-if="col.key === 'is_online'" :value="data.is_online" />
+              <template v-else-if="col.key === 'last_seen_at'">{{ data.last_seen_at ? formatDate(data.last_seen_at) : EMPTY_CELL }}</template>
+              <template v-else-if="col.key === 'dhcp_expires_at'">{{ displayExpiry(data.dhcp_expires_at, formatDate) }}</template>
             </template>
-          </Column>
-          <Column header="Type" sortable :sortField="'computed_type'" style="width: 9rem">
-            <template #body="{ data }">
-              <Tag v-if="data._ipState.type" :severity="data._ipState.typeSeverity"
-                   :value="data._ipState.type"
-                   v-tooltip.top="data._ipState.tooltip || null" />
-              <span v-else>—</span>
-            </template>
-          </Column>
-          <Column field="hostname" header="Hostname" sortable style="width: 10rem">
-            <template #body="{ data }">{{ displayHost(data.hostname) }}</template>
-          </Column>
-          <Column header="MAC Address" sortable style="width: 10rem" :sortField="'mac_address'">
-            <template #body="{ data }">
-              <code v-if="data.mac_address || data.last_seen_mac">{{ displayMac(data.mac_address || data.last_seen_mac) }}</code>
-              <span v-else class="cell-muted">—</span>
-            </template>
-          </Column>
-          <Column field="vendor" header="Vendor" sortable style="width: 10rem">
-            <template #body="{ data }">{{ displayCell(data.vendor) }}</template>
-          </Column>
-          <Column field="is_online" header="Online" sortable style="width: 5rem">
-            <template #body="{ data }">
-              <span :class="onlineDisplay(data.is_online).className">{{ onlineDisplay(data.is_online).label }}</span>
-            </template>
-          </Column>
-          <Column field="last_seen_at" header="Last Seen" sortable style="width: 10rem">
-            <template #body="{ data }">{{ data.last_seen_at ? formatDate(data.last_seen_at) : EMPTY_CELL }}</template>
-          </Column>
-          <Column field="dhcp_expires_at" header="Expires" sortable style="width: 9rem">
-            <template #body="{ data }">{{ displayExpiry(data.dhcp_expires_at, formatDate) }}</template>
           </Column>
         </DataTable>
       </TabPanel>
@@ -407,19 +400,25 @@ import TabPanel from 'primevue/tabpanel';
 import Tag from 'primevue/tag';
 import ScopeDialog from '../components/ScopeDialog.vue';
 import ScanToggle from '../components/ScanToggle.vue';
+import AddressTypePill from '../components/table/AddressTypePill.vue';
+import ColumnChooserButton from '../components/table/ColumnChooserButton.vue';
+import ColumnHeaderTooltip from '../components/table/ColumnHeaderTooltip.vue';
+import OnlineStatusCell from '../components/table/OnlineStatusCell.vue';
+import StatusText from '../components/table/StatusText.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import { loadJson } from '../utils/storage.js';
 import { useDhcpStore } from '../stores/dhcp.js';
+import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import api from '../api/client.js';
 import { ipToLong, longToIp } from '../utils/ip.js';
+import { ipLifecycleDisplay } from '../utils/ipLifecycleDisplay.js';
 import {
   EMPTY_CELL,
   apiError,
   displayCell,
   displayExpiry,
   displayHostnameCell,
-  displayMacAddress,
-  displayOnlineStatus
+  displayMacAddress
 } from '../utils/format.js';
 
 const props = defineProps({
@@ -433,9 +432,27 @@ const toast = useToast();
 const store = useSubnetStore();
 const dhcpStore = useDhcpStore();
 
+const networkTableColumns = [
+  { key: 'ip_address', header: 'IP Address', description: 'Address within the selected network.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
+  { key: 'status', header: 'Status', description: 'Whether the address is currently in use or available according to CIDRella lifecycle data.', field: 'ip_display_status', sortable: true, style: 'width: 7rem' },
+  { key: 'type', header: 'Type', description: 'How the address is assigned or reserved, such as static DNS, dynamic DHCP, reserved DHCP, rogue, gateway, system, or locked.', field: 'computed_type', sortField: 'computed_type', sortable: true, style: 'width: 9.5rem' },
+  { key: 'hostname', header: 'Hostname', description: 'Best known hostname from DNS, DHCP, or passive observations.', field: 'hostname', sortable: true, style: 'width: 10rem' },
+  { key: 'mac_address', header: 'MAC Address', description: 'Best known hardware address from DHCP or last-seen lifecycle data.', field: 'mac_address', sortField: 'mac_address', sortable: true, style: 'width: 10rem' },
+  { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
+  { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
+  { key: 'last_seen_at', header: 'Last Seen', description: 'Most recent time CIDRella observed this address through DHCP, DNS logs, or active scans.', field: 'last_seen_at', sortable: true, style: 'width: 10rem' },
+  { key: 'dhcp_expires_at', header: 'Expires', description: 'DHCP lease expiration time when the address has a dynamic lease.', field: 'dhcp_expires_at', sortable: true, style: 'width: 9rem' },
+];
+
+const {
+  visibleColumns: visibleNetworkColumns,
+  setVisibleColumns: setVisibleNetworkColumns,
+  resetColumns: resetNetworkColumns
+} = useColumnPreferences('cidrella_columns_networks', networkTableColumns);
+
 const subnet = ref(null);
 const ips = ref([]);
-const displayIps = computed(() => ips.value.map(ip => ({ ...ip, _ipState: getIpState(ip) })));
+const displayIps = computed(() => ips.value.map(ip => ({ ...ip, _ipState: ipLifecycleDisplay(ip) })));
 const ranges = ref([]);
 const rangeTypes = ref([]);
 const loading = ref(false);
@@ -673,73 +690,6 @@ const formatDate = formatDateTime;
 
 const displayHost = (hostname) => displayHostnameCell(hostname, subnet.value?.domain_name);
 const displayMac = displayMacAddress;
-const onlineDisplay = displayOnlineStatus;
-
-/**
- * Compute unified status + type for an IP row.
- * Returns { status, statusSeverity, type, typeSeverity, tooltip? }
- */
-function getIpState(data) {
-  const mac = data.mac_address || data.last_seen_mac;
-  const isDhcpScope = data.range_type_name === 'DHCP Scope';
-  const isLeaseExpired = data.dhcp_expires_at && data.dhcp_expires_at !== 'infinite'
-    && new Date(data.dhcp_expires_at) < new Date();
-
-  // Network / Broadcast
-  if (data.range_type_name === 'Network' || data.range_type_name === 'Broadcast') {
-    return { status: 'in use', statusSeverity: 'danger', type: 'system', typeSeverity: 'secondary' };
-  }
-
-  // Gateway
-  if (data.range_type_name === 'Gateway') {
-    return { status: 'in use', statusSeverity: 'danger', type: 'gateway', typeSeverity: 'warn' };
-  }
-
-  // Rogue: model flagged as rogue, OR online but has no assignment/reservation/lease/DNS
-  const hasActiveLease = data.dhcp_expires_at && !isLeaseExpired;
-  if (data.is_rogue) {
-    return {
-      status: 'in use', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger',
-      tooltip: data.rogue_reason || null
-    };
-  }
-  if (data.is_online
-      && data.status === 'available' && !data.has_dhcp_reservation && !data.hostname && !hasActiveLease) {
-    return { status: 'in use', statusSeverity: 'danger', type: 'rogue', typeSeverity: 'danger' };
-  }
-
-  // DHCP reservation (static IP assignment via DHCP — inside or outside a scope)
-  if (data.has_dhcp_reservation) {
-    return { status: 'in use', statusSeverity: 'danger', type: 'reservation', typeSeverity: 'info' };
-  }
-
-  // Inside DHCP scope
-  if (isDhcpScope) {
-    // Dynamic lease — active
-    if (data.dhcp_expires_at && !isLeaseExpired) {
-      return { status: 'in use', statusSeverity: 'danger', type: 'dynamic', typeSeverity: 'success' };
-    }
-    // Unassigned or expired lease in DHCP range
-    return { status: 'available', statusSeverity: 'secondary', type: 'dhcp', typeSeverity: 'secondary' };
-  }
-
-  // Locked (manually held — cannot be used until unlocked)
-  if (data.status === 'locked') {
-    return {
-      status: 'in use', statusSeverity: 'danger',
-      type: 'locked', typeSeverity: 'warn',
-      tooltip: data.reservation_note || null
-    };
-  }
-
-  // DNS assigned (has hostname, outside DHCP range)
-  if ((data.status === 'assigned' || data.hostname) && !isDhcpScope) {
-    return { status: 'in use', statusSeverity: 'danger', type: 'dns assigned', typeSeverity: 'info' };
-  }
-
-  // Completely undefined
-  return { status: 'available', statusSeverity: 'secondary', type: null, typeSeverity: null };
-}
 
 // The legend always shows every possible color so users can learn it
 // without needing a subnet that happens to have one of each. User-defined
@@ -863,16 +813,21 @@ const rangeDialogHeader = computed(() => {
 function gridTooltip(ip) {
   const lines = [ip.address];
   const pseudoData = {
+    ip_display_status: ip.ipDisplayStatus,
+    ip_status_severity: ip.ipStatusSeverity,
+    address_type: ip.addressType,
+    address_type_tooltip: ip.addressTypeTooltip,
+    ip_lifecycle_status: ip.ipLifecycleStatus,
     status: ip.status, range_type_name: ip.rangeType, reservation_note: ip.reservationNote,
     has_dhcp_reservation: ip.hasDhcpReservation, hostname: ip.hostname,
     mac_address: ip.mac, last_seen_mac: null,
     is_online: ip.isOnline ? 1 : 0, is_rogue: ip.isConflict ? 1 : 0, rogue_reason: ip.conflictReason,
     dhcp_expires_at: ip.dhcpExpiresAt || null
   };
-  const state = getIpState(pseudoData);
+  const state = ipLifecycleDisplay(pseudoData);
   lines.push(`Status: ${state.status}`);
-  if (state.type) {
-    lines.push(`Type: ${state.type}${state.tooltip ? ` (${state.tooltip})` : ''}`);
+  if (state.addressType?.label) {
+    lines.push(`Type: ${state.addressType.label}${state.tooltip ? ` (${state.tooltip})` : ''}`);
   }
   // Network and Broadcast both resolve to Type = "system"; the Role line
   // tells them apart for quick identification.
@@ -930,9 +885,7 @@ const ipGrid = computed(() => {
     //   6. Unassigned (no range, no assignment) — surface-200.
     const isSystemRange = !!rangeInfo?.isSystem;
     const isDhcpReservation = !!assignInfo?.has_dhcp_reservation;
-    const isDnsConfigured = !isDhcpReservation
-      && assignInfo?.detection_source === 'dns'
-      && !!assignInfo?.hostname;
+    const isDnsConfigured = !isDhcpReservation && assignInfo?.address_type === 'static DNS';
     const isUserLocked = assignInfo?.status === 'locked' && !isSystemRange;
 
     let cellColor;
@@ -960,6 +913,11 @@ const ipGrid = computed(() => {
       hostname: assignInfo?.hostname || null,
       mac: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
       status: assignInfo?.status || 'available',
+      ipLifecycleStatus: assignInfo?.ip_lifecycle_status || assignInfo?.status || 'available',
+      ipDisplayStatus: assignInfo?.ip_display_status || null,
+      ipStatusSeverity: assignInfo?.ip_status_severity || null,
+      addressType: assignInfo?.address_type || null,
+      addressTypeTooltip: assignInfo?.address_type_tooltip || null,
       reservationNote: assignInfo?.reservation_note || null,
       hasDhcpReservation: assignInfo?.has_dhcp_reservation || 0,
       dhcpExpiresAt: assignInfo?.dhcp_expires_at || null,
@@ -1853,6 +1811,8 @@ onUnmounted(() => {
 :deep(.p-tabview-panel > .p-datatable) {
   flex: 1;
   min-height: 0;
+  padding-right: 0.5rem;
+  box-sizing: border-box;
 }
 .detail-header {
   display: flex;
