@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { ipToLong, isIpInSubnet, rangesOverlap, validateDisplayString } from '../utils/ip.js';
+import * as Range from '../models/range.js';
 
 const router = Router({ mergeParams: true });
 
@@ -94,15 +95,13 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     });
   }
 
-  const result = db.prepare(
-    'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)'
-  ).run(subnetId, range_type_id, start_ip, end_ip, description || null);
-
-  const range = db.prepare(`
-    SELECT r.*, rt.name as range_type_name, rt.color as range_type_color
-    FROM ranges r JOIN range_types rt ON r.range_type_id = rt.id
-    WHERE r.id = ?
-  `).get(result.lastInsertRowid);
+  const range = Range.createRange(db, {
+    subnetId,
+    rangeTypeId: range_type_id,
+    startIp: start_ip,
+    endIp: end_ip,
+    description
+  });
 
   audit(req.user.id, 'range_created', 'range', range.id, { subnet_id: subnetId, start_ip, end_ip, type: rangeType.name });
   res.status(201).json(range);
@@ -164,14 +163,12 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     });
   }
 
-  db.prepare(`
-    UPDATE ranges SET range_type_id = ?, start_ip = ?, end_ip = ?, description = ?, updated_at = datetime('now') WHERE id = ?
-  `).run(range_type_id ?? range.range_type_id, newStart, newEnd, description !== undefined ? description : range.description, range.id);
-
-  const updated = db.prepare(`
-    SELECT r.*, rt.name as range_type_name, rt.color as range_type_color
-    FROM ranges r JOIN range_types rt ON r.range_type_id = rt.id WHERE r.id = ?
-  `).get(range.id);
+  const updated = Range.updateRange(db, range, {
+    rangeTypeId: range_type_id,
+    startIp: newStart,
+    endIp: newEnd,
+    description
+  });
 
   audit(req.user.id, 'range_updated', 'range', range.id, { changes: req.body });
   res.json(updated);
@@ -203,7 +200,7 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
     });
   }
 
-  db.prepare('DELETE FROM ranges WHERE id = ?').run(range.id);
+  Range.deleteRange(db, range.id);
   audit(req.user.id, 'range_deleted', 'range', range.id, { subnet_id: req.params.subnetId, type: rangeType?.name });
   res.json({ message: 'Range deleted' });
 });

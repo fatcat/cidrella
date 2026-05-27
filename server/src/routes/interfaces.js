@@ -10,6 +10,7 @@ import {
   getWebPortInfo, checkPortAvailable, getHttpsPort, getHttpPort
 } from '../utils/http-server.js';
 import { validPortOrError, validateInterfaceConfig } from '../utils/validation.js';
+import * as Setting from '../models/setting.js';
 
 const router = Router();
 
@@ -143,29 +144,24 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
 
   const db = getDb();
 
-  const upsert = db.prepare(`
-    INSERT INTO settings (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `);
-
   // Non-port settings write immediately. Port settings wait until the
   // live-swap succeeds, otherwise a swap failure would leave bad state on
   // disk that breaks the next server restart.
   db.transaction(() => {
     if (interfaces !== undefined) {
-      upsert.run('interface_config', JSON.stringify(interfaces));
+      Setting.upsertSettingWithConflict(db, 'interface_config', JSON.stringify(interfaces));
     }
     if (dns_enabled !== undefined) {
-      upsert.run('dns_enabled', String(dns_enabled));
+      Setting.upsertSettingWithConflict(db, 'dns_enabled', String(dns_enabled));
     }
     if (dhcp_enabled !== undefined) {
-      upsert.run('dhcp_enabled', String(dhcp_enabled));
+      Setting.upsertSettingWithConflict(db, 'dhcp_enabled', String(dhcp_enabled));
     }
     if (dns_listen_port !== undefined) {
-      upsert.run('dns_listen_port', String(Number(dns_listen_port)));
+      Setting.upsertSettingWithConflict(db, 'dns_listen_port', String(Number(dns_listen_port)));
     }
     if (http_redirect_enabled !== undefined) {
-      upsert.run('http_redirect_enabled', http_redirect_enabled ? 'true' : 'false');
+      Setting.upsertSettingWithConflict(db, 'http_redirect_enabled', http_redirect_enabled ? 'true' : 'false');
     }
   })();
 
@@ -183,7 +179,7 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
       port_changes.https = r;
       // Swap succeeded — commit the DB value now. If the server restarts
       // later it comes up on the new port.
-      upsert.run('https_port', String(httpsPortNum));
+      Setting.upsertSettingWithConflict(db, 'https_port', String(httpsPortNum));
     } catch (err) {
       console.warn('Failed to apply HTTPS port change:', err.message);
       return res.status(500).json({ error: `https_port swap failed: ${err.message}` });
@@ -193,7 +189,7 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
     try {
       const r = await applyHttpPortChange(httpPortNum);
       port_changes.http = r;
-      upsert.run('http_port', String(httpPortNum));
+      Setting.upsertSettingWithConflict(db, 'http_port', String(httpPortNum));
     } catch (err) {
       console.warn('Failed to apply HTTP port change:', err.message);
       // Don't 500 — the HTTPS port may have already swapped. Report warning.

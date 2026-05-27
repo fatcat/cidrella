@@ -3,6 +3,8 @@ import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { isValidIpv4 } from '../utils/ip.js';
+import * as Anomaly from '../models/anomaly.js';
+import * as Setting from '../models/setting.js';
 
 const router = Router();
 
@@ -177,7 +179,7 @@ router.delete('/:id', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid ID' });
   }
 
-  const result = db.prepare(`DELETE FROM anomaly_scores WHERE id = ?`).run(id);
+  const result = Anomaly.deleteScore(db, id);
 
   if (result.changes === 0) {
     return res.status(404).json({ error: 'Anomaly not found' });
@@ -193,10 +195,7 @@ router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid ID' });
   }
 
-  const result = db.prepare(
-    `UPDATE anomaly_scores SET resolved = 1, resolved_at = datetime('now')
-     WHERE id = ? AND resolved = 0`
-  ).run(id);
+  const result = Anomaly.dismissScore(db, id);
 
   if (result.changes === 0) {
     return res.status(404).json({ error: 'Anomaly not found or already resolved' });
@@ -224,20 +223,10 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   const existing = db.prepare('SELECT id FROM anomaly_whitelist WHERE client_ip = ?').get(client_ip);
   if (existing) return res.status(409).json({ error: 'Already whitelisted' });
 
-  const result = db.transaction(() => {
-    const ins = db.prepare(
-      'INSERT INTO anomaly_whitelist (client_ip, reason) VALUES (?, ?)'
-    ).run(client_ip, reason || null);
+  const id = Anomaly.addWhitelistEntry(db, client_ip, reason);
 
-    // Clean up: delete model and scores for this client
-    db.prepare('DELETE FROM anomaly_models WHERE client_ip = ?').run(client_ip);
-    db.prepare('DELETE FROM anomaly_scores WHERE client_ip = ?').run(client_ip);
-
-    return ins;
-  })();
-
-  audit(req.user.id, 'anomaly_whitelist_add', 'anomaly_whitelist', result.lastInsertRowid, { client_ip, reason });
-  res.status(201).json({ id: result.lastInsertRowid, ok: true });
+  audit(req.user.id, 'anomaly_whitelist_add', 'anomaly_whitelist', id, { client_ip, reason });
+  res.status(201).json({ id, ok: true });
 });
 
 // DELETE /api/anomalies/whitelist/:id — remove from whitelist
@@ -249,7 +238,7 @@ router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
   const entry = db.prepare('SELECT * FROM anomaly_whitelist WHERE id = ?').get(id);
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  db.prepare('DELETE FROM anomaly_whitelist WHERE id = ?').run(id);
+  Anomaly.deleteWhitelistEntry(db, id);
   audit(req.user.id, 'anomaly_whitelist_remove', 'anomaly_whitelist', id, { client_ip: entry.client_ip });
   res.json({ ok: true });
 });
@@ -304,17 +293,7 @@ router.put('/settings', requireRole('admin'), (req, res) => {
     }
   }
 
-  const upsert = db.prepare(
-    `INSERT INTO settings (key, value) VALUES (?, ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-  );
-
-  const transaction = db.transaction(() => {
-    for (const [key, val] of Object.entries(updates)) {
-      upsert.run(key, val);
-    }
-  });
-  transaction();
+  Setting.upsertSettings(db, Object.entries(updates));
 
   res.json({ ok: true, updated: Object.keys(updates) });
 });

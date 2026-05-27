@@ -11,7 +11,9 @@
     "test": "npm run test:server && npm run test:client",
     "test:server": "cd server && npx vitest run",
     "test:client": "cd client && npx vitest run",
-    "test:watch": "cd server && npx vitest"
+    "test:watch": "cd server && npx vitest",
+    "check:db-ownership": "node scripts/check-db-ownership.js",
+    "check:db-ownership:report": "node scripts/check-db-ownership.js --report"
   },
   "dependencies": {
     "agent-team": "^0.2.0",

@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
+import * as RangeType from '../models/range-type.js';
 
 const router = Router();
 
@@ -39,11 +40,12 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   const existing = db.prepare('SELECT id FROM range_types WHERE name = ?').get(name);
   if (existing) return res.status(409).json({ error: 'Range type already exists' });
 
-  const result = db.prepare(
-    'INSERT INTO range_types (name, color, is_system, description) VALUES (?, ?, 0, ?)'
-  ).run(name, color || '#6b7280', description || null);
-
-  const type = db.prepare('SELECT * FROM range_types WHERE id = ?').get(result.lastInsertRowid);
+  const type = RangeType.createRangeType(db, {
+    name,
+    color,
+    description,
+    isSystem: false
+  });
   audit(req.user.id, 'range_type_created', 'range_type', type.id, { name });
   res.status(201).json(type);
 });
@@ -78,11 +80,7 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     if (dup) return res.status(409).json({ error: 'Address type name already exists' });
   }
 
-  db.prepare(`
-    UPDATE range_types SET name = ?, color = ?, description = ?, updated_at = datetime('now') WHERE id = ?
-  `).run(name ?? type.name, color ?? type.color, description !== undefined ? description : type.description, type.id);
-
-  const updated = db.prepare('SELECT * FROM range_types WHERE id = ?').get(type.id);
+  const updated = RangeType.updateRangeType(db, type, { name, color, description });
   audit(req.user.id, 'range_type_updated', 'range_type', type.id, { changes: req.body });
   res.json(updated);
 });
@@ -100,7 +98,7 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
     return res.status(409).json({ error: `Address type is in use by ${usageCount.count} range(s)` });
   }
 
-  db.prepare('DELETE FROM range_types WHERE id = ?').run(type.id);
+  RangeType.deleteRangeType(db, type.id);
   audit(req.user.id, 'range_type_deleted', 'range_type', type.id, { name: type.name });
   res.json({ message: 'Range type deleted' });
 });

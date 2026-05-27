@@ -740,15 +740,3 @@ export function findBySubnetAndIp(db, subnetId, ip) {
     'SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 }
-
-/**
- * Prune old scan_results: keep only the latest completed scan per subnet.
- */
-export function pruneOldScanResults(db, subnetId, keepScanId) {
-  return db.prepare(`
-    DELETE FROM scan_results WHERE scan_id IN (
-      SELECT id FROM network_scans
-      WHERE subnet_id = ? AND status = 'completed' AND id != ?
-    )
-  `).run(subnetId, keepScanId);
-}

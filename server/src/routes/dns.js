@@ -4,6 +4,17 @@ import { requirePerm } from '../auth/require-perm.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
+import {
+  createRecord,
+  updateRecord,
+  deleteRecord,
+  fqdnForRecordName
+} from '../models/dns-record.js';
+import {
+  createZone,
+  updateZone,
+  deleteZone
+} from '../models/dns-zone.js';
 
 const router = Router();
 
@@ -86,13 +97,7 @@ function cnameNameErrorForZone(name, zoneName) {
 // Build the FQDN that a record name points at inside its zone. '@' means the
 // zone apex. Used for CNAME self-loop detection.
 function fqdnFor(name, zoneName) {
-  const raw = String(name || '').trim().toLowerCase();
-  const normalized = raw.replace(/\.$/, '');
-  const zone = normalizeDnsName(zoneName);
-  if (normalized === '@' || normalized === zone) return zoneName;
-  if (normalized.endsWith(`.${zone}`)) return normalized;
-  if (normalized.includes('.')) return raw.endsWith('.') ? raw : normalized;
-  return `${normalized}.${zoneName}`;
+  return fqdnForRecordName(name, zoneName);
 }
 
 function hostnameMatches(candidate, proposed, domainName) {
@@ -257,85 +262,6 @@ function validateRecord(type, { name, value, priority, weight, port }, zoneName,
   return null;
 }
 
-// ─── PTR Sync Helpers ─────────────────────────────────────
-
-/**
- * Find the reverse zone matching an IP address.
- * Returns { zone, ptrName } or null.
- */
-function findReverseZone(db, ip) {
-  const octets = ip.split('.');
-  // Try /24 first (most common), then /16, then /8
-  const candidates = [
-    { name: `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: octets[3] },
-    { name: `${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}` },
-    { name: `${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}.${octets[1]}` }
-  ];
-
-  for (const c of candidates) {
-    const zone = db.prepare("SELECT * FROM dns_zones WHERE name = ? AND type = 'reverse' AND enabled = 1").get(c.name);
-    if (zone) return { zone, ptrName: c.ptrName };
-  }
-  return null;
-}
-
-/**
- * Create or update a PTR record for an A record's IP in the matching reverse
- * zone. Returns { conflict } if an existing PTR already points at a different
- * FQDN from another forward zone — callers can choose to honor or reject.
- */
-function syncPtrForARecord(db, recordName, ip, forwardZoneName, { force = false } = {}) {
-  const match = findReverseZone(db, ip);
-  if (!match) return { updated: false }; // No matching reverse zone
-
-  const { zone, ptrName } = match;
-  const fqdn = fqdnFor(recordName, forwardZoneName);
-
-  const existing = db.prepare('SELECT * FROM dns_records WHERE zone_id = ? AND type = ? AND name = ?').get(zone.id, 'PTR', ptrName);
-
-  if (existing) {
-    // M9 fix: if an existing PTR points at an FQDN in a DIFFERENT forward
-    // zone, don't silently overwrite it. In today's single-admin model the
-    // last-write-wins behavior is a foot-gun; the moment zone-level RBAC
-    // is added it becomes an IDOR. `force:true` lets callers opt in (the
-    // UI can surface a confirmation).
-    if (!force && existing.value && existing.value !== ip) {
-      const bareIp = /^\d+\.\d+\.\d+\.\d+$/.test(existing.value);
-      if (!bareIp && existing.value.toLowerCase() !== fqdn.toLowerCase()) {
-        // Different forward zone? Only block if the existing target isn't
-        // already part of THIS forward zone (catches the cross-zone case
-        // while still allowing name changes within the same zone).
-        if (!existing.value.toLowerCase().endsWith('.' + forwardZoneName.toLowerCase()) &&
-            existing.value.toLowerCase() !== forwardZoneName.toLowerCase()) {
-          return { conflict: { existing: existing.value, proposed: fqdn, reverseZone: zone.name } };
-        }
-      }
-    }
-    db.prepare("UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?").run(fqdn, existing.id);
-  } else {
-    db.prepare('INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, ?, ?, 1)').run(zone.id, ptrName, 'PTR', fqdn);
-  }
-
-  db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?").run(zone.id);
-  return { updated: true };
-}
-
-/**
- * Revert a PTR record back to bare IP when the corresponding A record is deleted.
- */
-function clearPtrForIp(db, ip) {
-  const match = findReverseZone(db, ip);
-  if (!match) return;
-
-  const { zone, ptrName } = match;
-  const existing = db.prepare('SELECT * FROM dns_records WHERE zone_id = ? AND type = ? AND name = ?').get(zone.id, 'PTR', ptrName);
-  if (existing) {
-    // Revert to bare IP (indicating unresolved)
-    db.prepare("UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?").run(ip, existing.id);
-    db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?").run(zone.id);
-  }
-}
-
 // ─── Zones ───────────────────────────────────────────────
 
 // GET /api/dns/zones
@@ -399,16 +325,17 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
 
   const soaDefaults = getSetting('dns_soa_defaults');
 
-  const result = db.prepare(`
-    INSERT INTO dns_zones (name, type, description,
-      soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, type, description || null,
-    soa_primary_ns || soaDefaults.soa_primary_ns, soa_admin_email || soaDefaults.soa_admin_email,
-    soa_refresh ?? soaDefaults.soa_refresh, soa_retry ?? soaDefaults.soa_retry,
-    soa_expire ?? soaDefaults.soa_expire, soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl);
-
-  const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(result.lastInsertRowid);
+  const zone = createZone(db, {
+    name,
+    type,
+    description,
+    soa_primary_ns,
+    soa_admin_email,
+    soa_refresh,
+    soa_retry,
+    soa_expire,
+    soa_minimum_ttl
+  }, soaDefaults);
   audit(req.user.id, 'zone_created', 'dns_zone', zone.id, { name, type });
 
   req.afterCommit('regenerate_dns');
@@ -435,41 +362,17 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
     if (dup) return res.status(409).json({ error: 'Zone name already taken' });
   }
 
-  const newSerial = (zone.soa_serial || 0) + 1;
-
-  // On rename, update every subnet whose `domain_name` references the old
-  // zone name — zones are now subnet-agnostic, so any number of subnets
-  // may point at this zone. Wrap in a txn so rename + sync are atomic.
-  const upd = db.transaction(() => {
-    db.prepare(`
-      UPDATE dns_zones SET name = ?, description = ?, enabled = ?,
-        soa_primary_ns = ?, soa_admin_email = ?, soa_serial = ?,
-        soa_refresh = ?, soa_retry = ?, soa_expire = ?, soa_minimum_ttl = ?,
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      name ?? zone.name,
-      description !== undefined ? description : zone.description,
-      enabled !== undefined ? (enabled ? 1 : 0) : zone.enabled,
-      soa_primary_ns !== undefined ? soa_primary_ns : zone.soa_primary_ns,
-      soa_admin_email !== undefined ? soa_admin_email : zone.soa_admin_email,
-      newSerial,
-      soa_refresh !== undefined ? soa_refresh : zone.soa_refresh,
-      soa_retry !== undefined ? soa_retry : zone.soa_retry,
-      soa_expire !== undefined ? soa_expire : zone.soa_expire,
-      soa_minimum_ttl !== undefined ? soa_minimum_ttl : zone.soa_minimum_ttl,
-      zone.id
-    );
-
-    if (renaming && zone.type === 'forward') {
-      db.prepare(
-        "UPDATE subnets SET domain_name = ?, updated_at = datetime('now') WHERE domain_name = ?"
-      ).run(name, zone.name);
-    }
+  const updated = updateZone(db, zone, {
+    name,
+    description,
+    enabled,
+    soa_primary_ns,
+    soa_admin_email,
+    soa_refresh,
+    soa_retry,
+    soa_expire,
+    soa_minimum_ttl
   });
-  upd();
-
-  const updated = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(zone.id);
   audit(req.user.id, 'zone_updated', 'dns_zone', zone.id, { changes: req.body });
 
   req.afterCommit('regenerate_dns');
@@ -482,17 +385,7 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
-  const del = db.transaction(() => {
-    // Clear every subnet that was pointing at this forward zone — multiple
-    // subnets may reference it via `domain_name` post-decouple.
-    if (zone.type === 'forward') {
-      db.prepare(
-        "UPDATE subnets SET domain_name = NULL, updated_at = datetime('now') WHERE domain_name = ?"
-      ).run(zone.name);
-    }
-    db.prepare('DELETE FROM dns_zones WHERE id = ?').run(zone.id);
-  });
-  del();
+  deleteZone(db, zone);
 
   audit(req.user.id, 'zone_deleted', 'dns_zone', zone.id, { name: zone.name });
 
@@ -598,35 +491,32 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     }
   }
 
-  const result = db.prepare(`
-    INSERT INTO dns_records (zone_id, name, type, value, priority, weight, port, ttl, enabled)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    zone.id, normalizedName, type, normalizedValue,
-    priority ?? null, weight ?? null, port ?? null, ttl ?? null,
-    enabled !== undefined ? (enabled ? 1 : 0) : 1
-  );
-
-  // Increment zone SOA serial on record change
-  db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(\'now\') WHERE id = ?').run(zone.id);
-
-  const record = db.prepare('SELECT * FROM dns_records WHERE id = ?').get(result.lastInsertRowid);
-  audit(req.user.id, 'record_created', 'dns_record', record.id, { zone: zone.name, name: normalizedName, type, value: normalizedValue });
-
-  // Auto-create/update PTR record when A record is added to a forward zone.
-  // If the PTR already points at a different forward zone's FQDN, refuse
-  // unless the caller passed force_ptr:true (M9 — cross-zone PTR hijack).
-  if (type === 'A' && zone.type === 'forward') {
-    const ptrResult = syncPtrForARecord(db, normalizedName, normalizedValue, zone.name, { force: !!force_ptr });
-    if (ptrResult?.conflict) {
-      // Undo the A record insert so the state is consistent with the 409.
-      db.prepare('DELETE FROM dns_records WHERE id = ?').run(result.lastInsertRowid);
+  let record;
+  try {
+    ({ record } = createRecord(db, zone, {
+      name: normalizedName,
+      type,
+      value: normalizedValue,
+      priority,
+      weight,
+      port,
+      ttl,
+      enabled
+    }, { forcePtr: !!force_ptr }));
+  } catch (err) {
+    if (err.code === 'PTR_CONFLICT') {
       return res.status(409).json({
         error: 'PTR for this IP already points at a different forward zone',
-        ptr_conflict: ptrResult.conflict,
+        ptr_conflict: err.conflict,
         hint: 'Pass force_ptr:true to overwrite'
       });
     }
+    throw err;
+  }
+
+  audit(req.user.id, 'record_created', 'dns_record', record.id, { zone: zone.name, name: normalizedName, type, value: normalizedValue });
+
+  if (type === 'A' && zone.type === 'forward') {
     syncDnsToIp(db, normalizedName, normalizedValue, zone.name);
   }
 
@@ -709,20 +599,16 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     }
   }
 
-  db.prepare(`
-    UPDATE dns_records SET name = ?, type = ?, value = ?, priority = ?, weight = ?, port = ?, ttl = ?,
-      enabled = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `).run(
-    newName, newType, newValue, newPriority, newWeight, newPort, newTtl,
-    enabled !== undefined ? (enabled ? 1 : 0) : record.enabled,
-    record.id
-  );
-
-  // Increment zone SOA serial on record change
-  db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(\'now\') WHERE id = ?').run(zone.id);
-
-  const updated = db.prepare('SELECT * FROM dns_records WHERE id = ?').get(record.id);
+  const updated = updateRecord(db, zone, record, {
+    name: newName,
+    type: newType,
+    value: newValue,
+    priority: newPriority,
+    weight: newWeight,
+    port: newPort,
+    ttl: newTtl,
+    enabled
+  });
   audit(req.user.id, 'record_updated', 'dns_record', record.id, { changes: req.body });
 
   // Sync PTR + ip_addresses when an A record is updated in a forward zone.
@@ -739,7 +625,6 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
       // explicitly so the `dns_removed` event is recorded.
       clearDnsFromIp(db, record.name, record.value, zone.name);
     }
-    syncPtrForARecord(db, newName, newValue, zone.name);
     syncDnsToIp(db, newName, newValue, zone.name);
   }
 
@@ -757,15 +642,10 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
     return res.status(403).json({ error: 'DHCP-managed records cannot be deleted manually' });
   }
 
-  db.prepare('DELETE FROM dns_records WHERE id = ?').run(record.id);
-
-  // Increment zone SOA serial on record change
-  db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(\'now\') WHERE id = ?').run(record.zone_id);
-
   // Clear PTR and IP hostname when A record is deleted from a forward zone
   const delZone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(record.zone_id);
+  deleteRecord(db, delZone, record);
   if (record.type === 'A' && delZone?.type === 'forward') {
-    clearPtrForIp(db, record.value);
     clearDnsFromIp(db, record.name, record.value, delZone.name);
   }
 

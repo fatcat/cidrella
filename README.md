@@ -35,7 +35,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 CIDRella targets 1–2 GB hosts. Per-IP bookkeeping in SQLite is the dominant memory cost, so very large allocated subnets (e.g. `/10`, `/8`) will outgrow modest hosts long before DHCP lease counts become the bottleneck. See [docs/SIZING.md](docs/SIZING.md) for the ceiling-per-host table and the math behind it.
 
-Developer note: shared IP state returned to the UI follows the canonical read/write naming contract in [docs/API_MODEL.md](docs/API_MODEL.md).
+Developer notes: shared IP state returned to the UI follows the canonical read/write naming contract in [docs/API_MODEL.md](docs/API_MODEL.md). Backend database ownership boundaries and the consolidation plan are tracked in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Installation
 
@@ -100,6 +100,8 @@ docker compose pull && docker compose up -d
 | Database | DuckDB (for analytics and anomaly detection) |
 | Custom | DNS proxy (for domain and country blocking) |
 | Process Manager | s6-overlay (Docker), systemd (native) |
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership boundaries and planned consolidation work.
 
 ## Roles
 

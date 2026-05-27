@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { getDb, audit } from '../db/init.js';
+import * as User from '../models/user.js';
 
 const router = Router();
 
@@ -162,13 +163,10 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
     }
 
     const hash = await bcrypt.hash(new_password, 10);
-    db.prepare(
-      "UPDATE users SET password_hash = ?, must_change_password = 0, password_reset_by = NULL, updated_at = datetime('now') WHERE id = ?"
-    ).run(hash, user.id);
+    const updatedUser = User.changePassword(db, user.id, hash);
 
     audit(user.id, 'password_changed', 'user', user.id, null);
 
-    const updatedUser = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
     const token = generateToken(updatedUser);
 
     res.json({
@@ -198,8 +196,7 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
 router.post('/logout', (req, res) => {
   try {
     const db = getDb();
-    db.prepare("UPDATE users SET updated_at = datetime('now','+1 second') WHERE id = ?")
-      .run(req.user.id);
+    User.bumpTokenVersion(db, req.user.id);
     audit(req.user.id, 'logout', 'user', req.user.id, null);
     res.json({ ok: true });
   } catch (err) {
@@ -265,8 +262,7 @@ router.put('/preferences', (req, res) => {
 
   Object.assign(prefs, updates);
 
-  db.prepare("UPDATE users SET preferences = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(JSON.stringify(prefs), req.user.id);
+  User.updatePreferences(db, req.user.id, prefs);
 
   res.json(prefs);
 });

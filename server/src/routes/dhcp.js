@@ -4,9 +4,19 @@ import { requirePerm } from '../auth/require-perm.js';
 import { isIpInSubnet, ipToLong, longToIp, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
 import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
-import { syncDhcpReservationToIp, clearDhcpReservationFromIp, syncPtrForIp } from '../utils/ip-sync.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
+import { createScope, updateScope, deleteScope } from '../models/dhcp-scope.js';
+import {
+  createReservation,
+  updateReservation,
+  deleteReservation
+} from '../models/dhcp-reservation.js';
+import {
+  createCustomOption,
+  deleteCustomOption,
+  replaceDefaultOptions
+} from '../models/dhcp-option.js';
 
 const router = Router();
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
@@ -42,25 +52,6 @@ function parseIpList(jsonStr, fieldName) {
   } catch {
     return { error: `${fieldName} must be a valid JSON array` };
   }
-}
-
-// Helper: compute DHCP option values that are inherited from the subnet.
-// These are skipped when saving explicit scope options to avoid redundant storage.
-function computeInheritedOptions(subnet) {
-  const inherited = {};
-  if (subnet?.gateway_address) inherited[3] = subnet.gateway_address;
-  if (subnet?.cidr) {
-    const pfx = parseInt(subnet.cidr.split('/')[1], 10);
-    if (pfx >= 0 && pfx <= 32) {
-      const m = pfx === 0 ? 0 : (0xFFFFFFFF << (32 - pfx)) >>> 0;
-      inherited[1] = [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255].join('.');
-    }
-  }
-  if (subnet?.domain_name) {
-    inherited[15] = subnet.domain_name;
-    inherited[119] = subnet.domain_name;
-  }
-  return inherited;
 }
 
 // ─── Scopes ──────────────────────────────────────────────
@@ -178,51 +169,18 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'options must be an array' });
   }
 
-  const txn = db.transaction(() => {
-    const result = db.prepare(`
-      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      range_id, subnet_id,
-      lease_time || getSetting('default_lease_time'),
-      dns_servers || null,
-      domain_name || null,
-      gateway || null,
-      ntp_servers || null,
-      domain_search || null,
-      description || null
-    );
-
-    const scopeId = result.lastInsertRowid;
-
-    // Save scope options — skip values that match subnet defaults (inherited dynamically)
-    if (Array.isArray(options) && options.length > 0) {
-      const inherited = computeInheritedOptions(subnet);
-      const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
-      for (const opt of options) {
-        if (opt.code && opt.value != null && opt.value !== '') {
-          if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
-          insertOpt.run(scopeId, opt.code, String(opt.value));
-        }
-      }
-    }
-
-    return scopeId;
-  });
-
-  const scopeId = txn();
-
-  const scope = db.prepare(`
-    SELECT s.*, r.start_ip, r.end_ip,
-      sub.cidr as subnet_cidr, sub.name as subnet_name, sub.gateway_address as subnet_gateway
-    FROM dhcp_scopes s
-    JOIN ranges r ON s.range_id = r.id
-    JOIN subnets sub ON s.subnet_id = sub.id
-    WHERE s.id = ?
-  `).get(scopeId);
-
-  // Attach scope options
-  scope.options = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?').all(scopeId);
+  const scope = createScope(db, {
+    range_id,
+    subnet_id,
+    lease_time,
+    dns_servers,
+    domain_name,
+    gateway,
+    ntp_servers,
+    domain_search,
+    description,
+    options
+  }, { subnet, defaultLeaseTime: getSetting('default_lease_time') });
 
   audit(req.user.id, 'dhcp_scope_created', 'dhcp_scope', scope.id, { subnet: subnet.cidr, range_id });
   req.afterCommit('regenerate_dhcp');
@@ -321,62 +279,20 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'options must be an array' });
   }
 
-  const txn = db.transaction(() => {
-    db.prepare(`
-      UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
-        gateway = ?, ntp_servers = ?, domain_search = ?, enabled = ?, description = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      lease_time ?? scope.lease_time,
-      dns_servers !== undefined ? dns_servers : scope.dns_servers,
-      domain_name !== undefined ? domain_name : scope.domain_name,
-      gateway !== undefined ? (gateway || null) : scope.gateway,
-      ntp_servers !== undefined ? (ntp_servers || null) : scope.ntp_servers,
-      domain_search !== undefined ? (domain_search || null) : scope.domain_search,
-      enabled !== undefined ? (enabled ? 1 : 0) : scope.enabled,
-      description !== undefined ? description : scope.description,
-      scope.id
-    );
-
-    // Update range IPs if provided
-    if (start_ip !== undefined || end_ip !== undefined) {
-      const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
-      db.prepare("UPDATE ranges SET start_ip = ?, end_ip = ?, updated_at = datetime('now') WHERE id = ?").run(
-        start_ip || range.start_ip,
-        end_ip || range.end_ip,
-        scope.range_id
-      );
-    }
-
-    // Replace scope options if provided — skip values that match subnet defaults (inherited dynamically)
-    if (Array.isArray(options)) {
-      const subnet = db.prepare('SELECT gateway_address, cidr, domain_name FROM subnets WHERE id = ?').get(scope.subnet_id);
-      db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scope.id);
-      const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
-      const inherited = computeInheritedOptions(subnet);
-
-      for (const opt of options) {
-        if (opt.code && opt.value != null && opt.value !== '') {
-          // Skip if value matches what the config generator inherits from the subnet
-          if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
-          insertOpt.run(scope.id, opt.code, String(opt.value));
-        }
-      }
-    }
-  });
-
-  txn();
-
-  const updated = db.prepare(`
-    SELECT s.*, r.start_ip, r.end_ip,
-      sub.cidr as subnet_cidr, sub.name as subnet_name, sub.gateway_address as subnet_gateway
-    FROM dhcp_scopes s
-    JOIN ranges r ON s.range_id = r.id
-    JOIN subnets sub ON s.subnet_id = sub.id
-    WHERE s.id = ?
-  `).get(scope.id);
-
-  updated.options = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?').all(scope.id);
+  const optionSubnet = db.prepare('SELECT gateway_address, cidr, domain_name FROM subnets WHERE id = ?').get(scope.subnet_id);
+  const updated = updateScope(db, scope, {
+    lease_time,
+    dns_servers,
+    domain_name,
+    gateway,
+    ntp_servers,
+    domain_search,
+    enabled,
+    description,
+    start_ip,
+    end_ip,
+    options
+  }, { subnet: optionSubnet });
 
   audit(req.user.id, 'dhcp_scope_updated', 'dhcp_scope', scope.id, { changes: req.body });
   req.afterCommit('regenerate_dhcp');
@@ -389,9 +305,7 @@ router.delete('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   const scope = db.prepare('SELECT * FROM dhcp_scopes WHERE id = ?').get(req.params.id);
   if (!scope) return res.status(404).json({ error: 'Scope not found' });
 
-  db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scope.id);
-  db.prepare('DELETE FROM dhcp_scopes WHERE id = ?').run(scope.id);
-  db.prepare('DELETE FROM ranges WHERE id = ?').run(scope.range_id);
+  deleteScope(db, scope);
   audit(req.user.id, 'dhcp_scope_deleted', 'dhcp_scope', scope.id, { range_id: scope.range_id });
   req.afterCommit('regenerate_dhcp');
   res.json({ message: 'Scope deleted' });
@@ -509,25 +423,12 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   const dupIp = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ?').get(subnet_id, ip_address);
   if (dupIp) return res.status(409).json({ error: 'IP address already reserved in this subnet' });
 
-  const result = db.prepare(`
-    INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, description)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(subnet_id, mac, ip_address, hostname || null, description || null);
-
-  const reservation = db.prepare(`
-    SELECT dr.*, sub.cidr as subnet_cidr, sub.name as subnet_name
-    FROM dhcp_reservations dr
-    JOIN subnets sub ON dr.subnet_id = sub.id
-    WHERE dr.id = ?
-  `).get(result.lastInsertRowid);
-
-  syncDhcpReservationToIp(db, subnet_id, ip_address, { hostname: hostname || null, mac_address: mac });
-  // Populate the matching PTR record with the FQDN (hostname + domain), or
-  // blank it if no hostname was provided.
-  const fqdn = hostname
-    ? (subnet.domain_name ? `${hostname}.${subnet.domain_name}` : hostname)
-    : '';
-  syncPtrForIp(db, subnet_id, ip_address, fqdn);
+  const reservation = createReservation(db, subnet, {
+    mac_address: mac,
+    ip_address,
+    hostname,
+    description
+  });
   audit(req.user.id, 'dhcp_reservation_created', 'dhcp_reservation', reservation.id, { mac, ip: ip_address, subnet: subnet.cidr });
   req.afterCommit('regenerate_dhcp');
   res.status(201).json(reservation);
@@ -597,39 +498,13 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     if (dupIp) return res.status(409).json({ error: 'IP address already reserved in this subnet' });
   }
 
-  db.prepare(`
-    UPDATE dhcp_reservations SET mac_address = ?, ip_address = ?, hostname = ?,
-      description = ?, enabled = ?, updated_at = datetime('now')
-    WHERE id = ?
-  `).run(
-    newMac, newIp,
-    hostname !== undefined ? (hostname || null) : reservation.hostname,
-    description !== undefined ? (description || null) : reservation.description,
-    enabled !== undefined ? (enabled ? 1 : 0) : reservation.enabled,
-    reservation.id
-  );
-
-  const updated = db.prepare(`
-    SELECT dr.*, sub.cidr as subnet_cidr, sub.name as subnet_name
-    FROM dhcp_reservations dr
-    JOIN subnets sub ON dr.subnet_id = sub.id
-    WHERE dr.id = ?
-  `).get(reservation.id);
-
-  // If IP changed, clear old IP's DHCP metadata + PTR
-  if (newIp !== reservation.ip_address) {
-    clearDhcpReservationFromIp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
-    syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '');
-  }
-  const newHostname = hostname !== undefined ? (hostname || null) : reservation.hostname;
-  syncDhcpReservationToIp(db, reservation.subnet_id, newIp, {
-    hostname: newHostname,
-    mac_address: newMac
+  const updated = updateReservation(db, reservation, subnet, {
+    mac_address: newMac,
+    ip_address: newIp,
+    hostname,
+    description,
+    enabled
   });
-  const fqdn = newHostname
-    ? (subnet.domain_name ? `${newHostname}.${subnet.domain_name}` : newHostname)
-    : '';
-  syncPtrForIp(db, reservation.subnet_id, newIp, fqdn);
   audit(req.user.id, 'dhcp_reservation_updated', 'dhcp_reservation', reservation.id, { changes: req.body });
   req.afterCommit('regenerate_dhcp');
   res.json(updated);
@@ -641,9 +516,7 @@ router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   const reservation = db.prepare('SELECT * FROM dhcp_reservations WHERE id = ?').get(req.params.id);
   if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
 
-  db.prepare('DELETE FROM dhcp_reservations WHERE id = ?').run(reservation.id);
-  clearDhcpReservationFromIp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
-  syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '');
+  deleteReservation(db, reservation);
   audit(req.user.id, 'dhcp_reservation_deleted', 'dhcp_reservation', reservation.id, {
     mac: reservation.mac_address, ip: reservation.ip_address
   });
@@ -902,11 +775,16 @@ router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
   if (existing) return res.status(409).json({ error: `Code ${codeNum} already exists as a custom option` });
 
   const optName = name || `custom-${codeNum}`;
-  const result = db.prepare('INSERT INTO dhcp_custom_options (code, name, label, type, description) VALUES (?, ?, ?, ?, ?)')
-    .run(codeNum, optName, label, optType, description || null);
+  const created = createCustomOption(db, {
+    code: codeNum,
+    name: optName,
+    label,
+    type: optType,
+    description
+  });
 
-  audit(req.user.id, 'create', 'dhcp_custom_option', result.lastInsertRowid, { code: codeNum, label });
-  res.status(201).json({ id: result.lastInsertRowid, code: codeNum, label, type: optType });
+  audit(req.user.id, 'create', 'dhcp_custom_option', created.id, { code: codeNum, label });
+  res.status(201).json(created);
 });
 
 // DELETE /api/dhcp/options/custom/:code — delete a custom option
@@ -917,11 +795,7 @@ router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => 
   const entry = db.prepare('SELECT * FROM dhcp_custom_options WHERE code = ?').get(codeNum);
   if (!entry) return res.status(404).json({ error: 'Custom option not found' });
 
-  db.transaction(() => {
-    db.prepare('DELETE FROM dhcp_custom_options WHERE code = ?').run(codeNum);
-    db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code = ?').run(codeNum);
-    db.prepare('DELETE FROM dhcp_scope_options WHERE option_code = ?').run(codeNum);
-  })();
+  deleteCustomOption(db, entry);
 
   audit(req.user.id, 'delete', 'dhcp_custom_option', entry.id, { code: codeNum, label: entry.label });
   res.json({ ok: true });
@@ -933,112 +807,13 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   if (!Array.isArray(options)) {
     return res.status(400).json({ error: 'options must be an array of { code, value }' });
   }
-  const enabledSet = new Set((enabledDefaults || []).map(Number));
 
   const db = getDb();
-  const txn = db.transaction(() => {
-    db.prepare('DELETE FROM dhcp_option_defaults').run();
-    const insert = db.prepare(`
-      INSERT INTO dhcp_option_defaults (option_code, value, enabled_by_default, updated_at)
-      VALUES (?, ?, ?, datetime('now'))
-    `);
-    // Insert options that have a value
-    const inserted = new Set();
-    for (const opt of options) {
-      if (opt.code && opt.value != null && opt.value !== '') {
-        insert.run(opt.code, String(opt.value), enabledSet.has(Number(opt.code)) ? 1 : 0);
-        inserted.add(Number(opt.code));
-      }
-    }
-    // Insert enabled-only entries (no value but enabled by default)
-    for (const code of enabledSet) {
-      if (!inserted.has(code)) {
-        insert.run(code, null, 1);
-      }
-    }
-  });
-
-  txn();
+  const updated = replaceDefaultOptions(db, options, enabledDefaults);
   audit(req.user.id, 'dhcp_option_defaults_updated', 'dhcp', null, { count: options.length });
   req.afterCommit('regenerate_dhcp');
 
-  const rows = db.prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults').all();
-  const defaults = Object.fromEntries(rows.filter(r => r.value != null).map(r => [r.option_code, r.value]));
-  const returnedEnabled = rows.filter(r => r.enabled_by_default).map(r => r.option_code);
-  res.json({ defaults, enabledDefaults: returnedEnabled });
+  res.json(updated);
 });
-
-/**
- * Remove redundant option 3 (gateway) entries from dhcp_scope_options
- * when they match the subnet's gateway_address. These are inherited
- * dynamically by the config generator and should not be stored.
- */
-export function cleanupRedundantGatewayOptions(db) {
-  const result = db.prepare(`
-    DELETE FROM dhcp_scope_options
-    WHERE option_code = 3
-      AND scope_id IN (
-        SELECT s.id FROM dhcp_scopes s
-        JOIN subnets sub ON s.subnet_id = sub.id
-        WHERE sub.gateway_address IS NOT NULL
-          AND sub.gateway_address != ''
-      )
-      AND value = (
-        SELECT sub.gateway_address FROM dhcp_scopes s
-        JOIN subnets sub ON s.subnet_id = sub.id
-        WHERE s.id = dhcp_scope_options.scope_id
-      )
-  `).run();
-  if (result.changes > 0) {
-    console.log(`Cleaned up ${result.changes} redundant gateway option(s) from DHCP scopes`);
-  }
-}
-
-// One-time migration: copy legacy column values to dhcp_scope_options
-export function migrateLegacyScopeOptions(db) {
-  const scopes = db.prepare('SELECT * FROM dhcp_scopes').all();
-  const hasAny = db.prepare('SELECT COUNT(*) as c FROM dhcp_scope_options').get();
-  if (hasAny.c > 0) return; // Already migrated
-
-  const insert = db.prepare('INSERT OR IGNORE INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
-  const txn = db.transaction(() => {
-    for (const scope of scopes) {
-      // gateway → option 3
-      if (scope.gateway) {
-        insert.run(scope.id, 3, scope.gateway);
-      }
-      // dns_servers → option 6
-      if (scope.dns_servers) {
-        try {
-          const servers = JSON.parse(scope.dns_servers);
-          if (Array.isArray(servers) && servers.length > 0) {
-            insert.run(scope.id, 6, servers.join(','));
-          }
-        } catch { /* skip */ }
-      }
-      // domain_name → option 15
-      if (scope.domain_name) {
-        insert.run(scope.id, 15, scope.domain_name);
-      }
-      // ntp_servers → option 42
-      if (scope.ntp_servers) {
-        try {
-          const servers = JSON.parse(scope.ntp_servers);
-          if (Array.isArray(servers) && servers.length > 0) {
-            insert.run(scope.id, 42, servers.join(','));
-          }
-        } catch { /* skip */ }
-      }
-      // domain_search → option 119
-      if (scope.domain_search) {
-        insert.run(scope.id, 119, scope.domain_search);
-      }
-    }
-  });
-  txn();
-  if (scopes.length > 0) {
-    console.log(`Migrated legacy DHCP options for ${scopes.length} scopes`);
-  }
-}
 
 export default router;

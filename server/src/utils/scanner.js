@@ -5,6 +5,7 @@ import { parseCidr, longToIp } from './ip.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
 import * as IpAddress from '../models/ip-address.js';
+import * as ScanRun from '../models/scan-run.js';
 
 /**
  * Run arping on a single IP. It only responds for directly-reachable peers;
@@ -136,7 +137,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   const isTargeted = Array.isArray(targetIps) && targetIps.length > 0;
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
   if (!subnet) {
-    db.prepare("UPDATE network_scans SET status = 'failed', error = 'Subnet not found', completed_at = datetime('now') WHERE id = ?").run(scanId);
+    ScanRun.markFailed(db, scanId, 'Subnet not found');
     return;
   }
 
@@ -187,24 +188,18 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   }
 
   // Check for already-scanned IPs (resume support)
-  const alreadyScanned = new Set(
-    db.prepare('SELECT ip_address FROM scan_results WHERE scan_id = ?')
-      .all(scanId)
-      .map(r => r.ip_address)
-  );
+  const alreadyScanned = ScanRun.existingResultIps(db, scanId);
 
   // Load existing counts from partial run
   let scannedCount = alreadyScanned.size;
-  let conflictsFound = db.prepare(
-    'SELECT COUNT(*) as cnt FROM scan_results WHERE scan_id = ? AND is_conflict = 1'
-  ).get(scanId).cnt;
+  let conflictsFound = ScanRun.countConflicts(db, scanId);
 
   if (alreadyScanned.size > 0) {
     console.log(`[scanner] Resuming scan #${scanId} — ${alreadyScanned.size} IPs already scanned, continuing from where we left off`);
   }
 
   // Update scan status to running
-  db.prepare("UPDATE network_scans SET status = 'running', total_ips = ?, started_at = COALESCE(started_at, datetime('now')) WHERE id = ?").run(totalIps, scanId);
+  ScanRun.markRunning(db, scanId, totalIps);
 
   // Get existing IP assignments for conflict detection
   const assignments = db.prepare(`
@@ -264,11 +259,6 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     }
   }
 
-  const insertResult = db.prepare(`
-    INSERT INTO scan_results (scan_id, ip_address, mac_address, responded, is_conflict, conflict_reason)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `);
-
   try {
     // Scan in batches for reasonable speed
     for (let i = 0; i < ipsToScan.length; i += SCAN_BATCH_SIZE) {
@@ -327,24 +317,24 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
         probeMethods.set(result.ip, result.method);
 
-        insertResult.run(
-          scanId, result.ip, result.mac,
-          result.responded ? 1 : 0, isConflict, conflictReason
-        );
+        ScanRun.insertResult(db, scanId, {
+          ip: result.ip,
+          mac: result.mac,
+          responded: result.responded,
+          isConflict,
+          conflictReason
+        });
       }
 
       scannedCount += results.length;
 
       // Update progress
-      db.prepare("UPDATE network_scans SET scanned_ips = ?, conflicts_found = ? WHERE id = ?")
-        .run(scannedCount, conflictsFound, scanId);
+      ScanRun.updateProgress(db, scanId, { scannedIps: scannedCount, conflictsFound });
     }
 
     // Update ip_addresses via model — liveness, MAC, rogue state, lifecycle fields
     if (updateModel) {
-      const scanResults = db.prepare(
-        'SELECT ip_address, responded, mac_address, is_conflict, conflict_reason FROM scan_results WHERE scan_id = ?'
-      ).all(scanId);
+      const scanResults = ScanRun.getMaterializedResults(db, scanId);
 
       const conflictIps = new Set();
       for (const sr of scanResults) {
@@ -365,16 +355,14 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     }
 
     // Mark completed
-    db.prepare("UPDATE network_scans SET status = 'completed', scanned_ips = ?, conflicts_found = ?, completed_at = datetime('now') WHERE id = ?")
-      .run(scannedCount, conflictsFound, scanId);
+    ScanRun.markCompleted(db, scanId, { scannedIps: scannedCount, conflictsFound });
 
     // Prune old scan_results — keep only this scan (skip for targeted probes)
     if (!isTargeted) {
-      IpAddress.pruneOldScanResults(db, subnetId, scanId);
+      ScanRun.pruneOldResults(db, subnetId, scanId);
     }
   } catch (err) {
-    db.prepare("UPDATE network_scans SET status = 'failed', error = ?, completed_at = datetime('now') WHERE id = ?")
-      .run(err.message, scanId);
+    ScanRun.markFailed(db, scanId, err.message);
   } finally {
     // Clean up the ICMP session
     if (icmpSession) {

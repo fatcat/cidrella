@@ -8,6 +8,9 @@ import { requireRole } from '../auth/roles.js';
 import { clearJwtSecretCache } from '../auth/middleware.js';
 import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup, inspectBackup } from '../utils/backup.js';
 import { reloadTlsCerts } from '../utils/cert.js';
+import * as RangeType from '../models/range-type.js';
+import * as Folder from '../models/folder.js';
+import * as OperationMaintenance from '../services/operation-maintenance.js';
 
 import { DATA_DIR } from '../config/defaults.js';
 
@@ -282,26 +285,13 @@ router.post('/reset-database', async (req, res) => {
     ).all().map(r => r.name);
 
     // Delete all data from every table
-    db.pragma('foreign_keys = OFF');
-    const deleteAll = db.transaction(() => {
-      for (const table of tables) {
-        db.prepare(`DELETE FROM "${table}"`).run();
-      }
-    });
-    deleteAll();
-    db.pragma('foreign_keys = ON');
+    OperationMaintenance.deleteAllTableData(db, tables);
 
     // Re-seed system range types
-    db.prepare(`INSERT INTO range_types (name, color, is_system, description) VALUES
-      ('Network',   '#6b7280', 1, 'Network address (not assignable)'),
-      ('Gateway',   '#f59e0b', 1, 'Default gateway address'),
-      ('Broadcast', '#6b7280', 1, 'Broadcast address (not assignable)'),
-      ('DHCP Scope', '#3b82f6', 1, 'Dynamic DHCP allocation scope'),
-      ('Static',    '#10b981', 1, 'Statically assigned addresses')
-    `).run();
+    RangeType.seedSystemRangeTypes(db);
 
     // Re-seed default folder
-    db.prepare("INSERT INTO folders (name, description, sort_order) VALUES ('Default', 'Default folder', 0)").run();
+    Folder.seedDefaultFolder(db);
 
     // Re-run ensureDefaults to recreate admin user, JWT secret, and default settings
     await ensureDefaults();

@@ -5,6 +5,8 @@ import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig } from '../utils/blocklist.js';
 import { loadBlocklist } from '../utils/dns-proxy.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
+import * as Setting from '../models/setting.js';
+import * as BlocklistStore from '../models/blocklist-store.js';
 
 const router = Router();
 
@@ -44,8 +46,7 @@ router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
   if (enabled === undefined) return res.status(400).json({ error: 'enabled field is required' });
 
   ensureCategoryRows(db);
-  db.prepare('UPDATE blocklist_categories SET enabled = ? WHERE slug = ?')
-    .run(enabled ? 1 : 0, slug);
+  BlocklistStore.setCategoryEnabled(db, slug, enabled);
 
   audit(req.user.id, 'update', 'blocklist_category', null, { slug, enabled });
 
@@ -91,8 +92,7 @@ router.put('/categories/:slug/url', requirePerm('dns:write'), async (req, res) =
     const check = await validateOutboundUrl(urlValue);
     if (!check.ok) return res.status(400).json({ error: `Source URL refused: ${check.reason}` });
   }
-  db.prepare('UPDATE blocklist_categories SET source_url = ? WHERE slug = ?')
-    .run(urlValue, slug);
+  BlocklistStore.setCategorySourceUrl(db, slug, urlValue);
 
   audit(req.user.id, 'update', 'blocklist_category', null, { slug, source_url: urlValue || getDefaultCategoryUrl(slug) });
   res.json({ ok: true, source_url: urlValue || getDefaultCategoryUrl(slug), is_custom_url: !!urlValue });
@@ -173,7 +173,7 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
 
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
-      db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(String(req.body[key]), key);
+      Setting.upsertSetting(db, key, req.body[key]);
     }
   }
 
@@ -206,11 +206,11 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   const existing = db.prepare('SELECT id FROM blocklist_whitelist WHERE domain = ?').get(normalized);
   if (existing) return res.status(409).json({ error: 'Domain already whitelisted' });
 
-  const result = db.prepare('INSERT INTO blocklist_whitelist (domain, reason) VALUES (?, ?)').run(normalized, reason || null);
+  const id = BlocklistStore.addWhitelistEntry(db, normalized, reason);
   generateBlocklistConfig(db);
 
-  audit(req.user.id, 'create', 'blocklist_whitelist', result.lastInsertRowid, { domain: normalized });
-  res.status(201).json({ id: result.lastInsertRowid });
+  audit(req.user.id, 'create', 'blocklist_whitelist', id, { domain: normalized });
+  res.status(201).json({ id });
 });
 
 // DELETE /api/blocklists/whitelist/:id
@@ -219,7 +219,7 @@ router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
   const entry = db.prepare('SELECT * FROM blocklist_whitelist WHERE id = ?').get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'Whitelist entry not found' });
 
-  db.prepare('DELETE FROM blocklist_whitelist WHERE id = ?').run(entry.id);
+  BlocklistStore.deleteWhitelistEntry(db, entry.id);
   generateBlocklistConfig(db);
 
   audit(req.user.id, 'delete', 'blocklist_whitelist', entry.id, { domain: entry.domain });

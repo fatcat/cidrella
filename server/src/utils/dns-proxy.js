@@ -9,6 +9,7 @@ import dnsPacket from 'dns-packet';
 import maxmind from 'maxmind';
 import { LRUCache } from 'lru-cache';
 import { getDb, getSetting, setSetting } from '../db/init.js';
+import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyInterfaceConfig, restartDnsmasq } from './dnsmasq.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
@@ -616,7 +617,7 @@ function deactivateBypass() {
   proxyLog('info', 'Bypass deactivated — proxy recovered');
   try {
     const db = getDb();
-    db.prepare("DELETE FROM settings WHERE key = 'dns_proxy_bypass'").run();
+    Setting.deleteSetting(db, 'dns_proxy_bypass');
     applyInterfaceConfig(db);
     restartDnsmasq();
   } catch (err) {

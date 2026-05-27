@@ -16,7 +16,7 @@ beforeAll(async () => {
   const setup = await setupTestDb();
   db = setup.db;
   tmpDir = setup.tmpDir;
-  ({ syncDhcpDnsRecords } = await import('../../../src/utils/dhcp.js'));
+  ({ syncDhcpDnsRecords } = await import('../../../src/models/dhcp-lease.js'));
 
   db.prepare(`
     INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length, total_addresses, status, domain_name)

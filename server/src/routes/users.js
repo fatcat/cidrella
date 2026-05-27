@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { getDb, audit } from '../db/init.js';
 import { ROLES, requireRole } from '../auth/roles.js';
+import * as User from '../models/user.js';
 
 const router = Router();
 
@@ -46,15 +47,14 @@ router.post('/', requireAdmin, async (req, res) => {
     const password = crypto.randomBytes(9).toString('base64');
     const hash = await bcrypt.hash(password, 10);
 
-    const result = db.prepare(
-      'INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, ?, 1)'
-    ).run(username.trim().toLowerCase(), hash, role);
+    const user = User.createUser(db, {
+      username: username.trim().toLowerCase(),
+      passwordHash: hash,
+      role,
+      mustChangePassword: true
+    });
 
-    audit(req.user.id, 'user_created', 'user', result.lastInsertRowid, { username: username.trim(), role });
-
-    const user = db.prepare(
-      'SELECT id, username, role, must_change_password, created_at, updated_at FROM users WHERE id = ?'
-    ).get(result.lastInsertRowid);
+    audit(req.user.id, 'user_created', 'user', user.id, { username: username.trim(), role });
 
     res.status(201).json({ ...user, password });
   } catch (err) {
@@ -78,12 +78,9 @@ router.put('/:id', requireAdmin, (req, res) => {
     return res.status(400).json({ error: `Role must be one of: ${VALID_ROLES.join(', ')}` });
   }
 
-  db.prepare('UPDATE users SET role = ?, updated_at = datetime(\'now\') WHERE id = ?').run(role, user.id);
+  const updated = User.updateRole(db, user.id, role);
   audit(req.user.id, 'user_updated', 'user', user.id, { username: user.username, old_role: user.role, new_role: role });
 
-  const updated = db.prepare(
-    'SELECT id, username, role, must_change_password, created_at, updated_at FROM users WHERE id = ?'
-  ).get(user.id);
   res.json(updated);
 });
 
@@ -98,11 +95,7 @@ router.delete('/:id', requireAdmin, (req, res) => {
   }
 
   try {
-    const deleteUser = db.transaction(() => {
-      db.prepare('UPDATE audit_log SET user_id = NULL WHERE user_id = ?').run(user.id);
-      db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
-    });
-    deleteUser();
+    User.deleteUser(db, user.id);
     audit(req.user.id, 'user_deleted', 'user', user.id, { username: user.username });
     res.json({ ok: true });
   } catch (err) {
@@ -121,9 +114,7 @@ router.post('/:id/reset-password', requireAdmin, async (req, res) => {
     const password = crypto.randomBytes(9).toString('base64');
     const hash = await bcrypt.hash(password, 10);
 
-    db.prepare(
-      'UPDATE users SET password_hash = ?, must_change_password = 1, updated_at = datetime(\'now\') WHERE id = ?'
-    ).run(hash, user.id);
+    User.resetPassword(db, user.id, hash);
 
     audit(req.user.id, 'user_password_reset', 'user', user.id, { username: user.username });
     res.json({ password });

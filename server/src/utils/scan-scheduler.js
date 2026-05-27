@@ -1,6 +1,7 @@
 import { getDb } from '../db/init.js';
 import { startScan } from './scanner.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
+import * as ScanRun from '../models/scan-run.js';
 
 const INTERVAL_MS = {
   '': null,
@@ -59,12 +60,6 @@ function checkScheduledScans() {
     const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
 
-    // Check if a scan is already running for this subnet
-    const running = db.prepare(`
-      SELECT id FROM network_scans WHERE subnet_id = ? AND status IN ('pending', 'running')
-    `).get(subnet.id);
-    if (running) continue;
-
     // Check if last completed scan is old enough
     const lastScan = db.prepare(`
       SELECT completed_at FROM network_scans WHERE subnet_id = ? AND status = 'completed'
@@ -78,12 +73,11 @@ function checkScheduledScans() {
 
     // Create and start a new scan
     try {
-      const result = db.prepare(`
-        INSERT INTO network_scans (subnet_id, status) VALUES (?, 'pending')
-      `).run(subnet.id);
+      const pending = ScanRun.createPendingIfIdle(db, subnet.id);
+      if (!pending.created) continue;
 
       console.log(`[scan-scheduler] Starting scheduled scan for ${subnet.cidr} (interval: ${subnet.effective_scan_interval})`);
-      startScan(db, result.lastInsertRowid, subnet.id);
+      startScan(db, pending.scanId, subnet.id);
     } catch (err) {
       console.error(`[scan-scheduler] Failed to start scan for ${subnet.cidr}:`, err.message);
     }

@@ -514,31 +514,6 @@ describe('setScanEnabled', () => {
   });
 });
 
-// ── pruneOldScanResults ─────────────────────────────────
-
-describe('pruneOldScanResults', () => {
-  it('deletes scan_results from old completed scans', () => {
-    // Create two completed scans
-    db.prepare("INSERT INTO network_scans (subnet_id, status, total_ips, completed_at) VALUES (?, 'completed', 10, datetime('now', '-1 hour'))").run(subnetId);
-    const oldScanId = db.prepare("SELECT last_insert_rowid() as id").get().id;
-
-    db.prepare("INSERT INTO network_scans (subnet_id, status, total_ips, completed_at) VALUES (?, 'completed', 10, datetime('now'))").run(subnetId);
-    const newScanId = db.prepare("SELECT last_insert_rowid() as id").get().id;
-
-    // Insert results for both scans
-    db.prepare("INSERT INTO scan_results (scan_id, ip_address, responded) VALUES (?, '10.0.1.1', 1)").run(oldScanId);
-    db.prepare("INSERT INTO scan_results (scan_id, ip_address, responded) VALUES (?, '10.0.1.1', 1)").run(newScanId);
-
-    IpAddress.pruneOldScanResults(db, subnetId, newScanId);
-
-    const oldResults = db.prepare('SELECT COUNT(*) as c FROM scan_results WHERE scan_id = ?').get(oldScanId);
-    const newResults = db.prepare('SELECT COUNT(*) as c FROM scan_results WHERE scan_id = ?').get(newScanId);
-
-    expect(oldResults.c).toBe(0);
-    expect(newResults.c).toBe(1);
-  });
-});
-
 // ── lifecycle: rogue cleared on offline ─────────────────
 
 describe('rogue device goes offline', () => {

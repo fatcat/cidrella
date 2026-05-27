@@ -8,6 +8,7 @@
 import { ipToLong } from './ip.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
+import { setPtrForIp } from '../models/dns-record.js';
 
 // Cached leaf subnets — invalidated on subnet CRUD via invalidateSubnetCache()
 let leafSubnetCache = null;
@@ -343,62 +344,14 @@ export function pruneStaleDhcpHostRows(db, maxAgeHours = 24) {
 }
 
 /**
- * Derive the reverse-zone name + record name for an IPv4 in a covering
- * reverse zone stored in dns_zones. Looks up the matching /24 (or larger)
- * reverse zone by NAME only — zones are subnet-agnostic post-decouple, so
- * any subnet's reservation writes into whichever reverse zone happens to
- * cover the IP, regardless of who "owns" the zone.
- *
- * The `subnetId` argument is retained in the signature for call-site
- * compatibility but deliberately unused.
- */
-function findPtrLocation(db, _subnetId, ip) {
-  const octets = ip.split('.').map(Number);
-  if (octets.length !== 4) return null;
-  const candidates = [
-    // Prefer /24 reverse: "c.b.a.in-addr.arpa"
-    `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`,
-    `${octets[1]}.${octets[0]}.in-addr.arpa`,       // /16
-    `${octets[0]}.in-addr.arpa`,                    // /8
-  ];
-  for (const zoneName of candidates) {
-    const zone = db.prepare(
-      "SELECT id, name FROM dns_zones WHERE type = 'reverse' AND name = ?"
-    ).get(zoneName);
-    if (!zone) continue;
-    const zoneParts = zoneName.replace('.in-addr.arpa', '').split('.');
-    let recordName;
-    if (zoneParts.length === 3) recordName = String(octets[3]);
-    else if (zoneParts.length === 2) recordName = `${octets[3]}.${octets[2]}`;
-    else recordName = `${octets[3]}.${octets[2]}.${octets[1]}`;
-    return { zoneId: zone.id, recordName };
-  }
-  return null;
-}
-
-/**
  * Upsert the PTR record for a given IP inside a subnet's reverse zone.
  * `hostname` should be a non-empty FQDN to set, or falsy to clear the PTR.
  * If the target reverse zone doesn't exist (reverse DNS wasn't created for
  * this subnet), this is a no-op.
  */
 export function syncPtrForIp(db, subnetId, ip, hostname) {
-  const loc = findPtrLocation(db, subnetId, ip);
-  if (!loc) return;
-  const fqdn = (hostname || '').trim();
-  const existing = db.prepare(
-    "SELECT id FROM dns_records WHERE zone_id = ? AND name = ? AND type = 'PTR'"
-  ).get(loc.zoneId, loc.recordName);
-  if (existing) {
-    db.prepare("UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(fqdn, existing.id);
-  } else if (fqdn) {
-    db.prepare(
-      "INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, 'PTR', ?, 1)"
-    ).run(loc.zoneId, loc.recordName, fqdn);
-  }
-  db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?")
-    .run(loc.zoneId);
+  void subnetId;
+  return setPtrForIp(db, ip, hostname);
 }
 
 /**

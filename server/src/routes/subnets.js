@@ -4,14 +4,15 @@ import { requirePerm } from '../auth/require-perm.js';
 import {
   parseCidr, normalizeCidr, isValidCidr, calculateSubnets,
   ipToLong, longToIp, isIpInSubnet, subtractCidr, isSubnetOf, cidrsOverlap,
-  validateSupernet, applyNameTemplate, canMergeCidrs, getServerIpForSubnet, isValidDomain,
+  validateSupernet, applyNameTemplate, canMergeCidrs, isValidDomain,
   validateDisplayString
 } from '../utils/ip.js';
-import { generateReverseNames } from '../utils/dnsmasq.js';
-import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
 import * as IpAddress from '../models/ip-address.js';
 import { applyIpView, enrichIpViewRows } from '../models/ip-view.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
+import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
+import * as SubnetTopology from '../services/subnet-topology.js';
+import * as DnsTopology from '../services/subnet-dns-topology.js';
 
 const router = Router();
 
@@ -98,22 +99,7 @@ function buildTree(flatRows) {
 
 // Helper: create system ranges for an allocated subnet
 function createSystemRanges(db, subnetId, parsed, gatewayAddress) {
-  if (parsed.prefix >= 31) return;
-
-  const types = db.prepare("SELECT id, name FROM range_types WHERE is_system = 1 AND name IN ('Network', 'Gateway', 'Broadcast')").all();
-  const typeMap = Object.fromEntries(types.map(t => [t.name, t.id]));
-
-  db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
-    subnetId, typeMap['Network'], parsed.network, parsed.network, 'Network address'
-  );
-  if (gatewayAddress) {
-    db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
-      subnetId, typeMap['Gateway'], gatewayAddress, gatewayAddress, 'Default gateway'
-    );
-  }
-  db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
-    subnetId, typeMap['Broadcast'], parsed.broadcast, parsed.broadcast, 'Broadcast address'
-  );
+  return SubnetTopology.createSystemRanges(db, subnetId, parsed, gatewayAddress);
 }
 
 // Helper: nearest power of 2
@@ -143,69 +129,10 @@ function dhcpRangeDefaults(parsed) {
   return { startLong: poolStart, endLong: poolEnd };
 }
 
-// Helper: populate dhcp_scope_options from dhcp_option_defaults for a new scope
-function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
-  const enabledRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1').all();
-  const optionValues = new Map();
-  for (const row of enabledRows) {
-    optionValues.set(row.option_code, row.value != null ? row.value : null);
-  }
-  if (gateway) optionValues.set(3, gateway);
-  optionValues.set(1, parsed.mask);
-  optionValues.set(28, parsed.broadcast);
-  if (domain) {
-    if (!optionValues.has(15) || !optionValues.get(15)) optionValues.set(15, domain);
-    if (!optionValues.has(119) || !optionValues.get(119)) optionValues.set(119, domain);
-  }
-  const serverIp = getServerIpForSubnet(cidr);
-  if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
-    optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
-  }
-  const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
-  for (const [code, value] of optionValues) {
-    if (value != null && value !== '') insertOpt.run(scopeId, code, String(value));
-  }
-}
-
 // Helper: auto-create DHCP scope for a subnet if no existing hosts/leases/scopes
 function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
   const defaults = dhcpRangeDefaults(parsed);
-  if (!defaults) return;
-
-  // Skip if existing IP assignments, leases, reservations, or scopes
-  const ipCount = db.prepare("SELECT COUNT(*) as c FROM ip_addresses WHERE subnet_id = ? AND status != 'available'").get(subnetId);
-  if (ipCount.c > 0) return;
-  const leaseCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_leases WHERE subnet_id = ?').get(subnetId);
-  if (leaseCount.c > 0) return;
-  const resCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_reservations WHERE subnet_id = ?').get(subnetId);
-  if (resCount.c > 0) return;
-  const existingScope = db.prepare(`
-    SELECT r.id FROM ranges r JOIN range_types rt ON r.range_type_id = rt.id
-    WHERE r.subnet_id = ? AND rt.name = 'DHCP Scope'
-  `).get(subnetId);
-  if (existingScope) return;
-
-  const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
-  if (!dhcpType) return;
-
-  let { startLong, endLong } = defaults;
-  const gwLong = gateway ? ipToLong(gateway) : null;
-  if (gwLong === startLong) startLong++;
-  else if (gwLong === endLong) endLong--;
-
-  const rangeResult = db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
-    subnetId, dhcpType.id, longToIp(startLong), longToIp(endLong), 'DHCP scope'
-  );
-
-  const effectiveDomain = domainName || null;
-  const scopeResult = db.prepare(`
-    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
-    VALUES (?, ?, ?, ?, ?, 'Auto-created DHCP scope')
-  `).run(rangeResult.lastInsertRowid, subnetId, getSetting('default_lease_time'), gateway, effectiveDomain);
-
-  // Populate scope options from defaults
-  const scopeId = scopeResult.lastInsertRowid;
-  insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, effectiveDomain, parsed.network + '/' + parsed.prefix);
+  return DhcpTopology.autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName, defaults);
 }
 
 // Helper: detect whether the given `vlan_id` is already assigned to one or
@@ -224,17 +151,9 @@ function detectVlanCollision(db, vlanId, currentSubnetId) {
 
 // Helper: insert a subnet row
 function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, parent_id, folder_id, status, depth, domain_name }) {
-  const parsed = parseCidr(cidr);
-  return db.prepare(`
-    INSERT INTO subnets (cidr, name, description, vlan_id, network_address, broadcast_address,
-      prefix_length, total_addresses, gateway_address, parent_id, folder_id, status, depth, domain_name)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    cidr, name || cidr, description || null, vlan_id || null,
-    parsed.network, parsed.broadcast, parsed.prefix, parsed.totalAddresses,
-    gateway_address || null, parent_id || null, folder_id || null, status || 'unallocated', depth || 0,
-    domain_name || null
-  );
+  return SubnetTopology.insertSubnet(db, {
+    cidr, name, description, vlan_id, gateway_address, parent_id, folder_id, status, depth, domain_name
+  });
 }
 
 
@@ -242,117 +161,12 @@ function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, p
 // If all children of a parent are unallocated containers (have children, no config),
 // flatten by re-parenting grandchildren directly to the parent and removing intermediaries.
 function consolidateIntermediate(db, parentId) {
-  if (!parentId) return;
-
-  const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ?').all(parentId);
-  if (children.length === 0) return;
-
-  // Check if ALL children are unallocated and have their own children (are intermediaries)
-  const allAreIntermediaries = children.every(c => {
-    if (c.status !== 'unallocated') return false;
-    const grandchildCount = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE parent_id = ?').get(c.id);
-    return grandchildCount.c > 0;
-  });
-
-  if (!allAreIntermediaries) return;
-
-  // Flatten: re-parent all grandchildren to this parent, then delete intermediaries
-  const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-  if (!parent) return;
-
-  for (const child of children) {
-    // Move grandchildren up
-    db.prepare('UPDATE subnets SET parent_id = ?, depth = ? WHERE parent_id = ?')
-      .run(parentId, child.depth, child.id);
-    // Delete the intermediate child
-    db.prepare('DELETE FROM subnets WHERE id = ?').run(child.id);
-  }
-
-  // Fix depth recursively for moved grandchildren (they keep the intermediate's depth, which is correct)
-  // Recurse up in case the parent's parent can also be consolidated
-  consolidateIntermediate(db, parent.parent_id);
+  return SubnetTopology.consolidateIntermediate(db, parentId);
 }
 
 // Helper: buddy-merge unallocated siblings after deletion
 function buddyMerge(db, parentId) {
-  if (!parentId) return;
-
-  let merged = true;
-  while (merged) {
-    merged = false;
-    const unallocLeaves = db.prepare(`
-      SELECT s.* FROM subnets s
-      WHERE s.parent_id = ? AND s.status = 'unallocated'
-        AND NOT EXISTS (SELECT 1 FROM subnets c WHERE c.parent_id = s.id)
-      ORDER BY s.network_address
-    `).all(parentId);
-
-    for (let i = 0; i < unallocLeaves.length && !merged; i++) {
-      for (let j = i + 1; j < unallocLeaves.length && !merged; j++) {
-        const a = unallocLeaves[i], b = unallocLeaves[j];
-        if (a.prefix_length !== b.prefix_length) continue;
-
-        const combinedPrefix = a.prefix_length - 1;
-        const combinedMask = (0xFFFFFFFF << (32 - combinedPrefix)) >>> 0;
-        const aNet = ipToLong(a.network_address);
-        const bNet = ipToLong(b.network_address);
-
-        if ((aNet & combinedMask) === (bNet & combinedMask)) {
-          // They're buddies — merge.
-          const combinedNet = Math.min(aNet, bNet);
-          const combinedCidr = `${longToIp(combinedNet)}/${combinedPrefix}`;
-
-          const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-
-          // Determine destination id for any per-IP/zone state the buddies
-          // might be carrying. Unallocated subnets shouldn't have meaningful
-          // state, but we transfer anyway to avoid silent loss if callers
-          // leave stragglers behind.
-          let destId;
-          if (parent && combinedCidr === parent.cidr) {
-            destId = parent.id;
-          } else {
-            const ins = insertSubnet(db, {
-              cidr: combinedCidr,
-              name: combinedCidr,
-              parent_id: parentId,
-              status: 'unallocated',
-              depth: a.depth
-            });
-            destId = ins.lastInsertRowid;
-          }
-
-          transferPerIpArtifactsToParent(db, [a.id, b.id], destId);
-          migrateChildZonesToParent(db, [a.id, b.id], destId);
-
-          // Now the buddies have no dangling rows pointing at them; safe to
-          // delete. cleanupSubnetData covers ranges/scopes/leases/ip_addresses,
-          // then the subnet row itself goes.
-          cleanupSubnetData(db, a.id);
-          cleanupSubnetData(db, b.id);
-          db.prepare('DELETE FROM subnets WHERE id IN (?, ?)').run(a.id, b.id);
-
-          merged = true;
-        }
-      }
-    }
-  }
-
-  // If all children are gone, parent becomes a leaf again
-  const remaining = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE parent_id = ?').get(parentId);
-  if (remaining.c === 0) return;
-
-  // If only one unallocated child left covering the full parent, remove it
-  if (remaining.c === 1) {
-    const onlyChild = db.prepare(`SELECT * FROM subnets WHERE parent_id = ?`).get(parentId);
-    const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-    if (onlyChild.status === 'unallocated' && onlyChild.cidr === parent.cidr.replace(/\/\d+$/, '') + '/' + onlyChild.prefix_length) {
-      // Check if child covers the full parent
-      if (onlyChild.network_address === parent.network_address && onlyChild.broadcast_address === parent.broadcast_address) {
-        db.prepare('DELETE FROM subnets WHERE id = ?').run(onlyChild.id);
-      }
-    }
-  }
+  return SubnetTopology.buddyMerge(db, parentId);
 }
 
 // GET /api/subnets — return folder-grouped tree
@@ -574,9 +388,6 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
     return res.status(400).json({ error: mergeResult.error });
   }
 
-  const allocated = subnets.filter(s => s.status === 'allocated');
-  const gatewaySubnet = allocated.find(s => s.gateway_address);
-
   // Forward-zone conflict gate: refuse to silently consolidate when the
   // children claim different forward-zone domains. The user must resolve the
   // clash themselves (rename or delete one of the zones) before merging.
@@ -589,97 +400,11 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
     });
   }
 
-  // Get name template
-  const template = getSetting('subnet_name_template');
-
   try {
-    const txn = db.transaction(() => {
-      const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-      const mergedParsed = parseCidr(mergeResult.merged_cidr);
-
-      // Determine correct gateway for the merged network
-      const gwPosition = getSetting('default_gateway_position');
-      const mergedGateway = gwPosition === 'last' ? mergedParsed.lastUsable
-        : gwPosition === 'none' ? null : mergedParsed.firstUsable;
-
-      // Use the gateway subnet for config metadata, or fall back to any allocated subnet
-      const configSource = gatewaySubnet || allocated[0] || null;
-
-      // Check if merging reconstitutes the parent (merged CIDR equals parent CIDR)
-      if (mergeResult.merged_cidr === parent.cidr) {
-        // Transfer per-IP artifacts and DNS zones from children up to the
-        // parent BEFORE deleting the child rows. Without this, all
-        // reservations, ip_addresses rows, and dns_zones would be wiped by
-        // the delete + cleanup calls below.
-        transferPerIpArtifactsToParent(db, childIds, parent.id);
-        migrateChildZonesToParent(db, childIds, parent.id);
-        if (configSource) migrateChildScopesToParent(db, configSource.id, parent.id);
-
-        // Now it's safe to tear down the children: their per-IP rows, zones,
-        // and surviving scope already point at the parent. Competing (non-
-        // configSource) scopes cascade-delete with the child row.
-        for (const s of subnets) {
-          db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
-          db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
-        }
-
-        // Restore parent config from the allocated child if any
-        if (allocated.length > 0) {
-          db.prepare(`UPDATE subnets SET status = 'allocated', name = ?, description = ?,
-            vlan_id = ?, gateway_address = ?, has_reverse_dns = ?, domain_name = ?, updated_at = datetime('now')
-            WHERE id = ?`).run(
-            configSource.name, configSource.description,
-            configSource.vlan_id, mergedGateway,
-            configSource.has_reverse_dns || 0, configSource.domain_name || null, parent.id
-          );
-          createSystemRanges(db, parent.id, mergedParsed, mergedGateway);
-        } else {
-          db.prepare(`UPDATE subnets SET status = 'unallocated', gateway_address = ?, updated_at = datetime('now') WHERE id = ?`).run(
-            mergedGateway, parent.id
-          );
-          createSystemRanges(db, parent.id, mergedParsed, mergedGateway);
-        }
-
-        return parent.id;
-      }
-
-      // Normal case: merged CIDR is smaller than parent. Create the merged
-      // subnet FIRST so we have an id to transfer per-IP artifacts and zones
-      // into before the children are deleted.
-      const result = insertSubnet(db, {
-        cidr: mergeResult.merged_cidr,
-        name: configSource ? configSource.name : applyNameTemplate(template, mergeResult.merged_cidr),
-        description: configSource?.description || null,
-        vlan_id: configSource?.vlan_id || null,
-        gateway_address: mergedGateway,
-        parent_id: parentId,
-        status: allocated.length > 0 ? 'allocated' : 'unallocated',
-        depth: parent.depth + 1,
-        domain_name: configSource?.domain_name || null,
-      });
-
-      const mergedId = result.lastInsertRowid;
-
-      transferPerIpArtifactsToParent(db, childIds, mergedId);
-      migrateChildZonesToParent(db, childIds, mergedId);
-      if (configSource) migrateChildScopesToParent(db, configSource.id, mergedId);
-
-      // Now safe to remove the children: their per-IP rows, zones, and
-      // surviving scope already point at mergedId. Competing scopes cascade.
-      for (const s of subnets) {
-        db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(s.id);
-        db.prepare('DELETE FROM subnets WHERE id = ?').run(s.id);
-      }
-
-      createSystemRanges(db, mergedId, mergedParsed, mergedGateway);
-      if (configSource?.has_reverse_dns) {
-        db.prepare('UPDATE subnets SET has_reverse_dns = 1 WHERE id = ?').run(mergedId);
-      }
-
-      return mergedId;
+    const mergedId = SubnetTopology.mergeSubnets(db, subnets, mergeResult, {
+      defaultGatewayPosition: getSetting('default_gateway_position'),
+      nameTemplate: getSetting('subnet_name_template')
     });
-
-    const mergedId = txn();
     req.afterCommit('regenerate_dns');
     req.afterCommit('regenerate_dhcp');
     audit(req.user.id, 'subnets_merged', 'subnet', mergedId, {
@@ -709,20 +434,7 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
     return res.status(400).json({ error: 'No name template configured' });
   }
 
-  const updated = [];
-  const txn = db.transaction(() => {
-    for (const id of subnet_ids) {
-      const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(id);
-      if (!subnet) continue;
-      const newName = applyNameTemplate(template, subnet.cidr);
-      if (newName !== subnet.name) {
-        db.prepare("UPDATE subnets SET name = ?, updated_at = datetime('now') WHERE id = ?").run(newName, id);
-        updated.push({ id, cidr: subnet.cidr, old_name: subnet.name, new_name: newName });
-      }
-    }
-  });
-
-  txn();
+  const updated = SubnetTopology.applyNameTemplateToSubnets(db, subnet_ids, template);
   if (updated.length > 0) {
     audit(req.user.id, 'template_applied', 'subnet', null, { updated });
   }
@@ -843,58 +555,18 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     }
   }
 
-  const txn = db.transaction(() => {
-    db.prepare(`
-      UPDATE subnets SET name = ?, description = ?, vlan_id = ?, gateway_address = ?,
-        scan_interval = ?, folder_id = ?, domain_name = ?, scan_enabled = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(
-      name ?? subnet.name,
-      description !== undefined ? description : subnet.description,
-      vlan_id !== undefined ? vlan_id : subnet.vlan_id,
-      gateway_address ?? subnet.gateway_address,
-      scan_interval !== undefined ? scan_interval : subnet.scan_interval,
-      folder_id !== undefined ? folder_id : subnet.folder_id,
-      domain_name !== undefined ? domain_name : subnet.domain_name,
-      scanEn,
-      subnet.id
-    );
-
-    if (gatewayChanged) {
-      const gwType = db.prepare("SELECT id FROM range_types WHERE name = 'Gateway' AND is_system = 1").get();
-      if (gwType) {
-        const result = db.prepare("UPDATE ranges SET start_ip = ?, end_ip = ?, updated_at = datetime('now') WHERE subnet_id = ? AND range_type_id = ?").run(
-          gateway_address, gateway_address, subnet.id, gwType.id
-        );
-        if (result.changes === 0) {
-          db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
-            subnet.id, gwType.id, gateway_address, gateway_address, 'Default gateway'
-          );
-        }
-      }
-
-      // Release old gateway IP (set to available) if it was persisted
-      if (subnet.gateway_address) {
-        const oldGwIp = IpAddress.findBySubnetAndIp(db, subnet.id, subnet.gateway_address);
-        if (oldGwIp) {
-          IpAddress.setStatus(db, subnet.id, subnet.gateway_address, 'available', null);
-        }
-      }
-
-      // Reserve new gateway IP
-      IpAddress.setStatus(db, subnet.id, gateway_address, 'locked', 'Default gateway');
-    }
-
-    // Auto-create a forward zone if the user set a new domain_name that
-    // doesn't resolve to an existing zone. Zones themselves are shared;
-    // clearing domain_name leaves any existing zone in place for other
-    // subnets that may reference it.
-    if (domainChange && domainChange.autoCreate) {
-      db.prepare("INSERT INTO dns_zones (name, type, description, enabled) VALUES (?, 'forward', ?, 1)")
-        .run(domainChange.newName, `Forward zone for ${domainChange.newName}`);
-    }
+  const updated = SubnetTopology.updateSubnetDetails(db, subnet, {
+    name,
+    description,
+    vlan_id,
+    gateway_address,
+    scan_interval,
+    folder_id,
+    domain_name,
+    scan_enabled: scanEn,
+    gatewayChanged,
+    domainChange
   });
-  txn();
 
   if (gatewayChanged) {
     req.afterCommit('regenerate_dhcp');
@@ -903,7 +575,6 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     req.afterCommit('regenerate_dns');
   }
 
-  const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);
   audit(req.user.id, 'subnet_updated', 'subnet', subnet.id, { changes: req.body });
   // Surface a VLAN collision when the caller just assigned a VLAN that
   // another subnet already uses. Non-blocking; client toasts as warning.
@@ -1109,92 +780,14 @@ function migrateConfigToChild(db, parentId, childId, childParsed, childGw, paren
   // and child is >= /29. Previously only the range row was moved — the
   // dhcp_scopes config (lease time, DNS, options) got dropped on the floor,
   // leaving the inheriting child with a DHCP range but no working scope.
-  if (childParsed.prefix <= 29) {
-    const dhcpRanges = db.prepare(`
-      SELECT r.* FROM ranges r
-      JOIN range_types rt ON r.range_type_id = rt.id
-      WHERE r.subnet_id = ? AND rt.name = 'DHCP Scope'
-    `).all(parentId);
+  poolAdjustments.push(...DhcpTopology.cloneParentScopesToChild(
+    db, parentId, childId, childParsed, childGw, excludeGatewayFromPool
+  ));
 
-    const gwLong = childGw ? ipToLong(childGw) : null;
-
-    for (const dhcpRange of dhcpRanges) {
-      const rStart = ipToLong(dhcpRange.start_ip);
-      const rEnd = ipToLong(dhcpRange.end_ip);
-      let clippedStart = Math.max(rStart, childParsed.networkLong + 1);
-      let clippedEnd = Math.min(rEnd, childParsed.broadcastLong - 1);
-      if (clippedStart > clippedEnd) continue;
-
-      // Exclude the child's gateway from the pool — dnsmasq would otherwise
-      // hand the gateway IP to a client and break routing for the subnet.
-      const beforeStart = clippedStart;
-      const beforeEnd = clippedEnd;
-      const adj = excludeGatewayFromPool(clippedStart, clippedEnd, gwLong);
-      clippedStart = adj.start;
-      clippedEnd = adj.end;
-      if (adj.adjusted) {
-        poolAdjustments.push({
-          child_id: childId,
-          child_cidr: `${childParsed.network}/${childParsed.prefix}`,
-          gateway: childGw,
-          pool_was: { start_ip: longToIp(beforeStart), end_ip: longToIp(beforeEnd) },
-          pool_now: clippedStart > clippedEnd
-            ? null
-            : { start_ip: longToIp(clippedStart), end_ip: longToIp(clippedEnd) },
-        });
-      }
-      if (clippedStart > clippedEnd) continue;  // gateway swallowed whole pool
-
-      const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
-      if (!dhcpType) continue;
-
-      const newRange = db.prepare(
-        'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)'
-      ).run(childId, dhcpType.id, longToIp(clippedStart), longToIp(clippedEnd), dhcpRange.description);
-
-      // Copy every dhcp_scopes row attached to the parent's range into a new
-      // row under the child, pointing at the clipped range. Then clone scope
-      // options so lease time / DNS / NTP / etc. carry over.
-      const parentScopes = db.prepare(
-        'SELECT * FROM dhcp_scopes WHERE subnet_id = ? AND range_id = ?'
-      ).all(parentId, dhcpRange.id);
-      for (const ps of parentScopes) {
-        const newScope = db.prepare(`
-          INSERT INTO dhcp_scopes
-            (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway,
-             enabled, description, ntp_servers, domain_search)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          newRange.lastInsertRowid, childId,
-          ps.lease_time, ps.dns_servers, ps.domain_name, ps.gateway,
-          ps.enabled, ps.description, ps.ntp_servers, ps.domain_search
-        );
-        db.prepare(
-          'INSERT INTO dhcp_scope_options (scope_id, option_code, value) SELECT ?, option_code, value FROM dhcp_scope_options WHERE scope_id = ?'
-        ).run(newScope.lastInsertRowid, ps.id);
-      }
-    }
-  }
-
-  // Migrate user-created ranges that fit entirely within the child
-  const userRanges = db.prepare(`
-    SELECT r.* FROM ranges r
-    JOIN range_types rt ON r.range_type_id = rt.id
-    WHERE r.subnet_id = ? AND rt.is_system = 0
-  `).all(parentId);
-
-  for (const ur of userRanges) {
-    const urStart = ipToLong(ur.start_ip);
-    const urEnd = ipToLong(ur.end_ip);
-    if (urStart >= childParsed.networkLong && urEnd <= childParsed.broadcastLong) {
-      db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
-        childId, ur.range_type_id, ur.start_ip, ur.end_ip, ur.description
-      );
-    }
-  }
+  SubnetTopology.copyUserRangesToChild(db, parentId, childId, childParsed);
 
   if (parentHasReverseDns) {
-    db.prepare('UPDATE subnets SET has_reverse_dns = 1 WHERE id = ?').run(childId);
+    SubnetTopology.setReverseDnsFlag(db, childId);
   }
 
   return poolAdjustments;
@@ -1208,13 +801,7 @@ function migrateConfigToChild(db, parentId, childId, childParsed, childGw, paren
 // guards against forgetting to re-add the cascade if that table is ever
 // reshaped.
 function cleanupSubnetData(db, subnetId) {
-  db.prepare(
-    'DELETE FROM dhcp_scope_options WHERE scope_id IN (SELECT id FROM dhcp_scopes WHERE subnet_id = ?)'
-  ).run(subnetId);
-  db.prepare('DELETE FROM dhcp_scopes WHERE subnet_id = ?').run(subnetId);
-  db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ?').run(subnetId);
-  db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(subnetId);
-  IpAddress.deleteBySubnet(db, subnetId);
+  return SubnetTopology.deleteSubnetData(db, subnetId);
 }
 
 // Historically this deleted dns_zones attached to a subnet and reassigned
@@ -1230,6 +817,7 @@ function cleanupSubnetZones(_db, _subnetId) {
 // cleanupSubnetData() wipes the parent's ip_addresses (losing hostnames and
 // scan state) and dhcp_reservations linger pointing at an unallocated parent.
 function transferPerIpArtifactsToChildren(db, parentId) {
+  DhcpTopology.moveReservationsToChildren(db, parentId);
   const children = db.prepare('SELECT id, cidr FROM subnets WHERE parent_id = ?').all(parentId);
   if (children.length === 0) return;
   const childRanges = children.map(c => {
@@ -1238,16 +826,6 @@ function transferPerIpArtifactsToChildren(db, parentId) {
   });
   const findChildForIp = (ipLong) =>
     childRanges.find(c => ipLong >= c.netLong && ipLong <= c.bcastLong);
-
-  // Reservations (no range conflict — single-IP rows)
-  const reservations = db.prepare(
-    'SELECT id, ip_address FROM dhcp_reservations WHERE subnet_id = ?'
-  ).all(parentId);
-  const updRes = db.prepare('UPDATE dhcp_reservations SET subnet_id = ? WHERE id = ?');
-  for (const r of reservations) {
-    const c = findChildForIp(ipToLong(r.ip_address));
-    if (c) updRes.run(c.id, r.id);
-  }
 
   // ip_addresses: parent's row has the live state (hostname/mac/status/scan).
   // If a row already exists under the child for the same IP (auto-populated
@@ -1288,14 +866,12 @@ function cleanupLossyArtifactsAfterDivide(db, lossy) {
   }
   const ipSet = new Set(lossy.map(l => l.ip));
   const removed = { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 };
-  const delRes = db.prepare('DELETE FROM dhcp_reservations WHERE ip_address = ?');
-  const delRec = db.prepare("DELETE FROM dns_records WHERE type = 'A' AND value = ?");
-  const delLease = db.prepare('DELETE FROM dhcp_leases WHERE ip_address = ?');
+  const dhcpRemoved = DhcpTopology.deleteReservationsAndLeasesByIps(db, ipSet);
+  removed.reservations += dhcpRemoved.reservations;
+  removed.leases += dhcpRemoved.leases;
+  removed.dns_records += DnsTopology.deleteARecordsByIps(db, ipSet);
   for (const ip of ipSet) {
-    removed.reservations += delRes.run(ip).changes;
     removed.ip_addresses += IpAddress.deleteByIpAddress(db, ip).changes;
-    removed.dns_records  += delRec.run(ip).changes;
-    removed.leases       += delLease.run(ip).changes;
   }
   return { ips: [...ipSet], removed };
 }
@@ -1322,24 +898,7 @@ function transferPerIpArtifactsToParent(db, childIds, mergedId) {
   if (!Array.isArray(childIds) || childIds.length === 0) return;
   const placeholders = childIds.map(() => '?').join(',');
 
-  const childRes = db.prepare(
-    `SELECT id, mac_address, ip_address FROM dhcp_reservations WHERE subnet_id IN (${placeholders})`
-  ).all(...childIds);
-  const findMacDup = db.prepare(
-    'SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ?'
-  );
-  const findIpDup = db.prepare(
-    'SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ?'
-  );
-  const delRes = db.prepare('DELETE FROM dhcp_reservations WHERE id = ?');
-  const updRes = db.prepare('UPDATE dhcp_reservations SET subnet_id = ? WHERE id = ?');
-  for (const r of childRes) {
-    const macDup = findMacDup.get(mergedId, r.mac_address);
-    if (macDup && macDup.id !== r.id) delRes.run(macDup.id);
-    const ipDup = findIpDup.get(mergedId, r.ip_address);
-    if (ipDup && ipDup.id !== r.id) delRes.run(ipDup.id);
-    updRes.run(mergedId, r.id);
-  }
+  DhcpTopology.moveReservationsToSubnet(db, childIds, mergedId);
 
   // For ip_addresses, the child's row has the live state. If the merged
   // subnet already has a row for the same IP (rare — merged was just
@@ -1372,20 +931,7 @@ function migrateChildZonesToParent(_db, _childIds, _mergedId) {
 // child's ranges cascade-wipes its scopes too. So we move BOTH the range
 // and the scope together, before the child subnet deletion runs.
 function migrateChildScopesToParent(db, configSourceId, mergedId) {
-  if (!configSourceId || configSourceId === mergedId) return;
-
-  // Move the user-owned DHCP Scope range row to the merged subnet.
-  db.prepare(`
-    UPDATE ranges SET subnet_id = ?
-    WHERE subnet_id = ?
-      AND range_type_id = (SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1)
-  `).run(mergedId, configSourceId);
-
-  // The scope row itself. Options are attached via scope_id (FK cascade)
-  // so they travel automatically with the scope row UPDATE.
-  db.prepare(
-    `UPDATE dhcp_scopes SET subnet_id = ? WHERE subnet_id = ?`
-  ).run(mergedId, configSourceId);
+  DhcpTopology.moveScopesToSubnet(db, configSourceId, mergedId);
 }
 
 // Detect forward-zone domain conflicts among the subnets being merged.
@@ -1409,10 +955,7 @@ function detectForwardZoneConflict(db, childIds) {
 // they're no longer wanted. The function is still named "cleanupSubtreeZones"
 // to avoid churning a lot of call sites; rename if it causes confusion.
 function cleanupSubtreeZones(db, parentId) {
-  const tree = 'WITH RECURSIVE tree AS (SELECT id FROM subnets WHERE parent_id = ? UNION ALL SELECT s.id FROM subnets s JOIN tree t ON s.parent_id = t.id)';
-  db.prepare(`${tree} DELETE FROM dhcp_scope_options WHERE scope_id IN (SELECT id FROM dhcp_scopes WHERE subnet_id IN (SELECT id FROM tree))`).run(parentId);
-  db.prepare(`${tree} DELETE FROM dhcp_scopes WHERE subnet_id IN (SELECT id FROM tree)`).run(parentId);
-  db.prepare(`${tree} DELETE FROM dhcp_leases WHERE subnet_id IN (SELECT id FROM tree)`).run(parentId);
+  return DhcpTopology.deleteDhcpStateForSubtree(db, parentId);
 }
 
 // Helper: clear parent config after division. Assumes per-IP artifacts (IP
@@ -1422,17 +965,8 @@ function cleanupSubtreeZones(db, parentId) {
 // CLONED rather than moved — the parent's originals need to go), and resets
 // the parent row's config fields.
 function clearParentConfig(db, parentId) {
-  db.prepare(
-    'DELETE FROM dhcp_scope_options WHERE scope_id IN (SELECT id FROM dhcp_scopes WHERE subnet_id = ?)'
-  ).run(parentId);
-  db.prepare('DELETE FROM dhcp_scopes WHERE subnet_id = ?').run(parentId);
-  db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ?').run(parentId);
-  db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(parentId);
-  db.prepare(`
-    UPDATE subnets SET status = 'unallocated', description = NULL, vlan_id = NULL,
-      gateway_address = NULL, has_reverse_dns = 0, domain_name = NULL, updated_at = datetime('now')
-    WHERE id = ?
-  `).run(parentId);
+  DhcpTopology.deleteDhcpStateForSubnet(db, parentId);
+  SubnetTopology.clearParentConfig(db, parentId);
 }
 
 // POST /api/subnets/:id/divide — execute division
@@ -1773,152 +1307,42 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   // domain_name is just a pointer; any number of subnets may share a zone.
   // We auto-create the zone inside the txn if it doesn't exist yet.
 
-  const txn = db.transaction(() => {
-    db.prepare(`
-      UPDATE subnets SET status = 'allocated', name = ?, description = ?, vlan_id = ?,
-        gateway_address = ?, has_reverse_dns = ?, domain_name = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(name, description || null, vlan_id || null, gw, create_reverse_dns ? 1 : 0, domain_name || null, subnet.id);
-
-    // Move to specified folder if provided. Children are allowed too;
-    // the tree builder promotes them out of their CIDR parent's group.
-    if (folder_id !== undefined) {
-      db.prepare('UPDATE subnets SET folder_id = ? WHERE id = ?').run(folder_id, subnet.id);
-    }
-
-    // Recreate system ranges (Network/Gateway/Broadcast) with correct gateway
-    const sysTypes = db.prepare("SELECT id FROM range_types WHERE is_system = 1 AND name IN ('Network', 'Gateway', 'Broadcast')").all();
-    const sysTypeIds = sysTypes.map(t => t.id);
-    if (sysTypeIds.length > 0) {
-      const placeholders = sysTypeIds.map(() => '?').join(',');
-      db.prepare(`DELETE FROM ranges WHERE subnet_id = ? AND range_type_id IN (${placeholders})`).run(subnet.id, ...sysTypeIds);
-    }
-    createSystemRanges(db, subnet.id, parsed, gw);
-
-    // Auto-create reverse DNS zone(s) if requested
-    if (create_reverse_dns) {
-      const reverseNames = generateReverseNames(subnet.cidr);
-      const startIp = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
-      const endIp = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
-
-      const insertRecord = db.prepare(
-        'INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, ?, ?, 1)'
-      );
-
-      for (const reverseName of reverseNames) {
-        const existingZone = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(reverseName);
-        let zoneId;
-        if (!existingZone) {
-          const zoneResult = db.prepare(`
-            INSERT INTO dns_zones (name, type, description) VALUES (?, 'reverse', ?)
-          `).run(reverseName, `Reverse zone for ${subnet.cidr}`);
-          zoneId = zoneResult.lastInsertRowid;
-        } else {
-          zoneId = existingZone.id;
-        }
-
-        // Determine which IPs belong in this /24 zone
-        // Parse the zone's 3rd octet from the zone name (e.g., "2.0.10.in-addr.arpa" → 3rd octet = 2)
-        const zoneParts = reverseName.replace('.in-addr.arpa', '').split('.').map(Number);
-        const zoneThirdOctet = zoneParts.length === 3 ? zoneParts[0] : null;
-
-        const existingPtrs = db.prepare('SELECT name FROM dns_records WHERE zone_id = ? AND type = ?').all(zoneId, 'PTR');
-        const existingNames = new Set(existingPtrs.map(r => r.name));
-
-        for (let ipLong = startIp; ipLong <= endIp; ipLong++) {
-          // For /24 zones, only include IPs whose 3rd octet matches
-          if (zoneThirdOctet !== null && ((ipLong >>> 8) & 255) !== zoneThirdOctet) continue;
-
-          const ptrName = zoneParts.length === 3
-            ? String(ipLong & 255)                                          // /24 zone: last octet
-            : zoneParts.length === 2
-              ? `${ipLong & 255}.${(ipLong >>> 8) & 255}`                   // /16 zone: last.3rd
-              : `${ipLong & 255}.${(ipLong >>> 8) & 255}.${(ipLong >>> 16) & 255}`; // /8 zone
-
-          if (!existingNames.has(ptrName)) {
-            // Pre-populated PTR stubs have no hostname yet; they're filled in
-            // when a DHCP reservation or DNS A-record is created for the IP.
-            // (Older code wrote the IP itself as `value`, which is nonsense.)
-            insertRecord.run(zoneId, ptrName, 'PTR', '');
-          }
-        }
-
-        // Increment SOA serial
-        db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?").run(zoneId);
+  let dhcpPool = null;
+  if (create_dhcp_scope && parsed.prefix <= 29) {
+    const gwLong = ipToLong(gw);
+    let poolStart, poolEnd;
+    if (dhcp_start_ip && dhcp_end_ip) {
+      poolStart = ipToLong(dhcp_start_ip);
+      poolEnd = ipToLong(dhcp_end_ip);
+    } else {
+      const defaults = dhcpRangeDefaults(parsed);
+      if (defaults) {
+        poolStart = defaults.startLong;
+        poolEnd = defaults.endLong;
+      } else {
+        poolStart = parsed.networkLong + 1;
+        poolEnd = parsed.broadcastLong - 1;
       }
+      if (gwLong === poolStart) poolStart++;
+      else if (gwLong === poolEnd) poolEnd--;
     }
-
-    // Auto-populate ip_addresses for all usable IPs (up to /20 = 4096 IPs)
-    if (parsed.prefix >= 20) {
-      const ipStart = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
-      const ipEnd = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
-      const gwLong = gw ? ipToLong(gw) : null;
-
-      for (let ipLong = ipStart; ipLong <= ipEnd; ipLong++) {
-        const ipStatus = (gwLong !== null && ipLong === gwLong) ? 'locked' : 'available';
-        IpAddress.ensureAddress(db, subnet.id, longToIp(ipLong), ipStatus);
-      }
+    if (poolStart <= poolEnd) {
+      dhcpPool = { startLong: poolStart, endLong: poolEnd };
     }
+  }
 
-    // Forward DNS zone: create it if `domain_name` names a zone that
-    // doesn't exist yet. Otherwise reuse the existing one — zones are
-    // subnet-agnostic, any number of subnets may point at the same zone
-    // via `domain_name`.
-    if (domain_name) {
-      const existingFwd = db.prepare(
-        "SELECT id FROM dns_zones WHERE name = ? AND type = 'forward'"
-      ).get(domain_name);
-      if (!existingFwd) {
-        db.prepare(
-          "INSERT INTO dns_zones (name, type, description, enabled) VALUES (?, 'forward', ?, 1)"
-        ).run(domain_name, `Forward zone for ${domain_name}`);
-      }
-    }
-
-    // Create DHCP scope if requested and subnet is >= /29
-    if (create_dhcp_scope && parsed.prefix <= 29) {
-      const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
-      if (dhcpType) {
-        // Use client-provided start/end or fall back to formula defaults
-        const gwLong = ipToLong(gw);
-        let poolStart, poolEnd;
-        if (dhcp_start_ip && dhcp_end_ip) {
-          poolStart = ipToLong(dhcp_start_ip);
-          poolEnd = ipToLong(dhcp_end_ip);
-        } else {
-          const defaults = dhcpRangeDefaults(parsed);
-          if (defaults) {
-            poolStart = defaults.startLong;
-            poolEnd = defaults.endLong;
-          } else {
-            poolStart = parsed.networkLong + 1;
-            poolEnd = parsed.broadcastLong - 1;
-          }
-          if (gwLong === poolStart) poolStart++;
-          else if (gwLong === poolEnd) poolEnd--;
-        }
-
-        if (poolStart <= poolEnd) {
-          const rangeResult = db.prepare('INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)').run(
-            subnet.id, dhcpType.id, longToIp(poolStart), longToIp(poolEnd), 'DHCP scope'
-          );
-
-          // Auto-create DHCP scope with defaults
-          const effectiveDomain = domain_name || null;
-          const scopeResult = db.prepare(`
-            INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
-            VALUES (?, ?, ?, ?, ?, 'Auto-created DHCP scope')
-          `).run(rangeResult.lastInsertRowid, subnet.id, getSetting('default_lease_time'), gw, effectiveDomain);
-
-          // Populate scope options from enabled defaults + network-derived values
-          const scopeId = scopeResult.lastInsertRowid;
-          insertScopeOptionsFromDefaults(db, scopeId, parsed, gw, effectiveDomain, subnet.cidr);
-        }
-      }
-    }
+  const updated = SubnetTopology.configureSubnet(db, subnet, parsed, {
+    name,
+    description,
+    vlan_id,
+    gateway: gw,
+    create_reverse_dns,
+    domain_name,
+    folder_id,
+    create_dhcp_scope,
+    dhcpPool
   });
 
-  txn();
   audit(req.user.id, 'subnet_configured', 'subnet', subnet.id, { name, cidr: subnet.cidr, dhcp: !!create_dhcp_scope, reverse_dns: !!create_reverse_dns });
 
   if (create_dhcp_scope) {
@@ -1927,7 +1351,6 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   // Forward/reverse zones may have been created — always regen DNS after configure
   req.afterCommit('regenerate_dns');
 
-  const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet.id);
   const vlan_warning = detectVlanCollision(db, updated.vlan_id, subnet.id);
   res.json({ ...updated, ...(vlan_warning ? { vlan_warning } : {}) });
 }));
@@ -1938,69 +1361,7 @@ router.delete('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-  const hasChildren = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE parent_id = ?').get(subnet.id).c > 0;
-
-  const txn = db.transaction(() => {
-    if (subnet.status === 'allocated') {
-      // Allocated: convert to unallocated (clear config, ranges, IPs, zones, delete children)
-      if (hasChildren) {
-        cleanupSubtreeZones(db, subnet.id);
-        db.prepare(`
-          WITH RECURSIVE tree AS (
-            SELECT id FROM subnets WHERE parent_id = ?
-            UNION ALL
-            SELECT s.id FROM subnets s JOIN tree t ON s.parent_id = t.id
-          )
-          DELETE FROM subnets WHERE id IN (SELECT id FROM tree)
-        `).run(subnet.id);
-      }
-
-      // cleanupSubnetData now covers ranges, ip_addresses, dhcp_leases,
-      // dhcp_scopes, and dhcp_scope_options in one go.
-      cleanupSubnetZones(db, subnet.id);
-      cleanupSubnetData(db, subnet.id);
-      db.prepare(`
-        UPDATE subnets SET status = 'unallocated', name = ?, description = NULL,
-          vlan_id = NULL, gateway_address = NULL, has_reverse_dns = 0, domain_name = NULL, updated_at = datetime('now')
-        WHERE id = ?
-      `).run(subnet.cidr, subnet.id);
-
-      if (subnet.parent_id) buddyMerge(db, subnet.parent_id);
-      return 'deallocated';
-    }
-
-    if (!subnet.parent_id) {
-      // Root unallocated node: delete entirely with subtree
-      cleanupSubnetZones(db, subnet.id);
-      cleanupSubnetData(db, subnet.id);
-      if (hasChildren) cleanupSubtreeZones(db, subnet.id);
-      db.prepare('DELETE FROM subnets WHERE id = ?').run(subnet.id);
-      return 'deleted';
-    }
-
-    // Unallocated leaf: delete the row, then try to merge
-    if (!hasChildren) {
-      cleanupSubnetZones(db, subnet.id);
-      cleanupSubnetData(db, subnet.id);
-      db.prepare('DELETE FROM subnets WHERE id = ?').run(subnet.id);
-      buddyMerge(db, subnet.parent_id);
-      return 'deleted';
-    }
-
-    // Unallocated with children: delete children, making it a leaf again
-    cleanupSubtreeZones(db, subnet.id);
-    db.prepare(`
-      WITH RECURSIVE tree AS (
-        SELECT id FROM subnets WHERE parent_id = ?
-        UNION ALL
-        SELECT s.id FROM subnets s JOIN tree t ON s.parent_id = t.id
-      )
-      DELETE FROM subnets WHERE id IN (SELECT id FROM tree)
-    `).run(subnet.id);
-    return 'children_deleted';
-  });
-
-  const action = txn();
+  const action = SubnetTopology.deleteSubnet(db, subnet);
   req.afterCommit('regenerate_dns');
   req.afterCommit('regenerate_dhcp');
   audit(req.user.id, 'subnet_deleted', 'subnet', subnet.id, { cidr: subnet.cidr, action });

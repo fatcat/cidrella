@@ -5,12 +5,12 @@ import { execFileSync } from 'child_process';
 import { atomicWrite, signalDnsmasq, restartDnsmasq, cleanStaleFiles } from './dnsmasq.js';
 import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
-import { syncLeasesToIps } from './ip-sync.js';
 import { generateFallbackHostname } from './mac-vendor.js';
-import { queueRegen } from './after-commit.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
 import { isValidIpv4 } from './ip.js';
 import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
+import { replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
+import { upsertServerDnsDefault } from '../models/dhcp-option.js';
 
 /**
  * Resolve a hostname to an IPv4 address. Returns the IP string, or null on failure.
@@ -269,21 +269,7 @@ export function syncLeases(db) {
     }
   }
 
-  // Replace all leases (simple approach — lease file is the source of truth)
-  const txn = db.transaction(() => {
-    db.prepare('DELETE FROM dhcp_leases').run();
-    const insert = db.prepare(`
-      INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id, last_seen)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-    `);
-    for (const l of leases) {
-      insert.run(l.ip, l.mac, l.hostname, l.clientId, l.expiresAt, l.subnetId);
-    }
-  });
-
-  txn();
-
-  syncLeasesToIps(db, leases);
+  replaceLeases(db, leases);
 
   // Remove legacy dhcp-leases.hosts (hostnames now managed via dns_records)
   const legacyHostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
@@ -293,147 +279,6 @@ export function syncLeases(db) {
   syncDhcpDnsRecords(db, leases);
 
   return { synced: leases.length };
-}
-
-/**
- * Sync DHCP lease and reservation hostnames into dns_records table as A records with source='dhcp'.
- * Matches entries to forward DNS zones via the DHCP scope's domain_name or subnet's domain_name.
- * Also cleans up stale DHCP records for IPs no longer in leases/reservations.
- */
-export function syncDhcpDnsRecords(db, leases) {
-  // Build a map of subnet_id -> domain_name from DHCP scopes and subnets
-  const scopes = db.prepare(`
-    SELECT s.subnet_id, s.domain_name as scope_domain, sub.domain_name as subnet_domain
-    FROM dhcp_scopes s
-    JOIN subnets sub ON s.subnet_id = sub.id
-    WHERE s.enabled = 1
-  `).all();
-
-  const subnetDomainMap = new Map();
-  for (const s of scopes) {
-    const domain = s.scope_domain || s.subnet_domain;
-    if (domain) subnetDomainMap.set(s.subnet_id, domain);
-  }
-
-  let reservations = [];
-  try {
-    reservations = db.prepare(`
-      SELECT r.ip_address, r.hostname, r.mac_address, r.subnet_id
-      FROM dhcp_reservations r
-      WHERE r.enabled = 1 AND r.hostname IS NOT NULL AND r.hostname != ''
-    `).all();
-  } catch (err) {
-    console.error('Failed to query DHCP reservations for DNS sync:', err.message);
-    return;
-  }
-
-  // Merge leases with reservations. Reservations take priority for the same
-  // IP so the static hostname wins over a client-provided dynamic hostname.
-  const reservationIps = new Set(reservations.map(r => r.ip_address));
-  const entries = leases
-    .filter(l => !reservationIps.has(l.ip))
-    .map(l => ({ ...l, source: 'dhcp' }));
-
-  for (const r of reservations) {
-    entries.push({
-      ip: r.ip_address,
-      hostname: r.hostname,
-      subnetId: r.subnet_id,
-      source: 'reservation'
-    });
-  }
-
-  // Build a map of zone_name -> zone for forward zones
-  const forwardZones = db.prepare("SELECT * FROM dns_zones WHERE type = 'forward' AND enabled = 1").all();
-  const zoneByName = new Map();
-  for (const z of forwardZones) zoneByName.set(z.name, z);
-
-  // Track which DHCP dns_record IDs are still active
-  const activeRecordIds = new Set();
-  // Seed processedZoneIds with every zone that COULD have DHCP-sourced
-  // records for the currently-active scopes. Without this seeding, the only
-  // zones eligible for pruning are ones we touched this pass — so when the
-  // last lease for a subnet expires and its reservation is gone, the stale
-  // record lingers forever because the subnet's zone stops being "touched".
-  const processedZoneIds = new Set();
-  for (const domain of subnetDomainMap.values()) {
-    const z = zoneByName.get(domain);
-    if (z) processedZoneIds.add(z.id);
-  }
-  let configChanged = false;
-
-  const findRecord = db.prepare(`
-    SELECT id, source FROM dns_records WHERE zone_id = ? AND name = ? AND type = 'A' AND value = ?
-  `);
-
-  const insertDhcp = db.prepare(`
-    INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
-    VALUES (?, ?, 'A', ?, ?, 1)
-  `);
-
-  const touchDhcp = db.prepare(`
-    UPDATE dns_records SET updated_at = datetime('now') WHERE id = ?
-  `);
-
-  for (const l of entries) {
-    if (!l.hostname || !l.subnetId) continue;
-
-    const domain = subnetDomainMap.get(l.subnetId);
-    if (!domain) continue;
-
-    const zone = zoneByName.get(domain);
-    if (!zone) continue;
-
-    processedZoneIds.add(zone.id);
-
-    // Use the hostname as the record name (strip the domain suffix if present)
-    let recordName = l.hostname;
-    if (recordName.endsWith('.' + domain)) {
-      recordName = recordName.slice(0, -(domain.length + 1));
-    }
-
-    const existing = findRecord.get(zone.id, recordName, l.ip);
-    if (existing) {
-      // Don't overwrite manual records; just track DHCP/reservation ones as active
-      if (existing.source === 'dhcp' || existing.source === 'reservation') {
-        // Update source if it changed (e.g. lease became reservation)
-        if (existing.source !== (l.source || 'dhcp')) {
-          db.prepare('UPDATE dns_records SET source = ?, updated_at = datetime(\'now\') WHERE id = ?')
-            .run(l.source || 'dhcp', existing.id);
-        } else {
-          touchDhcp.run(existing.id);
-        }
-        activeRecordIds.add(existing.id);
-      }
-    } else {
-      const result = insertDhcp.run(zone.id, recordName, l.ip, l.source || 'dhcp');
-      activeRecordIds.add(result.lastInsertRowid);
-      configChanged = true;
-    }
-  }
-
-  // Clean up DHCP records that no longer have a matching lease/reservation.
-  // Only prune records in zones that were part of this sync — avoids cross-subnet
-  // record deletion and wiping records when all zones are disabled.
-  if (processedZoneIds.size > 0) {
-    const zoneIdList = [...processedZoneIds].join(',');
-    const staleRecords = db.prepare(
-      `SELECT id FROM dns_records WHERE source IN ('dhcp', 'reservation') AND zone_id IN (${zoneIdList})`
-    ).all();
-    for (const r of staleRecords) {
-      if (!activeRecordIds.has(r.id)) {
-        db.prepare('DELETE FROM dns_records WHERE id = ?').run(r.id);
-        configChanged = true;
-      }
-    }
-  }
-
-  // Route DNS regen through the shared single-flight. An inline call here
-  // would race concurrent request-hook fires (both ultimately read dns_records
-  // and write hosts.d files), risking stale emits.
-  if (configChanged) {
-    queueRegen('regenerate_dns');
-  }
 }
 
 /**
@@ -510,14 +355,9 @@ export function syncServerDnsDefault(db) {
 
   const newValue = `${serverIp},${FALLBACK_SECONDARY_DNS}`;
 
-  const existing = db.prepare('SELECT value FROM dhcp_option_defaults WHERE option_code = 6').get();
-  if (existing?.value === newValue) return; // no change
-
-  db.prepare(`
-    INSERT INTO dhcp_option_defaults (option_code, value, updated_at)
-    VALUES (6, ?, datetime('now'))
-    ON CONFLICT(option_code) DO UPDATE SET value = ?, updated_at = datetime('now')
-  `).run(newValue, newValue);
-
-  console.log(`DNS Servers default updated: ${newValue}`);
+  if (upsertServerDnsDefault(db, newValue)) {
+    console.log(`DNS Servers default updated: ${newValue}`);
+  }
 }
+
+export { syncDhcpDnsRecords };

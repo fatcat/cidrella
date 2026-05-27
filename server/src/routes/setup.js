@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { getDb } from '../db/init.js';
+import * as User from '../models/user.js';
+import * as Setting from '../models/setting.js';
 
 const router = Router();
 
@@ -39,9 +41,7 @@ router.post('/', async (req, res) => {
     const { username, password, skip } = body;
 
     if (skip === true) {
-      db.prepare(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('installation_complete', 'true')"
-      ).run();
+      Setting.upsertSetting(db, 'installation_complete', 'true');
       return res.json({ ok: true, skipped: true });
     }
 
@@ -68,12 +68,13 @@ router.post('/', async (req, res) => {
       if (setupIsClosed(db)) {
         throw new Error('__setup_closed_during_txn__');
       }
-      db.prepare(
-        'INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, ?, 0)'
-      ).run(username, hash, 'admin');
-      db.prepare(
-        "INSERT OR REPLACE INTO settings (key, value) VALUES ('installation_complete', 'true')"
-      ).run();
+      User.createUser(db, {
+        username,
+        passwordHash: hash,
+        role: 'admin',
+        mustChangePassword: false
+      });
+      Setting.upsertSetting(db, 'installation_complete', 'true');
     })();
 
     res.json({ ok: true, username });

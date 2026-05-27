@@ -3,6 +3,7 @@ import { getDb, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { pruneEvents } from '../models/ip-address.js';
+import * as Setting from '../models/setting.js';
 import { isValidIpv4 } from '../utils/ip.js';
 import { validateInterfaceConfig, validPortOrError } from '../utils/validation.js';
 
@@ -209,13 +210,7 @@ router.put('/bulk', requireRole('admin'), (req, res) => {
   }
 
   const db = getDb();
-  const stmt = db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)");
-  const saveAll = db.transaction((pairs) => {
-    for (const [key, value] of pairs) {
-      stmt.run(key, value);
-    }
-  });
-  saveAll(normalized);
+  Setting.upsertSettings(db, normalized);
 
   if (settings.ip_history_retention_days !== undefined) {
     pruneEvents(db);

@@ -5,6 +5,7 @@ import {
   getProxyStatus, loadMmdb, loadGeoipRules,
   downloadMmdb, resetStats
 } from '../utils/dns-proxy.js';
+import * as GeoipRule from '../models/geoip-rule.js';
 
 const router = Router();
 
@@ -58,19 +59,7 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
     return res.status(409).json({ error: `All specified country rules already exist: ${existing.map(c => c.code).join(', ')}` });
   }
 
-  const added = [];
-
-  db.transaction(() => {
-    const insert = db.prepare(
-      'INSERT OR IGNORE INTO geoip_rules (country_code, country_name) VALUES (?, ?)'
-    );
-    for (const c of countries) {
-      const result = insert.run(c.code, c.name || c.code);
-      if (result.changes > 0) {
-        added.push(c.code);
-      }
-    }
-  })();
+  const added = GeoipRule.addRules(db, countries);
 
   if (added.length > 0) {
     loadGeoipRules();
@@ -89,7 +78,7 @@ router.put('/rules/:id', requirePerm('dns:write'), (req, res) => {
   const { enabled } = req.body;
   if (enabled === undefined) return res.status(400).json({ error: 'enabled field is required' });
 
-  db.prepare('UPDATE geoip_rules SET enabled = ? WHERE id = ?').run(enabled ? 1 : 0, rule.id);
+  GeoipRule.setEnabled(db, rule.id, enabled);
   loadGeoipRules();
   audit(req.user.id, 'update', 'geoip_rule', rule.id, { country_code: rule.country_code, enabled });
   res.json({ ok: true });
@@ -101,7 +90,7 @@ router.delete('/rules/:id', requirePerm('dns:write'), (req, res) => {
   const rule = db.prepare('SELECT * FROM geoip_rules WHERE id = ?').get(req.params.id);
   if (!rule) return res.status(404).json({ error: 'Rule not found' });
 
-  db.prepare('DELETE FROM geoip_rules WHERE id = ?').run(rule.id);
+  GeoipRule.deleteRule(db, rule.id);
   loadGeoipRules();
   audit(req.user.id, 'delete', 'geoip_rule', rule.id, { country_code: rule.country_code });
   res.json({ ok: true });

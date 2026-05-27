@@ -5,10 +5,12 @@ import { requirePerm } from '../auth/require-perm.js';
 import http from 'http';
 import https from 'https';
 import { ipToLong, isClientMac, isValidMac, isValidIpv4, isValidDomain } from '../utils/ip.js';
-import { syncDnsToIp, syncDhcpReservationToIp, syncPtrForIp } from '../utils/ip-sync.js';
+import { syncDnsToIp } from '../utils/ip-sync.js';
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl } from '../utils/url-guard.js';
+import { createReservation } from '../models/dhcp-reservation.js';
+import { importRecords } from '../models/dns-record.js';
 
 const router = Router();
 
@@ -269,72 +271,37 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     dhcp: { created: 0, skipped: 0, failed: 0, noSubnet: 0 }
   };
 
-  // Build lookup maps: exact match set + name+type→record for merge/update
-  const existingExact = new Set();
-  const existingByNameType = new Map(); // "type|name" → { id, value }
-  for (const r of db.prepare('SELECT id, type, name, value FROM dns_records WHERE zone_id = ?').all(zoneId)) {
-    existingExact.add(`${r.type}|${r.name}|${r.value}`);
-    existingByNameType.set(`${r.type}|${r.name}`, { id: r.id, value: r.value });
-  }
-
-  const insertRecord = db.prepare(
-    'INSERT INTO dns_records (zone_id, name, type, value) VALUES (?, ?, ?, ?)'
-  );
-  const updateRecord = db.prepare(
-    "UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?"
-  );
+  const recordsToImport = [];
 
   // Import A records — merge: skip exact dupes, update if same name but different value
   if (hosts && hosts.length > 0) {
     for (const h of hosts) {
-      const name = recordName(h.hostname, zone.name);
-      const exactKey = `A|${name}|${h.ip}`;
-      if (existingExact.has(exactKey)) { results.a.skipped++; continue; }
-
-      const nameKey = `A|${name}`;
-      const existing = existingByNameType.get(nameKey);
-      try {
-        if (existing) {
-          // Same name, different value → update existing record
-          updateRecord.run(h.ip, existing.id);
-          existingExact.delete(`A|${name}|${existing.value}`);
-          existingExact.add(exactKey);
-          existingByNameType.set(nameKey, { id: existing.id, value: h.ip });
-          syncDnsToIp(db, name, h.ip, zone.name);
-          results.a.updated++;
-        } else {
-          insertRecord.run(zoneId, name, 'A', h.ip);
-          existingExact.add(exactKey);
-          syncDnsToIp(db, name, h.ip, zone.name);
-          results.a.created++;
-        }
-      } catch { results.a.failed++; }
+      recordsToImport.push({ type: 'A', name: recordName(h.hostname, zone.name), value: h.ip });
     }
   }
 
   // Import CNAME records — merge: skip exact dupes, update if same name but different target
   if (cnames && cnames.length > 0) {
     for (const c of cnames) {
-      const name = recordName(c.alias, zone.name);
-      const exactKey = `CNAME|${name}|${c.target}`;
-      if (existingExact.has(exactKey)) { results.cname.skipped++; continue; }
-
-      const nameKey = `CNAME|${name}`;
-      const existing = existingByNameType.get(nameKey);
-      try {
-        if (existing) {
-          updateRecord.run(c.target, existing.id);
-          existingExact.delete(`CNAME|${name}|${existing.value}`);
-          existingExact.add(exactKey);
-          existingByNameType.set(nameKey, { id: existing.id, value: c.target });
-          results.cname.updated++;
-        } else {
-          insertRecord.run(zoneId, name, 'CNAME', c.target);
-          existingExact.add(exactKey);
-          results.cname.created++;
-        }
-      } catch { results.cname.failed++; }
+      recordsToImport.push({ type: 'CNAME', name: recordName(c.alias, zone.name), value: c.target });
     }
+  }
+
+  const importResult = importRecords(db, zone, recordsToImport);
+  results.a = {
+    created: importResult.results.A.created,
+    updated: importResult.results.A.updated,
+    skipped: importResult.results.A.skipped,
+    failed: importResult.results.A.failed
+  };
+  results.cname = {
+    created: importResult.results.CNAME.created,
+    updated: importResult.results.CNAME.updated,
+    skipped: importResult.results.CNAME.skipped,
+    failed: importResult.results.CNAME.failed
+  };
+  for (const r of importResult.aRecordsToSync) {
+    syncDnsToIp(db, r.name, r.value, zone.name);
   }
 
   // Import DHCP reservations
@@ -348,10 +315,6 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     const existingRes = db.prepare('SELECT subnet_id, mac_address, ip_address FROM dhcp_reservations').all();
     const existingMacs = new Set(existingRes.map(r => `${r.subnet_id}|${r.mac_address}`));
     const existingIps = new Set(existingRes.map(r => `${r.subnet_id}|${r.ip_address}`));
-
-    const insertRes = db.prepare(
-      'INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, description) VALUES (?, ?, ?, ?, ?)'
-    );
 
     for (const d of dhcpHosts) {
       // Reuse the same validation gates as POST /api/dhcp/reservations so
@@ -381,24 +344,18 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
       if (existingMacs.has(macKey) || existingIps.has(ipKey)) { results.dhcp.skipped++; continue; }
 
       try {
-        insertRes.run(best.id, mac, d.ip, d.hostname || null, 'Imported from Pi-hole');
-        syncDhcpReservationToIp(db, best.id, d.ip, { hostname: d.hostname, mac_address: mac });
-        // Populate PTR in the subnet's reverse zone (no-op if reverse zone
-        // doesn't exist). Mirrors the direct POST /api/dhcp/reservations path.
-        const ptrFqdn = d.hostname
-          ? (best.domain_name ? `${d.hostname}.${best.domain_name}` : d.hostname)
-          : '';
-        syncPtrForIp(db, best.id, d.ip, ptrFqdn);
+        createReservation(db, best, {
+          mac_address: mac,
+          ip_address: d.ip,
+          hostname: d.hostname || null,
+          description: 'Imported from Pi-hole'
+        });
         existingMacs.add(macKey);
         existingIps.add(ipKey);
         results.dhcp.created++;
       } catch { results.dhcp.failed++; }
     }
   }
-
-  // Bump zone serial
-  db.prepare('UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime(?) WHERE id = ?')
-    .run(new Date().toISOString(), zoneId);
 
   // Queue dnsmasq regen (fires once after response; DNS always, DHCP if any created)
   req.afterCommit('regenerate_dns');

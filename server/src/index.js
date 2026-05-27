@@ -24,6 +24,8 @@ process.on('uncaughtException', (err) => {
 });
 
 import { initDb, getDb, getSetting } from './db/init.js';
+import * as Range from './models/range.js';
+import * as AuditLog from './models/audit-log.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
 import { authMiddleware } from './auth/middleware.js';
@@ -35,7 +37,7 @@ import rangeTypeRoutes from './routes/range-types.js';
 import rangeRoutes from './routes/ranges.js';
 import settingsRoutes from './routes/settings.js';
 import dnsRoutes from './routes/dns.js';
-import dhcpRoutes, { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './routes/dhcp.js';
+import dhcpRoutes from './routes/dhcp.js';
 import scanRoutes from './routes/scans.js';
 import auditRoutes from './routes/audit.js';
 import blocklistRoutes from './routes/blocklists.js';
@@ -51,6 +53,7 @@ import interfaceRoutes from './routes/interfaces.js';
 import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js';
 import { ensureCerts, setHttpsServer } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
+import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
@@ -115,18 +118,7 @@ async function main() {
   // breaks the Grid View's gateway coloring. New divides use the child's
   // gateway; this heal fixes the ones that already landed.
   try {
-    const repaired = getDb().prepare(`
-      UPDATE ranges
-         SET start_ip = (SELECT gateway_address FROM subnets WHERE id = ranges.subnet_id),
-             end_ip   = (SELECT gateway_address FROM subnets WHERE id = ranges.subnet_id),
-             updated_at = datetime('now')
-       WHERE range_type_id = (SELECT id FROM range_types WHERE name='Gateway' AND is_system=1)
-         AND EXISTS (
-           SELECT 1 FROM subnets WHERE id = ranges.subnet_id
-                                  AND gateway_address IS NOT NULL
-                                  AND gateway_address != ranges.start_ip
-         )
-    `).run();
+    const repaired = Range.repairStaleGatewayRanges(getDb());
     if (repaired.changes > 0) console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
   } catch (err) {
     console.warn('Gateway range repair skipped:', err?.message || err);
@@ -199,9 +191,8 @@ async function main() {
   // Audit log retention
   function pruneAuditLog() {
     try {
-      const db = getDb();
       const days = getSetting('audit_log_retention_days');
-      const result = db.prepare(`DELETE FROM audit_log WHERE created_at < datetime('now', ?)`).run(`-${parseInt(days, 10) || 7} days`);
+      const result = AuditLog.pruneAuditLog(getDb(), days);
       if (result.changes > 0) {
         console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
       }

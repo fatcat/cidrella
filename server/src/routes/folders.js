@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
+import * as SubnetTopology from '../services/subnet-topology.js';
+import * as Folder from '../models/folder.js';
 
 const router = Router();
 
@@ -49,12 +51,9 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM folders').get();
   const sortOrder = (maxOrder?.m ?? -1) + 1;
 
-  const result = db.prepare(
-    'INSERT INTO folders (name, description, sort_order) VALUES (?, ?, ?)'
-  ).run(cleanName, description || null, sortOrder);
+  const folder = Folder.createFolder(db, { name: cleanName, description, sortOrder });
 
-  audit(req.user.id, 'folder_created', 'folder', result.lastInsertRowid, { name: cleanName });
-  const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(result.lastInsertRowid);
+  audit(req.user.id, 'folder_created', 'folder', folder.id, { name: cleanName });
   res.status(201).json(folder);
 });
 
@@ -86,17 +85,13 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     return res.status(400).json({ error: 'sort_order must be an integer' });
   }
 
-  db.prepare(`
-    UPDATE folders SET name = ?, description = ?, sort_order = ? WHERE id = ?
-  `).run(
-    cleanName,
-    description !== undefined ? description : folder.description,
-    sort_order !== undefined ? sort_order : folder.sort_order,
-    folder.id
-  );
+  const updated = Folder.updateFolder(db, folder, {
+    name: cleanName,
+    description,
+    sortOrder: sort_order
+  });
 
   audit(req.user.id, 'folder_updated', 'folder', folder.id, { name: cleanName });
-  const updated = db.prepare('SELECT * FROM folders WHERE id = ?').get(folder.id);
   res.json(updated);
 });
 
@@ -108,9 +103,9 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
 
   const doDelete = db.transaction(() => {
     // Ungroup subnets — move to ungrouped
-    db.prepare('UPDATE subnets SET folder_id = NULL WHERE folder_id = ?').run(folder.id);
+    SubnetTopology.clearFolderAssignments(db, folder.id);
     // Delete the folder itself
-    db.prepare('DELETE FROM folders WHERE id = ?').run(folder.id);
+    Folder.deleteFolder(db, folder.id);
   });
   doDelete();
 

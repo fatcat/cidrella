@@ -2,6 +2,8 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
+import * as SubnetTopology from '../services/subnet-topology.js';
+import * as Vlan from '../models/vlan.js';
 
 const router = Router();
 
@@ -64,20 +66,17 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
         if (fresh?.vlan_id) throw new Error('Network already has a VLAN assigned');
       }
 
-      const result = db.prepare(
-        'INSERT INTO vlans (vlan_id, name) VALUES (?, ?)'
-      ).run(vlan_id, name.trim());
+      const vlan = Vlan.createVlan(db, { vlanId: vlan_id, name: name.trim() });
 
       if (subnet_id) {
-        db.prepare('UPDATE subnets SET vlan_id = ? WHERE id = ?').run(vlan_id, subnet_id);
+        SubnetTopology.assignVlan(db, subnet_id, vlan_id);
       }
 
-      return result;
+      return vlan;
     });
-    const result = create();
+    const vlan = create();
 
-    audit(req.user.id, 'vlan_created', 'vlan', result.lastInsertRowid, { vlan_id, name: name.trim(), subnet_id });
-    const vlan = db.prepare('SELECT * FROM vlans WHERE id = ?').get(result.lastInsertRowid);
+    audit(req.user.id, 'vlan_created', 'vlan', vlan.id, { vlan_id, name: name.trim(), subnet_id });
     res.status(201).json(vlan);
   } catch (err) {
     // Race condition: another request assigned the VLAN between our pre-check and transaction
@@ -113,14 +112,14 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     if (dup) return res.status(409).json({ error: `VLAN ${newVlanId} already exists` });
   }
 
-  db.transaction(() => {
-    db.prepare('UPDATE vlans SET vlan_id = ?, name = ? WHERE id = ?').run(newVlanId, newName, vlan.id);
+  const updated = db.transaction(() => {
+    const row = Vlan.updateVlan(db, vlan, { vlanId: newVlanId, name: newName });
     if (newVlanId !== vlan.vlan_id) {
-      db.prepare('UPDATE subnets SET vlan_id = ? WHERE vlan_id = ?').run(newVlanId, vlan.vlan_id);
+      SubnetTopology.replaceVlanAssignments(db, vlan.vlan_id, newVlanId);
     }
+    return row;
   })();
   audit(req.user.id, 'vlan_updated', 'vlan', vlan.id, { vlan_id: newVlanId, name: newName });
-  const updated = db.prepare('SELECT * FROM vlans WHERE id = ?').get(vlan.id);
   res.json(updated);
 });
 
@@ -131,8 +130,8 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   if (!vlan) return res.status(404).json({ error: 'VLAN not found' });
 
   // Clear dangling vlan_id references in subnets
-  db.prepare('UPDATE subnets SET vlan_id = NULL WHERE vlan_id = ?').run(vlan.vlan_id);
-  db.prepare('DELETE FROM vlans WHERE id = ?').run(vlan.id);
+  SubnetTopology.clearVlanAssignments(db, vlan.vlan_id);
+  Vlan.deleteVlan(db, vlan.id);
   audit(req.user.id, 'vlan_deleted', 'vlan', vlan.id, { vlan_id: vlan.vlan_id, name: vlan.name });
   res.json({ ok: true });
 });
