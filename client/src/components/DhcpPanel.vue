@@ -89,6 +89,10 @@
               <InputText v-model="dhcpSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
             </IconField>
             <Button v-if="dhcpSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpSearch = ''" />
+            <label class="available-toggle">
+              <ToggleSwitch v-model="showAvailableDhcp" />
+              <span>show available</span>
+            </label>
             <ColumnChooserButton
               tableName="DHCP"
               :allColumns="dhcpTableColumns"
@@ -103,6 +107,10 @@
               <InputText v-model="dhcpAllSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
             </IconField>
             <Button v-if="dhcpAllSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpAllSearch = ''" />
+            <label class="available-toggle">
+              <ToggleSwitch v-model="showAvailableDhcp" />
+              <span>show available</span>
+            </label>
             <ColumnChooserButton
               tableName="DHCP"
               :allColumns="dhcpTableColumns"
@@ -112,20 +120,24 @@
             />
           </div>
 
-          <DataTable :value="selectedScope ? searchedScopeLeases : searchedAllLeases"
+          <DataTable :value="sortedDhcpRows"
                      :loading="loadingLeases" stripedRows
                      :emptyMessage="selectedScope ? 'No addresses in this DHCP scope.' : 'No DHCP leases or reservations.'"
                      size="small" scrollable scrollHeight="flex"
                      paginator :rows="dhcpRows" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
                      @page="onDhcpPage"
-                     removableSort :nullSortOrder="0"
+                     removableSort customSort
+                     :sortField="dhcpSortField"
+                     :sortOrder="dhcpSortOrder"
+                     @sort="onDhcpSort"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <Column
               v-for="col in visibleDhcpColumns"
               :key="col.key"
               :field="col.field"
               :sortable="col.sortable"
+              :sortField="col.sortField || col.field"
               :style="col.style"
             >
               <template #header>
@@ -273,6 +285,7 @@ import {
   displayHostnameCell,
   displayMacAddress
 } from '../utils/format.js';
+import { ipToLong } from '../utils/ip.js';
 import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
 import { loadJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
@@ -287,11 +300,11 @@ const dhcpTableColumns = [
   { key: 'ip_address', header: 'IP Address', description: 'The address in the DHCP scope or global lease list.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
   { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
   { key: 'lease', header: 'Lease', description: 'Whether this DHCP scope address is actively leased, available, or inactive.', field: 'lease_status', sortable: true, style: 'width: 6rem' },
-  { key: 'type', header: 'Type', description: 'How the IP is instantiated, such as dynamic DHCP, reserved DHCP, static DNS, or rogue.', field: 'dhcp_assignment_type', sortable: true, style: 'width: 9rem' },
+  { key: 'type', header: 'Type', description: 'How the IP is instantiated, such as dynamic DHCP, reserved DHCP, static DNS, or rogue.', field: 'dhcp_assignment_type', sortField: 'computed_type', sortable: true, style: 'width: 9rem' },
   { key: 'hostname', header: 'Hostname', description: 'Hostname supplied by the lease or reservation, shown relative to the subnet domain when possible.', field: 'hostname', sortable: true, style: 'width: 10rem' },
   { key: 'mac_address', header: 'MAC Address', description: 'Client hardware address associated with the lease or reservation.', field: 'mac_address', sortable: true, style: 'width: 10rem' },
   { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
-  { key: 'network', header: 'Network', description: 'Network or subnet that contains this DHCP address.', field: 'subnet_name', sortable: true, style: 'width: 10rem' },
+  { key: 'network', header: 'Network', description: 'Network or subnet that contains this DHCP address.', field: 'subnet_name', sortField: 'network', sortable: true, style: 'width: 10rem' },
   { key: 'expires_at', header: 'Expires', description: 'Lease expiration time; reservations do not expire.', field: 'expires_at', sortable: true, style: 'width: 9rem' },
 ];
 
@@ -306,6 +319,8 @@ const scopeFilterText = ref('');
 const selectedScope = ref(null);
 const syncing = ref(false);
 const loadingLeases = ref(false);
+const dhcpSortField = ref(null);
+const dhcpSortOrder = ref(1);
 
 // Scope dialog
 const scopeDialogRef = ref(null);
@@ -399,8 +414,10 @@ function onMacInput(event) {
 
 const dhcpSearch = ref(loadJson('cidrella_dhcp_search', ''));
 const dhcpAllSearch = ref(loadJson('cidrella_dhcp_all_search', ''));
+const showAvailableDhcp = ref(loadJson('cidrella_dhcp_show_available', true));
 watch(dhcpSearch, (val) => { try { localStorage.setItem('cidrella_dhcp_search', JSON.stringify(val)); } catch {} });
 watch(dhcpAllSearch, (val) => { try { localStorage.setItem('cidrella_dhcp_all_search', JSON.stringify(val)); } catch {} });
+watch(showAvailableDhcp, (val) => { try { localStorage.setItem('cidrella_dhcp_show_available', JSON.stringify(val)); } catch {} });
 
 // Lease context menu
 const leaseContextMenuRef = ref();
@@ -487,6 +504,68 @@ const searchedAllLeases = computed(() => {
   return filteredLeases.value.filter(r => dhcpMatchSearch(r, q));
 });
 
+const dhcpRowsForDisplay = computed(() => {
+  const rows = selectedScope.value ? searchedScopeLeases.value : searchedAllLeases.value;
+  if (showAvailableDhcp.value) return rows;
+  return rows.filter(row => ipLifecycleDisplayForDhcpRow(row).status !== 'available');
+});
+
+const sortedDhcpRows = computed(() => {
+  const rows = [...dhcpRowsForDisplay.value];
+  if (!dhcpSortField.value || !dhcpSortOrder.value) return rows;
+  return rows.sort((a, b) => compareDhcpRows(a, b, dhcpSortField.value, dhcpSortOrder.value));
+});
+
+function onDhcpSort(event) {
+  const nextOrder = event.sortOrder ?? 0;
+  dhcpSortOrder.value = nextOrder;
+  dhcpSortField.value = nextOrder ? (event.sortField || event.field || null) : null;
+}
+
+function normalizedText(value) {
+  const text = String(value ?? '').trim().toLowerCase();
+  return text || null;
+}
+
+function normalizedOnline(value) {
+  if (value === true || value === 1 || value === '1') return 1;
+  if (value === false || value === 0 || value === '0') return 0;
+  return null;
+}
+
+function normalizedExpiry(value) {
+  if (!value) return null;
+  if (value === 'infinite') return Number.POSITIVE_INFINITY;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : timestamp;
+}
+
+function dhcpSortValue(row, field) {
+  if (field === 'ip_address') return row.ip_address ? ipToLong(row.ip_address) : null;
+  if (field === 'is_online') return normalizedOnline(row.is_online);
+  if (field === 'computed_type') return normalizedText(dhcpAddressTypeDisplay(row)?.label);
+  if (field === 'lease_status') return normalizedText(dhcpLeaseStatusLabel(row.lease_status));
+  if (field === 'hostname') return normalizedText(row.hostname);
+  if (field === 'mac_address') return normalizedText(row.mac_address);
+  if (field === 'vendor') return normalizedText(row.vendor);
+  if (field === 'network') return normalizedText(row.subnet_name || row.subnet_cidr);
+  if (field === 'expires_at') return normalizedExpiry(row.expires_at);
+  return normalizedText(row[field]);
+}
+
+function compareDhcpRows(a, b, field, order) {
+  const va = dhcpSortValue(a, field);
+  const vb = dhcpSortValue(b, field);
+  const aEmpty = va === null || va === undefined || va === '';
+  const bEmpty = vb === null || vb === undefined || vb === '';
+  if (aEmpty && bEmpty) return 0;
+  if (aEmpty) return 1;
+  if (bEmpty) return -1;
+  if (va < vb) return -1 * order;
+  if (va > vb) return 1 * order;
+  return 0;
+}
+
 const displayHost = displayHostnameCell;
 const displayMac = displayMacAddress;
 
@@ -508,7 +587,7 @@ const filteredScopes = computed(() => {
   );
 });
 
-const filteredLeases = computed(() => store.leases.map(l => ({ ...l, hostname: l.hostname || ' ' })));
+const filteredLeases = computed(() => store.leases);
 
 const scopeGateway = computed(() => {
   const s = selectedScope.value;
@@ -531,7 +610,7 @@ const scopeLeaseTime = computed(() => {
 // Filter leases for selected scope
 const scopeLeases = computed(() => {
   if (!selectedScope.value) return [];
-  return store.scopeAddresses.map(l => ({ ...l, hostname: l.hostname || ' ' }));
+  return store.scopeAddresses;
 });
 
 function dhcpLeaseStatusLabel(status) {
@@ -933,6 +1012,16 @@ defineExpose({ openScopeDialog });
 
 .search-bar { display: flex; align-items: center; gap: 0.25rem; padding: 0.4rem 0; flex-shrink: 0; }
 .search-input { width: 22rem; }
+.available-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.5rem;
+  color: var(--p-text-muted-color);
+  font-size: var(--app-fs-sm);
+  white-space: nowrap;
+  text-transform: lowercase;
+}
 
 .text-sm { font-size: var(--app-fs-sm); }
 .muted { color: var(--p-text-muted-color); }

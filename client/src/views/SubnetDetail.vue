@@ -79,6 +79,10 @@
             <InputText v-model="ipSearch" placeholder="Search by IP, hostname, MAC, vendor, status…" size="small" class="ip-search-input" />
           </IconField>
           <Button v-if="ipSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="ipSearch = ''" />
+          <label class="available-toggle">
+            <ToggleSwitch v-model="showAvailableIps" />
+            <span>show available</span>
+          </label>
           <ColumnChooserButton
             tableName="Network IPs"
             :allColumns="networkTableColumns"
@@ -398,6 +402,7 @@ import Toast from 'primevue/toast';
 import TabView from 'primevue/tabview';
 import TabPanel from 'primevue/tabpanel';
 import Tag from 'primevue/tag';
+import ToggleSwitch from 'primevue/toggleswitch';
 import ScopeDialog from '../components/ScopeDialog.vue';
 import ScanToggle from '../components/ScanToggle.vue';
 import AddressTypePill from '../components/table/AddressTypePill.vue';
@@ -579,6 +584,7 @@ const totalPages = ref(0);
 const sortField = ref(null);
 const sortOrder = ref(1);
 const loadingPage = ref(false);
+const showAvailableIps = ref(loadJson('cidrella_network_show_available', true));
 
 // Active tab (IP Addresses = 0, Grid View = 1)
 const activeTabIndex = ref(loadJson('cidrella_subnet_detail_tab', 0));
@@ -596,6 +602,13 @@ watch(ipSearch, (val) => {
     currentPage.value = 1;
     loadIpPage(1, currentPageSize.value);
   }, 300);
+});
+
+watch(showAvailableIps, (val) => {
+  try { localStorage.setItem('cidrella_network_show_available', JSON.stringify(val)); } catch {}
+  currentPage.value = 1;
+  store.invalidateDetailCache(props.subnetId);
+  loadIpPage(1, currentPageSize.value);
 });
 
 // Loading overlay for large subnets (>256 IPs)
@@ -1305,7 +1318,8 @@ async function loadIpPage(page, pageSize, { skipCache = false } = {}) {
       skipCache,
       search: ipSearch.value,
       sortField: sortField.value,
-      sortOrder: sortOrder.value
+      sortOrder: sortOrder.value,
+      showAvailable: showAvailableIps.value
     });
     // Guard: if subnetId changed while we were loading, discard stale result
     if (detail.subnet.id !== Number(props.subnetId)) return;
@@ -1730,6 +1744,16 @@ onUnmounted(() => {
 }
 .ip-search-input {
   width: 22rem;
+}
+.available-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.5rem;
+  color: var(--p-text-muted-color);
+  font-size: var(--app-fs-sm);
+  white-space: nowrap;
+  text-transform: lowercase;
 }
 
 .subnet-detail {

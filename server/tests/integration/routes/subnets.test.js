@@ -253,6 +253,48 @@ describe('GET /api/subnets/:id/ips', () => {
     expect(row.has_static_dns).toBe(1);
     expect(row.computed_type).toBe('static DNS');
   });
+
+  it('keeps virtual empty rows when sorting by a nullable column', async () => {
+    const createRes = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.74.0.0/29', name: 'Nullable Sort', status: 'allocated' });
+    expect(createRes.status).toBe(201);
+
+    db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, hostname, status, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.74.0.3', 'named-host', 'assigned', 0, 'manual', datetime('now'))
+    `).run(createRes.body.id);
+
+    const res = await request(app)
+      .get(`/api/subnets/${createRes.body.id}/ips?page=1&pageSize=8&sortField=hostname&sortOrder=asc`);
+    expect(res.status).toBe(200);
+    expect(res.body.totalIps).toBe(8);
+    expect(res.body.ips).toHaveLength(8);
+    expect(res.body.ips[0].ip_address).toBe('10.74.0.3');
+    expect(res.body.ips[0].hostname).toBe('named-host');
+    expect(res.body.ips.some(ip => ip.ip_address === '10.74.0.4' && ip.hostname === null)).toBe(true);
+  });
+
+  it('suppresses available rows when requested', async () => {
+    const createRes = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.73.0.0/29', name: 'Hide Available', status: 'allocated' });
+    expect(createRes.status).toBe(201);
+
+    db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, hostname, status, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.73.0.3', 'assigned-host', 'assigned', 0, 'manual', datetime('now'))
+    `).run(createRes.body.id);
+
+    const res = await request(app)
+      .get(`/api/subnets/${createRes.body.id}/ips?page=1&pageSize=8&showAvailable=false`);
+    expect(res.status).toBe(200);
+    expect(res.body.totalIps).toBe(3);
+    expect(res.body.ips.map(ip => ip.ip_address)).toEqual(['10.73.0.0', '10.73.0.3', '10.73.0.7']);
+    expect(res.body.ips.every(ip => ip.ip_display_status !== 'available')).toBe(true);
+  });
 });
 
 describe('DELETE /api/subnets/:id', () => {

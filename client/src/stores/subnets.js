@@ -202,8 +202,8 @@ export const useSubnetStore = defineStore('subnets', () => {
   const DETAIL_CACHE_TTL = 30_000; // 30 seconds
   const DETAIL_CACHE_MAX = 20;
 
-  async function getSubnetDetail(id, page = 1, pageSize = 256, { skipCache = false, search = '', sortField = null, sortOrder = 1 } = {}) {
-    const cacheKey = `${id}:${page}:${pageSize}:${search}:${sortField}:${sortOrder}`;
+  async function getSubnetDetail(id, page = 1, pageSize = 256, { skipCache = false, search = '', sortField = null, sortOrder = 1, showAvailable = true } = {}) {
+    const cacheKey = `${id}:${page}:${pageSize}:${search}:${sortField}:${sortOrder}:${showAvailable}`;
     if (!skipCache) {
       const cached = _detailCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < DETAIL_CACHE_TTL) {
@@ -217,6 +217,7 @@ export const useSubnetStore = defineStore('subnets', () => {
       params.sortField = sortField;
       params.sortOrder = sortOrder === -1 ? 'desc' : 'asc';
     }
+    if (!showAvailable) params.showAvailable = 'false';
     const res = await api.get(`/subnets/${id}/ips`, { params });
     // Evict least recently used entry if cache is full
     if (_detailCache.size >= DETAIL_CACHE_MAX) {

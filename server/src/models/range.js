@@ -6,6 +6,19 @@ export function findWithType(db, rangeId) {
   `).get(rangeId);
 }
 
+export function listSubnetDetailRanges(db, subnetId) {
+  return db.prepare(`
+    SELECT r.*, rt.name as range_type_name, rt.color as range_type_color,
+      rt.is_system as range_type_is_system, ds.id as dhcp_scope_id
+    FROM ranges r
+    JOIN range_types rt ON r.range_type_id = rt.id
+    LEFT JOIN dhcp_scopes ds ON ds.range_id = r.id
+    WHERE r.subnet_id = ?
+      AND (rt.name != 'DHCP Scope' OR ds.id IS NOT NULL)
+    ORDER BY r.start_ip
+  `).all(subnetId);
+}
+
 export function createRange(db, { subnetId, rangeTypeId, startIp, endIp, description }) {
   const result = db.prepare(
     'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)'
