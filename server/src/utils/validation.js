@@ -68,3 +68,42 @@ export function validateInterfaceConfig(v) {
   }
   return null;
 }
+
+export const GEOIP_MODES = new Set(['blocklist', 'allowlist']);
+
+export function isIntInRange(v, lo, hi) {
+  return typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+}
+
+export function validateSoaFields(fields = {}) {
+  const {
+    soa_primary_ns,
+    soa_admin_email,
+    soa_refresh,
+    soa_retry,
+    soa_expire,
+    soa_minimum_ttl
+  } = fields;
+
+  const domainLike = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$/;
+  for (const [field, value] of [['soa_primary_ns', soa_primary_ns], ['soa_admin_email', soa_admin_email]]) {
+    if (value === undefined || value === null || value === '') continue;
+    if (typeof value !== 'string') return `${field} must be a string`;
+    const text = value.trim();
+    if (text !== value || text.length > 253 || text.includes('..') || !domainLike.test(text)) {
+      return `${field} must be a DNS-safe name`;
+    }
+  }
+
+  for (const [field, value] of [
+    ['soa_refresh', soa_refresh],
+    ['soa_retry', soa_retry],
+    ['soa_expire', soa_expire],
+    ['soa_minimum_ttl', soa_minimum_ttl]
+  ]) {
+    if (value === undefined || value === null || value === '') continue;
+    if (!isIntInRange(value, 0, 2147483647)) return `${field} must be an integer 0-2147483647`;
+  }
+
+  return null;
+}

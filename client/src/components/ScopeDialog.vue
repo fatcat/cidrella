@@ -199,7 +199,7 @@ async function loadOptions() {
     for (const [code, value] of Object.entries(res.data.defaults || {})) {
       defaultValues[Number(code)] = value;
     }
-    enabledDefaultCodes.value = res.data.enabledDefaults || [];
+    enabledDefaultCodes.value = (res.data.enabledDefaults || []).map(Number).filter(Number.isInteger);
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
   }
@@ -214,6 +214,22 @@ async function reloadOptions() {
 
 
 
+function addOptionSelection(selected, code) {
+  const numericCode = Number(code);
+  if (!Number.isInteger(numericCode)) return;
+  if (!selected.includes(numericCode)) selected.push(numericCode);
+}
+
+function setOptionValue(selected, values, code, value, { overwrite = true } = {}) {
+  if (value == null || value === '') return;
+  const numericCode = Number(code);
+  if (!Number.isInteger(numericCode)) return;
+  addOptionSelection(selected, numericCode);
+  if (overwrite || values[numericCode] == null || values[numericCode] === '') {
+    values[numericCode] = value;
+  }
+}
+
 async function resolveHostnameField(code) {
   const val = form.value.optionValues[code];
   if (!val) return;
@@ -225,9 +241,7 @@ async function resolveHostnameField(code) {
 
 function toggleOption(code, checked) {
   if (checked) {
-    if (!form.value.selectedOptions.includes(code)) {
-      form.value.selectedOptions.push(code);
-    }
+    addOptionSelection(form.value.selectedOptions, code);
     // Pre-fill from default if no value set
     if (form.value.optionValues[code] == null || form.value.optionValues[code] === '') {
       const def = defaultValues[code];
@@ -283,7 +297,7 @@ watch(() => form.value.subnet_id, (subnetId, oldSubnetId) => {
 
   // Enable all enabled-by-default options
   for (const code of enabledDefaultCodes.value) {
-    if (!form.value.selectedOptions.includes(code)) form.value.selectedOptions.push(code);
+    addOptionSelection(form.value.selectedOptions, code);
     if (defaultValues[code] != null && !form.value.optionValues[code]) {
       form.value.optionValues[code] = defaultValues[code];
     }
@@ -291,14 +305,14 @@ watch(() => form.value.subnet_id, (subnetId, oldSubnetId) => {
 
   if (subnet.cidr) {
     const mask = computeMask(subnet.cidr);
-    if (mask) form.value.optionValues[1] = mask;
+    setOptionValue(form.value.selectedOptions, form.value.optionValues, 1, mask);
   }
   if (subnet.gateway_address) {
-    form.value.optionValues[3] = subnet.gateway_address;
+    setOptionValue(form.value.selectedOptions, form.value.optionValues, 3, subnet.gateway_address);
   }
   if (subnet.domain_name) {
-    if (!form.value.optionValues[15]) form.value.optionValues[15] = subnet.domain_name;
-    if (!form.value.optionValues[119]) form.value.optionValues[119] = subnet.domain_name;
+    setOptionValue(form.value.selectedOptions, form.value.optionValues, 15, subnet.domain_name, { overwrite: false });
+    setOptionValue(form.value.selectedOptions, form.value.optionValues, 119, subnet.domain_name, { overwrite: false });
   }
   if (subnet.name && !form.value.description) {
     form.value.description = `${subnet.name} DHCP Scope`;
@@ -328,30 +342,25 @@ watch(() => form.value.range_id, (rangeId) => {
   if (range.subnet_cidr) {
     const mask = computeMask(range.subnet_cidr);
     if (mask) {
-      if (!form.value.selectedOptions.includes(1)) form.value.selectedOptions.push(1);
-      form.value.optionValues[1] = mask;
+      setOptionValue(form.value.selectedOptions, form.value.optionValues, 1, mask);
     }
     const bcast = computeBroadcast(range.subnet_cidr);
     if (bcast) {
-      if (!form.value.selectedOptions.includes(28)) form.value.selectedOptions.push(28);
-      form.value.optionValues[28] = bcast;
+      setOptionValue(form.value.selectedOptions, form.value.optionValues, 28, bcast);
     }
   }
   // Gateway
   if (range.subnet_gateway) {
-    if (!form.value.selectedOptions.includes(3)) form.value.selectedOptions.push(3);
-    form.value.optionValues[3] = range.subnet_gateway;
+    setOptionValue(form.value.selectedOptions, form.value.optionValues, 3, range.subnet_gateway);
   }
   // DNS servers
   if (range.server_ip) {
-    if (!form.value.selectedOptions.includes(6)) form.value.selectedOptions.push(6);
-    if (!form.value.optionValues[6]) form.value.optionValues[6] = `${range.server_ip}, 9.9.9.9`;
+    setOptionValue(form.value.selectedOptions, form.value.optionValues, 6, `${range.server_ip}, 9.9.9.9`, { overwrite: false });
   }
   // Domain name + DNS search list
   if (range.subnet_domain_name) {
     for (const code of [15, 119]) {
-      if (!form.value.selectedOptions.includes(code)) form.value.selectedOptions.push(code);
-      if (!form.value.optionValues[code]) form.value.optionValues[code] = range.subnet_domain_name;
+      setOptionValue(form.value.selectedOptions, form.value.optionValues, code, range.subnet_domain_name, { overwrite: false });
     }
   }
 });
@@ -488,30 +497,25 @@ async function openEdit(scope) {
   const optVals = {};
   if (scope.options && Array.isArray(scope.options)) {
     for (const o of scope.options) {
-      selOpts.push(o.option_code);
-      optVals[o.option_code] = o.value;
+      setOptionValue(selOpts, optVals, o.option_code, o.value);
     }
+  }
+
+  for (const code of enabledDefaultCodes.value) {
+    setOptionValue(selOpts, optVals, code, defaultValues[code], { overwrite: false });
   }
 
   // Re-populate inherited values for options not stored in scope_options
   // Gateway (option 3) is stripped on save when it matches the subnet gateway,
   // so re-fill it from the subnet so the UI always shows the effective value.
-  if (!selOpts.includes(3) && scope.subnet_gateway) {
-    selOpts.push(3);
-    optVals[3] = scope.subnet_gateway;
-  }
+  setOptionValue(selOpts, optVals, 3, scope.subnet_gateway, { overwrite: false });
   if (!selOpts.includes(1) && scope.subnet_cidr) {
     const mask = computeMask(scope.subnet_cidr);
-    if (mask) { selOpts.push(1); optVals[1] = mask; }
+    setOptionValue(selOpts, optVals, 1, mask, { overwrite: false });
   }
-  if (!selOpts.includes(15) && scope.subnet_domain_name) {
-    selOpts.push(15);
-    optVals[15] = scope.subnet_domain_name;
-  }
-  if (!selOpts.includes(119) && scope.subnet_domain_name) {
-    selOpts.push(119);
-    optVals[119] = scope.subnet_domain_name;
-  }
+  setOptionValue(selOpts, optVals, 15, scope.subnet_domain_name, { overwrite: false });
+  setOptionValue(selOpts, optVals, 119, scope.subnet_domain_name, { overwrite: false });
+  setOptionValue(selOpts, optVals, 6, scope.server_ip ? `${scope.server_ip}, 9.9.9.9` : null, { overwrite: false });
 
   form.value = {
     range_id: scope.range_id,
@@ -545,18 +549,18 @@ async function openNewWithPicker(subnetCtx) {
 
   // Auto-select all enabled-by-default options
   for (const code of enabledDefaultCodes.value) {
-    autoSelected.push(code);
-    if (defaultValues[code] != null) autoValues[code] = defaultValues[code];
+    addOptionSelection(autoSelected, code);
+    setOptionValue(autoSelected, autoValues, code, defaultValues[code], { overwrite: false });
   }
 
   // Network-dependent overrides from subnet context
   let autoStartIp = '';
   let autoEndIp = '';
   if (subnetCtx) {
-    if (subnetCtx.gateway_address) autoValues[3] = subnetCtx.gateway_address;
+    setOptionValue(autoSelected, autoValues, 3, subnetCtx.gateway_address);
     if (subnetCtx.cidr) {
       const mask = computeMask(subnetCtx.cidr);
-      if (mask) autoValues[1] = mask;
+      setOptionValue(autoSelected, autoValues, 1, mask);
       // Pre-fill Start/End IP using the same size-based heuristic used by
       // the network-create/configure flows. Empty strings for subnets
       // outside /16–/29 (the user will enter their own).
@@ -568,8 +572,8 @@ async function openNewWithPicker(subnetCtx) {
       } catch { /* invalid cidr — leave blank */ }
     }
     if (subnetCtx.domain_name) {
-      autoValues[15] = subnetCtx.domain_name;
-      autoValues[119] = subnetCtx.domain_name;
+      setOptionValue(autoSelected, autoValues, 15, subnetCtx.domain_name);
+      setOptionValue(autoSelected, autoValues, 119, subnetCtx.domain_name);
     }
   }
 
@@ -613,25 +617,23 @@ async function openNewForRange(opts) {
   const autoSelected = [];
   const autoValues = {};
   for (const code of enabledDefaultCodes.value) {
-    autoSelected.push(code);
-    if (defaultValues[code] != null) {
-      autoValues[code] = defaultValues[code];
-    }
+    addOptionSelection(autoSelected, code);
+    setOptionValue(autoSelected, autoValues, code, defaultValues[code], { overwrite: false });
   }
 
   // Override gateway from subnet if available
-  if (opts.gateway) autoValues[3] = opts.gateway;
+  setOptionValue(autoSelected, autoValues, 3, opts.gateway);
 
   // Auto-populate mask from CIDR
   if (opts.cidr) {
     const mask = computeMask(opts.cidr);
-    if (mask) autoValues[1] = mask;
+    setOptionValue(autoSelected, autoValues, 1, mask);
   }
 
   // Domain name + DNS search list
   if (opts.domainName) {
-    if (!autoValues[15]) autoValues[15] = opts.domainName;
-    if (!autoValues[119]) autoValues[119] = opts.domainName;
+    setOptionValue(autoSelected, autoValues, 15, opts.domainName, { overwrite: false });
+    setOptionValue(autoSelected, autoValues, 119, opts.domainName, { overwrite: false });
   }
 
   form.value = {
@@ -652,21 +654,21 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
 .form-grid {
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.65rem;
 }
 .field-row {
   display: flex;
-  gap: 0.75rem;
+  gap: 0.65rem;
 }
 .field label {
   display: block;
-  margin-bottom: 0.35rem;
-  font-size: 0.85rem;
+  margin-bottom: 0.2rem;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 .field-help {
   display: block;
-  margin-top: 0.2rem;
+  margin-top: 0.15rem;
   font-size: 0.75rem;
   color: var(--p-text-muted-color);
 }
@@ -688,7 +690,7 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
 
 /* Scope dialog inline options */
 .scope-options-section {
-  margin-top: 1rem;
+  margin-top: 0.75rem;
   border: 1px solid var(--p-surface-border);
   border-radius: 6px;
   overflow: hidden;
@@ -716,7 +718,7 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   margin-left: auto;
 }
 .scope-options-list {
-  max-height: 18rem;
+  max-height: min(28rem, 54vh);
   overflow-y: auto;
 }
 .scope-option-row {

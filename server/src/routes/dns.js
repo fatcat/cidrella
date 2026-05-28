@@ -21,6 +21,7 @@ const router = Router();
 // Validation helpers
 import { isValidIpv4, isValidDomain, validateDisplayString } from '../utils/ip.js';
 import { isValidPtrName, validateTxtValue } from '../utils/dnsmasq-escape.js';
+import { validateSoaFields } from '../utils/validation.js';
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
@@ -317,6 +318,10 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     const err = validateDisplayString(description, { maxLength: 1024 });
     if (err) return res.status(400).json({ error: `description ${err}` });
   }
+  {
+    const err = validateSoaFields({ soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl });
+    if (err) return res.status(400).json({ error: err });
+  }
 
   const db = getDb();
 
@@ -354,6 +359,10 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
   if (description !== undefined) {
     const err = validateDisplayString(description, { maxLength: 1024 });
     if (err) return res.status(400).json({ error: `description ${err}` });
+  }
+  {
+    const err = validateSoaFields({ soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl });
+    if (err) return res.status(400).json({ error: err });
   }
 
   const renaming = name && name !== zone.name;
@@ -721,6 +730,10 @@ router.put('/soa-defaults', requirePerm('dns:write'), (req, res) => {
     soa_expire: soa_expire ?? current.soa_expire, soa_minimum_ttl: soa_minimum_ttl ?? current.soa_minimum_ttl,
     soa_primary_ns: soa_primary_ns || current.soa_primary_ns, soa_admin_email: soa_admin_email || current.soa_admin_email
   };
+  {
+    const err = validateSoaFields(defaults);
+    if (err) return res.status(400).json({ error: err });
+  }
   setSetting('dns_soa_defaults', JSON.stringify(defaults));
   audit(req.user.id, 'configure', 'dns_soa_defaults', null, defaults);
   res.json(defaults);

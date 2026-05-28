@@ -6,6 +6,7 @@ import {
   downloadMmdb, resetStats
 } from '../utils/dns-proxy.js';
 import * as GeoipRule from '../models/geoip-rule.js';
+import { GEOIP_MODES } from '../utils/validation.js';
 
 const router = Router();
 
@@ -105,7 +106,7 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     return res.status(400).json({ error: 'geoip_enabled must be a boolean' });
   }
 
-  if (geoip_mode !== undefined && !['blocklist', 'allowlist'].includes(geoip_mode)) {
+  if (geoip_mode !== undefined && !GEOIP_MODES.has(geoip_mode)) {
     return res.status(400).json({ error: 'Mode must be blocklist or allowlist' });
   }
 

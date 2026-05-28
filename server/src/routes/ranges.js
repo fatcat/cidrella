@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { ipToLong, isIpInSubnet, rangesOverlap, validateDisplayString } from '../utils/ip.js';
+import { ipToLong, isIpInSubnet, isValidIpv4, rangesOverlap, validateDisplayString } from '../utils/ip.js';
 import * as Range from '../models/range.js';
 
 const router = Router({ mergeParams: true });
@@ -34,6 +34,9 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   // "Internal server error". A 400 with the root cause is kinder.
   if (typeof start_ip !== 'string' || typeof end_ip !== 'string') {
     return res.status(400).json({ error: 'start_ip and end_ip must be strings' });
+  }
+  if (!isValidIpv4(start_ip) || !isValidIpv4(end_ip)) {
+    return res.status(400).json({ error: 'start_ip and end_ip must be valid IPv4 addresses' });
   }
   if (!Number.isInteger(range_type_id)) {
     return res.status(400).json({ error: 'range_type_id must be an integer' });
@@ -128,6 +131,9 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   if (end_ip !== undefined && typeof end_ip !== 'string') {
     return res.status(400).json({ error: 'end_ip must be a string' });
   }
+  if (range_type_id !== undefined && !Number.isInteger(range_type_id)) {
+    return res.status(400).json({ error: 'range_type_id must be an integer' });
+  }
   if (description !== undefined) {
     const derr = validateDisplayString(description, { maxLength: 1024 });
     if (derr) return res.status(400).json({ error: `description ${derr}` });
@@ -135,8 +141,18 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 
   const newStart = start_ip ?? range.start_ip;
   const newEnd = end_ip ?? range.end_ip;
+  if (!isValidIpv4(newStart) || !isValidIpv4(newEnd)) {
+    return res.status(400).json({ error: 'start_ip and end_ip must be valid IPv4 addresses' });
+  }
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.subnetId);
+  if (range_type_id !== undefined) {
+    const newRangeType = db.prepare('SELECT * FROM range_types WHERE id = ?').get(range_type_id);
+    if (!newRangeType) return res.status(404).json({ error: 'Range type not found' });
+    if (newRangeType.is_system && ['Network', 'Broadcast', 'Gateway'].includes(newRangeType.name)) {
+      return res.status(400).json({ error: `Cannot change a range to system type ${newRangeType.name}` });
+    }
+  }
 
   // Validate IPs within subnet
   if (!isIpInSubnet(newStart, subnet.cidr) || !isIpInSubnet(newEnd, subnet.cidr)) {

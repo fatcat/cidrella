@@ -116,3 +116,8 @@ export const ANALYTICS_RETENTION_CLEANUP_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 // Secondary DNS server used when auto-populating DHCP option 6
 export const FALLBACK_SECONDARY_DNS   = '9.9.9.9';
+
+// Baked DHCP option 42 default. Refresh this at release-build time with
+// scripts/refresh-ntp-defaults.js so new installs and reset databases do not
+// carry stale pool.ntp.org answers indefinitely.
+export const DHCP_DEFAULT_NTP_SERVERS = '162.254.225.151,193.29.63.226,172.104.209.204,198.137.202.32';

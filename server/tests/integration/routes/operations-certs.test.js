@@ -39,6 +39,8 @@ describe('certificate CSR flow', () => {
       { common_name: 'cidrella.test', organization: 'CIDRella/OU=injected' },
       { common_name: 'cidrella.test', country: 'USA' },
       { common_name: 'cidrella.test', key_algorithm: 'ecdsa', curve: 'badcurve' },
+      { common_name: 'cidrella.test', key_size: '2048' },
+      { common_name: 'cidrella.test', san: 'cidrella.test' },
     ];
 
     for (const body of cases) {
@@ -47,6 +49,13 @@ describe('certificate CSR flow', () => {
         .send({ key_size: 2048, ...body });
       expect(res.status, JSON.stringify({ body, response: res.body })).toBe(400);
     }
+  });
+
+  it('rejects non-string certificate upload fields', async () => {
+    const res = await request(app)
+      .post('/api/operations/certs/upload')
+      .send({ cert: ['not pem'], key: {} });
+    expect(res.status).toBe(400);
   });
 
   it('generates a CSR and accepts the signed certificate using the pending key', async () => {

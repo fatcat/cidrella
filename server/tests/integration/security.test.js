@@ -592,6 +592,66 @@ describe('M8 — display-string validator on subnet name/description', () => {
 });
 
 // -----------------------------------------------------------------------------
+// V1 — Backend-authoritative validation for route-specific operational inputs
+// -----------------------------------------------------------------------------
+
+describe('V1 — validation gaps from route-specific write paths', () => {
+  it('rejects Pi-hole import records with invalid DNS data before persistence', async () => {
+    const zoneRes = await request(app).post('/api/dns/zones').send({
+      name: 'pihole-validation.test',
+      type: 'forward'
+    });
+    expect(zoneRes.status).toBe(201);
+
+    const bad = await request(app).post('/api/pihole/import').send({
+      zoneId: zoneRes.body.id,
+      hosts: [{ hostname: 'bad\nhost.pihole-validation.test', ip: '10.0.0.10' }],
+      cnames: [],
+      dhcpHosts: []
+    });
+
+    expect(bad.status).toBe(400);
+    const rows = getDb().prepare('SELECT * FROM dns_records WHERE zone_id = ?').all(zoneRes.body.id);
+    expect(rows).toHaveLength(0);
+  });
+
+  it('rejects SOA values that could escape generated dnsmasq comments', async () => {
+    const res = await request(app).put('/api/dns/soa-defaults').send({
+      soa_primary_ns: 'ns1.safe.test\nserver=/bad/1.2.3.4'
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects per-IP writes outside the owning subnet', async () => {
+    const subnet = await request(app).post('/api/subnets').send({
+      cidr: '10.56.0.0/24',
+      name: 'ip-write-validation'
+    });
+    expect(subnet.status).toBe(201);
+
+    const res = await request(app)
+      .put(`/api/subnets/${subnet.body.id}/ips/10.57.0.8/status`)
+      .send({ status: 'locked', note: 'outside' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/within the subnet/i);
+  });
+
+  it('rejects malformed global DHCP option defaults', async () => {
+    const res = await request(app).put('/api/dhcp/options/defaults').send({
+      options: [{ code: 51, value: 'not-a-lease-time' }],
+      enabledDefaults: [51]
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/lease time/i);
+  });
+
+  it('uses the runtime GeoIP mode enum in generic settings writes', async () => {
+    const res = await request(app).put('/api/settings/geoip_mode').send({ value: 'block-country' });
+    expect(res.status).toBe(400);
+  });
+});
+
+// -----------------------------------------------------------------------------
 // M1 / M2 — Login + change-password rate limiters
 //
 // These tests HAVE to run last in the file because they exhaust the

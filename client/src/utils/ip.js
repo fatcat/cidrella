@@ -44,6 +44,17 @@ export function isValidCidr(cidr) {
   try { parseCidr(cidr); return true; } catch { return false; }
 }
 
+const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
+
+export function isValidIpv4(ip) {
+  return typeof ip === 'string'
+    && IPV4_RE.test(ip)
+    && ip.split('.').every(o => {
+      const n = Number(o);
+      return Number.isInteger(n) && n >= 0 && n <= 255;
+    });
+}
+
 export function isSubnetOf(childCidr, parentCidr) {
   const child = parseCidr(childCidr);
   const parent = parseCidr(parentCidr);

@@ -77,17 +77,20 @@ function runJsonCommand(command, argsForCommand, cwd) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  const stderr = result.error
+    ? result.error.message
+    : result.stderr.trim();
   const output = result.stdout.trim();
   if (!output) {
-    return { ok: result.status === 0, data: {}, stderr: result.stderr.trim() };
+    return { ok: result.status === 0 && !result.error, data: {}, stderr };
   }
   try {
-    return { ok: result.status === 0, data: JSON.parse(output), stderr: result.stderr.trim() };
+    return { ok: result.status === 0 && !result.error, data: JSON.parse(output), stderr };
   } catch (error) {
     return {
       ok: false,
       data: {},
-      stderr: `${result.stderr.trim()}\nCould not parse JSON from ${command} ${argsForCommand.join(' ')}: ${error.message}`.trim(),
+      stderr: `${stderr}\nCould not parse JSON from ${command} ${argsForCommand.join(' ')}: ${error.message}`.trim(),
     };
   }
 }
@@ -128,9 +131,7 @@ function checkNpmProject(projectRoot, relativeDir) {
 
   return {
     dir: relativeDir || '.',
-    auditOk: audit.ok || vulnerablePackages.length > 0,
     auditError: audit.ok || vulnerablePackages.length > 0 ? '' : audit.stderr,
-    outdatedOk: outdated.ok || outdatedPackages.length > 0,
     outdatedError: outdated.ok || outdatedPackages.length > 0 ? '' : outdated.stderr,
     vulnerabilities: vulnerablePackages,
     outdated: outdatedPackages,

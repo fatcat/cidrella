@@ -138,32 +138,36 @@ const LEGEND_LABELS = {
   boxWidth: 18,
   boxHeight: 8,
   padding: 18,
-  color: () => chartColor('text'),
 };
 
-export const DOUGHNUT_OPTIONS = {
-  responsive: true,
-  maintainAspectRatio: false,
-  cutout: '60%',
-  plugins: {
-    legend: {
-      position: 'right',
-      labels: {
-        ...LEGEND_LABELS,
+export function makeDoughnutOptions() {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    cutout: '60%',
+    plugins: {
+      legend: {
+        position: 'right',
+        labels: {
+          ...LEGEND_LABELS,
+          color: chartColor('text'),
+        },
+      },
+      tooltip: { enabled: true },
+      datalabels: {
+        color: (ctx) => readableTextColor(ctx.dataset.backgroundColor?.[ctx.dataIndex] || '#000000'),
+        font: { weight: 'bold', size: 11 },
+        formatter: (value, ctx) => {
+          const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+          const pct = ((value / total) * 100).toFixed(1);
+          return pct >= 5 ? `${pct}%` : '';
+        },
       },
     },
-    tooltip: { enabled: true },
-    datalabels: {
-      color: (ctx) => readableTextColor(ctx.dataset.backgroundColor?.[ctx.dataIndex] || '#000000'),
-      font: { weight: 'bold', size: 11 },
-      formatter: (value, ctx) => {
-        const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
-        const pct = ((value / total) * 100).toFixed(1);
-        return pct >= 5 ? `${pct}%` : '';
-      },
-    },
-  },
-};
+  };
+}
+
+export const DOUGHNUT_OPTIONS = makeDoughnutOptions();
 
 /**
  * Build a Chart.js options object for a line chart.

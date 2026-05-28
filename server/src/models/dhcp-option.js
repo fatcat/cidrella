@@ -1,3 +1,5 @@
+import { DHCP_DEFAULT_NTP_SERVERS } from '../config/defaults.js';
+
 export function createCustomOption(db, fields) {
   const result = db.prepare(`
     INSERT INTO dhcp_custom_options (code, name, label, type, description)
@@ -54,6 +56,28 @@ export function replaceDefaultOptions(db, options, enabledDefaults) {
 
   replace();
   return getDefaultOptions(db);
+}
+
+export function seedDefaultOptions(db) {
+  const seed = db.transaction(() => {
+    const insert = db.prepare(`
+      INSERT INTO dhcp_option_defaults (option_code, value, enabled_by_default, updated_at)
+      VALUES (?, ?, ?, datetime('now'))
+      ON CONFLICT(option_code) DO UPDATE SET
+        enabled_by_default = CASE
+          WHEN excluded.enabled_by_default = 1 THEN 1
+          ELSE dhcp_option_defaults.enabled_by_default
+        END
+    `);
+
+    for (const code of [1, 3, 6, 15, 119]) {
+      insert.run(code, null, 1);
+    }
+    insert.run(42, DHCP_DEFAULT_NTP_SERVERS, 1);
+    insert.run(51, '3600', 1);
+  });
+
+  seed();
 }
 
 export function getDefaultOptions(db) {

@@ -5,7 +5,7 @@ import {
   parseCidr, normalizeCidr, isValidCidr, calculateSubnets,
   ipToLong, longToIp, isIpInSubnet, subtractCidr, isSubnetOf, cidrsOverlap,
   validateSupernet, applyNameTemplate, canMergeCidrs, isValidDomain,
-  validateDisplayString
+  validateDisplayString, isValidIpv4
 } from '../utils/ip.js';
 import * as IpAddress from '../models/ip-address.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
@@ -128,6 +128,43 @@ function dhcpRangeDefaults(parsed) {
   poolStart = Math.max(poolStart, parsed.networkLong + 1);
   poolEnd = Math.min(poolEnd, parsed.broadcastLong - 1);
   return { startLong: poolStart, endLong: poolEnd };
+}
+
+function validateDhcpScopeBounds(parsed, startIp, endIp) {
+  if (!startIp || !endIp) return 'DHCP Scope Start IP and DHCP Scope End IP are required';
+  if (!isValidIpv4(startIp)) return 'DHCP Scope Start IP must be a valid IPv4 address';
+  if (!isValidIpv4(endIp)) return 'DHCP Scope End IP must be a valid IPv4 address';
+
+  const firstUsableLong = ipToLong(parsed.firstUsable);
+  const lastUsableLong = ipToLong(parsed.lastUsable);
+  const startLong = ipToLong(startIp);
+  const endLong = ipToLong(endIp);
+
+  if (startLong > endLong) {
+    return 'DHCP Scope Start IP must be less than or equal to DHCP Scope End IP';
+  }
+
+  if (startLong < firstUsableLong || startLong > lastUsableLong) {
+    return `DHCP Scope Start IP must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+
+  if (endLong < firstUsableLong || endLong > lastUsableLong) {
+    return `DHCP Scope End IP must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+
+  return null;
+}
+
+function validateGatewayForSubnet(parsed, gateway) {
+  if (gateway === undefined || gateway === null || gateway === '') return null;
+  if (typeof gateway !== 'string' || !isValidIpv4(gateway)) return 'gateway_address must be a valid IPv4 address';
+  const gwLong = ipToLong(gateway);
+  const firstUsableLong = ipToLong(parsed.firstUsable);
+  const lastUsableLong = ipToLong(parsed.lastUsable);
+  if (gwLong < firstUsableLong || gwLong > lastUsableLong) {
+    return `gateway_address must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  return null;
 }
 
 // Helper: auto-create DHCP scope for a subnet if no existing hosts/leases/scopes
@@ -1278,9 +1315,34 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
 router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id, domain_name, dhcp_start_ip, dhcp_end_ip } = req.body;
 
-  if (!name) return res.status(400).json({ error: 'Name is required' });
+  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  {
+    const err = validateDisplayString(name, { maxLength: 255 });
+    if (err) return res.status(400).json({ error: `name ${err}` });
+  }
+  if (description !== undefined) {
+    const err = validateDisplayString(description, { maxLength: 1024 });
+    if (err) return res.status(400).json({ error: `description ${err}` });
+  }
+  if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
+    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
+      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
+    }
+  }
+  if (create_dhcp_scope !== undefined && typeof create_dhcp_scope !== 'boolean') {
+    return res.status(400).json({ error: 'create_dhcp_scope must be boolean' });
+  }
+  if (create_reverse_dns !== undefined && typeof create_reverse_dns !== 'boolean') {
+    return res.status(400).json({ error: 'create_reverse_dns must be boolean' });
+  }
+  if (domain_name !== undefined && domain_name !== null && domain_name !== '' && typeof domain_name !== 'string') {
+    return res.status(400).json({ error: 'domain_name must be a string' });
+  }
   if (domain_name && !isValidDomain(domain_name)) {
     return res.status(400).json({ error: 'Invalid domain name format' });
+  }
+  if (folder_id !== undefined && folder_id !== null && !Number.isInteger(folder_id)) {
+    return res.status(400).json({ error: 'folder_id must be an integer' });
   }
 
   const db = getDb();
@@ -1288,6 +1350,10 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
   const parsed = parseCidr(subnet.cidr);
+  {
+    const err = validateGatewayForSubnet(parsed, gateway_address);
+    if (err) return res.status(400).json({ error: err });
+  }
 
   // Determine gateway
   let gw = gateway_address;
@@ -1310,11 +1376,17 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
 
   let dhcpPool = null;
   if (create_dhcp_scope && parsed.prefix <= 29) {
-    const gwLong = ipToLong(gw);
+    const gwLong = gw && isValidIpv4(gw) ? ipToLong(gw) : null;
     let poolStart, poolEnd;
-    if (dhcp_start_ip && dhcp_end_ip) {
-      poolStart = ipToLong(dhcp_start_ip);
-      poolEnd = ipToLong(dhcp_end_ip);
+    const explicitPool = dhcp_start_ip || dhcp_end_ip;
+    if (explicitPool) {
+      const defaults = dhcpRangeDefaults(parsed);
+      const startIp = dhcp_start_ip || (defaults ? longToIp(defaults.startLong) : parsed.firstUsable);
+      const endIp = dhcp_end_ip || (defaults ? longToIp(defaults.endLong) : parsed.lastUsable);
+      const error = validateDhcpScopeBounds(parsed, startIp, endIp);
+      if (error) return res.status(400).json({ error });
+      poolStart = ipToLong(startIp);
+      poolEnd = ipToLong(endIp);
     } else {
       const defaults = dhcpRangeDefaults(parsed);
       if (defaults) {
@@ -1324,7 +1396,7 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
         poolStart = parsed.networkLong + 1;
         poolEnd = parsed.broadcastLong - 1;
       }
-      if (gwLong === poolStart) poolStart++;
+      if (gwLong != null && gwLong === poolStart) poolStart++;
       else if (gwLong === poolEnd) poolEnd--;
     }
     if (poolStart <= poolEnd) {
@@ -1795,8 +1867,17 @@ router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((r
 
   const { start_ip, end_ip, status, note } = req.body;
   if (!start_ip || !end_ip) return res.status(400).json({ error: 'start_ip and end_ip are required' });
+  if (typeof start_ip !== 'string' || !isValidIpv4(start_ip)) return res.status(400).json({ error: 'start_ip must be a valid IPv4 address' });
+  if (typeof end_ip !== 'string' || !isValidIpv4(end_ip)) return res.status(400).json({ error: 'end_ip must be a valid IPv4 address' });
   if (!['available', 'locked', 'assigned'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
+  }
+  if (!isIpInSubnet(start_ip, subnet.cidr) || !isIpInSubnet(end_ip, subnet.cidr)) {
+    return res.status(400).json({ error: 'IP range must be within the subnet' });
+  }
+  if (note !== undefined) {
+    const err = validateDisplayString(note, { maxLength: 1024 });
+    if (err) return res.status(400).json({ error: `note ${err}` });
   }
 
   const startLong = ipToLong(start_ip);
@@ -1837,8 +1918,14 @@ router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((re
 
   const ipAddress = req.params.ip;
   const { status, note } = req.body;
+  if (!isValidIpv4(ipAddress)) return res.status(400).json({ error: 'Invalid IP address' });
+  if (!isIpInSubnet(ipAddress, subnet.cidr)) return res.status(400).json({ error: 'IP address must be within the subnet' });
   if (!['available', 'locked', 'assigned'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
+  }
+  if (note !== undefined) {
+    const err = validateDisplayString(note, { maxLength: 1024 });
+    if (err) return res.status(400).json({ error: `note ${err}` });
   }
 
   const rejection = ipStatusRejectionReason(subnet, ipAddress, status);
@@ -1861,6 +1948,11 @@ router.put('/:id/ips/:ip/scan-enabled', requirePerm('subnets:write'), asyncHandl
 
   const ipAddress = req.params.ip;
   const { scan_enabled } = req.body;
+  if (!isValidIpv4(ipAddress)) return res.status(400).json({ error: 'Invalid IP address' });
+  if (!isIpInSubnet(ipAddress, subnet.cidr)) return res.status(400).json({ error: 'IP address must be within the subnet' });
+  if (scan_enabled !== null && typeof scan_enabled !== 'boolean') {
+    return res.status(400).json({ error: 'scan_enabled must be boolean or null' });
+  }
   const scanEn = scan_enabled === null ? null : scan_enabled ? 1 : 0;
 
   IpAddress.setScanEnabled(db, subnet.id, ipAddress, scanEn);

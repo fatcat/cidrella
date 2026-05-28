@@ -4,7 +4,7 @@
     <div class="card-row">
       <div class="chart-card">
         <div v-if="items.length" class="doughnut-wrap">
-          <Doughnut :data="chartData" :options="DOUGHNUT_OPTIONS" :plugins="[ChartDataLabels]" />
+          <Doughnut :data="chartData" :options="doughnutOptions" :plugins="[ChartDataLabels]" />
         </div>
         <p v-else class="empty-chart">No data in this range.</p>
       </div>
@@ -27,11 +27,12 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import { Doughnut } from 'vue-chartjs';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
-import { DOUGHNUT_OPTIONS } from '../utils/chart-config.js';
+import { makeDoughnutOptions } from '../utils/chart-config.js';
 import { formatNumber } from '../utils/format.js';
 
 defineProps({
@@ -41,4 +42,6 @@ defineProps({
   labelField: { type: String, default: null },
   labelHeader: { type: String, default: 'Label' },
 });
+
+const doughnutOptions = computed(() => makeDoughnutOptions());
 </script>

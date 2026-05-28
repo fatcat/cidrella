@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { DEFAULTS } from '../config/defaults.js';
+import { seedDefaultOptions } from '../models/dhcp-option.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
@@ -147,6 +148,8 @@ export async function ensureDefaults() {
     const serialized = typeof value === 'object' ? JSON.stringify(value) : String(value);
     insert.run(key, serialized);
   }
+
+  seedDefaultOptions(db);
 
   // Create default admin user if no users exist
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();

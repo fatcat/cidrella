@@ -100,7 +100,7 @@
     </div>
 
     <!-- Step 2: Network -->
-    <div v-if="wizardStep === 2" class="form-grid">
+    <div v-if="wizardStep === 2" class="form-grid wizard-network-grid">
       <div class="field">
         <label>CIDR *</label>
         <InputText v-model="wizardNet.cidr" placeholder="10.0.0.0/8" class="w-full" />
@@ -147,19 +147,15 @@
           No domain name entered — DNS features will be limited. Click "Create &amp; Continue" again to proceed anyway.
         </Message>
       </div>
-      <div class="field">
+      <div class="field wizard-toggle-stack">
         <label class="toggle-label">
           <input type="checkbox" v-model="wizardNet.create_reverse_dns" />
           Create reverse DNS zone
         </label>
-      </div>
-      <div class="field">
         <label class="toggle-label">
           <input type="checkbox" v-model="wizardNet.scan_enabled" />
           Include hosts in liveness scans by default
         </label>
-      </div>
-      <div class="field" v-if="wizardPrefixLength <= 29">
         <label class="toggle-label">
           <input type="checkbox" v-model="wizardNet.create_dhcp_scope" />
           Create DHCP scope
@@ -173,14 +169,17 @@
           See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue —
           just enter Start IP and End IP manually.
         </Message>
-        <div class="field">
-          <label>Start IP</label>
-          <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" />
+        <div class="wizard-dhcp-row">
+          <div class="field">
+            <label>DHCP Scope Start IP</label>
+            <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" />
+          </div>
+          <div class="field">
+            <label>DHCP Scope End IP</label>
+            <InputText v-model="wizardNet.dhcp_end_ip" class="w-full" />
+          </div>
         </div>
-        <div class="field">
-          <label>End IP</label>
-          <InputText v-model="wizardNet.dhcp_end_ip" class="w-full" />
-        </div>
+        <small v-if="wizardDhcpScopeError" class="field-error">{{ wizardDhcpScopeError }}</small>
       </template>
     </div>
 
@@ -270,7 +269,7 @@
                 :disabled="!wizardHasSelectedIface" />
         <Button v-if="wizardStep === 2" label="Create & Continue" icon="pi pi-arrow-right" iconPos="right"
                 @click="wizardCreateAndContinue" :loading="saving"
-                :disabled="!!wizardCidrError || !wizardNet.cidr" />
+                :disabled="!!wizardCidrError || !!wizardDhcpScopeError || !wizardNet.cidr" />
         <Button v-if="wizardStep === 3" label="Skip Import" severity="secondary"
                 @click="wizardFinish" :disabled="piholeImporting" />
         <Button v-if="wizardStep === 3 && !piholeImportResults" label="Import" icon="pi pi-download"
@@ -698,7 +697,7 @@ import TabPanel from 'primevue/tabpanel';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { validateSupernet, isValidCidr, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp, nearestPow2, dhcpRangeDefaults, gatewayIpFromPosition, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
+import { validateSupernet, isValidCidr, isValidIpv4, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp, nearestPow2, dhcpRangeDefaults, gatewayIpFromPosition, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -853,6 +852,34 @@ const wizardDhcpDefaults = computed(() => {
   return dhcpRangeDefaults(p, gw);
 });
 
+const wizardDhcpScopeError = computed(() => {
+  if (!wizardNet.value.create_dhcp_scope || wizardPrefixLength.value > 29) return null;
+  const cidr = (wizardNet.value.cidr || '').trim();
+  if (!cidr || !isValidCidr(cidr)) return null;
+
+  const parsed = parseCidr(cidr);
+  const startIp = (wizardNet.value.dhcp_start_ip || wizardDhcpDefaults.value.start || '').trim();
+  const endIp = (wizardNet.value.dhcp_end_ip || wizardDhcpDefaults.value.end || '').trim();
+
+  if (!startIp || !endIp) return 'DHCP Scope Start IP and DHCP Scope End IP are required';
+  if (!isValidIpv4(startIp)) return 'DHCP Scope Start IP must be a valid IPv4 address';
+  if (!isValidIpv4(endIp)) return 'DHCP Scope End IP must be a valid IPv4 address';
+
+  const startLong = ipToLong(startIp);
+  const endLong = ipToLong(endIp);
+  const firstUsableLong = ipToLong(parsed.firstUsable);
+  const lastUsableLong = ipToLong(parsed.lastUsable);
+
+  if (startLong > endLong) return 'DHCP Scope Start IP must be less than or equal to DHCP Scope End IP';
+  if (startLong < firstUsableLong || startLong > lastUsableLong) {
+    return `DHCP Scope Start IP must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  if (endLong < firstUsableLong || endLong > lastUsableLong) {
+    return `DHCP Scope End IP must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  return null;
+});
+
 watch(() => wizardNet.value.gateway_position, () => {
   if (wizardNet.value.create_dhcp_scope) {
     const d = wizardDhcpDefaults.value;
@@ -966,6 +993,10 @@ async function wizardSkip() {
 }
 
 async function wizardCreateAndContinue() {
+  if (wizardDhcpScopeError.value) {
+    toast.add({ severity: 'error', summary: 'Invalid DHCP scope', detail: wizardDhcpScopeError.value, life: 5000 });
+    return;
+  }
   if (!wizardNet.value.domain_name && !domainWarningShown.value) {
     domainWarningShown.value = true;
     return;
@@ -2081,6 +2112,30 @@ defineExpose({
   flex-direction: column;
   gap: 0.75rem;
 }
+.wizard-network-grid {
+  gap: 0.5rem;
+}
+.wizard-network-grid .field {
+  gap: 0.18rem;
+}
+.wizard-network-grid :deep(.p-inputtext),
+.wizard-network-grid :deep(.p-autocomplete-input) {
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+.wizard-network-grid :deep(.p-button.p-button-sm) {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+.wizard-toggle-stack {
+  gap: 0.35rem;
+  padding-top: 0.1rem;
+}
+.wizard-dhcp-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
 .field {
   display: flex;
   flex-direction: column;
@@ -2123,7 +2178,7 @@ defineExpose({
   align-items: center;
 }
 .gateway-row {
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 /* Wizard DNS listen-port plain <input>: match PrimeVue input styling so it
    sits alongside sibling InputTexts without looking out of place. */

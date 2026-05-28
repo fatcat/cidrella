@@ -377,6 +377,32 @@ run_release_health_check() {
   fi
 }
 
+refresh_ntp_defaults() {
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would refresh baked DHCP NTP defaults from pool.ntp.org."
+    return 0
+  fi
+
+  echo "Refreshing baked DHCP NTP defaults from pool.ntp.org..."
+  set +e
+  node "$PROJECT_DIR/scripts/refresh-ntp-defaults.js"
+  local rc=$?
+  set -e
+  if [ "$rc" -eq 2 ]; then
+    echo ""
+    echo "DHCP NTP defaults were updated. Review and commit the changed files, then rerun the release build."
+    exit 1
+  fi
+  if [ "$rc" -ne 0 ]; then
+    echo ""
+    echo "WARNING: Could not refresh DHCP NTP defaults from pool.ntp.org."
+    if ! confirm_yn "Proceed with the existing baked NTP defaults?" "n"; then
+      echo "Build stopped so DHCP NTP defaults can be refreshed."
+      exit 1
+    fi
+  fi
+}
+
 echo "=== CIDRella Release Builder ==="
 echo "Version: $VERSION"
 echo "Tag:     $TAG"
@@ -460,6 +486,7 @@ if [ "$DRY_RUN" = true ]; then
 fi
 
 run_release_health_check
+refresh_ntp_defaults
 
 # Check minisign is installed (needed for all modes)
 if ! command -v minisign &>/dev/null; then

@@ -130,7 +130,7 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
 // POST /api/anomalies/acknowledge — clear the header notification counter.
 // This does not resolve or delete anomalies; it records the highest anomaly id
 // seen so older rows never contribute to the notification count again.
-router.post('/acknowledge', requirePerm('analytics:read'), (req, res) => {
+router.post('/acknowledge', requirePerm('analytics:write'), (req, res) => {
   const db = getDb();
   const maxId = db.prepare(
     `SELECT COALESCE(MAX(id), 0) as id FROM anomaly_scores WHERE is_anomaly = 1`

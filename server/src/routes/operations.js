@@ -11,7 +11,9 @@ import { createBackup, listBackups, deleteBackup, getBackupPath, restoreBackup, 
 import { reloadTlsCerts } from '../utils/cert.js';
 import * as RangeType from '../models/range-type.js';
 import * as Folder from '../models/folder.js';
+import { seedDefaultOptions } from '../models/dhcp-option.js';
 import * as OperationMaintenance from '../services/operation-maintenance.js';
+import { syncServerDnsDefault } from '../utils/dhcp.js';
 
 import { DATA_DIR } from '../config/defaults.js';
 
@@ -39,7 +41,12 @@ function certsDir() {
 }
 
 function validateSubjectValue(label, value, { required = false, max = 128 } = {}) {
-  const text = String(value || '').trim();
+  if (value === undefined || value === null || value === '') {
+    if (required) throw new Error(`${label} is required`);
+    return '';
+  }
+  if (typeof value !== 'string') throw new Error(`${label} must be a string`);
+  const text = value.trim();
   if (!text) {
     if (required) throw new Error(`${label} is required`);
     return '';
@@ -53,7 +60,8 @@ function validateSubjectValue(label, value, { required = false, max = 128 } = {}
 }
 
 function validateDnsName(value) {
-  const name = String(value || '').trim();
+  if (typeof value !== 'string') return false;
+  const name = value.trim();
   const check = name.startsWith('*.') ? name.slice(2) : name;
   if (name.length > 253) return false;
   if (!check || check.includes('..')) return false;
@@ -65,7 +73,9 @@ function validateDnsName(value) {
 }
 
 function validateSanValue(raw) {
-  const value = String(raw || '').trim();
+  if (raw === undefined || raw === null || raw === '') return '';
+  if (typeof raw !== 'string') throw new Error('Subject alternative names must be strings');
+  const value = raw.trim();
   if (!value) return '';
   if (value.length > 253) throw new Error(`Subject alternative name is too long: ${value.slice(0, 40)}`);
   if (isIP(value)) return value;
@@ -74,7 +84,8 @@ function validateSanValue(raw) {
 }
 
 function normalizeSanList(sans) {
-  if (!Array.isArray(sans)) return [];
+  if (!Array.isArray(sans)) throw new Error('san must be an array');
+  if (sans.length > 100) throw new Error('san may contain at most 100 entries');
   const seen = new Set();
   const result = [];
   for (const raw of sans) {
@@ -279,9 +290,12 @@ router.get('/certs/info', (req, res) => {
 router.post('/certs/upload', (req, res) => {
   const { key, cert } = req.body;
 
-  if (!cert) {
+  if (typeof cert !== 'string' || !cert) {
     return res.status(400).json({ error: 'cert field is required (PEM-encoded certificate)' });
   }
+  if (cert.length > 128 * 1024) return res.status(400).json({ error: 'cert field is too large' });
+  if (key !== undefined && key !== null && typeof key !== 'string') return res.status(400).json({ error: 'key field must be a string' });
+  if (typeof key === 'string' && key.length > 128 * 1024) return res.status(400).json({ error: 'key field is too large' });
 
   // Validate cert
   const tmpCert = path.join(os.tmpdir(), `cidrella-cert-${Date.now()}.pem`);
@@ -331,6 +345,7 @@ router.post('/certs/upload', (req, res) => {
 
 // POST /api/operations/certs/csr — generate a private key and CSR for signing
 router.post('/certs/csr', (req, res) => {
+  const body = req.body || {};
   const {
     common_name,
     san = [],
@@ -339,14 +354,12 @@ router.post('/certs/csr', (req, res) => {
     locality = '',
     state = '',
     country = '',
-    key_algorithm = 'rsa',
-    key_size = 3072,
-    curve = 'prime256v1'
-  } = req.body || {};
+  } = body;
 
   let commonName;
   let subject;
   try {
+    if (common_name === undefined || common_name === null || common_name === '') throw new Error('common_name is required');
     commonName = validateSanValue(common_name);
     if (!commonName) throw new Error('common_name is required');
     subject = {
@@ -361,12 +374,21 @@ router.post('/certs/csr', (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
-  const keyAlgorithm = String(key_algorithm || 'rsa').toLowerCase();
+  const keyAlgorithmInput = body.key_algorithm ?? 'rsa';
+  if (typeof keyAlgorithmInput !== 'string') return res.status(400).json({ error: 'key_algorithm must be rsa or ecdsa' });
+  const keyAlgorithm = (keyAlgorithmInput || 'rsa').toLowerCase();
   if (!['rsa', 'ecdsa'].includes(keyAlgorithm)) return res.status(400).json({ error: 'key_algorithm must be rsa or ecdsa' });
-  const keySize = Number(key_size);
-  if (keyAlgorithm === 'rsa' && ![2048, 3072, 4096].includes(keySize)) return res.status(400).json({ error: 'key_size must be 2048, 3072, or 4096' });
-  const curveName = String(curve || 'prime256v1');
-  if (keyAlgorithm === 'ecdsa' && !['prime256v1', 'secp384r1'].includes(curveName)) return res.status(400).json({ error: 'curve must be prime256v1 or secp384r1' });
+  const keySize = body.key_size ?? 3072;
+  if (keyAlgorithm === 'rsa') {
+    if (!Number.isInteger(keySize)) return res.status(400).json({ error: 'key_size must be an integer' });
+    if (![2048, 3072, 4096].includes(keySize)) return res.status(400).json({ error: 'key_size must be 2048, 3072, or 4096' });
+  }
+  const curveInput = body.curve ?? 'prime256v1';
+  if (keyAlgorithm === 'ecdsa') {
+    if (typeof curveInput !== 'string') return res.status(400).json({ error: 'curve must be prime256v1 or secp384r1' });
+    if (!['prime256v1', 'secp384r1'].includes(curveInput)) return res.status(400).json({ error: 'curve must be prime256v1 or secp384r1' });
+  }
+  const curveName = curveInput || 'prime256v1';
 
   let sans;
   try {
@@ -485,6 +507,8 @@ router.post('/reset-database', async (req, res) => {
 
     // Re-run ensureDefaults to recreate admin user, JWT secret, and default settings
     await ensureDefaults();
+    seedDefaultOptions(db);
+    syncServerDnsDefault(db);
 
     // `ensureDefaults` wrote a fresh jwt_secret to settings, but the auth
     // middleware holds the OLD secret in a module-level cache populated on

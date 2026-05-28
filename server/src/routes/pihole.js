@@ -7,6 +7,7 @@ import { syncDnsToIp } from '../utils/ip-sync.js';
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
+import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { createReservation } from '../models/dhcp-reservation.js';
 import { importRecords } from '../models/dns-record.js';
 
@@ -100,6 +101,42 @@ function recordName(hostname, zoneName) {
   if (hostname === zoneName) return '@';
   const suffix = `.${zoneName}`;
   return hostname.endsWith(suffix) ? hostname.slice(0, -suffix.length) : hostname;
+}
+
+function isValidRecordName(name) {
+  if (name === '@') return true;
+  return typeof name === 'string'
+    && name.length > 0
+    && name.length <= 253
+    && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(name.replace(/\.$/, ''));
+}
+
+function validateImportArray(value, field) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw new Error(`${field} must be an array`);
+  if (value.length > 5000) throw new Error(`${field} may contain at most 5000 entries`);
+  return value;
+}
+
+function validateImportRecord(record, zoneName) {
+  if (!isValidRecordName(record.name)) return 'Invalid hostname';
+  const nameErr = validateDnsmasqConfigValue(record.name, { allowComma: false });
+  if (nameErr) return `hostname ${nameErr}`;
+  if (record.type === 'A') {
+    if (!isValidIpv4(record.value)) return 'Invalid IPv4 address';
+    return null;
+  }
+  if (record.type === 'CNAME') {
+    if (!isValidDomain(record.value)) return 'Invalid CNAME target';
+    if (record.name === '@') return 'CNAME cannot be created at zone apex';
+    if (`${record.name}.${zoneName}`.toLowerCase() === String(record.value).replace(/\.$/, '').toLowerCase()) {
+      return 'CNAME target cannot reference itself';
+    }
+    const valueErr = validateDnsmasqConfigValue(record.value, { allowComma: false });
+    if (valueErr) return `CNAME target ${valueErr}`;
+    return null;
+  }
+  return 'Unsupported record type';
 }
 
 /**
@@ -251,18 +288,36 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   };
 
   const recordsToImport = [];
+  let hostRows, cnameRows, dhcpRows;
+  try {
+    hostRows = validateImportArray(hosts, 'hosts');
+    cnameRows = validateImportArray(cnames, 'cnames');
+    dhcpRows = validateImportArray(dhcpHosts, 'dhcpHosts');
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   // Import A records — merge: skip exact dupes, update if same name but different value
-  if (hosts && hosts.length > 0) {
-    for (const h of hosts) {
-      recordsToImport.push({ type: 'A', name: recordName(h.hostname, zone.name), value: h.ip });
+  if (hostRows.length > 0) {
+    for (const h of hostRows) {
+      if (!h || typeof h !== 'object') return res.status(400).json({ error: 'hosts entries must be objects' });
+      if (typeof h.hostname !== 'string') return res.status(400).json({ error: 'hosts hostname must be a string' });
+      const record = { type: 'A', name: recordName(h.hostname.trim(), zone.name), value: h.ip };
+      const err = validateImportRecord(record, zone.name);
+      if (err) return res.status(400).json({ error: `A record ${record.name || '?'}: ${err}` });
+      recordsToImport.push(record);
     }
   }
 
   // Import CNAME records — merge: skip exact dupes, update if same name but different target
-  if (cnames && cnames.length > 0) {
-    for (const c of cnames) {
-      recordsToImport.push({ type: 'CNAME', name: recordName(c.alias, zone.name), value: c.target });
+  if (cnameRows.length > 0) {
+    for (const c of cnameRows) {
+      if (!c || typeof c !== 'object') return res.status(400).json({ error: 'cnames entries must be objects' });
+      if (typeof c.alias !== 'string' || typeof c.target !== 'string') return res.status(400).json({ error: 'cnames alias and target must be strings' });
+      const record = { type: 'CNAME', name: recordName(c.alias.trim(), zone.name), value: c.target.trim() };
+      const err = validateImportRecord(record, zone.name);
+      if (err) return res.status(400).json({ error: `CNAME record ${record.name || '?'}: ${err}` });
+      recordsToImport.push(record);
     }
   }
 
@@ -284,7 +339,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   }
 
   // Import DHCP reservations
-  if (dhcpHosts && dhcpHosts.length > 0) {
+  if (dhcpRows.length > 0) {
     // Find all leaf subnets to match IPs against
     const subnets = db.prepare(`
       SELECT s.* FROM subnets s
@@ -295,7 +350,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     const existingMacs = new Set(existingRes.map(r => `${r.subnet_id}|${r.mac_address}`));
     const existingIps = new Set(existingRes.map(r => `${r.subnet_id}|${r.ip_address}`));
 
-    for (const d of dhcpHosts) {
+    for (const d of dhcpRows) {
       // Reuse the same validation gates as POST /api/dhcp/reservations so
       // imports can't inject data the normal API path would refuse.
       const mac = (d.mac || '').toLowerCase();

@@ -74,7 +74,7 @@
       <article class="lab-panel">
         <h2>Doughnut Palette</h2>
         <div class="chart-wrap lab-chart">
-          <Doughnut :data="doughnutData" :options="DOUGHNUT_OPTIONS" :plugins="[ChartDataLabels]" />
+          <Doughnut :data="doughnutData" :options="doughnutOptions" :plugins="[ChartDataLabels]" />
         </div>
       </article>
 
@@ -186,11 +186,11 @@ import LineChartCard from '../components/LineChartCard.vue';
 import StatusText from '../components/table/StatusText.vue';
 import { useThemeStore, themes, colorSwatches } from '../stores/theme.js';
 import {
-  DOUGHNUT_OPTIONS,
   chartColor,
   contrastRatio,
   cssVar,
   lineDataset,
+  makeDoughnutOptions,
   makeDoughnutData,
   makeLineOptions,
 } from '../utils/chart-config.js';
@@ -210,6 +210,7 @@ ChartJS.register(ArcElement, CategoryScale, LinearScale, PointElement, LineEleme
 
 const themeStore = useThemeStore();
 const selectedTheme = ref(themeStore.currentThemeId);
+const doughnutOptions = computed(() => makeDoughnutOptions());
 
 const themeOptions = computed(() => themes.map(theme => ({
   label: `${theme.name} (${theme.group})`,

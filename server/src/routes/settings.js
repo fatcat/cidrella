@@ -5,7 +5,7 @@ import { requireRole } from '../auth/roles.js';
 import { pruneEvents } from '../models/ip-address.js';
 import * as Setting from '../models/setting.js';
 import { isValidIpv4 } from '../utils/ip.js';
-import { validateInterfaceConfig, validPortOrError } from '../utils/validation.js';
+import { GEOIP_MODES, validateInterfaceConfig, validPortOrError } from '../utils/validation.js';
 
 const router = Router();
 
@@ -24,7 +24,6 @@ const SECRET_KEYS = new Set(['jwt_secret']);
 // Keys not present here are not editable (was `EDITABLE_KEYS` in v0.4.14).
 
 const BOOL_STR = new Set(['true', 'false']);
-const GEOIP_MODES = new Set(['off', 'block-country', 'log-only']);
 const BACKUP_SCHEDULES = new Set(['off', 'daily', 'weekly']);
 const SCAN_INTERVALS = new Set(['', 'off', '5m', '15m', '30m', '1h', '4h']);
 

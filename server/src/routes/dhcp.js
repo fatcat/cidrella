@@ -34,8 +34,16 @@ function validateScopeOption(opt) {
   if (typeof value !== 'string') return 'value must be a string';
   const optDef = DHCP_OPTIONS_BY_CODE[code];
   const type = optDef?.type || 'text';
+  if (code === 51 && !LEASE_TIME_RE.test(value)) return 'lease time must look like 3600, 1h, 30m, or 1d';
   const allowComma = type === 'ip-list' || type === 'text-list';
   return validateDnsmasqConfigValue(value, { allowComma });
+}
+
+function validateDefaultOption(opt) {
+  if (!opt || typeof opt !== 'object') return 'option must be an object';
+  if (!Number.isInteger(opt.code) || opt.code < 1 || opt.code > 254) return 'code must be an integer 1-254';
+  if (opt.value == null || opt.value === '') return null;
+  return validateScopeOption(opt);
 }
 
 
@@ -806,6 +814,19 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   const { options, enabledDefaults } = req.body;
   if (!Array.isArray(options)) {
     return res.status(400).json({ error: 'options must be an array of { code, value }' });
+  }
+  if (options.length > 254) return res.status(400).json({ error: 'options may contain at most 254 entries' });
+  for (const opt of options) {
+    const err = validateDefaultOption(opt);
+    if (err) return res.status(400).json({ error: `Default option ${opt?.code ?? '?'}: ${err}` });
+  }
+  if (enabledDefaults !== undefined) {
+    if (!Array.isArray(enabledDefaults)) return res.status(400).json({ error: 'enabledDefaults must be an array' });
+    for (const code of enabledDefaults) {
+      if (!Number.isInteger(code) || code < 1 || code > 254) {
+        return res.status(400).json({ error: 'enabledDefaults must contain integer option codes 1-254' });
+      }
+    }
   }
 
   const db = getDb();
