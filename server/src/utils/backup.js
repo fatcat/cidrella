@@ -206,6 +206,81 @@ function tarListingTimeoutMs(archiveBytes) {
   return Math.min(10 * 60 * 1000, Math.max(10_000, Math.ceil(archiveBytes / (200 * 1024 * 1024)) * 10_000));
 }
 
+function parseTarVerboseLine(line) {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(/\s+/);
+  if (parts.length < 6) return null;
+  const mode = parts[0];
+  const type = mode[0];
+  const size = parseInt(parts[2], 10);
+  let name = parts.slice(5).join(' ');
+  if (type === 'l') name = name.split(' -> ')[0];
+  if (type === 'h') name = name.split(' link to ')[0];
+  return { type, name, size: Number.isFinite(size) ? size : 0 };
+}
+
+function listTarEntries(archivePath, archiveBytes) {
+  let verbose;
+  try {
+    verbose = execFileSync('tar', ['-tzvf', archivePath], {
+      encoding: 'utf-8',
+      timeout: tarListingTimeoutMs(archiveBytes),
+      maxBuffer: MAX_LISTING_BUFFER_BYTES,
+    });
+  } catch (err) {
+    // ENOBUFS = too many entries (zip bomb by count). ETIMEDOUT = too big
+    // to list in our scaled timeout. Both collapse to the same semantic
+    // refusal: the archive can't be safely processed on this host.
+    if (err.code === 'ENOBUFS' || /maxBuffer/i.test(err.message || '')) {
+      const e = new Error('Archive has too many entries to process safely');
+      e.code = 'BACKUP_TOO_MANY_ENTRIES';
+      throw e;
+    }
+    if (err.code === 'ETIMEDOUT' || /ETIMEDOUT/i.test(err.message || '')) {
+      const e = new Error('Archive is too large to list within the timeout budget');
+      e.code = 'BACKUP_TOO_LARGE';
+      throw e;
+    }
+    throw err;
+  }
+  const entries = [];
+  for (const line of verbose.split('\n')) {
+    if (!line.trim()) continue;
+    const entry = parseTarVerboseLine(line);
+    if (!entry) {
+      throw new Error('Invalid archive: could not parse tar listing');
+    }
+    entries.push(entry);
+  }
+  return entries;
+}
+
+function assertSafeTarEntries(entries) {
+  const resolvedDataDir = path.resolve(DATA_DIR);
+  for (const entry of entries) {
+    if (entry.type !== '-' && entry.type !== 'd') {
+      throw new Error(`Invalid archive: unsupported entry type '${entry.type}' for ${entry.name}`);
+    }
+    const resolved = path.resolve(DATA_DIR, entry.name);
+    if (!resolved.startsWith(resolvedDataDir + path.sep) && resolved !== resolvedDataDir) {
+      throw new Error('Invalid archive: path traversal detected');
+    }
+  }
+}
+
+function validateStagedTree(root) {
+  for (const name of fs.readdirSync(root)) {
+    const fullPath = path.join(root, name);
+    const stat = fs.lstatSync(fullPath);
+    if (stat.isDirectory()) {
+      validateStagedTree(fullPath);
+    } else if (!stat.isFile()) {
+      throw new Error(`Invalid archive: staged entry is not a regular file: ${path.relative(root, fullPath)}`);
+    }
+  }
+}
+
 /**
  * Parse `tar tzvf` output to compute the uncompressed size of an archive
  * and return a summary of entries that would be skipped at extract time
@@ -229,44 +304,18 @@ export function analyzeArchive(archivePath) {
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
   }
-  let verbose;
-  try {
-    verbose = execFileSync('tar', ['tzvf', archivePath], {
-      encoding: 'utf-8',
-      timeout: tarListingTimeoutMs(archiveBytes),
-      maxBuffer: MAX_LISTING_BUFFER_BYTES,
-    });
-  } catch (err) {
-    // ENOBUFS = too many entries (zip bomb by count). ETIMEDOUT = too big
-    // to list in our scaled timeout. Both collapse to the same semantic
-    // refusal: the archive can't be safely processed on this host.
-    if (err.code === 'ENOBUFS' || /maxBuffer/i.test(err.message || '')) {
-      const e = new Error('Archive has too many entries to process safely');
-      e.code = 'BACKUP_TOO_MANY_ENTRIES';
-      throw e;
-    }
-    if (err.code === 'ETIMEDOUT' || /ETIMEDOUT/i.test(err.message || '')) {
-      const e = new Error('Archive is too large to list within the timeout budget');
-      e.code = 'BACKUP_TOO_LARGE';
-      throw e;
-    }
-    throw err;
-  }
+  const tarEntries = listTarEntries(archivePath, archiveBytes);
+  return analyzeTarEntries(tarEntries);
+}
+
+function analyzeTarEntries(tarEntries) {
+  assertSafeTarEntries(tarEntries);
 
   let totalBytes = 0;
   let skippedBytes = 0;
   const entries = [];
-  for (const line of verbose.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    // Split on whitespace, but the last field can contain spaces (symlinks
-    // use ' -> ' but we only care about regular files here). Paths with
-    // spaces are vanishingly rare in DATA_DIR so we treat them normally.
-    const parts = trimmed.split(/\s+/);
-    if (parts.length < 6) continue;
-    const size = parseInt(parts[2], 10);
-    if (!Number.isFinite(size)) continue;
-    const name = parts.slice(5).join(' ');
+  for (const entry of tarEntries) {
+    const { name, size } = entry;
     totalBytes += size;
     entries.push({ name, size });
     // Mirror the tar --exclude policy (RUNTIME_ARTIFACT_EXCLUDES) via the
@@ -308,40 +357,12 @@ export function inspectBackup(archivePath) {
     throw err;
   }
 
-  let listing;
-  try {
-    listing = execFileSync('tar', ['tzf', archivePath], {
-      encoding: 'utf-8',
-      timeout: tarListingTimeoutMs(archiveBytes),
-      maxBuffer: MAX_LISTING_BUFFER_BYTES,
-    });
-  } catch (err) {
-    if (err.code === 'ENOBUFS' || /maxBuffer/i.test(err.message || '')) {
-      const e = new Error('Archive has too many entries to process safely');
-      e.code = 'BACKUP_TOO_MANY_ENTRIES';
-      throw e;
-    }
-    if (err.code === 'ETIMEDOUT' || /ETIMEDOUT/i.test(err.message || '')) {
-      const e = new Error('Archive is too large to list within the timeout budget');
-      e.code = 'BACKUP_TOO_LARGE';
-      throw e;
-    }
-    // Gzip/format errors are a normal bad-input case — keep them mapped to
-    // 400 by the caller (operations.js). Don't convert to 5xx.
-    throw err;
-  }
-  if (!listing.includes('cidrella.db') && !listing.includes('ipam.db')) {
+  const entries = listTarEntries(archivePath, archiveBytes);
+  assertSafeTarEntries(entries);
+  const analysis = analyzeTarEntries(entries);
+  const hasDatabase = entries.some(e => e.name === 'cidrella.db' || e.name === './cidrella.db' || e.name === 'ipam.db' || e.name === './ipam.db');
+  if (!hasDatabase) {
     throw new Error('Invalid backup: missing database file');
-  }
-
-  // Validate that every entry resolves within DATA_DIR to prevent path traversal
-  const resolvedDataDir = path.resolve(DATA_DIR);
-  const entries = listing.split('\n').map(e => e.trim()).filter(Boolean);
-  for (const entry of entries) {
-    const resolved = path.resolve(DATA_DIR, entry);
-    if (!resolved.startsWith(resolvedDataDir + path.sep) && resolved !== resolvedDataDir) {
-      throw new Error('Invalid archive: path traversal detected');
-    }
   }
 
   const manifest = readBackupManifest(archivePath);
@@ -354,6 +375,7 @@ export function inspectBackup(archivePath) {
     return {
       manifest: null,
       compatible: true,
+      analysis,
       warning: 'Legacy backup without manifest — version cannot be verified. Proceed with caution.',
     };
   }
@@ -362,6 +384,7 @@ export function inspectBackup(archivePath) {
     return {
       manifest,
       compatible: false,
+      analysis,
       reason: `Backup was created by CIDRella v${manifest.cidrella_version} which is newer than this instance (v${APP_VERSION}). Restoring would leave the database at a schema version this code cannot handle. Upgrade to at least v${manifest.cidrella_version} first, then restore.`,
     };
   }
@@ -374,11 +397,12 @@ export function inspectBackup(archivePath) {
     return {
       manifest,
       compatible: false,
+      analysis,
       reason: `Backup schema version (${manifest.schema_version}) is wildly out of range vs current (${currentSchema}). Suspected incompatible or corrupt backup.`,
     };
   }
 
-  return { manifest, compatible: true };
+  return { manifest, compatible: true, analysis };
 }
 
 /**
@@ -509,7 +533,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   //     cp -a, cutting I/O in half on the happy path. Also skip *.log
   //     and *.pid at extract time so legacy backups can't re-trigger
   //     the dnsmasq.log bloat.
-  const analysis = analyzeArchive(archivePath);
+  const analysis = inspection.analysis || analyzeArchive(archivePath);
   const stagingRoot = DATA_DIR;
   let stagingFree = Infinity;
   try {
@@ -558,6 +582,8 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     execFileSync('tar', [
       ...RUNTIME_ARTIFACT_EXCLUDES,
       ...DEFENSIVE_EXCLUDES,
+      '--no-same-owner',
+      '--no-same-permissions',
       // Use '-xzf' (with dash), not bare 'xzf'. See create-side comment
       // for why — same GNU tar parsing quirk applies here.
       '-xzf', archivePath, '-C', stagingDir,
@@ -573,6 +599,13 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     );
     wrapped.cause = extractErr;
     throw wrapped;
+  }
+
+  try {
+    validateStagedTree(stagingDir);
+  } catch (stagedErr) {
+    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    throw stagedErr;
   }
 
   // Legacy backups (pre-cidrella rename) contain ipam.db. Rename in-place

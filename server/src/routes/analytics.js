@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { requirePerm } from '../auth/require-perm.js';
-import { getDb } from '../db/init.js';
+import { enrichWithHostnames } from '../utils/hostnames.js';
 import {
   queryTopClients, queryTopDomains, queryTopBlocked,
   queryTopClientsByAction, queryTopDomainsByAction, queryTopBlockReasons,
@@ -12,30 +12,6 @@ import {
 const router = Router();
 
 const VALID_RANGES = ['1h', '4h', '12h', '24h', '2d', '7d', '1w', '30d'];
-
-// Look up hostnames for a list of IPs from SQLite (ip_addresses + dhcp_leases)
-function enrichWithHostnames(rows) {
-  const db = getDb();
-  const ips = rows.map(r => r.client_ip);
-  if (!ips.length) return rows;
-
-  const placeholders = ips.map(() => '?').join(',');
-  const ipRows = db.prepare(
-    `SELECT ip_address, hostname FROM ip_addresses WHERE ip_address IN (${placeholders}) AND hostname IS NOT NULL`
-  ).all(...ips);
-  const leaseRows = db.prepare(
-    `SELECT ip_address, hostname FROM dhcp_leases WHERE ip_address IN (${placeholders}) AND hostname IS NOT NULL`
-  ).all(...ips);
-
-  const hostMap = new Map();
-  for (const r of leaseRows) hostMap.set(r.ip_address, r.hostname);
-  for (const r of ipRows) hostMap.set(r.ip_address, r.hostname); // ip_addresses takes priority
-
-  return rows.map(r => ({
-    ...r,
-    hostname: hostMap.get(r.client_ip) || null,
-  }));
-}
 
 /**
  * Factory for standard analytics route handlers.

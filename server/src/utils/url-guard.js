@@ -1,4 +1,6 @@
 import dns from 'dns';
+import http from 'http';
+import https from 'https';
 import net from 'net';
 
 // SSRF guard for outbound HTTP fetches. The Pi-hole probe / fetch path and
@@ -50,11 +52,8 @@ const BLOCKED_IPV4_RANGES = [
  * or `{ ok: false, reason }`. Only http/https are accepted. The hostname is
  * resolved; if it's already an IP, that IP is checked directly.
  *
- * Note: this is NOT a DNS-rebinding fix by itself — it can't stop a
- * malicious DNS response from changing between the allowlist check and the
- * actual fetch. Callers who care must either pin the IP in the URL or
- * re-resolve + check immediately before connecting. For CIDRella's current
- * threat model (admin-only writers) the check-then-fetch window is narrow.
+ * Callers that fetch the URL should use requestPinnedOutboundUrl below, which
+ * connects to this validated IP while preserving Host/SNI for virtual hosts.
  */
 export async function validateOutboundUrl(rawUrl) {
   if (typeof rawUrl !== 'string' || !rawUrl) {
@@ -95,4 +94,78 @@ export async function validateOutboundUrl(rawUrl) {
   }
 
   return { ok: true, url: parsed.toString(), hostname: parsed.hostname, ip };
+}
+
+/**
+ * Fetch a guarded outbound URL without a DNS rebinding window. The hostname is
+ * validated once, then the socket connects to that exact IP. Redirects are not
+ * followed; callers can validate a new Location explicitly if needed later.
+ */
+export async function requestPinnedOutboundUrl(rawUrl, {
+  method = 'GET',
+  body = null,
+  headers = {},
+  timeout = 5000,
+  maxBytes = 10 * 1024 * 1024,
+} = {}) {
+  const check = rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
+    ? rawUrl
+    : await validateOutboundUrl(rawUrl);
+  if (!check.ok) return { ok: false, error: check.reason };
+
+  const parsed = new URL(check.url);
+  const data = body == null
+    ? null
+    : Buffer.isBuffer(body) || typeof body === 'string'
+      ? body
+      : JSON.stringify(body);
+  const requestHeaders = { ...headers, Host: parsed.host };
+  if (data != null && requestHeaders['Content-Length'] == null && requestHeaders['content-length'] == null) {
+    requestHeaders['Content-Length'] = Buffer.byteLength(data);
+  }
+
+  return new Promise((resolve) => {
+    const mod = parsed.protocol === 'https:' ? https : http;
+    const reqOpts = {
+      hostname: check.ip,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: parsed.pathname + (parsed.search || ''),
+      method,
+      timeout,
+      headers: requestHeaders,
+      servername: parsed.hostname,
+      lookup: (_hostname, _opts, cb) => cb(null, check.ip, 4),
+    };
+
+    try {
+      const req = mod.request(reqOpts, (resp) => {
+        const chunks = [];
+        let received = 0;
+        resp.on('data', (chunk) => {
+          received += chunk.length;
+          if (received > maxBytes) {
+            req.destroy(new Error('Response too large'));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        resp.on('end', () => {
+          const text = Buffer.concat(chunks).toString('utf-8');
+          resolve({
+            ok: resp.statusCode >= 200 && resp.statusCode < 300,
+            status: resp.statusCode,
+            statusText: resp.statusMessage,
+            headers: resp.headers,
+            text,
+          });
+        });
+      });
+      req.on('error', (err) => resolve({ ok: false, error: err.message }));
+      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Connection timed out' }); });
+      if (data != null) req.write(data);
+      req.end();
+    } catch (err) {
+      resolve({ ok: false, error: err.message });
+    }
+  });
 }

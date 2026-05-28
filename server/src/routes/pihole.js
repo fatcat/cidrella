@@ -2,13 +2,11 @@ import { Router } from 'express';
 import { parse as parseToml } from 'smol-toml';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import http from 'http';
-import https from 'https';
 import { ipToLong, isClientMac, isValidMac, isValidIpv4, isValidDomain } from '../utils/ip.js';
 import { syncDnsToIp } from '../utils/ip-sync.js';
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
-import { validateOutboundUrl } from '../utils/url-guard.js';
+import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
 import { createReservation } from '../models/dhcp-reservation.js';
 import { importRecords } from '../models/dns-record.js';
 
@@ -22,42 +20,17 @@ const router = Router();
  * @param {string} url
  * @param {{ method?: string, body?: object, timeout?: number }} [opts]
  */
-function httpRequest(url, { method = 'GET', body = null, timeout = 5000 } = {}) {
-  return new Promise((resolve) => {
-    const mod = url.startsWith('https') ? https : http;
-    const parsed = new URL(url);
-    const data = body ? JSON.stringify(body) : null;
-    const reqOpts = {
-      hostname: parsed.hostname,
-      port: parsed.port || undefined,
-      path: parsed.pathname + (parsed.search || ''),
-      method,
-      timeout,
-      headers: data
-        ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
-        : {},
-    };
-
-    try {
-      const req = mod.request(reqOpts, (resp) => {
-        let respBody = '';
-        resp.on('data', (chunk) => { respBody += chunk; });
-        resp.on('end', () => {
-          try {
-            resolve({ ok: resp.statusCode >= 200 && resp.statusCode < 300, status: resp.statusCode, data: JSON.parse(respBody) });
-          } catch {
-            resolve({ ok: false, error: 'Invalid JSON response' });
-          }
-        });
-      });
-      req.on('error', (err) => resolve({ ok: false, error: err.message }));
-      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Connection timed out' }); });
-      if (data) req.write(data);
-      req.end();
-    } catch (err) {
-      resolve({ ok: false, error: err.message });
-    }
-  });
+async function httpRequest(url, { method = 'GET', body = null, timeout = 5000 } = {}) {
+  const headers = body
+    ? { 'Content-Type': 'application/json' }
+    : {};
+  const response = await requestPinnedOutboundUrl(url, { method, body, timeout, headers, maxBytes: 2 * 1024 * 1024 });
+  if (!response.ok) return response;
+  try {
+    return { ok: true, status: response.status, data: JSON.parse(response.text) };
+  } catch {
+    return { ok: false, status: response.status, error: 'Invalid JSON response' };
+  }
 }
 
 /** GET JSON from a URL — thin wrapper around httpRequest */
@@ -133,14 +106,22 @@ function recordName(hostname, zoneName) {
  * Validate and normalize a Pi-hole base URL.
  * v0.4.15: routes through the shared SSRF guard (loopback / RFC1918 /
  * link-local / metadata blocked). Returns { baseUrl } on success or
- * { error } on failure.
+ * { error } on failure. The returned outbound target pins the validated IP
+ * so auth/config requests do not re-resolve the host.
  */
 async function normalizeUrl(url) {
   if (typeof url !== 'string' || !url) return { error: 'URL is required' };
   const trimmed = url.replace(/\/+$/, '');
   const check = await validateOutboundUrl(trimmed);
   if (!check.ok) return { error: check.reason };
-  return { baseUrl: trimmed };
+  return { baseUrl: check.url.replace(/\/+$/, ''), outbound: check };
+}
+
+function appendPath(norm, path) {
+  return {
+    ...norm.outbound,
+    url: `${norm.baseUrl}${path}`,
+  };
 }
 
 
@@ -155,8 +136,7 @@ router.post('/probe', requirePerm('dns:write'), async (req, res) => {
   const { url, password } = req.body || {};
   const norm = await normalizeUrl(url);
   if (norm.error) return res.status(400).json({ error: norm.error });
-  const { baseUrl } = norm;
-  const authResult = await fetchJson(`${baseUrl}/api/auth`);
+  const authResult = await fetchJson(appendPath(norm, '/api/auth'));
 
   if (!authResult.ok) {
     return res.json({ reachable: false, error: authResult.error || 'Could not connect' });
@@ -168,7 +148,7 @@ router.post('/probe', requirePerm('dns:write'), async (req, res) => {
 
   // If password is needed and provided, attempt auth
   if (needsPassword && password) {
-    const loginResult = await postJson(`${baseUrl}/api/auth`, { password });
+    const loginResult = await postJson(appendPath(norm, '/api/auth'), { password });
     if (loginResult.ok && loginResult.data?.session?.valid) {
       authenticated = true;
     }
@@ -190,12 +170,11 @@ router.post('/fetch', requirePerm('dns:write'), async (req, res) => {
   const { url, password } = req.body || {};
   const norm = await normalizeUrl(url);
   if (norm.error) return res.status(400).json({ error: norm.error });
-  const { baseUrl } = norm;
 
   // Authenticate if password provided
   let sid = null;
   if (password) {
-    const loginResult = await postJson(`${baseUrl}/api/auth`, { password });
+    const loginResult = await postJson(appendPath(norm, '/api/auth'), { password });
     if (loginResult.ok && loginResult.data?.session?.sid) {
       sid = loginResult.data.session.sid;
     } else if (!loginResult.ok) {
@@ -203,7 +182,7 @@ router.post('/fetch', requirePerm('dns:write'), async (req, res) => {
     }
   }
 
-  const configUrl = sid ? `${baseUrl}/api/config?sid=${sid}` : `${baseUrl}/api/config`;
+  const configUrl = appendPath(norm, sid ? `/api/config?sid=${encodeURIComponent(sid)}` : '/api/config');
   const configResult = await fetchJson(configUrl);
 
   if (!configResult.ok) {

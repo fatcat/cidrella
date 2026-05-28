@@ -5,7 +5,7 @@ import { atomicWrite, restartDnsmasq } from './dnsmasq.js';
 import { loadBlocklist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 import { DATA_DIR, BLOCKLIST_DOWNLOAD_TIMEOUT_MS } from '../config/defaults.js';
-import { validateOutboundUrl } from './url-guard.js';
+import { requestPinnedOutboundUrl } from './url-guard.js';
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const BLOCKLIST_CONF = path.join(CONF_DIR, 'blocklist.conf');
 
@@ -70,42 +70,28 @@ export async function refreshCategory(db, slug) {
   const row = db.prepare('SELECT source_url FROM blocklist_categories WHERE slug = ?').get(slug);
   const url = row?.source_url || getDefaultCategoryUrl(slug);
 
-  // v0.4.15: SSRF guard. Refuse loopback / RFC1918 / link-local / metadata
-  // before dispatching the fetch. Default-catalog URLs always resolve to
-  // public IPs; the attacker vector was the per-category source_url override.
-  const check = await validateOutboundUrl(url);
-  if (!check.ok) {
-    const msg = `URL refused: ${check.reason}`;
-    db.prepare("UPDATE blocklist_categories SET last_error = ? WHERE slug = ?").run(msg, slug);
-    throw new Error(msg);
-  }
-
   let response;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), BLOCKLIST_DOWNLOAD_TIMEOUT_MS);
-    response = await fetch(url, {
-      signal: controller.signal,
+    response = await requestPinnedOutboundUrl(url, {
+      timeout: BLOCKLIST_DOWNLOAD_TIMEOUT_MS,
+      maxBytes: 20 * 1024 * 1024,
       headers: { 'User-Agent': 'CIDRella-Blocklist/1.0' },
-      // Don't follow redirects — they bypass the per-IP allowlist check.
-      redirect: 'error'
     });
-    clearTimeout(timeout);
   } catch (err) {
-    const msg = err.name === 'AbortError' ? 'Request timed out' : err.message;
+    const msg = err.message;
     db.prepare("UPDATE blocklist_categories SET last_error = ? WHERE slug = ?")
       .run(msg, slug);
     throw new Error(msg);
   }
 
   if (!response.ok) {
-    const msg = `HTTP ${response.status} ${response.statusText}`;
+    const msg = response.error || `HTTP ${response.status} ${response.statusText}`;
     db.prepare("UPDATE blocklist_categories SET last_error = ? WHERE slug = ?")
       .run(msg, slug);
     throw new Error(msg);
   }
 
-  const content = await response.text();
+  const content = response.text;
   const domains = parseDomainList(content);
   const oldCount = db.prepare('SELECT domain_count FROM blocklist_categories WHERE slug = ?').get(slug)?.domain_count || 0;
 

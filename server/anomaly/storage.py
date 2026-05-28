@@ -198,17 +198,32 @@ def auto_resolve(client_ip, consecutive_normal_windows):
 
 
 def update_daemon_status(**kwargs):
-    """Write daemon cycle status to settings as JSON. Merges non-None values."""
+    """Write daemon cycle status to settings as JSON. Merges non-None values.
+
+    Every status write also refreshes last_seen. The Node API uses this field
+    as the sidecar heartbeat, so scheduler-only writes and disabled-mode polls
+    must keep it current even when no scoring/training cycle completes.
+    """
     con = _connect()
     try:
         row = con.execute(
             "SELECT value FROM settings WHERE key = 'anomaly_daemon_status'"
         ).fetchone()
-        status = json.loads(row["value"]) if row else {}
+        try:
+            status = json.loads(row["value"]) if row and row["value"] else {}
+            if not isinstance(status, dict):
+                status = {}
+        except (json.JSONDecodeError, TypeError):
+            now = datetime.now(timezone.utc).isoformat()
+            status = {
+                "status_reset_reason": "invalid_json",
+                "status_reset_at": now,
+            }
 
         for key, value in kwargs.items():
             if value is not None:
                 status[key] = value
+        status["last_seen"] = datetime.now(timezone.utc).isoformat()
 
         con.execute(
             """INSERT INTO settings (key, value) VALUES ('anomaly_daemon_status', ?)

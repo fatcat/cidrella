@@ -3,34 +3,12 @@ import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { isValidIpv4 } from '../utils/ip.js';
+import { enrichWithHostnames } from '../utils/hostnames.js';
+import { DEFAULTS } from '../config/defaults.js';
 import * as Anomaly from '../models/anomaly.js';
 import * as Setting from '../models/setting.js';
 
 const router = Router();
-
-// ─── Hostname enrichment (shared with analytics) ────────
-function enrichWithHostnames(rows) {
-  const db = getDb();
-  const ips = rows.map(r => r.client_ip);
-  if (!ips.length) return rows;
-
-  const placeholders = ips.map(() => '?').join(',');
-  const ipRows = db.prepare(
-    `SELECT ip_address, hostname FROM ip_addresses WHERE ip_address IN (${placeholders}) AND hostname IS NOT NULL`
-  ).all(...ips);
-  const leaseRows = db.prepare(
-    `SELECT ip_address, hostname FROM dhcp_leases WHERE ip_address IN (${placeholders}) AND hostname IS NOT NULL`
-  ).all(...ips);
-
-  const hostMap = new Map();
-  for (const r of leaseRows) hostMap.set(r.ip_address, r.hostname);
-  for (const r of ipRows) hostMap.set(r.ip_address, r.hostname); // ip_addresses takes priority
-
-  return rows.map(r => ({
-    ...r,
-    hostname: hostMap.get(r.client_ip) || null,
-  }));
-}
 
 // GET /api/anomalies/active — active (unresolved) anomalies
 router.get('/active', requirePerm('analytics:read'), (req, res) => {
@@ -96,35 +74,39 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
     if (raw) daemon = JSON.parse(raw);
   } catch { /* ignore parse errors */ }
 
-  if (daemon && enabled) {
-    // Most recent heartbeat is whichever of {last_score, last_train, last_seen}
-    // is most recent. The daemon writes last_score on every scoring cycle and
-    // last_train on every training cycle (training is less frequent). If the
-    // daemon wrote neither, it never reported cycle completion — treat as stale.
-    const heartbeats = [daemon.last_score, daemon.last_train, daemon.last_seen]
-      .filter(Boolean)
-      .map(s => Date.parse(s))
-      .filter(n => Number.isFinite(n));
-
-    if (heartbeats.length === 0) {
-      daemon.stale = true;
-      daemon.stale_reason = 'no_heartbeat';
+  if (daemon) {
+    if (!enabled) {
+      daemon.stale = false;
     } else {
-      const lastHeartbeatMs = Math.max(...heartbeats);
-      const ageSec = Math.max(0, Math.round((Date.now() - lastHeartbeatMs) / 1000));
+      // The Python sidecar refreshes last_seen on every status write. Older
+      // releases did not, so fall back to score/train timestamps for restored
+      // or pre-fix status snapshots.
+      const heartbeats = [daemon.last_seen, daemon.last_score, daemon.last_train]
+        .filter(Boolean)
+        .map(s => Date.parse(s))
+        .filter(n => Number.isFinite(n));
 
-      // Threshold: 2× the scoring interval (min 60s floor, min 5min ceiling
-      // for the "ok" window so a misconfigured interval=1min doesn't flap).
-      const scoringMin = parseInt(getSetting('anomaly_scoring_interval_min'), 10);
-      const scoringSec = Number.isFinite(scoringMin) && scoringMin > 0
-        ? scoringMin * 60
-        : 600; // 10min default to match the anomaly_detector default
-      const thresholdSec = Math.max(300, scoringSec * 2);
+      if (heartbeats.length === 0) {
+        daemon.stale = true;
+        daemon.stale_reason = 'no_heartbeat';
+      } else {
+        const lastHeartbeatMs = Math.max(...heartbeats);
+        const ageSec = Math.max(0, Math.round((Date.now() - lastHeartbeatMs) / 1000));
 
-      daemon.heartbeat_age_sec = ageSec;
-      daemon.heartbeat_threshold_sec = thresholdSec;
-      daemon.stale = ageSec > thresholdSec;
-      if (daemon.stale) daemon.stale_reason = 'heartbeat_too_old';
+        // Threshold: 2× the scoring interval (min 60s floor, min 5min ceiling
+        // for the "ok" window so a misconfigured interval=1min doesn't flap).
+        const scoringMin = parseInt(getSetting('anomaly_scoring_interval_min'), 10);
+        const defaultScoringMin = parseInt(DEFAULTS.anomaly_scoring_interval_min, 10) || 15;
+        const scoringSec = Number.isFinite(scoringMin) && scoringMin > 0
+          ? scoringMin * 60
+          : defaultScoringMin * 60;
+        const thresholdSec = Math.max(300, scoringSec * 2);
+
+        daemon.heartbeat_age_sec = ageSec;
+        daemon.heartbeat_threshold_sec = thresholdSec;
+        daemon.stale = ageSec > thresholdSec;
+        if (daemon.stale) daemon.stale_reason = 'heartbeat_too_old';
+      }
     }
   }
 
@@ -299,9 +281,17 @@ router.put('/settings', requireRole('admin'), (req, res) => {
 });
 
 function parseScoreRow(row) {
+  let topFeatures = null;
+  if (row.top_features) {
+    try {
+      topFeatures = JSON.parse(row.top_features);
+    } catch {
+      topFeatures = null;
+    }
+  }
   return {
     ...row,
-    top_features: row.top_features ? JSON.parse(row.top_features) : null,
+    top_features: topFeatures,
   };
 }
 

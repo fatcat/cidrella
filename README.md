@@ -9,21 +9,17 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 ## Features
 
-- **DNS Management** — Forward and reverse zones with A, CNAME, MX, TXT, SRV records and auto-incrementing SOA serial. Automatic generation of PTR reverse-DNS zones
-- **DHCP management** — Scopes, options (global defaults + per-scope overrides), MAC reservations, lease tracking
-- **Domain blocklists** — Ad/malware blocking with multiple categories and auto-updates
-- **GeoIP DNS filtering** — Country-based DNS filtering with blocklist/allowlist modes
-- **Anomaly Detection** — Unusual host resolution or query frequency, DGA detection, beaconing detection
-- **Analytics** — Visualize DNS query data, Top 10 activity, system performance
-- **Network & Domain Inheritance** — Dividing an allocated subnet migrates gateway, DHCP scopes, and ranges to the inheriting child
-- **Functional ranges** — Define IP ranges (DHCP scopes, static, custom) with overlap detection and color coding
-- **IP address grid** — Color-coded visual map with drag-select, shift-click range select, and context menu
-- **Network scanning & Rogue Detection** — ARP/ping-based liveness scans with configurable intervals and per-subnet/per-IP enable inheritance
-- **Pi-hole import** — Import DNS records, DHCP reservations, and settings from Pi-hole
-- **Backup & restore** — Scheduled backups with retention policy, manual download, and upload restore
-- **Role based access control** — RBAC with admin, dns_admin, dhcp_admin, and readonly roles
-- **In-app update checker** — Periodic check against GitHub releases with UI notification
-- **Setup wizard** — Guided first-run setup for interface binding, network creation, and Pi-hole import
+- **IP address management** — Hierarchical subnets, folders, VLANs, functional ranges, table/grid views, and a canonical IP state model shared across Networks, DHCP, and DNS.
+- **DNS management** — Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation.
+- **DHCP management** — Scopes, global defaults for new scopes, per-scope options, reservations, dynamic lease tracking, and DHCP-derived DNS records.
+- **Liveness and rogue detection** — Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
+- **Analytics** — DNS query, blocked-domain, blocked-host, client/domain pair, and system performance views backed by DuckDB.
+- **Blocklists and GeoIP filtering** — Category blocklists, scheduled refresh, whitelisting, and country-based allow/block modes through the DNS proxy.
+- **Anomaly detection** — Python sidecar for unusual query volume, new-domain patterns, beaconing, and DGA-like behavior with UI status/health reporting.
+- **Pi-hole import** — Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP reservations, and upstream DNS settings.
+- **Operations and recovery** — Signed native updates, scheduled backups, restore validation, reset-password and reset-web-port tools, log viewing, and audit history.
+- **Certificate management** — Self-signed defaults, certificate upload, RSA/ECDSA CSR generation, and certificate/key validation.
+- **Role based access control** — Admin, DNS, DHCP, and readonly roles with permission-checked APIs and audited mutations.
 
 ---
 
@@ -35,7 +31,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 CIDRella targets 1–2 GB hosts. Per-IP bookkeeping in SQLite is the dominant memory cost, so very large allocated subnets (e.g. `/10`, `/8`) will outgrow modest hosts long before DHCP lease counts become the bottleneck. See [docs/SIZING.md](docs/SIZING.md) for the ceiling-per-host table and the math behind it.
 
-Developer notes: shared IP state returned to the UI follows the canonical read/write naming contract in [docs/API_MODEL.md](docs/API_MODEL.md). Backend database ownership boundaries and the consolidation plan are tracked in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Developer notes: shared IP state returned to the UI follows the canonical read/write naming contract in [docs/API_MODEL.md](docs/API_MODEL.md). Backend database ownership boundaries are tracked in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Installation
 
@@ -82,6 +78,11 @@ sudo cidrella-update --version 0.5.0  # update to specific version
 
 The update script (`/opt/cidrella/update.sh`) backs up the current installation, downloads and verifies the signed release tarball, installs dependencies, and restarts services. Database migrations run automatically on startup.
 
+Native updates also refresh the installed systemd units, sudoers/polkit helpers,
+logrotate configuration, and recovery scripts. Hosts installed before the
+ambient-capability change receive the updated systemd capability configuration
+when the installer/update path refreshes the unit files.
+
 **Docker:**
 ```bash
 docker compose pull && docker compose up -d
@@ -113,9 +114,10 @@ This clears the stored web port overrides, re-enables the HTTP redirect, and res
 | Database | SQLite (better-sqlite3) |
 | Database | DuckDB (for analytics and anomaly detection) |
 | Custom | DNS proxy (for domain and country blocking) |
+| Anomaly Detection | Python sidecar |
 | Process Manager | s6-overlay (Docker), systemd (native) |
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership boundaries and planned consolidation work.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership boundaries, model/service responsibilities, and guardrails.
 
 ## Roles
 

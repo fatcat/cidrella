@@ -89,6 +89,9 @@ info "Syncing files to LXC..."
 # Server source
 rsync -az --delete \
   --exclude='node_modules' \
+  --exclude='__pycache__' \
+  --exclude='*.pyc' \
+  --exclude='*.pyo' \
   "$PROJECT_DIR/server/" "${SSH_TARGET}:${INSTALL_DIR}/server/"
 
 # Client source, manifest, and built output. Preserve remote node_modules so

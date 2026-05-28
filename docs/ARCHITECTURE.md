@@ -1,164 +1,185 @@
-# CIDRella Architecture Notes
+# CIDRella Architecture
 
-This document records the intended backend ownership boundaries. The current
-codebase is being moved toward this structure incrementally; it is not a claim
-that every module already follows it.
+This document describes the intended backend ownership boundaries and the
+current state of the refactor. CIDRella is no longer a route-heavy prototype:
+core database writes are being consolidated behind models and services, with
+guardrails to prevent new ad hoc writers.
 
-## Database Ownership
+## Runtime Shape
 
-CIDRella should avoid ad hoc database writes from route handlers and utility
-modules. Debugging IP/DNS/DHCP state is much harder when several execution
-paths can write the same table with slightly different semantics.
+| Area | Implementation |
+| --- | --- |
+| Web/API | Node.js, Express, ES modules |
+| UI | Vue 3, PrimeVue, Pinia, Vue Router |
+| Primary storage | SQLite via `better-sqlite3`, WAL mode |
+| Analytics storage | DuckDB |
+| DNS/DHCP | dnsmasq, generated config/state files |
+| DNS filtering | Node DNS proxy for blocklist and GeoIP decisions |
+| Anomaly detection | Python sidecar using DuckDB features and SQLite status/scores |
+| Native process manager | systemd |
+| Docker process manager | s6-overlay |
 
-The target shape is:
+Persistent state is rooted at `DATA_DIR` (`/var/lib/cidrella` native,
+`/data` Docker). Application code is rooted at `/opt/cidrella` on native
+installs.
+
+## Layer Responsibilities
 
 | Layer | Responsibility |
 | --- | --- |
-| `server/src/db/` | Connection lifecycle, migrations, DB adapters, low-level initialization. |
-| `server/src/models/` | SQL ownership for one table or aggregate. Models own table-specific write semantics. |
-| `server/src/services/` | Cross-model workflows, transactions, audit coordination, queued side effects, filesystem/process coordination. |
-| `server/src/routes/` | Auth, input parsing, request validation, response shaping. Routes should not own persistence semantics. |
-| `server/src/utils/` | Pure helpers or external process/file utilities. Utilities that own DB writes should either move to `services/` or be explicitly allowlisted. |
+| `server/src/db/` | Connection lifecycle, migrations, low-level initialization, DB adapters. |
+| `server/src/models/` | Table or aggregate ownership. Models own write semantics and local invariants. |
+| `server/src/services/` | Cross-model workflows, transactions, audit coordination, queued side effects, process/file coordination. |
+| `server/src/routes/` | Auth, permission checks, input parsing, request validation, response shaping. |
+| `server/src/utils/` | Pure helpers or external process/file utilities. DB-writing utilities must be explicit exceptions. |
+| `server/anomaly/` | Python anomaly sidecar and its storage boundary. |
 
-The priority is centralized writes. Read-heavy projections and validation
-queries may remain close to routes until moving them meaningfully reduces
-duplication or ambiguity.
+The highest priority is centralized writes. Read-heavy projections may stay
+near routes until a read model meaningfully reduces duplication or ambiguity.
 
-## Existing Pattern
+## Canonical IP Model
 
-`server/src/models/ip-address.js` is the reference pattern for write ownership:
-IP lifecycle writes, liveness writes, rogue state, stale cleanup, and IP event
-emission should go through the IP model. `server/src/models/ip-view.js` owns the
-canonical API/read display projection for IP state.
+IP state is the most important shared contract in CIDRella. It is displayed in
+Networks, DHCP, and DNS views, so those views must not infer conflicting state.
 
-New ownership boundaries should follow the same spirit: keep table-local write
-rules in models and put multi-table behavior in services.
+Current owners:
 
-## Refactor Plan
+- `server/src/models/ip-address.js` owns IP lifecycle writes, liveness writes,
+  rogue state, stale cleanup, and event emission.
+- `server/src/models/ip-view.js` owns the canonical IP API/read projection used
+  to render assignment status, address type, online state, hostnames, MAC
+  details, and range context.
 
-1. Add guardrails.
-   Add a DB write ownership check with an allowlist. Start strict for
-   `ip_addresses`, then expand table by table as owners are created.
-   The current guardrail is `npm run check:db-ownership`; use
-   `npm run check:db-ownership:report` to list remaining direct-write
-   consolidation opportunities.
+Terminology:
 
-2. Centralize scan ownership.
-   Move `network_scans` and `scan_results` writes into a scan model/service.
-   Manual and scheduled scan starts should use one atomic "create if idle" path.
-   Review whether `/api/scans/probe` should be non-mutating or require write
-   permission.
-   Current write owner: `server/src/models/scan-run.js`.
+- `assignment_status`: whether an address is available, in use, reserved, or
+  rogue.
+- `address_type`: how an assigned address was instantiated, such as
+  static DNS, reserved DHCP, or dynamic DHCP. Available addresses should not
+  have a type.
+- `online_status`: active/passive liveness state, independent of assignment.
+- `hostname`: one primary hostname for an IP. Additional names should be CNAMEs.
 
-3. Centralize DNS ownership.
-   Add DNS zone and DNS record ownership. First consolidate PTR writes, then
-   move DNS record CRUD, SOA serial bumps, duplicate checks, CNAME/PTR handling,
-   and IP sync orchestration.
-   Current partial owners: `server/src/models/dns-record.js` owns DNS record
-   CRUD from the DNS routes, PTR write helpers, and DNS record SOA bumps;
-   `server/src/models/dns-zone.js` owns DNS zone CRUD from the DNS routes and
-   the zone/subnet domain-name synchronization done during zone rename/delete.
-   Pi-hole DNS record import also routes through `server/src/models/dns-record.js`.
-   Subnet topology paths still contain DNS writes and are intentionally
-   deferred to their topology phase.
+## Current Write Owners
 
-4. Centralize DHCP ownership.
-   Move reservation writes and lease sync into DHCP services. Lease sync should
-   own `dhcp_leases`, DHCP-derived DNS records, and calls into the IP model.
-   Current owners: `server/src/models/dhcp-scope.js` owns DHCP scope
-   CRUD from the DHCP routes, including explicit scope options and the backing
-   range update/delete performed by scope edits.
-   `server/src/models/dhcp-reservation.js` owns DHCP reservation CRUD from the
-   DHCP routes plus the corresponding IP/PTR synchronization.
-   `server/src/models/dhcp-lease.js` owns DHCP lease replacement from the
-   dnsmasq lease file plus DHCP-derived DNS A record synchronization.
-   `server/src/services/subnet-dhcp-topology.js` owns DHCP table mutations
-   required by subnet configure/divide/merge/delete workflows. DHCP table
-   ownership is enforced by `npm run check:db-ownership`.
+The ownership checker (`npm run check:db-ownership`) enforces strict ownership
+for the tables already migrated. `npm run check:db-ownership:report` lists
+remaining consolidation opportunities.
 
-5. Centralize DHCP scopes and options.
-   Move custom option and default option writes behind DHCP model/service
-   functions. Scope and scope-option route writes are already handled by
-   `server/src/models/dhcp-scope.js`; custom/default option writes and startup
-   DHCP option maintenance are handled by `server/src/models/dhcp-option.js`.
+| Domain | Current Owner |
+| --- | --- |
+| IP lifecycle and IP events | `models/ip-address.js` |
+| IP read projection | `models/ip-view.js` |
+| Scan runs and results | `models/scan-run.js` |
+| DNS records, PTR helpers, SOA bumps, Pi-hole DNS imports | `models/dns-record.js` |
+| DNS zones and zone/subnet domain pointer sync | `models/dns-zone.js` |
+| DHCP scopes and explicit scope options | `models/dhcp-scope.js` |
+| DHCP reservations and reservation IP/PTR sync | `models/dhcp-reservation.js` |
+| DHCP lease replacement and DHCP-derived DNS A sync | `models/dhcp-lease.js` |
+| DHCP option defaults/catalog maintenance | `models/dhcp-option.js` |
+| Ranges and range repair | `models/range.js` |
+| Range types | `models/range-type.js` |
+| Folders | `models/folder.js` |
+| VLANs | `models/vlan.js` |
+| Users | `models/user.js` |
+| Settings | `models/setting.js` |
+| GeoIP rules | `models/geoip-rule.js` |
+| Anomaly route mutations | `models/anomaly.js` |
+| Blocklist route mutations | `models/blocklist-store.js` |
+| Audit retention | `models/audit-log.js` |
 
-6. Extract subnet topology.
-   Move divide, merge, delete, and configure workflows into a
-   `SubnetTopologyService`, using DNS/DHCP/IP/scan models instead of direct
-   route SQL.
-   Current partial services: `server/src/services/subnet-dhcp-topology.js`
-   owns DHCP mutations performed by subnet topology workflows, and
-   `server/src/services/subnet-topology.js` owns low-level subnet/range helper
-   mutations such as system range creation, subnet insertion, user-range copy,
-   parent config clearing, subnet edit/configure transaction bodies, subnet
-   merge/delete transaction bodies, buddy/consolidation helpers, and subnet
-   name-template application.
-   `server/src/services/subnet-dns-topology.js`
-   owns DNS mutations performed by subnet topology workflows, including
-   forward zone creation, reverse zone/PTR stub creation, and lossy A-record
-   cleanup during divide.
+## Topology Services
 
-   `server/src/models/range.js` owns standalone range CRUD and maintenance
-   repairs. Topology services may still mutate ranges when the range is part
-   of a subnet/DHCP topology operation. `ranges` ownership is enforced by
-   `npm run check:db-ownership`.
+Subnet topology workflows touch several aggregates and must remain services,
+not route-local SQL.
 
-   `subnets` ownership is also enforced by `npm run check:db-ownership`.
-   Subnet lifecycle and metadata writes live in
-   `server/src/services/subnet-topology.js`; the explicit exception is
-   `server/src/models/dns-zone.js`, which synchronizes subnet `domain_name`
-   pointers when forward zones are renamed or deleted.
+- `services/subnet-topology.js` owns subnet lifecycle helpers, system range
+  creation, subnet insertion, user-range copy, parent config clearing,
+  edit/configure transaction bodies, merge/delete transaction bodies,
+  buddy/consolidation helpers, and subnet name-template application.
+- `services/subnet-dhcp-topology.js` owns DHCP mutations needed during subnet
+  configure/divide/merge/delete workflows.
+- `services/subnet-dns-topology.js` owns DNS mutations needed during subnet
+  configure/divide/merge/delete workflows, including forward zone creation,
+  reverse zone/PTR stub creation, and A-record cleanup during divide.
+- `services/operation-maintenance.js` owns operational maintenance workflows
+  that are too broad for a table model.
 
-   `server/src/models/range-type.js` owns range type CRUD and system range
-   type reseeding. `range_types` ownership is enforced by
-   `npm run check:db-ownership`.
+Topology services may call model functions and may own transaction boundaries.
+Routes should pass validated inputs and turn service results into HTTP
+responses.
 
-   `server/src/models/folder.js` and `server/src/models/vlan.js` own folder
-   and VLAN CRUD. Subnet-side assignment cleanup still routes through
-   `server/src/services/subnet-topology.js`. `folders` and `vlans` ownership
-   is enforced by `npm run check:db-ownership`.
+## Liveness and Scanning
 
-   Additional enforced owners:
-   `server/src/models/user.js` owns user mutations,
-   `server/src/models/setting.js` owns API setting mutations,
-   `server/src/models/geoip-rule.js` owns GeoIP rule mutations,
-   `server/src/models/anomaly.js` owns route-driven anomaly mutations,
-   `server/src/models/blocklist-store.js` owns route-driven blocklist
-   mutations, and `server/src/models/audit-log.js` owns audit retention.
-   Utility storage owners remain explicit for blocklist refresh/cache,
-   MAC vendor cache, metrics aggregation, anomaly-service storage, DB
-   initialization, backup/restore, and password reset maintenance.
+Liveness comes from active and passive sources:
 
-7. Clean routes.
-   Routes should become auth/input/response code. Direct DB writes should
-   disappear except for explicit operational exceptions.
+- active scans use the scanner and `models/scan-run.js`
+- passive DHCP lease activity routes through DHCP lease sync and IP model writes
+- passive DNS query activity routes through `utils/ip-liveness.js`
 
-## Explicit Exceptions
+Manual probes and scheduled scans should share the same probe implementation.
+ARP should be attempted first where appropriate, with ICMP ping fallback inside
+the same scan lifecycle event.
 
-Some low-level write access is expected and should be allowlisted rather than
-hidden:
+## DNS/DHCP Config Generation
+
+dnsmasq files are generated from database state using atomic writes. Different
+file classes have different reload behavior:
+
+- hosts-style files can usually be hot-read by dnsmasq
+- CNAME/MX/TXT/SRV and other `conf.d` changes require reload/SIGHUP
+- DHCP host and scope changes regenerate the corresponding dnsmasq state
+
+The backend should keep DNS and DHCP table ownership in models/services; config
+generators should read and emit, not invent persistence semantics.
+
+## Security and Operations Boundaries
+
+Expected low-level write exceptions:
 
 - migrations in `server/src/db/migrations/`
 - DB initialization in `server/src/db/init.js`
 - backup and restore implementation
 - DuckDB analytics adapter
-- maintenance scripts such as password reset
-- anomaly service storage, treated as its own storage boundary
+- anomaly sidecar storage in `server/anomaly/storage.py`
+- maintenance CLI scripts such as password reset and web port reset
+- metrics/log/cache utilities that are explicitly allowlisted
 
-## Deferred Cleanup Opportunities
+Native installs should rely on systemd ambient capabilities for privileged
+ports and raw probes. The install path should warn if ambient capabilities are
+not supported.
 
-These are similar architecture improvements, but they are deliberately deferred
-until core IP/DNS/DHCP/scan ownership is stable:
+Outbound URL fetches must use the guarded/pinned URL helper in
+`utils/url-guard.js` when the URL is operator supplied.
 
-- Centralize read-heavy dashboard/projection queries into read models.
-- Move users, auth, and preference writes into user/settings services.
-- Centralize audit log retention and audit write helpers more strictly.
-- Clean up blocklist, GeoIP, anomaly, VLAN, folder, range-type, and backup route
-  writes.
-- Reduce broad `getDb()` exposure in routes after service replacements exist.
-- Add import-boundary linting so routes cannot import write-capable DB APIs.
-- Promote `check:db-ownership` report-only findings into strict table ownership
-  rules as DNS, DHCP, scan, and topology services are extracted.
-- Review backup/restore/reset scripts and document why they are exceptions.
-- Add ownership documentation mapping each table to its model/service owner.
-- Consider read-only DB facades for routes once write centralization is stable.
+## Guardrails
+
+Use these before committing:
+
+```bash
+npm run check:db-ownership
+npm test
+```
+
+For refactor planning:
+
+```bash
+npm run check:db-ownership:report
+```
+
+The ownership checker is intentionally table-by-table. Do not hide every SQL
+statement just to satisfy an abstraction. The goal is clear ownership of writes
+and predictable domain behavior.
+
+## Deferred Cleanup
+
+These are valuable but not required before the core ownership model is stable:
+
+- Add route import-boundary linting so migrated routes cannot import write DB
+  primitives.
+- Move read-heavy dashboard and analytics queries into explicit read models.
+- Continue reducing direct `getDb()` exposure from routes as services mature.
+- Tighten settings upserts to avoid `INSERT OR REPLACE` where metadata matters.
+- Add a machine-readable table-to-owner map consumed by docs and CI.
+- Review backup, restore, reset, and install scripts as explicit exceptions and
+  keep their command/file safety tests focused.

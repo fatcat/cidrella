@@ -3,7 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { startScan } from '../utils/scanner.js';
 import { getNextScanTime } from '../utils/scan-scheduler.js';
-import { isValidIpv4 } from '../utils/ip.js';
+import { isIpInSubnet, isValidIpv4 } from '../utils/ip.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
 import * as ScanRun from '../models/scan-run.js';
 
@@ -67,7 +67,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 });
 
 // POST /api/scans/probe — probe a single IP (or list) for liveness using startScan
-router.post('/probe', requirePerm('subnets:read'), async (req, res) => {
+router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
   const { ip, subnet_id } = req.body;
   if (!ip || !isValidIpv4(ip)) {
     return res.status(400).json({ error: 'Valid IP address is required' });
@@ -77,9 +77,17 @@ router.post('/probe', requirePerm('subnets:read'), async (req, res) => {
 
   // Find the subnet — either from explicit subnet_id or by searching
   let resolvedSubnetId = subnet_id;
-  if (!resolvedSubnetId) {
+  if (resolvedSubnetId) {
+    const subnet = db.prepare("SELECT id, cidr, status FROM subnets WHERE id = ?").get(resolvedSubnetId);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.status !== 'allocated') {
+      return res.status(400).json({ error: 'Can only probe allocated subnets' });
+    }
+    if (!isIpInSubnet(ip, subnet.cidr)) {
+      return res.status(400).json({ error: 'IP address is not in the selected subnet' });
+    }
+  } else {
     const subnets = db.prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'").all();
-    const { isIpInSubnet } = await import('../utils/ip.js');
     for (const s of subnets) {
       if (isIpInSubnet(ip, s.cidr)) { resolvedSubnetId = s.id; break; }
     }

@@ -36,6 +36,14 @@ log = logging.getLogger("anomaly")
 _client_medians = {}
 
 
+def update_daemon_status_safe(**kwargs):
+    """Record daemon state without letting status persistence kill the loop."""
+    try:
+        storage.update_daemon_status(**kwargs)
+    except Exception:
+        log.error("Failed to update daemon status: %s", traceback.format_exc())
+
+
 def get_sensitivity():
     """Read sensitivity setting from SQLite."""
     return storage.get_setting("anomaly_sensitivity", "medium")
@@ -127,7 +135,7 @@ def train_all_clients():
     log.info("Training complete: %d/%d models trained in %.2fs (max %d windows)",
              trained, len(active_clients), elapsed, max_windows)
 
-    storage.update_daemon_status(
+    update_daemon_status_safe(
         last_train=datetime.now(timezone.utc).isoformat(),
         clients_trained=trained,
         train_duration_sec=elapsed,
@@ -209,7 +217,7 @@ def score_all_clients():
     log.info("Scoring complete: %d scored, %d anomalies in %.2fs%s",
              scored, anomalies, elapsed, " [OVERRUN]" if overrun else "")
 
-    storage.update_daemon_status(
+    update_daemon_status_safe(
         last_score=datetime.now(timezone.utc).isoformat(),
         clients_scored=scored,
         score_duration_sec=elapsed,
@@ -235,6 +243,7 @@ def main():
         try:
             # Check if enabled
             if not storage.is_enabled():
+                update_daemon_status_safe(enabled=False)
                 log.debug("Anomaly detection disabled, sleeping %ds", DISABLED_POLL_SEC)
                 time.sleep(DISABLED_POLL_SEC)
                 continue
@@ -271,7 +280,7 @@ def main():
             sleep_time = max(1, next_event - time.time())
 
             next_iso = datetime.fromtimestamp(next_event, tz=timezone.utc).isoformat()
-            storage.update_daemon_status(next_score=next_iso)
+            update_daemon_status_safe(enabled=True, next_score=next_iso)
 
             time.sleep(sleep_time)
 
@@ -279,7 +288,7 @@ def main():
             log.info("Shutting down")
             break
         except Exception as exc:
-            storage.update_daemon_status(
+            update_daemon_status_safe(
                 last_error=f"{type(exc).__name__}: {exc}",
                 last_error_at=datetime.now(timezone.utc).isoformat(),
             )
