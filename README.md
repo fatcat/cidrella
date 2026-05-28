@@ -51,7 +51,7 @@ less install.sh    # review before running
 sudo bash install.sh
 ```
 
-The script installs all dependencies (Node.js, dnsmasq, minisign, etc.), downloads the latest signed release from GitHub, verifies the signature, and configures systemd services. See **[INSTALL-NATIVE.md](INSTALL-NATIVE.md)** for full details.
+The script installs system dependencies, uses the bundled Node runtime from the release tarball, downloads the latest signed release from GitHub, verifies the signature, and configures systemd services. See **[INSTALL-NATIVE.md](INSTALL-NATIVE.md)** for full details.
 
 ### Option 2: Docker
 

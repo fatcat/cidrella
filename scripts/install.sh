@@ -29,6 +29,8 @@ BREAKGLASS_PUBKEY="RWRO6YFjR0VEbOr73Kjk9WNdUFgaVrZ/de+/S3bGYaroJaMLrxN7nLQK"
 FORCE_INSTALL=false
 NODE_MAJOR=22
 BUILD_ARCH="linux-x64"
+WEB_HTTPS_PORT="8443"
+WEB_HTTP_PORT="8080"
 
 # ─── Colors ───────────────────────────────────────────────
 RED='\033[0;31m'
@@ -431,7 +433,7 @@ if command -v minisign &>/dev/null; then
   }
   PUBKEY_TMP="$TMPDIR/cidrella.pub"
   printf 'untrusted comment: minisign public key\n%s\n' "$MINISIGN_PUBKEY" > "$PUBKEY_TMP"
-  if minisign -Vm "$TMPDIR/cidrella.tar.gz" -p "$PUBKEY_TMP" >/dev/null 2>&1; then
+  if minisign -Vm "$TMPDIR/cidrella.tar.gz" -p "$PUBKEY_TMP" >/dev/null; then
     ok "Signature verified."
     emit_event verify pass
   else
@@ -499,7 +501,16 @@ if [ -d "$INSTALL_DIR/server/node_modules/express" ]; then
 else
   info "Installing Node.js dependencies (this may take a moment)..."
   cd "$INSTALL_DIR/server"
-  npm install --omit=dev --silent 2>&1 | tail -5
+  if [ -x "$INSTALL_DIR/runtime/node/bin/npm" ]; then
+    PATH="$INSTALL_DIR/runtime/node/bin:$PATH" "$INSTALL_DIR/runtime/node/bin/npm" install --omit=dev --silent 2>&1 | tail -5
+  elif command -v npm >/dev/null 2>&1; then
+    npm install --omit=dev --silent 2>&1 | tail -5
+  else
+    err "Bundled node_modules are missing and no npm binary is available."
+    err "Expected bundled npm at $INSTALL_DIR/runtime/node/bin/npm."
+    emit_event install fail reason=no-npm-for-dependency-recovery
+    exit 1
+  fi
   ok "Dependencies installed."
 fi
 
@@ -625,6 +636,12 @@ emit_event systemd pass unit=cidrella.service
 # ═══════════════════════════════════════════════════════════
 
 PORT_OVERRIDE_FILE="/etc/systemd/system/cidrella.service.d/port-override.conf"
+if [ -f "$PORT_OVERRIDE_FILE" ]; then
+  EXISTING_HTTPS_PORT=$(grep -E '^Environment=HTTPS_PORT=' "$PORT_OVERRIDE_FILE" 2>/dev/null | tail -1 | sed 's/^Environment=HTTPS_PORT=//' || true)
+  EXISTING_HTTP_PORT=$(grep -E '^Environment=HTTP_PORT=' "$PORT_OVERRIDE_FILE" 2>/dev/null | tail -1 | sed 's/^Environment=HTTP_PORT=//' || true)
+  WEB_HTTPS_PORT="${EXISTING_HTTPS_PORT:-$WEB_HTTPS_PORT}"
+  WEB_HTTP_PORT="${EXISTING_HTTP_PORT:-$WEB_HTTP_PORT}"
+fi
 # If an override already exists, don't touch it — upgrade path.
 if [ ! -f "$PORT_OVERRIDE_FILE" ]; then
   port_free() {
@@ -642,6 +659,8 @@ Environment=HTTPS_PORT=443
 Environment=HTTP_PORT=80
 EOF
     chmod 644 "$PORT_OVERRIDE_FILE"
+    WEB_HTTPS_PORT="443"
+    WEB_HTTP_PORT="80"
     ok "Web ports: 443/80 (standard HTTPS/HTTP — both free)"
     emit_event systemd pass web_ports=443/80
   else
@@ -763,13 +782,22 @@ if systemctl is-active --quiet cidrella; then
   CIDRELLA_PID=$(systemctl show cidrella -p MainPID --value 2>/dev/null || true)
   if [ -n "${CIDRELLA_PID:-}" ] && [ "$CIDRELLA_PID" != "0" ] && [ -r "/proc/$CIDRELLA_PID/status" ]; then
     CAP_AMB=$(awk '/^CapAmb:/ {print $2}' "/proc/$CIDRELLA_PID/status")
+    CAP_AMB_NET_BIND=0
     CAP_AMB_NET_RAW=0
     if [[ "$CAP_AMB" =~ ^[0-9a-fA-F]+$ ]]; then
+      CAP_AMB_NET_BIND=$((16#$CAP_AMB & 0x400))
       CAP_AMB_NET_RAW=$((16#$CAP_AMB & 0x2000))
     fi
-    if [ "$CAP_AMB_NET_RAW" -eq 0 ]; then
-      warn "cidrella.service is running without ambient CAP_NET_RAW; active ARP scans will fail. Check whether this host/container supports AmbientCapabilities."
-      emit_event install warn reason=ambient-cap-net-raw-missing "pid=$CIDRELLA_PID"
+    if [ "$CAP_AMB_NET_RAW" -eq 0 ] || [ "$CAP_AMB_NET_BIND" -eq 0 ]; then
+      if [ "$CAP_AMB_NET_RAW" -eq 0 ]; then
+        warn "cidrella.service is running without ambient CAP_NET_RAW; active ARP and ICMP scans may fail."
+        emit_event install warn reason=ambient-cap-missing capability=CAP_NET_RAW "pid=$CIDRELLA_PID"
+      fi
+      if [ "$CAP_AMB_NET_BIND" -eq 0 ]; then
+        warn "cidrella.service is running without ambient CAP_NET_BIND_SERVICE; privileged web/DNS ports may fail."
+        emit_event install warn reason=ambient-cap-missing capability=CAP_NET_BIND_SERVICE "pid=$CIDRELLA_PID"
+      fi
+      warn "Check whether this host/container supports AmbientCapabilities."
     fi
   fi
   emit_event install end result=success "version=$VERSION"
@@ -828,13 +856,18 @@ ADMIN_PASSWORD=$(journalctl -u cidrella --no-pager -n 50 2>/dev/null | grep -oP 
 # Detect IP
 SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 [ -z "$SERVER_IP" ] && SERVER_IP="<your-server-ip>"
+if [ "${WEB_HTTPS_PORT:-8443}" = "443" ]; then
+  WEB_UI_URL="https://${SERVER_IP}"
+else
+  WEB_UI_URL="https://${SERVER_IP}:${WEB_HTTPS_PORT:-8443}"
+fi
 
 echo ""
 echo -e "${BOLD}═══════════════════════════════════════════${NC}"
 echo -e "${BOLD}  CIDRella v${VERSION} installed successfully!${NC}"
 echo -e "${BOLD}═══════════════════════════════════════════${NC}"
 echo ""
-echo -e "  ${BOLD}Web UI:${NC}      https://${SERVER_IP}:8443"
+echo -e "  ${BOLD}Web UI:${NC}      ${WEB_UI_URL}"
 echo -e "  ${BOLD}Data dir:${NC}    ${DATA_DIR}"
 echo -e "  ${BOLD}Install dir:${NC} ${INSTALL_LINK} (-> ${INSTALL_DIR})"
 echo -e "  ${BOLD}Update:${NC}      cidrella-update"

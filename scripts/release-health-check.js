@@ -1,0 +1,395 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const { spawnSync } = require('child_process');
+
+const NODE_DIST_INDEX = 'https://nodejs.org/dist/index.json';
+const NODE_RELEASE_SCHEDULE = 'https://raw.githubusercontent.com/nodejs/Release/main/schedule.json';
+const S6_OVERLAY_LATEST = 'https://api.github.com/repos/just-containers/s6-overlay/releases/latest';
+
+const args = process.argv.slice(2);
+let bundledNodeVersion = '';
+let jsonOut = '';
+
+for (let i = 0; i < args.length; i += 1) {
+  const arg = args[i];
+  if (arg === '--bundled-node-version') {
+    bundledNodeVersion = args[++i] || '';
+  } else if (arg === '--json-out') {
+    jsonOut = args[++i] || '';
+  } else {
+    console.error(`Unknown argument: ${arg}`);
+    process.exit(2);
+  }
+}
+
+if (!bundledNodeVersion) {
+  console.error('Missing --bundled-node-version');
+  process.exit(2);
+}
+
+function normalizeVersion(version) {
+  return String(version || '').replace(/^v/, '');
+}
+
+function compareVersions(a, b) {
+  const pa = normalizeVersion(a).split('.').map((n) => Number.parseInt(n, 10) || 0);
+  const pb = normalizeVersion(b).split('.').map((n) => Number.parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const diff = (pa[i] || 0) - (pb[i] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+function majorOf(version) {
+  return Number.parseInt(normalizeVersion(version).split('.')[0], 10);
+}
+
+function toDate(value) {
+  return value ? new Date(`${value}T00:00:00Z`) : null;
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'cidrella-release-health-check',
+      Accept: 'application/json,text/plain;q=0.9,*/*;q=0.8',
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`${url} returned HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+function runJsonCommand(command, argsForCommand, cwd) {
+  const cacheDir = path.join(path.resolve(__dirname, '..'), 'dist', '.npm-cache');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  const result = spawnSync(command, argsForCommand, {
+    cwd,
+    env: {
+      ...process.env,
+      npm_config_cache: cacheDir,
+    },
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const output = result.stdout.trim();
+  if (!output) {
+    return { ok: result.status === 0, data: {}, stderr: result.stderr.trim() };
+  }
+  try {
+    return { ok: result.status === 0, data: JSON.parse(output), stderr: result.stderr.trim() };
+  } catch (error) {
+    return {
+      ok: false,
+      data: {},
+      stderr: `${result.stderr.trim()}\nCould not parse JSON from ${command} ${argsForCommand.join(' ')}: ${error.message}`.trim(),
+    };
+  }
+}
+
+function checkNpmProject(projectRoot, relativeDir) {
+  const cwd = path.join(projectRoot, relativeDir);
+  const packageJson = path.join(cwd, 'package.json');
+  if (!fs.existsSync(packageJson)) return null;
+
+  const audit = runJsonCommand('npm', ['audit', '--omit=dev', '--json'], cwd);
+  const outdated = runJsonCommand('npm', ['outdated', '--omit=dev', '--json'], cwd);
+  const vulnerabilities = audit.data?.vulnerabilities || {};
+  const vulnerablePackages = Object.entries(vulnerabilities)
+    .filter(([, value]) => value && value.severity)
+    .map(([name, value]) => ({
+      name,
+      severity: value.severity,
+      via: Array.isArray(value.via)
+        ? value.via.map((entry) => (typeof entry === 'string' ? entry : entry.title)).filter(Boolean).slice(0, 5)
+        : [],
+      fixAvailable: Boolean(value.fixAvailable),
+    }))
+    .sort((a, b) => {
+      const rank = { critical: 4, high: 3, moderate: 2, low: 1 };
+      return (rank[b.severity] || 0) - (rank[a.severity] || 0) || a.name.localeCompare(b.name);
+    });
+
+  const outdatedPackages = Object.entries(outdated.data || {})
+    .map(([name, value]) => ({
+      name,
+      current: value.current,
+      wanted: value.wanted,
+      latest: value.latest,
+      type: value.type || '',
+    }))
+    .filter((pkg) => pkg.current && pkg.latest && pkg.current !== pkg.latest)
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return {
+    dir: relativeDir || '.',
+    auditOk: audit.ok || vulnerablePackages.length > 0,
+    auditError: audit.ok || vulnerablePackages.length > 0 ? '' : audit.stderr,
+    outdatedOk: outdated.ok || outdatedPackages.length > 0,
+    outdatedError: outdated.ok || outdatedPackages.length > 0 ? '' : outdated.stderr,
+    vulnerabilities: vulnerablePackages,
+    outdated: outdatedPackages,
+  };
+}
+
+function parseDockerfile(projectRoot) {
+  const dockerfile = path.join(projectRoot, 'Dockerfile');
+  if (!fs.existsSync(dockerfile)) {
+    return null;
+  }
+  const text = fs.readFileSync(dockerfile, 'utf8');
+  const fromMatches = [...text.matchAll(/^FROM\s+node:([^\s]+)(?:\s+AS\s+([^\s]+))?/gmi)];
+  const nodeImages = fromMatches.map((match) => {
+    const tag = match[1];
+    const versionMatch = tag.match(/^(\d+)(?:\.(\d+)\.(\d+))?(-.*)?$/);
+    return {
+      image: `node:${tag}`,
+      tag,
+      stage: match[2] || '',
+      major: versionMatch ? Number.parseInt(versionMatch[1], 10) : null,
+      pinnedPatch: Boolean(versionMatch && versionMatch[2] && versionMatch[3]),
+    };
+  });
+
+  const s6Match = text.match(/^ARG\s+S6_OVERLAY_VERSION=([^\s#]+)/m);
+  return {
+    present: true,
+    nodeImages,
+    s6OverlayVersion: s6Match ? normalizeVersion(s6Match[1]) : '',
+  };
+}
+
+async function checkDocker(projectRoot, latestLtsMajor, latestLtsVersion, distIndex) {
+  const parsed = parseDockerfile(projectRoot);
+  if (!parsed) {
+    return {
+      present: false,
+      nodeImages: [],
+      nodeLtsUpdateAvailable: false,
+      nodeSecurityUpdateRequired: false,
+      s6Overlay: {
+        current: '',
+        latest: '',
+        updateAvailable: false,
+      },
+      checkError: '',
+    };
+  }
+
+  let s6Latest = '';
+  let checkError = '';
+  try {
+    const latest = await fetchJson(S6_OVERLAY_LATEST);
+    s6Latest = normalizeVersion(latest.tag_name || latest.name || '');
+  } catch (error) {
+    checkError = `s6-overlay latest release check failed: ${error.message}`;
+  }
+
+  const nodeImages = parsed.nodeImages.map((image) => {
+    const sameMajor = image.major
+      ? distIndex.filter((release) => majorOf(release.version) === image.major).sort((a, b) => compareVersions(b.version, a.version))
+      : [];
+    const latestSameMajor = normalizeVersion(sameMajor[0]?.version || '');
+    const currentComparable = image.pinnedPatch ? image.tag.replace(/-.*/, '') : latestSameMajor;
+    const securityReleases = image.pinnedPatch
+      ? sameMajor
+        .filter((release) => compareVersions(release.version, currentComparable) > 0 && release.security === true)
+        .map((release) => ({ version: normalizeVersion(release.version) }))
+      : [];
+    return {
+      ...image,
+      latestSameMajor,
+      latestLtsMajor,
+      latestLtsVersion,
+      nodeLtsUpdateAvailable: Boolean(image.major && latestLtsMajor > image.major),
+      securityUpdateRequired: securityReleases.length > 0,
+      securityReleases,
+      fixTargetTag: image.tag.replace(/^(\d+)(?:\.\d+\.\d+)?/, String(latestLtsMajor)),
+    };
+  });
+
+  return {
+    present: true,
+    nodeImages,
+    nodeLtsUpdateAvailable: nodeImages.some((image) => image.nodeLtsUpdateAvailable),
+    nodeSecurityUpdateRequired: nodeImages.some((image) => image.securityUpdateRequired),
+    s6Overlay: {
+      current: parsed.s6OverlayVersion,
+      latest: s6Latest,
+      updateAvailable: Boolean(parsed.s6OverlayVersion && s6Latest && compareVersions(s6Latest, parsed.s6OverlayVersion) > 0),
+    },
+    checkError,
+  };
+}
+
+function printReport(report) {
+  console.log('Release dependency/runtime health check');
+  console.log(`  Bundled Node: v${report.node.current}`);
+
+  if (report.node.securityUpdateRequired) {
+    console.log(`  SECURITY: newer Node security release(s) exist on v${report.node.currentMajor}.`);
+    for (const release of report.node.securityReleases) {
+      console.log(`    - ${release.version}`);
+    }
+    console.log(`    Target update: v${report.node.recommendedVersion}`);
+    console.log('    Fix path: accept the security update prompt to rewrite BUNDLED_NODE_VERSION, then rerun the build.');
+  } else if (report.node.routineUpdateAvailable) {
+    console.log(`  Update available: Node v${report.node.latestSameMajor} is newer than bundled v${report.node.current}.`);
+    console.log('    Fix path: accept the routine update prompt to rewrite BUNDLED_NODE_VERSION, then rerun the build.');
+  } else {
+    console.log('  Node patch line: current');
+  }
+
+  if (report.node.ltsUpdateAvailable) {
+    console.log(`  LTS notice: active LTS is v${report.node.latestLtsMajor}; bundled major is v${report.node.currentMajor}.`);
+    console.log(`    Suggested LTS target: v${report.node.latestLtsVersion}`);
+    console.log('    Fix path: accept the routine update prompt to move the bundled runtime to the active LTS line.');
+  }
+
+  for (const project of report.npmProjects) {
+    if (project.vulnerabilities.length > 0) {
+      console.log(`  SECURITY: npm audit found ${project.vulnerabilities.length} vulnerable package(s) in ${project.dir}:`);
+      for (const vuln of project.vulnerabilities.slice(0, 10)) {
+        const fix = vuln.fixAvailable ? 'fix available' : 'no automatic fix reported';
+        console.log(`    - ${vuln.name} (${vuln.severity}, ${fix})${vuln.via.length ? `: ${vuln.via.join('; ')}` : ''}`);
+      }
+      console.log(`    Fix path: accept the security update prompt to run npm audit fix --omit=dev in ${project.dir}.`);
+    }
+    if (project.outdated.length > 0) {
+      console.log(`  Updates available in ${project.dir}: ${project.outdated.length} package(s)`);
+      for (const pkg of project.outdated.slice(0, 10)) {
+        console.log(`    - ${pkg.name}: ${pkg.current} -> wanted ${pkg.wanted}, latest ${pkg.latest}`);
+      }
+      console.log(`    Fix path: accept the routine update prompt to run npm update --omit=dev in ${project.dir}.`);
+    }
+    if (project.auditError) {
+      console.log(`  WARNING: npm audit check failed in ${project.dir}: ${project.auditError}`);
+    }
+    if (project.outdatedError) {
+      console.log(`  WARNING: npm outdated check failed in ${project.dir}: ${project.outdatedError}`);
+    }
+  }
+
+  if (report.docker.present) {
+    console.log('  Docker checks:');
+    for (const image of report.docker.nodeImages) {
+      const stage = image.stage ? ` (${image.stage})` : '';
+      if (image.securityUpdateRequired) {
+        console.log(`    SECURITY: Docker base ${image.image}${stage} is pinned behind Node security release(s):`);
+        for (const release of image.securityReleases) {
+          console.log(`      - ${release.version}`);
+        }
+        console.log('      Fix path: accept the security update prompt to update Dockerfile FROM node tags, then rebuild the image.');
+      } else if (image.nodeLtsUpdateAvailable) {
+        console.log(`    LTS notice: Docker base ${image.image}${stage} uses Node ${image.major}; active LTS is Node ${image.latestLtsMajor}.`);
+        console.log(`      Suggested Docker tag: ${image.fixTargetTag}`);
+        console.log('      Fix path: accept the routine update prompt to update Dockerfile FROM node tags.');
+      } else {
+        console.log(`    Docker base ${image.image}${stage}: Node major aligned with active LTS.`);
+      }
+      if (!image.pinnedPatch) {
+        console.log(`      Patch/security note: ${image.image} is a floating major tag; Docker publishing must rebuild/pull to pick up current ${image.latestSameMajor}.`);
+      }
+    }
+    if (report.docker.s6Overlay.current) {
+      if (report.docker.s6Overlay.updateAvailable) {
+        console.log(`    s6-overlay update available: ${report.docker.s6Overlay.current} -> ${report.docker.s6Overlay.latest}`);
+        console.log('      Fix path: accept the routine update prompt to update ARG S6_OVERLAY_VERSION in Dockerfile.');
+      } else if (report.docker.s6Overlay.latest) {
+        console.log(`    s6-overlay: current (${report.docker.s6Overlay.current})`);
+      }
+    }
+    if (report.docker.checkError) {
+      console.log(`    WARNING: ${report.docker.checkError}`);
+    }
+    console.log('    Alpine/apk package note: Docker OS package security is handled by rebuilding from a current base image and apk repositories; versions are intentionally not pinned here.');
+  }
+}
+
+async function main() {
+  const projectRoot = path.resolve(__dirname, '..');
+  const current = normalizeVersion(bundledNodeVersion);
+  const currentMajor = majorOf(current);
+
+  const [distIndex, schedule] = await Promise.all([
+    fetchJson(NODE_DIST_INDEX),
+    fetchJson(NODE_RELEASE_SCHEDULE),
+  ]);
+
+  const sameMajor = distIndex
+    .filter((release) => majorOf(release.version) === currentMajor)
+    .sort((a, b) => compareVersions(b.version, a.version));
+  const latestSameMajor = normalizeVersion(sameMajor[0]?.version || current);
+  const newerSameMajor = sameMajor.filter((release) => compareVersions(release.version, current) > 0);
+  const securityReleases = newerSameMajor
+    .filter((release) => release.security === true)
+    .map((release) => ({ version: normalizeVersion(release.version) }));
+
+  const now = new Date();
+  const activeLtsMajors = Object.entries(schedule)
+    .map(([key, value]) => ({
+      major: Number.parseInt(key.replace(/^v/, ''), 10),
+      lts: toDate(value.lts),
+      end: toDate(value.end),
+    }))
+    .filter((entry) => entry.lts && entry.end && entry.lts <= now && now < entry.end)
+    .map((entry) => entry.major)
+    .sort((a, b) => b - a);
+  const latestLtsMajor = activeLtsMajors[0] || currentMajor;
+  const latestLtsRelease = distIndex
+    .filter((release) => majorOf(release.version) === latestLtsMajor)
+    .sort((a, b) => compareVersions(b.version, a.version))[0];
+  const latestLtsVersion = normalizeVersion(latestLtsRelease?.version || latestSameMajor);
+
+  const npmProjects = ['client', 'server']
+    .map((relativeDir) => checkNpmProject(projectRoot, relativeDir))
+    .filter(Boolean);
+  const docker = await checkDocker(projectRoot, latestLtsMajor, latestLtsVersion, distIndex);
+
+  const report = {
+    node: {
+      current,
+      currentMajor,
+      latestSameMajor,
+      latestLtsMajor,
+      latestLtsVersion,
+      securityUpdateRequired: securityReleases.length > 0,
+      securityReleases,
+      routineUpdateAvailable: compareVersions(latestSameMajor, current) > 0,
+      ltsUpdateAvailable: latestLtsMajor > currentMajor,
+      recommendedVersion: securityReleases.length > 0 || compareVersions(latestSameMajor, current) > 0
+        ? latestSameMajor
+        : latestLtsVersion,
+    },
+    npmProjects,
+    docker,
+  };
+
+  report.summary = {
+    nodeSecurity: report.node.securityUpdateRequired,
+    packageSecurity: npmProjects.some((project) => project.vulnerabilities.length > 0),
+    nodeRoutine: report.node.routineUpdateAvailable,
+    nodeLts: report.node.ltsUpdateAvailable,
+    packageRoutine: npmProjects.some((project) => project.outdated.length > 0),
+    dockerSecurity: docker.nodeSecurityUpdateRequired,
+    dockerRoutine: docker.nodeLtsUpdateAvailable || docker.s6Overlay.updateAvailable,
+    dockerCheckFailures: Boolean(docker.checkError),
+    checkFailures: npmProjects.some((project) => project.auditError || project.outdatedError) || Boolean(docker.checkError),
+  };
+
+  printReport(report);
+
+  if (jsonOut) {
+    fs.writeFileSync(jsonOut, `${JSON.stringify(report, null, 2)}\n`);
+  }
+}
+
+main().catch((error) => {
+  console.error(`Release health check failed: ${error.message}`);
+  process.exit(1);
+});

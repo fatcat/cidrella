@@ -51,6 +51,7 @@ vitest.config.js
 # install.sh, rollback.sh, cidrella-node, cidrella-dnsmasq-hup, cidrella.pub,
 # lib/, sudoers/, systemd/). Tracked in PLAN.md backlog.
 build-release.sh
+release-health-check.js
 deploy-lxc.sh
 test-dns-blocking.sh
 

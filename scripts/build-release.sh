@@ -115,7 +115,9 @@ ENVIRONMENT
                             Defaults to ~/.minisign/cidrella.key.
 
 REQUIREMENTS
-    minisign, node, gcc/g++, make, python3-setuptools; gh (for non-build-only).
+    minisign, node, npm, gcc/g++, make, python3-setuptools; gh (for non-build-only).
+    Network access to nodejs.org, raw.githubusercontent.com, and npm registry
+    is required for the release health check.
 
 SEE ALSO
     RELEASE-NOTES.md, scripts/lib/slots.sh (semver helpers),
@@ -178,6 +180,202 @@ NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
 NODE_CACHE_DIR="$DIST_DIR/.node-cache"
+RELEASE_HEALTH_JSON="$DIST_DIR/release-health-check.json"
+
+confirm_yn() {
+  local prompt="$1"
+  local default="${2:-n}"
+  local answer
+  if [ ! -t 0 ]; then
+    echo "$prompt [non-interactive: no]"
+    return 1
+  fi
+  if [ "$default" = "y" ]; then
+    read -rp "$prompt [Y/n]: " answer
+    answer="${answer:-y}"
+  else
+    read -rp "$prompt [y/N]: " answer
+    answer="${answer:-n}"
+  fi
+  case "$answer" in
+    [Yy]*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+health_json() {
+  local expr="$1"
+  node -e "const r=require(process.argv[1]); const v=(${expr}); if (typeof v === 'boolean') process.stdout.write(v ? 'true' : 'false'); else process.stdout.write(String(v ?? ''));" "$RELEASE_HEALTH_JSON"
+}
+
+update_bundled_node_default() {
+  local target_version="$1"
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const target = process.argv[2];
+    const before = fs.readFileSync(file, "utf8");
+    const after = before.replace(
+      /BUNDLED_NODE_VERSION="\$\{BUNDLED_NODE_VERSION:-[^}]+}"/,
+      `BUNDLED_NODE_VERSION="\${BUNDLED_NODE_VERSION:-${target}}"`
+    );
+    if (after === before) {
+      console.error("Could not update BUNDLED_NODE_VERSION default in build-release.sh");
+      process.exit(1);
+    }
+    fs.writeFileSync(file, after);
+  ' "$PROJECT_DIR/scripts/build-release.sh" "$target_version"
+}
+
+apply_npm_updates() {
+  local mode="$1"
+  local dirs=("client" "server")
+  local dir
+  for dir in "${dirs[@]}"; do
+    if [ -f "$PROJECT_DIR/$dir/package.json" ]; then
+      echo "  Updating npm packages in $dir..."
+      if [ "$mode" = "security" ]; then
+        (cd "$PROJECT_DIR/$dir" && npm audit fix --omit=dev)
+      else
+        (cd "$PROJECT_DIR/$dir" && npm update --omit=dev)
+      fi
+    fi
+  done
+}
+
+update_docker_node_tags() {
+  local target_tag="$1"
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const targetTag = process.argv[2];
+    const before = fs.readFileSync(file, "utf8");
+    const after = before.replace(/^FROM node:[^\s]+/gm, `FROM node:${targetTag}`);
+    if (after === before) {
+      console.error("Could not update Dockerfile node FROM tags");
+      process.exit(1);
+    }
+    fs.writeFileSync(file, after);
+  ' "$PROJECT_DIR/Dockerfile" "$target_tag"
+}
+
+update_s6_overlay_version() {
+  local target_version="$1"
+  node -e '
+    const fs = require("fs");
+    const file = process.argv[1];
+    const target = process.argv[2];
+    const before = fs.readFileSync(file, "utf8");
+    const after = before.replace(/^ARG S6_OVERLAY_VERSION=.*/m, `ARG S6_OVERLAY_VERSION=${target}`);
+    if (after === before) {
+      console.error("Could not update ARG S6_OVERLAY_VERSION in Dockerfile");
+      process.exit(1);
+    }
+    fs.writeFileSync(file, after);
+  ' "$PROJECT_DIR/Dockerfile" "$target_version"
+}
+
+run_release_health_check() {
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would run release dependency/runtime health check."
+    return 0
+  fi
+
+  echo "Running release dependency/runtime health check..."
+  mkdir -p "$DIST_DIR"
+  node "$PROJECT_DIR/scripts/release-health-check.js" \
+    --bundled-node-version "$BUNDLED_NODE_VERSION" \
+    --json-out "$RELEASE_HEALTH_JSON"
+
+  local node_security package_security docker_security node_routine node_lts package_routine docker_routine check_failures
+  node_security=$(health_json 'r.summary.nodeSecurity')
+  package_security=$(health_json 'r.summary.packageSecurity')
+  docker_security=$(health_json 'r.summary.dockerSecurity')
+  node_routine=$(health_json 'r.summary.nodeRoutine')
+  node_lts=$(health_json 'r.summary.nodeLts')
+  package_routine=$(health_json 'r.summary.packageRoutine')
+  docker_routine=$(health_json 'r.summary.dockerRoutine')
+  check_failures=$(health_json 'r.summary.checkFailures')
+
+  if [ "$check_failures" = "true" ]; then
+    echo ""
+    echo "WARNING: one or more package health checks failed. Review the warnings above."
+    if ! confirm_yn "Proceed without complete package health data?" "n"; then
+      echo "Build stopped so package health checks can be corrected."
+      exit 1
+    fi
+  fi
+
+  if [ "$node_security" = "true" ] || [ "$package_security" = "true" ] || [ "$docker_security" = "true" ]; then
+    echo ""
+    echo "SECURITY UPDATE REQUIRED"
+    echo "The release health check found Node, package, or Docker security updates."
+    echo "CIDRella will not build a release with known security updates declined."
+    if confirm_yn "Apply available security updates now?" "y"; then
+      if [ "$node_security" = "true" ]; then
+        local node_target
+        node_target=$(health_json 'r.node.recommendedVersion')
+        echo "  Updating bundled Node default to v${node_target}..."
+        update_bundled_node_default "$node_target"
+      fi
+      if [ "$package_security" = "true" ]; then
+        apply_npm_updates security
+      fi
+      if [ "$docker_security" = "true" ]; then
+        local docker_security_tag
+        docker_security_tag=$(health_json '((r.docker.nodeImages.find(i => i.securityUpdateRequired) || {}).tag || "").replace(/^\\d+(?:\\.\\d+\\.\\d+)?/, (r.docker.nodeImages.find(i => i.securityUpdateRequired) || {}).latestSameMajor || "")')
+        if [ -n "$docker_security_tag" ]; then
+          echo "  Updating Dockerfile Node base tags to ${docker_security_tag}..."
+          update_docker_node_tags "$docker_security_tag"
+        fi
+      fi
+      echo ""
+      echo "Security updates were applied. Review and commit the changes, then rerun the release build."
+      exit 1
+    fi
+    echo "Build stopped because security updates were declined."
+    exit 1
+  fi
+
+  if [ "$node_routine" = "true" ] || [ "$node_lts" = "true" ] || [ "$package_routine" = "true" ] || [ "$docker_routine" = "true" ]; then
+    echo ""
+    echo "Routine updates are available."
+    echo "These are not blocking security findings. You may update now or continue this build."
+    if confirm_yn "Apply routine Node/package updates now?" "n"; then
+      if [ "$node_lts" = "true" ]; then
+        local lts_target
+        lts_target=$(health_json 'r.node.latestLtsVersion')
+        echo "  Updating bundled Node default to active LTS v${lts_target}..."
+        update_bundled_node_default "$lts_target"
+      elif [ "$node_routine" = "true" ]; then
+        local patch_target
+        patch_target=$(health_json 'r.node.latestSameMajor')
+        echo "  Updating bundled Node default to v${patch_target}..."
+        update_bundled_node_default "$patch_target"
+      fi
+      if [ "$package_routine" = "true" ]; then
+        apply_npm_updates routine
+      fi
+      if [ "$docker_routine" = "true" ]; then
+        local docker_target_tag s6_target
+        docker_target_tag=$(health_json '(r.docker.nodeImages.find(i => i.nodeLtsUpdateAvailable) || {}).fixTargetTag || ""')
+        if [ -n "$docker_target_tag" ]; then
+          echo "  Updating Dockerfile Node base tags to ${docker_target_tag}..."
+          update_docker_node_tags "$docker_target_tag"
+        fi
+        s6_target=$(health_json 'r.docker.s6Overlay.updateAvailable ? r.docker.s6Overlay.latest : ""')
+        if [ -n "$s6_target" ]; then
+          echo "  Updating Dockerfile s6-overlay to v${s6_target}..."
+          update_s6_overlay_version "$s6_target"
+        fi
+      fi
+      echo ""
+      echo "Routine updates were applied. Review and commit the changes, then rerun the release build."
+      exit 1
+    fi
+    echo "Continuing with current Node/package versions by developer choice."
+  fi
+}
 
 echo "=== CIDRella Release Builder ==="
 echo "Version: $VERSION"
@@ -260,6 +458,8 @@ if [ "$DRY_RUN" = true ]; then
   echo "[DRY RUN] Would build tarball, create tag $TAG, and publish GitHub release."
   echo ""
 fi
+
+run_release_health_check
 
 # Check minisign is installed (needed for all modes)
 if ! command -v minisign &>/dev/null; then

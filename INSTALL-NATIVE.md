@@ -119,8 +119,8 @@ sudo bash install.sh --version 0.1.0
 
 The installer is interactive and will:
 
-- Install Node.js 22+ (via NodeSource) if not present
-- Install system dependencies (dnsmasq, build-essential, nmap, arping, etc.)
+- Install system dependencies (dnsmasq, build-essential, arping, openssl, minisign, etc.)
+- Use the bundled Node 22 runtime shipped inside the release tarball
 - Detect and handle conflicts with systemd-resolved (port 53)
 - Handle existing dnsmasq installations (replace config, include config, or skip)
 - Create a `cidrella` system user and data directory at `/var/lib/cidrella`
@@ -136,7 +136,7 @@ Check the logs for the generated admin password:
 journalctl -u cidrella --no-pager | grep Password
 ```
 
-Open `https://<your-server-ip>:8443` and log in. A setup wizard will guide you through initial configuration.
+Open the Web UI URL printed by the installer and log in. Fresh installs use `https://<your-server-ip>` when 443/80 are free, otherwise `https://<your-server-ip>:8443`. A setup wizard will guide you through initial configuration.
 
 ## Updating
 
@@ -210,10 +210,10 @@ CIDRella requires the following ports:
 |------|----------|---------|
 | 53 | TCP/UDP | DNS |
 | 67 | UDP | DHCP server |
-| 8443 | TCP | Web UI (HTTPS) |
-| 8080 | TCP | HTTP redirect |
+| 443 or 8443 | TCP | Web UI (HTTPS) |
+| 80 or 8080 | TCP | HTTP redirect |
 
-Native installs bind directly to these ports.
+On a fresh install, CIDRella uses 443/80 when both ports are free. If either port is already in use, the installer keeps the fallback 8443/8080 ports. Existing installs keep their current systemd port override.
 
 ## Administration
 
