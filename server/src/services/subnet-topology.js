@@ -157,11 +157,13 @@ export function configureSubnet(db, subnet, parsed, fields) {
       const ipStart = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
       const ipEnd = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
       const gwLong = fields.gateway ? ipToLong(fields.gateway) : null;
+      const entries = [];
 
       for (let ipLong = ipStart; ipLong <= ipEnd; ipLong++) {
         const ipStatus = (gwLong !== null && ipLong === gwLong) ? 'locked' : 'available';
-        IpAddress.ensureAddress(db, subnet.id, longToIp(ipLong), ipStatus);
+        entries.push({ ip: longToIp(ipLong), status: ipStatus });
       }
+      IpAddress.ensureAddresses(db, subnet.id, entries);
     }
 
     DnsTopology.ensureForwardZone(db, fields.domain_name);

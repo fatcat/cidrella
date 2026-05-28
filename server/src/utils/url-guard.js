@@ -141,6 +141,11 @@ export async function requestPinnedOutboundUrl(rawUrl, {
       const req = mod.request(reqOpts, (resp) => {
         const chunks = [];
         let received = 0;
+        resp.on('error', () => {
+          // req.destroy() on an oversized response can also emit an error on
+          // the IncomingMessage. The request error handler resolves the
+          // promise; this listener prevents an unhandled EventEmitter error.
+        });
         resp.on('data', (chunk) => {
           received += chunk.length;
           if (received > maxBytes) {

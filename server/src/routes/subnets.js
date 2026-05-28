@@ -8,7 +8,7 @@ import {
   validateDisplayString
 } from '../utils/ip.js';
 import * as IpAddress from '../models/ip-address.js';
-import { applyIpView, enrichIpViewRows } from '../models/ip-view.js';
+import { enrichIpViewRows } from '../models/ip-view.js';
 import * as Range from '../models/range.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
@@ -1492,6 +1492,17 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     return (row.ip_display_status || row.status || 'available') === 'available';
   }
 
+  function enrichPersistedRows(rows, rangeLookup) {
+    enrichIpViewRows(db, rows);
+    for (const ip of rows) {
+      const ipLong = ipToLong(ip.ip_address);
+      const range = rangeForIpLong(rangeLookup, ipLong);
+      ip.range_type_id = range?.range_type_id || null;
+      ip.range_type_name = range?.range_type_name || null;
+      ip.range_type_color = range?.range_type_color || null;
+    }
+  }
+
   // ── Search mode: return only matching persisted IPs (no virtual fill) ──
   if (search) {
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
@@ -1523,20 +1534,11 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     // Load ranges
     const ranges = Range.listSubnetDetailRanges(db, req.params.id);
 
-    const rangeLookup = ranges.map(r => ({
-      ...r, startLong: ipToLong(r.start_ip), endLong: ipToLong(r.end_ip)
-    })).sort((a, b) => a.startLong - b.startLong);
-
     // Filter and enrich
-    enrichIpViewRows(db, allPersisted);
+    const rangeLookup = buildRangeLookup(ranges);
+    enrichPersistedRows(allPersisted, rangeLookup);
     const matched = [];
     for (const ip of allPersisted) {
-      const ipLong = ipToLong(ip.ip_address);
-      const range = rangeLookup.find(r => ipLong >= r.startLong && ipLong <= r.endLong);
-      ip.range_type_id = range?.range_type_id || null;
-      ip.range_type_name = range?.range_type_name || null;
-      ip.range_type_color = range?.range_type_color || null;
-      applyIpView(ip);
       if (!showAvailable && isAvailableIpRow(ip)) continue;
 
       if (ip.ip_address.includes(search) ||
@@ -1563,8 +1565,8 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     return res.json({ subnet, ips, ranges, totalIps: searchTotal, page, pageSize, totalPages: searchTotalPages, search });
   }
 
-  // ── Full-row mode: needed for non-IP sorting and suppressing available rows ──
-  if (!showAvailable || (reqSortField && reqSortField !== 'ip_address')) {
+  // ── Suppressed-available mode: return persisted occupied rows and synthesized locked rows only ──
+  if (!showAvailable) {
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
 
     const allPersisted = db.prepare(`
@@ -1596,36 +1598,24 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
 
     const rangeLookup = buildRangeLookup(ranges);
 
-    // Shared IP view + range enrichment
-    const persistedMap = new Map();
-    enrichIpViewRows(db, allPersisted);
-    for (const ip of allPersisted) {
-      const ipLong = ipToLong(ip.ip_address);
-      const range = rangeForIpLong(rangeLookup, ipLong);
-      ip.range_type_id = range?.range_type_id || null;
-      ip.range_type_name = range?.range_type_name || null;
-      ip.range_type_color = range?.range_type_color || null;
-      applyIpView(ip);
-      persistedMap.set(ipLong, ip);
-    }
+    enrichPersistedRows(allPersisted, rangeLookup);
+    const persistedByLong = new Map(allPersisted.map(ip => [ipToLong(ip.ip_address), ip]));
+    const displayRows = allPersisted.filter(row => !isAvailableIpRow(row));
 
     const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
-    const sortedRows = [];
-    for (let ipLong = parsed.networkLong; ipLong <= parsed.broadcastLong; ipLong++) {
-      const persisted = persistedMap.get(ipLong);
-      if (persisted) {
-        sortedRows.push(persisted);
-      } else {
-        sortedRows.push(makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong), gwLong));
+    const lockedLongs = new Set([parsed.networkLong, parsed.broadcastLong]);
+    if (gwLong !== null && gwLong >= parsed.networkLong && gwLong <= parsed.broadcastLong) {
+      lockedLongs.add(gwLong);
+    }
+
+    for (const ipLong of lockedLongs) {
+      if (!persistedByLong.has(ipLong)) {
+        const row = makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong), gwLong);
+        enrichIpViewRows(db, [row]);
+        if (!isAvailableIpRow(row)) displayRows.push(row);
       }
     }
 
-    enrichIpViewRows(db, sortedRows);
-    for (const ip of sortedRows) {
-      applyIpView(ip);
-    }
-
-    const displayRows = showAvailable ? sortedRows : sortedRows.filter(row => !isAvailableIpRow(row));
     sortIps(displayRows, reqSortField || 'ip_address', reqSortField ? reqSortOrder : 1);
 
     const sortedTotal = displayRows.length;
@@ -1633,6 +1623,61 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), sortedTotalPages);
     const start = (page - 1) * pageSize;
     const ips = displayRows.slice(start, start + pageSize);
+
+    return res.json({ subnet, ips, ranges, totalIps: sortedTotal, page, pageSize, totalPages: sortedTotalPages, sorted: true });
+  }
+
+  // ── Full-row mode: needed for non-IP sorting when available rows are visible ──
+  if (reqSortField && reqSortField !== 'ip_address') {
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+
+    const allPersisted = db.prepare(`
+      SELECT ip.*,
+        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
+        dl.expires_at as dhcp_expires_at,
+        CASE WHEN EXISTS (
+          SELECT 1
+          FROM dns_records r
+          JOIN dns_zones z ON z.id = r.zone_id
+          WHERE r.type = 'A'
+            AND r.enabled = 1
+            AND z.enabled = 1
+            AND z.type = 'forward'
+            AND r.value = ip.ip_address
+            AND COALESCE(r.source, 'manual') = 'manual'
+        ) THEN 1 ELSE 0 END as has_static_dns
+      FROM ip_addresses ip
+      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+      LEFT JOIN dhcp_leases dl
+        ON dl.subnet_id = ip.subnet_id
+       AND dl.ip_address = ip.ip_address
+       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+      WHERE ip.subnet_id = ?
+    `).all(req.params.id);
+
+    const ranges = Range.listSubnetDetailRanges(db, req.params.id);
+    const rangeLookup = buildRangeLookup(ranges);
+    const persistedMap = new Map();
+    enrichPersistedRows(allPersisted, rangeLookup);
+    for (const ip of allPersisted) {
+      persistedMap.set(ipToLong(ip.ip_address), ip);
+    }
+
+    const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
+    const sortedRows = [];
+    for (let ipLong = parsed.networkLong; ipLong <= parsed.broadcastLong; ipLong++) {
+      const persisted = persistedMap.get(ipLong);
+      sortedRows.push(persisted || makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong), gwLong));
+    }
+
+    enrichIpViewRows(db, sortedRows);
+    sortIps(sortedRows, reqSortField, reqSortOrder);
+
+    const sortedTotal = sortedRows.length;
+    const sortedTotalPages = Math.ceil(sortedTotal / pageSize) || 1;
+    const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), sortedTotalPages);
+    const start = (page - 1) * pageSize;
+    const ips = sortedRows.slice(start, start + pageSize);
 
     return res.json({ subnet, ips, ranges, totalIps: sortedTotal, page, pageSize, totalPages: sortedTotalPages, sorted: true });
   }
@@ -1722,9 +1767,6 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
 
   // Shared IP view for all rows on this page
   enrichIpViewRows(db, ips);
-  for (const ip of ips) {
-    applyIpView(ip);
-  }
 
   res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });
 }));

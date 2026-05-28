@@ -121,10 +121,11 @@ export function syncDhcpDnsRecords(db, leases) {
   }
 
   if (processedZoneIds.size > 0) {
-    const zoneIdList = [...processedZoneIds].join(',');
+    const zoneIds = [...processedZoneIds];
+    const placeholders = zoneIds.map(() => '?').join(',');
     const staleRecords = db.prepare(
-      `SELECT id FROM dns_records WHERE source IN ('dhcp', 'reservation') AND zone_id IN (${zoneIdList})`
-    ).all();
+      `SELECT id FROM dns_records WHERE source IN ('dhcp', 'reservation') AND zone_id IN (${placeholders})`
+    ).all(...zoneIds);
     for (const r of staleRecords) {
       if (!activeRecordIds.has(r.id)) {
         db.prepare('DELETE FROM dns_records WHERE id = ?').run(r.id);

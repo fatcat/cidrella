@@ -1,9 +1,12 @@
 export function upsertSetting(db, key, value) {
-  return db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)').run(key, String(value));
+  return upsertSettingWithConflict(db, key, value);
 }
 
 export function upsertSettings(db, pairs) {
-  const stmt = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+  const stmt = db.prepare(`
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+  `);
   const saveAll = db.transaction((items) => {
     for (const [key, value] of items) stmt.run(key, String(value));
   });

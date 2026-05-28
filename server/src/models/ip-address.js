@@ -462,6 +462,20 @@ export function ensureAddress(db, subnetId, ip, status = 'available') {
   ).run(subnetId, ip, status);
 }
 
+export function ensureAddresses(db, subnetId, entries) {
+  if (!Array.isArray(entries) || entries.length === 0) return { changes: 0 };
+
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO ip_addresses (subnet_id, ip_address, status) VALUES (?, ?, ?)'
+  );
+  let changes = 0;
+  for (const entry of entries) {
+    const result = insert.run(subnetId, entry.ip, entry.status || 'available');
+    changes += result.changes || 0;
+  }
+  return { changes };
+}
+
 /**
  * Clear stale DHCP assignment ownership while keeping recent last-seen
  * metadata for short-term display.

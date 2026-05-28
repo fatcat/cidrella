@@ -227,9 +227,9 @@ export function importRecords(db, zone, records) {
           existingByNameType.set(nameKey, { id: existing.id, value: r.value });
           results[r.type].updated++;
         } else {
-          insertRecord.run(zone.id, r.name, r.type, r.value);
+          const result = insertRecord.run(zone.id, r.name, r.type, r.value);
           existingExact.add(exactKey);
-          existingByNameType.set(nameKey, { value: r.value });
+          existingByNameType.set(nameKey, { id: result.lastInsertRowid, value: r.value });
           results[r.type].created++;
         }
         changed = true;
