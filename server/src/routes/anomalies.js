@@ -35,6 +35,7 @@ router.get('/active', requirePerm('analytics:read'), (req, res) => {
 // GET /api/anomalies/summary — dashboard summary
 router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
+  const acknowledgedThroughId = Math.max(0, parseInt(getSetting('anomaly_acknowledged_score_id'), 10) || 0);
 
   const active = db.prepare(
     `SELECT severity, COUNT(*) as count FROM anomaly_scores
@@ -43,6 +44,10 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   ).all();
 
   const totalActive = active.reduce((sum, r) => sum + r.count, 0);
+  const unacknowledgedActive = db.prepare(
+    `SELECT COUNT(*) as count FROM anomaly_scores
+     WHERE is_anomaly = 1 AND resolved = 0 AND id > ?`
+  ).get(acknowledgedThroughId)?.count || 0;
   const bySeverity = {};
   for (const r of active) {
     bySeverity[r.severity || 'unknown'] = r.count;
@@ -113,10 +118,31 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   res.json({
     enabled,
     total_active: totalActive,
+    unacknowledged_active: unacknowledgedActive,
+    acknowledged_through_id: acknowledgedThroughId,
     by_severity: bySeverity,
     clients_monitored: clientsMonitored,
     clients_learning: clientsLearning,
     daemon,
+  });
+});
+
+// POST /api/anomalies/acknowledge — clear the header notification counter.
+// This does not resolve or delete anomalies; it records the highest anomaly id
+// seen so older rows never contribute to the notification count again.
+router.post('/acknowledge', requirePerm('analytics:read'), (req, res) => {
+  const db = getDb();
+  const maxId = db.prepare(
+    `SELECT COALESCE(MAX(id), 0) as id FROM anomaly_scores WHERE is_anomaly = 1`
+  ).get()?.id || 0;
+
+  Setting.upsertSetting(db, 'anomaly_acknowledged_score_id', String(maxId));
+  audit(req.user.id, 'anomaly_counter_acknowledged', 'anomaly_scores', null, { through_id: maxId });
+
+  res.json({
+    ok: true,
+    acknowledged_through_id: maxId,
+    unacknowledged_active: 0,
   });
 });
 

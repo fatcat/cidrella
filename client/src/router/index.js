@@ -7,6 +7,14 @@ import NotFound from '../views/NotFound.vue';
 import AppLayout from '../components/AppLayout.vue';
 
 const routes = [
+  ...(import.meta.env.DEV ? [
+    {
+      path: '/dev/theme-lab',
+      name: 'ThemeLab',
+      component: () => import('../views/ThemeLab.vue'),
+      meta: { public: true }
+    }
+  ] : []),
   {
     path: '/login',
     name: 'Login',

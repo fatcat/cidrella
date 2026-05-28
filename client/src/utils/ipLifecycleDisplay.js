@@ -33,6 +33,11 @@ export const ADDRESS_TYPE_ROGUE = {
   className: 'type-rogue'
 };
 
+export const ADDRESS_TYPE_UNKNOWN = {
+  label: 'unknown',
+  className: 'type-unknown'
+};
+
 const ADDRESS_TYPE_BY_LABEL = {
   [ADDRESS_TYPE_STATIC_DNS.label]: ADDRESS_TYPE_STATIC_DNS,
   [ADDRESS_TYPE_DYNAMIC_DHCP.label]: ADDRESS_TYPE_DYNAMIC_DHCP,
@@ -59,7 +64,7 @@ export function ipLifecycleDisplay(data) {
     return {
       status: data.ip_display_status || (data.address_type ? 'in use' : 'available'),
       statusSeverity: data.ip_status_severity || (data.address_type ? 'danger' : 'secondary'),
-      addressType: data.address_type ? (ADDRESS_TYPE_BY_LABEL[data.address_type] || { label: data.address_type, className: 'type-static-dns' }) : null,
+      addressType: data.address_type ? (ADDRESS_TYPE_BY_LABEL[data.address_type] || { ...ADDRESS_TYPE_UNKNOWN, label: data.address_type }) : null,
       tooltip: data.address_type_tooltip || null
     };
   }

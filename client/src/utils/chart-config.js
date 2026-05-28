@@ -1,16 +1,39 @@
-// Shared chart constants for analytics pages.
-//
-// Doughnut palette is derived from --p-primary-color at render time:
-// a categorical hue-stepped palette (H, H+30, H+60, …) so that re-theming
-// the app re-colors the charts automatically. No hard-coded rainbow.
+// Shared chart constants for analytics pages. Colors are app-semantic CSS
+// tokens, not raw PrimeVue theme hues, so charts remain readable and
+// category identity stays stable across theme changes.
 
-// Fallback used only if the CSS variable is missing or unparseable.
+import { ref } from 'vue';
+
+export const chartThemeVersion = ref(0);
+
+function pokeChartTheme() {
+  chartThemeVersion.value += 1;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('ipam:theme-change', pokeChartTheme);
+  window.addEventListener('load', pokeChartTheme, { once: true });
+  requestAnimationFrame(() => requestAnimationFrame(pokeChartTheme));
+}
+
 export const CHART_COLORS = [
-  '#10b981', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444',
-  '#06b6d4', '#84cc16', '#f97316', '#6366f1', '#ec4899',
+  '#2563eb', '#16a34a', '#9333ea', '#d97706', '#dc2626',
+  '#0891b2', '#4f46e5', '#be123c', '#65a30d', '#0f766e',
 ];
 
-function parseColor(raw) {
+export function cssVar(name, fallback = '') {
+  chartThemeVersion.value;
+  if (typeof window === 'undefined' || !document?.documentElement) return fallback;
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+}
+
+export function cssNumber(name, fallback) {
+  const raw = cssVar(name, String(fallback));
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export function parseColor(raw) {
   if (!raw) return null;
   const s = raw.trim();
   if (s.startsWith('#')) {
@@ -24,32 +47,80 @@ function parseColor(raw) {
   return null;
 }
 
-function rgbToHsl(r, g, b) {
-  r /= 255; g /= 255; b /= 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  let h = 0, s = 0;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r)      h = (g - b) / d + (g < b ? 6 : 0);
-    else if (max === g) h = (b - r) / d + 2;
-    else                h = (r - g) / d + 4;
-    h *= 60;
-  }
-  return [h, s * 100, l * 100];
+function withAlpha(color, alpha) {
+  const rgb = parseColor(color);
+  if (!rgb) return color;
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
 }
 
-export function makeChartPalette(count = 10, step = 30) {
-  if (typeof window === 'undefined' || !document?.documentElement) return CHART_COLORS.slice(0, count);
-  const raw = getComputedStyle(document.documentElement).getPropertyValue('--p-primary-color');
-  const rgb = parseColor(raw);
-  if (!rgb) return CHART_COLORS.slice(0, count);
-  const [h, s, l] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
-  return Array.from({ length: count }, (_, i) => {
-    const hue = ((h + i * step) % 360 + 360) % 360;
-    return `hsl(${hue.toFixed(1)} ${s.toFixed(1)}% ${l.toFixed(1)}%)`;
-  });
+function luminance([r, g, b]) {
+  const convert = (channel) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const [lr, lg, lb] = [convert(r), convert(g), convert(b)];
+  return 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
+}
+
+export function contrastRatio(foreground, background) {
+  const fg = parseColor(foreground);
+  const bg = parseColor(background);
+  if (!fg || !bg) return null;
+  const light = Math.max(luminance(fg), luminance(bg));
+  const dark = Math.min(luminance(fg), luminance(bg));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+export function readableTextColor(background) {
+  const blackRatio = contrastRatio('#111827', background) || 0;
+  const whiteRatio = contrastRatio('#ffffff', background) || 0;
+  return blackRatio >= whiteRatio ? '#111827' : '#ffffff';
+}
+
+export function chartColor(indexOrName, fallback = null) {
+  if (typeof indexOrName === 'number') {
+    const index = ((indexOrName - 1) % CHART_COLORS.length + CHART_COLORS.length) % CHART_COLORS.length;
+    return cssVar(`--cid-chart-${index + 1}`, fallback || CHART_COLORS[index]);
+  }
+  const semantic = {
+    ok: ['--cid-status-ok', '#16a34a'],
+    warn: ['--cid-status-warn', '#d97706'],
+    err: ['--cid-status-err', '#dc2626'],
+    info: ['--cid-status-info', '#2563eb'],
+    muted: ['--cid-status-muted', '#64748b'],
+    track: ['--cid-gauge-track', 'rgba(100, 116, 139, 0.18)'],
+    text: ['--cid-chart-text', '#64748b'],
+    grid: ['--cid-chart-grid', 'rgba(100, 116, 139, 0.22)'],
+  };
+  const [token, defaultColor] = semantic[indexOrName] || [];
+  return token ? cssVar(token, fallback || defaultColor) : (fallback || CHART_COLORS[0]);
+}
+
+export function chartFill(indexOrName, alpha = 0.15) {
+  return withAlpha(chartColor(indexOrName), alpha);
+}
+
+export function makeChartPalette(count = 10) {
+  return Array.from({ length: count }, (_, i) => chartColor(i + 1));
+}
+
+export function lineDataset({ label, data, color = 1, fill = false, alpha = null, ...rest }) {
+  const borderColor = chartColor(color);
+  const fillAlpha = alpha ?? cssNumber('--cid-chart-line-fill-alpha', 0.15);
+  const borderWidth = cssNumber('--cid-chart-line-width', 2);
+  return {
+    label,
+    data,
+    borderColor,
+    backgroundColor: fill ? chartFill(color, fillAlpha) : undefined,
+    pointBackgroundColor: borderColor,
+    pointBorderColor: borderColor,
+    borderWidth,
+    fill,
+    tension: 0.3,
+    pointRadius: 0,
+    ...rest,
+  };
 }
 
 export const RANGE_OPTIONS = [
@@ -61,15 +132,29 @@ export const RANGE_OPTIONS = [
   { label: 'Last 1 week', value: '1w' },
 ];
 
+const LEGEND_LABELS = {
+  usePointStyle: true,
+  pointStyle: 'circle',
+  boxWidth: 18,
+  boxHeight: 8,
+  padding: 18,
+  color: () => chartColor('text'),
+};
+
 export const DOUGHNUT_OPTIONS = {
   responsive: true,
   maintainAspectRatio: false,
   cutout: '60%',
   plugins: {
-    legend: { position: 'right', labels: { usePointStyle: true, boxWidth: 8 } },
+    legend: {
+      position: 'right',
+      labels: {
+        ...LEGEND_LABELS,
+      },
+    },
     tooltip: { enabled: true },
     datalabels: {
-      color: '#fff',
+      color: (ctx) => readableTextColor(ctx.dataset.backgroundColor?.[ctx.dataIndex] || '#000000'),
       font: { weight: 'bold', size: 11 },
       formatter: (value, ctx) => {
         const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
@@ -90,12 +175,14 @@ export const DOUGHNUT_OPTIONS = {
  * @param {object}   [opts.extraScales]     - additional scale definitions merged into scales
  */
 export function makeLineOptions({ yLabel, tooltipCallback, stacked = false, extraScales } = {}) {
+  const textColor = chartColor('text');
+  const gridColor = chartColor('grid');
   return {
     responsive: true,
     maintainAspectRatio: false,
     interaction: { mode: 'index', intersect: false },
     plugins: {
-      legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 8 } },
+      legend: { position: 'top', labels: { ...LEGEND_LABELS, color: textColor } },
       tooltip: tooltipCallback
         ? { mode: 'index', intersect: false, callbacks: { label: tooltipCallback } }
         : { mode: 'index', intersect: false },
@@ -104,9 +191,11 @@ export function makeLineOptions({ yLabel, tooltipCallback, stacked = false, extr
       datalabels: { display: false },
     },
     scales: {
-      x: { ticks: { maxTicksLimit: 12, maxRotation: 0 }, grid: { display: false } },
+      x: { ticks: { maxTicksLimit: 12, maxRotation: 0, color: textColor }, grid: { display: false } },
       y: {
-        title: yLabel ? { display: true, text: yLabel } : undefined,
+        title: yLabel ? { display: true, text: yLabel, color: textColor } : undefined,
+        ticks: { color: textColor },
+        grid: { color: gridColor },
         beginAtZero: true,
         stacked,
       },
@@ -123,7 +212,8 @@ export function makeLineOptions({ yLabel, tooltipCallback, stacked = false, extr
  * @param {Function} [valueFn] - item → numeric value (defaults to r => Number(r.count))
  */
 export function makeDoughnutData(items, labelFn, valueFn = r => Number(r.count)) {
-  const palette = makeChartPalette(Math.max(items.length, 1));
+  const alpha = cssNumber('--cid-chart-doughnut-alpha', 0.62);
+  const palette = Array.from({ length: Math.max(items.length, 1) }, (_, i) => chartFill(i + 1, alpha));
   return {
     labels: items.map(labelFn),
     datasets: [{

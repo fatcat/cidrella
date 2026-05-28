@@ -260,6 +260,7 @@ import { Line } from 'vue-chartjs';
 import { useAnomalyStore } from '../stores/anomalies.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import '../assets/analytics-layout.css';
+import { chartColor, chartFill } from '../utils/chart-config.js';
 import { formatDateTime } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
 import { useConfirm } from 'primevue/useconfirm';
@@ -435,12 +436,12 @@ const clientChartData = computed(() => {
     datasets: [{
       label: 'Anomaly Score',
       data: sorted.map(r => r.anomaly_score),
-      borderColor: '#6366f1',
-      backgroundColor: 'rgba(99, 102, 241, 0.1)',
+      borderColor: chartColor(3),
+      backgroundColor: chartFill(3, 0.12),
       fill: true,
       tension: 0.3,
       pointRadius: sorted.map(r => r.is_anomaly ? 5 : 2),
-      pointBackgroundColor: sorted.map(r => r.is_anomaly ? '#ef4444' : '#6366f1'),
+      pointBackgroundColor: sorted.map(r => r.is_anomaly ? chartColor('err') : chartColor(3)),
     }],
   };
 });
@@ -449,7 +450,11 @@ const chartOptions = computed(() => ({
   responsive: true,
   maintainAspectRatio: false,
   scales: {
-    y: { title: { display: true, text: 'Score' } },
+    y: {
+      title: { display: true, text: 'Score', color: chartColor('text') },
+      ticks: { color: chartColor('text') },
+      grid: { color: chartColor('grid') },
+    },
     x: { display: false },
   },
   plugins: {

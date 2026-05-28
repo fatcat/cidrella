@@ -136,6 +136,54 @@ describe('DNS record ownership', () => {
     expect(getPtr(reverseZoneId, '26').value).toBe('renamed.example.test');
   });
 
+  it('clears the PTR when an A record is disabled', () => {
+    const forwardZoneId = createZone('example.test', 'forward');
+    const reverseZoneId = createZone('1.0.10.in-addr.arpa');
+    const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(forwardZoneId);
+    const { record } = DnsRecord.createRecord(db, zone, {
+      name: 'host',
+      type: 'A',
+      value: '10.0.1.25'
+    });
+
+    DnsRecord.updateRecord(db, zone, record, {
+      name: 'host',
+      type: 'A',
+      value: '10.0.1.25',
+      priority: null,
+      weight: null,
+      port: null,
+      ttl: null,
+      enabled: 0
+    });
+
+    expect(getPtr(reverseZoneId, '25').value).toBe('10.0.1.25');
+  });
+
+  it('clears the PTR when an A record changes to another type', () => {
+    const forwardZoneId = createZone('example.test', 'forward');
+    const reverseZoneId = createZone('1.0.10.in-addr.arpa');
+    const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(forwardZoneId);
+    const { record } = DnsRecord.createRecord(db, zone, {
+      name: 'alias',
+      type: 'A',
+      value: '10.0.1.25'
+    });
+
+    DnsRecord.updateRecord(db, zone, record, {
+      name: 'alias',
+      type: 'CNAME',
+      value: 'target.example.test',
+      priority: null,
+      weight: null,
+      port: null,
+      ttl: null,
+      enabled: 1
+    });
+
+    expect(getPtr(reverseZoneId, '25').value).toBe('10.0.1.25');
+  });
+
   it('deletes A records and clears their PTR record', () => {
     const forwardZoneId = createZone('example.test', 'forward');
     const reverseZoneId = createZone('1.0.10.in-addr.arpa');

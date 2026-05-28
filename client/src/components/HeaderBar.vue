@@ -13,10 +13,9 @@
       <nav class="header-nav">
         <router-link to="/analytics" class="nav-link" :class="{ active: route.path === '/analytics' }" data-track="nav-analytics">
           Analytics
-          <span v-if="anomalyCount > 0" class="anomaly-badge">{{ anomalyCount }}</span>
         </router-link>
         <router-link to="/networks" class="nav-link" :class="{ active: route.path === '/networks' || route.path === '/' }" data-track="nav-networks">IP Management</router-link>
-        <router-link to="/system" class="nav-link" :class="{ active: route.path === '/system' }" data-track="nav-system">System</router-link>
+        <router-link to="/system" class="nav-link" :class="{ active: route.path === '/system' }" data-track="nav-system">Settings</router-link>
       </nav>
     </div>
 
@@ -99,7 +98,8 @@
           <span class="status-popover-label">Sidecar</span>
           <span class="status-popover-val">{{ anomalyStatusLabel }}</span>
         </div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">Active anomalies</span><span class="status-popover-val">{{ anomalyCount }}</span></div>
+        <div class="status-popover-row"><span></span><span class="status-popover-label">New anomalies</span><span class="status-popover-val">{{ anomalyCount }}</span></div>
+        <div class="status-popover-row"><span></span><span class="status-popover-label">Active anomalies</span><span class="status-popover-val">{{ anomalySummary?.total_active ?? 0 }}</span></div>
         <div class="status-popover-row"><span></span><span class="status-popover-label">Clients monitored</span><span class="status-popover-val">{{ anomalySummary?.clients_monitored ?? '—' }}</span></div>
         <div class="status-popover-row"><span></span><span class="status-popover-label">Clients learning</span><span class="status-popover-val">{{ anomalySummary?.clients_learning ?? '—' }}</span></div>
         <div class="status-popover-row"><span></span><span class="status-popover-label">Last scored</span><span class="status-popover-val">{{ timeAgo(anomalySummary?.daemon?.last_score) }}</span></div>
@@ -115,6 +115,11 @@
         </div>
         <div v-if="anomalySummary?.daemon?.rss_mb != null" class="status-popover-row">
           <span></span><span class="status-popover-label">Sidecar RAM</span><span class="status-popover-val">{{ Number(anomalySummary.daemon.rss_mb).toFixed(0) }} MB</span>
+        </div>
+        <div v-if="anomalyCount > 0" class="status-popover-actions">
+          <button class="status-popover-action" data-track="header-anomaly-clear" :disabled="clearingAnomalies" @click="clearAnomalyCounter">
+            Clear counter
+          </button>
         </div>
       </div>
     </Popover>
@@ -176,6 +181,7 @@ const anomalySummary = ref(null);
 const activeScans = ref([]);
 const nextScanTime = ref(null);
 const updateInfo = ref(null);
+const clearingAnomalies = ref(false);
 let pollInterval = null;
 let scanPollInterval = null;
 
@@ -323,7 +329,7 @@ const nextScanTimeOnly = computed(() => {
   return formatTimeOnly(nextScanTime.value);
 });
 
-const anomalyCount = computed(() => anomalySummary.value?.total_active || 0);
+const anomalyCount = computed(() => anomalySummary.value?.unacknowledged_active || 0);
 
 const anomalyStatus = computed(() => {
   const summary = anomalySummary.value;
@@ -428,6 +434,21 @@ async function fetchAnomalySummary() {
   } catch { /* ignore */ }
 }
 
+async function clearAnomalyCounter() {
+  if (clearingAnomalies.value) return;
+  clearingAnomalies.value = true;
+  try {
+    const res = await api.post('/anomalies/acknowledge');
+    anomalySummary.value = {
+      ...(anomalySummary.value || {}),
+      unacknowledged_active: 0,
+      acknowledged_through_id: res.data.acknowledged_through_id || anomalySummary.value?.acknowledged_through_id || 0,
+    };
+  } finally {
+    clearingAnomalies.value = false;
+  }
+}
+
 async function fetchUpdateInfo() {
   try {
     const res = await api.get('/version');
@@ -504,22 +525,6 @@ onUnmounted(() => {
   color: var(--p-primary-color);
   background: color-mix(in srgb, var(--p-primary-color) 10%, transparent);
   font-weight: 600;
-}
-
-.anomaly-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--p-red-500);
-  color: white;
-  font-size: var(--app-fs-xs);
-  font-weight: 700;
-  margin-left: 4px;
-  line-height: 1;
 }
 
 .header-status {
@@ -799,6 +804,32 @@ onUnmounted(() => {
   letter-spacing: 0.08em;
   color: var(--p-text-muted-color);
   font-family: monospace;
+}
+.status-popover-actions {
+  margin-top: 4px;
+  padding: 8px;
+  border-top: 1px solid var(--p-surface-border);
+  display: flex;
+  justify-content: flex-end;
+}
+.status-popover-action {
+  border: 1px solid var(--p-surface-border);
+  border-radius: 4px;
+  background: var(--p-surface-card);
+  color: var(--p-text-color);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--app-fs-sm);
+  font-weight: 600;
+  padding: 5px 8px;
+}
+.status-popover-action:hover:not(:disabled) {
+  background: var(--p-surface-ground);
+  border-color: color-mix(in srgb, var(--p-primary-color) 35%, var(--p-surface-border));
+}
+.status-popover-action:disabled {
+  cursor: default;
+  opacity: 0.65;
 }
 
 /* ── Responsive collapse ── */

@@ -129,6 +129,37 @@ describe('GET /api/subnets/:id', () => {
   });
 });
 
+describe('POST /api/subnets/:id/configure', () => {
+  it('creates reverse zones without pre-populating empty PTR placeholders', async () => {
+    const createRes = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '192.168.50.0/24', name: 'Reverse No Placeholders' });
+    expect(createRes.status).toBe(201);
+
+    const configureRes = await request(app)
+      .post(`/api/subnets/${createRes.body.id}/configure`)
+      .send({
+        name: 'Reverse No Placeholders',
+        create_reverse_dns: true,
+        create_dhcp_scope: false
+      });
+    expect(configureRes.status).toBe(200);
+    expect(configureRes.body.has_reverse_dns).toBe(1);
+
+    const zone = db.prepare(`
+      SELECT id FROM dns_zones
+      WHERE name = '50.168.192.in-addr.arpa' AND type = 'reverse'
+    `).get();
+    expect(zone).toBeTruthy();
+
+    const ptrCount = db.prepare(`
+      SELECT COUNT(*) AS count FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR'
+    `).get(zone.id).count;
+    expect(ptrCount).toBe(0);
+  });
+});
+
 describe('GET /api/subnets/:id/ips', () => {
   it('classifies online unbacked DHCP lease history as rogue', async () => {
     const createRes = await request(app)

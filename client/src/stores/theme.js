@@ -1,12 +1,11 @@
 import { defineStore } from 'pinia';
 import { ref, computed } from 'vue';
 
-// Each theme: { id, name, group: 'light'|'dark', customPrimary, customSurface }
+// Each theme: { id, name, group: 'light'|'dark', tier: 'curated'|'experimental', customPrimary, customSurface }
 //
-// Five palette families, each providing both a light and dark variant
-// that share the SAME customPrimary + customSurface — PrimeVue Aura picks
-// different shade indices based on the .p-dark class, so one palette
-// naturally serves both modes.
+// Palette families provide customPrimary + customSurface ramps. PrimeVue Aura
+// picks different shade indices based on the .p-dark class, so most palettes
+// can naturally serve both modes.
 //
 // The palettes are inspired by their namesake editor/design themes
 // (Catppuccin, Rosé Pine, Gruvbox, One, Nord) but the surface ramps have
@@ -173,21 +172,15 @@ const palettes = {
 };
 
 export const themes = [
-  // ── Light ──
-  { id: 'light-catppuccin', name: 'Catppuccin', group: 'light', customPrimary: palettes.catppuccin.primary, customSurface: palettes.catppuccin.surface },
-  { id: 'light-rose-pine',  name: 'Rosé Pine',  group: 'light', customPrimary: palettes.rosePine.primary,   customSurface: palettes.rosePine.surface },
-  { id: 'light-gruvbox',    name: 'Gruvbox',    group: 'light', customPrimary: palettes.gruvbox.primary,    customSurface: palettes.gruvbox.surface },
-  { id: 'light-one',        name: 'One',        group: 'light', customPrimary: palettes.one.primary,        customSurface: palettes.one.surface },
-  { id: 'light-starry-night', name: 'Starry Night', group: 'light', customPrimary: palettes.starryNightLight.primary, customSurface: palettes.starryNightLight.surface },
-  { id: 'light-tokyo-day',  name: 'Tokyo Day',  group: 'light', customPrimary: palettes.tokyoDay.primary,   customSurface: palettes.tokyoDay.surface },
+  // ── Curated ──
+  { id: 'dark-nord',       name: 'Nord',      group: 'dark',  tier: 'curated', customPrimary: palettes.nord.primary,     customSurface: palettes.nord.surface },
+  { id: 'dark-one',        name: 'One',       group: 'dark',  tier: 'curated', customPrimary: palettes.one.primary,      customSurface: palettes.one.surface },
+  { id: 'light-one',       name: 'One',       group: 'light', tier: 'curated', customPrimary: palettes.one.primary,      customSurface: palettes.one.surface },
+  { id: 'light-tokyo-day', name: 'Tokyo Day', group: 'light', tier: 'curated', customPrimary: palettes.tokyoDay.primary, customSurface: palettes.tokyoDay.surface },
 
-  // ── Dark ──
-  { id: 'dark-catppuccin',  name: 'Catppuccin', group: 'dark',  customPrimary: palettes.catppuccin.primary, customSurface: palettes.catppuccin.surface },
-  { id: 'dark-rose-pine',   name: 'Rosé Pine',  group: 'dark',  customPrimary: palettes.rosePine.primary,   customSurface: palettes.rosePine.surface },
-  { id: 'dark-gruvbox',     name: 'Gruvbox',    group: 'dark',  customPrimary: palettes.gruvbox.primary,    customSurface: palettes.gruvbox.surface },
-  { id: 'dark-one',         name: 'One',        group: 'dark',  customPrimary: palettes.one.primary,        customSurface: palettes.one.surface },
-  { id: 'dark-starry-night', name: 'Starry Night', group: 'dark', customPrimary: palettes.starryNight.primary, customSurface: palettes.starryNight.surface },
-  { id: 'dark-nord',        name: 'Nord',       group: 'dark',  customPrimary: palettes.nord.primary,       customSurface: palettes.nord.surface },
+  // ── Experimental ──
+  { id: 'dark-catppuccin',  name: 'Catppuccin', group: 'dark',  tier: 'experimental', customPrimary: palettes.catppuccin.primary, customSurface: palettes.catppuccin.surface },
+  { id: 'light-catppuccin', name: 'Catppuccin', group: 'light', tier: 'experimental', customPrimary: palettes.catppuccin.primary, customSurface: palettes.catppuccin.surface },
 ];
 
 // Preview swatches for the Themes picker — each uses the palette's
@@ -233,6 +226,7 @@ export const useThemeStore = defineStore('theme', () => {
     } else {
       document.documentElement.classList.remove('p-dark');
     }
+    document.documentElement.setAttribute('data-cidrella-theme', theme.id);
 
     window.dispatchEvent(new CustomEvent('ipam:theme-change', { detail: theme }));
   }

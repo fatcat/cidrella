@@ -21,13 +21,13 @@
 .stat-value { font-size: var(--app-fs-2xl); font-weight: 700; font-family: monospace; display: flex; align-items: center; gap: 0.4rem; }
 .stat-label { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); text-transform: uppercase; letter-spacing: 0.08em; }
 
-.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--p-green-500); display: inline-block; }
-.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--p-red-500); display: inline-block; }
-.indicator-warn { width: 8px; height: 8px; border-radius: 50%; background: var(--p-orange-500); display: inline-block; }
+.indicator-on { width: 8px; height: 8px; border-radius: 50%; background: var(--cid-status-ok); display: inline-block; }
+.indicator-off { width: 8px; height: 8px; border-radius: 50%; background: var(--cid-status-err); display: inline-block; }
+.indicator-warn { width: 8px; height: 8px; border-radius: 50%; background: var(--cid-status-warn); display: inline-block; }
 .stat-sublabel { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); font-style: italic; margin-top: 2px; }
 
-.text-danger { color: var(--p-red-500); }
-.text-warning { color: var(--p-orange-500); }
+.text-danger { color: var(--cid-status-err); }
+.text-warning { color: var(--cid-status-warn); }
 
 .dashboard-content {
   background: var(--p-surface-card);

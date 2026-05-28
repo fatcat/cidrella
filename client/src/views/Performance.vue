@@ -112,7 +112,7 @@ import {
 } from 'chart.js';
 import { Line, Doughnut } from 'vue-chartjs';
 import { useDashboardStore } from '../stores/dashboard.js';
-import { RANGE_OPTIONS, makeLineOptions } from '../utils/chart-config.js';
+import { RANGE_OPTIONS, chartColor, lineDataset, makeLineOptions } from '../utils/chart-config.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import LineChartCard from '../components/LineChartCard.vue';
 import '../assets/analytics-layout.css';
@@ -169,18 +169,10 @@ const dnsRequestsData = computed(() => {
     labels: ts.map(r => formatTs(r.ts)),
     datasets: [
       {
-        label: 'DNS Queries',
-        data: ts.map(r => r.dns_queries),
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59,130,246,0.15)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'DNS Queries', data: ts.map(r => r.dns_queries), color: 1, fill: true }),
       },
       {
-        label: 'DHCP Requests',
-        data: ts.map(r => r.dhcp_requests),
-        borderColor: '#10b981',
-        backgroundColor: 'rgba(16,185,129,0.1)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'DHCP Requests', data: ts.map(r => r.dhcp_requests), color: 2, fill: true, alpha: 0.12 }),
       },
     ],
   };
@@ -196,20 +188,13 @@ const latencyData = computed(() => {
     labels: pp.map(r => formatTs(r.ts)),
     datasets: [
       {
-        label: 'Avg',
-        data: pp.map(r => (r.latency_avg || 0) / 1000),
-        borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'Avg', data: pp.map(r => (r.latency_avg || 0) / 1000), color: 1 }),
       },
       {
-        label: 'P95',
-        data: pp.map(r => (r.latency_p95 || 0) / 1000),
-        borderColor: '#f59e0b', fill: false, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'P95', data: pp.map(r => (r.latency_p95 || 0) / 1000), color: 'warn' }),
       },
       {
-        label: 'Max',
-        data: pp.map(r => (r.latency_max || 0) / 1000),
-        borderColor: '#ef4444',
-        fill: false, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'Max', data: pp.map(r => (r.latency_max || 0) / 1000), color: 'err' }),
       },
     ],
   };
@@ -225,16 +210,10 @@ const throughputData = computed(() => {
     labels: pp.map(r => formatTs(r.ts)),
     datasets: [
       {
-        label: 'Queries / min',
-        data: pp.map(r => r.query_count || 0),
-        borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.15)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'Queries / min', data: pp.map(r => r.query_count || 0), color: 1, fill: true }),
       },
       {
-        label: 'Timeouts',
-        data: pp.map(r => r.timeouts || 0),
-        borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.1)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'Timeouts', data: pp.map(r => r.timeouts || 0), color: 'err', fill: true, alpha: 0.12 }),
       },
     ],
   };
@@ -250,19 +229,13 @@ const resourceData = computed(() => {
     labels: pp.map(r => formatTs(r.ts)),
     datasets: [
       {
-        label: 'RSS (MB)',
-        data: pp.map(r => r.rss_mb),
-        borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'y',
+        ...lineDataset({ label: 'RSS (MB)', data: pp.map(r => r.rss_mb), color: 1, yAxisID: 'y' }),
       },
       {
-        label: 'Heap (MB)',
-        data: pp.map(r => r.heap_mb),
-        borderColor: '#10b981', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'y',
+        ...lineDataset({ label: 'Heap (MB)', data: pp.map(r => r.heap_mb), color: 2, yAxisID: 'y' }),
       },
       {
-        label: 'CPU %',
-        data: pp.map(r => normalizeProcessCpuPercent(r)),
-        borderColor: '#f59e0b', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'y1',
+        ...lineDataset({ label: 'CPU %', data: pp.map(r => normalizeProcessCpuPercent(r)), color: 7, yAxisID: 'y1' }),
       },
     ],
   };
@@ -271,7 +244,13 @@ const resourceData = computed(() => {
 const resourceOptions = makeLineOptions({
   yLabel: 'MB',
   extraScales: {
-    y1: { position: 'right', beginAtZero: true, title: { display: true, text: 'CPU %' }, grid: { drawOnChartArea: false } },
+    y1: {
+      position: 'right',
+      beginAtZero: true,
+      title: { display: true, text: 'CPU %', color: chartColor('text') },
+      ticks: { color: chartColor('text') },
+      grid: { drawOnChartArea: false },
+    },
   },
 });
 
@@ -299,7 +278,7 @@ const cpuGaugeData = computed(() => {
     labels: ['CPU', ''],
     datasets: [{
       data: [clamped, 100 - clamped],
-      backgroundColor: [clamped > 80 ? '#ef4444' : clamped > 50 ? '#f59e0b' : '#10b981', 'rgba(255,255,255,0.08)'],
+      backgroundColor: [clamped > 80 ? chartColor('err') : clamped > 50 ? chartColor('warn') : chartColor('ok'), chartColor('track')],
       borderWidth: 0,
     }],
   };
@@ -313,7 +292,7 @@ const memGaugeData = computed(() => {
     labels: ['Memory', ''],
     datasets: [{
       data: [pct, 100 - pct],
-      backgroundColor: [pct > 80 ? '#ef4444' : pct > 50 ? '#f59e0b' : '#3b82f6', 'rgba(255,255,255,0.08)'],
+      backgroundColor: [pct > 80 ? chartColor('err') : pct > 50 ? chartColor('warn') : chartColor(1), chartColor('track')],
       borderWidth: 0,
     }],
   };
@@ -343,16 +322,10 @@ const cacheData = computed(() => {
     labels: pp.map(r => formatTs(r.ts)),
     datasets: [
       {
-        label: 'Hits',
-        data: pp.map(r => r.cache_hits || 0),
-        borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.15)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'Hits', data: pp.map(r => r.cache_hits || 0), color: 'ok', fill: true }),
       },
       {
-        label: 'Misses',
-        data: pp.map(r => r.cache_misses || 0),
-        borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'Misses', data: pp.map(r => r.cache_misses || 0), color: 'warn', fill: true }),
       },
     ],
   };
@@ -368,16 +341,10 @@ const memoryData = computed(() => {
     labels: pp.map(r => formatTs(r.ts)),
     datasets: [
       {
-        label: 'RSS',
-        data: pp.map(r => r.rss_mb),
-        borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.15)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'RSS', data: pp.map(r => r.rss_mb), color: 1, fill: true }),
       },
       {
-        label: 'Heap',
-        data: pp.map(r => r.heap_mb),
-        borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.15)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'Heap', data: pp.map(r => r.heap_mb), color: 2, fill: true }),
       },
     ],
   };
@@ -393,10 +360,7 @@ const cpuData = computed(() => {
     labels: pp.map(r => formatTs(r.ts)),
     datasets: [
       {
-        label: 'CPU %',
-        data: pp.map(r => normalizeProcessCpuPercent(r)),
-        borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)',
-        fill: true, tension: 0.3, pointRadius: 0,
+        ...lineDataset({ label: 'CPU %', data: pp.map(r => normalizeProcessCpuPercent(r)), color: 7, fill: true }),
       },
     ],
   };

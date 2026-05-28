@@ -617,7 +617,6 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   // orphan entry pointing at the old hostname on the IP.
   if (newType === 'A' && zone.type === 'forward') {
     if (record.value !== newValue) {
-      clearPtrForIp(db, record.value);
       clearDnsFromIp(db, record.name, record.value, zone.name);
     } else if (record.name !== newName) {
       // Name-only change on the same IP: the ip_addresses row still has the

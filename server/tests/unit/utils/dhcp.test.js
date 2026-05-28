@@ -10,6 +10,7 @@ let tmpDir;
 let subnetId;
 let scopeId;
 let zoneId;
+let reverseZoneId;
 let syncDhcpDnsRecords;
 
 beforeAll(async () => {
@@ -38,6 +39,8 @@ beforeAll(async () => {
 
   const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
   zoneId = zone.lastInsertRowid;
+  reverseZoneId = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('1.0.10.in-addr.arpa', 'reverse', 1)")
+    .run().lastInsertRowid;
 });
 
 afterAll(() => {
@@ -72,6 +75,13 @@ describe('syncDhcpDnsRecords', () => {
       source: 'dhcp',
       enabled: 1
     });
+
+    const ptr = db.prepare(`
+      SELECT value FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '50'
+    `).get(reverseZoneId);
+
+    expect(ptr.value).toBe('lease-host.example.test');
   });
 
   it('keeps reservation hostname over dynamic lease hostname for the same IP', () => {
@@ -98,5 +108,65 @@ describe('syncDhcpDnsRecords', () => {
       value: '10.0.1.51',
       source: 'reservation'
     });
+
+    const ptr = db.prepare(`
+      SELECT value FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '51'
+    `).get(reverseZoneId);
+
+    expect(ptr.value).toBe('reserved-host.example.test');
+  });
+
+  it('updates the PTR record when a dynamic lease hostname changes', () => {
+    syncDhcpDnsRecords(db, [{
+      ip: '10.0.1.52',
+      mac: 'aa:bb:cc:dd:ee:52',
+      hostname: 'old-host',
+      subnetId
+    }]);
+
+    syncDhcpDnsRecords(db, [{
+      ip: '10.0.1.52',
+      mac: 'aa:bb:cc:dd:ee:52',
+      hostname: 'new-host',
+      subnetId
+    }]);
+
+    const records = db.prepare(`
+      SELECT name, value, source
+      FROM dns_records
+      WHERE zone_id = ? AND type = 'A' AND value = '10.0.1.52'
+      ORDER BY name
+    `).all(zoneId);
+    const ptr = db.prepare(`
+      SELECT value FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '52'
+    `).get(reverseZoneId);
+
+    expect(records).toEqual([{ name: 'new-host', value: '10.0.1.52', source: 'dhcp' }]);
+    expect(ptr.value).toBe('new-host.example.test');
+  });
+
+  it('clears the PTR record when a dynamic lease DNS record is removed', () => {
+    syncDhcpDnsRecords(db, [{
+      ip: '10.0.1.53',
+      mac: 'aa:bb:cc:dd:ee:53',
+      hostname: 'lease-host',
+      subnetId
+    }]);
+
+    syncDhcpDnsRecords(db, []);
+
+    const record = db.prepare(`
+      SELECT id FROM dns_records
+      WHERE zone_id = ? AND type = 'A' AND value = '10.0.1.53'
+    `).get(zoneId);
+    const ptr = db.prepare(`
+      SELECT value FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '53'
+    `).get(reverseZoneId);
+
+    expect(record).toBeUndefined();
+    expect(ptr.value).toBe('10.0.1.53');
   });
 });

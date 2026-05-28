@@ -4,10 +4,9 @@
       <nav class="ana-nav">
         <a v-for="item in menuItems" :key="item.tabIndex"
            class="ana-nav-item" :class="{ active: activeTab === item.tabIndex }"
-           :data-track="item.dataTrack" @click="activeTab = item.tabIndex">
+          :data-track="item.dataTrack" @click="activeTab = item.tabIndex">
           <i :class="item.icon"></i>
           <span>{{ item.label }}</span>
-          <span v-if="item.badge" class="nav-badge">{{ item.badge }}</span>
         </a>
       </nav>
     </aside>
@@ -25,8 +24,7 @@
 </template>
 
 <script setup>
-import { ref, watch, defineAsyncComponent, onMounted, onUnmounted } from 'vue';
-import api from '../api/client.js';
+import { ref, watch, defineAsyncComponent } from 'vue';
 
 const AsyncLoader = defineAsyncComponent(() => import('../components/AsyncLoader.vue'));
 
@@ -43,13 +41,11 @@ const PerformancePanel = asyncTab(() => import('./Performance.vue'));
 const IntelligencePanel = asyncTab(() => import('./Intelligence.vue'));
 const AnomaliesPanel = asyncTab(() => import('./Anomalies.vue'));
 
-const anomalyCount = ref(0);
-
 const menuItems = [
   { tabIndex: 0, label: 'Dashboard', icon: 'pi pi-objects-column', dataTrack: 'ana-tab-dashboard' },
   { tabIndex: 1, label: 'Performance', icon: 'pi pi-chart-bar', dataTrack: 'ana-tab-performance' },
   { tabIndex: 2, label: 'Intelligence', icon: 'pi pi-microchip-ai', dataTrack: 'ana-tab-intelligence' },
-  { tabIndex: 3, label: 'Anomalies', icon: 'pi pi-exclamation-triangle', dataTrack: 'ana-tab-anomalies', get badge() { return anomalyCount.value > 0 ? anomalyCount.value : null; } },
+  { tabIndex: 3, label: 'Anomalies', icon: 'pi pi-exclamation-triangle', dataTrack: 'ana-tab-anomalies' },
 ];
 
 const activeTab = ref(parseInt(localStorage.getItem('cidrella_analytics_tab') || '0', 10));
@@ -58,23 +54,6 @@ watch(activeTab, (val) => {
   localStorage.setItem('cidrella_analytics_tab', String(val));
 });
 
-async function fetchAnomalyCount() {
-  try {
-    const res = await api.get('/anomalies/summary');
-    anomalyCount.value = res.data.total_active || 0;
-  } catch { /* ignore */ }
-}
-
-let pollInterval = null;
-
-onMounted(() => {
-  fetchAnomalyCount();
-  pollInterval = setInterval(fetchAnomalyCount, 60_000);
-});
-
-onUnmounted(() => {
-  if (pollInterval) clearInterval(pollInterval);
-});
 </script>
 
 <style scoped>
@@ -107,7 +86,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
-  font-size: var(--app-fs-sm);
+  font-size: var(--app-fs-base);
   color: var(--p-text-color);
   text-decoration: none;
   cursor: pointer;
@@ -131,22 +110,6 @@ onUnmounted(() => {
   width: 1.25rem;
   text-align: center;
   font-size: 0.9rem;
-}
-
-.nav-badge {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--p-red-500);
-  color: white;
-  font-size: 0.65rem;
-  font-weight: 700;
-  line-height: 1;
 }
 
 .ana-content {

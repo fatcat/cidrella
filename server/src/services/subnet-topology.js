@@ -150,7 +150,7 @@ export function configureSubnet(db, subnet, parsed, fields) {
     createSystemRanges(db, subnet.id, parsed, fields.gateway);
 
     if (fields.create_reverse_dns) {
-      DnsTopology.createReverseZonesForSubnet(db, subnet, parsed);
+      DnsTopology.createReverseZonesForSubnet(db, subnet);
     }
 
     if (parsed.prefix >= 20) {

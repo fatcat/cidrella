@@ -58,8 +58,8 @@ window.addEventListener('ipam:theme-change', (e) => {
     semantic: {
       primary,
       colorScheme: {
-        light: { surface: { 0: '#ffffff', ...surface } },
-        dark: { surface: { 0: '#ffffff', ...surface } },
+        light: { surface },
+        dark: { surface },
       }
     }
   });

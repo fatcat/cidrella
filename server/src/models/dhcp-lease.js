@@ -1,5 +1,6 @@
 import { syncLeasesToIps } from '../utils/ip-sync.js';
 import { queueRegen } from '../utils/after-commit.js';
+import { clearPtrForARecord, syncPtrForARecord } from './dns-record.js';
 
 export function replaceLeases(db, leases) {
   const replace = db.transaction(() => {
@@ -86,6 +87,17 @@ export function syncDhcpDnsRecords(db, leases) {
   const updateSource = db.prepare(`
     UPDATE dns_records SET source = ?, updated_at = datetime('now') WHERE id = ?
   `);
+  const syncPtr = (zone, recordName, ip) => {
+    const result = syncPtrForARecord(db, recordName, ip, zone.name);
+    if (result?.conflict) {
+      console.warn(
+        `Skipping DHCP PTR sync for ${ip}: ${result.conflict.existing} already owns ${result.conflict.reverseZone}`
+      );
+      return false;
+    }
+    return Boolean(result?.updated);
+  };
+  const activeIps = new Set();
 
   for (const l of entries) {
     if (!l.hostname || !l.subnetId) continue;
@@ -108,14 +120,19 @@ export function syncDhcpDnsRecords(db, leases) {
       if (existing.source === 'dhcp' || existing.source === 'reservation') {
         if (existing.source !== (l.source || 'dhcp')) {
           updateSource.run(l.source || 'dhcp', existing.id);
+          configChanged = true;
         } else {
           touchDhcp.run(existing.id);
         }
         activeRecordIds.add(existing.id);
+        activeIps.add(l.ip);
+        if (syncPtr(zone, recordName, l.ip)) configChanged = true;
       }
     } else {
       const result = insertDhcp.run(zone.id, recordName, l.ip, l.source || 'dhcp');
       activeRecordIds.add(result.lastInsertRowid);
+      activeIps.add(l.ip);
+      syncPtr(zone, recordName, l.ip);
       configChanged = true;
     }
   }
@@ -124,10 +141,16 @@ export function syncDhcpDnsRecords(db, leases) {
     const zoneIds = [...processedZoneIds];
     const placeholders = zoneIds.map(() => '?').join(',');
     const staleRecords = db.prepare(
-      `SELECT id FROM dns_records WHERE source IN ('dhcp', 'reservation') AND zone_id IN (${placeholders})`
+      `SELECT r.id, r.name, r.value, z.name AS zone_name
+       FROM dns_records r
+       JOIN dns_zones z ON z.id = r.zone_id
+       WHERE r.source IN ('dhcp', 'reservation') AND r.zone_id IN (${placeholders})`
     ).all(...zoneIds);
     for (const r of staleRecords) {
       if (!activeRecordIds.has(r.id)) {
+        if (!activeIps.has(r.value)) {
+          clearPtrForARecord(db, r.name, r.value, r.zone_name);
+        }
         db.prepare('DELETE FROM dns_records WHERE id = ?').run(r.id);
         configChanged = true;
       }

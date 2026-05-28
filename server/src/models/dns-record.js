@@ -98,6 +98,22 @@ export function clearPtrForIp(db, ip) {
   return setPtrForIp(db, ip, ip, { enabledOnly: true });
 }
 
+export function clearPtrForARecord(db, recordName, ip, forwardZoneName) {
+  const match = findReversePtrLocation(db, ip, { enabledOnly: true });
+  if (!match) return { updated: false };
+
+  const fqdn = fqdnForRecordName(recordName, forwardZoneName).toLowerCase();
+  const existing = db.prepare(
+    "SELECT value FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?"
+  ).get(match.zone.id, match.ptrName);
+
+  if (!existing || String(existing.value || '').toLowerCase() !== fqdn) {
+    return { updated: false };
+  }
+
+  return clearPtrForIp(db, ip);
+}
+
 export function createRecord(db, zone, fields, { forcePtr = false } = {}) {
   const insert = db.transaction(() => {
     const result = db.prepare(`
@@ -118,7 +134,8 @@ export function createRecord(db, zone, fields, { forcePtr = false } = {}) {
     bumpZoneSerial(db, zone.id);
 
     let ptrResult = null;
-    if (fields.type === 'A' && zone.type === 'forward') {
+    const enabled = fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : 1;
+    if (enabled && fields.type === 'A' && zone.type === 'forward') {
       ptrResult = syncPtrForARecord(db, fields.name, fields.value, zone.name, { force: forcePtr });
       if (ptrResult?.conflict) {
         const err = new Error('PTR conflict');
@@ -139,6 +156,10 @@ export function createRecord(db, zone, fields, { forcePtr = false } = {}) {
 
 export function updateRecord(db, zone, record, fields) {
   const update = db.transaction(() => {
+    const oldEnabledA = record.enabled !== 0 && record.type === 'A' && zone.type === 'forward';
+    const newEnabled = fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : record.enabled;
+    const newEnabledA = newEnabled !== 0 && fields.type === 'A' && zone.type === 'forward';
+
     db.prepare(`
       UPDATE dns_records SET name = ?, type = ?, value = ?, priority = ?, weight = ?, port = ?, ttl = ?,
         enabled = ?, updated_at = datetime('now')
@@ -151,16 +172,16 @@ export function updateRecord(db, zone, record, fields) {
       fields.weight,
       fields.port,
       fields.ttl,
-      fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : record.enabled,
+      newEnabled,
       record.id
     );
 
     bumpZoneSerial(db, zone.id);
 
-    if (fields.type === 'A' && zone.type === 'forward') {
-      if (record.value !== fields.value) {
-        clearPtrForIp(db, record.value);
-      }
+    if (oldEnabledA && (!newEnabledA || record.value !== fields.value)) {
+      clearPtrForARecord(db, record.name, record.value, zone.name);
+    }
+    if (newEnabledA) {
       syncPtrForARecord(db, fields.name, fields.value, zone.name);
     }
 
@@ -175,8 +196,8 @@ export function deleteRecord(db, zone, record) {
     db.prepare('DELETE FROM dns_records WHERE id = ?').run(record.id);
     bumpZoneSerial(db, zone.id);
 
-    if (record.type === 'A' && zone.type === 'forward') {
-      clearPtrForIp(db, record.value);
+    if (record.enabled !== 0 && record.type === 'A' && zone.type === 'forward') {
+      clearPtrForARecord(db, record.name, record.value, zone.name);
     }
   });
 

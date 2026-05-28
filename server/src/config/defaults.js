@@ -59,6 +59,7 @@ export const DEFAULTS = {
   anomaly_min_training_hours: '48',
   anomaly_sensitivity: 'medium',
   anomaly_retention_days: '30',
+  anomaly_acknowledged_score_id: '0',
 };
 
 // ─── Shared constants (not in DB — implementation details) ───────

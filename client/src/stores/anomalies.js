@@ -41,6 +41,9 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     active.value = active.value.filter(a => a.id !== id);
     if (summary.value && removed?.is_anomaly) {
       summary.value.total_active = Math.max(0, summary.value.total_active - 1);
+      if (removed.id > (summary.value.acknowledged_through_id || 0)) {
+        summary.value.unacknowledged_active = Math.max(0, (summary.value.unacknowledged_active || 0) - 1);
+      }
       const sev = removed?.severity;
       if (sev && summary.value.by_severity[sev]) {
         summary.value.by_severity[sev] = Math.max(0, summary.value.by_severity[sev] - 1);
@@ -58,6 +61,9 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     active.value = active.value.filter(a => a.id !== id);
     if (summary.value) {
       summary.value.total_active = Math.max(0, summary.value.total_active - 1);
+      if (dismissed?.id > (summary.value.acknowledged_through_id || 0)) {
+        summary.value.unacknowledged_active = Math.max(0, (summary.value.unacknowledged_active || 0) - 1);
+      }
       const sev = dismissed?.severity;
       if (sev && summary.value.by_severity[sev]) {
         summary.value.by_severity[sev] = Math.max(0, summary.value.by_severity[sev] - 1);
@@ -88,6 +94,15 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     await fetchSettings();
   }
 
+  async function acknowledgeCounter() {
+    const res = await api.post('/anomalies/acknowledge');
+    if (summary.value) {
+      summary.value.unacknowledged_active = 0;
+      summary.value.acknowledged_through_id = res.data.acknowledged_through_id || summary.value.acknowledged_through_id || 0;
+    }
+    return res.data;
+  }
+
   async function fetchAll(severity = null) {
     loading.value = true;
     try {
@@ -104,6 +119,6 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     active, summary, clientHistory, clientModel, settings, loading,
     fetchActive, fetchSummary, fetchClientHistory, fetchClientModel,
     deleteAnomaly, dismissAnomaly, whitelistClient,
-    fetchSettings, updateSettings, fetchAll,
+    fetchSettings, updateSettings, acknowledgeCounter, fetchAll,
   };
 });

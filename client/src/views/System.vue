@@ -441,7 +441,7 @@
                    @click="themeStore.applyTheme(t.id)">
                 <span class="theme-swatch-dot" :style="{ background: getThemeSwatch(t) }"></span>
                 <div class="theme-card-info">
-                  <span class="theme-card-name">{{ t.name }}</span>
+                  <span class="theme-card-name">{{ getThemeLabel(t) }}</span>
                   <span class="theme-card-desc">{{ getThemeDesc(t) }}</span>
                 </div>
                 <i v-if="themeStore.currentThemeId === t.id" class="pi pi-check theme-check"></i>
@@ -574,8 +574,8 @@ const themeStore = useThemeStore();
 const toast = useToast();
 
 const themeGroups = [
-  { label: 'Dark Themes',  themes: themes.filter(t => t.group === 'dark') },
-  { label: 'Light Themes', themes: themes.filter(t => t.group === 'light') },
+  { label: 'Curated Themes', themes: themes.filter(t => t.tier === 'curated') },
+  { label: 'Experimental Themes', themes: themes.filter(t => t.tier === 'experimental') },
 ];
 
 function getThemeSwatch(t) {
@@ -595,6 +595,10 @@ function getThemeSwatch(t) {
 function getThemeDesc(t) {
   if (t.primary) return `${t.primary} primary, ${t.surface} surface`;
   return 'custom palette';
+}
+
+function getThemeLabel(t) {
+  return `${t.name} (${t.group})`;
 }
 
 // Persist active tab across refreshes
@@ -1374,7 +1378,7 @@ async function doResetCert() {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
-  font-size: var(--app-fs-sm);
+  font-size: var(--app-fs-base);
   color: var(--p-text-color);
   text-decoration: none;
   cursor: pointer;

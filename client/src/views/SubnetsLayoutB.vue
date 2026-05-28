@@ -902,7 +902,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 1rem;
-  font-size: var(--app-fs-sm);
+  font-size: var(--app-fs-base);
   color: var(--p-text-color);
   text-decoration: none;
   cursor: pointer;
