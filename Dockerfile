@@ -1,4 +1,4 @@
-FROM node:22-alpine AS client-build
+FROM node:24-alpine AS client-build
 
 ARG DEV_TRACKING=0
 
@@ -8,10 +8,10 @@ RUN npm install
 COPY client/ ./
 RUN VITE_TRACKING=$DEV_TRACKING npx vite build
 
-FROM node:22-alpine
+FROM node:24-alpine
 
 # s6-overlay version
-ARG S6_OVERLAY_VERSION=3.2.0.2
+ARG S6_OVERLAY_VERSION=3.2.3.0
 ARG TARGETARCH
 
 # Install s6-overlay (noarch + arch-specific)

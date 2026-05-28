@@ -175,7 +175,7 @@ STAGING_DIR="$DIST_DIR/cidrella-${TAG}-${BUILD_ARCH}"
 # cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
 # through to /usr/bin/node. Bumping this version requires a release + testerella
 # validation, not a hot swap.
-BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-22.22.2}"
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.16.0}"
 NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
@@ -206,6 +206,22 @@ confirm_yn() {
 health_json() {
   local expr="$1"
   node -e "const r=require(process.argv[1]); const v=(${expr}); if (typeof v === 'boolean') process.stdout.write(v ? 'true' : 'false'); else process.stdout.write(String(v ?? ''));" "$RELEASE_HEALTH_JSON"
+}
+
+print_dependency_override_note() {
+  node -e '
+    const fs = require("fs");
+    const path = require("path");
+    const pkgPath = path.join(process.argv[1], "server", "package.json");
+    if (!fs.existsSync(pkgPath)) process.exit(0);
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    const overrides = pkg.overrides || {};
+    if (!overrides["node-gyp"] && !overrides.tar) process.exit(0);
+    console.log("");
+    console.log("Dependency override reminder:");
+    console.log("  server/package.json currently overrides node-gyp/tar because duckdb pulls an old build-tool chain.");
+    console.log("  Revisit this after duckdb updates its dependencies; remove the override when npm audit stays clean without it.");
+  ' "$PROJECT_DIR"
 }
 
 update_bundled_node_default() {
@@ -239,6 +255,12 @@ apply_npm_updates() {
       else
         (cd "$PROJECT_DIR/$dir" && npm update --omit=dev)
       fi
+      # The release health check intentionally updates only production
+      # dependencies, but npm may prune dev dependencies from node_modules
+      # while doing so. Restore the local development install so commit hooks
+      # and follow-up tests continue to use the project's pinned Vitest/Vite
+      # toolchain instead of npx fetching a temporary copy.
+      (cd "$PROJECT_DIR/$dir" && npm install)
     fi
   done
 }
@@ -1047,6 +1069,7 @@ if [ "$BUILD_ONLY" = true ]; then
     echo "    dist/releases.json dist/releases.json.minisig \\"
     echo "    --title 'CIDRella $TAG' --generate-notes"
   fi
+  print_dependency_override_note
   exit 0
 fi
 
@@ -1123,4 +1146,4 @@ else
   echo "=== Dry run complete ==="
 fi
 
-echo ""
+print_dependency_override_note
