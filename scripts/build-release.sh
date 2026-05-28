@@ -169,13 +169,16 @@ BUILD_ARCH="${BUILD_ARCH:-linux-x64}"
 TARBALL="cidrella-${TAG}-${BUILD_ARCH}.tar.gz"
 DIST_DIR="$PROJECT_DIR/dist"
 STAGING_DIR="$DIST_DIR/cidrella-${TAG}-${BUILD_ARCH}"
+NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$DIST_DIR/.npm-cache}"
+NODE_GYP_DEVDIR="${NODE_GYP_DEVDIR:-$DIST_DIR/.node-gyp}"
+export NPM_CONFIG_CACHE
 
 # Bundled Node runtime — pinned LTS version shipped inside every release.
 # The tarball extracts to $SLOT/runtime/node/{bin,include,lib,share}/ and the
 # cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
 # through to /usr/bin/node. Bumping this version requires a release + testerella
 # validation, not a hot swap.
-BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.16.0}"
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-22.22.3}"
 NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
@@ -401,18 +404,19 @@ run_release_health_check() {
 
 refresh_ntp_defaults() {
   if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] Would refresh baked DHCP NTP defaults from pool.ntp.org."
+    echo "[DRY RUN] Would check baked DHCP NTP defaults and refresh stale values from pool.ntp.org."
     return 0
   fi
 
-  echo "Refreshing baked DHCP NTP defaults from pool.ntp.org..."
+  echo "Checking baked DHCP NTP defaults..."
   set +e
   node "$PROJECT_DIR/scripts/refresh-ntp-defaults.js"
   local rc=$?
   set -e
   if [ "$rc" -eq 2 ]; then
     echo ""
-    echo "DHCP NTP defaults were updated. Review and commit the changed files, then rerun the release build."
+    echo "DHCP NTP defaults were stale or invalid and were updated."
+    echo "Review and commit the changed files, then rerun the release build."
     exit 1
   fi
   if [ "$rc" -ne 0 ]; then
@@ -877,7 +881,8 @@ if [ "$DRY_RUN" = false ]; then
   cp "$PROJECT_DIR/server/package-lock.json" "$STAGING_DIR/server/package-lock.json" 2>/dev/null || true
 
   cd "$STAGING_DIR/server"
-  PATH="$STAGING_DIR/runtime/node/bin:$PATH" \
+  npm_config_devdir="$NODE_GYP_DEVDIR" \
+    PATH="$STAGING_DIR/runtime/node/bin:$PATH" \
     npm ci --omit=dev --silent 2>&1 | tail -3
   # Sanity check: which node did npm actually use?
   REBUILD_NODE=$(PATH="$STAGING_DIR/runtime/node/bin:$PATH" node --version)

@@ -120,4 +120,5 @@ export const FALLBACK_SECONDARY_DNS   = '9.9.9.9';
 // Baked DHCP option 42 default. Refresh this at release-build time with
 // scripts/refresh-ntp-defaults.js so new installs and reset databases do not
 // carry stale pool.ntp.org answers indefinitely.
-export const DHCP_DEFAULT_NTP_SERVERS = '162.254.225.151,193.29.63.226,172.104.209.204,198.137.202.32';
+export const DHCP_DEFAULT_NTP_SERVERS = '155.248.196.28,23.186.168.129,23.186.168.128,216.229.4.66';
+export const DHCP_DEFAULT_NTP_SERVERS_REFRESHED_AT = '2026-05-28';
