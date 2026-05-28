@@ -73,6 +73,12 @@
         for each DNS client on your network. After a training period, it flags clients whose
         query patterns deviate significantly from their established baseline.
       </p>
+      <p>
+        It can detect behavior such as sudden query-volume spikes, unusually bursty DNS traffic,
+        high NXDOMAIN or blocked-query rates, high-entropy or very long domain names, unusual
+        query types, unexpected TLD diversity, and clients resolving domains or IPs that differ
+        from their normal activity.
+      </p>
       <ul>
         <li><strong>Training</strong> — The system needs at least <em>{{ form.minTrainingHours }} hours</em> of DNS query data per client before it can start detecting anomalies.</li>
         <li><strong>Scoring</strong> — Every <em>{{ form.scoringInterval }} minutes</em>, the system evaluates the last hour of queries for each trained client.</li>

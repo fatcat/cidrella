@@ -132,6 +132,8 @@ def train_all_clients():
         clients_trained=trained,
         train_duration_sec=elapsed,
         train_max_windows=max_windows,
+        last_error="",
+        last_error_at="",
     )
 
 
@@ -212,6 +214,8 @@ def score_all_clients():
         clients_scored=scored,
         score_duration_sec=elapsed,
         score_overrun=overrun,
+        last_error="",
+        last_error_at="",
     )
 
 
@@ -274,7 +278,11 @@ def main():
         except KeyboardInterrupt:
             log.info("Shutting down")
             break
-        except Exception:
+        except Exception as exc:
+            storage.update_daemon_status(
+                last_error=f"{type(exc).__name__}: {exc}",
+                last_error_at=datetime.now(timezone.utc).isoformat(),
+            )
             log.error("Unexpected error: %s", traceback.format_exc())
             time.sleep(30)
 

@@ -7,6 +7,9 @@
       <Button label="Apply Config" icon="pi pi-refresh" size="small" data-track="sys-apply-dhcp-config" @click="applyConfig" />
       <Button label="Save Defaults" icon="pi pi-save" size="small" data-track="dhcp-save-defaults" @click="saveDefaults" :loading="savingDefaults" :disabled="!defaultsDirty" />
     </div>
+    <p class="field-help dhcp-defaults-note">
+      These settings are the defaults for newly created DHCP scopes. Changing these settings will not affect existing scopes.
+    </p>
     <DataTable :value="optionDefaultRows" size="small" :loading="loadingOptions"
                emptyMessage="No DHCP options available."
                rowGroupMode="subheader" groupRowsBy="_group"
@@ -298,7 +301,11 @@ onMounted(async () => {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.dhcp-defaults-note {
+  margin: 0 0 0.75rem;
 }
 
 .action-buttons { display: flex; gap: 0.25rem; }

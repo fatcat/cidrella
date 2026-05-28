@@ -184,6 +184,21 @@ export function queryTopBlockReasons(range, action, limit = 10) {
   );
 }
 
+// Top client/domain pairs for a given action
+export function queryTopClientDomainPairsByAction(range, action, limit = 20) {
+  const interval = rangeToInterval(range);
+  return queryRaw(
+    `SELECT client_ip, domain, block_reason, COUNT(*) as count
+     FROM dns_queries
+     WHERE ts >= NOW() - INTERVAL '${interval}'
+       AND action = ?
+     GROUP BY client_ip, domain, block_reason
+     ORDER BY count DESC
+     LIMIT ?`,
+    [action, limit]
+  );
+}
+
 // Top blocked domains
 export function queryTopBlocked(range, limit = 20) {
   const interval = rangeToInterval(range);

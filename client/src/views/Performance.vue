@@ -65,7 +65,7 @@
               <div class="gauge-item">
                 <div class="gauge-wrap">
                   <Doughnut :data="cpuGaugeData" :options="gaugeOptions" :plugins="[gaugeCenterText]" />
-                  <span class="gauge-value">{{ latestPerf?.cpu_percent?.toFixed(1) ?? '0' }}%</span>
+                  <span class="gauge-value">{{ processCpuPercent.toFixed(1) }}%</span>
                 </div>
                 <span class="gauge-label">CPU</span>
               </div>
@@ -131,6 +131,11 @@ const services = computed(() => store.services);
 
 function formatTs(epoch) {
   return formatEpoch(epoch, selectedRange.value);
+}
+
+function normalizeProcessCpuPercent(row) {
+  const cores = store.systemHealth?.cpu?.cores || 1;
+  return (row?.cpu_percent ?? 0) / cores;
 }
 
 // ── Stats bar ──────────────────────────────────────────
@@ -256,7 +261,7 @@ const resourceData = computed(() => {
       },
       {
         label: 'CPU %',
-        data: pp.map(r => r.cpu_percent),
+        data: pp.map(r => normalizeProcessCpuPercent(r)),
         borderColor: '#f59e0b', fill: false, tension: 0.3, pointRadius: 0, yAxisID: 'y1',
       },
     ],
@@ -276,8 +281,19 @@ const latestPerf = computed(() => {
   return pp.length ? pp[pp.length - 1] : null;
 });
 
+const systemMemoryTotalMb = computed(() => {
+  const totalBytes = store.systemHealth?.memory?.total;
+  if (totalBytes) return totalBytes / 1048576;
+  const observedPeak = Math.max(0, ...store.proxyPerf.map(r => r.rss_mb || 0));
+  return Math.max(512, observedPeak * 1.25);
+});
+
+const processCpuPercent = computed(() => {
+  return normalizeProcessCpuPercent(latestPerf.value);
+});
+
 const cpuGaugeData = computed(() => {
-  const val = latestPerf.value?.cpu_percent ?? 0;
+  const val = processCpuPercent.value;
   const clamped = Math.min(100, Math.max(0, val));
   return {
     labels: ['CPU', ''],
@@ -291,7 +307,7 @@ const cpuGaugeData = computed(() => {
 
 const memGaugeData = computed(() => {
   const rss = latestPerf.value?.rss_mb ?? 0;
-  const cap = 512; // scale reference
+  const cap = systemMemoryTotalMb.value || 512;
   const pct = Math.min(100, (rss / cap) * 100);
   return {
     labels: ['Memory', ''],
@@ -312,6 +328,7 @@ const gaugeOptions = {
   plugins: {
     legend: { display: false },
     tooltip: { enabled: false },
+    datalabels: { display: false },
   },
 };
 
@@ -377,7 +394,7 @@ const cpuData = computed(() => {
     datasets: [
       {
         label: 'CPU %',
-        data: pp.map(r => r.cpu_percent),
+        data: pp.map(r => normalizeProcessCpuPercent(r)),
         borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.15)',
         fill: true, tension: 0.3, pointRadius: 0,
       },
@@ -394,6 +411,7 @@ async function refreshAll() {
     await Promise.all([
       store.fetchTimeseries(selectedRange.value),
       store.fetchProxyPerf(selectedRange.value),
+      store.fetchSystemHealth(),
       store.fetchServices(),
     ]);
   } finally {

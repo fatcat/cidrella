@@ -57,6 +57,23 @@
         <template #label="{ data }">{{ data.hostname || data.client_ip }}</template>
       </DoughnutTableCard>
 
+      <div class="chart-card">
+        <h4>Top Blocked Host / Domain Pairs</h4>
+        <DataTable v-if="store.blocklistTopClientDomains.length" :value="store.blocklistTopClientDomains" size="small">
+          <Column header="Host">
+            <template #body="{ data }">{{ data.hostname || data.client_ip }}</template>
+          </Column>
+          <Column field="domain" header="Blocked Domain" />
+          <Column field="block_reason" header="Category">
+            <template #body="{ data }">{{ data.block_reason || 'unknown' }}</template>
+          </Column>
+          <Column field="count" header="Count">
+            <template #body="{ data }">{{ formatNumber(Number(data.count)) }}</template>
+          </Column>
+        </DataTable>
+        <p v-else class="empty-chart">No blocked host/domain pairs in this range.</p>
+      </div>
+
     </div>
   </div>
 </template>
@@ -65,6 +82,8 @@
 import { computed, onMounted } from 'vue';
 import Select from 'primevue/select';
 import Button from 'primevue/button';
+import DataTable from 'primevue/datatable';
+import Column from 'primevue/column';
 import {
   Chart as ChartJS, ArcElement, Tooltip, Legend,
 } from 'chart.js';

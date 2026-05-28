@@ -319,8 +319,61 @@
           </div>
 
           <div class="setting-group">
-            <h3>Upload Custom Certificate</h3>
-            <p class="field-help" style="margin-bottom: 0.75rem;">Upload PEM-encoded certificate and private key files. Applied immediately to new connections.</p>
+            <h3>Generate Certificate Signing Request</h3>
+            <p class="field-help" style="margin-bottom: 0.75rem;">Generate a private key and CSR for a certificate authority. The private key stays on this host; upload the signed certificate below when it is issued.</p>
+            <div class="csr-form">
+              <div class="field">
+                <label>Common Name</label>
+                <InputText v-model="csrForm.common_name" class="w-full" placeholder="cidrella.example.com" />
+              </div>
+              <div class="field">
+                <label>Subject Alternative Names</label>
+                <InputText v-model="csrForm.sanText" class="w-full" placeholder="cidrella.example.com, cidrella, 10.0.0.8" />
+                <small class="field-help">Comma or newline separated. The Common Name is included automatically.</small>
+              </div>
+              <div class="cert-fields-row">
+                <div class="field cert-field">
+                  <label>Organization</label>
+                  <InputText v-model="csrForm.organization" class="w-full" />
+                </div>
+                <div class="field cert-field">
+                  <label>Organizational Unit</label>
+                  <InputText v-model="csrForm.organizational_unit" class="w-full" />
+                </div>
+              </div>
+              <div class="cert-fields-row">
+                <div class="field cert-field">
+                  <label>Locality</label>
+                  <InputText v-model="csrForm.locality" class="w-full" />
+                </div>
+                <div class="field cert-field">
+                  <label>State</label>
+                  <InputText v-model="csrForm.state" class="w-full" />
+                </div>
+              </div>
+              <div class="cert-fields-row">
+                <div class="field cert-field">
+                  <label>Country</label>
+                  <InputText v-model="csrForm.country" class="w-full" maxlength="2" placeholder="US" />
+                </div>
+                <div class="field cert-field">
+                  <label>Key Type</label>
+                  <Select v-model="csrForm.key_profile" :options="csrKeyProfiles" optionLabel="label" optionValue="value" class="w-full" />
+                </div>
+              </div>
+              <div class="csr-actions">
+                <Button label="Generate CSR" icon="pi pi-file" data-track="sys-generate-csr"
+                        @click="doGenerateCsr" :loading="generatingCsr" :disabled="!csrForm.common_name.trim()" />
+                <Button v-if="generatedCsr" label="Copy CSR" icon="pi pi-copy" severity="secondary"
+                        @click="copyGeneratedCsr" />
+              </div>
+              <textarea v-if="generatedCsr" v-model="generatedCsr" readonly class="cert-textarea csr-output"></textarea>
+            </div>
+          </div>
+
+          <div class="setting-group">
+            <h3>Upload Certificate</h3>
+            <p class="field-help" style="margin-bottom: 0.75rem;">Upload PEM-encoded certificate and private key files. If you generated a CSR above, upload only the signed certificate and CIDRella will use the pending private key. Applied immediately to new connections.</p>
             <div class="cert-upload-form">
               <div class="cert-fields-row">
                 <div class="field cert-field">
@@ -350,7 +403,7 @@
               </div>
               <Button label="Upload Certificate" icon="pi pi-upload" data-track="sys-upload-cert"
                       @click="doUploadCert" :loading="uploadingCert"
-                      :disabled="!certUpload.cert || !certUpload.key || certValidation.cert === false || certValidation.key === false" />
+                      :disabled="!certUpload.cert || certValidation.cert === false || certValidation.key === false" />
             </div>
           </div>
 
@@ -455,6 +508,12 @@
       <div v-if="activeTab === 14" class="padded-tab">
         <UpdatePanel />
       </div>
+      <div v-if="activeTab === 15" class="content-card import-page">
+        <div class="setting-group">
+          <h3>Import Pi-hole</h3>
+          <PiholeImportPanel @imported="onImportComplete" />
+        </div>
+      </div>
     </div>
 
     <!-- Context Menus -->
@@ -503,6 +562,7 @@ const LogViewer = defineAsyncComponent(() => import('../components/LogViewer.vue
 const InterfacePanel = defineAsyncComponent(() => import('../components/InterfacePanel.vue'));
 const AnomalyDetectionPanel = defineAsyncComponent(() => import('./AnomalyDetection.vue'));
 const UpdatePanel = defineAsyncComponent(() => import('./UpdatePanel.vue'));
+const PiholeImportPanel = defineAsyncComponent(() => import('../components/PiholeImportPanel.vue'));
 
 const dnsPanelRef = ref(null);
 const route = useRoute();
@@ -539,7 +599,7 @@ function getThemeDesc(t) {
 
 // Persist active tab across refreshes
 const LOGGING_TAB_INDEX = 11;
-const TAB_NAME_MAP = { updates: 14, backup: 3, certificates: 4, logging: 11 };
+const TAB_NAME_MAP = { updates: 14, backup: 3, certificates: 4, logging: 11, import: 15 };
 const queryTab = route.query.tab;
 const initialTab = queryTab && TAB_NAME_MAP[queryTab] !== undefined
   ? TAB_NAME_MAP[queryTab]
@@ -566,13 +626,14 @@ const allMenuItems = [
   { tabIndex: 12, label: 'Interfaces', icon: 'pi pi-sitemap', dataTrack: 'sys-tab-interfaces', command: () => { activeTab.value = 12; } },
   { tabIndex: 13, label: 'Anomaly Detection', icon: 'pi pi-exclamation-circle', dataTrack: 'sys-tab-anomaly', command: () => { activeTab.value = 13; } },
   { tabIndex: 14, label: 'Updates', icon: 'pi pi-cloud-download', dataTrack: 'sys-tab-updates', command: () => { activeTab.value = 14; } },
+  { tabIndex: 15, label: 'Import Pi-hole', icon: 'pi pi-download', dataTrack: 'sys-tab-import', command: () => { activeTab.value = 15; } },
 ];
 
 const navGroups = [
   { label: 'Network', items: allMenuItems.filter(i => [0, 1, 2, 12].includes(i.tabIndex)) },
   { label: 'Services', items: allMenuItems.filter(i => [5, 6].includes(i.tabIndex)) },
   { label: 'Security', items: allMenuItems.filter(i => [7, 8, 13].includes(i.tabIndex)) },
-  { label: 'System', items: allMenuItems.filter(i => [3, 4, 9, 10, 11, 14].includes(i.tabIndex)) },
+  { label: 'System', items: allMenuItems.filter(i => [3, 4, 9, 10, 11, 14, 15].includes(i.tabIndex)) },
 ];
 
 const loadingSettings = ref(true);
@@ -638,6 +699,13 @@ async function doStartScan() {
   } finally {
     startingScan.value = false;
   }
+}
+
+async function onImportComplete() {
+  try {
+    await store.fetchTree();
+    window.dispatchEvent(new Event('ipam:stats-changed'));
+  } catch { /* non-critical refresh */ }
 }
 
 const templatePreview = computed(() => {
@@ -1130,6 +1198,25 @@ const certUpload = ref({ cert: '', key: '' });
 const certDragOver = ref(null);
 const uploadingCert = ref(false);
 const resettingCert = ref(false);
+const generatingCsr = ref(false);
+const generatedCsr = ref('');
+const csrKeyProfiles = [
+  { label: 'RSA 3072', value: 3072 },
+  { label: 'RSA 2048', value: 2048 },
+  { label: 'RSA 4096', value: 4096 },
+  { label: 'ECDSA P-256', value: 'ecdsa-p256' },
+  { label: 'ECDSA P-384', value: 'ecdsa-p384' },
+];
+const csrForm = ref({
+  common_name: '',
+  sanText: '',
+  organization: '',
+  organizational_unit: '',
+  locality: '',
+  state: '',
+  country: '',
+  key_profile: 3072,
+});
 
 const certValidation = computed(() => {
   const result = { cert: null, certError: '', key: null, keyError: '' };
@@ -1193,7 +1280,10 @@ function onCertDrop(event, field) {
 async function doUploadCert() {
   uploadingCert.value = true;
   try {
-    const result = await opsStore.uploadCert(certUpload.value.key, certUpload.value.cert);
+    const keyText = certUpload.value.key.trim();
+    const result = keyText
+      ? await opsStore.uploadCert(keyText, certUpload.value.cert)
+      : await opsStore.uploadSignedCert(certUpload.value.cert);
     certUpload.value = { cert: '', key: '' };
     toast.add({ severity: 'warn', summary: 'Certificate installed', detail: result.message, life: 10000 });
     await opsStore.fetchCertInfo().then(c => certInfo.value = c);
@@ -1201,6 +1291,45 @@ async function doUploadCert() {
     toast.add({ severity: 'error', summary: 'Upload failed', detail: apiError(err), life: 5000 });
   } finally {
     uploadingCert.value = false;
+  }
+}
+
+async function doGenerateCsr() {
+  generatingCsr.value = true;
+  try {
+    const san = csrForm.value.sanText
+      .split(/[\n,]/)
+      .map(s => s.trim())
+      .filter(Boolean);
+    const keyProfile = csrForm.value.key_profile;
+    const keyFields = typeof keyProfile === 'number'
+      ? { key_algorithm: 'rsa', key_size: keyProfile }
+      : { key_algorithm: 'ecdsa', curve: keyProfile === 'ecdsa-p384' ? 'secp384r1' : 'prime256v1' };
+    const result = await opsStore.generateCsr({
+      common_name: csrForm.value.common_name.trim(),
+      san,
+      organization: csrForm.value.organization.trim(),
+      organizational_unit: csrForm.value.organizational_unit.trim(),
+      locality: csrForm.value.locality.trim(),
+      state: csrForm.value.state.trim(),
+      country: csrForm.value.country.trim().toUpperCase(),
+      ...keyFields,
+    });
+    generatedCsr.value = result.csr;
+    toast.add({ severity: 'success', summary: 'CSR generated', detail: 'Send this CSR to your certificate authority, then upload the signed certificate.', life: 7000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'CSR failed', detail: apiError(err), life: 5000 });
+  } finally {
+    generatingCsr.value = false;
+  }
+}
+
+async function copyGeneratedCsr() {
+  try {
+    await navigator.clipboard.writeText(generatedCsr.value);
+    toast.add({ severity: 'success', summary: 'CSR copied', life: 2500 });
+  } catch {
+    toast.add({ severity: 'warn', summary: 'Copy failed', detail: 'Select the CSR text and copy it manually.', life: 5000 });
   }
 }
 
@@ -1499,6 +1628,20 @@ async function doResetCert() {
 }
 .cert-upload-form {
   max-width: 32rem;
+}
+.csr-form {
+  max-width: 32rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.csr-actions {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.csr-output {
+  height: 12rem;
 }
 .cert-fields-row {
   display: flex;

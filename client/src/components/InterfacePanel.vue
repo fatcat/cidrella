@@ -28,18 +28,6 @@
       <small v-if="portValidationError" class="field-help warn-text" style="margin-top: 0.5rem; display: block;">
         {{ portValidationError }}
       </small>
-      <small class="field-help" style="margin-top: 0.5rem; display: block;">
-        Standard ports are <strong>443</strong> (HTTPS) and <strong>80</strong> (HTTP redirect).
-        Ports under 1024 require <code>CAP_NET_BIND_SERVICE</code> on the cidrella service
-        (already set in the shipped systemd unit). When "Redirect" is off, port {{ webPorts.http_port }}
-        is not bound — use this if nginx/traefik fronts the UI or you don't want the redirect
-        port exposed.
-      </small>
-      <small class="field-help warn-text" style="margin-top: 0.25rem; display: block;">
-        Lockout recovery: if a port change makes the UI unreachable, run
-        <code>sudo sqlite3 /var/lib/cidrella/cidrella.db "UPDATE settings SET value='' WHERE key='https_port'"</code>
-        then <code>sudo systemctl restart cidrella</code> to revert to the systemd default.
-      </small>
     </div>
 
     <div class="content-card settings-form">

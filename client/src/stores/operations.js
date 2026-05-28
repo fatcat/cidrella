@@ -62,6 +62,16 @@ export const useOperationsStore = defineStore('operations', () => {
     return res.data;
   }
 
+  async function uploadSignedCert(certPem) {
+    const res = await api.post('/operations/certs/upload', { cert: certPem });
+    return res.data;
+  }
+
+  async function generateCsr(payload) {
+    const res = await api.post('/operations/certs/csr', payload);
+    return res.data;
+  }
+
   async function resetCert() {
     const res = await api.post('/operations/certs/reset');
     return res.data;
@@ -81,7 +91,7 @@ export const useOperationsStore = defineStore('operations', () => {
   return {
     backups, certInfo, loading,
     createBackup, fetchBackups, deleteBackup, downloadBackup, restoreBackup,
-    fetchCertInfo, uploadCert, resetCert,
+    fetchCertInfo, uploadCert, uploadSignedCert, generateCsr, resetCert,
     getSetupStatus, completeSetup
   };
 });

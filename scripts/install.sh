@@ -275,6 +275,11 @@ info "Installing system dependencies..."
 # the UI updater silently fails the same way the v0.4.8/v0.4.9 sudo path
 # did. Try the modern package name first, fall back to the legacy name.
 apt-get install -y -qq build-essential arping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
+if ! command -v openssl >/dev/null 2>&1; then
+  err "openssl is required for TLS certificate generation, CSR generation, and certificate validation."
+  err "Install it manually with: apt-get install openssl"
+  exit 1
+fi
 if ! apt-get install -y -qq polkitd >/dev/null 2>&1; then
   if ! apt-get install -y -qq policykit-1 >/dev/null 2>&1; then
     err "Failed to install polkit (tried polkitd and policykit-1)."
@@ -515,6 +520,11 @@ if [ "$DNSMASQ_MODE" = "own" ]; then
   # Ensure log and pid files exist
   touch "$DATA_DIR/dnsmasq/dnsmasq.log"
   touch "$DATA_DIR/dnsmasq/dnsmasq.pid"
+  if [ -f "$INSTALL_DIR/scripts/lib/dnsmasq-perms.sh" ]; then
+    # shellcheck source=scripts/lib/dnsmasq-perms.sh
+    source "$INSTALL_DIR/scripts/lib/dnsmasq-perms.sh"
+    repair_dnsmasq_log_permissions "$DATA_DIR"
+  fi
 
   # Disable system dnsmasq service if it exists
   systemctl stop dnsmasq 2>/dev/null || true
@@ -578,6 +588,14 @@ fi
 if [ -f "$INSTALL_DIR/scripts/cidrella-reset-password" ]; then
   install -m 0700 -o root -g root "$INSTALL_DIR/scripts/cidrella-reset-password" /usr/local/bin/cidrella-reset-password
   ok "Installed /usr/local/bin/cidrella-reset-password wrapper"
+fi
+
+# Install cidrella-reset-web-ports wrapper (v0.4.15+). Root-only (0700).
+# Clears DB web-port overrides and restarts cidrella so admins can recover
+# from a port change that made the UI unreachable.
+if [ -f "$INSTALL_DIR/scripts/cidrella-reset-web-ports" ]; then
+  install -m 0700 -o root -g root "$INSTALL_DIR/scripts/cidrella-reset-web-ports" /usr/local/bin/cidrella-reset-web-ports
+  ok "Installed /usr/local/bin/cidrella-reset-web-ports wrapper"
 fi
 
 # install_systemd_unit is sourced from scripts/lib/systemd-install.sh above;

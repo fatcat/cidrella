@@ -7,6 +7,9 @@ Documentation=https://github.com/fatcat/cidrella
 [Service]
 Type=simple
 ExecStartPre=-/usr/bin/pkill -x dnsmasq
+ExecStartPre=/usr/bin/touch /var/lib/cidrella/dnsmasq/dnsmasq.log
+ExecStartPre=/usr/bin/chgrp cidrella /var/lib/cidrella/dnsmasq/dnsmasq.log
+ExecStartPre=-/bin/chmod 0640 /var/lib/cidrella/dnsmasq/dnsmasq.log
 ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/var/lib/cidrella/dnsmasq/dnsmasq.conf
 # ExecReload added in v0.4.11 so the cidrella server can reload dnsmasq via
 # `systemctl reload cidrella-dnsmasq` (gated by polkit) instead of going
@@ -16,14 +19,11 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=3
 
-# dnsmasq opens its logfile with mode 0640 and then chowns it to 'nobody'
-# (see CAP_CHOWN below). Without UMask, the file inherits systemd's default
-# umask and lands as nobody:root 0660 — unreadable by cidrella, which is
-# not in group 'root'. This crashes the cidrella server's log tailer
-# (passive-liveness / metrics-aggregator) with EACCES. UMask=0022 relaxes
-# this to nobody:root 0644, letting cidrella read without granting any
-# write capability. Single-tenant appliance; the DNS log is not sensitive.
-UMask=0022
+# dnsmasq writes its log as nobody. CIDRella also tails this file for
+# Settings > Logging, passive liveness, and metrics, so pre-start repairs
+# the existing file to nobody:cidrella 0640. UMask=0027 keeps recreated
+# runtime files from becoming world-readable.
+UMask=0027
 
 # Capabilities required:
 #   CAP_NET_BIND_SERVICE — bind privileged ports 53 (DNS) and 67 (DHCP)

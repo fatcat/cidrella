@@ -49,7 +49,7 @@ const filteredLines = computed(() => {
 });
 
 function lineClass(line) {
-  if (/DHCP(DISCOVER|OFFER|REQUEST|ACK|NAK|RELEASE|INFORM|DECLINE)/i.test(line)) return 'log-dhcp';
+  if (/\bDHCP(DISCOVER|OFFER|REQUEST|ACK|NAK|RELEASE|INFORM|DECLINE)\b|available DHCP|dnsmasq-dhcp\[\d+\]:|\bsent size:\s+\d+\s+option:|\brequested options:|\bnext server:|\bclient provides name:|\bvendor class:|\btags:\s+scope/i.test(line)) return 'log-dhcp';
   if (/query\[/i.test(line)) return 'log-query';
   if (/reply|cached/i.test(line)) return 'log-reply';
   if (/forwarded/i.test(line)) return 'log-forward';

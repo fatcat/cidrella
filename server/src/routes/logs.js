@@ -21,17 +21,17 @@ setInterval(() => {
   }
 }, 60_000);
 
-// DHCP log patterns
-const DHCP_PATTERNS = [
-  'DHCPDISCOVER', 'DHCPOFFER', 'DHCPREQUEST', 'DHCPACK',
-  'DHCPNAK', 'DHCPRELEASE', 'DHCPINFORM', 'DHCPDECLINE',
-  'available DHCP'
-];
+const DHCP_RE = /\b(?:DHCPDISCOVER|DHCPOFFER|DHCPREQUEST|DHCPACK|DHCPNAK|DHCPRELEASE|DHCPINFORM|DHCPDECLINE)\b|available DHCP|dnsmasq-dhcp\[\d+\]:|\bsent size:\s+\d+\s+option:|\brequested options:|\bnext server:|\bclient provides name:|\bvendor class:|\btags:\s+scope/i;
 
-const DHCP_RE = new RegExp(DHCP_PATTERNS.join('|'), 'i');
-
-function isDhcpLine(line) {
+export function isDhcpLine(line) {
   return DHCP_RE.test(line);
+}
+
+function ensureLogFile() {
+  fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+  if (!fs.existsSync(LOG_FILE)) {
+    fs.writeFileSync(LOG_FILE, '');
+  }
 }
 
 function matchesFilter(line, filter) {
@@ -103,6 +103,13 @@ router.get('/stream', (req, res) => {
 
   const filter = req.query.filter || 'all';
 
+  try {
+    ensureLogFile();
+  } catch {
+    // Keep the SSE connection usable even if the runtime log path cannot be
+    // created. The stream will stay open and report an empty backlog.
+  }
+
   // SSE headers
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
@@ -172,7 +179,7 @@ router.get('/stream', (req, res) => {
       }
     });
   } catch {
-    res.write('event: error\ndata: watch failed\n\n');
+    res.write('event: watch-status\ndata: unavailable\n\n');
   }
 
   // Keepalive every 30s

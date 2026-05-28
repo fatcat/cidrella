@@ -89,6 +89,20 @@ docker compose pull && docker compose up -d
 
 > **Do not apply updates using tarballs downloaded from sources other than the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Manually extracting an unverified tarball bypasses signature verification and could compromise your network infrastructure.
 
+## Web UI Ports
+
+CIDRella's standard web UI ports are `443` for HTTPS and `80` for the HTTP-to-HTTPS redirect. Ports below `1024` require `CAP_NET_BIND_SERVICE`; the native systemd unit installed by CIDRella includes this capability.
+
+If CIDRella is behind nginx, Traefik, or another reverse proxy, the HTTP redirect can be disabled in **Settings > Interfaces**. When redirect is disabled, CIDRella does not bind the configured HTTP port.
+
+If a web port change makes the UI unreachable, run:
+
+```bash
+sudo cidrella-reset-web-ports
+```
+
+This clears the stored web port overrides, re-enables the HTTP redirect, and restarts CIDRella so it falls back to the systemd defaults for the host.
+
 ## Architecture
 
 | Layer | Technology |

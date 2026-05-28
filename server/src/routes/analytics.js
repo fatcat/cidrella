@@ -4,6 +4,7 @@ import { getDb } from '../db/init.js';
 import {
   queryTopClients, queryTopDomains, queryTopBlocked,
   queryTopClientsByAction, queryTopDomainsByAction, queryTopBlockReasons,
+  queryTopClientDomainPairsByAction,
   queryVolume, queryActionBreakdown,
   queryClientDomains, queryDomainClients,
 } from '../db/duckdb.js';
@@ -148,6 +149,9 @@ router.get('/blocklist/top-domains', auth, analyticsRoute(queryTopDomainsByActio
 
 // GET /api/analytics/blocklist/top-categories?range=24h&limit=10
 router.get('/blocklist/top-categories', auth, analyticsRoute(queryTopBlockReasons, { fixedAction: 'blocked_blocklist', defaultLimit: '10' }));
+
+// GET /api/analytics/blocklist/top-client-domains?range=24h&limit=20
+router.get('/blocklist/top-client-domains', auth, analyticsRoute(queryTopClientDomainPairsByAction, { enrich: true, fixedAction: 'blocked_blocklist', defaultLimit: '20' }));
 
 // GET /api/analytics/geoip/top-clients?range=24h&limit=10
 router.get('/geoip/top-clients', auth, analyticsRoute(queryTopClientsByAction, { enrich: true, fixedAction: 'blocked_geoip', defaultLimit: '10' }));

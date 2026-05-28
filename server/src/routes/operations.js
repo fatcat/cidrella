@@ -2,6 +2,7 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { isIP } from 'net';
 import { execFileSync } from 'child_process';
 import { getDb, audit, ensureDefaults } from '../db/init.js';
 import { requireRole } from '../auth/roles.js';
@@ -29,6 +30,83 @@ const router = Router();
 
 // All operations routes require admin
 router.use(requireRole('admin'));
+
+function certsDir() {
+  const dir = path.join(DATA_DIR, 'certs');
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try { fs.chmodSync(dir, 0o700); } catch {}
+  return dir;
+}
+
+function validateSubjectValue(label, value, { required = false, max = 128 } = {}) {
+  const text = String(value || '').trim();
+  if (!text) {
+    if (required) throw new Error(`${label} is required`);
+    return '';
+  }
+  if (text.length > max) throw new Error(`${label} is too long`);
+  // Conservative subset for OpenSSL -subj values. We call execFileSync with
+  // argv, not a shell string, but OpenSSL still parses the subject string.
+  // Reject separators, newlines, quotes, and other punctuation we do not need.
+  if (!/^[A-Za-z0-9 .,'()_@&:+-]+$/.test(text)) throw new Error(`Invalid ${label}`);
+  return text;
+}
+
+function validateDnsName(value) {
+  const name = String(value || '').trim();
+  const check = name.startsWith('*.') ? name.slice(2) : name;
+  if (name.length > 253) return false;
+  if (!check || check.includes('..')) return false;
+  return check.split('.').every(label =>
+    label.length >= 1
+      && label.length <= 63
+      && /^[A-Za-z0-9_](?:[A-Za-z0-9_-]*[A-Za-z0-9_])?$/.test(label)
+  );
+}
+
+function validateSanValue(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  if (value.length > 253) throw new Error(`Subject alternative name is too long: ${value.slice(0, 40)}`);
+  if (isIP(value)) return value;
+  if (validateDnsName(value)) return value;
+  throw new Error(`Invalid subject alternative name: ${value}`);
+}
+
+function normalizeSanList(sans) {
+  if (!Array.isArray(sans)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const raw of sans) {
+    const value = validateSanValue(raw);
+    if (!value) continue;
+    const lowered = value.toLowerCase();
+    if (seen.has(lowered)) continue;
+    seen.add(lowered);
+    result.push(value);
+  }
+  return result;
+}
+
+function sanConfigLine(value, index) {
+  if (isIP(value)) {
+    return `IP.${index} = ${value}`;
+  }
+  return `DNS.${index} = ${value}`;
+}
+
+function publicKeyPemFromCert(certPath) {
+  return execFileSync('openssl', ['x509', '-in', certPath, '-noout', '-pubkey'], { encoding: 'utf-8', timeout: 5000 }).trim();
+}
+
+function publicKeyPemFromKey(keyPath) {
+  return execFileSync('openssl', ['pkey', '-in', keyPath, '-pubout'], { encoding: 'utf-8', timeout: 5000 }).trim();
+}
+
+function clearPendingCsrFiles(dir) {
+  try { fs.unlinkSync(path.join(dir, 'pending-csr.key')); } catch {}
+  try { fs.unlinkSync(path.join(dir, 'pending-csr.csr')); } catch {}
+}
 
 // POST /api/operations/backup — create a new backup
 router.post('/backup', (req, res) => {
@@ -201,17 +279,26 @@ router.get('/certs/info', (req, res) => {
 router.post('/certs/upload', (req, res) => {
   const { key, cert } = req.body;
 
-  if (!key || !cert) {
-    return res.status(400).json({ error: 'Both key and cert fields are required (PEM-encoded strings)' });
+  if (!cert) {
+    return res.status(400).json({ error: 'cert field is required (PEM-encoded certificate)' });
   }
 
   // Validate cert
   const tmpCert = path.join(os.tmpdir(), `cidrella-cert-${Date.now()}.pem`);
   const tmpKey = path.join(os.tmpdir(), `cidrella-key-${Date.now()}.pem`);
+  const dir = certsDir();
+  const pendingKeyPath = path.join(dir, 'pending-csr.key');
+  const usingPendingKey = !key && fs.existsSync(pendingKeyPath);
 
   try {
     fs.writeFileSync(tmpCert, cert);
-    fs.writeFileSync(tmpKey, key);
+    if (key) {
+      fs.writeFileSync(tmpKey, key);
+    } else if (usingPendingKey) {
+      fs.copyFileSync(pendingKeyPath, tmpKey);
+    } else {
+      throw new Error('Private key is required unless a pending CSR key exists');
+    }
 
     // Validate certificate
     execFileSync('openssl', ['x509', '-in', tmpCert, '-noout'], { stdio: 'pipe', timeout: 5000 });
@@ -220,25 +307,18 @@ router.post('/certs/upload', (req, res) => {
     execFileSync('openssl', ['pkey', '-in', tmpKey, '-noout'], { stdio: 'pipe', timeout: 5000 });
 
     // Verify key matches cert
-    const certModulus = execFileSync('openssl', ['x509', '-in', tmpCert, '-noout', '-modulus'], { encoding: 'utf-8', timeout: 5000 }).trim();
-    let keyModulus;
-    try {
-      keyModulus = execFileSync('openssl', ['rsa', '-in', tmpKey, '-noout', '-modulus'], { encoding: 'utf-8', timeout: 5000 }).trim();
-    } catch {
-      keyModulus = execFileSync('openssl', ['pkey', '-in', tmpKey, '-noout', '-text'], { encoding: 'utf-8', timeout: 5000 }).trim();
-    }
-
-    // For RSA keys, modulus should match
-    if (certModulus.startsWith('Modulus=') && keyModulus.startsWith('Modulus=') && certModulus !== keyModulus) {
+    if (publicKeyPemFromCert(tmpCert) !== publicKeyPemFromKey(tmpKey)) {
       throw new Error('Certificate and key do not match');
     }
 
     // Install
-    const certsDir = path.join(DATA_DIR, 'certs');
-    fs.copyFileSync(tmpCert, path.join(certsDir, 'server.crt'));
-    fs.copyFileSync(tmpKey, path.join(certsDir, 'server.key'));
+    fs.copyFileSync(tmpCert, path.join(dir, 'server.crt'));
+    fs.copyFileSync(tmpKey, path.join(dir, 'server.key'));
+    try { fs.chmodSync(path.join(dir, 'server.crt'), 0o600); } catch {}
+    try { fs.chmodSync(path.join(dir, 'server.key'), 0o600); } catch {}
+    clearPendingCsrFiles(dir);
 
-    audit(req.user.id, 'update', 'tls_certificate', null, {});
+    audit(req.user.id, 'update', 'tls_certificate', null, { source: usingPendingKey ? 'csr' : 'upload' });
     const reloaded = reloadTlsCerts();
     res.json({ ok: true, message: reloaded ? 'Certificate installed and applied.' : 'Certificate installed. Server restart required to apply.' });
   } catch (err) {
@@ -246,6 +326,115 @@ router.post('/certs/upload', (req, res) => {
   } finally {
     try { fs.unlinkSync(tmpCert); } catch {}
     try { fs.unlinkSync(tmpKey); } catch {}
+  }
+});
+
+// POST /api/operations/certs/csr — generate a private key and CSR for signing
+router.post('/certs/csr', (req, res) => {
+  const {
+    common_name,
+    san = [],
+    organization = '',
+    organizational_unit = '',
+    locality = '',
+    state = '',
+    country = '',
+    key_algorithm = 'rsa',
+    key_size = 3072,
+    curve = 'prime256v1'
+  } = req.body || {};
+
+  let commonName;
+  let subject;
+  try {
+    commonName = validateSanValue(common_name);
+    if (!commonName) throw new Error('common_name is required');
+    subject = {
+      country: validateSubjectValue('country', country, { max: 2 }),
+      state: validateSubjectValue('state', state),
+      locality: validateSubjectValue('locality', locality),
+      organization: validateSubjectValue('organization', organization),
+      organizationalUnit: validateSubjectValue('organizational_unit', organizational_unit),
+    };
+    if (subject.country && !/^[A-Z]{2}$/i.test(subject.country)) throw new Error('country must be a 2-letter code');
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const keyAlgorithm = String(key_algorithm || 'rsa').toLowerCase();
+  if (!['rsa', 'ecdsa'].includes(keyAlgorithm)) return res.status(400).json({ error: 'key_algorithm must be rsa or ecdsa' });
+  const keySize = Number(key_size);
+  if (keyAlgorithm === 'rsa' && ![2048, 3072, 4096].includes(keySize)) return res.status(400).json({ error: 'key_size must be 2048, 3072, or 4096' });
+  const curveName = String(curve || 'prime256v1');
+  if (keyAlgorithm === 'ecdsa' && !['prime256v1', 'secp384r1'].includes(curveName)) return res.status(400).json({ error: 'curve must be prime256v1 or secp384r1' });
+
+  let sans;
+  try {
+    sans = normalizeSanList(san);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (!sans.some(s => s.toLowerCase() === commonName.toLowerCase())) sans.unshift(commonName);
+
+  const dir = certsDir();
+  const keyPath = path.join(dir, 'pending-csr.key');
+  const csrPath = path.join(dir, 'pending-csr.csr');
+  const configPath = path.join(os.tmpdir(), `cidrella-csr-${Date.now()}.cnf`);
+  const subjectParts = [
+    ['C', subject.country.toUpperCase()],
+    ['ST', subject.state],
+    ['L', subject.locality],
+    ['O', subject.organization],
+    ['OU', subject.organizationalUnit],
+    ['CN', commonName]
+  ].filter(([, v]) => v).map(([k, v]) => `/${k}=${v}`);
+
+  const altNames = sans.map((name, idx) => sanConfigLine(name, idx + 1)).join('\n');
+  const config = `
+[req]
+prompt = no
+distinguished_name = dn
+req_extensions = req_ext
+
+[dn]
+CN = ${commonName}
+
+[req_ext]
+subjectAltName = @alt_names
+
+[alt_names]
+${altNames}
+`;
+
+  try {
+    fs.writeFileSync(configPath, config);
+    if (keyAlgorithm === 'ecdsa') {
+      execFileSync('openssl', [
+        'ecparam', '-name', curveName, '-genkey', '-noout', '-out', keyPath
+      ], { stdio: 'pipe', timeout: 10000 });
+      execFileSync('openssl', [
+        'req', '-new', '-key', keyPath, '-out', csrPath,
+        '-config', configPath, '-subj', subjectParts.join('')
+      ], { stdio: 'pipe', timeout: 10000 });
+    } else {
+      execFileSync('openssl', [
+        'req', '-new', '-newkey', `rsa:${keySize}`, '-nodes',
+        '-keyout', keyPath, '-out', csrPath,
+        '-config', configPath, '-subj', subjectParts.join('')
+      ], { stdio: 'pipe', timeout: 15000 });
+    }
+    try { fs.chmodSync(keyPath, 0o600); } catch {}
+    try { fs.chmodSync(csrPath, 0o600); } catch {}
+    const csr = fs.readFileSync(csrPath, 'utf-8');
+    const keyInfo = keyAlgorithm === 'ecdsa'
+      ? { key_algorithm: keyAlgorithm, curve: curveName }
+      : { key_algorithm: keyAlgorithm, key_size: keySize };
+    audit(req.user.id, 'create', 'tls_csr', null, { common_name: commonName, san: sans, ...keyInfo });
+    res.status(201).json({ ok: true, csr, common_name: commonName, san: sans, ...keyInfo });
+  } catch (err) {
+    res.status(400).json({ error: err.message || 'Failed to generate CSR' });
+  } finally {
+    try { fs.unlinkSync(configPath); } catch {}
   }
 });
 
@@ -265,6 +454,7 @@ router.post('/certs/reset', (req, res) => {
       'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', certPath,
       '-days', '365', '-nodes', '-subj', '/CN=cidrella/O=CIDRella/C=US'
     ], { stdio: 'pipe', timeout: 10000 });
+    clearPendingCsrFiles(certsDir);
 
     audit(req.user.id, 'update', 'tls_certificate', null, { action: 'reset_self_signed' });
     const reloaded = reloadTlsCerts();

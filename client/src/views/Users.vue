@@ -52,7 +52,7 @@
         <div class="field">
           <label>Role *</label>
           <Select v-model="createForm.role" :options="ROLES" optionLabel="label" optionValue="value"
-                  class="w-full" placeholder="Select role" />
+                  class="w-full" placeholder="Select role" :loading="rolesLoading" />
         </div>
       </div>
       <template #footer>
@@ -71,7 +71,7 @@
         <div class="field">
           <label>Role *</label>
           <Select v-model="editForm.role" :options="ROLES" optionLabel="label" optionValue="value"
-                  class="w-full" />
+                  class="w-full" :loading="rolesLoading" />
         </div>
       </div>
       <template #footer>
@@ -142,7 +142,7 @@ const toast = useToast();
 const auth = useAuthStore();
 const currentUserId = auth.user?.id;
 
-const ROLES = [
+const FALLBACK_ROLES = [
   { value: 'admin', label: 'Administrator' },
   { value: 'dns_admin', label: 'DNS Administrator' },
   { value: 'dhcp_admin', label: 'DHCP Administrator' },
@@ -151,10 +151,13 @@ const ROLES = [
   { value: 'readonly', label: 'Read-Only' }
 ];
 
-const ROLE_LABELS = Object.fromEntries(ROLES.map(r => [r.value, r.label]));
+const roles = ref(FALLBACK_ROLES);
+const rolesLoading = ref(false);
+const ROLES = computed(() => roles.value);
+const ROLE_LABELS = computed(() => Object.fromEntries(roles.value.map(r => [r.value, r.label])));
 
 function roleLabel(role) {
-  return ROLE_LABELS[role] || role;
+  return ROLE_LABELS.value[role] || role;
 }
 
 const formatDate = formatDateOnly;
@@ -208,6 +211,19 @@ async function loadUsers() {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     loading.value = false;
+  }
+}
+
+async function loadRoles() {
+  rolesLoading.value = true;
+  try {
+    const res = await api.get('/users/roles');
+    roles.value = res.data.map(r => ({ value: r.value, label: r.label }));
+  } catch (err) {
+    roles.value = FALLBACK_ROLES;
+    toast.add({ severity: 'warn', summary: 'Roles unavailable', detail: apiError(err), life: 5000 });
+  } finally {
+    rolesLoading.value = false;
   }
 }
 
@@ -297,7 +313,10 @@ function copyPassword() {
   toast.add({ severity: 'info', summary: 'Copied to clipboard', life: 2000 });
 }
 
-onMounted(loadUsers);
+onMounted(async () => {
+  await loadRoles();
+  await loadUsers();
+});
 
 
 </script>

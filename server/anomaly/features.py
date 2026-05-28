@@ -3,19 +3,35 @@
 import json
 import math
 import ssl
+import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 
 import numpy as np
 
-from config import NODE_API_BASE, FEATURE_NAMES
+from config import NODE_API_PORT, FEATURE_NAMES
+import storage
 
 # SSL context for self-signed certs (localhost only)
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False
 _ssl_ctx.verify_mode = ssl.CERT_NONE
 
-_API_URL = f"{NODE_API_BASE}/api/internal/analytics/query"
+def _api_url():
+    """Return the current CIDRella internal analytics API URL.
+
+    The web server's effective HTTPS port is DB setting `https_port` first,
+    then the systemd/container environment fallback. The anomaly sidecar runs
+    as a separate process, so it must resolve the same setting before each
+    internal API call instead of caching the startup environment forever.
+    """
+    raw = storage.get_setting("https_port")
+    try:
+        port = int(raw) if raw not in (None, "") else NODE_API_PORT
+    except (TypeError, ValueError):
+        port = NODE_API_PORT
+    return f"https://127.0.0.1:{port}/api/internal/analytics/query"
 
 
 def _parse_ts(s):
@@ -40,13 +56,19 @@ def _query(query_name, **params):
     safe_params = {k: _serialize(v) for k, v in params.items()}
     body = json.dumps({"query": query_name, **safe_params}).encode()
     req = urllib.request.Request(
-        _API_URL,
+        _api_url(),
         data=body,
         headers={"Content-Type": "application/json"},
     )
-    with urllib.request.urlopen(req, context=_ssl_ctx, timeout=30) as resp:
-        result = json.loads(resp.read())
-        return result.get("rows", [])
+    for attempt in range(6):
+        try:
+            with urllib.request.urlopen(req, context=_ssl_ctx, timeout=30) as resp:
+                result = json.loads(resp.read())
+                return result.get("rows", [])
+        except urllib.error.URLError as exc:
+            if attempt >= 5 or not isinstance(exc.reason, ConnectionRefusedError):
+                raise
+            time.sleep(2)
 
 
 def _query_one(query_name, **params):

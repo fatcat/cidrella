@@ -11,6 +11,15 @@ const requireAdmin = requireRole('admin');
 const VALID_ROLES = Object.keys(ROLES);
 const USERNAME_RE = /^[a-zA-Z0-9._-]+$/;
 
+// GET /api/users/roles — authoritative role catalog for the UI
+router.get('/roles', requireAdmin, (req, res) => {
+  res.json(VALID_ROLES.map(value => ({
+    value,
+    label: ROLES[value].label,
+    permissions: ROLES[value].permissions
+  })));
+});
+
 // GET /api/users — list all users (no password hashes)
 router.get('/', requireAdmin, (req, res) => {
   const db = getDb();

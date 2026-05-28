@@ -151,6 +151,13 @@ ok "Permissions set."
 # prevents child arping probes from inheriting CAP_NET_RAW.
 ssh "$SSH_TARGET" "if [ -x ${INSTALL_DIR}/runtime/node/bin/node ]; then setcap -r ${INSTALL_DIR}/runtime/node/bin/node 2>/dev/null || true; fi"
 
+ssh "$SSH_TARGET" "
+  if [ -f ${INSTALL_DIR}/scripts/lib/dnsmasq-perms.sh ]; then
+    . ${INSTALL_DIR}/scripts/lib/dnsmasq-perms.sh
+    repair_dnsmasq_log_permissions /var/lib/cidrella
+  fi
+"
+
 # ═══════════════════════════════════════════════════════════
 # UPDATE SYSTEMD & SUDOERS
 # ═══════════════════════════════════════════════════════════
@@ -203,6 +210,9 @@ ssh "$SSH_TARGET" "
   fi
   if [ -f ${INSTALL_DIR}/scripts/cidrella-reset-password ]; then
     install -m 0700 -o root -g root ${INSTALL_DIR}/scripts/cidrella-reset-password /usr/local/bin/cidrella-reset-password
+  fi
+  if [ -f ${INSTALL_DIR}/scripts/cidrella-reset-web-ports ]; then
+    install -m 0700 -o root -g root ${INSTALL_DIR}/scripts/cidrella-reset-web-ports /usr/local/bin/cidrella-reset-web-ports
   fi
 "
 

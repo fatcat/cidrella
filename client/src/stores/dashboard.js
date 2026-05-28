@@ -13,6 +13,7 @@ const METRIC_CONFIG = [
   { key: 'blocklistTopClients',   url: '/analytics/blocklist/top-clients', params: { limit: 10 } },
   { key: 'blocklistTopDomains',   url: '/analytics/blocklist/top-domains', params: { limit: 10 } },
   { key: 'blocklistTopCategories',url: '/analytics/blocklist/top-categories', params: { limit: 10 } },
+  { key: 'blocklistTopClientDomains', url: '/analytics/blocklist/top-client-domains', params: { limit: 20 } },
   { key: 'geoipTopClients',       url: '/analytics/geoip/top-clients',    params: { limit: 10 } },
   { key: 'geoipTopDomains',       url: '/analytics/geoip/top-domains',    params: { limit: 10 } },
 ];
@@ -28,11 +29,13 @@ export const useDashboardStore = defineStore('dashboard', () => {
     blocklistTopClients: [],
     blocklistTopDomains: [],
     blocklistTopCategories: [],
+    blocklistTopClientDomains: [],
     geoipTopClients: [],
     geoipTopDomains: [],
   });
 
   const services = ref(null);
+  const systemHealth = ref(null);
   const loading = ref(false);
 
   // Shared time range across all analytics tabs
@@ -57,6 +60,12 @@ export const useDashboardStore = defineStore('dashboard', () => {
     return res.data;
   }
 
+  async function fetchSystemHealth() {
+    const res = await api.get('/health/system');
+    systemHealth.value = res.data;
+    return res.data;
+  }
+
   // Thin wrappers kept for backward compatibility with existing callers
   const fetchTimeseries            = (range) => fetchMetric('timeseries', range);
   const fetchBlocklistHits         = (range) => fetchMetric('blocklistHits', range);
@@ -67,6 +76,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const fetchBlocklistTopClients   = (range) => fetchMetric('blocklistTopClients', range);
   const fetchBlocklistTopDomains   = (range) => fetchMetric('blocklistTopDomains', range);
   const fetchBlocklistTopCategories= (range) => fetchMetric('blocklistTopCategories', range);
+  const fetchBlocklistTopClientDomains = (range) => fetchMetric('blocklistTopClientDomains', range);
   const fetchGeoipTopClients       = (range) => fetchMetric('geoipTopClients', range);
   const fetchGeoipTopDomains       = (range) => fetchMetric('geoipTopDomains', range);
 
@@ -76,6 +86,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
       await Promise.all([
         ...METRIC_CONFIG.map(c => fetchMetric(c.key, range)),
         fetchServices(),
+        fetchSystemHealth(),
       ]);
     } finally {
       loading.value = false;
@@ -85,12 +96,13 @@ export const useDashboardStore = defineStore('dashboard', () => {
   return {
     metrics,
     ...toRefs(metrics),  // live-linked refs so store.timeseries stays in sync with metrics.timeseries
-    services, loading,
+    services, systemHealth, loading,
     selectedRange, setRange,
     fetchMetric,
     fetchTimeseries, fetchBlocklistHits, fetchGeoipHits, fetchProxyPerf, fetchServices,
+    fetchSystemHealth,
     fetchTopClients, fetchTopDomains,
-    fetchBlocklistTopClients, fetchBlocklistTopDomains, fetchBlocklistTopCategories,
+    fetchBlocklistTopClients, fetchBlocklistTopDomains, fetchBlocklistTopCategories, fetchBlocklistTopClientDomains,
     fetchGeoipTopClients, fetchGeoipTopDomains,
     fetchAll,
   };

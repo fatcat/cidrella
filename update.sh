@@ -915,6 +915,12 @@ if [ -f "$TARGET_SLOT/scripts/cidrella-reset-password" ]; then
   ok "Installed /usr/local/bin/cidrella-reset-password wrapper"
 fi
 
+# Install cidrella-reset-web-ports wrapper (v0.4.15+). Root-only (0700).
+if [ -f "$TARGET_SLOT/scripts/cidrella-reset-web-ports" ]; then
+  install -m 0700 -o root -g root "$TARGET_SLOT/scripts/cidrella-reset-web-ports" /usr/local/bin/cidrella-reset-web-ports
+  ok "Installed /usr/local/bin/cidrella-reset-web-ports wrapper"
+fi
+
 # v0.4.15+: logrotate for dnsmasq.log. install.sh adds this on fresh
 # installs; the upgrade path needs it too so existing hosts (e.g. the
 # v0.4.14 → v0.4.15 production hop) pick up log rotation instead of
@@ -924,6 +930,15 @@ if [ -f "$TARGET_SLOT/scripts/logrotate/cidrella-dnsmasq" ] && [ -d /etc/logrota
     "$TARGET_SLOT/scripts/logrotate/cidrella-dnsmasq" \
     /etc/logrotate.d/cidrella-dnsmasq
   ok "Installed logrotate config (/etc/logrotate.d/cidrella-dnsmasq)"
+fi
+
+# Repair existing dnsmasq log permissions so the cidrella service can tail
+# logs for the live viewer, passive liveness, and metrics after upgrade.
+if [ -f "$TARGET_SLOT/scripts/lib/dnsmasq-perms.sh" ]; then
+  # shellcheck source=scripts/lib/dnsmasq-perms.sh
+  source "$TARGET_SLOT/scripts/lib/dnsmasq-perms.sh"
+  repair_dnsmasq_log_permissions "$DATA_DIR"
+  ok "Repaired dnsmasq log permissions"
 fi
 
 # Native systemd installs use AmbientCapabilities from cidrella.service.
