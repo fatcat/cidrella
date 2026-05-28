@@ -128,13 +128,18 @@ function checkNpmProject(projectRoot, relativeDir) {
     }))
     .filter((pkg) => pkg.current && pkg.latest && pkg.current !== pkg.latest)
     .sort((a, b) => a.name.localeCompare(b.name));
+  const actionableUpdates = outdatedPackages
+    .filter((pkg) => pkg.wanted && pkg.current !== pkg.wanted);
+  const majorUpdates = outdatedPackages
+    .filter((pkg) => !pkg.wanted || pkg.current === pkg.wanted);
 
   return {
     dir: relativeDir || '.',
     auditError: audit.ok || vulnerablePackages.length > 0 ? '' : audit.stderr,
     outdatedError: outdated.ok || outdatedPackages.length > 0 ? '' : outdated.stderr,
     vulnerabilities: vulnerablePackages,
-    outdated: outdatedPackages,
+    outdated: actionableUpdates,
+    majorUpdates,
   };
 }
 
@@ -299,6 +304,13 @@ function printReport(report) {
         console.log(`    - ${pkg.name}: ${pkg.current} -> wanted ${pkg.wanted}, latest ${pkg.latest}`);
       }
       console.log(`    Fix path: accept the routine update prompt to run npm update --omit=dev in ${project.dir}.`);
+    }
+    if (project.majorUpdates?.length > 0) {
+      console.log(`  Major updates available in ${project.dir}: ${project.majorUpdates.length} package(s)`);
+      for (const pkg of project.majorUpdates.slice(0, 10)) {
+        console.log(`    - ${pkg.name}: ${pkg.current} -> latest ${pkg.latest} (outside declared range)`);
+      }
+      console.log('    Note: not applied by routine npm update; evaluate separately before changing package.json ranges.');
     }
     if (project.auditError) {
       console.log(`  WARNING: npm audit check failed in ${project.dir}: ${project.auditError}`);
