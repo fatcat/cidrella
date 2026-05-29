@@ -745,11 +745,11 @@ if [ ! -d "$TARGET_SLOT/server/node_modules/express" ]; then
 fi
 
 # Verify key native bindings. v0.4.7 dropped bcrypt in favor of bcryptjs
-# (pure JS), so that check is gone. Three native bindings remain.
+# (pure JS), v0.4.15 replaced net-ping/raw-socket with system ping, and
+# DuckDB now uses the official @duckdb/node-api package family.
 MISSING=""
 [ ! -f "$TARGET_SLOT/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
-[ ! -f "$TARGET_SLOT/server/node_modules/duckdb/lib/binding/duckdb.node" ] && MISSING="$MISSING duckdb"
-[ ! -f "$TARGET_SLOT/server/node_modules/raw-socket/build/Release/raw.node" ] && MISSING="$MISSING raw-socket"
+[ ! -f "$TARGET_SLOT/server/node_modules/@duckdb/node-bindings-linux-x64/duckdb.node" ] && MISSING="$MISSING @duckdb/node-bindings-linux-x64"
 if [ -n "$MISSING" ]; then
   err "Pre-flight failed: missing native bindings:$MISSING"
   exit 1

@@ -178,7 +178,7 @@ export NPM_CONFIG_CACHE
 # cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
 # through to /usr/bin/node. Bumping this version requires a release + testerella
 # validation, not a hot swap.
-BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-22.22.3}"
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.16.0}"
 NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
@@ -222,8 +222,8 @@ print_dependency_override_note() {
     if (!overrides["node-gyp"] && !overrides.tar) process.exit(0);
     console.log("");
     console.log("Dependency override reminder:");
-    console.log("  server/package.json currently overrides node-gyp/tar because duckdb pulls an old build-tool chain.");
-    console.log("  Revisit this after duckdb updates its dependencies; remove the override when npm audit stays clean without it.");
+    console.log("  server/package.json currently overrides node-gyp/tar.");
+    console.log("  Revisit this periodically and remove the override when npm audit stays clean without it.");
   ' "$PROJECT_DIR"
 }
 
@@ -266,6 +266,62 @@ apply_npm_updates() {
       (cd "$PROJECT_DIR/$dir" && npm install)
     fi
   done
+}
+
+apply_npm_major_updates() {
+  node -e '
+    const fs = require("fs");
+    const path = require("path");
+    const { spawnSync } = require("child_process");
+
+    const projectDir = process.argv[1];
+    const reportFile = process.argv[2];
+    const report = JSON.parse(fs.readFileSync(reportFile, "utf8"));
+
+    for (const project of report.npmProjects || []) {
+      const updates = project.majorUpdates || [];
+      if (updates.length === 0) continue;
+
+      const cwd = path.join(projectDir, project.dir);
+      const specs = updates.map((pkg) => `${pkg.name}@${pkg.latest}`);
+      console.log(`  Checking major package updates in ${project.dir}: ${specs.join(", ")}`);
+
+      let result = spawnSync(
+        "npm",
+        ["install", "--save", "--package-lock-only", "--dry-run", "--ignore-scripts", ...specs],
+        {
+          cwd,
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          env: process.env,
+        }
+      );
+      if (result.status !== 0) {
+        console.log("");
+        console.log(`  Major package updates in ${project.dir} cannot be applied automatically.`);
+        console.log("  npm could not resolve the requested latest versions against the current project.");
+        console.log("  No package files were changed by this preflight check.");
+        console.log("");
+        console.log((result.stderr || result.stdout || "").trim());
+        process.exit(2);
+      }
+
+      console.log(`  Applying major package updates in ${project.dir}: ${specs.join(", ")}`);
+      result = spawnSync("npm", ["install", "--save", ...specs], {
+        cwd,
+        stdio: "inherit",
+        env: process.env,
+      });
+      if (result.status !== 0) process.exit(result.status || 1);
+
+      result = spawnSync("npm", ["install"], {
+        cwd,
+        stdio: "inherit",
+        env: process.env,
+      });
+      if (result.status !== 0) process.exit(result.status || 1);
+    }
+  ' "$PROJECT_DIR" "$RELEASE_HEALTH_JSON"
 }
 
 update_docker_node_tags() {
@@ -312,13 +368,14 @@ run_release_health_check() {
     --bundled-node-version "$BUNDLED_NODE_VERSION" \
     --json-out "$RELEASE_HEALTH_JSON"
 
-  local node_security package_security docker_security node_routine node_lts package_routine docker_routine check_failures
+  local node_security package_security docker_security node_routine node_lts package_routine package_major docker_routine check_failures
   node_security=$(health_json 'r.summary.nodeSecurity')
   package_security=$(health_json 'r.summary.packageSecurity')
   docker_security=$(health_json 'r.summary.dockerSecurity')
   node_routine=$(health_json 'r.summary.nodeRoutine')
   node_lts=$(health_json 'r.summary.nodeLts')
   package_routine=$(health_json 'r.summary.packageRoutine')
+  package_major=$(health_json 'r.summary.packageMajor')
   docker_routine=$(health_json 'r.summary.dockerRoutine')
   check_failures=$(health_json 'r.summary.checkFailures')
 
@@ -399,6 +456,34 @@ run_release_health_check() {
       exit 1
     fi
     echo "Continuing with current Node/package versions by developer choice."
+  fi
+
+  if [ "$package_major" = "true" ]; then
+    echo ""
+    echo "Major package updates are available."
+    echo "These require changing package.json version ranges and may include breaking changes."
+    echo "They are not applied by routine npm update."
+    if confirm_yn "Apply major package updates now?" "n"; then
+      set +e
+      apply_npm_major_updates
+      local major_rc=$?
+      set -e
+      if [ "$major_rc" -eq 2 ]; then
+        echo ""
+        echo "Major package updates could not be applied cleanly."
+        echo "Build stopped so the dependency plan can be resolved instead of silently skipping requested updates."
+        exit 1
+      fi
+      if [ "$major_rc" -ne 0 ]; then
+        echo ""
+        echo "Major package update failed unexpectedly."
+        exit "$major_rc"
+      fi
+      echo ""
+      echo "Major package updates were applied. Review and commit the changes, then rerun the release build."
+      exit 1
+    fi
+    echo "Continuing with current major package versions by developer choice."
   fi
 }
 
@@ -870,7 +955,7 @@ if [ "$DRY_RUN" = false ]; then
   # that's independent of whatever's in the dev server/node_modules.
   #
   # CRITICAL: we run npm with the BUNDLED node on PATH, not the system node.
-  # Reason: native modules (better-sqlite3, duckdb, raw-socket) compile
+  # Reason: native modules (better-sqlite3, duckdb) compile
   # against whatever node headers node-gyp sees. If we used system node
   # (say, v22.22.0) and then shipped the bundled runtime (v22.22.2), the
   # native bindings would be compiled for the wrong ABI and could fail to
@@ -894,12 +979,12 @@ if [ "$DRY_RUN" = false ]; then
 
   # Verify native bindings exist — we don't want to ship a tarball that
   # will fail at runtime because a native binary is missing. In v0.4.7 the
-  # bcrypt native module was replaced with bcryptjs (pure JS), so that check
-  # is gone. Three native bindings remain: better-sqlite3, duckdb, raw-socket.
+  # bcrypt native module was replaced with bcryptjs (pure JS), in v0.4.15
+  # net-ping/raw-socket was replaced with system ping, and DuckDB moved to
+  # the official @duckdb/node-api package family.
   MISSING=""
   [ ! -f "$STAGING_DIR/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
-  [ ! -f "$STAGING_DIR/server/node_modules/duckdb/lib/binding/duckdb.node" ] && MISSING="$MISSING duckdb"
-  [ ! -f "$STAGING_DIR/server/node_modules/raw-socket/build/Release/raw.node" ] && MISSING="$MISSING raw-socket"
+  [ ! -f "$STAGING_DIR/server/node_modules/@duckdb/node-bindings-linux-x64/duckdb.node" ] && MISSING="$MISSING @duckdb/node-bindings-linux-x64"
 
   if [ -n "$MISSING" ]; then
     echo "  ERROR: missing native bindings:$MISSING"

@@ -28,13 +28,13 @@ Recommended for production deployments on bare metal or LXC containers.
 | `python3`, `python3-setuptools` | Anomaly detection daemon runtime |
 | `python3-sklearn`, `python3-numpy`, `python3-joblib` | Anomaly detection ML libraries |
 
-Node.js is **not** a prerequisite — a Node 22.x runtime is bundled inside the release tarball and installed under `/opt/cidrella-<slot>/runtime/node/`. No system Node required.
+Node.js is **not** a prerequisite — a Node 24.x runtime is bundled inside the release tarball and installed under `/opt/cidrella-<slot>/runtime/node/`. No system Node required.
 
 ### Active scan capabilities
 
 Native installs use systemd ambient capabilities for active liveness scans:
 
-- `CAP_NET_RAW` lets CIDRella run ICMP probes and lets child `arping` probes inherit the raw-socket permission.
+- `CAP_NET_RAW` lets child `arping` probes inherit the raw-packet permission. ICMP fallback uses system `ping`.
 - `CAP_NET_BIND_SERVICE` lets the web/DNS processes bind privileged ports when configured.
 
 The installer and updater deliberately remove stale file capabilities from the bundled Node binary. Mixing Node file capabilities with `AmbientCapabilities=` is broken for ARP scans: Linux clears the ambient set when a file-capability binary is executed, so Node may keep `CAP_NET_RAW` while child `arping` processes lose it. If the host or container runtime strips ambient capabilities, CIDRella will warn during install/startup and active scans may report hosts offline; DHCP lease tracking and passive liveness still work.
@@ -120,7 +120,7 @@ sudo bash install.sh --version 0.1.0
 The installer is interactive and will:
 
 - Install system dependencies (dnsmasq, build-essential, arping, openssl, minisign, etc.)
-- Use the bundled Node 22 runtime shipped inside the release tarball
+- Use the bundled Node 24 runtime shipped inside the release tarball
 - Detect and handle conflicts with systemd-resolved (port 53)
 - Handle existing dnsmasq installations (replace config, include config, or skip)
 - Create a `cidrella` system user and data directory at `/var/lib/cidrella`

@@ -46,7 +46,7 @@ dnsmasq itself happily accepts any DHCP range (it doesn't pre-allocate); the con
 
 ## Where the numbers come from
 
-SQLite row size is approximate — actual bytes depend on column content (hostname strings, MAC presence, vendor lookups). DuckDB analytics is a ring buffer capped by the scheduler; it does not grow with subnet size. The 150 MB Node baseline is measured from `process.memoryUsage().rss` right after boot with a freshly-initialized DB on Node 22 + Debian 13.
+SQLite row size is approximate — actual bytes depend on column content (hostname strings, MAC presence, vendor lookups). DuckDB analytics is a ring buffer capped by the scheduler; it does not grow with subnet size. The 150 MB Node baseline is measured from `process.memoryUsage().rss` right after boot with a freshly-initialized DB on Node 24 + Debian 13.
 
 Verify your own instance with:
 ```bash

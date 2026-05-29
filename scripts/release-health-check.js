@@ -143,31 +143,6 @@ function checkNpmProject(projectRoot, relativeDir) {
   };
 }
 
-function nativeRuntimeBlockers(projectRoot) {
-  const lockFile = path.join(projectRoot, 'server', 'package-lock.json');
-  if (!fs.existsSync(lockFile)) return [];
-  try {
-    const lock = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
-    const rawSocketVersion = lock.packages?.['node_modules/raw-socket']?.version;
-    if (rawSocketVersion) {
-      return [{
-        package: 'raw-socket',
-        version: rawSocketVersion,
-        maxNodeMajor: 22,
-        reason: 'native dependency currently fails to build against Node 24/V8 headers',
-      }];
-    }
-  } catch (error) {
-    return [{
-      package: 'package-lock.json',
-      version: '',
-      maxNodeMajor: 0,
-      reason: `could not inspect native runtime compatibility: ${error.message}`,
-    }];
-  }
-  return [];
-}
-
 function parseDockerfile(projectRoot) {
   const dockerfile = path.join(projectRoot, 'Dockerfile');
   if (!fs.existsSync(dockerfile)) {
@@ -281,13 +256,6 @@ function printReport(report) {
     console.log(`    Suggested LTS target: v${report.node.latestLtsVersion}`);
     console.log('    Fix path: accept the routine update prompt to move the bundled runtime to the active LTS line.');
   }
-  if (report.node.ltsUpdateBlocked) {
-    console.log(`  LTS notice: active LTS is v${report.node.latestLtsMajor}, but bundled Node remains on v${report.node.currentMajor}.`);
-    for (const blocker of report.node.runtimeBlockers) {
-      console.log(`    - ${blocker.package}${blocker.version ? ` ${blocker.version}` : ''}: ${blocker.reason}; max supported Node major ${blocker.maxNodeMajor}.`);
-    }
-    console.log('    Fix path: replace or update the blocking native dependency, then move the bundled runtime to the active LTS line.');
-  }
 
   for (const project of report.npmProjects) {
     if (project.vulnerabilities.length > 0) {
@@ -390,20 +358,10 @@ async function main() {
     .filter((release) => majorOf(release.version) === latestLtsMajor)
     .sort((a, b) => compareVersions(b.version, a.version))[0];
   const latestLtsVersion = normalizeVersion(latestLtsRelease?.version || latestSameMajor);
-  const runtimeBlockers = nativeRuntimeBlockers(projectRoot);
-  const maxSupportedNodeMajor = runtimeBlockers
-    .filter((blocker) => blocker.maxNodeMajor > 0)
-    .reduce((min, blocker) => Math.min(min, blocker.maxNodeMajor), Infinity);
-  const ltsUpdateBlocked = Number.isFinite(maxSupportedNodeMajor)
-    && latestLtsMajor > maxSupportedNodeMajor
-    && currentMajor <= maxSupportedNodeMajor;
-  const compatibilityAwareLtsMajor = ltsUpdateBlocked ? currentMajor : latestLtsMajor;
-  const compatibilityAwareLtsVersion = ltsUpdateBlocked ? current : latestLtsVersion;
-
   const npmProjects = ['client', 'server']
     .map((relativeDir) => checkNpmProject(projectRoot, relativeDir))
     .filter(Boolean);
-  const docker = await checkDocker(projectRoot, compatibilityAwareLtsMajor, compatibilityAwareLtsVersion, distIndex);
+  const docker = await checkDocker(projectRoot, latestLtsMajor, latestLtsVersion, distIndex);
 
   const report = {
     node: {
@@ -412,12 +370,10 @@ async function main() {
       latestSameMajor,
       latestLtsMajor,
       latestLtsVersion,
-      runtimeBlockers,
-      ltsUpdateBlocked,
       securityUpdateRequired: securityReleases.length > 0,
       securityReleases,
       routineUpdateAvailable: compareVersions(latestSameMajor, current) > 0,
-      ltsUpdateAvailable: latestLtsMajor > currentMajor && !ltsUpdateBlocked,
+      ltsUpdateAvailable: latestLtsMajor > currentMajor,
       recommendedVersion: securityReleases.length > 0 || compareVersions(latestSameMajor, current) > 0
         ? latestSameMajor
         : latestLtsVersion,
@@ -432,6 +388,7 @@ async function main() {
     nodeRoutine: report.node.routineUpdateAvailable,
     nodeLts: report.node.ltsUpdateAvailable,
     packageRoutine: npmProjects.some((project) => project.outdated.length > 0),
+    packageMajor: npmProjects.some((project) => project.majorUpdates?.length > 0),
     dockerSecurity: docker.nodeSecurityUpdateRequired,
     dockerRoutine: docker.nodeLtsUpdateAvailable || docker.s6Overlay.updateAvailable,
     dockerCheckFailures: Boolean(docker.checkError),

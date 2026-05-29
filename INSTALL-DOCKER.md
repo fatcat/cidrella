@@ -122,7 +122,7 @@ The reset generates a random password (printed once to stdout), sets `must_chang
 **Docker-specific notes**:
 
 - The native-install wrapper at `/usr/local/bin/cidrella-reset-password` is **not** present in the Docker image. It's installed only by `scripts/install.sh`, which Docker images don't run. The direct `node` invocation above is the Docker-native equivalent.
-- The Docker image uses the base `node:22-alpine` Node runtime, not the bundled runtime that native installs get from v0.4.7+ onward. That's intentional — in Docker, container image updates already handle the runtime versioning.
+- The Docker image uses the base `node:24-alpine` Node runtime, not the bundled runtime that native installs get from v0.4.7+ onward. That's intentional — in Docker, container image updates already handle the runtime versioning.
 - The audit trail and Change Password banner work the same way in Docker as in native installs — the logic is in `reset-password.js` itself, not in the native wrapper.
 - There's no equivalent to the v0.4.8 file permission tightening (`600 cidrella:cidrella` on `cidrella.db`, etc.) inside the Docker image. The container's isolation is your security boundary — if an attacker has `docker exec` access, the permissions inside the container are moot anyway.
 

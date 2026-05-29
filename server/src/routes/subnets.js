@@ -1565,7 +1565,6 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   }
 
   function enrichPersistedRows(rows, rangeLookup) {
-    enrichIpViewRows(db, rows);
     for (const ip of rows) {
       const ipLong = ipToLong(ip.ip_address);
       const range = rangeForIpLong(rangeLookup, ipLong);
@@ -1573,6 +1572,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       ip.range_type_name = range?.range_type_name || null;
       ip.range_type_color = range?.range_type_color || null;
     }
+    enrichIpViewRows(db, rows);
   }
 
   // ── Search mode: return only matching persisted IPs (no virtual fill) ──

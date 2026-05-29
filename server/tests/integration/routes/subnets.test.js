@@ -326,6 +326,33 @@ describe('GET /api/subnets/:id/ips', () => {
     expect(res.body.ips.map(ip => ip.ip_address)).toEqual(['10.73.0.0', '10.73.0.3', '10.73.0.7']);
     expect(res.body.ips.every(ip => ip.ip_display_status !== 'available')).toBe(true);
   });
+
+  it('classifies a persisted locked gateway row as gateway when available rows are suppressed', async () => {
+    const createRes = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.72.0.0/29', name: 'Gateway Type', status: 'allocated', gateway_address: '10.72.0.1' });
+    expect(createRes.status).toBe(201);
+
+    const gatewayType = db.prepare("SELECT id FROM range_types WHERE name = 'Gateway' AND is_system = 1").get();
+    db.prepare(`
+      INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description)
+      VALUES (?, ?, '10.72.0.1', '10.72.0.1', 'Default gateway')
+    `).run(createRes.body.id, gatewayType.id);
+    db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, status, reservation_note)
+      VALUES (?, '10.72.0.1', 'locked', 'Default gateway')
+    `).run(createRes.body.id);
+
+    const res = await request(app)
+      .get(`/api/subnets/${createRes.body.id}/ips?page=1&pageSize=8&showAvailable=false`);
+    expect(res.status).toBe(200);
+    const row = res.body.ips.find(ip => ip.ip_address === '10.72.0.1');
+    expect(row).toBeDefined();
+    expect(row.range_type_name).toBe('Gateway');
+    expect(row.address_type).toBe('gateway');
+    expect(row.computed_type).toBe('gateway');
+  });
 });
 
 describe('DELETE /api/subnets/:id', () => {

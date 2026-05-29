@@ -41,11 +41,10 @@ export function readProcessCapabilities(pid = 'self') {
 
 export function getCapabilityWarning(capabilities = readProcessCapabilities()) {
   if (!capabilities.cap_net_raw_effective) {
-    return 'CAP_NET_RAW is not effective; ICMP scans cannot open raw sockets and ARP probes will fail.';
+    return 'CAP_NET_RAW is not effective; ARP probes will fail.';
   }
   if (!capabilities.cap_net_raw_ambient) {
     return 'CAP_NET_RAW is effective in Node but not ambient; child arping probes will not inherit it.';
   }
   return null;
 }
-

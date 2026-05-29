@@ -4,27 +4,22 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@duckdb/node-api": "^1.5.3-r.2",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^11.7.0",
+    "better-sqlite3": "^12.10.0",
     "cors": "^2.8.5",
     "dns-packet": "^5.6.1",
-    "duckdb": "^1.1.0",
-    "express": "^4.21.0",
+    "express": "^5.2.1",
     "express-rate-limit": "^8.3.2",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "lru-cache": "^11.2.6",
     "maxmind": "^5.0.5",
     "morgan": "^1.10.0",
-    "net-ping": "^1.2.4",
     "smol-toml": "^1.6.1"
   },
   "devDependencies": {
     "supertest": "^7.2.2",
     "vitest": "^4.0.18"
-  },
-  "overrides": {
-    "node-gyp": "^12.3.0",
-    "tar": "^7.5.15"
   }
 }

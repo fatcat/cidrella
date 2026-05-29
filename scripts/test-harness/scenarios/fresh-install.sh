@@ -31,7 +31,7 @@ scenario_assert() {
   assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.sqlite.ok" "true"
   assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.duckdb.ok" "true"
   assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.bcrypt.ok" "true"
-  assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.raw_socket.ok" "true"
+  assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.ping.ok" "true"
 
   # ─── All three services active ────────────────────────
   assert_systemctl_active cidrella

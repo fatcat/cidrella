@@ -17,7 +17,7 @@ CIDRella uses an **A/B slot** layout for atomic updates with automatic rollback.
 ```
 
 - A new release is extracted to the **inactive** slot while the current version keeps running
-- A pre-flight probe starts the new version on a temporary port and verifies every subsystem (SQLite, DuckDB, bcrypt, raw-socket) before any switchover
+- A pre-flight probe starts the new version on a temporary port and verifies every subsystem (SQLite, DuckDB, bcrypt, system ping) before any switchover
 - Databases are snapshotted to `/var/lib/cidrella/snapshots/pre-update/` before the symlink swap
 - The symlink swap is atomic — only the Node.js process is restarted, which takes a few seconds
 - `dnsmasq` (DNS/DHCP) runs as a separate systemd unit and is **not** restarted during updates. DNS and DHCP stay up throughout.
@@ -54,7 +54,7 @@ curl -sSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install
 
 The installer will:
 
-1. Install system dependencies (Node 22, dnsmasq, build tools, `python3-setuptools`)
+1. Install system dependencies (bundled Node runtime, dnsmasq, build tools, `python3-setuptools`)
 2. Create the `cidrella` service user
 3. Extract the latest release tarball to `/opt/cidrella-a/` and create the symlink `/opt/cidrella -> /opt/cidrella-a`
 4. Install the systemd units (`cidrella.service`, `cidrella-dnsmasq.service`, `cidrella-anomaly.service`)
@@ -119,7 +119,7 @@ Jumping multiple versions at once (for example, v0.4.2 to v0.7.0) is supported:
 Before a large jump, read the release notes for each intermediate version on GitHub. Watch for:
 
 - **Breaking config changes** — new required settings or format changes to settings in `cidrella.db`
-- **Node.js version changes** — `install.sh` ships with `NODE_MAJOR=22`. Tarballs include native binaries built against the release's Node ABI. If a future release moves to Node 24, the bundled binaries will not load on Node 22 and the update script will exit cleanly during pre-flight.
+- **Node.js version changes** — release tarballs include a bundled Node runtime and native binaries built against that release's Node ABI. If a future release moves Node majors, the update script validates the new slot during pre-flight and exits cleanly if native bindings cannot load.
 - **DuckDB major version changes** — DuckDB on-disk format is **not backward compatible** across major versions. Once an update runs migrations that touch `analytics.duckdb`, a rollback to the previous DuckDB version will lose analytics data (the snapshot is restored, but it was written by the older DuckDB, so it is readable again).
 - **Minisign key rotation** — if the public signing key ever rotates, you will need to update `/opt/cidrella/scripts/cidrella.pub` manually before `cidrella-update` can verify new releases.
 
@@ -596,7 +596,7 @@ sudo rm -rf /opt/cidrella.bak-*   # old backup directories from pre-A/B installs
 
 ### Node version mismatch after host upgrade
 
-If you upgrade Node.js on the host (for example, from Node 20 to Node 22 via `apt upgrade`), the native binaries in both slots will fail to load because they were built against the old ABI. Recovery:
+If you manually replace the bundled Node runtime in an installed slot, the native binaries in that slot can fail to load because they were built against the release's bundled ABI. Recovery:
 
 ```bash
 cd /opt/cidrella/server

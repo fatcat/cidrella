@@ -1,6 +1,5 @@
 import { execFile } from 'child_process';
 import { readFile } from 'fs/promises';
-import ping from 'net-ping';
 import { parseCidr, longToIp } from './ip.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
@@ -28,25 +27,10 @@ function arpingIp(ip) {
   });
 }
 
-/**
- * ICMP ping using net-ping (raw sockets — no shell, no sudo).
- * Requires CAP_NET_RAW on the node binary or running as root.
- */
-function createPingSession() {
-  return ping.createSession({
-    timeout: PING_TIMEOUT_MS,
-    retries: 0,
-    packetSize: 16,
-  });
-}
-
-function pingIp(session, ip) {
+function pingIp(ip) {
   return new Promise((resolve) => {
-    if (!session) {
-      resolve({ responded: false, mac: null });
-      return;
-    }
-    session.pingHost(ip, (error) => {
+    const timeoutSeconds = Math.max(1, Math.ceil(PING_TIMEOUT_MS / 1000));
+    execFile('ping', ['-c', '1', '-W', String(timeoutSeconds), ip], { timeout: PING_TIMEOUT_MS + 500 }, (error) => {
       resolve({ responded: !error, mac: null });
     });
   });
@@ -69,11 +53,11 @@ function fqdnForRecordName(recordName, zoneName) {
  * ARP is cheap and captures MAC addresses on directly-connected networks;
  * ICMP is the fallback for hosts that do not answer ARP or are off-link.
  */
-async function probeIp(icmpSession, ip) {
+async function probeIp(ip) {
   const arp = await arpingIp(ip);
   if (arp.responded) return { ...arp, method: 'arp' };
 
-  const icmp = await pingIp(icmpSession, ip);
+  const icmp = await pingIp(ip);
   return { ...icmp, method: 'icmp' };
 }
 
@@ -122,7 +106,7 @@ export function resumeInterruptedScans(db) {
 
 /**
  * Start an async network scan for a subnet.
- * Uses arping first, then net-ping ICMP when ARP gets no response.
+ * Uses arping first, then system ping ICMP when ARP gets no response.
  * Reads the OS ARP cache to capture MAC addresses learned during probes.
  * Resumes from where it left off if scan_results already exist for some IPs.
  * Updates the database with progress and results as it goes.
@@ -141,14 +125,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     return;
   }
 
-  let icmpSession = null;
   const probeMethods = new Map();
-
-  try {
-    icmpSession = createPingSession();
-  } catch (err) {
-    console.warn(`[scanner] ICMP fallback unavailable for ${subnet.cidr}: ${err.message}`);
-  }
 
   console.log(`[scanner] Subnet ${subnet.cidr} — using ARP probes with ICMP fallback`);
 
@@ -277,7 +254,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           }
         }
 
-        promises.push(probeIp(icmpSession, ip).then(result => ({ ip, ...result })));
+        promises.push(probeIp(ip).then(result => ({ ip, ...result })));
       }
 
       if (promises.length === 0) continue;
@@ -363,11 +340,6 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     }
   } catch (err) {
     ScanRun.markFailed(db, scanId, err.message);
-  } finally {
-    // Clean up the ICMP session
-    if (icmpSession) {
-      try { icmpSession.close(); } catch { /* ignore */ }
-    }
   }
 
   return { method: 'arp+icmp', results: Object.fromEntries(probeMethods) };

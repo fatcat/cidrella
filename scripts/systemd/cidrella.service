@@ -51,10 +51,10 @@ RestrictNamespaces=true
 RemoveIPC=true
 
 # Capabilities: bound the service to exactly what it needs, no more.
-# CAP_NET_RAW is used by active liveness scans: Node opens raw ICMP sockets
-# for remote subnets and child arping probes inherit CAP_NET_RAW via the
-# ambient set for directly-connected subnets. Do not set file capabilities on
-# the Node binary; file-cap exec clears the ambient set and breaks arping.
+# CAP_NET_RAW is used by active liveness scans: child arping probes inherit
+# CAP_NET_RAW via the ambient set for directly-connected subnets. ICMP
+# fallback uses system ping. Do not set file capabilities on the Node binary;
+# file-cap exec clears the ambient set and breaks arping.
 # CAP_NET_BIND_SERVICE lets the process bind privileged ports if needed.
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
@@ -71,8 +71,9 @@ AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
 #     mappings for generated code).
 #   SystemCallFilter=@system-service — too broad to adopt blindly; would
 #     need a syscall-by-syscall audit against better-sqlite3, duckdb, and
-#     raw-socket before turning on. Also implies NoNewPrivileges=yes, which
-#     is now fine (see note above) — adoption is purely a behavior risk.
+#     scanner child-process execution before turning on. Also implies
+#     NoNewPrivileges=yes, which is now fine (see note above) — adoption is
+#     purely a behavior risk.
 
 [Install]
 WantedBy=multi-user.target

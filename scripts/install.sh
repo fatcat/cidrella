@@ -266,7 +266,8 @@ fi
 # Dropped from this list in v0.4.7: nmap (never called by the app — was in
 # the prior apt list unused), nodejs (bundled now). build-essential and
 # python3-setuptools are kept because some users may still want to `npm
-# rebuild` manually. arping is kept because the scanner actually uses it.
+# rebuild` manually. arping and iputils-ping are kept because the scanner
+# uses arping first and system ping as the ICMP fallback.
 # The python packages are for the anomaly detection daemon.
 
 info "Installing system dependencies..."
@@ -276,7 +277,7 @@ info "Installing system dependencies..."
 # working polkit daemon and JS rules engine, those grants never apply and
 # the UI updater silently fails the same way the v0.4.8/v0.4.9 sudo path
 # did. Try the modern package name first, fall back to the legacy name.
-apt-get install -y -qq build-essential arping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
+apt-get install -y -qq build-essential arping iputils-ping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
 if ! command -v openssl >/dev/null 2>&1; then
   err "openssl is required for TLS certificate generation, CSR generation, and certificate validation."
   err "Install it manually with: apt-get install openssl"

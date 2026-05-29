@@ -84,12 +84,12 @@ router.get('/deep', requireLocalhost, async (req, res) => {
     allOk = false;
   }
 
-  // net-ping / raw-socket — module loads (don't actually send packets)
+  // ICMP fallback — scanner uses system ping via execFile, not a shell.
   try {
-    await import('raw-socket');
-    checks.raw_socket = { ok: true };
+    execFileSync('ping', ['-c', '1', '-W', '1', '127.0.0.1'], { stdio: 'pipe', timeout: 2000 });
+    checks.ping = { ok: true };
   } catch (err) {
-    checks.raw_socket = { ok: false, error: err.message };
+    checks.ping = { ok: false, error: err.message };
     allOk = false;
   }
 

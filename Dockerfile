@@ -1,4 +1,4 @@
-FROM node:22-alpine AS client-build
+FROM node:24-alpine AS client-build
 
 ARG DEV_TRACKING=0
 
@@ -8,7 +8,7 @@ RUN npm install
 COPY client/ ./
 RUN VITE_TRACKING=$DEV_TRACKING npx vite build
 
-FROM node:22-alpine
+FROM node:24-alpine
 
 # s6-overlay version
 ARG S6_OVERLAY_VERSION=3.2.3.0
@@ -28,6 +28,7 @@ RUN apk add --no-cache \
     dnsmasq \
     openssl \
     arping \
+    iputils \
     bind-tools \
     sudo \
     tzdata \
@@ -49,8 +50,7 @@ RUN echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*' > /etc/sudoer
 # Set up app directory
 WORKDIR /app
 
-# Install server dependencies (raw-socket needs python3/make/g++ to build)
-# and Python ML dependencies for anomaly detection sidecar
+# Install server dependencies and Python ML dependencies for anomaly detection sidecar
 COPY server/package.json server/package-lock.json* ./server/
 RUN apk add --no-cache python3 py3-pip py3-scikit-learn py3-numpy py3-joblib && \
     apk add --no-cache --virtual .build-deps py3-setuptools make g++ && \

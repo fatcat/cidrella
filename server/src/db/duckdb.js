@@ -1,9 +1,10 @@
 import path from 'path';
-import duckdb from 'duckdb';
+import { DuckDBInstance } from '@duckdb/node-api';
 import { DATA_DIR, ANALYTICS_FLUSH_INTERVAL_MS, ANALYTICS_RETENTION_CLEANUP_MS } from '../config/defaults.js';
 import { getSetting } from './init.js';
 
-let db = null;
+let instance = null;
+let connection = null;
 let buffer = [];
 let flushTimer = null;
 let pruneTimer = null;
@@ -12,54 +13,48 @@ let pruneTimer = null;
 export function initAnalyticsDb(dataDir) {
   const dbPath = path.join(dataDir || DATA_DIR, 'analytics.duckdb');
 
-  return new Promise((resolve, reject) => {
-    db = new duckdb.Database(dbPath, (err) => {
-      if (err) return reject(err);
-
-      // Cap DuckDB's buffer-pool memory before any query can run.
-      // Default is ~80% of system RAM (≈819MB on a 1GB LXC), which combined
-      // with the Node heap, the in-memory blocklist, and the Python anomaly
-      // daemon's resident set will push the cgroup over its limit and trigger
-      // the kernel OOM-killer on cidrella.service. The 17MB on-disk analytics
-      // dataset doesn't need a 256MB working set today, but headroom is cheap
-      // and a future ~10× growth still fits. threads=2 caps per-thread scratch
-      // so a single heavy GROUP BY can't spike RSS on a small box. duckdb-node
-      // serializes db.run calls per Database instance, so these PRAGMAs are
-      // guaranteed to apply before the CREATE TABLE below executes.
-      db.run("PRAGMA memory_limit='256MB'");
-      db.run("PRAGMA threads=2");
-
-      db.run(`
-        CREATE TABLE IF NOT EXISTS dns_queries (
-          ts TIMESTAMP NOT NULL,
-          client_ip VARCHAR NOT NULL,
-          domain VARCHAR NOT NULL,
-          query_type VARCHAR NOT NULL,
-          response_code VARCHAR,
-          action VARCHAR NOT NULL,
-          block_reason VARCHAR,
-          latency_us INTEGER,
-          resolved_ip VARCHAR
-        )
-      `, (err) => {
-        if (err) return reject(err);
-
-        // Start periodic flush
-        flushTimer = setInterval(() => flushQueries(), ANALYTICS_FLUSH_INTERVAL_MS);
-
-        // Start periodic pruning
-        pruneTimer = setInterval(() => pruneOldData(), ANALYTICS_RETENTION_CLEANUP_MS);
-
-        console.log('[analytics] DuckDB initialized', { path: dbPath });
-        resolve();
-      });
+  return (async () => {
+    // Cap DuckDB's buffer-pool memory before any query can run.
+    // Default is ~80% of system RAM (≈819MB on a 1GB LXC), which combined
+    // with the Node heap, the in-memory blocklist, and the Python anomaly
+    // daemon's resident set will push the cgroup over its limit and trigger
+    // the kernel OOM-killer on cidrella.service. The 17MB on-disk analytics
+    // dataset doesn't need a 256MB working set today, but headroom is cheap
+    // and a future ~10× growth still fits. threads=2 caps per-thread scratch
+    // so a single heavy GROUP BY can't spike RSS on a small box.
+    instance = await DuckDBInstance.create(dbPath, {
+      memory_limit: '256MB',
+      threads: '2'
     });
-  });
+    connection = await instance.connect();
+
+    await connection.run(`
+      CREATE TABLE IF NOT EXISTS dns_queries (
+        ts TIMESTAMP NOT NULL,
+        client_ip VARCHAR NOT NULL,
+        domain VARCHAR NOT NULL,
+        query_type VARCHAR NOT NULL,
+        response_code VARCHAR,
+        action VARCHAR NOT NULL,
+        block_reason VARCHAR,
+        latency_us INTEGER,
+        resolved_ip VARCHAR
+      )
+    `);
+
+    // Start periodic flush
+    flushTimer = setInterval(() => flushQueries(), ANALYTICS_FLUSH_INTERVAL_MS);
+
+    // Start periodic pruning
+    pruneTimer = setInterval(() => pruneOldData(), ANALYTICS_RETENTION_CLEANUP_MS);
+
+    console.log('[analytics] DuckDB initialized', { path: dbPath });
+  })();
 }
 
 // Buffer a DNS query for batch insert
 export function logDnsQuery({ clientIp, domain, queryType, responseCode, action, blockReason, latencyUs, resolvedIp }) {
-  if (!db) return;
+  if (!connection) return;
   buffer.push({
     ts: new Date().toISOString(),
     clientIp: clientIp || '',
@@ -75,7 +70,7 @@ export function logDnsQuery({ clientIp, domain, queryType, responseCode, action,
 
 // Flush buffered queries to DuckDB using batched multi-row INSERT
 export function flushQueries() {
-  if (!db || buffer.length === 0) return;
+  if (!connection || buffer.length === 0) return;
 
   const rows = buffer.splice(0, buffer.length);
 
@@ -89,12 +84,8 @@ export function flushQueries() {
 
   const sql = `INSERT INTO dns_queries (ts, client_ip, domain, query_type, response_code, action, block_reason, latency_us, resolved_ip) VALUES ${placeholders.join(', ')}`;
 
-  return new Promise((resolve) => {
-    db.run(sql, ...params, (err) => {
-      if (err) console.error('[analytics] Flush error:', err.message);
-      resolve();
-    });
-  });
+  return connection.run(sql, params)
+    .catch(err => console.error('[analytics] Flush error:', err.message));
 }
 
 // Validated range-to-interval mapping — only allows known safe values
@@ -111,20 +102,17 @@ function rangeToInterval(range) {
 // Helper to run a DuckDB query and return rows
 // Converts BigInt values to Number for JSON serialization
 export function queryRaw(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    if (!db) return resolve([]);
-    db.all(sql, ...params, (err, rows) => {
-      if (err) return reject(err);
-      const safe = (rows || []).map(row => {
-        const out = {};
-        for (const [k, v] of Object.entries(row)) {
-          out[k] = typeof v === 'bigint' ? Number(v) : v;
-        }
-        return out;
-      });
-      resolve(safe);
-    });
-  });
+  if (!connection) return Promise.resolve([]);
+  return connection.runAndReadAll(sql, params)
+    .then(reader => reader.getRowObjectsJS().map(safeRowForJson));
+}
+
+function safeRowForJson(row) {
+  const out = {};
+  for (const [k, v] of Object.entries(row || {})) {
+    out[k] = typeof v === 'bigint' ? Number(v) : v;
+  }
+  return out;
 }
 
 // Generic top-N query by column (no action filter)
@@ -274,18 +262,11 @@ export function queryDomainClients(domain, range, limit = 50) {
 
 // Prune old data based on retention setting
 export function pruneOldData() {
-  if (!db) return Promise.resolve();
+  if (!connection) return Promise.resolve();
   const days = Math.max(1, Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7));
   const interval = rangeToInterval(`${days}d`) || `${days} DAYS`;
-  return new Promise((resolve) => {
-    db.run(
-      `DELETE FROM dns_queries WHERE ts < NOW() - INTERVAL '${interval}'`,
-      (err) => {
-        if (err) console.error('[analytics] Prune error:', err.message);
-        resolve();
-      }
-    );
-  });
+  return connection.run(`DELETE FROM dns_queries WHERE ts < NOW() - INTERVAL '${interval}'`)
+    .catch(err => console.error('[analytics] Prune error:', err.message));
 }
 
 // Flush buffer and close DuckDB
@@ -293,14 +274,21 @@ export async function closeAnalyticsDb() {
   if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
   if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
 
-  if (db) {
+  if (connection) {
     await flushQueries();
-    return new Promise((resolve) => {
-      db.close((err) => {
-        if (err) console.error('[analytics] Close error:', err.message);
-        db = null;
-        resolve();
-      });
-    });
+    try {
+      connection.closeSync();
+    } catch (err) {
+      console.error('[analytics] Close error:', err.message);
+    }
+    connection = null;
+  }
+  if (instance) {
+    try {
+      instance.closeSync();
+    } catch (err) {
+      console.error('[analytics] Instance close error:', err.message);
+    }
+    instance = null;
   }
 }
