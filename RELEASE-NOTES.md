@@ -18,6 +18,11 @@ security: true
 
 The v0.4.14 release is also flagged on GitHub as deprecated in favor of this release; upgraders coming from v0.4.13 or earlier can hop straight to v0.4.15.
 
+### Fixed
+- This release contains security, reliability, upgrade, DNS/DHCP/IP lifecycle,
+  liveness scanning, dependency, and crash-recovery fixes. The detailed fixes
+  are grouped by severity and pre-release validation phase below.
+
 ### Fixed — Critical
 - **Unauthenticated process-crash DoS on `/api/auth/login`.** In v0.4.14, sending `{"username":"admin","password":{}}` (or any non-string shape for either field) triggered an unhandled promise rejection inside `bcrypt.compare`, which terminated the Node process. Systemd's 5 s restart loop meant one request every ~6 s kept the service 100 % offline. Fixed with strict `typeof` guards at the top of the login and change-password handlers, try/catch around every async code path, and a `process.on('unhandledRejection')` backstop so a future unprotected async handler can't kill the process either.
 - **Authenticated dnsmasq config injection via DNS PTR record `name`.** The PTR name was written unescaped into `conf.d/zone-<id>.conf`, so a payload containing `\naddress=/evil.com/6.6.6.6\n` in the name field turned into an arbitrary dnsmasq directive after the next reload — hijacking DNS for any domain served by the proxy. Fixed with a strict PTR-name regex (`^[0-9]+(\.[0-9]+)*$`) at the route validator and belt-and-suspenders at the config writer.
