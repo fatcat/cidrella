@@ -111,7 +111,6 @@ rsync -az --delete \
 # Root files used by the deployed app and maintenance commands.
 rsync -az "$PROJECT_DIR/package.json" "${SSH_TARGET}:${INSTALL_DIR}/package.json"
 rsync -az "$PROJECT_DIR/update.sh" "${SSH_TARGET}:${INSTALL_DIR}/update.sh"
-ssh "$SSH_TARGET" "chmod 0755 ${INSTALL_DIR}/update.sh"
 
 ok "Files synced."
 
@@ -202,6 +201,10 @@ ssh "$SSH_TARGET" "
 # Update stable command wrappers. These resolve through /opt/cidrella and do
 # not point at a concrete A/B slot.
 ssh "$SSH_TARGET" "
+  if [ -f ${INSTALL_DIR}/update.sh ]; then
+    chmod 0755 ${INSTALL_DIR}/update.sh
+    ln -sf ${INSTALL_DIR}/update.sh /usr/local/bin/cidrella-update
+  fi
   if [ -f ${INSTALL_DIR}/scripts/cidrella-node ]; then
     install -m 0755 ${INSTALL_DIR}/scripts/cidrella-node /usr/local/bin/cidrella-node
   fi

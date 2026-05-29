@@ -161,6 +161,37 @@ resolve_node() {
   printf '%s\n' "/usr/bin/node"
 }
 
+is_preflight_health_acceptable() {
+  local node_bin="$1"
+  local health_json="$2"
+  "$node_bin" -e '
+    const fs = require("fs");
+    const path = process.argv[1];
+    let body;
+    try {
+      body = JSON.parse(fs.readFileSync(path, "utf8"));
+    } catch {
+      process.exit(1);
+    }
+    if (body.status === "ok") process.exit(0);
+
+    const checks = body.checks || {};
+    const criticalOk = checks.sqlite?.ok === true
+      && checks.duckdb?.ok === true
+      && checks.bcrypt?.ok === true;
+    const pingDetail = [
+      checks.ping?.error,
+      checks.ping?.warning
+    ].filter(Boolean).join("\n");
+    const pingIsCapabilityOnly = checks.ping?.ok === false
+      && /CAP_NET_RAW|Operation not permitted|missing cap_net_raw/i.test(pingDetail);
+    const unexpectedFailures = Object.entries(checks)
+      .filter(([name, check]) => check && check.ok === false && !["ping", "capabilities"].includes(name));
+
+    process.exit(criticalOk && pingIsCapabilityOnly && unexpectedFailures.length === 0 ? 0 : 1);
+  ' "$health_json"
+}
+
 # ─── Progress file helpers ────────────────────────────────
 
 write_progress() {
@@ -844,23 +875,18 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
     tail -30 "$TMPDIR/preflight.log" >&2 || true
     exit 1
   fi
-  if curl -sfk "https://127.0.0.1:${PREFLIGHT_PORT}/api/health/deep" -o "$TMPDIR/health.json" 2>/dev/null; then
-    if grep -q '"status":"ok"' "$TMPDIR/health.json"; then
+  HEALTH_CODE=$(curl -sk "https://127.0.0.1:${PREFLIGHT_PORT}/api/health/deep" -o "$TMPDIR/health.json" -w "%{http_code}" 2>/dev/null || true)
+  if [ "$HEALTH_CODE" != "000" ]; then
+    if is_preflight_health_acceptable "$PREFLIGHT_NODE" "$TMPDIR/health.json"; then
+      if [ "$HEALTH_CODE" != "200" ]; then
+        warn "Pre-flight health probe returned HTTP ${HEALTH_CODE}, but only the expected non-systemd CAP_NET_RAW ping check failed."
+      fi
       PROBE_OK=true
       break
     fi
   fi
   sleep 1
 done
-
-# Kill the preflight process
-if kill -0 "$PREFLIGHT_PID" 2>/dev/null; then
-  kill -TERM "$PREFLIGHT_PID" 2>/dev/null || true
-  sleep 1
-  kill -KILL "$PREFLIGHT_PID" 2>/dev/null || true
-fi
-PREFLIGHT_PID=""
-rm -rf "$PREFLIGHT_DATA"
 
 if [ "$PROBE_OK" != true ]; then
   err "Pre-flight health probe failed — new version did not come up cleanly"
@@ -885,6 +911,15 @@ if ! grep -q '<script[^>]*type="module"' "$TMPDIR/frontend.html"; then
   exit 1
 fi
 ok "Frontend pre-flight probe passed"
+
+# Kill the preflight process after all probes are complete.
+if kill -0 "$PREFLIGHT_PID" 2>/dev/null; then
+  kill -TERM "$PREFLIGHT_PID" 2>/dev/null || true
+  sleep 1
+  kill -KILL "$PREFLIGHT_PID" 2>/dev/null || true
+fi
+PREFLIGHT_PID=""
+rm -rf "$PREFLIGHT_DATA"
 
 track_progress "validating" 70 "Pre-flight validated"
 

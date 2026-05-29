@@ -89,8 +89,12 @@ router.get('/deep', requireLocalhost, async (req, res) => {
     execFileSync('ping', ['-c', '1', '-W', '1', '127.0.0.1'], { stdio: 'pipe', timeout: 2000 });
     checks.ping = { ok: true };
   } catch (err) {
-    checks.ping = { ok: false, error: err.message };
-    allOk = false;
+    const detail = `${err.message || ''}\n${err.stderr?.toString?.() || ''}`;
+    const missingCapability = /CAP_NET_RAW|Operation not permitted|missing cap_net_raw/i.test(detail);
+    checks.ping = missingCapability
+      ? { ok: false, warning: 'ICMP ping requires CAP_NET_RAW; active scans may rely on ARP/passive liveness only.', error: err.message }
+      : { ok: false, error: err.message };
+    if (!missingCapability) allOk = false;
   }
 
   // Service capability inheritance. This is warning-only: CIDRella can still
