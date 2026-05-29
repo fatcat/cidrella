@@ -47,7 +47,7 @@
       </button>
       <button class="status-chip status-chip-ops" :class="{ 'chip-err': opsIssue }"
               data-track="header-chip-ops" @click="toggleOpsPopover"
-              :title="`Operations: ${opsIssue ? 'issue' : 'ok'}`">
+              :title="opsTitle">
         <span class="card-dot" :class="opsIssue ? 'dot-down' : 'dot-up'"></span>
         <span class="status-chip-label">Ops</span>
       </button>
@@ -86,6 +86,11 @@
           <span class="card-dot" :class="activeScans.length ? 'dot-up' : 'dot-ok'"></span>
           <span class="status-popover-label">Scanner</span>
           <span class="status-popover-val">{{ scanDisplay }}</span>
+        </div>
+        <div v-if="serviceCrash" class="status-popover-row status-popover-row-alert">
+          <span class="card-dot dot-down"></span>
+          <span class="status-popover-label">Backend Restart</span>
+          <span class="status-popover-val">{{ serviceCrashLabel }}</span>
         </div>
         <div class="status-popover-footer">next scan {{ nextScanTimeOnly }}</div>
       </div>
@@ -213,10 +218,27 @@ const userInitials = computed(() => {
 
 const opsIssue = computed(() =>
   !health.value?.services?.dnsmasq
+  || !!serviceCrash.value
   || cpuStatusClass.value === 'card-err'
   || ramStatusClass.value === 'card-err'
   || diskStatusClass.value === 'card-err'
 );
+
+const serviceCrash = computed(() => health.value?.service?.recent_crash || null);
+
+const serviceCrashLabel = computed(() => {
+  const crash = serviceCrash.value;
+  if (!crash) return 'None';
+  if (crash.type === 'oom') return 'Out of memory';
+  if (crash.type === 'fatal') return 'Fatal error';
+  if (crash.type === 'exit') return 'Process exited';
+  return 'Crash detected';
+});
+
+const opsTitle = computed(() => {
+  if (serviceCrash.value) return `Operations: ${serviceCrashLabel.value}`;
+  return `Operations: ${opsIssue.value ? 'issue' : 'ok'}`;
+});
 
 async function onTimeFormatChange(event) {
   try {
@@ -782,6 +804,9 @@ onUnmounted(() => {
   font-size: var(--app-fs-sm);
 }
 .status-popover-row + .status-popover-row { border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 60%, transparent); }
+.status-popover-row-alert {
+  color: var(--p-red-500);
+}
 .status-popover-label {
   color: var(--p-text-muted-color);
   text-transform: uppercase;

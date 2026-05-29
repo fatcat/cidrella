@@ -57,9 +57,11 @@ let healthTimer = null;
 let geoipRuleSet = null;            // Set<string> — enabled country codes
 let geoipMode = 'blocklist';        // 'blocklist' or 'allowlist'
 
-// Blocklist state — domains loaded from DB for in-proxy blocking
-let blocklistSet = null;            // Set<string> — blocked domains (lowercase)
-let blocklistCategoryMap = null;    // Map<string, string> — domain → category_slug
+// Blocklist state — domains loaded from DB for in-proxy blocking.
+// A single Map is enough: Map.has() gives membership and Map.get() gives the
+// category for metrics. Keeping a separate Set duplicates index overhead for
+// large lists and can push small hosts into V8 heap pressure.
+let blocklistDomainMap = null;      // Map<string, string> — domain → category_slug
 let blocklistEnabled = false;
 let blocklistRedirectIp = '';
 let blocklistBlockedDelta = 0;
@@ -236,7 +238,7 @@ function createBlockedResponse(query) {
   return createNxdomainResponse(query);
 }
 
-// Load blocklist domains from DB into Set + category Map
+// Load blocklist domains from DB into a domain -> category Map.
 export function loadBlocklist() {
   const db = getDb();
   const enabled = getSetting('blocklist_enabled');
@@ -244,37 +246,33 @@ export function loadBlocklist() {
   blocklistRedirectIp = getSetting('blocklist_redirect_ip') || '';
 
   if (!blocklistEnabled) {
-    blocklistSet = null;
-    blocklistCategoryMap = null;
+    blocklistDomainMap = null;
     proxyLog('info', 'Blocklist disabled — cleared in-memory set');
     return;
   }
 
-  const rows = db.prepare(`
+  const stmt = db.prepare(`
     SELECT DISTINCT bd.domain, bd.category_slug
     FROM blocklist_domains bd
     JOIN blocklist_categories bc ON bd.category_slug = bc.slug
     WHERE bc.enabled = 1
       AND bd.domain NOT IN (SELECT domain FROM blocklist_whitelist)
-  `).all();
+  `);
 
-  const newSet = new Set();
   const newMap = new Map();
-  for (const row of rows) {
-    newSet.add(row.domain);
+  for (const row of stmt.iterate()) {
     if (!newMap.has(row.domain)) {
       newMap.set(row.domain, row.category_slug);
     }
   }
 
-  blocklistSet = newSet;
-  blocklistCategoryMap = newMap;
-  proxyLog('info', 'Blocklist loaded', { domains: newSet.size });
+  blocklistDomainMap = newMap;
+  proxyLog('info', 'Blocklist loaded', { domains: newMap.size });
 }
 
 // Check query domain against blocklist (walks domain hierarchy for subdomain matching)
 function checkBlocklist(queryName) {
-  if (!blocklistEnabled || !blocklistSet) return null;
+  if (!blocklistEnabled || !blocklistDomainMap) return null;
 
   const name = queryName.toLowerCase();
   const labels = name.split('.');
@@ -282,8 +280,8 @@ function checkBlocklist(queryName) {
   // Walk hierarchy: sub.evil.com → evil.com (stop before single-label TLD)
   for (let i = 0; i < labels.length - 1; i++) {
     const candidate = labels.slice(i).join('.');
-    if (blocklistSet.has(candidate)) {
-      return blocklistCategoryMap.get(candidate) || 'unknown';
+    if (blocklistDomainMap.has(candidate)) {
+      return blocklistDomainMap.get(candidate) || 'unknown';
     }
   }
   return null;
@@ -721,8 +719,8 @@ export function getProxyStatus() {
     statsTotal,
     statsBlocked,
     statsAllowed,
-    blocklistLoaded: blocklistSet !== null,
-    blocklistDomainCount: blocklistSet?.size || 0,
+    blocklistLoaded: blocklistDomainMap !== null,
+    blocklistDomainCount: blocklistDomainMap?.size || 0,
   };
 }
 

@@ -15,7 +15,7 @@ Type=simple
 User=cidrella
 Group=cidrella
 WorkingDirectory=/opt/cidrella
-ExecStart=/usr/local/bin/cidrella-node server/src/index.js
+ExecStart=/usr/local/bin/cidrella-node server/src/launcher.js
 Environment=DATA_DIR=/var/lib/cidrella
 Environment=NODE_ENV=production
 Environment=HTTPS_PORT=8443

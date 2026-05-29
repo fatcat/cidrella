@@ -69,10 +69,16 @@ import analyticsRoutes from './routes/analytics.js';
 import anomalyRoutes from './routes/anomalies.js';
 import { initAnalyticsDb, closeAnalyticsDb } from './db/duckdb.js';
 import { getCapabilityWarning } from './utils/capabilities.js';
+import { captureBootServiceHealth } from './utils/service-health.js';
+import { markBackendReady } from './utils/startup-status.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function main() {
+  // Capture the previous process' systemd/journal crash context before the
+  // normal boot path writes enough logs to bury the useful failure lines.
+  captureBootServiceHealth();
+
   // Ensure data directories exist
   const dataDirs = ['certs', 'backups', 'dnsmasq/hosts.d', 'dnsmasq/dhcp-hosts.d', 'dnsmasq/conf.d', 'blocklists', 'geoip'];
   for (const dir of dataDirs) {
@@ -416,7 +422,19 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
   // through to process.env.HTTPS_PORT and finally 8443. A UI edit to
   // `https_port` triggers a live port change via applyHttpsPortChange()
   // without a service restart.
-  await startHttpsServer({ app, keyPath, certPath, setHttpsServer });
+  await startHttpsServer({
+    app,
+    keyPath,
+    certPath,
+    setHttpsServer,
+    onReady: () => {
+      try {
+        markBackendReady();
+      } catch (err) {
+        console.warn(`Unable to clear startup status: ${err?.message || err}`);
+      }
+    },
+  });
 
   // HTTP redirect — same lifecycle pattern. v0.4.15 adds a UI toggle to
   // disable it entirely (when TLS is fronted by nginx/traefik) and a UI

@@ -9,6 +9,7 @@ import { APP_VERSION } from '../utils/version.js';
 import { isDnsmasqRunning } from '../utils/dnsmasq.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getCapabilityWarning, readProcessCapabilities } from '../utils/capabilities.js';
+import { getBootServiceHealth } from '../utils/service-health.js';
 
 const router = Router();
 
@@ -180,6 +181,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
     disk,
     uptime: { system: systemUptime, process: processUptime },
     services: { dnsmasq: dnsmasqRunning },
+    service: getBootServiceHealth(),
     stats,
     timestamp: new Date().toISOString()
   });

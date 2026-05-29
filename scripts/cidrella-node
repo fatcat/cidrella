@@ -2,7 +2,7 @@
 # CIDRella node resolver — prefers a bundled runtime if present,
 # falls back to the system node binary. Installed at
 # /usr/local/bin/cidrella-node and used by:
-#   - cidrella.service (ExecStart)
+#   - cidrella.service (ExecStart, via server/src/launcher.js)
 #   - update.sh (when operating on the active slot)
 #   - rollback.sh
 #

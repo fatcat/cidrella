@@ -803,6 +803,16 @@ if [ $SYNTAX_CHECK_RC -ne 0 ]; then
   emit_event preflight fail reason=syntax-check "node=$PREFLIGHT_NODE" "rc=$SYNTAX_CHECK_RC"
   exit 1
 fi
+LAUNCHER_SYNTAX_CHECK_OUTPUT=$("$PREFLIGHT_NODE" --check "$TARGET_SLOT/server/src/launcher.js" 2>&1)
+LAUNCHER_SYNTAX_CHECK_RC=$?
+if [ $LAUNCHER_SYNTAX_CHECK_RC -ne 0 ]; then
+  err "Pre-flight failed: server/src/launcher.js failed syntax check"
+  err "  Node binary: $PREFLIGHT_NODE"
+  err "  Exit code:   $LAUNCHER_SYNTAX_CHECK_RC"
+  err "  Output:      $LAUNCHER_SYNTAX_CHECK_OUTPUT"
+  emit_event preflight fail reason=launcher-syntax-check "node=$PREFLIGHT_NODE" "rc=$LAUNCHER_SYNTAX_CHECK_RC"
+  exit 1
+fi
 ok "Syntax check passed (using $PREFLIGHT_NODE)"
 
 # Verify bundled node_modules exist — the new build pipeline bundles them
