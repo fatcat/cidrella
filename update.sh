@@ -46,7 +46,30 @@ SLOT_A="/opt/cidrella-a"
 SLOT_B="/opt/cidrella-b"
 DATA_DIR="/var/lib/cidrella"
 SNAPSHOT_DIR="${DATA_DIR}/snapshots/pre-update"
-BUILD_ARCH="linux-x64"
+detect_build_arch() {
+  local arch
+  arch=$(dpkg --print-architecture 2>/dev/null || uname -m)
+  case "$arch" in
+    amd64|x86_64) printf '%s\n' "linux-x64" ;;
+    arm64|aarch64) printf '%s\n' "linux-arm64" ;;
+    *)
+      echo "[WARN] Unsupported architecture '$arch'; falling back to linux-x64 release asset." >&2
+      printf '%s\n' "linux-x64"
+      ;;
+  esac
+}
+
+duckdb_binding_package_for_arch() {
+  case "$1" in
+    linux-x64) printf '%s\n' "@duckdb/node-bindings-linux-x64" ;;
+    linux-arm64) printf '%s\n' "@duckdb/node-bindings-linux-arm64" ;;
+    *)
+      printf '%s\n' "@duckdb/node-bindings-linux-x64"
+      ;;
+  esac
+}
+
+BUILD_ARCH="$(detect_build_arch)"
 PREFLIGHT_PORT=18443
 HEALTH_POLL_SECONDS=20
 MIN_FREE_MB=400   # Require 400MB free on /opt for bundled tarballs
@@ -58,6 +81,7 @@ FORCE=false
 STARTED_AT=""
 CURRENT_VERSION="unknown"
 NEW_VERSION=""
+RELEASE_NODE_VERSION=""
 TMPDIR=""
 RESOLV_BACKUP=""
 PREFLIGHT_PID=""
@@ -692,6 +716,7 @@ if [ -f "$RELEASE_META" ]; then
   # If the gate fires we wipe the target slot so a subsequent retry against
   # a different target doesn't inherit the refused payload.
   MIN_FROM=$(sed -n 's/.*"min_from"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RELEASE_META" | head -1)
+  RELEASE_NODE_VERSION=$(sed -n 's/.*"bundled_node_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RELEASE_META" | head -1)
   if [ -n "$MIN_FROM" ] && [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$CURRENT_VERSION" "$MIN_FROM"; then
     err "Refusing to install v${NEW_VERSION}: requires running at least v${MIN_FROM}, you're on v${CURRENT_VERSION}."
     err "Install v${MIN_FROM} (or a later intermediate listed in RELEASE-NOTES.md) first, then retry."
@@ -724,6 +749,19 @@ info "Pre-flight validation..."
 # script then misreported as "syntax errors". Result: CLI updates appeared
 # broken on bundled-Node-only hosts. Fixed in v0.4.11.
 PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT")
+if [ -n "$RELEASE_NODE_VERSION" ]; then
+  TARGET_NODE_VERSION=$("$PREFLIGHT_NODE" --version 2>/dev/null || true)
+  if [ "$TARGET_NODE_VERSION" != "v${RELEASE_NODE_VERSION}" ]; then
+    err "Pre-flight failed: bundled Node version mismatch"
+    err "  RELEASE.json expects: v${RELEASE_NODE_VERSION}"
+    err "  Target node reports:  ${TARGET_NODE_VERSION:-missing}"
+    err "  Node binary:          $PREFLIGHT_NODE"
+    emit_event preflight fail reason=node-version-mismatch "expected=v$RELEASE_NODE_VERSION" "actual=${TARGET_NODE_VERSION:-missing}"
+    exit 1
+  fi
+  ok "Bundled Node version verified ($TARGET_NODE_VERSION)"
+fi
+
 SYNTAX_CHECK_OUTPUT=$("$PREFLIGHT_NODE" --check "$TARGET_SLOT/server/src/index.js" 2>&1)
 SYNTAX_CHECK_RC=$?
 if [ $SYNTAX_CHECK_RC -ne 0 ]; then
@@ -740,16 +778,38 @@ ok "Syntax check passed (using $PREFLIGHT_NODE)"
 if [ ! -d "$TARGET_SLOT/server/node_modules/express" ]; then
   warn "Bundled node_modules not found in tarball — running npm install as fallback"
   cd "$TARGET_SLOT/server"
-  npm install --omit=dev --silent 2>&1 | tail -3
+  if [ -x "$TARGET_SLOT/runtime/node/bin/npm" ]; then
+    PATH="$TARGET_SLOT/runtime/node/bin:$PATH" "$TARGET_SLOT/runtime/node/bin/npm" install --omit=dev --silent 2>&1 | tail -3
+  elif command -v npm >/dev/null 2>&1; then
+    warn "Target slot bundled npm not found; falling back to system npm."
+    npm install --omit=dev --silent 2>&1 | tail -3
+  else
+    err "Bundled node_modules are missing and no npm binary is available."
+    err "Expected bundled npm at $TARGET_SLOT/runtime/node/bin/npm."
+    exit 1
+  fi
   cd - >/dev/null
 fi
+
+# Verify Vue/Vite production assets exist. API health can pass while the UI
+# would still be broken if a release tarball was staged without client/dist.
+if [ ! -s "$TARGET_SLOT/client/dist/index.html" ]; then
+  err "Pre-flight failed: client/dist/index.html missing from release tarball"
+  exit 1
+fi
+if [ ! -d "$TARGET_SLOT/client/dist/assets" ]; then
+  err "Pre-flight failed: client/dist/assets missing from release tarball"
+  exit 1
+fi
+ok "Client assets present"
 
 # Verify key native bindings. v0.4.7 dropped bcrypt in favor of bcryptjs
 # (pure JS), v0.4.15 replaced net-ping/raw-socket with system ping, and
 # DuckDB now uses the official @duckdb/node-api package family.
 MISSING=""
+DUCKDB_BINDING_PKG="$(duckdb_binding_package_for_arch "$BUILD_ARCH")"
 [ ! -f "$TARGET_SLOT/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
-[ ! -f "$TARGET_SLOT/server/node_modules/@duckdb/node-bindings-linux-x64/duckdb.node" ] && MISSING="$MISSING @duckdb/node-bindings-linux-x64"
+[ ! -f "$TARGET_SLOT/server/node_modules/$DUCKDB_BINDING_PKG/duckdb.node" ] && MISSING="$MISSING $DUCKDB_BINDING_PKG"
 if [ -n "$MISSING" ]; then
   err "Pre-flight failed: missing native bindings:$MISSING"
   exit 1
@@ -812,6 +872,20 @@ if [ "$PROBE_OK" != true ]; then
 fi
 ok "Pre-flight health probe passed"
 emit_event preflight pass probe=deep-health "port=$PREFLIGHT_PORT"
+
+# Vite/Vue smoke check through the new Express stack. This catches a missing
+# SPA fallback or static-asset serving regression before the active symlink
+# moves to the new slot.
+if ! curl -sfk "https://127.0.0.1:${PREFLIGHT_PORT}/" -o "$TMPDIR/frontend.html" 2>/dev/null; then
+  err "Pre-flight frontend probe failed — new version did not serve the Vue app"
+  exit 1
+fi
+if ! grep -q '<script[^>]*type="module"' "$TMPDIR/frontend.html"; then
+  err "Pre-flight frontend probe failed — served root page does not look like a Vite build"
+  exit 1
+fi
+ok "Frontend pre-flight probe passed"
+
 track_progress "validating" 70 "Pre-flight validated"
 
 # ═══════════════════════════════════════════════════════════

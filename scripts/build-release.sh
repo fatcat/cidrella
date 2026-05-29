@@ -185,6 +185,17 @@ NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.tx
 NODE_CACHE_DIR="$DIST_DIR/.node-cache"
 RELEASE_HEALTH_JSON="$DIST_DIR/release-health-check.json"
 
+duckdb_binding_package_for_arch() {
+  case "$1" in
+    linux-x64) printf '%s\n' "@duckdb/node-bindings-linux-x64" ;;
+    linux-arm64) printf '%s\n' "@duckdb/node-bindings-linux-arm64" ;;
+    *)
+      echo "Unsupported build arch for DuckDB native binding: $1" >&2
+      exit 1
+      ;;
+  esac
+}
+
 confirm_yn() {
   local prompt="$1"
   local default="${2:-n}"
@@ -983,8 +994,9 @@ if [ "$DRY_RUN" = false ]; then
   # net-ping/raw-socket was replaced with system ping, and DuckDB moved to
   # the official @duckdb/node-api package family.
   MISSING=""
+  DUCKDB_BINDING_PKG="$(duckdb_binding_package_for_arch "$BUILD_ARCH")"
   [ ! -f "$STAGING_DIR/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
-  [ ! -f "$STAGING_DIR/server/node_modules/@duckdb/node-bindings-linux-x64/duckdb.node" ] && MISSING="$MISSING @duckdb/node-bindings-linux-x64"
+  [ ! -f "$STAGING_DIR/server/node_modules/$DUCKDB_BINDING_PKG/duckdb.node" ] && MISSING="$MISSING $DUCKDB_BINDING_PKG"
 
   if [ -n "$MISSING" ]; then
     echo "  ERROR: missing native bindings:$MISSING"
