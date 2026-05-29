@@ -78,6 +78,7 @@ REQUESTED_VERSION=""
 PROGRESS_FILE=""
 FROM_API=false
 FORCE=false
+BOOTSTRAPPED=false
 STARTED_AT=""
 CURRENT_VERSION="unknown"
 NEW_VERSION=""
@@ -220,7 +221,9 @@ track_progress() {
 
 # ─── Cleanup trap ─────────────────────────────────────────
 
+CLEANED_UP=false
 cleanup() {
+  [ "$CLEANED_UP" = true ] && return 0
   # Kill preflight process if still alive
   if [ -n "$PREFLIGHT_PID" ] && kill -0 "$PREFLIGHT_PID" 2>/dev/null; then
     kill -TERM "$PREFLIGHT_PID" 2>/dev/null || true
@@ -235,6 +238,45 @@ cleanup() {
   [ -n "$TMPDIR" ] && [ -d "$TMPDIR" ] && rm -rf "$TMPDIR"
   # Clean up preflight data dir
   rm -rf /tmp/cidrella-preflight 2>/dev/null || true
+  CLEANED_UP=true
+}
+
+write_failed_progress_if_needed() {
+  local exit_code="$1"
+  [ "$exit_code" -eq 0 ] && return 0
+  [ -z "${PROGRESS_FILE:-}" ] && return 0
+  [ ! -f "$PROGRESS_FILE" ] && return 0
+
+  local state status_node
+  status_node="$(resolve_node "$INSTALL_LINK")"
+  state=$("$status_node" -e '
+    const fs = require("fs");
+    try {
+      const s = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      process.stdout.write(String(s.state || ""));
+    } catch {}
+  ' "$PROGRESS_FILE" 2>/dev/null || true)
+  case "$state" in
+    ""|idle|completed|failed) return 0 ;;
+  esac
+
+  local log_tail=""
+  if [ -f "$UPDATE_LOG" ]; then
+    log_tail=$(tail -n 12 "$UPDATE_LOG" 2>/dev/null || true)
+  fi
+
+  local error_msg
+  error_msg="Update failed during ${LAST_PHASE:-unknown} phase (exit ${exit_code})."
+  if [ -n "$log_tail" ]; then
+    error_msg="${error_msg}"$'\n'"Last output:"$'\n'"${log_tail}"
+  fi
+  write_progress "failed" "${LAST_PCT:-0}" "Update failed" "$error_msg"
+}
+
+on_exit() {
+  local exit_code=$?
+  write_failed_progress_if_needed "$exit_code"
+  cleanup
 }
 
 on_error() {
@@ -292,7 +334,7 @@ on_error() {
 }
 
 trap on_error ERR
-trap cleanup EXIT
+trap on_exit EXIT
 
 # ─── Parse arguments ──────────────────────────────────────
 
@@ -335,6 +377,9 @@ OPTIONS
                        DB-snapshot restore, so any schema-newer data written
                        since the target version shipped may trip the new
                        (older) code on first boot. Exercise accordingly.
+
+    --bootstrapped     Internal flag used after a signed release tarball has
+                       supplied a newer updater. Do not pass manually.
 
     --help, -h         Show this help and exit.
 
@@ -385,6 +430,7 @@ while [[ $# -gt 0 ]]; do
     --progress-file) PROGRESS_FILE="$2"; shift 2 ;;
     --from-api) FROM_API=true; shift ;;
     --force) FORCE=true; shift ;;
+    --bootstrapped) BOOTSTRAPPED=true; shift ;;
     --help|-h) show_help; exit 0 ;;
     *) err "Unknown argument: $1"; err "Run 'cidrella-update --help' for usage."; exit 1 ;;
   esac
@@ -763,6 +809,33 @@ if [ -f "$RELEASE_META" ]; then
 else
   warn "Tarball has no RELEASE.json — pre-v0.4.3 release; using unverified GitHub tag for version"
   emit_event verify warn reason=no-release-json
+fi
+
+# ─── Updater self-bootstrap ──────────────────────────────
+#
+# The updater that starts an install is the updater from the CURRENT slot.
+# If its validation assumptions are stale, it can reject a perfectly good
+# newer tarball before the fixed updater inside that tarball is installed.
+# After the tarball signature, RELEASE.json version, downgrade, and min_from
+# gates have passed, hand off to the target release's updater once. The new
+# updater repeats verification from the beginning, so this is a compatibility
+# bridge, not a trust shortcut.
+if [ "$BOOTSTRAPPED" != true ] && [ -x "$TARGET_SLOT/update.sh" ]; then
+  CURRENT_UPDATER_HASH=$(sha256sum "$_UPDATE_SH_REAL" 2>/dev/null | awk '{print $1}' || true)
+  TARGET_UPDATER_HASH=$(sha256sum "$TARGET_SLOT/update.sh" 2>/dev/null | awk '{print $1}' || true)
+  if [ -n "$CURRENT_UPDATER_HASH" ] && [ -n "$TARGET_UPDATER_HASH" ] && [ "$CURRENT_UPDATER_HASH" != "$TARGET_UPDATER_HASH" ]; then
+    ok "Bootstrapping updater from verified v${NEW_VERSION} release"
+    emit_event verify pass updater_bootstrap=target "from=$CURRENT_UPDATER_HASH" "to=$TARGET_UPDATER_HASH"
+    chmod +x "$TARGET_SLOT/update.sh"
+    cleanup
+
+    REEXEC_ARGS=(--version "$NEW_VERSION" --bootstrapped)
+    [ "$FROM_API" = true ] && REEXEC_ARGS+=(--from-api)
+    [ "$FORCE" = true ] && REEXEC_ARGS+=(--force)
+    [ -n "$PROGRESS_FILE" ] && REEXEC_ARGS+=(--progress-file "$PROGRESS_FILE")
+
+    exec "$TARGET_SLOT/update.sh" "${REEXEC_ARGS[@]}"
+  fi
 fi
 
 # ═══════════════════════════════════════════════════════════

@@ -1005,6 +1005,21 @@ if [ "$DRY_RUN" = false ]; then
     exit 1
   fi
 
+  # v0.4.15 compatibility bridge: pre-bootstrap updaters from some pre.4
+  # installs still perform existence-only checks for the legacy duckdb and
+  # raw-socket native binding paths before they can install this release's
+  # fixed update.sh. The application no longer imports either package, so
+  # harmless placeholder files let those old updaters reach the deep-health
+  # probe and switchover, where the real bootstrap-capable updater becomes
+  # installed for future releases.
+  mkdir -p "$STAGING_DIR/server/node_modules/duckdb/lib/binding"
+  mkdir -p "$STAGING_DIR/server/node_modules/raw-socket/build/Release"
+  printf 'CIDRella legacy updater compatibility placeholder; not a loadable native module.\n' \
+    > "$STAGING_DIR/server/node_modules/duckdb/lib/binding/duckdb.node"
+  printf 'CIDRella legacy updater compatibility placeholder; not a loadable native module.\n' \
+    > "$STAGING_DIR/server/node_modules/raw-socket/build/Release/raw.node"
+  echo "  Added legacy updater compatibility placeholders for duckdb/raw-socket checks"
+
   NODE_MODULES_SIZE=$(du -sh "$STAGING_DIR/server/node_modules" | cut -f1)
   echo "  Bundled node_modules: $NODE_MODULES_SIZE"
   cd "$PROJECT_DIR"
