@@ -31,12 +31,12 @@
         <span class="status-chip-label">dnsmasq</span>
       </button>
       <button class="status-chip status-chip-wide" :class="cpuChipClass" data-track="header-chip-cpu"
-              @click="toggleOpsPopover" :title="`CPU load: ${cpuDisplay}`">
+              @click="toggleOpsPopover" :title="`Host CPU load: ${cpuDisplay}`">
         <span class="card-dot" :class="cpuDotClass"></span>
         <span class="status-chip-label">CPU {{ cpuPercentText }}</span>
       </button>
       <button class="status-chip status-chip-wide" :class="ramChipClass" data-track="header-chip-ram"
-              @click="toggleOpsPopover" :title="`RAM: ${ramDisplay}`">
+              @click="toggleOpsPopover" :title="`Host RAM: ${ramDisplay}`">
         <span class="card-dot" :class="ramDotClass"></span>
         <span class="status-chip-label">RAM {{ ramPercentText }}</span>
       </button>
@@ -69,12 +69,12 @@
         </div>
         <div class="status-popover-row">
           <span class="card-dot" :class="cpuDotClass"></span>
-          <span class="status-popover-label">CPU Load</span>
+          <span class="status-popover-label">Host CPU Load</span>
           <span class="status-popover-val">{{ cpuDisplay }}</span>
         </div>
         <div class="status-popover-row">
           <span class="card-dot" :class="ramDotClass"></span>
-          <span class="status-popover-label">RAM</span>
+          <span class="status-popover-label">Host RAM</span>
           <span class="status-popover-val">{{ ramDisplay }}</span>
         </div>
         <div class="status-popover-row">

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import os from 'os';
+import fs from 'fs';
 import { execFileSync } from 'child_process';
 import bcrypt from 'bcryptjs';
 import { getDb } from '../db/init.js';
@@ -24,6 +25,25 @@ function parseDf(target) {
     };
   }
   return { total: 0, used: 0, available: 0, percent: 0 };
+}
+
+function getSystemMemory() {
+  const totalMem = os.totalmem();
+  let availableMem = os.freemem();
+
+  // On Linux, MemAvailable is a better operational signal than MemFree
+  // because it accounts for reclaimable page cache and buffers.
+  try {
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+    const match = meminfo.match(/^MemAvailable:\s+(\d+)\s+kB/im);
+    if (match) {
+      availableMem = Number(match[1]) * 1024;
+    }
+  } catch { /* non-Linux or unreadable procfs; os.freemem() is the fallback */ }
+
+  const freeMem = os.freemem();
+  const usedMem = Math.max(0, totalMem - availableMem);
+  return { total: totalMem, used: usedMem, free: freeMem, available: availableMem };
 }
 
 // GET /api/health — basic health check (unauthenticated)
@@ -125,9 +145,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   const cpuCount = os.cpus().length;
 
   // Memory
-  const totalMem = os.totalmem();
-  const freeMem = os.freemem();
-  const usedMem = totalMem - freeMem;
+  const memory = getSystemMemory();
 
   // Disk usage for data directory
   const dataDir = process.env.DATA_DIR || '/data';
@@ -158,7 +176,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   res.json({
     version: APP_VERSION,
     cpu: { loadAvg, cores: cpuCount },
-    memory: { total: totalMem, used: usedMem, free: freeMem },
+    memory,
     disk,
     uptime: { system: systemUptime, process: processUptime },
     services: { dnsmasq: dnsmasqRunning },

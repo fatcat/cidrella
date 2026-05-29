@@ -58,7 +58,7 @@
 
       <!-- Process Resources -->
       <div class="chart-card">
-        <h4>Process Resources</h4>
+        <h4>CIDRella Process Resources</h4>
         <div class="card-row">
           <div class="chart-card gauge-card">
             <div class="gauge-group">
@@ -90,10 +90,10 @@
       <LineChartCard title="Cache Performance" :data="cacheData" :options="cacheOptions"
                      emptyText="No cache data in this range." />
 
-      <LineChartCard title="Memory Consumption" :data="memoryData" :options="memoryOptions"
+      <LineChartCard title="CIDRella Process Memory" :data="memoryData" :options="memoryOptions"
                      emptyText="No memory data in this range." />
 
-      <LineChartCard title="CPU Usage" :data="cpuData" :options="cpuOptions"
+      <LineChartCard title="CIDRella Process CPU" :data="cpuData" :options="cpuOptions"
                      emptyText="No CPU data in this range." />
 
     </div>
