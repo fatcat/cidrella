@@ -24,7 +24,7 @@
     <div class="settings-row">
       <div class="schedule-group">
         <label class="schedule-label">Enabled:</label>
-        <ToggleSwitch v-model="blocklistEnabled" />
+        <span @click="onEnableClick"><ToggleSwitch v-model="blocklistEnabledDisplay" :disabled="noRecursion" /></span>
       </div>
       <div class="schedule-group">
         <label class="schedule-label">Update Schedule:</label>
@@ -177,14 +177,23 @@ import DomainWhitelist from '../components/DomainWhitelist.vue';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
 import { useBlocklistStore } from '../stores/blocklists.js';
+import { useDnsStore } from '../stores/dns.js';
 
 const store = useBlocklistStore();
+const dnsStore = useDnsStore();
+const noRecursion = ref(false);
 const toast = useToast();
 
 const stats = ref({ enabled_categories: 0, total_domains: 0, whitelist_count: 0, last_update: null });
 const settings = reactive({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily' });
 const blocklistEnabled = ref(true);
 const savedBlocklistEnabled = ref(true);
+// Show the toggle OFF (and locked) while recursion is disabled — blocking is
+// inert then. Non-destructive: the saved preference returns when recursion is on.
+const blocklistEnabledDisplay = computed({
+  get: () => noRecursion.value ? false : blocklistEnabled.value,
+  set: (v) => { if (!noRecursion.value) blocklistEnabled.value = v; },
+});
 const savedSchedule = ref('daily');
 
 const settingsDirty = computed(() => {
@@ -218,6 +227,19 @@ const savingUrl = ref(false);
 function startEditUrl(cat) {
   editingUrlSlug.value = cat.slug;
   editingUrlValue.value = cat.source_url;
+}
+
+// Category blocking only applies to forwarded/recursive queries. When recursion
+// is disabled the enable toggle is locked; explain why on a click attempt.
+function onEnableClick() {
+  if (noRecursion.value) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Recursion is disabled',
+      detail: 'Category blocking only applies to recursive queries. Enable recursion in Settings → DNS → Upstream Forwarders first.',
+      life: 5000,
+    });
+  }
 }
 
 async function refreshStats() {
@@ -381,6 +403,7 @@ onMounted(async () => {
   blocklistEnabled.value = fetchedSettings.blocklist_enabled !== 'false';
   savedBlocklistEnabled.value = blocklistEnabled.value;
   savedSchedule.value = settings.blocklist_update_schedule;
+  try { noRecursion.value = !!(await dnsStore.getForwarders()).no_recursion; } catch { /* ignore */ }
 });
 </script>
 

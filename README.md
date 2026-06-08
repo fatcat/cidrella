@@ -10,7 +10,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 ## Features
 
 - **IP address management** — Hierarchical subnets, folders, VLANs, functional ranges, table/grid views, and a canonical IP state model shared across Networks, DHCP, and DNS.
-- **DNS management** — Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation.
+- **DNS management** — Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation. An optional **"do not provide recursion"** mode makes CIDRella authoritative-only (answers its own zones, no external forwarding) — which also disables forwarders, encryption, and domain/GeoIP filtering since they no longer apply.
 - **DNSSEC validation** — UI toggle that turns on dnsmasq DNSSEC validation against the root trust anchor, with a TCP-capable DNS proxy (so large/signed answers and validating-stub resolvers work) while blocklist + GeoIP filtering stay in place. NTP is enabled automatically and dnsmasq starts lenient on signature timestamps until the clock syncs.
 - **Encrypted forwarders (DoT/DoH)** — Optionally encrypt CIDRella→upstream DNS via DNS-over-TLS or DNS-over-HTTPS through a built-in stub (no external daemon), with preset unfiltered resolvers (Cloudflare/Google/Quad9/AdGuard) or custom. Fails closed (no silent plaintext fallback) and stays compatible with DNSSEC validation.
 - **DHCP management** — Scopes, global defaults for new scopes, per-scope options, reservations, dynamic lease tracking, and DHCP-derived DNS records.

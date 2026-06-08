@@ -250,6 +250,7 @@ export function regenerateDnsmasqConf(db) {
   const servers = getSetting('dns_upstream_servers');
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
   const encryption = getSetting('forwarder_encryption') || 'off';
+  const noRecursion = getSetting('dns_no_recursion') === 'true';
 
   const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
   const lines = content.split('\n');
@@ -257,14 +258,17 @@ export function regenerateDnsmasqConf(db) {
   // idempotent regardless of which setting changed.
   const filtered = lines.filter(line => !/^server=/.test(line) && !isManagedDnssecLine(line));
 
-  // Insert server lines after no-resolv or at the start. When encrypted
+  // Insert server lines after no-resolv or at the start. When recursion is
+  // disabled, emit NO upstreams (authoritative-only). Otherwise, when encrypted
   // forwarding is on, send everything to the in-Node DoT/DoH stub on loopback
   // instead of the plain upstream IPs (the stub encrypts to the real upstreams).
   const noResolvIdx = filtered.findIndex(l => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
-  const serverLines = (encryption === 'tls' || encryption === 'https')
-    ? [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`]
-    : servers.map(s => `server=${s}`);
+  const serverLines = noRecursion
+    ? []
+    : (encryption === 'tls' || encryption === 'https')
+      ? [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`]
+      : servers.map(s => `server=${s}`);
   filtered.splice(insertIdx, 0, ...serverLines);
 
   // Append the DNSSEC block when enabled and the local dnsmasq supports it.

@@ -52,6 +52,35 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+describe('regenerateDnsmasqConf — no-recursion (authoritative-only)', () => {
+  it('emits NO server= lines when dns_no_recursion is true', () => {
+    settings.dns_no_recursion = 'true';
+    regenerateDnsmasqConf({});
+    const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
+    expect(conf.split('\n').some(l => /^server=/.test(l))).toBe(false);
+    settings.dns_no_recursion = 'false';
+  });
+
+  it('no-recursion overrides encryption (still no upstreams)', () => {
+    settings.dns_no_recursion = 'true';
+    settings.forwarder_encryption = 'tls';
+    regenerateDnsmasqConf({});
+    const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
+    expect(conf).not.toContain('server=127.0.0.1#5356');
+    expect(conf).not.toContain('server=8.8.8.8');
+    settings.dns_no_recursion = 'false';
+    settings.forwarder_encryption = 'off';
+  });
+
+  it('restores upstreams when recursion is re-enabled', () => {
+    settings.dns_no_recursion = 'true';
+    regenerateDnsmasqConf({});
+    settings.dns_no_recursion = 'false';
+    regenerateDnsmasqConf({});
+    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=8.8.8.8');
+  });
+});
+
 describe('regenerateDnsmasqConf — encrypted forwarding server= wiring', () => {
   it('uses plain upstream IPs when encryption is off', () => {
     settings.forwarder_encryption = 'off';

@@ -31,6 +31,9 @@ export const DEFAULTS = {
   blocklist_enabled:       'true',
   blocklist_redirect_ip:   '',
   dnssec_enabled:          'false',
+  // When 'true', dnsmasq is authoritative-only: it answers for local zones but
+  // does not forward/recurse for external domains (no server= lines emitted).
+  dns_no_recursion:        'false',
   // Encrypted forwarding: 'off' | 'tls' (DoT) | 'https' (DoH). When on, dnsmasq
   // forwards to the in-Node stub which encrypts to forwarder_encrypted_upstreams.
   forwarder_encryption:    'off',

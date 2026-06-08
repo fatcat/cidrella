@@ -3,25 +3,79 @@
     <div class="dns-sections">
       <div class="dns-section">
         <h4>Upstream Forwarders</h4>
-        <div class="forwarders-list">
-          <div v-for="(fwd, i) in forwarders" :key="i" class="forwarder-entry">
-            <span class="status-dot" :class="dotClass(fwd)"></span>
-            <InputText v-model="forwarders[i].ip" size="small" placeholder="e.g. 8.8.8.8" style="width: 12rem"
-                       @blur="onForwarderBlur(i)" @keyup.enter="onForwarderBlur(i)" />
-            <i v-if="fwd.status === 'testing'" class="pi pi-spin pi-spinner fwd-testing"></i>
-            <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                    @click="removeForwarder(i)" v-if="forwarders.length > 1" title="Remove" />
+        <p class="section-hint">
+          How CIDRella forwards queries upstream. Encrypted modes (DoT/DoH) use curated
+          unfiltered providers — CIDRella still does all filtering.
+        </p>
+
+        <div class="recursion-row">
+          <Checkbox v-model="noRecursion" :binary="true" inputId="no-recursion" data-track="dns-toggle-no-recursion" />
+          <label for="no-recursion">Do not provide recursion</label>
+          <span v-tooltip.top="recursionTip" class="soa-help">?</span>
+        </div>
+
+        <template v-if="!noRecursion">
+          <div class="enc-row">
+            <label>Mode</label>
+            <SelectButton v-model="encForm.mode" :options="encModeOptions" optionLabel="label" optionValue="value"
+                          :allowEmpty="false" data-track="dns-forwarding-mode" />
           </div>
-          <div class="forwarder-actions">
-            <Button label="Add Forwarder" icon="pi pi-plus" size="small" severity="secondary"
-                    @click="addForwarder" />
-            <Button label="Save" icon="pi pi-save" size="small" data-track="dns-save-forwarders"
-                    @click="saveForwarders" :loading="savingForwarders" :disabled="!forwardersDirty" />
+
+          <!-- Plaintext: enter upstream IPs -->
+          <div v-if="encForm.mode === 'off'" class="forwarders-list">
+            <div v-for="(fwd, i) in forwarders" :key="i" class="forwarder-entry">
+              <span class="status-dot" :class="dotClass(fwd)"></span>
+              <InputText v-model="forwarders[i].ip" size="small" placeholder="e.g. 8.8.8.8" style="width: 12rem"
+                         @blur="onForwarderBlur(i)" @keyup.enter="onForwarderBlur(i)" />
+              <i v-if="fwd.status === 'testing'" class="pi pi-spin pi-spinner fwd-testing"></i>
+              <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                      @click="removeForwarder(i)" v-if="forwarders.length > 1" title="Remove" />
+            </div>
+            <div class="forwarder-actions">
+              <Button label="Add Forwarder" icon="pi pi-plus" size="small" severity="secondary" @click="addForwarder" />
+            </div>
+            <p class="forwarder-hint">
+              Forwarders are tested via DNS resolution on entry and every 15 minutes.
+              A failed test is retried once after 5 seconds before marking as down.
+            </p>
           </div>
-          <p class="forwarder-hint">
-            Forwarders are tested via DNS resolution on entry and every 15 minutes.
-            A failed test is retried once after 5 seconds before marking as down.
-          </p>
+
+          <!-- Encrypted: pick a curated unfiltered provider -->
+          <template v-else>
+            <div class="enc-row">
+              <label>Provider</label>
+              <Select v-model="encForm.provider" :options="providerOptions" optionLabel="label" optionValue="value"
+                      size="small" style="width: 22rem" data-track="dns-encryption-provider" />
+            </div>
+            <template v-if="encForm.provider === 'custom'">
+              <div class="enc-row">
+                <label>Hostname</label>
+                <InputText v-model="encCustom.hostname" size="small" placeholder="dns.example.com" style="width: 22rem" />
+              </div>
+              <div class="enc-row">
+                <label>Addresses</label>
+                <InputText v-model="encCustom.addresses" size="small" placeholder="9.9.9.10, 149.112.112.10" style="width: 22rem" />
+              </div>
+              <div class="enc-row">
+                <label>DoH URL</label>
+                <InputText v-model="encCustom.doh_url" size="small" placeholder="https://dns.example.com/dns-query" style="width: 22rem" />
+              </div>
+            </template>
+            <p v-if="encStatusLine" class="dnssec-status">
+              <span class="status-dot" :class="encStatusDot"></span>{{ encStatusLine }}
+            </p>
+            <p class="forwarder-hint">On failure, forwarding fails closed — no silent fallback to plaintext.</p>
+          </template>
+        </template>
+
+        <p v-else class="forwarder-hint recursion-note">
+          Recursion is disabled — CIDRella answers only for its own zones and records.
+          Forwarders, encryption, and domain/GeoIP filtering do not apply.
+        </p>
+
+        <div class="forwarder-actions">
+          <Button label="Save" icon="pi pi-save" size="small" data-track="dns-save-upstream"
+                  @click="saveUpstream" :loading="savingForwarders" :disabled="!upstreamDirty" />
         </div>
       </div>
 
@@ -91,47 +145,6 @@
         </div>
       </div>
 
-      <div class="dns-section">
-        <h4>DNS Encryption</h4>
-        <p class="section-hint">
-          Encrypt CIDRella → upstream DNS traffic. Upstreams are <strong>unfiltered</strong> —
-          CIDRella does the filtering (blocklist, GeoIP, whitelist). On failure it fails closed
-          (no silent fallback to plaintext).
-        </p>
-        <div class="enc-form">
-          <div class="enc-row">
-            <label>Forwarders</label>
-            <Select v-model="encForm.mode" :options="encModeOptions" optionLabel="label" optionValue="value"
-                    size="small" style="width: 16rem" data-track="dns-encryption-mode" />
-          </div>
-          <div v-if="encForm.mode !== 'off'" class="enc-row">
-            <label>Provider</label>
-            <Select v-model="encForm.provider" :options="providerOptions" optionLabel="label" optionValue="value"
-                    size="small" style="width: 22rem" />
-          </div>
-          <template v-if="encForm.mode !== 'off' && encForm.provider === 'custom'">
-            <div class="enc-row">
-              <label>Hostname</label>
-              <InputText v-model="encCustom.hostname" size="small" placeholder="dns.example.com" style="width: 22rem" />
-            </div>
-            <div class="enc-row">
-              <label>Addresses</label>
-              <InputText v-model="encCustom.addresses" size="small" placeholder="9.9.9.10, 149.112.112.10" style="width: 22rem" />
-            </div>
-            <div class="enc-row">
-              <label>DoH URL</label>
-              <InputText v-model="encCustom.doh_url" size="small" placeholder="https://dns.example.com/dns-query" style="width: 22rem" />
-            </div>
-          </template>
-          <p v-if="encStatusLine" class="dnssec-status">
-            <span class="status-dot" :class="encStatusDot"></span>{{ encStatusLine }}
-          </p>
-          <div class="forwarder-actions">
-            <Button label="Save" icon="pi pi-save" size="small" data-track="dns-save-encryption"
-                    @click="saveEncryption" :loading="savingEnc" :disabled="!encDirty" />
-          </div>
-        </div>
-      </div>
     </div>
   </div>
 </template>
@@ -144,6 +157,8 @@ import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import ToggleSwitch from 'primevue/toggleswitch';
 import Select from 'primevue/select';
+import SelectButton from 'primevue/selectbutton';
+import Checkbox from 'primevue/checkbox';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
 
@@ -153,9 +168,18 @@ const toast = useToast();
 const forwarders = ref([]);
 const savedForwarders = ref([]);
 const savingForwarders = ref(false);
+const noRecursion = ref(false);
+const savedNoRecursion = ref(false);
 let pollTimer = null;
 
+const recursionTip =
+  'When enabled, CIDRella is an authoritative-only DNS server: it answers for its own ' +
+  'zones and records but will NOT forward or recursively resolve external domains for ' +
+  'clients. Upstream forwarders, DNS encryption, and domain/GeoIP filtering have no ' +
+  'effect while this is on. Use it for an internal-only / split-horizon DNS server.';
+
 const forwardersDirty = computed(() => {
+  if (noRecursion.value !== savedNoRecursion.value) return true;
   const current = forwarders.value.map(f => f.ip.trim()).filter(Boolean);
   const saved = savedForwarders.value;
   if (current.length !== saved.length) return true;
@@ -185,12 +209,11 @@ const encCustom = ref({ hostname: '', addresses: '', doh_url: '' });
 const encProviders = ref([]);
 const encStatus = ref(null);
 const savedEnc = ref(null);
-const savingEnc = ref(false);
 
 const encModeOptions = [
-  { label: 'Off (plaintext)', value: 'off' },
-  { label: 'TLS — DNS over TLS', value: 'tls' },
-  { label: 'HTTPS — DNS over HTTPS', value: 'https' },
+  { label: 'Plaintext', value: 'off' },
+  { label: 'DoT', value: 'tls' },
+  { label: 'DoH', value: 'https' },
 ];
 const providerOptions = computed(() => [
   ...encProviders.value.map(p => ({ label: p.label, value: p.id })),
@@ -261,17 +284,40 @@ function buildEncUpstreams() {
   return p ? [{ label: p.label, hostname: p.hostname, addresses: p.addresses, doh_url: p.doh_url }] : [];
 }
 
-async function saveEncryption() {
-  savingEnc.value = true;
+// Converged save for the whole "Upstream Forwarders" card. The two concerns map
+// to two endpoints: the forwarders endpoint carries the plaintext IP list + the
+// recursion flag (always persisted so the IP list survives mode switches); the
+// encryption endpoint carries the mode + provider. Saved sequentially with
+// part-aware error reporting.
+const upstreamDirty = computed(() => forwardersDirty.value || encDirty.value);
+
+async function saveUpstream() {
+  savingForwarders.value = true;
+  let savedFwd = false;
   try {
-    const res = await store.updateEncryption(encForm.value.mode, buildEncUpstreams());
-    encStatus.value = res.status || null;
-    encSnapshot();
-    toast.add({ severity: 'success', summary: `DNS encryption ${encForm.value.mode === 'off' ? 'disabled' : 'enabled'}`, life: 3000 });
+    if (forwardersDirty.value) {
+      const servers = forwarders.value.map(f => f.ip.trim()).filter(Boolean);
+      const res = await store.updateForwarders(servers, noRecursion.value);
+      savedForwarders.value = [...(res.servers || servers)];
+      savedNoRecursion.value = !!res.no_recursion;
+      savedFwd = true;
+    }
+    // Persist encryption whenever it's dirty (even with recursion off, so a
+    // pending mode change isn't lost and the dirty state clears). The backend
+    // keeps the stub stopped while no-recursion is set.
+    if (encDirty.value) {
+      const res = await store.updateEncryption(encForm.value.mode, buildEncUpstreams());
+      encStatus.value = res.status || null;
+      encSnapshot();
+    }
+    toast.add({ severity: 'success', summary: 'Upstream forwarders saved', life: 3000 });
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+    const detail = savedFwd
+      ? `Forwarders saved, but encryption update failed: ${apiError(err)}`
+      : apiError(err);
+    toast.add({ severity: 'error', summary: 'Error', detail, life: 6000 });
   } finally {
-    savingEnc.value = false;
+    savingForwarders.value = false;
   }
 }
 
@@ -327,20 +373,6 @@ async function testAllForwarders() {
   }
 }
 
-async function saveForwarders() {
-  savingForwarders.value = true;
-  try {
-    const servers = forwarders.value.map(f => f.ip.trim()).filter(Boolean);
-    await store.updateForwarders(servers);
-    savedForwarders.value = [...servers];
-    toast.add({ severity: 'success', summary: 'Forwarders saved', life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally {
-    savingForwarders.value = false;
-  }
-}
-
 async function saveSoaDefaults() {
   savingSoa.value = true;
   try {
@@ -384,9 +416,11 @@ async function saveDnssec() {
 
 onMounted(async () => {
   try {
-    const servers = await store.getForwarders();
-    forwarders.value = servers.map(ip => ({ ip, status: null }));
-    savedForwarders.value = [...servers];
+    const { servers, no_recursion } = await store.getForwarders();
+    forwarders.value = (servers || []).map(ip => ({ ip, status: null }));
+    savedForwarders.value = [...(servers || [])];
+    noRecursion.value = !!no_recursion;
+    savedNoRecursion.value = !!no_recursion;
   } catch {
     forwarders.value = [];
     savedForwarders.value = [];
@@ -514,6 +548,20 @@ onUnmounted(() => {
 }
 .dnssec-warn {
   color: var(--p-red-400);
+}
+.recursion-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: var(--app-fs-sm);
+}
+.dimmed {
+  opacity: 0.45;
+}
+.recursion-note {
+  color: var(--p-text-muted-color);
+  font-style: italic;
 }
 .enc-form {
   display: flex;

@@ -689,35 +689,52 @@ router.post('/apply', requirePerm('dns:write'), (req, res) => {
 
 // GET /api/dns/forwarders
 router.get('/forwarders', requirePerm('dns:read'), (req, res) => {
-  res.json({ servers: getSetting('dns_upstream_servers') });
+  res.json({
+    servers: getSetting('dns_upstream_servers'),
+    no_recursion: getSetting('dns_no_recursion') === 'true',
+  });
 });
 
 // PUT /api/dns/forwarders
 router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
-  const { servers } = req.body;
-  if (!Array.isArray(servers) || servers.length === 0) {
-    return res.status(400).json({ error: 'At least one upstream server is required' });
-  }
+  const { servers, no_recursion } = req.body;
+  const noRecursion = !!no_recursion;
 
-  for (const s of servers) {
-    if (!isValidIpv4(s)) {
-      return res.status(400).json({ error: `Invalid IP address: ${s}` });
+  // Upstream servers are only required when recursion is enabled — with recursion
+  // off, CIDRella is authoritative-only and forwarders are ignored.
+  if (!noRecursion) {
+    if (!Array.isArray(servers) || servers.length === 0) {
+      return res.status(400).json({ error: 'At least one upstream server is required' });
+    }
+  }
+  if (Array.isArray(servers)) {
+    for (const s of servers) {
+      if (!isValidIpv4(s)) return res.status(400).json({ error: `Invalid IP address: ${s}` });
     }
   }
 
   const db = getDb();
   const oldRow = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
 
-  setSetting('dns_upstream_servers', JSON.stringify(servers));
+  // Preserve the existing forwarder list when recursion is off and none sent,
+  // so toggling recursion back on restores them.
+  if (Array.isArray(servers) && servers.length > 0) {
+    setSetting('dns_upstream_servers', JSON.stringify(servers));
+  }
+  setSetting('dns_no_recursion', noRecursion ? 'true' : 'false');
 
+  // Re-evaluate the encrypted-forwarder stub: enabling no-recursion must stop it
+  // (forwarding is off); disabling it restarts the stub if encryption is on.
+  applyEncryptedForwarder();
   req.afterCommit('regenerate_dnsmasq_conf');
 
   audit(req.user.id, 'dns_forwarders_updated', 'dns', null, {
     old: oldRow?.value,
-    new: JSON.stringify(servers)
+    new: JSON.stringify(servers),
+    no_recursion: noRecursion,
   });
 
-  res.json({ servers });
+  res.json({ servers: getSetting('dns_upstream_servers'), no_recursion: noRecursion });
 });
 
 // GET /api/dns/dnssec — current state + dnsmasq support + clock-sync status
@@ -762,7 +779,7 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
 
 // ─── Encrypted forwarding (DoT/DoH) ──────────────────────
 
-function validateUpstreamList(arr) {
+function validateUpstreamList(arr, mode) {
   if (!Array.isArray(arr) || arr.length === 0) return 'at least one upstream is required';
   if (arr.length > 8) return 'too many upstreams (max 8)';
   for (const u of arr) {
@@ -771,7 +788,10 @@ function validateUpstreamList(arr) {
       return 'each upstream needs a non-empty addresses[] of IPv4 strings';
     }
     if (typeof u.hostname !== 'string' || !u.hostname) return 'each upstream needs a hostname';
-    if (typeof u.doh_url !== 'string' || !/^https:\/\//.test(u.doh_url)) return 'each upstream needs an https doh_url';
+    // doh_url is only used by DoH (https) mode; DoT (tls) never reads it.
+    if (mode === 'https' && (typeof u.doh_url !== 'string' || !/^https:\/\//.test(u.doh_url))) {
+      return 'each upstream needs an https doh_url';
+    }
   }
   return null;
 }
@@ -801,7 +821,7 @@ router.put('/encryption', requirePerm('dns:write'), (req, res) => {
   let list = [];
   if (mode !== 'off') {
     list = Array.isArray(upstreams) ? upstreams : [];
-    const err = validateUpstreamList(list);
+    const err = validateUpstreamList(list, mode);
     if (err) return res.status(400).json({ error: err });
   }
 

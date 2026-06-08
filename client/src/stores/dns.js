@@ -65,12 +65,12 @@ export const useDnsStore = defineStore('dns', () => {
 
   async function getForwarders() {
     const res = await api.get('/dns/forwarders');
-    return res.data.servers;
+    return res.data; // { servers, no_recursion }
   }
 
-  async function updateForwarders(servers) {
-    const res = await api.put('/dns/forwarders', { servers });
-    return res.data.servers;
+  async function updateForwarders(servers, noRecursion = false) {
+    const res = await api.put('/dns/forwarders', { servers, no_recursion: noRecursion });
+    return res.data;
   }
 
   async function testForwarder(ip) {

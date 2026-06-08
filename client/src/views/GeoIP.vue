@@ -35,7 +35,7 @@
     <div class="settings-row">
       <div class="schedule-group">
         <label class="schedule-label">Enabled:</label>
-        <ToggleSwitch v-model="settingsForm.geoip_enabled" />
+        <span @click="onEnableClick"><ToggleSwitch v-model="geoipEnabledDisplay" :disabled="noRecursion" /></span>
       </div>
       <div class="schedule-group">
         <label class="schedule-label">Mode:</label>
@@ -146,15 +146,24 @@ import DomainWhitelist from '../components/DomainWhitelist.vue';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
 import { useGeoipStore } from '../stores/geoip.js';
+import { useDnsStore } from '../stores/dns.js';
 import { COUNTRIES, countryFlag } from '../utils/countries.js';
 
 const store = useGeoipStore();
+const dnsStore = useDnsStore();
 const toast = useToast();
 
 const status = ref(null);
+const noRecursion = ref(false);
 
 // Settings form
 const settingsForm = ref({ geoip_enabled: false, geoip_mode: 'blocklist', geoip_proxy_port: 5353, geoip_update_schedule: 'monthly' });
+// Show the toggle OFF (and locked) while recursion is disabled — GeoIP is inert
+// then. Non-destructive: the saved preference returns when recursion is on.
+const geoipEnabledDisplay = computed({
+  get: () => noRecursion.value ? false : settingsForm.value.geoip_enabled,
+  set: (v) => { if (!noRecursion.value) settingsForm.value.geoip_enabled = v; },
+});
 const savedSettings = ref(null);
 const savingSettings = ref(false);
 
@@ -314,6 +323,19 @@ async function removeWhitelist(item) {
   }
 }
 
+// GeoIP filtering only applies to forwarded/recursive queries. When recursion is
+// disabled the enable toggle is locked; explain why on a click attempt.
+function onEnableClick() {
+  if (noRecursion.value) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Recursion is disabled',
+      detail: 'GeoIP filtering only applies to recursive queries. Enable recursion in Settings → DNS → Upstream Forwarders first.',
+      life: 5000,
+    });
+  }
+}
+
 async function refreshStatus() {
   const s = await store.fetchStatus();
   status.value = s;
@@ -334,6 +356,7 @@ onMounted(async () => {
     store.fetchWhitelist(),
     refreshStatus()
   ]);
+  try { noRecursion.value = !!(await dnsStore.getForwarders()).no_recursion; } catch { /* ignore */ }
 });
 </script>
 

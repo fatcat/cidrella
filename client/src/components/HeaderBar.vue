@@ -159,6 +159,14 @@
                     @change="onTimeFormatChange" />
           </div>
           <div class="user-menu-divider"></div>
+          <div class="user-menu-section">
+            <label class="user-menu-label">Theme</label>
+            <Select v-model="selectedTheme" :options="themeOptions"
+                    optionLabel="label" optionValue="value"
+                    optionGroupLabel="label" optionGroupChildren="items"
+                    data-track="user-pref-theme" class="w-full" @change="onThemeChange" />
+          </div>
+          <div class="user-menu-divider"></div>
           <button class="user-menu-item" data-track="header-logout" @click="handleLogout">
             <i class="pi pi-sign-out"></i>
             <span>Sign out</span>
@@ -177,6 +185,7 @@ import Popover from 'primevue/popover';
 import Select from 'primevue/select';
 import { useAuthStore } from '../stores/auth.js';
 import { useSubnetStore } from '../stores/subnets.js';
+import { useThemeStore, themes } from '../stores/theme.js';
 import { formatTimeOnly } from '../utils/dateFormat.js';
 import api from '../api/client.js';
 
@@ -205,6 +214,16 @@ const timeFormatOptions = [
 
 const selectedTimeFormat = ref(auth.timeFormat);
 watch(() => auth.timeFormat, (v) => { selectedTimeFormat.value = v; });
+
+// Theme picker — grouped by light/dark; applyTheme persists + live-applies via main.js.
+const themeStore = useThemeStore();
+const selectedTheme = ref(themeStore.currentThemeId);
+watch(() => themeStore.currentThemeId, (v) => { selectedTheme.value = v; });
+const themeOptions = computed(() => [
+  { label: 'Dark', items: themes.filter(t => t.group === 'dark').map(t => ({ label: t.name, value: t.id })) },
+  { label: 'Light', items: themes.filter(t => t.group === 'light').map(t => ({ label: t.name, value: t.id })) },
+]);
+function onThemeChange(event) { themeStore.applyTheme(event.value); }
 
 function toggleUserMenu(event) {
   userMenuRef.value.toggle(event);

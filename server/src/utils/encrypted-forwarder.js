@@ -33,8 +33,15 @@ let tcpServer = null;
 let mode = 'off';        // 'off' | 'tls' | 'https'
 let upstreams = [];      // [{ label, addresses:[], hostname, doh_url }]
 let rrIndex = 0;
-let recentErrors = 0;
+let errorTimes = [];     // timestamps of recent failures (sliding window)
 let lastError = null;
+const ERROR_WINDOW_MS = 10 * 60 * 1000;  // "recent" = last 10 minutes
+
+function recentErrorCount() {
+  const cutoff = Date.now() - ERROR_WINDOW_MS;
+  errorTimes = errorTimes.filter(t => t >= cutoff);
+  return errorTimes.length;
+}
 
 function efLog(level, msg, extra) {
   const ts = new Date().toISOString();
@@ -46,7 +53,7 @@ function efLog(level, msg, extra) {
 }
 
 function recordError(e) {
-  recentErrors++;
+  errorTimes.push(Date.now());
   lastError = e?.message || String(e);
 }
 
@@ -199,10 +206,15 @@ export function applyEncryptedForwarder() {
     const raw = getSetting('forwarder_encrypted_upstreams');
     upstreams = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
   } catch { upstreams = []; }
-  recentErrors = 0;
+  errorTimes = [];
   lastError = null;
 
-  if (mode === 'off' || !Array.isArray(upstreams) || upstreams.length === 0) {
+  // With recursion disabled, CIDRella forwards nothing — don't run the stub even
+  // if an encryption mode is still persisted (preference is preserved for when
+  // recursion is re-enabled).
+  const noRecursion = getSetting('dns_no_recursion') === 'true';
+
+  if (mode === 'off' || noRecursion || !Array.isArray(upstreams) || upstreams.length === 0) {
     stopListeners();
     return;
   }
@@ -219,7 +231,7 @@ export function getEncryptedForwarderStatus() {
     mode,
     running: !!(udpSocket || tcpServer),
     upstreams: upstreams.map(u => u.hostname || u.label || ''),
-    recentErrors,
+    recentErrors: recentErrorCount(),
     lastError,
   };
 }

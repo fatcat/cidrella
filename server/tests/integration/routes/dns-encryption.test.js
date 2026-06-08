@@ -54,6 +54,18 @@ describe('PUT /api/dns/encryption', () => {
     expect((await request(app).put('/api/dns/encryption').send({ mode: 'https', upstreams: [bad] })).status).toBe(400);
   });
 
+  it('accepts a TLS (DoT) upstream without a doh_url (DoH-only field)', async () => {
+    const dotOnly = { label: 'Custom', addresses: ['9.9.9.10'], hostname: 'dns10.quad9.net' };
+    const res = await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [dotOnly] });
+    expect(res.status).toBe(200);
+    expect(res.body.mode).toBe('tls');
+  });
+
+  it('still requires a doh_url for HTTPS (DoH) mode', async () => {
+    const noDoh = { label: 'Custom', addresses: ['9.9.9.10'], hostname: 'dns10.quad9.net' };
+    expect((await request(app).put('/api/dns/encryption').send({ mode: 'https', upstreams: [noDoh] })).status).toBe(400);
+  });
+
   it('enables TLS, persists, and (re)starts the stub', async () => {
     const res = await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [CF] });
     expect(res.status).toBe(200);
@@ -66,5 +78,28 @@ describe('PUT /api/dns/encryption', () => {
     const res = await request(app).put('/api/dns/encryption').send({ mode: 'off' });
     expect(res.status).toBe(200);
     expect((await request(app).get('/api/dns/encryption')).body.mode).toBe('off');
+  });
+});
+
+describe('PUT /api/dns/forwarders — no_recursion', () => {
+  it('requires upstreams when recursion is enabled', async () => {
+    expect((await request(app).put('/api/dns/forwarders').send({ servers: [], no_recursion: false })).status).toBe(400);
+  });
+
+  it('allows empty upstreams when recursion is disabled, and persists the flag', async () => {
+    const res = await request(app).put('/api/dns/forwarders').send({ no_recursion: true });
+    expect(res.status).toBe(200);
+    expect(res.body.no_recursion).toBe(true);
+    expect((await request(app).get('/api/dns/forwarders')).body.no_recursion).toBe(true);
+  });
+
+  it('rejects an invalid forwarder IP even with recursion off', async () => {
+    expect((await request(app).put('/api/dns/forwarders').send({ servers: ['not-an-ip'], no_recursion: true })).status).toBe(400);
+  });
+
+  it('re-enabling recursion clears the flag', async () => {
+    const res = await request(app).put('/api/dns/forwarders').send({ servers: ['8.8.8.8'], no_recursion: false });
+    expect(res.status).toBe(200);
+    expect(res.body.no_recursion).toBe(false);
   });
 });

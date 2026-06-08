@@ -165,6 +165,12 @@ const SETTING_SCHEMA = {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)
   },
+  // Authoritative-only (no recursion). Authoritative write path is
+  // PUT /api/dns/forwarders; entry here for parity/editability.
+  dns_no_recursion: {
+    validate: v => isBoolStr(v) ? null : 'must be true or false',
+    normalize: v => toBoolStr(v)
+  },
   // Encrypted forwarding. Authoritative write path is PUT /api/dns/encryption
   // (which also (re)starts the stub + regenerates dnsmasq.conf); these entries
   // just make the keys known/editable for parity.
