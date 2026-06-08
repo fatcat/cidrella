@@ -90,6 +90,48 @@
           </div>
         </div>
       </div>
+
+      <div class="dns-section">
+        <h4>DNS Encryption</h4>
+        <p class="section-hint">
+          Encrypt CIDRella → upstream DNS traffic. Upstreams are <strong>unfiltered</strong> —
+          CIDRella does the filtering (blocklist, GeoIP, whitelist). On failure it fails closed
+          (no silent fallback to plaintext).
+        </p>
+        <div class="enc-form">
+          <div class="enc-row">
+            <label>Forwarders</label>
+            <Select v-model="encForm.mode" :options="encModeOptions" optionLabel="label" optionValue="value"
+                    size="small" style="width: 16rem" data-track="dns-encryption-mode" />
+          </div>
+          <div v-if="encForm.mode !== 'off'" class="enc-row">
+            <label>Provider</label>
+            <Select v-model="encForm.provider" :options="providerOptions" optionLabel="label" optionValue="value"
+                    size="small" style="width: 22rem" />
+          </div>
+          <template v-if="encForm.mode !== 'off' && encForm.provider === 'custom'">
+            <div class="enc-row">
+              <label>Hostname</label>
+              <InputText v-model="encCustom.hostname" size="small" placeholder="dns.example.com" style="width: 22rem" />
+            </div>
+            <div class="enc-row">
+              <label>Addresses</label>
+              <InputText v-model="encCustom.addresses" size="small" placeholder="9.9.9.10, 149.112.112.10" style="width: 22rem" />
+            </div>
+            <div class="enc-row">
+              <label>DoH URL</label>
+              <InputText v-model="encCustom.doh_url" size="small" placeholder="https://dns.example.com/dns-query" style="width: 22rem" />
+            </div>
+          </template>
+          <p v-if="encStatusLine" class="dnssec-status">
+            <span class="status-dot" :class="encStatusDot"></span>{{ encStatusLine }}
+          </p>
+          <div class="forwarder-actions">
+            <Button label="Save" icon="pi pi-save" size="small" data-track="dns-save-encryption"
+                    @click="saveEncryption" :loading="savingEnc" :disabled="!encDirty" />
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -101,6 +143,7 @@ import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import ToggleSwitch from 'primevue/toggleswitch';
+import Select from 'primevue/select';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
 
@@ -135,6 +178,102 @@ const ntpSynced = ref(false);
 const dnssecDirty = computed(() =>
   savedDnssec.value !== null && dnssecForm.value.enabled !== savedDnssec.value.enabled
 );
+
+// ── DNS Encryption (forwarders DoT/DoH) ──
+const encForm = ref({ mode: 'off', provider: 'cloudflare' });
+const encCustom = ref({ hostname: '', addresses: '', doh_url: '' });
+const encProviders = ref([]);
+const encStatus = ref(null);
+const savedEnc = ref(null);
+const savingEnc = ref(false);
+
+const encModeOptions = [
+  { label: 'Off (plaintext)', value: 'off' },
+  { label: 'TLS — DNS over TLS', value: 'tls' },
+  { label: 'HTTPS — DNS over HTTPS', value: 'https' },
+];
+const providerOptions = computed(() => [
+  ...encProviders.value.map(p => ({ label: p.label, value: p.id })),
+  { label: 'Custom…', value: 'custom' },
+]);
+const encDirty = computed(() => {
+  if (!savedEnc.value) return false;
+  const s = savedEnc.value;
+  if (encForm.value.mode !== s.mode) return true;
+  if (encForm.value.mode === 'off') return false;
+  if (encForm.value.provider !== s.provider) return true;
+  if (encForm.value.provider === 'custom') {
+    return encCustom.value.hostname !== s.custom.hostname ||
+      encCustom.value.addresses !== s.custom.addresses ||
+      encCustom.value.doh_url !== s.custom.doh_url;
+  }
+  return false;
+});
+const encStatusLine = computed(() => {
+  if (encForm.value.mode === 'off' || !savedEnc.value || savedEnc.value.mode === 'off') return '';
+  const st = encStatus.value;
+  if (st?.recentErrors > 0) return `Encrypted forwarding active, but ${st.recentErrors} recent error(s) — DNS fails closed on the encrypted path.`;
+  return `Encrypted forwarding active (${savedEnc.value.mode === 'tls' ? 'DoT' : 'DoH'}).`;
+});
+const encStatusDot = computed(() => (encStatus.value?.recentErrors > 0 ? 'dot-down' : 'dot-up'));
+
+function encSnapshot() {
+  savedEnc.value = {
+    mode: encForm.value.mode,
+    provider: encForm.value.provider,
+    custom: { ...encCustom.value },
+  };
+}
+
+async function loadEncryption() {
+  try {
+    const d = await store.getEncryption();
+    encProviders.value = d.providers || [];
+    encStatus.value = d.status || null;
+    encForm.value.mode = d.mode || 'off';
+    const up = (d.upstreams || [])[0];
+    if (up) {
+      const match = encProviders.value.find(p => p.hostname === up.hostname);
+      if (match) {
+        encForm.value.provider = match.id;
+      } else {
+        encForm.value.provider = 'custom';
+        encCustom.value = { hostname: up.hostname || '', addresses: (up.addresses || []).join(', '), doh_url: up.doh_url || '' };
+      }
+    } else {
+      encForm.value.provider = encProviders.value[0]?.id || 'custom';
+    }
+    encSnapshot();
+  } catch { /* leave defaults */ }
+}
+
+function buildEncUpstreams() {
+  if (encForm.value.mode === 'off') return [];
+  if (encForm.value.provider === 'custom') {
+    return [{
+      label: 'Custom',
+      hostname: encCustom.value.hostname.trim(),
+      addresses: encCustom.value.addresses.split(',').map(s => s.trim()).filter(Boolean),
+      doh_url: encCustom.value.doh_url.trim(),
+    }];
+  }
+  const p = encProviders.value.find(x => x.id === encForm.value.provider);
+  return p ? [{ label: p.label, hostname: p.hostname, addresses: p.addresses, doh_url: p.doh_url }] : [];
+}
+
+async function saveEncryption() {
+  savingEnc.value = true;
+  try {
+    const res = await store.updateEncryption(encForm.value.mode, buildEncUpstreams());
+    encStatus.value = res.status || null;
+    encSnapshot();
+    toast.add({ severity: 'success', summary: `DNS encryption ${encForm.value.mode === 'off' ? 'disabled' : 'enabled'}`, life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally {
+    savingEnc.value = false;
+  }
+}
 
 const soaDirty = computed(() => {
   if (!savedSoa.value) return false;
@@ -260,6 +399,7 @@ onMounted(async () => {
     savedSoa.value = { ...defaults };
   } catch { /* use local defaults */ }
   await loadDnssec();
+  await loadEncryption();
 });
 
 onUnmounted(() => {
@@ -374,5 +514,20 @@ onUnmounted(() => {
 }
 .dnssec-warn {
   color: var(--p-red-400);
+}
+.enc-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+.enc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.enc-row label {
+  width: 6rem;
+  font-size: var(--app-fs-sm);
+  font-weight: 600;
 }
 </style>

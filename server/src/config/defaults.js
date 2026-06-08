@@ -31,6 +31,10 @@ export const DEFAULTS = {
   blocklist_enabled:       'true',
   blocklist_redirect_ip:   '',
   dnssec_enabled:          'false',
+  // Encrypted forwarding: 'off' | 'tls' (DoT) | 'https' (DoH). When on, dnsmasq
+  // forwards to the in-Node stub which encrypts to forwarder_encrypted_upstreams.
+  forwarder_encryption:    'off',
+  forwarder_encrypted_upstreams: [],
   rogue_dhcp_detection_enabled: 'false',
   rogue_dhcp_probe_interval_min: '15',
   blocklist_update_schedule: 'daily',
@@ -107,6 +111,11 @@ export const GITHUB_REPO              = 'fatcat/cidrella';    // owner/repo for 
 // same bind address. 5353 is the historical default.
 export const DNSMASQ_INTERNAL_PORT     = 5353;
 export const DNSMASQ_INTERNAL_PORT_ALT = 5354;
+// Loopback port the in-Node encrypted-forwarder stub binds; dnsmasq forwards
+// here (server=127.0.0.1#<port>) when DoT/DoH forwarding is enabled. 5356 avoids
+// 5353 (mDNS, dnsmasq internal) and 5355 (LLMNR).
+export const ENCRYPTED_FORWARDER_PORT  = 5356;
+export const ENCRYPTED_FORWARDER_TIMEOUT_MS = 5000;
 
 /**
  * Returns the port dnsmasq should bind internally, given the user's LAN

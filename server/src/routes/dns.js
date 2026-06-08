@@ -6,6 +6,8 @@ import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
 import { dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
 import { ensureNtpEnabled, getNtpStatus, armDnssecTimecheckWhenSynced } from '../utils/timesync.js';
+import { applyEncryptedForwarder, getEncryptedForwarderStatus } from '../utils/encrypted-forwarder.js';
+import { DOH_PROVIDERS } from '../data/doh-providers.js';
 import {
   createRecord,
   updateRecord,
@@ -756,6 +758,64 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
   });
 
   res.json({ enabled, ntp: getNtpStatus() });
+});
+
+// ─── Encrypted forwarding (DoT/DoH) ──────────────────────
+
+function validateUpstreamList(arr) {
+  if (!Array.isArray(arr) || arr.length === 0) return 'at least one upstream is required';
+  if (arr.length > 8) return 'too many upstreams (max 8)';
+  for (const u of arr) {
+    if (!u || typeof u !== 'object') return 'each upstream must be an object';
+    if (!Array.isArray(u.addresses) || u.addresses.length === 0 || !u.addresses.every(a => isValidIpv4(a))) {
+      return 'each upstream needs a non-empty addresses[] of IPv4 strings';
+    }
+    if (typeof u.hostname !== 'string' || !u.hostname) return 'each upstream needs a hostname';
+    if (typeof u.doh_url !== 'string' || !/^https:\/\//.test(u.doh_url)) return 'each upstream needs an https doh_url';
+  }
+  return null;
+}
+
+// GET /api/dns/encryption — mode, configured upstreams, preset catalog, live status
+router.get('/encryption', requirePerm('dns:read'), (req, res) => {
+  let upstreams = [];
+  try {
+    const raw = getSetting('forwarder_encrypted_upstreams');
+    upstreams = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
+  } catch { upstreams = []; }
+  res.json({
+    mode: getSetting('forwarder_encryption') || 'off',
+    upstreams,
+    providers: DOH_PROVIDERS,
+    status: getEncryptedForwarderStatus(),
+  });
+});
+
+// PUT /api/dns/encryption — set Off/TLS/HTTPS + upstreams. Authoritative path:
+// (re)configures the in-Node stub and regenerates dnsmasq.conf (server= → stub).
+router.put('/encryption', requirePerm('dns:write'), (req, res) => {
+  const { mode, upstreams } = req.body || {};
+  if (!['off', 'tls', 'https'].includes(mode)) {
+    return res.status(400).json({ error: 'mode must be off, tls, or https' });
+  }
+  let list = [];
+  if (mode !== 'off') {
+    list = Array.isArray(upstreams) ? upstreams : [];
+    const err = validateUpstreamList(list);
+    if (err) return res.status(400).json({ error: err });
+  }
+
+  setSetting('forwarder_encryption', mode);
+  setSetting('forwarder_encrypted_upstreams', JSON.stringify(list));
+
+  applyEncryptedForwarder();            // start/stop/reconfigure the stub now
+  req.afterCommit('regenerate_dnsmasq_conf'); // server= → stub (or back to IPs)
+
+  audit(req.user.id, 'dns_encryption_updated', 'dns', null, {
+    mode, upstreams: list.map(u => u.hostname),
+  });
+
+  res.json({ mode, upstreams: list, status: getEncryptedForwarderStatus() });
 });
 
 // GET /api/dns/soa-defaults

@@ -98,11 +98,22 @@ export const useDnsStore = defineStore('dns', () => {
     return res.data;
   }
 
+  async function getEncryption() {
+    const res = await api.get('/dns/encryption');
+    return res.data;
+  }
+
+  async function updateEncryption(mode, upstreams) {
+    const res = await api.put('/dns/encryption', { mode, upstreams });
+    return res.data;
+  }
+
   return {
     zones, loading,
     fetchZones, getZone, createZone, updateZone, deleteZone,
     getRecords, createRecord, updateRecord, deleteRecord,
     applyConfig, getForwarders, updateForwarders, testForwarder,
-    getSoaDefaults, updateSoaDefaults, getDnssec, updateDnssec
+    getSoaDefaults, updateSoaDefaults, getDnssec, updateDnssec,
+    getEncryption, updateEncryption
   };
 });

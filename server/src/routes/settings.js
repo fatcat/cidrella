@@ -49,6 +49,26 @@ function intOrNull(v) {
   return typeof v === 'number' ? v : parseInt(v, 10);
 }
 
+// Validator for the encrypted-upstreams list (forwarder_encrypted_upstreams).
+// Each entry: { label?, addresses:[ipv4...], hostname, doh_url(https) }.
+function validateEncryptedUpstreams(v) {
+  let arr = v;
+  if (typeof v === 'string') {
+    try { arr = JSON.parse(v); } catch { return 'must be a JSON array'; }
+  }
+  if (!Array.isArray(arr)) return 'must be an array';
+  if (arr.length > 8) return 'too many upstreams (max 8)';
+  for (const u of arr) {
+    if (!u || typeof u !== 'object') return 'each upstream must be an object';
+    if (!Array.isArray(u.addresses) || u.addresses.length === 0 || !u.addresses.every(a => isValidIpv4(a))) {
+      return 'each upstream needs a non-empty addresses[] of IPv4 strings';
+    }
+    if (typeof u.hostname !== 'string' || !u.hostname) return 'each upstream needs a hostname';
+    if (typeof u.doh_url !== 'string' || !/^https:\/\//.test(u.doh_url)) return 'each upstream needs an https doh_url';
+  }
+  return null;
+}
+
 // One-shot validator for arrays of IPv4 — used for dns_upstream_servers.
 function validateDnsUpstreamServers(v) {
   // Accept either a JSON-encoded array (legacy) or a real array (preferred).
@@ -144,6 +164,17 @@ const SETTING_SCHEMA = {
   dnssec_enabled: {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)
+  },
+  // Encrypted forwarding. Authoritative write path is PUT /api/dns/encryption
+  // (which also (re)starts the stub + regenerates dnsmasq.conf); these entries
+  // just make the keys known/editable for parity.
+  forwarder_encryption: {
+    validate: v => (typeof v === 'string' && ['off', 'tls', 'https'].includes(v)) ? null : 'must be off, tls, or https',
+    normalize: v => v
+  },
+  forwarder_encrypted_upstreams: {
+    validate: validateEncryptedUpstreams,
+    normalize: v => typeof v === 'string' ? v : JSON.stringify(v)
   },
   // Rogue DHCP detection. Authoritative write path is PUT /api/dhcp/rogue/settings
   // (it also drives the probe scheduler); these entries make the keys editable

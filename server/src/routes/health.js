@@ -8,6 +8,7 @@ import { queryRaw } from '../db/duckdb.js';
 import { APP_VERSION } from '../utils/version.js';
 import { isDnsmasqRunning, dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
 import { getNtpStatus } from '../utils/timesync.js';
+import { getEncryptedForwarderStatus } from '../utils/encrypted-forwarder.js';
 import { getProbeState } from '../utils/dhcp-probe.js';
 import { countUnacknowledged } from '../models/rogue-dhcp.js';
 import { requirePerm } from '../auth/require-perm.js';
@@ -204,6 +205,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
       validating: dnssecEnabled && dnssecSupported && ntp.synchronized,
     },
     ntp,
+    dnsEncryption: getEncryptedForwarderStatus(),
     rogueDhcp: {
       enabled: getSetting('rogue_dhcp_detection_enabled') === 'true',
       supported: rogueProbe.probeSupported,

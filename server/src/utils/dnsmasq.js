@@ -4,7 +4,7 @@ import os from 'os';
 import { execFileSync, execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
-import { DATA_DIR, DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort } from '../config/defaults.js';
+import { DATA_DIR, DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort, ENCRYPTED_FORWARDER_PORT } from '../config/defaults.js';
 import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
@@ -249,6 +249,7 @@ export function regenerateDnsmasqConf(db) {
   // dnsmasq always uses real upstream servers — proxy sits in front, not behind
   const servers = getSetting('dns_upstream_servers');
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
+  const encryption = getSetting('forwarder_encryption') || 'off';
 
   const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
   const lines = content.split('\n');
@@ -256,10 +257,14 @@ export function regenerateDnsmasqConf(db) {
   // idempotent regardless of which setting changed.
   const filtered = lines.filter(line => !/^server=/.test(line) && !isManagedDnssecLine(line));
 
-  // Insert server lines after no-resolv or at the start
+  // Insert server lines after no-resolv or at the start. When encrypted
+  // forwarding is on, send everything to the in-Node DoT/DoH stub on loopback
+  // instead of the plain upstream IPs (the stub encrypts to the real upstreams).
   const noResolvIdx = filtered.findIndex(l => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
-  const serverLines = servers.map(s => `server=${s}`);
+  const serverLines = (encryption === 'tls' || encryption === 'https')
+    ? [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`]
+    : servers.map(s => `server=${s}`);
   filtered.splice(insertIdx, 0, ...serverLines);
 
   // Append the DNSSEC block when enabled and the local dnsmasq supports it.

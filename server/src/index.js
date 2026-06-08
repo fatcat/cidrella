@@ -61,6 +61,7 @@ import { startRogueDhcpScheduler } from './utils/dhcp-probe.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq } from './utils/dnsmasq.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
+import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
@@ -179,6 +180,10 @@ async function main() {
     ensureNtpEnabled();
     armDnssecTimecheckWhenSynced();
   }
+
+  // Encrypted DNS forwarders: start the in-Node DoT/DoH stub if enabled
+  // (dnsmasq's server= already points at it via regenerateDnsmasqConf above).
+  applyEncryptedForwarder();
 
   // 2. Initialize DuckDB analytics
   await initAnalyticsDb(DATA_DIR);

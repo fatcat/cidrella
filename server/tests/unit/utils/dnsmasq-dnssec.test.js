@@ -52,6 +52,36 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+describe('regenerateDnsmasqConf — encrypted forwarding server= wiring', () => {
+  it('uses plain upstream IPs when encryption is off', () => {
+    settings.forwarder_encryption = 'off';
+    regenerateDnsmasqConf({});
+    const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
+    expect(conf).toContain('server=8.8.8.8');
+    expect(conf).toContain('server=9.9.9.9');
+    expect(conf).not.toContain('server=127.0.0.1#5356');
+  });
+
+  it('points server= at the in-Node stub when encryption is tls', () => {
+    settings.forwarder_encryption = 'tls';
+    regenerateDnsmasqConf({});
+    const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
+    expect(conf).toContain('server=127.0.0.1#5356');
+    expect(conf).not.toContain('server=8.8.8.8');
+  });
+
+  it('points server= at the stub when encryption is https, and reverts when off', () => {
+    settings.forwarder_encryption = 'https';
+    regenerateDnsmasqConf({});
+    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=127.0.0.1#5356');
+    settings.forwarder_encryption = 'off';
+    regenerateDnsmasqConf({});
+    const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
+    expect(conf).toContain('server=8.8.8.8');
+    expect(conf).not.toContain('server=127.0.0.1#5356');
+  });
+});
+
 describe('regenerateDnsmasqConf — DNSSEC block', () => {
   it('emits no DNSSEC directives when dnssec_enabled is false', () => {
     regenerateDnsmasqConf({});
