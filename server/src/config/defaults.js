@@ -30,6 +30,7 @@ export const DEFAULTS = {
   default_scan_enabled:    '1',
   blocklist_enabled:       'true',
   blocklist_redirect_ip:   '',
+  dnssec_enabled:          'false',
   blocklist_update_schedule: 'daily',
   backup_schedule:         'off',
   backup_retention_count:  '7',
@@ -87,6 +88,9 @@ export const PASSIVE_LIVENESS_STALE_MS    = 600000;          // 10 minutes → m
 export const PROXY_HEALTH_CHECK_MS        = 3000;              // 3 seconds
 export const PROXY_MAX_RESTART_ATTEMPTS   = 3;
 export const PROXY_RESTART_DELAY_MS       = 2000;              // 2 seconds between restart attempts
+// DNS-over-TCP relay (used by DNSSEC-aware / large responses).
+export const PROXY_TCP_IDLE_TIMEOUT_MS    = 10000;            // close idle client TCP conns
+export const PROXY_MAX_TCP_CONNECTIONS    = 1000;            // concurrent client TCP conn cap
 export const BLOCKLIST_DOWNLOAD_TIMEOUT_MS = 60000;
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;      // 1 hour
 export const UPDATE_CHECK_DELAY_MS    = 0;                    // check immediately on startup

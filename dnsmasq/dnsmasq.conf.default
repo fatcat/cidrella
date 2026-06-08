@@ -8,6 +8,16 @@ no-resolv
 server=8.8.8.8
 server=9.9.9.9
 
+# DNSSEC validation (managed by CIDRella — toggle via DNS settings UI).
+# When enabled, the server injects the block below automatically; do not edit
+# by hand. It validates answers against the root trust anchor and starts
+# lenient on signature timestamps (dnssec-no-timecheck) until the clock is
+# NTP-synced, at which point the backend SIGHUPs dnsmasq to enforce them.
+#dnssec
+#dnssec-check-unsigned
+#dnssec-no-timecheck
+#conf-file=/usr/share/dnsmasq/trust-anchors.conf
+
 # DNS listener (loopback only by default)
 listen-address=127.0.0.1
 

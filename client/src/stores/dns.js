@@ -88,11 +88,21 @@ export const useDnsStore = defineStore('dns', () => {
     return res.data;
   }
 
+  async function getDnssec() {
+    const res = await api.get('/dns/dnssec');
+    return res.data;
+  }
+
+  async function updateDnssec(enabled) {
+    const res = await api.put('/dns/dnssec', { enabled });
+    return res.data;
+  }
+
   return {
     zones, loading,
     fetchZones, getZone, createZone, updateZone, deleteZone,
     getRecords, createRecord, updateRecord, deleteRecord,
     applyConfig, getForwarders, updateForwarders, testForwarder,
-    getSoaDefaults, updateSoaDefaults
+    getSoaDefaults, updateSoaDefaults, getDnssec, updateDnssec
   };
 });

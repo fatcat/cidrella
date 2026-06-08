@@ -242,6 +242,34 @@ if ss -tlnp 2>/dev/null | grep -q ':53 '; then
 fi
 
 # ═══════════════════════════════════════════════════════════
+# NTP — system clock sync (required for DNSSEC validation)
+# ═══════════════════════════════════════════════════════════
+#
+# DNSSEC signature validation checks each signature's NotBefore/NotAfter
+# window, so a host with a wrong clock SERVFAILs signed lookups. Ensure an NTP
+# client is active. The app can also re-enable NTP at runtime via a polkit
+# grant (see 49-cidrella.rules), but enabling it here makes a fresh install
+# correct from first boot. Idempotent: skips when NTP is already on.
+if command -v timedatectl >/dev/null 2>&1; then
+  if timedatectl show -p NTP --value 2>/dev/null | grep -qx yes; then
+    ok "NTP time sync already enabled."
+  else
+    info "Enabling NTP time synchronization (required for DNSSEC)..."
+    # Ensure a client exists: prefer an already-installed timesyncd/chrony/ntp,
+    # otherwise install systemd-timesyncd (smallest footprint).
+    if ! systemctl list-unit-files 2>/dev/null | grep -qE '^(systemd-timesyncd|chrony|chronyd|ntp)\.service'; then
+      apt-get install -y -qq systemd-timesyncd >/dev/null 2>&1 || \
+        warn "Could not install systemd-timesyncd — enable an NTP client manually for DNSSEC."
+    fi
+    if timedatectl set-ntp true 2>/dev/null; then
+      ok "NTP time sync enabled."
+    else
+      warn "Failed to enable NTP. DNSSEC validation may fail on clock skew until corrected."
+    fi
+  fi
+fi
+
+# ═══════════════════════════════════════════════════════════
 # NODE.JS — bundled runtime
 # ═══════════════════════════════════════════════════════════
 #

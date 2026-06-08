@@ -137,6 +137,14 @@ const SETTING_SCHEMA = {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)
   },
+  // dnssec_enabled is a known editable key, but the authoritative write path is
+  // PUT /api/dns/dnssec — only that route regenerates dnsmasq.conf and restarts
+  // dnsmasq. A bare settings PUT changes the value without applying it (matches
+  // how dns_upstream_servers behaves vs /api/dns/forwarders).
+  dnssec_enabled: {
+    validate: v => isBoolStr(v) ? null : 'must be true or false',
+    normalize: v => toBoolStr(v)
+  },
   http_redirect_enabled: {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)

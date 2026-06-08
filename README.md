@@ -11,6 +11,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 - **IP address management** — Hierarchical subnets, folders, VLANs, functional ranges, table/grid views, and a canonical IP state model shared across Networks, DHCP, and DNS.
 - **DNS management** — Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation.
+- **DNSSEC validation** — UI toggle that turns on dnsmasq DNSSEC validation against the root trust anchor, with a TCP-capable DNS proxy (so large/signed answers and validating-stub resolvers work) while blocklist + GeoIP filtering stay in place. NTP is enabled automatically and dnsmasq starts lenient on signature timestamps until the clock syncs.
 - **DHCP management** — Scopes, global defaults for new scopes, per-scope options, reservations, dynamic lease tracking, and DHCP-derived DNS records.
 - **Liveness and rogue detection** — Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
 - **Analytics** — DNS query, blocked-domain, blocked-host, client/domain pair, and system performance views backed by DuckDB.

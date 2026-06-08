@@ -43,3 +43,15 @@ polkit.addRule(function(action, subject) {
 
     return polkit.Result.NOT_HANDLED;
 });
+
+// System clock / NTP control. DNSSEC signature validation needs an accurate
+// clock; this lets the cidrella service account turn NTP on at runtime
+// (`timedatectl set-ntp true`) when it finds the clock unsynchronized, without
+// sudo. Scoped to exactly that one action and the cidrella user.
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.timedate1.set-ntp" &&
+        subject.user === "cidrella") {
+        return polkit.Result.YES;
+    }
+    return polkit.Result.NOT_HANDLED;
+});

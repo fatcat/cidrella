@@ -1,4 +1,5 @@
 import dgram from 'dgram';
+import net from 'net';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -18,6 +19,7 @@ import {
   GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
   GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
   PROXY_HEALTH_CHECK_MS, PROXY_MAX_RESTART_ATTEMPTS, PROXY_RESTART_DELAY_MS,
+  PROXY_TCP_IDLE_TIMEOUT_MS, PROXY_MAX_TCP_CONNECTIONS,
   DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort,
 } from '../config/defaults.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
@@ -39,7 +41,9 @@ function proxyLog(level, msg, extra) {
 }
 
 // Module state
-let proxyServers = [];         // Array of { socket, address } — one per LAN address on port 53
+let proxyServers = [];         // Array of { socket, address } — one per LAN address on port 53 (UDP)
+let tcpServers = [];           // Array of { server, address } — TCP listener per LAN address (DNS-over-TCP)
+let activeTcpConnections = 0;  // concurrent client TCP connections (capped at PROXY_MAX_TCP_CONNECTIONS)
 let mmdbReader = null;
 let geoCache = null;
 let statsTotal = 0;
@@ -206,36 +210,83 @@ function getListenAddresses() {
   return addresses;
 }
 
-// Create NXDOMAIN response for a query
-function createNxdomainResponse(query) {
+// dns-packet's encoder takes the on-the-wire rcode from the low 4 bits of the
+// `flags` field and IGNORES the convenience `rcode` string — so a response must
+// fold its rcode into flags or it silently encodes as NOERROR. (This was a
+// latent bug: synthesized NXDOMAIN/SERVFAIL replies were going out as NOERROR.)
+const RCODE = { NOERROR: 0, FORMERR: 1, SERVFAIL: 2, NXDOMAIN: 3, NOTIMP: 4, REFUSED: 5 };
+function responseFlags(rcodeName) {
+  return (dnsPacket.RECURSION_DESIRED | dnsPacket.RECURSION_AVAILABLE) | (RCODE[rcodeName] || 0);
+}
+
+// Pull the EDNS OPT pseudo-record (if any) from a decoded query's additionals.
+export function getQueryOpt(query) {
+  return query?.additionals?.find(a => a.type === 'OPT') || null;
+}
+
+// Build the additionals array for a synthesized response. When the client's
+// query carried an EDNS OPT record we echo a matching one (advertised UDP
+// payload size + DO bit) so DNSSEC-aware clients see a well-formed reply. We
+// deliberately do NOT set the AD (authenticated-data) header flag: a locally
+// blocked domain is unsigned local policy, not a validated answer.
+function buildOptEcho(opt) {
+  if (!opt) return [];
+  // dns-packet encodes the EDNS flags field from `flags` (not `flag_do`), so
+  // the DO bit must be set there; `flag_do` is set too for symmetry on decode.
+  return [{
+    type: 'OPT',
+    name: '.',
+    udpPayloadSize: opt.udpPayloadSize || 1232,
+    extendedRcode: 0,
+    ednsVersion: 0,
+    flags: opt.flag_do ? dnsPacket.DNSSEC_OK : 0,
+    flag_do: !!opt.flag_do,
+    options: [],
+  }];
+}
+
+// Create NXDOMAIN response for a query (echoes EDNS OPT when present)
+export function createNxdomainResponse(query) {
   return dnsPacket.encode({
     id: query.id,
     type: 'response',
-    flags: dnsPacket.RECURSION_DESIRED | dnsPacket.RECURSION_AVAILABLE,
-    rcode: 'NXDOMAIN',
+    flags: responseFlags('NXDOMAIN'),
     questions: query.questions,
     answers: [],
     authorities: [],
-    additionals: []
+    additionals: buildOptEcho(getQueryOpt(query))
   });
 }
 
-// Create a blocked response — redirect IP (A record) or NXDOMAIN
-function createBlockedResponse(query) {
+// Create a blocked response — redirect IP (A record, NOERROR) or NXDOMAIN
+export function createBlockedResponse(query) {
   if (blocklistRedirectIp) {
     return dnsPacket.encode({
       id: query.id,
       type: 'response',
-      flags: dnsPacket.RECURSION_DESIRED | dnsPacket.RECURSION_AVAILABLE,
+      flags: responseFlags('NOERROR'),
       questions: query.questions,
       answers: query.questions
         .filter(q => q.type === 'A')
         .map(q => ({ type: 'A', name: q.name, ttl: 300, data: blocklistRedirectIp })),
       authorities: [],
-      additionals: []
+      additionals: buildOptEcho(getQueryOpt(query))
     });
   }
   return createNxdomainResponse(query);
+}
+
+// Encode a SERVFAIL response, echoing EDNS OPT when present.
+function encodeServfail(query) {
+  return dnsPacket.encode({
+    id: query.id,
+    type: 'response',
+    flags: responseFlags('SERVFAIL'),
+    questions: query.questions || [],
+    answers: [],
+    authorities: [],
+    additionals: buildOptEcho(getQueryOpt(query))
+  });
 }
 
 // Load blocklist domains from DB into a domain -> category Map.
@@ -337,11 +388,7 @@ function handleQuery(msg, rinfo, sock) {
     // Circuit breaker — reject when too many queries are pending
     if (pendingQueries.size >= MAX_PENDING_QUERIES) {
       statsTotal++;
-      const servfail = dnsPacket.encode({
-        id: query.id, type: 'response', rcode: 'SERVFAIL',
-        questions: query.questions || [], answers: [], authorities: [], additionals: []
-      });
-      sock.send(servfail, rinfo.port, rinfo.address);
+      sock.send(encodeServfail(query), rinfo.port, rinfo.address);
       return;
     }
 
@@ -350,11 +397,7 @@ function handleQuery(msg, rinfo, sock) {
     if (internalId === null) {
       // All 65536 IDs exhausted — drop query with SERVFAIL
       statsTotal++;
-      const servfail = dnsPacket.encode({
-        id: query.id, type: 'response', rcode: 'SERVFAIL',
-        questions: query.questions || [], answers: [], authorities: [], additionals: []
-      });
-      sock.send(servfail, rinfo.port, rinfo.address);
+      sock.send(encodeServfail(query), rinfo.port, rinfo.address);
       return;
     }
 
@@ -374,10 +417,9 @@ function handleQuery(msg, rinfo, sock) {
           responseCode: 'SERVFAIL', action: 'allowed', latencyUs,
         });
         try {
-          const servfail = dnsPacket.encode({
-            id: p.originalId, type: 'response', rcode: 'SERVFAIL',
-            questions: [], answers: [], authorities: [], additionals: []
-          });
+          // Echo the client's EDNS OPT (stored on the pending entry) so a
+          // validating stub still gets a well-formed SERVFAIL.
+          const servfail = encodeServfail({ id: p.originalId, questions: [], additionals: p.opt ? [p.opt] : [] });
           p.socket.send(servfail, p.port, p.address);
         } catch { /* ignore */ }
       }
@@ -390,6 +432,7 @@ function handleQuery(msg, rinfo, sock) {
       socket: sock,
       queryName: queryName || '',
       queryType,
+      opt: getQueryOpt(query),   // echoed on a synthesized GeoIP-block response
       timer,
       startNs
     });
@@ -430,7 +473,11 @@ function handleDnsmasqResponse(msg) {
         for (const cc of countryCodes) {
           countryHits.set(cc, (countryHits.get(cc) || 0) + 1);
         }
-        const nxResponse = createNxdomainResponse({ id: pending.originalId, questions: response.questions });
+        const nxResponse = createNxdomainResponse({
+          id: pending.originalId,
+          questions: response.questions,
+          additionals: pending.opt ? [pending.opt] : [],
+        });
         pending.socket.send(nxResponse, pending.port, pending.address);
         const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
         recordLatency(latencyUs);
@@ -463,6 +510,193 @@ function handleDnsmasqResponse(msg) {
   } catch (err) {
     proxyLog('error', 'Response processing error', { error: err.message });
   }
+}
+
+// ─── DNS-over-TCP relay ──────────────────────────────────────────
+// DNS-over-TCP frames each message with a 2-byte big-endian length prefix.
+// Unlike the UDP path, each query gets its own independent connection to
+// dnsmasq, so there's no 16-bit ID multiplexing — we relay the client's bytes
+// (and dnsmasq's response bytes) verbatim, which keeps DNSSEC signatures and
+// the query ID intact. TCP fallback is what validating-stub resolvers use for
+// large/truncated signed answers, so this path is required for end-to-end
+// DNSSEC while filtering stays in place.
+
+// Prefix a payload with its 2-byte big-endian length (DNS-over-TCP framing).
+export function frameTcpMessage(payload) {
+  const lenBuf = Buffer.allocUnsafe(2);
+  lenBuf.writeUInt16BE(payload.length, 0);
+  return Buffer.concat([lenBuf, payload]);
+}
+
+// Pull all complete length-prefixed messages out of a stream buffer.
+// Returns { messages: Buffer[], rest: Buffer } — `rest` is the unconsumed tail.
+export function extractTcpMessages(buf) {
+  const messages = [];
+  let offset = 0;
+  while (buf.length - offset >= 2) {
+    const msgLen = buf.readUInt16BE(offset);
+    if (buf.length - offset < 2 + msgLen) break; // wait for more bytes
+    messages.push(buf.subarray(offset + 2, offset + 2 + msgLen));
+    offset += 2 + msgLen;
+  }
+  return { messages, rest: offset > 0 ? buf.subarray(offset) : buf };
+}
+
+function writeTcpMessage(sock, payload) {
+  if (!sock.writable) return;
+  try { sock.write(frameTcpMessage(payload)); } catch { /* client gone */ }
+}
+
+/**
+ * Relay one DNS query to dnsmasq over TCP and resolve with the raw response
+ * bytes (length prefix stripped), or null on timeout/error. Each call uses a
+ * fresh connection — testable against any loopback TCP responder.
+ */
+export function relayQueryOverTcp(reqMsg, host, port, timeoutMs) {
+  return new Promise((resolve) => {
+    const upstream = net.connect(port, host);
+    upstream.setTimeout(timeoutMs);
+    let respBuf = Buffer.alloc(0);
+    let done = false;
+    const finish = (val) => {
+      if (done) return;
+      done = true;
+      try { upstream.destroy(); } catch { /* ignore */ }
+      resolve(val);
+    };
+    upstream.on('connect', () => upstream.write(frameTcpMessage(reqMsg)));
+    upstream.on('data', (chunk) => {
+      respBuf = Buffer.concat([respBuf, chunk]);
+      if (respBuf.length < 2) return;
+      const respLen = respBuf.readUInt16BE(0);
+      if (respBuf.length < 2 + respLen) return; // wait for full message
+      finish(respBuf.subarray(2, 2 + respLen));
+    });
+    upstream.on('timeout', () => finish(null));
+    upstream.on('error', () => finish(null));
+    upstream.on('close', () => finish(null));
+  });
+}
+
+// Handle a single framed DNS message from a client TCP connection.
+async function handleTcpQuery(msg, clientSock) {
+  const startNs = process.hrtime.bigint();
+  let query;
+  try {
+    query = dnsPacket.decode(msg);
+  } catch {
+    return; // malformed — ignore this message, keep the connection open
+  }
+  const clientIp = clientSock.remoteAddress || '';
+  const queryName = query.questions?.[0]?.name;
+  const queryType = query.questions?.[0]?.type || 'A';
+
+  try {
+    recordDnsQueryLiveness(getDb(), clientIp, { createRogue: true, source: 'passive' });
+  } catch (err) {
+    proxyLog('warn', 'Failed to record DNS-query liveness (TCP)', { clientIp, error: err.message });
+  }
+
+  // Blocklist intercept — no dnsmasq round-trip.
+  if (queryName) {
+    const blockedCategory = checkBlocklist(queryName);
+    if (blockedCategory) {
+      statsBlocked++;
+      statsTotal++;
+      blocklistBlockedDelta++;
+      blocklistCategoryHits.set(blockedCategory, (blocklistCategoryHits.get(blockedCategory) || 0) + 1);
+      writeTcpMessage(clientSock, createBlockedResponse(query));
+      const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
+      recordLatency(latencyUs);
+      logDnsQuery({
+        clientIp, domain: queryName, queryType,
+        responseCode: blocklistRedirectIp ? 'NOERROR' : 'NXDOMAIN',
+        action: 'blocked_blocklist', blockReason: blockedCategory, latencyUs,
+      });
+      return;
+    }
+  }
+
+  // Relay to dnsmasq over TCP (same internal port it serves UDP on).
+  const internalPort = resolveDnsmasqInternalPort(getSetting('dns_listen_port'));
+  const respMsg = await relayQueryOverTcp(msg, '127.0.0.1', internalPort, GEOIP_QUERY_TIMEOUT_MS);
+  const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
+  recordLatency(latencyUs);
+
+  if (!respMsg) {
+    timeoutCount++;
+    statsTotal++;
+    writeTcpMessage(clientSock, encodeServfail(query));
+    logDnsQuery({ clientIp, domain: queryName || '', queryType, responseCode: 'SERVFAIL', action: 'allowed', latencyUs });
+    return;
+  }
+
+  // GeoIP check on the resolved answers — same policy as the UDP path.
+  let response = null;
+  try { response = dnsPacket.decode(respMsg); } catch { /* relay raw below */ }
+
+  const ips = response
+    ? response.answers.filter(a => a.type === 'A' || a.type === 'AAAA').map(a => a.data)
+    : [];
+
+  if (ips.length > 0) {
+    const countryCodes = ips.map(ip => lookupCountry(ip)).filter(cc => cc !== null);
+    if (countryCodes.length > 0 && shouldBlock(countryCodes)) {
+      statsBlocked++;
+      blockedDelta++;
+      statsTotal++;
+      for (const cc of countryCodes) countryHits.set(cc, (countryHits.get(cc) || 0) + 1);
+      writeTcpMessage(clientSock, createNxdomainResponse(query));
+      logDnsQuery({
+        clientIp, domain: queryName || '', queryType,
+        responseCode: 'NXDOMAIN', action: 'blocked_geoip',
+        blockReason: countryCodes[0], latencyUs, resolvedIp: ips[0],
+      });
+      return;
+    }
+  }
+
+  // Allowed — relay dnsmasq's raw bytes verbatim (preserves signatures + ID).
+  statsAllowed++;
+  statsTotal++;
+  writeTcpMessage(clientSock, respMsg);
+  const rcodeNames = ['NOERROR', 'FORMERR', 'SERVFAIL', 'NXDOMAIN', 'NOTIMP', 'REFUSED'];
+  logDnsQuery({
+    clientIp, domain: queryName || '', queryType,
+    responseCode: response?.rcode || rcodeNames[0], action: 'allowed',
+    latencyUs, resolvedIp: ips[0] || null,
+  });
+}
+
+// Accept a client TCP connection: buffer, deframe, dispatch each message.
+function onTcpConnection(clientSock) {
+  if (activeTcpConnections >= PROXY_MAX_TCP_CONNECTIONS) {
+    try { clientSock.destroy(); } catch { /* ignore */ }
+    return;
+  }
+  activeTcpConnections++;
+  clientSock.setTimeout(PROXY_TCP_IDLE_TIMEOUT_MS);
+
+  let buf = Buffer.alloc(0);
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    activeTcpConnections--;
+    try { clientSock.destroy(); } catch { /* ignore */ }
+  };
+
+  clientSock.on('data', (chunk) => {
+    buf = Buffer.concat([buf, chunk]);
+    const { messages, rest } = extractTcpMessages(buf);
+    buf = rest;
+    for (const m of messages) handleTcpQuery(m, clientSock);
+    // Guard against a peer that sends a huge length prefix but never the body.
+    if (buf.length > 0xFFFF + 2) cleanup();
+  });
+  clientSock.on('timeout', cleanup);
+  clientSock.on('error', cleanup);
+  clientSock.on('close', cleanup);
 }
 
 // Start the DNS proxy — binds one UDP socket per LAN address on port 53
@@ -523,6 +757,22 @@ export function startProxy() {
 
     proxyServers.push({ socket: sock, address: addr });
   }
+
+  // Bind a TCP listener per LAN address on the same port. TCP is additive and
+  // best-effort: a TCP bind failure is logged but does NOT tear down the UDP
+  // path or trip the bypass health monitor (which tracks UDP sockets) — UDP
+  // DNS keeps working even if TCP can't bind. In practice they bind or fail
+  // together since they share the address/port.
+  for (const addr of addresses) {
+    const tcpServer = net.createServer(onTcpConnection);
+    tcpServer.on('error', (err) => {
+      proxyLog('error', 'Proxy TCP server error', { address: addr, error: err.message, code: err.code });
+    });
+    tcpServer.listen(listenPort, addr, () => {
+      proxyLog('info', 'Proxy TCP listener bound', { address: `${addr}:${listenPort}` });
+    });
+    tcpServers.push({ server: tcpServer, address: addr });
+  }
 }
 
 // Stop the DNS proxy
@@ -531,6 +781,12 @@ export function stopProxy() {
     try { socket.close(); } catch { /* ignore */ }
   }
   proxyServers = [];
+
+  for (const { server } of tcpServers) {
+    try { server.close(); } catch { /* ignore */ }
+  }
+  tcpServers = [];
+  activeTcpConnections = 0;
 
   if (dnsmasqSocket) {
     try { dnsmasqSocket.close(); } catch { /* ignore */ }
@@ -712,6 +968,8 @@ export function getProxyStatus() {
     bypassed: bypassMode,
     port: 53,
     listenAddresses: proxyServers.map(s => s.address),
+    tcpListeners: tcpServers.length,
+    activeTcpConnections,
     dbLoaded: mmdbReader !== null,
     dbExists,
     dbPath,

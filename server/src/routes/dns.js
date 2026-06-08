@@ -4,6 +4,8 @@ import { requirePerm } from '../auth/require-perm.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
+import { dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
+import { ensureNtpEnabled, getNtpStatus, armDnssecTimecheckWhenSynced } from '../utils/timesync.js';
 import {
   createRecord,
   updateRecord,
@@ -714,6 +716,46 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   });
 
   res.json({ servers });
+});
+
+// GET /api/dns/dnssec — current state + dnsmasq support + clock-sync status
+router.get('/dnssec', requirePerm('dns:read'), (req, res) => {
+  res.json({
+    enabled: getSetting('dnssec_enabled') === 'true',
+    supported: dnsmasqSupportsDnssec(),
+    ntp: getNtpStatus(),
+  });
+});
+
+// PUT /api/dns/dnssec — toggle DNSSEC validation. Mirrors /forwarders: the
+// authoritative write path that regenerates dnsmasq.conf and restarts dnsmasq
+// via the regenerate_dnsmasq_conf afterCommit hook.
+router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
+  const { enabled } = req.body;
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled must be a boolean' });
+  }
+  if (enabled && !dnsmasqSupportsDnssec()) {
+    return res.status(400).json({ error: 'dnsmasq on this host was not built with DNSSEC support' });
+  }
+
+  const oldVal = getSetting('dnssec_enabled');
+  setSetting('dnssec_enabled', enabled ? 'true' : 'false');
+
+  if (enabled) {
+    // Make sure the clock will sync, and arm the one-shot SIGHUP that switches
+    // dnsmasq from lenient (dnssec-no-timecheck) to enforcing once it has.
+    ensureNtpEnabled();
+    armDnssecTimecheckWhenSynced();
+  }
+
+  req.afterCommit('regenerate_dnsmasq_conf');
+
+  audit(req.user.id, 'dns_dnssec_updated', 'dns', null, {
+    old: oldVal, new: enabled ? 'true' : 'false'
+  });
+
+  res.json({ enabled, ntp: getNtpStatus() });
 });
 
 // GET /api/dns/soa-defaults

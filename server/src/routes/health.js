@@ -3,10 +3,11 @@ import os from 'os';
 import fs from 'fs';
 import { execFileSync } from 'child_process';
 import bcrypt from 'bcryptjs';
-import { getDb } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
 import { queryRaw } from '../db/duckdb.js';
 import { APP_VERSION } from '../utils/version.js';
-import { isDnsmasqRunning } from '../utils/dnsmasq.js';
+import { isDnsmasqRunning, dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
+import { getNtpStatus } from '../utils/timesync.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getCapabilityWarning, readProcessCapabilities } from '../utils/capabilities.js';
 import { getBootServiceHealth } from '../utils/service-health.js';
@@ -158,6 +159,13 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   // Services
   const dnsmasqRunning = isDnsmasqRunning();
 
+  // DNSSEC + clock sync. "validating" means dnsmasq is actually enforcing
+  // signature validation with trustworthy timestamps (enabled + supported +
+  // clock synced). Before NTP sync, dnsmasq runs lenient (dnssec-no-timecheck).
+  const ntp = getNtpStatus();
+  const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
+  const dnssecSupported = dnsmasqSupportsDnssec();
+
   // Uptime
   const systemUptime = os.uptime();
   const processUptime = process.uptime();
@@ -182,6 +190,12 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
     uptime: { system: systemUptime, process: processUptime },
     services: { dnsmasq: dnsmasqRunning },
     service: getBootServiceHealth(),
+    dnssec: {
+      enabled: dnssecEnabled,
+      supported: dnssecSupported,
+      validating: dnssecEnabled && dnssecSupported && ntp.synchronized,
+    },
+    ntp,
     stats,
     timestamp: new Date().toISOString()
   });

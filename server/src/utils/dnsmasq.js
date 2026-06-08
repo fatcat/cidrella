@@ -187,21 +187,89 @@ export function regenerateConfDir(db) {
   return changed;
 }
 
+// ─── DNSSEC ──────────────────────────────────────────────
+// Distro-maintained root trust-anchor file (Debian/Ubuntu ship this with
+// dnsmasq-base). Preferred over a hardcoded key because it survives root KSK
+// rollovers via package updates.
+const DISTRO_TRUST_ANCHORS = '/usr/share/dnsmasq/trust-anchors.conf';
+// Fallback root KSK (KSK-2017, key tag 20326) used only when the distro file
+// is absent. dnsmasq trust-anchor format: name,key_tag,algo,digest_type,digest.
+const ROOT_KSK_TRUST_ANCHOR =
+  'trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D';
+
+// Memoized: dnsmasq's compile-time options don't change at runtime.
+let _dnssecSupportCache = null;
+
+/**
+ * Whether the installed dnsmasq was built with DNSSEC support. dnsmasq prints
+ * its compile flags on `--version`; an unsupported build lists the token
+ * "no-DNSSEC" instead of "DNSSEC", so an exact token match distinguishes them.
+ * Returns false (and we refuse to emit the DNSSEC block) when dnsmasq is
+ * missing or lacks support, rather than producing a config it rejects on start.
+ */
+export function dnsmasqSupportsDnssec() {
+  if (_dnssecSupportCache !== null) return _dnssecSupportCache;
+  try {
+    const out = execFileSync('dnsmasq', ['--version'], { encoding: 'utf-8' });
+    _dnssecSupportCache = out.split(/\s+/).includes('DNSSEC');
+  } catch {
+    _dnssecSupportCache = false;
+  }
+  return _dnssecSupportCache;
+}
+
+// True for any dnsmasq.conf line this module injects for DNSSEC, so regen can
+// strip them before re-adding — keeping the conf a pure function of the setting.
+function isManagedDnssecLine(line) {
+  const t = line.trim();
+  if (t === 'dnssec' || t === 'dnssec-no-timecheck') return true;
+  if (/^dnssec-check-unsigned(=.*)?$/.test(t)) return true;
+  if (/^trust-anchor=/.test(t)) return true;
+  if (/^conf-file=.*trust-anchor/i.test(t)) return true;
+  return false;
+}
+
+function buildDnssecLines() {
+  // dnssec-no-timecheck: start lenient on signature time windows so early-boot
+  // lookups don't SERVFAIL on clock skew. timesync.js SIGHUPs dnsmasq once the
+  // clock is NTP-synced, which clears this mode. Re-armed on every restart
+  // because the directive stays in the conf.
+  const lines = ['dnssec', 'dnssec-check-unsigned', 'dnssec-no-timecheck'];
+  if (fs.existsSync(DISTRO_TRUST_ANCHORS)) {
+    lines.push(`conf-file=${DISTRO_TRUST_ANCHORS}`);
+  } else {
+    lines.push(ROOT_KSK_TRUST_ANCHOR);
+  }
+  return lines;
+}
+
 export function regenerateDnsmasqConf(db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return;
 
   // dnsmasq always uses real upstream servers — proxy sits in front, not behind
   const servers = getSetting('dns_upstream_servers');
+  const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
 
   const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
   const lines = content.split('\n');
-  const filtered = lines.filter(line => !line.match(/^server=/));
+  // Strip existing server= lines and any DNSSEC-managed lines so regen is
+  // idempotent regardless of which setting changed.
+  const filtered = lines.filter(line => !/^server=/.test(line) && !isManagedDnssecLine(line));
 
   // Insert server lines after no-resolv or at the start
   const noResolvIdx = filtered.findIndex(l => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
   const serverLines = servers.map(s => `server=${s}`);
   filtered.splice(insertIdx, 0, ...serverLines);
+
+  // Append the DNSSEC block when enabled and the local dnsmasq supports it.
+  if (dnssecEnabled) {
+    if (dnsmasqSupportsDnssec()) {
+      filtered.push(...buildDnssecLines());
+    } else {
+      console.warn('[dnsmasq] dnssec_enabled is true but dnsmasq was not built with DNSSEC support — skipping DNSSEC directives');
+    }
+  }
 
   atomicWrite(DNSMASQ_CONF, filtered.join('\n'));
 }

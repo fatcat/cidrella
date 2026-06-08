@@ -62,6 +62,34 @@
           </div>
         </div>
       </div>
+
+      <div class="dns-section">
+        <h4>DNSSEC Validation</h4>
+        <p class="section-hint">
+          Cryptographically validate DNS responses against the root trust anchor.
+          Blocklist and GeoIP filtering continue to apply to validated answers.
+        </p>
+        <div class="dnssec-form">
+          <div class="dnssec-row">
+            <ToggleSwitch v-model="dnssecForm.enabled" data-track="dns-toggle-dnssec"
+                          :disabled="dnssecSupported === false" />
+            <span>Enable DNSSEC validation</span>
+          </div>
+          <p v-if="dnssecSupported === false" class="dnssec-warn">
+            This host's dnsmasq was not built with DNSSEC support — validation cannot be enabled.
+          </p>
+          <p v-else-if="savedDnssec && savedDnssec.enabled" class="dnssec-status">
+            <span class="status-dot" :class="ntpSynced ? 'dot-up' : 'dot-unknown'"></span>
+            {{ ntpSynced
+                 ? 'Clock synchronized — signatures are fully validated.'
+                 : 'Waiting for NTP sync — validation is lenient on signature timestamps until the clock syncs.' }}
+          </p>
+          <div class="forwarder-actions">
+            <Button label="Save" icon="pi pi-save" size="small" data-track="dns-save-dnssec"
+                    @click="saveDnssec" :loading="savingDnssec" :disabled="!dnssecDirty" />
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -72,6 +100,7 @@ import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
+import ToggleSwitch from 'primevue/toggleswitch';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
 
@@ -96,6 +125,16 @@ const soaForm = ref({
 });
 const savedSoa = ref(null);
 const savingSoa = ref(false);
+
+const dnssecForm = ref({ enabled: false });
+const savedDnssec = ref(null);
+const savingDnssec = ref(false);
+const dnssecSupported = ref(null);  // null = unknown until loaded
+const ntpSynced = ref(false);
+
+const dnssecDirty = computed(() =>
+  savedDnssec.value !== null && dnssecForm.value.enabled !== savedDnssec.value.enabled
+);
 
 const soaDirty = computed(() => {
   if (!savedSoa.value) return false;
@@ -176,6 +215,34 @@ async function saveSoaDefaults() {
   }
 }
 
+async function loadDnssec() {
+  try {
+    const d = await store.getDnssec();
+    dnssecForm.value = { enabled: !!d.enabled };
+    savedDnssec.value = { enabled: !!d.enabled };
+    dnssecSupported.value = d.supported;
+    ntpSynced.value = !!d.ntp?.synchronized;
+  } catch { /* leave defaults */ }
+}
+
+async function saveDnssec() {
+  savingDnssec.value = true;
+  try {
+    const res = await store.updateDnssec(dnssecForm.value.enabled);
+    savedDnssec.value = { enabled: dnssecForm.value.enabled };
+    ntpSynced.value = !!res.ntp?.synchronized;
+    toast.add({
+      severity: 'success',
+      summary: `DNSSEC ${dnssecForm.value.enabled ? 'enabled' : 'disabled'}`,
+      life: 3000
+    });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally {
+    savingDnssec.value = false;
+  }
+}
+
 onMounted(async () => {
   try {
     const servers = await store.getForwarders();
@@ -192,6 +259,7 @@ onMounted(async () => {
     soaForm.value = defaults;
     savedSoa.value = { ...defaults };
   } catch { /* use local defaults */ }
+  await loadDnssec();
 });
 
 onUnmounted(() => {
@@ -282,5 +350,29 @@ onUnmounted(() => {
   font-size: var(--app-fs-xs);
   color: var(--p-text-muted-color);
   margin-top: 0.2rem;
+}
+.dnssec-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.dnssec-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--app-fs-sm);
+}
+.dnssec-status,
+.dnssec-warn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--app-fs-xs);
+  color: var(--p-text-muted-color);
+  margin: 0;
+  line-height: 1.4;
+}
+.dnssec-warn {
+  color: var(--p-red-400);
 }
 </style>

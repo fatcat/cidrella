@@ -59,6 +59,7 @@ import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq } from './utils/dnsmasq.js';
+import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
@@ -163,6 +164,14 @@ async function main() {
   applyInterfaceConfig(getDb());
   regenerateDnsmasqConf(getDb());
   try { restartDnsmasq(); } catch { console.warn('dnsmasq restart failed (may not be installed)'); }
+
+  // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
+  // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,
+  // so it switches to enforcing. No-op unless dnssec_enabled.
+  if (getSetting('dnssec_enabled') === 'true') {
+    ensureNtpEnabled();
+    armDnssecTimecheckWhenSynced();
+  }
 
   // 2. Initialize DuckDB analytics
   await initAnalyticsDb(DATA_DIR);
