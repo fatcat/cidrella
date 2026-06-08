@@ -65,11 +65,13 @@ import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
 import { startPassiveLivenessWatcher } from './utils/passive-liveness.js';
+import { startDhcpFingerprintWatcher } from './utils/dhcp-fingerprint.js';
 import { startMetricsAggregator } from './utils/metrics-aggregator.js';
 import metricsRoutes from './routes/metrics.js';
 import analyticsRoutes from './routes/analytics.js';
 import anomalyRoutes from './routes/anomalies.js';
 import rogueDhcpRoutes from './routes/rogue-dhcp.js';
+import deviceRoutes from './routes/devices.js';
 import { initAnalyticsDb, closeAnalyticsDb } from './db/duckdb.js';
 import { getCapabilityWarning } from './utils/capabilities.js';
 import { captureBootServiceHealth } from './utils/service-health.js';
@@ -161,6 +163,9 @@ async function main() {
 
   // Start passive liveness watcher (DNS query log → is_online)
   startPassiveLivenessWatcher(getDb());
+
+  // Passive device/OS fingerprinting from dnsmasq log-dhcp output
+  startDhcpFingerprintWatcher(getDb());
 
   // 1. Configure dnsmasq for port 5353 + DHCP interfaces, then restart
   applyInterfaceConfig(getDb());
@@ -337,6 +342,7 @@ async function main() {
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dns', dnsRoutes);
   app.use('/api/dhcp/rogue', rogueDhcpRoutes);
+  app.use('/api/devices', deviceRoutes);
   app.use('/api/dhcp', dhcpRoutes);
   app.use('/api/scans', scanRoutes);
   app.use('/api/audit', auditRoutes);

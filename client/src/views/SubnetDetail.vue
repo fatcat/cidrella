@@ -133,6 +133,7 @@
                 <span v-else class="cell-muted">—</span>
               </template>
               <template v-else-if="col.key === 'vendor'">{{ displayCell(data.vendor) }}</template>
+              <template v-else-if="col.key === 'device'">{{ deviceCell(data) }}</template>
               <OnlineStatusCell v-else-if="col.key === 'is_online'" :value="data.is_online" />
               <template v-else-if="col.key === 'last_seen_at'">{{ data.last_seen_at ? formatDate(data.last_seen_at) : EMPTY_CELL }}</template>
               <template v-else-if="col.key === 'dhcp_expires_at'">{{ displayExpiry(data.dhcp_expires_at, formatDate) }}</template>
@@ -379,6 +380,9 @@
       </div>
     </Dialog>
 
+    <!-- Host "more info" dialog -->
+    <HostInfoDialog v-model:visible="showHostInfo" :host="hostInfoRow" />
+
     <Toast />
   </div>
   <div v-else-if="loading" class="loading">Loading network...</div>
@@ -404,6 +408,7 @@ import TabPanel from 'primevue/tabpanel';
 import Tag from 'primevue/tag';
 import ToggleSwitch from 'primevue/toggleswitch';
 import ScopeDialog from '../components/ScopeDialog.vue';
+import HostInfoDialog from '../components/HostInfoDialog.vue';
 import ScanToggle from '../components/ScanToggle.vue';
 import AddressTypePill from '../components/table/AddressTypePill.vue';
 import ColumnChooserButton from '../components/table/ColumnChooserButton.vue';
@@ -444,6 +449,7 @@ const networkTableColumns = [
   { key: 'hostname', header: 'Hostname', description: 'Best known hostname from DNS, DHCP, or passive observations.', field: 'hostname', sortable: true, style: 'width: 10rem' },
   { key: 'mac_address', header: 'MAC Address', description: 'Best known hardware address from DHCP or last-seen lifecycle data.', field: 'mac_address', sortField: 'mac_address', sortable: true, style: 'width: 10rem' },
   { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
+  { key: 'device', header: 'Device', description: 'Device type / OS family inferred passively from the DHCP fingerprint (options 55/60 + hostname) and MAC OUI. Right-click → More info for full detail.', field: 'os_family', sortable: true, style: 'width: 9rem' },
   { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
   { key: 'last_seen_at', header: 'Last Seen', description: 'Most recent time CIDRella observed this address through DHCP, DNS logs, or active scans.', field: 'last_seen_at', sortable: true, style: 'width: 10rem' },
   { key: 'dhcp_expires_at', header: 'Expires', description: 'DHCP lease expiration time when the address has a dynamic lease.', field: 'dhcp_expires_at', sortable: true, style: 'width: 9rem' },
@@ -474,6 +480,19 @@ const reserveScanEnabled = ref(null);
 const showStaticDhcpDialog = ref(false);
 const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', description: '' });
 const staticDhcpScanEnabled = ref(null);
+
+// Host "more info" dialog (full per-host metadata + device fingerprint)
+const showHostInfo = ref(false);
+const hostInfoRow = ref(null);
+function openHostInfo(row) {
+  hostInfoRow.value = row;
+  showHostInfo.value = true;
+}
+// Compact "Device" column — OS family preferred, else device type. Full detail
+// (manufacturer, confidence, raw fingerprint) lives in the More-info popup.
+function deviceCell(row) {
+  return row.os_family || row.device_type || EMPTY_CELL;
+}
 
 // IP Lifecycle Events dialog
 const showEventsDialog = ref(false);
@@ -673,7 +692,10 @@ const tableContextMenuItems = computed(() => {
     hostname: row.hostname || null
   };
 
-  return buildContextMenuItems([ip]);
+  return [
+    { label: 'More info', icon: 'pi pi-info-circle', command: () => openHostInfo(row) },
+    ...buildContextMenuItems([ip]),
+  ];
 });
 
 // Range context menu
@@ -849,6 +871,7 @@ function gridTooltip(ip) {
   if (ip.hostname) lines.push(`Host: ${displayHost(ip.hostname)}`);
   if (ip.mac) lines.push(`MAC: ${ip.mac}`);
   if (ip.vendor) lines.push(`Vendor: ${ip.vendor}`);
+  if (ip.os_family || ip.device_type) lines.push(`Device: ${ip.os_family || ip.device_type}`);
   lines.push(ip.isOnline ? 'Online' : 'Offline');
   if (ip.lastSeen) lines.push(`Last seen: ${formatDate(ip.lastSeen)}`);
   if (ip.conflictReason) lines.push(`Warning: ${ip.conflictReason}`);

@@ -1,4 +1,5 @@
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
+import { lookupFingerprintBatch } from './device-fingerprint.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -155,11 +156,16 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
     applyIpView(row);
   }
 
-  const allMacs = rows.map(r => r.mac_address || r.last_seen_mac).filter(Boolean);
-  const vendorMap = lookupVendorBatch([...new Set(allMacs)]);
+  const allMacs = [...new Set(rows.map(r => r.mac_address || r.last_seen_mac).filter(Boolean))];
+  const vendorMap = lookupVendorBatch(allMacs);
+  const fpMap = lookupFingerprintBatch(db, allMacs);
   for (const row of rows) {
     const mac = row.mac_address || row.last_seen_mac;
     row.vendor = mac ? (vendorMap.get(mac) || null) : null;
+    const fp = mac ? fpMap.get(mac) : null;
+    row.device_type = fp?.device_type || null;
+    row.os_family = fp?.os_family || null;
+    row.device_confidence = fp?.confidence ?? null;
   }
 
   return rows;
