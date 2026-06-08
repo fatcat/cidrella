@@ -6,6 +6,42 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.4.16 — 2026-06-08
+
+```yaml
+min_from: ""
+breaking: false
+security: false
+```
+
+A feature release on top of the v0.4.15 resilience base: encrypted DNS forwarding, DNSSEC validation, rogue-DHCP detection, passive device/OS fingerprinting, an authoritative-only mode, and a consolidated DNS-forwarding settings UI. Schema migrates forward to **version 49**. No breaking API changes; any prior v0.4.x may upgrade directly.
+
+### New
+- **Encrypted DNS forwarders (DoT / DoH).** CIDRella can forward upstream queries over DNS-over-TLS or DNS-over-HTTPS. An in-process stub (no external daemon — no stubby/dnsproxy) relays to the chosen resolver and dnsmasq points `server=` at it instead of plaintext IPs. Ships preset **unfiltered** resolvers — Cloudflare, Google, Quad9 (the unfiltered `9.9.9.10` tier, *not* the malware-filtered `9.9.9.9`), and AdGuard — plus custom hostname/address/DoH-URL entry. **Fails closed**: any encrypted-path error returns SERVFAIL rather than silently dropping to plaintext, surfaced via `/api/health/system` and the settings UI. DNSSEC validation keeps working end-to-end through the tunnel. New `GET/PUT /api/dns/encryption` routes.
+- **DNSSEC validation.** A UI toggle enables dnsmasq DNSSEC validation against the root trust anchor. The DNS proxy gained a per-LAN-address TCP listener so large/signed answers and validating-stub resolvers (DO bit, TC fallback) work while blocklist + GeoIP filtering stay in place. dnsmasq starts with `dnssec-no-timecheck` to survive boot-time clock skew; a timesync watcher enables system NTP and SIGHUPs dnsmasq exactly once to switch it to enforcing signature timestamps. `install.sh`/preflight enable NTP as root, and a polkit rule lets the service account call `timedatectl set-ntp true` at runtime.
+- **Rogue DHCP server detection.** A scheduled probe broadcasts a DHCP DISCOVER per LAN segment and flags any server that answers and isn't CIDRella's own or on the user allowlist. Pure UDP — no raw socket or extra capability — and sends only DISCOVER, so no lease is consumed; degrades gracefully if `:68` can't bind. The header dnsmasq + Ops chips turn **yellow** (not red) on unacknowledged rogues, and the Ops popover links straight to the System tab.
+- **Passive device / OS fingerprinting.** Because CIDRella is the DHCP server, it now identifies each client's device type and OS family for free by tailing dnsmasq's `log-dhcp` output — reconstructing transactions by xid to capture DHCP option 55 / option 60 / hostname per MAC, then classifying offline (option signatures + hostname patterns + MAC OUI vendor, with a confidence boost when ≥2 signals agree). No active scanning, no raw sockets. Surfaced as a **Device** column in the IP table and a right-click **"More info"** host-metadata popup; operator overrides (`PUT /api/devices/:mac/fingerprint`) survive later DHCP recaptures.
+- **Authoritative-only mode.** A new "Do not provide recursion" option makes CIDRella answer only for its own zones and stop forwarding external queries (all `server=` lines omitted, encrypted stub stopped). Category blocking and GeoIP toggles lock off with a toast explanation while it's active, since those only apply to forwarded queries.
+
+### Changed
+- **Consolidated DNS forwarding settings.** "Upstream Forwarders" and the former standalone "DNS Encryption" card are now one card: a Plaintext / DoT / DoH mode selector swaps the plaintext IP list for the curated provider picker, with a single Save that writes both concerns.
+- **"Blocklists" renamed to "Category Blocking"** in the navigation for clarity.
+- **Single shared whitelist for category + GeoIP blocking.** The whitelist (extracted into a shared component, now also a tab on the GeoIP page) is one global allowlist that exempts a domain from **both** category blocking and GeoIP — previously it exempted only category blocking.
+- **Theme picker in the user menu.** The header user dropdown now has a quick theme switcher (grouped light/dark) alongside the full grid on the Themes page.
+- **Interfaces page fixes.** sysfs-based interface enumeration (IP-less interfaces no longer show as "missing"), stale-interface removal, a corrected `ToggleSwitch` binding, and a dark-mode CSS token regression fix.
+
+### Fixed
+- **Synthesized DNS responses now echo the client's EDNS OPT** (UDP payload size + DO bit) and carry the correct rcode in the flags word — fixes a latent bug where blocked / NXDOMAIN / SERVFAIL answers encoded as NOERROR.
+- **DoT mode no longer requires a DoH URL.** `doh_url` validation is now scoped to DoH (HTTPS) mode; a custom DoT upstream needs only address + hostname.
+- **Encrypted-forwarder error reporting is a 10-minute sliding window** instead of a counter that only reset on save, so the surfaced "recent errors" is actually recent.
+
+### Upgrade notes
+- **Schema migrates forward to version 49** — adds the rogue-DHCP authorized-server allowlist (`047`) and the per-MAC `device_fingerprints` table (`049`). The `048` migration slot is intentionally skipped: it was an interim GeoIP-whitelist table that was superseded by unifying the whitelist into the existing one. Transparent and forward-only.
+- **Enabling DNSSEC enables system NTP** and installs a polkit rule scoped to exactly `org.freedesktop.timedate1.set-ntp` for the service account. Validation is lenient on signature timestamps until the clock first syncs, then becomes enforcing.
+- **No breaking API changes** and no manual config changes required.
+
+---
+
 ## v0.4.15 — 2026-04-19
 
 ```yaml
