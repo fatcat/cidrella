@@ -19,7 +19,7 @@ import {
   GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
   GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
   PROXY_HEALTH_CHECK_MS, PROXY_MAX_RESTART_ATTEMPTS, PROXY_RESTART_DELAY_MS,
-  PROXY_TCP_IDLE_TIMEOUT_MS, PROXY_MAX_TCP_CONNECTIONS,
+  PROXY_TCP_IDLE_TIMEOUT_MS, PROXY_MAX_TCP_CONNECTIONS, PROXY_TCP_RELAY_TIMEOUT_MS,
   DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort,
 } from '../config/defaults.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
@@ -60,6 +60,7 @@ let healthTimer = null;
 // GeoIP rule cache — reloaded on settings change, avoids per-query DB hits
 let geoipRuleSet = null;            // Set<string> — enabled country codes
 let geoipMode = 'blocklist';        // 'blocklist' or 'allowlist'
+let whitelistSet = null;            // Set<string> — single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
 
 // Blocklist state — domains loaded from DB for in-proxy blocking.
 // A single Map is enough: Map.has() gives membership and Map.get() gives the
@@ -153,6 +154,29 @@ export function loadGeoipRules() {
   const enabledRules = db.prepare('SELECT country_code FROM geoip_rules WHERE enabled = 1').all();
   geoipRuleSet = new Set(enabledRules.map(r => r.country_code));
   proxyLog('info', 'GeoIP rules loaded', { count: geoipRuleSet.size, mode: geoipMode });
+}
+
+// Load the single global allowlist (blocklist_whitelist) into memory. This one
+// list applies everywhere: the category blocklist already excludes these domains
+// at load time (SQL), and the GeoIP path consults this set too. Reloaded on any
+// whitelist change via generateBlocklistConfig().
+export function loadWhitelist() {
+  const db = getDb();
+  const rows = db.prepare('SELECT domain FROM blocklist_whitelist').all();
+  whitelistSet = new Set(rows.map(r => r.domain.toLowerCase()));
+  proxyLog('info', 'Whitelist loaded', { count: whitelistSet.size });
+}
+
+// Is this query domain on the global allowlist? Walks the label hierarchy so a
+// whitelisted example.com also exempts sub.example.com (same matching as the
+// blocklist). Returns false when nothing is whitelisted.
+function isWhitelisted(queryName) {
+  if (!whitelistSet || whitelistSet.size === 0 || !queryName) return false;
+  const labels = queryName.toLowerCase().split('.');
+  for (let i = 0; i < labels.length - 1; i++) {
+    if (whitelistSet.has(labels.slice(i).join('.'))) return true;
+  }
+  return false;
 }
 
 // Check if query should be blocked based on resolved country codes (uses cached rules)
@@ -466,7 +490,7 @@ function handleDnsmasqResponse(msg) {
         .map(ip => lookupCountry(ip))
         .filter(cc => cc !== null);
 
-      if (countryCodes.length > 0 && shouldBlock(countryCodes)) {
+      if (countryCodes.length > 0 && shouldBlock(countryCodes) && !isWhitelisted(pending.queryName)) {
         statsBlocked++;
         blockedDelta++;
         statsTotal++;
@@ -619,7 +643,7 @@ async function handleTcpQuery(msg, clientSock) {
 
   // Relay to dnsmasq over TCP (same internal port it serves UDP on).
   const internalPort = resolveDnsmasqInternalPort(getSetting('dns_listen_port'));
-  const respMsg = await relayQueryOverTcp(msg, '127.0.0.1', internalPort, GEOIP_QUERY_TIMEOUT_MS);
+  const respMsg = await relayQueryOverTcp(msg, '127.0.0.1', internalPort, PROXY_TCP_RELAY_TIMEOUT_MS);
   const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
   recordLatency(latencyUs);
 
@@ -641,7 +665,7 @@ async function handleTcpQuery(msg, clientSock) {
 
   if (ips.length > 0) {
     const countryCodes = ips.map(ip => lookupCountry(ip)).filter(cc => cc !== null);
-    if (countryCodes.length > 0 && shouldBlock(countryCodes)) {
+    if (countryCodes.length > 0 && shouldBlock(countryCodes) && !isWhitelisted(queryName)) {
       statsBlocked++;
       blockedDelta++;
       statsTotal++;
@@ -900,6 +924,10 @@ export async function startProxyIfEnabled() {
   if (blocklistOn) {
     loadBlocklist();
   }
+
+  // Single global allowlist — used by the GeoIP path (the blocklist path also
+  // excludes these at load time). Loaded regardless of which features are on.
+  loadWhitelist();
 
   startProxy();
 }

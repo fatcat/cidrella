@@ -20,7 +20,7 @@
         <span class="stat-value" :class="{ 'text-danger': summary.blocklistBlocks > 0 }">
           {{ formatNumber(summary.blocklistBlocks) }}
         </span>
-        <span class="stat-label">Blocklist Blocks</span>
+        <span class="stat-label">Category Blocks</span>
       </div>
       <div class="stat">
         <span class="stat-value" :class="{ 'text-danger': summary.geoipBlocks > 0 }">

@@ -13,6 +13,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 - **DNS management** — Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation.
 - **DNSSEC validation** — UI toggle that turns on dnsmasq DNSSEC validation against the root trust anchor, with a TCP-capable DNS proxy (so large/signed answers and validating-stub resolvers work) while blocklist + GeoIP filtering stay in place. NTP is enabled automatically and dnsmasq starts lenient on signature timestamps until the clock syncs.
 - **DHCP management** — Scopes, global defaults for new scopes, per-scope options, reservations, dynamic lease tracking, and DHCP-derived DNS records.
+- **Rogue DHCP detection** — Scheduled active probe (DISCOVER broadcast) that flags unauthorized DHCP servers answering on CIDRella's segments; CIDRella's own server is auto-trusted, with a user allowlist for other legitimate servers. Surfaces a yellow warning on the Ops chip.
 - **Liveness and rogue detection** — Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
 - **Analytics** — DNS query, blocked-domain, blocked-host, client/domain pair, and system performance views backed by DuckDB.
 - **Blocklists and GeoIP filtering** — Category blocklists, scheduled refresh, whitelisting, and country-based allow/block modes through the DNS proxy.

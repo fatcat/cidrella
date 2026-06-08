@@ -53,6 +53,8 @@
       <Button label="Add Countries" icon="pi pi-plus" size="small" severity="secondary" @click="openAddCountries" />
     </div>
 
+    <TabView>
+      <TabPanel header="Country Rules">
     <!-- Country Rules Table -->
     <DataTable :value="store.rules" :loading="store.loading" stripedRows size="small"
                emptyMessage="No country rules configured."
@@ -84,6 +86,14 @@
         </template>
       </Column>
     </DataTable>
+      </TabPanel>
+
+      <TabPanel header="Whitelist">
+        <p class="wl-hint">A single shared allowlist — domains here are never blocked by GeoIP or category blocking. Editing it here also updates it under Category Blocking.</p>
+        <DomainWhitelist :items="store.whitelist" :on-add="addWhitelist" :on-remove="removeWhitelist"
+                         add-track="geoip-add-whitelist" />
+      </TabPanel>
+    </TabView>
 
     <!-- Add Countries Dialog -->
     <Dialog v-model:visible="showAddDialog" header="Add Countries" modal :style="{ width: '32rem' }">
@@ -130,6 +140,9 @@ import Select from 'primevue/select';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
+import TabView from 'primevue/tabview';
+import TabPanel from 'primevue/tabpanel';
+import DomainWhitelist from '../components/DomainWhitelist.vue';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
 import { useGeoipStore } from '../stores/geoip.js';
@@ -281,6 +294,26 @@ async function doRefreshDb() {
   }
 }
 
+// Whitelist handlers passed to the shared DomainWhitelist component.
+async function addWhitelist(domain, reason) {
+  try {
+    await store.addWhitelist(domain, reason);
+    toast.add({ severity: 'success', summary: 'Domain whitelisted', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+    throw err;
+  }
+}
+
+async function removeWhitelist(item) {
+  try {
+    await store.removeWhitelist(item.id);
+    toast.add({ severity: 'success', summary: 'Removed from whitelist', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  }
+}
+
 async function refreshStatus() {
   const s = await store.fetchStatus();
   status.value = s;
@@ -298,6 +331,7 @@ onMounted(async () => {
   await Promise.all([
     store.fetchRules(),
     store.fetchStats(),
+    store.fetchWhitelist(),
     refreshStatus()
   ]);
 });
@@ -312,6 +346,7 @@ onMounted(async () => {
   margin: 0 0 1rem 0;
 }
 .country-flag { font-size: 1.1rem; }
+.wl-hint { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0 0 0.75rem; line-height: 1.4; }
 .action-buttons { display: flex; gap: 0.25rem; }
 .country-search { margin-bottom: 0.75rem; }
 .country-list {

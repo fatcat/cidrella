@@ -514,6 +514,9 @@
           <PiholeImportPanel @imported="onImportComplete" />
         </div>
       </div>
+      <div v-if="activeTab === 16" class="padded-tab">
+        <RogueDhcpPanel />
+      </div>
     </div>
 
     <!-- Context Menus -->
@@ -563,6 +566,7 @@ const InterfacePanel = defineAsyncComponent(() => import('../components/Interfac
 const AnomalyDetectionPanel = defineAsyncComponent(() => import('./AnomalyDetection.vue'));
 const UpdatePanel = defineAsyncComponent(() => import('./UpdatePanel.vue'));
 const PiholeImportPanel = defineAsyncComponent(() => import('../components/PiholeImportPanel.vue'));
+const RogueDhcpPanel = defineAsyncComponent(() => import('./RogueDhcp.vue'));
 
 const dnsPanelRef = ref(null);
 const route = useRoute();
@@ -622,7 +626,7 @@ const allMenuItems = [
   { tabIndex: 4, label: 'Certificates', icon: 'pi pi-lock', dataTrack: 'sys-tab-certificates', command: () => { activeTab.value = 4; } },
   { tabIndex: 5, label: 'DNS', icon: 'pi pi-globe', dataTrack: 'sys-tab-dns', command: () => { activeTab.value = 5; } },
   { tabIndex: 6, label: 'DHCP', icon: 'pi pi-server', dataTrack: 'sys-tab-dhcp', command: () => { activeTab.value = 6; } },
-  { tabIndex: 7, label: 'Blocklists', icon: 'pi pi-ban', dataTrack: 'sys-tab-blocklists', command: () => { activeTab.value = 7; } },
+  { tabIndex: 7, label: 'Category Blocking', icon: 'pi pi-ban', dataTrack: 'sys-tab-blocklists', command: () => { activeTab.value = 7; } },
   { tabIndex: 8, label: 'GeoIP', icon: 'pi pi-map', dataTrack: 'sys-tab-geoip', command: () => { activeTab.value = 8; } },
   { tabIndex: 9, label: 'Users', icon: 'pi pi-users', dataTrack: 'sys-tab-users', command: () => { activeTab.value = 9; } },
   { tabIndex: 10, label: 'Themes', icon: 'pi pi-palette', dataTrack: 'sys-tab-themes', command: () => { activeTab.value = 10; } },
@@ -631,12 +635,13 @@ const allMenuItems = [
   { tabIndex: 13, label: 'Anomaly Detection', icon: 'pi pi-exclamation-circle', dataTrack: 'sys-tab-anomaly', command: () => { activeTab.value = 13; } },
   { tabIndex: 14, label: 'Updates', icon: 'pi pi-cloud-download', dataTrack: 'sys-tab-updates', command: () => { activeTab.value = 14; } },
   { tabIndex: 15, label: 'Import Pi-hole', icon: 'pi pi-download', dataTrack: 'sys-tab-import', command: () => { activeTab.value = 15; } },
+  { tabIndex: 16, label: 'Rogue DHCP', icon: 'pi pi-shield', dataTrack: 'sys-tab-rogue-dhcp', command: () => { activeTab.value = 16; } },
 ];
 
 const navGroups = [
   { label: 'Network', items: allMenuItems.filter(i => [0, 1, 2, 12].includes(i.tabIndex)) },
   { label: 'Services', items: allMenuItems.filter(i => [5, 6].includes(i.tabIndex)) },
-  { label: 'Security', items: allMenuItems.filter(i => [7, 8, 13].includes(i.tabIndex)) },
+  { label: 'Security', items: allMenuItems.filter(i => [7, 8, 13, 16].includes(i.tabIndex)) },
   { label: 'System', items: allMenuItems.filter(i => [3, 4, 9, 10, 11, 14, 15].includes(i.tabIndex)) },
 ];
 

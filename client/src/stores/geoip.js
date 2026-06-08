@@ -4,6 +4,7 @@ import api from '../api/client.js';
 
 export const useGeoipStore = defineStore('geoip', () => {
   const rules = ref([]);
+  const whitelist = ref([]);
   const status = ref(null);
   const stats = ref({ total: 0, blocked: 0, allowed: 0 });
   const loading = ref(false);
@@ -60,9 +61,29 @@ export const useGeoipStore = defineStore('geoip', () => {
     return res.data;
   }
 
+  // Single global allowlist — shared with category blocking
+  // (the /api/blocklists/whitelist endpoint backs one list for both).
+  async function fetchWhitelist() {
+    const res = await api.get('/blocklists/whitelist');
+    whitelist.value = res.data;
+    return res.data;
+  }
+
+  async function addWhitelist(domain, reason) {
+    const res = await api.post('/blocklists/whitelist', { domain, reason });
+    await fetchWhitelist();
+    return res.data;
+  }
+
+  async function removeWhitelist(id) {
+    await api.delete(`/blocklists/whitelist/${id}`);
+    await fetchWhitelist();
+  }
+
   return {
-    rules, status, stats, loading,
+    rules, whitelist, status, stats, loading,
     fetchStatus, fetchRules, addRules, toggleRule, deleteRule,
-    updateSettings, refreshDb, fetchStats
+    updateSettings, refreshDb, fetchStats,
+    fetchWhitelist, addWhitelist, removeWhitelist
   };
 });

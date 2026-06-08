@@ -62,6 +62,9 @@
             <span class="iface-name">{{ data.name }}</span>
             <Tag v-if="data.state === 'down'" value="down" severity="warn" class="iface-badge" />
             <Tag v-if="data.missing" value="missing" severity="danger" class="iface-badge" />
+            <Button v-if="data.missing" icon="pi pi-trash" text rounded size="small" severity="danger"
+                    class="iface-remove" title="Remove this stale interface from config"
+                    :data-track="'iface-remove-' + data.name" @click="removeMissing(data)" />
           </template>
         </Column>
         <Column header="IP Address">
@@ -69,7 +72,7 @@
             <template v-if="data.addresses && data.addresses.length">
               <div v-for="addr in data.addresses" :key="addr.address">{{ addr.address }}</div>
             </template>
-            <span v-else class="muted">—</span>
+            <span v-else class="muted" title="Interface present but has no IPv4 address">no IP</span>
           </template>
         </Column>
         <Column header="MAC" style="width: 10rem">
@@ -80,14 +83,18 @@
         </Column>
         <Column header="DNS" style="width: 5rem; text-align: center;">
           <template #body="{ data }">
-            <ToggleSwitch v-model="data.dns" :disabled="!dnsEnabled || data.missing"
+            <!-- Show the EFFECTIVE state: a globally-disabled service overrides
+                 the per-interface preference to off (the stored value is kept
+                 for when the service is re-enabled). -->
+            <ToggleSwitch :model-value="dnsEnabled && data.dns" :disabled="!dnsEnabled || data.missing"
                           :data-track="'iface-dns-' + data.name"
                           @update:modelValue="val => onDnsToggle(data, val)" />
           </template>
         </Column>
         <Column header="DHCP" style="width: 5rem; text-align: center;">
           <template #body="{ data }">
-            <ToggleSwitch v-model="data.dhcp" :disabled="!dhcpEnabled || !dnsEnabled || data.missing"
+            <ToggleSwitch :model-value="dhcpEnabled && dnsEnabled && data.dhcp"
+                          :disabled="!dhcpEnabled || !dnsEnabled || data.missing"
                           :data-track="'iface-dhcp-' + data.name"
                           @update:modelValue="val => onDhcpToggle(data, val)" />
           </template>
@@ -254,17 +261,23 @@ async function loadInterfaces() {
 }
 
 function onDnsToggle(iface, val) {
-  if (!val) {
-    // Disabling DNS auto-disables DHCP
-    iface.dhcp = false;
-  }
+  // Toggles bind one-way (:model-value), so write the value back here.
+  iface.dns = val;
+  // Disabling DNS auto-disables DHCP
+  if (!val) iface.dhcp = false;
 }
 
 function onDhcpToggle(iface, val) {
-  if (val) {
-    // Enabling DHCP auto-enables DNS
-    iface.dns = true;
-  }
+  iface.dhcp = val;
+  // Enabling DHCP auto-enables DNS
+  if (val) iface.dns = true;
+}
+
+// Remove a genuinely-missing interface (in saved config but not present on the
+// host) from the list. Persists on Save — it won't be written back to
+// interface_config, so the stale entry is dropped.
+function removeMissing(iface) {
+  mergedInterfaces.value = mergedInterfaces.value.filter(i => i.name !== iface.name);
 }
 
 function onGlobalDnsToggle(val) {
@@ -281,15 +294,16 @@ function onGlobalDnsToggle(val) {
 
 function onGlobalDhcpToggle(val) {
   if (val && !dnsEnabled.value) {
-    // Can't enable DHCP without DNS
+    // DHCP requires DNS — can't enable the service without it.
     dhcpEnabled.value = false;
-  } else if (val) {
-    // DHCP on → enable DHCP (and DNS) on all available interfaces
+    return;
+  }
+  if (val) {
+    // Enabling the DHCP service does NOT auto-enable DHCP on any interface —
+    // they stay off until the user turns them on manually. Clear any stale
+    // per-interface DHCP so the toggles start from a clean off state.
     for (const iface of mergedInterfaces.value) {
-      if (!iface.missing) {
-        iface.dhcp = true;
-        iface.dns = true;
-      }
+      if (!iface.missing) iface.dhcp = false;
     }
   }
 }
@@ -366,10 +380,14 @@ onMounted(loadInterfaces);
   width: 6em;
   padding: 0.375rem 0.5rem;
   font-family: var(--font-mono, monospace);
-  background: var(--p-inputtext-background, var(--p-surface-0));
-  color: var(--p-inputtext-color, var(--p-text-color));
-  border: 1px solid var(--p-inputtext-border-color, var(--p-surface-300));
-  border-radius: var(--p-inputtext-border-radius, 4px);
+  /* Use PrimeVue v4 form-field tokens — the older --p-inputtext-* tokens are
+     unset in this build, so they fell back to the light --p-surface-0, giving a
+     white field (with light text) that's invisible on dark themes. The
+     form-field tokens adapt to light/dark mode like the real InputText. */
+  background: var(--p-form-field-background, var(--p-content-background));
+  color: var(--p-form-field-color, var(--p-text-color));
+  border: 1px solid var(--p-form-field-border-color, var(--p-surface-300));
+  border-radius: var(--p-form-field-border-radius, 4px);
 }
 .port-input:focus {
   outline: 2px solid var(--p-primary-color);
@@ -416,6 +434,11 @@ onMounted(loadInterfaces);
 .iface-badge {
   margin-left: 0.5rem;
   font-size: 0.7rem;
+}
+.iface-remove {
+  margin-left: 0.25rem;
+  width: 1.5rem;
+  height: 1.5rem;
 }
 .mono {
   font-family: var(--font-mono, monospace);

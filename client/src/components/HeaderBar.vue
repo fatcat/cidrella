@@ -26,9 +26,10 @@
         <span class="status-chip-label">{{ scanChipText }}</span>
       </button>
       <button class="status-chip status-chip-wide" :class="dnsChipClass" data-track="header-chip-dnsmasq"
-              @click="toggleOpsPopover" :title="`DNSmasq: ${dnsDisplay}`">
-        <span class="card-dot" :class="health?.services?.dnsmasq ? 'dot-up' : 'dot-down'"></span>
+              @click="toggleOpsPopover" :title="dnsTitle">
+        <span class="card-dot" :class="dnsDotClass"></span>
         <span class="status-chip-label">dnsmasq</span>
+        <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
       </button>
       <button class="status-chip status-chip-wide" :class="cpuChipClass" data-track="header-chip-cpu"
               @click="toggleOpsPopover" :title="`Host CPU load: ${cpuDisplay}`">
@@ -45,11 +46,12 @@
         <span class="card-dot" :class="diskDotClass"></span>
         <span class="status-chip-label">Disk {{ diskPercentText }}</span>
       </button>
-      <button class="status-chip status-chip-ops" :class="{ 'chip-err': opsIssue }"
+      <button class="status-chip status-chip-ops" :class="opsChipClass"
               data-track="header-chip-ops" @click="toggleOpsPopover"
               :title="opsTitle">
-        <span class="card-dot" :class="opsIssue ? 'dot-down' : 'dot-up'"></span>
+        <span class="card-dot" :class="opsDotClass"></span>
         <span class="status-chip-label">Ops</span>
+        <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
       </button>
       <button class="status-chip status-chip-anomaly" :class="anomalyChipClass"
               data-track="header-chip-anomaly" @click="toggleAnomalyPopover"
@@ -66,6 +68,11 @@
           <span class="card-dot" :class="health?.services?.dnsmasq ? 'dot-up' : 'dot-down'"></span>
           <span class="status-popover-label">DNSmasq</span>
           <span class="status-popover-val">{{ dnsDisplay }}</span>
+        </div>
+        <div class="status-popover-row status-popover-clickable" @click="goToRogueDhcp" title="Open Rogue DHCP">
+          <span class="card-dot" :class="rogueDhcpCount > 0 ? 'dot-warn' : 'dot-up'"></span>
+          <span class="status-popover-label">Rogue DHCP</span>
+          <span class="status-popover-val">{{ rogueDhcpDisplay }}</span>
         </div>
         <div class="status-popover-row">
           <span class="card-dot" :class="cpuDotClass"></span>
@@ -92,7 +99,7 @@
           <span class="status-popover-label">Backend Restart</span>
           <span class="status-popover-val">{{ serviceCrashLabel }}</span>
         </div>
-        <div class="status-popover-footer">next scan {{ nextScanTimeOnly }}</div>
+        <div class="status-popover-footer">{{ nextScanTime ? `next scan ${nextScanTimeOnly}` : 'scheduled scanning disabled' }}</div>
       </div>
     </Popover>
 
@@ -235,10 +242,34 @@ const serviceCrashLabel = computed(() => {
   return 'Crash detected';
 });
 
+// Rogue DHCP is a WARNING (yellow), never an outage (red). Red wins if a real
+// service-down condition exists; otherwise an unacknowledged rogue turns the
+// Ops chip yellow.
+const rogueDhcpCount = computed(() => health.value?.rogueDhcp?.unacknowledged || 0);
+const opsWarn = computed(() => !opsIssue.value && rogueDhcpCount.value > 0);
+const opsChipClass = computed(() => opsIssue.value ? 'chip-err' : (opsWarn.value ? 'chip-warn' : ''));
+const opsDotClass = computed(() => opsIssue.value ? 'dot-down' : (opsWarn.value ? 'dot-warn' : 'dot-up'));
+
+const rogueDhcpDisplay = computed(() => {
+  const r = health.value?.rogueDhcp;
+  if (!r || !r.enabled) return 'Off';
+  if (!r.supported) return 'Unavailable';
+  return r.unacknowledged > 0 ? `${r.unacknowledged} detected` : 'None';
+});
+
 const opsTitle = computed(() => {
   if (serviceCrash.value) return `Operations: ${serviceCrashLabel.value}`;
-  return `Operations: ${opsIssue.value ? 'issue' : 'ok'}`;
+  if (opsIssue.value) return 'Operations: issue';
+  if (opsWarn.value) return `Operations: ${rogueDhcpCount.value} rogue DHCP server(s) detected`;
+  return 'Operations: ok';
 });
+
+function goToRogueDhcp() {
+  localStorage.setItem('cidrella_system_tab', '16');
+  // '/system' — NOT '/', which the router redirects to /analytics (System.vue
+  // would never mount and the stored tab index would never be read).
+  router.push('/system');
+}
 
 async function onTimeFormatChange(event) {
   try {
@@ -386,7 +417,25 @@ function resourceChip(statusClass) {
   return 'chip-ok';
 }
 
-const dnsChipClass = computed(() => health.value?.services?.dnsmasq ? 'chip-ok' : 'chip-err');
+// The dnsmasq chip is the DHCP/DNS service chip shown on wide layouts (the Ops
+// chip is the narrow-screen aggregate and is display:none on desktop). It's
+// where the rogue-DHCP warning surfaces on desktop: red if dnsmasq is down
+// (wins), else yellow if an unacknowledged rogue is present, else green.
+const dnsChipClass = computed(() => {
+  if (!health.value?.services?.dnsmasq) return 'chip-err';
+  if (rogueDhcpCount.value > 0) return 'chip-warn';
+  return 'chip-ok';
+});
+const dnsDotClass = computed(() => {
+  if (!health.value?.services?.dnsmasq) return 'dot-down';
+  if (rogueDhcpCount.value > 0) return 'dot-warn';
+  return 'dot-up';
+});
+const dnsTitle = computed(() =>
+  rogueDhcpCount.value > 0
+    ? `DNSmasq: ${dnsDisplay.value} — ${rogueDhcpCount.value} rogue DHCP server(s) detected`
+    : `DNSmasq: ${dnsDisplay.value}`
+);
 const cpuChipClass = computed(() => resourceChip(cpuStatusClass.value));
 const ramChipClass = computed(() => resourceChip(ramStatusClass.value));
 const diskChipClass = computed(() => resourceChip(diskStatusClass.value));
@@ -596,25 +645,26 @@ onUnmounted(() => {
 .card-dot.dot-up { background: var(--p-green-500); }
 .card-dot.dot-down { background: var(--p-red-500); }
 .card-dot.dot-ok { background: var(--p-surface-400); }
-.card-dot.dot-warn { background: var(--p-orange-500); }
+.card-dot.dot-warn { background: var(--p-yellow-400); }
 
 .status-chip.chip-ok {
   border-left: 3px solid var(--p-primary-color);
 }
+/* Status is conveyed by the dot only — chip text stays the default color and
+   the left accent is uniform across all chips (red/yellow/green never tint the
+   text). chip-idle keeps its dimmed text since "idle" is an inactive state, not
+   a status color. */
 .status-chip.chip-active {
-  border-left: 3px solid var(--p-green-500);
-  color: var(--p-green-600);
+  border-left: 3px solid var(--p-primary-color);
 }
 .status-chip.chip-idle {
   color: var(--p-text-muted-color);
 }
 .status-chip.chip-warn {
-  border-left: 3px solid var(--p-orange-500);
-  color: var(--p-orange-600);
+  border-left: 3px solid var(--p-primary-color);
 }
 .status-chip.chip-err {
-  border-left: 3px solid var(--p-red-500);
-  color: var(--p-red-500);
+  border-left: 3px solid var(--p-primary-color);
 }
 .status-chip-ops {
   display: none;
@@ -804,6 +854,8 @@ onUnmounted(() => {
   font-size: var(--app-fs-sm);
 }
 .status-popover-row + .status-popover-row { border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 60%, transparent); }
+.status-popover-clickable { cursor: pointer; }
+.status-popover-clickable:hover { background: var(--p-surface-100); }
 .status-popover-row-alert {
   color: var(--p-red-500);
 }

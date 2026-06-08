@@ -120,32 +120,9 @@
 
       <!-- Whitelist Tab -->
       <TabPanel header="Whitelist">
-        <div class="settings-row">
-          <InputText v-model="newWhitelistDomain" placeholder="domain.com" style="width: 16rem" />
-          <InputText v-model="newWhitelistReason" placeholder="Reason (optional)" style="width: 14rem" />
-          <Button label="Add" icon="pi pi-plus" size="small" @click="doAddWhitelist" :loading="addingWhitelist" />
-        </div>
-        <DataTable :value="store.whitelist" stripedRows size="small" emptyMessage="No whitelisted domains."
-                   :paginator="store.whitelist.length > 256" :rows="256"
-                   :rowsPerPageOptions="[64, 128, 256, 512]"
-                   @row-contextmenu="onWhitelistRightClick" contextMenu
-                   scrollable scrollHeight="flex">
-          <Column field="domain" header="Domain" sortable />
-          <Column field="reason" header="Reason">
-            <template #body="{ data }">{{ data.reason || '—' }}</template>
-          </Column>
-          <Column field="created_at" header="Added" style="width: 10rem">
-            <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
-          </Column>
-          <Column header="Actions" style="width: 80px">
-            <template #body="{ data }">
-              <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                @click="doRemoveWhitelist(data)"
-                v-tooltip.top="'Remove'" />
-            </template>
-          </Column>
-        </DataTable>
-        <ContextMenu ref="whitelistContextMenuRef" :model="whitelistContextMenuItems" />
+        <p class="wl-hint">A single shared allowlist — domains here are never blocked by category blocking or GeoIP. Editing it here also updates it under GeoIP.</p>
+        <DomainWhitelist :items="store.whitelist" :on-add="wlAdd" :on-remove="wlRemove"
+                         add-track="blocklist-add-whitelist" />
       </TabPanel>
 
       <!-- Search Tab -->
@@ -196,7 +173,7 @@ import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
-import ContextMenu from 'primevue/contextmenu';
+import DomainWhitelist from '../components/DomainWhitelist.vue';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
 import { useBlocklistStore } from '../stores/blocklists.js';
@@ -271,26 +248,6 @@ async function doResetUrl(slug) {
     savingUrl.value = false;
   }
 }
-
-// Whitelist context menu
-const whitelistContextMenuRef = ref();
-const selectedWhitelist = ref(null);
-const whitelistContextMenuItems = computed(() => {
-  const w = selectedWhitelist.value;
-  if (!w) return [];
-  return [
-    { label: 'Remove from Whitelist', icon: 'pi pi-trash', command: () => doRemoveWhitelist(w) }
-  ];
-});
-function onWhitelistRightClick(event) {
-  selectedWhitelist.value = event.data;
-  whitelistContextMenuRef.value.show(event.originalEvent);
-}
-
-// Whitelist
-const newWhitelistDomain = ref('');
-const newWhitelistReason = ref('');
-const addingWhitelist = ref(false);
 
 // Search
 const searchQuery = ref('');
@@ -376,24 +333,19 @@ async function doSaveSettings() {
   }
 }
 
-// Whitelist
-async function doAddWhitelist() {
-  if (!newWhitelistDomain.value.trim()) return;
-  addingWhitelist.value = true;
+// Whitelist — handlers passed to the shared DomainWhitelist component.
+async function wlAdd(domain, reason) {
   try {
-    await store.addWhitelist(newWhitelistDomain.value.trim(), newWhitelistReason.value.trim() || undefined);
-    newWhitelistDomain.value = '';
-    newWhitelistReason.value = '';
+    await store.addWhitelist(domain, reason);
     toast.add({ severity: 'success', summary: 'Domain whitelisted', life: 3000 });
     await refreshStats();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally {
-    addingWhitelist.value = false;
+    throw err;
   }
 }
 
-async function doRemoveWhitelist(entry) {
+async function wlRemove(entry) {
   try {
     await store.removeWhitelist(entry.id);
     toast.add({ severity: 'success', summary: 'Removed from whitelist', life: 3000 });
@@ -438,6 +390,7 @@ onMounted(async () => {
 
 <style scoped>
 .blocklists-page { }
+.wl-hint { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0 0 0.75rem; line-height: 1.4; }
 .blocklists-page :deep(.p-tabview) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .blocklists-page :deep(.p-tabview-panels) { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .blocklists-page :deep(.p-tabview-panel) { flex: 1; min-height: 0; display: flex; flex-direction: column; }

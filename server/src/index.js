@@ -57,6 +57,7 @@ import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './mod
 import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
+import { startRogueDhcpScheduler } from './utils/dhcp-probe.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq } from './utils/dnsmasq.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
@@ -68,6 +69,7 @@ import { startMetricsAggregator } from './utils/metrics-aggregator.js';
 import metricsRoutes from './routes/metrics.js';
 import analyticsRoutes from './routes/analytics.js';
 import anomalyRoutes from './routes/anomalies.js';
+import rogueDhcpRoutes from './routes/rogue-dhcp.js';
 import { initAnalyticsDb, closeAnalyticsDb } from './db/duckdb.js';
 import { getCapabilityWarning } from './utils/capabilities.js';
 import { captureBootServiceHealth } from './utils/service-health.js';
@@ -183,6 +185,7 @@ async function main() {
   startBlocklistScheduler();
   startBackupScheduler();
   startGeoipScheduler();
+  startRogueDhcpScheduler();
 
   // Resume any scans interrupted by server restart, then start scheduler
   resumeInterruptedScans(getDb());
@@ -333,6 +336,7 @@ async function main() {
   app.use('/api/range-types', rangeTypeRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dns', dnsRoutes);
+  app.use('/api/dhcp/rogue', rogueDhcpRoutes);
   app.use('/api/dhcp', dhcpRoutes);
   app.use('/api/scans', scanRoutes);
   app.use('/api/audit', auditRoutes);

@@ -174,4 +174,7 @@ router.post('/stats/reset', requirePerm('dns:write'), (req, res) => {
   res.json({ ok: true });
 });
 
+// Note: the domain whitelist is a single global allowlist shared with category
+// blocking — managed via /api/blocklists/whitelist (one list, applies to both).
+
 export default router;

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getDb, getSetting } from '../db/init.js';
 import { atomicWrite, restartDnsmasq } from './dnsmasq.js';
-import { loadBlocklist } from './dns-proxy.js';
+import { loadBlocklist, loadWhitelist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 import { DATA_DIR, BLOCKLIST_DOWNLOAD_TIMEOUT_MS } from '../config/defaults.js';
 import { requestPinnedOutboundUrl } from './url-guard.js';
@@ -136,8 +136,10 @@ export async function refreshAllEnabled(db) {
  * All blocking now happens in the DNS proxy, not via dnsmasq address= directives.
  */
 export function generateBlocklistConfig(db) {
-  // Reload the proxy's in-memory blocklist
+  // Reload the proxy's in-memory blocklist + the global allowlist (the latter
+  // is also consulted by the GeoIP path, so any whitelist change applies there).
   loadBlocklist();
+  loadWhitelist();
 
   // Clean up legacy blocklist.conf — proxy handles blocking now
   try {

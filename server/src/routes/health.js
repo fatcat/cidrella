@@ -8,6 +8,8 @@ import { queryRaw } from '../db/duckdb.js';
 import { APP_VERSION } from '../utils/version.js';
 import { isDnsmasqRunning, dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
 import { getNtpStatus } from '../utils/timesync.js';
+import { getProbeState } from '../utils/dhcp-probe.js';
+import { countUnacknowledged } from '../models/rogue-dhcp.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getCapabilityWarning, readProcessCapabilities } from '../utils/capabilities.js';
 import { getBootServiceHealth } from '../utils/service-health.js';
@@ -166,6 +168,12 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
   const dnssecSupported = dnsmasqSupportsDnssec();
 
+  // Rogue DHCP detection — `unacknowledged > 0` drives the header Ops chip's
+  // yellow warning state (red is reserved for an actual service-down condition).
+  const rogueProbe = getProbeState();
+  let rogueUnacknowledged = 0;
+  try { rogueUnacknowledged = countUnacknowledged(db); } catch { /* table may not exist yet */ }
+
   // Uptime
   const systemUptime = os.uptime();
   const processUptime = process.uptime();
@@ -196,6 +204,12 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
       validating: dnssecEnabled && dnssecSupported && ntp.synchronized,
     },
     ntp,
+    rogueDhcp: {
+      enabled: getSetting('rogue_dhcp_detection_enabled') === 'true',
+      supported: rogueProbe.probeSupported,
+      lastProbeAt: rogueProbe.lastProbeAt,
+      unacknowledged: rogueUnacknowledged,
+    },
     stats,
     timestamp: new Date().toISOString()
   });

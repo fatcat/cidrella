@@ -145,6 +145,17 @@ const SETTING_SCHEMA = {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)
   },
+  // Rogue DHCP detection. Authoritative write path is PUT /api/dhcp/rogue/settings
+  // (it also drives the probe scheduler); these entries make the keys editable
+  // via the generic settings API too, for parity.
+  rogue_dhcp_detection_enabled: {
+    validate: v => isBoolStr(v) ? null : 'must be true or false',
+    normalize: v => toBoolStr(v)
+  },
+  rogue_dhcp_probe_interval_min: {
+    validate: v => isIntInRange(v, 5, 1440) ? null : 'must be an integer 5-1440',
+    normalize: v => String(intOrNull(v))
+  },
   http_redirect_enabled: {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)

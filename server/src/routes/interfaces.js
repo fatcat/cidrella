@@ -41,15 +41,33 @@ function getInterfaceMac(name) {
   }
 }
 
-// GET /api/interfaces — enumerate real network interfaces
+// GET /api/interfaces — enumerate real network interfaces.
+//
+// Source the interface LIST from /sys/class/net rather than
+// os.networkInterfaces(), because Node only reports interfaces that already
+// have an assigned address. A provisioned-but-IP-less interface (e.g. a freshly
+// added NIC with no IP yet) would otherwise be invisible here and get
+// mislabeled "missing" in the UI. IPv4 addresses are merged in from
+// os.networkInterfaces() (may be empty for an interface without an IP).
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const sysIfaces = os.networkInterfaces();
+
+  let names;
+  try {
+    names = fs.readdirSync('/sys/class/net');
+  } catch {
+    // Non-Linux / no sysfs — fall back to whatever has addresses.
+    names = Object.keys(sysIfaces);
+  }
+
   const result = [];
-
-  for (const [name, addrs] of Object.entries(sysIfaces)) {
+  for (const name of names) {
     if (!isRealInterface(name)) continue;
+    // Skip sysfs control entries (e.g. bonding_masters) — real interfaces
+    // expose an `address` attribute; control files do not.
+    if (!fs.existsSync(`/sys/class/net/${name}/address`)) continue;
 
-    const ipv4Addrs = addrs
+    const ipv4Addrs = (sysIfaces[name] || [])
       .filter(a => a.family === 'IPv4')
       .map(a => ({ address: a.address, netmask: a.netmask }));
 
