@@ -10,7 +10,12 @@
 # (ipam.db is already caught by *.db — listing it explicitly creates a
 # maintenance hazard where a future cleanup might assume it's still excluded
 # via the legacy-named explicit entry.)
-data/
+#
+# Anchored with a leading slash to the rsync root (server/ or scripts/) so it
+# matches ONLY server/data/ — NOT server/src/data/, which holds shipped source
+# data (doh-providers.js, device-fingerprints.js). An unanchored `data/` dropped
+# server/src/data/ from the tarball → preflight ERR_MODULE_NOT_FOUND.
+/data/
 *.db
 *.db-wal
 *.db-shm
