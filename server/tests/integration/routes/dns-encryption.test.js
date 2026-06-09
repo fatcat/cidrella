@@ -66,6 +66,14 @@ describe('PUT /api/dns/encryption', () => {
     expect((await request(app).put('/api/dns/encryption').send({ mode: 'https', upstreams: [noDoh] })).status).toBe(400);
   });
 
+  it('rejects an upstream address in a private/reserved range (SSRF guard)', async () => {
+    for (const ip of ['127.0.0.1', '10.0.0.5', '192.168.1.1', '169.254.169.254']) {
+      const bad = { label: 'Evil', addresses: [ip], hostname: 'dns10.quad9.net' };
+      const res = await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [bad] });
+      expect(res.status, `expected 400 for ${ip}`).toBe(400);
+    }
+  });
+
   it('enables TLS, persists, and (re)starts the stub', async () => {
     const res = await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [CF] });
     expect(res.status).toBe(200);

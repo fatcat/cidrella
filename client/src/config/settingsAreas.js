@@ -7,13 +7,8 @@
 //                      panels with unsaved edits); pair with onActivated refresh.
 //   onEnter         — reserved for imperative load-on-enter (e.g. audit log).
 //   badge           — () => string|number for a live count chip (reserved).
-//
-// NOTE: inline sections not yet extracted (SET-2) point at _Pending.vue and are
-// swapped to their real component as each is extracted.
 
 import { defineAsyncComponent } from 'vue';
-
-const Pending = () => defineAsyncComponent(() => import('../views/settings/_Pending.vue'));
 
 export const SETTINGS_AREAS = [
   {

@@ -35,7 +35,7 @@
 </template>
 
 <script setup>
-import { computed, ref, watch, onMounted } from 'vue';
+import { computed, ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import InputText from 'primevue/inputtext';
 import SettingsArea from '../components/settings/SettingsArea.vue';
@@ -50,9 +50,6 @@ const activeAreaId = computed(() => {
   return a && findArea(a) ? a : '';
 });
 const activeSec = computed(() => (typeof route.query.sec === 'string' ? route.query.sec : ''));
-
-// Remember the last area visited (for future "resume" affordances / deep links).
-watch(activeAreaId, (id) => { if (id) localStorage.setItem('cidrella_settings_area', id); });
 
 const filteredAreas = computed(() => {
   const q = search.value.trim().toLowerCase();

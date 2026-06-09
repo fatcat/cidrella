@@ -171,9 +171,10 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     setSetting('geoip_enabled', nowEnabled ? 'true' : 'false');
   }
 
-  // Proxy always runs — just load/unload MMDB data and refresh rule cache
+  // Proxy always runs — just load/unload MMDB data and refresh rule + allowlist caches
   try {
     loadGeoipRules();
+    loadGeoipAllowlist();
     if (nowEnabled && !wasEnabled) {
       await loadMmdb();
     }

@@ -24,6 +24,7 @@ const router = Router();
 
 // Validation helpers
 import { isValidIpv4, isValidDomain, validateDisplayString } from '../utils/ip.js';
+import { isBlockedIpv4 } from '../utils/url-guard.js';
 import { isValidPtrName, validateTxtValue } from '../utils/dnsmasq-escape.js';
 import { validateSoaFields } from '../utils/validation.js';
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
@@ -787,6 +788,10 @@ function validateUpstreamList(arr, mode) {
     if (!Array.isArray(u.addresses) || u.addresses.length === 0 || !u.addresses.every(a => isValidIpv4(a))) {
       return 'each upstream needs a non-empty addresses[] of IPv4 strings';
     }
+    // SSRF guard: the stub connects directly to these IPs (DoT and DoH alike), so
+    // refuse private/loopback/metadata/reserved targets — same ranges url-guard blocks.
+    const blocked = u.addresses.find(a => isBlockedIpv4(a));
+    if (blocked) return `upstream address ${blocked} is in a private/reserved range`;
     if (typeof u.hostname !== 'string' || !u.hostname) return 'each upstream needs a hostname';
     // doh_url is only used by DoH (https) mode; DoT (tls) never reads it.
     if (mode === 'https' && (typeof u.doh_url !== 'string' || !/^https:\/\//.test(u.doh_url))) {

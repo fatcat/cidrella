@@ -703,10 +703,10 @@ async function handleTcpQuery(msg, clientSock) {
   statsAllowed++;
   statsTotal++;
   writeTcpMessage(clientSock, respMsg);
-  const rcodeNames = ['NOERROR', 'FORMERR', 'SERVFAIL', 'NXDOMAIN', 'NOTIMP', 'REFUSED'];
   logDnsQuery({
     clientIp, domain: queryName || '', queryType,
-    responseCode: response?.rcode || rcodeNames[0], action: 'allowed',
+    // response is null when decode failed and we relayed raw bytes — don't claim NOERROR.
+    responseCode: response?.rcode || 'UNKNOWN', action: 'allowed',
     latencyUs, resolvedIp: ips[0] || null,
   });
 }

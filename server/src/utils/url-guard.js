@@ -48,6 +48,16 @@ const BLOCKED_IPV4_RANGES = [
 ];
 
 /**
+ * True if a literal IPv4 address falls in a blocked (private/loopback/metadata/
+ * reserved) range. Synchronous — for callers that already have a literal IP
+ * (e.g. encrypted-forwarder upstreams) and don't need hostname resolution.
+ */
+export function isBlockedIpv4(ip) {
+  if (net.isIP(ip) !== 4) return false; // not a v4 literal — caller validates format separately
+  return BLOCKED_IPV4_RANGES.some(range => ipInCidr(ip, range));
+}
+
+/**
  * Parse and validate an outbound URL. Returns `{ ok: true, url, hostname, ip }`
  * or `{ ok: false, reason }`. Only http/https are accepted. The hostname is
  * resolved; if it's already an IP, that IP is checked directly.
