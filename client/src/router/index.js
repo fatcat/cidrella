@@ -33,16 +33,17 @@ const routes = [
       { path: '', redirect: '/analytics' },
       { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
       { path: 'networks', name: 'Networks', component: () => import('../views/SubnetsLayoutB.vue') },
-      { path: 'system', name: 'System', component: () => import('../views/System.vue') },
+      { path: 'system', name: 'System', component: () => import('../views/Settings.vue') },
       // Redirects for old bookmarks
       { path: 'dashboard', redirect: '/analytics' },
       { path: 'anomalies', redirect: '/analytics' },
       { path: 'subnets', redirect: '/networks' },
-      { path: 'dns', redirect: '/' },
-      { path: 'dhcp', redirect: '/' },
-      { path: 'blocklists', redirect: '/system' },
-      { path: 'geoip', redirect: '/system' },
-      { path: 'range-types', redirect: '/system' }
+      { path: 'dns', redirect: { path: '/system', query: { area: 'dns' } } },
+      { path: 'dhcp', redirect: { path: '/system', query: { area: 'dhcp' } } },
+      { path: 'blocklists', redirect: { path: '/system', query: { area: 'filtering' } } },
+      { path: 'geoip', redirect: { path: '/system', query: { area: 'filtering', sec: 'geoip' } } },
+      { path: 'range-types', redirect: { path: '/system', query: { area: 'general' } } },
+      { path: 'settings-preview', redirect: '/system' }
     ]
   },
   {

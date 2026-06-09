@@ -118,12 +118,7 @@
         </DataTable>
       </TabPanel>
 
-      <!-- Whitelist Tab -->
-      <TabPanel header="Whitelist">
-        <p class="wl-hint">A single shared allowlist — domains here are never blocked by category blocking or GeoIP. Editing it here also updates it under GeoIP.</p>
-        <DomainWhitelist :items="store.whitelist" :on-add="wlAdd" :on-remove="wlRemove"
-                         add-track="blocklist-add-whitelist" />
-      </TabPanel>
+      <!-- Whitelist moved to the shared Filtering › Whitelist sub-tab. -->
 
       <!-- Search Tab -->
       <TabPanel header="Search">
@@ -173,7 +168,6 @@ import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
-import DomainWhitelist from '../components/DomainWhitelist.vue';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
 import { useBlocklistStore } from '../stores/blocklists.js';
@@ -355,27 +349,7 @@ async function doSaveSettings() {
   }
 }
 
-// Whitelist — handlers passed to the shared DomainWhitelist component.
-async function wlAdd(domain, reason) {
-  try {
-    await store.addWhitelist(domain, reason);
-    toast.add({ severity: 'success', summary: 'Domain whitelisted', life: 3000 });
-    await refreshStats();
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-    throw err;
-  }
-}
-
-async function wlRemove(entry) {
-  try {
-    await store.removeWhitelist(entry.id);
-    toast.add({ severity: 'success', summary: 'Removed from whitelist', life: 3000 });
-    await refreshStats();
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  }
-}
+// (Whitelist editing moved to the shared Filtering › Whitelist sub-tab.)
 
 // Search
 async function doSearch(fromPagination = false) {
@@ -393,9 +367,8 @@ async function doSearch(fromPagination = false) {
 }
 
 onMounted(async () => {
-  const [, , fetchedSettings] = await Promise.all([
+  const [, fetchedSettings] = await Promise.all([
     store.fetchCategories(),
-    store.fetchWhitelist(),
     store.fetchSettings(),
     refreshStats(),
   ]);

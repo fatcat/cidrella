@@ -5,7 +5,7 @@
       <span v-if="health?.version" class="version-tag">
         v{{ health.version }}
         <router-link v-if="updateInfo?.updateAvailable && !updateInfo?.isDocker"
-           to="/system?tab=updates"
+           to="/system?area=maintenance&sec=updates"
            class="update-badge" :title="`Update available: v${updateInfo.updateAvailable}`">
           <i class="pi pi-arrow-up"></i>
         </router-link>
@@ -284,10 +284,7 @@ const opsTitle = computed(() => {
 });
 
 function goToRogueDhcp() {
-  localStorage.setItem('cidrella_system_tab', '16');
-  // '/system' — NOT '/', which the router redirects to /analytics (System.vue
-  // would never mount and the stored tab index would never be read).
-  router.push('/system');
+  router.push('/system?area=dhcp&sec=rogue');
 }
 
 async function onTimeFormatChange(event) {
