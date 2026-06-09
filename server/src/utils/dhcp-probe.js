@@ -151,10 +151,16 @@ function directedBroadcast(address, netmask) {
   }
 }
 
-// LAN IPv4 interfaces to probe on, honoring interface_config the same way the
-// DNS proxy's getListenAddresses() does (dns-proxy.js). We additionally need the
-// MAC (for chaddr) and the directed broadcast (for per-segment egress).
-function getLanInterfaces() {
+// LAN IPv4 interfaces to probe on. Rogue DHCP detection is only meaningful where
+// CIDRella actually serves DHCP, so this mirrors dnsmasq.js's DHCP-serving logic
+// exactly: nothing when DHCP is globally off; with interface_config, only
+// interfaces flagged `cfg.dhcp` (NOT dns-only ones); on a fresh deploy (no config)
+// dnsmasq binds DHCP to all real interfaces, so we probe them all. We additionally
+// need the MAC (for chaddr) and the directed broadcast (for per-segment egress).
+export function getLanInterfaces() {
+  // Global DHCP switch (same default + sense as dnsmasq.js: on unless 'false').
+  if (getSetting('dhcp_enabled') === 'false') return [];
+
   let ifaceConfig = {};
   try {
     const raw = getSetting('interface_config');
@@ -179,10 +185,11 @@ function getLanInterfaces() {
 
   if (Object.keys(ifaceConfig).length > 0) {
     for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
-      if (!cfg.dhcp && !cfg.dns) continue; // only interfaces CIDRella serves on
+      if (!cfg.dhcp) continue; // only interfaces CIDRella serves DHCP on (not dns-only)
       pushFrom(ifName);
     }
   } else {
+    // Fresh deploy — dnsmasq binds DHCP to every real interface, so probe them all.
     for (const ifName of Object.keys(sysIfaces)) {
       if (ifName === 'lo') continue;
       pushFrom(ifName);

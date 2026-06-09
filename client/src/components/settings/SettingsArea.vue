@@ -34,7 +34,7 @@
                 @click="$emit('sec', st.id)">{{ st.label }}</button>
       </div>
 
-      <div class="sa-panel">
+      <div class="sa-panel" :class="{ fill: activeSubtab && activeSubtab.fill }">
         <keep-alive>
           <component v-if="activeSubtab && activeSubtab.keepAlive" :is="activeSubtab.component" :key="area.id + ':' + activeSecId" />
         </keep-alive>
@@ -90,7 +90,15 @@ function areasInGroup(group) {
 .sa-content { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;
   padding: 1.1rem 1.4rem; overflow: hidden; }
 .sa-head, .sa-subtabs { flex: 0 0 auto; }
-.sa-panel { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+/* Plain bounded scroll container (NOT a flex box): panels with `height:100%`
+   (DHCP/GeoIP/Blocklists/Users/VLANs) fill it exactly so only their inner table
+   scrolls; shorter form panels overflow and scroll the panel itself. A flex
+   container here produced a second (outer) scrollbar on the fill panels. */
+.sa-panel { flex: 1; min-height: 0; overflow: auto; }
+/* Fill panels (DHCP/GeoIP/Blocklists/Users/Calculator/VLANs) have a `height:100%`
+   root with an internal scrollHeight="flex" table — clip the panel so ONLY that
+   table scrolls (no outer scrollbar). */
+.sa-panel.fill { overflow: hidden; }
 .sa-crumb { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); }
 .sa-crumb a { color: var(--p-primary-color); cursor: pointer; }
 .sa-crumb b { color: var(--p-text-color); }

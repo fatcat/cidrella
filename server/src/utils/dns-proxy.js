@@ -14,6 +14,7 @@ import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyInterfaceConfig, restartDnsmasq } from './dnsmasq.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
+import { parseCidrEntry, ipInAny } from './cidr-match.js';
 import {
   DATA_DIR,
   GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
@@ -60,6 +61,7 @@ let healthTimer = null;
 // GeoIP rule cache — reloaded on settings change, avoids per-query DB hits
 let geoipRuleSet = null;            // Set<string> — enabled country codes
 let geoipMode = 'blocklist';        // 'blocklist' or 'allowlist'
+let geoipAllowEntries = [];         // parsed IP/CIDR entries never GeoIP-blocked
 let whitelistSet = null;            // Set<string> — single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
 
 // Blocklist state — domains loaded from DB for in-proxy blocking.
@@ -154,6 +156,21 @@ export function loadGeoipRules() {
   const enabledRules = db.prepare('SELECT country_code FROM geoip_rules WHERE enabled = 1').all();
   geoipRuleSet = new Set(enabledRules.map(r => r.country_code));
   proxyLog('info', 'GeoIP rules loaded', { count: geoipRuleSet.size, mode: geoipMode });
+}
+
+// Load the GeoIP IP/CIDR allowlist into memory. Resolved answer IPs matching any
+// of these are exempt from country-based blocking (the correct-granularity GeoIP
+// exception). Reloaded on any allowlist change via the /geoip/allowlist routes.
+export function loadGeoipAllowlist() {
+  const db = getDb();
+  const rows = db.prepare('SELECT value FROM geoip_ip_allowlist').all();
+  geoipAllowEntries = rows.map(r => parseCidrEntry(r.value)).filter(Boolean);
+  proxyLog('info', 'GeoIP IP allowlist loaded', { count: geoipAllowEntries.length });
+}
+
+// Is this resolved IP exempt from GeoIP blocking?
+function isGeoipAllowed(ip) {
+  return ipInAny(ip, geoipAllowEntries);
 }
 
 // Load the single global allowlist (blocklist_whitelist) into memory. This one
@@ -486,7 +503,9 @@ function handleDnsmasqResponse(msg) {
       .map(a => a.data);
 
     if (ips.length > 0) {
+      // Answer IPs on the GeoIP allowlist are exempt — only evaluate the rest.
       const countryCodes = ips
+        .filter(ip => !isGeoipAllowed(ip))
         .map(ip => lookupCountry(ip))
         .filter(cc => cc !== null);
 
@@ -664,7 +683,7 @@ async function handleTcpQuery(msg, clientSock) {
     : [];
 
   if (ips.length > 0) {
-    const countryCodes = ips.map(ip => lookupCountry(ip)).filter(cc => cc !== null);
+    const countryCodes = ips.filter(ip => !isGeoipAllowed(ip)).map(ip => lookupCountry(ip)).filter(cc => cc !== null);
     if (countryCodes.length > 0 && shouldBlock(countryCodes) && !isWhitelisted(queryName)) {
       statsBlocked++;
       blockedDelta++;
@@ -915,6 +934,7 @@ export async function startProxyIfEnabled() {
 
   if (geoipOn) {
     loadGeoipRules();
+    loadGeoipAllowlist();
     const loaded = await loadMmdb();
     if (!loaded) {
       proxyLog('warn', 'GeoIP enabled but MMDB not available — proxy will start without GeoIP filtering');

@@ -22,7 +22,7 @@ export const SETTINGS_AREAS = [
     subtabs: [
       { id: 'naming', label: 'Naming & Scanning', dataTrack: 'settings-sec-naming',
         component: defineAsyncComponent(() => import('../views/settings/NetworkSettings.vue')) },
-      { id: 'vlans', label: 'VLANs', dataTrack: 'settings-sec-vlans',
+      { id: 'vlans', label: 'VLANs', dataTrack: 'settings-sec-vlans', fill: true,
         component: defineAsyncComponent(() => import('../views/settings/VlanSettings.vue')) },
       { id: 'interfaces', label: 'Interfaces', dataTrack: 'settings-sec-interfaces',
         component: defineAsyncComponent(() => import('../components/InterfacePanel.vue')) },
@@ -40,7 +40,7 @@ export const SETTINGS_AREAS = [
     id: 'dhcp', label: 'DHCP', icon: 'pi pi-server', group: 'Configuration',
     blurb: 'Scopes, leases, rogue detection', dataTrack: 'settings-area-dhcp',
     subtabs: [
-      { id: 'scopes', label: 'Scopes & Leases', dataTrack: 'settings-sec-dhcp',
+      { id: 'scopes', label: 'Scopes & Leases', dataTrack: 'settings-sec-dhcp', fill: true,
         component: defineAsyncComponent(() => import('../views/DHCP.vue')) },
       { id: 'rogue', label: 'Rogue Detection', dataTrack: 'settings-sec-rogue-dhcp',
         component: defineAsyncComponent(() => import('../views/RogueDhcp.vue')) },
@@ -48,23 +48,23 @@ export const SETTINGS_AREAS = [
   },
   {
     id: 'filtering', label: 'Filtering', icon: 'pi pi-filter', group: 'Configuration',
-    blurb: 'Categories, GeoIP, anomalies, whitelist', dataTrack: 'settings-area-filtering',
+    blurb: 'Categories, GeoIP, anomalies', dataTrack: 'settings-area-filtering',
     subtabs: [
-      { id: 'categories', label: 'Categories', dataTrack: 'settings-sec-blocklists',
+      { id: 'categories', label: 'Categories', dataTrack: 'settings-sec-blocklists', fill: true,
         component: defineAsyncComponent(() => import('../views/Blocklists.vue')) },
-      { id: 'geoip', label: 'GeoIP', dataTrack: 'settings-sec-geoip',
+      { id: 'geoip', label: 'GeoIP', dataTrack: 'settings-sec-geoip', fill: true,
         component: defineAsyncComponent(() => import('../views/GeoIP.vue')) },
       { id: 'anomalies', label: 'Anomalies', dataTrack: 'settings-sec-anomaly',
         component: defineAsyncComponent(() => import('../views/AnomalyDetection.vue')) },
-      { id: 'whitelist', label: 'Whitelist', dataTrack: 'settings-sec-whitelist',
-        component: defineAsyncComponent(() => import('../views/settings/FilteringWhitelist.vue')) },
+      // "Allowed Domains" lives as an inner tab on the Categories panel (Blocklists.vue),
+      // mirroring GeoIP's "Allowed IPs" — no standalone Whitelist sub-tab.
     ],
   },
   {
     id: 'access', label: 'Access', icon: 'pi pi-lock', group: 'System',
     blurb: 'Users & roles, TLS certificate', dataTrack: 'settings-area-access',
     subtabs: [
-      { id: 'users', label: 'Users', dataTrack: 'settings-sec-users',
+      { id: 'users', label: 'Users', dataTrack: 'settings-sec-users', fill: true,
         component: defineAsyncComponent(() => import('../views/Users.vue')) },
       { id: 'certificate', label: 'TLS Certificate', dataTrack: 'settings-sec-certificates',
         component: defineAsyncComponent(() => import('../views/settings/CertificateSettings.vue')) },
@@ -96,7 +96,7 @@ export const SETTINGS_AREAS = [
     id: 'tools', label: 'Tools', icon: 'pi pi-calculator', group: 'Tools',
     blurb: 'Subnet calculator', dataTrack: 'settings-area-tools',
     subtabs: [
-      { id: 'calculator', label: 'Subnet Calculator', dataTrack: 'settings-sec-calculator',
+      { id: 'calculator', label: 'Subnet Calculator', dataTrack: 'settings-sec-calculator', fill: true,
         component: defineAsyncComponent(() => import('../views/SubnetCalculator.vue')) },
     ],
   },

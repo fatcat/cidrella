@@ -195,7 +195,7 @@ onMounted(loadVlans);
 .content-card { padding: 1.25rem; background: var(--p-surface-card); border: 1px solid var(--p-surface-border); border-radius: 8px; }
 .card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
 .card-header h3 { margin: 0; font-size: var(--app-fs-lg); color: var(--p-text-color); }
-.range-types-section { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.range-types-section { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .form-grid { display: flex; flex-direction: column; gap: 1rem; }
 .field { margin-bottom: 1rem; }
 .field label { display: block; margin-bottom: 0.4rem; font-size: var(--app-fs-sm); font-weight: 500; }

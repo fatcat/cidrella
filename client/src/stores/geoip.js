@@ -5,6 +5,7 @@ import api from '../api/client.js';
 export const useGeoipStore = defineStore('geoip', () => {
   const rules = ref([]);
   const whitelist = ref([]);
+  const ipAllowlist = ref([]);
   const status = ref(null);
   const stats = ref({ total: 0, blocked: 0, allowed: 0 });
   const loading = ref(false);
@@ -80,10 +81,29 @@ export const useGeoipStore = defineStore('geoip', () => {
     await fetchWhitelist();
   }
 
+  // GeoIP IP/CIDR allowlist — addresses/ranges never GeoIP-blocked.
+  async function fetchIpAllowlist() {
+    const res = await api.get('/geoip/allowlist');
+    ipAllowlist.value = res.data;
+    return res.data;
+  }
+
+  async function addIpAllow(value, reason) {
+    const res = await api.post('/geoip/allowlist', { value, reason });
+    await fetchIpAllowlist();
+    return res.data;
+  }
+
+  async function removeIpAllow(id) {
+    await api.delete(`/geoip/allowlist/${id}`);
+    await fetchIpAllowlist();
+  }
+
   return {
-    rules, whitelist, status, stats, loading,
+    rules, whitelist, ipAllowlist, status, stats, loading,
     fetchStatus, fetchRules, addRules, toggleRule, deleteRule,
     updateSettings, refreshDb, fetchStats,
-    fetchWhitelist, addWhitelist, removeWhitelist
+    fetchWhitelist, addWhitelist, removeWhitelist,
+    fetchIpAllowlist, addIpAllow, removeIpAllow
   };
 });

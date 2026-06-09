@@ -2,10 +2,12 @@ import { Router } from 'express';
 import { getDb, getSetting, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
-  getProxyStatus, loadMmdb, loadGeoipRules,
+  getProxyStatus, loadMmdb, loadGeoipRules, loadGeoipAllowlist,
   downloadMmdb, resetStats
 } from '../utils/dns-proxy.js';
 import * as GeoipRule from '../models/geoip-rule.js';
+import * as GeoipAllowlist from '../models/geoip-ip-allowlist.js';
+import { isValidIpOrCidr } from '../utils/cidr-match.js';
 import { GEOIP_MODES } from '../utils/validation.js';
 
 const router = Router();
@@ -94,6 +96,46 @@ router.delete('/rules/:id', requirePerm('dns:write'), (req, res) => {
   GeoipRule.deleteRule(db, rule.id);
   loadGeoipRules();
   audit(req.user.id, 'delete', 'geoip_rule', rule.id, { country_code: rule.country_code });
+  res.json({ ok: true });
+});
+
+// ─── GeoIP IP/CIDR allowlist (IPs/ranges never GeoIP-blocked) ───────────────
+// GET /api/geoip/allowlist
+router.get('/allowlist', requirePerm('dns:read'), (req, res) => {
+  res.json(GeoipAllowlist.listEntries(getDb()));
+});
+
+// POST /api/geoip/allowlist
+router.post('/allowlist', requirePerm('dns:write'), (req, res) => {
+  const db = getDb();
+  const { value, reason } = req.body || {};
+  if (typeof value !== 'string' || !value.trim()) {
+    return res.status(400).json({ error: 'An IP address or CIDR is required' });
+  }
+  const v = value.trim();
+  if (!isValidIpOrCidr(v)) {
+    return res.status(400).json({ error: 'Invalid IP address or CIDR (IPv4 or IPv6)' });
+  }
+  if (reason != null && (typeof reason !== 'string' || reason.length > 200)) {
+    return res.status(400).json({ error: 'reason must be a string up to 200 chars' });
+  }
+  if (GeoipAllowlist.getByValue(db, v)) {
+    return res.status(409).json({ error: 'Already in the allowlist' });
+  }
+  const id = GeoipAllowlist.addEntry(db, v, reason);
+  loadGeoipAllowlist();
+  audit(req.user.id, 'create', 'geoip_ip_allowlist', id, { value: v });
+  res.status(201).json({ id });
+});
+
+// DELETE /api/geoip/allowlist/:id
+router.delete('/allowlist/:id', requirePerm('dns:write'), (req, res) => {
+  const db = getDb();
+  const entry = db.prepare('SELECT * FROM geoip_ip_allowlist WHERE id = ?').get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Allowlist entry not found' });
+  GeoipAllowlist.deleteEntry(db, entry.id);
+  loadGeoipAllowlist();
+  audit(req.user.id, 'delete', 'geoip_ip_allowlist', entry.id, { value: entry.value });
   res.json({ ok: true });
 });
 

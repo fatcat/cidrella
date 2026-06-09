@@ -18,7 +18,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 - **Liveness and rogue detection** — Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
 - **Passive device/OS fingerprinting** — Identifies each DHCP client's device type and OS family from its DHCP fingerprint (options 55/60 + hostname) and MAC OUI, classified by an offline ruleset. Surfaced as a "Device" column and a per-host "More info" popup. No active scanning, no raw sockets.
 - **Analytics** — DNS query, blocked-domain, blocked-host, client/domain pair, and system performance views backed by DuckDB.
-- **Blocklists and GeoIP filtering** — Category blocklists, scheduled refresh, whitelisting, and country-based allow/block modes through the DNS proxy.
+- **Blocklists and GeoIP filtering** — Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy. Two distinct exemptions: a shared **domain whitelist** (always allow a domain everywhere) and a GeoIP **IP/CIDR allowlist** (never GeoIP-block specific addresses/ranges — IPv4 or IPv6 — regardless of country).
 - **Anomaly detection** — Python sidecar for unusual query volume, new-domain patterns, beaconing, and DGA-like behavior with UI status/health reporting.
 - **Pi-hole import** — Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP reservations, and upstream DNS settings.
 - **Operations and recovery** — Signed native updates, scheduled backups, restore validation, reset-password and reset-web-port tools, log viewing, and audit history.

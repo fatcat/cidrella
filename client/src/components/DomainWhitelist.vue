@@ -1,7 +1,7 @@
 <!--
-  Reusable domain-whitelist manager: an add-form (domain + optional reason) plus
-  a table of whitelisted domains with remove actions and a right-click menu.
-  Used by both the Blocklists and GeoIP whitelist views.
+  Reusable allowed-domains manager: an add-form (domain + optional reason) plus
+  a table of allowed domains with remove actions and a right-click menu.
+  Used by the Categories › Allowed Domains tab (Blocklists.vue).
 
   The parent owns the data + persistence: pass `items` and async `onAdd`/`onRemove`
   handlers (which do the API call + toast). This component manages only its own
@@ -80,10 +80,17 @@ async function remove(item) {
 const ctxRef = ref();
 const selected = ref(null);
 const ctxItems = computed(() => selected.value
-  ? [{ label: 'Remove from Whitelist', icon: 'pi pi-trash', command: () => remove(selected.value) }]
+  ? [{ label: 'Remove from Allowed Domains', icon: 'pi pi-trash', command: () => remove(selected.value) }]
   : []);
 function onRightClick(event) {
   selected.value = event.data;
   ctxRef.value.show(event.originalEvent);
 }
 </script>
+
+<style scoped>
+/* Fill the host panel (e.g. the Categories › Allowed Domains fill tab) so the
+   scrollHeight="flex" table below the add-row scrolls internally. Harmless as a
+   plain block when the host isn't a flex column. */
+.domain-whitelist { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+</style>

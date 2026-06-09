@@ -150,6 +150,16 @@
                   @click="searchPage++; doSearch(true)" />
         </div>
       </TabPanel>
+
+      <TabPanel header="Allowed Domains">
+        <p class="wl-hint">
+          Domains here are <strong>never</strong> blocked — by category blocking <em>or</em> GeoIP.
+          (To allow specific IPs/ranges regardless of country, use GeoIP › Allowed IPs.)
+        </p>
+        <DomainWhitelist :items="store.whitelist" :on-add="wlAdd" :on-remove="wlRemove"
+                         add-track="blocklist-add-allowed-domain"
+                         empty-message="No allowed domains." />
+      </TabPanel>
     </TabView>
 
     <Toast />
@@ -170,6 +180,7 @@ import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
+import DomainWhitelist from '../components/DomainWhitelist.vue';
 import { useBlocklistStore } from '../stores/blocklists.js';
 import { useDnsStore } from '../stores/dns.js';
 
@@ -366,11 +377,30 @@ async function doSearch(fromPagination = false) {
   }
 }
 
+// Allowed Domains (the shared domain whitelist — also exempts GeoIP).
+async function wlAdd(domain, reason) {
+  try {
+    await store.addWhitelist(domain, reason);
+    toast.add({ severity: 'success', summary: 'Domain allowed', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  }
+}
+async function wlRemove(entry) {
+  try {
+    await store.removeWhitelist(entry.id);
+    toast.add({ severity: 'success', summary: 'Domain removed', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  }
+}
+
 onMounted(async () => {
   const [, fetchedSettings] = await Promise.all([
     store.fetchCategories(),
     store.fetchSettings(),
     refreshStats(),
+    store.fetchWhitelist(),
   ]);
   Object.assign(settings, fetchedSettings);
   blocklistEnabled.value = fetchedSettings.blocklist_enabled !== 'false';
