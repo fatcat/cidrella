@@ -697,7 +697,7 @@ import TabPanel from 'primevue/tabpanel';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { validateSupernet, isValidCidr, isValidIpv4, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, longToIp, nearestPow2, dhcpRangeDefaults, gatewayIpFromPosition, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
+import { validateSupernet, isValidCidr, isValidIpv4, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, dhcpRangeDefaults, gatewayIpFromPosition, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -1832,7 +1832,9 @@ async function executeNetworkSave() {
       emit('network-configured', id);
     } else {
       const id = props.selectedNode.data.id;
-      const { create_dhcp_scope, create_reverse_dns, ...editPayload } = networkForm.value;
+      const editPayload = { ...networkForm.value };
+      delete editPayload.create_dhcp_scope;
+      delete editPayload.create_reverse_dns;
       const updated = await store.updateSubnet(id, editPayload);
       surfaceVlanWarning(updated);
       showNetworkDialog.value = false;
@@ -2069,11 +2071,11 @@ function openEdit(node, folderId) {
   showNetworkDialog.value = true;
 }
 
-function openDelete(node) {
+function openDelete(_node) {
   showDelete.value = true;
 }
 
-function openDeallocate(node) {
+function openDeallocate(_node) {
   showDeallocate.value = true;
 }
 

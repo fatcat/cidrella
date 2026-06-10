@@ -160,7 +160,10 @@ fi
 ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
 case "$ARCH" in
   amd64|x86_64) ARCH="amd64" ;;
-  arm64|aarch64) ARCH="arm64" ;;
+  arm64|aarch64)
+    warn "This host is arm64. CIDRella releases are linux-x64 only (arm64 was discontinued after v0.4.15) — installing here would leave a system that cannot receive updates."
+    exit 1
+    ;;
   *)
     warn "Unsupported architecture: $ARCH"
     if ! ask_yn "Continue anyway?"; then

@@ -1,6 +1,6 @@
 import { getSetting } from '../db/init.js';
 import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
-import { parseCidr, ipToLong, longToIp, getServerIpForSubnet, isIpInSubnet } from '../utils/ip.js';
+import { parseCidr, ipToLong, longToIp, getServerIpForSubnet } from '../utils/ip.js';
 
 export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
   const enabledRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1').all();

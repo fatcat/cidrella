@@ -21,7 +21,7 @@ import {
   GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
   PROXY_HEALTH_CHECK_MS, PROXY_MAX_RESTART_ATTEMPTS, PROXY_RESTART_DELAY_MS,
   PROXY_TCP_IDLE_TIMEOUT_MS, PROXY_MAX_TCP_CONNECTIONS, PROXY_TCP_RELAY_TIMEOUT_MS,
-  DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort,
+  resolveDnsmasqInternalPort,
 } from '../config/defaults.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
@@ -52,7 +52,6 @@ let statsBlocked = 0;
 let statsAllowed = 0;
 let blockedDelta = 0;
 let countryHits = new Map();
-let updateTimer = null;
 
 // Bypass mode — when proxy dies and can't restart, dnsmasq takes over port 53
 let bypassMode = false;
@@ -213,7 +212,6 @@ function shouldBlock(countryCodes) {
 
 // Get LAN IPv4 addresses to bind proxy sockets on port 53
 function getListenAddresses() {
-  const db = getDb();
   let ifaceConfig = {};
   try {
     const raw = getSetting('interface_config');
@@ -1104,7 +1102,7 @@ function scheduleToDays(schedule) {
 // Auto-update scheduler
 export function startGeoipScheduler() {
   // Check every 6 hours if MMDB needs updating
-  updateTimer = setInterval(async () => {
+  setInterval(async () => {
     try {
       const enabled = getSetting('geoip_enabled');
       if (enabled !== 'true') return;

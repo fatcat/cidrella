@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # npm across all three package roots. Routine minor/patch bumps arrive as ONE
+  # grouped weekly PR per root; security fixes arrive immediately as their own
+  # PRs. This replaces the manual lockfile-churn dance at release time.
+  - package-ecosystem: npm
+    directories:
+      - "/"
+      - "/server"
+      - "/client"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      routine:
+        update-types: ["minor", "patch"]
+        patterns: ["*"]
+    open-pull-requests-limit: 5
+
+  # Keep the Actions workflows' pinned action versions current.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday

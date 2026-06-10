@@ -1,5 +1,4 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import { getDb, getSetting, setSetting } from '../db/init.js';
@@ -631,7 +630,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   if (fs.existsSync(stagedDb)) {
     const magic = Buffer.alloc(16);
     const fd = fs.openSync(stagedDb, 'r');
-    let readLen = 0;
+    let readLen;
     try { readLen = fs.readSync(fd, magic, 0, 16, 0); } finally { try { fs.closeSync(fd); } catch { /* ignore */ } }
     if (readLen !== 16 || magic.toString('utf-8') !== 'SQLite format 3\x00') {
       try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }

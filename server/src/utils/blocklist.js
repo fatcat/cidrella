@@ -135,7 +135,7 @@ export async function refreshAllEnabled(db) {
  * Reload blocklist — updates the proxy's in-memory Set and clears the old dnsmasq conf.
  * All blocking now happens in the DNS proxy, not via dnsmasq address= directives.
  */
-export function generateBlocklistConfig(db) {
+export function generateBlocklistConfig(_db) {
   // Reload the proxy's in-memory blocklist + the global allowlist (the latter
   // is also consulted by the GeoIP path, so any whitelist change applies there).
   loadBlocklist();

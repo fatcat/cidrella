@@ -109,7 +109,7 @@ EXAMPLES
     ./scripts/build-release.sh
 
 ENVIRONMENT
-    BUILD_ARCH              Defaults to linux-x64. Change for other arches.
+    BUILD_ARCH              linux-x64 only (arm64 discontinued after v0.4.15).
     BUNDLED_NODE_VERSION    Pinned Node runtime version shipped in tarball.
     MINISIGN_KEY            Path to the minisign private key used for signing.
                             Defaults to ~/.minisign/cidrella.key.
@@ -158,6 +158,9 @@ done
 # version for the duration of this build. The source package.json stays at
 # the base version; only the staged copy inside the tarball is rewritten.
 BASE_VERSION=$(node -e "console.log(require('./package.json').version)")
+# Guard: package.json version must match the newest RELEASE-NOTES.md heading.
+# Catches "code bumped but notes/version forgotten" before anything is built.
+node "$PROJECT_DIR/scripts/check-release-version.js" "$PROJECT_DIR" || exit 1
 if [ "$PRE_RELEASE" = true ]; then
   VERSION="${BASE_VERSION}-${PRE_SUFFIX}"
 else
@@ -166,6 +169,13 @@ fi
 TAG="v${VERSION}"
 # Architecture suffix — bundled native binaries are tied to the build arch
 BUILD_ARCH="${BUILD_ARCH:-linux-x64}"
+# arm64 builds are discontinued (v0.4.16+): no arm64 hardware in the field to
+# validate on, and bundled native modules (better-sqlite3, duckdb) make an
+# unvalidated cross-arch tarball a DOA risk. Last arm64 release: v0.4.15.
+if [ "$BUILD_ARCH" != "linux-x64" ]; then
+  echo "ERROR: BUILD_ARCH=$BUILD_ARCH is not supported — cidrella releases are linux-x64 only (arm64 discontinued after v0.4.15)."
+  exit 1
+fi
 TARBALL="cidrella-${TAG}-${BUILD_ARCH}.tar.gz"
 DIST_DIR="$PROJECT_DIR/dist"
 STAGING_DIR="$DIST_DIR/cidrella-${TAG}-${BUILD_ARCH}"
@@ -707,6 +717,14 @@ if [ "$DRY_RUN" = false ]; then
 
   # Server source (node_modules added fresh in step 3 via `npm ci --omit=dev`)
   rsync -a --exclude-from="$BUILDIGNORE" "$PROJECT_DIR/server/" "$STAGING_DIR/server/"
+
+  # Completeness guard: every relative import in the STAGED server tree must
+  # resolve to a staged file. Catches source dropped by a too-broad .buildignore
+  # exclude or never committed — the v0.4.16-pre.1 DOA, where the missing module
+  # only surfaced in the post-publish preflight (ERR_MODULE_NOT_FOUND). set -e
+  # aborts the build here, before the expensive bundling/signing/publish.
+  echo "  Checking staged import completeness..."
+  node "$PROJECT_DIR/scripts/check-staging-imports.js" "$STAGING_DIR/server"
 
   # Built client (dist only — we never ship client/src or client/node_modules)
   mkdir -p "$STAGING_DIR/client"

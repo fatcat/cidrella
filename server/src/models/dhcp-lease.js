@@ -36,7 +36,7 @@ export function syncDhcpDnsRecords(db, leases) {
     if (domain) subnetDomainMap.set(s.subnet_id, domain);
   }
 
-  let reservations = [];
+  let reservations;
   try {
     reservations = db.prepare(`
       SELECT r.ip_address, r.hostname, r.mac_address, r.subnet_id

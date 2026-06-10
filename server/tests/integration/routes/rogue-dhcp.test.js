@@ -11,7 +11,6 @@ vi.mock('../../../src/utils/dhcp-probe.js', () => ({
 const { default: rogueRouter } = await import('../../../src/routes/rogue-dhcp.js');
 const { runProbe } = await import('../../../src/utils/dhcp-probe.js');
 const RogueDhcp = await import('../../../src/models/rogue-dhcp.js');
-const { getDb } = await import('../../../src/db/init.js');
 const { default: request } = await import('supertest');
 
 let tmpDir;

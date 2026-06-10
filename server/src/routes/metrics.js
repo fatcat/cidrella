@@ -77,7 +77,7 @@ router.get('/services', requirePerm('analytics:read'), async (req, res) => {
 
   // Forwarder liveness
   const upstreamRaw = getSetting('dns_upstream_servers');
-  let upstreams = [];
+  let upstreams;
   try {
     upstreams = typeof upstreamRaw === 'string' ? JSON.parse(upstreamRaw) : (upstreamRaw || []);
   } catch { upstreams = []; }

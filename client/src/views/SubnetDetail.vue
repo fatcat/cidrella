@@ -436,7 +436,7 @@ const props = defineProps({
   compact: { type: Boolean, default: false }
 });
 
-const emit = defineEmits(['refresh']);
+defineEmits(['refresh']);
 
 const toast = useToast();
 const store = useSubnetStore();
@@ -614,7 +614,7 @@ watch(activeTabIndex, (val) => {
 // Search / filter
 const ipSearch = ref('');
 let _searchTimer = null;
-watch(ipSearch, (val) => {
+watch(ipSearch, (_val) => {
   if (_searchTimer) clearTimeout(_searchTimer);
   _searchTimer = setTimeout(() => {
     _searchTimer = null;
@@ -1433,7 +1433,7 @@ function onLazySort(event) {
 
 // Watch for subnetId changes — debounce rapid clicks
 let _loadTimer = null;
-watch(() => props.subnetId, (newId, oldId) => {
+watch(() => props.subnetId, (newId, _oldId) => {
   gridSelection.value = new Set();
   ipSearch.value = '';
   if (_loadTimer) clearTimeout(_loadTimer);
@@ -1487,7 +1487,7 @@ async function saveRange(force = false) {
       showOverlapDialog.value = false;
       toast.add({ severity: 'success', summary: 'Range updated', life: 3000 });
     } else {
-      const created = await store.createRange(subnet.value.id, payload);
+      await store.createRange(subnet.value.id, payload);
       closeRangeDialog();
       showOverlapDialog.value = false;
       toast.add({ severity: 'success', summary: 'Range created', life: 3000 });

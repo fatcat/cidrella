@@ -1,6 +1,4 @@
 import express from 'express';
-import https from 'https';
-import http from 'http';
 import fs from 'fs';
 import path from 'path';
 import helmet from 'helmet';
@@ -13,7 +11,7 @@ import { fileURLToPath } from 'url';
 // The primary fix for the v0.4.14 bcrypt crash is in-handler type guards +
 // try/catch; this is insurance so a *different* unprotected async handler
 // can't kill the process if one slips through.
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason, _promise) => {
   console.error('Unhandled promise rejection:', reason);
 });
 process.on('uncaughtException', (err) => {
@@ -73,7 +71,7 @@ import analyticsRoutes from './routes/analytics.js';
 import anomalyRoutes from './routes/anomalies.js';
 import rogueDhcpRoutes from './routes/rogue-dhcp.js';
 import deviceRoutes from './routes/devices.js';
-import { initAnalyticsDb, closeAnalyticsDb } from './db/duckdb.js';
+import { initAnalyticsDb } from './db/duckdb.js';
 import { getCapabilityWarning } from './utils/capabilities.js';
 import { captureBootServiceHealth } from './utils/service-health.js';
 import { markBackendReady } from './utils/startup-status.js';
@@ -395,7 +393,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
   // the server log. Explicit 4xx errors (thrown with err.status set) are
   // passed through because routes use that path to surface validation
   // messages to clients.
-  app.use('/api', (err, req, res, next) => {
+  app.use('/api', (err, req, res, _next) => {
     const msg = err.message || 'Internal server error';
 
     // Detect missing table errors from SQLite — this one IS useful to the

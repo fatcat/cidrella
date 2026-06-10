@@ -76,7 +76,7 @@ export function buildDiscover({ xid, mac }) {
   const params = [1, 3, 6, 15, 51, 54]; // mask, router, dns, domain, lease, server-id
   buf.writeUInt8(55, off++); buf.writeUInt8(params.length, off++);
   for (const p of params) buf.writeUInt8(p, off++);
-  buf.writeUInt8(255, off++);           // end
+  buf.writeUInt8(255, off);             // end
   return buf;
 }
 

@@ -3,7 +3,7 @@ import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { isIpInSubnet, ipToLong, longToIp, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
 import { syncLeases } from '../utils/dhcp.js';
-import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, LEGACY_COLUMN_MAP, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
+import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import { createScope, updateScope, deleteScope } from '../models/dhcp-scope.js';

@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Node 24 = the production target (bundled runtime in release tarballs).
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+            client/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix server
+          npm ci --prefix client
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Server tests
+        run: npm run test:server
+
+      - name: Client tests
+        run: npm run test:client
+
+      - name: Client production build
+        run: npm run build:client
+
+      - name: Release guards
+        # Same guards build-release.sh runs — catch version/notes drift and
+        # broken release plumbing on every push, not just at release time.
+        run: node scripts/check-release-version.js .

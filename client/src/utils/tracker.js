@@ -4,7 +4,6 @@ const FLUSH_INTERVAL = 3000;
 const MAX_BUFFER = 20;
 
 let buffer = [];
-let flushTimer = null;
 
 function flush() {
   if (buffer.length === 0) return;
@@ -137,7 +136,7 @@ export function initTracker({ router, apiClient, pinia }) {
   trackStoreActions(pinia);
 
   // Periodic flush
-  flushTimer = setInterval(flush, FLUSH_INTERVAL);
+  setInterval(flush, FLUSH_INTERVAL);
 
   // Flush on page unload
   window.addEventListener('beforeunload', flush);

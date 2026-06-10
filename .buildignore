@@ -57,6 +57,8 @@ vitest.config.js
 # lib/, sudoers/, systemd/). Tracked in PLAN.md backlog.
 build-release.sh
 release-health-check.js
+check-staging-imports.js
+check-release-version.js
 deploy-lxc.sh
 test-dns-blocking.sh
 

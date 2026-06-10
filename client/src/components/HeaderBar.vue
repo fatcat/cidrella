@@ -184,7 +184,6 @@ import { useRouter, useRoute } from 'vue-router';
 import Popover from 'primevue/popover';
 import Select from 'primevue/select';
 import { useAuthStore } from '../stores/auth.js';
-import { useSubnetStore } from '../stores/subnets.js';
 import { useThemeStore, themes } from '../stores/theme.js';
 import { formatTimeOnly } from '../utils/dateFormat.js';
 import api from '../api/client.js';
@@ -193,7 +192,6 @@ const router = useRouter();
 const route = useRoute();
 
 const auth = useAuthStore();
-const subnetStore = useSubnetStore();
 const userMenuRef = ref(null);
 const opsPopoverRef = ref(null);
 const anomalyPopoverRef = ref(null);
@@ -388,10 +386,6 @@ const scanChipText = computed(() => {
   const scannedIps = running.reduce((sum, s) => sum + (s.scanned_ips || 0), 0);
   if (totalIps > 0) return `Scanner active ${Math.round((scannedIps / totalIps) * 100)}%`;
   return 'Scanner active';
-});
-
-const scanLabel = computed(() => {
-  return `next scan ${nextScanTimeOnly.value}`;
 });
 
 const nextScanTimeOnly = computed(() => {

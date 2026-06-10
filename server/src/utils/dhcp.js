@@ -3,7 +3,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { atomicWrite, signalDnsmasq, restartDnsmasq, cleanStaleFiles } from './dnsmasq.js';
-import { parseCidr, ipToLong, longToIp, isIpInSubnet } from './ip.js';
+import { parseCidr, isIpInSubnet } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';

@@ -202,11 +202,6 @@ function consolidateIntermediate(db, parentId) {
   return SubnetTopology.consolidateIntermediate(db, parentId);
 }
 
-// Helper: buddy-merge unallocated siblings after deletion
-function buddyMerge(db, parentId) {
-  return SubnetTopology.buddyMerge(db, parentId);
-}
-
 // GET /api/subnets — return folder-grouped tree
 router.get('/', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
@@ -831,25 +826,6 @@ function migrateConfigToChild(db, parentId, childId, childParsed, childGw, paren
   return poolAdjustments;
 }
 
-// Helper: delete all subnet-scoped state during teardown. Covers ranges,
-// ip_addresses, dhcp_leases, and dhcp_scopes (+ options). Most of these
-// tables already ON DELETE CASCADE from subnets (via migration 007), but
-// the explicit deletes keep the ordering stable and insulate the teardown
-// path from future FK relaxations; the scope_options cleanup in particular
-// guards against forgetting to re-add the cascade if that table is ever
-// reshaped.
-function cleanupSubnetData(db, subnetId) {
-  return SubnetTopology.deleteSubnetData(db, subnetId);
-}
-
-// Historically this deleted dns_zones attached to a subnet and reassigned
-// to siblings that shared domain_name. Post-decouple, zones are subnet-
-// agnostic — nothing to do here. Kept as a named no-op so callers stay
-// readable and we can add per-subnet DNS cleanup later if needed.
-function cleanupSubnetZones(_db, _subnetId) {
-  // intentionally empty
-}
-
 // During divide: move per-IP rows (DHCP reservations, ip_addresses) from the
 // parent to whichever new child's CIDR contains each row's IP. Without this,
 // cleanupSubnetData() wipes the parent's ip_addresses (losing hostnames and
@@ -921,57 +897,6 @@ function migrateParentZonesToChildren(_db, _parentId) {
   // intentionally empty — see migration 045
 }
 
-// Inverse of transferPerIpArtifactsToChildren: during MERGE, move reservations
-// and ip_addresses from the children being merged to the new/merged subnet.
-// Without this, cleanupSubnetData() wipes everything the merging children knew
-// about the IPs (hostnames, MACs, scan state, reservations).
-//
-// Reservations are constrained by UNIQUE(subnet_id, mac) AND UNIQUE(subnet_id, ip).
-// A raw bulk UPDATE can hit those constraints when the destination already has
-// a row with the same MAC or IP — e.g. buddyMerge targeting the parent, or a
-// merge across siblings that legitimately have duplicate entries. Dedup
-// upfront by deleting dest-side duplicates (child wins, per the same rule
-// we use for ip_addresses).
-function transferPerIpArtifactsToParent(db, childIds, mergedId) {
-  if (!Array.isArray(childIds) || childIds.length === 0) return;
-  const placeholders = childIds.map(() => '?').join(',');
-
-  DhcpTopology.moveReservationsToSubnet(db, childIds, mergedId);
-
-  // For ip_addresses, the child's row has the live state. If the merged
-  // subnet already has a row for the same IP (rare — merged was just
-  // created), dedup by preferring the child's row. Also rewrite
-  // `ip_events.subnet_id` so history queries filtered by subnet return
-  // events for the merged target, not the deleted children.
-  const ips = db.prepare(
-    `SELECT id, ip_address FROM ip_addresses WHERE subnet_id IN (${placeholders})`
-  ).all(...childIds);
-  for (const ip of ips) {
-    IpAddress.moveToSubnet(db, ip.id, ip.ip_address, mergedId);
-  }
-}
-
-// Post-decouple no-op. See migrateParentZonesToChildren.
-function migrateChildZonesToParent(_db, _childIds, _mergedId) {
-  // intentionally empty — see migration 045
-}
-
-// During MERGE, move the configSource child's DHCP scope (+ its backing
-// range and scope options) to the merged subnet. configSource is the
-// allocated child whose config metadata (name, gateway, domain_name, etc.)
-// survives; its scope is the one we want to preserve. Other merging
-// children's scopes are deliberately left to CASCADE-delete via
-// dhcp_scopes.subnet_id ON DELETE CASCADE — they were competing
-// narrower-scope definitions, not survivors.
-//
-// Ranges table has no ON DELETE cascade on subnet_id directly, but
-// dhcp_scopes.range_id → ranges.id ON DELETE CASCADE means deleting the
-// child's ranges cascade-wipes its scopes too. So we move BOTH the range
-// and the scope together, before the child subnet deletion runs.
-function migrateChildScopesToParent(db, configSourceId, mergedId) {
-  DhcpTopology.moveScopesToSubnet(db, configSourceId, mergedId);
-}
-
 // Detect forward-zone domain conflicts among the subnets being merged.
 // Post-decouple we look at each subnet's `domain_name` (the pointer to its
 // forward zone) rather than at `dns_zones.subnet_id`. Two merging subnets
@@ -985,15 +910,6 @@ function detectForwardZoneConflict(db, childIds) {
   ).all(...childIds);
   const names = new Set(rows.map(r => r.name));
   return { conflict: names.size > 1, zones: rows };
-}
-
-// Helper: wipe subtree-scoped DHCP state (scopes + options + leases) for
-// every descendant of `parentId`. Zones are subnet-agnostic so they aren't
-// touched here — the user deletes zones explicitly via the DNS UI when
-// they're no longer wanted. The function is still named "cleanupSubtreeZones"
-// to avoid churning a lot of call sites; rename if it causes confusion.
-function cleanupSubtreeZones(db, parentId) {
-  return DhcpTopology.deleteDhcpStateForSubtree(db, parentId);
 }
 
 // Helper: clear parent config after division. Assumes per-IP artifacts (IP
@@ -1358,7 +1274,6 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   // Determine gateway
   let gw = gateway_address;
   if (!gw) {
-    const targetFolder = folder_id || subnet.folder_id;
     const gwPosition = getSetting('default_gateway_position');
     gw = gwPosition === 'none' ? null
       : gwPosition === 'last' ? parsed.lastUsable : parsed.firstUsable;
@@ -1763,8 +1678,6 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   // Compute IP range for this page
   const pageStartLong = parsed.networkLong + (page - 1) * pageSize;
   const pageEndLong = Math.min(pageStartLong + pageSize - 1, parsed.broadcastLong);
-  const pageStartIp = longToIp(pageStartLong);
-  const pageEndIp = longToIp(pageEndLong);
 
   // Load persisted ip_addresses for this subnet and filter to page range in JS
   // (ip_address is text so SQL string comparison on dotted-decimal is unreliable)

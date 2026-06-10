@@ -437,27 +437,6 @@ const isFirstRunEmpty = computed(() => {
   return realFolders.length === 0 && !anySubnets;
 });
 
-// Unallocated subnets: all non-allocated networks across all folders
-const unallocatedSubnets = computed(() => {
-  const q = filterText.value.toLowerCase().trim();
-  const result = [];
-  function collect(nodes) {
-    for (const s of nodes) {
-      const hasChildren = s.children && s.children.length > 0;
-      if (s.status !== 'allocated' && !hasChildren) {
-        if (!q || s.cidr.includes(q) || s.name?.toLowerCase().includes(q)) {
-          result.push(s);
-        }
-      }
-      if (hasChildren) collect(s.children);
-    }
-  }
-  for (const folder of store.folders) {
-    if (folder.subnets) collect(folder.subnets);
-  }
-  return result;
-});
-
 const filteredBrowseNodes = computed(() => {
   const flat = [];
   function flatten(nodes, depth) {
@@ -721,33 +700,6 @@ async function onDropUngrouped(event) {
 
 function onUngroupedDragStart(event, subnet) {
   event.dataTransfer.setData('application/x-subnet-id', String(subnet.id));
-  event.dataTransfer.setData('text/plain', subnet.cidr);
-  event.dataTransfer.effectAllowed = 'move';
-}
-
-function isDraggableBrowseNode(node) {
-  if (node.data.status === 'allocated') return false;
-  if (node.leaf || !node.children || node.children.length === 0) return true;
-  if (node.data.parent_id) return true;
-  return false;
-}
-
-function collectLeafIds(node) {
-  if (node.leaf || !node.children || node.children.length === 0) return [node.data.id];
-  const ids = [];
-  for (const child of node.children) ids.push(...collectLeafIds(child));
-  return ids;
-}
-
-function onBrowseDragStart(event, subnet, node) {
-  const isGroup = node && !node.leaf && node.children && node.children.length > 0;
-  if (isGroup) {
-    const leafIds = collectLeafIds(node);
-    event.dataTransfer.setData('application/x-subnet-ids', JSON.stringify(leafIds));
-    event.dataTransfer.setData('application/x-subnet-id', String(subnet.id));
-  } else {
-    event.dataTransfer.setData('application/x-subnet-id', String(subnet.id));
-  }
   event.dataTransfer.setData('text/plain', subnet.cidr);
   event.dataTransfer.effectAllowed = 'move';
 }

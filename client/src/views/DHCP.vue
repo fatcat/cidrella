@@ -113,7 +113,7 @@ import Select from 'primevue/select';
 import Popover from 'primevue/popover';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
-import { IP_RE, resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
+import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError } from '../utils/format.js';
 
 const DHCP_PLACEHOLDERS = {

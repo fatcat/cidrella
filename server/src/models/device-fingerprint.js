@@ -2,7 +2,6 @@
 // batch-lookup shape of mac-vendor.js so the IP-view enrichment can attach
 // device metadata the same way it attaches the OUI vendor.
 
-import { getDb } from '../db/init.js';
 
 // Insert or refresh a fingerprint. A 'manual' override is never clobbered by a
 // later 'dhcp' capture — we still bump last_seen_at and refresh the raw DHCP

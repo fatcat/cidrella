@@ -86,7 +86,6 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
 
 // GET /api/interfaces/config — read saved interface config
 router.get('/config', requirePerm('subnets:read'), (req, res) => {
-  const db = getDb();
   let interfaces = {};
   let dnsEnabled = true;
   let dhcpEnabled = true;

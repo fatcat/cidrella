@@ -19,7 +19,7 @@
 
 <script setup>
 defineProps({
-  modelValue: { default: null },
+  modelValue: { type: Boolean, default: null },
   resolvedEnabled: { type: Boolean, default: false },
 });
 defineEmits(['update:modelValue']);

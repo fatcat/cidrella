@@ -124,7 +124,7 @@ import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
 import { parseCidr, longToIp, dhcpRangeDefaults } from '../utils/ip.js';
 import api from '../api/client.js';
-import { IP_RE, resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
+import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError } from '../utils/format.js';
 
 const toast = useToast();

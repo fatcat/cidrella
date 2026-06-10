@@ -3,7 +3,6 @@ import { getDb, audit, getSetting } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig } from '../utils/blocklist.js';
-import { loadBlocklist } from '../utils/dns-proxy.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
@@ -107,7 +106,7 @@ router.post('/categories/:slug/refresh', requirePerm('dns:write'), async (req, r
   if (!cat) return res.status(404).json({ error: 'Unknown category' });
 
   try {
-    const result = await refreshCategory(db, slug);
+    await refreshCategory(db, slug);
     generateBlocklistConfig(db);
     const row = db.prepare('SELECT domain_count, last_fetched_at FROM blocklist_categories WHERE slug = ?').get(slug);
     res.json({ ok: true, domain_count: row?.domain_count, last_fetched_at: row?.last_fetched_at });

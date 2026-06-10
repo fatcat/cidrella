@@ -233,7 +233,7 @@ function parseReleaseNotes(source) {
 
 // ─── lint ─────────────────────────────────────────────────
 
-function lint(releases, errors, warnings) {
+function lint(releases, errors, _warnings) {
   const issues = [...errors];
   if (releases.length === 0) {
     issues.push({ message: 'No release sections found in RELEASE-NOTES.md. Check header format: `## vX.Y.Z — YYYY-MM-DD` (with em-dash).' });

@@ -27,7 +27,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue';
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
 import api from '../api/client.js';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';

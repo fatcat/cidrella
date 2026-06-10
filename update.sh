@@ -51,7 +51,13 @@ detect_build_arch() {
   arch=$(dpkg --print-architecture 2>/dev/null || uname -m)
   case "$arch" in
     amd64|x86_64) printf '%s\n' "linux-x64" ;;
-    arm64|aarch64) printf '%s\n' "linux-arm64" ;;
+    arm64|aarch64)
+      # arm64 releases are discontinued. Falling back to the x64 tarball would
+      # install native modules (better-sqlite3, duckdb) that cannot load on
+      # this host — refuse instead of producing a broken install.
+      echo "[ERROR] This host is arm64. CIDRella arm64 releases were discontinued after v0.4.15 — this host cannot update past that version. Releases are linux-x64 only." >&2
+      exit 1
+      ;;
     *)
       echo "[WARN] Unsupported architecture '$arch'; falling back to linux-x64 release asset." >&2
       printf '%s\n' "linux-x64"

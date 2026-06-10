@@ -4,7 +4,6 @@ import { createTestApp } from '../../helpers/test-app.js';
 
 const { default: deviceRouter } = await import('../../../src/routes/devices.js');
 const DF = await import('../../../src/models/device-fingerprint.js');
-const { getDb } = await import('../../../src/db/init.js');
 const { default: request } = await import('supertest');
 
 let tmpDir;

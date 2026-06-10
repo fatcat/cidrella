@@ -29,6 +29,7 @@ A feature release on top of the v0.4.15 resilience base: encrypted DNS forwardin
 - **Single shared whitelist for category + GeoIP blocking.** The whitelist (extracted into a shared component, now also a tab on the GeoIP page) is one global allowlist that exempts a domain from **both** category blocking and GeoIP — previously it exempted only category blocking.
 - **Theme picker in the user menu.** The header user dropdown now has a quick theme switcher (grouped light/dark) alongside the full grid on the Themes page.
 - **Interfaces page fixes.** sysfs-based interface enumeration (IP-less interfaces no longer show as "missing"), stale-interface removal, a corrected `ToggleSwitch` binding, and a dark-mode CSS token regression fix.
+- **arm64 builds discontinued.** Releases are linux-x64 only from this version; v0.4.15 was the final arm64 release. The installer and updater now refuse on arm64 hosts instead of fetching a tarball whose bundled native modules (better-sqlite3, DuckDB) cannot load on that architecture.
 
 ### Fixed
 - **Synthesized DNS responses now echo the client's EDNS OPT** (UDP payload size + DO bit) and carry the correct rcode in the flags word — fixes a latent bug where blocked / NXDOMAIN / SERVFAIL answers encoded as NOERROR.
@@ -39,6 +40,7 @@ A feature release on top of the v0.4.15 resilience base: encrypted DNS forwardin
 - **Schema migrates forward to version 49** — adds the rogue-DHCP authorized-server allowlist (`047`) and the per-MAC `device_fingerprints` table (`049`). The `048` migration slot is intentionally skipped: it was an interim GeoIP-whitelist table that was superseded by unifying the whitelist into the existing one. Transparent and forward-only.
 - **Enabling DNSSEC enables system NTP** and installs a polkit rule scoped to exactly `org.freedesktop.timedate1.set-ntp` for the service account. Validation is lenient on signature timestamps until the clock first syncs, then becomes enforcing.
 - **No breaking API changes** and no manual config changes required.
+- **arm64 hosts cannot upgrade to this release.** v0.4.15 is the last supported version on arm64; `cidrella-update` on an arm64 host refuses with an explanatory error rather than installing a broken build.
 
 ---
 

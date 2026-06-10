@@ -141,7 +141,6 @@ router.delete('/allowlist/:id', requirePerm('dns:write'), (req, res) => {
 
 // PUT /api/geoip/settings — update GeoIP settings
 router.put('/settings', requirePerm('dns:write'), async (req, res) => {
-  const db = getDb();
   const { geoip_enabled, geoip_mode, geoip_update_schedule } = req.body;
 
   if (geoip_enabled !== undefined && typeof geoip_enabled !== 'boolean') {

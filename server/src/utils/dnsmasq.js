@@ -4,7 +4,7 @@ import os from 'os';
 import { execFileSync, execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
-import { DATA_DIR, DNSMASQ_INTERNAL_PORT, resolveDnsmasqInternalPort, ENCRYPTED_FORWARDER_PORT } from '../config/defaults.js';
+import { DATA_DIR, resolveDnsmasqInternalPort, ENCRYPTED_FORWARDER_PORT } from '../config/defaults.js';
 import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
@@ -243,7 +243,7 @@ function buildDnssecLines() {
   return lines;
 }
 
-export function regenerateDnsmasqConf(db) {
+export function regenerateDnsmasqConf(_db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return;
 
   // dnsmasq always uses real upstream servers — proxy sits in front, not behind
@@ -342,7 +342,7 @@ export function restartDnsmasq() {
   }
 }
 
-export function applyInterfaceConfig(db) {
+export function applyInterfaceConfig(_db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return;
 
   const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');

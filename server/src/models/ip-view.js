@@ -23,7 +23,6 @@ function activeLease(expiresAt) {
 
 export function computeIpView(row) {
   const ipLifecycleStatus = row.ip_lifecycle_status || row.status || 'available';
-  const isDhcpScope = row.range_type_name === 'DHCP Scope';
   const hasActiveLease = activeLease(row.dhcp_expires_at);
   const hasDhcpReservation = truthy(row.has_dhcp_reservation);
   const hasStaticDns = truthy(row.has_static_dns);

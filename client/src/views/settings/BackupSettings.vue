@@ -184,7 +184,6 @@ async function loadBackupSettings() {
 }
 
 async function saveBackupSettings() {
-  const previousSchedule = backupSchedule.value;
   try {
     await api.put('/settings/bulk', {
       settings: {
