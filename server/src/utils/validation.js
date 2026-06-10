@@ -16,7 +16,10 @@
  * interpolated into the format string itself.
  */
 export function sanitizeForLog(v) {
-  return String(v).replace(/[\x00-\x1f\x7f]/g, ' ');
+  // The explicit CR/LF pass is redundant with the control-char sweep below,
+  // but it matches the newline-removal pattern CodeQL recognizes as a
+  // log-injection barrier — the range form alone is not modeled.
+  return String(v).replace(/[\r\n]/g, ' ').replace(/[\x00-\x1f\x7f]/g, ' ');
 }
 
 /**
