@@ -34,14 +34,14 @@ function asyncHandler(fn) {
       const result = fn(req, res, next);
       if (result && typeof result.catch === 'function') {
         result.catch(err => {
-          console.error('Route error [%s %s]:', req.method, sanitizeForLog(req.originalUrl), err);
+          console.error('Route error [%s]:', sanitizeForLog(`${req.method} ${req.originalUrl}`), err);
           if (!res.headersSent) {
             res.status(500).json({ error: err.message || 'Internal server error' });
           }
         });
       }
     } catch (err) {
-      console.error('Route error [%s %s]:', req.method, sanitizeForLog(req.originalUrl), err);
+      console.error('Route error [%s]:', sanitizeForLog(`${req.method} ${req.originalUrl}`), err);
       if (!res.headersSent) {
         res.status(500).json({ error: err.message || 'Internal server error' });
       }
@@ -1890,7 +1890,7 @@ router.get('/:id/ips/:ip/events', requirePerm('subnets:read'), asyncHandler((req
 
 // Error handler for all subnet routes
 router.use((err, req, res, _next) => {
-  console.error('Subnet route error [%s %s]:', req.method, sanitizeForLog(req.originalUrl), err);
+  console.error('Subnet route error [%s]:', sanitizeForLog(`${req.method} ${req.originalUrl}`), err);
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 

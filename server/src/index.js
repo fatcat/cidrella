@@ -411,7 +411,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
 
     const status = err.status || 500;
     if (status >= 500) {
-      console.error('API 5xx [%s %s]:', req.method, sanitizeForLog(req.originalUrl), msg);
+      console.error('API 5xx [%s]:', sanitizeForLog(`${req.method} ${req.originalUrl}`), msg);
       return res.status(status).json({ error: 'Internal server error' });
     }
     // Body-parse errors from express.json() leak parser detail ("Expected
