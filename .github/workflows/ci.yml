@@ -45,3 +45,20 @@ jobs:
         # Same guards build-release.sh runs — catch version/notes drift and
         # broken release plumbing on every push, not just at release time.
         run: node scripts/check-release-version.js .
+
+      - name: Circular dependency check (server)
+        # Baseline = 1 known cycle: utils/dhcp.js → models/dhcp-lease.js →
+        # utils/after-commit.js → utils/dhcp.js. That one is a deliberate
+        # hook-registry pattern (imports only invoked at runtime; safe under
+        # ESM live bindings) — breaking it means inverting to runtime
+        # registration, tracked as a future refactor. This gate fails only
+        # when a NEW cycle appears. madge can't parse Vue SFCs, so client/
+        # is out of scope here.
+        run: |
+          COUNT=$(npx -y madge --circular --extensions js --json server/src | jq 'length')
+          echo "Circular dependency chains: $COUNT (baseline: 1)"
+          if [ "$COUNT" -gt 1 ]; then
+            npx -y madge --circular --extensions js server/src
+            echo "New circular dependency introduced — see chains above."
+            exit 1
+          fi

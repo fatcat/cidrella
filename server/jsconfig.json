@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2023",
+    "checkJs": false
+  },
+  "include": ["src/**/*.js", "tests/**/*.js"],
+  "exclude": ["node_modules", "data"]
+}

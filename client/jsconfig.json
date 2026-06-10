@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "checkJs": false
+  },
+  "include": ["src/**/*.js", "vite.config.js", "vitest.config.js"],
+  "exclude": ["node_modules", "dist"]
+}

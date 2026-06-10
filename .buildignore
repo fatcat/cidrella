@@ -49,6 +49,9 @@ secrets
 tests/
 vitest.config.js
 
+# Editor/LSP indexing config — dev-only
+jsconfig.json
+
 # Dev-only scripts — users can't usefully run these on a production box.
 # NOTE: this is an explicit-name exclusion list. If a new dev script is added
 # in the future, it must be added here or it will silently ship. Longer-term,
