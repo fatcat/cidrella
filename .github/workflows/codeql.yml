@@ -11,22 +11,34 @@ on:
 
 jobs:
   analyze:
-    name: Analyze (javascript-typescript)
+    name: Analyze (${{ matrix.language }})
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       actions: read
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Taint-flow queries for the things the live injection tester probes
+          # episodically — this runs on every push.
+          - language: javascript-typescript
+            queries: security-and-quality
+          # server/anomaly (anomaly-detection sidecar)
+          - language: python
+            queries: security-and-quality
+          # Workflow files themselves (untrusted-input/injection patterns).
+          - language: actions
+            queries: security-extended
     steps:
       - uses: actions/checkout@v6
 
       - uses: github/codeql-action/init@v4
         with:
-          languages: javascript-typescript
-          # Taint-flow queries for the things the live injection tester probes
-          # episodically — this runs on every push.
-          queries: security-and-quality
+          languages: ${{ matrix.language }}
+          queries: ${{ matrix.queries }}
 
       - uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:javascript-typescript"
+          category: "/language:${{ matrix.language }}"
