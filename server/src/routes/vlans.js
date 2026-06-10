@@ -25,7 +25,7 @@ router.get('/search', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
   const { q } = req.query;
 
-  const escaped = (q || '').trim().replace(/[%_]/g, '\\$&');
+  const escaped = (typeof q === 'string' ? q : '').trim().replace(/[\\%_]/g, '\\$&');
   const term = `%${escaped}%`;
   const vlans = db.prepare(`
     SELECT v.*,

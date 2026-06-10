@@ -11,6 +11,7 @@ import * as IpAddress from '../models/ip-address.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import * as Range from '../models/range.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
+import { sanitizeForLog } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
@@ -33,14 +34,14 @@ function asyncHandler(fn) {
       const result = fn(req, res, next);
       if (result && typeof result.catch === 'function') {
         result.catch(err => {
-          console.error(`Route error [${req.method} ${req.originalUrl}]:`, err);
+          console.error('Route error [%s %s]:', req.method, sanitizeForLog(req.originalUrl), err);
           if (!res.headersSent) {
             res.status(500).json({ error: err.message || 'Internal server error' });
           }
         });
       }
     } catch (err) {
-      console.error(`Route error [${req.method} ${req.originalUrl}]:`, err);
+      console.error('Route error [%s %s]:', req.method, sanitizeForLog(req.originalUrl), err);
       if (!res.headersSent) {
         res.status(500).json({ error: err.message || 'Internal server error' });
       }
@@ -1889,7 +1890,7 @@ router.get('/:id/ips/:ip/events', requirePerm('subnets:read'), asyncHandler((req
 
 // Error handler for all subnet routes
 router.use((err, req, res, _next) => {
-  console.error(`Subnet route error [${req.method} ${req.originalUrl}]:`, err);
+  console.error('Subnet route error [%s %s]:', req.method, sanitizeForLog(req.originalUrl), err);
   res.status(500).json({ error: err.message || 'Internal server error' });
 });
 

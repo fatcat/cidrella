@@ -26,6 +26,7 @@ import * as Range from './models/range.js';
 import * as AuditLog from './models/audit-log.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
+import { sanitizeForLog } from './utils/validation.js';
 import { authMiddleware } from './auth/middleware.js';
 import { afterCommitMiddleware } from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
@@ -410,7 +411,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
 
     const status = err.status || 500;
     if (status >= 500) {
-      console.error(`API 5xx [${req.method} ${req.originalUrl}]:`, msg);
+      console.error('API 5xx [%s %s]:', req.method, sanitizeForLog(req.originalUrl), msg);
       return res.status(status).json({ error: 'Internal server error' });
     }
     // Body-parse errors from express.json() leak parser detail ("Expected

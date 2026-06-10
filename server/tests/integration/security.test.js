@@ -690,3 +690,20 @@ describe('M1 — change-password rate limiter caps at 10/15min per IP', () => {
     expect(lastStatus).toBe(429);
   }, 30_000);
 });
+
+// -----------------------------------------------------------------------------
+// CodeQL #5 — blocklist search: array-typed query param must not crash
+// -----------------------------------------------------------------------------
+describe('blocklist search query type confusion', () => {
+  it('returns an empty result, not a 500, when q is supplied twice (array)', async () => {
+    const res = await request(app).get('/api/blocklists/search?q=aaa&q=bbb');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ items: [], total: 0 });
+  });
+
+  it('still serves normal string queries', async () => {
+    const res = await request(app).get('/api/blocklists/search?q=ads');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.items)).toBe(true);
+  });
+});

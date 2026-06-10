@@ -19,7 +19,6 @@ import argparse
 import getpass
 import ipaddress
 import json
-import re
 import ssl
 import sys
 import tomllib
@@ -45,7 +44,7 @@ def api(base_url, method, path, token=None, body=None, ctx=None):
         try:
             err_body = json.loads(err_body)
         except Exception:
-            pass
+            pass  # body wasn't JSON — keep the raw text as the detail
         return {"_error": True, "_status": e.code, "_detail": err_body}
 
 

@@ -69,6 +69,7 @@ def _query(query_name, **params):
             if attempt >= 5 or not isinstance(exc.reason, ConnectionRefusedError):
                 raise
             time.sleep(2)
+    raise RuntimeError(f"query {query_name!r} failed: retries exhausted")  # unreachable
 
 
 def _query_one(query_name, **params):

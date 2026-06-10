@@ -148,6 +148,9 @@ function validateImportRecord(record, zoneName) {
  */
 async function normalizeUrl(url) {
   if (typeof url !== 'string' || !url) return { error: 'URL is required' };
+  // Length cap before any regex work — the trailing-slash strip below is
+  // quadratic on pathological all-slash inputs (CodeQL js/polynomial-redos).
+  if (url.length > 2048) return { error: 'URL is too long' };
   const trimmed = url.replace(/\/+$/, '');
   const check = await validateOutboundUrl(trimmed);
   if (!check.ok) return { error: check.reason };

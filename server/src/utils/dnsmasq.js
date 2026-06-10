@@ -152,7 +152,7 @@ export function regenerateConfDir(db) {
           // already blocks these; a bad row in the DB from a pre-v0.4.15
           // install is silently skipped rather than emitted.
           if (validateTxtValue(r.value) != null) break;
-          lines.push(`txt-record=${fqdn},"${r.value.replace(/"/g, '\\"')}"`);
+          lines.push(`txt-record=${fqdn},"${r.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
           break;
         case 'SRV':
           if (validateDnsmasqConfigValue(r.value) != null) break;

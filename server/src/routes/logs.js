@@ -29,9 +29,9 @@ export function isDhcpLine(line) {
 
 function ensureLogFile() {
   fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
-  if (!fs.existsSync(LOG_FILE)) {
-    fs.writeFileSync(LOG_FILE, '');
-  }
+  // Append nothing: creates the file if missing without truncating one that
+  // dnsmasq created (and started writing) between a check and a write.
+  fs.writeFileSync(LOG_FILE, '', { flag: 'a' });
 }
 
 function matchesFilter(line, filter) {

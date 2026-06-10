@@ -85,7 +85,7 @@ async function readArpCache() {
  * Inheritance: IP override → Subnet override → Folder default → true
  */
 function shouldScanIp(ipOverride, subnetDefault) {
-  if (ipOverride !== null && ipOverride !== undefined) return !!ipOverride;
+  if (ipOverride != null) return !!ipOverride;
   return subnetDefault;
 }
 

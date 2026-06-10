@@ -1,7 +1,5 @@
 """Isolation Forest model management — train, score, persist, explain."""
 
-import json
-import numpy as np
 import joblib
 from sklearn.ensemble import IsolationForest
 

@@ -111,3 +111,23 @@ describe('regenerateConfigs reload behavior', () => {
     expect(hosts).not.toContain('host.google.com.the-mcnultys.org');
   });
 });
+
+describe('TXT record escaping', () => {
+  it('escapes backslashes so a trailing backslash cannot swallow the closing quote', () => {
+    regenerateConfigs(makeDb({
+      otherRecords: [{ name: 'spf', type: 'TXT', value: 'v=spf1 a:mail.example.com \\', ttl: null }],
+    }));
+
+    const conf = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'conf.d', 'zone-10.conf'), 'utf-8');
+    expect(conf).toContain('txt-record=spf.the-mcnultys.org,"v=spf1 a:mail.example.com \\\\"');
+  });
+
+  it('escapes quotes and backslashes independently', () => {
+    regenerateConfigs(makeDb({
+      otherRecords: [{ name: 'meta', type: 'TXT', value: 'say "hi" via C:\\path', ttl: null }],
+    }));
+
+    const conf = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'conf.d', 'zone-10.conf'), 'utf-8');
+    expect(conf).toContain('txt-record=meta.the-mcnultys.org,"say \\"hi\\" via C:\\\\path"');
+  });
+});

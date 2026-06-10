@@ -117,6 +117,7 @@ function publicKeyPemFromKey(keyPath) {
 function clearPendingCsrFiles(dir) {
   try { fs.unlinkSync(path.join(dir, 'pending-csr.key')); } catch {}
   try { fs.unlinkSync(path.join(dir, 'pending-csr.csr')); } catch {}
+  try { fs.unlinkSync(path.join(dir, 'pending-csr.cnf')); } catch {}
 }
 
 // POST /api/operations/backup — create a new backup
@@ -297,17 +298,21 @@ router.post('/certs/upload', (req, res) => {
   if (key !== undefined && key !== null && typeof key !== 'string') return res.status(400).json({ error: 'key field must be a string' });
   if (typeof key === 'string' && key.length > 128 * 1024) return res.status(400).json({ error: 'key field is too large' });
 
-  // Validate cert
-  const tmpCert = path.join(os.tmpdir(), `cidrella-cert-${Date.now()}.pem`);
-  const tmpKey = path.join(os.tmpdir(), `cidrella-key-${Date.now()}.pem`);
+  // Validate cert. Key material goes through a private mkdtemp dir (0700,
+  // unpredictable name) — never a fixed path in the shared /tmp, where
+  // another local user could pre-create the file or plant a symlink and
+  // capture the private key.
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-cert-'));
+  const tmpCert = path.join(tmpDir, 'cert.pem');
+  const tmpKey = path.join(tmpDir, 'key.pem');
   const dir = certsDir();
   const pendingKeyPath = path.join(dir, 'pending-csr.key');
   const usingPendingKey = !key && fs.existsSync(pendingKeyPath);
 
   try {
-    fs.writeFileSync(tmpCert, cert);
+    fs.writeFileSync(tmpCert, cert, { mode: 0o600 });
     if (key) {
-      fs.writeFileSync(tmpKey, key);
+      fs.writeFileSync(tmpKey, key, { mode: 0o600 });
     } else if (usingPendingKey) {
       fs.copyFileSync(pendingKeyPath, tmpKey);
     } else {
@@ -338,8 +343,7 @@ router.post('/certs/upload', (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message || 'Invalid certificate or key' });
   } finally {
-    try { fs.unlinkSync(tmpCert); } catch {}
-    try { fs.unlinkSync(tmpKey); } catch {}
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 });
 
@@ -401,7 +405,9 @@ router.post('/certs/csr', (req, res) => {
   const dir = certsDir();
   const keyPath = path.join(dir, 'pending-csr.key');
   const csrPath = path.join(dir, 'pending-csr.csr');
-  const configPath = path.join(os.tmpdir(), `cidrella-csr-${Date.now()}.cnf`);
+  // Lives next to the pending-csr key/csr in the app-owned certs dir, not
+  // the shared /tmp (symlink-planting target); removed in the finally below.
+  const configPath = path.join(dir, 'pending-csr.cnf');
   const subjectParts = [
     ['C', subject.country.toUpperCase()],
     ['ST', subject.state],

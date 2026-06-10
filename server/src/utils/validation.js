@@ -9,6 +9,17 @@
  */
 
 /**
+ * Strip control characters (CR/LF, ANSI escape introducers) from a
+ * request-derived value before embedding it in a log line, so request
+ * data can't forge log entries or smuggle terminal escapes into the
+ * journal. Pass the result as a printf-style argument (`%s`), never
+ * interpolated into the format string itself.
+ */
+export function sanitizeForLog(v) {
+  return String(v).replace(/[\x00-\x1f\x7f]/g, ' ');
+}
+
+/**
  * Require `v` to be a real JS integer in [1, 65535]. Rejects numeric
  * strings, single-element arrays, booleans, and everything else that
  * would be silently coerced by `Number()` or `parseInt()`. Returns an

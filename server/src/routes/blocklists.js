@@ -229,12 +229,12 @@ router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
 router.get('/search', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   const { q, page = 1, limit = 50 } = req.query;
-  if (!q || q.length < 2) return res.json({ items: [], total: 0 });
+  if (typeof q !== 'string' || q.length < 2) return res.json({ items: [], total: 0 });
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
   const offset = (pageNum - 1) * limitNum;
-  const escaped = q.replace(/[%_]/g, '\\$&');
+  const escaped = q.replace(/[\\%_]/g, '\\$&');
   const searchTerm = `%${escaped}%`;
 
   const total = db.prepare(`

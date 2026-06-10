@@ -46,7 +46,7 @@ function extractRoutes(app) {
     }
 
     // Simple mount: ^\\/api\\/auth\\/?(?=\\/|$)
-    const m = src.match(/^\^\\\/([\w\-\\/\\:.]+)/);
+    const m = src.match(/^\^\\\/([\w\-\\/:.]+)/);
     if (m) return '/' + m[1].replace(/\\\//g, '/').replace(/\\-/g, '-').replace(/\\./g, '.');
     return '';
   }
