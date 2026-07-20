@@ -6,20 +6,20 @@
   "dependencies": {
     "@duckdb/node-api": "^1.5.3-r.2",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.10.0",
+    "better-sqlite3": "^12.11.1",
     "cors": "^2.8.5",
     "dns-packet": "^5.6.1",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.3.2",
-    "helmet": "^8.0.0",
+    "express-rate-limit": "^8.6.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
-    "lru-cache": "^11.2.6",
+    "lru-cache": "^11.5.2",
     "maxmind": "^5.0.5",
     "morgan": "^1.10.0",
-    "smol-toml": "^1.6.1"
+    "smol-toml": "^1.7.0"
   },
   "devDependencies": {
     "supertest": "^7.2.2",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.10"
   }
 }
