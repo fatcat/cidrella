@@ -11,7 +11,7 @@ RUN VITE_TRACKING=$DEV_TRACKING npx vite build
 FROM node:24-alpine
 
 # s6-overlay version
-ARG S6_OVERLAY_VERSION=3.2.3.0
+ARG S6_OVERLAY_VERSION=3.2.3.2
 ARG TARGETARCH
 
 # Install s6-overlay (noarch + arch-specific)
