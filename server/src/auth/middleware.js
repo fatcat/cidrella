@@ -57,7 +57,12 @@ export function authMiddleware(req, res, next) {
   }
 
   try {
-    const decoded = jwt.verify(token, secret);
+    // Pin the algorithm to what we sign with (HS256). Without this, jwt.verify
+    // accepts any algorithm in the token header, which is the classic
+    // alg-confusion footing (e.g. an attacker flipping to 'none' or to an
+    // asymmetric alg). Not exploitable with our symmetric secret, but this
+    // closes the class outright rather than relying on the secret's shape.
+    const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] });
 
     // Re-validate user from DB to catch deletions/role changes
     const user = db.prepare('SELECT id, role, must_change_password, updated_at FROM users WHERE id = ?').get(decoded.id);

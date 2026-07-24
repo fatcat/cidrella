@@ -259,7 +259,31 @@ assert_file_contains() {
 #   output to /tmp/install-output.log. Used by any scenario whose scenario_run
 #   needs "start from a clean host, install the latest release, then assert".
 #   Returns install.sh's exit code.
+# Wait for apt/dpkg locks to clear. reset_host's package purge can leave a
+# lock held for a few seconds after its ssh returns (or an apt timer can
+# grab one), and the shipped installers run apt-get with output swallowed
+# under set -e, so a lock collision kills the install silently and fast.
+# flock ships with util-linux, so it exists even on a freshly wiped host.
+wait_for_apt() {
+  local lock
+  for lock in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock; do
+    if [ -e "$lock" ]; then
+      flock -w 120 "$lock" true || { echo "apt lock $lock still held after 120s" >&2; return 1; }
+    fi
+  done
+  return 0
+}
+
+# Refresh apt lists before invoking a shipped installer. A wiped lab host
+# can sit long enough for the mirror to rotate package versions, and the
+# installers' apt-get calls then 404 on the stale list URLs.
+refresh_apt_lists() {
+  apt-get update -qq >/dev/null 2>&1 || echo "warning: apt-get update failed; install may hit stale lists" >&2
+}
+
 install_latest_release() {
+  wait_for_apt || return 1
+  refresh_apt_lists
   curl -fsSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh \
     -o /tmp/install.sh || return 1
   yes y | bash /tmp/install.sh > /tmp/install-output.log 2>&1
@@ -274,6 +298,8 @@ install_latest_release() {
 install_release_tag() {
   local tag="$1"
   [ -n "$tag" ] || { echo "install_release_tag: tag required" >&2; return 2; }
+  wait_for_apt || return 1
+  refresh_apt_lists
   case "$tag" in v*) : ;; *) tag="v$tag" ;; esac
   curl -fsSL "https://raw.githubusercontent.com/fatcat/cidrella/${tag}/scripts/install.sh" \
     -o /tmp/install.sh || return 1

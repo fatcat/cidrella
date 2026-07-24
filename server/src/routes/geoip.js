@@ -48,10 +48,13 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
 
   const CC_RE = /^[A-Z]{2}$/;
 
-  // Validate all country codes before inserting
-  const invalid = countries.filter(c => !c.code || !CC_RE.test(c.code));
+  // Validate all country codes before inserting. Guard the element type too:
+  // a non-object entry (null, string, number) would throw on `.code` and turn
+  // into a 500 instead of a clean 400.
+  const invalid = countries.filter(c => !c || typeof c !== 'object' || !c.code || !CC_RE.test(c.code));
   if (invalid.length > 0) {
-    return res.status(400).json({ error: `Invalid country codes: ${invalid.map(c => c.code || '(empty)').join(', ')}` });
+    // c may be null/non-object here, so read `code` defensively for the message too.
+    return res.status(400).json({ error: `Invalid country codes: ${invalid.map(c => (c && c.code) || '(empty)').join(', ')}` });
   }
 
   // Check for duplicates

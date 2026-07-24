@@ -127,3 +127,12 @@ describe('canonicalizeExisting backfill — UNIQUE collision regression', () => 
     ]);
   });
 });
+
+describe('POST /api/geoip/rules type guards (v0.4.16-pre.3 pentest)', () => {
+  it('rejects non-object country entries with 400 not 500', async () => {
+    for (const bad of [[null], ['US'], [123], [{}]]) {
+      const res = await request(app).post('/api/geoip/rules').send({ countries: bad });
+      expect(res.status, `countries ${JSON.stringify(bad)}`).toBe(400);
+    }
+  });
+});

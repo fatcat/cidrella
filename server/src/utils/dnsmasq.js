@@ -114,6 +114,14 @@ export function regenerateConfDir(db) {
   let changed = false;
 
   for (const zone of zones) {
+    // Defense in depth: the zone name is interpolated raw into ptr-record= and
+    // the SOA comment below. The route validates it, but this writer is the
+    // actual config-injection sink, so it must never trust a stored name.
+    // Skip any zone whose name carries characters that could break out of the
+    // line or smuggle a directive (a legit name is a domain or dotted-decimal
+    // in-addr.arpa — no whitespace, commas, or control chars).
+    if (validateDnsmasqConfigValue(zone.name) != null) continue;
+
     const records = db.prepare(`
       SELECT name, type, value, priority, weight, port, ttl FROM dns_records
       WHERE zone_id = ? AND type NOT IN ('A', 'PTR') AND enabled = 1

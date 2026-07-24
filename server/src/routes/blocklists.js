@@ -4,6 +4,7 @@ import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig, SCHEDULE_HOURS } from '../utils/blocklist.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
+import { isValidIpv4 } from '../utils/ip.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
 
@@ -42,7 +43,9 @@ router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
 
   const cat = BLOCKLIST_CATEGORIES.find(c => c.slug === slug);
   if (!cat) return res.status(404).json({ error: 'Unknown category' });
-  if (enabled === undefined) return res.status(400).json({ error: 'enabled field is required' });
+  // Require a real boolean. The old check accepted any truthy value, so
+  // {"enabled":{...}} enabled the category and kicked off a live download.
+  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean' });
 
   ensureCategoryRows(db);
   BlocklistStore.setCategoryEnabled(db, slug, enabled);
@@ -168,6 +171,15 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: `blocklist_update_schedule must be one of: ${validSchedules.join(', ')}` });
   }
 
+  // redirect IP becomes the A-record for every blocked domain, so it must be
+  // a real IPv4 (or empty = NXDOMAIN). An object persisted as "[object Object]"
+  // and drove a garbage answer IP.
+  if (req.body.blocklist_redirect_ip !== undefined
+      && req.body.blocklist_redirect_ip !== ''
+      && (typeof req.body.blocklist_redirect_ip !== 'string' || !isValidIpv4(req.body.blocklist_redirect_ip))) {
+    return res.status(400).json({ error: 'blocklist_redirect_ip must be a valid IPv4 address or empty' });
+  }
+
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
       Setting.upsertSetting(db, key, req.body[key]);
@@ -192,7 +204,9 @@ router.get('/whitelist', requirePerm('dns:read'), (req, res) => {
 router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const { domain, reason } = req.body;
-  if (!domain) return res.status(400).json({ error: 'Domain is required' });
+  // Type guard before the string methods below: a non-string domain (number,
+  // array, object) would throw on .trim()/.toLowerCase() and 500.
+  if (typeof domain !== 'string' || !domain) return res.status(400).json({ error: 'Domain is required' });
 
   const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$/;
   if (!DOMAIN_RE.test(domain.trim())) {

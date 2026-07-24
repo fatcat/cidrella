@@ -262,6 +262,35 @@ describe('C2/H2 — DNS record config injection', () => {
     expect(res.body.value).toBe('target-host.injtest.example');
   });
 
+  // CRITICAL (v0.4.16-pre.3 pentest): the reverse-zone name branch skipped all
+  // validation, so a newline-laden `.in-addr.arpa` name smuggled arbitrary
+  // dnsmasq directives (address=/hijack/6.6.6.6) into conf.d and hijacked DNS.
+  it('rejects a reverse zone name with an injected directive (config injection)', async () => {
+    const res = await request(app).post('/api/dns/zones').send({
+      name: '1.2.10.foo,ok\naddress=/hijack.pentest.test/6.6.6.6\n#z.in-addr.arpa',
+      type: 'reverse'
+    });
+    expect(res.status).toBe(400);
+  });
+
+  // The injection vector is control/delimiter characters in the name, since
+  // that's what breaks out of the config line. A benign non-reverse domain
+  // like 'evil.in-addr.arpa' is accepted (isValidDomain passes) and is
+  // harmless, matching pre-existing behavior, so it's not in this list.
+  it('rejects reverse zone names carrying delimiter/control characters', async () => {
+    for (const name of ['5,x.in-addr.arpa', '1 2.in-addr.arpa', '1.2.arpa,evil', '10.in-addr.arpa\naddress=/x/1.1.1.1']) {
+      const res = await request(app).post('/api/dns/zones').send({ name, type: 'reverse' });
+      expect(res.status, `name ${JSON.stringify(name)}`).toBe(400);
+    }
+  });
+
+  it('still accepts every legitimate reverse zone form', async () => {
+    for (const name of ['10.in-addr.arpa', '88.10.in-addr.arpa', '5.88.10.in-addr.arpa']) {
+      const res = await request(app).post('/api/dns/zones').send({ name, type: 'reverse' });
+      expect([201, 409]).toContain(res.status); // 409 if a prior test already made it
+    }
+  });
+
   it('rejects a CNAME alias FQDN outside the zone', async () => {
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
       name: 'wrong.example.net',

@@ -315,7 +315,15 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
   if (typeof type !== 'string' || !['forward', 'reverse'].includes(type)) {
     return res.status(400).json({ error: 'Zone type must be forward or reverse' });
   }
-  if (!isValidDomain(name) && !name.endsWith('.in-addr.arpa')) {
+  // Forward zones: a normal domain. Reverse zones: ONLY the dotted-decimal
+  // in-addr.arpa form the generator produces (`<octet>.<octet>.<octet>.in-addr.arpa`).
+  // The old check accepted anything ending in `.in-addr.arpa` with no charset
+  // or length guard, so a newline-laden name smuggled arbitrary dnsmasq
+  // directives into conf.d/zone-*.conf (the name is interpolated raw at the
+  // ptr-record line). Digits and dots only closes that hole and still accepts
+  // every legitimate reverse zone.
+  const REVERSE_ZONE_RE = /^(?:\d{1,3}\.){1,3}in-addr\.arpa$/;
+  if (!isValidDomain(name) && !REVERSE_ZONE_RE.test(name)) {
     return res.status(400).json({ error: 'Invalid zone name' });
   }
 

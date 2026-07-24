@@ -308,7 +308,19 @@ info "Installing system dependencies..."
 # working polkit daemon and JS rules engine, those grants never apply and
 # the UI updater silently fails the same way the v0.4.8/v0.4.9 sudo path
 # did. Try the modern package name first, fall back to the legacy name.
-apt-get install -y -qq build-essential arping iputils-ping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1
+# Refresh package lists first. Stale lists point at .deb URLs the mirror
+# has rotated away (404), which killed the install silently here because
+# the apt output below is swallowed. Surface a diagnostic on failure
+# instead of dying without a word (set -e would otherwise end the script
+# at the failing apt-get with no output at all).
+if ! apt-get update -qq >/dev/null 2>&1; then
+  warn "apt-get update failed; continuing with existing package lists"
+fi
+if ! apt-get install -y -qq build-essential arping iputils-ping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1; then
+  err "apt-get failed installing base dependencies. Run this to see why:"
+  err "  apt-get update && apt-get install -y build-essential arping iputils-ping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib"
+  exit 1
+fi
 if ! command -v openssl >/dev/null 2>&1; then
   err "openssl is required for TLS certificate generation, CSR generation, and certificate validation."
   err "Install it manually with: apt-get install openssl"
