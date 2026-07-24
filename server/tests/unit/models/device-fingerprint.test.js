@@ -45,4 +45,28 @@ describe('device-fingerprint model', () => {
     expect(DF.getByMac(db, '11:22:33:44:55:66').device_type).toBe('IoT');
     expect(DF.getByMac(db, 'ff:ff:ff:ff:ff:ff')).toBeNull();
   });
+
+  it('clearManual removes a manual override so the next capture re-classifies', () => {
+    const db = getDb();
+    DF.setManual(db, 'aa:bb:cc:dd:ee:01', { device_type: 'Printer', os_family: 'Linux' });
+    expect(DF.getByMac(db, 'aa:bb:cc:dd:ee:01').source).toBe('manual');
+
+    const info = DF.clearManual(db, 'AA:BB:CC:DD:EE:01');
+    expect(info.changes).toBe(1);
+    expect(DF.getByMac(db, 'aa:bb:cc:dd:ee:01')).toBeNull();
+
+    DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:01', dhcp_fingerprint: '1,3,6', device_type: 'Computer', os_family: 'Windows', confidence: 80, source: 'dhcp' });
+    const row = DF.getByMac(db, 'aa:bb:cc:dd:ee:01');
+    expect(row.source).toBe('dhcp');
+    expect(row.device_type).toBe('Computer');
+  });
+
+  it('clearManual is a no-op on auto-classified rows', () => {
+    const db = getDb();
+    DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:02', device_type: 'IoT', confidence: 60, source: 'dhcp' });
+    const info = DF.clearManual(db, 'aa:bb:cc:dd:ee:02');
+    expect(info.changes).toBe(0);
+    expect(DF.getByMac(db, 'aa:bb:cc:dd:ee:02').device_type).toBe('IoT');
+  });
 });
+

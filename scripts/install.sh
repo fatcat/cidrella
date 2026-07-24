@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Anchor CWD to / so we never depend on the invoker's working directory.
-# See the note in update.sh — same reasoning: if the caller is cd'd into a
+# See the note in update.sh, same reasoning: if the caller is cd'd into a
 # directory this script ends up removing (slot wipe, data dir cleanup, etc),
 # child processes like rsync will fail on getcwd() at startup. Immunizing
 # here is a one-line fix.
@@ -45,7 +45,7 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 
-# Minimal inline JSONL event emitter — this script runs via curl|bash
+# Minimal inline JSONL event emitter, this script runs via curl|bash
 # before any tarball exists on disk, so we can't source scripts/lib/log.sh
 # until after extraction. This inline version produces the same JSONL
 # format as lib/log.sh so the install and update event streams are
@@ -224,7 +224,7 @@ if ss -tlnp 2>/dev/null | grep -q ':53 '; then
         echo "DNSStubListener=no" >> /etc/systemd/resolved.conf
       fi
 
-      # Fix resolv.conf — point directly at upstream (will be replaced by dnsmasq later)
+      # Fix resolv.conf, point directly at upstream (will be replaced by dnsmasq later)
       rm -f /etc/resolv.conf
       echo "nameserver 8.8.8.8" > /etc/resolv.conf
       echo "nameserver 9.9.9.9" >> /etc/resolv.conf
@@ -245,7 +245,7 @@ if ss -tlnp 2>/dev/null | grep -q ':53 '; then
 fi
 
 # ═══════════════════════════════════════════════════════════
-# NTP — system clock sync (required for DNSSEC validation)
+# NTP: system clock sync (required for DNSSEC validation)
 # ═══════════════════════════════════════════════════════════
 #
 # DNSSEC signature validation checks each signature's NotBefore/NotAfter
@@ -273,17 +273,17 @@ if command -v timedatectl >/dev/null 2>&1; then
 fi
 
 # ═══════════════════════════════════════════════════════════
-# NODE.JS — bundled runtime
+# NODE.JS: bundled runtime
 # ═══════════════════════════════════════════════════════════
 #
 # Starting in v0.4.7 CIDRella ships its own Node runtime inside the release
 # tarball at $SLOT/runtime/node/bin/node. The cidrella-node wrapper resolves
 # to that path before falling through to the system binary, and the systemd
-# unit's ExecStart points at /usr/local/bin/cidrella-node — so we don't need
+# unit's ExecStart points at /usr/local/bin/cidrella-node, so we don't need
 # a system Node at all. The previous NodeSource install block was removed.
 #
 # If the user already has a system Node installed (from an earlier install
-# or their own apt install), we leave it alone — harmless, just unused.
+# or their own apt install), we leave it alone. Harmless, just unused.
 if command -v node >/dev/null 2>&1; then
   info "System Node.js $(node -v) present (will be unused — runtime ships bundled)"
 else
@@ -294,7 +294,7 @@ fi
 # SYSTEM PACKAGES
 # ═══════════════════════════════════════════════════════════
 #
-# Dropped from this list in v0.4.7: nmap (never called by the app — was in
+# Dropped from this list in v0.4.7: nmap (never called by the app, was in
 # the prior apt list unused), nodejs (bundled now). build-essential and
 # python3-setuptools are kept because some users may still want to `npm
 # rebuild` manually. arping and iputils-ping are kept because the scanner
@@ -304,7 +304,7 @@ fi
 info "Installing system dependencies..."
 # polkit (a.k.a. policykit-1 on older Debian/Ubuntu, polkitd on newer) is a
 # HARD dependency as of v0.4.11. The cidrella server triggers the in-app
-# updater and dnsmasq reload via polkit-gated systemctl calls — without a
+# updater and dnsmasq reload via polkit-gated systemctl calls, without a
 # working polkit daemon and JS rules engine, those grants never apply and
 # the UI updater silently fails the same way the v0.4.8/v0.4.9 sudo path
 # did. Try the modern package name first, fall back to the legacy name.
@@ -382,7 +382,7 @@ if dpkg -l dnsmasq 2>/dev/null | grep -q '^ii'; then
 else
   info "Installing dnsmasq..."
   apt-get install -y -qq dnsmasq >/dev/null 2>&1
-  # Stop the default system service — CIDRella uses its own unit
+  # Stop the default system service, CIDRella uses its own unit
   systemctl stop dnsmasq 2>/dev/null || true
   systemctl disable dnsmasq 2>/dev/null || true
   DNSMASQ_MODE="own"
@@ -403,7 +403,7 @@ else
   ok "User $SERVICE_USER already exists."
 fi
 
-# Create data directories. `snapshots/` is explicitly listed — update.sh
+# Create data directories. `snapshots/` is explicitly listed, update.sh
 # later writes pre-update/ under it as root, and the running cidrella
 # service writes pre-restore/ under it at restore time. Pre-seeding the
 # parent dir with cidrella ownership avoids an EACCES in the restore path
@@ -481,8 +481,8 @@ fi
 # ═══════════════════════════════════════════════════════════
 # EXTRACT TO A/B LAYOUT
 # ═══════════════════════════════════════════════════════════
-# /opt/cidrella-a/   (slot A — fresh install goes here)
-# /opt/cidrella-b/   (slot B — reserved, populated by first update)
+# /opt/cidrella-a/   (slot A, fresh install goes here)
+# /opt/cidrella-b/   (slot B, reserved, populated by first update)
 # /opt/cidrella      (symlink -> /opt/cidrella-a)
 
 # If /opt/cidrella exists as a plain directory (legacy install), remove it
@@ -513,7 +513,7 @@ ok "Symlink: $INSTALL_LINK -> $INSTALL_DIR"
 
 # ─── Source shared library helpers (now that the slot is populated) ──
 # From here on we can use lib/systemd-install.sh. lib/log.sh's emit_event
-# will redefine our inline stub — since both produce the same JSONL line
+# will redefine our inline stub, since both produce the same JSONL line
 # format, the event stream stays homogeneous across the transition.
 if [ -f "$INSTALL_DIR/scripts/lib/systemd-install.sh" ]; then
   # shellcheck source=scripts/lib/systemd-install.sh
@@ -600,7 +600,7 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 
 info "Installing systemd services..."
 
-# Install cidrella-node wrapper first — v0.4.3+ systemd units reference it
+# Install cidrella-node wrapper first, v0.4.3+ systemd units reference it
 # as ExecStart, so it must exist before daemon-reload runs.
 if [ -f "$INSTALL_DIR/scripts/cidrella-node" ]; then
   install -m 0755 "$INSTALL_DIR/scripts/cidrella-node" /usr/local/bin/cidrella-node
@@ -662,7 +662,7 @@ emit_event systemd pass unit=cidrella.service
 # On a FRESH install we prefer 443/80 so the user browses to
 # `https://cidrella.local` without a port suffix. If either port is
 # already bound (e.g. by nginx, another appliance), we leave the unit's
-# default in place. Upgrades never run this block — update.sh explicitly
+# default in place. Upgrades never run this block, update.sh explicitly
 # skips unit reinstall when the existing unit is present, so any port
 # override the user set previously is preserved.
 # ═══════════════════════════════════════════════════════════
@@ -674,7 +674,7 @@ if [ -f "$PORT_OVERRIDE_FILE" ]; then
   WEB_HTTPS_PORT="${EXISTING_HTTPS_PORT:-$WEB_HTTPS_PORT}"
   WEB_HTTP_PORT="${EXISTING_HTTP_PORT:-$WEB_HTTP_PORT}"
 fi
-# If an override already exists, don't touch it — upgrade path.
+# If an override already exists, don't touch it. This is the upgrade path.
 if [ ! -f "$PORT_OVERRIDE_FILE" ]; then
   port_free() {
     # ss returns 0 whether or not it found anything; use grep to actually detect.
@@ -683,7 +683,7 @@ if [ ! -f "$PORT_OVERRIDE_FILE" ]; then
   if port_free 443 && port_free 80; then
     mkdir -p /etc/systemd/system/cidrella.service.d
     cat > "$PORT_OVERRIDE_FILE" <<'EOF'
-# CIDRella web-server port override — written by install.sh at first install.
+# CIDRella web-server port override, written by install.sh at first install.
 # Upgrades never touch this file. To revert to the default 8443/8080, delete
 # this file and run `systemctl daemon-reload && systemctl restart cidrella`.
 [Service]
@@ -740,7 +740,7 @@ install -m 0644 -o root -g root \
 ok "Installed polkit rule (/etc/polkit-1/rules.d/49-cidrella.rules)"
 # Polkit picks up new rules on the next D-Bus call to logind/systemd1.
 # Modern polkitd uses inotify on the rules.d directory; older versions need
-# an explicit reload. Try the reload but don't fail on it — the next D-Bus
+# an explicit reload. Try the reload but don't fail on it, the next D-Bus
 # call will pick up the rule regardless.
 systemctl reload polkit 2>/dev/null || systemctl reload polkitd 2>/dev/null || true
 
@@ -777,7 +777,7 @@ fi
 
 if [ -f "$INSTALL_LINK/scripts/rollback.sh" ]; then
   # Copy (not symlink) the rollback script so it survives if /opt/cidrella
-  # gets corrupted — rollback must never depend on the installation it is
+  # gets corrupted, rollback must never depend on the installation it is
   # rolling back.
   cp "$INSTALL_LINK/scripts/rollback.sh" /usr/local/bin/cidrella-rollback
   chmod +x /usr/local/bin/cidrella-rollback
@@ -857,7 +857,7 @@ fi
 # POST-INSTALL HOOK (v0.4.9+)
 # ═══════════════════════════════════════════════════════════
 #
-# Run the release's post-install hook — same convention update.sh uses for
+# Run the release's post-install hook, same convention update.sh uses for
 # the upgrade path. For a fresh install, PREV_SLOT is empty and
 # IS_FRESH_INSTALL=1 so the hook can branch on install-vs-update if it
 # needs to. Non-fatal on error.

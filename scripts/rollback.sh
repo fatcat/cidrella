@@ -8,7 +8,7 @@ cd / 2>/dev/null || true
 
 # ═══════════════════════════════════════════════════════════
 # CIDRella Rollback
-# Standalone rollback script — does NOT depend on CIDRella code,
+# Standalone rollback script, does NOT depend on CIDRella code,
 # network, or DNS resolution.
 #
 # Restores the previous (inactive) slot and the pre-update
@@ -43,7 +43,7 @@ ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
-# Minimal inline JSONL event emitter — rollback MUST stay standalone, so
+# Minimal inline JSONL event emitter, rollback MUST stay standalone, so
 # we deliberately do not source scripts/lib/log.sh here. This produces the
 # same JSONL format as lib/log.sh for consistent downstream parsing.
 emit_event() {
@@ -64,7 +64,7 @@ emit_event() {
 }
 
 # ─── Node resolver ────────────────────────────────────────
-# Rollback must be standalone — no dependence on the installation being
+# Rollback must be standalone, no dependence on the installation being
 # rolled back. Inline the bundled-runtime check so this script stays
 # self-contained even if /usr/local/bin/cidrella-node was wiped.
 resolve_node() {

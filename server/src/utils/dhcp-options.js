@@ -3,12 +3,12 @@
  * Each entry defines how the option is displayed in the UI and written to dnsmasq config.
  *
  * Types:
- *   ip       — single IPv4 address
- *   ip-list  — comma-separated IPv4 addresses
- *   text     — free-form string
- *   text-list— comma-separated strings
- *   number   — integer
- *   select   — pick from choices[]
+ *   ip      , single IPv4 address
+ *   ip-list , comma-separated IPv4 addresses
+ *   text    , free-form string
+ *   text-list, comma-separated strings
+ *   number  , integer
+ *   select  , pick from choices[]
  *
  * Groups (display order):
  *   Common, Network, DNS, Time, Boot/PXE, NetBIOS, Ancient History
@@ -58,7 +58,7 @@ export const DHCP_OPTIONS = [
   { code: 119, name: 'domain-search',          label: 'DNS Search List',            type: 'text-list', dnsmasqName: 'option:domain-search',  group: 'Common',  rfc: 'RFC 3397', rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3397',             description: 'Domain search list for hostname resolution.' },
 
   // ── Time ────────────────────────────────────────────────────────────
-  { code: 42,  name: 'ntp-server',             label: 'NTP Servers',                type: 'ip-list',   dnsmasqName: 'option:ntp-server',     group: 'Common',  rfc: 'RFC 2132', rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-8.3',  description: 'NTP server addresses, in order of preference. Enter hostnames or IPs — hostnames are resolved automatically.' },
+  { code: 42,  name: 'ntp-server',             label: 'NTP Servers',                type: 'ip-list',   dnsmasqName: 'option:ntp-server',     group: 'Common',  rfc: 'RFC 2132', rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-8.3',  description: 'NTP server addresses, in order of preference. Enter hostnames or IPs, hostnames are resolved automatically.' },
 
   // ── Boot/PXE ────────────────────────────────────────────────────────
   { code: 13,  name: 'boot-file-size',         label: 'Boot File Size',             type: 'number',    dnsmasqName: '13',                    group: 'Boot/PXE', rfc: 'RFC 2132', rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-3.15', description: 'Length of the default boot image in 512-octet blocks.' },

@@ -16,7 +16,7 @@ set -euo pipefail
 #     carry the -suffix, so the running server reports 0.4.15-pre. This is
 #     distinct from the final 0.4.15 so monitoring / the UI footer / audit
 #     logs don't blur the two.
-#   - GitHub release is flagged --prerelease, so /releases/latest skips it —
+#   - GitHub release is flagged --prerelease, so /releases/latest skips it,
 #     other hosts' auto-update checks won't see it.
 #   - releases.json manifest is NOT uploaded, so hosts using the signed
 #     manifest path also won't see it. Only an explicit `cidrella-update
@@ -25,7 +25,7 @@ set -euo pipefail
 #     publishes the release, so `gh release delete --cleanup-tag` is a
 #     one-command rollback.
 #   - For multi-iteration pre-releases, use dotted-numeric identifiers
-#     (pre.1, pre.2, pre.10) — per semver 2.0 they sort numerically.
+#     (pre.1, pre.2, pre.10). Those sort numerically per semver 2.0.
 #     Plain "pre2" vs "pre10" compares lexically and orders wrong.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -91,7 +91,7 @@ EXAMPLES
     # Preview what a release WOULD do without touching anything
     ./scripts/build-release.sh --dry-run
 
-    # Build the tarball but skip publishing — handy before committing
+    # Build the tarball but skip publishing, handy before committing
     ./scripts/build-release.sh --build-only
 
     # Pre-release for testerella validation (becomes e.g. v0.4.15-pre)
@@ -139,7 +139,7 @@ while [[ $# -gt 0 ]]; do
       else
         PRE_SUFFIX="pre"; shift
       fi
-      # Sanity check — semver prerelease identifiers are [0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*
+      # Sanity check, semver prerelease identifiers are [0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*
       if ! [[ "$PRE_SUFFIX" =~ ^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$ ]]; then
         echo "Error: --pre suffix '$PRE_SUFFIX' is not a valid semver prerelease identifier."
         echo "  Allowed: [0-9A-Za-z-] separated by dots. Examples: pre, pre.1, rc.2, beta"
@@ -167,7 +167,7 @@ else
   VERSION="${BASE_VERSION}"
 fi
 TAG="v${VERSION}"
-# Architecture suffix — bundled native binaries are tied to the build arch
+# Architecture suffix, bundled native binaries are tied to the build arch
 BUILD_ARCH="${BUILD_ARCH:-linux-x64}"
 # arm64 builds are discontinued (v0.4.16+): no arm64 hardware in the field to
 # validate on, and bundled native modules (better-sqlite3, duckdb) make an
@@ -183,12 +183,12 @@ NPM_CONFIG_CACHE="${NPM_CONFIG_CACHE:-$DIST_DIR/.npm-cache}"
 NODE_GYP_DEVDIR="${NODE_GYP_DEVDIR:-$DIST_DIR/.node-gyp}"
 export NPM_CONFIG_CACHE
 
-# Bundled Node runtime — pinned LTS version shipped inside every release.
+# Bundled Node runtime, pinned LTS version shipped inside every release.
 # The tarball extracts to $SLOT/runtime/node/{bin,include,lib,share}/ and the
 # cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
 # through to /usr/bin/node. Bumping this version requires a release + testerella
 # validation, not a hot swap.
-BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.16.0}"
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.18.0}"
 NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
@@ -547,7 +547,7 @@ if [ "$PRE_RELEASE" = true ]; then
 fi
 echo ""
 
-# Print the cleanup hint again on ANY exit for pre-releases — banner-at-start
+# Print the cleanup hint again on ANY exit for pre-releases, banner-at-start
 # may have scrolled off screen by the time a mid-run failure surfaces, and
 # the end-of-run success path's own "To withdraw" line only fires if we got
 # that far. This trap covers both cases so the operator never has to dig the
@@ -571,7 +571,7 @@ fi
 # The signed releases.json manifest published alongside each release is
 # derived from RELEASE-NOTES.md. If the current VERSION (from package.json)
 # has no entry in the file, the generator emits a manifest that DOES NOT
-# contain the version being built — and then the server-side update checker
+# contain the version being built, and then the server-side update checker
 # on any host running a prior version will see the manifest as "latest =
 # previous release" and silently fail to surface the new release. This is
 # exactly the class of bug that shipped v0.4.12's initial manifest blank
@@ -579,11 +579,11 @@ fi
 #
 # Hard-fail early. The error names the exact file to edit so a human can
 # fix it in one minute without spelunking. This runs before anything else,
-# before preflight, before staging, before the expensive Node download — no
+# before preflight, before staging, before the expensive Node download, no
 # wasted work if the author forgot to update the notes.
 if [ -f "$PROJECT_DIR/RELEASE-NOTES.md" ]; then
   # For pre-releases we look up the BASE version's header (0.4.15), not the
-  # full 0.4.15-pre — the pre-release ships the same notes as the version
+  # full 0.4.15-pre, the pre-release ships the same notes as the version
   # it's a preview of, and requiring a separate header per pre-release
   # iteration would force duplicate notes.
   NOTES_VERSION="${BASE_VERSION}"
@@ -665,7 +665,7 @@ if [ "$BUILD_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
     exit 1
   fi
 
-  # Pre-releases don't create a local git tag — the remote tag gets created
+  # Pre-releases don't create a local git tag, the remote tag gets created
   # by gh at release-create time and `gh release delete --cleanup-tag`
   # removes both in one step. Only guard against a local tag collision for
   # real releases.
@@ -679,7 +679,7 @@ if [ "$BUILD_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
 
   # Check for existing GitHub release (applies to both real and pre).
   # For pre-releases, the user explicitly deletes + re-uploads between
-  # iterations — this guard catches the forgotten-delete case.
+  # iterations, this guard catches the forgotten-delete case.
   if gh release view "$TAG" &>/dev/null 2>&1; then
     echo "Error: GitHub release $TAG already exists."
     echo "  To delete it: gh release delete $TAG --cleanup-tag --yes"
@@ -720,13 +720,13 @@ if [ "$DRY_RUN" = false ]; then
 
   # Completeness guard: every relative import in the STAGED server tree must
   # resolve to a staged file. Catches source dropped by a too-broad .buildignore
-  # exclude or never committed — the v0.4.16-pre.1 DOA, where the missing module
+  # exclude or never committed, the v0.4.16-pre.1 DOA, where the missing module
   # only surfaced in the post-publish preflight (ERR_MODULE_NOT_FOUND). set -e
   # aborts the build here, before the expensive bundling/signing/publish.
   echo "  Checking staged import completeness..."
   node "$PROJECT_DIR/scripts/check-staging-imports.js" "$STAGING_DIR/server"
 
-  # Built client (dist only — we never ship client/src or client/node_modules)
+  # Built client (dist only, we never ship client/src or client/node_modules)
   mkdir -p "$STAGING_DIR/client"
   cp -a "$PROJECT_DIR/client/dist" "$STAGING_DIR/client/dist"
 
@@ -744,7 +744,7 @@ if [ "$DRY_RUN" = false ]; then
   # inside every release tarball at fixed canonical paths so update.sh can
   # verify the next release's signature AND apply rotation announcements
   # signed by the break-glass key. The rsync above already copies both
-  # files along with the rest of scripts/ — this block is an explicit
+  # files along with the rest of scripts/, this block is an explicit
   # post-staging assertion so a future change (e.g. someone adds *.pub to
   # .buildignore, or someone deletes the committed file) hard-fails the
   # build instead of silently producing a tarball that can't verify itself
@@ -761,11 +761,11 @@ if [ "$DRY_RUN" = false ]; then
   done
 
   # Verify the embedded pubkey strings in install.sh match the staged pub
-  # files. These two sources of truth must never drift — if they do, new
+  # files. These two sources of truth must never drift. If they do, new
   # installs verify correctly against install.sh's constant but the running
   # service's scripts/cidrella.pub disagrees, breaking the next update.
   #
-  # Compare the base64 line from each .pub file (second line — first line
+  # Compare the base64 line from each .pub file (second line, first line
   # is the minisign `untrusted comment: ...` header) against the constant
   # in install.sh. Hard-fail on mismatch.
   #
@@ -828,7 +828,7 @@ if [ "$DRY_RUN" = false ]; then
 
   # Root package.json (version source). For pre-releases, rewrite the
   # staged copy's version field so the running server reports the full
-  # suffixed version (e.g. 0.4.15-pre) — the source tree stays at the
+  # suffixed version (e.g. 0.4.15-pre), the source tree stays at the
   # base version untouched. `APP_VERSION` is imported from here at
   # runtime, so this is what shows up in /api/health and the UI footer.
   cp "$PROJECT_DIR/package.json" "$STAGING_DIR/package.json"
@@ -842,14 +842,14 @@ if [ "$DRY_RUN" = false ]; then
     echo "  Rewrote staged package.json version → ${VERSION}"
   fi
 
-  # requirements.json — single source of truth for minimum host requirements.
+  # requirements.json, single source of truth for minimum host requirements.
   # Consumed by scripts/lib/preflight.sh at install/update time.
   cp "$PROJECT_DIR/requirements.json" "$STAGING_DIR/requirements.json"
 
   # Documentation
   cp "$PROJECT_DIR/README.md" "$STAGING_DIR/README.md" 2>/dev/null || true
 
-  # RELEASE.json — signed-payload source of truth for the version, commit,
+  # RELEASE.json, signed-payload source of truth for the version, commit,
   # bundled node version, and (as of v0.4.12) the min_from gate. update.sh
   # uses these fields AFTER minisign verification: version as the
   # authoritative downgrade-guard input (not the GitHub API's tag_name,
@@ -859,10 +859,10 @@ if [ "$DRY_RUN" = false ]; then
   COMMIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 
   # Extract this release's min_from from RELEASE-NOTES.md. The linter has
-  # already validated the file, so we can afford a lightweight grep — but
+  # already validated the file, so we can afford a lightweight grep, but
   # we still route it through build-releases-manifest.js to avoid two
   # parsers in the project. If extraction fails, fall back to empty string
-  # (equivalent to "any predecessor may jump here") and emit a warning —
+  # (equivalent to "any predecessor may jump here") and emit a warning,
   # build proceeds so that missing metadata doesn't block an emergency
   # release, but the warning is loud enough for a human to notice.
   MIN_FROM=$(node "$PROJECT_DIR/scripts/build-releases-manifest.js" 2>/dev/null \
@@ -900,7 +900,7 @@ fi
 # Download node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz from nodejs.org,
 # verify against the official SHASUMS256.txt, and stage into runtime/node/.
 # The tarball is cached under dist/.node-cache so subsequent local builds
-# don't re-download — invalidated only on version bump.
+# don't re-download, invalidated only on version bump.
 
 echo "[2.5/7] Staging bundled Node ${BUNDLED_NODE_VERSION}..."
 if [ "$DRY_RUN" = false ]; then
@@ -915,7 +915,7 @@ if [ "$DRY_RUN" = false ]; then
   fi
 
   # Verify SHA-256 against the official checksum file. We intentionally do
-  # NOT verify the checksum file's GPG signature — that would need
+  # NOT verify the checksum file's GPG signature, that would need
   # nodejs.org's release keys on the build box. SHA verification against the
   # live file is sufficient against tarball tampering at rest or in transit,
   # which is the threat model here. A stronger defense (GPG sig check against
@@ -940,7 +940,7 @@ if [ "$DRY_RUN" = false ]; then
   # Extract to runtime/node/ with --strip-components=1 so the top-level
   # node-vX.Y.Z-linux-x64/ dir is unwrapped. Fail loudly on extract errors
   # (disk full, corrupted archive, truncated download) rather than letting
-  # the script continue to the binary-existence check — a partial extract
+  # the script continue to the binary-existence check, a partial extract
   # can leave bin/node present while include/ headers are missing, which
   # would break the subsequent npm ci against bundled Node.
   RUNTIME_DIR="$STAGING_DIR/runtime/node"
@@ -1006,7 +1006,7 @@ if [ "$DRY_RUN" = false ]; then
     echo "  Native modules compiled against bundled $REBUILD_NODE"
   fi
 
-  # Verify native bindings exist — we don't want to ship a tarball that
+  # Verify native bindings exist, we don't want to ship a tarball that
   # will fail at runtime because a native binary is missing. In v0.4.7 the
   # bcrypt native module was replaced with bcryptjs (pure JS), in v0.4.15
   # net-ping/raw-socket was replaced with system ping, and DuckDB moved to
@@ -1023,20 +1023,11 @@ if [ "$DRY_RUN" = false ]; then
     exit 1
   fi
 
-  # v0.4.15 compatibility bridge: pre-bootstrap updaters from some pre.4
-  # installs still perform existence-only checks for the legacy duckdb and
-  # raw-socket native binding paths before they can install this release's
-  # fixed update.sh. The application no longer imports either package, so
-  # harmless placeholder files let those old updaters reach the deep-health
-  # probe and switchover, where the real bootstrap-capable updater becomes
-  # installed for future releases.
-  mkdir -p "$STAGING_DIR/server/node_modules/duckdb/lib/binding"
-  mkdir -p "$STAGING_DIR/server/node_modules/raw-socket/build/Release"
-  printf 'CIDRella legacy updater compatibility placeholder; not a loadable native module.\n' \
-    > "$STAGING_DIR/server/node_modules/duckdb/lib/binding/duckdb.node"
-  printf 'CIDRella legacy updater compatibility placeholder; not a loadable native module.\n' \
-    > "$STAGING_DIR/server/node_modules/raw-socket/build/Release/raw.node"
-  echo "  Added legacy updater compatibility placeholders for duckdb/raw-socket checks"
+  # The v0.4.15 compatibility bridge (placeholder duckdb/raw-socket binding
+  # files for pre-bootstrap pre.4 updaters) was removed in v0.4.16, no
+  # pre-bootstrap updaters remain in the field, and RELEASE-NOTES declares
+  # min_from: 0.4.15 so any straggler gets a clean refusal with the remedy
+  # instead of a confusing missing-binding failure.
 
   NODE_MODULES_SIZE=$(du -sh "$STAGING_DIR/server/node_modules" | cut -f1)
   echo "  Bundled node_modules: $NODE_MODULES_SIZE"
@@ -1105,7 +1096,7 @@ if [ "$DRY_RUN" = false ]; then
   # actually verifies against the committed scripts/cidrella.pub. This
   # catches the silent-drift failure mode where the local private key
   # (~/.minisign/cidrella.key) has rotated but scripts/cidrella.pub was
-  # not updated — in which case the tarball would be signed but no running
+  # not updated, in which case the tarball would be signed but no running
   # CIDRella would be able to verify it. Fail the build here rather than
   # publishing a DOA release.
   if ! minisign -Vm "$DIST_DIR/$TARBALL" -p "$PROJECT_DIR/scripts/cidrella.pub" >/dev/null 2>&1; then
@@ -1132,7 +1123,7 @@ fi
 # reachability. We sign it with the same primary minisign key as the
 # tarball so its authenticity chains from the same trust root. The verifier
 # side (server/src/utils/update-checker.js in v0.4.12+) will treat the
-# manifest as an advisory index — cryptographically verified but lower
+# manifest as an advisory index, cryptographically verified but lower
 # trust weight than the tarball signature, which is still the authoritative
 # install gate. The break-glass composition gap raised by the architect
 # review is addressed on the verifier side via a keyring pattern, not here
@@ -1149,7 +1140,7 @@ if [ "$PRE_RELEASE" = true ]; then
   echo "  must not advertise pre-release versions. Only explicit"
   echo "  'cidrella-update --version ${VERSION}' reaches this build.)"
 elif [ "$DRY_RUN" = false ]; then
-  # Lint first — fails the build on any schema violation
+  # Lint first, fails the build on any schema violation
   if ! node "$PROJECT_DIR/scripts/build-releases-manifest.js" --lint; then
     echo "  ERROR: RELEASE-NOTES.md failed lint. Fix the issues above before releasing."
     exit 1
@@ -1256,8 +1247,8 @@ if [ "$DRY_RUN" = false ]; then
     # Uploading releases.json + .minisig alongside the tarball means a
     # client fetching `/releases/latest/download/releases.json` gets the
     # manifest cut at the moment this tag was published. The manifest file
-    # name is stable across releases — every new release re-publishes the
-    # latest-known state — so there's no collision issue.
+    # name is stable across releases, every new release re-publishes the
+    # latest-known state, so there's no collision issue.
     gh release create "$TAG" \
       "$DIST_DIR/$TARBALL" \
       "$DIST_DIR/${TARBALL}.minisig" \

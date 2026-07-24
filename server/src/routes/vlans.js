@@ -7,7 +7,7 @@ import * as Vlan from '../models/vlan.js';
 
 const router = Router();
 
-// GET /api/vlans — list all VLANs
+// GET /api/vlans: list all VLANs
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
   const vlans = db.prepare(`
@@ -20,7 +20,7 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   res.json(vlans);
 });
 
-// GET /api/vlans/search — search VLANs for autocomplete
+// GET /api/vlans/search: search VLANs for autocomplete
 router.get('/search', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
   const { q } = req.query;
@@ -39,7 +39,7 @@ router.get('/search', requirePerm('subnets:read'), (req, res) => {
   res.json(vlans);
 });
 
-// POST /api/vlans — create VLAN
+// POST /api/vlans: create VLAN
 router.post('/', requirePerm('subnets:write'), (req, res) => {
   const body = req.body || {};
   const { vlan_id, name, subnet_id } = body;
@@ -87,7 +87,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   }
 });
 
-// PUT /api/vlans/:id — update VLAN
+// PUT /api/vlans/:id: update VLAN
 router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const vlan = db.prepare('SELECT * FROM vlans WHERE id = ?').get(req.params.id);
@@ -123,7 +123,7 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   res.json(updated);
 });
 
-// DELETE /api/vlans/:id — delete VLAN
+// DELETE /api/vlans/:id: delete VLAN
 router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const vlan = db.prepare('SELECT * FROM vlans WHERE id = ?').get(req.params.id);

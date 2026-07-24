@@ -66,7 +66,7 @@ async function connect() {
     const { data } = await api.post('/logs/stream-token');
     ticket = data.ticket;
   } catch {
-    // proceed without ticket — server will reject unauthenticated SSE
+    // proceed without ticket, server will reject unauthenticated SSE
   }
 
   const url = `/api/logs/stream?filter=${activeFilter.value}&ticket=${encodeURIComponent(ticket)}`;

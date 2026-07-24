@@ -51,7 +51,7 @@ function getSystemMemory() {
   return { total: totalMem, used: usedMem, free: freeMem, available: availableMem };
 }
 
-// GET /api/health — basic health check (unauthenticated)
+// GET /api/health: basic health check (unauthenticated)
 router.get('/', (req, res) => {
   try {
     const db = getDb();
@@ -62,7 +62,7 @@ router.get('/', (req, res) => {
   }
 });
 
-// Restrict /deep to localhost only — exposes subsystem details useful for pre-flight probes
+// Restrict /deep to localhost only, exposes subsystem details useful for pre-flight probes
 function requireLocalhost(req, res, next) {
   const ip = req.ip || req.socket?.remoteAddress || '';
   const isLocal = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
@@ -70,7 +70,7 @@ function requireLocalhost(req, res, next) {
   next();
 }
 
-// GET /api/health/deep — deep health check for pre-flight validation
+// GET /api/health/deep: deep health check for pre-flight validation
 // Verifies every critical subsystem: SQLite, DuckDB, bcrypt, schema version, fs paths
 // Used by update.sh to validate a new version before switching to it.
 // Returns 200 only if ALL checks pass. Returns 503 with per-subsystem details otherwise.
@@ -78,7 +78,7 @@ router.get('/deep', requireLocalhost, async (req, res) => {
   const checks = {};
   let allOk = true;
 
-  // SQLite — open + query + schema version
+  // SQLite, open + query + schema version
   try {
     const db = getDb();
     db.prepare('SELECT 1').get();
@@ -89,7 +89,7 @@ router.get('/deep', requireLocalhost, async (req, res) => {
     allOk = false;
   }
 
-  // DuckDB — query analytics DB
+  // DuckDB, query analytics DB
   try {
     const rows = await queryRaw('SELECT 1 AS ok');
     checks.duckdb = { ok: Array.isArray(rows) && rows.length > 0 };
@@ -99,7 +99,7 @@ router.get('/deep', requireLocalhost, async (req, res) => {
     allOk = false;
   }
 
-  // bcrypt — module loads and runs a minimal operation
+  // bcrypt, module loads and runs a minimal operation
   try {
     const hash = await bcrypt.hash('x', 4);
     checks.bcrypt = { ok: typeof hash === 'string' && hash.startsWith('$2') };
@@ -109,7 +109,7 @@ router.get('/deep', requireLocalhost, async (req, res) => {
     allOk = false;
   }
 
-  // ICMP fallback — scanner uses system ping via execFile, not a shell.
+  // ICMP fallback, scanner uses system ping via execFile, not a shell.
   try {
     execFileSync('ping', ['-c', '1', '-W', '1', '127.0.0.1'], { stdio: 'pipe', timeout: 2000 });
     checks.ping = { ok: true };
@@ -141,7 +141,7 @@ router.get('/deep', requireLocalhost, async (req, res) => {
   });
 });
 
-// GET /api/health/system — detailed system metrics (authenticated)
+// GET /api/health/system: detailed system metrics (authenticated)
 router.get('/system', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
 
@@ -169,7 +169,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
   const dnssecSupported = dnsmasqSupportsDnssec();
 
-  // Rogue DHCP detection — `unacknowledged > 0` drives the header Ops chip's
+  // Rogue DHCP detection, `unacknowledged > 0` drives the header Ops chip's
   // yellow warning state (red is reserved for an actual service-down condition).
   const rogueProbe = getProbeState();
   let rogueUnacknowledged = 0;

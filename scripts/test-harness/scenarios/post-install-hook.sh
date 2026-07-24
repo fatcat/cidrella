@@ -70,7 +70,7 @@ scenario_assert() {
   # ─── Sentinel wrapper plumbing works ─────────────────────
   # These assertions verify that the sentinel-wrapper pattern is functional
   # (env vars propagate, the wrapper runs, output lands where expected).
-  # They do NOT prove install.sh itself exports the documented env contract —
+  # They do NOT prove install.sh itself exports the documented env contract,
   # the scenario sets the env vars explicitly before invoking the sentinel.
   # True contract verification would need to intercept install.sh's real
   # invocation; see manifest.json `does_not_catch` for the gap.

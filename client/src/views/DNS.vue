@@ -5,7 +5,7 @@
         <h4>Upstream Forwarders</h4>
         <p class="section-hint">
           How CIDRella forwards queries upstream. Encrypted modes (DoT/DoH) use curated
-          unfiltered providers — CIDRella still does all filtering.
+          unfiltered providers. CIDRella still does all filtering.
         </p>
 
         <div class="recursion-row">
@@ -15,16 +15,21 @@
         </div>
 
         <template v-if="!noRecursion">
-          <div class="enc-row">
+          <div class="enc-row mode-row">
             <label>Mode</label>
-            <SelectButton v-model="encForm.mode" :options="encModeOptions" optionLabel="label" optionValue="value"
-                          :allowEmpty="false" data-track="dns-forwarding-mode" />
+            <div class="enc-modes" role="radiogroup" aria-label="Upstream forwarding mode">
+              <div v-for="opt in encModeOptions" :key="opt.value" class="enc-mode-option">
+                <RadioButton v-model="encForm.mode" :inputId="`enc-mode-${opt.value}`" name="enc-mode"
+                             :value="opt.value" data-track="dns-forwarding-mode" />
+                <label :for="`enc-mode-${opt.value}`">{{ opt.label }}</label>
+              </div>
+            </div>
           </div>
 
           <!-- Plaintext: enter upstream IPs -->
           <div v-if="encForm.mode === 'off'" class="forwarders-list">
             <div v-for="(fwd, i) in forwarders" :key="i" class="forwarder-entry">
-              <span class="status-dot" :class="dotClass(fwd)"></span>
+              <StatusDot :kind="fwdDotKind(fwd)" :label="fwdDotLabel(fwd)" />
               <InputText v-model="forwarders[i].ip" size="small" placeholder="e.g. 8.8.8.8" style="width: 12rem"
                          @blur="onForwarderBlur(i)" @keyup.enter="onForwarderBlur(i)" />
               <i v-if="fwd.status === 'testing'" class="pi pi-spin pi-spinner fwd-testing"></i>
@@ -62,14 +67,16 @@
               </div>
             </template>
             <p v-if="encStatusLine" class="dnssec-status">
-              <span class="status-dot" :class="encStatusDot"></span>{{ encStatusLine }}
+              <StatusDot :kind="encStatus?.recentErrors > 0 ? 'err' : 'ok'"
+                         :label="encStatus?.recentErrors > 0 ? 'Recent errors' : 'Active'" />
+              {{ encStatusLine }}
             </p>
-            <p class="forwarder-hint">On failure, forwarding fails closed — no silent fallback to plaintext.</p>
+            <p class="forwarder-hint">On failure, forwarding fails closed. There is no silent fallback to plaintext.</p>
           </template>
         </template>
 
         <p v-else class="forwarder-hint recursion-note">
-          Recursion is disabled — CIDRella answers only for its own zones and records.
+          Recursion is disabled. CIDRella answers only for its own zones and records.
           Forwarders, encryption, and domain/GeoIP filtering do not apply.
         </p>
 
@@ -106,7 +113,7 @@
               <InputNumber v-model="soaForm.soa_expire" size="small" :min="0" style="width: 100%" />
             </div>
             <div class="field">
-              <label>Minimum TTL (s) <span v-tooltip.top="'Default negative-cache TTL — how long resolvers cache NXDOMAIN responses'" class="soa-help">?</span></label>
+              <label>Minimum TTL (s) <span v-tooltip.top="'Default negative-cache TTL: how long resolvers cache NXDOMAIN responses'" class="soa-help">?</span></label>
               <InputNumber v-model="soaForm.soa_minimum_ttl" size="small" :min="0" style="width: 100%" />
             </div>
           </div>
@@ -130,13 +137,13 @@
             <span>Enable DNSSEC validation</span>
           </div>
           <p v-if="dnssecSupported === false" class="dnssec-warn">
-            This host's dnsmasq was not built with DNSSEC support — validation cannot be enabled.
+            This host's dnsmasq was not built with DNSSEC support, so validation cannot be enabled.
           </p>
           <p v-else-if="savedDnssec && savedDnssec.enabled" class="dnssec-status">
-            <span class="status-dot" :class="ntpSynced ? 'dot-up' : 'dot-unknown'"></span>
+            <StatusDot :kind="ntpSynced ? 'ok' : 'muted'" :label="ntpSynced ? 'Clock synchronized' : 'Waiting for NTP sync'" />
             {{ ntpSynced
-                 ? 'Clock synchronized — signatures are fully validated.'
-                 : 'Waiting for NTP sync — validation is lenient on signature timestamps until the clock syncs.' }}
+                 ? 'Clock synchronized. Signatures are fully validated.'
+                 : 'Waiting for NTP sync. Validation stays lenient on signature timestamps until the clock syncs.' }}
           </p>
           <div class="forwarder-actions">
             <Button label="Save" icon="pi pi-save" size="small" data-track="dns-save-dnssec"
@@ -157,8 +164,9 @@ import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import ToggleSwitch from 'primevue/toggleswitch';
 import Select from 'primevue/select';
-import SelectButton from 'primevue/selectbutton';
+import RadioButton from 'primevue/radiobutton';
 import Checkbox from 'primevue/checkbox';
+import StatusDot from '../components/StatusDot.vue';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
 
@@ -235,10 +243,9 @@ const encDirty = computed(() => {
 const encStatusLine = computed(() => {
   if (encForm.value.mode === 'off' || !savedEnc.value || savedEnc.value.mode === 'off') return '';
   const st = encStatus.value;
-  if (st?.recentErrors > 0) return `Encrypted forwarding active, but ${st.recentErrors} recent error(s) — DNS fails closed on the encrypted path.`;
+  if (st?.recentErrors > 0) return `Encrypted forwarding active, but ${st.recentErrors} recent error(s). DNS fails closed on the encrypted path.`;
   return `Encrypted forwarding active (${savedEnc.value.mode === 'tls' ? 'DoT' : 'DoH'}).`;
 });
-const encStatusDot = computed(() => (encStatus.value?.recentErrors > 0 ? 'dot-down' : 'dot-up'));
 
 function encSnapshot() {
   savedEnc.value = {
@@ -332,10 +339,15 @@ const soaDirty = computed(() => {
 
 const ipv4Re = /^(\d{1,3}\.){3}\d{1,3}$/;
 
-function dotClass(fwd) {
-  if (fwd.status === 'reachable') return 'dot-up';
-  if (fwd.status === 'unreachable') return 'dot-down';
-  return 'dot-unknown';
+function fwdDotKind(fwd) {
+  if (fwd.status === 'reachable') return 'ok';
+  if (fwd.status === 'unreachable') return 'err';
+  return 'muted';
+}
+function fwdDotLabel(fwd) {
+  if (fwd.status === 'reachable') return 'Reachable';
+  if (fwd.status === 'unreachable') return 'Unreachable';
+  return 'Not yet tested';
 }
 
 function addForwarder() {
@@ -472,15 +484,6 @@ onUnmounted(() => {
   gap: 0.5rem;
   margin-top: 0.25rem;
 }
-.status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.dot-up { background: var(--p-green-500); }
-.dot-down { background: var(--p-red-500); }
-.dot-unknown { background: var(--p-surface-400); }
 .fwd-testing { color: var(--p-text-muted-color); font-size: var(--app-fs-sm); }
 .forwarder-hint {
   font-size: var(--app-fs-xs);
@@ -577,5 +580,23 @@ onUnmounted(() => {
   width: 6rem;
   font-size: var(--app-fs-sm);
   font-weight: 600;
+}
+.enc-modes {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+.enc-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.enc-row .enc-modes label {
+  width: auto;
+  font-weight: 400;
+  cursor: pointer;
+}
+.enc-row.mode-row {
+  margin-bottom: 4px;
 }
 </style>

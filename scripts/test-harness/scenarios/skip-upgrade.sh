@@ -4,7 +4,7 @@
 # Validates that `cidrella-update` runs end-to-end on a bundled-Node-only
 # host without hitting the bare-`node` preflight bug fixed in v0.4.11. This
 # is the anchor regression test for the bug that made CLI recovery
-# unreliable for v0.4.8/v0.4.9 hosts — the preflight syntax check used
+# unreliable for v0.4.8/v0.4.9 hosts, the preflight syntax check used
 # bare `node --check` instead of the resolved bundled binary, so a
 # bundled-Node-only host (the supported config since v0.4.7) hit
 # command-not-found and misreported it as "syntax errors in index.js".
@@ -18,7 +18,7 @@
 # bundled-Node-only. It does NOT exercise a real version jump unless
 # there's a newer release than the one install_latest_release pulls. Once
 # v0.4.12+ ships, the same scenario automatically becomes a real
-# skip-upgrade regression test — the scenario asks "can CLI update run to
+# skip-upgrade regression test. The scenario asks "can CLI update run to
 # completion from the current installed version?" and the answer scales
 # with what's published.
 
@@ -33,9 +33,9 @@ scenario_run() {
   install_latest_release
 
   # Run cidrella-update and capture output. Either outcome is acceptable:
-  # (a) no newer version available — cidrella-update exits 0 with an
+  # (a) no newer version available, cidrella-update exits 0 with an
   #     "already up to date" or "up-to-date" message
-  # (b) a newer version exists — the update proceeds through download,
+  # (b) a newer version exists, the update proceeds through download,
   #     verify, extract, preflight, switchover, health-check
   # The failure mode we're guarding against is the bare-node preflight bug:
   # cidrella-update claiming "syntax errors in server/src/index.js" when

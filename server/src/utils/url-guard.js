@@ -5,7 +5,7 @@ import net from 'net';
 
 // SSRF guard for outbound HTTP fetches. The Pi-hole probe / fetch path and
 // the blocklist source_url field both accept operator-supplied URLs that
-// the server then connects to — without guarding, these can be pointed at
+// the server then connects to, without guarding, these can be pointed at
 // loopback, link-local, RFC1918, or cloud-metadata IPs to probe internal
 // services or exfiltrate their responses. v0.4.15 adds this guard and
 // wires it into both callers.
@@ -49,11 +49,11 @@ const BLOCKED_IPV4_RANGES = [
 
 /**
  * True if a literal IPv4 address falls in a blocked (private/loopback/metadata/
- * reserved) range. Synchronous — for callers that already have a literal IP
+ * reserved) range. Synchronous, for callers that already have a literal IP
  * (e.g. encrypted-forwarder upstreams) and don't need hostname resolution.
  */
 export function isBlockedIpv4(ip) {
-  if (net.isIP(ip) !== 4) return false; // not a v4 literal — caller validates format separately
+  if (net.isIP(ip) !== 4) return false; // not a v4 literal, caller validates format separately
   return BLOCKED_IPV4_RANGES.some(range => ipInCidr(ip, range));
 }
 

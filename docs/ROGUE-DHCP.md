@@ -1,7 +1,7 @@
 # Rogue DHCP server detection
 
 CIDRella can detect unauthorized DHCP servers answering on its network
-segment(s). A rogue server — misconfigured gear or an attacker — hands clients a
+segment(s). A rogue server (misconfigured gear or an attacker) hands clients a
 bad gateway/DNS and can silently MITM or break the network. Manage it from
 **System → Rogue DHCP** (Security group).
 
@@ -21,15 +21,15 @@ On a schedule (default every 15 min, configurable 5–1440), and on demand via
      never flags itself) or is on the user **authorized-servers allowlist**.
    - **Rogue** otherwise → recorded as an event.
 
-It sends `DISCOVER` only — never `REQUEST` — so **no lease is consumed** and the
+It sends `DISCOVER` only, never `REQUEST`, so **no lease is consumed** and the
 probe is non-disruptive. Detection is implemented with a single UDP socket and
-hand-rolled DHCP packets — no raw sockets, no extra capability beyond the
+hand-rolled DHCP packets: no raw sockets, no extra capability beyond the
 privileged-port bind CIDRella already does for `:53`, no new dependency.
 
 ## Alerting
 
 When an **unacknowledged** rogue is present, the header **Ops chip turns yellow**
-(a warning — red stays reserved for an actual service-down condition) and the Ops
+(a warning, red stays reserved for an actual service-down condition) and the Ops
 popover shows a "Rogue DHCP" row linking to the tab. Acknowledge an event to
 silence it (it stays acknowledged even as the rogue persists; clear it to re-arm).
 
@@ -43,10 +43,10 @@ silence it (it stays acknowledged even as the rogue persists; clear it to re-arm
   Rogue servers are therefore identified by **IP**, not MAC. (The allowlist
   accepts an optional MAC for the operator's reference.)
 - **Detection only.** CIDRella reports rogues; it can't block them (that needs L2
-  switch control — out of scope).
+  switch control, out of scope).
 - **Port 68 bind.** Binding `:68` is privileged and can collide with a host DHCP
   client. If it can't bind, detection reports `probeSupported: false` (surfaced in
-  the UI) and the backend continues normally — it never crashes.
+  the UI) and the backend continues normally. It never crashes.
 - IPv4/DHCPv4 only; DHCPv6 is out of scope.
 
 ## Verifying

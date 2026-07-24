@@ -12,9 +12,12 @@
       </button>
       <template v-for="group in groups" :key="group">
         <div class="sa-group">{{ group }}</div>
+        <!-- Plain nav buttons, not a tab widget: aria-current marks the active
+             area. Don't add role="tab" here. A tab role outside a tablist
+             (and without tabpanel/keyboard wiring) misleads assistive tech. -->
         <button v-for="a in areasInGroup(group)" :key="a.id" type="button"
                 class="sa-rail-item" :class="{ active: a.id === areaId }"
-                role="tab" :aria-selected="a.id === areaId" :data-track="a.dataTrack"
+                :aria-current="a.id === areaId ? 'page' : undefined" :data-track="a.dataTrack"
                 @click="$emit('area', a.id)">
           <i :class="a.icon"></i><span>{{ a.label }}</span>
         </button>
@@ -23,14 +26,14 @@
 
     <section class="sa-content" v-if="area">
       <div class="sa-head">
-        <span class="sa-crumb"><a @click="$emit('home')">Settings</a> › <b>{{ area.label }}</b></span>
+        <span class="sa-crumb"><button type="button" class="sa-crumb-link" @click="$emit('home')">Settings</button> › <b>{{ area.label }}</b></span>
         <h2 class="sa-title">{{ area.label }}</h2>
       </div>
 
-      <div v-if="subtabs.length > 1" class="sa-subtabs" role="tablist">
+      <div v-if="subtabs.length > 1" class="sa-subtabs" aria-label="Section">
         <button v-for="st in subtabs" :key="st.id" type="button"
                 class="sa-subtab" :class="{ active: st.id === activeSecId }"
-                role="tab" :aria-selected="st.id === activeSecId" :data-track="st.dataTrack"
+                :aria-current="st.id === activeSecId ? 'true' : undefined" :data-track="st.dataTrack"
                 @click="$emit('sec', st.id)">{{ st.label }}</button>
       </div>
 
@@ -96,11 +99,16 @@ function areasInGroup(group) {
    container here produced a second (outer) scrollbar on the fill panels. */
 .sa-panel { flex: 1; min-height: 0; overflow: auto; }
 /* Fill panels (DHCP/GeoIP/Blocklists/Users/Calculator/VLANs) have a `height:100%`
-   root with an internal scrollHeight="flex" table — clip the panel so ONLY that
+   root with an internal scrollHeight="flex" table. Clip the panel so ONLY that
    table scrolls (no outer scrollbar). */
 .sa-panel.fill { overflow: hidden; }
 .sa-crumb { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); }
-.sa-crumb a { color: var(--p-primary-color); cursor: pointer; }
+.sa-crumb-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+ color: var(--p-primary-color); cursor: pointer; }
 .sa-crumb b { color: var(--p-text-color); }
 .sa-title { margin: 0.15rem 0 0.9rem; font-size: 1.25rem; font-weight: 650; }
 .sa-subtabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--p-content-border-color);

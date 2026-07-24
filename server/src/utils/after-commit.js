@@ -36,7 +36,7 @@ import { regenerateDhcpConfigs } from './dhcp.js';
 //
 // Note on ordering: hooks fire via queueMicrotask, AFTER res.on('finish').
 // Callers that must observe the hook's effect synchronously (e.g. before a
-// dnsmasq restart) MUST call the underlying function inline instead —
+// dnsmasq restart) MUST call the underlying function inline instead.
 // queueRegen is not a synchronous-completion primitive.
 const HOOK_REGISTRY = {
   regenerate_dns:  (db) => regenDnsConfigs(db),
@@ -47,7 +47,7 @@ const HOOK_REGISTRY = {
 const HOOK_ORDER = ['regenerate_dns', 'regenerate_dhcp', 'regenerate_dnsmasq_conf'];
 
 // Per-hook single-flight state. Under concurrent writes to DNS/DHCP, the old
-// design had each request's res.on('finish') handler race independently —
+// design had each request's res.on('finish') handler race independently, so
 // two overlapping regens could read conflicting snapshots of dns_records /
 // dhcp_reservations and write inconsistent hosts.d files. We now serialize
 // each hook: while one is running, new registrations flip `pending`, and the
@@ -63,7 +63,7 @@ function fireHook(name) {
   if (st.running) { st.pending = true; return; }
   st.running = true;
   st.pending = false;
-  // Do the work synchronously — hooks are synchronous SQLite + dnsmasq calls.
+  // Do the work synchronously, hooks are synchronous SQLite + dnsmasq calls.
   // queueMicrotask lets the res.on('finish') handler return before we start,
   // so the hook never delays flushing the HTTP response.
   queueMicrotask(() => {

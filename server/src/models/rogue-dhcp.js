@@ -1,4 +1,4 @@
-// Data access for rogue DHCP detection — the authorized-server allowlist and
+// Data access for rogue DHCP detection, the authorized-server allowlist and
 // the detected rogue events. All functions take an explicit `db` handle, matching
 // the other model modules (e.g. models/geoip-rule.js).
 
@@ -7,7 +7,7 @@
 // Insert or refresh a detected rogue. Dedup key is (server_ip, server_mac);
 // server_mac defaults to '' when unknown so the UNIQUE key never sees NULL.
 // On re-detection we bump last_seen_at/times_seen and refresh the offered_*
-// fields, but deliberately leave `acknowledged` untouched — a persistent rogue
+// fields, but deliberately leave `acknowledged` untouched, a persistent rogue
 // stays silenced once acknowledged; clearing the event re-arms it.
 export function upsertRogueEvent(db, ev) {
   return db.prepare(`
@@ -77,7 +77,7 @@ export function deleteAuthorized(db, id) {
   return db.prepare('DELETE FROM dhcp_authorized_servers WHERE id = ?').run(id);
 }
 
-// Lowercased set of authorized server IPs (allowlist only — CIDRella's own LAN
+// Lowercased set of authorized server IPs (allowlist only, CIDRella's own LAN
 // IPs are added separately by the probe via getSelfIps()).
 export function authorizedIpSet(db) {
   const rows = db.prepare('SELECT server_ip FROM dhcp_authorized_servers').all();

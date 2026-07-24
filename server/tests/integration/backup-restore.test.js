@@ -6,7 +6,7 @@ import { execFileSync } from 'child_process';
 import { analyzeArchive } from '../../src/utils/backup.js';
 
 // These tests exercise the tar behaviors that restoreBackup / createBackup
-// rely on — verifying the actual command-line flags produce the intended
+// rely on, verifying the actual command-line flags produce the intended
 // on-disk result. They deliberately don't go through the Express route or
 // initDb, so DATA_DIR mocking isn't needed. The 2026-04-21 incident was
 // caused by dnsmasq.log (1.5 GB) shipping inside every backup; these tests
@@ -184,7 +184,7 @@ describe('tar --exclude on restore (restoreBackup defense-in-depth)', () => {
     writeFile(path.join(src, 'dnsmasq', 'dnsmasq.conf'), Buffer.from('# conf'));
     // Simulate a legacy backup (pre-2026-04-20) that still contains dnsmasq.log
     writeFile(path.join(src, 'dnsmasq', 'dnsmasq.log'), Buffer.alloc(64 * 1024, 'L'));
-    // Also a logrotate-rotated copy — defense-in-depth patterns must catch these too.
+    // Also a logrotate-rotated copy, defense-in-depth patterns must catch these too.
     writeFile(path.join(src, 'dnsmasq', 'dnsmasq.log-20260421'), Buffer.alloc(1024, 'R'));
     writeFile(path.join(src, 'dnsmasq', 'dnsmasq.leases'), Buffer.from('lease data'));
 

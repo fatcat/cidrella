@@ -370,7 +370,7 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'subnet_id, mac_address, and ip_address are required' });
   }
 
-  // Type guards BEFORE any string method is called — prevents the
+  // Type guards BEFORE any string method is called, prevents the
   // `mac_address.toLowerCase is not a function` 500 that v0.4.14's API
   // fuzzer logged.
   if (typeof mac_address !== 'string' || typeof ip_address !== 'string') {
@@ -410,10 +410,10 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   // unallocated AND non-leaf) gets the clearer "not a leaf" message.
   const hasChildren = db.prepare('SELECT 1 FROM subnets WHERE parent_id = ? LIMIT 1').get(subnet.id);
   if (hasChildren) {
-    return res.status(400).json({ error: 'Subnet has child subnets — reservations must be placed on a leaf.' });
+    return res.status(400).json({ error: 'Subnet has child subnets. Reservations must be placed on a leaf.' });
   }
   if (subnet.status !== 'allocated') {
-    return res.status(400).json({ error: 'Subnet is not allocated — reservations require an allocated subnet.' });
+    return res.status(400).json({ error: 'Subnet is not allocated. Reservations require an allocated subnet.' });
   }
 
   if (!isIpInSubnet(ip_address, subnet.cidr)) {
@@ -640,7 +640,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
   return enrichDhcpRows(db, unified);
 }
 
-// GET /api/dhcp/scopes/:id/addresses — every IP in a DHCP scope with lease/reservation overlays
+// GET /api/dhcp/scopes/:id/addresses: every IP in a DHCP scope with lease/reservation overlays
 router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
   const scope = db.prepare(`
@@ -689,7 +689,7 @@ router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
   res.json(enrichDhcpRows(db, rows));
 });
 
-// GET /api/dhcp/leases — unified view: dynamic leases + reservations
+// GET /api/dhcp/leases: unified view: dynamic leases + reservations
 router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
   res.json(getUnifiedDhcpRows(db));
@@ -716,7 +716,7 @@ router.post('/apply', requirePerm('dhcp:write'), (req, res) => {
   res.json({ message: 'DHCP configuration applied', scopes: scopeCount, reservations: reservationCount });
 });
 
-// GET /api/dhcp/available-ranges — ranges eligible for scope creation
+// GET /api/dhcp/available-ranges: ranges eligible for scope creation
 router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
   const ranges = db.prepare(`
@@ -739,7 +739,7 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
 
 // ─── DHCP Options ────────────────────────────────────────
 
-// GET /api/dhcp/options — catalog + global defaults + custom options
+// GET /api/dhcp/options: catalog + global defaults + custom options
 router.get('/options', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
   const rows = db.prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults').all();
@@ -760,7 +760,7 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
   res.json({ catalog, defaults, enabledDefaults, groups: DHCP_OPTION_GROUPS });
 });
 
-// POST /api/dhcp/options/custom — create a custom option (codes 128-254)
+// POST /api/dhcp/options/custom: create a custom option (codes 128-254)
 router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const { code, name, label, type, description } = req.body;
@@ -795,7 +795,7 @@ router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
   res.status(201).json(created);
 });
 
-// DELETE /api/dhcp/options/custom/:code — delete a custom option
+// DELETE /api/dhcp/options/custom/:code: delete a custom option
 router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const codeNum = parseInt(req.params.code, 10);
@@ -809,7 +809,7 @@ router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => 
   res.json({ ok: true });
 });
 
-// PUT /api/dhcp/options/defaults — set global defaults
+// PUT /api/dhcp/options/defaults: set global defaults
 router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   const { options, enabledDefaults } = req.body;
   if (!Array.isArray(options)) {

@@ -55,3 +55,29 @@ describe('PUT /api/devices/:mac/fingerprint (override)', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('DELETE /api/devices/:mac/fingerprint', () => {
+  it('clears a manual override and reports cleared:true', async () => {
+    DF.setManual(db, 'aa:bb:cc:dd:ee:ff', { device_type: 'Printer', os_family: 'Linux' });
+    const res = await request(app).delete('/api/devices/aa:bb:cc:dd:ee:ff/fingerprint');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true, cleared: true });
+    expect(DF.getByMac(db, 'aa:bb:cc:dd:ee:ff')).toBeNull();
+  });
+
+  it('is a no-op (cleared:false) for auto rows and unknown MACs', async () => {
+    DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:aa', device_type: 'IoT', confidence: 60, source: 'dhcp' });
+    const auto = await request(app).delete('/api/devices/aa:bb:cc:dd:ee:aa/fingerprint');
+    expect(auto.status).toBe(200);
+    expect(auto.body.cleared).toBe(false);
+    expect(DF.getByMac(db, 'aa:bb:cc:dd:ee:aa')).not.toBeNull();
+
+    const unknown = await request(app).delete('/api/devices/11:22:33:44:55:66/fingerprint');
+    expect(unknown.status).toBe(200);
+    expect(unknown.body.cleared).toBe(false);
+  });
+
+  it('400s on an invalid MAC', async () => {
+    expect((await request(app).delete('/api/devices/nope/fingerprint')).status).toBe(400);
+  });
+});

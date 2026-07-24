@@ -3,7 +3,7 @@
 
 -- Ensure rows exist for the seven standard options (mask, router, DNS, domain,
 -- NTP, lease time, domain search). NTP (42) was added 2026-04-19; pre-existing
--- installs are unaffected — this migration only runs on fresh schema_version.
+-- installs are unaffected, this migration only runs on fresh schema_version.
 INSERT OR IGNORE INTO dhcp_option_defaults (option_code, enabled_by_default) VALUES (1, 1);
 INSERT OR IGNORE INTO dhcp_option_defaults (option_code, enabled_by_default) VALUES (3, 1);
 INSERT OR IGNORE INTO dhcp_option_defaults (option_code, enabled_by_default) VALUES (6, 1);

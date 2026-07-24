@@ -16,7 +16,7 @@ const STATUS_FILE = path.join(DATA_DIR, 'update-status.json');
 
 // A status record is "stale" when it claims an update is in progress but no
 // process is actually backing it. This happens when the update worker dies
-// (or never starts) before its first progress write — the historical case
+// (or never starts) before its first progress write, the historical case
 // being the v0.4.8/v0.4.9 sudo-under-NoNewPrivileges failure that left the
 // API's initial `state: starting, pid: null` row sitting forever. We treat
 // any in-progress record older than this threshold with no live pid as a
@@ -69,7 +69,7 @@ function isStaleInProgress(status) {
 
 // Mutate a stale record into a `failed` one in-place on disk. We do not
 // delete the file because the UI surfaces the error string from a `failed`
-// state and gives the user a Dismiss button — both of which are better UX
+// state and gives the user a Dismiss button, both of which are better UX
 // than the file simply disappearing (which would let the user start a new
 // update without ever seeing what went wrong).
 //
@@ -124,7 +124,7 @@ function isUpdateRunning() {
 }
 
 // Resolve a real pending update by cross-checking the stored value against
-// the currently running code. Pure read — stale entries are cleared by
+// the currently running code. Pure read, stale entries are cleared by
 // clearStaleUpdateFlag() on boot and by checkForUpdates() on its next pass.
 // The stored value can become stale when:
 //  - the background check ran before an out-of-band upgrade (manual deploy)
@@ -149,7 +149,7 @@ function resolvePendingUpdate() {
   } catch { /* fall through to direct one-hop */ }
 
   // Next-hop semantics: `version` is what the install handler will actually
-  // install when the user clicks Install — i.e. chain[0], the first hop
+  // install when the user clicks Install, i.e. chain[0], the first hop
   // the current version can reach. `chainTarget` is the eventual
   // destination (chain[chain.length - 1]). For a single-hop update these
   // are the same; for a multi-hop chain they differ, and the UI shows both
@@ -183,12 +183,12 @@ function resolvePendingUpdate() {
   };
 }
 
-// GET /api/version — current version and update status
+// GET /api/version: current version and update status
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const pending = resolvePendingUpdate();
   res.json({
     version: APP_VERSION,
-    // updateAvailable is the NEXT hop — the version that clicking Install
+    // updateAvailable is the NEXT hop, the version that clicking Install
     // will actually install. For a direct jump this equals chainTarget;
     // for a multi-hop chain, it's the first reachable intermediate.
     updateAvailable: pending?.version || null,
@@ -196,7 +196,7 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
     // Skip-upgrade fields (v0.4.12+). updateChain is always non-empty when
     // updateAvailable is non-null; a direct one-hop jump has length 1, a
     // multi-hop skip has length > 1. chainTarget is the final destination
-    // — the highest version reachable by walking the chain.
+    //, the highest version reachable by walking the chain.
     updateChain: pending?.chain || [],
     chainTarget: pending?.chainTarget || null,
     manifestAvailable: pending?.manifestAvailable ?? null,
@@ -207,7 +207,7 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   });
 });
 
-// POST /api/version/check — trigger immediate update check (admin only)
+// POST /api/version/check: trigger immediate update check (admin only)
 // Always bypasses the manifest cache so a user clicking Check Now sees the
 // absolute latest state, not a 1-hour-old cached view.
 router.post('/check', requireRole('admin'), async (req, res) => {
@@ -224,12 +224,12 @@ router.post('/check', requireRole('admin'), async (req, res) => {
   }
 });
 
-// GET /api/version/update-status — read update progress (admin only)
+// GET /api/version/update-status: read update progress (admin only)
 router.get('/update-status', requireRole('admin'), (req, res) => {
   res.json(readStatusFile());
 });
 
-// POST /api/version/install — trigger update installation (admin only)
+// POST /api/version/install: trigger update installation (admin only)
 router.post('/install', requireRole('admin'), (req, res) => {
   if (isDockerEnvironment()) {
     return res.status(400).json({ error: 'Auto-update is not available in Docker deployments. Pull the latest image to update.' });
@@ -266,7 +266,7 @@ router.post('/install', requireRole('admin'), (req, res) => {
   }
 
   // Start the update as its own systemd unit instance. The unit is a static
-  // template (cidrella-update@.service) with no hardening — it runs as root
+  // template (cidrella-update@.service) with no hardening, it runs as root
   // with default access, so update.sh can manipulate /opt and the data dir
   // freely. The cidrella service account is authorized to start instances
   // of this template via /etc/polkit-1/rules.d/49-cidrella.rules.
@@ -314,7 +314,7 @@ router.post('/install', requireRole('admin'), (req, res) => {
   res.status(202).json({ started: true, version: targetVersion });
 });
 
-// POST /api/version/update-dismiss — clear completed/failed status (admin only)
+// POST /api/version/update-dismiss: clear completed/failed status (admin only)
 router.post('/update-dismiss', requireRole('admin'), (req, res) => {
   try {
     if (fs.existsSync(STATUS_FILE)) {

@@ -88,7 +88,7 @@ export function getServerIpForSubnet(cidr) {
 }
 
 /**
- * Normalize a CIDR — ensures the IP portion is the actual network address.
+ * Normalize a CIDR, ensures the IP portion is the actual network address.
  * e.g., 192.168.1.50/24 -> 192.168.1.0/24
  */
 export function normalizeCidr(cidr) {
@@ -260,7 +260,7 @@ export function isValidMac(mac) {
  * Rejects MACs a client would never use:
  *   - all-zero  (00:00:00:00:00:00)
  *   - broadcast (ff:ff:ff:ff:ff:ff)
- *   - multicast (first-octet LSB set — the I/G bit, RFC 5342)
+ *   - multicast (first-octet LSB set, the I/G bit, RFC 5342)
  */
 export function isClientMac(mac) {
   if (!isValidMac(mac)) return false;
@@ -350,7 +350,7 @@ export function subtractCidr(parentCidr, childCidr) {
   return remainder;
 }
 
-// Domain name validation — shared by dns.js and subnets.js
+// Domain name validation, shared by dns.js and subnets.js
 const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 export function isValidDomain(name) {
   return typeof name === 'string' && name.length > 0 && name.length <= 253 && DOMAIN_RE.test(name);

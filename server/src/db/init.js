@@ -42,7 +42,7 @@ export function getSetting(key) {
     return raw != null ? parseInt(raw, 10) : DEFAULTS[key];
   }
 
-  // String keys — return DB value or default
+  // String keys, return DB value or default
   if (raw != null) return raw;
   return DEFAULTS[key] ?? null;
 }
@@ -78,7 +78,7 @@ function runMigrations() {
     return v > max ? v : max;
   }, 0);
 
-  // Check for schema-too-new — prevents running old code against a new DB
+  // Check for schema-too-new, prevents running old code against a new DB
   // (which happens after an unsafe rollback that didn't restore the DB snapshot).
   const dbMaxVersion = db.prepare('SELECT MAX(version) AS v FROM schema_version').get()?.v ?? 0;
   if (dbMaxVersion > codeMaxVersion) {
@@ -169,8 +169,8 @@ export async function ensureDefaults() {
     console.log('');
   }
 
-  // v0.4.15: once any user exists — whether freshly seeded above or preserved
-  // from a previous install — lock down the pre-auth setup endpoints by
+  // v0.4.15: once any user exists, whether freshly seeded above or preserved
+  // from a previous install, lock down the pre-auth setup endpoints by
   // marking the installation complete. In v0.4.14 this flag was only flipped
   // by POST /api/setup, which created a window where a fresh install could be
   // hijacked by an unauthenticated attacker hitting the endpoint first.

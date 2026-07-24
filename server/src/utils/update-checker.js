@@ -40,7 +40,7 @@ export async function checkUpdateAvailability({ forceFresh = false } = {}) {
         intermediateNotes: best.intermediateNotes,
       };
     }
-    // Manifest available but no update reachable — still "manifest works"
+    // Manifest available but no update reachable, still "manifest works"
     return { version: null, chain: [], manifestAvailable: true, intermediateNotes: [] };
   }
 
@@ -120,7 +120,7 @@ export async function checkForUpdates({ forceFresh = false } = {}) {
       return null;
     }
 
-    // Build a GitHub release URL for the NEXT HOP — chain[0] — since
+    // Build a GitHub release URL for the NEXT HOP (chain[0]) since
     // that's the version clicking Install will actually install. For a
     // direct one-hop jump chain[0] == result.version (the chain target),
     // so the URL is the same as the pre-v0.4.12 behavior. For a multi-hop
@@ -151,7 +151,7 @@ let timer = null;
 export function startUpdateScheduler() {
   if (timer) return;
 
-  // Clear stale flag immediately on boot — the running code may be newer
+  // Clear stale flag immediately on boot, the running code may be newer
   // than whatever the DB was told about previously (e.g., manual deploy).
   clearStaleUpdateFlag();
 

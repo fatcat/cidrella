@@ -15,6 +15,7 @@ import { logDnsQuery } from '../db/duckdb.js';
 import { applyInterfaceConfig, restartDnsmasq } from './dnsmasq.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import { parseCidrEntry, ipInAny } from './cidr-match.js';
+import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
 import {
   DATA_DIR,
   GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
@@ -42,8 +43,8 @@ function proxyLog(level, msg, extra) {
 }
 
 // Module state
-let proxyServers = [];         // Array of { socket, address } — one per LAN address on port 53 (UDP)
-let tcpServers = [];           // Array of { server, address } — TCP listener per LAN address (DNS-over-TCP)
+let proxyServers = [];         // Array of { socket, address }, one per LAN address on port 53 (UDP)
+let tcpServers = [];           // Array of { server, address }, TCP listener per LAN address (DNS-over-TCP)
 let activeTcpConnections = 0;  // concurrent client TCP connections (capped at PROXY_MAX_TCP_CONNECTIONS)
 let mmdbReader = null;
 let geoCache = null;
@@ -53,27 +54,27 @@ let statsAllowed = 0;
 let blockedDelta = 0;
 let countryHits = new Map();
 
-// Bypass mode — when proxy dies and can't restart, dnsmasq takes over port 53
+// Bypass mode, when proxy dies and can't restart, dnsmasq takes over port 53
 let bypassMode = false;
 let healthTimer = null;
 
-// GeoIP rule cache — reloaded on settings change, avoids per-query DB hits
-let geoipRuleSet = null;            // Set<string> — enabled country codes
+// GeoIP rule cache, reloaded on settings change, avoids per-query DB hits
+let geoipRuleSet = null;            // Set<string>, enabled country codes
 let geoipMode = 'blocklist';        // 'blocklist' or 'allowlist'
 let geoipAllowEntries = [];         // parsed IP/CIDR entries never GeoIP-blocked
-let whitelistSet = null;            // Set<string> — single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
+let whitelistSet = null;            // Set<string>, single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
 
-// Blocklist state — domains loaded from DB for in-proxy blocking.
+// Blocklist state, domains loaded from DB for in-proxy blocking.
 // A single Map is enough: Map.has() gives membership and Map.get() gives the
 // category for metrics. Keeping a separate Set duplicates index overhead for
 // large lists and can push small hosts into V8 heap pressure.
-let blocklistDomainMap = null;      // Map<string, string> — domain → category_slug
+let blocklistDomainMap = null;      // Map<string, string>, domain → category_slug
 let blocklistEnabled = false;
 let blocklistRedirectIp = '';
 let blocklistBlockedDelta = 0;
 let blocklistCategoryHits = new Map();
 
-// Performance instrumentation — reservoir sampling caps memory at 1000 samples
+// Performance instrumentation, reservoir sampling caps memory at 1000 samples
 const RESERVOIR_SIZE = 1000;
 let latencySamples = [];
 let latencySampleCount = 0;
@@ -222,7 +223,7 @@ function getListenAddresses() {
   const addresses = [];
 
   if (Object.keys(ifaceConfig).length > 0) {
-    // Explicit config — bind to IPs on configured interfaces.
+    // Explicit config, bind to IPs on configured interfaces.
     // Use Object.hasOwn to avoid prototype-chain lookups: if ifName is
     // 'constructor' / '__proto__' / 'toString', naked indexing would
     // return a non-array object and crash the for…of. The validator
@@ -237,7 +238,7 @@ function getListenAddresses() {
       }
     }
   } else {
-    // No explicit config — bind to all non-loopback IPv4 addresses
+    // No explicit config, bind to all non-loopback IPv4 addresses
     for (const [ifName, addrs] of Object.entries(sysIfaces)) {
       if (ifName === 'lo') continue;
       for (const a of addrs) {
@@ -250,7 +251,7 @@ function getListenAddresses() {
 }
 
 // dns-packet's encoder takes the on-the-wire rcode from the low 4 bits of the
-// `flags` field and IGNORES the convenience `rcode` string — so a response must
+// `flags` field and IGNORES the convenience `rcode` string, so a response must
 // fold its rcode into flags or it silently encodes as NOERROR. (This was a
 // latent bug: synthesized NXDOMAIN/SERVFAIL replies were going out as NOERROR.)
 const RCODE = { NOERROR: 0, FORMERR: 1, SERVFAIL: 2, NXDOMAIN: 3, NOTIMP: 4, REFUSED: 5 };
@@ -297,7 +298,7 @@ export function createNxdomainResponse(query) {
   });
 }
 
-// Create a blocked response — redirect IP (A record, NOERROR) or NXDOMAIN
+// Create a blocked response, redirect IP (A record, NOERROR) or NXDOMAIN
 export function createBlockedResponse(query) {
   if (blocklistRedirectIp) {
     return dnsPacket.encode({
@@ -337,7 +338,7 @@ export function loadBlocklist() {
 
   if (!blocklistEnabled) {
     blocklistDomainMap = null;
-    proxyLog('info', 'Blocklist disabled — cleared in-memory set');
+    proxyLog('info', 'Blocklist disabled, cleared in-memory set');
     return;
   }
 
@@ -386,6 +387,57 @@ export function getAndResetBlocklistHits() {
   return { delta, categoryHits: cats };
 }
 
+// ─── Filtering policy (shared by the UDP and TCP paths) ─────────────────────
+// The verdict logic lives here exactly once so the two transports cannot
+// drift ("blocked over UDP, leaked over TCP"). The evaluators are pure.
+// Transports own sockets, response synthesis, latency, and query logging.
+// The record* helpers bump the shared counters on a block.
+
+// Pre-forward verdict: does the blocklist intercept this name?
+export function evaluateInboundPolicy(queryName) {
+  if (!queryName) return { action: 'forward' };
+  const blockedCategory = checkBlocklist(queryName);
+  if (!blockedCategory) return { action: 'forward' };
+  return {
+    action: 'block',
+    blockReason: blockedCategory,
+    // With a redirect IP configured the synthesized answer resolves, so the
+    // logged response code is NOERROR; otherwise the block is an NXDOMAIN.
+    responseCode: blocklistRedirectIp ? 'NOERROR' : 'NXDOMAIN',
+  };
+}
+
+export function recordInboundBlock(verdict) {
+  statsBlocked++;
+  statsTotal++;
+  blocklistBlockedDelta++;
+  blocklistCategoryHits.set(verdict.blockReason, (blocklistCategoryHits.get(verdict.blockReason) || 0) + 1);
+}
+
+// Post-answer verdict: do the resolved IPs trip a GeoIP country block?
+// Allowlisted answer IPs are exempt before the country lookup; a whitelisted
+// query name overrides a would-be block.
+export function evaluateResolvedPolicy(queryName, ips, lookup = lookupCountry) {
+  if (!ips || ips.length === 0) return { action: 'forward' };
+  const countryCodes = ips
+    .filter(ip => !isGeoipAllowed(ip))
+    .map(ip => lookup(ip))
+    .filter(cc => cc !== null);
+  if (countryCodes.length > 0 && shouldBlock(countryCodes) && !isWhitelisted(queryName)) {
+    return { action: 'block', blockReason: countryCodes[0], countryCodes };
+  }
+  return { action: 'forward' };
+}
+
+export function recordResolvedBlock(verdict) {
+  statsBlocked++;
+  blockedDelta++;
+  statsTotal++;
+  for (const cc of verdict.countryCodes) {
+    countryHits.set(cc, (countryHits.get(cc) || 0) + 1);
+  }
+}
+
 // Handle a DNS query from any proxy socket
 function handleQuery(msg, rinfo, sock) {
   try {
@@ -402,29 +454,24 @@ function handleQuery(msg, rinfo, sock) {
       proxyLog('warn', 'Failed to record DNS-query liveness', { clientIp: rinfo.address, error: err.message });
     }
 
-    // Blocklist check — intercept before forwarding to dnsmasq
-    if (queryName) {
-      const blockedCategory = checkBlocklist(queryName);
-      if (blockedCategory) {
-        statsBlocked++;
-        statsTotal++;
-        blocklistBlockedDelta++;
-        blocklistCategoryHits.set(blockedCategory, (blocklistCategoryHits.get(blockedCategory) || 0) + 1);
-        const response = createBlockedResponse(query);
-        sock.send(response, rinfo.port, rinfo.address);
-        const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
-        recordLatency(latencyUs);
-        logDnsQuery({
-          clientIp: rinfo.address, domain: queryName, queryType,
-          responseCode: blocklistRedirectIp ? 'NOERROR' : 'NXDOMAIN',
-          action: 'blocked_blocklist', blockReason: blockedCategory,
-          latencyUs,
-        });
-        return;
-      }
+    // Blocklist check, intercept before forwarding to dnsmasq
+    const inbound = evaluateInboundPolicy(queryName);
+    if (inbound.action === 'block') {
+      recordInboundBlock(inbound);
+      const response = createBlockedResponse(query);
+      sock.send(response, rinfo.port, rinfo.address);
+      const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
+      recordLatency(latencyUs);
+      logDnsQuery({
+        clientIp: rinfo.address, domain: queryName, queryType,
+        responseCode: inbound.responseCode,
+        action: 'blocked_blocklist', blockReason: inbound.blockReason,
+        latencyUs,
+      });
+      return;
     }
 
-    // Circuit breaker — reject when too many queries are pending
+    // Circuit breaker, reject when too many queries are pending
     if (pendingQueries.size >= MAX_PENDING_QUERIES) {
       statsTotal++;
       sock.send(encodeServfail(query), rinfo.port, rinfo.address);
@@ -434,7 +481,7 @@ function handleQuery(msg, rinfo, sock) {
     // Assign internal query ID to track pending responses
     const internalId = allocateQueryId();
     if (internalId === null) {
-      // All 65536 IDs exhausted — drop query with SERVFAIL
+      // All 65536 IDs exhausted, drop query with SERVFAIL
       statsTotal++;
       sock.send(encodeServfail(query), rinfo.port, rinfo.address);
       return;
@@ -442,7 +489,7 @@ function handleQuery(msg, rinfo, sock) {
 
     // Store pending query mapping (includes the socket that received the query + query metadata)
     const timer = setTimeout(() => {
-      // Timeout — send SERVFAIL so client doesn't hang
+      // Timeout, send SERVFAIL so client doesn't hang
       const p = pendingQueries.get(internalId);
       if (p) {
         pendingQueries.delete(internalId);
@@ -495,43 +542,31 @@ function handleDnsmasqResponse(msg) {
     pendingQueries.delete(response.id);
     clearTimeout(pending.timer);
 
-    // GeoIP check — inspect resolved IPs
+    // GeoIP check, inspect resolved IPs
     const ips = response.answers
       .filter(a => a.type === 'A' || a.type === 'AAAA')
       .map(a => a.data);
 
-    if (ips.length > 0) {
-      // Answer IPs on the GeoIP allowlist are exempt — only evaluate the rest.
-      const countryCodes = ips
-        .filter(ip => !isGeoipAllowed(ip))
-        .map(ip => lookupCountry(ip))
-        .filter(cc => cc !== null);
-
-      if (countryCodes.length > 0 && shouldBlock(countryCodes) && !isWhitelisted(pending.queryName)) {
-        statsBlocked++;
-        blockedDelta++;
-        statsTotal++;
-        for (const cc of countryCodes) {
-          countryHits.set(cc, (countryHits.get(cc) || 0) + 1);
-        }
-        const nxResponse = createNxdomainResponse({
-          id: pending.originalId,
-          questions: response.questions,
-          additionals: pending.opt ? [pending.opt] : [],
-        });
-        pending.socket.send(nxResponse, pending.port, pending.address);
-        const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
-        recordLatency(latencyUs);
-        logDnsQuery({
-          clientIp: pending.address, domain: pending.queryName, queryType: pending.queryType,
-          responseCode: 'NXDOMAIN', action: 'blocked_geoip',
-          blockReason: countryCodes[0], latencyUs, resolvedIp: ips[0],
-        });
-        return;
-      }
+    const resolved = evaluateResolvedPolicy(pending.queryName, ips);
+    if (resolved.action === 'block') {
+      recordResolvedBlock(resolved);
+      const nxResponse = createNxdomainResponse({
+        id: pending.originalId,
+        questions: response.questions,
+        additionals: pending.opt ? [pending.opt] : [],
+      });
+      pending.socket.send(nxResponse, pending.port, pending.address);
+      const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
+      recordLatency(latencyUs);
+      logDnsQuery({
+        clientIp: pending.address, domain: pending.queryName, queryType: pending.queryType,
+        responseCode: 'NXDOMAIN', action: 'blocked_geoip',
+        blockReason: resolved.blockReason, latencyUs, resolvedIp: ips[0],
+      });
+      return;
     }
 
-    // Allowed — forward original response (restore original query ID)
+    // Allowed, forward original response (restore original query ID)
     statsAllowed++;
     statsTotal++;
     const buf = Buffer.from(msg);
@@ -556,32 +591,11 @@ function handleDnsmasqResponse(msg) {
 // ─── DNS-over-TCP relay ──────────────────────────────────────────
 // DNS-over-TCP frames each message with a 2-byte big-endian length prefix.
 // Unlike the UDP path, each query gets its own independent connection to
-// dnsmasq, so there's no 16-bit ID multiplexing — we relay the client's bytes
+// dnsmasq, so there's no 16-bit ID multiplexing, we relay the client's bytes
 // (and dnsmasq's response bytes) verbatim, which keeps DNSSEC signatures and
 // the query ID intact. TCP fallback is what validating-stub resolvers use for
 // large/truncated signed answers, so this path is required for end-to-end
 // DNSSEC while filtering stays in place.
-
-// Prefix a payload with its 2-byte big-endian length (DNS-over-TCP framing).
-export function frameTcpMessage(payload) {
-  const lenBuf = Buffer.allocUnsafe(2);
-  lenBuf.writeUInt16BE(payload.length, 0);
-  return Buffer.concat([lenBuf, payload]);
-}
-
-// Pull all complete length-prefixed messages out of a stream buffer.
-// Returns { messages: Buffer[], rest: Buffer } — `rest` is the unconsumed tail.
-export function extractTcpMessages(buf) {
-  const messages = [];
-  let offset = 0;
-  while (buf.length - offset >= 2) {
-    const msgLen = buf.readUInt16BE(offset);
-    if (buf.length - offset < 2 + msgLen) break; // wait for more bytes
-    messages.push(buf.subarray(offset + 2, offset + 2 + msgLen));
-    offset += 2 + msgLen;
-  }
-  return { messages, rest: offset > 0 ? buf.subarray(offset) : buf };
-}
 
 function writeTcpMessage(sock, payload) {
   if (!sock.writable) return;
@@ -591,7 +605,7 @@ function writeTcpMessage(sock, payload) {
 /**
  * Relay one DNS query to dnsmasq over TCP and resolve with the raw response
  * bytes (length prefix stripped), or null on timeout/error. Each call uses a
- * fresh connection — testable against any loopback TCP responder.
+ * fresh connection, testable against any loopback TCP responder.
  */
 export function relayQueryOverTcp(reqMsg, host, port, timeoutMs) {
   return new Promise((resolve) => {
@@ -626,7 +640,7 @@ async function handleTcpQuery(msg, clientSock) {
   try {
     query = dnsPacket.decode(msg);
   } catch {
-    return; // malformed — ignore this message, keep the connection open
+    return; // malformed, ignore this message, keep the connection open
   }
   const clientIp = clientSock.remoteAddress || '';
   const queryName = query.questions?.[0]?.name;
@@ -638,24 +652,19 @@ async function handleTcpQuery(msg, clientSock) {
     proxyLog('warn', 'Failed to record DNS-query liveness (TCP)', { clientIp, error: err.message });
   }
 
-  // Blocklist intercept — no dnsmasq round-trip.
-  if (queryName) {
-    const blockedCategory = checkBlocklist(queryName);
-    if (blockedCategory) {
-      statsBlocked++;
-      statsTotal++;
-      blocklistBlockedDelta++;
-      blocklistCategoryHits.set(blockedCategory, (blocklistCategoryHits.get(blockedCategory) || 0) + 1);
-      writeTcpMessage(clientSock, createBlockedResponse(query));
-      const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
-      recordLatency(latencyUs);
-      logDnsQuery({
-        clientIp, domain: queryName, queryType,
-        responseCode: blocklistRedirectIp ? 'NOERROR' : 'NXDOMAIN',
-        action: 'blocked_blocklist', blockReason: blockedCategory, latencyUs,
-      });
-      return;
-    }
+  // Blocklist intercept, no dnsmasq round-trip. Same verdict path as UDP.
+  const inbound = evaluateInboundPolicy(queryName);
+  if (inbound.action === 'block') {
+    recordInboundBlock(inbound);
+    writeTcpMessage(clientSock, createBlockedResponse(query));
+    const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
+    recordLatency(latencyUs);
+    logDnsQuery({
+      clientIp, domain: queryName, queryType,
+      responseCode: inbound.responseCode,
+      action: 'blocked_blocklist', blockReason: inbound.blockReason, latencyUs,
+    });
+    return;
   }
 
   // Relay to dnsmasq over TCP (same internal port it serves UDP on).
@@ -672,7 +681,7 @@ async function handleTcpQuery(msg, clientSock) {
     return;
   }
 
-  // GeoIP check on the resolved answers — same policy as the UDP path.
+  // GeoIP check on the resolved answers, same policy as the UDP path.
   let response = null;
   try { response = dnsPacket.decode(respMsg); } catch { /* relay raw below */ }
 
@@ -680,30 +689,26 @@ async function handleTcpQuery(msg, clientSock) {
     ? response.answers.filter(a => a.type === 'A' || a.type === 'AAAA').map(a => a.data)
     : [];
 
-  if (ips.length > 0) {
-    const countryCodes = ips.filter(ip => !isGeoipAllowed(ip)).map(ip => lookupCountry(ip)).filter(cc => cc !== null);
-    if (countryCodes.length > 0 && shouldBlock(countryCodes) && !isWhitelisted(queryName)) {
-      statsBlocked++;
-      blockedDelta++;
-      statsTotal++;
-      for (const cc of countryCodes) countryHits.set(cc, (countryHits.get(cc) || 0) + 1);
-      writeTcpMessage(clientSock, createNxdomainResponse(query));
-      logDnsQuery({
-        clientIp, domain: queryName || '', queryType,
-        responseCode: 'NXDOMAIN', action: 'blocked_geoip',
-        blockReason: countryCodes[0], latencyUs, resolvedIp: ips[0],
-      });
-      return;
-    }
+  // Same verdict path as UDP's handleDnsmasqResponse.
+  const resolved = evaluateResolvedPolicy(queryName, ips);
+  if (resolved.action === 'block') {
+    recordResolvedBlock(resolved);
+    writeTcpMessage(clientSock, createNxdomainResponse(query));
+    logDnsQuery({
+      clientIp, domain: queryName || '', queryType,
+      responseCode: 'NXDOMAIN', action: 'blocked_geoip',
+      blockReason: resolved.blockReason, latencyUs, resolvedIp: ips[0],
+    });
+    return;
   }
 
-  // Allowed — relay dnsmasq's raw bytes verbatim (preserves signatures + ID).
+  // Allowed, relay dnsmasq's raw bytes verbatim (preserves signatures + ID).
   statsAllowed++;
   statsTotal++;
   writeTcpMessage(clientSock, respMsg);
   logDnsQuery({
     clientIp, domain: queryName || '', queryType,
-    // response is null when decode failed and we relayed raw bytes — don't claim NOERROR.
+    // response is null when decode failed and we relayed raw bytes, don't claim NOERROR.
     responseCode: response?.rcode || 'UNKNOWN', action: 'allowed',
     latencyUs, resolvedIp: ips[0] || null,
   });
@@ -740,7 +745,7 @@ function onTcpConnection(clientSock) {
   clientSock.on('close', cleanup);
 }
 
-// Start the DNS proxy — binds one UDP socket per LAN address on port 53
+// Start the DNS proxy, binds one UDP socket per LAN address on port 53
 export function startProxy() {
   if (proxyServers.length > 0) {
     proxyLog('warn', 'Proxy already running');
@@ -759,7 +764,7 @@ export function startProxy() {
   // Bind one socket per LAN address on the configured DNS listen port (default 53).
   const addresses = getListenAddresses();
   if (addresses.length === 0) {
-    proxyLog('warn', 'No LAN addresses found — proxy has nothing to bind to');
+    proxyLog('warn', 'No LAN addresses found, proxy has nothing to bind to');
     return;
   }
   const listenPort = Number(getSetting('dns_listen_port')) || 53;
@@ -801,7 +806,7 @@ export function startProxy() {
 
   // Bind a TCP listener per LAN address on the same port. TCP is additive and
   // best-effort: a TCP bind failure is logged but does NOT tear down the UDP
-  // path or trip the bypass health monitor (which tracks UDP sockets) — UDP
+  // path or trip the bypass health monitor (which tracks UDP sockets), UDP
   // DNS keeps working even if TCP can't bind. In practice they bind or fail
   // together since they share the address/port.
   for (const addr of addresses) {
@@ -850,7 +855,7 @@ export function rebindProxy() {
   startProxy();
 }
 
-// Health monitor — detects proxy death, attempts restart, fails open if unrecoverable
+// Health monitor, detects proxy death, attempts restart, fails open if unrecoverable
 function startHealthMonitor() {
   stopHealthMonitor();
   healthTimer = setInterval(async () => {
@@ -877,7 +882,7 @@ function startHealthMonitor() {
       }
     }
 
-    // All restart attempts failed — activate bypass
+    // All restart attempts failed, activate bypass
     activateBypass();
   }, PROXY_HEALTH_CHECK_MS);
 }
@@ -890,13 +895,25 @@ function stopHealthMonitor() {
 }
 
 // Bypass: dnsmasq takes over port 53 on LAN IPs directly (requires full restart for port change)
+//
+// These two writers deliberately call applyInterfaceConfig + restartDnsmasq
+// inline, OUTSIDE the after-commit single-flight that serializes the
+// request-driven regen hooks. Bypass needs the conf written and dnsmasq
+// restarted synchronously (queueRegen defers into a microtask that would
+// fire after the restart). The cost is a small last-writer-wins window: a
+// concurrent request-triggered regen that read dns_proxy_bypass before the
+// flip can clobber the bypass directives. Accepted (2026-07-23 review):
+// bypass only runs when the proxy is already dead, atomicWrite prevents torn
+// files, and the health monitor re-runs activateBypass on the next tick if
+// DNS still isn't answering, the window self-heals. Don't route these
+// through queueRegen without solving the synchrony requirement first.
 function activateBypass() {
   if (bypassMode) return;
   bypassMode = true;
-  proxyLog('error', 'All restart attempts failed — activating bypass mode (dnsmasq takes port 53)');
+  proxyLog('error', 'All restart attempts failed, activating bypass mode (dnsmasq takes port 53)');
   try {
     // Temporarily override: dnsmasq listens on port 53 + LAN IPs.
-    // Must be synchronous before restartDnsmasq — queueRegen would defer
+    // Must be synchronous before restartDnsmasq, queueRegen would defer
     // the conf write into a microtask that fires AFTER the restart.
     setSetting('dns_proxy_bypass', 'true');
     applyInterfaceConfig(getDb());
@@ -909,7 +926,7 @@ function activateBypass() {
 
 function deactivateBypass() {
   bypassMode = false;
-  proxyLog('info', 'Bypass deactivated — proxy recovered');
+  proxyLog('info', 'Bypass deactivated, proxy recovered');
   try {
     const db = getDb();
     Setting.deleteSetting(db, 'dns_proxy_bypass');
@@ -925,7 +942,7 @@ export function isProxyBypassed() {
   return bypassMode;
 }
 
-// Start proxy (always-on — called on server startup)
+// Start proxy (always-on, called on server startup)
 export async function startProxyIfEnabled() {
   const geoipOn = getSetting('geoip_enabled') === 'true';
   const blocklistOn = getSetting('blocklist_enabled') === 'true';
@@ -935,7 +952,7 @@ export async function startProxyIfEnabled() {
     loadGeoipAllowlist();
     const loaded = await loadMmdb();
     if (!loaded) {
-      proxyLog('warn', 'GeoIP enabled but MMDB not available — proxy will start without GeoIP filtering');
+      proxyLog('warn', 'GeoIP enabled but MMDB not available, starting without GeoIP filtering');
     }
   }
 
@@ -943,7 +960,7 @@ export async function startProxyIfEnabled() {
     loadBlocklist();
   }
 
-  // Single global allowlist — used by the GeoIP path (the blocklist path also
+  // Single global allowlist, used by the GeoIP path (the blocklist path also
   // excludes these at load time). Loaded regardless of which features are on.
   loadWhitelist();
 

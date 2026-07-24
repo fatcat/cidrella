@@ -62,7 +62,7 @@ describe('upsert', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.13', { is_online: 1 });
     const first = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.13');
 
-    // Update with new hostname — first_seen_at should be preserved
+    // Update with new hostname, first_seen_at should be preserved
     IpAddress.upsert(db, subnetId, '10.0.1.13', { hostname: 'updated' });
     const second = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.13');
 
@@ -74,7 +74,7 @@ describe('upsert', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.14', { hostname: 'same', status: 'assigned' });
     const first = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.14');
 
-    // Same values — updated_at should not change
+    // Same values, updated_at should not change
     IpAddress.upsert(db, subnetId, '10.0.1.14', { hostname: 'same', status: 'assigned' });
     const second = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.14');
 
@@ -197,7 +197,7 @@ describe('markOffline', () => {
 
 describe('bulkMarkStale', () => {
   it('deletes stale ephemeral IPs', () => {
-    // Ephemeral IP last seen 2 hours ago — should be deleted
+    // Ephemeral IP last seen 2 hours ago, should be deleted
     IpAddress.upsert(db, subnetId, '10.0.1.30', {
       is_online: 1,
       is_rogue: 1,
@@ -207,7 +207,7 @@ describe('bulkMarkStale', () => {
     db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.30'")
       .run(subnetId);
 
-    // Fresh IP — should remain online
+    // Fresh IP, should remain online
     IpAddress.upsert(db, subnetId, '10.0.1.31', { is_online: 1, detection_source: 'passive' });
 
     IpAddress.bulkMarkStale(db, 60);
@@ -220,7 +220,7 @@ describe('bulkMarkStale', () => {
   });
 
   it('keeps stale persistent IPs and clears rogue', () => {
-    // Persistent IP (has hostname) last seen 2 hours ago — should be kept but marked offline
+    // Persistent IP (has hostname) last seen 2 hours ago, should be kept but marked offline
     IpAddress.upsert(db, subnetId, '10.0.1.32', {
       is_online: 1,
       is_rogue: 1,

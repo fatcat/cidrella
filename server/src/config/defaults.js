@@ -1,7 +1,7 @@
 // ─── Central default values ──────────────────────────────
 // Every tunable constant lives here. DB-seeded settings use these as
 // initial values (see db/init.js ensureDefaults). Server code imports
-// either the DB-backed getter or the constant directly — never both.
+// either the DB-backed getter or the constant directly, never both.
 
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -48,13 +48,13 @@ export const DEFAULTS = {
   audit_log_retention_days: 7,
   geoip_enabled:           'false',
   geoip_mode:              'blocklist',
-  geoip_proxy_port:        '5353',     // legacy — kept for migration compat
+  geoip_proxy_port:        '5353',     // legacy, kept for migration compat
   geoip_db_path:           'auto',
   geoip_last_updated:      '',
   geoip_update_schedule:   'monthly',
   update_check_enabled:    'true',
   // v0.4.15 web-port settings. Empty string means "use the env var / fallback"
-  // — the server resolves to DB value if set, env var if set, hardcoded
+  //, the server resolves to DB value if set, env var if set, hardcoded
   // default otherwise. Edits via the Interfaces UI populate these; install.sh
   // sets the env vars (via systemd drop-in) but does NOT touch the DB, so an
   // unedited install always follows the env path.
@@ -72,9 +72,9 @@ export const DEFAULTS = {
   anomaly_acknowledged_score_id: '0',
 };
 
-// ─── Shared constants (not in DB — implementation details) ───────
+// ─── Shared constants (not in DB, implementation details) ───────
 
-// Valid time range keys — single source of truth for metrics + analytics
+// Valid time range keys, single source of truth for metrics + analytics
 export const VALID_RANGE_KEYS = ['1h', '4h', '12h', '24h', '2d', '1w'];
 
 export const DNS_TEST_TIMEOUT_MS      = 5000;

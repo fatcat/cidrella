@@ -2,7 +2,7 @@
 //
 // IMPORTANT: these are the **unfiltered** endpoints. CIDRella is the single
 // source of filtering (blocklist + GeoIP + the shared whitelist), so the upstream
-// must NOT filter — double-filtering would block domains before CIDRella's logic
+// must NOT filter, double-filtering would block domains before CIDRella's logic
 // runs and break the whitelist/override model.
 //
 // Each provider carries: IPv4 addresses (we connect by IP and verify the cert
@@ -28,7 +28,7 @@ export const DOH_PROVIDERS = [
     dnssecTransparent: true,
   },
   {
-    // Quad9 UNFILTERED tier — NOT 9.9.9.9 (that one is malware-filtered).
+    // Quad9 UNFILTERED tier, NOT 9.9.9.9 (that one is malware-filtered).
     // dns10 is non-validating but DNSSEC-transparent (passes RRSIGs).
     id: 'quad9',
     label: 'Quad9 — unfiltered (9.9.9.10)',

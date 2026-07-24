@@ -36,131 +36,87 @@
               @click="doRefreshAll" :loading="refreshingAll" />
     </div>
 
-    <TabView>
-      <!-- Categories Tab -->
-      <TabPanel header="Categories">
-        <!-- Category Table -->
-        <DataTable :value="store.categories" :loading="store.loading" stripedRows size="small"
-                   emptyMessage="Loading categories..." dataKey="slug"
-                   :paginator="store.categories.length > 256" :rows="256"
-                   :rowsPerPageOptions="[64, 128, 256, 512]"
-                   scrollable scrollHeight="flex">
-          <Column style="width: 3.5rem">
-            <template #header>
-              <input type="checkbox" :checked="allEnabled" :indeterminate="someEnabled && !allEnabled"
-                     @change="doToggleAll($event.target.checked)" :disabled="togglingAll" />
-            </template>
-            <template #body="{ data }">
-              <input type="checkbox" :checked="data.enabled"
-                     @change="doToggleCategory(data, $event.target.checked)"
-                     :disabled="togglingSlug === data.slug || togglingAll" />
-            </template>
-          </Column>
-          <Column header="Category" style="min-width: 14rem">
-            <template #body="{ data }">
-              <div>
-                <strong>{{ data.name }}</strong>
-                <div class="text-sm muted">{{ data.description }}</div>
-              </div>
-            </template>
-          </Column>
-          <Column header="Group" style="width: 5rem">
-            <template #body="{ data }">
-              <span :class="data.group === 'beta' ? 'badge-sm badge-yellow' : 'badge-sm badge-muted'">
-                {{ data.group === 'beta' ? 'Beta' : 'Main' }}
-              </span>
-            </template>
-          </Column>
-          <Column header="Domains" style="width: 7rem">
-            <template #body="{ data }">
-              {{ data.domain_count > 0 ? formatNumber(data.domain_count) : '—' }}
-            </template>
-          </Column>
-          <Column header="Last Updated" style="width: 10rem">
-            <template #body="{ data }">
-              {{ data.last_fetched_at ? formatDate(data.last_fetched_at) : 'Never' }}
-            </template>
-          </Column>
-          <Column header="Status" style="width: 6rem">
-            <template #body="{ data }">
-              <span v-if="data.last_error" class="badge badge-red" style="cursor: help" :title="data.last_error">Error</span>
-              <span v-else-if="data.enabled && data.last_fetched_at" class="badge badge-green">Active</span>
-              <span v-else-if="data.enabled" class="badge badge-yellow">Pending</span>
-              <span v-else class="badge badge-muted">Off</span>
-            </template>
-          </Column>
-          <Column header="Source URL" style="min-width: 18rem">
-            <template #body="{ data }">
-              <div class="url-cell">
-                <template v-if="editingUrlSlug === data.slug">
-                  <InputText v-model="editingUrlValue" class="url-input" size="small" placeholder="https://..."
-                             @keyup.enter="doSaveUrl(data.slug)" @keyup.escape="editingUrlSlug = null" />
-                  <Button icon="pi pi-check" severity="success" text rounded size="small" @click="doSaveUrl(data.slug)" :loading="savingUrl" />
-                  <Button icon="pi pi-times" severity="secondary" text rounded size="small" @click="editingUrlSlug = null" />
-                </template>
-                <template v-else>
-                  <span class="url-text" :class="{ 'url-custom': data.is_custom_url }" :title="data.source_url">{{ data.source_url }}</span>
-                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                          @click="startEditUrl(data)" title="Edit URL" />
-                  <Button v-if="data.is_custom_url" icon="pi pi-undo" severity="secondary" text rounded size="small"
-                          @click="doResetUrl(data.slug)" title="Reset to default URL" :loading="savingUrl" />
-                </template>
-              </div>
-            </template>
-          </Column>
-          <Column header="" style="width: 3.5rem">
-            <template #body="{ data }">
-              <Button v-if="data.enabled" icon="pi pi-refresh" severity="secondary" text rounded size="small"
-                      @click="doRefreshCategory(data)" :loading="refreshingSlug === data.slug"
-                      title="Refresh this category" />
-            </template>
-          </Column>
-        </DataTable>
-      </TabPanel>
-
-      <!-- Whitelist moved to the shared Filtering › Whitelist sub-tab. -->
-
-      <!-- Search Tab -->
-      <TabPanel header="Search">
-        <div class="settings-row">
-          <InputText v-model="searchQuery" placeholder="Search blocked domains..." style="width: 20rem"
-                     @keyup.enter="doSearch()" />
-          <Button label="Search" icon="pi pi-search" size="small" @click="doSearch()" :loading="searching" />
+    <!-- Search and Allowed Domains are sibling Filtering sub-tabs now
+         (views/settings/BlocklistSearch.vue / BlocklistAllowedDomains.vue). -->
+    <DataTable :value="store.categories" :loading="store.loading" stripedRows size="small"
+             dataKey="slug"
+             :paginator="store.categories.length > 256" :rows="256"
+             :rowsPerPageOptions="[64, 128, 256, 512]"
+             scrollable scrollHeight="flex">
+    <template #empty>
+      <EmptyState v-if="!store.loading" icon="pi-ban" title="No categories available" description="The category catalog failed to load. Refresh the page or check the server log." />
+    </template>
+    <Column style="width: 3.5rem">
+      <template #header>
+        <input type="checkbox" :checked="allEnabled" :indeterminate="someEnabled && !allEnabled"
+               @change="doToggleAll($event.target.checked)" :disabled="togglingAll" />
+      </template>
+      <template #body="{ data }">
+        <input type="checkbox" :checked="data.enabled"
+               @change="doToggleCategory(data, $event.target.checked)"
+               :disabled="togglingSlug === data.slug || togglingAll" />
+      </template>
+    </Column>
+    <Column header="Category" style="min-width: 14rem">
+      <template #body="{ data }">
+        <div>
+          <strong>{{ data.name }}</strong>
+          <div class="text-sm muted">{{ data.description }}</div>
         </div>
-        <DataTable v-if="searchResults.items.length > 0 || searchPerformed" :value="searchResults.items"
-                   stripedRows size="small" emptyMessage="No matching domains found."
-                   :paginator="searchResults.items.length > 256" :rows="256"
-                   :rowsPerPageOptions="[64, 128, 256, 512]"
-                   scrollable scrollHeight="flex">
-          <Column field="domain" header="Domain" />
-          <Column field="categories" header="Categories" />
-          <Column header="Status" style="width: 8rem">
-            <template #body="{ data }">
-              <span v-if="data.whitelisted" class="badge badge-green">Whitelisted</span>
-              <span v-else class="badge badge-red">Blocked</span>
-            </template>
-          </Column>
-        </DataTable>
-        <div class="search-pagination" v-if="searchResults.total > searchLimit">
-          <Button label="Previous" severity="secondary" size="small" :disabled="searchPage <= 1"
-                  @click="searchPage--; doSearch(true)" />
-          <span class="page-info">Page {{ searchPage }} of {{ Math.ceil(searchResults.total / searchLimit) }}</span>
-          <Button label="Next" severity="secondary" size="small"
-                  :disabled="searchPage >= Math.ceil(searchResults.total / searchLimit)"
-                  @click="searchPage++; doSearch(true)" />
+      </template>
+    </Column>
+    <Column header="Group" style="width: 5rem">
+      <template #body="{ data }">
+        <span :class="data.group === 'beta' ? 'badge-sm badge-yellow' : 'badge-sm badge-muted'">
+          {{ data.group === 'beta' ? 'Beta' : 'Main' }}
+        </span>
+      </template>
+    </Column>
+    <Column header="Domains" style="width: 7rem">
+      <template #body="{ data }">
+        {{ data.domain_count > 0 ? formatNumber(data.domain_count) : '—' }}
+      </template>
+    </Column>
+    <Column header="Last Updated" style="width: 10rem">
+      <template #body="{ data }">
+        {{ data.last_fetched_at ? formatDate(data.last_fetched_at) : 'Never' }}
+      </template>
+    </Column>
+    <Column header="Status" style="width: 6rem">
+      <template #body="{ data }">
+        <span v-if="data.last_error" class="badge badge-red" style="cursor: help" :title="data.last_error">Error</span>
+        <span v-else-if="data.enabled && data.last_fetched_at" class="badge badge-green">Active</span>
+        <span v-else-if="data.enabled" class="badge badge-yellow">Pending</span>
+        <span v-else class="badge badge-muted">Off</span>
+      </template>
+    </Column>
+    <Column header="Source URL" style="min-width: 18rem">
+      <template #body="{ data }">
+        <div class="url-cell">
+          <template v-if="editingUrlSlug === data.slug">
+            <InputText v-model="editingUrlValue" class="url-input" size="small" placeholder="https://..."
+                       @keyup.enter="doSaveUrl(data.slug)" @keyup.escape="editingUrlSlug = null" />
+            <Button icon="pi pi-check" severity="success" text rounded size="small" @click="doSaveUrl(data.slug)" :loading="savingUrl" />
+            <Button icon="pi pi-times" severity="secondary" text rounded size="small" @click="editingUrlSlug = null" />
+          </template>
+          <template v-else>
+            <span class="url-text" :class="{ 'url-custom': data.is_custom_url }" :title="data.source_url">{{ data.source_url }}</span>
+            <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
+                    @click="startEditUrl(data)" title="Edit URL" />
+            <Button v-if="data.is_custom_url" icon="pi pi-undo" severity="secondary" text rounded size="small"
+                    @click="doResetUrl(data.slug)" title="Reset to default URL" :loading="savingUrl" />
+          </template>
         </div>
-      </TabPanel>
-
-      <TabPanel header="Allowed Domains">
-        <p class="wl-hint">
-          Domains here are <strong>never</strong> blocked — by category blocking <em>or</em> GeoIP.
-          (To allow specific IPs/ranges regardless of country, use GeoIP › Allowed IPs.)
-        </p>
-        <DomainWhitelist :items="store.whitelist" :on-add="wlAdd" :on-remove="wlRemove"
-                         add-track="blocklist-add-allowed-domain"
-                         empty-message="No allowed domains." />
-      </TabPanel>
-    </TabView>
+      </template>
+    </Column>
+    <Column header="" style="width: 3.5rem">
+      <template #body="{ data }">
+        <Button v-if="data.enabled" icon="pi pi-refresh" severity="secondary" text rounded size="small"
+                @click="doRefreshCategory(data)" :loading="refreshingSlug === data.slug"
+                title="Refresh this category" />
+      </template>
+    </Column>
+  </DataTable>
 
     <Toast />
   </div>
@@ -171,8 +127,7 @@ import { ref, reactive, computed, onMounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
 import { formatNumber, apiError } from '../utils/format.js';
 import { useToast } from 'primevue/usetoast';
-import TabView from 'primevue/tabview';
-import TabPanel from 'primevue/tabpanel';
+import EmptyState from '../components/EmptyState.vue';
 import Button from 'primevue/button';
 import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
@@ -180,7 +135,6 @@ import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
-import DomainWhitelist from '../components/DomainWhitelist.vue';
 import { useBlocklistStore } from '../stores/blocklists.js';
 import { useDnsStore } from '../stores/dns.js';
 
@@ -193,7 +147,7 @@ const stats = ref({ enabled_categories: 0, total_domains: 0, whitelist_count: 0,
 const settings = reactive({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily' });
 const blocklistEnabled = ref(true);
 const savedBlocklistEnabled = ref(true);
-// Show the toggle OFF (and locked) while recursion is disabled — blocking is
+// Show the toggle OFF (and locked) while recursion is disabled. Blocking is
 // inert then. Non-destructive: the saved preference returns when recursion is on.
 const blocklistEnabledDisplay = computed({
   get: () => noRecursion.value ? false : blocklistEnabled.value,
@@ -276,13 +230,6 @@ async function doResetUrl(slug) {
   }
 }
 
-// Search
-const searchQuery = ref('');
-const searchResults = ref({ items: [], total: 0 });
-const searchPage = ref(1);
-const searchLimit = 50;
-const searching = ref(false);
-const searchPerformed = ref(false);
 
 
 const formatDate = formatDateTime;
@@ -360,47 +307,11 @@ async function doSaveSettings() {
   }
 }
 
-// (Whitelist editing moved to the shared Filtering › Whitelist sub-tab.)
-
-// Search
-async function doSearch(fromPagination = false) {
-  if (!searchQuery.value.trim() || searchQuery.value.trim().length < 2) return;
-  if (!fromPagination) searchPage.value = 1;
-  searching.value = true;
-  searchPerformed.value = true;
-  try {
-    searchResults.value = await store.searchDomains(searchQuery.value.trim(), searchPage.value, searchLimit);
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Search failed', detail: apiError(err), life: 5000 });
-  } finally {
-    searching.value = false;
-  }
-}
-
-// Allowed Domains (the shared domain whitelist — also exempts GeoIP).
-async function wlAdd(domain, reason) {
-  try {
-    await store.addWhitelist(domain, reason);
-    toast.add({ severity: 'success', summary: 'Domain allowed', life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  }
-}
-async function wlRemove(entry) {
-  try {
-    await store.removeWhitelist(entry.id);
-    toast.add({ severity: 'success', summary: 'Domain removed', life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  }
-}
-
 onMounted(async () => {
   const [, fetchedSettings] = await Promise.all([
     store.fetchCategories(),
     store.fetchSettings(),
     refreshStats(),
-    store.fetchWhitelist(),
   ]);
   Object.assign(settings, fetchedSettings);
   blocklistEnabled.value = fetchedSettings.blocklist_enabled !== 'false';
@@ -416,10 +327,6 @@ onMounted(async () => {
 
 <style scoped>
 .blocklists-page { }
-.wl-hint { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0 0 0.75rem; line-height: 1.4; }
-.blocklists-page :deep(.p-tabview) { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.blocklists-page :deep(.p-tabview-panels) { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.blocklists-page :deep(.p-tabview-panel) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .blocklists-page h2 {
   margin: 0 0 1rem 0;
 }
@@ -428,13 +335,6 @@ onMounted(async () => {
 .muted { color: var(--p-text-muted-color); }
 
 
-.search-pagination {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  justify-content: center;
-  margin-top: 0.5rem;
-}
 .page-info { font-size: 0.85rem; color: var(--p-text-muted-color); }
 
 .url-cell {

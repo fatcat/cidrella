@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 //
-// CIDRella — CLI password reset
+// CIDRella, CLI password reset
 //
 // Invoked via the /usr/local/bin/cidrella-reset-password wrapper (install.sh
 // installs it at v0.4.8+). Sets a random password on a user account, marks
@@ -9,11 +9,11 @@
 // legitimate account owner sees a visible trail on next successful login.
 //
 // Security model: this script is a convenience for a capability that already
-// exists — anyone with write access to /var/lib/cidrella/cidrella.db can
+// exists, anyone with write access to /var/lib/cidrella/cidrella.db can
 // manipulate password_hash rows via any SQLite tooling. Hiding the script
 // doesn't add security. The real boundary is filesystem access to the DB
 // file, which v0.4.8 tightens to 600 cidrella:cidrella. The audit trail
-// ensures that any use of this capability — legitimate or not — is visible
+// ensures that any use of this capability, legitimate or not, is visible
 // to the legitimate account owner on their next login.
 //
 // Usage (via the wrapper):
@@ -21,8 +21,8 @@
 //   sudo cidrella-reset-password someuser   # resets 'someuser'
 //
 // Exit codes:
-//   0 — reset succeeded, new password printed to stdout
-//   1 — user not found, database not found, or other fatal error
+//   0, reset succeeded, new password printed to stdout
+//   1, user not found, database not found, or other fatal error
 
 import crypto from 'crypto';
 import os from 'os';
@@ -113,7 +113,7 @@ const actorLabel = `cli:${osUser}@${hostname}`;
 // Detect whether the DB has the v0.4.8 password_reset_by column. On pre-v0.4.8
 // DBs (which a user might hit if they're resetting a password on a legacy
 // install that was never upgraded), the column doesn't exist and we gracefully
-// skip writing it — the password reset itself still succeeds, just without
+// skip writing it, the password reset itself still succeeds, just without
 // the banner trail. This is the ONLY place in reset-password.js that needs
 // runtime schema introspection; elsewhere we use the known canonical schema
 // directly. Do the check once, up front, outside the transaction.
@@ -123,7 +123,7 @@ const hasResetByCol = userCols.includes('password_reset_by');
 // Apply the reset + audit log atomically. The audit_log schema is canonical
 // (created by migration 001 and stable since): id, user_id, action,
 // entity_type, entity_id, details, created_at. There's no need to introspect
-// it — we're in a codebase where migrations always run before any non-CLI
+// it, we're in a codebase where migrations always run before any non-CLI
 // code, and this CLI opens the DB without running migrations, but the
 // audit_log has existed since day one so the CLI can assume it.
 const reset = db.transaction(() => {
@@ -147,7 +147,7 @@ const reset = db.transaction(() => {
   }
 
   // Audit log INSERT uses the canonical schema. user_id is NULL because the
-  // actor is not a CIDRella user — it's an OS-level root with shell access.
+  // actor is not a CIDRella user, it's an OS-level root with shell access.
   // The actor label goes into details.
   const details = JSON.stringify({
     os_user: osUser,
@@ -180,7 +180,7 @@ console.log('========================================');
 console.log('');
 console.log(`  Actor recorded as:  ${actorLabel}`);
 if (result.hasResetByCol) {
-  console.log('  users.password_reset_by populated — legitimate account owner');
+  console.log('  users.password_reset_by populated. The legitimate account owner');
   console.log('  will see a warning banner on next successful login.');
 } else {
   console.warn('  NOTE: this database predates v0.4.8 and does not have');
@@ -193,7 +193,7 @@ if (result.auditInserted) {
   console.warn(`  NOTE: audit_log insert failed: ${result.auditError}`);
   console.warn('  The reset is in effect but the audit trail is incomplete.');
 } else {
-  console.warn('  NOTE: no audit_log table detected — no audit entry written.');
+  console.warn('  NOTE: no audit_log table detected, no audit entry written.');
 }
 console.log('');
 console.log('  Log in, go to Change Password, and set a real password immediately.');

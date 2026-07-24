@@ -1,4 +1,4 @@
-<!-- VLANs. Extracted from System.vue tab 1 (1:1) — table + add/edit/delete dialogs
+<!-- VLANs. Extracted from System.vue tab 1 (1:1): table + add/edit/delete dialogs
      + its own row context menu. Loads on mount. -->
 <template>
   <div class="content-card range-types-section">
@@ -6,11 +6,15 @@
       <h3>VLANs</h3>
       <Button label="Add VLAN" icon="pi pi-plus" size="small" data-track="sys-add-vlan" @click="openVlanDialog()" />
     </div>
-    <DataTable :value="vlans" :loading="loadingVlans" stripedRows emptyMessage="No VLANs found." size="small"
+    <DataTable :value="vlans" :loading="loadingVlans" stripedRows size="small"
                :paginator="vlans.length > 256" :rows="256"
                :rowsPerPageOptions="[64, 128, 256, 512]"
                @row-contextmenu="onVlanRightClick" contextMenu
                scrollable scrollHeight="flex">
+      <template #empty>
+        <EmptyState icon="pi-tags" title="No VLANs" description="Define VLANs to tag subnets with their layer-2 segment."
+                   :actions="[{ label: 'Add VLAN', icon: 'pi-plus', dataTrack: 'sys-add-vlan-empty', onClick: () => openVlanDialog() }]" />
+      </template>
       <Column field="vlan_id" header="VLAN ID" sortable style="width: 6rem" />
       <Column field="name" header="Name" sortable />
       <Column field="subnet_names" header="Network" sortable>
@@ -60,6 +64,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import Button from 'primevue/button';
+import EmptyState from '../../components/EmptyState.vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';

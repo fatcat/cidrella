@@ -53,6 +53,6 @@ export function compareSemver(a, b) {
     const c = cmpId(pa.pre[i], pb.pre[i]);
     if (c !== 0) return c;
   }
-  // All compared identifiers equal — the longer prerelease outranks (semver 2.0 §11.4.4).
+  // All compared identifiers equal, the longer prerelease outranks (semver 2.0 §11.4.4).
   return pa.pre.length < pb.pre.length ? -1 : (pa.pre.length > pb.pre.length ? 1 : 0);
 }

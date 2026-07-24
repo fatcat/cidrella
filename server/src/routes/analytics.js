@@ -62,7 +62,7 @@ router.get('/top-domains', auth, analyticsRoute(queryTopDomains));
 router.get('/top-blocked', auth, analyticsRoute(queryTopBlocked));
 
 // GET /api/analytics/query-volume?range=24h&interval=5m
-// queryVolume takes (range, interval) — not a standard (range, limit) shape, keep inline
+// queryVolume takes (range, interval), not a standard (range, limit) shape, keep inline
 router.get('/query-volume', auth, async (req, res) => {
   try {
     const { range = '24h', interval = '5m' } = req.query;
@@ -77,7 +77,7 @@ router.get('/query-volume', auth, async (req, res) => {
 });
 
 // GET /api/analytics/action-breakdown?range=24h
-// queryActionBreakdown takes only (range) — no limit param
+// queryActionBreakdown takes only (range), no limit param
 router.get('/action-breakdown', auth, async (req, res) => {
   try {
     const { range = '24h' } = req.query;
@@ -92,7 +92,7 @@ router.get('/action-breakdown', auth, async (req, res) => {
 });
 
 // GET /api/analytics/client/:ip/domains?range=24h&limit=50
-// queryClientDomains takes (clientIp, range, limit) — different first arg
+// queryClientDomains takes (clientIp, range, limit), different first arg
 router.get('/client/:ip/domains', auth, async (req, res) => {
   try {
     const parsed = parseRangeAndLimit(req, res);
@@ -105,7 +105,7 @@ router.get('/client/:ip/domains', auth, async (req, res) => {
 });
 
 // GET /api/analytics/domain/:name/clients?range=24h&limit=50
-// queryDomainClients takes (domain, range, limit) — different first arg
+// queryDomainClients takes (domain, range, limit), different first arg
 router.get('/domain/:name/clients', auth, async (req, res) => {
   try {
     const parsed = parseRangeAndLimit(req, res);

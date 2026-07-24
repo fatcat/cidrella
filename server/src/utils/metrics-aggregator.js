@@ -1,5 +1,5 @@
 /**
- * Metrics aggregator — collects DNS, DHCP, blocklist, and GeoIP stats
+ * Metrics aggregator, collects DNS, DHCP, blocklist, and GeoIP stats
  * every 60 seconds and persists them to the metrics tables.
  *
  * Blocklist and GeoIP block counts come from in-memory proxy counters.

@@ -5,7 +5,7 @@
 // Signals, strongest→weakest: DHCP option 60 (vendor class), option 55
 // (parameter-request-list signature), supplied hostname, MAC OUI vendor.
 
-// DHCP option 60 (vendor class identifier) — substring match (case-insensitive).
+// DHCP option 60 (vendor class identifier), substring match (case-insensitive).
 export const OPT60_RULES = [
   { test: /MSFT/i,           os_family: 'Windows',   device_type: 'Computer',   confidence: 85 },
   { test: /android-dhcp/i,   os_family: 'Android',   device_type: 'Smartphone', confidence: 85 },
@@ -15,7 +15,7 @@ export const OPT60_RULES = [
   { test: /\bHP\b|Hewlett|JetDirect/i,              device_type: 'Printer',    confidence: 50 },
 ];
 
-// DHCP option 55 (parameter request list) — exact match on the normalized csv.
+// DHCP option 55 (parameter request list), exact match on the normalized csv.
 // Order is OS-specific and fairly stable, so an exact hit is a strong signal.
 export const OPT55_SIGNATURES = [
   { fp: '1,3,6,15,31,33,43,44,46,47,121,249,252', os_family: 'Windows',   device_type: 'Computer',   confidence: 80 },
@@ -27,7 +27,7 @@ export const OPT55_SIGNATURES = [
   { fp: '1,33,3,6,15,26,28,51,58,59,43,114',      os_family: 'Android',   device_type: 'Smartphone', confidence: 72 },
 ];
 
-// Supplied hostname — regex match (case-insensitive).
+// Supplied hostname, regex match (case-insensitive).
 export const HOSTNAME_RULES = [
   { test: /(^|[-_.])android/i,                 os_family: 'Android',   device_type: 'Smartphone', confidence: 70 },
   { test: /iphone/i,                           os_family: 'Apple iOS', device_type: 'Smartphone', confidence: 75 },
@@ -40,7 +40,7 @@ export const HOSTNAME_RULES = [
   { test: /(printer|epson|canon|brother)/i,                            device_type: 'Printer',    confidence: 65 },
 ];
 
-// MAC OUI vendor string (from mac-vendor lookup) — weak corroborating signal.
+// MAC OUI vendor string (from mac-vendor lookup), weak corroborating signal.
 export const OUI_RULES = [
   { test: /hikvision|dahua|axis comm/i,                                device_type: 'IP Camera', confidence: 65 },
   { test: /espressif|tuya|shelly|sonoff/i,                             device_type: 'IoT',       confidence: 60 },

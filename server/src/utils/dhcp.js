@@ -61,7 +61,7 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
   }
 
   // Option 51 (lease-time) overrides the scope's lease_time in dhcp-range
-  // dnsmasq ignores option 51 via dhcp-option — it only uses the dhcp-range lease time
+  // dnsmasq ignores option 51 via dhcp-option, it only uses the dhcp-range lease time
   let leaseTime = scope.lease_time;
   if (mergedOptions.has(51)) {
     leaseTime = `${mergedOptions.get(51)}s`;
@@ -104,7 +104,7 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
     mergedOptions.set(119, scope.subnet_domain_name);
   }
 
-  // Options handled internally by dnsmasq — don't emit as dhcp-option lines
+  // Options handled internally by dnsmasq, don't emit as dhcp-option lines
   // Option 1 (subnet mask): derived from dhcp-range netmask
   // Option 28 (broadcast): auto-computed from network/mask
   mergedOptions.delete(1);
@@ -112,7 +112,7 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
 
   // Emit dhcp-option lines, resolving hostnames to IPs where needed.
   // C3 fix: refuse to emit any option whose value would inject a directive
-  // (newlines, =, or — for non-list types — commas). Skipping silently is
+  // (newlines, =, or commas for non-list types). Skipping silently is
   // safer than crashing the whole regen; a bad row from a pre-v0.4.15
   // install won't be honored, but the scope still comes up.
   for (const [code, value] of mergedOptions) {

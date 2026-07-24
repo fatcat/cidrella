@@ -15,11 +15,14 @@
       <InputText v-model="newReason" placeholder="Reason (optional)" style="width: 14rem" />
       <Button label="Add" icon="pi pi-plus" size="small" @click="add" :loading="adding" />
     </div>
-    <DataTable :value="items" stripedRows size="small" :emptyMessage="emptyMessage"
+    <DataTable :value="items" stripedRows size="small"
                :paginator="items.length > 256" :rows="256"
                :rowsPerPageOptions="[64, 128, 256, 512]"
                @row-contextmenu="onRightClick" contextMenu
                scrollable scrollHeight="flex">
+      <template #empty>
+        <EmptyState icon="pi-check-circle" :title="emptyMessage" description="Domains listed here are exempt from category and GeoIP blocking." />
+      </template>
       <Column field="domain" header="Domain" sortable />
       <Column field="reason" header="Reason">
         <template #body="{ data }">{{ data.reason || '—' }}</template>
@@ -41,6 +44,7 @@
 <script setup>
 import { ref, computed } from 'vue';
 import InputText from 'primevue/inputtext';
+import EmptyState from './EmptyState.vue';
 import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';

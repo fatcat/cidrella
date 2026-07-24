@@ -311,7 +311,7 @@ const gaugeOptions = {
   },
 };
 
-// Empty plugin object — value shown via HTML overlay
+// Empty plugin object, value shown via HTML overlay
 const gaugeCenterText = { id: 'gaugeCenterText' };
 
 // ── Cache Performance ──────────────────────────────────
@@ -391,7 +391,7 @@ useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>
-/* Page-specific styles only — shared styles come from analytics-layout.css */
+/* Page-specific styles only. Shared styles come from analytics-layout.css */
 
 .gauge-card {
   display: flex;

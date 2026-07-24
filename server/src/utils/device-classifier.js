@@ -1,4 +1,4 @@
-// Offline device/OS classifier. Pure function — combines DHCP option 55/60 +
+// Offline device/OS classifier. Pure function, combines DHCP option 55/60 +
 // hostname + MAC OUI signals against the curated ruleset and returns a best
 // guess with a confidence score. Never throws; unknown → nulls + low/zero
 // confidence (the caller still records the OUI manufacturer separately).

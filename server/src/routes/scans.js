@@ -9,19 +9,19 @@ import * as ScanRun from '../models/scan-run.js';
 
 const router = Router();
 
-// GET /api/scans — list scans (optionally filtered by subnet_id)
+// GET /api/scans: list scans (optionally filtered by subnet_id)
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
   const { subnet_id } = req.query;
   res.json(ScanRun.list(db, { subnetId: subnet_id || null }));
 });
 
-// GET /api/scans/next — next scheduled scan time
+// GET /api/scans/next: next scheduled scan time
 router.get('/next', requirePerm('subnets:read'), (req, res) => {
   res.json({ next_scan_at: getNextScanTime() });
 });
 
-// GET /api/scans/:id — get scan with results
+// GET /api/scans/:id: get scan with results
 router.get('/:id', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
   const scan = ScanRun.findById(db, req.params.id);
@@ -33,7 +33,7 @@ router.get('/:id', requirePerm('subnets:read'), (req, res) => {
   res.json({ ...scan, results });
 });
 
-// POST /api/scans — start a new scan
+// POST /api/scans: start a new scan
 router.post('/', requirePerm('subnets:write'), (req, res) => {
   const { subnet_id } = req.body;
   const db = getDb();
@@ -66,7 +66,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   res.status(201).json(scan);
 });
 
-// POST /api/scans/probe — probe a single IP (or list) for liveness using startScan
+// POST /api/scans/probe: probe a single IP (or list) for liveness using startScan
 router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
   const { ip, subnet_id } = req.body;
   if (!ip || !isValidIpv4(ip)) {
@@ -75,7 +75,7 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
 
   const db = getDb();
 
-  // Find the subnet — either from explicit subnet_id or by searching
+  // Find the subnet, either from explicit subnet_id or by searching
   let resolvedSubnetId = subnet_id;
   if (resolvedSubnetId) {
     const subnet = db.prepare("SELECT id, cidr, status FROM subnets WHERE id = ?").get(resolvedSubnetId);
@@ -126,7 +126,7 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
   }
 });
 
-// DELETE /api/scans/:id — delete scan and results
+// DELETE /api/scans/:id: delete scan and results
 router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const result = ScanRun.deleteIfNotRunning(db, req.params.id);

@@ -1,5 +1,5 @@
 <!--
-  Host "more info" popup — shows the full metadata CIDRella knows about a single
+  Host "more info" popup shows the full metadata CIDRella knows about a single
   host: identity, liveness, and the passively-inferred device/OS fingerprint
   (device type, OS family, manufacturer, confidence, and the raw DHCP signals).
   Most fields come from the IP row already loaded; the raw fingerprint detail
@@ -24,9 +24,16 @@
         <div class="hi-row"><span class="hi-label">OS family</span><span class="hi-val">{{ osFamily || dash }}</span></div>
         <div class="hi-row"><span class="hi-label">DHCP fingerprint</span><span class="hi-val mono small">{{ fp?.dhcp_fingerprint || dash }}</span></div>
         <div class="hi-row"><span class="hi-label">Vendor class</span><span class="hi-val mono small">{{ fp?.vendor_class || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">Source</span><span class="hi-val">{{ fp?.source || dash }}</span></div>
+        <div class="hi-row"><span class="hi-label">Source</span>
+          <span class="hi-val">{{ fp?.source || dash }}
+            <Button v-if="fp?.source === 'manual'" label="Reset to detected" size="small" text
+                    icon="pi pi-undo" class="hi-reset" :loading="resetting"
+                    data-track="host-info-reset-fingerprint" @click="resetFingerprint"
+                    v-tooltip.top="'Remove the manual override; the device re-identifies on its next DHCP lease'" />
+          </span>
+        </div>
         <p v-if="!loading && !deviceType && !osFamily" class="hi-hint">
-          No DHCP fingerprint yet — the device will be identified the next time it requests/renews a DHCP lease (static hosts won't fingerprint via DHCP).
+          No DHCP fingerprint yet. The device will be identified the next time it requests/renews a DHCP lease (static hosts won't fingerprint via DHCP).
         </p>
       </section>
 
@@ -34,7 +41,7 @@
         <h5>Liveness</h5>
         <div class="hi-row"><span class="hi-label">Status</span><span class="hi-val">{{ host.ip_display_status || host.status || dash }}</span></div>
         <div class="hi-row"><span class="hi-label">Online</span>
-          <span class="hi-val"><span class="dot" :class="host.is_online ? 'dot-up' : 'dot-off'"></span>{{ host.is_online ? 'Online' : 'Offline' }}</span>
+          <span class="hi-val"><StatusDot :kind="host.is_online ? 'ok' : 'muted'" :label="host.is_online ? 'Online' : 'Offline'" class="hi-dot" />{{ host.is_online ? 'Online' : 'Offline' }}</span>
         </div>
         <div class="hi-row"><span class="hi-label">Last seen</span><span class="hi-val">{{ host.last_seen_at ? fmt(host.last_seen_at) : dash }}</span></div>
         <div class="hi-row" v-if="host.dhcp_expires_at"><span class="hi-label">Lease expires</span><span class="hi-val">{{ fmt(host.dhcp_expires_at) }}</span></div>
@@ -47,7 +54,11 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import Dialog from 'primevue/dialog';
+import Button from 'primevue/button';
+import StatusDot from './StatusDot.vue';
+import { useToast } from 'primevue/usetoast';
 import api from '../api/client.js';
+import { apiError } from '../utils/format.js';
 import { formatDateTime } from '../utils/dateFormat.js';
 
 const props = defineProps({
@@ -55,6 +66,7 @@ const props = defineProps({
   host: { type: Object, default: null },
 });
 const emit = defineEmits(['update:visible']);
+const toast = useToast();
 
 const dash = '—';
 const fmt = formatDateTime;
@@ -81,6 +93,20 @@ async function loadFingerprint() {
   }
 }
 
+const resetting = ref(false);
+async function resetFingerprint() {
+  if (!mac.value) return;
+  resetting.value = true;
+  try {
+    await api.delete(`/devices/${encodeURIComponent(mac.value)}/fingerprint`);
+    await loadFingerprint();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Reset failed', detail: apiError(err), life: 5000 });
+  } finally {
+    resetting.value = false;
+  }
+}
+
 watch(() => props.visible, (v) => { if (v) loadFingerprint(); });
 </script>
 
@@ -93,9 +119,8 @@ watch(() => props.visible, (v) => { if (v) loadFingerprint(); });
 .hi-val { color: var(--p-text-color); word-break: break-word; }
 .hi-val.mono { font-family: var(--font-mono, monospace); }
 .hi-val.small { font-size: var(--app-fs-xs); }
+.hi-reset { margin-left: 0.5rem; padding: 0 0.4rem; font-size: var(--app-fs-xs); }
 .hi-rogue { color: var(--p-red-400); }
 .hi-hint { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0.3rem 0 0; line-height: 1.4; }
-.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 0.4rem; vertical-align: middle; }
-.dot-up { background: var(--p-green-500); }
-.dot-off { background: var(--p-surface-400); }
+.hi-dot { margin-right: 0.4rem; }
 </style>

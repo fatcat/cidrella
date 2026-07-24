@@ -141,7 +141,7 @@ export function getNextScanTime() {
     if (lastScan) {
       nextTime = new Date(lastScan.completed_at + 'Z').getTime() + intervalMs;
     } else {
-      // No completed scan yet — next scheduler check can trigger it.
+      // No completed scan yet, next scheduler check can trigger it.
       nextTime = Date.now() + SCHEDULER_TICK_MS;
     }
     if (nextTime <= Date.now()) nextTime = Date.now() + SCHEDULER_TICK_MS;

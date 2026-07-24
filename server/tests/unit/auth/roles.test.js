@@ -122,3 +122,24 @@ describe('requireRole', () => {
     expect(res._status).toBe(401);
   });
 });
+
+describe('system scope (v0.4.16)', () => {
+  it('every role can read system config (settings/interfaces feed shared UI)', () => {
+    for (const role of Object.keys(ROLES)) {
+      expect(hasPermission(role, 'system:read'), role).toBe(true);
+    }
+  });
+
+  it('only admin can write system config', () => {
+    expect(hasPermission('admin', 'system:write')).toBe(true);
+    for (const role of Object.keys(ROLES).filter(r => r !== 'admin')) {
+      expect(hasPermission(role, 'system:write'), role).toBe(false);
+    }
+  });
+
+  it('no non-admin role holds subnets:write (the scope system routes used to borrow)', () => {
+    for (const role of Object.keys(ROLES).filter(r => r !== 'admin')) {
+      expect(hasPermission(role, 'subnets:write'), role).toBe(false);
+    }
+  });
+});

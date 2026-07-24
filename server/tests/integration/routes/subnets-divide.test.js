@@ -6,7 +6,7 @@
  *
  * The original bug (before R1): dividing an allocated /22 silently wiped all
  * reservations, ip_addresses rows, DNS zones, and DHCP scope config under the
- * parent — declared "disastrous for a production system" by the user.
+ * parent, declared "disastrous for a production system" by the user.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
@@ -88,7 +88,7 @@ describe('POST /api/subnets/:id/divide — data preservation', () => {
     const parent = await createSubnet({ cidr: '10.10.0.0/23', name: 'Divide-res', status: 'allocated', gateway_address: '10.10.0.1' });
     await configure(parent.id, { name: 'Divide-res', create_reverse_dns: false, create_dhcp_scope: false });
 
-    // Create reservation at 10.10.1.50 — lands in the upper /24 after divide.
+    // Create reservation at 10.10.1.50, lands in the upper /24 after divide.
     const resvCreate = await request(app).post('/api/dhcp/reservations').send({
       subnet_id: parent.id, ip_address: '10.10.1.50', mac_address: 'aa:bb:cc:00:00:10', hostname: 'carrier'
     });
@@ -213,7 +213,7 @@ describe('POST /api/subnets/:id/divide — lossy gate', () => {
     const parent = await createSubnet({ cidr: '10.16.0.0/22', name: 'Lossy-partial', status: 'allocated', gateway_address: '10.16.0.1' });
     await configure(parent.id, { name: 'Lossy-partial', create_reverse_dns: false, create_dhcp_scope: true });
 
-    // Reservation in the upper half — which the user is NOT selecting.
+    // Reservation in the upper half, which the user is NOT selecting.
     await request(app).post('/api/dhcp/reservations').send({
       subnet_id: parent.id, ip_address: '10.16.3.50', mac_address: 'aa:bb:cc:00:00:30', hostname: 'stranded'
     });
@@ -249,7 +249,7 @@ describe('POST /api/subnets/:id/divide — lossy-artifact cleanup with force_los
       name: 'LossyCleanup', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'lossy-cleanup.test'
     });
 
-    // Reservation at 10.19.1.255 — becomes broadcast of 10.19.0.0/23.
+    // Reservation at 10.19.1.255, becomes broadcast of 10.19.0.0/23.
     const resvRes = await request(app).post('/api/dhcp/reservations').send({
       subnet_id: parent.id, ip_address: '10.19.1.255', mac_address: 'aa:bb:cc:00:77:01', hostname: 'doomed'
     });

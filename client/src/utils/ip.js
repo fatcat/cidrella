@@ -179,7 +179,7 @@ export function dhcpRangeDefaults(p, gw) {
   const gwLong = gw ? ipToLong(gw) : null;
   let poolEnd, poolSize;
   if (prefix >= 21 && prefix <= 23) {
-    // /21, /22, /23: cap end at network + 128, pool size = 64 — conservative
+    // /21, /22, /23: cap end at network + 128, pool size = 64 (conservative)
     // default to keep the pool near the start so ops can use the rest for
     // static allocations.
     poolEnd = p.networkLong + 128;

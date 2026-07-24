@@ -51,7 +51,7 @@ router.delete('/events/:id', requirePerm('dhcp:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/dhcp/rogue/probe — trigger an immediate probe
+// POST /api/dhcp/rogue/probe: trigger an immediate probe
 router.post('/probe', requirePerm('dhcp:write'), async (req, res) => {
   const summary = await runProbe(getDb(), {});
   audit(req.user.id, 'rogue_dhcp_probe', 'rogue_dhcp', null, {

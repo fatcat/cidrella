@@ -88,7 +88,7 @@ export function flushQueries() {
     .catch(err => console.error('[analytics] Flush error:', err.message));
 }
 
-// Validated range-to-interval mapping — only allows known safe values
+// Validated range-to-interval mapping, only allows known safe values
 const VALID_INTERVALS = new Map();
 for (const n of [1, 5, 10, 15, 30, 60]) VALID_INTERVALS.set(`${n}m`, `${n} MINUTES`);
 for (const n of [1, 2, 4, 6, 12, 24, 48, 72]) VALID_INTERVALS.set(`${n}h`, `${n} HOURS`);

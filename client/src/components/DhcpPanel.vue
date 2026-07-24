@@ -57,7 +57,7 @@
           <Button label="Sync Now" icon="pi pi-sync" size="small" text data-track="dhcp-sync-leases" @click="doSyncLeases" :loading="syncing" />
         </div>
 
-        <!-- Scope info bar — only shown when a scope is selected -->
+        <!-- Scope info bar, only shown when a scope is selected -->
         <template v-if="selectedScope">
           <div class="info-bar">
             <span class="info-bar-name">{{ selectedScope.subnet_name || selectedScope.subnet_cidr }}</span>
@@ -74,7 +74,7 @@
           </div>
         </template>
 
-        <!-- All-leases header — only shown when no scope is selected and leases exist -->
+        <!-- All-leases header, only shown when no scope is selected and leases exist -->
         <template v-else-if="filteredLeases.length > 0">
           <div class="panel-header">
             <h3>All Leases</h3>
@@ -93,7 +93,7 @@
               <ToggleSwitch v-model="showAvailableDhcp" />
               <span>show available</span>
             </label>
-            <ColumnChooserButton
+<ColumnChooserButton
               tableName="DHCP"
               :allColumns="dhcpTableColumns"
               :visibleColumns="visibleDhcpColumns"
@@ -122,7 +122,6 @@
 
           <DataTable :value="sortedDhcpRows"
                      :loading="loadingLeases" stripedRows
-                     :emptyMessage="selectedScope ? 'No addresses in this DHCP scope.' : 'No DHCP leases or reservations.'"
                      size="small" scrollable scrollHeight="flex"
                      paginator :rows="dhcpRows" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
@@ -132,6 +131,9 @@
                      :sortOrder="dhcpSortOrder"
                      @sort="onDhcpSort"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
+            <template #empty>
+              <EmptyState icon="pi-list" :title="selectedScope ? 'No addresses in this DHCP scope' : 'No DHCP leases or reservations'" />
+            </template>
             <Column
               v-for="col in visibleDhcpColumns"
               :key="col.key"
@@ -290,7 +292,7 @@ import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
 import { loadJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
 
-// No props needed — shows all scopes globally
+// No props needed, shows all scopes globally
 
 const store = useDhcpStore();
 const toast = useToast();
@@ -349,7 +351,7 @@ function formatMacFromHex(hex) {
 
 let _macInvalidToastTs = 0;
 function warnInvalidMac() {
-  // Debounce the toast — users holding a key shouldn't get flooded.
+  // Debounce the toast, users holding a key shouldn't get flooded.
   const now = Date.now();
   if (now - _macInvalidToastTs < 1500) return;
   _macInvalidToastTs = now;
@@ -392,7 +394,7 @@ function macCursorFromHexCount(n) {
 function onMacInput(event) {
   const input = event.target;
   const raw = input.value;
-  // Count hex chars strictly before the caret in the raw string — that's
+  // Count hex chars strictly before the caret in the raw string, that's
   // our cursor anchor. We preserve "hex char index" across the reformat,
   // so a mid-string edit stays mid-string instead of snapping to the end.
   const caret = input.selectionStart ?? raw.length;

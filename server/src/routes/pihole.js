@@ -34,10 +34,10 @@ async function httpRequest(url, { method = 'GET', body = null, timeout = 5000 } 
   }
 }
 
-/** GET JSON from a URL — thin wrapper around httpRequest */
+/** GET JSON from a URL: thin wrapper around httpRequest */
 function fetchJson(url) { return httpRequest(url); }
 
-/** POST JSON to a URL — thin wrapper around httpRequest */
+/** POST JSON to a URL: thin wrapper around httpRequest */
 function postJson(url, body) { return httpRequest(url, { method: 'POST', body }); }
 
 /** Parse Pi-hole config object into normalized arrays */
@@ -148,7 +148,7 @@ function validateImportRecord(record, zoneName) {
  */
 async function normalizeUrl(url) {
   if (typeof url !== 'string' || !url) return { error: 'URL is required' };
-  // Length cap before any regex work — the trailing-slash strip below is
+  // Length cap before any regex work, the trailing-slash strip below is
   // quadratic on pathological all-slash inputs (CodeQL js/polynomial-redos).
   if (url.length > 2048) return { error: 'URL is too long' };
   const trimmed = url.replace(/\/+$/, '');
@@ -300,7 +300,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
-  // Import A records — merge: skip exact dupes, update if same name but different value
+  // Import A records, merge: skip exact dupes, update if same name but different value
   if (hostRows.length > 0) {
     for (const h of hostRows) {
       if (!h || typeof h !== 'object') return res.status(400).json({ error: 'hosts entries must be objects' });
@@ -312,7 +312,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     }
   }
 
-  // Import CNAME records — merge: skip exact dupes, update if same name but different target
+  // Import CNAME records, merge: skip exact dupes, update if same name but different target
   if (cnameRows.length > 0) {
     for (const c of cnameRows) {
       if (!c || typeof c !== 'object') return res.status(400).json({ error: 'cnames entries must be objects' });

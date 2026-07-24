@@ -10,7 +10,7 @@
 #
 # This scenario uses a unit-style approach because creating a real
 # end-to-end test requires a signed release tarball with a doctored
-# RELEASE.json — a fixture we don't currently commit to the repo. Instead
+# RELEASE.json, a fixture we don't currently commit to the repo. Instead
 # we: (a) install the latest release normally, (b) write a synthetic
 # RELEASE.json to a temp location, (c) directly exercise the gate's
 # parsing + comparison logic the same way update.sh does it, and (d)
@@ -31,9 +31,9 @@ scenario_run() {
 
   # Write synthetic RELEASE.json files for the unit test. The gate's sed
   # pattern matches exactly `"min_from"\s*:\s*"..."`, so these cover:
-  #   1. min_from satisfied (running ≥ required) — gate MUST pass
-  #   2. min_from unmet (running < required)     — gate MUST refuse
-  #   3. min_from null/absent                    — gate MUST skip (no gate)
+  #   1. min_from satisfied (running ≥ required): gate MUST pass
+  #   2. min_from unmet (running < required):     gate MUST refuse
+  #   3. min_from null/absent:                    gate MUST skip (no gate)
 
   mkdir -p /tmp/min-from-test
 

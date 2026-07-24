@@ -3,7 +3,7 @@ import { queryRaw } from '../db/duckdb.js';
 
 const router = Router();
 
-// Pre-defined named queries — no arbitrary SQL accepted.
+// Pre-defined named queries, no arbitrary SQL accepted.
 // Each entry: { sql, paramMap } where paramMap transforms the request body into ordered params.
 const ALLOWED_QUERIES = {
   // ─── Dashboard queries ────────────────────────────────
@@ -90,7 +90,7 @@ const ALLOWED_QUERIES = {
   },
 };
 
-// Localhost-only guard — use socket address, not req.ip, to prevent X-Forwarded-For spoofing
+// Localhost-only guard, use socket address, not req.ip, to prevent X-Forwarded-For spoofing
 router.use((req, res, next) => {
   const ip = req.socket.remoteAddress;
   if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') {
@@ -100,7 +100,7 @@ router.use((req, res, next) => {
 });
 
 // POST /api/internal/analytics/query
-// Accepts { query, ...params } — looks up pre-defined SQL from ALLOWED_QUERIES
+// Accepts { query, ...params }, looks up pre-defined SQL from ALLOWED_QUERIES
 router.post('/query', async (req, res) => {
   const { query } = req.body;
 

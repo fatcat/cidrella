@@ -3,10 +3,10 @@
 //
 // Each sub-tab's `component` is a defineAsyncComponent factory (preserves the
 // lazy-loading the old System.vue had). Optional per-sub-tab hatches:
-//   keepAlive: true  — keep the panel mounted across sub-tab switches (form-heavy
+//   keepAlive: true    keep the panel mounted across sub-tab switches (form-heavy
 //                      panels with unsaved edits); pair with onActivated refresh.
-//   onEnter         — reserved for imperative load-on-enter (e.g. audit log).
-//   badge           — () => string|number for a live count chip (reserved).
+//   onEnter           reserved for imperative load-on-enter (e.g. audit log).
+//   badge             () => string|number for a live count chip (reserved).
 
 import { defineAsyncComponent } from 'vue';
 
@@ -44,15 +44,24 @@ export const SETTINGS_AREAS = [
   {
     id: 'filtering', label: 'Filtering', icon: 'pi pi-filter', group: 'Configuration',
     blurb: 'Categories, GeoIP, anomalies', dataTrack: 'settings-area-filtering',
+    // One flat sub-tab layer (v0.4.16): the former inner TabViews on the
+    // Categories and GeoIP panels were promoted to sibling sub-tabs:
+    // blocking sources first, then the exemptions (domain → IP), then
+    // observability. Old deep-link sec ids (categories/geoip/anomalies)
+    // are unchanged; unknown sec values fall back to the first sub-tab.
     subtabs: [
       { id: 'categories', label: 'Categories', dataTrack: 'settings-sec-blocklists', fill: true,
         component: defineAsyncComponent(() => import('../views/Blocklists.vue')) },
-      { id: 'geoip', label: 'GeoIP', dataTrack: 'settings-sec-geoip', fill: true,
+      { id: 'search', label: 'Search', dataTrack: 'settings-sec-blocklist-search', fill: true,
+        component: defineAsyncComponent(() => import('../views/settings/BlocklistSearch.vue')) },
+      { id: 'allowed-domains', label: 'Allowed Domains', dataTrack: 'settings-sec-allowed-domains', fill: true,
+        component: defineAsyncComponent(() => import('../views/settings/BlocklistAllowedDomains.vue')) },
+      { id: 'geoip', label: 'GeoIP Rules', dataTrack: 'settings-sec-geoip', fill: true,
         component: defineAsyncComponent(() => import('../views/GeoIP.vue')) },
+      { id: 'allowed-ips', label: 'Allowed IPs', dataTrack: 'settings-sec-allowed-ips', fill: true,
+        component: defineAsyncComponent(() => import('../views/settings/GeoIpAllowedIps.vue')) },
       { id: 'anomalies', label: 'Anomalies', dataTrack: 'settings-sec-anomaly',
         component: defineAsyncComponent(() => import('../views/AnomalyDetection.vue')) },
-      // "Allowed Domains" lives as an inner tab on the Categories panel (Blocklists.vue),
-      // mirroring GeoIP's "Allowed IPs" — no standalone Whitelist sub-tab.
     ],
   },
   {

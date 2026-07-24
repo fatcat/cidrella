@@ -8,7 +8,7 @@ import { VALID_RANGE_KEYS } from '../config/defaults.js';
 
 const router = Router();
 
-// Range string to seconds — derived from VALID_RANGE_KEYS
+// Range string to seconds, derived from VALID_RANGE_KEYS
 const RANGE_MAP = {};
 for (const key of VALID_RANGE_KEYS) {
   const m = key.match(/^(\d+)(h|d|w)$/);

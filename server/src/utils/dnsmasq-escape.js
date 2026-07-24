@@ -15,7 +15,7 @@
  * @param {string} value
  * @param {object} [opts]
  * @param {boolean} [opts.allowComma=false]  Option-list fields (e.g. DNS servers) legitimately contain commas.
- * @param {boolean} [opts.allowEquals=false]  Rare — used only when the value is itself a quoted TXT record payload.
+ * @param {boolean} [opts.allowEquals=false]  Rare, used only when the value is itself a quoted TXT record payload.
  */
 export function validateDnsmasqConfigValue(value, opts = {}) {
   const { allowComma = false, allowEquals = false } = opts;
@@ -45,7 +45,7 @@ export function isValidPtrName(name) {
 
 /**
  * TXT record `value` column lands inside `txt-record=<fqdn>,"..."`. The
- * writer escapes `"` but nothing else — we must refuse anything that would
+ * writer escapes `"` but nothing else, we must refuse anything that would
  * terminate the line prematurely or emit a new directive.
  */
 export function validateTxtValue(value) {

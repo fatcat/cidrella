@@ -7,14 +7,14 @@
 // a file that is actually present in staging. This catches the failure class
 // behind the v0.4.16-pre.1 DOA: server/src/data/doh-providers.js was imported by
 // routes/dns.js but excluded from the tarball by an unanchored `.buildignore`
-// `data/` pattern — `node --check` passes (syntax is fine) and the missing module
+// `data/` pattern, `node --check` passes (syntax is fine) and the missing module
 // only surfaced in the post-publish A/B preflight (ERR_MODULE_NOT_FOUND). Running
 // this against the staged tree fails the build BEFORE anything is signed/published.
 //
 // Scope: STATIC relative imports/re-exports only (`import … from './x'`,
 // `export … from './x'`). These are load-time mandatory, so a missing target is
 // always a broken release (the DOA case was a static `import {…} from
-// '../data/doh-providers.js'`). Bare specifiers (node_modules) are out of scope —
+// '../data/doh-providers.js'`). Bare specifiers (node_modules) are out of scope,
 // installed via `npm ci --omit=dev` and verified separately. Dynamic `import(…)`
 // is deliberately NOT checked: it's conditional by nature and legitimately points
 // at intentionally-unstaged modules (e.g. the dev-only routes/api-browser.js,

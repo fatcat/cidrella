@@ -93,7 +93,7 @@ export function startDhcpFingerprintWatcher(db) {
   let offset = 0;
   const pending = new Map();
 
-  // Start at EOF — don't replay history.
+  // Start at EOF, don't replay history.
   try { offset = fs.statSync(LOG_FILE).size; } catch { /* not created yet */ }
 
   function poll() {

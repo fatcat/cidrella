@@ -15,14 +15,14 @@
 #
 # Scenarios using this library should define these functions and then call
 # scenario_main at the end:
-#   scenario_setup        — prepare state (install, wipe, seed data)
-#   scenario_run          — the action being validated (often empty — setup is enough)
-#   scenario_assert       — calls to assert_* helpers
-#   scenario_capture      — calls to capture_* helpers for post-mortem observables
+#   scenario_setup: prepare state (install, wipe, seed data)
+#   scenario_run: the action being validated (often empty, setup is enough)
+#   scenario_assert: calls to assert_* helpers
+#   scenario_capture: calls to capture_* helpers for post-mortem observables
 #
 # Scenarios should also set these variables at the top:
-#   SCENARIO_NAME         — short slug, e.g. "fresh-install"
-#   SCENARIO_DESCRIPTION  — one-line human-readable summary
+#   SCENARIO_NAME: short slug, e.g. "fresh-install"
+#   SCENARIO_DESCRIPTION: one-line human-readable summary
 
 set -u
 
@@ -33,10 +33,10 @@ ASSERT_ENTRIES=""       # JSON array fragments, comma-separated
 CAPTURE_ENTRIES=""      # JSON "key": "value" fragments, comma-separated
 SCENARIO_START_TS=$(date +%s%3N 2>/dev/null || date +%s)
 
-# _json_escape — escape a string for JSON embedding.
+# _json_escape: escape a string for JSON embedding.
 # Handles: \, ", newline, carriage return, tab, and other C0 control chars.
 # Captured command output and file contents regularly contain form feed
-# (0x0C), backspace (0x08), ESC, etc. — JSON requires all U+0000–U+001F to
+# (0x0C), backspace (0x08), ESC, etc. JSON requires all U+0000–U+001F to
 # be escaped. The named-replacement block below covers \n \r \t; the tr
 # pass strips the remaining control bytes so the emitted result JSON parses
 # under strict parsers on the agent side.
@@ -263,6 +263,21 @@ install_latest_release() {
   curl -fsSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh \
     -o /tmp/install.sh || return 1
   yes y | bash /tmp/install.sh > /tmp/install-output.log 2>&1
+}
+
+# install_release_tag <tag>
+#   Pinned-version install for upgrade-path scenarios: fetches install.sh
+#   from the TAG'S OWN ref (not main, main's installer may assume a newer
+#   tarball layout than the pinned release provides) and installs that exact
+#   version via install.sh --version. Tag works with or without the leading v.
+#   Output lands in /tmp/install-output.log like install_latest_release.
+install_release_tag() {
+  local tag="$1"
+  [ -n "$tag" ] || { echo "install_release_tag: tag required" >&2; return 2; }
+  case "$tag" in v*) : ;; *) tag="v$tag" ;; esac
+  curl -fsSL "https://raw.githubusercontent.com/fatcat/cidrella/${tag}/scripts/install.sh" \
+    -o /tmp/install.sh || return 1
+  yes y | bash /tmp/install.sh --version "${tag#v}" > /tmp/install-output.log 2>&1
 }
 
 # ─── Capture helpers ─────────────────────────────────────

@@ -7,7 +7,7 @@ const router = Router();
 // All audit routes require admin
 router.use(requireRole('admin'));
 
-// GET /api/audit — paginated audit log (admin only)
+// GET /api/audit: paginated audit log (admin only)
 router.get('/', (req, res) => {
   const db = getDb();
   const page = Math.max(1, parseInt(req.query.page || '1', 10));
@@ -67,14 +67,14 @@ router.get('/', (req, res) => {
   res.json({ items, total, page, limit });
 });
 
-// GET /api/audit/actions — list distinct action types
+// GET /api/audit/actions: list distinct action types
 router.get('/actions', (req, res) => {
   const db = getDb();
   const actions = db.prepare('SELECT DISTINCT action FROM audit_log ORDER BY action').all();
   res.json(actions.map(a => a.action));
 });
 
-// GET /api/audit/entities — list distinct entity types
+// GET /api/audit/entities: list distinct entity types
 router.get('/entities', (req, res) => {
   const db = getDb();
   const entities = db.prepare('SELECT DISTINCT entity_type FROM audit_log ORDER BY entity_type').all();

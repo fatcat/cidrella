@@ -6,7 +6,7 @@ import * as RangeType from '../models/range-type.js';
 
 const router = Router();
 
-// Hex color regex — #RGB or #RRGGBB. Refuses arbitrary strings like
+// Hex color regex, #RGB or #RRGGBB. Refuses arbitrary strings like
 // "red; background: url(javascript:...)" that could leak into inline
 // style attributes in the UI (no v-html exists today, but keep it clean).
 const COLOR_RE = /^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/;

@@ -11,7 +11,7 @@ const requireAdmin = requireRole('admin');
 const VALID_ROLES = Object.keys(ROLES);
 const USERNAME_RE = /^[a-zA-Z0-9._-]+$/;
 
-// GET /api/users/roles — authoritative role catalog for the UI
+// GET /api/users/roles: authoritative role catalog for the UI
 router.get('/roles', requireAdmin, (req, res) => {
   res.json(VALID_ROLES.map(value => ({
     value,
@@ -20,7 +20,7 @@ router.get('/roles', requireAdmin, (req, res) => {
   })));
 });
 
-// GET /api/users — list all users (no password hashes)
+// GET /api/users: list all users (no password hashes)
 router.get('/', requireAdmin, (req, res) => {
   const db = getDb();
   const users = db.prepare(
@@ -29,7 +29,7 @@ router.get('/', requireAdmin, (req, res) => {
   res.json(users);
 });
 
-// POST /api/users — create user with random password
+// POST /api/users: create user with random password
 router.post('/', requireAdmin, async (req, res) => {
   const { username, role } = req.body;
 
@@ -71,7 +71,7 @@ router.post('/', requireAdmin, async (req, res) => {
   }
 });
 
-// PUT /api/users/:id — update user role
+// PUT /api/users/:id: update user role
 router.put('/:id', requireAdmin, (req, res) => {
   const { role } = req.body;
   const db = getDb();
@@ -93,7 +93,7 @@ router.put('/:id', requireAdmin, (req, res) => {
   res.json(updated);
 });
 
-// DELETE /api/users/:id — delete user
+// DELETE /api/users/:id: delete user
 router.delete('/:id', requireAdmin, (req, res) => {
   const db = getDb();
   const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(req.params.id);
@@ -113,7 +113,7 @@ router.delete('/:id', requireAdmin, (req, res) => {
   }
 });
 
-// POST /api/users/:id/reset-password — admin resets password
+// POST /api/users/:id/reset-password: admin resets password
 router.post('/:id/reset-password', requireAdmin, async (req, res) => {
   const db = getDb();
   const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(req.params.id);

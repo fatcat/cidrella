@@ -62,7 +62,7 @@ export const useGeoipStore = defineStore('geoip', () => {
     return res.data;
   }
 
-  // Single global allowlist — shared with category blocking
+  // Single global allowlist, shared with category blocking
   // (the /api/blocklists/whitelist endpoint backs one list for both).
   async function fetchWhitelist() {
     const res = await api.get('/blocklists/whitelist');
@@ -81,7 +81,7 @@ export const useGeoipStore = defineStore('geoip', () => {
     await fetchWhitelist();
   }
 
-  // GeoIP IP/CIDR allowlist — addresses/ranges never GeoIP-blocked.
+  // GeoIP IP/CIDR allowlist. Addresses/ranges never GeoIP-blocked.
   async function fetchIpAllowlist() {
     const res = await api.get('/geoip/allowlist');
     ipAllowlist.value = res.data;

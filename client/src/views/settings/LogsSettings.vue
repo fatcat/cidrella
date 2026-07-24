@@ -1,13 +1,18 @@
-<!-- Logging. Extracted from System.vue tab 11 (1:1) — inner TabView with a DNSmasq
+<!-- Logging. Extracted from System.vue tab 11 (1:1): inner Tabs with a DNSmasq
      tab (LogViewer component) and an Audit Log tab (DataTable + filters + pagination).
      Loads audit filter options + audit log on mount. -->
 <template>
   <div>
-    <TabView class="logging-subtabs">
-      <TabPanel header="DNSmasq">
+    <Tabs value="dnsmasq" class="logging-subtabs">
+      <TabList>
+        <Tab value="dnsmasq">DNSmasq</Tab>
+        <Tab value="audit">Audit Log</Tab>
+      </TabList>
+      <TabPanels>
+      <TabPanel value="dnsmasq">
         <LogViewer />
       </TabPanel>
-      <TabPanel header="Audit Log">
+      <TabPanel value="audit">
         <div class="audit-section">
           <div class="audit-filters">
             <MultiSelect v-model="auditFilters.action" :options="auditActionOptions" optionLabel="label" optionValue="value"
@@ -17,8 +22,11 @@
             <Button icon="pi pi-refresh" severity="secondary" text rounded @click="loadAuditLog" />
           </div>
           <DataTable :value="auditLog.items" :loading="loadingAudit" stripedRows size="small"
-                     emptyMessage="No audit entries found."
+                    
                      scrollable scrollHeight="flex">
+            <template #empty>
+              <EmptyState icon="pi-list" title="No audit entries" description="Actions will appear here as configuration changes are made." />
+            </template>
             <Column field="created_at" header="Time" style="width: 11rem">
               <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
             </Column>
@@ -48,14 +56,19 @@
           </div>
         </div>
       </TabPanel>
-    </TabView>
+      </TabPanels>
+    </Tabs>
   </div>
 </template>
 
 <script setup>
 import { ref, watch, onMounted, defineAsyncComponent } from 'vue';
 import { useToast } from 'primevue/usetoast';
-import TabView from 'primevue/tabview';
+import Tabs from 'primevue/tabs';
+import TabList from 'primevue/tablist';
+import Tab from 'primevue/tab';
+import TabPanels from 'primevue/tabpanels';
+import EmptyState from '../../components/EmptyState.vue';
 import TabPanel from 'primevue/tabpanel';
 import Button from 'primevue/button';
 import DataTable from 'primevue/datatable';
@@ -85,7 +98,7 @@ async function loadAuditFilterOptions() {
     ]);
     auditActionOptions.value = actionsRes.data.map(a => ({ label: a, value: a }));
     auditEntityOptions.value = entitiesRes.data.map(e => ({ label: e, value: e }));
-  } catch { /* ignore — filters will just be empty */ }
+  } catch { /* ignore, filters will just be empty */ }
 }
 
 // Auto-refresh when filters change
@@ -200,14 +213,14 @@ onMounted(() => {
   flex: 1;
   min-height: 0;
 }
-.logging-subtabs :deep(.p-tabview-panels) {
+.logging-subtabs :deep(.p-tabpanels) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-.logging-subtabs :deep(.p-tabview-panel) {
+.logging-subtabs :deep(.p-tabpanel) {
   flex: 1;
   min-height: 0;
   display: flex;

@@ -5,7 +5,7 @@
  * v0.4.15-pre.1: a port-coercion bypass on `PUT /api/interfaces/config`
  * was "fixed" by copy-pasting the validator from settings.js instead of
  * sharing it, and the two copies drifted immediately. This module is the
- * single source of truth — drift becomes impossible.
+ * single source of truth, drift becomes impossible.
  */
 
 /**
@@ -18,7 +18,7 @@
 export function sanitizeForLog(v) {
   // The explicit CR/LF pass is redundant with the control-char sweep below,
   // but it matches the newline-removal pattern CodeQL recognizes as a
-  // log-injection barrier — the range form alone is not modeled.
+  // log-injection barrier, the range form alone is not modeled.
   return String(v).replace(/[\r\n]/g, ' ').replace(/[\x00-\x1f\x7f]/g, ' ');
 }
 
@@ -41,7 +41,7 @@ export function validPortOrError(v, field) {
  * string (legacy settings-bulk path). Returns an error string or null.
  *
  * Keys must match `^[a-zA-Z0-9._-]{1,32}$` AND not be a reserved JS
- * property name. The regex alone is NOT sufficient — an earlier version
+ * property name. The regex alone is NOT sufficient, an earlier version
  * of this function claimed in a comment that the regex blocked
  * prototype-key injection, but keys like `constructor`, `__proto__`,
  * `toString`, `hasOwnProperty` all match `[a-zA-Z0-9._-]`. The trio

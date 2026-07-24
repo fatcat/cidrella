@@ -5,11 +5,11 @@ import fs from 'fs';
 import { getSetting } from '../db/init.js';
 
 // Port fallback order (v0.4.15+):
-//   1. DB setting `https_port` / `http_port`   — source of truth when the
+//   1. DB setting `https_port` / `http_port`  , source of truth when the
 //      admin has saved a value via the UI (routes/interfaces.js).
-//   2. process.env.HTTPS_PORT / HTTP_PORT      — systemd drop-in override
+//   2. process.env.HTTPS_PORT / HTTP_PORT     , systemd drop-in override
 //      from install.sh, or a dev-mode override.
-//   3. Hardcoded fallback (8443 / 8080)        — last resort.
+//   3. Hardcoded fallback (8443 / 8080)       , last resort.
 //
 // Every read goes through these helpers so a live port change immediately
 // takes effect for subsequent reads.
@@ -110,7 +110,7 @@ export async function startHttpsServer({ app, keyPath, certPath, onReady, setHtt
  * Live-swap the HTTPS listener onto a new port. Creates a fresh server on
  * the target port, then closes the old one (in-flight requests finish
  * naturally). Preflight-bind fails cleanly without disturbing the old
- * listener — so if the new port is bad, the server stays reachable on the
+ * listener, so if the new port is bad, the server stays reachable on the
  * old port.
  */
 export async function applyHttpsPortChange(newPort) {
@@ -139,7 +139,7 @@ export async function applyHttpsPortChange(newPort) {
   // on the old port will serve until idle-timeout.
   oldServer.close(() => console.log(`HTTPS moved from ${oldPort} to ${newPort}`));
   // The HTTP redirect server reads _httpsPort at request time (see
-  // makeHttpRedirectServer), so no cycle is needed — its Location target
+  // makeHttpRedirectServer), so no cycle is needed, its Location target
   // picks up the new port automatically.
   return { changed: true, oldPort, newPort };
 }
@@ -151,7 +151,7 @@ function makeHttpRedirectServer() {
     // Read the current HTTPS port AT REQUEST TIME, not capture it at server
     // creation. That way an HTTPS port change via applyHttpsPortChange()
     // automatically updates the Location target without needing to cycle
-    // the redirect listener — avoids an EADDRINUSE race when we'd otherwise
+    // the redirect listener, avoids an EADDRINUSE race when we'd otherwise
     // try to rebind on the same port while the old socket is still in
     // TIME_WAIT.
     const httpsPort = _httpsPort;
@@ -201,14 +201,14 @@ export async function applyHttpRedirectConfig() {
     return;
   }
   if (shouldRun && _httpServer && desiredPort !== _httpPort) {
-    // Port changed — restart the listener.
+    // Port changed, restart the listener.
     await applyHttpPortChange(desiredPort, { force: true });
   }
 }
 
 /**
  * Live-swap the HTTP redirect listener onto a new port. `force:true` cycles
- * the listener unconditionally even when the port doesn't change — used
+ * the listener unconditionally even when the port doesn't change, used
  * after an HTTPS port change so the redirect's Location-header target
  * closure sees the new httpsPort value.
  */
@@ -250,7 +250,7 @@ export function getWebPortInfo() {
 }
 
 // Backwards-compat re-exports so existing imports keep working. These are
-// const snapshots of the values at MODULE LOAD — anything that needs the
+// const snapshots of the values at MODULE LOAD, anything that needs the
 // live value should call getHttpsPort() / getHttpPort() instead.
 export const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '8443', 10);
 export const HTTP_PORT  = parseInt(process.env.HTTP_PORT  || '8080', 10);

@@ -8,7 +8,7 @@ let buffer = [];
 function flush() {
   if (buffer.length === 0) return;
   const batch = buffer.splice(0);
-  // Fire and forget — don't let tracking failures break the app
+  // Fire and forget. Don't let tracking failures break the app
   api.post('/dev/tracking', batch).catch(() => {});
 }
 
@@ -21,7 +21,7 @@ function record(type, data) {
   if (buffer.length >= MAX_BUFFER) flush();
 }
 
-// Track click events — capture element info and component context
+// Track click events, capture element info and component context
 function trackClicks() {
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-track], button, a, [role="menuitem"], [role="tab"], .p-menuitem');

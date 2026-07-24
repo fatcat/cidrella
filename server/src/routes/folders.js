@@ -7,7 +7,7 @@ import * as Folder from '../models/folder.js';
 
 const router = Router();
 
-// GET /api/folders — list all folders with subnet counts
+// GET /api/folders: list all folders with subnet counts
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
   // Count every subnet explicitly tagged with this folder. Previously the
@@ -23,7 +23,7 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   res.json(folders);
 });
 
-// POST /api/folders — create folder (grouping only)
+// POST /api/folders: create folder (grouping only)
 router.post('/', requirePerm('subnets:write'), (req, res) => {
   const body = req.body || {};
   const { name, description } = body;
@@ -46,7 +46,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 
   const db = getDb();
   // Let any DB error bubble through the asyncHandler path by returning next(err)
-  // instead of a local 500 that leaked err.message — the global handler in
+  // instead of a local 500 that leaked err.message, the global handler in
   // index.js collapses 5xx to a generic message.
   const maxOrder = db.prepare('SELECT MAX(sort_order) as m FROM folders').get();
   const sortOrder = (maxOrder?.m ?? -1) + 1;
@@ -57,7 +57,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   res.status(201).json(folder);
 });
 
-// PUT /api/folders/:id — update folder
+// PUT /api/folders/:id: update folder
 router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(req.params.id);
@@ -95,14 +95,14 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   res.json(updated);
 });
 
-// DELETE /api/folders/:id — delete folder (ungroups children, does not delete them)
+// DELETE /api/folders/:id: delete folder (ungroups children, does not delete them)
 router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const folder = db.prepare('SELECT * FROM folders WHERE id = ?').get(req.params.id);
   if (!folder) return res.status(404).json({ error: 'Folder not found' });
 
   const doDelete = db.transaction(() => {
-    // Ungroup subnets — move to ungrouped
+    // Ungroup subnets, move to ungrouped
     SubnetTopology.clearFolderAssignments(db, folder.id);
     // Delete the folder itself
     Folder.deleteFolder(db, folder.id);

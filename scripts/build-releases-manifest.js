@@ -6,7 +6,7 @@
  *
  * The manifest is the machine-readable view of the human-canonical
  * RELEASE-NOTES.md. It is consumed (starting in v0.4.12) by the server-side
- * update checker to compute skip-upgrade reachability — i.e. "given the
+ * update checker to compute skip-upgrade reachability, i.e. "given the
  * running version C, what is the highest version reachable in one jump?"
  * A release X is reachable from C iff X > C and (X.min_from is null or
  * X.min_from <= C).
@@ -34,10 +34,10 @@
  *   node scripts/build-releases-manifest.js --lint       # lint only, no output
  *
  * Exit codes:
- *   0 — success (or all lints passed)
- *   1 — lint failure, parse failure, or I/O error
+ *   0: success (or all lints passed)
+ *   1: lint failure, parse failure, or I/O error
  *
- * No external dependencies — uses Node built-ins only so this runs on any
+ * No external dependencies, uses Node built-ins only so this runs on any
  * bundled-Node install without npm ci.
  */
 
@@ -70,7 +70,7 @@ function compareSemver(a, b) {
   return 0;
 }
 
-// GitHub-style header anchor. Approximation — GitHub's exact algorithm is
+// GitHub-style header anchor. Approximation. GitHub's exact algorithm is
 // more nuanced but this matches for well-formed CIDRella headers.
 function anchorFor(header) {
   return header
@@ -82,7 +82,7 @@ function anchorFor(header) {
 
 // Parse a tiny YAML block. Only supports the exact fields we emit:
 // min_from (string), breaking (bool), security (bool). Quoted or unquoted
-// values are both accepted. No nesting, no lists, no anchors — if someone
+// values are both accepted. No nesting, no lists, no anchors, if someone
 // authors anything more complex the linter catches it.
 function parseYamlBlock(yamlText, lineOffset) {
   const result = {};
@@ -136,7 +136,7 @@ function parseReleaseNotes(source) {
     const lineNo = i + 1;
 
     // Release header: "## v<semver> — <YYYY-MM-DD>" with optional trailing tag
-    // The separator is U+2014 EM DASH — not an ASCII hyphen. Enforcing the
+    // The separator is U+2014 EM DASH, not an ASCII hyphen. Enforcing the
     // em-dash keeps the format readable and gives the linter a sharp
     // boundary to detect malformed headers.
     const headerMatch = /^##\s+v(\d+\.\d+\.\d+)\s+—\s+(\d{4}-\d{2}-\d{2})(?:\s+\[([^\]]+)\])?\s*$/.exec(line);
@@ -160,7 +160,7 @@ function parseReleaseNotes(source) {
       continue;
     }
 
-    // Level-1 heading ends the release-notes region — anything after a
+    // Level-1 heading ends the release-notes region, anything after a
     // top-level "# " is not a release section
     if (/^#\s/.test(line) && !/^##\s/.test(line)) {
       if (currentRelease) {
@@ -170,7 +170,7 @@ function parseReleaseNotes(source) {
       continue;
     }
 
-    // Horizontal rule — also closes the current release in some authoring
+    // Horizontal rule, also closes the current release in some authoring
     // styles. We treat it as a soft boundary, not a close.
 
     // YAML fenced block
@@ -182,7 +182,7 @@ function parseReleaseNotes(source) {
         continue;
       }
       if (inYamlBlock && /^\s*```\s*$/.test(line)) {
-        // End of YAML block — parse it
+        // End of YAML block, parse it
         const { result: parsed, errors: yamlErrors } = parseYamlBlock(
           yamlBuffer.join('\n'),
           yamlStartLine
@@ -209,7 +209,7 @@ function parseReleaseNotes(source) {
       }
     }
 
-    // Level-3 subsection tracking — so the linter can enforce "at least
+    // Level-3 subsection tracking, so the linter can enforce "at least
     // one non-empty New/Fixed/Known issues" per release.
     if (currentRelease) {
       const subMatch = /^###\s+(.+?)\s*$/.exec(line);

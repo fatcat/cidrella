@@ -24,13 +24,13 @@ export function readLogTail(filePath, offset, maxBytes = DEFAULT_MAX_READ_BYTES)
     return { lines: [], newOffset: 0 };
   }
 
-  if (size < offset) offset = 0; // truncated — restart from beginning
+  if (size < offset) offset = 0; // truncated, restart from beginning
   if (size === offset) return { lines: [], newOffset: offset };
 
   // Best-effort read: if the file exists but we can't open/read it (EACCES
   // because dnsmasq recreated the log as nobody:root 0640, EBUSY during
   // rotation, transient I/O error), swallow and return no lines. Callers
-  // are pollers on a fixed interval — throwing here escapes the timer
+  // are pollers on a fixed interval, throwing here escapes the timer
   // callback and becomes an uncaughtException, which crashes the service.
   const bytesToRead = Math.min(size - offset, maxBytes);
   const buf = Buffer.alloc(bytesToRead);

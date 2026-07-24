@@ -11,7 +11,7 @@ const router = Router();
 // mistakes doesn't count against the lockout, closing the "1 bad IP DoSes
 // the admin" vector the auth-security-tester flagged in v0.4.14. Burst raised
 // from 10 → 20 for the same reason. Per-username counters were considered
-// and rejected — they let an attacker lock the admin out by spraying bad
+// and rejected, they let an attacker lock the admin out by spraying bad
 // passwords at the username, which is a worse foot-gun than the per-IP bound.
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -70,7 +70,7 @@ router.post('/login', loginLimiter, async (req, res) => {
 
     // Strict type check BEFORE any bcrypt or SQL call. Non-string values
     // crashed the Node process in v0.4.14 via the unhandled bcrypt type
-    // error — this guard is the primary fix for the unauthenticated DoS.
+    // error, this guard is the primary fix for the unauthenticated DoS.
     if (typeof username !== 'string' || typeof password !== 'string') {
       return res.status(400).json({ error: 'Username and password must be strings' });
     }
@@ -185,7 +185,7 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
   }
 });
 
-// POST /api/auth/logout — invalidate the caller's token by bumping
+// POST /api/auth/logout: invalidate the caller's token by bumping
 // users.updated_at PAST the token's iat. The auth middleware refuses
 // tokens with `iat < updated_at`; because SQLite datetime() is 1-second
 // granular, a login followed by an immediate logout in the same wall-
@@ -233,7 +233,7 @@ router.get('/me', (req, res) => {
   res.json(payload);
 });
 
-// PUT /api/auth/preferences — update current user's preferences
+// PUT /api/auth/preferences: update current user's preferences
 router.put('/preferences', (req, res) => {
   const ALLOWED_KEYS = ['time_format'];
   const VALID_TIME_FORMATS = ['locale', 'ampm', '24h'];

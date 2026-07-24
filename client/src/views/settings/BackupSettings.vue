@@ -1,4 +1,4 @@
-<!-- Backup & Restore. Extracted from System.vue tab 3 (1:1) — manual backup, schedule,
+<!-- Backup & Restore. Extracted from System.vue tab 3 (1:1): manual backup, schedule,
      backups table + row context menu, restore, delete-backup dialog, and admin-gated
      Database Reset. Loads on mount. -->
 <template>
@@ -31,8 +31,11 @@
       <div class="setting-group">
         <h3>Existing Backups</h3>
         <DataTable :value="opsStore.backups" :loading="opsStore.loading" stripedRows size="small"
-                   emptyMessage="No backups found."
+                  
                    @row-contextmenu="onBackupRightClick" contextMenu>
+          <template #empty>
+            <EmptyState icon="pi-database" title="No backups yet" description="Create a backup now or enable the schedule below." />
+          </template>
           <Column field="filename" header="Filename" />
           <Column header="Size" style="width: 8rem">
             <template #body="{ data }">{{ formatSize(data.size_bytes) }}</template>
@@ -114,6 +117,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import Button from 'primevue/button';
+import EmptyState from '../../components/EmptyState.vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
@@ -168,9 +172,9 @@ const nextBackupLabel = computed(() => {
   const interval = INTERVAL_MS[backupSchedule.value];
   if (!interval) return 'None scheduled';
   const lastRun = backupLastRun.value ? new Date(backupLastRun.value).getTime() : 0;
-  if (!lastRun) return 'Pending — will run within 15 minutes';
+  if (!lastRun) return 'Pending (runs within 15 minutes)';
   const nextTime = new Date(lastRun + interval);
-  if (nextTime.getTime() <= Date.now()) return 'Pending — will run within 15 minutes';
+  if (nextTime.getTime() <= Date.now()) return 'Pending (runs within 15 minutes)';
   return formatDateTime(nextTime.toISOString());
 });
 

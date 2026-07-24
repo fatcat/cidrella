@@ -20,7 +20,7 @@
                non-idle state and the normal Dismiss button (scoped to the
                progress card, which only renders for completed/failed) is
                not reachable. Clicking this is equivalent to the server
-               rm'ing /var/lib/cidrella/update-status.json — safe at any
+               rm'ing /var/lib/cidrella/update-status.json. Safe at any
                time; worst case it clears an active update's progress UI,
                not the underlying update process. -->
           <Button icon="pi pi-ellipsis-v" size="small" text
@@ -50,7 +50,7 @@
             v{{ versionInfo.version }} <i class="pi pi-arrow-right"></i> v{{ versionInfo.updateAvailable }}
           </p>
           <!-- Multi-hop skip-upgrade context: explain why this is step N of M
-               and what the ultimate destination is. Read-only — no auto-chain
+               and what the ultimate destination is. Read-only, no auto-chain
                in v0.4.12. User clicks Install once per hop; after each
                successful completion + restart, this card will re-render with
                the next hop as the new "updateAvailable". -->
@@ -58,7 +58,7 @@
             <p class="chain-summary">
               <i class="pi pi-info-circle"></i>
               <span>
-                Step <strong>1 of {{ versionInfo.updateChain.length }}</strong> —
+                Step <strong>1 of {{ versionInfo.updateChain.length }}</strong>:
                 the latest version <strong>v{{ versionInfo.chainTarget }}</strong> requires going
                 through intermediate versions first.
               </span>
@@ -273,7 +273,7 @@ const isUpdating = computed(() => {
 // version and the standard single-hop flow applies. When true, the user
 // is looking at step 1 of the chain and must click Install, wait for it
 // to complete, return to this panel, and click again for each subsequent
-// step. No automatic continuation — that was explicitly cut from v0.4.12
+// step. No automatic continuation, that was explicitly cut from v0.4.12
 // per the pre-implementation agent review.
 const isMultiHopChain = computed(() => {
   const chain = versionInfo.value?.updateChain;
@@ -329,7 +329,7 @@ async function fetchUpdateStatus() {
       startReconnecting();
     }
   } catch {
-    // API unreachable — if we were updating, we're in the restart phase
+    // API unreachable. If we were updating, we're in the restart phase
     if (isUpdating.value) {
       startReconnecting();
     }
@@ -430,7 +430,7 @@ function startReconnecting() {
   reconnectTimer = setInterval(async () => {
     try {
       await api.get('/health');
-      // Server is back — fetch final state
+      // Server is back, fetch final state
       clearInterval(reconnectTimer);
       reconnectTimer = null;
       reconnecting.value = false;

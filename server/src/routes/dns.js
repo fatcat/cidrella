@@ -258,7 +258,7 @@ function validateRecord(type, { name, value, priority, weight, port }, zoneName,
     case 'PTR':
       // PTR name is unreversed octets (e.g. "5" or "5.12"). Locking it to
       // digits-and-dots means the generated ptr-record=<name>.<zone>,<value>
-      // line is safe by construction — no newline / "=" / "," injection.
+      // line is safe by construction, no newline / "=" / "," injection.
       if (!isValidPtrName(name)) return 'PTR name must be numeric-octets-and-dots (e.g., "5" or "5.12")';
       if (!isValidDomain(value)) return 'Invalid target hostname';
       break;
@@ -303,7 +303,7 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
   res.json({ ...zone, records });
 });
 
-// POST /api/dns/zones — zones are subnet-agnostic. Any number of subnets
+// POST /api/dns/zones: zones are subnet-agnostic. Any number of subnets
 // can share a forward zone via matching `subnets.domain_name`, and any
 // reverse zone is queried by name derived from an IP at PTR time.
 router.post('/zones', requirePerm('dns:write'), (req, res) => {
@@ -434,7 +434,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.zoneId);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
-  // String-type guards up front — otherwise `name.endsWith` / `value.split`
+  // String-type guards up front, otherwise `name.endsWith` / `value.split`
   // calls later crash with `.foo is not a function` 500s (H6 in v0.4.14).
   if (typeof name !== 'string' || typeof type !== 'string' || typeof value !== 'string') {
     return res.status(400).json({ error: 'name, type, and value must be strings' });
@@ -626,7 +626,7 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   audit(req.user.id, 'record_updated', 'dns_record', record.id, { changes: req.body });
 
   // Sync PTR + ip_addresses when an A record is updated in a forward zone.
-  // Clear the OLD hostname whenever NAME OR VALUE changed — the previous
+  // Clear the OLD hostname whenever NAME OR VALUE changed, the previous
   // version would skip the clear when only the name changed, leaving an
   // orphan entry pointing at the old hostname on the IP.
   if (newType === 'A' && zone.type === 'forward') {
@@ -670,7 +670,7 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
 
 // ─── Utility ─────────────────────────────────────────────
 
-// POST /api/dns/apply — force regenerate all config files. Routes through
+// POST /api/dns/apply: force regenerate all config files. Routes through
 // the shared single-flight so a concurrent lease watcher or request hook
 // doesn't race on hosts.d/*.hosts emission.
 router.post('/apply', requirePerm('dns:write'), (req, res) => {
@@ -701,7 +701,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   const { servers, no_recursion } = req.body;
   const noRecursion = !!no_recursion;
 
-  // Upstream servers are only required when recursion is enabled — with recursion
+  // Upstream servers are only required when recursion is enabled, with recursion
   // off, CIDRella is authoritative-only and forwarders are ignored.
   if (!noRecursion) {
     if (!Array.isArray(servers) || servers.length === 0) {
@@ -738,7 +738,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   res.json({ servers: getSetting('dns_upstream_servers'), no_recursion: noRecursion });
 });
 
-// GET /api/dns/dnssec — current state + dnsmasq support + clock-sync status
+// GET /api/dns/dnssec: current state + dnsmasq support + clock-sync status
 router.get('/dnssec', requirePerm('dns:read'), (req, res) => {
   res.json({
     enabled: getSetting('dnssec_enabled') === 'true',
@@ -747,7 +747,7 @@ router.get('/dnssec', requirePerm('dns:read'), (req, res) => {
   });
 });
 
-// PUT /api/dns/dnssec — toggle DNSSEC validation. Mirrors /forwarders: the
+// PUT /api/dns/dnssec: toggle DNSSEC validation. Mirrors /forwarders: the
 // authoritative write path that regenerates dnsmasq.conf and restarts dnsmasq
 // via the regenerate_dnsmasq_conf afterCommit hook.
 router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
@@ -789,7 +789,7 @@ function validateUpstreamList(arr, mode) {
       return 'each upstream needs a non-empty addresses[] of IPv4 strings';
     }
     // SSRF guard: the stub connects directly to these IPs (DoT and DoH alike), so
-    // refuse private/loopback/metadata/reserved targets — same ranges url-guard blocks.
+    // refuse private/loopback/metadata/reserved targets, same ranges url-guard blocks.
     const blocked = u.addresses.find(a => isBlockedIpv4(a));
     if (blocked) return `upstream address ${blocked} is in a private/reserved range`;
     if (typeof u.hostname !== 'string' || !u.hostname) return 'each upstream needs a hostname';
@@ -801,7 +801,7 @@ function validateUpstreamList(arr, mode) {
   return null;
 }
 
-// GET /api/dns/encryption — mode, configured upstreams, preset catalog, live status
+// GET /api/dns/encryption: mode, configured upstreams, preset catalog, live status
 router.get('/encryption', requirePerm('dns:read'), (req, res) => {
   let upstreams;
   try {
@@ -816,7 +816,7 @@ router.get('/encryption', requirePerm('dns:read'), (req, res) => {
   });
 });
 
-// PUT /api/dns/encryption — set Off/TLS/HTTPS + upstreams. Authoritative path:
+// PUT /api/dns/encryption: set Off/TLS/HTTPS + upstreams. Authoritative path:
 // (re)configures the in-Node stub and regenerates dnsmasq.conf (server= → stub).
 router.put('/encryption', requirePerm('dns:write'), (req, res) => {
   const { mode, upstreams } = req.body || {};
@@ -866,7 +866,7 @@ router.put('/soa-defaults', requirePerm('dns:write'), (req, res) => {
   res.json(defaults);
 });
 
-// POST /api/dns/forwarders/test — test if a DNS forwarder is reachable
+// POST /api/dns/forwarders/test: test if a DNS forwarder is reachable
 router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
   const { ip } = req.body;
   if (!ip || !isValidIpv4(ip)) {
@@ -877,7 +877,7 @@ router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
   res.json({ ip, ...result });
 });
 
-// GET /api/dns/resolve?name=hostname — resolve hostname to IPs
+// GET /api/dns/resolve?name=hostname: resolve hostname to IPs
 router.get('/resolve', requirePerm('dns:read'), async (req, res) => {
   const { name } = req.query;
   if (!name) return res.status(400).json({ error: 'name parameter required' });

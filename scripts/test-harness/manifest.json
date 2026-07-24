@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "CIDRella integration test harness — agent-readable scenario catalog. Read this before running scenarios so you know what each one tests, and prefer harness results over code-reading when both are available.",
+  "description": "CIDRella integration test harness \u2014 agent-readable scenario catalog. Read this before running scenarios so you know what each one tests, and prefer harness results over code-reading when both are available.",
   "runner": "scripts/test-harness/run.sh",
   "results_dir": "scripts/test-harness/results",
   "default_host": "10.0.0.8",
@@ -43,7 +43,7 @@
         ".buildignore accidentally excluding scripts/post-install.sh"
       ],
       "does_not_catch": [
-        "env contract drift (TARGET_SLOT/DATA_DIR/NEW_VERSION/IS_FRESH_INSTALL): the env-capture sub-assertion only proves the sentinel wrapper itself sees the vars the scenario explicitly sets, not that install.sh exports them. True env-contract verification would need to intercept install.sh's actual invocation — not feasible without restructuring the scenario."
+        "env contract drift (TARGET_SLOT/DATA_DIR/NEW_VERSION/IS_FRESH_INSTALL): the env-capture sub-assertion only proves the sentinel wrapper itself sees the vars the scenario explicitly sets, not that install.sh exports them. True env-contract verification would need to intercept install.sh's actual invocation \u2014 not feasible without restructuring the scenario."
       ],
       "expected_duration_sec": 100,
       "requires_fresh_host": true
@@ -59,7 +59,7 @@
         "CLI update exiting non-zero when there's nothing newer to install"
       ],
       "does_not_catch": [
-        "a real multi-release jump — testerella's installed version is always `latest` via install_latest_release, so until v0.4.12+ ships, this scenario only exercises the 'already up to date' path. Once a newer release is published, the same scenario automatically becomes a real jump test."
+        "a real multi-release jump \u2014 testerella's installed version is always `latest` via install_latest_release, so until v0.4.12+ ships, this scenario only exercises the 'already up to date' path. Once a newer release is published, the same scenario automatically becomes a real jump test."
       ],
       "expected_duration_sec": 120,
       "requires_fresh_host": true
@@ -97,6 +97,24 @@
       ],
       "expected_duration_sec": 130,
       "requires_fresh_host": true
+    },
+    {
+      "name": "upgrade-path",
+      "file": "scripts/test-harness/scenarios/upgrade-path.sh",
+      "description": "Real old-to-new update jump: pinned install of FROM_TAG (default v0.4.15), then cidrella-update to a PUBLISHED candidate (pre-)release given via --candidate. Asserts update-status success, A/B slot switchover, deep health, schema version (EXPECTED_SCHEMA, default 50), active services, and switchover events. Candidate MUST be published on GitHub (the installed old updater resolves it via the releases API; there is no local-tarball input).",
+      "catches": [
+        "updater regressions shipped in the FROM release",
+        "self-bootstrap handoff breakage between updater generations",
+        "min_from misconfiguration in the candidate's RELEASE.json",
+        "schema migration failures on a real upgrade (vs fresh install)",
+        "A/B slot-switch and rollback plumbing regressions"
+      ],
+      "does_not_catch": [
+        "upgrades from releases older than FROM_TAG (pin a different --from-tag to cover those)",
+        "problems in unpublished local builds (candidate must be a published tag)"
+      ],
+      "expected_duration_sec": 240,
+      "requires_fresh_host": true
     }
   ],
   "result_schema": {
@@ -121,9 +139,9 @@
     "Read manifest.json first to know what scenarios exist and what each catches. Agents should not need to re-read scenario source code to understand coverage.",
     "Run specific scenarios with: scripts/test-harness/run.sh --scenario <name>",
     "Run all with: scripts/test-harness/run.sh",
-    "Results land in scripts/test-harness/results/<scenario>-<timestamp>.json — one JSON object per file, parseable directly.",
+    "Results land in scripts/test-harness/results/<scenario>-<timestamp>.json \u2014 one JSON object per file, parseable directly.",
     "Each scenario wipes the target host before running (on by default). Runner refuses to run if the host is unreachable.",
-    "The harness targets testerella (10.0.0.8) by default. DO NOT point it at the production host — scenarios wipe state aggressively.",
+    "The harness targets testerella (10.0.0.8) by default. DO NOT point it at the production host \u2014 scenarios wipe state aggressively.",
     "A scenario 'pass' means every assertion passed; a 'fail' means at least one assertion failed AND the captures object contains the observed state at the moment of failure.",
     "When a scenario fails, read the captures object before hypothesizing a fix. The captures answer 'what was the actual state when this assertion fired?' which is usually enough to narrow the fault.",
     "To add a scenario: copy an existing one in scripts/test-harness/scenarios/, define SCENARIO_NAME and SCENARIO_DESCRIPTION, implement scenario_setup/run/assert/capture, then add an entry here in manifest.json."

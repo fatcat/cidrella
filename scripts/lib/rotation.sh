@@ -57,7 +57,7 @@ _rotation_node() {
 
 # load_key_state
 #   Reads $KEY_STATE_FILE if present. Populates KEY_STATE_* env vars.
-#   Missing file is not an error — callers fall through to shipped pubkeys.
+#   Missing file is not an error, callers fall through to shipped pubkeys.
 load_key_state() {
   KEY_STATE_MAX_SEEN=""
   KEY_STATE_PRIMARY=""
@@ -162,8 +162,8 @@ _materialize_pubkey() {
 # current_primary_pubkey_file <dest-path>
 #   Resolves the CURRENT trusted primary pubkey and writes it to dest-path
 #   as a minisign-format .pub file. Resolution order:
-#     1. KEY_STATE_PRIMARY (populated by load_key_state) — most recent rotation
-#     2. $INSTALL_LINK/scripts/cidrella.pub — shipped file from the current
+#     1. KEY_STATE_PRIMARY (populated by load_key_state): most recent rotation
+#     2. $INSTALL_LINK/scripts/cidrella.pub: shipped file from the current
 #        release's install.sh constant
 #   Echoes the resolved path (same as dest-path) on stdout on success.
 #   Returns 1 on failure (no pubkey available anywhere).
@@ -205,7 +205,7 @@ current_break_glass_pubkey_file() {
 #   downloads each .json + its corresponding .minisig into out-dir. Echoes
 #   the base names (without path or extension) of fetched announcements on
 #   stdout, one per line. Missing .minisig for an announcement is a warning,
-#   not a failure — the announcement is just skipped.
+#   not a failure, the announcement is just skipped.
 fetch_rotation_announcements() {
   local release_json="$1" out_dir="$2"
   mkdir -p "$out_dir"
@@ -367,7 +367,7 @@ apply_rotation_announcements() {
       return 1
     fi
 
-    # not_before check (coarse — string compare works for ISO8601 UTC)
+    # not_before check (coarse, string compare works for ISO8601 UTC)
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     if [ "$not_before" \> "$now" ]; then
       info "$name: not_before=$not_before is in the future — deferring"

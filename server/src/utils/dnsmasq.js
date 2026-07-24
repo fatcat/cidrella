@@ -162,7 +162,7 @@ export function regenerateConfDir(db) {
     }
 
     // PTR records: ptr-record=<octet>.<zone>,<hostname>. Skip any row whose
-    // name or value doesn't pass the sanitizer — they would only emit if
+    // name or value doesn't pass the sanitizer, they would only emit if
     // someone bypassed the route validator or edited the DB directly.
     for (const ptr of ptrRecords) {
       if (!isValidPtrName(ptr.name)) continue;
@@ -219,7 +219,7 @@ export function dnsmasqSupportsDnssec() {
 }
 
 // True for any dnsmasq.conf line this module injects for DNSSEC, so regen can
-// strip them before re-adding — keeping the conf a pure function of the setting.
+// strip them before re-adding, keeping the conf a pure function of the setting.
 function isManagedDnssecLine(line) {
   const t = line.trim();
   if (t === 'dnssec' || t === 'dnssec-no-timecheck') return true;
@@ -244,9 +244,9 @@ function buildDnssecLines() {
 }
 
 export function regenerateDnsmasqConf(_db) {
-  if (!fs.existsSync(DNSMASQ_CONF)) return;
+  if (!fs.existsSync(DNSMASQ_CONF)) return false;
 
-  // dnsmasq always uses real upstream servers — proxy sits in front, not behind
+  // dnsmasq always uses real upstream servers, proxy sits in front, not behind
   const servers = getSetting('dns_upstream_servers');
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
   const encryption = getSetting('forwarder_encryption') || 'off';
@@ -276,11 +276,16 @@ export function regenerateDnsmasqConf(_db) {
     if (dnsmasqSupportsDnssec()) {
       filtered.push(...buildDnssecLines());
     } else {
-      console.warn('[dnsmasq] dnssec_enabled is true but dnsmasq was not built with DNSSEC support — skipping DNSSEC directives');
+      console.warn('[dnsmasq] dnssec_enabled is true but dnsmasq was not built with DNSSEC support, skipping DNSSEC directives');
     }
   }
 
-  atomicWrite(DNSMASQ_CONF, filtered.join('\n'));
+  // Skip the write when nothing changed so callers (boot especially) can skip
+  // the dnsmasq restart. Same changed-boolean convention as regenerateConfigs.
+  const next = filtered.join('\n');
+  if (next === content) return false;
+  atomicWrite(DNSMASQ_CONF, next);
+  return true;
 }
 
 export function isDnsmasqRunning() {
@@ -292,13 +297,49 @@ export function isDnsmasqRunning() {
   }
 }
 
+// Liveness of OUR dnsmasq specifically. `pidof dnsmasq` matches any dnsmasq
+// on the host (libvirt, LXD, and NetworkManager all spawn their own), so a
+// dead cidrella-dnsmasq could look alive. Ask systemd about the exact unit;
+// fall back to pidof only where systemctl doesn't exist (Docker/s6, where
+// the only dnsmasq in the container is ours).
+export function isCidrellaDnsmasqRunning() {
+  try {
+    execFileSync('systemctl', ['is-active', '--quiet', 'cidrella-dnsmasq'], { stdio: 'ignore' });
+    return true;
+  } catch (err) {
+    if (err && err.code === 'ENOENT') return isDnsmasqRunning();
+    // systemctl exists and says the unit is not active
+    return false;
+  }
+}
+
 const DNSMASQ_PID = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.pid');
+const RESTART_PENDING = path.join(DATA_DIR, 'runtime', 'dnsmasq-restart-pending');
+
+// True when a previous restartDnsmasq() could not complete, meaning the conf
+// on disk may be newer than what the running dnsmasq loaded. The boot path
+// checks this so change-detection can't skip the restart that would heal a
+// stale-loaded config.
+export function dnsmasqRestartPending() {
+  return fs.existsSync(RESTART_PENDING);
+}
+
+function setRestartPending(pending) {
+  try {
+    if (pending) {
+      fs.mkdirSync(path.dirname(RESTART_PENDING), { recursive: true });
+      fs.writeFileSync(RESTART_PENDING, new Date().toISOString());
+    } else {
+      fs.rmSync(RESTART_PENDING, { force: true });
+    }
+  } catch { /* marker is best-effort */ }
+}
 
 export function signalDnsmasq() {
   // Reload dnsmasq via systemctl. cidrella-dnsmasq.service has
   // ExecReload=/bin/kill -HUP $MAINPID (added in v0.4.11), and the cidrella
   // service account is authorized to reload that exact unit by
-  // /etc/polkit-1/rules.d/49-cidrella.rules — no sudo, no setuid escalation.
+  // /etc/polkit-1/rules.d/49-cidrella.rules, no sudo, no setuid escalation.
   //
   // This path replaces the sudo+wrapper path (cidrella-dnsmasq-hup) which
   // was broken from v0.4.8 onward by the systemd hardening on
@@ -327,6 +368,7 @@ export function restartDnsmasq() {
   try {
     execFileSync('systemctl', ['restart', 'cidrella-dnsmasq'], { stdio: 'pipe' });
     console.log('dnsmasq restarted via systemctl');
+    setRestartPending(false);
     return;
   } catch (err) {
     const stderr = err?.stderr?.toString?.().trim();
@@ -337,13 +379,18 @@ export function restartDnsmasq() {
   try {
     execFileSync('pkill', ['-TERM', '-x', 'dnsmasq'], { stdio: 'pipe' });
     console.log('dnsmasq terminated (supervisor will restart)');
+    setRestartPending(false);
   } catch {
+    // Both restart paths failed: the conf on disk may now be ahead of the
+    // running process. Leave a marker so the next boot restarts even if
+    // change-detection sees an unchanged file.
     console.warn('Could not restart dnsmasq');
+    setRestartPending(true);
   }
 }
 
 export function applyInterfaceConfig(_db) {
-  if (!fs.existsSync(DNSMASQ_CONF)) return;
+  if (!fs.existsSync(DNSMASQ_CONF)) return false;
 
   const content = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
   const lines = content.split('\n');
@@ -379,7 +426,7 @@ export function applyInterfaceConfig(_db) {
     if (val === 'false') dhcpEnabled = false;
   } catch { /* use default */ }
 
-  // Check for proxy bypass mode — dnsmasq takes over port 53 on LAN IPs
+  // Check for proxy bypass mode, dnsmasq takes over port 53 on LAN IPs
   let proxyBypass = false;
   try {
     const val = getSetting('dns_proxy_bypass');
@@ -388,9 +435,9 @@ export function applyInterfaceConfig(_db) {
 
   const sysIfaces = os.networkInterfaces();
 
-  // Normal mode: dnsmasq DNS listens on localhost:5353 only — proxy handles
+  // Normal mode: dnsmasq DNS listens on localhost:5353 only, proxy handles
   //   LAN-facing DNS on the configured `dns_listen_port` (default 53).
-  // Bypass mode: proxy is dead — dnsmasq listens on `dns_listen_port` + LAN IPs directly.
+  // Bypass mode: proxy is dead, dnsmasq listens on `dns_listen_port` + LAN IPs directly.
   // DHCP always needs interface= directives for LAN interfaces.
   let configuredListenPort = 53;
   try {
@@ -412,7 +459,7 @@ export function applyInterfaceConfig(_db) {
   if (hasExplicitConfig) {
     for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
       if (!cfg.dns && !cfg.dhcp) continue;
-      // Skip any stored ifName that isn't a real host interface — guards
+      // Skip any stored ifName that isn't a real host interface, guards
       // against prototype-chain lookups (constructor/__proto__/toString)
       // in stored config that predates the validator fix for C1.
       if (!Object.hasOwn(sysIfaces, ifName)) continue;
@@ -432,7 +479,7 @@ export function applyInterfaceConfig(_db) {
       }
     }
   } else {
-    // Fresh deploy — bind DHCP to all real interfaces
+    // Fresh deploy, bind DHCP to all real interfaces
     for (const [ifName, addrs] of Object.entries(sysIfaces)) {
       if (ifName === 'lo') continue;
       if (dhcpEnabled) {
@@ -452,7 +499,11 @@ export function applyInterfaceConfig(_db) {
   // Append directives at the end
   filtered.push(...newDirectives);
 
-  atomicWrite(DNSMASQ_CONF, filtered.join('\n'));
+  // Same changed-boolean convention as regenerateDnsmasqConf/regenerateConfigs.
+  const next = filtered.join('\n');
+  if (next === content) return false;
+  atomicWrite(DNSMASQ_CONF, next);
+  return true;
 }
 
 export function regenerateConfigs(db) {

@@ -13,7 +13,7 @@
 #
 # This function is idempotent and only tightens (never loosens). It's called
 # from install.sh post-service-start and from update.sh post-health-check.
-# Every chmod is `|| true` — files may legitimately not exist on a fresh
+# Every chmod is `|| true`, files may legitimately not exist on a fresh
 # install until the service creates them.
 #
 # dnsmasq subtree is NOT touched: dnsmasq drops to the `nobody` user at
@@ -39,11 +39,11 @@ tighten_secrets() {
     [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true
   done
 
-  # TLS material — cert is public but the private key absolutely is not.
+  # TLS material, cert is public but the private key absolutely is not.
   chmod 700 "$data_dir/certs"            2>/dev/null || true
   chmod 600 "$data_dir/certs/server.key" 2>/dev/null || true
 
-  # Backups — contain full DB dumps, strictly admin-only.
+  # Backups contain full DB dumps, strictly admin-only.
   chmod 700 "$data_dir/backups" 2>/dev/null || true
   for f in "$data_dir"/backups/*.tar.gz "$data_dir"/backups/*.tar.gz.enc; do
     [ -f "$f" ] && chmod 600 "$f" 2>/dev/null || true

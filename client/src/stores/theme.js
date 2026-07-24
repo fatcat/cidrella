@@ -17,7 +17,7 @@ import { ref, computed } from 'vue';
 // by the dark variant and 500-600 as the deeper form used by light mode.
 
 const palettes = {
-  // ── Catppuccin — cool gray + signature mauve accent
+  // ── Catppuccin: cool gray + signature mauve accent
   //    Mocha bases (dark): base=#1e1e2e, surface0=#313244, surface1=#45475a,
   //                        surface2=#585b70, text=#cdd6f4
   //    Latte accent:       mauve=#8839ef   Mocha accent: mauve=#cba6f7
@@ -36,7 +36,7 @@ const palettes = {
     },
   },
 
-  // ── Rosé Pine — warm gray + signature iris (soft lavender) accent
+  // ── Rosé Pine: warm gray + signature iris (soft lavender) accent
   //    Main bases (dark):  base=#191724, surface=#1f1d2e, overlay=#26233a
   //    Dawn iris:          #907aa9    Main iris: #c4a7e7
   rosePine: {
@@ -54,7 +54,7 @@ const palettes = {
     },
   },
 
-  // ── Gruvbox — sepia warm gray + signature aqua accent (light + dark)
+  // ── Gruvbox: sepia warm gray + signature aqua accent (light + dark)
   //    Dark bases:  bg0=#282828, bg1=#3c3836, bg2=#504945, bg3=#665c54
   //    Dark aqua:   #8ec07c     Light aqua: #689d6a
   //    Light-mode surface shades (0–100) pulled toward medium warm-gray
@@ -77,7 +77,7 @@ const palettes = {
     },
   },
 
-  // ── Tokyo Day — light-gray blue + soft blue accent (LIGHT-ONLY)
+  // ── Tokyo Day: light-gray blue + soft blue accent (LIGHT-ONLY)
   //    Tokyo Night Day bases: bg=#e1e2e7, bg_dark=#b7c1e3,
   //                           comment=#848cb5, dark3=#8990b3
   //    Day blue accent: #2e7de9   Night pastel form: #7aa2f7
@@ -96,7 +96,7 @@ const palettes = {
     },
   },
 
-  // ── One — blue-gray + signature blue accent (Atom/VSCode One theme)
+  // ── One: blue-gray + signature blue accent (Atom/VSCode One theme)
   //    Dark bases: bg=#282c34, lighter=#3e4451, gutter=#636d83
   //    Light blue: #4078f2    Dark blue: #61afef
   one: {
@@ -114,11 +114,11 @@ const palettes = {
     },
   },
 
-  // ── Starry Night (light) — green/earth palette from the painting
-  //    Primary:  cypress & hills — muted sage/olive green
+  // ── Starry Night (light): green/earth palette from the painting
+  //    Primary:  cypress & hills, muted sage/olive green
   //    Surface:  village cream-gray → rolling olive → cypress near-black
   //    Light bg (surface.0) ≈ #cbcaba medium warm-gray with a green cast
-  //    Paired with starryNight (dark) below — the sky-side of the painting.
+  //    Paired with starryNight (dark) below, the sky-side of the painting.
   starryNightLight: {
     primary: {
       50:  '#eaeddf', 100: '#d6dcc3', 200: '#b6c09d',
@@ -134,11 +134,11 @@ const palettes = {
     },
   },
 
-  // ── Starry Night (dark) — Van Gogh (1889) sky palette
+  // ── Starry Night (dark): Van Gogh (1889) sky palette
   //    Primary:  star yellow → golden moon (bright to deep ochre)
   //    Surface:  village cream → dusk blue-gray → cobalt night sky
   //    Dark bg  (surface.900) ≈ #13294a deep night-sky blue
-  //    Paired with starryNightLight above — the earth-side of the painting.
+  //    Paired with starryNightLight above (the earth-side of the painting).
   starryNight: {
     primary: {
       50:  '#556382', 100: '#556382', 200: '#556382',
@@ -154,7 +154,7 @@ const palettes = {
     },
   },
 
-  // ── Nord — hand-tuned, preserved unchanged
+  // ── Nord: hand-tuned, preserved unchanged
   nord: {
     primary: {
       50:  '#f0f4f8', 100: '#dae5f0', 200: '#b8cfe0',
@@ -183,7 +183,7 @@ export const themes = [
   { id: 'light-catppuccin', name: 'Catppuccin', group: 'light', tier: 'experimental', customPrimary: palettes.catppuccin.primary, customSurface: palettes.catppuccin.surface },
 ];
 
-// Preview swatches for the Themes picker — each uses the palette's
+// Preview swatches for the Themes picker. Each uses the palette's
 // signature accent shade at 300 (the pastel form seen in dark mode) so
 // the swatch reads as the theme's personality on both light and dark
 // picker cards.
@@ -193,8 +193,8 @@ export const colorSwatches = {
   gruvbox:     palettes.gruvbox.primary[300],
   one:         palettes.one.primary[300],
   'tokyo day': palettes.tokyoDay.primary[300],
-  // Starry Night has two distinct palettes — green for light, yellow for
-  // dark — so the picker needs two swatches, not one shared by name.
+  // Starry Night has two distinct palettes (green for light, yellow for
+  // dark), so the picker needs two swatches, not one shared by name.
   // System.vue branches on theme.group to pick the right key.
   'starry night light': palettes.starryNightLight.primary[300],
   'starry night':       palettes.starryNight.primary[300],
@@ -202,7 +202,7 @@ export const colorSwatches = {
 };
 
 export const useThemeStore = defineStore('theme', () => {
-  // Default to Nord — the only theme preserved across the v0.4.15 rework.
+  // Default to Nord, the only theme preserved across the v0.4.15 rework.
   // Previously-stored theme IDs (light-emerald-slate, dark-blue-zinc,
   // light-sage etc.) no longer exist; they fall through to Nord via the
   // currentTheme computed and init() snaps the stored ID on next boot.

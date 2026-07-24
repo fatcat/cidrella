@@ -410,7 +410,7 @@ const emit = defineEmits(['saved']);
 async function save() {
   saving.value = true;
   try {
-    // Send all selected options to the server — the server strips inherited
+    // Send all selected options to the server. The server strips inherited
     // values using fresh subnet data from the DB (avoids stale client-side list).
     const options = form.value.selectedOptions
       .filter(code => form.value.optionValues[code] != null && form.value.optionValues[code] !== '')
@@ -569,7 +569,7 @@ async function openNewWithPicker(subnetCtx) {
         const pool = dhcpRangeDefaults(parsed, subnetCtx.gateway_address || null);
         autoStartIp = pool.start || '';
         autoEndIp = pool.end || '';
-      } catch { /* invalid cidr — leave blank */ }
+      } catch { /* invalid cidr, leave blank */ }
     }
     if (subnetCtx.domain_name) {
       setOptionValue(autoSelected, autoValues, 15, subnetCtx.domain_name);

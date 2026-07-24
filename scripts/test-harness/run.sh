@@ -15,9 +15,9 @@
 #   ./run.sh --list                   # print manifest.json and exit
 #
 # Exit codes:
-#   0 — all scenarios passed
-#   1 — at least one scenario failed
-#   2 — runner error (bad args, SSH unreachable, etc.)
+#   0: all scenarios passed
+#   1: at least one scenario failed
+#   2: runner error (bad args, SSH unreachable, etc.)
 #
 # Design note: scenarios run sequentially with a host wipe between each,
 # so a scenario that mutates system state doesn't pollute the next. The
@@ -35,6 +35,11 @@ RESULTS_DIR="$SCRIPT_DIR/results"
 MANIFEST_FILE="$SCRIPT_DIR/manifest.json"
 
 HOST="${HOST:-10.0.0.8}"
+# Upgrade-path scenario inputs (harmless for scenarios that ignore them):
+# FROM_TAG is the release installed first, CANDIDATE_VERSION is the published
+# (pre-)release cidrella-update jumps to. See scenarios/upgrade-path.sh.
+FROM_TAG="${FROM_TAG:-v0.4.15}"
+CANDIDATE_VERSION="${CANDIDATE_VERSION:-}"
 REQUESTED=()
 DO_RESET=1
 LIST_ONLY=0
@@ -43,6 +48,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --host) HOST="$2"; shift 2 ;;
     --scenario) REQUESTED+=("$2"); shift 2 ;;
+    --from-tag) FROM_TAG="$2"; shift 2 ;;
+    --candidate) CANDIDATE_VERSION="$2"; shift 2 ;;
     --no-reset) DO_RESET=0; shift ;;
     --list) LIST_ONLY=1; shift ;;
     -h|--help)
@@ -105,7 +112,7 @@ echo "  results:   $RESULTS_DIR"
 echo ""
 
 # ─── Reset host helper ───────────────────────────────────
-# Wipes all CIDRella state on the target. Intentionally aggressive —
+# Wipes all CIDRella state on the target. Intentionally aggressive.
 # intended for throwaway test hosts only. DO NOT RUN AGAINST PROD.
 reset_host() {
   echo "[reset] wiping host..."
@@ -143,8 +150,8 @@ run_scenario() {
   # file. The last line on stdout is the JSON result.
   local ssh_output
   if ssh_output=$(cat "$LIB_FILE" "$scenario_file" \
-    | ssh "root@$HOST" 'TERM=dumb bash -s' 2>"$stderr_file"); then
-    # Extract the last line — that's the result JSON
+    | ssh "root@$HOST" "TERM=dumb FROM_TAG='$FROM_TAG' CANDIDATE_VERSION='$CANDIDATE_VERSION' bash -s" 2>"$stderr_file"); then
+    # Extract the last line, that's the result JSON
     local json_line
     json_line=$(printf '%s' "$ssh_output" | tail -n 1)
     if [ -n "$json_line" ] && [ "${json_line:0:1}" = "{" ]; then
@@ -153,7 +160,7 @@ run_scenario() {
       # IMPORTANT: use `grep -o ... | head -1` for `status`, not a greedy
       # `sed 's/.*"status":"..."/'`. Every assertion entry in the assertions
       # array also has a "status" field, and greedy `.*` would match the
-      # LAST one in the line — so a scenario whose overall status is "fail"
+      # LAST one in the line, so a scenario whose overall status is "fail"
       # but whose final assertion passed would report status=pass. First
       # match in the JSON is the top-level scenario status.
       local status

@@ -5,7 +5,7 @@
 # install, cidrella.db, analytics.duckdb, server.key and their sidecars
 # must be mode 600, certs/, backups/, anomaly/ must be mode 700. The
 # dnsmasq subtree must stay at 755 because dnsmasq drops to the `nobody`
-# user and needs to read its own state files on SIGHUP reload — tightening
+# user and needs to read its own state files on SIGHUP reload, tightening
 # it breaks config reload.
 #
 # This catches the v0.4.7 regression where the DB and TLS private key were
@@ -16,7 +16,7 @@ SCENARIO_NAME="secret-file-perms"
 SCENARIO_DESCRIPTION="Verify v0.4.8+ secret-file-permission tightening after fresh install"
 
 scenario_setup() {
-  # No setup — runner wipes host before this scenario.
+  # No setup, runner wipes host before this scenario.
   return 0
 }
 
@@ -28,7 +28,7 @@ scenario_assert() {
   # ─── SQLite DB + WAL/SHM sidecars: 600 ────────────────
   assert_file_mode /var/lib/cidrella/cidrella.db 600
   assert_file_owner /var/lib/cidrella/cidrella.db cidrella
-  # The WAL/SHM files only exist if there's been activity — service has
+  # The WAL/SHM files only exist if there's been activity, service has
   # started so they probably do. Conditional assertion would be nicer but
   # keep it simple; if they're missing, the test documents that.
   if [ -e /var/lib/cidrella/cidrella.db-wal ]; then

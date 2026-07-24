@@ -53,67 +53,39 @@
       <Button label="Add Countries" icon="pi pi-plus" size="small" severity="secondary" @click="openAddCountries" />
     </div>
 
-    <TabView>
-      <TabPanel header="Country Rules">
-        <DataTable :value="store.rules" :loading="store.loading" stripedRows size="small"
-                   emptyMessage="No country rules configured."
-                   :paginator="store.rules.length > 256" :rows="256"
-                   :rowsPerPageOptions="[64, 128, 256, 512]"
-                   scrollable scrollHeight="flex">
-          <Column header="" style="width: 3rem">
-            <template #body="{ data }">
-              <span class="country-flag">{{ countryFlag(data.country_code) }}</span>
-            </template>
-          </Column>
-          <Column field="country_name" header="Country" sortable />
-          <Column field="country_code" header="Code" style="width: 5rem" sortable />
-          <Column header="Status" style="width: 7rem">
-            <template #body="{ data }">
-              <span v-if="data.enabled" class="badge badge-green">Active</span>
-              <span v-else class="badge badge-muted">Disabled</span>
-            </template>
-          </Column>
-          <Column header="" style="width: 7rem">
-            <template #body="{ data }">
-              <div class="action-buttons">
-                <Button :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'" severity="secondary"
-                        text rounded size="small" @click="doToggleRule(data)"
-                        :title="data.enabled ? 'Disable' : 'Enable'" />
-                <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                        @click="confirmDeleteRule(data)" />
-              </div>
-            </template>
-          </Column>
-        </DataTable>
-      </TabPanel>
-
-      <TabPanel header="Allowed IPs">
-        <p class="wl-hint">
-          IP addresses or CIDR ranges here are <strong>never</strong> GeoIP-blocked, regardless of the
-          resolved country — for known-good servers/ranges in an otherwise-blocked country. (To always
-          allow a whole <em>domain</em>, use Categories › Allowed Domains instead.)
-        </p>
-        <div class="ip-allow-add">
-          <InputText v-model="newIp" placeholder="e.g. 203.0.113.0/24 or 2001:db8::/32"
-                     class="ip-allow-input" @keyup.enter="doAddIp" />
-          <InputText v-model="newIpReason" placeholder="Reason (optional)" class="ip-allow-reason" />
-          <Button label="Add" icon="pi pi-plus" size="small" :loading="addingIp" @click="doAddIp"
-                  data-track="geoip-add-allow-ip" />
-        </div>
-        <DataTable :value="store.ipAllowlist" stripedRows size="small"
-                   emptyMessage="No allowed IPs or ranges." scrollable scrollHeight="flex">
-          <Column field="value" header="IP / CIDR" sortable />
-          <Column field="reason" header="Reason">
-            <template #body="{ data }">{{ data.reason || '—' }}</template>
-          </Column>
-          <Column header="" style="width: 4rem">
-            <template #body="{ data }">
-              <Button icon="pi pi-trash" severity="danger" text rounded size="small" @click="doRemoveIp(data)" />
-            </template>
-          </Column>
-        </DataTable>
-      </TabPanel>
-    </TabView>
+    <DataTable :value="store.rules" :loading="store.loading" stripedRows size="small"
+              
+               :paginator="store.rules.length > 256" :rows="256"
+               :rowsPerPageOptions="[64, 128, 256, 512]"
+               scrollable scrollHeight="flex">
+      <template #empty>
+        <EmptyState icon="pi-globe" title="No country rules" description="Add countries to block or allow resolved answers by origin." />
+      </template>
+      <Column header="" style="width: 3rem">
+        <template #body="{ data }">
+          <span class="country-flag">{{ countryFlag(data.country_code) }}</span>
+        </template>
+      </Column>
+      <Column field="country_name" header="Country" sortable />
+      <Column field="country_code" header="Code" style="width: 5rem" sortable />
+      <Column header="Status" style="width: 7rem">
+        <template #body="{ data }">
+          <span v-if="data.enabled" class="badge badge-green">Active</span>
+          <span v-else class="badge badge-muted">Disabled</span>
+        </template>
+      </Column>
+      <Column header="" style="width: 7rem">
+        <template #body="{ data }">
+          <div class="action-buttons">
+            <Button :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'" severity="secondary"
+                    text rounded size="small" @click="doToggleRule(data)"
+                    :title="data.enabled ? 'Disable' : 'Enable'" />
+            <Button icon="pi pi-trash" severity="danger" text rounded size="small"
+                    @click="confirmDeleteRule(data)" />
+          </div>
+        </template>
+      </Column>
+    </DataTable>
 
     <!-- Add Countries Dialog -->
     <Dialog v-model:visible="showAddDialog" header="Add Countries" modal :style="{ width: '32rem' }">
@@ -155,13 +127,12 @@ import { formatDateTime } from '../utils/dateFormat.js';
 import { formatNumber, apiError } from '../utils/format.js';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
+import EmptyState from '../components/EmptyState.vue';
 import InputText from 'primevue/inputtext';
 import Select from 'primevue/select';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
-import TabView from 'primevue/tabview';
-import TabPanel from 'primevue/tabpanel';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
 import { useGeoipStore } from '../stores/geoip.js';
@@ -177,7 +148,7 @@ const noRecursion = ref(false);
 
 // Settings form
 const settingsForm = ref({ geoip_enabled: false, geoip_mode: 'blocklist', geoip_proxy_port: 5353, geoip_update_schedule: 'monthly' });
-// Show the toggle OFF (and locked) while recursion is disabled — GeoIP is inert
+// Show the toggle OFF (and locked) while recursion is disabled. GeoIP is inert
 // then. Non-destructive: the saved preference returns when recursion is on.
 const geoipEnabledDisplay = computed({
   get: () => noRecursion.value ? false : settingsForm.value.geoip_enabled,
@@ -196,8 +167,8 @@ const settingsDirty = computed(() => {
 const refreshingDb = ref(false);
 
 const modeOptions = [
-  { label: 'Blocklist — block listed countries', value: 'blocklist' },
-  { label: 'Allowlist — allow only listed countries', value: 'allowlist' }
+  { label: 'Blocklist: block listed countries', value: 'blocklist' },
+  { label: 'Allowlist: allow only listed countries', value: 'allowlist' }
 ];
 
 const scheduleOptions = [
@@ -322,34 +293,9 @@ async function doRefreshDb() {
   }
 }
 
-// (Domain allowlist lives on Categories › Allowed Domains; GeoIP keeps IP/CIDR only.)
-
-// GeoIP IP/CIDR allowlist — IPs/ranges never GeoIP-blocked.
-const newIp = ref('');
-const newIpReason = ref('');
-const addingIp = ref(false);
-async function doAddIp() {
-  const v = newIp.value.trim();
-  if (!v) return;
-  addingIp.value = true;
-  try {
-    await store.addIpAllow(v, newIpReason.value.trim() || null);
-    newIp.value = ''; newIpReason.value = '';
-    toast.add({ severity: 'success', summary: 'IP allowlisted', life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally {
-    addingIp.value = false;
-  }
-}
-async function doRemoveIp(entry) {
-  try {
-    await store.removeIpAllow(entry.id);
-    toast.add({ severity: 'success', summary: 'Removed from allowlist', life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  }
-}
+// (Domain allowlist lives on Filtering › Allowed Domains; the GeoIP IP/CIDR
+// allowlist moved to its own Filtering › Allowed IPs sub-tab in v0.4.16,
+// see views/settings/GeoIpAllowedIps.vue.)
 
 // GeoIP filtering only applies to forwarded/recursive queries. When recursion is
 // disabled the enable toggle is locked; explain why on a click attempt.
@@ -381,7 +327,6 @@ onMounted(async () => {
   await Promise.all([
     store.fetchRules(),
     store.fetchStats(),
-    store.fetchIpAllowlist(),
     refreshStatus()
   ]);
   try { noRecursion.value = !!(await dnsStore.getForwarders()).no_recursion; } catch { /* ignore */ }
@@ -397,10 +342,6 @@ onMounted(async () => {
   margin: 0 0 1rem 0;
 }
 .country-flag { font-size: 1.1rem; }
-.ip-allow-add { display: flex; gap: 0.5rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
-.ip-allow-input { width: 18rem; }
-.ip-allow-reason { width: 14rem; }
-.wl-hint { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0 0 0.75rem; line-height: 1.4; }
 .action-buttons { display: flex; gap: 0.25rem; }
 .country-search { margin-bottom: 0.75rem; }
 .country-list {

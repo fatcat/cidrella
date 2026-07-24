@@ -120,7 +120,7 @@ function clearPendingCsrFiles(dir) {
   try { fs.unlinkSync(path.join(dir, 'pending-csr.cnf')); } catch {}
 }
 
-// POST /api/operations/backup — create a new backup
+// POST /api/operations/backup: create a new backup
 router.post('/backup', (req, res) => {
   try {
     const db = getDb();
@@ -132,13 +132,13 @@ router.post('/backup', (req, res) => {
   }
 });
 
-// GET /api/operations/backups — list all backups
+// GET /api/operations/backups: list all backups
 router.get('/backups', (req, res) => {
   const db = getDb();
   res.json(listBackups(db));
 });
 
-// GET /api/operations/backups/:id/download — download a backup file
+// GET /api/operations/backups/:id/download: download a backup file
 router.get('/backups/:id/download', (req, res) => {
   const db = getDb();
   const row = db.prepare('SELECT * FROM backups WHERE id = ?').get(req.params.id);
@@ -161,7 +161,7 @@ router.get('/backups/:id/download', (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
-// DELETE /api/operations/backups/:id — delete a backup
+// DELETE /api/operations/backups/:id: delete a backup
 router.delete('/backups/:id', (req, res) => {
   try {
     const db = getDb();
@@ -173,10 +173,10 @@ router.delete('/backups/:id', (req, res) => {
   }
 });
 
-// POST /api/operations/restore — restore from uploaded backup
+// POST /api/operations/restore: restore from uploaded backup
 // Query params:
-//   ?inspect=1           — just return the manifest + compatibility, don't restore
-//   ?allowIncompatible=1 — bypass version safety check (admin escape hatch)
+//   ?inspect=1          , just return the manifest + compatibility, don't restore
+//   ?allowIncompatible=1, bypass version safety check (admin escape hatch)
 router.post('/restore', (req, res) => {
   const contentType = req.headers['content-type'] || '';
   const inspectOnly = req.query.inspect === '1' || req.query.inspect === 'true';
@@ -205,7 +205,7 @@ router.post('/restore', (req, res) => {
         return res.json(info);
       }
 
-      // Check compatibility FIRST — if we bail here we don't want an
+      // Check compatibility FIRST, if we bail here we don't want an
       // audit entry for a restore that never happened.
       const inspection = inspectBackup(tmpPath);
       if (!inspection.compatible && !allowIncompatible) {
@@ -227,7 +227,7 @@ router.post('/restore', (req, res) => {
       // timer before exit specifically so Express can flush the response.
       // Pass the inspection through so restoreBackup doesn't re-parse the tarball.
       const result = restoreBackup(tmpPath, { allowIncompatible, inspection });
-      // Clean up the uploaded tarball — we're about to exit, but be explicit
+      // Clean up the uploaded tarball, we're about to exit, but be explicit
       // so a second restore within RestartSec doesn't find a stale tmp copy.
       try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
       res.json(result);
@@ -238,7 +238,7 @@ router.post('/restore', (req, res) => {
       else if (err.code === 'BACKUP_TOO_LARGE') status = 507;
       else if (err.code === 'BACKUP_TOO_MANY_ENTRIES') status = 413;
       else if (err.code === 'INVALID_DATABASE_FILE') status = 400;
-      // Sanitize the response body — subprocess errors from tar/gzip AND
+      // Sanitize the response body, subprocess errors from tar/gzip AND
       // Node system errors (ENOENT/EACCES/EPERM) include absolute staging
       // paths. 5xx is already collapsed by the global handler; 4xx bypass
       // it. Surface messages only for our own application error codes; OS
@@ -256,7 +256,7 @@ router.post('/restore', (req, res) => {
   });
 });
 
-// GET /api/operations/certs/info — get current certificate info
+// GET /api/operations/certs/info: get current certificate info
 router.get('/certs/info', (req, res) => {
   const certPath = path.join(DATA_DIR, 'certs', 'server.crt');
 
@@ -287,7 +287,7 @@ router.get('/certs/info', (req, res) => {
   }
 });
 
-// POST /api/operations/certs/upload — upload custom TLS cert + key
+// POST /api/operations/certs/upload: upload custom TLS cert + key
 router.post('/certs/upload', (req, res) => {
   const { key, cert } = req.body;
 
@@ -299,7 +299,7 @@ router.post('/certs/upload', (req, res) => {
   if (typeof key === 'string' && key.length > 128 * 1024) return res.status(400).json({ error: 'key field is too large' });
 
   // Validate cert. Key material goes through a private mkdtemp dir (0700,
-  // unpredictable name) — never a fixed path in the shared /tmp, where
+  // unpredictable name), never a fixed path in the shared /tmp, where
   // another local user could pre-create the file or plant a symlink and
   // capture the private key.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-cert-'));
@@ -347,7 +347,7 @@ router.post('/certs/upload', (req, res) => {
   }
 });
 
-// POST /api/operations/certs/csr — generate a private key and CSR for signing
+// POST /api/operations/certs/csr: generate a private key and CSR for signing
 router.post('/certs/csr', (req, res) => {
   const body = req.body || {};
   const {
@@ -466,7 +466,7 @@ ${altNames}
   }
 });
 
-// POST /api/operations/certs/reset — reset to self-signed
+// POST /api/operations/certs/reset: reset to self-signed
 router.post('/certs/reset', (req, res) => {
   const certsDir = path.join(DATA_DIR, 'certs');
   const keyPath = path.join(certsDir, 'server.key');
@@ -492,7 +492,7 @@ router.post('/certs/reset', (req, res) => {
   }
 });
 
-// POST /api/operations/reset-database — wipe all data and reinitialize
+// POST /api/operations/reset-database: wipe all data and reinitialize
 router.post('/reset-database', async (req, res) => {
   try {
     const db = getDb();

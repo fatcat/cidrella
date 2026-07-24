@@ -3,7 +3,7 @@
     <div class="content-card settings-form">
       <h3>Web Ports</h3>
       <p class="field-help" style="margin-bottom: 0.75rem;">
-        Ports the CIDRella web UI binds to. Changes take effect immediately — no service
+        Ports the CIDRella web UI binds to. Changes take effect immediately with no service
         restart needed. You will be redirected to the new HTTPS port after saving.
       </p>
       <div class="web-ports-info">
@@ -56,7 +56,10 @@
       </div>
 
       <DataTable :value="mergedInterfaces" :loading="loading" stripedRows size="small"
-                 emptyMessage="No network interfaces found.">
+                >
+        <template #empty>
+          <EmptyState icon="pi-sitemap" title="No network interfaces found" />
+        </template>
         <Column field="name" header="Interface" style="width: 8rem">
           <template #body="{ data }">
             <span class="iface-name">{{ data.name }}</span>
@@ -102,7 +105,7 @@
       </DataTable>
 
       <small class="field-help" style="margin-top: 0.5rem; display: block;">
-        DHCP requires DNS — enabling DHCP will auto-enable DNS on that interface.
+        DHCP requires DNS, so enabling DHCP will auto-enable DNS on that interface.
         Disabling DNS will auto-disable DHCP.
       </small>
     </div>
@@ -117,7 +120,7 @@
 <!--
   v0.4.15: added the "Web Ports" section above Service Controls. HTTPS/HTTP
   port numbers are install-time-fixed (see the help text above) but the
-  HTTP redirect toggle is live — saving applies it without a service restart.
+  HTTP redirect toggle is live, saving applies it without a service restart.
 -->
 
 
@@ -127,6 +130,7 @@ import { useToast } from 'primevue/usetoast';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
 import DataTable from 'primevue/datatable';
+import EmptyState from './EmptyState.vue';
 import Column from 'primevue/column';
 import ToggleSwitch from 'primevue/toggleswitch';
 import Button from 'primevue/button';
@@ -175,7 +179,7 @@ const httpPortValid = computed(() => {
 });
 const portsValid = computed(() => {
   if (!httpsPortValid.value || !httpPortValid.value) return false;
-  // HTTPS and HTTP must not collide — the server rejects this with a 400
+  // HTTPS and HTTP must not collide. The server rejects this with a 400
   // too, but catch it here so the user doesn't have to wait for the round
   // trip.
   if (httpRedirectEnabled.value && httpsPortEdit.value === httpPortEdit.value) return false;
@@ -243,7 +247,7 @@ async function loadInterfaces() {
     savedConfig.value = configRes.data.interfaces || {};
     dnsEnabled.value = configRes.data.dns_enabled !== false;
     dhcpEnabled.value = configRes.data.dhcp_enabled !== false;
-    // v0.4.15: web_ports block. Absent on pre-v0.4.15 backends — keep
+    // v0.4.15: web_ports block. Absent on pre-v0.4.15 backends, keep
     // sensible defaults if the field isn't there.
     if (configRes.data.web_ports) {
       webPorts.value = configRes.data.web_ports;
@@ -274,7 +278,7 @@ function onDhcpToggle(iface, val) {
 }
 
 // Remove a genuinely-missing interface (in saved config but not present on the
-// host) from the list. Persists on Save — it won't be written back to
+// host) from the list. Persists on Save, it won't be written back to
 // interface_config, so the stale entry is dropped.
 function removeMissing(iface) {
   mergedInterfaces.value = mergedInterfaces.value.filter(i => i.name !== iface.name);
@@ -294,12 +298,12 @@ function onGlobalDnsToggle(val) {
 
 function onGlobalDhcpToggle(val) {
   if (val && !dnsEnabled.value) {
-    // DHCP requires DNS — can't enable the service without it.
+    // DHCP requires DNS, can't enable the service without it.
     dhcpEnabled.value = false;
     return;
   }
   if (val) {
-    // Enabling the DHCP service does NOT auto-enable DHCP on any interface —
+    // Enabling the DHCP service does NOT auto-enable DHCP on any interface,
     // they stay off until the user turns them on manually. Clear any stale
     // per-interface DHCP so the toggles start from a clean off state.
     for (const iface of mergedInterfaces.value) {
@@ -380,7 +384,7 @@ onMounted(loadInterfaces);
   width: 6em;
   padding: 0.375rem 0.5rem;
   font-family: var(--font-mono, monospace);
-  /* Use PrimeVue v4 form-field tokens — the older --p-inputtext-* tokens are
+  /* Use PrimeVue v4 form-field tokens. The older --p-inputtext-* tokens are
      unset in this build, so they fell back to the light --p-surface-0, giving a
      white field (with light text) that's invisible on dark themes. The
      form-field tokens adapt to light/dark mode like the real InputText. */
@@ -404,7 +408,7 @@ onMounted(loadInterfaces);
 .port-input-invalid:focus {
   outline-color: var(--p-red-500, #ef4444);
 }
-/* Hide the native up/down spinners — users requested plain entry fields. */
+/* Hide the native up/down spinners. Users requested plain entry fields. */
 .port-input::-webkit-outer-spin-button,
 .port-input::-webkit-inner-spin-button {
   -webkit-appearance: none;

@@ -67,7 +67,7 @@ export function createBackup(db) {
   // historical DNS query metrics and perf data that aren't in cidrella.db and
   // aren't re-derivable; (2) anomaly/models/, which holds per-client ML
   // models that take ~48 hours of DNS traffic each to retrain. Both were
-  // already being captured by the pre-restore snapshot code below — the
+  // already being captured by the pre-restore snapshot code below, the
   // normal backup was just forgotten.
   const includes = [];
   if (fs.existsSync(path.join(DATA_DIR, 'cidrella.db'))) includes.push('cidrella.db');
@@ -77,7 +77,7 @@ export function createBackup(db) {
 
   // analytics.duckdb + its WAL/shm sidecars. DuckDB may not have a WAL at
   // rest, so the sidecar loop is existence-gated. We don't checkpoint the
-  // DuckDB WAL here — there's no equivalent pragma exposed to better-sqlite3
+  // DuckDB WAL here, there's no equivalent pragma exposed to better-sqlite3
   // and the duckdb addon isn't loaded in this route. If the WAL exists, we
   // capture it alongside the main file so the restore side is self-consistent.
   if (fs.existsSync(path.join(DATA_DIR, 'analytics.duckdb'))) {
@@ -107,21 +107,20 @@ export function createBackup(db) {
     // directly. dnsmasq.leases can mutate mid-archive when a DHCP client
     // lease rolls over during the second or two tar is running; tar
     // completes the archive but exits with status 1 ("some files
-    // differ"). --warning=no-file-changed ONLY suppresses stderr —
-    // despite the old comment's claim, it does NOT change the exit code,
+    // differ"). --warning=no-file-changed ONLY suppresses stderr,     // despite the old comment's claim, it does NOT change the exit code,
     // so execFileSync would throw on that benign race and fail the
     // backup. The archive bytes captured are still self-consistent (tar
     // archives what it read), so exit 1 is treated as a soft warning.
     // Exit 2+ is still fatal (real tar failure).
     const result = spawnSync('tar', [
-      // Strip runtime artifacts — see RUNTIME_ARTIFACT_EXCLUDES at the top
+      // Strip runtime artifacts, see RUNTIME_ARTIFACT_EXCLUDES at the top
       // of this file.
       ...RUNTIME_ARTIFACT_EXCLUDES,
       ...DEFENSIVE_EXCLUDES,
       '--warning=no-file-changed',
       // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
       // POSIX keyletter form doesn't coexist with long --exclude options
-      // in GNU tar 1.35 — it errors with "You must specify one of the
+      // in GNU tar 1.35, it errors with "You must specify one of the
       // '-Acdtrux'..." and produces no archive. This silently crippled
       // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
       // anyway because tar never got the action flag).
@@ -141,7 +140,7 @@ export function createBackup(db) {
     // status 0 = clean. status 1 = at least one file changed mid-read
     // (typically dnsmasq.leases); archive is still valid, log + continue.
     if (result.status === 1) {
-      console.warn('[backup] tar exited 1 (file changed during archive — expected for dnsmasq.leases); archive is valid');
+      console.warn('[backup] tar exited 1 (file changed during archive, expected for dnsmasq.leases); archive is valid');
     }
   } finally {
     try { fs.unlinkSync(manifestPath); } catch { /* ignore */ }
@@ -168,11 +167,11 @@ export function createBackup(db) {
 /**
  * Read the manifest from a backup archive without extracting it.
  * Returns null if the archive has no manifest (legacy backups from before
- * manifests existed — we still allow restoring them but lose the safety checks).
+ * manifests existed, we still allow restoring them but lose the safety checks).
  */
 function readBackupManifest(archivePath) {
   try {
-    // Use '-xzf' with leading dash — matches the convention everywhere else
+    // Use '-xzf' with leading dash, matches the convention everywhere else
     // in this file. Bare 'xzf' works here today only because no --exclude
     // precedes it, but if one is ever added the quirk from createBackup
     // applies.
@@ -190,10 +189,10 @@ function readBackupManifest(archivePath) {
 }
 
 // Hard caps on archive inspection. Both were reached by crafted inputs in
-// the 2026-04-24 ship-gate trio — a 3.7 MB zip-bomb with 500 k tiny entries
+// the 2026-04-24 ship-gate trio, a 3.7 MB zip-bomb with 500 k tiny entries
 // blew `tar tzvf`'s 16 MiB maxBuffer with ENOBUFS (HIGH H3), and a 12 GB
 // gzipped archive timed out `tar tzf` before the 507 preflight could fire
-// (MEDIUM M1). Size cap is on the ON-DISK gzipped size — below it, the
+// (MEDIUM M1). Size cap is on the ON-DISK gzipped size, below it, the
 // uncompressed-size refusal (BACKUP_TOO_LARGE inside restoreBackup) still
 // runs after the listing pass. Timeout scales with size so large legitimate
 // backups aren't rejected; entry-count buffer is sized for ~500 k entries
@@ -298,7 +297,7 @@ export function analyzeArchive(archivePath) {
     const err = new Error(
       `Archive is ${(archiveBytes / (1024 * 1024 * 1024)).toFixed(1)} GiB on disk, ` +
       `larger than the ${(MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024))} GiB cap. ` +
-      `Refusing to analyze — a legitimate CIDRella backup is never this large.`
+      `Refusing to analyze. A legitimate CIDRella backup is never this large.`
     );
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
@@ -375,7 +374,7 @@ export function inspectBackup(archivePath) {
       manifest: null,
       compatible: true,
       analysis,
-      warning: 'Legacy backup without manifest — version cannot be verified. Proceed with caution.',
+      warning: 'Legacy backup without manifest, so the version cannot be verified. Proceed with caution.',
     };
   }
 
@@ -388,7 +387,7 @@ export function inspectBackup(archivePath) {
     };
   }
 
-  // Schema version sanity check (defensive — same idea as the version check)
+  // Schema version sanity check (defensive, same idea as the version check)
   const db = getDb();
   const currentSchema = db.prepare('SELECT MAX(version) AS v FROM schema_version').get()?.v ?? 0;
   if (manifest.schema_version != null && manifest.schema_version > currentSchema + 100) {
@@ -407,7 +406,7 @@ export function inspectBackup(archivePath) {
 /**
  * Take a pre-restore snapshot to /var/lib/cidrella/snapshots/pre-restore/.
  * Unlike the pre-update snapshot, this is NOT managed by cidrella-rollback
- * — it's purely a safety net the admin can restore manually.
+ *, it's purely a safety net the admin can restore manually.
  */
 function takePreRestoreSnapshot(db) {
   // mkdirSync fails with EACCES if the parent snapshots/ directory was
@@ -495,10 +494,10 @@ function takePreRestoreSnapshot(db) {
  * Flow:
  *  1. Inspect the archive (manifest, path traversal, version compatibility)
  *  2. Take a pre-restore snapshot to /var/lib/cidrella/snapshots/pre-restore/
- *  3. Extract into a staging dir, NOT directly over DATA_DIR — this way
+ *  3. Extract into a staging dir, NOT directly over DATA_DIR, this way
  *     the running server never sees half-written files
  *  4. Atomically move the staged files into place
- *  5. Exit the process — systemd will restart with the new state
+ *  5. Exit the process, systemd will restart with the new state
  *
  * The process exit (step 5) is what makes this safe. Without it, the
  * running server's open file descriptors would point at orphaned inodes
@@ -523,7 +522,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   //     uncompressed payload wouldn't fit comfortably on the staging
   //     filesystem.
   //
-  //     Staging goes alongside DATA_DIR, not /tmp — the default os.tmpdir()
+  //     Staging goes alongside DATA_DIR, not /tmp, the default os.tmpdir()
   //     is tmpfs on many LXC distros (Debian 13 / systemd 257), which
   //     means extracting there consumes RAM instead of disk. statfs
   //     against tmpfs reports deceivingly large free space (usually 50%
@@ -538,7 +537,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   try {
     const stat = fs.statfsSync(stagingRoot);
     stagingFree = stat.bavail * stat.bsize;
-  } catch { /* statfs unsupported — skip the check */ }
+  } catch { /* statfs unsupported, skip the check */ }
   const SAFETY_MARGIN = 512 * 1024 * 1024; // 512 MB headroom
   if (analysis.effectiveBytes + SAFETY_MARGIN > stagingFree) {
     const needMiB = Math.ceil(analysis.effectiveBytes / (1024 * 1024));
@@ -554,10 +553,10 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
 
   const db = getDb();
 
-  // 2. Pre-restore snapshot (safety net — not managed by cidrella-rollback)
+  // 2. Pre-restore snapshot (safety net, not managed by cidrella-rollback)
   takePreRestoreSnapshot(db);
 
-  // 3. Stage extraction to /tmp — if anything goes wrong here, DATA_DIR is untouched.
+  // 3. Stage extraction to /tmp, if anything goes wrong here, DATA_DIR is untouched.
   //    --exclude=*.log --exclude=*.pid catches log/pid files that slipped
   //    into legacy backups (pre-2026-04-20) created before the create-side
   //    exclude was in place. Without this, a legacy backup carrying a
@@ -574,7 +573,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   );
 
   // Extract into staging. A failure here (corrupt archive, timeout, disk
-  // space during extract) leaves DATA_DIR untouched — the service is
+  // space during extract) leaves DATA_DIR untouched, the service is
   // still healthy. Clean up the staging dir and surface a 500 via the
   // normal error path; do NOT process.exit() for this class of failure.
   try {
@@ -584,7 +583,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
       '--no-same-owner',
       '--no-same-permissions',
       // Use '-xzf' (with dash), not bare 'xzf'. See create-side comment
-      // for why — same GNU tar parsing quirk applies here.
+      // for why, same GNU tar parsing quirk applies here.
       '-xzf', archivePath, '-C', stagingDir,
     ], {
       stdio: 'pipe',
@@ -620,11 +619,11 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   // swapping it into DATA_DIR. A 5-byte "stub\n" file named cidrella.db
   // satisfies every check up to this point (the filename-only validation
   // in inspectBackup, the path-traversal check, the manifest/compat flow
-  // — legacy-backup-without-manifest is "compatible with warning"). But
+  //, legacy-backup-without-manifest is "compatible with warning"). But
   // after swap+exit, systemd restarts into SQLITE_NOTADB on the pragma
   // journal_mode call, crash-loops through StartLimitBurst, and finally
   // stops the unit. Recovery needs shell access. Magic-byte check here
-  // catches this BEFORE the swap loop — any failure leaves DATA_DIR
+  // catches this BEFORE the swap loop, any failure leaves DATA_DIR
   // untouched and returns a clean error via the throw below.
   const stagedDb = path.join(stagingDir, 'cidrella.db');
   if (fs.existsSync(stagedDb)) {
@@ -653,7 +652,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   //
   //    If any copy step fails MID-LOOP (ENOSPC, permission, etc.), DATA_DIR
   //    is left in a partially-restored state. We MUST close the DB and
-  //    exit so systemd restarts us — continuing to run with a half-swapped
+  //    exit so systemd restarts us, continuing to run with a half-swapped
   //    DATA_DIR is worse than a brief outage, and the pre-restore snapshot
   //    is the recovery path. The scope of this try/catch is deliberately
   //    narrow: only failures during the actual file swap trigger the exit,
@@ -701,7 +700,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     try { db.close(); } catch { /* ignore */ }
     try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
     setTimeout(() => {
-      console.error('Restore failed mid-swap — exiting for restart', copyErr?.message);
+      console.error('Restore failed mid-swap, exiting for restart', copyErr?.message);
       process.exit(1);
     }, 500);
     const wrapped = new Error(`Restore failed during file swap: ${copyErr.message}. Service will restart. Recover from /var/lib/cidrella/snapshots/pre-restore/ if needed.`);
@@ -717,7 +716,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   //    We exit with code 0 after a short delay so the HTTP response can
   //    flush to the client before shutdown.
   setTimeout(() => {
-    console.log('Restore complete — exiting for service restart');
+    console.log('Restore complete, exiting for service restart');
     process.exit(0);
   }, 500);
 
@@ -789,7 +788,7 @@ function enforceRetention(db) {
  * Sweep abandoned restore-staging artifacts from DATA_DIR and
  * DATA_DIR/snapshots/. A process crash (OOM, SIGKILL, panic) between
  * upload/extract start and cleanup leaves these multi-GB files on disk
- * forever — which is especially likely on the resource-constrained hosts
+ * forever, which is especially likely on the resource-constrained hosts
  * the restore path is designed to defend. Called on server boot.
  *
  * Names swept:
@@ -817,7 +816,7 @@ export function sweepStaleRestoreArtifacts() {
         if (now - stat.mtimeMs < MAX_AGE_MS) continue;
         fs.rmSync(fullPath, { recursive: true, force: true });
         swept++;
-      } catch { /* ignore — next boot will retry */ }
+      } catch { /* ignore, next boot will retry */ }
     }
   }
   return swept;

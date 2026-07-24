@@ -1,12 +1,12 @@
-// Rogue DHCP server detection — active probe.
+// Rogue DHCP server detection, active probe.
 //
 // On a schedule, broadcast a DHCP DISCOVER out each LAN segment and collect the
 // OFFERs. Any server that answers but isn't CIDRella's own DHCP (auto-trusted
 // by LAN IP) or on the user allowlist is flagged as rogue. We send DISCOVER
-// only — never REQUEST — so no lease is consumed and the probe is non-disruptive.
+// only, never REQUEST, so no lease is consumed and the probe is non-disruptive.
 //
 // No raw sockets and no new capability beyond the privileged-port bind we
-// already do for :53 — a single UDP socket on :68 with the broadcast flag set.
+// already do for :53, a single UDP socket on :68 with the broadcast flag set.
 // Pure-JS packet build/parse, no dependency.
 //
 // L2-scoped: only sees servers on the same broadcast domain as a CIDRella
@@ -128,7 +128,7 @@ export function classifyOffer(offer, { selfIps, authorized }) {
   return { rogue: true, reason: 'unauthorized' };
 }
 
-// CIDRella's own non-internal IPv4 addresses (lowercased Set) — always trusted.
+// CIDRella's own non-internal IPv4 addresses (lowercased Set), always trusted.
 export function getSelfIps() {
   const set = new Set();
   for (const addrs of Object.values(os.networkInterfaces())) {
@@ -189,7 +189,7 @@ export function getLanInterfaces() {
       pushFrom(ifName);
     }
   } else {
-    // Fresh deploy — dnsmasq binds DHCP to every real interface, so probe them all.
+    // Fresh deploy, dnsmasq binds DHCP to every real interface, so probe them all.
     for (const ifName of Object.keys(sysIfaces)) {
       if (ifName === 'lo') continue;
       pushFrom(ifName);
@@ -243,7 +243,7 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
 
     sock.on('error', (err) => {
       if (err.code === 'EACCES' || err.code === 'EADDRINUSE') {
-        probeLog('warn', `Cannot bind UDP :68 (${err.code}) — rogue DHCP detection unavailable on this host`);
+        probeLog('warn', `Cannot bind UDP :68 (${err.code}). Rogue DHCP detection is unavailable on this host`);
         finish(false);
       } else {
         probeLog('error', 'Probe socket error', { error: err.message, code: err.code });

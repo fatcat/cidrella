@@ -11,12 +11,15 @@
       These settings are the defaults for newly created DHCP scopes. Changing these settings will not affect existing scopes.
     </p>
     <DataTable :value="optionDefaultRows" size="small" :loading="loadingOptions"
-               emptyMessage="No DHCP options available."
+              
                rowGroupMode="subheader" groupRowsBy="_group"
                :rowClass="(data) => defaultEnabled[data.code] ? 'option-enabled-row' : ''"
                scrollable scrollHeight="flex">
       <template #groupheader="{ data }">
         <strong>{{ data._group }}</strong>
+      </template>
+      <template #empty>
+        <EmptyState icon="pi-sliders-h" title="No DHCP options" description="Options appear here once a scope or global option is defined." />
       </template>
       <Column field="code" header="Code" style="width: 4rem" />
       <Column field="label" header="Option" style="min-width: 12rem">
@@ -104,6 +107,7 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
+import EmptyState from '../components/EmptyState.vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';

@@ -1,4 +1,4 @@
-<!-- Network settings. Extracted from System.vue tab 0 (1:1) — naming-template
+<!-- Network settings. Extracted from System.vue tab 0 (1:1): naming-template
      settings, scan settings, and the Address Types / range-types table with
      its add/edit/delete dialogs + its own row context menu. Loads on mount. -->
 <template>
@@ -63,11 +63,14 @@
           <Button label="Add Type" icon="pi pi-plus" size="small" text data-track="sys-add-range-type" @click="showRangeTypeDialog = true" />
         </div>
         <div class="range-types-section">
-            <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows emptyMessage="No address types found." size="small"
+            <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows size="small"
                        :paginator="rangeTypes.length > 256" :rows="256"
                        :rowsPerPageOptions="[64, 128, 256, 512]"
                        @row-contextmenu="onRangeTypeRightClick" contextMenu
                        scrollable scrollHeight="flex">
+              <template #empty>
+                <EmptyState icon="pi-tags" title="No address types" />
+              </template>
               <Column header="Color" style="width: 4rem">
                 <template #body="{ data }">
                   <span class="color-swatch" :style="{ background: data.color }"></span>
@@ -131,6 +134,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import Button from 'primevue/button';
+import EmptyState from '../../components/EmptyState.vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';

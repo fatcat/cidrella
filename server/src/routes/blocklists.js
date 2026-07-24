@@ -2,14 +2,14 @@ import { Router } from 'express';
 import { getDb, audit, getSetting } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
-import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig } from '../utils/blocklist.js';
+import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig, SCHEDULE_HOURS } from '../utils/blocklist.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
 
 const router = Router();
 
-// GET /api/blocklists/categories — all categories with state
+// GET /api/blocklists/categories: all categories with state
 router.get('/categories', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   ensureCategoryRows(db);
@@ -34,7 +34,7 @@ router.get('/categories', requirePerm('dns:read'), (req, res) => {
   res.json(result);
 });
 
-// PUT /api/blocklists/categories/:slug — enable/disable a category
+// PUT /api/blocklists/categories/:slug: enable/disable a category
 router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
   const { slug } = req.params;
@@ -67,7 +67,7 @@ router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
   res.json({ ok: true });
 });
 
-// PUT /api/blocklists/categories/:slug/url — update source URL for a category
+// PUT /api/blocklists/categories/:slug/url: update source URL for a category
 router.put('/categories/:slug/url', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
   const { slug } = req.params;
@@ -97,7 +97,7 @@ router.put('/categories/:slug/url', requirePerm('dns:write'), async (req, res) =
   res.json({ ok: true, source_url: urlValue || getDefaultCategoryUrl(slug), is_custom_url: !!urlValue });
 });
 
-// POST /api/blocklists/categories/:slug/refresh — manual refresh single category
+// POST /api/blocklists/categories/:slug/refresh: manual refresh single category
 router.post('/categories/:slug/refresh', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
   const { slug } = req.params;
@@ -115,7 +115,7 @@ router.post('/categories/:slug/refresh', requirePerm('dns:write'), async (req, r
   }
 });
 
-// POST /api/blocklists/refresh — refresh all enabled categories
+// POST /api/blocklists/refresh: refresh all enabled categories
 router.post('/refresh', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
   try {
@@ -157,17 +157,15 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const allowed = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule'];
 
-  // Validate blocklist_enabled must be a boolean
-  if (req.body.blocklist_enabled !== undefined && typeof req.body.blocklist_enabled !== 'boolean') {
-    return res.status(400).json({ error: 'blocklist_enabled must be a boolean' });
+  // Settings are stored as strings, so the toggle arrives as 'true'/'false'.
+  // The enum checks also reject non-string types (arrays, objects, booleans).
+  if (req.body.blocklist_enabled !== undefined && !['true', 'false'].includes(req.body.blocklist_enabled)) {
+    return res.status(400).json({ error: "blocklist_enabled must be 'true' or 'false'" });
   }
 
-  // Validate blocklist_update_schedule must be a non-negative integer (minutes)
-  if (req.body.blocklist_update_schedule !== undefined) {
-    const interval = parseInt(req.body.blocklist_update_schedule, 10);
-    if (isNaN(interval) || interval < 0) {
-      return res.status(400).json({ error: 'blocklist_update_schedule must be a non-negative integer' });
-    }
+  const validSchedules = Object.keys(SCHEDULE_HOURS);
+  if (req.body.blocklist_update_schedule !== undefined && !validSchedules.includes(req.body.blocklist_update_schedule)) {
+    return res.status(400).json({ error: `blocklist_update_schedule must be one of: ${validSchedules.join(', ')}` });
   }
 
   for (const key of allowed) {
@@ -176,7 +174,7 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
     }
   }
 
-  // Reload blocklist in proxy (proxy always runs — just loads/clears data)
+  // Reload blocklist in proxy (proxy always runs, just loads/clears data)
   generateBlocklistConfig(db);
 
   audit(req.user.id, 'update', 'blocklist_settings', null, req.body);

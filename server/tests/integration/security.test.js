@@ -1,5 +1,5 @@
 /**
- * Security regression tests — v0.4.14 pentest findings that v0.4.15 closed.
+ * Security regression tests, v0.4.14 pentest findings that v0.4.15 closed.
  *
  * Covers CRITICAL / HIGH / MEDIUM / LOW items from the three security agents
  * (api-security-tester, auth-security-tester, injection-logic-tester). Each
@@ -52,7 +52,7 @@ const { default: request } = await import('supertest');
 
 let tmpDir;
 let app;              // multi-router app with fake admin (matches prod routers that need req.user)
-let noAuthApp;        // no fake-user middleware — for pre-auth surface (setup) and the auth router
+let noAuthApp;        // no fake-user middleware, for pre-auth surface (setup) and the auth router
 
 beforeAll(async () => {
   const setup = await setupTestDb();
@@ -86,7 +86,7 @@ beforeAll(async () => {
     if (status >= 500) return res.status(status).json({ error: 'Internal server error' });
     res.status(status).json({ error: err.message || 'Bad request' });
   });
-  // JSON 404 fallback — matches the production mount order.
+  // JSON 404 fallback, matches the production mount order.
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
 
   // Pre-auth app (no fake user) for the auth router + setup.
@@ -101,7 +101,7 @@ afterAll(() => {
 });
 
 // -----------------------------------------------------------------------------
-// C1 — Unauthenticated crash-DoS via non-string password
+// C1, Unauthenticated crash-DoS via non-string password
 // -----------------------------------------------------------------------------
 
 describe('C1 — bcrypt crash DoS: non-string password/username rejected with 400', () => {
@@ -124,7 +124,7 @@ describe('C1 — bcrypt crash DoS: non-string password/username rejected with 40
 });
 
 // -----------------------------------------------------------------------------
-// H1 — Unauthenticated setup takeover
+// H1, Unauthenticated setup takeover
 // -----------------------------------------------------------------------------
 
 describe('H1 — setup is closed once any user exists', () => {
@@ -146,7 +146,7 @@ describe('H1 — setup is closed once any user exists', () => {
 });
 
 // -----------------------------------------------------------------------------
-// L6 — unknown-user login is audited
+// L6, unknown-user login is audited
 // -----------------------------------------------------------------------------
 
 describe('L6 — unknown-user login attempts audited', () => {
@@ -166,7 +166,7 @@ describe('L6 — unknown-user login attempts audited', () => {
 });
 
 // -----------------------------------------------------------------------------
-// L2 — logout invalidates the caller's token (via updated_at bump)
+// L2, logout invalidates the caller's token (via updated_at bump)
 // -----------------------------------------------------------------------------
 
 describe('L2 — logout invalidates the caller\'s token', () => {
@@ -178,7 +178,7 @@ describe('L2 — logout invalidates the caller\'s token', () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
 
-    // Audit row confirms the mechanism fired — the actual updated_at bump
+    // Audit row confirms the mechanism fired, the actual updated_at bump
     // happens via SQL we can't easily diff at sub-second resolution.
     const row = db.prepare(
       "SELECT * FROM audit_log WHERE user_id = 1 AND action = 'logout' ORDER BY id DESC LIMIT 1"
@@ -188,7 +188,7 @@ describe('L2 — logout invalidates the caller\'s token', () => {
 });
 
 // -----------------------------------------------------------------------------
-// C2 — PTR record name config injection
+// C2, PTR record name config injection
 // -----------------------------------------------------------------------------
 
 describe('C2/H2 — DNS record config injection', () => {
@@ -312,7 +312,7 @@ describe('C2/H2 — DNS record config injection', () => {
 });
 
 // -----------------------------------------------------------------------------
-// M9 — PTR cross-zone conflict
+// M9, PTR cross-zone conflict
 // -----------------------------------------------------------------------------
 
 describe('M9 — PTR cross-zone conflict refuses silent overwrite', () => {
@@ -353,7 +353,7 @@ describe('M9 — PTR cross-zone conflict refuses silent overwrite', () => {
 });
 
 // -----------------------------------------------------------------------------
-// C3 — DHCP scope option / domain_name config injection
+// C3, DHCP scope option / domain_name config injection
 // -----------------------------------------------------------------------------
 
 describe('C3 — DHCP scope config injection', () => {
@@ -415,7 +415,7 @@ describe('C3 — DHCP scope config injection', () => {
 });
 
 // -----------------------------------------------------------------------------
-// H5 — /api/subnets/calculate DoS cap
+// H5, /api/subnets/calculate DoS cap
 // -----------------------------------------------------------------------------
 
 describe('H5 — /api/subnets/calculate child-count cap', () => {
@@ -443,7 +443,7 @@ describe('H5 — /api/subnets/calculate child-count cap', () => {
 });
 
 // -----------------------------------------------------------------------------
-// H6 — JSON body-parse error collapse
+// H6, JSON body-parse error collapse
 // -----------------------------------------------------------------------------
 
 describe('H6 — malformed JSON body yields "Invalid JSON body" 400', () => {
@@ -458,7 +458,7 @@ describe('H6 — malformed JSON body yields "Invalid JSON body" 400', () => {
 });
 
 // -----------------------------------------------------------------------------
-// H7 — settings per-key schema
+// H7, settings per-key schema
 // -----------------------------------------------------------------------------
 
 describe('H7 — settings per-key schema rejects shape abuse', () => {
@@ -516,7 +516,7 @@ describe('H7 — settings per-key schema rejects shape abuse', () => {
 });
 
 // -----------------------------------------------------------------------------
-// H3/H4 — SSRF guard rejects loopback / link-local / RFC1918
+// H3/H4, SSRF guard rejects loopback / link-local / RFC1918
 // -----------------------------------------------------------------------------
 
 describe('H3/H4 — outbound URL guard rejects private IPs', () => {
@@ -552,7 +552,7 @@ describe('H3/H4 — outbound URL guard rejects private IPs', () => {
 });
 
 // -----------------------------------------------------------------------------
-// M6 — JSON 404 fallback
+// M6, JSON 404 fallback
 // -----------------------------------------------------------------------------
 
 describe('M6 — JSON 404 fallback on unknown /api path', () => {
@@ -565,7 +565,7 @@ describe('M6 — JSON 404 fallback on unknown /api path', () => {
 });
 
 // -----------------------------------------------------------------------------
-// M8 — Display-string validator rejects angle brackets + control chars
+// M8, Display-string validator rejects angle brackets + control chars
 // -----------------------------------------------------------------------------
 
 describe('M8 — display-string validator on subnet name/description', () => {
@@ -592,7 +592,7 @@ describe('M8 — display-string validator on subnet name/description', () => {
 });
 
 // -----------------------------------------------------------------------------
-// V1 — Backend-authoritative validation for route-specific operational inputs
+// V1, Backend-authoritative validation for route-specific operational inputs
 // -----------------------------------------------------------------------------
 
 describe('V1 — validation gaps from route-specific write paths', () => {
@@ -652,7 +652,7 @@ describe('V1 — validation gaps from route-specific write paths', () => {
 });
 
 // -----------------------------------------------------------------------------
-// M1 / M2 — Login + change-password rate limiters
+// M1 / M2, Login + change-password rate limiters
 //
 // These tests HAVE to run last in the file because they exhaust the
 // loginLimiter's 15-minute window (which doesn't reset between tests in the
@@ -692,7 +692,7 @@ describe('M1 — change-password rate limiter caps at 10/15min per IP', () => {
 });
 
 // -----------------------------------------------------------------------------
-// CodeQL #5 — blocklist search: array-typed query param must not crash
+// CodeQL #5, blocklist search: array-typed query param must not crash
 // -----------------------------------------------------------------------------
 describe('blocklist search query type confusion', () => {
   it('returns an empty result, not a 500, when q is supplied twice (array)', async () => {

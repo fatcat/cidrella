@@ -1,5 +1,5 @@
 /**
- * IP Address model — single owner of all ip_addresses table writes.
+ * IP Address model, single owner of all ip_addresses table writes.
  *
  * All systems that need to create or update IP address records should
  * go through this module rather than writing inline SQL.
@@ -124,7 +124,7 @@ export function upsert(db, subnetId, ip, fields = {}) {
     return existing.id;
   }
 
-  // INSERT — set first_seen_at for new rows that show activity
+  // INSERT, set first_seen_at for new rows that show activity
   const hasActivity = is_online || mac_address || last_seen_mac;
   const result = db.prepare(`
     INSERT INTO ip_addresses (
@@ -149,7 +149,7 @@ export function upsert(db, subnetId, ip, fields = {}) {
 
 /**
  * Mark an IP as online. Sets is_online=1, last_seen_at, first_seen_at (if unset).
- * UPDATE only — does not create rows for unknown IPs.
+ * UPDATE only, does not create rows for unknown IPs.
  */
 export function markOnline(db, subnetId, ip, { mac, source } = {}) {
   const existing = db.prepare(
@@ -632,7 +632,7 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'scanner' });
     }
   } else if (responded) {
-    // Rogue device with no existing record — create one
+    // Rogue device with no existing record, create one
     // Re-check for reservation before inserting as rogue
     if (effectiveConflict) {
       const hasReservation = db.prepare(
@@ -674,7 +674,7 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
 
 /**
  * Set IP status and reservation note (manual lock/unlock/assign).
- * Upserts — creates the row if it doesn't exist.
+ * Upserts, creates the row if it doesn't exist.
  */
 export function setStatus(db, subnetId, ip, status, reservationNote = null) {
   const existing = db.prepare(
@@ -705,7 +705,7 @@ export function setStatus(db, subnetId, ip, status, reservationNote = null) {
 
 /**
  * Set per-IP scan-enabled override.
- * Upserts — creates the row if it doesn't exist.
+ * Upserts, creates the row if it doesn't exist.
  */
 export function setScanEnabled(db, subnetId, ip, scanEnabled) {
   const existing = db.prepare(

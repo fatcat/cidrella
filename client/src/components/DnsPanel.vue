@@ -156,7 +156,7 @@
           </div>
 
           <DataTable :key="'records-' + selectedZone?.type" :value="filteredRecords" :loading="loadingRecords" stripedRows
-                     emptyMessage="No records in this zone." size="small"
+                     size="small"
                      scrollable scrollHeight="flex"
                      :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
                      removableSort
@@ -165,6 +165,9 @@
                      @page="onDnsPage"
                      @row-contextmenu="onRecordRightClick"
                      :contextMenu="true">
+            <template #empty>
+              <EmptyState icon="pi-book" title="No records in this zone" description="Add A, CNAME, MX, TXT, or SRV records to serve them for this zone." />
+            </template>
             <Column
               v-for="col in visibleDnsColumns"
               :key="col.key"
@@ -271,7 +274,7 @@
               <InputNumber v-model="zoneForm.soa_expire" class="w-full" :min="0" />
             </div>
             <div class="field">
-              <label>Minimum TTL (s) <span v-tooltip.top="'Default negative-cache TTL — how long resolvers cache NXDOMAIN responses'" class="soa-help">?</span></label>
+              <label>Minimum TTL (s) <span v-tooltip.top="'Default negative-cache TTL: how long resolvers cache NXDOMAIN responses'" class="soa-help">?</span></label>
               <InputNumber v-model="zoneForm.soa_minimum_ttl" class="w-full" :min="0" />
             </div>
           </div>
@@ -406,7 +409,7 @@ import StatusText from './table/StatusText.vue';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import { useRowsPreference } from '../composables/useRowsPreference.js';
 
-// No props needed — shows all zones globally
+// No props needed, shows all zones globally
 
 const store = useDnsStore();
 const dhcpStore = useDhcpStore();
@@ -415,7 +418,7 @@ const { rows: dnsRows, onPage: onDnsPage } = useRowsPreference('cidrella_dns_tab
 
 // Find the first DHCP scope whose pool contains `ip`. Returns { scope, cidr }
 // or null. Used to warn when a user points a DNS A record at an IP inside a
-// dynamic DHCP pool — DHCP may hand that IP to a different host tomorrow.
+// dynamic DHCP pool, DHCP may hand that IP to a different host tomorrow.
 function findDhcpScopeForIp(ip) {
   if (!ip) return null;
   let ipLong;
@@ -425,7 +428,7 @@ function findDhcpScopeForIp(ip) {
     // Guard per-scope IP conversion: a malformed start/end in the store
     // (import or migration edge case) would otherwise throw mid-loop,
     // bubble up to saveRecord's catch, and fire an error toast AFTER the
-    // DNS A record has already been created — user thinks the save
+    // DNS A record has already been created, user thinks the save
     // failed and retries, creating a duplicate record.
     let startLong, endLong;
     try { startLong = ipToLong(s.start_ip); endLong = ipToLong(s.end_ip); } catch { continue; }
@@ -789,7 +792,7 @@ async function saveRecord() {
     }
 
     // Warn (but don't block) when an A record points at an IP that sits
-    // inside a DHCP dynamic pool — the DHCP server may hand that IP to a
+    // inside a DHCP dynamic pool. The DHCP server may hand that IP to a
     // different host, breaking the A record until the next renewal. A
     // reservation would be the right tool if the user wants a stable
     // hostname for that MAC.
@@ -838,7 +841,7 @@ async function doDeleteRecord() {
 onMounted(async () => {
   await store.fetchZones();
   // Load DHCP scopes so we can warn when a new A record points at an IP
-  // inside a DHCP pool. Fire-and-forget — the panel is usable immediately.
+  // inside a DHCP pool. Fire-and-forget, the panel is usable immediately.
   if (!dhcpStore.scopes || dhcpStore.scopes.length === 0) {
     dhcpStore.fetchScopes().catch(() => {});
   }

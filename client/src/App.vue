@@ -29,7 +29,7 @@ body {
   --p-surface-content: var(--p-surface-0);
   --p-surface-border: var(--p-surface-200);
 
-  /* App type scale — dense by design. Pixel-based so they don't compound
+  /* App type scale, dense by design. Pixel-based so they don't compound
      with browser font-size adjustments; rem-based spacing still scales. */
   --app-fs-xs:   11px;  /* uppercase eyebrows, version tags */
   --app-fs-sm:   12px;  /* meta strips, chips, tree sub-labels */
@@ -40,7 +40,7 @@ body {
   --app-fs-2xl:  24px;  /* hero stats */
   --app-fs-3xl:  30px;  /* KPI numerals */
 
-  /* App spacing scale — 4px rhythm. Use these as literals. */
+  /* App spacing scale, 4px rhythm. Use these as literals. */
   --sp-1:  4px;
   --sp-2:  8px;
   --sp-3:  12px;
@@ -296,7 +296,7 @@ body {
 .p-toast-close-button {
   color: var(--p-surface-300) !important;
 }
-/* Circular icon backgrounds — white icon on colored circle */
+/* Circular icon backgrounds: white icon on colored circle */
 .p-toast-message-icon {
   color: var(--p-surface-0) !important;
   width: 1.75rem !important;
@@ -352,7 +352,7 @@ body {
   font-size: var(--app-fs-base);
 }
 
-/* Taxonomy tag — tinted capsule for *categorical* flags only
+/* Taxonomy tag: tinted capsule for *categorical* flags only
    (Reservation, Gateway, Rogue, System, etc.). Never for state.
    Spec §3.4: primary-color tint, xs size, 4px radius, 2/6px padding. */
 .taxonomy-tag {
@@ -421,7 +421,7 @@ body {
   color: var(--cid-rogue);
 }
 
-/* Status text — for "state" values in dense data tables.
+/* Status text, for "state" values in dense data tables.
    Spec rule: capsules are for taxonomy, text is for state. */
 .status-text {
   display: inline-flex;
@@ -445,7 +445,7 @@ body {
 .status-text.state-ok     { color: var(--cid-status-ok); }
 .status-text.state-info   { color: var(--cid-status-info); }
 .status-text.state-muted  { color: var(--cid-status-muted); }
-/* "Off" variants use a ring instead of a filled dot — shape carries meaning
+/* "Off" variants use a ring instead of a filled dot. Shape carries meaning
    even in grayscale, addressing color-alone contrast concerns. */
 .status-text.state-muted::before {
   background: transparent;

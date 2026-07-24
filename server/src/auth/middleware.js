@@ -9,14 +9,14 @@ import { getDb } from '../db/init.js';
 // enforces ticket-or-jwt itself: a one-time, 30s, single-use stream ticket
 // minted via POST /api/logs/stream-token (which still requires a valid JWT
 // + dns:read permission). Skipping the global middleware here lets the
-// route handler's ticket validation actually run — without this exemption
+// route handler's ticket validation actually run, without this exemption
 // the SSE GET is rejected at the middleware before the ticket is ever read.
 const PUBLIC_PATHS = ['/api/auth/login', '/api/health', '/api/health/deep', '/api/logs/stream'];
 
 // Paths allowed when must_change_password is true
 const PASSWORD_CHANGE_PATHS = ['/api/auth/change-password', '/api/auth/me'];
 
-// Cached JWT secret — loaded on first use, cleared on key rotation
+// Cached JWT secret, loaded on first use, cleared on key rotation
 let _cachedJwtSecret = null;
 
 function getJwtSecret(db) {

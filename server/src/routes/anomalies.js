@@ -10,7 +10,7 @@ import * as Setting from '../models/setting.js';
 
 const router = Router();
 
-// GET /api/anomalies/active — active (unresolved) anomalies
+// GET /api/anomalies/active: active (unresolved) anomalies
 router.get('/active', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const { severity } = req.query;
@@ -32,7 +32,7 @@ router.get('/active', requirePerm('analytics:read'), (req, res) => {
   res.json(enrichWithHostnames(rows));
 });
 
-// GET /api/anomalies/summary — dashboard summary
+// GET /api/anomalies/summary: dashboard summary
 router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const acknowledgedThroughId = Math.max(0, parseInt(getSetting('anomaly_acknowledged_score_id'), 10) || 0);
@@ -64,15 +64,14 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
 
   // Daemon status reported here is whatever the python daemon last wrote to
   // the anomaly_daemon_status setting. The daemon writes this on every scoring
-  // and training cycle — so if it stops writing, we know the daemon is dead
+  // and training cycle, so if it stops writing, we know the daemon is dead
   // even though the cached values look fine. We must NOT pass the stale
   // snapshot through to the UI as "healthy"; instead, compare the last
   // heartbeat timestamp against the expected scoring interval and mark the
   // daemon as stale when it exceeds the threshold.
   //
   // This is why the System tab's Anomaly Detection indicator stayed green on
-  // prod on 2026-04-12 while the systemd service had been dead for 5h36m —
-  // the API was reading a six-hour-old snapshot without checking freshness.
+  // prod on 2026-04-12 while the systemd service had been dead for 5h36m,   // the API was reading a six-hour-old snapshot without checking freshness.
   let daemon = null;
   try {
     const raw = getSetting('anomaly_daemon_status');
@@ -127,7 +126,7 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   });
 });
 
-// POST /api/anomalies/acknowledge — clear the header notification counter.
+// POST /api/anomalies/acknowledge: clear the header notification counter.
 // This does not resolve or delete anomalies; it records the highest anomaly id
 // seen so older rows never contribute to the notification count again.
 router.post('/acknowledge', requirePerm('analytics:write'), (req, res) => {
@@ -146,7 +145,7 @@ router.post('/acknowledge', requirePerm('analytics:write'), (req, res) => {
   });
 });
 
-// GET /api/anomalies/client/:ip — anomaly history for a client
+// GET /api/anomalies/client/:ip: anomaly history for a client
 router.get('/client/:ip', requirePerm('analytics:read'), (req, res) => {
   const { ip } = req.params;
   if (!isValidIpv4(ip)) {
@@ -165,7 +164,7 @@ router.get('/client/:ip', requirePerm('analytics:read'), (req, res) => {
   res.json(rows.map(parseScoreRow));
 });
 
-// GET /api/anomalies/client/:ip/model — model metadata
+// GET /api/anomalies/client/:ip/model: model metadata
 router.get('/client/:ip/model', requirePerm('analytics:read'), (req, res) => {
   const { ip } = req.params;
   if (!isValidIpv4(ip)) {
@@ -179,7 +178,7 @@ router.get('/client/:ip/model', requirePerm('analytics:read'), (req, res) => {
   res.json(row || null);
 });
 
-// DELETE /api/anomalies/:id — delete an anomaly score
+// DELETE /api/anomalies/:id: delete an anomaly score
 router.delete('/:id', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id, 10);
@@ -195,7 +194,7 @@ router.delete('/:id', requirePerm('dns:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/anomalies/:id/dismiss — mark anomaly as resolved (kept for backwards compat)
+// POST /api/anomalies/:id/dismiss: mark anomaly as resolved (kept for backwards compat)
 router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id, 10);
@@ -213,14 +212,14 @@ router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
 
 // ─── Whitelist CRUD ─────────────────────────────────────
 
-// GET /api/anomalies/whitelist — list whitelisted clients
+// GET /api/anomalies/whitelist: list whitelisted clients
 router.get('/whitelist', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const rows = db.prepare('SELECT * FROM anomaly_whitelist ORDER BY whitelisted_at DESC').all();
   res.json(enrichWithHostnames(rows));
 });
 
-// POST /api/anomalies/whitelist — whitelist a client IP
+// POST /api/anomalies/whitelist: whitelist a client IP
 router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const { client_ip, reason } = req.body;
@@ -237,7 +236,7 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   res.status(201).json({ id, ok: true });
 });
 
-// DELETE /api/anomalies/whitelist/:id — remove from whitelist
+// DELETE /api/anomalies/whitelist/:id: remove from whitelist
 router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id, 10);
@@ -251,7 +250,7 @@ router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/anomalies/settings — anomaly detection settings
+// GET /api/anomalies/settings: anomaly detection settings
 router.get('/settings', requirePerm('analytics:read'), (req, res) => {
   res.json({
     anomaly_detection_enabled: getSetting('anomaly_detection_enabled') || 'false',
@@ -263,7 +262,7 @@ router.get('/settings', requirePerm('analytics:read'), (req, res) => {
   });
 });
 
-// PUT /api/anomalies/settings — update anomaly detection settings
+// PUT /api/anomalies/settings: update anomaly detection settings
 router.put('/settings', requireRole('admin'), (req, res) => {
   const db = getDb();
   const allowedKeys = [

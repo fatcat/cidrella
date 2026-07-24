@@ -22,41 +22,41 @@
     <div class="header-status">
       <button class="status-chip status-chip-scan" :class="scanChipClass" data-track="header-chip-scan"
               @click="toggleOpsPopover" :title="`Scanner: ${scanDisplay}`">
-        <span class="card-dot" :class="activeScans.length ? 'dot-up' : 'dot-ok'"></span>
+        <StatusDot :kind="activeScans.length ? 'ok' : 'muted'" :label="dotLabel(activeScans.length ? 'ok' : 'muted')" />
         <span class="status-chip-label">{{ scanChipText }}</span>
       </button>
       <button class="status-chip status-chip-wide" :class="dnsChipClass" data-track="header-chip-dnsmasq"
               @click="toggleOpsPopover" :title="dnsTitle">
-        <span class="card-dot" :class="dnsDotClass"></span>
+        <StatusDot :kind="dnsDotKind" :label="dotLabel(dnsDotKind)" />
         <span class="status-chip-label">dnsmasq</span>
         <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
       </button>
       <button class="status-chip status-chip-wide" :class="cpuChipClass" data-track="header-chip-cpu"
               @click="toggleOpsPopover" :title="`Host CPU load: ${cpuDisplay}`">
-        <span class="card-dot" :class="cpuDotClass"></span>
+        <StatusDot :kind="cpuDotKind" :label="dotLabel(cpuDotKind)" />
         <span class="status-chip-label">CPU {{ cpuPercentText }}</span>
       </button>
       <button class="status-chip status-chip-wide" :class="ramChipClass" data-track="header-chip-ram"
               @click="toggleOpsPopover" :title="`Host RAM: ${ramDisplay}`">
-        <span class="card-dot" :class="ramDotClass"></span>
+        <StatusDot :kind="ramDotKind" :label="dotLabel(ramDotKind)" />
         <span class="status-chip-label">RAM {{ ramPercentText }}</span>
       </button>
       <button class="status-chip status-chip-wide" :class="diskChipClass" data-track="header-chip-disk"
               @click="toggleOpsPopover" :title="`Disk: ${diskDisplay}`">
-        <span class="card-dot" :class="diskDotClass"></span>
+        <StatusDot :kind="diskDotKind" :label="dotLabel(diskDotKind)" />
         <span class="status-chip-label">Disk {{ diskPercentText }}</span>
       </button>
       <button class="status-chip status-chip-ops" :class="opsChipClass"
               data-track="header-chip-ops" @click="toggleOpsPopover"
               :title="opsTitle">
-        <span class="card-dot" :class="opsDotClass"></span>
+        <StatusDot :kind="opsDotKind" :label="dotLabel(opsDotKind)" />
         <span class="status-chip-label">Ops</span>
         <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
       </button>
       <button class="status-chip status-chip-anomaly" :class="anomalyChipClass"
               data-track="header-chip-anomaly" @click="toggleAnomalyPopover"
               :title="`Anomaly sidecar: ${anomalyStatusLabel}`">
-        <span class="card-dot" :class="anomalyDotClass"></span>
+        <StatusDot :kind="anomalyDotKind" :label="dotLabel(anomalyDotKind)" />
         <span class="status-chip-label">Anomaly</span>
         <span v-if="anomalyCount > 0" class="status-chip-badge">{{ anomalyCount }}</span>
       </button>
@@ -65,37 +65,37 @@
     <Popover ref="opsPopoverRef">
       <div class="status-popover-panel">
         <div class="status-popover-row">
-          <span class="card-dot" :class="health?.services?.dnsmasq ? 'dot-up' : 'dot-down'"></span>
+          <StatusDot :kind="health?.services?.dnsmasq ? 'ok' : 'err'" :label="dotLabel(health?.services?.dnsmasq ? 'ok' : 'err')" />
           <span class="status-popover-label">DNSmasq</span>
           <span class="status-popover-val">{{ dnsDisplay }}</span>
         </div>
         <div class="status-popover-row status-popover-clickable" @click="goToRogueDhcp" title="Open Rogue DHCP">
-          <span class="card-dot" :class="rogueDhcpCount > 0 ? 'dot-warn' : 'dot-up'"></span>
+          <StatusDot :kind="rogueDhcpCount > 0 ? 'warn' : 'ok'" :label="dotLabel(rogueDhcpCount > 0 ? 'warn' : 'ok')" />
           <span class="status-popover-label">Rogue DHCP</span>
           <span class="status-popover-val">{{ rogueDhcpDisplay }}</span>
         </div>
         <div class="status-popover-row">
-          <span class="card-dot" :class="cpuDotClass"></span>
+          <StatusDot :kind="cpuDotKind" :label="dotLabel(cpuDotKind)" />
           <span class="status-popover-label">Host CPU Load</span>
           <span class="status-popover-val">{{ cpuDisplay }}</span>
         </div>
         <div class="status-popover-row">
-          <span class="card-dot" :class="ramDotClass"></span>
+          <StatusDot :kind="ramDotKind" :label="dotLabel(ramDotKind)" />
           <span class="status-popover-label">Host RAM</span>
           <span class="status-popover-val">{{ ramDisplay }}</span>
         </div>
         <div class="status-popover-row">
-          <span class="card-dot" :class="diskDotClass"></span>
+          <StatusDot :kind="diskDotKind" :label="dotLabel(diskDotKind)" />
           <span class="status-popover-label">Disk</span>
           <span class="status-popover-val">{{ diskDisplay }}</span>
         </div>
         <div class="status-popover-row">
-          <span class="card-dot" :class="activeScans.length ? 'dot-up' : 'dot-ok'"></span>
+          <StatusDot :kind="activeScans.length ? 'ok' : 'muted'" :label="dotLabel(activeScans.length ? 'ok' : 'muted')" />
           <span class="status-popover-label">Scanner</span>
           <span class="status-popover-val">{{ scanDisplay }}</span>
         </div>
         <div v-if="serviceCrash" class="status-popover-row status-popover-row-alert">
-          <span class="card-dot dot-down"></span>
+          <StatusDot kind="err" label="Down" />
           <span class="status-popover-label">Backend Restart</span>
           <span class="status-popover-val">{{ serviceCrashLabel }}</span>
         </div>
@@ -106,7 +106,7 @@
     <Popover ref="anomalyPopoverRef">
       <div class="status-popover-panel anomaly-popover-panel">
         <div class="status-popover-row">
-          <span class="card-dot" :class="anomalyDotClass"></span>
+          <StatusDot :kind="anomalyDotKind" :label="dotLabel(anomalyDotKind)" />
           <span class="status-popover-label">Sidecar</span>
           <span class="status-popover-val">{{ anomalyStatusLabel }}</span>
         </div>
@@ -183,6 +183,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import Popover from 'primevue/popover';
 import Select from 'primevue/select';
+import StatusDot from './StatusDot.vue';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
 import { formatTimeOnly } from '../utils/dateFormat.js';
@@ -213,7 +214,7 @@ const timeFormatOptions = [
 const selectedTimeFormat = ref(auth.timeFormat);
 watch(() => auth.timeFormat, (v) => { selectedTimeFormat.value = v; });
 
-// Theme picker — grouped by light/dark; applyTheme persists + live-applies via main.js.
+// Theme picker, grouped by light/dark. applyTheme persists + live-applies via main.js.
 const themeStore = useThemeStore();
 const selectedTheme = ref(themeStore.currentThemeId);
 watch(() => themeStore.currentThemeId, (v) => { selectedTheme.value = v; });
@@ -265,7 +266,7 @@ const serviceCrashLabel = computed(() => {
 const rogueDhcpCount = computed(() => health.value?.rogueDhcp?.unacknowledged || 0);
 const opsWarn = computed(() => !opsIssue.value && rogueDhcpCount.value > 0);
 const opsChipClass = computed(() => opsIssue.value ? 'chip-err' : (opsWarn.value ? 'chip-warn' : ''));
-const opsDotClass = computed(() => opsIssue.value ? 'dot-down' : (opsWarn.value ? 'dot-warn' : 'dot-up'));
+const opsDotKind = computed(() => opsIssue.value ? 'err' : (opsWarn.value ? 'warn' : 'ok'));
 
 const rogueDhcpDisplay = computed(() => {
   const r = health.value?.rogueDhcp;
@@ -409,16 +410,20 @@ const anomalyStatusLabel = computed(() => {
   return 'Unknown';
 });
 
-const anomalyDotClass = computed(() => {
-  if (anomalyStatus.value === 'running') return 'dot-up';
-  if (anomalyStatus.value === 'off') return 'dot-ok';
-  return 'dot-warn';
+// One label per StatusDot kind, used by every header dot.
+const KIND_LABEL = { ok: 'OK', err: 'Down', warn: 'Warning', muted: 'Idle' };
+function dotLabel(kind) { return KIND_LABEL[kind] || 'Idle'; }
+
+const anomalyDotKind = computed(() => {
+  if (anomalyStatus.value === 'running') return 'ok';
+  if (anomalyStatus.value === 'off') return 'muted';
+  return 'warn';
 });
 
-function resourceDot(statusClass) {
-  if (statusClass === 'card-err') return 'dot-down';
-  if (statusClass === 'card-warn') return 'dot-warn';
-  return 'dot-up';
+function resourceDotKind(statusClass) {
+  if (statusClass === 'card-err') return 'err';
+  if (statusClass === 'card-warn') return 'warn';
+  return 'ok';
 }
 
 function resourceChip(statusClass) {
@@ -436,10 +441,10 @@ const dnsChipClass = computed(() => {
   if (rogueDhcpCount.value > 0) return 'chip-warn';
   return 'chip-ok';
 });
-const dnsDotClass = computed(() => {
-  if (!health.value?.services?.dnsmasq) return 'dot-down';
-  if (rogueDhcpCount.value > 0) return 'dot-warn';
-  return 'dot-up';
+const dnsDotKind = computed(() => {
+  if (!health.value?.services?.dnsmasq) return 'err';
+  if (rogueDhcpCount.value > 0) return 'warn';
+  return 'ok';
 });
 const dnsTitle = computed(() =>
   rogueDhcpCount.value > 0
@@ -449,9 +454,9 @@ const dnsTitle = computed(() =>
 const cpuChipClass = computed(() => resourceChip(cpuStatusClass.value));
 const ramChipClass = computed(() => resourceChip(ramStatusClass.value));
 const diskChipClass = computed(() => resourceChip(diskStatusClass.value));
-const cpuDotClass = computed(() => resourceDot(cpuStatusClass.value));
-const ramDotClass = computed(() => resourceDot(ramStatusClass.value));
-const diskDotClass = computed(() => resourceDot(diskStatusClass.value));
+const cpuDotKind = computed(() => resourceDotKind(cpuStatusClass.value));
+const ramDotKind = computed(() => resourceDotKind(ramStatusClass.value));
+const diskDotKind = computed(() => resourceDotKind(diskStatusClass.value));
 const scanChipClass = computed(() => activeScans.value.length ? 'chip-active' : 'chip-idle');
 const anomalyChipClass = computed(() => {
   if (anomalyStatus.value === 'running') return 'chip-ok';
@@ -646,21 +651,11 @@ onUnmounted(() => {
   letter-spacing: 0.02em;
 }
 
-.card-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.card-dot.dot-up { background: var(--p-green-500); }
-.card-dot.dot-down { background: var(--p-red-500); }
-.card-dot.dot-ok { background: var(--p-surface-400); }
-.card-dot.dot-warn { background: var(--p-yellow-400); }
 
 .status-chip.chip-ok {
   border-left: 3px solid var(--p-primary-color);
 }
-/* Status is conveyed by the dot only — chip text stays the default color and
+/* Status is conveyed by the dot only. Chip text stays the default color and
    the left accent is uniform across all chips (red/yellow/green never tint the
    text). chip-idle keeps its dimmed text since "idle" is an inactive state, not
    a status color. */
@@ -687,11 +682,18 @@ onUnmounted(() => {
   height: 16px;
   padding: 0 4px;
   border-radius: 8px;
-  background: var(--p-red-500);
+  background: var(--cid-status-err);
   color: white;
   font-size: var(--app-fs-xs);
   font-weight: 700;
   line-height: 1;
+}
+/* The count badge follows the chip's severity: yellow on a warn chip, red
+   only when the chip itself is in an error state. A red badge on a yellow
+   warn chip read as an outage. */
+.status-chip.chip-warn .status-chip-badge {
+  background: var(--cid-status-warn);
+  color: #1a1a1a;
 }
 
 .header-right {
@@ -830,7 +832,7 @@ onUnmounted(() => {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--p-blue-500);
+  background: var(--cid-status-info);
   color: white;
   font-size: 9px;
   text-decoration: none;

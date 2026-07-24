@@ -5,12 +5,12 @@
 // must equal the version in the newest `## vX.Y.Z` heading of RELEASE-NOTES.md.
 //
 // Why: on 2026-06-08 the 0.4.16 work was committed with no package.json bump and
-// no 0.4.16 release-notes section — the mismatch surfaced only at release time.
+// no 0.4.16 release-notes section, the mismatch surfaced only at release time.
 // This fails the build up front instead.
 //
 // Scope: ONLY the root package.json is release-tracked. server/ and client/
 // package.json versions are intentionally ignored (unread by the build and the
-// app — APP_VERSION reads the root). Pre-release builds splice the -pre.N
+// app, APP_VERSION reads the root). Pre-release builds splice the -pre.N
 // suffix AFTER this check runs, so the comparison is always base-vs-base.
 //
 // Usage: node check-release-version.js [project-dir]

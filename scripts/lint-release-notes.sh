@@ -1,5 +1,5 @@
 #!/bin/bash
-# lint-release-notes.sh — thin wrapper around build-releases-manifest.js --lint
+# lint-release-notes.sh: thin wrapper around build-releases-manifest.js --lint
 #
 # Exists so CI / pre-commit hooks / release-readiness checks can run a
 # stable entry point without caring that the validator is a Node script.

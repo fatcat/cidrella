@@ -4,7 +4,7 @@
  *     (with UNIQUE-constraint dedup from R3 #5).
  *   - migrateChildZonesToParent moves DNS zones.
  *   - migrateChildScopesToParent preserves the configSource's DHCP scope
- *     (R3 #1 — the scope previously cascaded to nothing).
+ *     (R3 #1, the scope previously cascaded to nothing).
  *   - detectForwardZoneConflict blocks 409 when siblings own different
  *     forward-zone domain names.
  *
@@ -89,7 +89,7 @@ describe('POST /api/subnets/merge — data preservation', () => {
     const children = await getChildren(parent.id);
     const [c0, c1] = children.sort((a, b) => a.cidr.localeCompare(b.cidr));
 
-    // Reservation on the upper child — should survive the merge.
+    // Reservation on the upper child, should survive the merge.
     await request(app).post('/api/dhcp/reservations').send({
       subnet_id: c1.id, ip_address: '10.20.1.50', mac_address: 'aa:bb:cc:10:00:01', hostname: 'keepme'
     });
@@ -151,7 +151,7 @@ describe('POST /api/subnets/merge — data preservation', () => {
     expect(merge.status).toBe(200);
 
     // Post-decouple: the zone still exists, unmodified. Any subnet may
-    // reference it via domain_name — the merged parent continues to point
+    // reference it via domain_name, the merged parent continues to point
     // at it.
     const zonesAfter = await request(app).get('/api/dns/zones');
     const survived = zonesAfter.body.find(z => z.id === fwd.id);

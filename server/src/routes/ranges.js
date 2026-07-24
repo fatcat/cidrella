@@ -29,7 +29,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     return res.status(400).json({ error: 'range_type_id, start_ip, and end_ip are required' });
   }
 
-  // v0.4.15: type-guard before any string operation — non-string IPs caused
+  // v0.4.15: type-guard before any string operation, non-string IPs caused
   // ipToLong to throw 500s that the generic handler then masked as
   // "Internal server error". A 400 with the root cause is kinder.
   if (typeof start_ip !== 'string' || typeof end_ip !== 'string') {
@@ -203,7 +203,7 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
 
   // Refuse deletion if a DHCP scope is attached to this range. The FK is
   // ON DELETE SET NULL, so a blind delete would leave dhcp_scopes with
-  // range_id=NULL — a ghost row no UI surfaces but which breaks future
+  // range_id=NULL, a ghost row no UI surfaces but which breaks future
   // scope creation on the same subnet. Force the user to delete the scope
   // first.
   const attachedScope = db.prepare(

@@ -5,7 +5,7 @@ import { initDb, getDb } from '../../src/db/init.js';
 
 /**
  * Create a fresh test database in a temp directory with all migrations applied.
- * Returns { db, tmpDir } — call cleanupTestDb(tmpDir) when done.
+ * Returns { db, tmpDir }, call cleanupTestDb(tmpDir) when done.
  */
 export async function setupTestDb() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-test-'));

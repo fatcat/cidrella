@@ -40,7 +40,7 @@ export function formatTimeOnly(dateStr) {
   } catch { return String(dateStr); }
 }
 
-/** Time with seconds (HH:MM:SS) — for debug panel */
+/** Time with seconds (HH:MM:SS), for debug panel */
 export function formatTimeWithSeconds(date) {
   if (!date) return '—';
   const d = date instanceof Date ? date : new Date(date);

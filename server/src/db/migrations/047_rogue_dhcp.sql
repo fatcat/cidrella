@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS dhcp_authorized_servers (
 -- Detected DHCP servers that were NOT authorized. Deduped on (server_ip,
 -- server_mac); a re-detection bumps last_seen_at/times_seen and refreshes the
 -- offered_* fields but leaves `acknowledged` alone (a persistent rogue stays
--- acknowledged once silenced — clear it to re-arm). server_mac is stored as ''
+-- acknowledged once silenced, clear it to re-arm). server_mac is stored as ''
 -- when unknown so the UNIQUE/upsert key never sees a NULL.
 CREATE TABLE IF NOT EXISTS rogue_dhcp_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

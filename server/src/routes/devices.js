@@ -6,7 +6,7 @@ import * as DeviceFingerprint from '../models/device-fingerprint.js';
 
 const router = Router();
 
-// GET /api/devices/:mac/fingerprint — full per-device fingerprint (for the
+// GET /api/devices/:mac/fingerprint: full per-device fingerprint (for the
 // host "more info" popup). Returns null fields when unknown.
 router.get('/:mac/fingerprint', requirePerm('dhcp:read'), (req, res) => {
   const mac = req.params.mac;
@@ -15,7 +15,7 @@ router.get('/:mac/fingerprint', requirePerm('dhcp:read'), (req, res) => {
   res.json(row || { mac_address: mac.toLowerCase(), device_type: null, os_family: null, confidence: 0, source: null });
 });
 
-// PUT /api/devices/:mac/fingerprint — operator override of device type / OS.
+// PUT /api/devices/:mac/fingerprint: operator override of device type / OS.
 router.put('/:mac/fingerprint', requirePerm('dhcp:write'), (req, res) => {
   const mac = req.params.mac;
   if (!isValidMac(mac)) return res.status(400).json({ error: 'Invalid MAC address' });
@@ -30,6 +30,20 @@ router.put('/:mac/fingerprint', requirePerm('dhcp:write'), (req, res) => {
   DeviceFingerprint.setManual(db, mac, { device_type, os_family });
   audit(req.user.id, 'device_fingerprint_override', 'device_fingerprint', null, { mac: mac.toLowerCase(), device_type, os_family });
   res.json(DeviceFingerprint.getByMac(db, mac));
+});
+
+// DELETE /api/devices/:mac/fingerprint: remove an operator override so the
+// device goes back to auto-classification on its next DHCP transaction.
+// No-op (still 200) when the row isn't a manual override.
+router.delete('/:mac/fingerprint', requirePerm('dhcp:write'), (req, res) => {
+  const mac = req.params.mac;
+  if (!isValidMac(mac)) return res.status(400).json({ error: 'Invalid MAC address' });
+  const db = getDb();
+  const info = DeviceFingerprint.clearManual(db, mac);
+  if (info.changes > 0) {
+    audit(req.user.id, 'device_fingerprint_reset', 'device_fingerprint', null, { mac: mac.toLowerCase() });
+  }
+  res.json({ ok: true, cleared: info.changes > 0 });
 });
 
 export default router;

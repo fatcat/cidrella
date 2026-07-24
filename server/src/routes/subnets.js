@@ -54,7 +54,7 @@ function asyncHandler(fn) {
 //
 // Folders are an overlay: a subnet inherits its parent's effective folder
 // unless it sets its own `folder_id` explicitly. If it does, it's PROMOTED
-// to a root-level node of that folder — detaching it from the CIDR parent
+// to a root-level node of that folder, detaching it from the CIDR parent
 // in the tree view. This lets a user put a /24 into a different folder
 // than its /22 parent without having to move the whole parent.
 //
@@ -177,7 +177,7 @@ function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
 // Helper: detect whether the given `vlan_id` is already assigned to one or
 // more other subnets. Same VLAN on different L3 subnets is legal in some
 // topologies (e.g. a VLAN spanning multiple IP supernets), but in practice
-// it's almost always a misconfiguration — so we surface a non-blocking
+// it's almost always a misconfiguration, so we surface a non-blocking
 // warning to the caller. Returns `{ vlan_id, peers: [{id, cidr, name}] }`
 // when there's a conflict, or null when the VLAN is unique (or null).
 function detectVlanCollision(db, vlanId, currentSubnetId) {
@@ -203,7 +203,7 @@ function consolidateIntermediate(db, parentId) {
   return SubnetTopology.consolidateIntermediate(db, parentId);
 }
 
-// GET /api/subnets — return folder-grouped tree
+// GET /api/subnets: return folder-grouped tree
 router.get('/', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
 
@@ -249,7 +249,7 @@ router.get('/', requirePerm('subnets:read'), asyncHandler((req, res) => {
   res.json({ folders: result });
 }));
 
-// GET /api/subnets/:id — single subnet with children
+// GET /api/subnets/:id: single subnet with children
 router.get('/:id', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare(`
@@ -271,7 +271,7 @@ router.get('/:id', requirePerm('subnets:read'), asyncHandler((req, res) => {
   res.json({ ...subnet, children });
 }));
 
-// POST /api/subnets — create root supernet
+// POST /api/subnets: create root supernet
 router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const body = req.body || {};
   const { cidr, name, description, vlan_id, folder_id } = body;
@@ -350,7 +350,7 @@ router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
   res.status(201).json({ ...subnet, ...(vlan_warning ? { vlan_warning } : {}) });
 }));
 
-// POST /api/subnets/merge/preview — validate merge without committing
+// POST /api/subnets/merge/preview: validate merge without committing
 router.post('/merge/preview', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const { subnet_ids } = req.body;
   if (!Array.isArray(subnet_ids) || subnet_ids.length < 2) {
@@ -394,7 +394,7 @@ router.post('/merge/preview', requirePerm('subnets:read'), asyncHandler((req, re
   });
 }));
 
-// POST /api/subnets/merge — execute merge
+// POST /api/subnets/merge: execute merge
 router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { subnet_ids } = req.body;
   if (!Array.isArray(subnet_ids) || subnet_ids.length < 2) {
@@ -455,7 +455,7 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
   }
 }));
 
-// POST /api/subnets/apply-template — apply name template to selected subnets
+// POST /api/subnets/apply-template: apply name template to selected subnets
 router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { subnet_ids } = req.body;
   if (!Array.isArray(subnet_ids) || subnet_ids.length === 0) {
@@ -475,7 +475,7 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
   res.json({ updated, count: updated.length });
 }));
 
-// PUT /api/subnets/:id — update subnet config
+// PUT /api/subnets/:id: update subnet config
 router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const body = req.body || {};
   const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name, scan_enabled, cidr } = body;
@@ -518,7 +518,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-  // CIDR can't be changed here — use /divide or /merge. The edit dialog
+  // CIDR can't be changed here, use /divide or /merge. The edit dialog
   // echoes the current CIDR back in the body, so we only reject when the
   // value actually DIFFERS from what's stored; a matching value is a
   // harmless no-op.
@@ -535,7 +535,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   }
 
   // Validate folder_id if provided. Any subnet (root or child) can be
-  // assigned to a folder — children in the tree view are promoted to a
+  // assigned to a folder, children in the tree view are promoted to a
   // root-level node of the chosen folder, detached from their CIDR parent.
   if (folder_id !== undefined && folder_id !== null) {
     const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
@@ -545,7 +545,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   // Post-decouple: `domain_name` is just a pointer to a forward zone by
   // name. Multiple subnets may share the same value. If the zone doesn't
   // exist yet, auto-create it on commit. Clearing `domain_name` does NOT
-  // delete the zone — other subnets may still reference it; the user must
+  // delete the zone, other subnets may still reference it; the user must
   // delete via the DNS UI if they want the zone gone.
   const domainChange = (domain_name !== undefined && domain_name !== subnet.domain_name)
     ? {
@@ -617,7 +617,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   res.json({ ...updated, ...(vlan_warning ? { vlan_warning } : {}) });
 }));
 
-// POST /api/subnets/:id/divide/preview — preview division without committing
+// POST /api/subnets/:id/divide/preview: preview division without committing
 router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const { cidr, new_prefix } = req.body;
   const db = getDb();
@@ -689,7 +689,7 @@ router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((re
 //
 // If `childCidrs` is a PROPER SUBSET of the parent (selected_cidrs path in
 // equal-mode divide), any host whose IP falls OUTSIDE every selected child
-// is also flagged as lossy — the transfer helpers silently drop rows with
+// is also flagged as lossy, the transfer helpers silently drop rows with
 // no matching child, so without this check users lose reservations when
 // doing partial divides.
 function detectLossyIpsForDivision(db, parentId, childCidrs) {
@@ -700,7 +700,7 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
   });
   for (const cr of childRanges) {
     const p = parseCidr(cr.cidr);
-    // Skip /31 and /32 — no network/broadcast concept (point-to-point / host).
+    // Skip /31 and /32, no network/broadcast concept (point-to-point / host).
     if (p.prefix >= 31) continue;
     boundaries.set(longToIp(cr.networkLong), { reason: 'network', child_cidr: cr.cidr });
     boundaries.set(longToIp(cr.broadcastLong), { reason: 'broadcast', child_cidr: cr.cidr });
@@ -793,7 +793,7 @@ function excludeGatewayFromPool(clippedStart, clippedEnd, gwLong) {
   }
   if (gwLong === clippedStart) return { start: clippedStart + 1, end: clippedEnd, adjusted: true };
   if (gwLong === clippedEnd)   return { start: clippedStart, end: clippedEnd - 1, adjusted: true };
-  // Strictly in the middle — keep the larger contiguous side.
+  // Strictly in the middle, keep the larger contiguous side.
   const leftSize = gwLong - clippedStart;    // size of pool before gw
   const rightSize = clippedEnd - gwLong;     // size of pool after gw
   if (rightSize >= leftSize) return { start: gwLong + 1, end: clippedEnd, adjusted: true };
@@ -801,7 +801,7 @@ function excludeGatewayFromPool(clippedStart, clippedEnd, gwLong) {
 }
 
 // Helper: migrate config from parent to inheriting child during division.
-// `childGw` is the new child's gateway IP (not the parent's — the divide
+// `childGw` is the new child's gateway IP (not the parent's, the divide
 // handler computes it per-child, e.g. firstUsable of each /24 after a /22
 // split). Returns a list of pool adjustments we had to make so the handler
 // can surface them in the response for user-facing warnings.
@@ -811,7 +811,7 @@ function migrateConfigToChild(db, parentId, childId, childParsed, childGw, paren
   const poolAdjustments = [];
 
   // Migrate DHCP scope ranges (and their scope config + options) if they fit
-  // and child is >= /29. Previously only the range row was moved — the
+  // and child is >= /29. Previously only the range row was moved, the
   // dhcp_scopes config (lease time, DNS, options) got dropped on the floor,
   // leaving the inheriting child with a DHCP range but no working scope.
   poolAdjustments.push(...DhcpTopology.cloneParentScopesToChild(
@@ -895,14 +895,14 @@ function cleanupLossyArtifactsAfterDivide(db, lossy) {
 // automatically because no `subnet_id` reference to fix up. Retained as an
 // empty function so divide call sites stay readable and bisectable.
 function migrateParentZonesToChildren(_db, _parentId) {
-  // intentionally empty — see migration 045
+  // intentionally empty, see migration 045
 }
 
 // Detect forward-zone domain conflicts among the subnets being merged.
 // Post-decouple we look at each subnet's `domain_name` (the pointer to its
 // forward zone) rather than at `dns_zones.subnet_id`. Two merging subnets
-// with different domain_names is still a real conflict — the merged subnet
-// can only hold one domain_name — so we surface it for user resolution.
+// with different domain_names is still a real conflict, the merged subnet
+// can only hold one domain_name, so we surface it for user resolution.
 function detectForwardZoneConflict(db, childIds) {
   if (!Array.isArray(childIds) || childIds.length === 0) return { conflict: false, zones: [] };
   const placeholders = childIds.map(() => '?').join(',');
@@ -917,14 +917,14 @@ function detectForwardZoneConflict(db, childIds) {
 // addresses, reservations) and DNS zones have ALREADY been transferred to
 // children via transferPerIpArtifactsToChildren() and migrateParentZonesToChildren().
 // This call wipes parent-owned ranges, DHCP scopes (which migrateConfigToChild
-// CLONED rather than moved — the parent's originals need to go), and resets
+// CLONED rather than moved, the parent's originals need to go), and resets
 // the parent row's config fields.
 function clearParentConfig(db, parentId) {
   DhcpTopology.deleteDhcpStateForSubnet(db, parentId);
   SubnetTopology.clearParentConfig(db, parentId);
 }
 
-// POST /api/subnets/:id/divide — execute division
+// POST /api/subnets/:id/divide: execute division
 // `force` accepts destruction of the parent's allocated config.
 // `force_lossy` is a separate acknowledgement that any host IPs landing on
 // new network/broadcast boundaries will become unusable. We keep these
@@ -940,7 +940,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
   const childCount = db.prepare('SELECT COUNT(*) as c FROM subnets WHERE parent_id = ?').get(parent.id);
   if (childCount.c > 0) return res.status(400).json({ error: 'Subnet already has children. Cannot divide further.' });
 
-  // Check if parent is allocated — require confirmation
+  // Check if parent is allocated, require confirmation
   if (parent.status === 'allocated' && !force) {
     return res.status(409).json({
       error: 'Subnet is allocated. Division will migrate or remove its configuration.',
@@ -980,7 +980,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
 
       // Lossy-IP gate: if any host's IP would fall on a new child's network
       // or broadcast, require explicit force_lossy. Distinct from `force`
-      // (which covers the allocated-parent gate) — see route comment above.
+      // (which covers the allocated-parent gate), see route comment above.
       const childCidrList = subnets.map(s => `${s.network}/${s.prefix}`);
       const lossy = detectLossyIpsForDivision(db, parent.id, childCidrList);
       if (lossy.length > 0 && !force_lossy) {
@@ -998,7 +998,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       let txnLossyCleanup = { ips: [], removed: { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 } };
       const txn = db.transaction(() => {
         // Infer the parent's gateway POSITION (first / last / custom / none)
-        // so children can inherit the same relative choice — prior code only
+        // so children can inherit the same relative choice, prior code only
         // copied the parent's literal address into the one child that
         // happened to contain it, and fell back to a global setting for the
         // rest, producing divergent gateways within a single divide.
@@ -1006,7 +1006,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         if (parent.status === 'allocated' && parent.gateway_address) {
           if (parent.gateway_address === parentParsed.firstUsable) inheritedPosition = 'first';
           else if (parent.gateway_address === parentParsed.lastUsable) inheritedPosition = 'last';
-          // else: custom address — let the old exact-match logic handle it
+          // else: custom address, let the old exact-match logic handle it
         }
 
         // Only used when the parent's gateway doesn't match a clean first/last
@@ -1065,7 +1065,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
           }
           childIds.push(result.lastInsertRowid);
         }
-        // Pool adjustments bubble up via a closure variable — the return
+        // Pool adjustments bubble up via a closure variable, the return
         // value of txn() is the child id list, and we read the outer
         // variable after.
         txnPoolAdjustments = poolAdjustmentsAll;
@@ -1076,7 +1076,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         migrateParentZonesToChildren(db, parent.id);
 
         // Now that artifacts live under children, delete the ones the user
-        // acknowledged via force_lossy — their IPs sit on new boundaries
+        // acknowledged via force_lossy, their IPs sit on new boundaries
         // and can't be valid hosts.
         if (lossy.length > 0) {
           txnLossyCleanup = cleanupLossyArtifactsAfterDivide(db, lossy);
@@ -1228,7 +1228,7 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
   }
 }));
 
-// POST /api/subnets/:id/configure — allocate a subnet
+// POST /api/subnets/:id/configure: allocate a subnet
 router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id, domain_name, dhcp_start_ip, dhcp_end_ip } = req.body;
 
@@ -1337,14 +1337,14 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   if (create_dhcp_scope) {
     req.afterCommit('regenerate_dhcp');
   }
-  // Forward/reverse zones may have been created — always regen DNS after configure
+  // Forward/reverse zones may have been created, always regen DNS after configure
   req.afterCommit('regenerate_dns');
 
   const vlan_warning = detectVlanCollision(db, updated.vlan_id, subnet.id);
   res.json({ ...updated, ...(vlan_warning ? { vlan_warning } : {}) });
 }));
 
-// DELETE /api/subnets/:id — hierarchy-aware deletion with reconsolidation
+// DELETE /api/subnets/:id: hierarchy-aware deletion with reconsolidation
 router.delete('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -1357,7 +1357,7 @@ router.delete('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   res.json({ message: 'Subnet deleted', action });
 }));
 
-// POST /api/subnets/calculate — standalone calculator.
+// POST /api/subnets/calculate: standalone calculator.
 // v0.4.15: refuse divides that would return more than MAX_CALCULATE_CHILDREN
 // subnets. In v0.4.14 the endpoint would happily emit 1M+ rows (~60 MB JSON)
 // and block the event loop for 30s. The practical UI cap is much lower; this
@@ -1401,7 +1401,7 @@ router.post('/calculate', requirePerm('subnets:read'), asyncHandler((req, res) =
   }
 }));
 
-// GET /api/subnets/:id/ips — IP addresses with server-side pagination and virtual IPs
+// GET /api/subnets/:id/ips: IP addresses with server-side pagination and virtual IPs
 router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -1746,7 +1746,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       persisted.range_type_color = match?.range_type_color || null;
       ips.push(persisted);
     } else {
-      // Virtual IP entry — no persisted record
+      // Virtual IP entry, no persisted record
       ips.push(makeVirtualIpRow(ipLong, match, gwLong));
     }
   }
@@ -1773,7 +1773,7 @@ function ipStatusRejectionReason(subnet, ip, status) {
   return null;
 }
 
-// PUT /api/subnets/:id/ips/bulk-status — reserve or unreserve a range of IPs
+// PUT /api/subnets/:id/ips/bulk-status: reserve or unreserve a range of IPs
 router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -1824,7 +1824,7 @@ router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((r
   res.json({ count: updated.length, skipped: skipped.length, status, reservation_note: reservationNote });
 }));
 
-// PUT /api/subnets/:id/ips/:ip/status — reserve or unreserve an IP
+// PUT /api/subnets/:id/ips/:ip/status: reserve or unreserve an IP
 router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -1854,7 +1854,7 @@ router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((re
   res.json({ ip_address: ipAddress, status, reservation_note: reservationNote });
 }));
 
-// PUT /:id/ips/:ip/scan-enabled — set per-IP liveness scan override
+// PUT /:id/ips/:ip/scan-enabled: set per-IP liveness scan override
 router.put('/:id/ips/:ip/scan-enabled', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
@@ -1874,7 +1874,7 @@ router.put('/:id/ips/:ip/scan-enabled', requirePerm('subnets:write'), asyncHandl
   res.json({ ip_address: ipAddress, scan_enabled: scanEn });
 }));
 
-// GET /:id/ips/:ip/events — IP lifecycle event history
+// GET /:id/ips/:ip/events: IP lifecycle event history
 router.get('/:id/ips/:ip/events', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT id FROM subnets WHERE id = ?').get(req.params.id);

@@ -23,12 +23,12 @@ function writeTracking(entries) {
   fs.writeFileSync(TRACKING_FILE, JSON.stringify(entries, null, 2));
 }
 
-// GET — return all tracked interactions
+// GET: return all tracked interactions
 router.get('/', (req, res) => {
   res.json(readTracking());
 });
 
-// POST — append new interactions
+// POST: append new interactions
 router.post('/', (req, res) => {
   const raw = Array.isArray(req.body) ? req.body : [req.body];
   const events = raw.filter(e => !(e.type === 'api' && (e.url?.includes('/dev/tracking') || e.url?.includes('/health/'))));
@@ -41,7 +41,7 @@ router.post('/', (req, res) => {
   res.json({ ok: true, count: trimmed.length });
 });
 
-// DELETE — clear tracking data
+// DELETE: clear tracking data
 router.delete('/', (req, res) => {
   writeTracking([]);
   res.json({ ok: true });

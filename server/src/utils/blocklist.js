@@ -132,7 +132,7 @@ export async function refreshAllEnabled(db) {
 }
 
 /**
- * Reload blocklist — updates the proxy's in-memory Set and clears the old dnsmasq conf.
+ * Reload blocklist, updates the proxy's in-memory Set and clears the old dnsmasq conf.
  * All blocking now happens in the DNS proxy, not via dnsmasq address= directives.
  */
 export function generateBlocklistConfig(_db) {
@@ -141,7 +141,7 @@ export function generateBlocklistConfig(_db) {
   loadBlocklist();
   loadWhitelist();
 
-  // Clean up legacy blocklist.conf — proxy handles blocking now
+  // Clean up legacy blocklist.conf, proxy handles blocking now
   try {
     const existing = fs.existsSync(BLOCKLIST_CONF) ? fs.readFileSync(BLOCKLIST_CONF, 'utf-8') : '';
     if (existing !== '') {
@@ -152,16 +152,21 @@ export function generateBlocklistConfig(_db) {
 }
 
 /**
- * Map schedule setting to interval in hours
+ * The one place the blocklist refresh-schedule vocabulary lives. The settings
+ * route validates against these keys and the scheduler maps them to hours,  * add new options here and both stay in sync (the client's scheduleOptions in
+ * Blocklists.vue is a separate package and still needs a matching entry).
+ * Ordered as presented in the UI. 0 hours = disabled.
  */
+export const SCHEDULE_HOURS = {
+  off: 0,
+  '6h': 6,
+  '12h': 12,
+  daily: 24,
+  weekly: 168,
+};
+
 function scheduleToHours(schedule) {
-  switch (schedule) {
-    case '6h': return 6;
-    case '12h': return 12;
-    case 'daily': return 24;
-    case 'weekly': return 168;
-    default: return 0; // 'off'
-  }
+  return SCHEDULE_HOURS[schedule] ?? 0;
 }
 
 /**

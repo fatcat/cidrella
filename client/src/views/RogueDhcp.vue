@@ -2,7 +2,7 @@
   <div class="rogue-dhcp-page">
     <p class="section-hint">
       Periodically broadcasts a DHCP DISCOVER and flags any DHCP server that answers
-      but isn't CIDRella's own or on the authorized list. Detection only — CIDRella
+      but isn't CIDRella's own or on the authorized list. Detection only. CIDRella
       can't block a rogue server. Only servers on the same network segment as a
       CIDRella interface are visible.
     </p>
@@ -21,8 +21,8 @@
                        suffix=" min" style="width: 9rem" />
         </div>
         <p v-if="status && status.probeSupported === false" class="rd-warn">
-          Could not bind UDP port 68 on this host (another DHCP client may be using it) —
-          detection is unavailable until that's resolved.
+          Could not bind UDP port 68 on this host (another DHCP client may be using it).
+          Detection is unavailable until that's resolved.
         </p>
         <p v-else-if="status" class="rd-status">
           Last probe: {{ status.lastProbeAt ? formatDate(status.lastProbeAt) : 'never' }}
@@ -47,12 +47,13 @@
       <DataTable :value="store.events" :loading="store.loading" size="small"
                  dataKey="id" :rows="10" paginator responsiveLayout="scroll"
                  :pt="{ table: { style: 'min-width: 40rem' } }">
-        <template #empty>No rogue DHCP servers detected.</template>
+        <template #empty>
+          <EmptyState icon="pi-check-circle" title="No rogue DHCP servers detected" description="Probes run on the configured interval; anything answering DISCOVER that isn't authorized appears here." />
+        </template>
         <Column header="Status" style="width: 6rem">
           <template #body="{ data }">
-            <span class="rd-badge" :class="data.acknowledged ? 'rd-badge-ack' : 'rd-badge-rogue'">
-              {{ data.acknowledged ? 'Acked' : 'Rogue' }}
-            </span>
+            <StatusBadge :kind="data.acknowledged ? 'muted' : 'warn'"
+                         :label="data.acknowledged ? 'Acked' : 'Rogue'" />
           </template>
         </Column>
         <Column field="server_ip" header="Server IP" />
@@ -95,7 +96,9 @@
                 @click="addAuth" :loading="addingAuth" />
       </div>
       <DataTable :value="store.authorized" size="small" dataKey="id" responsiveLayout="scroll">
-        <template #empty>No authorized servers added.</template>
+        <template #empty>
+          <EmptyState icon="pi-verified" title="No authorized servers" description="Add known-good DHCP servers so probes don't flag them as rogue." />
+        </template>
         <Column field="server_ip" header="Server IP" />
         <Column field="server_mac" header="MAC">
           <template #body="{ data }">{{ data.server_mac || '—' }}</template>
@@ -122,12 +125,14 @@ import { formatDateTime } from '../utils/dateFormat.js';
 import { apiError } from '../utils/format.js';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
+import EmptyState from '../components/EmptyState.vue';
 import InputText from 'primevue/inputtext';
 import InputNumber from 'primevue/inputnumber';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Toast from 'primevue/toast';
 import ToggleSwitch from 'primevue/toggleswitch';
+import StatusBadge from '../components/StatusBadge.vue';
 import { useRogueDhcpStore } from '../stores/rogueDhcp.js';
 
 const store = useRogueDhcpStore();
@@ -258,15 +263,6 @@ onMounted(async () => {
 .rd-row { display: flex; align-items: center; gap: 0.5rem; font-size: var(--app-fs-sm); }
 .rd-actions { display: flex; gap: 0.5rem; margin-top: 0.25rem; }
 .rd-status { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0; }
-.rd-warn { font-size: var(--app-fs-xs); color: var(--p-orange-500); margin: 0; }
+.rd-warn { font-size: var(--app-fs-xs); color: var(--cid-status-warn); margin: 0; }
 .rd-add-form { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem; align-items: center; }
-.rd-badge {
-  display: inline-block;
-  padding: 0.1rem 0.45rem;
-  border-radius: 0.5rem;
-  font-size: var(--app-fs-xs);
-  font-weight: 600;
-}
-.rd-badge-rogue { background: var(--p-orange-500); color: #fff; }
-.rd-badge-ack { background: var(--p-surface-300); color: var(--p-text-muted-color); }
 </style>

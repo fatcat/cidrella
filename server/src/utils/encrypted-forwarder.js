@@ -7,7 +7,7 @@
  * returns the raw response verbatim (preserving EDNS/DO so DNSSEC records pass
  * through and CIDRella's own validation still works).
  *
- * FAIL CLOSED: any encrypted-path failure returns SERVFAIL — never a silent
+ * FAIL CLOSED: any encrypted-path failure returns SERVFAIL, never a silent
  * fallback to plaintext. The cost is that resolution is down if the encrypted
  * path is broken (surfaced via getEncryptedForwarderStatus()).
  *
@@ -21,7 +21,7 @@ import tls from 'tls';
 import https from 'https';
 import dnsPacket from 'dns-packet';
 import { getSetting } from '../db/init.js';
-import { frameTcpMessage, extractTcpMessages } from './dns-proxy.js';
+import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
 import { ENCRYPTED_FORWARDER_PORT, ENCRYPTED_FORWARDER_TIMEOUT_MS } from '../config/defaults.js';
 
 const HOST = '127.0.0.1';
@@ -111,7 +111,7 @@ export function forwardDoT(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIM
 }
 
 // ── DoH: HTTPS POST application/dns-message, connecting by IP (custom lookup)
-// with SNI/cert validation against the hostname — no bootstrap DNS needed.
+// with SNI/cert validation against the hostname, no bootstrap DNS needed.
 export function forwardDoH(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIMEOUT_MS) {
   return new Promise((resolve) => {
     let url;
@@ -209,7 +209,7 @@ export function applyEncryptedForwarder() {
   errorTimes = [];
   lastError = null;
 
-  // With recursion disabled, CIDRella forwards nothing — don't run the stub even
+  // With recursion disabled, CIDRella forwards nothing, don't run the stub even
   // if an encryption mode is still persisted (preference is preserved for when
   // recursion is re-enabled).
   const noRecursion = getSetting('dns_no_recursion') === 'true';

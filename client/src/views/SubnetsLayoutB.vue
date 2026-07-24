@@ -1,6 +1,6 @@
 <template>
   <div class="layout-b">
-    <!-- Left rail — mirrors Analytics / System layout (user-requested 2026-04-18) -->
+    <!-- Left rail, mirrors Analytics / System layout (user-requested 2026-04-18) -->
     <aside class="ipam-sidebar">
       <nav class="ipam-nav">
         <a v-for="item in menuItems" :key="item.key"
@@ -412,7 +412,7 @@ function toggleBrowseExpand(key) {
 // ── Filtered data ──
 const filteredFolders = computed(() => {
   const q = filterText.value.toLowerCase().trim();
-  // Exclude the virtual "Ungrouped" folder (id=null) — shown separately
+  // Exclude the virtual "Ungrouped" folder (id=null), shown separately
   const realFolders = store.folders.filter(f => f.id !== null);
   if (!q) return realFolders;
   return realFolders.filter(f => {
@@ -430,7 +430,7 @@ const ungroupedSubnets = computed(() => {
   return collectAllocatedSubnets(ungroupedFolder.subnets, filterText.value.trim());
 });
 
-// True empty state — zero real folders AND zero subnets anywhere.
+// True empty state, zero real folders AND zero subnets anywhere.
 const isFirstRunEmpty = computed(() => {
   const realFolders = store.folders.filter(f => f.id !== null);
   const anySubnets = store.folders.some(f => f.subnets && f.subnets.length > 0);
@@ -506,7 +506,7 @@ const subnetContextMenuItems = computed(() => {
   }
 
   // Quick entry point to create a DHCP scope targeted at this subnet. Only
-  // makes sense for allocated leaves — divided subnets can't host a scope
+  // makes sense for allocated leaves, divided subnets can't host a scope
   // and unallocated ones have nothing to scope against. `openNewWithPicker`
   // pre-selects subnet mask, gateway, and domain options from the subnet.
   if (d.status === 'allocated' && isLeaf) {
@@ -706,7 +706,7 @@ function onUngroupedDragStart(event, subnet) {
 
 // ── Event handlers from dialogs ──
 function onTreeChanged() {
-  // Tree is auto-refreshed by store — just update stale refs
+  // Tree is auto-refreshed by store, just update stale refs
   refreshSelectionRefs();
 }
 
@@ -802,7 +802,7 @@ onMounted(async () => {
     if (node) {
       selectedNode.value = node;
     } else {
-      // Subnet no longer exists — clear so folder restoration kicks in
+      // Subnet no longer exists, clear so folder restoration kicks in
       selectedSubnetId.value = null;
     }
   }

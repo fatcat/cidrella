@@ -2,7 +2,7 @@
  * Regression tests for the remaining mutation-path fixes (R1 #2, R2 #2/#3,
  * R3 #2, R4 #1–#4).
  *
- *   - Forward-zone rename-in-place (records survive — the pre-R1 delete-and-
+ *   - Forward-zone rename-in-place (records survive, the pre-R1 delete-and-
  *     recreate would cascade every record in the zone).
  *   - Forward-zone conflict 409 when another subnet owns the target name.
  *   - Detached-zone adoption when the target name points at an orphan (R4 #3).
@@ -108,7 +108,7 @@ describe('PUT /api/subnets/:id — domain_name pointer semantics', () => {
     const b = await mkSubnet({ cidr: '10.31.1.0/24', name: 'B', status: 'allocated', gateway_address: '10.31.1.1' });
     await configure(a.id, { name: 'A', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'shared.test' });
 
-    // B pointing at the same zone is allowed — no 409.
+    // B pointing at the same zone is allowed, no 409.
     const put = await request(app).put(`/api/subnets/${b.id}`).send({ domain_name: 'shared.test' });
     expect(put.status).toBe(200);
     expect(put.body.domain_name).toBe('shared.test');
@@ -122,7 +122,7 @@ describe('PUT /api/subnets/:id — domain_name pointer semantics', () => {
     expect(put.status).toBe(200);
     expect(put.body.domain_name).toBeNull();
 
-    // The zone is deliberately NOT deleted — zones are shared state.
+    // The zone is deliberately NOT deleted, zones are shared state.
     const zone = await findZone('still-here.test');
     expect(zone).toBeDefined();
   });
@@ -332,7 +332,7 @@ describe('ip-sync orphan cleanup', () => {
     });
 
     // A-record create already wrote hostname='keeper.orphan-keep.test' with
-    // detection_source='dns' — that's a REAL mapping. Reconcile must leave it.
+    // detection_source='dns', that's a REAL mapping. Reconcile must leave it.
     reconcileDnsOrphans(db);
 
     const row = db.prepare(
@@ -384,8 +384,7 @@ describe('PUT /api/subnets/:id — structural guards', () => {
     expect(bad.status).toBe(400);
     expect(bad.body.error).toMatch(/CIDR cannot be changed/i);
 
-    // But echoing the existing CIDR back in the body is a harmless no-op —
-    // the edit dialog always sends the current value along with the other
+    // But echoing the existing CIDR back in the body is a harmless no-op,     // the edit dialog always sends the current value along with the other
     // fields, so we must accept it.
     const ok = await request(app).put(`/api/subnets/${s.id}`).send({ cidr: s.cidr, name: 'renamed' });
     expect(ok.status).toBe(200);
@@ -422,7 +421,7 @@ describe('PUT /api/dhcp/scopes/:id — pool resize guard (R4 #4)', () => {
     const scope = scopes.body.find(sc => sc.subnet_id === s.id);
     expect(scope).toBeDefined();
 
-    // Try to widen the pool to include .1 (the gateway) — 409.
+    // Try to widen the pool to include .1 (the gateway), 409.
     const bad = await request(app).put(`/api/dhcp/scopes/${scope.id}`).send({ start_ip: '10.42.0.1', end_ip: '10.42.0.200' });
     expect(bad.status).toBe(409);
 

@@ -4,7 +4,6 @@ import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { pruneEvents } from '../models/ip-address.js';
 import * as Setting from '../models/setting.js';
-import { isValidIpv4 } from '../utils/ip.js';
 import { GEOIP_MODES, validateInterfaceConfig, validPortOrError } from '../utils/validation.js';
 
 const router = Router();
@@ -13,7 +12,7 @@ const router = Router();
 const SECRET_KEYS = new Set(['jwt_secret']);
 
 // v0.4.15: per-key schema. In v0.4.14 the setter did `String(value)` on any
-// JSON shape, so `{"value":{"a":1}}` persisted as `"[object Object]"` — and
+// JSON shape, so `{"value":{"a":1}}` persisted as `"[object Object]"`, and
 // an attacker could brick the server by writing `dns_listen_port =
 // "[object Object]"` (next restart would fail to bind). This schema rejects
 // anything that doesn't match the declared type / shape for the key.
@@ -49,41 +48,6 @@ function intOrNull(v) {
   return typeof v === 'number' ? v : parseInt(v, 10);
 }
 
-// Validator for the encrypted-upstreams list (forwarder_encrypted_upstreams).
-// Each entry: { label?, addresses:[ipv4...], hostname, doh_url(https) }.
-function validateEncryptedUpstreams(v) {
-  let arr = v;
-  if (typeof v === 'string') {
-    try { arr = JSON.parse(v); } catch { return 'must be a JSON array'; }
-  }
-  if (!Array.isArray(arr)) return 'must be an array';
-  if (arr.length > 8) return 'too many upstreams (max 8)';
-  for (const u of arr) {
-    if (!u || typeof u !== 'object') return 'each upstream must be an object';
-    if (!Array.isArray(u.addresses) || u.addresses.length === 0 || !u.addresses.every(a => isValidIpv4(a))) {
-      return 'each upstream needs a non-empty addresses[] of IPv4 strings';
-    }
-    if (typeof u.hostname !== 'string' || !u.hostname) return 'each upstream needs a hostname';
-    if (typeof u.doh_url !== 'string' || !/^https:\/\//.test(u.doh_url)) return 'each upstream needs an https doh_url';
-  }
-  return null;
-}
-
-// One-shot validator for arrays of IPv4 — used for dns_upstream_servers.
-function validateDnsUpstreamServers(v) {
-  // Accept either a JSON-encoded array (legacy) or a real array (preferred).
-  let arr = v;
-  if (typeof v === 'string') {
-    try { arr = JSON.parse(v); } catch { return 'must be a JSON array of IPv4 strings'; }
-  }
-  if (!Array.isArray(arr) || arr.length === 0) return 'must be a non-empty array of IPv4 strings';
-  if (arr.length > 16) return 'too many upstream servers (max 16)';
-  for (const s of arr) {
-    if (typeof s !== 'string' || !isValidIpv4(s)) return `${s} is not a valid IPv4 address`;
-  }
-  return null;
-}
-
 // Each key's validator. Returns string error or null. The persisted form is
 // always a plain string (that's the settings column's actual type); numeric
 // and boolean shapes are normalized to strings before save.
@@ -96,10 +60,11 @@ const SETTING_SCHEMA = {
     validate: v => typeof v === 'string' && v.length <= 128 ? null : 'must be a string up to 128 chars',
     normalize: v => v
   },
-  dns_upstream_servers: {
-    validate: validateDnsUpstreamServers,
-    normalize: v => typeof v === 'string' ? v : JSON.stringify(v)
-  },
+  // dns_upstream_servers is deliberately NOT editable here either, same
+  // persist-without-apply class as the DNS/rogue keys noted below. Its
+  // authoritative route is PUT /api/dns/forwarders (persists + regenerates
+  // dnsmasq.conf). Milder failure mode than the keys below (next regen
+  // self-heals), but one write path is one write path.
   backup_schedule: {
     validate: v => typeof v === 'string' && BACKUP_SCHEDULES.has(v) ? null : `must be one of: ${[...BACKUP_SCHEDULES].join(', ')}`,
     normalize: v => v
@@ -157,49 +122,24 @@ const SETTING_SCHEMA = {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)
   },
-  // dnssec_enabled is a known editable key, but the authoritative write path is
-  // PUT /api/dns/dnssec — only that route regenerates dnsmasq.conf and restarts
-  // dnsmasq. A bare settings PUT changes the value without applying it (matches
-  // how dns_upstream_servers behaves vs /api/dns/forwarders).
-  dnssec_enabled: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
-  },
-  // Authoritative-only (no recursion). Authoritative write path is
-  // PUT /api/dns/forwarders; entry here for parity/editability.
-  dns_no_recursion: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
-  },
-  // Encrypted forwarding. Authoritative write path is PUT /api/dns/encryption
-  // (which also (re)starts the stub + regenerates dnsmasq.conf); these entries
-  // just make the keys known/editable for parity.
-  forwarder_encryption: {
-    validate: v => (typeof v === 'string' && ['off', 'tls', 'https'].includes(v)) ? null : 'must be off, tls, or https',
-    normalize: v => v
-  },
-  forwarder_encrypted_upstreams: {
-    validate: validateEncryptedUpstreams,
-    normalize: v => typeof v === 'string' ? v : JSON.stringify(v)
-  },
-  // Rogue DHCP detection. Authoritative write path is PUT /api/dhcp/rogue/settings
-  // (it also drives the probe scheduler); these entries make the keys editable
-  // via the generic settings API too, for parity.
-  rogue_dhcp_detection_enabled: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
-  },
-  rogue_dhcp_probe_interval_min: {
-    validate: v => isIntInRange(v, 5, 1440) ? null : 'must be an integer 5-1440',
-    normalize: v => String(intOrNull(v))
-  },
+  // dnssec_enabled, dns_no_recursion, forwarder_encryption,
+  // forwarder_encrypted_upstreams, rogue_dhcp_detection_enabled, and
+  // rogue_dhcp_probe_interval_min are deliberately NOT editable here. Their
+  // authoritative routes (PUT /api/dns/dnssec, /api/dns/forwarders,
+  // /api/dns/encryption, /api/dhcp/rogue/settings) persist AND apply, regen
+  // dnsmasq.conf, restart, (re)start the DoT/DoH stub, arm the probe
+  // scheduler. A bare settings PUT would store the value without applying it,
+  // and dnsmasq.js reads these keys on every conf regen, so the stale value
+  // would get applied later by an unrelated regen (e.g. pointing dnsmasq at
+  // an encrypted-forwarder stub that was never started). Don't re-add them
+  // "for parity", that's how they got here the first time.
   http_redirect_enabled: {
     validate: v => isBoolStr(v) ? null : 'must be true or false',
     normalize: v => toBoolStr(v)
   },
   // https_port / http_port can be empty ("" clears the override). Non-empty
   // values go through the shared validPortOrError so the settings endpoint
-  // matches /api/interfaces/config — a mismatch here was HIGH-severity
+  // matches /api/interfaces/config, a mismatch here was HIGH-severity
   // finding H1 from the pre.2 ship-gate trio: /api/settings/https_port
   // accepted {"value": 22} (numeric string / privileged integer) with no
   // bind preflight, which would brick the service on the next restart.
@@ -235,8 +175,8 @@ function validateSetting(key, value) {
   return { normalized: schema.normalize(value) };
 }
 
-// GET /api/settings — return all non-secret settings
-router.get('/', requirePerm('subnets:read'), (req, res) => {
+// GET /api/settings: return all non-secret settings
+router.get('/', requirePerm('system:read'), (req, res) => {
   const db = getDb();
   const rows = db.prepare('SELECT key, value FROM settings').all();
   const settings = {};
@@ -248,7 +188,7 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   res.json(settings);
 });
 
-// PUT /api/settings/bulk — update multiple settings in one transaction (admin only)
+// PUT /api/settings/bulk: update multiple settings in one transaction (admin only)
 router.put('/bulk', requireRole('admin'), (req, res) => {
   const body = req.body || {};
   const { settings } = body;
@@ -275,8 +215,8 @@ router.put('/bulk', requireRole('admin'), (req, res) => {
   res.json({ ok: true });
 });
 
-// PUT /api/settings/:key — update a single setting
-router.put('/:key', requirePerm('subnets:write'), (req, res) => {
+// PUT /api/settings/:key: update a single setting
+router.put('/:key', requirePerm('system:write'), (req, res) => {
   const { key } = req.params;
   const body = req.body || {};
   const { value } = body;

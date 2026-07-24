@@ -14,7 +14,7 @@ export function saveJson(key, value) {
 
 /**
  * One-time migration from ipam_ / ipam- prefixed keys to cidrella_ / cidrella-.
- * Safe to call on every app start — only runs once (sets a migration flag).
+ * Safe to call on every app start. Only runs once (sets a migration flag).
  */
 export function migrateStorageKeys() {
   if (localStorage.getItem('cidrella_storage_migrated')) return;

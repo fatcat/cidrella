@@ -10,7 +10,7 @@
               @click="$emit('update:modelValue', false)">Disabled</button>
     </div>
     <small v-if="modelValue === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
-      Inherits from subnet — scanning is {{ resolvedEnabled ? 'enabled' : 'disabled' }} for this network
+      Inherits from subnet: scanning is {{ resolvedEnabled ? 'enabled' : 'disabled' }} for this network
     </small>
     <small v-else-if="modelValue === true" style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is enabled for this network</small>
     <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is disabled for this network</small>

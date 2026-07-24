@@ -112,8 +112,8 @@ export function resumeInterruptedScans(db) {
  * Updates the database with progress and results as it goes.
  *
  * @param {Object} [options]
- * @param {string[]} [options.targetIps] — scan only these IPs (bypasses scan_enabled checks)
- * @param {boolean} [options.updateModel=true] — update ip_addresses model after scan
+ * @param {string[]} [options.targetIps], scan only these IPs (bypasses scan_enabled checks)
+ * @param {boolean} [options.updateModel=true], update ip_addresses model after scan
  * @returns {Promise<{ method: 'arp+icmp', results?: Object }>}
  */
 export async function startScan(db, scanId, subnetId, options = {}) {
@@ -127,7 +127,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
   const probeMethods = new Map();
 
-  console.log(`[scanner] Subnet ${subnet.cidr} — using ARP probes with ICMP fallback`);
+  console.log(`[scanner] Subnet ${subnet.cidr}: using ARP probes with ICMP fallback`);
 
   // Resolve subnet-level scan default from inheritance chain (subnet → global setting)
   let subnetDefault = true;
@@ -147,7 +147,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     overrideMap = new Map(ipOverrides.map(r => [r.ip_address, r.scan_enabled]));
   }
 
-  // Build IP list — either from targetIps or from subnet CIDR range
+  // Build IP list, either from targetIps or from subnet CIDR range
   let ipsToScan;
   let totalIps;
   if (isTargeted) {
@@ -172,7 +172,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   let conflictsFound = ScanRun.countConflicts(db, scanId);
 
   if (alreadyScanned.size > 0) {
-    console.log(`[scanner] Resuming scan #${scanId} — ${alreadyScanned.size} IPs already scanned, continuing from where we left off`);
+    console.log(`[scanner] Resuming scan #${scanId}: ${alreadyScanned.size} IPs already scanned, continuing from where we left off`);
   }
 
   // Update scan status to running
@@ -199,7 +199,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     }
   }
 
-  // Also include DHCP reservations — an IP with a reservation is not rogue
+  // Also include DHCP reservations, an IP with a reservation is not rogue
   // (covers cases where ip_addresses wasn't synced yet)
   const reservations = db.prepare(`
     SELECT ip_address, mac_address, hostname FROM dhcp_reservations
@@ -211,7 +211,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     }
   }
 
-  // Also include DNS-owned A records — not rogue. Do not trust stale
+  // Also include DNS-owned A records, not rogue. Do not trust stale
   // ip_addresses.hostname alone; restored DHCP lease history can retain a
   // hostname after the active lease is gone.
   const ipsToScanSet = new Set(ipsToScan);
@@ -250,7 +250,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
         if (!isTargeted) {
           const override = overrideMap.get(ip);
           if (!shouldScanIp(override !== undefined ? override : null, subnetDefault)) {
-            continue; // skip — scanning disabled for this IP
+            continue; // skip, scanning disabled for this IP
           }
         }
 
@@ -279,7 +279,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
         if (result.responded) {
           if (!assignment) {
-            // IP responded but not assigned — rogue device
+            // IP responded but not assigned, rogue device
             isConflict = 1;
             conflictReason = 'Rogue device (IP not assigned)';
           } else if (assignment.mac_address && result.mac &&
@@ -309,7 +309,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
       ScanRun.updateProgress(db, scanId, { scannedIps: scannedCount, conflictsFound });
     }
 
-    // Update ip_addresses via model — liveness, MAC, rogue state, lifecycle fields
+    // Update ip_addresses via model, liveness, MAC, rogue state, lifecycle fields
     if (updateModel) {
       const scanResults = ScanRun.getMaterializedResults(db, scanId);
 
@@ -325,7 +325,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
       }
 
       // Clear rogue on IPs in this subnet that weren't flagged in this scan
-      // (only for full subnet scans — targeted probes shouldn't clear other IPs)
+      // (only for full subnet scans, targeted probes shouldn't clear other IPs)
       if (!isTargeted) {
         IpAddress.clearRogueForSubnet(db, subnetId, conflictIps);
       }
@@ -334,7 +334,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     // Mark completed
     ScanRun.markCompleted(db, scanId, { scannedIps: scannedCount, conflictsFound });
 
-    // Prune old scan_results — keep only this scan (skip for targeted probes)
+    // Prune old scan_results, keep only this scan (skip for targeted probes)
     if (!isTargeted) {
       ScanRun.pruneOldResults(db, subnetId, scanId);
     }

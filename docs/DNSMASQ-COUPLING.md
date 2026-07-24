@@ -2,7 +2,7 @@
 
 > Status: living design note. No behavior change. Purpose: map every place
 > dnsmasq leaks into the codebase, define the **backend service API** these
-> should sit behind, and record how that API maps onto Kea + PowerDNS — so a
+> should sit behind, and record how that API maps onto Kea + PowerDNS, so a
 > future migration is a *swap of adapters*, not a teardown.
 
 ## The target shape
@@ -21,7 +21,7 @@ app/services  ──►  Backend API (intent, resource model)  ──►  adapte
 
 Mirror only the subset we use; don't reproduce the full vendor APIs. Where the
 dnsmasq adapter can't satisfy an operation (DoT/DoH upstream, RPZ, DHCP hooks),
-it returns "unsupported" / approximates — and that gap list is the migration map.
+it returns "unsupported" / approximates, and that gap list is the migration map.
 
 ### Backend split (target)
 | Concern | dnsmasq today | Future owner |
@@ -44,16 +44,16 @@ it returns "unsupported" / approximates — and that gap list is the migration m
 
 ### Supporting coupling
 - **Process control**: `utils/dnsmasq.js` `signalDnsmasq()` / `restartDnsmasq()` + `scripts/systemd/cidrella-dnsmasq.service` + s6 `run`. Future: adapter calls REST, no SIGHUP/restart. Behind `reload()` / implicit (API is live).
-- **Apply orchestration**: `utils/after-commit.js` hooks (`regenerate_dns`, `regenerate_dhcp`, `regenerate_dnsmasq_conf`). This is *already* the intent layer — callers register "make DNS reflect the DB," not "write file X." Keep funnelling everything through here; it's where the backend API will hang.
+- **Apply orchestration**: `utils/after-commit.js` hooks (`regenerate_dns`, `regenerate_dhcp`, `regenerate_dnsmasq_conf`). This is *already* the intent layer. Callers register "make DNS reflect the DB," not "write file X." Keep funnelling everything through here. It's where the backend API will hang.
 - **DHCP→DNS derivation / PTR sync**: `utils/ip-sync.js`, `services/subnet-dns-topology.js`. Today leans on dnsmasq doing some of this internally; split backends need explicit DDNS (Kea DDNS → PowerDNS) or app-mediated sync. **Highest-risk seam** for a split-backend world.
 
 ## Guardrails for new features (so coupling doesn't grow)
 1. **DB stays canonical.** No dnsmasq-flavored strings in the schema; store intent (records, scopes, modes), render at the edge.
 2. **One module per seam.** Any new dnsmasq touch goes behind an intent-named function in the owning module (above), never inline in routes/services.
 3. **Route everything through `after-commit` hooks**, not direct `dnsmasq.js` calls from features.
-4. **Build new features adapter-swappable.** E.g. encrypted forwarders = a self-contained in-Node DoT/DoH stub that dnsmasq points `server=` at — when Recursor lands, delete the stub and point `setForwarders()` at Recursor's native DoT/DoH. (Seam #7.)
+4. **Build new features adapter-swappable.** E.g. encrypted forwarders = a self-contained in-Node DoT/DoH stub that dnsmasq points `server=` at. When Recursor lands, delete the stub and point `setForwarders()` at Recursor's native DoT/DoH. (Seam #7.)
 
-## Migration approach (when serious — not now)
+## Migration approach (when serious, not now)
 1. **Spike PowerDNS Recursor + RPZ** against the blocklist/GeoIP needs to validate it can retire `dns-proxy.js`. Let the real second implementation define the API boundary (don't finalize the interface from dnsmasq alone).
 2. Introduce the backend API as a thin facade over today's dnsmasq code (adapter = current functions, renamed to intent ops). No behavior change.
 3. Add the PowerDNS/Kea adapter; flip `dns_backend`/`dhcp_backend` per deployment; deprecate dnsmasq over one release (no permanent dual stack).

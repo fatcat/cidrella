@@ -8,20 +8,20 @@
 # by install.sh at the end of a fresh install after services start.
 #
 # Available environment variables (set by the caller before sourcing):
-#   TARGET_SLOT  — path to the newly-active slot (e.g. /opt/cidrella-a)
-#   PREV_SLOT    — path to the previous slot (e.g. /opt/cidrella-b), or
+#   TARGET_SLOT: path to the newly-active slot (e.g. /opt/cidrella-a)
+#   PREV_SLOT: path to the previous slot (e.g. /opt/cidrella-b), or
 #                  empty string on fresh install (install.sh sets it empty)
-#   DATA_DIR     — /var/lib/cidrella
-#   NEW_VERSION  — the version being upgraded TO, e.g. 0.4.9
-#   OLD_VERSION  — the version being upgraded FROM, or empty on fresh install
-#   IS_FRESH_INSTALL — "1" when called from install.sh, "0" when from update.sh
+#   DATA_DIR: /var/lib/cidrella
+#   NEW_VERSION: the version being upgraded TO, e.g. 0.4.9
+#   OLD_VERSION: the version being upgraded FROM, or empty on fresh install
+#   IS_FRESH_INSTALL: "1" when called from install.sh, "0" when from update.sh
 #
 # Contract:
 #   - This script MUST be idempotent. The caller may re-run it, and an admin
 #     may invoke it manually for recovery.
 #   - Non-fatal errors should warn and continue. Exit non-zero ONLY for
 #     conditions that the admin needs to act on. The outgoing update.sh
-#     catches non-zero exits with `warn` and keeps going — the update is
+#     catches non-zero exits with `warn` and keeps going, the update is
 #     already on disk and rollback is already harder at this point.
 #   - Reachable commands: standard Debian/Alpine shell utilities, plus
 #     /usr/local/bin/cidrella-node if node is needed for anything. Do NOT
@@ -69,7 +69,7 @@ fi
 
 # ─── v0.4.9 post-install work ──────────────────────────────
 #
-# v0.4.9 itself has nothing version-specific to do — the hook convention
+# v0.4.9 itself has nothing version-specific to do, the hook convention
 # lands AS v0.4.9, so this release's post-install.sh is a no-op that proves
 # the plumbing works. Future releases (v0.4.10+) add their one-shot setup
 # to their own post-install.sh; none of it lands here retroactively.

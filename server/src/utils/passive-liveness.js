@@ -58,7 +58,7 @@ export function startPassiveLivenessWatcher(db) {
       recordDnsQueryLiveness(db, ip, { createRogue: false, source: 'passive' });
     }
 
-    // Staleness sweep (every ~60 seconds) — also clears rogue on stale IPs
+    // Staleness sweep (every ~60 seconds), also clears rogue on stale IPs
     if (now - lastStaleCheck >= 60000) {
       const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
       IpAddress.bulkMarkStale(db, staleMinutes);

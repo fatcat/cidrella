@@ -2,7 +2,7 @@ import { Router } from 'express';
 
 const router = Router();
 
-// Override CSP for api-browser pages — inline scripts are required for the self-contained UI
+// Override CSP for api-browser pages, inline scripts are required for the self-contained UI
 router.use((req, res, next) => {
   res.setHeader('Content-Security-Policy',
     "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'");
@@ -54,7 +54,7 @@ function extractRoutes(app) {
   function walkStack(stack, basePath = '') {
     for (const layer of stack) {
       if (layer.route) {
-        // Leaf route — has .methods
+        // Leaf route, has .methods
         const suffix = layer.route.path === '/' ? '' : layer.route.path;
         const routePath = (basePath + suffix).replace(/\/+/g, '/') || '/';
         for (const method of Object.keys(layer.route.methods)) {
@@ -88,13 +88,13 @@ function extractRoutes(app) {
     .sort((a, b) => a.path.localeCompare(b.path) || a.method.localeCompare(b.method));
 }
 
-// GET /api-browser/routes — JSON endpoint for route list
+// GET /api-browser/routes: JSON endpoint for route list
 router.get('/routes', (req, res) => {
   const routes = extractRoutes(req.app);
   res.json(routes);
 });
 
-// GET /api-browser — HTML interface
+// GET /api-browser: HTML interface
 router.get('/', (req, res) => {
   res.setHeader('Content-Type', 'text/html');
   res.send(buildHtml());

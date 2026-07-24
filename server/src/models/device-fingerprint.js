@@ -4,7 +4,7 @@
 
 
 // Insert or refresh a fingerprint. A 'manual' override is never clobbered by a
-// later 'dhcp' capture — we still bump last_seen_at and refresh the raw DHCP
+// later 'dhcp' capture, we still bump last_seen_at and refresh the raw DHCP
 // signals, but keep the operator-set type/os/source.
 export function upsertFingerprint(db, fp) {
   return db.prepare(`
@@ -60,6 +60,17 @@ export function lookupFingerprintBatch(db, macs) {
     if (row) result.set(mac, row);
   }
   return result;
+}
+
+// Undo an operator override. Deletes the whole row rather than flipping
+// source back to 'dhcp': the raw DHCP signals are re-captured and
+// re-classified on the device's next DHCP transaction, so deletion is the
+// clean path back to auto-classification (upsertFingerprint keeps 'manual'
+// sticky, so an in-place flip would need re-derivation logic here instead).
+export function clearManual(db, mac) {
+  return db.prepare(
+    "DELETE FROM device_fingerprints WHERE mac_address = ? AND source = 'manual'"
+  ).run(String(mac).toLowerCase());
 }
 
 // Operator override from the UI.

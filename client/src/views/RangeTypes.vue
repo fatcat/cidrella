@@ -5,10 +5,13 @@
       <Button label="Add Type" icon="pi pi-plus" @click="showDialog = true" />
     </div>
 
-    <DataTable :value="types" :loading="loading" stripedRows emptyMessage="No address types found."
+    <DataTable :value="types" :loading="loading" stripedRows
                :paginator="types.length > 256" :rows="256"
                :rowsPerPageOptions="[64, 128, 256, 512]"
                scrollable scrollHeight="flex">
+      <template #empty>
+        <EmptyState icon="pi-tags" title="No address types" />
+      </template>
       <Column header="Color" style="width: 4rem">
         <template #body="{ data }">
           <span class="color-swatch" :style="{ background: data.color }"></span>
@@ -78,6 +81,7 @@
 import { ref, onMounted } from 'vue';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
+import EmptyState from '../components/EmptyState.vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';

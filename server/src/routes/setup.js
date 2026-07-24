@@ -21,13 +21,13 @@ function setupIsClosed(db) {
   return flag?.value === 'true';
 }
 
-// GET /api/setup/status — tell the client whether the wizard should appear.
+// GET /api/setup/status: tell the client whether the wizard should appear.
 router.get('/status', (req, res) => {
   const db = getDb();
   res.json({ setup_required: !setupIsClosed(db) });
 });
 
-// POST /api/setup — complete first-run setup. Available ONLY when no user
+// POST /api/setup: complete first-run setup. Available ONLY when no user
 // exists. `skip` is accepted in the same window but otherwise rejected.
 router.post('/', async (req, res) => {
   try {

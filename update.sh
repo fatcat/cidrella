@@ -5,7 +5,7 @@ set -euo pipefail
 # if $0 is a relative path like `./update.sh` (user ran it via cd + ./),
 # then `readlink -f` evaluates it against the current cwd. Resolving after
 # `cd /` would yield `/update.sh`, and the library-path derivation below
-# would produce `//scripts/lib` — the cryptic failure mode that bit prod
+# would produce `//scripts/lib`, the cryptic failure mode that bit prod
 # on the v0.4.6→v0.4.8 transition. Capture the realpath first.
 _UPDATE_SH_REAL="$(readlink -f "$0" 2>/dev/null || echo "$0")"
 
@@ -35,7 +35,7 @@ cd / 2>/dev/null || true
 #   5. Snapshot DB (SQLite WAL-checkpointed + DuckDB)
 #   6. Install standalone rollback script
 #   7. Atomic switchover: swap symlink, daemon-reload, restart
-#   8. Verify health — auto-rollback on failure
+#   8. Verify health, auto-rollback on failure
 #
 # dnsmasq is NEVER restarted by this script. DNS/DHCP stay up throughout.
 # ═══════════════════════════════════════════════════════════
@@ -54,7 +54,7 @@ detect_build_arch() {
     arm64|aarch64)
       # arm64 releases are discontinued. Falling back to the x64 tarball would
       # install native modules (better-sqlite3, duckdb) that cannot load on
-      # this host — refuse instead of producing a broken install.
+      # this host, so refuse instead of producing a broken install.
       echo "[ERROR] This host is arm64. CIDRella arm64 releases were discontinued after v0.4.15 — this host cannot update past that version. Releases are linux-x64 only." >&2
       exit 1
       ;;
@@ -100,7 +100,7 @@ UPDATE_LOG="/var/lib/cidrella/update.log"
 # $INSTALL_LINK/scripts/lib/. $0 was resolved above (before `cd /`) so
 # _UPDATE_SH_REAL is an absolute path regardless of how we were invoked:
 # `./update.sh`, `/opt/cidrella/update.sh`, or `/usr/local/bin/cidrella-update`
-# (a symlink — readlink -f follows it).
+# (a symlink, readlink -f follows it).
 _UPDATE_SLOT_DIR="$(dirname "$_UPDATE_SH_REAL")"
 LIB_DIR="$_UPDATE_SLOT_DIR/scripts/lib"
 # Fallback: if the $0-derived path somehow doesn't point at a valid lib
@@ -125,7 +125,7 @@ source "$LIB_DIR/slots.sh"
 source "$LIB_DIR/verify.sh"
 # shellcheck source=scripts/lib/systemd-install.sh
 source "$LIB_DIR/systemd-install.sh"
-# rotation.sh is optional — pre-v0.4.9 slots don't ship it. The rotation
+# rotation.sh is optional. Pre-v0.4.9 slots don't ship it. The rotation
 # step is gated on this check at every call site.
 if [ -f "$LIB_DIR/rotation.sh" ]; then
   # shellcheck source=scripts/lib/rotation.sh
@@ -135,8 +135,8 @@ fi
 # ─── Canonical invocation nudge ──────────────────────────
 # If the user ran update.sh directly (either by path or `./update.sh`)
 # rather than through the `cidrella-update` wrapper symlink, point them
-# at the canonical command. Both entry points work identically — the
-# wrapper is just a symlink to this file — but the wrapper path is what
+# at the canonical command. Both entry points work identically (the
+# wrapper is just a symlink to this file), but the wrapper path is what
 # install.sh and the docs advertise, and it's the invocation that the
 # $0-vs-cwd corner case in pre-v0.4.10 releases handled most reliably.
 # Suppress the nudge when running under the API (FROM_API=true), when
@@ -321,7 +321,7 @@ on_error() {
   if command -v emit_event >/dev/null 2>&1; then
     # `failed_cmd` may contain quotes, backslashes, or other characters that
     # break emit_event's naive JSON string building. Strip or replace the
-    # problematic chars here so the events.jsonl line stays parseable — the
+    # problematic chars here so the events.jsonl line stays parseable. The
     # one log line a consumer most needs to read (the failing command) must
     # not produce a JSON parse error. Quotes become single quotes, backslashes
     # become forward slashes, control chars and newlines get stripped.
@@ -445,12 +445,12 @@ done
 # Always capture stdout and stderr to $UPDATE_LOG so the ERR trap can read
 # the tail and surface it in the progress file's `error` field. Two modes:
 #   --from-api: server spawns with stdio: 'ignore', so we redirect only
-#               (no tee needed — there's no terminal to write to anyway).
+#               (no tee needed, there's no terminal to write to anyway).
 #   CLI mode:   tee to both the terminal AND the log file so the user still
 #               sees interactive progress AND the on_error handler has a
 #               log to read from. Prior to v0.4.6 CLI mode didn't populate
 #               the log at all, so the rich ERR-trap message was empty on
-#               direct invocations — specifically the rsync getcwd() failure
+#               direct invocations, specifically the rsync getcwd() failure
 #               from the 2026-04-12 prod incident would have been lost.
 mkdir -p "$(dirname "$UPDATE_LOG")" 2>/dev/null || true
 : > "$UPDATE_LOG" 2>/dev/null || true
@@ -492,7 +492,7 @@ track_progress "preflight" 2 "Detecting installation layout..."
 
 # ─── Detect / migrate installation layout ─────────────────
 # The A/B layout uses /opt/cidrella as a symlink to /opt/cidrella-a or -b.
-# Pre-A/B installations have /opt/cidrella as a plain directory — we migrate
+# Pre-A/B installations have /opt/cidrella as a plain directory, so we migrate
 # on the first A/B update to avoid a flag-day transition.
 if [ ! -L "$INSTALL_LINK" ]; then
   info "Migrating to A/B layout (first-time transition)..."
@@ -594,7 +594,7 @@ fi
 
 # Prevent accidental downgrade via the update path. Downgrades must go
 # through cidrella-rollback, which is the only path that also restores
-# the DB snapshot — otherwise old code will crash on a newer schema.
+# the DB snapshot. Otherwise old code will crash on a newer schema.
 # --force bypasses this (pre-release iteration workflow). The user is
 # responsible for understanding the DB implication.
 if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
@@ -610,7 +610,7 @@ if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VER
   fi
 fi
 
-# Warn if jumping multiple minor versions — migrations and data format
+# Warn if jumping multiple minor versions, since migrations and data format
 # changes may accumulate. The update will still run, but the admin should
 # read intermediate release notes.
 CURRENT_MAJOR_MINOR=$(echo "$CURRENT_VERSION" | awk -F. '{print $1"."$2}')
@@ -659,11 +659,11 @@ curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || tr
 # rotation announcements signed by the break-glass key. Apply them to the
 # local key state so that the subsequent tarball verify uses the CURRENT
 # (possibly rotated) primary pubkey. This makes key rotation a transparent
-# part of the update flow — existing installs pick up rotation on their
+# part of the update flow. Existing installs pick up rotation on their
 # next update without any admin action.
 #
-# Gated on rotation.sh being present (pre-v0.4.9 slots don't have it —
-# the library was sourced at the top of this script if available).
+# Gated on rotation.sh being present (pre-v0.4.9 slots don't have it,
+# and the library was sourced at the top of this script if available).
 if declare -F load_key_state >/dev/null 2>&1; then
   load_key_state
 
@@ -689,7 +689,7 @@ fi
 #
 # Resolve the primary pubkey the update.sh was originally hardcoded to
 # $INSTALL_LINK/scripts/cidrella.pub, which is the pubkey shipped with the
-# CURRENT slot — i.e. the pubkey install.sh had embedded when THIS version
+# CURRENT slot, i.e. the pubkey install.sh had embedded when THIS version
 # was installed. That still works for the common no-rotation case, but
 # rotation changes the effective trust anchor. Use the resolver from
 # rotation.sh if available (which consults .key-state.json first); fall
@@ -752,8 +752,8 @@ emit_event extract pass "target_slot=$TARGET_SLOT"
 track_progress "extracting" 50 "Files extracted"
 
 # ─── Verify RELEASE.json and authoritative version ──────
-# The GitHub API's tag_name is on the attacker's side of the trust boundary —
-# any early version checks we did were advisory. The signed tarball contains
+# The GitHub API's tag_name is on the attacker's side of the trust boundary,
+# so any early version checks we did were advisory. The signed tarball contains
 # a RELEASE.json whose version field is the ONLY authoritative version.
 # Re-run the downgrade guard here with that value.
 RELEASE_META="$TARGET_SLOT/RELEASE.json"
@@ -770,7 +770,7 @@ if [ -f "$RELEASE_META" ]; then
     emit_event verify warn reason=tag-mismatch "tag=$NEW_VERSION" "release_json=$VERIFIED_VERSION"
     NEW_VERSION="$VERIFIED_VERSION"
   fi
-  # Authoritative downgrade guard — runs on signed data. --force bypasses
+  # Authoritative downgrade guard, runs on signed data. --force bypasses
   # (same rationale as the pre-signature-verify guard above).
   if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
     if [ "$FORCE" = true ]; then
@@ -788,12 +788,12 @@ if [ -f "$RELEASE_META" ]; then
   # ─── min_from gate (v0.4.12+) ────────────────────────────
   # Reads the min_from field from the signed RELEASE.json. If set and the
   # current version is strictly less than it, this release requires an
-  # intermediate stop — refuse and surface the required intermediate in the
+  # intermediate stop. Refuse and surface the required intermediate in the
   # error so the user knows exactly what to install first.
   #
   # The field is authoritative (signed), and missing/null is treated as "no
   # gate." Pre-v0.4.12 tarballs have no min_from field, so sed returns
-  # empty and the gate is skipped — backward compatible. JSON null is also
+  # empty and the gate is skipped (backward compatible). JSON null is also
   # unquoted so the sed pattern doesn't match it, giving the same result.
   #
   # If the gate fires we wipe the target slot so a subsequent retry against
@@ -852,7 +852,7 @@ track_progress "validating" 55 "Validating new version..."
 info "Pre-flight validation..."
 
 # Syntax check using the bundled Node from the target slot. Bare `node` was
-# used in v0.4.3-v0.4.10 — the original Phase 0 resolver was added but this
+# used in v0.4.3-v0.4.10. The original Phase 0 resolver was added but this
 # callsite was missed. On systems installed from a v0.4.7+ tarball with no
 # system Node (the supported config), the bare invocation hit
 # command-not-found, and stderr was discarded by `2>/dev/null`, which the
@@ -894,7 +894,7 @@ if [ $LAUNCHER_SYNTAX_CHECK_RC -ne 0 ]; then
 fi
 ok "Syntax check passed (using $PREFLIGHT_NODE)"
 
-# Verify bundled node_modules exist — the new build pipeline bundles them
+# Verify bundled node_modules exist. The new build pipeline bundles them
 if [ ! -d "$TARGET_SLOT/server/node_modules/express" ]; then
   warn "Bundled node_modules not found in tarball — running npm install as fallback"
   cd "$TARGET_SLOT/server"
@@ -944,7 +944,7 @@ rm -rf "$PREFLIGHT_DATA"
 mkdir -p "$PREFLIGHT_DATA"
 chown cidrella:cidrella "$PREFLIGHT_DATA"
 
-# Start new version on temp port with throwaway data dir — so it doesn't
+# Start new version on temp port with throwaway data dir, so it doesn't
 # touch production DB and we can verify all subsystems come up clean.
 PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT")
 sudo -u cidrella env \
@@ -1019,12 +1019,12 @@ track_progress "validating" 70 "Pre-flight validated"
 track_progress "snapshotting" 75 "Snapshotting databases..."
 info "Snapshotting databases..."
 
-# Make snapshot dir (fresh — discard any previous snapshot).
+# Make snapshot dir (fresh, discard any previous snapshot).
 # update.sh runs as root, so mkdir+chown here make the snapshots/ tree writable
 # by the cidrella service user. Without the chown, the restore route (running
 # as cidrella) can't mkdir its sibling snapshots/pre-restore/ and hits EACCES.
 # Fix one directory up as well in case this is the first time the parent is
-# being touched — chown of an already-correct tree is a no-op.
+# being touched. Chown of an already-correct tree is a no-op.
 rm -rf "$SNAPSHOT_DIR"
 mkdir -p "$SNAPSHOT_DIR"
 chown -R cidrella:cidrella "$DATA_DIR/snapshots"
@@ -1067,7 +1067,7 @@ if [ -f "$ACTIVE_SLOT/scripts/rollback.sh" ]; then
   chmod +x /usr/local/bin/cidrella-rollback
   ok "Rollback script installed at /usr/local/bin/cidrella-rollback"
 else
-  # First time upgrading to a version that has rollback.sh — use the new one
+  # First time upgrading to a version that has rollback.sh, use the new one
   if [ -f "$TARGET_SLOT/scripts/rollback.sh" ]; then
     cp "$TARGET_SLOT/scripts/rollback.sh" /usr/local/bin/cidrella-rollback
     chmod +x /usr/local/bin/cidrella-rollback
@@ -1085,7 +1085,7 @@ track_progress "switching" 85 "Switching to new version..."
 info "Switching to new version..."
 
 # Install cidrella-node wrapper from new slot BEFORE systemd unit update.
-# v0.4.3+ systemd units use /usr/local/bin/cidrella-node as ExecStart — the
+# v0.4.3+ systemd units use /usr/local/bin/cidrella-node as ExecStart, so the
 # wrapper must exist before daemon-reload or the restart will fail.
 if [ -f "$TARGET_SLOT/scripts/cidrella-node" ]; then
   install -m 0755 "$TARGET_SLOT/scripts/cidrella-node" /usr/local/bin/cidrella-node
@@ -1154,7 +1154,7 @@ fi
 # The v0.4.11 polkit migration relies on a system-wide polkit daemon being
 # installed AND /etc/polkit-1/rules.d/49-cidrella.rules existing AND the
 # daemon running. v0.4.11's install.sh handles all three on fresh installs,
-# but v0.4.11's update.sh did NOT — which meant any host that reached
+# but v0.4.11's update.sh did NOT, which meant any host that reached
 # v0.4.11 via `cidrella-update` (CLI path, not fresh install) ended up with
 # the new Node code and systemd units but no polkit at all. The first UI
 # update attempt on such a host then failed with "Access denied" from
@@ -1164,7 +1164,7 @@ fi
 # This block runs on every update from v0.4.13 forward. It's idempotent:
 # if polkit is already installed, apt-get is a no-op; if the rule file
 # already matches, `install` just overwrites; if the daemon is running,
-# systemctl start is a no-op. It does NOT run `apt-get update` — the
+# systemctl start is a no-op. It does NOT run `apt-get update`. The
 # install is a targeted one-package install, relying on the host's apt
 # cache.
 #
@@ -1177,7 +1177,7 @@ fi
 #
 # Polkit absence or daemon-start failure is a HARD FAIL, not a warning.
 # A successful update that leaves the UI updater silently broken is
-# exactly the failure class we've been killing — "warn and continue"
+# exactly the failure class we've been killing. "warn and continue"
 # here would just ship the v0.4.11 bug forward one more release.
 if [ -f "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" ]; then
   info "Reconciling polkit state..."
@@ -1281,7 +1281,7 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" ] && [ -f /etc/s
     emit_event switchover pass unit=cidrella-anomaly.service
   fi
 fi
-# Note: cidrella-dnsmasq.service is deliberately NOT touched — dnsmasq keeps running.
+# Note: cidrella-dnsmasq.service is deliberately NOT touched (dnsmasq keeps running).
 
 # v0.4.11+ templated update worker unit. install_systemd_unit is idempotent
 # so running this on every update is free.
@@ -1318,7 +1318,7 @@ systemctl restart cidrella
 
 # Restore any enabled-but-inactive auxiliary services after the switchover.
 # On 2026-04-12 prod had cidrella-anomaly stopped (cause unknown) and the
-# prior update path left it that way — the UI showed stale-green health and
+# prior update path left it that way. The UI showed stale-green health and
 # anomaly detection was silently dead. Explicitly check each auxiliary unit
 # that ships with CIDRella: if the unit is enabled but not active, start it.
 # Missing units (e.g. dnsmasq mode=include) are silently skipped.
@@ -1333,7 +1333,7 @@ for _aux in cidrella-anomaly; do
 done
 
 # ═══════════════════════════════════════════════════════════
-# PHASE 7: VERIFY HEALTH — auto-rollback on failure
+# PHASE 7: VERIFY HEALTH (auto-rollback on failure)
 # ═══════════════════════════════════════════════════════════
 
 track_progress "verifying" 93 "Verifying new version..."
@@ -1343,19 +1343,19 @@ info "Verifying new version..."
 # can be 443 (fresh-install port probe), 8443 (default or probe fallback), or
 # anything set via the UI's Web Ports panel and persisted to the DB. Previous
 # versions hardcoded 8443 here, which silently broke post-switch health
-# verification on any host using a different HTTPS port — update.sh polled
+# verification on any host using a different HTTPS port. update.sh polled
 # the wrong port, saw no response, and auto-rolled back a perfectly healthy
 # new slot. v0.4.15 surfaced this on production where the fresh install had
 # moved to 443.
 #
 # Resolution order mirrors the server (utils/http-server.js):
-#   1. DB setting `https_port`  — UI-edited value, authoritative in v0.4.15+
-#   2. systemd Environment=HTTPS_PORT=... — from unit or drop-in override
+#   1. DB setting `https_port`: UI-edited value, authoritative in v0.4.15+
+#   2. systemd Environment=HTTPS_PORT=... (from unit or drop-in override)
 #   3. Fallback: probe 443 then 8443 in order
 discover_verify_port() {
   local p
-  # DB (authoritative in v0.4.15+). sqlite3 is NOT guaranteed on the host
-  # — missing or unreadable DB silently falls through.
+  # DB (authoritative in v0.4.15+). sqlite3 is NOT guaranteed on the host.
+  # Missing or unreadable DB silently falls through.
   if command -v sqlite3 >/dev/null 2>&1 && [ -r "$DATA_DIR/cidrella.db" ]; then
     p=$(sqlite3 "$DATA_DIR/cidrella.db" \
           "SELECT value FROM settings WHERE key='https_port' AND value != '' LIMIT 1" 2>/dev/null)
@@ -1363,7 +1363,7 @@ discover_verify_port() {
       printf '%s' "$p"; return
     fi
   fi
-  # systemd env — catches the install.sh drop-in override.
+  # systemd env: catches the install.sh drop-in override.
   p=$(systemctl show cidrella -p Environment 2>/dev/null \
         | grep -oE 'HTTPS_PORT=[0-9]+' | head -1 | sed 's/HTTPS_PORT=//')
   if [ -n "$p" ]; then printf '%s' "$p"; return; fi
@@ -1374,7 +1374,7 @@ VERIFY_PORT=$(discover_verify_port)
 info "Verify port: $VERIFY_PORT"
 
 VERIFY_OK=false
-# Candidate port list — start with the discovered port, but also probe the
+# Candidate port list: start with the discovered port, but also probe the
 # two common defaults as a belt-and-suspenders. If the discovery logic
 # returned a stale or unreadable value but the server IS up on 443 or 8443,
 # we still succeed.
@@ -1404,7 +1404,7 @@ if [ "$VERIFY_OK" = true ]; then
 
   # Tighten secret file permissions (v0.4.8+). Logic lives in
   # scripts/lib/tighten-secrets.sh so install.sh and update.sh share one
-  # source of truth. Idempotent — safe to run on every update. Fixes pre-
+  # source of truth. Idempotent, safe to run on every update. Fixes pre-
   # v0.4.8 installs that had 644 cidrella.db and server.key on disk.
   if [ -f "$INSTALL_LINK/scripts/lib/tighten-secrets.sh" ]; then
     # shellcheck source=scripts/lib/tighten-secrets.sh
@@ -1416,7 +1416,7 @@ if [ "$VERIFY_OK" = true ]; then
 
   # Run the incoming release's post-install hook (v0.4.9+). The hook is
   # authored by THIS release (the one whose slot we just switched to) and
-  # handles any one-shot setup specific to the new version — wrapper
+  # handles any one-shot setup specific to the new version: wrapper
   # installs, chmod passes, setting seeds, etc. This breaks the recurring
   # pattern where new post-install steps in the incoming update.sh got
   # silently skipped because the outgoing update.sh predated them.
@@ -1459,7 +1459,7 @@ if [ "$VERIFY_OK" = true ]; then
 fi
 
 # ═══════════════════════════════════════════════════════════
-# AUTO-ROLLBACK — new version failed to come up
+# AUTO-ROLLBACK (new version failed to come up)
 # ═══════════════════════════════════════════════════════════
 
 err "New version failed health check — auto-rolling back to v${CURRENT_VERSION}"

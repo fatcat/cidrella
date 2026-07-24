@@ -9,21 +9,21 @@ DNS requests flow through CIDRella's proxy (`server/src/utils/dns-proxy.js`)
 which fronts dnsmasq for filtering. dnsmasq performs the actual DNSSEC
 validation; the proxy makes the path correct end-to-end:
 
-- **dnsmasq config** — when enabled, `regenerateDnsmasqConf()` injects a managed
+- **dnsmasq config**: when enabled, `regenerateDnsmasqConf()` injects a managed
   block into `dnsmasq.conf`: `dnssec`, `dnssec-check-unsigned`,
   `dnssec-no-timecheck`, and a root trust anchor (the distro-maintained
   `/usr/share/dnsmasq/trust-anchors.conf` via `conf-file=` when present,
   otherwise a hardcoded root KSK fallback). The block is a pure function of the
-  `dnssec_enabled` setting — regen strips and re-adds it idempotently, so
+  `dnssec_enabled` setting. Regen strips and re-adds it idempotently, so
   forwarder edits never leave DNSSEC state inconsistent.
-- **TCP relay** — validating-stub resolvers (e.g. Debian with
+- **TCP relay**: validating-stub resolvers (e.g. Debian with
   `systemd-resolved DNSSEC=yes`) set the DO bit, receive large signed answers,
   and fall back to TCP. The proxy now listens on **TCP** as well as UDP on each
   LAN address, length-prefix-frames messages, applies the same blocklist/GeoIP
   policy, and relays to dnsmasq's TCP port. Responses are relayed **verbatim**,
-  preserving signatures and the query ID. TCP is additive — a TCP bind failure
+  preserving signatures and the query ID. TCP is additive. A TCP bind failure
   does not tear down the UDP path.
-- **EDNS echo** — synthesized blocked/NXDOMAIN/SERVFAIL responses echo the
+- **EDNS echo**: synthesized blocked/NXDOMAIN/SERVFAIL responses echo the
   client's EDNS OPT record (advertised UDP payload size + DO bit) so they stay
   well-formed for DNSSEC-aware clients. The AD (authenticated-data) flag is
   **not** set: a locally blocked domain is unsigned local policy, not a
@@ -52,7 +52,7 @@ only when DNSSEC is enabled, dnsmasq supports it, and the clock is synced.
   `no-DNSSEC`) in its compile options. If it lacks support, the toggle is
   disabled in the UI and `PUT /api/dns/dnssec` returns 400 rather than writing a
   config dnsmasq rejects on start.
-- **Authoritative write path is `PUT /api/dns/dnssec`** — only that route
+- **Authoritative write path is `PUT /api/dns/dnssec`**: only that route
   regenerates `dnsmasq.conf` and restarts dnsmasq (via the
   `regenerate_dnsmasq_conf` afterCommit hook). A bare `PUT /api/settings/dnssec_enabled`
   changes the value without applying it (same as `dns_upstream_servers` vs

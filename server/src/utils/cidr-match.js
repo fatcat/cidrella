@@ -56,11 +56,56 @@ export function parseCidrEntry(entry) {
   }
   const full = (1n << BigInt(parsed.bits)) - 1n;
   const mask = full ^ ((1n << BigInt(parsed.bits - prefix)) - 1n);
-  return { bits: parsed.bits, network: parsed.v & mask, mask };
+  return { bits: parsed.bits, network: parsed.v & mask, mask, prefix };
 }
 
 export function isValidIpOrCidr(entry) {
   return parseCidrEntry(entry) !== null;
+}
+
+// Render a parsed entry back to its one canonical string: host bits masked
+// off, explicit /prefix, IPv6 lowercased and zero-compressed (RFC 5952).
+// Storing this form makes the allowlist's UNIQUE(value) mean "unique
+// network" instead of "unique spelling" ('10.5.5.5/8', '010.0.0.0/8', and
+// '10.0.0.0/8' all become '10.0.0.0/8').
+export function formatCidrEntry(entry) {
+  if (!entry || typeof entry.network !== 'bigint') return null;
+  if (entry.bits === 32) {
+    const octets = [];
+    for (let shift = 24n; shift >= 0n; shift -= 8n) {
+      octets.push(((entry.network >> shift) & 0xffn).toString(10));
+    }
+    return `${octets.join('.')}/${entry.prefix}`;
+  }
+  // IPv6: emit 8 hextets, then compress the longest run of >=2 zero groups
+  // (leftmost wins a tie, per RFC 5952 s4.2.3).
+  const groups = [];
+  for (let shift = 112n; shift >= 0n; shift -= 16n) {
+    groups.push(((entry.network >> shift) & 0xffffn).toString(16));
+  }
+  let bestStart = -1, bestLen = 0;
+  for (let i = 0; i < 8;) {
+    if (groups[i] !== '0') { i++; continue; }
+    let j = i;
+    while (j < 8 && groups[j] === '0') j++;
+    if (j - i > bestLen) { bestStart = i; bestLen = j - i; }
+    i = j;
+  }
+  let addr;
+  if (bestLen >= 2) {
+    const head = groups.slice(0, bestStart).join(':');
+    const tail = groups.slice(bestStart + bestLen).join(':');
+    addr = `${head}::${tail}`;
+  } else {
+    addr = groups.join(':');
+  }
+  return `${addr}/${entry.prefix}`;
+}
+
+// Parse + reformat in one step; null for invalid input.
+export function canonicalizeIpOrCidr(value) {
+  const parsed = parseCidrEntry(value);
+  return parsed ? formatCidrEntry(parsed) : null;
 }
 
 export function ipMatchesEntry(ip, entry) {

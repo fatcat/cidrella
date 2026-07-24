@@ -144,7 +144,7 @@
         <label>Domain Name</label>
         <InputText v-model="wizardNet.domain_name" class="w-full" />
         <Message v-if="domainWarningShown && !wizardNet.domain_name" severity="warn" :closable="false" class="mt-1">
-          No domain name entered — DNS features will be limited. Click "Create &amp; Continue" again to proceed anyway.
+          No domain name entered, so DNS features will be limited. Click "Create &amp; Continue" again to proceed anyway.
         </Message>
       </div>
       <div class="field wizard-toggle-stack">
@@ -164,9 +164,9 @@
       <template v-if="wizardNet.create_dhcp_scope && wizardPrefixLength <= 29">
         <Message v-if="wizardDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
           A /{{ wizardPrefixLength }} is larger than CIDRella will auto-size a DHCP pool for.
-          RAM is the primary concern — every IP in an allocated subnet gets a row in
+          RAM is the primary concern: every IP in an allocated subnet gets a row in
           <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB.
-          See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue —
+          See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue,
           just enter Start IP and End IP manually.
         </Message>
         <div class="wizard-dhcp-row">
@@ -254,7 +254,7 @@
           {{ piholeImportResults.cname.created }} CNAME created<template v-if="piholeImportResults.cname.updated">, {{ piholeImportResults.cname.updated }} updated</template>;
           {{ piholeImportResults.dhcp.created }} DHCP created
           <template v-if="piholeImportResults.dhcp.noSubnet > 0">
-            ({{ piholeImportResults.dhcp.noSubnet }} DHCP skipped — no matching subnet)
+            ({{ piholeImportResults.dhcp.noSubnet }} DHCP skipped: no matching subnet)
           </template>
         </Message>
       </div>
@@ -324,7 +324,7 @@
       <template v-if="!quickAddMode">
         <div class="field">
           <label>Name</label>
-          <InputText v-model="supernetForm.name" :placeholder="supernetAutoName || 'Optional — defaults to template'" class="w-full" />
+          <InputText v-model="supernetForm.name" :placeholder="supernetAutoName || 'Optional, defaults to template'" class="w-full" />
         </div>
         <div class="field">
           <label>Folder (optional)</label>
@@ -523,7 +523,7 @@
                   @click="networkForm.scan_enabled = false">Disabled</button>
         </div>
         <small class="field-help" v-if="networkForm.scan_enabled === null">
-          Inherits from global default — scanning is {{ resolvedGlobalScanEnabled ? 'enabled' : 'disabled' }} for this network
+          Inherits from global default: scanning is {{ resolvedGlobalScanEnabled ? 'enabled' : 'disabled' }} for this network
         </small>
         <small class="field-help" v-else-if="networkForm.scan_enabled === true">Scanning is enabled for this network</small>
         <small class="field-help" v-else>Scanning is disabled for this network</small>
@@ -544,9 +544,9 @@
         <template v-if="networkForm.create_dhcp_scope">
           <Message v-if="editDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
             A /{{ effectivePrefixLength }} is larger than CIDRella will auto-size a DHCP pool for.
-            RAM is the primary concern — every IP in an allocated subnet gets a row in
+            RAM is the primary concern: every IP in an allocated subnet gets a row in
             <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB.
-            See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue —
+            See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue,
             just enter Start IP and End IP manually.
           </Message>
           <div class="field">
@@ -735,7 +735,7 @@ const wizardNet = ref({
   scan_enabled: true,
 });
 // Gateway position options live here but watchers that reference `networkForm`
-// must wait until `networkForm` itself is declared — installed further below.
+// must wait until `networkForm` itself is declared, installed further below.
 const gatewayPositionOptions = [
   { label: 'First IP', value: 'first' },
   { label: 'Last IP', value: 'last' },
@@ -768,7 +768,7 @@ const wizardIfaceSaving = ref(false);
 const wizardHasSelectedIface = computed(() => wizardIfaces.value.some(i => i.dns));
 const wizardDnsListenPort = ref(53);
 
-// Used in the non-53 port warning — first DNS-enabled interface's IPv4, or a
+// Used in the non-53 port warning, first DNS-enabled interface's IPv4, or a
 // placeholder if none picked yet.
 const resolverIpForHint = computed(() => {
   const picked = wizardIfaces.value.find(i => i.dns);
@@ -834,7 +834,7 @@ const wizardPrefixLength = computed(() => {
   return 32;
 });
 
-// True when the wizard CIDR is outside the auto-fill sweet spot — either too
+// True when the wizard CIDR is outside the auto-fill sweet spot, either too
 // small (/30–/32, no sensible pool) or too large (/15 and up, RAM-dangerous
 // on modest hosts). UI shows a warning. See docs/SIZING.md for the numbers.
 const wizardDhcpRiskySize = computed(() => {
@@ -928,7 +928,7 @@ watch(() => wizardNet.value.cidr, (cidr) => {
   }
 });
 
-// Auto-populate DHCP Start/End IPs when "Create DHCP scope" is toggled on — mirrors
+// Auto-populate DHCP Start/End IPs when "Create DHCP scope" is toggled on. Mirrors
 // the Edit dialog. Only fills blank fields so the user's own input is never overwritten.
 function applyWizardDhcpDefaults() {
   if (!wizardNet.value.create_dhcp_scope) return;
@@ -938,12 +938,12 @@ function applyWizardDhcpDefaults() {
   if (!wizardNet.value.dhcp_end_ip)   wizardNet.value.dhcp_end_ip   = d.end;
 }
 watch(() => wizardNet.value.create_dhcp_scope, applyWizardDhcpDefaults);
-// Also fire when the CIDR arrives AFTER the checkbox was already ticked — e.g.
+// Also fire when the CIDR arrives AFTER the checkbox was already ticked, e.g.
 // user enables DHCP before typing the CIDR, common in guided-setup flows.
 watch(() => wizardNet.value.cidr, applyWizardDhcpDefaults);
 
 function searchWizardVlans(event) {
-  // Reuse the existing vlan search but scoped — wizard has no folder yet so search all
+  // Reuse the existing vlan search but scoped, wizard has no folder yet so search all
   api.get('/vlans/search', { params: { q: event.query } }).then(res => {
     vlanSuggestions.value = res.data.map(v => ({ ...v, display: `VLAN ${v.vlan_id} — ${v.name}` }));
   }).catch(() => { vlanSuggestions.value = []; });
@@ -1065,7 +1065,7 @@ function cleanPiholeUrl(raw) {
   if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
   try {
     const parsed = new URL(url);
-    // Strip path, query, hash — keep only scheme://host[:port]
+    // Strip path, query, hash, keep only scheme://host[:port]
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return url;
@@ -1405,7 +1405,7 @@ async function executeCarve() {
   await runDivide(nodeId, 'carve', params);
 }
 
-// Per-child pool adjustments surfaced from the server — shown as warn
+// Per-child pool adjustments surfaced from the server, shown as warn
 // toasts so the user knows which gateways we pulled out of which pools.
 function surfacePoolAdjustments(resp) {
   const adjustments = resp?.pool_adjustments;
@@ -1446,7 +1446,7 @@ function surfaceLossyCleanup(resp) {
   });
 }
 
-// Shared handler for both divide modes — intercepts the lossy-IP 409 and
+// Shared handler for both divide modes, intercepts the lossy-IP 409 and
 // opens the confirm dialog instead of showing an opaque toast.
 async function runDivide(nodeId, mode, params) {
   saving.value = true;
@@ -1512,7 +1512,7 @@ const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for
 const dropTargetFolderIdForConfigure = ref(null);
 
 // Gateway-position watchers + placeholder (live here because they reference
-// networkForm — declaring them earlier would hit a TDZ on the `networkForm`
+// networkForm, declaring them earlier would hit a TDZ on the `networkForm`
 // const during watch() initial-dep tracking.)
 const gatewayPlaceholder = computed(() => {
   if (gatewayPosition.value === 'none') return 'No gateway';
@@ -1604,7 +1604,7 @@ watch(showNetworkDialog, async (val) => {
     try {
       const settings = await store.getSettings();
       resolvedGlobalScanEnabled.value = settings.default_scan_enabled !== '0';
-    } catch { /* best effort — keep default true */ }
+    } catch { /* best effort, keep default true */ }
   }
 });
 watch(() => networkForm.value.create_dhcp_scope, (checked) => {
@@ -1642,7 +1642,7 @@ async function loadForwardZones() {
       .filter(z => z.type === 'forward')
       .slice()
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  } catch { /* non-fatal — field still works as free-text */ }
+  } catch { /* non-fatal, field still works as free-text */ }
 }
 
 function searchDomains(event) {
@@ -2000,7 +2000,7 @@ function openCreateNetwork(folderId) {
   };
   editVlanSelection.value = null;
   editDomainSelection.value = null;
-  // Default to first-address gateway for new allocations — most common pattern.
+  // Default to first-address gateway for new allocations, most common pattern.
   gatewayPosition.value = 'first';
   loadForwardZones();
   showNetworkDialog.value = true;
@@ -2462,7 +2462,7 @@ defineExpose({
   background: color-mix(in srgb, var(--p-blue-500) 25%, transparent);
   color: var(--p-blue-500);
 }
-/* Resolved (inherited) indicator — subtle highlight */
+/* Resolved (inherited) indicator, subtle highlight */
 .scan-enabled.resolved {
   background: color-mix(in srgb, var(--p-green-500) 10%, transparent);
   color: var(--p-green-500);

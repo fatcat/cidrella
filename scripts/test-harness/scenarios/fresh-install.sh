@@ -11,7 +11,7 @@ SCENARIO_NAME="fresh-install"
 SCENARIO_DESCRIPTION="Fresh install of the latest release + full post-install state verification"
 
 scenario_setup() {
-  # No setup — the runner wipes the host before this scenario runs.
+  # No setup, the runner wipes the host before this scenario runs.
   return 0
 }
 

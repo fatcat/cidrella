@@ -122,7 +122,7 @@ check_dnsmasq() {
 check_clock() {
   if command -v timedatectl >/dev/null 2>&1; then
     if ! timedatectl show 2>/dev/null | grep -q 'NTPSynchronized=yes'; then
-      # Preflight runs as root during install/update — try to enable NTP so
+      # Preflight runs as root during install/update, try to enable NTP so
       # DNSSEC signature-time validation doesn't SERVFAIL on a skewed clock.
       # (Sync itself is asynchronous; we just make sure the client is on.)
       if ! timedatectl show -p NTP --value 2>/dev/null | grep -qx yes; then

@@ -9,7 +9,7 @@ import { requireRole } from '../auth/roles.js';
 const router = Router();
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
-// Short-lived SSE stream tickets — key: token string, value: expiry timestamp
+// Short-lived SSE stream tickets, key: token string, value: expiry timestamp
 const streamTickets = new Map();
 const TICKET_TTL_MS = 30_000; // 30 seconds
 
@@ -54,7 +54,7 @@ function readNewLines(offset) {
     return { lines: [], newOffset: 0 };
   }
 
-  // File was truncated (e.g. clear) — reset
+  // File was truncated (e.g. clear), reset
   if (size < offset) offset = 0;
   if (size === offset) return { lines: [], newOffset: offset };
 
@@ -74,7 +74,7 @@ function readNewLines(offset) {
 /**
  * POST /api/logs/stream-token
  * Issues a short-lived ticket (30s) that can be used as ?ticket= on the SSE stream.
- * Requires authentication — this lets EventSource (which can't set headers) authenticate.
+ * Requires authentication, this lets EventSource (which can't set headers) authenticate.
  */
 router.post('/stream-token', requirePerm('dns:read'), (req, res) => {
   const token = crypto.randomBytes(32).toString('hex');
@@ -95,7 +95,7 @@ router.get('/stream', (req, res) => {
     if (!expiry || Date.now() > expiry) {
       return res.status(401).json({ error: 'Invalid or expired stream ticket' });
     }
-    // Consume the ticket — single use
+    // Consume the ticket, single use
     streamTickets.delete(ticket);
   } else if (!req.user || !req.user.role) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -128,7 +128,7 @@ router.get('/stream', (req, res) => {
   // dnsmasq.log on long-running installs without log rotation can be
   // 1+ GB. The previous version did `fs.readFileSync(LOG_FILE, 'utf-8')`
   // which allocated the entire file into a Buffer, then a String, then a
-  // 15M-element Array — V8 attempted ~3 GB of heap and the cidrella service
+  // 15M-element Array, V8 attempted ~3 GB of heap and the cidrella service
   // OOM-killed itself every time anyone opened the Logging tab. Read a
   // bounded tail instead. 64 KB comfortably holds ~200 lines of dnsmasq
   // output (~150-200 bytes/line) with headroom.
@@ -148,7 +148,7 @@ router.get('/stream', (req, res) => {
     offset = size; // resume incremental tail from EOF, no double-reads
     const text = buf.toString('utf-8');
     // If we didn't start the read at a newline boundary, the first
-    // partial line is unusable — drop it. Skip this trim only when we
+    // partial line is unusable, drop it. Skip this trim only when we
     // happened to read the entire file (tailStart === 0).
     const firstNewline = text.indexOf('\n');
     const usable = (tailStart > 0 && firstNewline >= 0)

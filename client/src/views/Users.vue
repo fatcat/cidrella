@@ -4,11 +4,15 @@
       <h3>Users</h3>
       <Button label="Add User" icon="pi pi-plus" size="small" data-track="sys-add-user" @click="openCreateDialog()" />
     </div>
-    <DataTable :value="users" :loading="loading" stripedRows size="small" emptyMessage="No users found."
+    <DataTable :value="users" :loading="loading" stripedRows size="small"
                :paginator="users.length > 256" :rows="256"
                :rowsPerPageOptions="[64, 128, 256, 512]"
                @row-contextmenu="onUserRightClick" contextMenu
                scrollable scrollHeight="flex">
+      <template #empty>
+        <EmptyState icon="pi-users" title="No users" description="Add operator accounts with scoped roles."
+                        :actions="[{ label: 'Add User', icon: 'pi-plus', dataTrack: 'sys-add-user-empty', onClick: () => openCreateDialog() }]" />
+      </template>
       <Column field="username" header="Username" sortable style="min-width: 10rem" />
       <Column header="Role" sortable sortField="role" style="min-width: 10rem">
         <template #body="{ data }">{{ roleLabel(data.role) }}</template>
@@ -127,6 +131,7 @@ import { ref, computed, onMounted } from 'vue';
 import { formatDateOnly } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
+import EmptyState from '../components/EmptyState.vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import ContextMenu from 'primevue/contextmenu';

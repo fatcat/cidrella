@@ -10,7 +10,7 @@ import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
 import { setPtrForIp } from '../models/dns-record.js';
 
-// Cached leaf subnets — invalidated on subnet CRUD via invalidateSubnetCache()
+// Cached leaf subnets, invalidated on subnet CRUD via invalidateSubnetCache()
 let leafSubnetCache = null;
 
 /**
@@ -387,7 +387,7 @@ export function syncDhcpReservationToIp(db, subnetId, ip, { hostname, mac_addres
 /**
  * Clear DHCP reservation data from ip_addresses when a reservation is deleted
  * or its IP address changes. The reservation being deleted is authoritative,
- * so we always clear reservation-owned fields — even when the MAC drifted
+ * so we always clear reservation-owned fields, even when the MAC drifted
  * (e.g. a live lease retagged the row before delete arrived).
  *
  *   - If the row was written exclusively by the reservation
@@ -442,7 +442,7 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
   }
 
   // For non-reservation-owned rows, only blow away MAC if it still matches
-  // what the reservation owned — otherwise something else (scan, live lease)
+  // what the reservation owned, otherwise something else (scan, live lease)
   // overwrote the MAC and is the current owner. Hostname and status we clear
   // regardless, since they were reservation-derived.
   const clearMac = existing.mac_address === mac_address;

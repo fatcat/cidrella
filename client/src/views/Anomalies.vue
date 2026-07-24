@@ -471,7 +471,7 @@ const chartOptions = computed(() => ({
       }
     },
     // ChartDataLabels is globally registered by Dashboard/Intelligence; suppress
-    // on-point labels here — tooltip already covers that information.
+    // on-point labels here, tooltip already covers that information.
     datalabels: { display: false },
   },
 }));
@@ -484,7 +484,7 @@ useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>
-/* Page-specific styles only — shared styles come from analytics-layout.css */
+/* Page-specific styles only. Shared styles come from analytics-layout.css */
 
 .page-header {
   display: flex;

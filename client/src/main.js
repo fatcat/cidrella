@@ -24,7 +24,7 @@ const pinia = createPinia();
 app.use(pinia);
 app.use(router);
 
-// Dev-only interaction tracking — tree-shaken out of production builds
+// Dev-only interaction tracking, tree-shaken out of production builds
 if (import.meta.env.VITE_TRACKING) {
   import('./utils/tracker.js').then(({ initTracker }) => {
     initTracker({ router, apiClient: api, pinia });
@@ -42,7 +42,7 @@ app.use(ToastService);
 app.use(ConfirmationService);
 app.directive('tooltip', Tooltip);
 
-// Theme switching — listen for theme change events and update PrimeVue preset
+// Theme switching. Listen for theme change events and update PrimeVue preset
 function buildPalette(colorName, customPalette) {
   if (customPalette) return { ...customPalette };
   const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];

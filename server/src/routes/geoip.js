@@ -7,7 +7,7 @@ import {
 } from '../utils/dns-proxy.js';
 import * as GeoipRule from '../models/geoip-rule.js';
 import * as GeoipAllowlist from '../models/geoip-ip-allowlist.js';
-import { isValidIpOrCidr } from '../utils/cidr-match.js';
+import { canonicalizeIpOrCidr } from '../utils/cidr-match.js';
 import { GEOIP_MODES } from '../utils/validation.js';
 
 const router = Router();
@@ -37,7 +37,7 @@ router.get('/rules', requirePerm('dns:read'), (req, res) => {
   res.json(rules);
 });
 
-// POST /api/geoip/rules — add one or more country rules
+// POST /api/geoip/rules: add one or more country rules
 router.post('/rules', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const { countries } = req.body;
@@ -72,7 +72,7 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
   res.status(201).json({ added });
 });
 
-// PUT /api/geoip/rules/:id — toggle enabled
+// PUT /api/geoip/rules/:id: toggle enabled
 router.put('/rules/:id', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const rule = db.prepare('SELECT * FROM geoip_rules WHERE id = ?').get(req.params.id);
@@ -112,8 +112,10 @@ router.post('/allowlist', requirePerm('dns:write'), (req, res) => {
   if (typeof value !== 'string' || !value.trim()) {
     return res.status(400).json({ error: 'An IP address or CIDR is required' });
   }
-  const v = value.trim();
-  if (!isValidIpOrCidr(v)) {
+  // Store the canonical CIDR form (host bits masked, explicit prefix, IPv6
+  // compressed) so dedup means "same network", not "same spelling".
+  const v = canonicalizeIpOrCidr(value.trim());
+  if (!v) {
     return res.status(400).json({ error: 'Invalid IP address or CIDR (IPv4 or IPv6)' });
   }
   if (reason != null && (typeof reason !== 'string' || reason.length > 200)) {
@@ -125,7 +127,7 @@ router.post('/allowlist', requirePerm('dns:write'), (req, res) => {
   const id = GeoipAllowlist.addEntry(db, v, reason);
   loadGeoipAllowlist();
   audit(req.user.id, 'create', 'geoip_ip_allowlist', id, { value: v });
-  res.status(201).json({ id });
+  res.status(201).json({ id, value: v });
 });
 
 // DELETE /api/geoip/allowlist/:id
@@ -139,7 +141,7 @@ router.delete('/allowlist/:id', requirePerm('dns:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// PUT /api/geoip/settings — update GeoIP settings
+// PUT /api/geoip/settings: update GeoIP settings
 router.put('/settings', requirePerm('dns:write'), async (req, res) => {
   const { geoip_enabled, geoip_mode, geoip_update_schedule } = req.body;
 
@@ -170,7 +172,7 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     setSetting('geoip_enabled', nowEnabled ? 'true' : 'false');
   }
 
-  // Proxy always runs — just load/unload MMDB data and refresh rule + allowlist caches
+  // Proxy always runs, just load/unload MMDB data and refresh rule + allowlist caches
   try {
     loadGeoipRules();
     loadGeoipAllowlist();
@@ -188,7 +190,7 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/geoip/db/refresh — manual MMDB download
+// POST /api/geoip/db/refresh: manual MMDB download
 router.post('/db/refresh', requirePerm('dns:write'), async (req, res) => {
   try {
     await downloadMmdb();
@@ -217,6 +219,6 @@ router.post('/stats/reset', requirePerm('dns:write'), (req, res) => {
 });
 
 // Note: the domain whitelist is a single global allowlist shared with category
-// blocking — managed via /api/blocklists/whitelist (one list, applies to both).
+// blocking, managed via /api/blocklists/whitelist (one list, applies to both).
 
 export default router;

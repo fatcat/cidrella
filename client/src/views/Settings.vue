@@ -1,7 +1,7 @@
 <!--
   The A+C Settings shell. Two states from the route query:
-    • Home  (no ?area)  — card-grid "front door" (C) + search.
-    • Area  (?area=x)   — SettingsArea (A): rail + sub-tabs.
+    • Home  (no ?area):  card-grid "front door" (C) + search.
+    • Area  (?area=x):   SettingsArea (A): rail + sub-tabs.
   Routing is query-only (path-agnostic) so this works while previewed at a temp
   route and after it takes over /system. The global <Toast> lives in App.vue.
 -->
@@ -13,7 +13,7 @@
         <h1>Settings</h1>
         <span class="p-input-icon-left home-search-wrap">
           <i class="pi pi-search" />
-          <InputText v-model="search" placeholder="Search settings — try “DNSSEC”, “rogue”, “TLS”…"
+          <InputText v-model="search" placeholder="Search settings (try “DNSSEC”, “rogue”, “TLS”)…"
                      class="home-search" data-track="settings-search" />
         </span>
       </div>

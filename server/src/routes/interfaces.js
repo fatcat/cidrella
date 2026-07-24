@@ -3,7 +3,7 @@ import os from 'os';
 import fs from 'fs';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { applyInterfaceConfig, restartDnsmasq } from '../utils/dnsmasq.js';
+import { applyInterfaceConfig, restartDnsmasq, isCidrellaDnsmasqRunning, dnsmasqRestartPending } from '../utils/dnsmasq.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
 import {
   applyHttpRedirectConfig, applyHttpsPortChange, applyHttpPortChange,
@@ -41,7 +41,7 @@ function getInterfaceMac(name) {
   }
 }
 
-// GET /api/interfaces — enumerate real network interfaces.
+// GET /api/interfaces: enumerate real network interfaces.
 //
 // Source the interface LIST from /sys/class/net rather than
 // os.networkInterfaces(), because Node only reports interfaces that already
@@ -49,21 +49,21 @@ function getInterfaceMac(name) {
 // added NIC with no IP yet) would otherwise be invisible here and get
 // mislabeled "missing" in the UI. IPv4 addresses are merged in from
 // os.networkInterfaces() (may be empty for an interface without an IP).
-router.get('/', requirePerm('subnets:read'), (req, res) => {
+router.get('/', requirePerm('system:read'), (req, res) => {
   const sysIfaces = os.networkInterfaces();
 
   let names;
   try {
     names = fs.readdirSync('/sys/class/net');
   } catch {
-    // Non-Linux / no sysfs — fall back to whatever has addresses.
+    // Non-Linux / no sysfs, fall back to whatever has addresses.
     names = Object.keys(sysIfaces);
   }
 
   const result = [];
   for (const name of names) {
     if (!isRealInterface(name)) continue;
-    // Skip sysfs control entries (e.g. bonding_masters) — real interfaces
+    // Skip sysfs control entries (e.g. bonding_masters), real interfaces
     // expose an `address` attribute; control files do not.
     if (!fs.existsSync(`/sys/class/net/${name}/address`)) continue;
 
@@ -84,8 +84,8 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   res.json(result);
 });
 
-// GET /api/interfaces/config — read saved interface config
-router.get('/config', requirePerm('subnets:read'), (req, res) => {
+// GET /api/interfaces/config: read saved interface config
+router.get('/config', requirePerm('system:read'), (req, res) => {
   let interfaces = {};
   let dnsEnabled = true;
   let dhcpEnabled = true;
@@ -105,15 +105,15 @@ router.get('/config', requirePerm('subnets:read'), (req, res) => {
   });
 });
 
-// PUT /api/interfaces/config — save interface config and apply
-router.put('/config', requirePerm('subnets:write'), async (req, res) => {
+// PUT /api/interfaces/config: save interface config and apply
+router.put('/config', requirePerm('system:write'), async (req, res) => {
   const body = req.body || {};
   const {
     interfaces, dns_enabled, dhcp_enabled, dns_listen_port, http_redirect_enabled,
     https_port, http_port
   } = body;
 
-  // Validators are the shared helpers in utils/validation.js — same
+  // Validators are the shared helpers in utils/validation.js, same
   // implementation used by /api/settings/bulk and /api/settings/:key so
   // the two endpoints can never drift. The original port validator in
   // this route was hand-rolled and coerced single-element arrays
@@ -186,7 +186,7 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
   // HTTPS port first (so the HTTP redirect's Location target closure picks
   // up the new HTTPS port), then HTTP port, then redirect enable/disable.
   // applyHttpsPortChange() / applyHttpPortChange() both compare to their
-  // OWN module-level state — we don't pre-check here because getHttpsPort()
+  // OWN module-level state, we don't pre-check here because getHttpsPort()
   // would read the DB (which we haven't written yet) and resolve to the
   // old env fallback, not the currently-bound port.
   const port_changes = {};
@@ -194,7 +194,7 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
     try {
       const r = await applyHttpsPortChange(httpsPortNum);
       port_changes.https = r;
-      // Swap succeeded — commit the DB value now. If the server restarts
+      // Swap succeeded, commit the DB value now. If the server restarts
       // later it comes up on the new port.
       Setting.upsertSettingWithConflict(db, 'https_port', String(httpsPortNum));
     } catch (err) {
@@ -209,7 +209,7 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
       Setting.upsertSettingWithConflict(db, 'http_port', String(httpPortNum));
     } catch (err) {
       console.warn('Failed to apply HTTP port change:', err.message);
-      // Don't 500 — the HTTPS port may have already swapped. Report warning.
+      // Don't 500, the HTTPS port may have already swapped. Report warning.
       port_changes.http = { changed: false, error: err.message };
     }
   }
@@ -222,15 +222,21 @@ router.put('/config', requirePerm('subnets:write'), async (req, res) => {
   // Regenerate dnsmasq config and restart (interface changes require full
   // restart, not just SIGHUP). Must be synchronous: restartDnsmasq on the
   // next line needs to pick up the freshly-written conf. Don't route this
-  // through queueRegen — the hook fires in a microtask AFTER the restart,
+  // through queueRegen, the hook fires in a microtask AFTER the restart,
   // which would leave dnsmasq running the old conf until the next regen.
-  applyInterfaceConfig(db);
+  // A no-op save (nothing effectively changed, our unit healthy) skips the
+  // restart so clicking Save can't blip DNS/DHCP for the whole LAN.
+  const ifaceChanged = applyInterfaceConfig(db);
 
   let dnsmasqStatus = 'restarted';
-  try {
-    restartDnsmasq();
-  } catch {
-    dnsmasqStatus = 'restart_failed';
+  if (ifaceChanged || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
+    try {
+      restartDnsmasq();
+    } catch {
+      dnsmasqStatus = 'restart_failed';
+    }
+  } else {
+    dnsmasqStatus = 'unchanged';
   }
 
   // Rebind proxy sockets to updated interface addresses

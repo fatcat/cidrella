@@ -97,14 +97,14 @@ _semver_cmp_id() {
   case "$a" in ''|*[!0-9]*) a_num=0 ;; *) a_num=1 ;; esac
   case "$b" in ''|*[!0-9]*) b_num=0 ;; *) b_num=1 ;; esac
   if [ "$a_num" = 1 ] && [ "$b_num" = 1 ]; then
-    # Both numeric — arithmetic compare.
+    # Both numeric, arithmetic compare.
     if [ "$a" -lt "$b" ]; then printf -- '-1'; return 0; fi
     if [ "$a" -gt "$b" ]; then printf '1'; return 0; fi
     printf '0'; return 0
   fi
   if [ "$a_num" = 1 ] && [ "$b_num" = 0 ]; then printf -- '-1'; return 0; fi
   if [ "$a_num" = 0 ] && [ "$b_num" = 1 ]; then printf '1';  return 0; fi
-  # Both alphanumeric — lexical compare.
+  # Both alphanumeric, lexical compare.
   if [ "$a" = "$b" ]; then printf '0'; return 0; fi
   if [[ "$a" < "$b" ]]; then printf -- '-1'; return 0; fi
   printf '1'
@@ -120,7 +120,7 @@ _semver_cmp_id() {
 #     (1.0.0-alpha < 1.0.0-alpha.1)
 _semver_cmp_pre() {
   local a="$1" b="$2"
-  # Empty means "no prerelease" — higher precedence than any prerelease.
+  # Empty means "no prerelease", higher precedence than any prerelease.
   if [ -z "$a" ] && [ -z "$b" ]; then printf '0';  return 0; fi
   if [ -z "$a" ];                  then printf '1';  return 0; fi
   if [ -z "$b" ];                  then printf -- '-1'; return 0; fi
@@ -163,7 +163,7 @@ semver_cmp() {
   if [ "$a2" -gt "$b2" ]; then printf '1\n';  return 0; fi
   if [ "$a3" -lt "$b3" ]; then printf -- '-1\n'; return 0; fi
   if [ "$a3" -gt "$b3" ]; then printf '1\n';  return 0; fi
-  # Cores equal — fall through to prerelease compare.
+  # Cores equal, fall through to prerelease compare.
   local pre_cmp
   pre_cmp=$(_semver_cmp_pre "$a_pre" "$b_pre")
   printf '%s\n' "$pre_cmp"
@@ -173,6 +173,6 @@ semver_lt() { [ "$(semver_cmp "$1" "$2")" = "-1" ]; }
 semver_gt() { [ "$(semver_cmp "$1" "$2")" = "1" ]; }
 semver_eq() { [ "$(semver_cmp "$1" "$2")" = "0" ]; }
 
-# Backwards-compat shim — scripts written against the old helper name. Prints
+# Backwards-compat shim for scripts written against the old helper name. Prints
 # "major minor patch" (no prerelease). New code should use _semver_core.
 _semver_parts() { _semver_core "$1"; }

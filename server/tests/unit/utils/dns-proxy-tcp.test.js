@@ -11,8 +11,9 @@ vi.mock('../../../src/db/duckdb.js', () => ({
   logDnsQuery: vi.fn(),
 }));
 
+import { frameTcpMessage, extractTcpMessages } from '../../../src/utils/dns-wire.js';
 import {
-  frameTcpMessage, extractTcpMessages, relayQueryOverTcp,
+  relayQueryOverTcp,
   createNxdomainResponse, createBlockedResponse, getQueryOpt,
 } from '../../../src/utils/dns-proxy.js';
 
@@ -89,7 +90,7 @@ describe('relayQueryOverTcp', () => {
   });
 
   it('resolves null on connection error (nothing listening)', async () => {
-    // port 1 is privileged/closed — connect should fail fast
+    // port 1 is privileged/closed, connect should fail fast
     const out = await relayQueryOverTcp(Buffer.from('0001', 'hex'), '127.0.0.1', 1, 500);
     expect(out).toBeNull();
   });

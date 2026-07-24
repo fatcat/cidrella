@@ -1,4 +1,4 @@
-<!-- Certificates. Extracted from System.vue tab 4 (1:1) — current cert info display,
+<!-- Certificates. Extracted from System.vue tab 4 (1:1): current cert info display,
      CSR generation form, certificate/key upload drag-drop zones with live PEM
      validation, and reset-to-self-signed. Loads cert info on mount. -->
 <template>

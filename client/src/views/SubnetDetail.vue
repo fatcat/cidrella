@@ -71,8 +71,13 @@
     </div>
 
     <!-- Tabs: IP Addresses + Grid View -->
-    <TabView v-model:activeIndex="activeTabIndex">
-      <TabPanel header="IP Addresses" :pt="{ headerAction: { 'data-track': 'subnet-tab-ip-addresses' } }">
+    <Tabs v-model:value="activeTab" class="subnet-tabs">
+      <TabList>
+        <Tab value="ips" data-track="subnet-tab-ip-addresses">IP Addresses</Tab>
+        <Tab value="grid" data-track="subnet-tab-grid-view">Grid View</Tab>
+      </TabList>
+      <TabPanels>
+      <TabPanel value="ips">
         <div class="ip-search-bar">
           <IconField>
             <InputIcon class="pi pi-search" />
@@ -93,7 +98,7 @@
         </div>
         <DataTable :value="displayIps" stripedRows size="small"
                    :loading="loadingPage"
-                   emptyMessage="No IP addresses."
+                  
                    scrollable scrollHeight="flex"
                    dataKey="ip_address"
                    @row-contextmenu="onTableRowContextMenu"
@@ -108,6 +113,9 @@
                    removableSort
                    @page="onLazyPage"
                    @sort="onLazySort">
+          <template #empty>
+            <EmptyState icon="pi-table" title="No IP addresses" description="Scan the subnet or add addresses to populate this view." />
+          </template>
           <Column
             v-for="col in visibleNetworkColumns"
             :key="col.key"
@@ -142,16 +150,19 @@
         </DataTable>
       </TabPanel>
 
-      <TabPanel header="Grid View" :pt="{ headerAction: { 'data-track': 'subnet-tab-grid-view' } }">
+      <TabPanel value="grid">
         <div class="grid-view-scroll">
         <!-- Ranges Table -->
         <div class="section">
           <h4 style="margin:0 0 0.5rem 0">Ranges</h4>
-          <DataTable :value="visibleRanges" stripedRows size="small" emptyMessage="No ranges defined."
+          <DataTable :value="visibleRanges" stripedRows size="small"
                      :paginator="ranges.length > 256" :rows="256"
                      :rowsPerPageOptions="[64, 128, 256, 512]"
                      @row-contextmenu="onRangeRightClick" contextMenu
                      scrollable scrollHeight="flex">
+            <template #empty>
+              <EmptyState icon="pi-sitemap" title="No ranges defined" />
+            </template>
             <Column header="Type">
               <template #body="{ data }">
                 <span class="range-type-badge" :style="{ background: data.range_type_color }">
@@ -225,7 +236,8 @@
         </div>
         </div>
       </TabPanel>
-    </TabView>
+      </TabPanels>
+    </Tabs>
 
     <!-- Scan Confirm Dialog -->
     <Dialog v-model:visible="showScanConfirm" header="Scan Network" modal :style="{ width: '26rem' }" data-track="dialog-scan-network">
@@ -394,6 +406,7 @@ import { ref, computed, watch, onUnmounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
 import { useToast } from 'primevue/usetoast';
 import Button from 'primevue/button';
+import EmptyState from '../components/EmptyState.vue';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Dialog from 'primevue/dialog';
@@ -403,7 +416,10 @@ import InputIcon from 'primevue/inputicon';
 import Select from 'primevue/select';
 import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
-import TabView from 'primevue/tabview';
+import Tabs from 'primevue/tabs';
+import TabList from 'primevue/tablist';
+import Tab from 'primevue/tab';
+import TabPanels from 'primevue/tabpanels';
 import TabPanel from 'primevue/tabpanel';
 import Tag from 'primevue/tag';
 import ToggleSwitch from 'primevue/toggleswitch';
@@ -488,7 +504,7 @@ function openHostInfo(row) {
   hostInfoRow.value = row;
   showHostInfo.value = true;
 }
-// Compact "Device" column — OS family preferred, else device type. Full detail
+// Compact "Device" column: OS family preferred, else device type. Full detail
 // (manufacturer, confidence, raw fingerprint) lives in the More-info popup.
 function deviceCell(row) {
   return row.os_family || row.device_type || EMPTY_CELL;
@@ -562,7 +578,7 @@ const resolvedSubnetScanEnabled = computed(() => {
   return folder ? !!folder.scan_enabled : true;
 });
 
-// Server-side pagination state — persisted per-subnet
+// Server-side pagination state, persisted per-subnet
 function loadTableState() {
   const saved = loadJson('cidrella_ip_table_state', {});
   return saved;
@@ -605,9 +621,16 @@ const sortOrder = ref(1);
 const loadingPage = ref(false);
 const showAvailableIps = ref(loadJson('cidrella_network_show_available', true));
 
-// Active tab (IP Addresses = 0, Grid View = 1)
-const activeTabIndex = ref(loadJson('cidrella_subnet_detail_tab', 0));
-watch(activeTabIndex, (val) => {
+// Active tab, persisted as a string key. Older builds stored the numeric
+// TabView index (0/1) under the same localStorage key, map those over.
+const TAB_KEYS = ['ips', 'grid'];
+function loadSubnetTab() {
+  const stored = loadJson('cidrella_subnet_detail_tab', 'ips');
+  if (typeof stored === 'number') return TAB_KEYS[stored] || 'ips';
+  return TAB_KEYS.includes(stored) ? stored : 'ips';
+}
+const activeTab = ref(loadSubnetTab());
+watch(activeTab, (val) => {
   try { localStorage.setItem('cidrella_subnet_detail_tab', JSON.stringify(val)); } catch {}
 });
 
@@ -728,10 +751,10 @@ const displayMac = displayMacAddress;
 
 // The legend always shows every possible color so users can learn it
 // without needing a subnet that happens to have one of each. User-defined
-// range types (non-system) still appear dynamically — those are specific
+// range types (non-system) still appear dynamically, those are specific
 // to a deployment and only meaningful when they exist.
 const rangeTypeLegend = computed(() => {
-  // Static baseline — always shown, in a deliberate order.
+  // Static baseline, always shown, in a deliberate order.
   const baseline = [
     { name: 'System',      color: '#6b7280' },          // network + broadcast
     { name: 'Gateway',     color: '#f59e0b' },
@@ -752,7 +775,7 @@ const rangeTypeLegend = computed(() => {
 });
 
 // Entries displayed in the Ranges table on the Grid View. System-range rows
-// (Network / Broadcast / Gateway) are hidden — they're implicit for every
+// (Network / Broadcast / Gateway) are hidden, they're implicit for every
 // allocated subnet and add noise. Locked IPs from `ip_addresses` are injected
 // as synthetic rows so users can see which addresses are manually held. We
 // collapse consecutive locked IPs into a single range (e.g. .5–.7 instead
@@ -764,7 +787,7 @@ const visibleRanges = computed(() => {
   });
 
   // A locked IP that overlaps a system range (Network / Broadcast / Gateway)
-  // is not user-locked — createSystemRanges writes those rows automatically.
+  // is not user-locked, createSystemRanges writes those rows automatically.
   // The grid-cell coloring already applies this same filter; we mirror it
   // here so the Ranges table doesn't list .0, .255, or the gateway IP as
   // Locked. Build a set of system-range IPs for quick lookup.
@@ -910,15 +933,15 @@ const ipGrid = computed(() => {
     const assignInfo = ipAssignMap.get(i);
 
     // Color precedence (top wins):
-    //   1. System range (Network/Broadcast/Gateway) — uses the range's own
+    //   1. System range (Network/Broadcast/Gateway), uses the range's own
     //      color so gateway is orange and network/broadcast are gray.
-    //   2. DHCP reservation — dark blue, stands out from the pale DHCP-pool
+    //   2. DHCP reservation, dark blue, stands out from the pale DHCP-pool
     //      tint that normally covers reservation IPs.
-    //   3. DNS-configured host (A record backing, no reservation) — pale
+    //   3. DNS-configured host (A record backing, no reservation), pale
     //      green so users can see which IPs are claimed by DNS only.
-    //   4. User-locked (manually held, no system range) — violet.
+    //   4. User-locked (manually held, no system range), violet.
     //   5. Range color (DHCP Scope, user-defined ranges).
-    //   6. Unassigned (no range, no assignment) — surface-200.
+    //   6. Unassigned (no range, no assignment), surface-200.
     const isSystemRange = !!rangeInfo?.isSystem;
     const isDhcpReservation = !!assignInfo?.has_dhcp_reservation;
     const isDnsConfigured = !isDhcpReservation && assignInfo?.address_type === 'static DNS';
@@ -1129,7 +1152,7 @@ function buildContextMenuItems(selectedIps) {
       });
     }
 
-    // Liveness scan toggle — resolve effective state (IP override → subnet default)
+    // Liveness scan toggle, resolve effective state (IP override → subnet default)
     items.push({ separator: true });
     const ipData = ips.value.find(a => a.ip_address === ip.address);
     const ipOverride = ipData?.scan_enabled ?? null;
@@ -1150,7 +1173,7 @@ function buildContextMenuItems(selectedIps) {
     items.push({ label: `Probe ${ip.address}`, icon: 'pi pi-wifi', command: () => probeIpNow(ip.address) });
     items.push({ label: `Lifecycle of ${ip.address}`, icon: 'pi pi-history', command: () => openEventsDialog(ip.address) });
   } else {
-    // Multi-select. Skip system-reserved IPs (network/broadcast/gateway) —
+    // Multi-select. Skip system-reserved IPs (network/broadcast/gateway),
     // they can't be locked/unlocked by the user. The server-side bulk-status
     // endpoint also silently skips them, so this is just UX symmetry.
     const unlockable = selectedIps.filter(ip => !isSystemReserved(ip));
@@ -1160,7 +1183,7 @@ function buildContextMenuItems(selectedIps) {
     // If the contiguous selection is entirely inside ONE DHCP Scope range,
     // offer a bulk "Remove from Scope" that shrinks/splits that scope. When
     // the selection straddles two scopes or leaks outside any scope, we
-    // don't offer it — the user should remove per-scope.
+    // don't offer it, the user should remove per-scope.
     const firstLong = ipToLong(firstIp.address);
     const lastLong = ipToLong(lastIp.address);
     const coveringScope = ranges.value.find(r =>
@@ -1431,7 +1454,7 @@ function onLazySort(event) {
   saveTableState();
 }
 
-// Watch for subnetId changes — debounce rapid clicks
+// Watch for subnetId changes, debounce rapid clicks
 let _loadTimer = null;
 watch(() => props.subnetId, (newId, _oldId) => {
   gridSelection.value = new Set();
@@ -1514,7 +1537,7 @@ async function forceCreateRange() {
 // Shrink a DHCP scope range to exclude a contiguous sub-range [startIp,
 // endIp]. Caller guarantees [startIp, endIp] is fully inside `range`.
 // Three shapes are supported: whole pool, start trim, end trim. Middle-
-// split (two pools per subnet) is NOT supported today — dnsmasq can handle
+// split (two pools per subnet) is NOT supported today, dnsmasq can handle
 // multiple scopes per interface but CIDRella's data model and UI assume
 // one DHCP scope per subnet. Rather than throw a generic server-side
 // "ranges must be contiguous" error, refuse client-side with guidance.
@@ -1524,7 +1547,7 @@ async function removeRangeFromPool(range, startIp, endIp) {
   const cutStart = ipToLong(startIp);
   const cutEnd = ipToLong(endIp);
 
-  // Middle cut — would split the pool into two. Reject with guidance.
+  // Middle cut, would split the pool into two. Reject with guidance.
   if (cutStart > poolStart && cutEnd < poolEnd) {
     toast.add({
       severity: 'warn',
@@ -1538,7 +1561,7 @@ async function removeRangeFromPool(range, startIp, endIp) {
   saving.value = true;
   try {
     if (cutStart <= poolStart && cutEnd >= poolEnd) {
-      // Whole pool carved out — drop it.
+      // Whole pool carved out, drop it.
       await store.deleteRange(subnet.value.id, range.id);
       toast.add({ severity: 'success', summary: 'Pool deleted', life: 3000 });
     } else if (cutStart <= poolStart) {
@@ -1567,7 +1590,7 @@ async function removeIpFromPool(range, ipAddress) {
   const endLong = ipToLong(range.end_ip);
   const ipLong = ipToLong(ipAddress);
 
-  // Middle cut would require two separate pools (one below, one above) —
+  // Middle cut would require two separate pools (one below, one above),
   // not supported today. Explain up front instead of hitting the generic
   // contiguous-range error from the ranges POST endpoint.
   if (startLong !== endLong && ipLong !== startLong && ipLong !== endLong) {
@@ -1583,7 +1606,7 @@ async function removeIpFromPool(range, ipAddress) {
   saving.value = true;
   try {
     if (startLong === endLong) {
-      // Single-IP pool — just delete it
+      // Single-IP pool, just delete it
       await store.deleteRange(subnet.value.id, range.id);
       toast.add({ severity: 'success', summary: 'Pool deleted', life: 3000 });
     } else if (ipLong === startLong) {
@@ -1616,7 +1639,7 @@ async function doDeleteRange() {
   saving.value = true;
   try {
     const range = deletingRange.value;
-    // DHCP Scope ranges aren't deletable directly — the server refuses to
+    // DHCP Scope ranges aren't deletable directly, the server refuses to
     // avoid orphaning the attached `dhcp_scopes` row (range_id → SET NULL).
     // The DHCP scope DELETE endpoint wipes scope + options + range together,
     // which is what the user actually wants. Look up the scope by range_id
@@ -1624,7 +1647,7 @@ async function doDeleteRange() {
     if (range.range_type_name === 'DHCP Scope') {
       const scopes = await dhcpStore.fetchScopes();
       const scope = (scopes || dhcpStore.scopes || []).find(s => s.range_id === range.id);
-      if (!scope) throw new Error('DHCP scope metadata missing — refresh and retry.');
+      if (!scope) throw new Error('DHCP scope metadata missing. Refresh and retry.');
       await dhcpStore.deleteScope(scope.id);
       showDeleteRangeDialog.value = false;
       toast.add({ severity: 'success', summary: 'DHCP scope deleted', life: 3000 });
@@ -1837,25 +1860,25 @@ onUnmounted(() => {
   font-weight: 600;
 }
 
-:deep(.p-tabview) {
+:deep(.p-tabs) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-:deep(.p-tabview-panels) {
+:deep(.p-tabpanels) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-:deep(.p-tabview-panel) {
+:deep(.p-tabpanel) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
 }
-:deep(.p-tabview-panel > .p-datatable) {
+:deep(.p-tabpanel > .p-datatable) {
   flex: 1;
   min-height: 0;
   padding-right: 0.5rem;
@@ -1965,7 +1988,7 @@ onUnmounted(() => {
 .ip-grid {
   display: grid;
   grid-template-columns: repeat(64, 1fr);
-  /* No gap — `gap: 1px` combined with `1fr` columns produces fractional
+  /* No gap. `gap: 1px` combined with `1fr` columns produces fractional
      cell widths (e.g. 14.859–14.875 px) whose 1px gaps then get eaten by
      sub-pixel rasterization, so grid lines randomly disappear. We draw
      each cell's right + bottom edges with an inset box-shadow instead;
@@ -2003,7 +2026,7 @@ onUnmounted(() => {
 }
 /* Every 16th column gets a thicker, slightly darker right edge so users
    can count IPs by groups of 16 at a glance. Overrides the default
-   box-shadow (right + bottom) — we keep the bottom thin but widen and
+   box-shadow (right + bottom), we keep the bottom thin but widen and
    darken the right edge. */
 .ip-cell-section-right {
   box-shadow:

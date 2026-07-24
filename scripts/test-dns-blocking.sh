@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-dns-blocking.sh — Tests GeoIP and blocklist DNS blocking via CIDRella's dnsmasq
+# test-dns-blocking.sh: Tests GeoIP and blocklist DNS blocking via CIDRella's dnsmasq
 #
 # This script performs DNS lookups only (no HTTP connections).
 # It queries the local dnsmasq server and checks whether blocked domains
@@ -143,7 +143,7 @@ else
 fi
 
 # ════════════════════════════════════════════════════════════════════════
-# BLOCKLIST TESTS — static domains pulled from CIDRella DB
+# BLOCKLIST TESTS: static domains pulled from CIDRella DB
 # ════════════════════════════════════════════════════════════════════════
 
 run_category "malware" \
@@ -285,7 +285,7 @@ for d in google.com github.com cloudflare.com wikipedia.org ubuntu.com; do
 done
 
 # ════════════════════════════════════════════════════════════════════════
-# GEOIP TESTS — well-known domains hosted in blocked countries
+# GEOIP TESTS: well-known domains hosted in blocked countries
 # Preference: government, state media, banks, telecoms (avoid CDN-fronted sites)
 # ════════════════════════════════════════════════════════════════════════
 

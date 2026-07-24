@@ -1,5 +1,5 @@
 /**
- * Network scan model — single owner for network_scans and scan_results writes.
+ * Network scan model, single owner for network_scans and scan_results writes.
  */
 
 export function list(db, { subnetId, limit = 50 } = {}) {

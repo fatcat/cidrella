@@ -131,5 +131,5 @@ useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>
-/* Page-specific styles only — shared styles come from analytics-layout.css */
+/* Page-specific styles only. Shared styles come from analytics-layout.css */
 </style>

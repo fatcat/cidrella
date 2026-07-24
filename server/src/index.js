@@ -16,7 +16,7 @@ process.on('unhandledRejection', (reason, _promise) => {
 });
 process.on('uncaughtException', (err) => {
   console.error('Uncaught exception:', err);
-  // Do not exit — the server is expected to stay up. If the error indicates
+  // Do not exit, the server is expected to stay up. If the error indicates
   // corrupted state (e.g. DB closed), the operator still has cidrella-update
   // and cidrella-rollback as escape hatches.
 });
@@ -53,12 +53,13 @@ import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js'
 import { ensureCerts, setHttpsServer } from './utils/cert.js';
 import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
+import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/dhcp-probe.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
-import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq } from './utils/dnsmasq.js';
+import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq, isCidrellaDnsmasqRunning, dnsmasqRestartPending } from './utils/dnsmasq.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
@@ -100,6 +101,17 @@ async function main() {
   // Remove redundant gateway options that should be inherited from subnet
   cleanupRedundantGatewayOptions(getDb());
 
+  // Rewrite GeoIP allowlist entries to canonical CIDR form and collapse
+  // same-network duplicates (idempotent; runs before the proxy loads them).
+  // Never let a surprising data shape in this table take the whole
+  // appliance down: worst case the allowlist stays un-canonicalized and
+  // the proxy still loads whatever is stored.
+  try {
+    canonicalizeGeoipAllowlist(getDb());
+  } catch (err) {
+    console.error('GeoIP allowlist canonicalization failed (continuing with stored values):', err.message);
+  }
+
   // Clear any ip_addresses rows whose DNS-sourced hostname no longer has a
   // backing A record (historic orphans from pre-refactor cleanup paths).
   try {
@@ -125,7 +137,7 @@ async function main() {
   // the subnet's own `gateway_address`. An earlier version of
   // migrateConfigToChild passed the PARENT's gateway IP to createSystemRanges
   // for every child, so /22 → 4x/24 divides left all four children pointing
-  // at the parent's gateway IP — which falls outside the child's CIDR and
+  // at the parent's gateway IP, which falls outside the child's CIDR and
   // breaks the Grid View's gateway coloring. New divides use the child's
   // gateway; this heal fixes the ones that already landed.
   try {
@@ -167,10 +179,25 @@ async function main() {
   // Passive device/OS fingerprinting from dnsmasq log-dhcp output
   startDhcpFingerprintWatcher(getDb());
 
-  // 1. Configure dnsmasq for port 5353 + DHCP interfaces, then restart
-  applyInterfaceConfig(getDb());
-  regenerateDnsmasqConf(getDb());
-  try { restartDnsmasq(); } catch { console.warn('dnsmasq restart failed (may not be installed)'); }
+  // 1. Configure dnsmasq for port 5353 + DHCP interfaces. Both writers skip
+  // the write and return false when the composed config matches what's on
+  // disk, so a clean reboot no longer blips DNS with a needless restart.
+  // We still restart when dnsmasq isn't running at all, the boot path
+  // doubles as "make sure DNS is up" and change-detection must not lose that.
+  // (The blocklist scheduler's one-time legacy blocklist.conf blanking ~10s
+  // in has its own restart guard and stays separate on purpose.)
+  const ifaceChanged = applyInterfaceConfig(getDb());
+  const confChanged = regenerateDnsmasqConf(getDb());
+  try {
+    // Restart when the config changed, when OUR unit is down (the specific
+    // unit, not any dnsmasq on the host), or when a previous restart failed
+    // and the running process may have loaded a stale config.
+    if (ifaceChanged || confChanged || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
+      restartDnsmasq();
+    } else {
+      console.log('dnsmasq config unchanged and service running, skipping boot restart');
+    }
+  } catch { console.warn('dnsmasq restart failed (may not be installed)'); }
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,
@@ -238,7 +265,7 @@ async function main() {
   // Case-sensitive + strict routing. Without these, Express matches
   // '/API/auth/login' to the '/api/auth' mount, but auth middleware
   // compares `req.path.startsWith('/api/')` with a case-sensitive JS
-  // string — so uppercased paths skip auth entirely. The trio pentest
+  // string, so uppercased paths skip auth entirely. The trio pentest
   // (2026-04-24) found this pivot let unauthenticated callers burn the
   // change-password rate limiter and produce unguarded 500s on
   // `/API/auth/me`. Turning on case-sensitive routing forces the router
@@ -275,10 +302,10 @@ async function main() {
   // Hooks fire on res.on('finish') so regen never blocks the HTTP response.
   app.use(afterCommitMiddleware);
 
-  // Setup routes (pre-auth — accessible before installation is complete)
+  // Setup routes (pre-auth, accessible before installation is complete)
   app.use('/api/setup', setupRoutes);
 
-  // API browser — developer tool only. Mounts /api-browser which enumerates
+  // API browser, developer tool only. Mounts /api-browser which enumerates
   // every registered route and offers an interactive client. In a release
   // audit the validator flagged that it was (a) pre-auth, (b) exposed a
   // full route inventory to unauthenticated callers, and (c) relaxed CSP
@@ -300,17 +327,17 @@ async function main() {
   // limiter, so a compromised/bought token could fill the DB, thrash dnsmasq
   // regen, or spam audit_log at unlimited rates. This caps POST/PUT/PATCH/
   // DELETE per user (fallback to IP for anon/unauthed preflight). Reads are
-  // intentionally unlimited — the calculate endpoint has its own cap, and
+  // intentionally unlimited, the calculate endpoint has its own cap, and
   // the rest are cheap.
   //
-  // MUST be mounted AFTER authMiddleware — otherwise req.user is undefined
+  // MUST be mounted AFTER authMiddleware, otherwise req.user is undefined
   // and every request keys off the same IP-fallback bucket, silently
   // short-circuiting the limiter (the v0.4.15 API agent caught this
   // exact bug in the initial commit; the first post-release patch moved
   // this mount below the auth middleware).
   const writeLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 300,  // 5/sec sustained per user — plenty for a human, too slow to brick the server
+    max: 300,  // 5/sec sustained per user, plenty for a human, too slow to brick the server
     message: { error: 'Too many write requests. Slow down or retry later.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -388,22 +415,22 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
   });
 
   // Global API error handler.
-  // v0.4.15: generic response body for 5xx so raw err.message — which in
+  // v0.4.15: generic response body for 5xx so raw err.message, which in
   // v0.4.14 leaked SQLite bind errors, `.toLowerCase is not a function`, and
-  // JSON parser text — no longer reaches the client. Full detail stays in
+  // JSON parser text, no longer reaches the client. Full detail stays in
   // the server log. Explicit 4xx errors (thrown with err.status set) are
   // passed through because routes use that path to surface validation
   // messages to clients.
   app.use('/api', (err, req, res, _next) => {
     const msg = err.message || 'Internal server error';
 
-    // Detect missing table errors from SQLite — this one IS useful to the
+    // Detect missing table errors from SQLite, this one IS useful to the
     // operator (tells them to restart so migrations apply) and doesn't leak
     // anything attacker-controlled.
     if (msg.includes('no such table')) {
       const match = msg.match(/no such table:\s*(\S+)/);
       const table = match ? match[1] : 'unknown';
-      console.error(`Missing table "${table}" — database migrations may not have been applied`);
+      console.error(`Missing table "${table}". Database migrations may not have been applied`);
       return res.status(500).json({
         error: `Missing database table "${table}". Please restart the server to apply pending migrations.`
       });
@@ -422,7 +449,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
     if (err.type === 'entity.too.large') {
       return res.status(413).json({ error: 'Request body too large' });
     }
-    // 4xx errors — route code already wrote a clean message; trust it.
+    // 4xx errors, route code already wrote a clean message; trust it.
     res.status(status).json({ error: msg });
   });
 
@@ -430,7 +457,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
-    // SPA fallback — serve index.html for all non-API routes
+    // SPA fallback, serve index.html for all non-API routes
     app.get(/^(?!\/api).*/, (req, res) => {
       res.sendFile(path.join(clientDist, 'index.html'));
     });
@@ -440,7 +467,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
     });
   }
 
-  // HTTPS server — utils/http-server.js owns the listen + live-swap. It
+  // HTTPS server, utils/http-server.js owns the listen + live-swap. It
   // reads the effective port from DB setting `https_port` first, falling
   // through to process.env.HTTPS_PORT and finally 8443. A UI edit to
   // `https_port` triggers a live port change via applyHttpsPortChange()
@@ -459,7 +486,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
     },
   });
 
-  // HTTP redirect — same lifecycle pattern. v0.4.15 adds a UI toggle to
+  // HTTP redirect, same lifecycle pattern. v0.4.15 adds a UI toggle to
   // disable it entirely (when TLS is fronted by nginx/traefik) and a UI
   // editable port setting.
   await applyHttpRedirectConfig();

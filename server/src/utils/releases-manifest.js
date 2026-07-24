@@ -9,7 +9,7 @@
 // Trust model: the manifest is signed with the same primary minisign key
 // as the release tarball. Verification happens by shelling out to the
 // `minisign` CLI (installed by install.sh as a hard dep). The manifest is
-// an ADVISORY INDEX — it tells you what's reachable, but the actual install
+// an ADVISORY INDEX, it tells you what's reachable, but the actual install
 // gate is still the per-tarball minisign signature checked by update.sh.
 // So a failure here (stale cached key, network glitch, signature mismatch)
 // should not gate installs. It only degrades skip-upgrade to the legacy
@@ -18,7 +18,7 @@
 //
 // Keyring note (v0.4.12 v1): this implementation verifies against the
 // primary pubkey only. The dual-key rotation composition gap flagged by
-// the architect pre-implementation review is a known limitation — it
+// the architect pre-implementation review is a known limitation, it
 // only bites if a primary-key rotation has actually happened and the
 // running host has a stale embedded pubkey. No rotation has occurred in
 // project history so far. Follow-up: extend verify() to try primary,
@@ -51,7 +51,7 @@ const MANIFEST_SIG_URL = `${MANIFEST_URL}.minisig`;
 
 const FETCH_TIMEOUT_MS = 10 * 1000;
 
-// compareSemver lives in utils/semver.js — this file used to carry a
+// compareSemver lives in utils/semver.js, this file used to carry a
 // local copy to dodge the circular-import risk with update-checker.js,
 // but the duplicate got out of sync in v0.4.15 (only update-checker's
 // copy was rewritten for prerelease precedence) and caused the manifest
@@ -87,7 +87,7 @@ export function invalidateCache() {
   try {
     if (fs.existsSync(CACHE_FILE)) fs.unlinkSync(CACHE_FILE);
   } catch {
-    // best effort — next fetch will just overwrite
+    // best effort, next fetch will just overwrite
   }
 }
 
@@ -214,7 +214,7 @@ export function computeBestTarget(currentVersion, manifest) {
   if (!manifest || !Array.isArray(manifest.releases)) return null;
   if (!currentVersion) return null;
 
-  // Work with ascending order — the chain algorithm is cleaner.
+  // Work with ascending order, the chain algorithm is cleaner.
   const ascending = [...manifest.releases]
     .filter(r => r && r.version)
     .sort((a, b) => compareSemver(a.version, b.version));

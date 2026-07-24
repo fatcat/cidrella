@@ -37,7 +37,7 @@ scenario_run() {
 
   # Replace with a structurally-valid but wrong minisign pubkey. Using a
   # random key means signature verification deterministically fails
-  # without also failing the load step — we want verify() to actually
+  # without also failing the load step, we want verify() to actually
   # run and return false, not to blow up earlier on malformed key file.
   cat > /opt/cidrella/scripts/cidrella.pub <<'WRONG_KEY'
 untrusted comment: test-only wrong key for manifest-fallback scenario
@@ -60,7 +60,7 @@ WRONG_KEY
   done
   sleep 6
 
-  # Capture the /api/version response. We need auth — the endpoint is
+  # Capture the /api/version response. We need auth, the endpoint is
   # gated behind requirePerm('subnets:read'), so we log in as admin first.
   # Parse the generated password from install output. install.sh wraps it
   # in ANSI color escapes (ESC[0;32m...ESC[0m). Strip the escapes first,
@@ -100,7 +100,7 @@ WRONG_KEY
   # wipes between scenarios but defensive cleanup is cheap.
   cp /tmp/cidrella.pub.real /opt/cidrella/scripts/cidrella.pub
   systemctl restart cidrella
-  # Wait for the service to settle after the second restart — the final
+  # Wait for the service to settle after the second restart, the final
   # health-check assertion needs the API to be responding.
   for i in $(seq 1 20); do
     if curl -sk https://127.0.0.1:8443/api/health >/dev/null 2>&1; then break; fi
@@ -125,13 +125,13 @@ scenario_assert() {
   # unavailable" note instead of silently degrading.
   #
   # Accept either of two shapes:
-  #   a) manifestAvailable: false   — canonical fallback
-  #   b) manifestAvailable: null    — no pending update detected AT ALL
+  #   a) manifestAvailable: false   (canonical fallback)
+  #   b) manifestAvailable: null    (no pending update detected AT ALL)
   #      (legit outcome if the GitHub API fallback also says "up to date",
   #      in which case there's no pending object to carry the flag)
   # The scenario passes in either shape so long as manifestAvailable is
   # NOT true. A true value means the manifest somehow verified despite
-  # the garbage pubkey — a real regression.
+  # the garbage pubkey, a real regression.
   assert_command_ok "! grep -q '\"manifestAvailable\":true' /tmp/version-response.json"
 
   # ─── Server log shows the expected fallback warning ──
@@ -139,7 +139,7 @@ scenario_assert() {
   # "releases-manifest: signature verification failed" and
   # "releases-manifest: fetch failed". If neither shows up, either the
   # fetch didn't happen (network? service didn't boot?) or the warning
-  # path was removed — both are regressions.
+  # path was removed, both are regressions.
   assert_command_ok "journalctl -u cidrella --since '1 minute ago' --no-pager 2>&1 | grep -qi 'releases-manifest'"
 
   # ─── The real pubkey was restored at end of scenario_run ──

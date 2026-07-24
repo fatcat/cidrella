@@ -80,10 +80,10 @@
         from their normal activity.
       </p>
       <ul>
-        <li><strong>Training</strong> — The system needs at least <em>{{ form.minTrainingHours }} hours</em> of DNS query data per client before it can start detecting anomalies.</li>
-        <li><strong>Scoring</strong> — Every <em>{{ form.scoringInterval }} minutes</em>, the system evaluates the last hour of queries for each trained client.</li>
-        <li><strong>Sensitivity</strong> — Controls how aggressively the system flags anomalies. Higher sensitivity means more alerts.</li>
-        <li><strong>Auto-resolve</strong> — Anomalies are automatically resolved after 4 consecutive normal scoring windows.</li>
+        <li><strong>Training</strong>: the system needs at least <em>{{ form.minTrainingHours }} hours</em> of DNS query data per client before it can start detecting anomalies.</li>
+        <li><strong>Scoring</strong>: every <em>{{ form.scoringInterval }} minutes</em>, the system evaluates the last hour of queries for each trained client.</li>
+        <li><strong>Sensitivity</strong>: controls how aggressively the system flags anomalies. Higher sensitivity means more alerts.</li>
+        <li><strong>Auto-resolve</strong>: anomalies are automatically resolved after 4 consecutive normal scoring windows.</li>
       </ul>
     </div>
   </div>
@@ -120,7 +120,7 @@ const original = reactive({ ...form });
 
 // Status indicator resolves the combined state of the user-toggled setting
 // AND the daemon's actual liveness. Prior to v0.4.5 this was just
-// `summary.enabled`, which lied green when the daemon was dead — the server
+// `summary.enabled`, which lied green when the daemon was dead. The server
 // now includes `daemon.stale` when heartbeats have gone silent past the
 // expected interval, and we surface that as a warning state distinct from
 // "disabled".

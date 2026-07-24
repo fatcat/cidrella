@@ -67,7 +67,7 @@
         {{ importResults.cname.created }} CNAME created<template v-if="importResults.cname.updated">, {{ importResults.cname.updated }} updated</template>;
         {{ importResults.dhcp.created }} DHCP created
         <template v-if="importResults.dhcp.noSubnet > 0">
-          ({{ importResults.dhcp.noSubnet }} DHCP skipped — no matching subnet)
+          ({{ importResults.dhcp.noSubnet }} DHCP skipped: no matching subnet)
         </template>
       </Message>
     </div>

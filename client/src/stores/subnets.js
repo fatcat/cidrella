@@ -186,7 +186,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     const res = await api.post(`/subnets/${id}/divide`, payload);
     await fetchTree();
     // Response body carries `pool_adjustments` when the server had to shrink
-    // a child's DHCP pool to keep the gateway out — bubble it up to callers
+    // a child's DHCP pool to keep the gateway out, bubble it up to callers
     // so they can surface a per-child warning toast.
     return res.data;
   }
@@ -305,7 +305,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  // Address types (cached — rarely changes)
+  // Address types (cached, rarely changes)
   let _rangeTypesCache = null;
   let _rangeTypesCacheTime = 0;
 
