@@ -409,6 +409,13 @@ run_release_health_check() {
     fi
   fi
 
+  # One pass over every update category: each accepted category is applied
+  # immediately but the build exits only ONCE at the end, so a run with
+  # security + routine + major updates pending costs a single
+  # commit/push/rerun cycle instead of one per category.
+  local updates_applied=false
+  local node_default_updated=false
+
   if [ "$node_security" = "true" ] || [ "$package_security" = "true" ] || [ "$docker_security" = "true" ]; then
     echo ""
     echo "SECURITY UPDATE REQUIRED"
@@ -420,6 +427,7 @@ run_release_health_check() {
         node_target=$(health_json 'r.node.recommendedVersion')
         echo "  Updating bundled Node default to v${node_target}..."
         update_bundled_node_default "$node_target"
+        node_default_updated=true
       fi
       if [ "$package_security" = "true" ]; then
         apply_npm_updates security
@@ -432,12 +440,11 @@ run_release_health_check() {
           update_docker_node_tags "$docker_security_tag"
         fi
       fi
-      echo ""
-      echo "Security updates were applied. Review and commit the changes, then rerun the release build."
+      updates_applied=true
+    else
+      echo "Build stopped because security updates were declined."
       exit 1
     fi
-    echo "Build stopped because security updates were declined."
-    exit 1
   fi
 
   if [ "$node_routine" = "true" ] || [ "$node_lts" = "true" ] || [ "$package_routine" = "true" ] || [ "$docker_routine" = "true" ]; then
@@ -445,12 +452,14 @@ run_release_health_check() {
     echo "Routine updates are available."
     echo "These are not blocking security findings. You may update now or continue this build."
     if confirm_yn "Apply routine Node/package updates now?" "n"; then
-      if [ "$node_lts" = "true" ]; then
+      # Skip the node rewrite when the security block already moved it (the
+      # security target is the same-major patch that routine would pick).
+      if [ "$node_lts" = "true" ] && [ "$node_default_updated" = false ]; then
         local lts_target
         lts_target=$(health_json 'r.node.latestLtsVersion')
         echo "  Updating bundled Node default to active LTS v${lts_target}..."
         update_bundled_node_default "$lts_target"
-      elif [ "$node_routine" = "true" ]; then
+      elif [ "$node_routine" = "true" ] && [ "$node_default_updated" = false ]; then
         local patch_target
         patch_target=$(health_json 'r.node.latestSameMajor')
         echo "  Updating bundled Node default to v${patch_target}..."
@@ -472,11 +481,10 @@ run_release_health_check() {
           update_s6_overlay_version "$s6_target"
         fi
       fi
-      echo ""
-      echo "Routine updates were applied. Review and commit the changes, then rerun the release build."
-      exit 1
+      updates_applied=true
+    else
+      echo "Continuing with current Node/package versions by developer choice."
     fi
-    echo "Continuing with current Node/package versions by developer choice."
   fi
 
   if [ "$package_major" = "true" ]; then
@@ -500,11 +508,17 @@ run_release_health_check() {
         echo "Major package update failed unexpectedly."
         exit "$major_rc"
       fi
-      echo ""
-      echo "Major package updates were applied. Review and commit the changes, then rerun the release build."
-      exit 1
+      updates_applied=true
+    else
+      echo "Continuing with current major package versions by developer choice."
     fi
-    echo "Continuing with current major package versions by developer choice."
+  fi
+
+  if [ "$updates_applied" = true ]; then
+    echo ""
+    echo "All accepted updates were applied in one pass."
+    echo "Review and commit the changes, push, then rerun the release build."
+    exit 1
   fi
 }
 
@@ -870,12 +884,13 @@ if [ "$DRY_RUN" = false ]; then
         let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{
           try {
             const m=JSON.parse(s);
-            const r=m.releases.find(r=>r.version==="'"${VERSION}"'");
+            const r=m.releases.find(r=>r.version==="'"${BASE_VERSION}"'");
             if (r && r.min_from) process.stdout.write(r.min_from);
           } catch(e){}
         });
       ' 2>/dev/null || echo "")
   if [ -z "$MIN_FROM" ]; then
+    echo "  WARNING: no min_from found for ${BASE_VERSION} in RELEASE-NOTES.md; RELEASE.json will allow any predecessor to upgrade directly."
     MIN_FROM_JSON="null"
   else
     MIN_FROM_JSON="\"${MIN_FROM}\""
@@ -1013,7 +1028,18 @@ if [ "$DRY_RUN" = false ]; then
   # the official @duckdb/node-api package family.
   MISSING=""
   DUCKDB_BINDING_PKG="$(duckdb_binding_package_for_arch "$BUILD_ARCH")"
-  [ ! -f "$STAGING_DIR/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
+  # better-sqlite3 <=12 compiles to build/Release; 13+ ships prebuilt
+  # binaries under prebuilds/ (glibc linux-x64 -> linux-x64.node). Accept
+  # either layout, then prove it actually loads on the bundled runtime,
+  # which is the guarantee a path check can only approximate.
+  if [ ! -f "$STAGING_DIR/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] \
+     && [ ! -f "$STAGING_DIR/server/node_modules/better-sqlite3/prebuilds/linux-x64.node" ]; then
+    MISSING="$MISSING better-sqlite3"
+  elif ! (cd "$STAGING_DIR/server" && "$STAGING_DIR/runtime/node/bin/node" -e \
+      "require('better-sqlite3')(':memory:').exec('SELECT 1')" >/dev/null 2>&1); then
+    echo "  ERROR: better-sqlite3 binding present but failed to load on the bundled runtime"
+    MISSING="$MISSING better-sqlite3(load)"
+  fi
   [ ! -f "$STAGING_DIR/server/node_modules/$DUCKDB_BINDING_PKG/duckdb.node" ] && MISSING="$MISSING $DUCKDB_BINDING_PKG"
 
   if [ -n "$MISSING" ]; then

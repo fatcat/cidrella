@@ -928,7 +928,11 @@ ok "Client assets present"
 # DuckDB now uses the official @duckdb/node-api package family.
 MISSING=""
 DUCKDB_BINDING_PKG="$(duckdb_binding_package_for_arch "$BUILD_ARCH")"
-[ ! -f "$TARGET_SLOT/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] && MISSING="$MISSING better-sqlite3"
+# better-sqlite3 <=12: build/Release; 13+: shipped prebuilds/linux-x64.node
+if [ ! -f "$TARGET_SLOT/server/node_modules/better-sqlite3/build/Release/better_sqlite3.node" ] \
+   && [ ! -f "$TARGET_SLOT/server/node_modules/better-sqlite3/prebuilds/linux-x64.node" ]; then
+  MISSING="$MISSING better-sqlite3"
+fi
 [ ! -f "$TARGET_SLOT/server/node_modules/$DUCKDB_BINDING_PKG/duckdb.node" ] && MISSING="$MISSING $DUCKDB_BINDING_PKG"
 if [ -n "$MISSING" ]; then
   err "Pre-flight failed: missing native bindings:$MISSING"
