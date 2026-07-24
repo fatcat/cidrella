@@ -100,6 +100,18 @@ function checkNpmProject(projectRoot, relativeDir) {
   const packageJson = path.join(cwd, 'package.json');
   if (!fs.existsSync(packageJson)) return null;
 
+  // Packages deliberately held back on their current major. The build's
+  // update prompt must NOT offer these, or an accepted prompt re-upgrades a
+  // dependency we chose to stay on (this bit us when PrimeVue, reverted 5->4
+  // to dodge its paid-license watermark, got re-upgraded to 5 by the prompt).
+  // Declared in the project's package.json so the policy lives with the deps:
+  //   "releaseHealth": { "holdMajor": ["primevue", "@primeuix/themes"] }
+  let heldMajors = [];
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
+    heldMajors = Array.isArray(pkg.releaseHealth?.holdMajor) ? pkg.releaseHealth.holdMajor : [];
+  } catch { /* ignore malformed package.json here; other checks surface it */ }
+
   const audit = runJsonCommand('npm', ['audit', '--omit=dev', '--json'], cwd);
   const outdated = runJsonCommand('npm', ['outdated', '--omit=dev', '--json'], cwd);
   const vulnerabilities = audit.data?.vulnerabilities || {};
@@ -127,6 +139,9 @@ function checkNpmProject(projectRoot, relativeDir) {
       type: value.type || '',
     }))
     .filter((pkg) => pkg.current && pkg.latest && pkg.current !== pkg.latest)
+    // Drop held packages entirely so neither the routine nor the major
+    // update prompt ever offers them.
+    .filter((pkg) => !heldMajors.includes(pkg.name))
     .sort((a, b) => a.name.localeCompare(b.name));
   const actionableUpdates = outdatedPackages
     .filter((pkg) => pkg.wanted && pkg.current !== pkg.wanted);
