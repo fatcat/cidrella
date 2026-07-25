@@ -22,7 +22,7 @@ jobs:
       matrix:
         include:
           # Taint-flow queries for the things the live injection tester probes
-          # episodically — this runs on every push.
+          # episodically. This runs on every push.
           - language: javascript-typescript
             queries: security-and-quality
           # server/anomaly (anomaly-detection sidecar)

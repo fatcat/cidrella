@@ -7,7 +7,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# Checkout + status reporting only — no writes to the repo or releases.
+# Checkout + status reporting only. No writes to the repo or releases.
 permissions:
   contents: read
 
@@ -52,7 +52,7 @@ jobs:
         run: npm run build:client
 
       - name: Release guards
-        # Same guards build-release.sh runs — catch version/notes drift and
+        # Same guards build-release.sh runs, catching version/notes drift and
         # broken release plumbing on every push, not just at release time.
         run: node scripts/check-release-version.js .
 
@@ -60,7 +60,7 @@ jobs:
         # Baseline = 1 known cycle: utils/dhcp.js → models/dhcp-lease.js →
         # utils/after-commit.js → utils/dhcp.js. That one is a deliberate
         # hook-registry pattern (imports only invoked at runtime; safe under
-        # ESM live bindings) — breaking it means inverting to runtime
+        # ESM live bindings). Breaking it means inverting to runtime
         # registration, tracked as a future refactor. This gate fails only
         # when a NEW cycle appears. madge can't parse Vue SFCs, so client/
         # is out of scope here.

@@ -52,24 +52,16 @@ vitest.config.js
 # Editor/LSP indexing config — dev-only
 jsconfig.json
 
-# Dev-only scripts — users can't usefully run these on a production box.
-# NOTE: this is an explicit-name exclusion list. If a new dev script is added
-# in the future, it must be added here or it will silently ship. Longer-term,
-# the scripts/ staging should probably invert to an allowlist (ship only
-# install.sh, rollback.sh, cidrella-node, cidrella-dnsmasq-hup, cidrella.pub,
-# lib/, sudoers/, systemd/). Tracked in PLAN.md backlog.
-build-release.sh
-release-health-check.js
-check-staging-imports.js
-check-release-version.js
-check-install-scripts.js
-deploy-lxc.sh
-test-dns-blocking.sh
-
-# Integration test harness — dev-only, runs against throwaway LXCs via SSH.
-# Primary consumer is Claude Code review agents. Never needed on a production
-# box and shipping it would expose a runner that wipes host state.
-test-harness/
+# NOTE: scripts/ is NO LONGER filtered by this file. As of v0.4.16 its staging
+# is allowlist-driven by scripts/release-files.txt, so build/dev tooling
+# (build-release.sh, the check-*.js guards, deploy-lxc.sh, test-dns-blocking.sh,
+# test-harness/, lint-release-notes.sh, refresh-ntp-defaults.js,
+# build-releases-manifest.js, check-db-ownership.js) simply isn't listed and
+# therefore never ships. The old deny-list here failed OPEN: a new dev script
+# shipped unless someone remembered to add it, and four were doing exactly that.
+# To change what ships from scripts/, edit scripts/release-files.txt.
+#
+# Everything below still applies to the server/ tree staging.
 
 # Dev-only source files that don't belong in production. The api-browser
 # route is also gated at mount time by NODE_ENV !== 'production' in

@@ -747,10 +747,36 @@ if [ "$DRY_RUN" = false ]; then
   # dnsmasq config templates (no dev cruft in this dir, cp -a is fine)
   cp -a "$PROJECT_DIR/dnsmasq" "$STAGING_DIR/dnsmasq"
 
-  # Scripts (install, systemd, sudoers, lib, cidrella-node wrapper, pubkey).
-  # Switched from `cp -a` to rsync so we can apply .buildignore and strip
-  # dev-only helpers like build-release.sh, deploy-lxc.sh, test-dns-blocking.sh.
-  rsync -a --exclude-from="$BUILDIGNORE" "$PROJECT_DIR/scripts/" "$STAGING_DIR/scripts/"
+  # Scripts: ALLOWLIST, not deny-list. scripts/release-files.txt names exactly
+  # what ships (installer/updater/recovery entry points, wrappers the app and
+  # systemd invoke, both minisign pubkeys, lib/, and the OS integration assets).
+  #
+  # This used to be `rsync --exclude-from=.buildignore`, which failed OPEN: every
+  # new dev script shipped to production unless someone remembered to exclude it.
+  # Four build-only tools were shipping that way. An allowlist fails CLOSED.
+  SCRIPTS_ALLOWLIST="$PROJECT_DIR/scripts/release-files.txt"
+  if [ ! -f "$SCRIPTS_ALLOWLIST" ]; then
+    echo "  ERROR: missing scripts allowlist at $SCRIPTS_ALLOWLIST"
+    exit 1
+  fi
+  # Strip comments/blanks into a temp list rsync can consume.
+  SCRIPTS_LIST_TMP="$(mktemp)"
+  grep -vE '^[[:space:]]*(#|$)' "$SCRIPTS_ALLOWLIST" > "$SCRIPTS_LIST_TMP"
+  # Fail closed: every allowlisted path must exist. Catches a rename/deletion
+  # that would otherwise silently drop a runtime file from the tarball.
+  MISSING_SCRIPTS=""
+  while IFS= read -r rel; do
+    [ -e "$PROJECT_DIR/scripts/$rel" ] || MISSING_SCRIPTS="$MISSING_SCRIPTS $rel"
+  done < "$SCRIPTS_LIST_TMP"
+  if [ -n "$MISSING_SCRIPTS" ]; then
+    echo "  ERROR: scripts/release-files.txt lists paths that do not exist:$MISSING_SCRIPTS"
+    echo "  Either restore them or update the allowlist."
+    rm -f "$SCRIPTS_LIST_TMP"
+    exit 1
+  fi
+  rsync -a --files-from="$SCRIPTS_LIST_TMP" "$PROJECT_DIR/scripts/" "$STAGING_DIR/scripts/"
+  rm -f "$SCRIPTS_LIST_TMP"
+  echo "  Staged $(grep -cvE '^[[:space:]]*(#|$)' "$SCRIPTS_ALLOWLIST") allowlisted script paths"
 
   # ─── Pubkey staging assertion ────────────────────────
   #

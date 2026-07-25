@@ -1,0 +1,54 @@
+# Allowlist of scripts/ paths that ship inside the release tarball.
+#
+# Consumed by build-release.sh as `rsync --files-from`, relative to scripts/.
+# This REPLACED a deny-list in .buildignore, which failed OPEN: any new dev
+# script silently shipped unless someone remembered to exclude it. That bit us
+# twice: build-releases-manifest.js, check-db-ownership.js, lint-release-notes.sh
+# and refresh-ntp-defaults.js were all shipping to production appliances with no
+# runtime purpose, and a newly added build guard (check-install-scripts.js) would
+# have joined them. An allowlist fails CLOSED: forget an entry and the build
+# stops, which is the direction you want to be wrong in.
+#
+# Rules:
+#   - Only add something an OPERATOR or the appliance itself needs at runtime
+#     (install, update, rollback, systemd/polkit/sudoers integration, signature
+#     verification). Build/dev tooling belongs OUT.
+#   - build-release.sh verifies every path here exists before staging, so a
+#     rename or deletion fails the build instead of silently dropping a file.
+#   - Blank lines and #-comments are stripped before rsync sees this.
+
+# Installer / updater / recovery entry points
+install.sh
+rollback.sh
+post-install.sh
+
+# Wrappers invoked by the app, systemd units, and the updater
+cidrella-node
+cidrella-npm
+cidrella-dnsmasq-hup
+cidrella-reset-password
+cidrella-reset-web-ports
+
+# minisign public keys. update.sh verifies the next release with these, and the
+# break-glass key validates rotation announcements (BREAK-GLASS-CEREMONY.md step 5)
+cidrella.pub
+cidrella-break-glass.pub
+
+# Shared shell libraries sourced by install/update/rollback
+lib/dnsmasq-perms.sh
+lib/log.sh
+lib/preflight.sh
+lib/rotation.sh
+lib/slots.sh
+lib/systemd-install.sh
+lib/tighten-secrets.sh
+lib/verify.sh
+
+# OS integration assets installed onto the host
+logrotate/cidrella-dnsmasq
+polkit/49-cidrella.rules
+sudoers/cidrella
+systemd/cidrella.service
+systemd/cidrella-dnsmasq.service
+systemd/cidrella-anomaly.service
+systemd/cidrella-update@.service

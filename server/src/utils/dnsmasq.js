@@ -119,7 +119,7 @@ export function regenerateConfDir(db) {
     // actual config-injection sink, so it must never trust a stored name.
     // Skip any zone whose name carries characters that could break out of the
     // line or smuggle a directive (a legit name is a domain or dotted-decimal
-    // in-addr.arpa — no whitespace, commas, or control chars).
+    // in-addr.arpa, so no whitespace, commas, or control chars).
     if (validateDnsmasqConfigValue(zone.name) != null) continue;
 
     const records = db.prepare(`

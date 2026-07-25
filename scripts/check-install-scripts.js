@@ -107,7 +107,7 @@ for (const f of found) {
   for (const s of f.scripts) console.error(`      ${s}`);
 }
 console.error('');
-console.error('  The staged install uses --ignore-scripts, so these did NOT run — meaning');
+console.error('  The staged install uses --ignore-scripts, so these did NOT run, meaning');
 console.error('  if any is a genuine build step, the package is now incomplete and will');
 console.error('  fail at runtime (missing native binding), not here.');
 console.error('');
