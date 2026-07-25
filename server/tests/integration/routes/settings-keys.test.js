@@ -23,7 +23,7 @@ const APPLY_COUPLED_KEYS = [
   'rogue_dhcp_probe_interval_min',
 ];
 
-describe('PUT /api/settings/:key — apply-coupled keys are not editable', () => {
+describe('PUT /api/settings/:key, apply-coupled keys are not editable', () => {
   for (const key of APPLY_COUPLED_KEYS) {
     it(`rejects ${key}`, async () => {
       const res = await request(app).put(`/api/settings/${key}`).send({ value: 'true' });

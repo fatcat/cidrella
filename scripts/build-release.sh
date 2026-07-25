@@ -64,8 +64,8 @@ OPTIONS
                            /api/health, the UI footer, and audit logs.
                          - Tarball name + RELEASE.json + git-less GitHub tag
                            all use the suffixed version.
-                         - RELEASE-NOTES.md lookup strips the suffix — same
-                           notes as the eventual real release.
+                         - RELEASE-NOTES.md lookup strips the suffix, so you
+                           get the same notes as the eventual real release.
                          - Skips releases.json manifest generation + upload.
                          - GitHub release is flagged --prerelease, so
                            /releases/latest on other hosts skips it.
@@ -78,8 +78,8 @@ OPTIONS
 
                        Suffix must match [0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*
                        per semver 2.0. For multi-iteration pre-releases,
-                       use dotted-numeric (pre.1, pre.2, pre.10) — these
-                       sort numerically. Plain pre2 vs pre10 sorts
+                       use dotted-numeric (pre.1, pre.2, pre.10) because
+                       these sort numerically. Plain pre2 vs pre10 sorts
                        lexically and orders wrong.
 
     --help, -h         Show this help and exit.
@@ -173,7 +173,7 @@ BUILD_ARCH="${BUILD_ARCH:-linux-x64}"
 # validate on, and bundled native modules (better-sqlite3, duckdb) make an
 # unvalidated cross-arch tarball a DOA risk. Last arm64 release: v0.4.15.
 if [ "$BUILD_ARCH" != "linux-x64" ]; then
-  echo "ERROR: BUILD_ARCH=$BUILD_ARCH is not supported — cidrella releases are linux-x64 only (arm64 discontinued after v0.4.15)."
+  echo "ERROR: BUILD_ARCH=$BUILD_ARCH is not supported: cidrella releases are linux-x64 only (arm64 discontinued after v0.4.15)."
   exit 1
 fi
 TARBALL="cidrella-${TAG}-${BUILD_ARCH}.tar.gz"
@@ -617,7 +617,7 @@ if [ -f "$PROJECT_DIR/RELEASE-NOTES.md" ]; then
     echo "  Known issues subsections. Then run the build again."
     exit 1
   fi
-  echo "  RELEASE-NOTES.md has v${NOTES_VERSION} entry — OK"
+  echo "  RELEASE-NOTES.md has v${NOTES_VERSION} entry: OK"
 else
   echo "WARNING: RELEASE-NOTES.md not found at $PROJECT_DIR/RELEASE-NOTES.md"
   echo "  The v0.4.12+ skip-upgrade machinery requires this file. Build will"
@@ -725,7 +725,7 @@ if [ "$DRY_RUN" = false ]; then
   # vitest config, and dev-only scripts out of the release tarball.
   BUILDIGNORE="$PROJECT_DIR/.buildignore"
   if [ ! -f "$BUILDIGNORE" ]; then
-    echo "Error: $BUILDIGNORE missing — release would ship dev data. Aborting."
+    echo "Error: $BUILDIGNORE missing. Release would ship dev data. Aborting."
     exit 1
   fi
 
@@ -831,7 +831,7 @@ if [ "$DRY_RUN" = false ]; then
     fi
     if [ "$match_count" -gt 1 ]; then
       echo "  ERROR: $constant_name defined more than once in install.sh ($match_count matches)"
-      echo "  Ambiguous constant — refusing to guess which is authoritative."
+      echo "  Ambiguous constant, refusing to guess which is authoritative."
       exit 1
     fi
 
@@ -1177,7 +1177,7 @@ if [ "$DRY_RUN" = false ]; then
     echo "  Delete dist/$TARBALL and dist/${TARBALL}.minisig before retrying."
     exit 1
   fi
-  echo "  Signature verified against scripts/cidrella.pub — build is self-consistent"
+  echo "  Signature verified against scripts/cidrella.pub, build is self-consistent"
 else
   echo "  [DRY RUN] Would run: minisign -Sm dist/$TARBALL"
   echo "  [DRY RUN] Would verify signature against scripts/cidrella.pub"
@@ -1203,7 +1203,7 @@ fi
 echo "[5.5/7] Building releases.json manifest..."
 if [ "$PRE_RELEASE" = true ]; then
   echo "  SKIPPED for pre-release."
-  echo "  (Manifest not generated/uploaded — other hosts' update checker"
+  echo "  (Manifest not generated/uploaded, other hosts' update checker"
   echo "  must not advertise pre-release versions. Only explicit"
   echo "  'cidrella-update --version ${VERSION}' reaches this build.)"
 elif [ "$DRY_RUN" = false ]; then
@@ -1240,7 +1240,7 @@ if [ "$BUILD_ONLY" = true ]; then
   echo "  Tarball:   dist/$TARBALL"
   echo "  Signature: dist/${TARBALL}.minisig"
   if [ "$PRE_RELEASE" = true ]; then
-    echo "  Manifest:  (not generated — pre-release)"
+    echo "  Manifest:  (not generated, pre-release)"
   else
     echo "  Manifest:  dist/releases.json + .minisig"
   fi
@@ -1304,7 +1304,7 @@ if [ "$DRY_RUN" = false ]; then
     echo "  Tag:       $TAG"
     echo "  Tarball:   dist/$TARBALL"
     echo "  Signature: dist/${TARBALL}.minisig"
-    echo "  Manifest:  (skipped — pre-release)"
+    echo "  Manifest:  (skipped, pre-release)"
     echo "  URL:       $RELEASE_URL"
     echo ""
     echo "To test:     ssh root@<host> cidrella-update --version ${BASE_VERSION}-${PRE_SUFFIX}"

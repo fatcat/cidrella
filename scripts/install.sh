@@ -161,7 +161,7 @@ ARCH=$(dpkg --print-architecture 2>/dev/null || uname -m)
 case "$ARCH" in
   amd64|x86_64) ARCH="amd64" ;;
   arm64|aarch64)
-    warn "This host is arm64. CIDRella releases are linux-x64 only (arm64 was discontinued after v0.4.15) — installing here would leave a system that cannot receive updates."
+    warn "This host is arm64. CIDRella releases are linux-x64 only (arm64 was discontinued after v0.4.15). Installing here would leave a system that cannot receive updates."
     exit 1
     ;;
   *)
@@ -262,7 +262,7 @@ if command -v timedatectl >/dev/null 2>&1; then
     # otherwise install systemd-timesyncd (smallest footprint).
     if ! systemctl list-unit-files 2>/dev/null | grep -qE '^(systemd-timesyncd|chrony|chronyd|ntp)\.service'; then
       apt-get install -y -qq systemd-timesyncd >/dev/null 2>&1 || \
-        warn "Could not install systemd-timesyncd — enable an NTP client manually for DNSSEC."
+        warn "Could not install systemd-timesyncd, enable an NTP client manually for DNSSEC."
     fi
     if timedatectl set-ntp true 2>/dev/null; then
       ok "NTP time sync enabled."
@@ -285,9 +285,9 @@ fi
 # If the user already has a system Node installed (from an earlier install
 # or their own apt install), we leave it alone. Harmless, just unused.
 if command -v node >/dev/null 2>&1; then
-  info "System Node.js $(node -v) present (will be unused — runtime ships bundled)"
+  info "System Node.js $(node -v) present (will be unused, runtime ships bundled)"
 else
-  info "No system Node.js — using bundled runtime from release tarball"
+  info "No system Node.js, using bundled runtime from release tarball"
 fi
 
 # ═══════════════════════════════════════════════════════════
@@ -486,7 +486,7 @@ if command -v minisign &>/dev/null; then
     exit 1
   fi
 else
-  warn "minisign not installed — skipping signature verification."
+  warn "minisign not installed, skipping signature verification."
   emit_event verify skip reason=no-minisign
 fi
 
@@ -541,7 +541,7 @@ fi
 # ═══════════════════════════════════════════════════════════
 
 if [ -d "$INSTALL_DIR/server/node_modules/express" ]; then
-  ok "Bundled node_modules present — skipping npm install"
+  ok "Bundled node_modules present, skipping npm install"
 else
   info "Installing Node.js dependencies (this may take a moment)..."
   cd "$INSTALL_DIR/server"
@@ -705,10 +705,10 @@ EOF
     chmod 644 "$PORT_OVERRIDE_FILE"
     WEB_HTTPS_PORT="443"
     WEB_HTTP_PORT="80"
-    ok "Web ports: 443/80 (standard HTTPS/HTTP — both free)"
+    ok "Web ports: 443/80 (standard HTTPS/HTTP, both free)"
     emit_event systemd pass web_ports=443/80
   else
-    info "Web ports 443 and/or 80 already in use — keeping defaults 8443/8080"
+    info "Web ports 443 and/or 80 already in use, keeping defaults 8443/8080"
     emit_event systemd pass web_ports=8443/8080
   fi
 fi
@@ -922,7 +922,7 @@ if [ -n "$ADMIN_PASSWORD" ]; then
   echo -e "    Username: ${GREEN}admin${NC}"
   echo -e "    Password: ${GREEN}${ADMIN_PASSWORD}${NC}"
   echo ""
-  echo -e "  ${YELLOW}Save this password — it will not be shown again.${NC}"
+  echo -e "  ${YELLOW}Save this password. It will not be shown again.${NC}"
   echo -e "  ${YELLOW}You will be prompted to change it on first login.${NC}"
 else
   echo -e "  ${BOLD}Admin login:${NC}"

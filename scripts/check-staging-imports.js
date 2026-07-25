@@ -83,7 +83,7 @@ if (missing.length > 0) {
   for (const x of missing) console.error(`    server/${x.importer}  →  ${x.spec}`);
   console.error('  A source file is missing from the tarball. Check .buildignore exclusions');
   console.error('  (anchor dev-only patterns with a leading "/") and confirm the file is');
-  console.error('  committed to git. This is the v0.4.16-pre.1 DOA class — fail before publish.');
+  console.error('  committed to git. This is the v0.4.16-pre.1 DOA class: fail before publish.');
   process.exit(1);
 }
 

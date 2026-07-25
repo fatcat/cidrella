@@ -104,7 +104,7 @@ afterAll(() => {
 // C1, Unauthenticated crash-DoS via non-string password
 // -----------------------------------------------------------------------------
 
-describe('C1 — bcrypt crash DoS: non-string password/username rejected with 400', () => {
+describe('C1: bcrypt crash DoS, non-string password/username rejected with 400', () => {
   it.each([
     ['password as object', { username: 'sectest', password: {} }],
     ['password as array',  { username: 'sectest', password: [] }],
@@ -127,7 +127,7 @@ describe('C1 — bcrypt crash DoS: non-string password/username rejected with 40
 // H1, Unauthenticated setup takeover
 // -----------------------------------------------------------------------------
 
-describe('H1 — setup is closed once any user exists', () => {
+describe('H1: setup is closed once any user exists', () => {
   it('GET /api/setup/status returns setup_required:false when users exist', async () => {
     const res = await request(noAuthApp).get('/api/setup/status');
     expect(res.status).toBe(200);
@@ -149,7 +149,7 @@ describe('H1 — setup is closed once any user exists', () => {
 // L6, unknown-user login is audited
 // -----------------------------------------------------------------------------
 
-describe('L6 — unknown-user login attempts audited', () => {
+describe('L6: unknown-user login attempts audited', () => {
   it('logs reason:unknown_user on non-existent username', async () => {
     const marker = 'nosuchuser_' + Date.now();
     const res = await request(noAuthApp).post('/api/auth/login').send({ username: marker, password: 'whatever' });
@@ -169,7 +169,7 @@ describe('L6 — unknown-user login attempts audited', () => {
 // L2, logout invalidates the caller's token (via updated_at bump)
 // -----------------------------------------------------------------------------
 
-describe('L2 — logout invalidates the caller\'s token', () => {
+describe('L2: logout invalidates the caller\'s token', () => {
   it('POST /api/auth/logout returns 200 and records an audit entry', async () => {
     const db = getDb();
     // createTestApp injects req.user={id:1} so this exercises the logout path.
@@ -191,7 +191,7 @@ describe('L2 — logout invalidates the caller\'s token', () => {
 // C2, PTR record name config injection
 // -----------------------------------------------------------------------------
 
-describe('C2/H2 — DNS record config injection', () => {
+describe('C2/H2: DNS record config injection', () => {
   let fwdZone;
   let revZone;
 
@@ -325,7 +325,7 @@ describe('C2/H2 — DNS record config injection', () => {
     expect(second.status).toBe(409);
   });
 
-  it('accepts a normal PTR record (regression guard — sanitizer is not over-strict)', async () => {
+  it('accepts a normal PTR record (regression guard, sanitizer is not over-strict)', async () => {
     const res = await request(app).post(`/api/dns/zones/${revZone.id}/records`).send({
       name: '7', type: 'PTR', value: 'clean.injtest.example'
     });
@@ -344,7 +344,7 @@ describe('C2/H2 — DNS record config injection', () => {
 // M9, PTR cross-zone conflict
 // -----------------------------------------------------------------------------
 
-describe('M9 — PTR cross-zone conflict refuses silent overwrite', () => {
+describe('M9: PTR cross-zone conflict refuses silent overwrite', () => {
   let zoneB;
   let reverseZone;
 
@@ -385,7 +385,7 @@ describe('M9 — PTR cross-zone conflict refuses silent overwrite', () => {
 // C3, DHCP scope option / domain_name config injection
 // -----------------------------------------------------------------------------
 
-describe('C3 — DHCP scope config injection', () => {
+describe('C3: DHCP scope config injection', () => {
   let scopeId;
 
   beforeAll(async () => {
@@ -447,7 +447,7 @@ describe('C3 — DHCP scope config injection', () => {
 // H5, /api/subnets/calculate DoS cap
 // -----------------------------------------------------------------------------
 
-describe('H5 — /api/subnets/calculate child-count cap', () => {
+describe('H5: /api/subnets/calculate child-count cap', () => {
   it('rejects /10 → /30 as over-limit', async () => {
     const res = await request(app).post('/api/subnets/calculate').send({ cidr: '10.0.0.0/10', new_prefix: 30 });
     expect(res.status).toBe(400);
@@ -459,7 +459,7 @@ describe('H5 — /api/subnets/calculate child-count cap', () => {
     expect(res.status).toBe(400);
   });
 
-  it('accepts /24 → /25 (2 children — inside the cap)', async () => {
+  it('accepts /24 → /25 (2 children, inside the cap)', async () => {
     const res = await request(app).post('/api/subnets/calculate').send({ cidr: '192.168.200.0/24', new_prefix: 25 });
     expect(res.status).toBe(200);
     expect(res.body.subnets).toHaveLength(2);
@@ -475,7 +475,7 @@ describe('H5 — /api/subnets/calculate child-count cap', () => {
 // H6, JSON body-parse error collapse
 // -----------------------------------------------------------------------------
 
-describe('H6 — malformed JSON body yields "Invalid JSON body" 400', () => {
+describe('H6: malformed JSON body yields "Invalid JSON body" 400', () => {
   it('responds 400 with generic message', async () => {
     const res = await request(app)
       .post('/api/subnets')
@@ -490,7 +490,7 @@ describe('H6 — malformed JSON body yields "Invalid JSON body" 400', () => {
 // H7, settings per-key schema
 // -----------------------------------------------------------------------------
 
-describe('H7 — settings per-key schema rejects shape abuse', () => {
+describe('H7: settings per-key schema rejects shape abuse', () => {
   it('rejects object value for dns_listen_port', async () => {
     const res = await request(app).put('/api/settings/dns_listen_port').send({ value: { a: 1 } });
     expect(res.status).toBe(400);
@@ -548,7 +548,7 @@ describe('H7 — settings per-key schema rejects shape abuse', () => {
 // H3/H4, SSRF guard rejects loopback / link-local / RFC1918
 // -----------------------------------------------------------------------------
 
-describe('H3/H4 — outbound URL guard rejects private IPs', () => {
+describe('H3/H4: outbound URL guard rejects private IPs', () => {
   it('rejects Pi-hole probe with http://127.0.0.1', async () => {
     const res = await request(app).post('/api/pihole/probe').send({ url: 'http://127.0.0.1:8080' });
     expect(res.status).toBe(400);
@@ -584,7 +584,7 @@ describe('H3/H4 — outbound URL guard rejects private IPs', () => {
 // M6, JSON 404 fallback
 // -----------------------------------------------------------------------------
 
-describe('M6 — JSON 404 fallback on unknown /api path', () => {
+describe('M6: JSON 404 fallback on unknown /api path', () => {
   it('GET /api/nothing returns JSON 404', async () => {
     const res = await request(app).get('/api/nothing');
     expect(res.status).toBe(404);
@@ -597,7 +597,7 @@ describe('M6 — JSON 404 fallback on unknown /api path', () => {
 // M8, Display-string validator rejects angle brackets + control chars
 // -----------------------------------------------------------------------------
 
-describe('M8 — display-string validator on subnet name/description', () => {
+describe('M8: display-string validator on subnet name/description', () => {
   it('rejects subnet name containing <', async () => {
     const res = await request(app).post('/api/subnets').send({
       cidr: '10.55.0.0/24', name: '<script>alert(1)</script>'
@@ -624,7 +624,7 @@ describe('M8 — display-string validator on subnet name/description', () => {
 // V1, Backend-authoritative validation for route-specific operational inputs
 // -----------------------------------------------------------------------------
 
-describe('V1 — validation gaps from route-specific write paths', () => {
+describe('V1: validation gaps from route-specific write paths', () => {
   it('rejects Pi-hole import records with invalid DNS data before persistence', async () => {
     const zoneRes = await request(app).post('/api/dns/zones').send({
       name: 'pihole-validation.test',
@@ -688,7 +688,7 @@ describe('V1 — validation gaps from route-specific write paths', () => {
 // same process). Placing them at the end keeps earlier tests unaffected.
 // -----------------------------------------------------------------------------
 
-describe('M2 — login rate limiter trips on too many bad attempts', () => {
+describe('M2: login rate limiter trips on too many bad attempts', () => {
   // Uses a FRESH supertest agent so it doesn't share an IP bucket with
   // earlier tests... which it actually does since supertest binds to the
   // same ephemeral loopback. We're checking the trip itself, not the cap.
@@ -705,7 +705,7 @@ describe('M2 — login rate limiter trips on too many bad attempts', () => {
   }, 30_000);
 });
 
-describe('M1 — change-password rate limiter caps at 10/15min per IP', () => {
+describe('M1: change-password rate limiter caps at 10/15min per IP', () => {
   it('returns 429 after 10+ bad-current-password attempts', async () => {
     const cpApp = createTestApp(authRouter, '/api/auth');
     let lastStatus = 0;

@@ -93,7 +93,7 @@ load_key_state() {
       process.exit(1);
     }
   " 2>/dev/null) || {
-    warn "Could not parse $KEY_STATE_FILE — using shipped pubkeys"
+    warn "Could not parse $KEY_STATE_FILE, using shipped pubkeys"
     return 0
   }
   {
@@ -212,7 +212,7 @@ fetch_rotation_announcements() {
 
   local node_bin
   node_bin=$(_rotation_node) || {
-    warn "No node binary for parsing release JSON — skipping rotation fetch"
+    warn "No node binary for parsing release JSON, skipping rotation fetch"
     return 0
   }
 
@@ -252,7 +252,7 @@ fetch_rotation_announcements() {
       continue
     fi
     if ! curl --proto '=https' --proto-redir '=https' -fsSL "${url}.minisig" -o "$out_dir/${name}.minisig" 2>/dev/null; then
-      warn "No signature file for $name — skipping (unsigned announcements are rejected)"
+      warn "No signature file for $name, skipping (unsigned announcements are rejected)"
       rm -f "$out_dir/$name"
       continue
     fi
@@ -277,7 +277,7 @@ _parse_announcement() {
       if (!Number.isInteger(a.sequence_number)) throw new Error('sequence_number missing or not integer');
       if (!['primary', 'break-glass'].includes(a.rotation_target)) throw new Error('invalid rotation_target');
       // Minisign pubkeys are fixed-length (~56 chars, all base64) with no
-      // whitespace. Reject anything outside that shape — both because
+      // whitespace. Reject anything outside that shape, both because
       // malformed values would shift \`read\`-based field-splitting in the
       // caller, and because a legitimate rotation announcement will never
       // contain such a value.
@@ -329,7 +329,7 @@ apply_rotation_announcements() {
   sorted=""
   for json in "${files[@]}"; do
     entry=$(_parse_announcement "$json") || {
-      warn "Failed to parse $(basename "$json") — skipping"
+      warn "Failed to parse $(basename "$json"), skipping"
       continue
     }
     seq="${entry%% *}"
@@ -356,7 +356,7 @@ apply_rotation_announcements() {
 
     # Replay protection
     if [ "$seq" -le "$max_seen" ] 2>/dev/null; then
-      info "$name: sequence $seq <= max_seen $max_seen — already applied, skipping"
+      info "$name: sequence $seq <= max_seen $max_seen. Already applied, skipping"
       continue
     fi
 
@@ -370,7 +370,7 @@ apply_rotation_announcements() {
     # not_before check (coarse, string compare works for ISO8601 UTC)
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     if [ "$not_before" \> "$now" ]; then
-      info "$name: not_before=$not_before is in the future — deferring"
+      info "$name: not_before=$not_before is in the future, deferring"
       continue
     fi
 
@@ -399,7 +399,7 @@ apply_rotation_announcements() {
       warn "$name: revoked_pubkey in announcement does not match currently-trusted $target key"
       warn "  announcement claims to retire: $revoked_pk"
       warn "  current trusted $target key:   $current_for_target"
-      warn "  Rejecting as stale/mismatched — investigate before manually applying."
+      warn "  Rejecting as stale/mismatched. Investigate before manually applying."
       emit_event rotation fail "announcement=$name" reason=revoked-mismatch
       continue
     fi

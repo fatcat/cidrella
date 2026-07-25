@@ -55,7 +55,7 @@ detect_build_arch() {
       # arm64 releases are discontinued. Falling back to the x64 tarball would
       # install native modules (better-sqlite3, duckdb) that cannot load on
       # this host, so refuse instead of producing a broken install.
-      echo "[ERROR] This host is arm64. CIDRella arm64 releases were discontinued after v0.4.15 — this host cannot update past that version. Releases are linux-x64 only." >&2
+      echo "[ERROR] This host is arm64. CIDRella arm64 releases were discontinued after v0.4.15. This host cannot update past that version. Releases are linux-x64 only." >&2
       exit 1
       ;;
     *)
@@ -366,12 +366,12 @@ OPTIONS
 
     --from-api         Suppress interactive output. The server spawns the
                        updater this way when the admin clicks "Install" in
-                       the UI — there's no terminal to write to.
+                       the UI, there's no terminal to write to.
 
     --force            Bypass the "already running this version" short-circuit
                        and the downgrade guard. DOES NOT bypass signature
                        verification, the deep-health preflight, or the
-                       min_from gate — those are safety checks, not policy.
+                       min_from gate. Those are safety checks, not policy.
 
                        Use cases:
                          - Iterate pre-releases: 0.4.15-pre.2 → 0.4.15-pre.1
@@ -411,7 +411,7 @@ EXAMPLES
     # Install a pre-release (only works if the tag exists on GitHub)
     cidrella-update --version 0.4.15-pre.1
 
-    # Downgrade after a bad release — use cidrella-rollback instead of
+    # Downgrade after a bad release, use cidrella-rollback instead of
     # this script. --version DOES NOT allow downgrades; the downgrade
     # guard in this script will refuse.
 
@@ -422,8 +422,8 @@ RECOVERY
     Full incident guide: /opt/cidrella/BREAK-GLASS-CEREMONY.md
 
 LOGS
-    /var/lib/cidrella/update.log     — Full stdout/stderr of the last run
-    /var/lib/cidrella/update-status.json — Current state (UI polls this)
+    /var/lib/cidrella/update.log     - Full stdout/stderr of the last run
+    /var/lib/cidrella/update-status.json - Current state (UI polls this)
 
 SEE ALSO
     cidrella-rollback, RELEASE-NOTES.md inside /opt/cidrella
@@ -545,7 +545,7 @@ info "Disk space: ${AVAILABLE_MB}MB free on /opt (ok)"
 # if anything in the update flow needs it. Inject a public fallback and
 # restore on exit (via cleanup trap).
 if grep -qE '^nameserver\s+(127\.|::1|0\.0\.0\.0)' /etc/resolv.conf 2>/dev/null; then
-  info "Detected local DNS resolver — injecting fallback (8.8.8.8, 1.1.1.1)..."
+  info "Detected local DNS resolver, injecting fallback (8.8.8.8, 1.1.1.1)..."
   RESOLV_BACKUP="/etc/resolv.conf.cidrella-update.bak"
   cp /etc/resolv.conf "$RESOLV_BACKUP"
   {
@@ -600,7 +600,7 @@ fi
 if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
   if [ "$FORCE" = true ]; then
     warn "Allowing downgrade v${CURRENT_VERSION} → v${NEW_VERSION} (--force)."
-    warn "No DB snapshot will be restored — schema newer than v${NEW_VERSION} may break on boot."
+    warn "No DB snapshot will be restored. Schema newer than v${NEW_VERSION} may break on boot."
   else
     err "Refusing to downgrade: v${CURRENT_VERSION} → v${NEW_VERSION}"
     err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot),"
@@ -673,15 +673,15 @@ if declare -F load_key_state >/dev/null 2>&1; then
     mkdir -p "$ROT_DIR"
     _rot_names=$(fetch_rotation_announcements "$RELEASE_JSON" "$ROT_DIR" || true)
     if [ -n "$_rot_names" ]; then
-      info "Found rotation announcements in this release — applying"
+      info "Found rotation announcements in this release, applying"
       if ! apply_rotation_announcements "$ROT_DIR" "$BG_PUB_TMP"; then
-        err "Rotation announcement verification failed — aborting update"
+        err "Rotation announcement verification failed, aborting update"
         write_progress "failed" 28 "Rotation verify failed" "A rotation announcement in this release failed signature verification against the break-glass key. This is a security event. Aborting update."
         exit 1
       fi
     fi
   else
-    warn "Break-glass pubkey not available — skipping rotation check"
+    warn "Break-glass pubkey not available, skipping rotation check"
   fi
 fi
 
@@ -711,7 +711,7 @@ if [ -f "$_sig_file" ] && [ -f "$PUBKEY_FILE" ]; then
   else
     _rc=$?
     if [ "$_rc" -eq 2 ]; then
-      warn "minisign not installed — skipping signature verification."
+      warn "minisign not installed, skipping signature verification."
       emit_event verify skip reason=no-minisign
     else
       err "Signature verification failed! The download may be corrupted or tampered with."
@@ -724,7 +724,7 @@ elif [ -f "$PUBKEY_FILE" ]; then
   warn "No signature file found for this release. Proceeding without verification."
   emit_event verify skip reason=no-sig-file
 else
-  warn "minisign not available or no public key — skipping signature verification."
+  warn "minisign not available or no public key, skipping signature verification."
   emit_event verify skip reason=no-pubkey
 fi
 
@@ -741,7 +741,7 @@ mkdir -p "$TARGET_SLOT"
 tar -xzf "$TMPDIR/cidrella.tar.gz" -C "$TMPDIR"
 EXTRACTED=$(find "$TMPDIR" -maxdepth 1 -type d -name "cidrella*" | head -1)
 if [ -z "$EXTRACTED" ] || [ "$EXTRACTED" = "$TMPDIR" ]; then
-  err "Unexpected tarball layout — no cidrella-* directory found."
+  err "Unexpected tarball layout, no cidrella-* directory found."
   exit 1
 fi
 # Copy all files from the extracted directory into the target slot
@@ -760,7 +760,7 @@ RELEASE_META="$TARGET_SLOT/RELEASE.json"
 if [ -f "$RELEASE_META" ]; then
   VERIFIED_VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$RELEASE_META" | head -1)
   if [ -z "$VERIFIED_VERSION" ]; then
-    err "RELEASE.json present but missing/malformed 'version' field — aborting"
+    err "RELEASE.json present but missing/malformed 'version' field, aborting"
     emit_event verify fail reason=release-json-malformed
     exit 1
   fi
@@ -813,7 +813,7 @@ if [ -f "$RELEASE_META" ]; then
   ok "RELEASE.json verified: v${VERIFIED_VERSION}${MIN_FROM:+ (min_from=v$MIN_FROM)}"
   emit_event verify pass "release_json_version=$VERIFIED_VERSION" "min_from=${MIN_FROM:-none}"
 else
-  warn "Tarball has no RELEASE.json — pre-v0.4.3 release; using unverified GitHub tag for version"
+  warn "Tarball has no RELEASE.json, pre-v0.4.3 release. Using unverified GitHub tag for version"
   emit_event verify warn reason=no-release-json
 fi
 
@@ -896,7 +896,7 @@ ok "Syntax check passed (using $PREFLIGHT_NODE)"
 
 # Verify bundled node_modules exist. The new build pipeline bundles them
 if [ ! -d "$TARGET_SLOT/server/node_modules/express" ]; then
-  warn "Bundled node_modules not found in tarball — running npm install as fallback"
+  warn "Bundled node_modules not found in tarball, running npm install as fallback"
   cd "$TARGET_SLOT/server"
   if [ -x "$TARGET_SLOT/runtime/node/bin/npm" ]; then
     PATH="$TARGET_SLOT/runtime/node/bin:$PATH" "$TARGET_SLOT/runtime/node/bin/npm" install --omit=dev --silent 2>&1 | tail -3
@@ -982,7 +982,7 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27
 done
 
 if [ "$PROBE_OK" != true ]; then
-  err "Pre-flight health probe failed — new version did not come up cleanly"
+  err "Pre-flight health probe failed, new version did not come up cleanly"
   echo "--- preflight log ---" >&2
   tail -30 "$TMPDIR/preflight.log" >&2 || true
   echo "--- health response ---" >&2
@@ -996,11 +996,11 @@ emit_event preflight pass probe=deep-health "port=$PREFLIGHT_PORT"
 # SPA fallback or static-asset serving regression before the active symlink
 # moves to the new slot.
 if ! curl -sfk "https://127.0.0.1:${PREFLIGHT_PORT}/" -o "$TMPDIR/frontend.html" 2>/dev/null; then
-  err "Pre-flight frontend probe failed — new version did not serve the Vue app"
+  err "Pre-flight frontend probe failed, new version did not serve the Vue app"
   exit 1
 fi
 if ! grep -q '<script[^>]*type="module"' "$TMPDIR/frontend.html"; then
-  err "Pre-flight frontend probe failed — served root page does not look like a Vite build"
+  err "Pre-flight frontend probe failed, served root page does not look like a Vite build"
   exit 1
 fi
 ok "Frontend pre-flight probe passed"
@@ -1189,7 +1189,7 @@ if [ -f "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" ]; then
   # Install polkit if it's missing. Try modern name first (polkitd),
   # fall back to legacy name (policykit-1).
   if ! command -v pkaction >/dev/null 2>&1; then
-    info "polkit not installed — installing polkitd (or policykit-1 on older releases)"
+    info "polkit not installed, installing polkitd (or policykit-1 on older releases)"
     if ! apt-get install -y -qq polkitd >/dev/null 2>&1 && \
        ! apt-get install -y -qq policykit-1 >/dev/null 2>&1; then
       err "Pre-flight failed: polkit is required but could not be installed automatically."
@@ -1466,10 +1466,10 @@ fi
 # AUTO-ROLLBACK (new version failed to come up)
 # ═══════════════════════════════════════════════════════════
 
-err "New version failed health check — auto-rolling back to v${CURRENT_VERSION}"
+err "New version failed health check, auto-rolling back to v${CURRENT_VERSION}"
 emit_event health fail "version=$NEW_VERSION"
 emit_event rollback start "from=$NEW_VERSION" "to=$CURRENT_VERSION"
-write_progress "rolling_back" 95 "New version failed — auto-rolling back..." "Health check failed"
+write_progress "rolling_back" 95 "New version failed, auto-rolling back..." "Health check failed"
 
 # Swap symlink back
 ln -sfn "$ACTIVE_SLOT" "$INSTALL_LINK"
@@ -1500,11 +1500,11 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 done
 
 if [ "$ROLLBACK_OK" = true ]; then
-  err "Update FAILED — automatically rolled back to v${CURRENT_VERSION}."
+  err "Update FAILED, automatically rolled back to v${CURRENT_VERSION}."
   err "Check logs: journalctl -u cidrella -n 100"
   emit_event rollback pass "restored_version=$CURRENT_VERSION"
   emit_event update end result=rolled-back "from=$CURRENT_VERSION" "to=$NEW_VERSION"
-  write_progress "failed" 100 "Update failed — rolled back to v${CURRENT_VERSION}" "Health check failed after update. Automatic rollback succeeded."
+  write_progress "failed" 100 "Update failed, rolled back to v${CURRENT_VERSION}" "Health check failed after update. Automatic rollback succeeded."
   exit 1
 else
   err "CRITICAL: rollback FAILED too! CIDRella is not running."

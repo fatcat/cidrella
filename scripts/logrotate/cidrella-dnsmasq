@@ -4,7 +4,7 @@
 #
 # Context: dnsmasq is configured with `log-queries` and `log-dhcp`, which
 # produces a high-volume append-only log at /var/lib/cidrella/dnsmasq/dnsmasq.log.
-# Without rotation this grows unbounded — on the 2026-04-21 incident the
+# Without rotation this grows unbounded: on the 2026-04-21 incident the
 # prod log had reached 1.5 GB and was silently inflating every backup,
 # which froze a 1 GB RAM test instance during restore.
 #

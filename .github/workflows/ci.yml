@@ -69,6 +69,6 @@ jobs:
           echo "Circular dependency chains: $COUNT (baseline: 1)"
           if [ "$COUNT" -gt 1 ]; then
             npx -y madge --circular --extensions js server/src
-            echo "New circular dependency introduced — see chains above."
+            echo "New circular dependency introduced, see chains above."
             exit 1
           fi

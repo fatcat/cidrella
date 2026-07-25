@@ -21,7 +21,7 @@ beforeEach(() => {
   vi.spyOn(os, 'networkInterfaces').mockReturnValue(IFACES);
 });
 
-describe('getLanInterfaces — rogue DHCP probes only DHCP-enabled segments', () => {
+describe('getLanInterfaces: rogue DHCP probes only DHCP-enabled segments', () => {
   it('returns [] when DHCP is globally disabled (even if an interface is dhcp:true)', () => {
     state.settings.dhcp_enabled = 'false';
     state.settings.interface_config = JSON.stringify({ eth0: { dhcp: true } });

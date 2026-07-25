@@ -89,7 +89,7 @@ describe('PUT /api/dns/encryption', () => {
   });
 });
 
-describe('PUT /api/dns/forwarders — no_recursion', () => {
+describe('PUT /api/dns/forwarders: no_recursion', () => {
   it('requires upstreams when recursion is enabled', async () => {
     expect((await request(app).put('/api/dns/forwarders').send({ servers: [], no_recursion: false })).status).toBe(400);
   });

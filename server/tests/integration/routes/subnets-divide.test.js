@@ -83,7 +83,7 @@ async function dividePreview(subnetId, body) {
 
 // Tests ----------------------------------------------------------------
 
-describe('POST /api/subnets/:id/divide — data preservation', () => {
+describe('POST /api/subnets/:id/divide, data preservation', () => {
   it('transfers DHCP reservations into the child that contains the IP', async () => {
     const parent = await createSubnet({ cidr: '10.10.0.0/23', name: 'Divide-res', status: 'allocated', gateway_address: '10.10.0.1' });
     await configure(parent.id, { name: 'Divide-res', create_reverse_dns: false, create_dhcp_scope: false });
@@ -143,7 +143,7 @@ describe('POST /api/subnets/:id/divide — data preservation', () => {
   });
 });
 
-describe('POST /api/subnets/:id/divide — lossy gate', () => {
+describe('POST /api/subnets/:id/divide, lossy gate', () => {
   it('preview returns lossy list when a reservation would land on a new broadcast IP', async () => {
     const parent = await createSubnet({ cidr: '10.12.0.0/22', name: 'Lossy-preview', status: 'allocated', gateway_address: '10.12.0.1' });
     await configure(parent.id, { name: 'Lossy-preview', create_reverse_dns: false, create_dhcp_scope: true });
@@ -240,7 +240,7 @@ describe('POST /api/subnets/:id/divide — lossy gate', () => {
   });
 });
 
-describe('POST /api/subnets/:id/divide — lossy-artifact cleanup with force_lossy', () => {
+describe('POST /api/subnets/:id/divide, lossy-artifact cleanup with force_lossy', () => {
   it('deletes DHCP reservations, DNS A records, and reports counts', async () => {
     const parent = await createSubnet({
       cidr: '10.19.0.0/22', name: 'LossyCleanup', status: 'allocated', gateway_address: '10.19.0.1'
@@ -282,7 +282,7 @@ describe('POST /api/subnets/:id/divide — lossy-artifact cleanup with force_los
   });
 });
 
-describe('POST /api/subnets/:id/divide — gateway/pool conflict handling', () => {
+describe('POST /api/subnets/:id/divide, gateway/pool conflict handling', () => {
   it('shrinks the pool to exclude the child gateway and reports the adjustment', async () => {
     // Parent /22 with gateway at .1 (firstUsable) and a pool spanning the
     // FULL usable range of the parent. After divide into /23s, each child

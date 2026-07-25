@@ -1,4 +1,4 @@
-# CIDRella — Native Installation (Debian/Ubuntu)
+# CIDRella: Native Installation (Debian/Ubuntu)
 
 Recommended for production deployments on bare metal or LXC containers.
 
@@ -8,7 +8,7 @@ Recommended for production deployments on bare metal or LXC containers.
 - Root access (or sudo)
 - Network access to github.com (release download + signature verification)
 
-> **Note on `arm64`**: the installer and bundled runtime *should* work on arm64 (the release tarballs are built for it and the Node binary + native modules are compiled for both architectures), but arm64 is **not tested** — all development and release validation runs on `amd64`. If you hit arm64-specific issues, please open a GitHub issue with the output of `uname -a`, `dpkg --print-architecture`, and the install.sh log.
+> **Note on `arm64`**: the installer and bundled runtime *should* work on arm64 (the release tarballs are built for it and the Node binary + native modules are compiled for both architectures), but arm64 is **not tested**: all development and release validation runs on `amd64`. If you hit arm64-specific issues, please open a GitHub issue with the output of `uname -a`, `dpkg --print-architecture`, and the install.sh log.
 
 **You do not need to install any system packages yourself.** The installer calls `apt-get` and pulls everything CIDRella needs. It is listed here only so you know what will land on the host:
 
@@ -28,7 +28,7 @@ Recommended for production deployments on bare metal or LXC containers.
 | `python3`, `python3-setuptools` | Anomaly detection daemon runtime |
 | `python3-sklearn`, `python3-numpy`, `python3-joblib` | Anomaly detection ML libraries |
 
-Node.js is **not** a prerequisite — a Node 24.x runtime is bundled inside the release tarball and installed under `/opt/cidrella-<slot>/runtime/node/`. No system Node required.
+Node.js is **not** a prerequisite. A Node 24.x runtime is bundled inside the release tarball and installed under `/opt/cidrella-<slot>/runtime/node/`. No system Node required.
 
 ### Active scan capabilities
 
@@ -48,7 +48,7 @@ What the installer does:
 - Drops a narrow rule at `/etc/polkit-1/rules.d/49-cidrella.rules` authorizing `subject.user == "cidrella"` to `start cidrella-update@*.service` and to `reload`/`restart cidrella-dnsmasq.service` via D-Bus (no other actions, no other units)
 - Probes `pkaction --version` to confirm the JS rules engine is present, and verifies the polkit daemon is active before completing the install
 
-If any step fails, the installer aborts with a diagnostic message. A working polkit daemon is **not optional** on v0.4.11+ native installs — the in-app updater depends on it.
+If any step fails, the installer aborts with a diagnostic message. A working polkit daemon is **not optional** on v0.4.11+ native installs: the in-app updater depends on it.
 
 **If you upgraded *to* v0.4.11 via `cidrella-update` from v0.4.10 or earlier**, your host is missing the polkit package, rule file, and templated unit because v0.4.11's `update.sh` did not reconcile that state on upgrade (only fresh installs via `install.sh` did). Symptom: the UI update panel fails with "Access denied" on every install click, or your stuck update status says `systemctl start cidrella-update@... failed: Access denied`. Recovery (run as root on the host):
 
@@ -71,7 +71,7 @@ systemctl daemon-reload
 
 # 4. Start polkit. On some LXC builds systemd hits a "status=217/USER" race
 #    on the first start attempt because the polkitd user was just created
-#    and the cache hasn't refreshed — a reset-failed + start clears it.
+#    and the cache hasn't refreshed. A reset-failed + start clears it.
 systemctl reset-failed polkit 2>/dev/null || true
 systemctl start polkit
 
@@ -81,7 +81,7 @@ rm -f /var/lib/cidrella/update-status.json
 # 6. Retry the update via the UI (or run `cidrella-update` as root).
 ```
 
-v0.4.13 moves this reconciliation into `update.sh` so the problem self-heals on the next upgrade. Until then, the manual procedure above is the only path — or use `cidrella-update` from a root shell, which bypasses the polkit requirement entirely.
+v0.4.13 moves this reconciliation into `update.sh` so the problem self-heals on the next upgrade. Until then, the manual procedure above is the only path, or use `cidrella-update` from a root shell, which bypasses the polkit requirement entirely.
 
 ## Installation
 
@@ -219,22 +219,22 @@ On a fresh install, CIDRella uses 443/80 when both ports are free. If either por
 
 ### Reset Admin Password
 
-If you've forgotten the admin password — or need to rotate credentials for any user — run the CLI reset wrapper as root:
+If you've forgotten the admin password (or need to rotate credentials for any user), run the CLI reset wrapper as root:
 
 ```bash
 sudo cidrella-reset-password           # resets 'admin'
 sudo cidrella-reset-password someuser  # resets 'someuser'
 ```
 
-The wrapper prints a fresh random password once, sets `must_change_password=1`, writes an `audit_log` entry with `action=password_reset_cli`, and records who performed the reset in `users.password_reset_by` (e.g. `cli:root@cidrella-prod`). On next successful login the user sees a red warning banner on the Change Password page identifying the reset — so if the legitimate owner sees that banner and didn't do the reset, they know someone with root shell access to the host ran it and should investigate immediately.
+The wrapper prints a fresh random password once, sets `must_change_password=1`, writes an `audit_log` entry with `action=password_reset_cli`, and records who performed the reset in `users.password_reset_by` (e.g. `cli:root@cidrella-prod`). On next successful login the user sees a red warning banner on the Change Password page identifying the reset. So if the legitimate owner sees that banner and didn't do the reset, they know someone with root shell access to the host ran it and should investigate immediately.
 
 **Security notes**:
 
-- The wrapper is `/usr/local/bin/cidrella-reset-password`, mode `0700 root:root` — only root can execute it.
+- The wrapper is `/usr/local/bin/cidrella-reset-password`, mode `0700 root:root`. Only root can execute it.
 - The actual filesystem security comes from `/var/lib/cidrella/cidrella.db` being mode `600 cidrella:cidrella` on v0.4.8+ installs. Anyone with root or cidrella shell access can bypass the wrapper and manipulate the DB directly; this is not a bug, it's the correct security boundary. Host access is total access.
-- Every reset is audited and visible on next login. **This is the primary defense against unauthorized resets** — they can't be silent.
+- Every reset is audited and visible on next login. **This is the primary defense against unauthorized resets**: they can't be silent.
 
-**Legacy installs (pre-v0.4.8)**: the wrapper is installed starting in v0.4.8. If you're on an older version, you can still run the underlying script directly, but note that v0.4.7+ installs no longer have system `node` — use the bundled runtime:
+**Legacy installs (pre-v0.4.8)**: the wrapper is installed starting in v0.4.8. If you're on an older version, you can still run the underlying script directly, but note that v0.4.7+ installs no longer have system `node`. Use the bundled runtime:
 
 ```bash
 # Pre-v0.4.8 on v0.4.7+:

@@ -52,7 +52,7 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('regenerateDnsmasqConf — no-recursion (authoritative-only)', () => {
+describe('regenerateDnsmasqConf: no-recursion (authoritative-only)', () => {
   it('emits NO server= lines when dns_no_recursion is true', () => {
     settings.dns_no_recursion = 'true';
     regenerateDnsmasqConf({});
@@ -81,7 +81,7 @@ describe('regenerateDnsmasqConf — no-recursion (authoritative-only)', () => {
   });
 });
 
-describe('regenerateDnsmasqConf — encrypted forwarding server= wiring', () => {
+describe('regenerateDnsmasqConf: encrypted forwarding server= wiring', () => {
   it('uses plain upstream IPs when encryption is off', () => {
     settings.forwarder_encryption = 'off';
     regenerateDnsmasqConf({});
@@ -111,7 +111,7 @@ describe('regenerateDnsmasqConf — encrypted forwarding server= wiring', () => 
   });
 });
 
-describe('regenerateDnsmasqConf — DNSSEC block', () => {
+describe('regenerateDnsmasqConf: DNSSEC block', () => {
   it('emits no DNSSEC directives when dnssec_enabled is false', () => {
     regenerateDnsmasqConf({});
     const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
@@ -136,7 +136,7 @@ describe('regenerateDnsmasqConf — DNSSEC block', () => {
     expect(hasAnchor).toBe(true);
   });
 
-  it('is idempotent — repeated regen does not duplicate the block', () => {
+  it('is idempotent: repeated regen does not duplicate the block', () => {
     settings.dnssec_enabled = 'true';
     regenerateDnsmasqConf({});
     regenerateDnsmasqConf({});
@@ -167,7 +167,7 @@ describe('regenerateDnsmasqConf — DNSSEC block', () => {
   });
 });
 
-describe('regenerateDnsmasqConf — dnsmasq without DNSSEC support', () => {
+describe('regenerateDnsmasqConf: dnsmasq without DNSSEC support', () => {
   it('refuses to emit the block and reports unsupported', async () => {
     vi.resetModules();
     vi.mocked(execFileSync).mockReturnValue('Compile time options: IPv6 DHCP no-DNSSEC inotify');

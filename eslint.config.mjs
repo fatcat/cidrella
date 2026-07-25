@@ -1,7 +1,7 @@
-// ESLint flat config — correctness-focused, not stylistic. Formatting churn is
+// ESLint flat config: correctness-focused, not stylistic. Formatting churn is
 // deliberately avoided on this established codebase; stylistic enforcement is
 // the format-on-edit hook's job in projects that opt into Prettier (this one
-// doesn't — see CLAUDE.md "Conventions").
+// doesn't, see CLAUDE.md "Conventions").
 import js from '@eslint/js';
 import pluginVue from 'eslint-plugin-vue';
 import globals from 'globals';
@@ -73,7 +73,7 @@ export default [
       'preserve-caught-error': 'off',
       // View components are legitimately single-word (Settings.vue, GeoIP.vue)
       'vue/multi-word-component-names': 'off',
-      // Vue stylistic rules off — formatting is not lint's job here, and the
+      // Vue stylistic rules off, formatting is not lint's job here, and the
       // codebase predates the linter. Correctness rules from the plugin stay on.
       'vue/max-attributes-per-line': 'off',
       'vue/singleline-html-element-content-newline': 'off',

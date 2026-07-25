@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ipToLong, longToIp, parseCidr } from '../../../src/utils/ip.js';
 
-// Client-side IP utils mirror server-side — these tests catch drift
+// Client-side IP utils mirror server-side. These tests catch drift
 
 describe('ipToLong', () => {
   it('converts 0.0.0.0', () => {

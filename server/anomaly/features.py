@@ -1,4 +1,4 @@
-"""Feature engineering — queries DuckDB via the Node.js internal API."""
+"""Feature engineering: queries DuckDB via the Node.js internal API."""
 
 import json
 import math
@@ -151,7 +151,7 @@ def extract_features(client_ip, window_start, window_end):
     unique_domains = set(domains)
     unique_domain_count = len(unique_domains)
 
-    # New domain ratio: placeholder — filled by caller with historical context
+    # New domain ratio: placeholder, filled by caller with historical context
     new_domain_ratio = 0.0
 
     entropies = [_shannon_entropy(d) for d in domains]

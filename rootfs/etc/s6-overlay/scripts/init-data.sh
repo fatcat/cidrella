@@ -25,7 +25,7 @@ if [ ! -f /data/dnsmasq/dnsmasq.conf ]; then
   echo "Copied default dnsmasq configuration"
 fi
 
-# Fix listen-address=0.0.0.0 — dnsmasq with bind-dynamic ignores 0.0.0.0
+# Fix listen-address=0.0.0.0: dnsmasq with bind-dynamic ignores 0.0.0.0
 # Replace with 127.0.0.1 + all real interface IPs
 if grep -q '^listen-address=0\.0\.0\.0' /data/dnsmasq/dnsmasq.conf; then
   # Build replacement: 127.0.0.1 + each non-loopback IPv4 address

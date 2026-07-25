@@ -1,4 +1,4 @@
-"""Isolation Forest model management — train, score, persist, explain."""
+"""Isolation Forest model management: train, score, persist, explain."""
 
 import joblib
 from sklearn.ensemble import IsolationForest

@@ -85,7 +85,7 @@ async function findZone(name) {
 // Post-decouple (migration 045): zones are subnet-agnostic. `domain_name` on a
 // subnet is just a pointer to a forward zone by name. Multiple subnets may
 // share one zone; changing a subnet's domain_name doesn't touch the zone.
-describe('PUT /api/subnets/:id — domain_name pointer semantics', () => {
+describe('PUT /api/subnets/:id, domain_name pointer semantics', () => {
   it('changing domain_name auto-creates the target forward zone if missing', async () => {
     const s = await mkSubnet({ cidr: '10.30.0.0/24', name: 'ptr', status: 'allocated', gateway_address: '10.30.0.1' });
     await configure(s.id, { name: 'ptr', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'old.test' });
@@ -345,7 +345,7 @@ describe('ip-sync orphan cleanup', () => {
 
 // --- PUT /:id CIDR reject + gateway-in-pool guards --------------------
 
-describe('PUT /api/subnets/:id — structural guards', () => {
+describe('PUT /api/subnets/:id, structural guards', () => {
   it('rejects DHCP scope bounds outside the subnet usable range', async () => {
     const s = await mkSubnet({ cidr: '10.90.0.0/22', name: 'bad-scope', status: 'unallocated' });
 
@@ -409,7 +409,7 @@ describe('PUT /api/subnets/:id — structural guards', () => {
   });
 });
 
-describe('PUT /api/dhcp/scopes/:id — pool resize guard (R4 #4)', () => {
+describe('PUT /api/dhcp/scopes/:id, pool resize guard (R4 #4)', () => {
   it('refuses a pool resize that would include the subnet gateway', async () => {
     const s = await mkSubnet({ cidr: '10.42.0.0/24', name: 'scope-resize', status: 'allocated', gateway_address: '10.42.0.1' });
     await configure(s.id, {
@@ -431,7 +431,7 @@ describe('PUT /api/dhcp/scopes/:id — pool resize guard (R4 #4)', () => {
   });
 });
 
-describe('GET /api/dhcp/scopes/:id/addresses — lifecycle state', () => {
+describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
   it('includes ip_addresses lifecycle state for unassigned addresses in the scope', async () => {
     const s = await mkSubnet({ cidr: '10.44.0.0/24', name: 'scope-lifecycle', status: 'allocated', gateway_address: '10.44.0.1' });
     await configure(s.id, {
@@ -580,7 +580,7 @@ describe('VLAN collision warning', () => {
 
 // --- Reservation leaf-only guard (R-audit MEDIUM) ---------------------
 
-describe('POST /api/dhcp/reservations — subnet target must be an allocated leaf', () => {
+describe('POST /api/dhcp/reservations, subnet target must be an allocated leaf', () => {
   it('rejects a reservation on a subnet that has children (not a leaf)', async () => {
     const fA = (await request(app).post('/api/folders').send({ name: 'ResvLeafA' })).body;
     void fA;
@@ -615,7 +615,7 @@ describe('POST /api/dhcp/reservations — subnet target must be an allocated lea
 
 // --- Range DELETE guard (R2 #2) ---------------------------------------
 
-describe('DELETE /api/subnets/:subnetId/ranges/:id — scope guard', () => {
+describe('DELETE /api/subnets/:subnetId/ranges/:id, scope guard', () => {
   it('refuses to update a range to a nonexistent range type', async () => {
     const s = await mkSubnet({ cidr: '10.92.0.0/24', name: 'range-type-guard', status: 'allocated', gateway_address: '10.92.0.1' });
     const { getDb } = await import('../../../src/db/init.js');

@@ -62,7 +62,7 @@ describe('DELETE /api/geoip/allowlist/:id', () => {
   });
 });
 
-describe('POST /api/geoip/allowlist — canonicalization (v0.4.16)', () => {
+describe('POST /api/geoip/allowlist: canonicalization (v0.4.16)', () => {
   it('stores the canonical CIDR form (host bits masked, explicit prefix)', async () => {
     const res = await request(app).post('/api/geoip/allowlist').send({ value: '10.5.5.5/8' });
     expect(res.status).toBe(201);
@@ -89,14 +89,14 @@ describe('canonicalizeExisting backfill', () => {
     const { canonicalizeExisting } = await import('../../../src/models/geoip-ip-allowlist.js');
     const db = getDb();
     const ins = db.prepare('INSERT INTO geoip_ip_allowlist (value, reason) VALUES (?, ?)');
-    ins.run('10.5.5.5/8', 'oldest — keep me');
-    ins.run('010.0.0.0/8', 'dup — drop me');
+    ins.run('10.5.5.5/8', 'oldest, keep me');
+    ins.run('010.0.0.0/8', 'dup, drop me');
     ins.run('8.8.8.8', null);
     ins.run('2001:DB8::1', null);
     canonicalizeExisting(db);
     const rows = db.prepare('SELECT value, reason FROM geoip_ip_allowlist ORDER BY id').all();
     expect(rows).toEqual([
-      { value: '10.0.0.0/8', reason: 'oldest — keep me' },
+      { value: '10.0.0.0/8', reason: 'oldest, keep me' },
       { value: '8.8.8.8/32', reason: null },
       { value: '2001:db8::1/128', reason: null },
     ]);
@@ -106,7 +106,7 @@ describe('canonicalizeExisting backfill', () => {
   });
 });
 
-describe('canonicalizeExisting backfill — UNIQUE collision regression', () => {
+describe('canonicalizeExisting backfill: UNIQUE collision regression', () => {
   it('survives a non-canonical row ordered BEFORE a row already storing the canonical string', async () => {
     // Regression: the one-pass version UPDATEd row 1 ('10.5.5.5/8' -> '10.0.0.0/8')
     // while row 2 already held '10.0.0.0/8', violating UNIQUE(value) and

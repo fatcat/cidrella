@@ -110,7 +110,7 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if [ ! -L "$INSTALL_LINK" ]; then
-  err "$INSTALL_LINK is not a symlink — A/B rollback not available."
+  err "$INSTALL_LINK is not a symlink, A/B rollback not available."
   err "This installation predates the A/B update system."
   err "Look for backup directories: ls -la /opt/cidrella.bak-*"
   exit 1
@@ -165,7 +165,7 @@ if [ "$HAS_SNAPSHOT" = true ]; then
   echo "                     cidrella.db + analytics.duckdb will be restored"
 else
   echo -e "  DB snapshot:       ${YELLOW}NOT FOUND${NC}"
-  echo "                     Database will NOT be rolled back — schema mismatches may occur."
+  echo "                     Database will NOT be rolled back, schema mismatches may occur."
 fi
 echo ""
 

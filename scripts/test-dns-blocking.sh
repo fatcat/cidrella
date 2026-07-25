@@ -54,7 +54,7 @@ expect_blocked() {
     echo -e "  ${GREEN}PASS${RESET}  ${domain}  ${DIM}(${dns_status})${RESET}"
     (( pass++ )) || true
   elif [[ "$dns_status" == "NOERROR" ]]; then
-    echo -e "  ${RED}FAIL${RESET}  ${domain}  → ${dns_answer}  ${DIM}(${dns_status} — expected block)${RESET}"
+    echo -e "  ${RED}FAIL${RESET}  ${domain}  → ${dns_answer}  ${DIM}(${dns_status}, expected block)${RESET}"
     (( fail++ )) || true
   else
     echo -e "  ${YELLOW}SKIP${RESET}  ${domain}  ${DIM}(${dns_status})${RESET}"
@@ -69,7 +69,7 @@ expect_allowed() {
     echo -e "  ${GREEN}PASS${RESET}  ${domain}  → ${dns_answer}  ${DIM}(${note})${RESET}"
     (( pass++ )) || true
   elif [[ "$dns_status" == "NXDOMAIN" ]]; then
-    echo -e "  ${RED}FAIL${RESET}  ${domain}  ${DIM}(NXDOMAIN — expected to resolve; ${note})${RESET}"
+    echo -e "  ${RED}FAIL${RESET}  ${domain}  ${DIM}(NXDOMAIN, expected to resolve; ${note})${RESET}"
     (( fail++ )) || true
   else
     echo -e "  ${YELLOW}SKIP${RESET}  ${domain}  ${DIM}(${dns_status}; ${note})${RESET}"
@@ -84,10 +84,10 @@ expect_geoip_blocked() {
     echo -e "  ${YELLOW}SKIP${RESET}  ${domain}  ${DIM}(no response from server; ${country})${RESET}"
     (( skip++ )) || true
   elif [[ "$dns_status" == "NXDOMAIN" ]] || [[ "$dns_status" == "NOERROR" && -z "$dns_answer" ]]; then
-    echo -e "  ${GREEN}PASS${RESET}  ${domain}  ${DIM}(${dns_status} empty — ${country} blocked)${RESET}"
+    echo -e "  ${GREEN}PASS${RESET}  ${domain}  ${DIM}(${dns_status} empty, ${country} blocked)${RESET}"
     (( pass++ )) || true
   elif [[ "$dns_status" == "NOERROR" && -n "$dns_answer" ]]; then
-    echo -e "  ${RED}FAIL${RESET}  ${domain}  → ${dns_answer}  ${DIM}(resolved — expected GeoIP block for ${country})${RESET}"
+    echo -e "  ${RED}FAIL${RESET}  ${domain}  → ${dns_answer}  ${DIM}(resolved, expected GeoIP block for ${country})${RESET}"
     (( fail++ )) || true
   else
     echo -e "  ${YELLOW}SKIP${RESET}  ${domain}  ${DIM}(${dns_status}; ${country})${RESET}"
@@ -312,15 +312,15 @@ run_geoip "IR" \
 
 # KP: Very few domains exist (all on 175.45.176.0/22, often unreachable)
 print_header "GEOIP: KP (5 domains)"
-echo -e "  ${DIM}Note: KP domains are frequently unreachable — SKIPs expected.${RESET}"
+echo -e "  ${DIM}Note: KP domains are frequently unreachable, SKIPs expected.${RESET}"
 for d in star.co.kp kcna.kp naenara.com.kp rodong.rep.kp ma.gov.kp; do
   expect_geoip_blocked "$d" "KP"
 done
 
 # ── GeoIP control: should resolve normally ──
-print_header "GEOIP: Control (US/EU — should resolve normally)"
+print_header "GEOIP: Control (US/EU, should resolve normally)"
 for d in google.com github.com cloudflare.com bbc.co.uk lemonde.fr; do
-  expect_allowed "$d" "US/EU — not geo-blocked"
+  expect_allowed "$d" "US/EU, not geo-blocked"
 done
 
 # ════════════════════════════════════════════════════════════════════════
@@ -345,7 +345,7 @@ if [[ $fail -gt 0 ]]; then
   echo "  - dnsmasq is running and reachable at ${DNS_SERVER}"
   exit 1
 elif [[ $skip -gt $((total / 3)) ]]; then
-  echo -e "${YELLOW}Many tests skipped — DNS resolution issues or domains expired.${RESET}"
+  echo -e "${YELLOW}Many tests skipped. DNS resolution issues or domains expired.${RESET}"
   exit 0
 else
   echo -e "${GREEN}All tests passed.${RESET}"

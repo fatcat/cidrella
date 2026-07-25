@@ -1,4 +1,4 @@
-# CIDRella — sudoers file for the cidrella service account.
+# CIDRella: sudoers file for the cidrella service account.
 #
 # As of v0.4.14, this file is EMPTY. Every sudo callsite has been eliminated:
 #
@@ -7,7 +7,7 @@
 #
 # - v0.4.14: arping replaced with a direct execFile call. The cidrella
 #   service runs with AmbientCapabilities=CAP_NET_RAW (set by
-#   cidrella.service), which propagates to child processes on exec —
+#   cidrella.service), which propagates to child processes on exec,
 #   including arping. No sudo, no setcap, no file capabilities on the
 #   arping binary. Verified on testerella via a transient systemd unit
 #   running as the cidrella user with AmbientCapabilities=CAP_NET_RAW.

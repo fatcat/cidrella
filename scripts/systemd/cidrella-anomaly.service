@@ -42,13 +42,13 @@ RestrictNamespaces=true
 NoNewPrivileges=true
 RemoveIPC=true
 
-# Drop ALL capabilities from the bounding set — the anomaly daemon needs
+# Drop ALL capabilities from the bounding set, the anomaly daemon needs
 # none of them.
 CapabilityBoundingSet=
 AmbientCapabilities=
 
 # NOT enabled:
-#   MemoryDenyWriteExecute=true — numpy / scipy / scikit-learn may use
+#   MemoryDenyWriteExecute=true: numpy / scipy / scikit-learn may use
 #     SIMD code paths that rely on W+X mappings in some builds. Risk of
 #     silent runtime breakage, not worth it for the marginal gain.
 

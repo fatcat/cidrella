@@ -448,7 +448,7 @@ const dnsDotKind = computed(() => {
 });
 const dnsTitle = computed(() =>
   rogueDhcpCount.value > 0
-    ? `DNSmasq: ${dnsDisplay.value} — ${rogueDhcpCount.value} rogue DHCP server(s) detected`
+    ? `DNSmasq: ${dnsDisplay.value}, ${rogueDhcpCount.value} rogue DHCP server(s) detected`
     : `DNSmasq: ${dnsDisplay.value}`
 );
 const cpuChipClass = computed(() => resourceChip(cpuStatusClass.value));

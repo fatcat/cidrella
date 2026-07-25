@@ -1,8 +1,8 @@
 #!/bin/sh
-# cidrella-reset-web-ports — recover CIDRella web UI port settings.
+# cidrella-reset-web-ports: recover CIDRella web UI port settings.
 #
 # Installed at /usr/local/bin/cidrella-reset-web-ports by install.sh and
-# refreshed by update.sh. Mode 0700 root:root — only root can execute it.
+# refreshed by update.sh. Mode 0700 root:root, only root can execute it.
 #
 # Usage:
 #   sudo cidrella-reset-web-ports

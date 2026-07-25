@@ -10,7 +10,7 @@ Open a [private security advisory](https://github.com/fatcat/cidrella/security/a
 
 Include enough detail to reproduce: affected version, the request or input that triggers the issue, and the observed vs. expected behavior. A working PoC is appreciated but not required.
 
-I aim to acknowledge reports within a few days and ship a fix in the next release train. CIDRella is a one-maintainer project — please be patient with response times.
+I aim to acknowledge reports within a few days and ship a fix in the next release train. CIDRella is a one-maintainer project, so please be patient with response times.
 
 ## Supported versions
 
@@ -21,7 +21,7 @@ Only the latest released version receives security fixes. Old release tags are k
 A few things worth knowing if you're evaluating CIDRella for self-hosting:
 
 - **Releases are signed.** Every release tarball is signed with [minisign](https://jedisct1.github.io/minisign/). The primary public key ships in `scripts/cidrella.pub` inside every release. `update.sh` verifies the signature against the embedded pubkey before extracting any new slot, and refuses to apply unsigned or mis-signed tarballs.
-- **Per-install secrets.** The JWT signing secret and self-signed TLS certificate are generated at install time using `crypto.randomBytes(64)`. Nothing in the release tarball seeds these — every install has its own secrets.
+- **Per-install secrets.** The JWT signing secret and self-signed TLS certificate are generated at install time using `crypto.randomBytes(64)`. Nothing in the release tarball seeds these. Every install has its own secrets.
 - **A/B slot updates with auto-rollback.** Updates extract to an inactive slot, preflight-probe the new slot's `/api/health/deep`, and only swap the symlink if the probe passes. A failed health check after switchover triggers automatic rollback to the previous slot. DNS and DHCP stay up across updates (the `cidrella-dnsmasq` service is never restarted by the updater).
 - **Systemd hardening.** Service units run with `ProtectSystem=strict`, narrow `CapabilityBoundingSet`, `NoNewPrivileges`, `PrivateDevices`, the full `Protect*` family, and explicit `ReadWritePaths`. The Python anomaly daemon runs with an empty capability bounding set.
 - **Filesystem permissions.** `cidrella.db`, `analytics.duckdb`, and the TLS private key are mode 0600 and owned by the `cidrella` user. The `certs/`, `backups/`, and `anomaly/` directories are mode 0700.
@@ -42,7 +42,7 @@ A few things worth knowing if you're evaluating CIDRella for self-hosting:
 **Why it happened**: `scripts/build-release.sh` used `rsync -a --exclude='node_modules'` without a broader exclude list. Anything in `server/` outside `node_modules/` was staged into the tarball. This included the running dev environment's data directory.
 
 **Why it is not currently exploitable against any real install**:
-- **The leaked JWT secret has no install that uses it.** Both `install.sh` (native) and the Dockerfile (container) bootstrap from an empty data directory at runtime: `/var/lib/cidrella/` (native) or `/data` (Docker). The leaked `cidrella.db` ends up at `/opt/cidrella/server/data/cidrella.db` (native) or `/app/server/data/cidrella.db` (Docker), which is the wrong path — the running server never opens it. On first start, `db/init.js:ensureDefaults()` finds no `jwt_secret` in the empty DB and generates a fresh per-install secret with `crypto.randomBytes(64)`. A forged token signed with the leaked secret will not verify against any real install's middleware.
+- **The leaked JWT secret has no install that uses it.** Both `install.sh` (native) and the Dockerfile (container) bootstrap from an empty data directory at runtime: `/var/lib/cidrella/` (native) or `/data` (Docker). The leaked `cidrella.db` ends up at `/opt/cidrella/server/data/cidrella.db` (native) or `/app/server/data/cidrella.db` (Docker), which is the wrong path, so the running server never opens it. On first start, `db/init.js:ensureDefaults()` finds no `jwt_secret` in the empty DB and generates a fresh per-install secret with `crypto.randomBytes(64)`. A forged token signed with the leaked secret will not verify against any real install's middleware.
 - **The leaked TLS key is self-signed and untrusted.** No browser or system trust store accepts it, and `install.sh` generates a fresh self-signed cert per install via `openssl`.
 - **The leaked bcrypt hash is for a development `admin` account that does not exist on real installs.** `install.sh` prompts the operator for an admin password during first-run setup and forces a password change on first login.
 

@@ -1,12 +1,12 @@
 #!/bin/sh
-# CIDRella node resolver — prefers a bundled runtime if present,
+# CIDRella node resolver: prefers a bundled runtime if present,
 # falls back to the system node binary. Installed at
 # /usr/local/bin/cidrella-node and used by:
 #   - cidrella.service (ExecStart, via server/src/launcher.js)
 #   - update.sh (when operating on the active slot)
 #   - rollback.sh
 #
-# Phase 0 (v0.4.3): bundled runtime does not exist yet — this wrapper
+# Phase 0 (v0.4.3): bundled runtime does not exist yet, this wrapper
 # is plumbing for Phase 2 (v0.4.5), which will ship a pinned Node.
 # Until then, every call falls through to /usr/bin/node.
 #
@@ -23,7 +23,7 @@ set -eu
 # (CIDRELLA_NODE=/usr/local/bin/cidrella-node when this script IS that
 # path) is detected and skipped. Without the guard, calling this wrapper
 # with CIDRELLA_NODE set to itself produces a tight exec() loop with no
-# output — the exact trap that the v0.4.15 cidrella-reset-password
+# output, the exact trap that the v0.4.15 cidrella-reset-password
 # wrapper fell into. readlink -f resolves symlinks; if readlink is
 # missing we still fall through to the candidate list below.
 if [ -n "${CIDRELLA_NODE:-}" ] && [ -x "${CIDRELLA_NODE}" ]; then

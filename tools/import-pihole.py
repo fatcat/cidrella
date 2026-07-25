@@ -44,7 +44,7 @@ def api(base_url, method, path, token=None, body=None, ctx=None):
         try:
             err_body = json.loads(err_body)
         except Exception:
-            pass  # body wasn't JSON — keep the raw text as the detail
+            pass  # body wasn't JSON, keep the raw text as the detail
         return {"_error": True, "_status": e.code, "_detail": err_body}
 
 
@@ -191,7 +191,7 @@ def main():
         print(f"  Zone: {zone_name}")
 
     if args.dry_run:
-        print("\n── Dry run — showing planned imports\n")
+        print("\n── Dry run: showing planned imports\n")
         if not args.skip_dns:
             print("  DNS A records:")
             for h in dns_hosts:
@@ -329,7 +329,7 @@ def main():
 
             subnet = find_subnet_for_ip(d["ip"], leaf_subnets)
             if not subnet:
-                print(f"    ⚠ No subnet found for {d['ip']} ({d['hostname']}) — skipping")
+                print(f"    ⚠ No subnet found for {d['ip']} ({d['hostname']}), skipping")
                 d_no_subnet += 1
                 continue
 

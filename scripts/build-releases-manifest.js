@@ -291,7 +291,7 @@ function lint(releases, errors, _warnings) {
       issues.push({
         version: releases[i].version,
         line: releases[i].header_line,
-        message: `[${releases[i].version}] out of order — releases must be listed newest first. Previous was ${releases[i - 1].version}.`,
+        message: `[${releases[i].version}] out of order, releases must be listed newest first. Previous was ${releases[i - 1].version}.`,
       });
     }
   }

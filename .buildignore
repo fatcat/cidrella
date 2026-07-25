@@ -1,18 +1,18 @@
-# .buildignore — patterns excluded from release tarballs by scripts/build-release.sh.
+# .buildignore: patterns excluded from release tarballs by scripts/build-release.sh.
 #
 # Passed to `rsync --exclude-from` when staging server/ and scripts/ into the
 # tarball. Patterns are relative to each rsync source root, not the repo root,
 # so `data/` matches server/data/ (any `data/` directory at any depth).
 # See rsync(1) FILTER RULES for syntax.
 
-# Dev database and local state — would leak dev credentials and audit log
+# Dev database and local state: would leak dev credentials and audit log
 # contents into every shipped tarball. All of server/data/ is never-ship.
-# (ipam.db is already caught by *.db — listing it explicitly creates a
+# (ipam.db is already caught by *.db, listing it explicitly creates a
 # maintenance hazard where a future cleanup might assume it's still excluded
 # via the legacy-named explicit entry.)
 #
 # Anchored with a leading slash to the rsync root (server/ or scripts/) so it
-# matches ONLY server/data/ — NOT server/src/data/, which holds shipped source
+# matches ONLY server/data/, NOT server/src/data/, which holds shipped source
 # data (doh-providers.js, device-fingerprints.js). An unanchored `data/` dropped
 # server/src/data/ from the tarball → preflight ERR_MODULE_NOT_FOUND.
 /data/
@@ -21,12 +21,12 @@
 *.db-shm
 analytics.duckdb*
 
-# Credentials and TLS material — belt-and-suspenders. These should be kept
+# Credentials and TLS material: belt-and-suspenders. These should be kept
 # out of server/ at all times, but the exclusion catches stray dev artifacts
 # if someone ever drops a key into the source tree.
 #
 # `*.crt` is deliberately NOT excluded because in theory someone could want
-# to ship a cert in the tarball — but in practice TLS certs live only in
+# to ship a cert in the tarball, but in practice TLS certs live only in
 # /var/lib/cidrella/certs/ which isn't staged at all.
 #
 # `*.pub` is deliberately NOT excluded because `scripts/cidrella.pub` (the
@@ -45,11 +45,11 @@ id_ed25519
 credentials
 secrets
 
-# Test scaffolding — not needed at runtime
+# Test scaffolding: not needed at runtime
 tests/
 vitest.config.js
 
-# Editor/LSP indexing config — dev-only
+# Editor/LSP indexing config: dev-only
 jsconfig.json
 
 # NOTE: scripts/ is NO LONGER filtered by this file. As of v0.4.16 its staging
@@ -83,7 +83,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Dependencies — already handled by the build pipeline (server/node_modules
+# Dependencies: already handled by the build pipeline (server/node_modules
 # is cleaned and re-installed via `npm ci --omit=dev` later), but excluded
 # here as belt-and-suspenders so the dev tree's node_modules never
 # accidentally makes it into staging.

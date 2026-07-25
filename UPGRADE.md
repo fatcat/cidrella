@@ -19,7 +19,7 @@ CIDRella uses an **A/B slot** layout for atomic updates with automatic rollback.
 - A new release is extracted to the **inactive** slot while the current version keeps running
 - A pre-flight probe starts the new version on a temporary port and verifies every subsystem (SQLite, DuckDB, bcrypt, system ping) before any switchover
 - Databases are snapshotted to `/var/lib/cidrella/snapshots/pre-update/` before the symlink swap
-- The symlink swap is atomic — only the Node.js process is restarted, which takes a few seconds
+- The symlink swap is atomic, only the Node.js process is restarted, which takes a few seconds
 - `dnsmasq` (DNS/DHCP) runs as a separate systemd unit and is **not** restarted during updates. DNS and DHCP stay up throughout.
 - If the new version fails its post-switch health check, `update.sh` automatically rolls back to the previous slot and restores the database snapshot.
 
@@ -27,11 +27,11 @@ CIDRella uses an **A/B slot** layout for atomic updates with automatic rollback.
 
 Release tarballs ship as `cidrella-vX.Y.Z-linux-x64.tar.gz` and include:
 
-- `server/` — Node.js server code
-- `server/node_modules/` — **pre-built** with native binaries. No `npm install` runs during updates.
-- `client/dist/` — built Vue frontend
-- `scripts/` — install, rollback, systemd units, sudoers
-- `update.sh` — the update script (extracted and re-execed on self-update)
+- `server/`: Node.js server code
+- `server/node_modules/`: **pre-built** with native binaries. No `npm install` runs during updates.
+- `client/dist/`: built Vue frontend
+- `scripts/`: install, rollback, systemd units, sudoers
+- `update.sh`: the update script (extracted and re-execed on self-update)
 
 Because native modules are bundled, updates do not require:
 
@@ -106,28 +106,28 @@ The update proceeds through these phases:
 sudo cidrella-update --version 0.5.0
 ```
 
-Downgrades via `cidrella-update` are refused — use `cidrella-rollback` instead (it restores the DB snapshot too).
+Downgrades via `cidrella-update` are refused. Use `cidrella-rollback` instead (it restores the DB snapshot too).
 
 ### Skipping versions
 
 Jumping multiple versions at once (for example, v0.4.2 to v0.7.0) is supported:
 
 - **Schema migrations apply sequentially** from whatever `schema_version` is in your DB to the latest. All historical migrations ship with every release.
-- **Bundled dependencies** are whatever the target version built against — you do not accumulate cruft from intermediate versions.
+- **Bundled dependencies** are whatever the target version built against, you do not accumulate cruft from intermediate versions.
 - **update.sh will warn** when you skip more than one minor version and point you at the release notes.
 
 Before a large jump, read the release notes for each intermediate version on GitHub. Watch for:
 
-- **Breaking config changes** — new required settings or format changes to settings in `cidrella.db`
-- **Node.js version changes** — release tarballs include a bundled Node runtime and native binaries built against that release's Node ABI. If a future release moves Node majors, the update script validates the new slot during pre-flight and exits cleanly if native bindings cannot load.
-- **DuckDB major version changes** — DuckDB on-disk format is **not backward compatible** across major versions. Once an update runs migrations that touch `analytics.duckdb`, a rollback to the previous DuckDB version will lose analytics data (the snapshot is restored, but it was written by the older DuckDB, so it is readable again).
-- **Minisign key rotation** — if the public signing key ever rotates, you will need to update `/opt/cidrella/scripts/cidrella.pub` manually before `cidrella-update` can verify new releases.
+- **Breaking config changes**: new required settings or format changes to settings in `cidrella.db`
+- **Node.js version changes**: release tarballs include a bundled Node runtime and native binaries built against that release's Node ABI. If a future release moves Node majors, the update script validates the new slot during pre-flight and exits cleanly if native bindings cannot load.
+- **DuckDB major version changes**: DuckDB on-disk format is **not backward compatible** across major versions. Once an update runs migrations that touch `analytics.duckdb`, a rollback to the previous DuckDB version will lose analytics data (the snapshot is restored, but it was written by the older DuckDB, so it is readable again).
+- **Minisign key rotation**: if the public signing key ever rotates, you will need to update `/opt/cidrella/scripts/cidrella.pub` manually before `cidrella-update` can verify new releases.
 
 ### Version-specific upgrade notes
 
 Some releases have introduced changes that require a one-time manual step when upgrading through them. These live in their own files so they stay findable and don't clutter the main upgrade flow:
 
-- **[v0.4.6 → v0.4.7](./UPGRADING-0.4.6-to-0.4.7.md)** — requires an `update.sh` hot-patch. v0.4.6's hardcoded binding check expected `bcrypt` (replaced by `bcryptjs` in v0.4.7) and its preflight probe spawns the new Node binary without capabilities (v0.4.7 ships a bundled Node that needs `setcap` before the raw-socket health check can run).
+- **[v0.4.6 → v0.4.7](./UPGRADING-0.4.6-to-0.4.7.md)**: requires an `update.sh` hot-patch. v0.4.6's hardcoded binding check expected `bcrypt` (replaced by `bcryptjs` in v0.4.7) and its preflight probe spawns the new Node binary without capabilities (v0.4.7 ships a bundled Node that needs `setcap` before the raw-socket health check can run).
 
 ### Triggering from the API
 
@@ -145,7 +145,7 @@ GET /api/version/update-status    # reads /var/lib/cidrella/update-status.json
 
 ## Rolling back
 
-A rollback restores the **previous slot and the pre-update database snapshot** that `update.sh` took before cutting over. It is deliberately a single-step operation — we keep only one previous version, not a multi-version history.
+A rollback restores the **previous slot and the pre-update database snapshot** that `update.sh` took before cutting over. It is deliberately a single-step operation. We keep only one previous version, not a multi-version history.
 
 ### When rollback is available
 
@@ -171,7 +171,7 @@ Preview without doing anything:
 sudo cidrella-rollback --list
 ```
 
-`cidrella-rollback` is a standalone bash script installed at `/usr/local/bin/cidrella-rollback`. It does **not** depend on CIDRella's Node.js code, DNS resolution, or network access. The script is copied from the currently running version **before** each update, so the rollback script is always the last known-good logic — not the new version's logic.
+`cidrella-rollback` is a standalone bash script installed at `/usr/local/bin/cidrella-rollback`. It does **not** depend on CIDRella's Node.js code, DNS resolution, or network access. The script is copied from the currently running version **before** each update, so the rollback script is always the last known-good logic, not the new version's logic.
 
 ### What rollback does
 
@@ -182,7 +182,7 @@ sudo cidrella-rollback --list
 5. Waits up to 15 seconds for the service to come up
 6. Reports success or failure
 
-`cidrella-dnsmasq.service` is not touched — DNS/DHCP stay up during rollback.
+`cidrella-dnsmasq.service` is not touched. DNS/DHCP stay up during rollback.
 
 ### What rollback does NOT do
 
@@ -204,9 +204,9 @@ journalctl -u cidrella -n 100 --no-pager
 
 The most common failures:
 
-- **`ERR_DLOPEN_FAILED: compiled against a different Node.js version`** — the bundled native binaries in the tarball do not match the installed Node.js ABI. Usually caused by a Node.js upgrade that happened outside the CIDRella install flow. Fix: `cd /opt/cidrella/server && npm rebuild` (requires `build-essential` + `python3-setuptools`).
-- **`Cannot find module 'express'`** — `server/node_modules/` is missing or incomplete. This used to happen with the old update script when `npm install` failed silently. With the new bundled tarballs, it indicates a botched manual change. Fix: extract the tarball fresh or `cd /opt/cidrella/server && npm install --omit=dev`.
-- **`Database schema v{N} is newer than code max v{M}`** — the database has been migrated to a newer version than the currently running code supports. This happens if someone manually swapped code directories without restoring the DB. Fix: `sudo cidrella-rollback` (restores the DB snapshot too).
+- **`ERR_DLOPEN_FAILED: compiled against a different Node.js version`**: the bundled native binaries in the tarball do not match the installed Node.js ABI. Usually caused by a Node.js upgrade that happened outside the CIDRella install flow. Fix: `cd /opt/cidrella/server && npm rebuild` (requires `build-essential` + `python3-setuptools`).
+- **`Cannot find module 'express'`**: `server/node_modules/` is missing or incomplete. This used to happen with the old update script when `npm install` failed silently. With the new bundled tarballs, it indicates a botched manual change. Fix: extract the tarball fresh or `cd /opt/cidrella/server && npm install --omit=dev`.
+- **`Database schema v{N} is newer than code max v{M}`**: the database has been migrated to a newer version than the currently running code supports. This happens if someone manually swapped code directories without restoring the DB. Fix: `sudo cidrella-rollback` (restores the DB snapshot too).
 
 ### 2. Automatic rollback
 
@@ -227,9 +227,9 @@ If the service is down and auto-rollback did not run (or failed):
 sudo cidrella-rollback --yes
 ```
 
-This works even if `cidrella.service` is completely broken — the script does not depend on CIDRella code.
+This works even if `cidrella.service` is completely broken, the script does not depend on CIDRella code.
 
-### 4. Manual surgery — symlink swap only (no DB restore)
+### 4. Manual surgery: symlink swap only (no DB restore)
 
 If you need to swap the symlink manually without restoring the database (for example, the database is fine and only the code is broken):
 
@@ -243,7 +243,7 @@ sudo systemctl daemon-reload
 sudo systemctl restart cidrella
 ```
 
-### 5. Manual surgery — restore database only
+### 5. Manual surgery: restore database only
 
 If the code is fine but the database got migrated and you want to roll back just the DB:
 
@@ -286,7 +286,7 @@ Your data in `/var/lib/cidrella/` is untouched by this procedure.
 
 ### 7. Forgotten admin password
 
-Available on v0.4.8 and later. If you've forgotten your admin password — particularly after restoring a legacy backup onto a fresh install, where the restored credentials are from the original install and may not be what you remember — the CLI reset tool can set a new random password for any user:
+Available on v0.4.8 and later. If you've forgotten your admin password (particularly after restoring a legacy backup onto a fresh install, where the restored credentials are from the original install and may not be what you remember), the CLI reset tool can set a new random password for any user:
 
 ```bash
 sudo cidrella-reset-password           # resets 'admin'
@@ -300,12 +300,12 @@ The output prints the new password exactly once. Log in with it, and CIDRella wi
 - Generates a fresh random base64url password
 - bcrypt-hashes it and writes `users.password_hash`
 - Sets `users.must_change_password = 1`
-- Sets `users.password_reset_by = "cli:<os-user>@<hostname>"` — so on the next successful login, the Change Password page shows a red banner identifying who performed the reset
+- Sets `users.password_reset_by = "cli:<os-user>@<hostname>"`, so on the next successful login, the Change Password page shows a red banner identifying who performed the reset
 - Writes an `audit_log` entry with `action = password_reset_cli`
 
-**Security note**: the wrapper requires `sudo` (root). The actual filesystem access that lets it work is the `600 cidrella:cidrella` mode on `/var/lib/cidrella/cidrella.db`. If you're on a pre-v0.4.8 install where the DB is still `644` (world-readable), ANY local user could reproduce the effect by calling `sqlite3` directly — the wrapper isn't a security boundary, the file permissions are. Upgrade to v0.4.8+ first so the DB is not world-readable, then use the wrapper.
+**Security note**: the wrapper requires `sudo` (root). The actual filesystem access that lets it work is the `600 cidrella:cidrella` mode on `/var/lib/cidrella/cidrella.db`. If you're on a pre-v0.4.8 install where the DB is still `644` (world-readable), ANY local user could reproduce the effect by calling `sqlite3` directly. The wrapper isn't a security boundary, the file permissions are. Upgrade to v0.4.8+ first so the DB is not world-readable, then use the wrapper.
 
-**If the reset is unexpected**: the banner on next login tells the legitimate owner that their password was reset. If the owner did not perform the reset, someone with root shell access to the host ran the tool (or an equivalent SQL update). Treat the host as potentially compromised and investigate who has shell access — the password reset is the least of what a host-level attacker can do.
+**If the reset is unexpected**: the banner on next login tells the legitimate owner that their password was reset. If the owner did not perform the reset, someone with root shell access to the host ran the tool (or an equivalent SQL update). Treat the host as potentially compromised and investigate who has shell access. The password reset is the least of what a host-level attacker can do.
 
 ### Secret file permissions (v0.4.8+)
 
@@ -321,9 +321,9 @@ v0.4.8 tightens the mode on the following paths to `600 cidrella:cidrella` so th
 | `/var/lib/cidrella/backups/` (dir) | 700 | Full DB dumps |
 | `/var/lib/cidrella/anomaly/` (dir) | 700 | Per-client DNS behavior profiles |
 
-The `dnsmasq/` subtree stays at the default `755` because the dnsmasq process drops to the `nobody` user after startup and needs to read its own state files on SIGHUP reload — tightening it would break DNS/DHCP config reload.
+The `dnsmasq/` subtree stays at the default `755` because the dnsmasq process drops to the `nobody` user after startup and needs to read its own state files on SIGHUP reload. Tightening it would break DNS/DHCP config reload.
 
-This tightening applies automatically on upgrade to v0.4.8 — no user action required. Existing files have their mode fixed during the post-health-check phase of `update.sh`. New files created by the service after the upgrade land with default 644 mode and are retightened on the next update pass.
+This tightening applies automatically on upgrade to v0.4.8, no user action required. Existing files have their mode fixed during the post-health-check phase of `update.sh`. New files created by the service after the upgrade land with default 644 mode and are retightened on the next update pass.
 
 ---
 
@@ -335,7 +335,7 @@ CIDRella has a **separate** backup mechanism that complements the rollback syste
 |---|---|---|
 | **Scope** | Last pre-update DB + analytics | DB + dnsmasq config + TLS certs |
 | **Retention** | Always exactly one (overwritten by next update) | Configurable count (default 7) |
-| **Trigger** | Automatic — every update | Scheduled (daily) + manual |
+| **Trigger** | Automatic (every update) | Scheduled (daily) + manual |
 | **Use when** | Bad update needs reverting | Disaster recovery, restoring to a new host |
 | **Restores DuckDB analytics** | Yes | No |
 | **Location** | `/var/lib/cidrella/snapshots/pre-update/` | `/var/lib/cidrella/backups/` |
@@ -344,20 +344,20 @@ CIDRella has a **separate** backup mechanism that complements the rollback syste
 
 A backup archive is a gzipped tar of:
 
-- `cidrella-backup-manifest.json` — metadata: CIDRella version, schema version, creation time, included files
-- `cidrella.db` — main SQLite database (settings, subnets, DNS/DHCP records, users, audit log)
-- `dnsmasq/` — dnsmasq config, hosts files, dhcp-hosts files, lease file
-- `certs/` — TLS certificates (the self-signed or imported cert that the web UI serves)
+- `cidrella-backup-manifest.json`: metadata, CIDRella version, schema version, creation time, included files
+- `cidrella.db`: main SQLite database (settings, subnets, DNS/DHCP records, users, audit log)
+- `dnsmasq/`: dnsmasq config, hosts files, dhcp-hosts files, lease file
+- `certs/`: TLS certificates (the self-signed or imported cert that the web UI serves)
 
 It does **not** include:
 
-- `analytics.duckdb` — the DNS query analytics database. Analytics is explicitly non-critical — losing it does not affect DNS/DHCP operation. If you need analytics history across a restore, snapshot it manually (see below).
-- `geoip/` — GeoIP database. Regenerated on next scheduled update.
-- `backups/` — obviously. Avoids recursive backup-of-backups.
-- `snapshots/pre-update/` — the rollback snapshots, tied to a specific slot.
-- `snapshots/pre-restore/` — the pre-restore safety snapshot, tied to the host.
+- `analytics.duckdb`: the DNS query analytics database. Analytics is explicitly non-critical, losing it does not affect DNS/DHCP operation. If you need analytics history across a restore, snapshot it manually (see below).
+- `geoip/`: GeoIP database. Regenerated on next scheduled update.
+- `backups/`: obviously. Avoids recursive backup-of-backups.
+- `snapshots/pre-update/`: the rollback snapshots, tied to a specific slot.
+- `snapshots/pre-restore/`: the pre-restore safety snapshot, tied to the host.
 
-**Backups from before v0.5.0 (legacy backups)** have no manifest. Restore still works, but CIDRella cannot verify version compatibility — you get a warning and the restore proceeds at your own risk.
+**Backups from before v0.5.0 (legacy backups)** have no manifest. Restore still works, but CIDRella cannot verify version compatibility, so you get a warning and the restore proceeds at your own risk.
 
 ### Creating a backup
 
@@ -392,7 +392,7 @@ sudo -u cidrella bash -c '
 
 Backups run on a schedule controlled by the `backup_schedule` setting (default: daily). Retention is controlled by `backup_retention_count` (default: 7). Both are editable in **System → Settings**.
 
-Retention enforcement deletes the oldest backups first. The scheduled runner uses the same `createBackup()` code as manual backups — including the WAL checkpoint — so a scheduled backup is always consistent.
+Retention enforcement deletes the oldest backups first. The scheduled runner uses the same `createBackup()` code as manual backups (including the WAL checkpoint), so a scheduled backup is always consistent.
 
 ### Downloading a backup off the host
 
@@ -416,7 +416,7 @@ Keep backups off-host. If the server disk dies, the backups die with it.
 
 ### Restoring a backup
 
-**Safety net**: Before any restore (via API or CLI), CIDRella takes a **pre-restore snapshot** of your current state to `/var/lib/cidrella/snapshots/pre-restore/`. If the restore brings in a bad or wrong backup, you can recover by restoring that snapshot manually. Unlike rollback snapshots, this one is not managed by `cidrella-rollback` — see [Recovering from a bad restore](#recovering-from-a-bad-restore).
+**Safety net**: Before any restore (via API or CLI), CIDRella takes a **pre-restore snapshot** of your current state to `/var/lib/cidrella/snapshots/pre-restore/`. If the restore brings in a bad or wrong backup, you can recover by restoring that snapshot manually. Unlike rollback snapshots, this one is not managed by `cidrella-rollback`. See [Recovering from a bad restore](#recovering-from-a-bad-restore).
 
 **Version safety**: The restore path checks the backup's manifest and refuses to restore a backup from a **newer** version of CIDRella than the one currently running. The old code cannot handle a newer schema; it would just fail to start after the restore. Upgrade CIDRella first, then restore.
 
@@ -439,7 +439,7 @@ curl -sk -X POST -H "Authorization: Bearer $TOKEN" \
   --data-binary @/path/to/cidrella-backup.tar.gz \
   "https://SERVER:8443/api/operations/restore"
 
-# Force restore of a newer backup (NOT recommended — will cause schema
+# Force restore of a newer backup (NOT recommended, will cause schema
 # version incompatibility and the service will refuse to start):
 curl -sk -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/gzip" \
@@ -452,7 +452,7 @@ Via command line (for when the UI or API is unreachable):
 ```bash
 sudo systemctl stop cidrella
 cd /var/lib/cidrella
-# Extract — this overwrites cidrella.db, certs/, dnsmasq/
+# Extract: this overwrites cidrella.db, certs/, dnsmasq/
 sudo tar -xzf /path/to/cidrella-backup.tar.gz
 sudo rm -f cidrella.db-wal cidrella.db-shm  # stale WAL would confuse SQLite
 sudo chown -R cidrella:cidrella cidrella.db* dnsmasq certs
@@ -471,7 +471,7 @@ Every restore (via API or UI) takes a snapshot of the pre-restore state to `/var
 ```bash
 sudo systemctl stop cidrella
 cd /var/lib/cidrella
-# Restore the pre-restore snapshot — SQLite + DuckDB + config
+# Restore the pre-restore snapshot: SQLite + DuckDB + config
 sudo cp -a snapshots/pre-restore/cidrella.db cidrella.db
 sudo cp -a snapshots/pre-restore/cidrella.db-wal cidrella.db-wal 2>/dev/null || sudo rm -f cidrella.db-wal
 sudo cp -a snapshots/pre-restore/cidrella.db-shm cidrella.db-shm 2>/dev/null || sudo rm -f cidrella.db-shm
@@ -487,15 +487,15 @@ sudo chown -R cidrella:cidrella cidrella.db* analytics.duckdb* certs dnsmasq
 sudo systemctl start cidrella
 ```
 
-The pre-restore snapshot is overwritten by the next restore operation. If you take a second restore before recovering, the first pre-restore state is gone. `cidrella-rollback` does **not** touch pre-restore snapshots — they're a separate recovery mechanism from the pre-update rollback system.
+The pre-restore snapshot is overwritten by the next restore operation. If you take a second restore before recovering, the first pre-restore state is gone. `cidrella-rollback` does **not** touch pre-restore snapshots. They're a separate recovery mechanism from the pre-update rollback system.
 
-**On a new host** (disaster recovery — server died, setting up a replacement):
+**On a new host** (disaster recovery: server died, setting up a replacement):
 
 1. Fresh-install CIDRella at the same or newer version than the backup was taken from:
    ```bash
    curl -sSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh | sudo bash
    ```
-2. Let the install complete and verify the service starts (you will have the "default admin" password from the fresh install output — ignore it, you will use your backup's credentials)
+2. Let the install complete and verify the service starts (you will have the "default admin" password from the fresh install output, ignore it, you will use your backup's credentials)
 3. Stop the service and restore:
    ```bash
    sudo systemctl stop cidrella
@@ -523,7 +523,7 @@ This works as long as the DuckDB version matches. If you restored on a different
 
 ### Backup-before-upgrade discipline
 
-The rollback snapshot covers routine update failures. For larger risks — major version jumps, schema-heavy releases, one-off experiments — take a full backup first:
+The rollback snapshot covers routine update failures. For larger risks (major version jumps, schema-heavy releases, one-off experiments), take a full backup first:
 
 ```bash
 # From the UI: System → Backups → Create Backup
@@ -536,13 +536,13 @@ Download it off-host before you start the upgrade. The rollback snapshot is stor
 
 ## DNS chicken-and-egg
 
-Many CIDRella deployments use CIDRella itself as the host's DNS resolver via `/etc/resolv.conf` pointing at `127.0.0.1` or the host's own IP. This creates a problem during updates: if CIDRella is stopped, the host cannot resolve names — including `registry.npmjs.org`, `api.github.com`, or `npm.duckdb.org`.
+Many CIDRella deployments use CIDRella itself as the host's DNS resolver via `/etc/resolv.conf` pointing at `127.0.0.1` or the host's own IP. This creates a problem during updates: if CIDRella is stopped, the host cannot resolve names, including `registry.npmjs.org`, `api.github.com`, or `npm.duckdb.org`.
 
 The new update system handles this in three layers:
 
-1. **Bundled node_modules** — the update never needs to download npm packages.
-2. **dnsmasq stays up** — `cidrella-dnsmasq.service` is a separate systemd unit that the update script never touches. DNS answers continue throughout.
-3. **Fallback DNS injection** — if the update script does need DNS (tarball download from GitHub, which runs while the old version is still up anyway), and `/etc/resolv.conf` points at localhost, it temporarily injects `8.8.8.8` and `1.1.1.1`. It restores the original resolv.conf on exit via a trap, including on failure.
+1. **Bundled node_modules**: the update never needs to download npm packages.
+2. **dnsmasq stays up**: `cidrella-dnsmasq.service` is a separate systemd unit that the update script never touches. DNS answers continue throughout.
+3. **Fallback DNS injection**: if the update script does need DNS (tarball download from GitHub, which runs while the old version is still up anyway), and `/etc/resolv.conf` points at localhost, it temporarily injects `8.8.8.8` and `1.1.1.1`. It restores the original resolv.conf on exit via a trap, including on failure.
 
 If you ever need to run npm or apt commands manually while CIDRella is down:
 
@@ -572,7 +572,7 @@ The server cross-checks the stored target version against the running version on
    ```bash
    sudo sqlite3 /var/lib/cidrella/cidrella.db "SELECT key, value FROM settings WHERE key LIKE 'update_%';"
    ```
-   `update_available_version` should be empty. If it is not, restart `cidrella.service` — `clearStaleUpdateFlag()` runs on boot.
+   `update_available_version` should be empty. If it is not, restart `cidrella.service`. `clearStaleUpdateFlag()` runs on boot.
 
 ### `cidrella-update` says "Refusing to downgrade"
 
@@ -627,7 +627,7 @@ systemctl status cidrella-update.scope
 cat /var/lib/cidrella/update-status.json
 ```
 
-If the scope is gone but `update-status.json` still says "in progress", the update either finished or died. The A/B design means your running version is unchanged unless the symlink was swapped — check:
+If the scope is gone but `update-status.json` still says "in progress", the update either finished or died. The A/B design means your running version is unchanged unless the symlink was swapped. Check:
 
 ```bash
 readlink /opt/cidrella
@@ -650,10 +650,10 @@ sudo rm /var/lib/cidrella/update-status.json
 
 The minisign signature on the downloaded tarball does not match the public key at `/opt/cidrella/scripts/cidrella.pub`. This can mean:
 
-- The download is corrupted — retry
+- The download is corrupted, retry
 - The release was not signed (older releases)
 - You are running an unofficial fork that uses a different signing key
-- The signing key has been compromised — **stop and investigate**
+- The signing key has been compromised: **stop and investigate**
 
 ---
 

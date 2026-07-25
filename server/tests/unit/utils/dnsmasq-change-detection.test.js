@@ -47,7 +47,7 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('regenerateDnsmasqConf — change detection', () => {
+describe('regenerateDnsmasqConf: change detection', () => {
   it('returns false and leaves the file alone when settings match the file', () => {
     // BASE_CONF already reflects the mocked settings, so the regen is a no-op
     const before = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
@@ -76,7 +76,7 @@ describe('regenerateDnsmasqConf — change detection', () => {
   });
 });
 
-describe('applyInterfaceConfig — change detection', () => {
+describe('applyInterfaceConfig: change detection', () => {
   it('writes on first apply, then reports unchanged on an identical re-apply', () => {
     // First apply rewrites BASE_CONF's interface directives for this host
     const first = applyInterfaceConfig({});

@@ -3,14 +3,14 @@
 import os
 import pathlib
 
-# Data directory — mirrors Node.js DATA_DIR convention
+# Data directory, mirrors Node.js DATA_DIR convention
 DATA_DIR = pathlib.Path(os.environ.get("DATA_DIR", str(pathlib.Path(__file__).resolve().parent.parent / "data")))
 
 # Paths
 SQLITE_PATH = DATA_DIR / "cidrella.db"
 MODELS_DIR = DATA_DIR / "anomaly" / "models"
 
-# Node.js API — anomaly sidecar queries DuckDB via the Node.js internal API
+# Node.js API: anomaly sidecar queries DuckDB via the Node.js internal API
 NODE_API_PORT = int(os.environ.get("HTTPS_PORT", "8443"))
 NODE_API_BASE = f"https://127.0.0.1:{NODE_API_PORT}"
 

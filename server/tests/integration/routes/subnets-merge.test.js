@@ -79,7 +79,7 @@ async function getChildren(parentId) {
   return p?.children || [];
 }
 
-describe('POST /api/subnets/merge — data preservation', () => {
+describe('POST /api/subnets/merge: data preservation', () => {
   it('preserves reservations on merged children', async () => {
     const parent = await createSubnet({ cidr: '10.20.0.0/23', name: 'M-resv', status: 'allocated', gateway_address: '10.20.0.1' });
     await configure(parent.id, { name: 'M-resv', create_reverse_dns: false, create_dhcp_scope: false });
@@ -161,7 +161,7 @@ describe('POST /api/subnets/merge — data preservation', () => {
   });
 });
 
-describe('POST /api/subnets/merge — conflict detection', () => {
+describe('POST /api/subnets/merge: conflict detection', () => {
   it('blocks with 409 when siblings own forward zones with different names', async () => {
     const parent = await createSubnet({ cidr: '10.23.0.0/23', name: 'M-conflict', status: 'allocated', gateway_address: '10.23.0.1' });
     await configure(parent.id, {

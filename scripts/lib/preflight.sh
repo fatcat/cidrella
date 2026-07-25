@@ -129,7 +129,7 @@ check_clock() {
         timedatectl set-ntp true >/dev/null 2>&1 || true
       fi
       if ! timedatectl show 2>/dev/null | grep -q 'NTPSynchronized=yes'; then
-        warn "System clock is not NTP-synchronized — DNSSEC signature timestamps may be off until sync completes"
+        warn "System clock is not NTP-synchronized, DNSSEC signature timestamps may be off until sync completes"
       fi
     fi
   fi
