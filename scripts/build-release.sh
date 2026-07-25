@@ -1010,9 +1010,19 @@ if [ "$DRY_RUN" = false ]; then
   cp "$PROJECT_DIR/server/package-lock.json" "$STAGING_DIR/server/package-lock.json" 2>/dev/null || true
 
   cd "$STAGING_DIR/server"
+  # --ignore-scripts: dependency lifecycle hooks (preinstall/install/postinstall)
+  # do NOT execute on the build machine. This is the delivery vector the
+  # September 2025 npm attacks used (the Shai-Hulud worm shipped its credential
+  # stealer in a postinstall hook), and this host holds the signing key and npm/
+  # GitHub credentials. Safe to block because CIDRella's production tree needs
+  # zero install scripts: better-sqlite3 13 and @duckdb/node-api ship prebuilt
+  # binaries instead of compiling via node-gyp. check-install-scripts.js below
+  # fails the build if that ever stops being true, since npm skips scripts
+  # SILENTLY and the breakage would otherwise surface as a runtime
+  # missing-.node error far from the cause.
   npm_config_devdir="$NODE_GYP_DEVDIR" \
     PATH="$STAGING_DIR/runtime/node/bin:$PATH" \
-    npm ci --omit=dev --silent 2>&1 | tail -3
+    npm ci --omit=dev --ignore-scripts --silent 2>&1 | tail -3
   # Sanity check: which node did npm actually use?
   REBUILD_NODE=$(PATH="$STAGING_DIR/runtime/node/bin:$PATH" node --version)
   if [ "$REBUILD_NODE" != "v${BUNDLED_NODE_VERSION}" ]; then
@@ -1020,6 +1030,11 @@ if [ "$DRY_RUN" = false ]; then
   else
     echo "  Native modules compiled against bundled $REBUILD_NODE"
   fi
+
+  # Supply-chain guard: no staged dependency may declare an install script.
+  cd "$PROJECT_DIR"
+  node "$PROJECT_DIR/scripts/check-install-scripts.js" "$STAGING_DIR/server" || exit 1
+  cd "$STAGING_DIR/server"
 
   # Verify native bindings exist, we don't want to ship a tarball that
   # will fail at runtime because a native binary is missing. In v0.4.7 the

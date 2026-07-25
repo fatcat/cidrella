@@ -28,10 +28,16 @@ jobs:
             client/package-lock.json
 
       - name: Install dependencies
+        # --ignore-scripts: no dependency lifecycle hook runs in CI. This is the
+        # vector the September 2025 npm attacks used (Shai-Hulud shipped a
+        # credential stealer in a postinstall hook), and CI holds a token.
+        # Verified safe: no package in any of the three trees, dev or prod,
+        # declares preinstall/install/postinstall. build-release.sh enforces
+        # this invariant for the production tree via check-install-scripts.js.
         run: |
-          npm ci
-          npm ci --prefix server
-          npm ci --prefix client
+          npm ci --ignore-scripts
+          npm ci --prefix server --ignore-scripts
+          npm ci --prefix client --ignore-scripts
 
       - name: Lint
         run: npm run lint
