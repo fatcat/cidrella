@@ -62,6 +62,7 @@ build-release.sh
 release-health-check.js
 check-staging-imports.js
 check-release-version.js
+check-install-scripts.js
 deploy-lxc.sh
 test-dns-blocking.sh
 
