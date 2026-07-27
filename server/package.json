@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "@duckdb/node-api": "^1.5.5-r.1",
+    "@duckdb/node-api": "^1.5.5-r.2",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^13.0.1",
     "cors": "^2.8.5",
