@@ -6,6 +6,12 @@
  */
 
 import { getSetting } from '../db/init.js';
+import * as DnsRecord from './dns-record.js';
+
+// The reason string the passive path stamps on an address it has never seen
+// assigned. Exported because the self-heal below matches on it exactly rather
+// than on a substring, so an unrelated rogue reason is never cleared by mistake.
+export const PASSIVE_ROGUE_REASON = 'passive DNS query from unassigned address';
 
 /**
  * Record an IP lifecycle event.
@@ -187,43 +193,94 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
 }
 
 /**
+ * Everything that makes an address legitimately in use, for an address we hold no
+ * ip_addresses row for. This mirrors the assignment map the scanner builds in
+ * utils/scanner.js: an operator's manual A record, an active DHCP lease, or a
+ * DHCP reservation. The scanner has always consulted all three. The passive path
+ * consulted NONE of them, so any host that resolved a name while CIDRella had no
+ * row for it was recorded as rogue, including hosts holding a valid lease.
+ *
+ * `hostname` is returned only for the DNS claim. A lease hostname is deliberately
+ * NOT propagated into ip_addresses.hostname: that is the stale-name trap the
+ * scanner warns about, where restored lease history keeps a name after the lease
+ * is long gone.
+ */
+function addressClaim(db, subnetId, ip) {
+  const dnsHostname = DnsRecord.dnsAssignedHostname(db, ip);
+  if (dnsHostname) return { claimed: true, hostname: dnsHostname };
+
+  const lease = db.prepare(`
+    SELECT 1 FROM dhcp_leases
+     WHERE subnet_id = ? AND ip_address = ?
+       AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+     LIMIT 1
+  `).get(subnetId, ip);
+  if (lease) return { claimed: true, hostname: null };
+
+  const reservation = db.prepare(
+    'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? LIMIT 1'
+  ).get(subnetId, ip);
+  if (reservation) return { claimed: true, hostname: null };
+
+  return { claimed: false, hostname: null };
+}
+
+/**
  * Record passive activity for an IP address, such as a DNS query observed from
  * the host. Existing rows are marked online. Unknown rows can optionally be
  * created as rogue because the host proved it is using an address CIDRella did
- * not assign.
+ * not assign, but only when nothing else already claims that address.
  */
 export function recordPassiveActivity(db, subnetId, ip, {
   mac,
   source = 'passive',
   createRogue = false,
-  rogueReason = 'passive DNS query from unassigned address'
+  rogueReason = PASSIVE_ROGUE_REASON
 } = {}) {
   const existing = db.prepare(
-    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_rogue, rogue_reason, hostname FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
+  const { claimed, hostname: dnsHostname } = addressClaim(db, subnetId, ip);
+
   if (existing) {
-    return markOnline(db, subnetId, ip, { mac, source });
+    const result = markOnline(db, subnetId, ip, { mac, source });
+    // Self-heal rows already mislabelled by the old behaviour. Scoped to the
+    // "we never assigned this" reason on purpose: a MAC mismatch on a claimed
+    // address is a real conflict and must survive.
+    if (claimed && existing.is_rogue && existing.rogue_reason === PASSIVE_ROGUE_REASON) {
+      clearRogue(db, subnetId, ip);
+    }
+    // Backfill the name so the row survives the offline sweep instead of being
+    // deleted and recreated on the next query (shouldKeepOffline reads hostname).
+    if (dnsHostname && !existing.hostname) {
+      db.prepare("UPDATE ip_addresses SET hostname = ?, updated_at = datetime('now') WHERE id = ?")
+        .run(dnsHostname, existing.id);
+    }
+    return result;
   }
 
-  if (!createRogue) return { changes: 0 };
+  if (!createRogue && !claimed) return { changes: 0 };
 
+  const isRogue = createRogue && !claimed;
   const result = db.prepare(`
     INSERT INTO ip_addresses (
       subnet_id, ip_address, status, is_online,
-      last_seen_at, last_seen_mac,
+      last_seen_at, last_seen_mac, hostname,
       is_rogue, rogue_reason,
       first_seen_at, detection_source
     ) VALUES (
       ?, ?, 'available', 1,
-      datetime('now'), ?,
-      1, ?,
+      datetime('now'), ?, ?,
+      ?, ?,
       datetime('now'), ?
     )
-  `).run(subnetId, ip, mac || null, rogueReason, source);
+  `).run(subnetId, ip, mac || null, dnsHostname, isRogue ? 1 : 0, isRogue ? rogueReason : null, source);
 
   emit(db, result.lastInsertRowid, subnetId, ip, 'online', { source });
-  emit(db, result.lastInsertRowid, subnetId, ip, 'rogue_detected', { newValue: rogueReason, source });
+  if (isRogue) {
+    emit(db, result.lastInsertRowid, subnetId, ip, 'rogue_detected', { newValue: rogueReason, source });
+  }
   return result;
 }
 

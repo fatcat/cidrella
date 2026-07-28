@@ -5,6 +5,7 @@ import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/d
 import { getSetting } from '../db/init.js';
 import * as IpAddress from '../models/ip-address.js';
 import * as ScanRun from '../models/scan-run.js';
+import * as DnsRecord from '../models/dns-record.js';
 
 /**
  * Run arping on a single IP. It only responds for directly-reachable peers;
@@ -34,16 +35,6 @@ function pingIp(ip) {
       resolve({ responded: !error, mac: null });
     });
   });
-}
-
-function fqdnForRecordName(recordName, zoneName) {
-  const raw = String(recordName || '').trim().toLowerCase();
-  const normalized = raw.replace(/\.$/, '');
-  const zone = String(zoneName || '').trim().replace(/\.$/, '').toLowerCase();
-  if (normalized === '@' || normalized === zone) return zone;
-  if (normalized.endsWith(`.${zone}`)) return normalized;
-  if (normalized.includes('.')) return raw.endsWith('.') ? raw : normalized;
-  return `${normalized}.${zone}`;
 }
 
 /**
@@ -213,24 +204,16 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
   // Also include DNS-owned A records, not rogue. Do not trust stale
   // ip_addresses.hostname alone; restored DHCP lease history can retain a
-  // hostname after the active lease is gone.
+  // hostname after the active lease is gone. Predicate lives in dns-record.js
+  // so the scanner, the IP view, and the passive path all agree on it.
   const ipsToScanSet = new Set(ipsToScan);
-  const dnsAssigned = db.prepare(`
-    SELECT r.value AS ip_address, r.name, z.name AS zone_name
-    FROM dns_records r
-    JOIN dns_zones z ON z.id = r.zone_id
-    WHERE r.type = 'A'
-      AND r.enabled = 1
-      AND z.enabled = 1
-      AND z.type = 'forward'
-      AND COALESCE(r.source, 'manual') = 'manual'
-  `).all().filter(r => ipsToScanSet.has(r.ip_address));
+  const dnsAssigned = DnsRecord.listDnsAssignedIps(db).filter(r => ipsToScanSet.has(r.ip_address));
   for (const d of dnsAssigned) {
     if (!assignmentMap.has(d.ip_address)) {
       assignmentMap.set(d.ip_address, {
         ip_address: d.ip_address,
         mac_address: null,
-        hostname: fqdnForRecordName(d.name, d.zone_name),
+        hostname: d.hostname,
         status: 'assigned'
       });
     }

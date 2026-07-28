@@ -6,7 +6,7 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
-## v0.4.16 — 2026-06-08
+## v0.4.16 — 2026-07-30
 
 ```yaml
 min_from: "0.4.15"
@@ -44,6 +44,8 @@ A feature release on top of the v0.4.15 resilience base: encrypted DNS forwardin
 ### Fixed
 - **Saving Filtering settings no longer fails with a validation error.** The blocklist settings endpoint demanded a JS boolean and an integer schedule while the UI (correctly) sends `'true'`/`'false'` strings and named schedules (`off`/`6h`/`12h`/`daily`/`weekly`). Every save from that page was rejected.
 - **Backend boot no longer restarts dnsmasq when nothing changed.** The config writers now detect no-op regenerations, so a clean service restart leaves dnsmasq (and DNS/DHCP service) untouched instead of blipping it up to three times; dnsmasq is still started if it's found down.
+- **dnsmasq no longer restarts every few seconds on an active network.** Each zone config file carries the zone's SOA serial in a header comment, DHCP lease churn bumps that serial continuously, and change detection compared the generated file byte-for-byte. A purely cosmetic comment edit therefore counted as a config change. On a busy LAN this restarted dnsmasq roughly every 18 seconds (about 4,800 times a day), flushing the DNS cache on each one and holding the cache hit rate near zero. Change detection now compares only directive lines, which is all dnsmasq reads from the file. The file is still rewritten so the comment stays accurate. Present since v0.4.15.
+- **Hosts with a DNS name are no longer flagged as rogue.** A manual A record in an enabled forward zone is the operator declaring that an address is in use, but two paths ignored that declaration. The Networks table inferred "rogue" from "online and unassigned" without consulting the static-DNS claim it had already computed for the same row, and the passive path that watches DNS proxy queries checked nothing at all before creating a rogue row, so a host was flagged the moment it resolved anything, even while holding a valid DHCP lease. The passive path now checks manual A records, active leases, and reservations before it flags an address. Rows already mislabelled clear themselves the next time the address is seen, matched on that exact reason so a genuine conflict such as a MAC mismatch stays flagged. Present since v0.4.15.
 - **Synthesized DNS responses now echo the client's EDNS OPT** (UDP payload size + DO bit) and carry the correct rcode in the flags word. This fixes a latent bug where blocked / NXDOMAIN / SERVFAIL answers encoded as NOERROR.
 - **DoT mode no longer requires a DoH URL.** `doh_url` validation is now scoped to DoH (HTTPS) mode; a custom DoT upstream needs only address + hostname.
 - **Encrypted-forwarder error reporting is a 10-minute sliding window** instead of a counter that only reset on save, so the surfaced "recent errors" is actually recent.

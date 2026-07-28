@@ -74,6 +74,27 @@ describe('regenerateDnsmasqConf: change detection', () => {
     expect(regenerateDnsmasqConf({})).toBe(false);
     expect(fs.existsSync(DNSMASQ_CONF)).toBe(false);
   });
+
+  it('does not mistake the # in server=IP#port for a comment', () => {
+    // Change detection ignores comment LINES. It must not strip from an inline
+    // `#`, because dnsmasq uses it as the port separator. If it did, the
+    // encrypted-forwarder line would compare as `server=127.0.0.1` against a
+    // generated `server=127.0.0.1#5356` and never converge, restarting dnsmasq
+    // on every single regen.
+    settings.forwarder_encryption = 'tls';
+    expect(regenerateDnsmasqConf({})).toBe(true);
+    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=127.0.0.1#5356');
+
+    // Second pass with identical settings must be a no-op.
+    expect(regenerateDnsmasqConf({})).toBe(false);
+  });
+
+  it('keeps a hand-written comment in dnsmasq.conf and reports no change', () => {
+    fs.writeFileSync(DNSMASQ_CONF, `# operator note: do not remove bind-dynamic\n${BASE_CONF}`);
+    expect(regenerateDnsmasqConf({})).toBe(false);
+    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8'))
+      .toContain('# operator note: do not remove bind-dynamic');
+  });
 });
 
 describe('applyInterfaceConfig: change detection', () => {

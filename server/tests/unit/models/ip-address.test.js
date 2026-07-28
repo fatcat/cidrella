@@ -157,6 +157,110 @@ describe('recordPassiveActivity', () => {
   });
 });
 
+// Regression: an address named by a manual A record is one the operator declared
+// in use. The scanner always honoured that; this path did not, so any host with a
+// DNS name was flagged rogue the moment it sent its first query through the proxy.
+describe('recordPassiveActivity: addresses named in DNS are not rogue', () => {
+  function addForwardARecord(ip, name = 'pve-01', zoneName = 'example.test', source = 'manual') {
+    const zoneId = db.prepare('INSERT INTO dns_zones (name, type, enabled) VALUES (?, ?, 1)')
+      .run(zoneName, 'forward').lastInsertRowid;
+    db.prepare('INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, ?, ?, ?, 1)')
+      .run(zoneId, name, 'A', ip, source);
+    return zoneId;
+  }
+
+  it('creates the row online and named, not rogue, when DNS claims the address', () => {
+    addForwardARecord('10.0.1.30');
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.30', { createRogue: true });
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.30');
+
+    expect(row.is_online).toBe(1);
+    expect(row.is_rogue).toBe(0);
+    expect(row.rogue_reason).toBeNull();
+    expect(row.hostname).toBe('pve-01.example.test');
+  });
+
+  it('creates the row even when createRogue is off, so liveness is not lost', () => {
+    addForwardARecord('10.0.1.31', 'nas');
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.31', { createRogue: false });
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.31');
+
+    expect(row).toBeTruthy();
+    expect(row.is_online).toBe(1);
+    expect(row.is_rogue).toBe(0);
+  });
+
+  it('clears a stale rogue flag left behind by the old behaviour', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.32', {
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: IpAddress.PASSIVE_ROGUE_REASON,
+    });
+    addForwardARecord('10.0.1.32', 'printer');
+
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.32', { createRogue: true });
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.32');
+
+    expect(row.is_rogue).toBe(0);
+    expect(row.rogue_reason).toBeNull();
+    expect(row.hostname).toBe('printer.example.test');
+  });
+
+  it('leaves a MAC-mismatch rogue alone, a DNS name does not excuse a conflict', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.33', {
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'MAC mismatch (expected aa:bb:cc:dd:ee:ff, got 11:22:33:44:55:66)',
+    });
+    addForwardARecord('10.0.1.33', 'squatted');
+
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.33', { createRogue: true });
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.33');
+
+    expect(row.is_rogue).toBe(1);
+    expect(row.rogue_reason).toContain('MAC mismatch');
+  });
+
+  it('still flags an address no DNS record claims', () => {
+    addForwardARecord('10.0.1.34', 'elsewhere');   // a record, but for a different IP
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.35', { createRogue: true });
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.35');
+
+    expect(row.is_rogue).toBe(1);
+    expect(row.rogue_reason).toBe(IpAddress.PASSIVE_ROGUE_REASON);
+  });
+
+  it('ignores DHCP-sourced A records, those track a lease not an operator decision', () => {
+    addForwardARecord('10.0.1.36', 'leased', 'example.test', 'dhcp');
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.36', { createRogue: true });
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.36');
+
+    expect(row.is_rogue).toBe(1);
+  });
+
+  it('ignores A records in a disabled zone', () => {
+    const zoneId = addForwardARecord('10.0.1.37', 'offzone');
+    db.prepare('UPDATE dns_zones SET enabled = 0 WHERE id = ?').run(zoneId);
+
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.37', { createRogue: true });
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.37').is_rogue).toBe(1);
+  });
+
+  it('backfills the hostname so the offline sweep keeps the row', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.38', { is_online: 1 });
+    addForwardARecord('10.0.1.38', 'keepme');
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.38', { createRogue: true });
+
+    // Without the hostname, shouldKeepOffline() deletes the row and the next
+    // query recreates it, which is the flap that made these come and go.
+    IpAddress.markOffline(db, subnetId, '10.0.1.38');
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.38');
+
+    expect(row).toBeTruthy();
+    expect(row.hostname).toBe('keepme.example.test');
+  });
+});
+
 describe('markOffline', () => {
   it('deletes ephemeral IPs (no hostname, not locked/assigned, no reservation)', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.22', { is_online: 1, is_rogue: 1, rogue_reason: 'test' });

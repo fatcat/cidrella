@@ -17,6 +17,51 @@ export function fqdnForRecordName(recordName, zoneName) {
   return `${normalized}.${zoneName}`;
 }
 
+/**
+ * A manual A record in an enabled forward zone is the operator declaring "this
+ * address is in use", and that declaration is what makes an address NOT rogue.
+ *
+ * Three places need to know it: the scanner's bulk assignment map, the IP-view
+ * static-DNS set, and the passive DNS-query path. Each used to carry its own
+ * copy of this predicate and the passive path was missing it entirely, so a host
+ * with a name in DNS got flagged rogue the moment it resolved anything. One
+ * definition now, so the three cannot drift apart again.
+ *
+ * DHCP-sourced A records are excluded deliberately: those track a lease rather
+ * than an operator decision, and restored lease history can leave one behind
+ * after the lease itself is gone.
+ */
+const DNS_ASSIGNED_SELECT = `
+  SELECT r.value AS ip_address, r.name, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+   WHERE r.type = 'A'
+     AND r.enabled = 1
+     AND z.enabled = 1
+     AND z.type = 'forward'
+     AND COALESCE(r.source, 'manual') = 'manual'
+`;
+
+/** Every address a manual forward A record claims, with the FQDN it claims it as. */
+export function listDnsAssignedIps(db) {
+  return db.prepare(DNS_ASSIGNED_SELECT).all().map(r => ({
+    ip_address: r.ip_address,
+    hostname: fqdnForRecordName(r.name, r.zone_name),
+  }));
+}
+
+/** The set of addresses DNS claims. Cheap: bounded by operator-created records. */
+export function dnsAssignedIpSet(db) {
+  return new Set(db.prepare(DNS_ASSIGNED_SELECT).all().map(r => r.ip_address));
+}
+
+/** The FQDN DNS assigns to `ip`, or null when no manual A record claims it. */
+export function dnsAssignedHostname(db, ip) {
+  if (!ip) return null;
+  const row = db.prepare(`${DNS_ASSIGNED_SELECT} AND r.value = ? LIMIT 1`).get(ip);
+  return row ? fqdnForRecordName(row.name, row.zone_name) : null;
+}
+
 export function findReversePtrLocation(db, ip, { enabledOnly = false } = {}) {
   const octets = String(ip || '').split('.');
   if (octets.length !== 4) return null;

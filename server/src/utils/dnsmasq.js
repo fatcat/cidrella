@@ -16,6 +16,50 @@ export function atomicWrite(filePath, content) {
   fs.renameSync(tmpPath, filePath);
 }
 
+/**
+ * Strip everything dnsmasq ignores: blank lines and whole-line comments.
+ *
+ * Only lines whose FIRST non-space character is `#` are dropped. Inline `#` is
+ * deliberately left alone because it is meaningful inside directives:
+ * `server=127.0.0.1#5353` uses it as the port separator, and a TXT value can
+ * contain one. Stripping from the first `#` onward would silently corrupt the
+ * comparison for both.
+ */
+function directivesOf(content) {
+  const out = [];
+  for (const line of String(content || '').split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('#')) continue;
+    out.push(trimmed);
+  }
+  return out.join('\n');
+}
+
+/**
+ * Write `newContent` when the bytes differ, but report "changed" only when the
+ * DIRECTIVES differ. Callers use the return value to decide whether to restart
+ * or SIGHUP dnsmasq, and dnsmasq reads no meaning at all from comments.
+ *
+ * Without this split, a purely cosmetic edit forced a full daemon restart. The
+ * SOA serial rides along in a header comment in every zone-*.conf, DHCP lease
+ * churn bumps that serial constantly, and the old byte-exact compare read each
+ * bump as a config change. Field result: dnsmasq restarted roughly every 18
+ * seconds (~4800 times a day), and every restart dropped the whole DNS cache.
+ *
+ * The file is still rewritten so the comment stays truthful, it just no longer
+ * drags the daemon along with it.
+ *
+ * @returns {boolean} true when dnsmasq needs to be told about this write
+ */
+function writeIfChanged(filePath, newContent) {
+  let oldContent = '';
+  try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* doesn't exist yet */ }
+  if (newContent === oldContent) return false;
+  const directivesChanged = directivesOf(newContent) !== directivesOf(oldContent);
+  atomicWrite(filePath, newContent);
+  return directivesChanged;
+}
+
 export function cleanStaleFiles(dir, prefix, suffix, activeIds) {
   if (!fs.existsSync(dir)) return false;
   let removed = false;
@@ -93,12 +137,7 @@ export function regenerateHostsDir(db) {
     activeIds.add(zone.id);
     const filePath = path.join(HOSTS_DIR, `zone-${zone.id}.hosts`);
     const newContent = records.map(r => `${r.value} ${toFqdn(r.name, zone.name)}`).join('\n') + '\n';
-    let oldContent = '';
-    try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* doesn't exist */ }
-    if (newContent !== oldContent) {
-      atomicWrite(filePath, newContent);
-      changed = true;
-    }
+    if (writeIfChanged(filePath, newContent)) changed = true;
   }
 
   if (cleanStaleFiles(HOSTS_DIR, 'zone-', '.hosts', activeIds)) changed = true;
@@ -181,13 +220,9 @@ export function regenerateConfDir(db) {
     const filePath = path.join(CONF_DIR, `zone-${zone.id}.conf`);
     const newContent = lines.join('\n') + '\n';
 
-    // Check if content actually changed
-    let oldContent = '';
-    try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* file doesn't exist */ }
-    if (newContent !== oldContent) {
-      atomicWrite(filePath, newContent);
-      changed = true;
-    }
+    // Comment-only deltas (the SOA serial above) rewrite the file but do NOT
+    // count as a change, so lease churn stops restarting dnsmasq.
+    if (writeIfChanged(filePath, newContent)) changed = true;
   }
 
   if (cleanStaleFiles(CONF_DIR, 'zone-', '.conf', activeIds)) changed = true;
@@ -290,10 +325,7 @@ export function regenerateDnsmasqConf(_db) {
 
   // Skip the write when nothing changed so callers (boot especially) can skip
   // the dnsmasq restart. Same changed-boolean convention as regenerateConfigs.
-  const next = filtered.join('\n');
-  if (next === content) return false;
-  atomicWrite(DNSMASQ_CONF, next);
-  return true;
+  return writeIfChanged(DNSMASQ_CONF, filtered.join('\n'));
 }
 
 export function isDnsmasqRunning() {
@@ -508,10 +540,7 @@ export function applyInterfaceConfig(_db) {
   filtered.push(...newDirectives);
 
   // Same changed-boolean convention as regenerateDnsmasqConf/regenerateConfigs.
-  const next = filtered.join('\n');
-  if (next === content) return false;
-  atomicWrite(DNSMASQ_CONF, next);
-  return true;
+  return writeIfChanged(DNSMASQ_CONF, filtered.join('\n'));
 }
 
 export function regenerateConfigs(db) {

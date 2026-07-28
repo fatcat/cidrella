@@ -1,5 +1,6 @@
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import { lookupFingerprintBatch } from './device-fingerprint.js';
+import * as DnsRecord from './dns-record.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -42,7 +43,7 @@ export function computeIpView(row) {
   } else if (isRogue) {
     addressType = ADDRESS_TYPE.ROGUE;
     tooltip = row.rogue_reason || null;
-  } else if (isOnline && ipLifecycleStatus === 'available' && !hasDhcpReservation && !row.hostname && !hasActiveLease) {
+  } else if (isOnline && ipLifecycleStatus === 'available' && !hasDhcpReservation && !row.hostname && !hasActiveLease && !hasStaticDns) {
     addressType = ADDRESS_TYPE.ROGUE;
   } else if (hasDhcpReservation) {
     addressType = ADDRESS_TYPE.RESERVED_DHCP;
@@ -54,6 +55,10 @@ export function computeIpView(row) {
   } else if (ipLifecycleStatus === 'assigned' || isStaticDns) {
     addressType = ADDRESS_TYPE.STATIC_DNS;
   } else if (isOnline && (ipLifecycleStatus === 'available' || ipLifecycleStatus === 'dhcp')) {
+    // No hasStaticDns guard needed here: the isStaticDns branch directly above
+    // already claimed every such row. The guard belongs on the earlier
+    // available-and-online branch, which runs BEFORE that claim and was
+    // therefore labelling DNS-named hosts rogue on sight.
     addressType = ADDRESS_TYPE.ROGUE;
   }
 
@@ -78,27 +83,14 @@ export function applyIpView(row) {
   return row;
 }
 
-export function getStaticDnsIpSet(db, ips) {
-  const set = new Set();
-  const uniqueIps = [...new Set((ips || []).filter(Boolean))];
-  const CHUNK_SIZE = 900;
-  for (let i = 0; i < uniqueIps.length; i += CHUNK_SIZE) {
-    const chunk = uniqueIps.slice(i, i + CHUNK_SIZE);
-    if (!chunk.length) continue;
-    const rows = db.prepare(`
-      SELECT DISTINCT r.value AS ip_address
-        FROM dns_records r
-        JOIN dns_zones z ON z.id = r.zone_id
-       WHERE r.type = 'A'
-         AND r.enabled = 1
-         AND z.enabled = 1
-         AND z.type = 'forward'
-         AND COALESCE(r.source, 'manual') = 'manual'
-         AND r.value IN (${chunk.map(() => '?').join(',')})
-    `).all(...chunk);
-    for (const row of rows) set.add(row.ip_address);
-  }
-  return set;
+/**
+ * Addresses claimed by a manual forward A record. Delegates to the single
+ * definition in dns-record.js. The `ips` argument is accepted for call-site
+ * compatibility but no longer needed to filter: the record set is bounded by
+ * what the operator created, so one unchunked query beats N chunked ones.
+ */
+export function getStaticDnsIpSet(db, _ips) {
+  return DnsRecord.dnsAssignedIpSet(db);
 }
 
 export function getIpStateMap(db, rows) {

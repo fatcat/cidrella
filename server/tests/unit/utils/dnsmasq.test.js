@@ -12,8 +12,8 @@ vi.mock('child_process', () => ({
 let tmpDir;
 let regenerateConfigs;
 
-function makeDb({ aRecords = [], otherRecords = [], ptrRecords = [] } = {}) {
-  const zones = [{ id: 10, name: 'the-mcnultys.org' }];
+function makeDb({ aRecords = [], otherRecords = [], ptrRecords = [], zone = {} } = {}) {
+  const zones = [{ id: 10, name: 'the-mcnultys.org', ...zone }];
   return {
     prepare(sql) {
       return {
@@ -109,6 +109,97 @@ describe('regenerateConfigs reload behavior', () => {
     const hosts = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'hosts.d', 'zone-10.hosts'), 'utf-8');
     expect(hosts).toContain('10.0.3.232 host.google.com.');
     expect(hosts).not.toContain('host.google.com.the-mcnultys.org');
+  });
+});
+
+describe('comment-only conf changes do not touch dnsmasq', () => {
+  // Regression: DHCP lease churn bumps dns_zones.soa_serial, the serial rides
+  // along in a `# SOA:` comment in every zone-*.conf, and change detection used
+  // a byte-exact compare. Result in the field was dnsmasq restarting roughly
+  // every 18 seconds (~4800/day), flushing the DNS cache each time, while the
+  // directives in the file never changed.
+  const SOA = {
+    soa_primary_ns: 'ns1.the-mcnultys.org',
+    soa_admin_email: 'admin.the-mcnultys.org',
+    soa_refresh: 3600,
+    soa_retry: 900,
+    soa_expire: 604800,
+    soa_minimum_ttl: 900,
+  };
+  const CNAME = [{
+    name: 'checker',
+    type: 'CNAME',
+    value: 'container-host.the-mcnultys.org',
+    ttl: null,
+  }];
+  const CONF = () => path.join(tmpDir, 'dnsmasq', 'conf.d', 'zone-10.conf');
+
+  function restarts() {
+    return vi.mocked(execFileSync).mock.calls
+      .filter(([cmd, args]) => cmd === 'systemctl' && args?.[0] === 'restart').length;
+  }
+  function reloads() {
+    return vi.mocked(execFileSync).mock.calls
+      .filter(([cmd, args]) => cmd === 'systemctl' && args?.[0] === 'reload').length;
+  }
+
+  it('rewrites the file but does not restart when only the SOA serial moved', () => {
+    // First pass establishes the file and legitimately restarts.
+    regenerateConfigs(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860436 } }));
+    expect(fs.readFileSync(CONF(), 'utf-8')).toContain('860436');
+    expect(restarts()).toBe(1);
+
+    // Lease churn bumped the serial. Nothing else about the zone changed.
+    vi.clearAllMocks();
+    regenerateConfigs(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860439 } }));
+
+    const conf = fs.readFileSync(CONF(), 'utf-8');
+    expect(conf).toContain('860439');        // comment stays truthful
+    expect(conf).toContain('cname=checker.the-mcnultys.org,container-host.the-mcnultys.org');
+    expect(restarts()).toBe(0);              // ...but the daemon is left alone
+    expect(reloads()).toBe(0);
+  });
+
+  it('still restarts when a real directive changes alongside the serial', () => {
+    regenerateConfigs(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
+    vi.clearAllMocks();
+
+    regenerateConfigs(makeDb({
+      otherRecords: [...CNAME, { name: 'mail', type: 'MX', value: 'mx1.the-mcnultys.org', priority: 10, ttl: null }],
+      zone: { ...SOA, soa_serial: 2 },
+    }));
+
+    expect(fs.readFileSync(CONF(), 'utf-8')).toContain('mx-host=mail.the-mcnultys.org,mx1.the-mcnultys.org,10');
+    expect(restarts()).toBe(1);
+  });
+
+  it('is fully idempotent when nothing at all changed', () => {
+    const db = () => makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 7 } });
+    regenerateConfigs(db());
+    const after = fs.readFileSync(CONF(), 'utf-8');
+    vi.clearAllMocks();
+
+    regenerateConfigs(db());
+    expect(fs.readFileSync(CONF(), 'utf-8')).toBe(after);
+    expect(restarts()).toBe(0);
+    expect(reloads()).toBe(0);
+  });
+
+  it('treats a commented-out directive as a real change, not a comment', () => {
+    // Guard against a lazy "ignore anything with a #" implementation: dropping a
+    // directive behind a `#` genuinely disables it and must reach the daemon.
+    regenerateConfigs(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
+    vi.clearAllMocks();
+
+    // Same serial, but the CNAME is gone. The zone now has only a PTR.
+    regenerateConfigs(makeDb({
+      ptrRecords: [{ name: '231', value: 'container-host.the-mcnultys.org' }],
+      zone: { ...SOA, soa_serial: 1 },
+    }));
+
+    const conf = fs.readFileSync(CONF(), 'utf-8');
+    expect(conf).not.toContain('cname=');
+    expect(restarts()).toBe(1);
   });
 });
 
