@@ -6,6 +6,8 @@
  */
 
 import { getSetting } from '../db/init.js';
+import { scannerCoveredSql } from '../utils/scan-coverage.js';
+import { isLocalAddress } from '../utils/local-addresses.js';
 import * as DnsRecord from './dns-record.js';
 
 // The reason string the passive path stamps on an address it has never seen
@@ -67,7 +69,7 @@ export function upsert(db, subnetId, ip, fields = {}) {
   } = fields;
 
   const existing = db.prepare(
-    'SELECT id, hostname, mac_address, status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, hostname, mac_address, status, is_online FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
   if (existing) {
@@ -96,6 +98,12 @@ export function upsert(db, subnetId, ip, fields = {}) {
       if (is_online) {
         updates.push("last_seen_at = datetime('now')");
         updates.push("first_seen_at = COALESCE(first_seen_at, datetime('now'))");
+      }
+      // Edge-only, matching markOnline. Without this a liveness flip is
+      // invisible in ip_events, which is how a lease-sync overwrite of the
+      // scanner's verdict went unnoticed.
+      if (!!is_online !== !!existing.is_online) {
+        events.push({ type: is_online ? 'online' : 'offline' });
       }
     }
     if (last_seen_mac !== undefined) {
@@ -206,6 +214,9 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
  * is long gone.
  */
 function addressClaim(db, subnetId, ip) {
+  // An address the appliance itself holds is obviously in use, and by us.
+  if (isLocalAddress(ip)) return { claimed: true, hostname: null };
+
   const dnsHostname = DnsRecord.dnsAssignedHostname(db, ip);
   if (dnsHostname) return { claimed: true, hostname: dnsHostname };
 
@@ -223,6 +234,32 @@ function addressClaim(db, subnetId, ip) {
   if (reservation) return { claimed: true, hostname: null };
 
   return { claimed: false, hostname: null };
+}
+
+/**
+ * Has an admin declared this address, as opposed to CIDRella merely having
+ * observed it? Declared addresses keep everything learned about them until the
+ * admin removes the declaration. Observed ones are subject to cleanup.
+ *
+ * Declared means any of:
+ *   - status 'locked' or 'assigned' (a manual assignment)
+ *   - an enabled DHCP reservation
+ *   - a manual A record in an enabled forward zone
+ *
+ * Deliberately NOT the same as addressClaim(), which also counts an active
+ * lease. A live lease is an observation that expires on its own. It says
+ * nothing about what the admin intends for the address.
+ */
+export function isAdminDeclared(db, row) {
+  if (!row) return false;
+  if (row.status === 'locked' || row.status === 'assigned') return true;
+
+  const reservation = db.prepare(
+    'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? AND enabled = 1 LIMIT 1'
+  ).get(row.subnet_id, row.ip_address);
+  if (reservation) return true;
+
+  return !!DnsRecord.dnsAssignedHostname(db, row.ip_address);
 }
 
 /**
@@ -251,8 +288,10 @@ export function recordPassiveActivity(db, subnetId, ip, {
     if (claimed && existing.is_rogue && existing.rogue_reason === PASSIVE_ROGUE_REASON) {
       clearRogue(db, subnetId, ip);
     }
-    // Backfill the name so the row survives the offline sweep instead of being
-    // deleted and recreated on the next query (shouldKeepOffline reads hostname).
+    // Backfill the name DNS already assigns so the row reads correctly in the
+    // UI. Survival across the offline sweep no longer depends on this: the
+    // manual A record that produced the name is itself what makes the address
+    // admin-declared (see isAdminDeclared).
     if (dnsHostname && !existing.hostname) {
       db.prepare("UPDATE ip_addresses SET hostname = ?, updated_at = datetime('now') WHERE id = ?")
         .run(dnsHostname, existing.id);
@@ -286,18 +325,20 @@ export function recordPassiveActivity(db, subnetId, ip, {
 
 /**
  * Check whether an IP record should be kept when going offline.
- * Persistent reasons: manual status (locked/assigned), DHCP host state,
- * DNS hostname, DHCP reservation, or per-IP scan override.
+ *
+ * This answers "is there anything here worth keeping right now", NOT "should
+ * this be kept forever". Those are different questions and conflating them
+ * would delete a dynamic host's MAC the moment it went quiet, which is what the
+ * retention window exists to decide. Only a row with nothing on it at all is
+ * dropped here, such as a scan blip on an unassigned address.
+ *
+ * How long learned data then survives is clearStaleDynamicMetadata's call:
+ * admin-declared addresses keep it indefinitely, dynamic ones age out.
  */
 function shouldKeepOffline(db, row) {
-  if (row.status === 'locked' || row.status === 'assigned' || row.status === 'dhcp') return true;
-  if (row.hostname) return true;
   if (row.scan_enabled !== null && row.scan_enabled !== undefined) return true;
-  const hasReservation = db.prepare(
-    'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? LIMIT 1'
-  ).get(row.subnet_id, row.ip_address);
-  if (hasReservation) return true;
-  return false;
+  if (row.hostname || row.mac_address || row.last_seen_mac) return true;
+  return isAdminDeclared(db, row);
 }
 
 /**
@@ -306,7 +347,7 @@ function shouldKeepOffline(db, row) {
  */
 export function markOffline(db, subnetId, ip) {
   const existing = db.prepare(
-    'SELECT id, is_online, is_rogue, status, hostname, scan_enabled, subnet_id, ip_address FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_online, is_rogue, status, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
   if (!existing) return { changes: 0 };
 
@@ -330,13 +371,16 @@ export function markOffline(db, subnetId, ip) {
 }
 
 /**
- * Bulk passive staleness sweep: mark passively-seen IPs offline if not seen
- * within staleMinutes.
+ * Bulk staleness sweep: mark an address offline when nothing has been seen from
+ * it within staleMinutes.
  *
- * Active scanner and DHCP lease liveness are intentionally excluded here:
- * scanner-owned rows should stay online until the next scan disproves them,
- * and DHCP-owned rows are governed by lease sync/expiry.
- * Ephemeral IPs are deleted; persistent IPs are marked offline.
+ * Scoped to addresses the active scanner will never probe. Where the scanner
+ * does run it owns both edges (it sets is_online from the probe result), and a
+ * host that answers every scan would otherwise flap offline in the gap between
+ * the short staleness window and the much longer scan interval. Coverage is
+ * decided by the same predicate the scheduler uses, see utils/scan-coverage.js.
+ *
+ * Ephemeral IPs are deleted, declared ones are marked offline.
  * Also clears rogue status for stale IPs (rogue device went away).
  */
 export function bulkMarkStale(db, staleMinutes) {
@@ -344,14 +388,12 @@ export function bulkMarkStale(db, staleMinutes) {
 
   const staleIps = db.prepare(`
     SELECT ip.id, ip.subnet_id, ip.ip_address, ip.is_rogue, ip.status,
-           ip.hostname, ip.scan_enabled,
-           (dr.id IS NOT NULL) AS has_reservation
+           ip.hostname, ip.mac_address, ip.last_seen_mac, ip.scan_enabled
     FROM ip_addresses ip
-    LEFT JOIN dhcp_reservations dr
-      ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
+    JOIN subnets s ON s.id = ip.subnet_id
     WHERE ip.is_online = 1
-      AND ip.detection_source = 'passive'
       AND ip.last_seen_at < datetime('now', ?)
+      AND NOT ${scannerCoveredSql('s', 'ip')}
   `).all(offset);
 
   const toDelete = [];
@@ -362,9 +404,7 @@ export function bulkMarkStale(db, staleMinutes) {
     if (row.is_rogue) {
       emit(db, row.id, row.subnet_id, row.ip_address, 'rogue_cleared', { source: 'stale' });
     }
-    const keep = row.status === 'locked' || row.status === 'assigned' || row.status === 'dhcp'
-      || row.hostname || row.scan_enabled !== null || row.has_reservation;
-    if (keep) {
+    if (shouldKeepOffline(db, row)) {
       toUpdate.push(row.id);
     } else {
       toDelete.push(row.id);
@@ -387,6 +427,68 @@ export function bulkMarkStale(db, staleMinutes) {
   }
 
   return { changes: toUpdate.length + toDelete.length, deleted: toDelete.length, updated: toUpdate.length };
+}
+
+/**
+ * Clear learned metadata from dynamically assigned addresses that have been
+ * offline past the retention window. Reads offline_metadata_retention_days from
+ * settings (default 7).
+ *
+ * Admin-declared addresses (static DNS record, DHCP reservation, locked or
+ * assigned status) are never touched. They keep everything learned about them
+ * until the admin deletes the declaration.
+ *
+ * Only the observed columns are cleared. Vendor, device type and OS family need
+ * no handling: models/ip-view.js derives all three from the MAC at read time, so
+ * clearing the MAC clears them too. The fingerprint itself lives in its own
+ * MAC-keyed table, so an operator override survives and re-attaches if that MAC
+ * comes back. Lease expiry likewise comes from a join, not a column here.
+ *
+ * A row with nothing left to say is deleted rather than left as an empty husk.
+ */
+export function clearStaleDynamicMetadata(db) {
+  const val = getSetting('offline_metadata_retention_days');
+  const retentionDays = parseInt(val, 10) || 7;
+  const offset = `-${retentionDays} days`;
+
+  const candidates = db.prepare(`
+    SELECT id, subnet_id, ip_address, status, reservation_note, description, scan_enabled
+    FROM ip_addresses
+    WHERE is_online = 0
+      AND last_seen_at IS NOT NULL
+      AND last_seen_at < datetime('now', ?)
+  `).all(offset);
+
+  const toClear = [];
+  const toDelete = [];
+
+  for (const row of candidates) {
+    if (isAdminDeclared(db, row)) continue;
+    // Keeping anything an operator typed, plus a per-IP scan override.
+    const hasOperatorData = !!row.reservation_note || !!row.description
+      || (row.scan_enabled !== null && row.scan_enabled !== undefined);
+    if (hasOperatorData) toClear.push(row.id);
+    else toDelete.push(row.id);
+  }
+
+  if (toClear.length > 0) {
+    const clearStmt = db.prepare(`
+      UPDATE ip_addresses SET
+        hostname = NULL, mac_address = NULL, last_seen_mac = NULL,
+        last_seen_at = NULL, first_seen_at = NULL, last_scanned_at = NULL,
+        detection_source = NULL, status = 'available',
+        updated_at = datetime('now')
+      WHERE id = ?
+    `);
+    for (const id of toClear) clearStmt.run(id);
+  }
+
+  if (toDelete.length > 0) {
+    const deleteStmt = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
+    for (const id of toDelete) deleteStmt.run(id);
+  }
+
+  return { changes: toClear.length + toDelete.length, cleared: toClear.length, deleted: toDelete.length };
 }
 
 /**
@@ -586,7 +688,7 @@ export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
  */
 export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, conflictReason }) {
   const existing = db.prepare(
-    'SELECT id, is_online, is_rogue, status, hostname, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_online, is_rogue, status, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
   // Re-check: if scanner says conflict but the IP now has a static assignment

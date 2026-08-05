@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
-import { readFile } from 'fs/promises';
 import { parseCidr, longToIp } from './ip.js';
+import { parseArpingMac, readArpCache } from './arp-cache.js';
+import { localIpv4Set } from './local-addresses.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
 import * as IpAddress from '../models/ip-address.js';
@@ -19,10 +20,9 @@ function arpingIp(ip) {
         resolve({ responded: false, mac: null });
         return;
       }
-      const macMatch = stdout.match(/\[([0-9a-fA-F:]+)\]/);
       resolve({
         responded: true,
-        mac: macMatch ? macMatch[1].toLowerCase() : null
+        mac: parseArpingMac(stdout)
       });
     });
   });
@@ -50,25 +50,6 @@ async function probeIp(ip) {
 
   const icmp = await pingIp(ip);
   return { ...icmp, method: 'icmp' };
-}
-
-/**
- * Read the OS ARP cache from /proc/net/arp.
- * Returns a Map of IP → MAC for all entries with a valid MAC.
- */
-async function readArpCache() {
-  const arpMap = new Map();
-  try {
-    const data = await readFile('/proc/net/arp', 'utf8');
-    // Format: IP address  HW type  Flags  HW address  Mask  Device
-    for (const line of data.split('\n').slice(1)) {
-      const parts = line.trim().split(/\s+/);
-      if (parts.length >= 4 && parts[3] !== '00:00:00:00:00:00') {
-        arpMap.set(parts[0], parts[3].toLowerCase());
-      }
-    }
-  } catch { /* /proc/net/arp may not exist on non-Linux */ }
-  return arpMap;
 }
 
 /**
@@ -207,6 +188,20 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   // hostname after the active lease is gone. Predicate lives in dns-record.js
   // so the scanner, the IP view, and the passive path all agree on it.
   const ipsToScanSet = new Set(ipsToScan);
+
+  // Our own interface addresses always answer a probe. Without this they look
+  // like an unknown host on an unassigned address and get flagged rogue.
+  for (const localIp of localIpv4Set()) {
+    if (ipsToScanSet.has(localIp) && !assignmentMap.has(localIp)) {
+      assignmentMap.set(localIp, {
+        ip_address: localIp,
+        mac_address: null,
+        hostname: null,
+        status: 'assigned'
+      });
+    }
+  }
+
   const dnsAssigned = DnsRecord.listDnsAssignedIps(db).filter(r => ipsToScanSet.has(r.ip_address));
   for (const d of dnsAssigned) {
     if (!assignmentMap.has(d.ip_address)) {
@@ -244,10 +239,11 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
       const results = await Promise.all(promises);
 
-      // Read the ARP cache to capture MACs the kernel learned from ping/arping responses
+      // Read the ARP cache to capture MACs the kernel learned from ping responses.
+      // Forced, because the point is to see entries these probes just created.
       let arpCache = null;
       if (results.some(r => r.responded && !r.mac)) {
-        arpCache = await readArpCache();
+        arpCache = readArpCache({ force: true });
       }
 
       for (const result of results) {

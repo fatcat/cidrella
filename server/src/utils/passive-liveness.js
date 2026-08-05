@@ -64,6 +64,7 @@ export function startPassiveLivenessWatcher(db) {
       IpAddress.bulkMarkStale(db, staleMinutes);
       pruneStaleDhcpHostRows(db);
       IpAddress.pruneEvents(db);
+      IpAddress.clearStaleDynamicMetadata(db);
       lastStaleCheck = now;
 
     }

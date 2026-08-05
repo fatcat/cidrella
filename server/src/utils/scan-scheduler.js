@@ -1,48 +1,11 @@
 import { getDb } from '../db/init.js';
 import { startScan } from './scanner.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
+import { intervalToMs, scanEnabledSql } from './scan-coverage.js';
 import * as ScanRun from '../models/scan-run.js';
-
-const INTERVAL_MS = {
-  '': null,
-  'off': null,
-  '5m': 5 * 60 * 1000,
-  '15m': 15 * 60 * 1000,
-  '30m': 30 * 60 * 1000,
-  '1h': 60 * 60 * 1000,
-  '4h': 4 * 60 * 60 * 1000,
-};
 
 let timer = null;
 const SCHEDULER_TICK_MS = 60 * 1000;
-
-function intervalToMs(value) {
-  if (value === null || value === undefined) return null;
-  const raw = String(value).trim();
-  if (Object.hasOwn(INTERVAL_MS, raw)) return INTERVAL_MS[raw];
-
-  // Backward compatibility for any installs that persisted the old
-  // integer-minutes shape before the UI/API contract was aligned.
-  if (/^\d+$/.test(raw)) {
-    const minutes = parseInt(raw, 10);
-    return minutes > 0 ? minutes * 60 * 1000 : null;
-  }
-
-  return null;
-}
-
-function scanEnabledSql() {
-  return `
-    COALESCE(
-      s.scan_enabled,
-      CASE
-        WHEN (SELECT value FROM settings WHERE key = 'default_scan_enabled') IN ('1', 'true') THEN 1
-        WHEN (SELECT value FROM settings WHERE key = 'default_scan_enabled') IN ('0', 'false') THEN 0
-        ELSE 1
-      END
-    ) = 1
-  `;
-}
 
 function checkScheduledScans() {
   const db = getDb();

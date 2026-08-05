@@ -60,3 +60,24 @@ describe('computeIpView: rogue inference respects a DNS claim', () => {
     expect(view({ is_online: 0 }).address_type).toBeNull();
   });
 });
+
+// CIDRella scans the networks it is attached to, so it probes its own interface
+// addresses and they always answer. That looked identical to an unknown host on
+// an unassigned address. Only the appliance addresses that happened to carry a
+// DNS record escaped, because a manual A record already counted as a claim.
+describe('computeIpView: the appliance own addresses are not rogue', () => {
+  it('labels a local address as system rather than rogue', () => {
+    const out = view({ is_online: 1, is_local_address: 1 });
+    expect(out.address_type).toBe(ADDRESS_TYPE.SYSTEM);
+    expect(out.ip_display_status).toBe('in use');
+  });
+
+  it('wins over a stored rogue flag, so old rows read correctly before the next scan', () => {
+    const out = view({ is_online: 1, is_local_address: 1, is_rogue: 1, rogue_reason: 'Rogue device (IP not assigned)' });
+    expect(out.address_type).toBe(ADDRESS_TYPE.SYSTEM);
+  });
+
+  it('still labels a non-local online unclaimed address rogue', () => {
+    expect(view({ is_online: 1, is_local_address: 0 }).address_type).toBe(ADDRESS_TYPE.ROGUE);
+  });
+});

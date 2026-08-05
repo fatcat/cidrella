@@ -72,7 +72,8 @@ describe('syncLeasesToIps', () => {
     expect(current.mac_address).toBe('aa:bb:cc:dd:ee:ff');
     expect(current.hostname).toBe('new-host');
     expect(current.status).toBe('dhcp');
-    expect(current.is_online).toBe(1);
+    // Lease sync owns assignment, not liveness. It must not claim the host is up.
+    expect(current.is_online).toBe(0);
   });
 
   it('removes stale rows matched only by last_seen_mac', () => {
@@ -133,7 +134,54 @@ describe('syncLeasesToIps', () => {
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.80');
     expect(row.hostname).toBe('reserved-name');
     expect(row.status).toBe('dhcp');
-    expect(row.is_online).toBe(1);
+    expect(row.is_online).toBe(0);
+  });
+
+  it('does not mark a host online, even on an infinite lease', () => {
+    // The reported bug. A reservation reaches dnsmasq's lease file with
+    // expires_at='infinite', so it never expires. Asserting liveness here made
+    // those hosts permanently "online" and re-asserted it over the scanner's
+    // verdict on every lease-file rewrite.
+    syncLeasesToIps(db, [{
+      subnetId,
+      ip: '10.0.1.90',
+      mac: 'aa:bb:cc:dd:ee:90',
+      hostname: 'static-host',
+      expiresAt: 'infinite'
+    }]);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.90');
+    expect(row.is_online).toBe(0);
+    expect(row.last_seen_at).toBeNull();
+  });
+
+  it('does not overwrite a scanner no-response verdict', () => {
+    // End-to-end shape of the bug: the scanner proves the host is gone, then
+    // any other device renewing its lease rewrites the file and re-syncs.
+    IpAddress.upsert(db, subnetId, '10.0.1.91', {
+      mac_address: 'aa:bb:cc:dd:ee:91',
+      status: 'dhcp',
+      is_online: 1,
+      detection_source: 'dhcp_lease'
+    });
+    IpAddress.updateFromScan(db, subnetId, '10.0.1.91', {
+      responded: 0, mac: null, isConflict: 0, conflictReason: null
+    });
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.91').is_online).toBe(0);
+
+    const before = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.91').last_seen_at;
+
+    syncLeasesToIps(db, [{
+      subnetId,
+      ip: '10.0.1.91',
+      mac: 'aa:bb:cc:dd:ee:91',
+      hostname: 'gone-host',
+      expiresAt: 'infinite'
+    }]);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.91');
+    expect(row.is_online).toBe(0);
+    expect(row.last_seen_at).toBe(before);
   });
 });
 
@@ -275,6 +323,44 @@ describe('pruneStaleDhcpHostRows', () => {
 
     expect(pruneStaleDhcpHostRows(db)).toBe(1);
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.70')).toBeUndefined();
+  });
+
+  it('spares a row a manual A record points at', () => {
+    // Deleting the row takes the MAC with it, and vendor and device with that.
+    // A static DNS entry is an admin declaration, so it keeps what was learned.
+    const zoneId = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('prune.test', 'forward', 1)")
+      .run().lastInsertRowid;
+    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, 'nas', 'A', '10.0.1.72', 'manual', 1)")
+      .run(zoneId);
+
+    IpAddress.upsert(db, subnetId, '10.0.1.72', {
+      hostname: 'nas',
+      mac_address: '00:24:e4:ee:96:18',
+      status: 'dhcp',
+      is_online: 0,
+      detection_source: 'dhcp_lease'
+    });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.72'")
+      .run(subnetId);
+
+    expect(pruneStaleDhcpHostRows(db)).toBe(0);
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.72');
+    expect(row).toBeTruthy();
+    expect(row.mac_address).toBe('00:24:e4:ee:96:18');
+  });
+
+  it('spares a locked row', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.73', {
+      mac_address: '00:24:e4:ee:96:19',
+      status: 'locked',
+      is_online: 0,
+      detection_source: 'dhcp_lease'
+    });
+    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.73'")
+      .run(subnetId);
+
+    expect(pruneStaleDhcpHostRows(db)).toBe(0);
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.73')).toBeTruthy();
   });
 
   it('keeps recent offline DHCP rows', () => {

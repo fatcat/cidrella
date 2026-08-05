@@ -155,3 +155,36 @@ describe('ipLifecycleDisplay', () => {
     expect(display.addressType).toMatchObject({ label: 'dynamic DHCP', className: 'type-dynamic-dhcp' });
   });
 });
+
+// This module is the client-side fallback for the server's computeIpView, used
+// when a row arrives without address_type. It has to agree with the server, so
+// these mirror server/tests/unit/models/ip-view.test.js.
+describe('ipLifecycleDisplay: parity with the server projection', () => {
+  it('shows system for an address the appliance itself holds', () => {
+    expect(ipLifecycleDisplay({ is_online: 1, is_local_address: 1 }).addressType)
+      .toMatchObject({ label: 'system' });
+  });
+
+  it('prefers system over a stored rogue flag', () => {
+    expect(ipLifecycleDisplay({ is_online: 1, is_local_address: 1, is_rogue: 1 }).addressType)
+      .toMatchObject({ label: 'system' });
+  });
+
+  it('does not call a DNS-claimed address rogue', () => {
+    expect(ipLifecycleDisplay({ status: 'available', is_online: 1, has_static_dns: 1 }).addressType)
+      .toMatchObject({ label: 'static DNS' });
+  });
+
+  it('still shows rogue for an online address nothing claims', () => {
+    expect(ipLifecycleDisplay({ status: 'available', is_online: 1 }).addressType)
+      .toMatchObject({ label: 'rogue' });
+  });
+
+  // Known divergence, deliberately pinned rather than fixed here. The server's
+  // computeIpView defaults a missing status to 'available' and would label this
+  // rogue. This fallback leaves it undefined and returns no type. Real rows
+  // always carry a status, so it does not bite today.
+  it('returns no address type when the row carries no status at all', () => {
+    expect(ipLifecycleDisplay({ is_online: 1 }).addressType).toBeNull();
+  });
+});

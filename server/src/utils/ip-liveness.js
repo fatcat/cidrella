@@ -1,6 +1,7 @@
 import net from 'net';
 import { PASSIVE_LIVENESS_DEBOUNCE_MS } from '../config/defaults.js';
 import { findSubnetForIp } from './ip-sync.js';
+import { lookupArpMac } from './arp-cache.js';
 import * as IpAddress from '../models/ip-address.js';
 
 const lastPassiveWrite = new Map();
@@ -40,7 +41,14 @@ export function recordDnsQueryLiveness(db, ip, { createRogue = false, source = '
   const subnet = findSubnetForIp(db, ip);
   if (!subnet) return { changes: 0, ignored: true };
 
+  // A host that just sent us a query is normally in the kernel neighbour table,
+  // so the MAC is there for free. It matters most for the rogue case: an
+  // address CIDRella never assigned is exactly the one an operator has to go
+  // find on the network, and the MAC is what makes that possible. Off-link
+  // clients simply miss here, which is correct, the only MAC ARP could offer
+  // for those is the gateway's.
   const result = IpAddress.recordPassiveActivity(db, subnet.id, ip, {
+    mac: lookupArpMac(ip),
     source,
     createRogue
   });

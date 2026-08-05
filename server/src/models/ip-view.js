@@ -1,4 +1,5 @@
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
+import { localIpv4Set } from '../utils/local-addresses.js';
 import { lookupFingerprintBatch } from './device-fingerprint.js';
 import * as DnsRecord from './dns-record.js';
 
@@ -40,6 +41,12 @@ export function computeIpView(row) {
     addressType = ADDRESS_TYPE.SYSTEM;
   } else if (row.range_type_name === 'Gateway') {
     addressType = ADDRESS_TYPE.GATEWAY;
+  } else if (truthy(row.is_local_address)) {
+    // An address the appliance itself holds. Ahead of the isRogue branch on
+    // purpose, so a row mislabelled by the old behaviour reads correctly
+    // straight away rather than waiting for the next scan to clear the flag.
+    addressType = ADDRESS_TYPE.SYSTEM;
+    tooltip = 'This CIDRella interface';
   } else if (isRogue) {
     addressType = ADDRESS_TYPE.ROGUE;
     tooltip = row.rogue_reason || null;
@@ -119,6 +126,7 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
 
   const stateMap = fillFromIpAddress ? getIpStateMap(db, rows) : new Map();
   const staticDnsIps = getStaticDnsIpSet(db, rows.map(r => r.ip_address));
+  const localIps = localIpv4Set();
 
   for (const row of rows) {
     const state = stateMap.get(`${row.subnet_id}:${row.ip_address}`);
@@ -143,6 +151,9 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
 
     if (row.has_static_dns === undefined) {
       row.has_static_dns = staticDnsIps.has(row.ip_address) ? 1 : 0;
+    }
+    if (row.is_local_address === undefined) {
+      row.is_local_address = localIps.has(row.ip_address) ? 1 : 0;
     }
     applyIpView(row);
   }

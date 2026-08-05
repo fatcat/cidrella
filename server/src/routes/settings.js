@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getDb, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
-import { pruneEvents } from '../models/ip-address.js';
+import { pruneEvents, clearStaleDynamicMetadata } from '../models/ip-address.js';
 import * as Setting from '../models/setting.js';
 import { GEOIP_MODES, validateInterfaceConfig, validPortOrError } from '../utils/validation.js';
 
@@ -157,6 +157,10 @@ const SETTING_SCHEMA = {
     validate: v => isIntInRange(v, 1, 3650) ? null : 'must be an integer 1-3650',
     normalize: v => String(intOrNull(v))
   },
+  offline_metadata_retention_days: {
+    validate: v => isIntInRange(v, 1, 3650) ? null : 'must be an integer 1-3650',
+    normalize: v => String(intOrNull(v))
+  },
 };
 
 const EDITABLE_KEYS = new Set(Object.keys(SETTING_SCHEMA));
@@ -210,6 +214,9 @@ router.put('/bulk', requireRole('admin'), (req, res) => {
   if (settings.ip_history_retention_days !== undefined) {
     pruneEvents(db);
   }
+  if (settings.offline_metadata_retention_days !== undefined) {
+    clearStaleDynamicMetadata(db);
+  }
 
   audit(req.user.id, 'settings_bulk_updated', 'setting', null, { keys: entries.map(([k]) => k) });
   res.json({ ok: true });
@@ -231,8 +238,10 @@ router.put('/:key', requirePerm('system:write'), (req, res) => {
   setSetting(key, check.normalized);
 
   if (key === 'ip_history_retention_days') {
-    const db = getDb();
-    pruneEvents(db);
+    pruneEvents(getDb());
+  }
+  if (key === 'offline_metadata_retention_days') {
+    clearStaleDynamicMetadata(getDb());
   }
 
   audit(req.user.id, 'setting_updated', 'setting', null, { key, value: check.normalized });

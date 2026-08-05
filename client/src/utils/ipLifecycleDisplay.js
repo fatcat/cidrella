@@ -81,6 +81,9 @@ export function ipLifecycleDisplay(data) {
     || data.has_static_dns === 1
     || data.has_static_dns === '1';
   const isRogue = data.is_rogue === true || data.is_rogue === 1 || data.is_rogue === '1';
+  const isLocalAddress = data.is_local_address === true
+    || data.is_local_address === 1
+    || data.is_local_address === '1';
   const isStaticDns = hasStaticDns || (data.detection_source === 'dns' && !!data.hostname);
   const ipLifecycleStatus = data.ip_lifecycle_status || data.ip_status || data.status;
 
@@ -92,6 +95,15 @@ export function ipLifecycleDisplay(data) {
     return { status: 'in use', statusSeverity: 'danger', addressType: ADDRESS_TYPE_GATEWAY };
   }
 
+  if (isLocalAddress) {
+    return {
+      status: 'in use',
+      statusSeverity: 'danger',
+      addressType: ADDRESS_TYPE_SYSTEM,
+      tooltip: 'This CIDRella interface'
+    };
+  }
+
   if (isRogue) {
     return {
       status: 'in use',
@@ -101,7 +113,7 @@ export function ipLifecycleDisplay(data) {
     };
   }
 
-  if (isOnline && ipLifecycleStatus === 'available' && !hasDhcpReservation && !data.hostname && !hasActiveLease) {
+  if (isOnline && ipLifecycleStatus === 'available' && !hasDhcpReservation && !data.hostname && !hasActiveLease && !hasStaticDns) {
     return { status: 'in use', statusSeverity: 'danger', addressType: ADDRESS_TYPE_ROGUE };
   }
 

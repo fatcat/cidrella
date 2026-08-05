@@ -8,7 +8,7 @@
 import { ipToLong } from './ip.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
-import { setPtrForIp } from '../models/dns-record.js';
+import { setPtrForIp, dnsAssignedIpSet } from '../models/dns-record.js';
 
 // Cached leaf subnets, invalidated on subnet CRUD via invalidateSubnetCache()
 let leafSubnetCache = null;
@@ -321,7 +321,7 @@ export function pruneStaleDhcpHostRows(db, maxAgeHours = 24) {
   const offset = `-${hours} hours`;
 
   const staleRows = db.prepare(`
-    SELECT ip.id
+    SELECT ip.id, ip.ip_address
     FROM ip_addresses ip
     LEFT JOIN dhcp_leases dl
       ON dl.subnet_id = ip.subnet_id
@@ -335,12 +335,20 @@ export function pruneStaleDhcpHostRows(db, maxAgeHours = 24) {
     WHERE (ip.status = 'dhcp' OR ip.detection_source = 'dhcp_lease')
       AND dl.id IS NULL
       AND dr.id IS NULL
+      AND ip.status NOT IN ('locked', 'assigned')
       AND datetime(COALESCE(ip.last_seen_at, ip.updated_at, ip.created_at)) < datetime('now', ?)
   `).all(offset);
 
   if (staleRows.length === 0) return 0;
 
-  return IpAddress.deleteByIds(db, staleRows.map(row => row.id)).changes;
+  // This deletes the whole row, MAC included, which also takes vendor and
+  // device with it. An address a manual A record points at is admin-declared,
+  // so it keeps what was learned until that record is deleted.
+  const declaredByDns = dnsAssignedIpSet(db);
+  const deletable = staleRows.filter(row => !declaredByDns.has(row.ip_address));
+  if (deletable.length === 0) return 0;
+
+  return IpAddress.deleteByIds(db, deletable.map(row => row.id)).changes;
 }
 
 /**
@@ -414,11 +422,13 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
       LIMIT 1
     `).get(subnetId, ip);
     if (lease) {
+      // No is_online here. A lease says the address is assigned, not that the
+      // host is present. Liveness belongs to the scanner and the passive DNS
+      // watcher, which actually observe it.
       IpAddress.upsert(db, subnetId, ip, {
         hostname: lease.hostname || undefined,
         mac_address: lease.mac_address || undefined,
         status: 'dhcp',
-        is_online: 1,
         last_seen_mac: lease.mac_address || undefined,
         detection_source: 'dhcp_lease'
       });
@@ -475,11 +485,15 @@ export function syncLeasesToIps(db, leases) {
         AND trim(hostname) != ''
       LIMIT 1
     `).get(l.subnetId, l.ip);
+    // Deliberately no is_online. Holding a lease is not evidence the host is
+    // up: a reservation appears here with expires_at='infinite' and would stay
+    // "online" forever, and every lease-file rewrite would re-assert it over
+    // the scanner's verdict. Liveness is owned by the scanner and the passive
+    // DNS watcher. Assignment (status, MAC, hostname) is owned here.
     IpAddress.upsert(db, l.subnetId, l.ip, {
       hostname: reservation ? undefined : (l.hostname || undefined),
       mac_address: l.mac || undefined,
       status: 'dhcp',
-      is_online: 1,
       last_seen_mac: l.mac || undefined,
       detection_source: 'dhcp_lease'
     });
