@@ -13,9 +13,9 @@ export function upsertRogueEvent(db, ev) {
   return db.prepare(`
     INSERT INTO rogue_dhcp_events
       (server_ip, server_mac, server_identifier, offered_ip, offered_gateway,
-       offered_dns, offered_subnet_mask, iface)
+       offered_dns, offered_subnet_mask, relay_ip, iface)
     VALUES (@server_ip, @server_mac, @server_identifier, @offered_ip, @offered_gateway,
-            @offered_dns, @offered_subnet_mask, @iface)
+            @offered_dns, @offered_subnet_mask, @relay_ip, @iface)
     ON CONFLICT(server_ip, server_mac) DO UPDATE SET
       last_seen_at        = datetime('now'),
       times_seen          = times_seen + 1,
@@ -24,6 +24,7 @@ export function upsertRogueEvent(db, ev) {
       offered_gateway     = excluded.offered_gateway,
       offered_dns         = excluded.offered_dns,
       offered_subnet_mask = excluded.offered_subnet_mask,
+      relay_ip            = excluded.relay_ip,
       iface               = excluded.iface
   `).run({
     server_ip: ev.server_ip,
@@ -33,6 +34,7 @@ export function upsertRogueEvent(db, ev) {
     offered_gateway: ev.offered_gateway ?? null,
     offered_dns: ev.offered_dns ?? null,
     offered_subnet_mask: ev.offered_subnet_mask ?? null,
+    relay_ip: ev.relay_ip ?? null,
     iface: ev.iface ?? null,
   });
 }

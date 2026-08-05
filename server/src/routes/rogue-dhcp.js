@@ -10,12 +10,35 @@ const router = Router();
 // GET /api/dhcp/rogue/status
 router.get('/status', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
-  const { lastProbeAt, probeSupported } = getProbeState();
+  const { lastProbeAt, probeSupported, probeInProgress, lastProbeOutcome, lastProbeError } = getProbeState();
+  const enabled = getSetting('rogue_dhcp_detection_enabled') === 'true';
+  const intervalMin = parseInt(getSetting('rogue_dhcp_probe_interval_min'), 10) || 15;
+
+  // Detection is only doing its job if it is actually probing. A clean probe
+  // logs nothing, and the one routine log line it does emit only appears when a
+  // rogue is found, so "healthy on a quiet network" and "has not run in weeks"
+  // look identical from outside. Report the difference directly.
+  const graceMs = (intervalMin * 60 * 1000) * 2 + 60 * 1000;
+  // lastProbeAt is per-process, so it is null for the first few seconds after
+  // every restart. Give the scheduler's initial kick room to land rather than
+  // showing "nothing is watching" on each start, which would train the operator
+  // to ignore the one banner that matters.
+  const NEVER_PROBED_GRACE_MS = 2 * 60 * 1000;
+  const ageMs = lastProbeAt ? Date.now() - new Date(lastProbeAt).getTime() : null;
+  const stale = enabled && probeSupported && (
+    ageMs === null ? process.uptime() * 1000 > NEVER_PROBED_GRACE_MS : ageMs > graceMs
+  );
+
   res.json({
-    enabled: getSetting('rogue_dhcp_detection_enabled') === 'true',
-    intervalMin: parseInt(getSetting('rogue_dhcp_probe_interval_min'), 10) || 15,
+    enabled,
+    intervalMin,
     lastProbeAt,
     probeSupported,
+    probeInProgress,
+    lastProbeOutcome,
+    lastProbeError,
+    healthy: !enabled || (probeSupported && !stale),
+    stale,
     unacknowledged: RogueDhcp.countUnacknowledged(db),
   });
 });
@@ -53,12 +76,24 @@ router.delete('/events/:id', requirePerm('dhcp:write'), (req, res) => {
 
 // POST /api/dhcp/rogue/probe: trigger an immediate probe
 router.post('/probe', requirePerm('dhcp:write'), async (req, res) => {
-  const summary = await runProbe(getDb(), {});
+  let summary;
+  try {
+    summary = await runProbe(getDb(), {});
+  } catch (err) {
+    // runProbe rejects when it cannot even get as far as opening a socket.
+    // Name the failure instead of letting it surface as a bare 500.
+    return res.status(500).json({ error: `DHCP probe could not start: ${err.message}` });
+  }
   audit(req.user.id, 'rogue_dhcp_probe', 'rogue_dhcp', null, {
-    interfaces: summary.interfaces, offers: summary.offers, rogues: summary.rogues.length,
+    interfaces: summary.interfaces, offers: summary.offers,
+    rogues: summary.rogues.length, skipped: summary.skipped === true,
   });
   res.json({
     supported: summary.supported,
+    // A skipped run finds nothing because it never looked. Reporting that as a
+    // successful probe with zero results is how a dead prober stays hidden.
+    skipped: summary.skipped === true,
+    skipReason: summary.skipReason ?? null,
     interfaces: summary.interfaces,
     offers: summary.offers,
     rogueCount: summary.rogues.length,

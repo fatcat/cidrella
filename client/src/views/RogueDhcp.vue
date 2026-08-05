@@ -24,6 +24,12 @@
           Could not bind UDP port 68 on this host (another DHCP client may be using it).
           Detection is unavailable until that's resolved.
         </p>
+        <p v-else-if="status && status.stale" class="rd-warn" data-track="rogue-dhcp-stale-warning">
+          Detection is enabled but has not probed
+          {{ status.lastProbeAt ? 'since ' + formatDate(status.lastProbeAt) : 'at all yet' }}.
+          Nothing is currently watching for rogue DHCP servers.
+          <template v-if="status.lastProbeError"> Last error: {{ status.lastProbeError }}.</template>
+        </p>
         <p v-else-if="status" class="rd-status">
           Last probe: {{ status.lastProbeAt ? formatDate(status.lastProbeAt) : 'never' }}
         </p>
@@ -62,6 +68,14 @@
         </Column>
         <Column field="offered_dns" header="Offered DNS">
           <template #body="{ data }">{{ data.offered_dns || '—' }}</template>
+        </Column>
+        <Column field="relay_ip" header="Via relay">
+          <template #body="{ data }">
+            <span v-if="data.relay_ip" v-tooltip.top="'Forwarded by a DHCP relay. The offer may originate from a server elsewhere, including this one.'">
+              {{ data.relay_ip }}
+            </span>
+            <span v-else v-tooltip.top="'Answered directly on this segment, no relay in the path'">direct</span>
+          </template>
         </Column>
         <Column field="iface" header="Interface">
           <template #body="{ data }">{{ data.iface || '—' }}</template>
@@ -189,6 +203,14 @@ async function probeNow() {
     const res = await store.probeNow();
     if (res.supported === false) {
       toast.add({ severity: 'warn', summary: 'Probe unavailable', detail: 'Could not bind UDP port 68 on this host.', life: 6000 });
+    } else if (res.skipped) {
+      toast.add({
+        severity: 'warn', summary: 'Probe skipped',
+        detail: res.skipReason === 'in-progress'
+          ? 'A probe is already running. Try again in a few seconds.'
+          : 'The probe did not run, so nothing was checked.',
+        life: 6000,
+      });
     } else {
       toast.add({ severity: 'success', summary: 'Probe complete', detail: `${res.rogueCount} rogue server(s), ${res.offers} offer(s) across ${res.interfaces} interface(s).`, life: 4000 });
     }

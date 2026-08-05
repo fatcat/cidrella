@@ -9,7 +9,7 @@ vi.mock('../../../src/utils/dhcp-probe.js', () => ({
 }));
 
 const { default: rogueRouter } = await import('../../../src/routes/rogue-dhcp.js');
-const { runProbe } = await import('../../../src/utils/dhcp-probe.js');
+const { runProbe, getProbeState } = await import('../../../src/utils/dhcp-probe.js');
 const RogueDhcp = await import('../../../src/models/rogue-dhcp.js');
 const { default: request } = await import('supertest');
 
@@ -39,6 +39,42 @@ describe('GET /status', () => {
     expect(res.body).toHaveProperty('intervalMin');
     expect(res.body).toHaveProperty('probeSupported', true);
     expect(res.body).toHaveProperty('unacknowledged', 0);
+  });
+
+  // A clean probe logs nothing, so "healthy but quiet" and "has not run in
+  // weeks" are indistinguishable unless the status endpoint says which it is.
+  it('reports stale when detection is enabled but the last probe is ancient', async () => {
+    await request(app).put('/api/dhcp/rogue/settings').send({ enabled: true, intervalMin: 15 });
+    const res = await request(app).get('/api/dhcp/rogue/status');
+    expect(res.body.stale).toBe(true);
+    expect(res.body.healthy).toBe(false);
+  });
+
+  it('is not stale when detection is switched off', async () => {
+    await request(app).put('/api/dhcp/rogue/settings').send({ enabled: false });
+    const res = await request(app).get('/api/dhcp/rogue/status');
+    expect(res.body.stale).toBe(false);
+    expect(res.body.healthy).toBe(true);
+  });
+
+  it('does not cry stale in the first moments after a restart', async () => {
+    // lastProbeAt is per-process, so it is null until the scheduler's initial
+    // kick lands. That must not read as "nothing is watching".
+    vi.mocked(getProbeState).mockReturnValueOnce({ lastProbeAt: null, probeSupported: true });
+    const uptime = vi.spyOn(process, 'uptime').mockReturnValue(5);
+    await request(app).put('/api/dhcp/rogue/settings').send({ enabled: true, intervalMin: 15 });
+    const res = await request(app).get('/api/dhcp/rogue/status');
+    expect(res.body.stale).toBe(false);
+    uptime.mockRestore();
+  });
+
+  it('does report stale when nothing has probed long after boot', async () => {
+    vi.mocked(getProbeState).mockReturnValueOnce({ lastProbeAt: null, probeSupported: true });
+    const uptime = vi.spyOn(process, 'uptime').mockReturnValue(3600);
+    await request(app).put('/api/dhcp/rogue/settings').send({ enabled: true, intervalMin: 15 });
+    const res = await request(app).get('/api/dhcp/rogue/status');
+    expect(res.body.stale).toBe(true);
+    uptime.mockRestore();
   });
 });
 
@@ -138,5 +174,25 @@ describe('POST /probe', () => {
     expect(res.status).toBe(200);
     expect(runProbe).toHaveBeenCalled();
     expect(res.body).toMatchObject({ supported: true, interfaces: 1, offers: 2, rogueCount: 0 });
+    expect(res.body.skipped).toBe(false);
+  });
+
+  // A skipped run found nothing because it never looked. Reporting that as a
+  // successful scan is the whole reason a dead prober can go unnoticed.
+  it('says the probe was skipped instead of reporting a clean scan', async () => {
+    vi.mocked(runProbe).mockResolvedValueOnce({
+      supported: true, skipped: true, skipReason: 'in-progress',
+      interfaces: 0, offers: 0, rogues: [],
+    });
+    const res = await request(app).post('/api/dhcp/rogue/probe');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ skipped: true, skipReason: 'in-progress' });
+  });
+
+  it('names the failure when the probe cannot start', async () => {
+    vi.mocked(runProbe).mockRejectedValueOnce(new Error('interface enumeration blew up'));
+    const res = await request(app).post('/api/dhcp/rogue/probe');
+    expect(res.status).toBe(500);
+    expect(res.body.error).toContain('interface enumeration blew up');
   });
 });

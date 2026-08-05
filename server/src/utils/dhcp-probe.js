@@ -25,11 +25,18 @@ const MAGIC_COOKIE = 0x63825363;
 const PROBE_WINDOW_MS = 4000;
 const SCHEDULER_TICK_MS = 60 * 1000;
 const INITIAL_KICK_MS = 20 * 1000;
+// Grace on top of the listen window before the watchdog calls a probe stalled.
+const PROBE_WATCHDOG_GRACE_MS = 15 * 1000;
+// How long an "in progress" probe may sit before a later run reclaims the flag.
+const PROBE_STUCK_MS = 5 * 60 * 1000;
 
 // Module state
 let probeInProgress = false;
+let probeStartedAt = null;       // so a stranded in-progress flag is detectable
 let probeSupported = true;       // flips false if :68 can't bind
 let lastProbeAt = null;
+let lastProbeOutcome = null;     // ok | timeout | error | unsupported | no-interfaces
+let lastProbeError = null;
 let xidSeq = 1;
 let schedulerTimer = null;
 let initialKickTimer = null;
@@ -90,6 +97,13 @@ export function parseOffer(buf) {
   const xid = buf.readUInt32BE(4);
   const yiaddr = ipToStr(buf, 16);
   const siaddr = ipToStr(buf, 20);
+  // giaddr, the relay agent that forwarded this. Zero means the offer came
+  // straight from a server on our segment. Non-zero means a relay was in the
+  // path, which is the difference between "a second DHCP server is running"
+  // and "our own offer came back via a relay that rewrote the server-id".
+  // Worth capturing: it is the only field that tells those two apart.
+  const giaddrRaw = ipToStr(buf, 24);
+  const giaddr = giaddrRaw === '0.0.0.0' ? null : giaddrRaw;
   const chaddr = Array.from(buf.subarray(28, 34)).map(b => b.toString(16).padStart(2, '0')).join(':');
 
   let off = 240;
@@ -112,7 +126,7 @@ export function parseOffer(buf) {
     off += len;
   }
   if (msgType !== 2) return null; // OFFER only
-  return { msgType, xid, yiaddr, siaddr, chaddr, serverId, gateway, subnetMask, dns };
+  return { msgType, xid, yiaddr, siaddr, giaddr, chaddr, serverId, gateway, subnetMask, dns };
 }
 
 // Decide whether an offer comes from an unauthorized server. `selfIps` and
@@ -202,34 +216,73 @@ export function getLanInterfaces() {
 
 export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
   if (probeInProgress) {
-    return Promise.resolve({ supported: probeSupported, skipped: true, interfaces: 0, offers: 0, rogues: [] });
+    const heldMs = probeStartedAt ? Date.now() - probeStartedAt : 0;
+    if (heldMs < PROBE_STUCK_MS) {
+      probeLog('info', 'Probe already running, skipping this run', { heldMs });
+      return Promise.resolve({
+        supported: probeSupported, skipped: true, skipReason: 'in-progress',
+        interfaces: 0, offers: 0, rogues: []
+      });
+    }
+    // A previous run never finished. This used to disable rogue detection
+    // permanently and in total silence: every later call returned "skipped"
+    // with no log, so the only symptom was a rogue event that stopped
+    // updating. Take the flag back and say so.
+    probeLog('error', 'Previous probe never completed, reclaiming the in-progress flag', { heldMs });
+    lastProbeError = `previous probe stalled for ${Math.round(heldMs / 1000)}s`;
+    probeInProgress = false;
   }
   probeInProgress = true;
+  probeStartedAt = Date.now();
 
-  const ifaces = getLanInterfaces();
+  let ifaces, selfIps, authorized;
+  try {
+    ifaces = getLanInterfaces();
+    selfIps = getSelfIps();
+    authorized = authorizedIpSet(db);
+  } catch (err) {
+    // Anything thrown here used to strand probeInProgress, because only
+    // finish() cleared it and finish() lives past this point.
+    probeInProgress = false;
+    probeStartedAt = null;
+    lastProbeOutcome = 'error';
+    lastProbeError = err.message;
+    probeLog('error', 'Probe setup failed', { error: err.message });
+    // Rejected promise, not a synchronous throw. Every other path here returns
+    // a promise, and callers use await or .catch.
+    return Promise.reject(err);
+  }
+
   if (ifaces.length === 0) {
     probeInProgress = false;
+    probeStartedAt = null;
     lastProbeAt = new Date().toISOString();
+    lastProbeOutcome = 'no-interfaces';
+    lastProbeError = null;
+    probeLog('warn', 'No LAN interfaces to probe');
     return Promise.resolve({ supported: true, interfaces: 0, offers: 0, rogues: [] });
   }
 
-  const selfIps = getSelfIps();
-  const authorized = authorizedIpSet(db);
   const xidMap = new Map();        // xid → ifName
   const rogues = new Map();        // serverIp → event
   let offerCount = 0;
 
   return new Promise((resolve) => {
-    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    let sock = null;
     let settled = false;
+    let watchdog = null;
 
-    const finish = (supported) => {
+    const finish = (supported, { outcome = 'ok', error = null } = {}) => {
       if (settled) return;
       settled = true;
-      try { sock.close(); } catch { /* ignore */ }
+      if (watchdog) clearTimeout(watchdog);
+      try { sock?.close(); } catch { /* ignore */ }
       probeSupported = supported;
       probeInProgress = false;
+      probeStartedAt = null;
       lastProbeAt = new Date().toISOString();
+      lastProbeOutcome = supported ? outcome : 'unsupported';
+      lastProbeError = error;
       try {
         for (const ev of rogues.values()) upsertRogueEvent(db, ev);
       } catch (err) {
@@ -241,13 +294,31 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
       resolve({ supported, interfaces: ifaces.length, offers: offerCount, rogues: [...rogues.values()] });
     };
 
+    // Last line of defence. Every path below is supposed to reach finish(), but
+    // if one ever does not (a bind callback that never fires, say) this clears
+    // the in-progress flag anyway. Without it a single stall disables rogue
+    // detection until the service restarts.
+    watchdog = setTimeout(() => {
+      probeLog('error', 'Probe did not complete in time, forcing completion');
+      finish(probeSupported, { outcome: 'timeout', error: 'probe did not complete in time' });
+    }, windowMs + PROBE_WATCHDOG_GRACE_MS);
+    if (watchdog.unref) watchdog.unref();
+
+    try {
+      sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    } catch (err) {
+      probeLog('error', 'Could not create probe socket', { error: err.message });
+      finish(probeSupported, { outcome: 'error', error: err.message });
+      return;
+    }
+
     sock.on('error', (err) => {
       if (err.code === 'EACCES' || err.code === 'EADDRINUSE') {
         probeLog('warn', `Cannot bind UDP :68 (${err.code}). Rogue DHCP detection is unavailable on this host`);
-        finish(false);
+        finish(false, { error: `cannot bind UDP :68 (${err.code})` });
       } else {
         probeLog('error', 'Probe socket error', { error: err.message, code: err.code });
-        finish(probeSupported);
+        finish(probeSupported, { outcome: 'error', error: err.message });
       }
     });
 
@@ -270,6 +341,7 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
             offered_gateway: offer.gateway || null,
             offered_dns: (offer.dns || []).join(',') || null,
             offered_subnet_mask: offer.subnetMask || null,
+            relay_ip: offer.giaddr || null,
             iface: xidMap.get(offer.xid),
           });
         }
@@ -296,7 +368,13 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
 }
 
 export function getProbeState() {
-  return { lastProbeAt, probeSupported };
+  return {
+    lastProbeAt,
+    probeSupported,
+    probeInProgress,
+    lastProbeOutcome,
+    lastProbeError
+  };
 }
 
 // ─── Scheduler ───────────────────────────────────────────
