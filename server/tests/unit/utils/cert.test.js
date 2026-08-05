@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { buildSanList, certHasSan, ensureCerts } from '../../../src/utils/cert.js';
+import { buildSanList, certHasSan, isSelfGeneratedCert, ensureCerts } from '../../../src/utils/cert.js';
 
 const IFACES = {
   lo: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
@@ -89,5 +89,33 @@ describe('ensureCerts', () => {
     ensureCerts(legacyDir);
     expect(certHasSan(certPath)).toBe(true);
     fs.rmSync(legacyDir, { recursive: true, force: true });
+  });
+
+  // The operator's own certificate is off limits. Overwriting it would destroy
+  // the private key too, which an upgrade has no business doing.
+  it('never replaces an operator certificate, even one with no subjectAltName', () => {
+    const ownDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-own-'));
+    const certsDir = path.join(ownDir, 'certs');
+    fs.mkdirSync(certsDir, { recursive: true });
+    const keyPath = path.join(certsDir, 'server.key');
+    const certPath = path.join(certsDir, 'server.crt');
+    execFileSync('openssl', [
+      'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', certPath,
+      '-days', '365', '-nodes', '-subj', '/CN=nas.example.internal/O=Example Corp/C=GB',
+    ], { stdio: 'pipe' });
+    expect(certHasSan(certPath)).toBe(false);
+    const certBefore = fs.readFileSync(certPath, 'utf8');
+    const keyBefore = fs.readFileSync(keyPath, 'utf8');
+
+    ensureCerts(ownDir);
+
+    expect(fs.readFileSync(certPath, 'utf8')).toBe(certBefore);
+    expect(fs.readFileSync(keyPath, 'utf8')).toBe(keyBefore);
+    fs.rmSync(ownDir, { recursive: true, force: true });
+  });
+
+  it('recognizes its own certificate and not the operator\'s', () => {
+    const { certPath } = ensureCerts(dir);
+    expect(isSelfGeneratedCert(certPath)).toBe(true);
   });
 });

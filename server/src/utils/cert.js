@@ -56,6 +56,21 @@ export function certHasSan(certPath) {
   }
 }
 
+// True only for a certificate this appliance generated: self-signed, carrying
+// the exact subject generateCert() writes. Anything else belongs to the
+// operator, and replacing it would destroy their certificate AND its private
+// key, which is not a thing an upgrade gets to do.
+export function isSelfGeneratedCert(certPath) {
+  try {
+    const cert = new X509Certificate(fs.readFileSync(certPath));
+    if (cert.subject !== cert.issuer) return false;
+    const fields = new Set(cert.subject.split('\n').map(s => s.trim()));
+    return fields.has('CN=cidrella') && fields.has('O=CIDRella');
+  } catch {
+    return false;
+  }
+}
+
 function generateCert(san) {
   const args = [
     'req', '-x509', '-newkey', 'rsa:2048',
@@ -85,6 +100,14 @@ export function ensureCerts(dataDir) {
   if (fs.existsSync(keyFilePath) && fs.existsSync(certFilePath)) {
     if (certHasSan(certFilePath)) {
       console.log('Using existing TLS certificates');
+      return { keyPath: keyFilePath, certPath: certFilePath };
+    }
+    if (!isSelfGeneratedCert(certFilePath)) {
+      console.warn('The installed TLS certificate has no subjectAltName, which browsers ' +
+        'reject by name. Leaving it alone because CIDRella did not generate it, and ' +
+        'replacing it would destroy your certificate and its private key. Reissue it with ' +
+        'a subjectAltName, or remove server.crt and server.key to fall back to a ' +
+        'generated certificate.');
       return { keyPath: keyFilePath, certPath: certFilePath };
     }
     // Browsers have required subjectAltName since Chrome 58 and reject a
