@@ -448,11 +448,22 @@ fi
 TAG_NAME=$(echo "$RELEASE_JSON" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' | head -1)
 VERSION="${TAG_NAME#v}"
 
-# Find tarball asset
-TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.tar\.gz' | head -1)
+# Find tarball asset, qualified by architecture.
+#
+# This used to match any *.tar.gz and take head -1. Releases through v0.4.15
+# shipped linux-arm64 alongside linux-x64, so on such a release an amd64 host
+# picked the ARM tarball. Its signature matched (the .minisig was selected by a
+# separate head -1 that landed on the same arch), so minisign verified happily
+# and the appliance installed a build whose native modules cannot load on this
+# CPU. Note BUILD_ARCH was already defined at the top of this script and never
+# used. See REVIEW.md, duplicate-logic audit #32.
+TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*'"${BUILD_ARCH}"'\.tar\.gz"' | sed 's/"$//' | head -1)
 if [ -z "$TARBALL_URL" ]; then
-  # Fallback to source tarball
-  TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/cidrella-${TAG_NAME}.tar.gz"
+  # Single-arch release (v0.4.16 onward): fall back to any tarball asset.
+  TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.tar\.gz"' | sed 's/"$//' | head -1)
+fi
+if [ -z "$TARBALL_URL" ]; then
+  TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/cidrella-${TAG_NAME}-${BUILD_ARCH}.tar.gz"
 fi
 
 info "Version: $VERSION"
@@ -465,10 +476,9 @@ trap "rm -rf '$TMPDIR'" EXIT
 curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
 
 # Download and verify signature
-MINISIG_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.minisig"' | sed 's/"$//' | head -1)
-if [ -z "$MINISIG_URL" ]; then
-  MINISIG_URL="${TARBALL_URL}.minisig"
-fi
+# Derive the signature from the tarball we actually chose, never by an
+# independent match. Two separate head -1 selections can disagree.
+MINISIG_URL="${TARBALL_URL}.minisig"
 
 if command -v minisign &>/dev/null; then
   curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" || {

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
+import { ADDRESS_TYPE } from '../../../src/models/ip-view.js';
 
 // Stub filesystem-dependent utilities so they don't write dnsmasq/dhcp configs
 vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
@@ -161,6 +162,55 @@ describe('POST /api/subnets/:id/configure', () => {
 });
 
 describe('GET /api/subnets/:id/ips', () => {
+  // All four query modes of this route build has_static_dns from the shared
+  // staticDnsClaimSql() fragment. Only Normal mode was exercised before, so a
+  // malformed fragment in the other three would have shipped silently: the SQL
+  // is assembled at runtime, so it fails when the query runs, not at import.
+  // See REVIEW.md, duplicate-logic audit #19.
+  describe('has_static_dns is computed in every mode', () => {
+    // Each mode gets its own subnet and zone: the CIDR and the zone name are
+    // both unique-constrained, so a shared fixture would fail every run after
+    // the first.
+    async function subnetWithStaticDns(octet) {
+      const cidr = `10.88.${octet}.0/24`;
+      const ip = `10.88.${octet}.9`;
+      const zone = `static${octet}.test`;
+      const created = await request(app)
+        .post('/api/subnets')
+        .send({ cidr, name: `StaticDns${octet}`, status: 'allocated' });
+      expect(created.status).toBe(201);
+      const id = created.body.id;
+      db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES (?, 'forward', 1)").run(zone);
+      const zoneId = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(zone).id;
+      db.prepare(
+        "INSERT INTO dns_records (zone_id, type, name, value, enabled, source)"
+        + " VALUES (?, 'A', 'claimed', ?, 1, 'manual')"
+      ).run(zoneId, ip);
+      db.prepare(
+        "INSERT INTO ip_addresses (subnet_id, ip_address, status, is_online, detection_source)"
+        + " VALUES (?, ?, 'available', 1, 'scanner')"
+      ).run(id, ip);
+      return { id, ip };
+    }
+
+    const MODES = [
+      ['normal',               1, () => 'page=1&pageSize=64'],
+      ['search',               2, ip => `page=1&pageSize=64&search=${ip}`],
+      ['suppressed-available', 3, () => 'page=1&pageSize=64&showAvailable=false'],
+      ['full-row sort',        4, () => 'page=1&pageSize=64&sortField=hostname&sortOrder=asc'],
+    ];
+
+    it.each(MODES)('%s mode returns the claimed address as static DNS', async (_mode, octet, qs) => {
+      const { id, ip } = await subnetWithStaticDns(octet);
+      const res = await request(app).get(`/api/subnets/${id}/ips?${qs(ip)}`);
+      expect(res.status).toBe(200);
+      const row = (res.body.ips || res.body.data || []).find(r => r.ip_address === ip);
+      expect(row, 'claimed address missing from response').toBeDefined();
+      // The claim must survive into the computed view, not just the raw column.
+      expect(row.address_type).toBe(ADDRESS_TYPE.STATIC_DNS);
+    });
+  });
+
   it('classifies online unbacked DHCP lease history as rogue', async () => {
     const createRes = await request(app)
       .post('/api/subnets')

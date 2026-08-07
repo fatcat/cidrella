@@ -39,14 +39,9 @@ const PROJECT_DIR = path.resolve(process.argv[2] || path.join(__dirname, '..'));
 const SCAN_ROOTS = ['server/src', 'client/src'];
 
 // Each entry: "<file>::<name>" plus why it is tolerated for now.
-const BASELINE = {
-  'server/src/routes/dns.js::isIntInRange':
-    'REVIEW.md #14. Unifying makes the DNS zone route reject numeric strings, a behavior change.',
-  'server/src/routes/settings.js::isIntInRange':
-    'REVIEW.md #14. The settings route deliberately coerces numeric strings today.',
-  'server/src/utils/ip-sync.js::fqdnForRecordName':
-    'REVIEW.md #8. The local copy lowercases the zone name, so unifying changes stored hostnames.',
-};
+// Empty. Every violation found by the 2026-08 duplicate-logic audit has been
+// fixed. Adding an entry here to silence a NEW finding defeats the guard.
+const BASELINE = {};
 
 // Genuinely-not-duplicates, permanently allowed.
 const ALLOWLIST = {

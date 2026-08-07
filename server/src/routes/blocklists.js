@@ -4,7 +4,7 @@ import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig, SCHEDULE_HOURS } from '../utils/blocklist.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
-import { isValidIpv4 } from '../utils/ip.js';
+import { isValidIpv4, isValidDomain } from '../utils/ip.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
 
@@ -208,9 +208,19 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   // array, object) would throw on .trim()/.toLowerCase() and 500.
   if (typeof domain !== 'string' || !domain) return res.status(400).json({ error: 'Domain is required' });
 
-  const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$/;
-  if (!DOMAIN_RE.test(domain.trim())) {
+  // Shape and the 253-char cap come from the shared validator. This route used
+  // to inline its own regex with NO length bound at all, so a 300-character
+  // name was accepted here and rejected everywhere else.
+  //
+  // The extra TLD requirement is deliberate and stays: this is a public-domain
+  // allowlist, so a single-label name like "intranet" is not meaningful here
+  // even though isValidDomain accepts it. See REVIEW.md, duplicate-logic audit #21.
+  const trimmed = domain.trim();
+  if (!isValidDomain(trimmed)) {
     return res.status(400).json({ error: 'Invalid domain name' });
+  }
+  if (!/\.[a-zA-Z]{2,}$/.test(trimmed)) {
+    return res.status(400).json({ error: 'Domain must include a top-level domain' });
   }
 
   const normalized = domain.toLowerCase().trim();

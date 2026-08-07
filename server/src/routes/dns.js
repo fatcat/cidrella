@@ -12,7 +12,8 @@ import {
   createRecord,
   updateRecord,
   deleteRecord,
-  fqdnForRecordName
+  fqdnForRecordName,
+  normalizeRecordNameForZone
 } from '../models/dns-record.js';
 import {
   createZone,
@@ -26,7 +27,7 @@ const router = Router();
 import { isValidIpv4, isValidDomain, validateDisplayString } from '../utils/ip.js';
 import { isBlockedIpv4 } from '../utils/url-guard.js';
 import { isValidPtrName, validateTxtValue } from '../utils/dnsmasq-escape.js';
-import { validateSoaFields } from '../utils/validation.js';
+import { validateSoaFields, isIntInRange } from '../utils/validation.js';
 const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
@@ -36,27 +37,8 @@ function isValidHostname(name) {
   return HOSTNAME_RE.test(name.replace(/\.$/, ''));
 }
 
-function isIntInRange(v, lo, hi) {
-  return typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
-}
-
 function normalizeDnsName(name) {
   return String(name || '').trim().replace(/\.$/, '').toLowerCase();
-}
-
-function normalizeRecordNameForZone(name, zoneName) {
-  const raw = String(name || '').trim().toLowerCase();
-  const normalized = raw.replace(/\.$/, '');
-  const zone = normalizeDnsName(zoneName);
-  if (normalized === '@') return '@';
-  if (normalized === zone) return '@';
-  if (normalized.endsWith(`.${zone}`)) {
-    return normalized.slice(0, -(zone.length + 1));
-  }
-  if (normalized.includes('.')) {
-    return raw.endsWith('.') ? raw : normalized;
-  }
-  return normalized;
 }
 
 function findSubnetDomainForIp(db, ip) {

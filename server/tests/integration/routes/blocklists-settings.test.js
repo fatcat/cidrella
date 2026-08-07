@@ -100,6 +100,38 @@ describe('schedule vocabulary single-sourcing (v0.4.16)', () => {
   });
 });
 
+// The whitelist route used to inline its own domain regex with NO length bound,
+// so a 300-character name was accepted here and rejected by every other route.
+// It now uses the shared isValidDomain (shape + 253 cap) and keeps its own
+// extra TLD requirement, which is deliberate for a public-domain allowlist.
+// See REVIEW.md, duplicate-logic audit #21.
+describe('whitelist domain validation matches the shared validator', () => {
+  it('rejects a name longer than 253 characters', async () => {
+    const tooLong = `${'a'.repeat(250)}.com`;
+    expect(tooLong.length).toBeGreaterThan(253);
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: tooLong });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts a name at the limit, so the cap is not off by one', async () => {
+    const label = 'a'.repeat(249);
+    const ok = `${label}.com`;
+    expect(ok.length).toBe(253);
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: ok });
+    expect(res.status).toBe(201);
+  });
+
+  it('still requires a TLD, which is this route being deliberately stricter', async () => {
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: 'intranet' });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts an ordinary domain', async () => {
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: 'example.com' });
+    expect(res.status).toBe(201);
+  });
+});
+
 describe('input type guards (v0.4.16-pre.3 pentest)', () => {
   it('whitelist rejects non-string domain with 400 not 500', async () => {
     for (const bad of [123, true, ['x.com'], { d: 'x.com' }]) {

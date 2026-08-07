@@ -27,6 +27,11 @@ SCENARIO_DESCRIPTION="Pinned install of FROM_TAG then cidrella-update to CANDIDA
 
 # Schema version the candidate is expected to land on. Bump alongside new
 # migrations (max migration number, 048 intentionally skipped).
+# Default derived from the migrations directory in this checkout rather than a
+# hardcoded number that goes stale on every schema change (it said 50 while the
+# tree was on 52). Override with EXPECTED_SCHEMA= when testing an older release.
+# See REVIEW.md, duplicate-logic audit #36.
+EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-$(ls "$(dirname "${BASH_SOURCE[0]}")/../../../server/src/db/migrations" 2>/dev/null | grep -oE '^[0-9]+' | sort -n | tail -1 | sed 's/^0*//')}"
 EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-50}"
 
 # The web port depends on install-time probing: a fresh install grabs 443

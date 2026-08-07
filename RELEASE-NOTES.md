@@ -6,6 +6,34 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.4.17 — 2026-08-07
+
+```yaml
+min_from: "0.4.15"
+breaking: false
+security: false
+```
+
+A correctness release. Several rules that the appliance enforces in more than one place turned out to disagree with themselves, and the disagreements were doing real damage: an address you locked could stay flagged as a rogue device indefinitely, an address could silently lose its hostname while its DNS record still pointed at it, and the updater could proceed with its disk-space check and all four of its upgrade guards quietly disabled. Schema migrates forward to **version 52**. No breaking API changes.
+
+### Changed
+- **DNS names are stored in a single canonical form.** Record names are lowercased and no longer keep a redundant copy of their own zone suffix, and zone names are lowercased. A one-time migration rewrites existing rows. **This is visible in the UI**: a device that reported its own name in mixed case, such as `S24-Ultra`, now displays as `s24-ultra`. DNS itself is case-insensitive so nothing resolves differently, and the name shown was already being lowercased everywhere it was compared. The reason for the change is in the Fixed section below: the two spellings were the bug.
+
+### Fixed
+- **An address you locked or assigned could stay flagged as a rogue device forever.** Whether an address counts as claimed was decided in two places, and they used different rules. The scanner honored a manual lock or assignment, the passive DNS watcher did not. Locking an address does not clear an existing rogue flag, so if an address was flagged before you locked it, only a scan would clear it, and on a subnet the scanner does not cover no scan ever comes. The address list shows rogue ahead of locked, so the row read as ROGUE indefinitely. Both paths now ask the same question.
+- **An address could lose its hostname while its DNS record still pointed at it.** A startup task removes hostnames whose DNS record has gone away. It rebuilt the expected name by joining the record name to its zone, but names arriving from DHCP leases and reservations were stored exactly as the device reported them, so a device calling itself `S24-Ultra` produced a name that never matched the lowercased form the rest of the system uses. The record was present and correct, and the hostname was stripped anyway. Storing one canonical form (see Changed) removes the mismatch rather than papering over it at each comparison.
+- **The updater's disk-space check could pass when the disk was full.** On a host whose `/opt` device has a long name, such as an LVM path, `df` wraps its output onto a second line and the check read the use percentage instead of the free megabytes. The comparison then failed in a way that neither the error trap nor `set -e` catches, so the update proceeded regardless and ran out of space partway through extraction. It now uses the shared preflight check, which asks `df` for guaranteed single-line output.
+- **The updater could disable every upgrade guard at once.** The running version was read with a helper that returned the literal string `unknown` if it could not locate a working Node binary, and `unknown` switches off the pre-signature downgrade guard, the major/minor guard, the post-signature downgrade guard and the `min_from` skip-upgrade gate together, so the update proceeded unconditionally. The read now falls back to parsing `package.json` directly, so it succeeds even where no usable Node exists, and `unknown` once again means only what it should: there is no version to read.
+- **The installer could install a build for the wrong processor architecture.** Releases through v0.4.15 shipped arm64 alongside x64, and `install.sh` matched any tarball and took the first one, so pinning an older version with `--version` on an ordinary amd64 machine could fetch the ARM build. Its signature matched, so verification passed and the install completed, leaving an appliance whose native modules cannot load. The installer now selects by architecture and derives the signature from the file it actually chose.
+- **The allowed-domain list accepted a domain of any length**, where every other route caps names at 253 characters.
+- **`folder_id` was validated three different ways** across the routes that accept it, so the same request could be accepted by one and rejected by another. All three now apply one rule, and all three now check that the folder actually exists.
+
+### Upgrade notes
+- **Schema migrates forward to version 52**, normalizing stored DNS names (`052`). The migration is idempotent and forward-only. Existing zone names, subnet domain pointers and record names are rewritten together, so nothing is left pointing at the old spelling.
+- **No breaking API changes** and no manual config changes required.
+
+---
+
 ## v0.4.16 — 2026-08-05
 
 ```yaml

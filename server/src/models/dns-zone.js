@@ -1,10 +1,19 @@
+// Zone names are stored lowercase. DNS is case-insensitive, and several
+// queries build an FQDN as `r.name || '.' || z.name` and compare it with `=`,
+// which SQLite evaluates case-sensitively. Normalizing at the sink is what makes
+// those comparisons correct without every call site remembering to lower().
+// See REVIEW.md, duplicate-logic audit #8.
+export function normalizeZoneName(name) {
+  return String(name || '').trim().replace(/\.$/, '').toLowerCase();
+}
+
 export function createZone(db, fields, soaDefaults) {
   const result = db.prepare(`
     INSERT INTO dns_zones (name, type, description,
       soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
-    fields.name,
+    normalizeZoneName(fields.name),
     fields.type,
     fields.description || null,
     fields.soa_primary_ns || soaDefaults.soa_primary_ns,
@@ -20,7 +29,9 @@ export function createZone(db, fields, soaDefaults) {
 
 export function updateZone(db, zone, fields) {
   const update = db.transaction(() => {
-    const renaming = fields.name && fields.name !== zone.name;
+    // Normalize before comparing, or a case-only edit reads as a rename.
+    const newName = fields.name ? normalizeZoneName(fields.name) : null;
+    const renaming = newName && newName !== zone.name;
     const newSerial = (zone.soa_serial || 0) + 1;
 
     db.prepare(`
@@ -30,7 +41,7 @@ export function updateZone(db, zone, fields) {
         updated_at = datetime('now')
       WHERE id = ?
     `).run(
-      fields.name ?? zone.name,
+      newName ?? zone.name,
       fields.description !== undefined ? fields.description : zone.description,
       fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : zone.enabled,
       fields.soa_primary_ns !== undefined ? fields.soa_primary_ns : zone.soa_primary_ns,
@@ -46,7 +57,7 @@ export function updateZone(db, zone, fields) {
     if (renaming && zone.type === 'forward') {
       db.prepare(
         "UPDATE subnets SET domain_name = ?, updated_at = datetime('now') WHERE domain_name = ?"
-      ).run(fields.name, zone.name);
+      ).run(newName, zone.name);
     }
 
     return db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(zone.id);

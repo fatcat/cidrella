@@ -123,6 +123,8 @@ source "$LIB_DIR/log.sh"
 source "$LIB_DIR/slots.sh"
 # shellcheck source=scripts/lib/verify.sh
 source "$LIB_DIR/verify.sh"
+# shellcheck source=scripts/lib/preflight.sh
+source "$LIB_DIR/preflight.sh"
 # shellcheck source=scripts/lib/systemd-install.sh
 source "$LIB_DIR/systemd-install.sh"
 # rotation.sh is optional. Pre-v0.4.9 slots don't ship it. The rotation
@@ -524,21 +526,46 @@ info "Target slot:  $TARGET_SLOT"
 
 # Read current version (via active slot's node, which may be bundled in future)
 if [ -f "$INSTALL_LINK/package.json" ]; then
-  ACTIVE_NODE=$(resolve_node "$INSTALL_LINK")
-  CURRENT_VERSION=$("$ACTIVE_NODE" -e "console.log(require('$INSTALL_LINK/package.json').version)" 2>/dev/null || echo "unknown")
+  # read_slot_version (lib/slots.sh) rather than a local node one-liner. The
+  # local version depended entirely on resolve_node succeeding and collapsed to
+  # the string "unknown" on any failure, and "unknown" is not inert: it disables
+  # the pre-signature downgrade guard, the major/minor guard, the post-signature
+  # downgrade guard AND the min_from skip-upgrade gate, so the update proceeds
+  # unconditionally. read_slot_version tries the cidrella-node wrapper, then
+  # PATH, then falls back to parsing package.json with sed, so it returns a real
+  # version even on a host with no usable node. That leaves "unknown" meaning
+  # what it should: there is genuinely no package.json to read.
+  # See REVIEW.md, duplicate-logic audit #31 and #33.
+  CURRENT_VERSION=$(read_slot_version "$INSTALL_LINK" 2>/dev/null || echo "unknown")
+  [ -n "$CURRENT_VERSION" ] || CURRENT_VERSION="unknown"
 fi
 info "Current version: v${CURRENT_VERSION}"
 emit_event preflight pass "from_version=$CURRENT_VERSION" "active_slot=$ACTIVE_SLOT" "target_slot=$TARGET_SLOT"
 
 # ─── Disk space check ────────────────────────────────────
-# Need room for: tarball download + extracted tarball + populated target slot
-AVAILABLE_MB=$(df -BM /opt | tail -1 | awk '{print $4}' | tr -d 'M')
-if [ "$AVAILABLE_MB" -lt "$MIN_FREE_MB" ]; then
-  err "Insufficient disk space on /opt: ${AVAILABLE_MB}MB free, need at least ${MIN_FREE_MB}MB."
-  write_progress "failed" 2 "Update failed" "Insufficient disk space: ${AVAILABLE_MB}MB free"
+# Need room for: tarball download + extracted tarball + populated target slot.
+#
+# Uses check_disk from lib/preflight.sh rather than an inline df. The inline
+# version ran `df -BM /opt | tail -1`, and df wraps onto a second line when the
+# device name is long (an LVM path such as /dev/mapper/vg--system-lv--opt--storage),
+# so `$4` picked up the USE PERCENTAGE instead of the free megabytes. The
+# comparison then failed with "integer expression expected", and because it sat
+# in an `if` condition neither `set -e` nor the ERR trap fired, so the check
+# PASSED and the update proceeded with unknown free space, failing mid-extraction
+# instead. check_disk uses `df -Pm`, and POSIX output is guaranteed one line per
+# filesystem. See REVIEW.md, duplicate-logic audit #30.
+#
+# REQ_MIN_DISK_MB is pinned to the value this check has actually enforced in the
+# field. requirements.json says 2000, but nothing ever loaded it (load_requirements
+# has no callers), so 2000 has never run anywhere. Raising the bar 5x here would
+# start refusing upgrades on tight-disk appliances that upgrade fine today, which
+# is not a change to make as a side effect of fixing a parsing bug.
+REQ_MIN_DISK_MB="$MIN_FREE_MB"
+if ! check_disk /opt; then
+  write_progress "failed" 2 "Update failed" "Insufficient disk space on /opt"
   exit 1
 fi
-info "Disk space: ${AVAILABLE_MB}MB free on /opt (ok)"
+info "Disk space: ok (>= ${MIN_FREE_MB}MB free on /opt)"
 
 # ─── DNS fallback injection ──────────────────────────────
 # If /etc/resolv.conf points at localhost (CIDRella itself), we may lose DNS

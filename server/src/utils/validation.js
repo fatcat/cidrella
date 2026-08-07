@@ -89,6 +89,29 @@ export function isIntInRange(v, lo, hi) {
   return typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
 }
 
+/**
+ * As isIntInRange, but also accepts a string of digits.
+ *
+ * This exists because the settings surface is string-typed end to end: the
+ * `settings` table column is TEXT, and the client's Select controls carry string
+ * option values ('3', '7', ...), so `PUT /api/settings/:key` legitimately
+ * receives "30" rather than 30. The strict validator would reject every
+ * retention setting the UI can send.
+ *
+ * The two used to be one name with two behaviors: routes/settings.js and
+ * routes/dns.js each carried a local `isIntInRange`, one coercing and one not,
+ * so "30" was accepted by the settings route and rejected by the DNS zone
+ * route. Naming the coercion is the point. Reach for the strict one unless the
+ * input genuinely arrives as a string, and never silently swap one for the
+ * other. See REVIEW.md, duplicate-logic audit #14.
+ */
+export function isIntInRangeCoercing(v, lo, hi) {
+  const n = typeof v === 'number'
+    ? v
+    : (typeof v === 'string' && /^-?\d+$/.test(v) ? parseInt(v, 10) : NaN);
+  return Number.isInteger(n) && n >= lo && n <= hi;
+}
+
 export function validateSoaFields(fields = {}) {
   const {
     soa_primary_ns,

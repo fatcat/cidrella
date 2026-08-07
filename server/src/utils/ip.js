@@ -225,18 +225,6 @@ export function calculateSubnets(cidr, newPrefix) {
   return results;
 }
 
-/**
- * Validate that an IP string is well-formed.
- */
-export function isValidIp(ip) {
-  try {
-    ipToLong(ip);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
 

@@ -8,7 +8,7 @@
 import { ipToLong } from './ip.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
-import { setPtrForIp, dnsAssignedIpSet } from '../models/dns-record.js';
+import { setPtrForIp, dnsAssignedIpSet, fqdnForRecordName } from '../models/dns-record.js';
 
 // Cached leaf subnets, invalidated on subnet CRUD via invalidateSubnetCache()
 let leafSubnetCache = null;
@@ -47,20 +47,6 @@ export function findSubnetForIp(db, ip) {
     }
   }
   return best;
-}
-
-function normalizeDnsName(name) {
-  return String(name || '').trim().replace(/\.$/, '').toLowerCase();
-}
-
-function fqdnForRecordName(recordName, zoneName) {
-  const raw = String(recordName || '').trim().toLowerCase();
-  const normalized = raw.replace(/\.$/, '');
-  const zone = normalizeDnsName(zoneName);
-  if (normalized === '@' || normalized === zone) return zone;
-  if (normalized.endsWith(`.${zone}`)) return normalized;
-  if (normalized.includes('.')) return raw.endsWith('.') ? raw : normalized;
-  return `${normalized}.${zone}`;
 }
 
 function nonEmpty(value) {

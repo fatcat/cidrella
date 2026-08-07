@@ -1,6 +1,6 @@
 import { syncLeasesToIps } from '../utils/ip-sync.js';
 import { queueRegen } from '../utils/after-commit.js';
-import { clearPtrForARecord, syncPtrForARecord } from './dns-record.js';
+import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
 export function replaceLeases(db, leases) {
   const replace = db.transaction(() => {
@@ -110,10 +110,13 @@ export function syncDhcpDnsRecords(db, leases) {
 
     processedZoneIds.add(zone.id);
 
-    let recordName = l.hostname;
-    if (recordName.endsWith('.' + domain)) {
-      recordName = recordName.slice(0, -(domain.length + 1));
-    }
+    // Normalize at the sink. This is where the un-normalized names came from:
+    // the lease hostname is whatever the client reported ("S24-Ultra"), and it
+    // used to be stored raw with only the domain suffix stripped by hand. The
+    // FQDN-building SQL then produced "S24-Ultra.example.com" where the JS
+    // builder produced "s24-ultra.example.com", and SQLite `=` is
+    // case-sensitive. See REVIEW.md, duplicate-logic audit #8.
+    const recordName = normalizeRecordNameForZone(l.hostname, domain);
 
     const existing = findRecord.get(zone.id, recordName, l.ip);
     if (existing) {

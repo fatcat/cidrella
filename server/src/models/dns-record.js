@@ -7,6 +7,39 @@ function bumpZoneSerial(db, zoneId) {
     .run(zoneId);
 }
 
+/**
+ * The canonical stored form of a record name, relative to its zone.
+ *
+ * Storage is normalized at the sink so every query can rely on it. In
+ * particular `r.name || '.' || z.name` is only a correct FQDN if the stored
+ * name is lowercase and does NOT already carry the zone suffix, and two
+ * queries build exactly that (utils/ip-sync.js reconcileDnsOrphans, and the
+ * CNAME target check in routes/dns.js). Before this was enforced, a record
+ * written with a device-reported name like "S24-Ultra" produced
+ * "S24-Ultra.example.com" from SQL while the JS builder produced
+ * "s24-ultra.example.com", and SQLite's `=` is case-sensitive, so the two
+ * never matched and reconcileDnsOrphans would strip the hostname off an
+ * address whose A record was still present and still pointing at it.
+ *
+ * Every write path must go through this: the API routes, the Pi-hole import,
+ * and the DHCP/reservation lease sync, which is where the un-normalized names
+ * actually came from. See REVIEW.md, duplicate-logic audit #8.
+ */
+export function normalizeRecordNameForZone(name, zoneName) {
+  const raw = String(name || '').trim().toLowerCase();
+  const normalized = raw.replace(/\.$/, '');
+  const zone = normalizeDnsName(zoneName);
+  if (normalized === '@') return '@';
+  if (normalized === zone) return '@';
+  if (normalized.endsWith(`.${zone}`)) {
+    return normalized.slice(0, -(zone.length + 1));
+  }
+  if (normalized.includes('.')) {
+    return raw.endsWith('.') ? raw : normalized;
+  }
+  return normalized;
+}
+
 export function fqdnForRecordName(recordName, zoneName) {
   const raw = String(recordName || '').trim().toLowerCase();
   const normalized = raw.replace(/\.$/, '');
@@ -31,16 +64,47 @@ export function fqdnForRecordName(recordName, zoneName) {
  * than an operator decision, and restored lease history can leave one behind
  * after the lease itself is gone.
  */
+// The predicate itself, in one place. Both shapes below are built from it, so
+// they cannot say different things about what "a manual forward A record"
+// means. Assumes the record table is aliased `r` and the zone table `z`.
+const MANUAL_FORWARD_A_WHERE = `
+        r.type = 'A'
+    AND r.enabled = 1
+    AND z.enabled = 1
+    AND z.type = 'forward'
+    AND COALESCE(r.source, 'manual') = 'manual'
+`;
+
 const DNS_ASSIGNED_SELECT = `
   SELECT r.value AS ip_address, r.name, z.name AS zone_name
     FROM dns_records r
     JOIN dns_zones z ON z.id = r.zone_id
-   WHERE r.type = 'A'
-     AND r.enabled = 1
-     AND z.enabled = 1
-     AND z.type = 'forward'
-     AND COALESCE(r.source, 'manual') = 'manual'
+   WHERE ${MANUAL_FORWARD_A_WHERE}
 `;
+
+/**
+ * The same claim as a correlated EXISTS, for queries that need it as a column
+ * rather than as a row source.
+ *
+ * `ipColumn` is interpolated as SQL, so it must be a column reference the caller
+ * controls (for example 'ip.ip_address'), never user input. Same contract as
+ * scannerCoveredSql in utils/scan-coverage.js.
+ *
+ * This exists because routes/subnets.js carried FOUR hand-written copies of this
+ * predicate across the four modes of GET /:id/ips, outside the guarantee the
+ * comment above claims. The predicate had already drifted once before, which is
+ * why it was centralized in the first place. See REVIEW.md, duplicate-logic
+ * audit #19.
+ */
+export function staticDnsClaimSql(ipColumn) {
+  return `EXISTS (
+    SELECT 1
+      FROM dns_records r
+      JOIN dns_zones z ON z.id = r.zone_id
+     WHERE ${MANUAL_FORWARD_A_WHERE}
+       AND r.value = ${ipColumn}
+  )`;
+}
 
 /** Every address a manual forward A record claims, with the FQDN it claims it as. */
 export function listDnsAssignedIps(db) {
@@ -166,7 +230,7 @@ export function createRecord(db, zone, fields, { forcePtr = false } = {}) {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       zone.id,
-      fields.name,
+      normalizeRecordNameForZone(fields.name, zone.name),
       fields.type,
       fields.value,
       fields.priority ?? null,
@@ -210,7 +274,7 @@ export function updateRecord(db, zone, record, fields) {
         enabled = ?, updated_at = datetime('now')
       WHERE id = ?
     `).run(
-      fields.name,
+      normalizeRecordNameForZone(fields.name, zone.name),
       fields.type,
       fields.value,
       fields.priority,
@@ -277,30 +341,35 @@ export function importRecords(db, zone, records) {
         continue;
       }
 
-      const exactKey = `${r.type}|${r.name}|${r.value}`;
+      // Normalize at the sink. The import path historically wrote the raw name
+      // straight from the Pi-hole file, which is precisely the shape the
+      // FQDN-building SQL cannot match.
+      const name = normalizeRecordNameForZone(r.name, zone.name);
+
+      const exactKey = `${r.type}|${name}|${r.value}`;
       if (existingExact.has(exactKey)) {
         results[r.type].skipped++;
         continue;
       }
 
-      const nameKey = `${r.type}|${r.name}`;
+      const nameKey = `${r.type}|${name}`;
       const existing = existingByNameType.get(nameKey);
       try {
         if (existing) {
           updateRecordValue.run(r.value, existing.id);
-          existingExact.delete(`${r.type}|${r.name}|${existing.value}`);
+          existingExact.delete(`${r.type}|${name}|${existing.value}`);
           existingExact.add(exactKey);
           existingByNameType.set(nameKey, { id: existing.id, value: r.value });
           results[r.type].updated++;
         } else {
-          const result = insertRecord.run(zone.id, r.name, r.type, r.value);
+          const result = insertRecord.run(zone.id, name, r.type, r.value);
           existingExact.add(exactKey);
           existingByNameType.set(nameKey, { id: result.lastInsertRowid, value: r.value });
           results[r.type].created++;
         }
         changed = true;
         if (r.type === 'A') {
-          aRecordsToSync.push({ name: r.name, value: r.value });
+          aRecordsToSync.push({ name, value: r.value });
         }
       } catch {
         results[r.type].failed++;

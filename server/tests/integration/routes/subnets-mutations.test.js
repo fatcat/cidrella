@@ -511,6 +511,60 @@ describe('gateway-in-pool invariant holds on every route that writes a pool', ()
   });
 });
 
+// folder_id is validated by one rule on all three routes that accept it. They
+// used to disagree on both type and existence, so the same body got 201, 200
+// and 400 depending on which route you sent it to.
+// See REVIEW.md, duplicate-logic audit #22.
+describe('folder_id is validated identically on every route that accepts it', () => {
+  async function realFolder() {
+    const res = await request(app).post('/api/folders').send({ name: `F${Date.now()}${Math.floor(process.hrtime()[1] % 1000)}` });
+    expect(res.status).toBe(201);
+    return res.body.id;
+  }
+
+  it('rejects a numeric string on all three routes', async () => {
+    const s = await mkSubnet({ cidr: '10.121.0.0/24', name: 'fid-str', status: 'allocated', gateway_address: '10.121.0.1' });
+    const create = await request(app).post('/api/subnets')
+      .send({ cidr: '10.122.0.0/24', name: 'fid-str2', status: 'allocated', folder_id: '3' });
+    expect(create.status).toBe(400);
+
+    const put = await request(app).put(`/api/subnets/${s.id}`).send({ folder_id: '3' });
+    expect(put.status).toBe(400);
+
+    const cfg = await request(app).post(`/api/subnets/${s.id}/configure`)
+      .send({ name: 'fid-str', create_reverse_dns: false, create_dhcp_scope: false, folder_id: '3' });
+    expect(cfg.status).toBe(400);
+  });
+
+  it('rejects a folder that does not exist on all three routes', async () => {
+    const s = await mkSubnet({ cidr: '10.123.0.0/24', name: 'fid-missing', status: 'allocated', gateway_address: '10.123.0.1' });
+    const create = await request(app).post('/api/subnets')
+      .send({ cidr: '10.124.0.0/24', name: 'fid-missing2', status: 'allocated', folder_id: 999999 });
+    expect(create.status).toBe(400);
+
+    const put = await request(app).put(`/api/subnets/${s.id}`).send({ folder_id: 999999 });
+    expect(put.status).toBe(400);
+
+    const cfg = await request(app).post(`/api/subnets/${s.id}/configure`)
+      .send({ name: 'fid-missing', create_reverse_dns: false, create_dhcp_scope: false, folder_id: 999999 });
+    expect(cfg.status).toBe(400);
+  });
+
+  it('accepts a real folder id, so the rule is not simply rejecting everything', async () => {
+    const folderId = await realFolder();
+    const s = await mkSubnet({ cidr: '10.125.0.0/24', name: 'fid-ok', status: 'allocated', gateway_address: '10.125.0.1' });
+    const put = await request(app).put(`/api/subnets/${s.id}`).send({ folder_id: folderId });
+    expect(put.status).toBe(200);
+    expect(put.body.folder_id).toBe(folderId);
+  });
+
+  it('still accepts null, which clears the assignment', async () => {
+    const s = await mkSubnet({ cidr: '10.126.0.0/24', name: 'fid-null', status: 'allocated', gateway_address: '10.126.0.1' });
+    const put = await request(app).put(`/api/subnets/${s.id}`).send({ folder_id: null });
+    expect(put.status).toBe(200);
+  });
+});
+
 describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
   it('includes ip_addresses lifecycle state for unassigned addresses in the scope', async () => {
     const s = await mkSubnet({ cidr: '10.44.0.0/24', name: 'scope-lifecycle', status: 'allocated', gateway_address: '10.44.0.1' });

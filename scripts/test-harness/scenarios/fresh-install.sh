@@ -62,7 +62,11 @@ scenario_assert() {
 
   # ─── Bundled Node runtime (v0.4.7+) ───────────────────
   assert_file_exists /opt/cidrella/runtime/node/bin/node
-  assert_command_ok "/opt/cidrella/runtime/node/bin/node --version | grep -q '^v22'"
+  # Derive the expected runtime from the release the host actually installed,
+  # rather than restating it here. This asserted '^v22' against builds that have
+  # bundled Node 24 since v0.4.16, so it was permanently red and trained readers
+  # to skip it. See REVIEW.md, duplicate-logic audit #36.
+  assert_command_ok "test \"v\$(grep -oE '\"bundled_node_version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"' /opt/cidrella/RELEASE.json | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')\" = \"\$(/opt/cidrella/runtime/node/bin/node --version)\""
 
   # ─── Events log has the expected install phases ───────
   assert_file_exists /var/lib/cidrella/events.jsonl

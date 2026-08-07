@@ -4,7 +4,7 @@ import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { pruneEvents, clearStaleDynamicMetadata } from '../models/ip-address.js';
 import * as Setting from '../models/setting.js';
-import { GEOIP_MODES, validateInterfaceConfig, validPortOrError } from '../utils/validation.js';
+import { GEOIP_MODES, validateInterfaceConfig, validPortOrError, isIntInRangeCoercing } from '../utils/validation.js';
 
 const router = Router();
 
@@ -39,10 +39,6 @@ function isBoolish01(v) {
 function toBool01(v) {
   return (v === true || v === 1 || v === '1' || v === 'true') ? '1' : '0';
 }
-function isIntInRange(v, lo, hi) {
-  const n = typeof v === 'number' ? v : (typeof v === 'string' && /^-?\d+$/.test(v) ? parseInt(v, 10) : NaN);
-  return Number.isInteger(n) && n >= lo && n <= hi;
-}
 function intOrNull(v) {
   if (v === null || v === undefined || v === '') return null;
   return typeof v === 'number' ? v : parseInt(v, 10);
@@ -70,7 +66,7 @@ const SETTING_SCHEMA = {
     normalize: v => v
   },
   backup_retention_count: {
-    validate: v => isIntInRange(v, 1, 365) ? null : 'must be an integer 1-365',
+    validate: v => isIntInRangeCoercing(v, 1, 365) ? null : 'must be an integer 1-365',
     normalize: v => String(intOrNull(v))
   },
   // ISO-8601 timestamp. Server writes this itself; refuse arbitrary values.
@@ -154,11 +150,11 @@ const SETTING_SCHEMA = {
     normalize: v => (v === '' || v === null) ? '' : String(v)
   },
   ip_history_retention_days: {
-    validate: v => isIntInRange(v, 1, 3650) ? null : 'must be an integer 1-3650',
+    validate: v => isIntInRangeCoercing(v, 1, 3650) ? null : 'must be an integer 1-3650',
     normalize: v => String(intOrNull(v))
   },
   offline_metadata_retention_days: {
-    validate: v => isIntInRange(v, 1, 3650) ? null : 'must be an integer 1-3650',
+    validate: v => isIntInRangeCoercing(v, 1, 3650) ? null : 'must be an integer 1-3650',
     normalize: v => String(intOrNull(v))
   },
 };
