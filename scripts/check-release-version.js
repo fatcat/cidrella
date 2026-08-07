@@ -17,6 +17,10 @@
 
 const fs = require('fs');
 const path = require('path');
+// One shared definition of the release-header format. This guard used to carry
+// its own looser regex, which accepted headings the manifest generator then
+// silently skipped. See REVIEW.md, duplicate-logic audit #29.
+const { parseHeadersFile } = require('./lib/release-notes.js');
 
 const projectDir = path.resolve(process.argv[2] || '.');
 const pkgPath = path.join(projectDir, 'package.json');
@@ -24,15 +28,25 @@ const notesPath = path.join(projectDir, 'RELEASE-NOTES.md');
 
 const pkgVersion = JSON.parse(fs.readFileSync(pkgPath, 'utf8')).version;
 
-const notes = fs.readFileSync(notesPath, 'utf8');
-const heading = notes.split('\n').find((l) => /^## v\d/.test(l));
-if (!heading) {
+const { headers, errors } = parseHeadersFile(notesPath);
+
+// A heading that announces a release and does not parse is fatal here too.
+// Reporting "version OK" off a well-formed heading while an unreadable one sits
+// above it is how a release goes missing from the signed manifest.
+if (errors.length > 0) {
+  console.error(`  ERROR: ${notesPath} has malformed release heading(s):`);
+  for (const e of errors) console.error(`    line ${e.line}: ${e.message}`);
+  process.exit(1);
+}
+
+if (headers.length === 0) {
   console.error(`  ERROR: no '## vX.Y.Z' heading found in ${notesPath}.`);
   console.error('  Every release needs a RELEASE-NOTES.md section before it can be built.');
   process.exit(1);
 }
-const m = heading.match(/^## v(\S+)/);
-const notesVersion = m && m[1];
+
+const heading = headers[0].raw;
+const notesVersion = headers[0].version;
 
 if (notesVersion !== pkgVersion) {
   console.error(`  ERROR: version mismatch between package.json and RELEASE-NOTES.md:`);

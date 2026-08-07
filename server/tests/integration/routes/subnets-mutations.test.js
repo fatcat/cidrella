@@ -431,6 +431,86 @@ describe('PUT /api/dhcp/scopes/:id, pool resize guard (R4 #4)', () => {
   });
 });
 
+// The gateway-in-pool invariant used to be enforced on two of the four routes
+// that can write a scope's pool. dnsmasq builds dhcp-range= straight from the
+// ranges row (utils/dhcp.js), so an unguarded route hands the router's own
+// address out as a dynamic lease. One test per write path, so a future route
+// that skips the shared helper fails here.
+describe('gateway-in-pool invariant holds on every route that writes a pool', () => {
+  it('POST /api/subnets/:id/configure refuses an explicit pool containing the gateway', async () => {
+    const s = await mkSubnet({ cidr: '10.111.0.0/24', name: 'cfg-gw', status: 'allocated', gateway_address: '10.111.0.1' });
+    const bad = await request(app).post(`/api/subnets/${s.id}/configure`).send({
+      name: 'cfg-gw', create_reverse_dns: false, create_dhcp_scope: true,
+      dhcp_start_ip: '10.111.0.1', dhcp_end_ip: '10.111.0.200'
+    });
+    expect(bad.status).toBe(409);
+
+    const ok = await request(app).post(`/api/subnets/${s.id}/configure`).send({
+      name: 'cfg-gw', create_reverse_dns: false, create_dhcp_scope: true,
+      dhcp_start_ip: '10.111.0.100', dhcp_end_ip: '10.111.0.200'
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  // The old check compared the gateway against the pool boundaries only, so a
+  // gateway sitting strictly inside the pool went straight through.
+  // Note /configure takes the gateway from the request (falling back to
+  // default_gateway_position) and writes it, so the gateway under test has to
+  // be in the same call, not just on the subnet.
+  it('POST /api/subnets/:id/configure refuses a gateway strictly inside the pool', async () => {
+    const s = await mkSubnet({ cidr: '10.114.0.0/24', name: 'cfg-gw-mid', status: 'allocated', gateway_address: '10.114.0.150' });
+    const bad = await request(app).post(`/api/subnets/${s.id}/configure`).send({
+      name: 'cfg-gw-mid', create_reverse_dns: false, create_dhcp_scope: true,
+      gateway_address: '10.114.0.150',
+      dhcp_start_ip: '10.114.0.100', dhcp_end_ip: '10.114.0.200'
+    });
+    expect(bad.status).toBe(409);
+  });
+
+  it('POST /api/subnets/:subnetId/ranges refuses a DHCP Scope range containing the gateway', async () => {
+    const s = await mkSubnet({ cidr: '10.112.0.0/24', name: 'rng-post-gw', status: 'allocated', gateway_address: '10.112.0.1' });
+    await configure(s.id, { name: 'rng-post-gw', create_reverse_dns: false, create_dhcp_scope: false });
+
+    // The range-types router is not mounted in this app, read the seeded row.
+    const { getDb } = await import('../../../src/db/init.js');
+    const dhcpType = getDb().prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get();
+    expect(dhcpType).toBeDefined();
+
+    const bad = await request(app).post(`/api/subnets/${s.id}/ranges`).send({
+      range_type_id: dhcpType.id, start_ip: '10.112.0.1', end_ip: '10.112.0.100', force: true
+    });
+    expect(bad.status).toBe(409);
+
+    const ok = await request(app).post(`/api/subnets/${s.id}/ranges`).send({
+      range_type_id: dhcpType.id, start_ip: '10.112.0.50', end_ip: '10.112.0.100', force: true
+    });
+    expect(ok.status).toBe(201);
+  });
+
+  it('PUT /api/subnets/:subnetId/ranges/:id refuses editing a live pool onto the gateway', async () => {
+    const s = await mkSubnet({ cidr: '10.113.0.0/24', name: 'rng-put-gw', status: 'allocated', gateway_address: '10.113.0.1' });
+    await configure(s.id, {
+      name: 'rng-put-gw', create_reverse_dns: false, create_dhcp_scope: true,
+      dhcp_start_ip: '10.113.0.100', dhcp_end_ip: '10.113.0.200'
+    });
+
+    // The range the scope points at is the row dnsmasq actually serves.
+    const scopes = await request(app).get('/api/dhcp/scopes');
+    const scope = scopes.body.find(sc => sc.subnet_id === s.id);
+    expect(scope).toBeDefined();
+
+    const bad = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/${scope.range_id}`)
+      .send({ start_ip: '10.113.0.1', end_ip: '10.113.0.200', force: true });
+    expect(bad.status).toBe(409);
+
+    const ok = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/${scope.range_id}`)
+      .send({ start_ip: '10.113.0.50', end_ip: '10.113.0.200', force: true });
+    expect(ok.status).toBe(200);
+  });
+});
+
 describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
   it('includes ip_addresses lifecycle state for unassigned addresses in the scope', async () => {
     const s = await mkSubnet({ cidr: '10.44.0.0/24', name: 'scope-lifecycle', status: 'allocated', gateway_address: '10.44.0.1' });

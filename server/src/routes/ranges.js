@@ -3,6 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { ipToLong, isIpInSubnet, isValidIpv4, rangesOverlap, validateDisplayString } from '../utils/ip.js';
 import * as Range from '../models/range.js';
+import { gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
 
 const router = Router({ mergeParams: true });
 
@@ -66,6 +67,16 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 
   // Check for locked IPs in the range (for DHCP Scope ranges)
   if (rangeType.name === 'DHCP Scope') {
+    // Same invariant PUT /api/dhcp/scopes/:id enforces: this row becomes the
+    // dnsmasq dhcp-range, so the gateway must not sit inside it.
+    const conflict = gatewayInPoolConflict(subnet, start_ip, end_ip);
+    if (conflict) {
+      return res.status(409).json({
+        error: gatewayInPoolError(conflict),
+        gateway_address: conflict.gateway_address
+      });
+    }
+
     const startLong = ipToLong(start_ip);
     const endLong = ipToLong(end_ip);
     const reservedIps = db.prepare(
@@ -161,6 +172,22 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 
   if (ipToLong(newStart) > ipToLong(newEnd)) {
     return res.status(400).json({ error: 'Start IP must be less than or equal to end IP' });
+  }
+
+  // This row may be what dnsmasq serves as a dhcp-range. Guard on the
+  // authoritative signal, an attached scope, rather than only on the type
+  // name, plus the effective type for a range being retyped into a pool.
+  const attachedScope = db.prepare('SELECT id FROM dhcp_scopes WHERE range_id = ?').get(range.id);
+  const effectiveTypeId = range_type_id ?? range.range_type_id;
+  const effectiveType = db.prepare('SELECT name FROM range_types WHERE id = ?').get(effectiveTypeId);
+  if (attachedScope || effectiveType?.name === 'DHCP Scope') {
+    const conflict = gatewayInPoolConflict(subnet, newStart, newEnd);
+    if (conflict) {
+      return res.status(409).json({
+        error: gatewayInPoolError(conflict),
+        gateway_address: conflict.gateway_address
+      });
+    }
   }
 
   // Check overlaps excluding self

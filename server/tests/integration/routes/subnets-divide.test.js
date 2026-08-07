@@ -284,19 +284,21 @@ describe('POST /api/subnets/:id/divide, lossy-artifact cleanup with force_lossy'
 
 describe('POST /api/subnets/:id/divide, gateway/pool conflict handling', () => {
   it('shrinks the pool to exclude the child gateway and reports the adjustment', async () => {
-    // Parent /22 with gateway at .1 (firstUsable) and a pool spanning the
-    // FULL usable range of the parent. After divide into /23s, each child
-    // inherits a clipped slice of the pool that still contains the child's
-    // own gateway (.0.1 and .2.1). The server should shrink each child's
-    // pool to exclude its gateway and echo the adjustment back.
+    // Parent /22 with gateway at .0.1 and a pool covering everything after it.
+    // The parent's own gateway is deliberately OUTSIDE the pool, because
+    // /configure now refuses to create that state. The conflict this test
+    // exercises appears at divide time instead: splitting into /23s gives the
+    // second child a clipped slice starting at 10.18.2.1, which is that
+    // child's own gateway. The server should shrink the child's pool to
+    // exclude it and echo the adjustment back.
     const parent = await createSubnet({
       cidr: '10.18.0.0/22', name: 'GwInPool', status: 'allocated', gateway_address: '10.18.0.1'
     });
     await configure(parent.id, {
       name: 'GwInPool', create_reverse_dns: false, create_dhcp_scope: true,
-      // Explicit wide pool that bleeds across the /23 boundary and covers
-      // each child's firstUsable.
-      dhcp_start_ip: '10.18.0.1', dhcp_end_ip: '10.18.3.254'
+      // Bleeds across the /23 boundary so the second child inherits a slice
+      // containing its own firstUsable.
+      dhcp_start_ip: '10.18.0.2', dhcp_end_ip: '10.18.3.254'
     });
 
     const divRes = await divide(parent.id, { new_prefix: 23, force: true });

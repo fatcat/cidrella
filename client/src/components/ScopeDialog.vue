@@ -122,7 +122,7 @@ import Popover from 'primevue/popover';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
-import { parseCidr, longToIp, dhcpRangeDefaults } from '../utils/ip.js';
+import { parseCidr, dhcpRangeDefaults } from '../utils/ip.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError } from '../utils/format.js';
@@ -318,12 +318,17 @@ watch(() => form.value.subnet_id, (subnetId, oldSubnetId) => {
     form.value.description = `${subnet.name} DHCP Scope`;
   }
 
-  // Pre-fill suggested start/end IPs from subnet CIDR
+  // Pre-fill suggested start/end IPs from subnet CIDR, using the same
+  // size-based heuristic as openNewWithPicker() below. This used to suggest
+  // the whole usable range (network+1 .. broadcast-1), which starts ON the
+  // gateway for the usual .1 layout, so the dialog offered a pool the server
+  // refuses (a gateway inside a DHCP pool gets leased to a client).
   if (subnet.cidr && !form.value.start_ip && !form.value.end_ip) {
     try {
-      const { network, broadcast } = parseCidr(subnet.cidr);
-      form.value.start_ip = longToIp(network + 1);
-      form.value.end_ip = longToIp(broadcast - 1);
+      const parsed = parseCidr(subnet.cidr);
+      const pool = dhcpRangeDefaults(parsed, subnet.gateway_address || null);
+      form.value.start_ip = pool.start || '';
+      form.value.end_ip = pool.end || '';
     } catch { /* ignore */ }
   }
 });

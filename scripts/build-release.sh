@@ -601,7 +601,12 @@ if [ -f "$PROJECT_DIR/RELEASE-NOTES.md" ]; then
   # it's a preview of, and requiring a separate header per pre-release
   # iteration would force duplicate notes.
   NOTES_VERSION="${BASE_VERSION}"
-  if ! grep -q "^## v${NOTES_VERSION} " "$PROJECT_DIR/RELEASE-NOTES.md"; then
+  # Ask the shared parser rather than grepping. A grep for "^## vX.Y.Z " matches
+  # headings the manifest generator cannot read (an ASCII hyphen instead of the
+  # em-dash separator, say), which used to let a build proceed and then publish
+  # a manifest with the release missing. The helper fails on a malformed heading
+  # anywhere in the file, not just a missing one.
+  if ! node "$PROJECT_DIR/scripts/lib/release-notes.js" --has-version "${NOTES_VERSION}" "$PROJECT_DIR/RELEASE-NOTES.md"; then
     echo "ERROR: RELEASE-NOTES.md has no entry for v${NOTES_VERSION}."
     echo ""
     echo "  The release manifest is derived from RELEASE-NOTES.md. Building"

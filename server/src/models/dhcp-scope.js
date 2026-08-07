@@ -1,3 +1,32 @@
+import { ipToLong } from '../utils/ip.js';
+
+// The one definition of "this DHCP pool would swallow the subnet's gateway".
+//
+// dnsmasq serves the pool verbatim: utils/dhcp.js builds `dhcp-range=` from
+// `dhcp_scopes JOIN ranges ON s.range_id = r.id`, so a gateway inside the pool
+// gets handed to a client as a dynamic lease and collides with the router.
+//
+// This lives here because four separate routes can write a scope's pool
+// (PUT /dhcp/scopes/:id, POST and PUT on /subnets/:id/ranges, and
+// POST /subnets/:id/configure) and only one of them used to check.
+//
+// Returns null when the pool is safe, otherwise the details of the clash.
+export function gatewayInPoolConflict(subnet, startIp, endIp) {
+  if (!subnet?.gateway_address || !startIp || !endIp) return null;
+  const gwLong = ipToLong(subnet.gateway_address);
+  if (gwLong >= ipToLong(startIp) && gwLong <= ipToLong(endIp)) {
+    return { gateway_address: subnet.gateway_address, start_ip: startIp, end_ip: endIp };
+  }
+  return null;
+}
+
+// Message for a gatewayInPoolConflict result, so every route rejects with the
+// same wording instead of three near-identical strings.
+export function gatewayInPoolError(conflict) {
+  return `Pool ${conflict.start_ip}–${conflict.end_ip} would include the subnet gateway ` +
+    `${conflict.gateway_address}. Shrink the pool or change the gateway first.`;
+}
+
 function computeInheritedOptions(subnet) {
   const inherited = {};
   if (subnet?.gateway_address) inherited[3] = subnet.gateway_address;

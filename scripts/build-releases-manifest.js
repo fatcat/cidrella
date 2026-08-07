@@ -48,6 +48,14 @@ const PROJECT_DIR = path.resolve(__dirname, '..');
 const NOTES_FILE = path.join(PROJECT_DIR, 'RELEASE-NOTES.md');
 const SCHEMA_VERSION = 1;
 
+// The release-header format lives in one place, shared with
+// check-release-version.js and (via its CLI) build-release.sh.
+const {
+  RELEASE_HEADER_RE,
+  RELEASE_HEADER_HINT_RE,
+  malformedHeaderMessage,
+} = require('./lib/release-notes.js');
+
 // ─── argv ──────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const LINT_ONLY = args.includes('--lint');
@@ -139,7 +147,20 @@ function parseReleaseNotes(source) {
     // The separator is U+2014 EM DASH, not an ASCII hyphen. Enforcing the
     // em-dash keeps the format readable and gives the linter a sharp
     // boundary to detect malformed headers.
-    const headerMatch = /^##\s+v(\d+\.\d+\.\d+)\s+—\s+(\d{4}-\d{2}-\d{2})(?:\s+\[([^\]]+)\])?\s*$/.exec(line);
+    //
+    // A line that announces a release but does not parse is a HARD ERROR, not
+    // a line to skip. Skipping was silent and expensive: the release vanished
+    // from the signed releases.json (so hosts kept seeing the previous version
+    // as latest) and its min_from lookup returned null (so the skip-upgrade
+    // gate was disabled in the signed RELEASE.json), while check-release-version.js
+    // and build-release.sh's own grep both still reported success. One ASCII
+    // hyphen in place of the em-dash was enough to do all of that.
+    if (RELEASE_HEADER_HINT_RE.test(line) && !RELEASE_HEADER_RE.test(line)) {
+      errors.push({ line: lineNo, message: malformedHeaderMessage(line) });
+      continue;
+    }
+
+    const headerMatch = RELEASE_HEADER_RE.exec(line);
     if (headerMatch) {
       // Close any previous release
       if (currentRelease) releases.push(currentRelease);

@@ -6,7 +6,7 @@ import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
-import { createScope, updateScope, deleteScope } from '../models/dhcp-scope.js';
+import { createScope, updateScope, deleteScope, gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
 import {
   createReservation,
   updateReservation,
@@ -261,17 +261,14 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     if (ipToLong(newStart) > ipToLong(newEnd)) {
       return res.status(400).json({ error: 'Start IP must be before or equal to end IP' });
     }
-    // Symmetric to the PUT /api/subnets/:id gateway-in-pool guard: block a
-    // resize that would place the subnet's gateway inside the DHCP pool.
-    // dnsmasq would hand out the gateway IP as a dynamic lease otherwise.
-    if (subnet.gateway_address) {
-      const gwLong = ipToLong(subnet.gateway_address);
-      if (gwLong >= ipToLong(newStart) && gwLong <= ipToLong(newEnd)) {
-        return res.status(409).json({
-          error: `Pool ${newStart}–${newEnd} would include the subnet gateway ${subnet.gateway_address}. Shrink the pool or change the gateway first.`,
-          gateway_address: subnet.gateway_address
-        });
-      }
+    // Block a resize that would place the subnet's gateway inside the pool.
+    // Shared with the range routes and /configure, which write the same row.
+    const conflict = gatewayInPoolConflict(subnet, newStart, newEnd);
+    if (conflict) {
+      return res.status(409).json({
+        error: gatewayInPoolError(conflict),
+        gateway_address: conflict.gateway_address
+      });
     }
   }
 

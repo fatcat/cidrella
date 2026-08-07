@@ -15,6 +15,7 @@ import { sanitizeForLog } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
+import { gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
 
 const router = Router();
 
@@ -1301,6 +1302,16 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
       const endIp = dhcp_end_ip || (defaults ? longToIp(defaults.endLong) : parsed.lastUsable);
       const error = validateDhcpScopeBounds(parsed, startIp, endIp);
       if (error) return res.status(400).json({ error });
+      // validateDhcpScopeBounds checks subnet bounds and ordering only, never
+      // the gateway. An explicitly requested pool is rejected rather than
+      // silently adjusted, matching the scope and range routes.
+      const conflict = gatewayInPoolConflict({ gateway_address: gw }, startIp, endIp);
+      if (conflict) {
+        return res.status(409).json({
+          error: gatewayInPoolError(conflict),
+          gateway_address: conflict.gateway_address
+        });
+      }
       poolStart = ipToLong(startIp);
       poolEnd = ipToLong(endIp);
     } else {
@@ -1312,8 +1323,12 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
         poolStart = parsed.networkLong + 1;
         poolEnd = parsed.broadcastLong - 1;
       }
-      if (gwLong != null && gwLong === poolStart) poolStart++;
-      else if (gwLong === poolEnd) poolEnd--;
+      // A derived pool is adjusted, not rejected: the user did not choose it.
+      // excludeGatewayFromPool also handles a gateway strictly inside the
+      // pool, which the old boundary-only check let straight through.
+      const adjusted = excludeGatewayFromPool(poolStart, poolEnd, gwLong);
+      poolStart = adjusted.start;
+      poolEnd = adjusted.end;
     }
     if (poolStart <= poolEnd) {
       dhcpPool = { startLong: poolStart, endLong: poolEnd };
