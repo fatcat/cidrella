@@ -72,3 +72,13 @@ jobs:
             echo "New circular dependency introduced, see chains above."
             exit 1
           fi
+
+      - name: Duplicate-export check
+        # Fails when a file hand-rolls a function that a module it already
+        # imports from also exports. That is the shape utils/validation.js was
+        # extracted to end, and two route files went on to redefine
+        # isIntInRange anyway. Baselined like the madge gate above: known-open
+        # cases are listed in the script with their REVIEW.md finding number,
+        # so this fires only on NEW duplication. Namespace imports are exempt,
+        # since a local wrapper delegating to Namespace.fn() is deliberate.
+        run: node scripts/check-duplicate-exports.js .

@@ -161,6 +161,9 @@ BASE_VERSION=$(node -e "console.log(require('./package.json').version)")
 # Guard: package.json version must match the newest RELEASE-NOTES.md heading.
 # Catches "code bumped but notes/version forgotten" before anything is built.
 node "$PROJECT_DIR/scripts/check-release-version.js" "$PROJECT_DIR" || exit 1
+# Guard: no file may hand-roll a function that a module it already imports from
+# already exports. Baselined, so this only fires on NEW duplication.
+node "$PROJECT_DIR/scripts/check-duplicate-exports.js" "$PROJECT_DIR" || exit 1
 if [ "$PRE_RELEASE" = true ]; then
   VERSION="${BASE_VERSION}-${PRE_SUFFIX}"
 else
