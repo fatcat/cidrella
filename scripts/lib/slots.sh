@@ -39,6 +39,38 @@ detect_active_slot() {
 #   Prints the version string from <slot>/package.json, or "unknown" if the
 #   file can't be read. Uses node if available (preferred for correctness),
 #   falling back to a grep-based parse.
+# resolve_node [slot]
+#   The one node-resolution order. Tries, in priority order:
+#     1. the given slot's bundled runtime   (correct during an A/B update)
+#     2. the active install's bundled runtime
+#     3. the cidrella-node wrapper          (what the systemd unit execs)
+#     4. node on PATH
+#   Prints the path and returns 0, or prints NOTHING and returns 1.
+#
+# There used to be two mutually exclusive families of this. One checked only
+# the slot runtimes and then printed a hardcoded /usr/bin/node WITHOUT testing
+# it, so callers could not tell "found node" from "guessed", and a host whose
+# node lived anywhere else silently produced a broken path. The other checked
+# only the wrapper and PATH and never looked at a slot runtime, so it was blind
+# during an update. Neither could resolve a host the other could.
+# See REVIEW.md, duplicate-logic audit #33.
+resolve_node() {
+  local slot="${1:-}"
+  local candidate
+  for candidate in \
+    "${slot:+$slot/runtime/node/bin/node}" \
+    "/opt/cidrella/runtime/node/bin/node" \
+    "/usr/local/bin/cidrella-node"
+  do
+    [ -n "$candidate" ] && [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  return 1
+}
+
 read_slot_version() {
   local slot="${1:-}"
   local pkg="$slot/package.json"

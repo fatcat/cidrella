@@ -25,28 +25,28 @@
 SCENARIO_NAME="upgrade-path"
 SCENARIO_DESCRIPTION="Pinned install of FROM_TAG then cidrella-update to CANDIDATE_VERSION; asserts slot switchover, deep health, schema, events"
 
-# Schema version the candidate is expected to land on. Bump alongside new
-# migrations (max migration number, 048 intentionally skipped).
-# Default derived from the migrations directory in this checkout rather than a
-# hardcoded number that goes stale on every schema change (it said 50 while the
-# tree was on 52). Override with EXPECTED_SCHEMA= when testing an older release.
+# Schema version the candidate is expected to land on: the highest migration
+# number the INSTALLED release ships, read off the target after the update.
+#
+# Two earlier versions of this were both wrong. A hardcoded 50 went stale on
+# every schema change. Replacing it with a `dirname "${BASH_SOURCE[0]}"` lookup
+# of this checkout's migrations directory was worse, because it was dead code:
+# the runner pipes this scenario to the host through `bash -s`, so BASH_SOURCE
+# is unset, dirname yields ".", the ls fails and it fell through to 50 anyway.
+# The number it WOULD have produced was also the wrong one, since upgrade-path
+# tests a published candidate while the checkout is normally ahead of it.
+#
+# Deriving it from the installed slot is not circular. It asserts that every
+# migration the release shipped actually ran: a migration that failed or was
+# skipped leaves the DB below the file count, which is the bug this catches.
+# Override with EXPECTED_SCHEMA= to pin an exact number.
 # See REVIEW.md, duplicate-logic audit #36.
-EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-$(ls "$(dirname "${BASH_SOURCE[0]}")/../../../server/src/db/migrations" 2>/dev/null | grep -oE '^[0-9]+' | sort -n | tail -1 | sed 's/^0*//')}"
-EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-50}"
-
-# The web port depends on install-time probing: a fresh install grabs 443
-# when it's free, else 8443. Probe both and remember the answer.
-cidrella_base_url() {
-  if [ -f /tmp/cidrella-base-url ]; then cat /tmp/cidrella-base-url; return; fi
-  local url
-  for url in "https://127.0.0.1:8443" "https://127.0.0.1"; do
-    if curl -skf --max-time 3 "$url/api/health" >/dev/null 2>&1; then
-      echo "$url" | tee /tmp/cidrella-base-url
-      return
-    fi
-  done
-  echo "https://127.0.0.1:8443"
+shipped_schema() {
+  ls /opt/cidrella/server/src/db/migrations 2>/dev/null \
+    | grep -oE '^[0-9]+' | sort -n | tail -1 | sed 's/^0*//'
 }
+
+# cidrella_base_url now lives in lib/scenario-lib.sh (audit #35).
 
 scenario_setup() {
   if [ -z "$CANDIDATE_VERSION" ]; then
@@ -103,7 +103,11 @@ scenario_assert() {
 
   # ─── Schema migrated (bundled node + better-sqlite3; the host has no
   # sqlite3 CLI and it is not a CIDRella dependency) ────
-  assert_command_ok "cd /opt/cidrella/server && [ \"\$(/opt/cidrella/runtime/node/bin/node -e \"console.log(require('better-sqlite3')('/var/lib/cidrella/cidrella.db',{readonly:true}).prepare('SELECT MAX(version) v FROM schema_version').get().v)\")\" = \"$EXPECTED_SCHEMA\" ]"
+  local expect_schema="${EXPECTED_SCHEMA:-$(shipped_schema)}"
+  # An empty expectation would make the comparison below vacuous, so say so
+  # rather than reporting a pass nobody checked.
+  assert_command_ok "[ -n '$expect_schema' ]"
+  assert_command_ok "cd /opt/cidrella/server && [ \"\$(/opt/cidrella/runtime/node/bin/node -e \"console.log(require('better-sqlite3')('/var/lib/cidrella/cidrella.db',{readonly:true}).prepare('SELECT MAX(version) v FROM schema_version').get().v)\")\" = \"$expect_schema\" ]"
 
   # ─── Services up, switchover recorded ─────────────────
   assert_systemctl_active cidrella
@@ -118,8 +122,12 @@ scenario_capture() {
   capture_command "installed_version" "grep version /opt/cidrella/package.json"
   capture_file_tail "update_status" /var/lib/cidrella/update-status.json 20
   capture_file_tail "events_jsonl" /var/lib/cidrella/events.jsonl 40
-  capture_command "deep_health" "curl -sk https://127.0.0.1:8443/api/health/deep"
-  capture_command "schema_version" "sqlite3 /var/lib/cidrella/cidrella.db 'SELECT MAX(version) FROM schema_version' 2>&1"
+  capture_command "deep_health" "curl -sk $(cidrella_base_url)/api/health/deep"
+  # Bundled node, not sqlite3: the host has no sqlite3 CLI, so the old capture
+  # recorded "command not found" on every run instead of the schema version,
+  # which is the one number you want when the schema assert fails.
+  capture_command "schema_version" "cd /opt/cidrella/server && /opt/cidrella/runtime/node/bin/node -e \"console.log(require('better-sqlite3')('/var/lib/cidrella/cidrella.db',{readonly:true}).prepare('SELECT MAX(version) v FROM schema_version').get().v)\" 2>&1"
+  capture_command "shipped_migrations" "ls /opt/cidrella/server/src/db/migrations 2>&1 | tail -5"
 }
 
 scenario_main

@@ -155,20 +155,10 @@ NC=$'\033[0m'
 # ─── Node binary resolver ─────────────────────────────────
 # Phase 0 plumbing for Phase 2's bundled-Node release. Prefers a
 # slot-local bundled runtime if present; falls back to /usr/bin/node.
-# Pass the slot directory whose bundled runtime you want (the
-# target slot for preflight, the active slot for DB maintenance).
-resolve_node() {
-  local slot="${1:-}"
-  if [ -n "$slot" ] && [ -x "$slot/runtime/node/bin/node" ]; then
-    printf '%s\n' "$slot/runtime/node/bin/node"
-    return 0
-  fi
-  if [ -x "/opt/cidrella/runtime/node/bin/node" ]; then
-    printf '%s\n' "/opt/cidrella/runtime/node/bin/node"
-    return 0
-  fi
-  printf '%s\n' "/usr/bin/node"
-}
+# resolve_node lives in lib/slots.sh (sourced above). The local copy that used
+# to sit here checked only the slot runtimes and then printed /usr/bin/node
+# without testing it, so a host with node anywhere else got a path that does not
+# exist and no way to detect that. See REVIEW.md, duplicate-logic audit #33.
 
 is_preflight_health_acceptable() {
   local node_bin="$1"
@@ -256,7 +246,11 @@ write_failed_progress_if_needed() {
   [ ! -f "$PROGRESS_FILE" ] && return 0
 
   local state status_node
-  status_node="$(resolve_node "$INSTALL_LINK")"
+  # Non-fatal: this only reads a progress file for reporting. If no node can be
+  # resolved there is nothing to report, so bail out quietly rather than letting
+  # set -e kill the update over a status read.
+  status_node="$(resolve_node "$INSTALL_LINK" || true)"
+  [ -n "$status_node" ] || return 0
   state=$("$status_node" -e '
     const fs = require("fs");
     try {
@@ -885,7 +879,16 @@ info "Pre-flight validation..."
 # command-not-found, and stderr was discarded by `2>/dev/null`, which the
 # script then misreported as "syntax errors". Result: CLI updates appeared
 # broken on bundled-Node-only hosts. Fixed in v0.4.11.
-PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT")
+if ! PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT"); then
+  # resolve_node returns nonzero rather than emitting an untested /usr/bin/node,
+  # so name the failure instead of dying bare under set -e or failing later with
+  # a confusing "command not found".
+  err "Pre-flight failed: no usable node runtime found."
+  err "  Looked for: ${TARGET_SLOT}/runtime/node/bin/node, /opt/cidrella/runtime/node/bin/node,"
+  err "              /usr/local/bin/cidrella-node, then node on PATH."
+  write_progress "failed" 5 "Update failed" "No usable node runtime found"
+  exit 1
+fi
 if [ -n "$RELEASE_NODE_VERSION" ]; then
   TARGET_NODE_VERSION=$("$PREFLIGHT_NODE" --version 2>/dev/null || true)
   if [ "$TARGET_NODE_VERSION" != "v${RELEASE_NODE_VERSION}" ]; then
@@ -977,7 +980,16 @@ chown cidrella:cidrella "$PREFLIGHT_DATA"
 
 # Start new version on temp port with throwaway data dir, so it doesn't
 # touch production DB and we can verify all subsystems come up clean.
-PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT")
+if ! PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT"); then
+  # resolve_node returns nonzero rather than emitting an untested /usr/bin/node,
+  # so name the failure instead of dying bare under set -e or failing later with
+  # a confusing "command not found".
+  err "Pre-flight failed: no usable node runtime found."
+  err "  Looked for: ${TARGET_SLOT}/runtime/node/bin/node, /opt/cidrella/runtime/node/bin/node,"
+  err "              /usr/local/bin/cidrella-node, then node on PATH."
+  write_progress "failed" 5 "Update failed" "No usable node runtime found"
+  exit 1
+fi
 sudo -u cidrella env \
   HTTPS_PORT=$PREFLIGHT_PORT \
   HTTP_PORT=$((PREFLIGHT_PORT + 1)) \
@@ -1062,7 +1074,7 @@ chown -R cidrella:cidrella "$DATA_DIR/snapshots"
 
 # SQLite: checkpoint WAL so the .db file is up to date, then copy
 if [ -f "$DATA_DIR/cidrella.db" ]; then
-  ACTIVE_NODE=$(resolve_node "$INSTALL_LINK")
+  ACTIVE_NODE=$(resolve_node "$INSTALL_LINK" || true)
   sudo -u cidrella "$ACTIVE_NODE" -e "
     const Database = require('$INSTALL_LINK/server/node_modules/better-sqlite3');
     const db = new Database('$DATA_DIR/cidrella.db');

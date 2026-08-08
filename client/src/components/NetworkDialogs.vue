@@ -679,6 +679,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import { useToast } from 'primevue/usetoast';
+import { usePiholeImport } from '../composables/usePiholeImport.js';
 import Button from 'primevue/button';
 import SelectButton from 'primevue/selectbutton';
 import Dialog from 'primevue/dialog';
@@ -772,7 +773,9 @@ const wizardDnsListenPort = ref(53);
 // placeholder if none picked yet.
 const resolverIpForHint = computed(() => {
   const picked = wizardIfaces.value.find(i => i.dns);
-  const ip = picked?.addresses?.find(a => /^\d+\.\d+\.\d+\.\d+$/.test(a.address))?.address;
+  // isValidIpv4 rather than a bare shape regex: the inline one accepted
+  // "1234.1.1.1" and any out-of-range octet. See audit #51.
+  const ip = picked?.addresses?.find(a => isValidIpv4(a.address))?.address;
   return ip || 'server';
 });
 
@@ -1043,145 +1046,35 @@ async function wizardFinish() {
 }
 
 // ── Pi-hole Import (Step 3) ──
-const piholeTab = ref('online');
-const piholeUrl = ref('');
-const piholePassword = ref('');
-const piholeProbeStatus = ref(null); // null | 'ok' | 'fail'
-const piholeProbeError = ref('');
-const piholeNeedsPassword = ref(false);
-const piholeFetching = ref(false);
-const piholeParsing = ref(false);
-const piholeImporting = ref(false);
-const piholePreview = ref(null);
-const piholeImportResults = ref(null);
-const piholeFileContent = ref(null);
-const piholeFileInput = ref(null);
 const wizardCreatedSubnetId = ref(null);
 
-function cleanPiholeUrl(raw) {
-  let url = raw.trim();
-  if (!url) return '';
-  // Add scheme if missing
-  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
-  try {
-    const parsed = new URL(url);
-    // Strip path, query, hash, keep only scheme://host[:port]
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return url;
-  }
-}
-
-let piholeProbeTimer = null;
-
-async function probePihole() {
-  const url = cleanPiholeUrl(piholeUrl.value);
-  if (!url) { piholeProbeStatus.value = null; return; }
-  // Update the input to the cleaned URL
-  if (url !== piholeUrl.value.trim()) piholeUrl.value = url;
-  try {
-    const res = await api.post('/pihole/probe', { url, password: piholePassword.value || undefined });
-    if (res.data.reachable) {
-      piholeProbeStatus.value = 'ok';
-      piholeNeedsPassword.value = res.data.needsPassword;
-      piholeProbeError.value = '';
-    } else {
-      piholeProbeStatus.value = 'fail';
-      piholeProbeError.value = res.data.error || 'Could not connect';
-    }
-  } catch (err) {
-    piholeProbeStatus.value = 'fail';
-    piholeProbeError.value = apiError(err);
-  }
-}
-
-// Auto-probe when URL changes (debounced)
-watch(piholeUrl, (val) => {
-  clearTimeout(piholeProbeTimer);
-  piholeProbeStatus.value = null;
-  piholeProbeError.value = '';
-  const trimmed = val?.trim();
-  if (!trimmed) return;
-  piholeProbeTimer = setTimeout(() => probePihole(), 600);
+// The Pi-hole import flow lives in composables/usePiholeImport.js. It used to be
+// duplicated here in full, about 120 lines of script identical to
+// PiholeImportPanel.vue apart from ONE line: the zone fallback below. That one
+// contextual difference is now a parameter instead of a reason to keep a second
+// copy of everything around it. Names are aliased to the prefixed ones this
+// wizard's template already binds, so no template changed.
+// See REVIEW.md, duplicate-logic audit #47.
+const {
+  tab: piholeTab, url: piholeUrl, password: piholePassword,
+  probeStatus: piholeProbeStatus, probeError: piholeProbeError,
+  needsPassword: piholeNeedsPassword,
+  fetching: piholeFetching, parsing: piholeParsing, importing: piholeImporting,
+  preview: piholePreview, importResults: piholeImportResults,
+  fileContent: piholeFileContent, fileInput: piholeFileInput,
+  fetchConfig: fetchPiholeConfig, onFileSelect: onPiholeFileSelect,
+  parseFile: parsePiholeFile, executeImport: executePiholeImport,
+  resetState: resetPiholeImportState,
+} = usePiholeImport({
+  toast,
+  // Step 2 asked for a domain. If the pihole.toml does not declare one, that is
+  // the zone to import into. Settings > Integrations has no equivalent, which is
+  // exactly why this is a parameter.
+  fallbackZoneName: () => wizardNet.value?.domain_name || null,
 });
 
-async function fetchPiholeConfig() {
-  piholeFetching.value = true;
-  try {
-    const res = await api.post('/pihole/fetch', {
-      url: piholeUrl.value.trim(),
-      password: piholePassword.value || undefined
-    });
-    piholePreview.value = res.data;
-    piholeImportResults.value = null;
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Fetch failed', detail: apiError(err), life: 5000 });
-  } finally { piholeFetching.value = false; }
-}
-
-function onPiholeFileSelect(event) {
-  const file = event.target.files[0];
-  if (!file) { piholeFileContent.value = null; return; }
-  const reader = new FileReader();
-  reader.onload = (e) => { piholeFileContent.value = e.target.result; };
-  reader.readAsText(file);
-}
-
-async function parsePiholeFile() {
-  piholeParsing.value = true;
-  try {
-    const res = await api.post('/pihole/parse', piholeFileContent.value, {
-      headers: { 'Content-Type': 'text/plain' }
-    });
-    piholePreview.value = res.data;
-    piholeImportResults.value = null;
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Parse failed', detail: apiError(err), life: 5000 });
-  } finally { piholeParsing.value = false; }
-}
-
-async function executePiholeImport() {
-  if (!piholePreview.value) return;
-  piholeImporting.value = true;
-  try {
-    // Find the forward zone for the domain created in step 2
-    const dnsStore = (await import('../stores/dns.js')).useDnsStore();
-    await dnsStore.fetchZones();
-    const domainName = piholePreview.value.zoneName || wizardNet.value.domain_name;
-
-    let zone = dnsStore.zones.find(z => z.name === domainName && z.type === 'forward');
-    if (!zone && domainName) {
-      // Create the zone if it doesn't exist
-      zone = await dnsStore.createZone({ name: domainName, type: 'forward' });
-    }
-    if (!zone) {
-      toast.add({ severity: 'error', summary: 'No zone found', detail: 'Could not find or create a forward DNS zone for import', life: 5000 });
-      return;
-    }
-
-    const res = await api.post('/pihole/import', {
-      zoneId: zone.id,
-      hosts: piholePreview.value.hosts,
-      cnames: piholePreview.value.cnames,
-      dhcpHosts: piholePreview.value.dhcpHosts,
-    });
-    piholeImportResults.value = res.data.results;
-    toast.add({ severity: 'success', summary: 'Pi-hole import complete', life: 3000 });
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Import failed', detail: apiError(err), life: 5000 });
-  } finally { piholeImporting.value = false; }
-}
-
 function resetPiholeState() {
-  piholeTab.value = 'online';
-  piholeUrl.value = '';
-  piholePassword.value = '';
-  piholeProbeStatus.value = null;
-  piholeProbeError.value = '';
-  piholeNeedsPassword.value = false;
-  piholePreview.value = null;
-  piholeImportResults.value = null;
-  piholeFileContent.value = null;
+  resetPiholeImportState();
   wizardCreatedSubnetId.value = null;
 }
 

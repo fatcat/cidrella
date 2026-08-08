@@ -65,7 +65,7 @@ scenario_assert() {
   # Whether the update completed or there was nothing to do, the service
   # should still be running.
   assert_systemctl_active cidrella
-  assert_http_200 "https://127.0.0.1:8443/api/health/deep"
+  assert_http_200 "$(cidrella_base_url)/api/health/deep"
 
   # ─── Bundled node resolver finds the binary ──────────────────
   # Direct probe against the file the Phase 0 resolver returns.

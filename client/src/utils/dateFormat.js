@@ -10,6 +10,32 @@ function hourOption() {
 /** True if the string already carries a timezone indicator (Z or ±HH:MM) */
 const hasTZ = (s) => /Z|[+-]\d{2}:\d{2}$/.test(String(s));
 
+/**
+ * Elapsed time since an ISO timestamp, as "just now" / "5m ago" / "3h ago" / "2d ago".
+ *
+ * There were three copies of this: HeaderBar.vue, Anomalies.vue and (as
+ * formatRelative) UpdatePanel.vue. Only HeaderBar's carried the finite guard, so
+ * the other two rendered the literal string "NaNd ago" for a timestamp that does
+ * not parse. That is reachable: Anomalies feeds this from daemon fields written
+ * by the Python anomaly sidecar. The three also disagreed on the missing-value
+ * placeholder, UpdatePanel returning an empty string where the others returned
+ * the em-dash every other cell in the app uses.
+ *
+ * The em-dash here is the documented EMPTY_CELL placeholder, not prose.
+ * See REVIEW.md, duplicate-logic audit #42.
+ */
+export function formatRelativeTime(dateStr) {
+  if (!dateStr) return '—';
+  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (!Number.isFinite(seconds)) return '—';
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 /** Full date + time (replaces most formatDate functions) */
 export function formatDateTime(dateStr) {
   if (!dateStr) return '—';

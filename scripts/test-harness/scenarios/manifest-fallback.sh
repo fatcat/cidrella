@@ -55,7 +55,7 @@ WRONG_KEY
   # so 8 seconds is more than enough for the fetch + verify + fallback
   # sequence to complete on testerella.
   for i in $(seq 1 20); do
-    if curl -sk https://127.0.0.1:8443/api/health >/dev/null 2>&1; then break; fi
+    if curl -sk $(cidrella_base_url)/api/health >/dev/null 2>&1; then break; fi
     sleep 0.5
   done
   sleep 6
@@ -73,7 +73,7 @@ WRONG_KEY
   if [ -z "$ADMIN_PW" ]; then
     ADMIN_PW="admin"
   fi
-  TOKEN=$(curl -sk -X POST https://127.0.0.1:8443/api/auth/login \
+  TOKEN=$(curl -sk -X POST $(cidrella_base_url)/api/auth/login \
     -H "Content-Type: application/json" \
     -d "{\"username\":\"admin\",\"password\":\"${ADMIN_PW}\"}" 2>/dev/null \
     | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
@@ -82,16 +82,22 @@ WRONG_KEY
     # Fresh installs require a password change on first login. Do it so the
     # subsequent /api/version call isn't blocked with MUST_CHANGE_PASSWORD.
     NEW_PW="test-scenario-pw-$(date +%s)"
+    # cidrella_base_url, not a hardcoded 8443. This was the last hardcoded call
+    # site left after audit #35 and it silently broke the whole scenario: on a
+    # host that took 443 the change-password POST went nowhere, the account
+    # stayed in must-change state, and /api/version answered
+    # {"error":"Password change required"}. The manifestAvailable assertion then
+    # passed against an error body that never mentioned manifests at all.
     CHANGE_RESP=$(curl -sk -X POST -H "Authorization: Bearer $TOKEN" \
       -H "Content-Type: application/json" \
       -d "{\"current_password\":\"${ADMIN_PW}\",\"new_password\":\"${NEW_PW}\"}" \
-      https://localhost:8443/api/auth/change-password 2>/dev/null)
+      $(cidrella_base_url)/api/auth/change-password 2>/dev/null)
     # If change succeeded, re-extract the new token from the change response.
     NEW_TOKEN=$(echo "$CHANGE_RESP" | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
     [ -n "$NEW_TOKEN" ] && TOKEN="$NEW_TOKEN"
 
     curl -sk -H "Authorization: Bearer $TOKEN" \
-      https://127.0.0.1:8443/api/version > /tmp/version-response.json 2>&1
+      $(cidrella_base_url)/api/version > /tmp/version-response.json 2>&1
   else
     echo '{"error":"could not authenticate","token_empty":true}' > /tmp/version-response.json
   fi
@@ -103,7 +109,7 @@ WRONG_KEY
   # Wait for the service to settle after the second restart, the final
   # health-check assertion needs the API to be responding.
   for i in $(seq 1 20); do
-    if curl -sk https://127.0.0.1:8443/api/health >/dev/null 2>&1; then break; fi
+    if curl -sk $(cidrella_base_url)/api/health >/dev/null 2>&1; then break; fi
     sleep 0.5
   done
 }
@@ -113,10 +119,12 @@ scenario_assert() {
   assert_file_exists /tmp/version-response.json
 
   # ─── /api/version is reachable and returns JSON ──
-  # If auth failed (e.g., admin password differs on this host), fall back
-  # to a softer check that at least proves the fallback path was taken by
-  # looking at the server log instead.
+  # This one is load-bearing, not a formality: every check below is a grep over
+  # this file, and a grep for an absent string passes just as happily against an
+  # error body as against a real answer. Prove we got a version payload before
+  # reading anything out of it.
   assert_command_ok "grep -q 'version' /tmp/version-response.json"
+  assert_command_ok "! grep -q 'MUST_CHANGE_PASSWORD' /tmp/version-response.json"
 
   # ─── manifestAvailable is false in the response ──
   # This is the core assertion of the scenario. Phase C's contract: when
@@ -132,6 +140,10 @@ scenario_assert() {
   # The scenario passes in either shape so long as manifestAvailable is
   # NOT true. A true value means the manifest somehow verified despite
   # the garbage pubkey, a real regression.
+  #
+  # Paired with the payload check above, because on its own a negative grep is
+  # satisfied by a response that says nothing about manifests: this assertion
+  # reported pass for months against an auth-error body.
   assert_command_ok "! grep -q '\"manifestAvailable\":true' /tmp/version-response.json"
 
   # ─── Server log shows the expected fallback warning ──
@@ -148,7 +160,7 @@ scenario_assert() {
   assert_command_ok "cmp /tmp/cidrella.pub.real /opt/cidrella/scripts/cidrella.pub"
 
   # ─── Service is still healthy after the restart cycle ──
-  assert_http_200 "https://127.0.0.1:8443/api/health"
+  assert_http_200 "$(cidrella_base_url)/api/health"
   assert_systemctl_active cidrella
 }
 

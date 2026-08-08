@@ -186,8 +186,11 @@ import Select from 'primevue/select';
 import StatusDot from './StatusDot.vue';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
+import { useAnomalyStore } from '../stores/anomalies.js';
 import { formatTimeOnly } from '../utils/dateFormat.js';
 import api from '../api/client.js';
+import { formatRelativeTime as timeAgo } from '../utils/dateFormat.js';
+import { formatBytes as formatBytes } from '../utils/format.js';
 
 const router = useRouter();
 const route = useRoute();
@@ -197,7 +200,14 @@ const userMenuRef = ref(null);
 const opsPopoverRef = ref(null);
 const anomalyPopoverRef = ref(null);
 const health = ref(null);
-const anomalySummary = ref(null);
+// Read through the store rather than keeping a second copy. The header used to
+// hold its own anomalySummary ref and its own acknowledge call, so clearing the
+// counter here left the Anomalies page stale, and clearing it there left this
+// badge stale, in both cases until the 60s poll came round. Two counters for one
+// number that the user can see in two places at once.
+// See REVIEW.md, duplicate-logic audit #49.
+const anomalyStore = useAnomalyStore();
+const anomalySummary = computed(() => anomalyStore.summary);
 const activeScans = ref([]);
 const nextScanTime = ref(null);
 const updateInfo = ref(null);
@@ -298,13 +308,6 @@ function handleLogout() {
   router.push('/login');
 }
 
-function formatBytes(bytes) {
-  if (!bytes) return '--';
-  const gb = bytes / (1024 * 1024 * 1024);
-  if (gb >= 1) return `${gb.toFixed(1)} GB`;
-  const mb = bytes / (1024 * 1024);
-  return `${mb.toFixed(0)} MB`;
-}
 
 const cpuDisplay = computed(() => {
   return `${cpuPercent.value}%`;
@@ -464,18 +467,6 @@ const anomalyChipClass = computed(() => {
   return 'chip-warn';
 });
 
-function timeAgo(iso) {
-  if (!iso) return '—';
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (!Number.isFinite(seconds)) return '—';
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 async function fetchActiveScan() {
   try {
@@ -514,22 +505,18 @@ async function fetchHealth() {
 }
 
 async function fetchAnomalySummary() {
-  try {
-    const res = await api.get('/anomalies/summary');
-    anomalySummary.value = res.data;
-  } catch { /* ignore */ }
+  // Swallowed on purpose: this is a background poll for a header badge, and a
+  // transient failure should not surface as an error toast.
+  try { await anomalyStore.fetchSummary(); } catch { /* ignore */ }
 }
 
 async function clearAnomalyCounter() {
   if (clearingAnomalies.value) return;
   clearingAnomalies.value = true;
   try {
-    const res = await api.post('/anomalies/acknowledge');
-    anomalySummary.value = {
-      ...(anomalySummary.value || {}),
-      unacknowledged_active: 0,
-      acknowledged_through_id: res.data.acknowledged_through_id || anomalySummary.value?.acknowledged_through_id || 0,
-    };
+    // The store zeroes its own summary, so the Anomalies page updates with us
+    // instead of showing the old number until its next poll.
+    await anomalyStore.acknowledgeCounter();
   } finally {
     clearingAnomalies.value = false;
   }

@@ -25,13 +25,13 @@ scenario_run() {
 
 scenario_assert() {
   # ─── Version + health ─────────────────────────────────
-  assert_http_200 "https://127.0.0.1:8443/api/health"
-  assert_http_200 "https://127.0.0.1:8443/api/health/deep"
-  assert_json_field "https://127.0.0.1:8443/api/health/deep" "status" "ok"
-  assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.sqlite.ok" "true"
-  assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.duckdb.ok" "true"
-  assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.bcrypt.ok" "true"
-  assert_json_field "https://127.0.0.1:8443/api/health/deep" "checks.ping.ok" "true"
+  assert_http_200 "$(cidrella_base_url)/api/health"
+  assert_http_200 "$(cidrella_base_url)/api/health/deep"
+  assert_json_field "$(cidrella_base_url)/api/health/deep" "status" "ok"
+  assert_json_field "$(cidrella_base_url)/api/health/deep" "checks.sqlite.ok" "true"
+  assert_json_field "$(cidrella_base_url)/api/health/deep" "checks.duckdb.ok" "true"
+  assert_json_field "$(cidrella_base_url)/api/health/deep" "checks.bcrypt.ok" "true"
+  assert_json_field "$(cidrella_base_url)/api/health/deep" "checks.ping.ok" "true"
 
   # ─── All three services active ────────────────────────
   assert_systemctl_active cidrella
@@ -76,8 +76,8 @@ scenario_assert() {
 }
 
 scenario_capture() {
-  capture_command "api_health" "curl -sk https://127.0.0.1:8443/api/health"
-  capture_command "api_health_deep" "curl -sk https://127.0.0.1:8443/api/health/deep"
+  capture_command "api_health" "curl -sk $(cidrella_base_url)/api/health"
+  capture_command "api_health_deep" "curl -sk $(cidrella_base_url)/api/health/deep"
   capture_command "services_active" "systemctl is-active cidrella cidrella-dnsmasq cidrella-anomaly"
   capture_command "wrappers_installed" "ls -la /usr/local/bin/cidrella-* 2>&1"
   capture_command "slot_scripts" "ls /opt/cidrella/scripts/"

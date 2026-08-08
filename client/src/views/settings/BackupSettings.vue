@@ -131,6 +131,7 @@ import { useAuthStore } from '../../stores/auth.js';
 import { apiError } from '../../utils/format.js';
 import { formatDateTime } from '../../utils/dateFormat.js';
 import api from '../../api/client.js';
+import { formatBytes as formatSize } from '../../utils/format.js';
 
 const store = useSubnetStore();
 const opsStore = useOperationsStore();
@@ -296,14 +297,6 @@ async function doResetDatabase() {
   }
 }
 
-function formatSize(bytes) {
-  if (!bytes) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let i = 0;
-  let size = bytes;
-  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
-  return `${size.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
-}
 
 onMounted(async () => {
   await Promise.all([

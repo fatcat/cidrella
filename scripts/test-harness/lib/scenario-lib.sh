@@ -405,3 +405,24 @@ scenario_main() {
   fi
   emit_result
 }
+
+
+# ─── Web base URL ─────────────────────────────────────────
+# The web port depends on install-time probing: a fresh install takes 443 when
+# 443 and 80 are both free, otherwise 8443. Scenarios used to hardcode 8443,
+# which is why results/upgrade-path-20260724T132758.json records
+# "http_200 https://127.0.0.1:8443/api/health/deep ... got 000curl-failed"
+# alongside "systemctl is-active cidrella ... pass": the service was up and the
+# test was looking at the wrong port. Probe once, remember the answer.
+# See REVIEW.md, duplicate-logic audit #35.
+cidrella_base_url() {
+  if [ -f /tmp/cidrella-base-url ]; then cat /tmp/cidrella-base-url; return; fi
+  local url
+  for url in "https://127.0.0.1" "https://127.0.0.1:8443"; do
+    if curl -skf --max-time 3 "$url/api/health" >/dev/null 2>&1; then
+      printf '%s' "$url" | tee /tmp/cidrella-base-url
+      return
+    fi
+  done
+  printf '%s' "https://127.0.0.1:8443"
+}

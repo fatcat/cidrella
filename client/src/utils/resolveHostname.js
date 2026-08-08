@@ -2,7 +2,18 @@
  * Shared DHCP hostname-resolution utilities used by DHCP.vue and ScopeDialog.vue.
  */
 
-export const IP_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
+import { isValidIpv4 } from './ip.js';
+
+/**
+ * Is this entry already an address, so it needs no DNS lookup?
+ *
+ * This was a local IP_RE that checked shape only, with no octet range check, so
+ * "300.1.1.1" was treated as an address already and passed through untouched
+ * into a DHCP option value instead of being resolved or rejected. isValidIpv4
+ * is the same shape test plus the 0-255 bound.
+ * See REVIEW.md, duplicate-logic audit #51.
+ */
+const isAddress = (v) => isValidIpv4(String(v ?? '').trim());
 
 /**
  * Resolve a comma-separated list of hostnames/IPs to IP addresses.
@@ -15,11 +26,11 @@ export const IP_RE = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
  * @returns {Promise<string>} Resolved comma-separated IP string
  */
 export async function resolveHostname(value, api, toast) {
-  if (!value || IP_RE.test(value.trim())) return value;
+  if (!value || isAddress(value)) return value;
   const parts = value.split(',').map(s => s.trim()).filter(Boolean);
   const resolved = [];
   for (const part of parts) {
-    if (IP_RE.test(part)) {
+    if (isAddress(part)) {
       resolved.push(part);
     } else {
       try {

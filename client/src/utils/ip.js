@@ -11,6 +11,27 @@ export function longToIp(long) {
   return [(long >>> 24) & 255, (long >>> 16) & 255, (long >>> 8) & 255, long & 255].join('.');
 }
 
+/**
+ * Dotted-quad netmask for a prefix length.
+ *
+ * parseCidr returns the broadcast but not the mask, so ScopeDialog hand-rolled
+ * both of those inline. Its copies did no validation, and `parseInt(undefined)`
+ * is NaN, which slips through a `p < 0 || p > 32` guard, so a malformed CIDR
+ * yielded a 255.255.255.255 mask that was written straight into DHCP option 1.
+ * See REVIEW.md, duplicate-logic audit #50.
+ */
+export function netmaskFor(prefix) {
+  // Explicit shape check rather than leaning on Number(): Number('') and
+  // Number(null) are both 0, which is a legal prefix, so coercion alone would
+  // turn "no prefix at all" into a valid /0.
+  const p = typeof prefix === 'number'
+    ? prefix
+    : (typeof prefix === 'string' && /^\d+$/.test(prefix.trim()) ? parseInt(prefix, 10) : NaN);
+  if (!Number.isInteger(p) || p < 0 || p > 32) return null;
+  const m = p === 0 ? 0 : (0xFFFFFFFF << (32 - p)) >>> 0;
+  return longToIp(m);
+}
+
 export function parseCidr(cidr) {
   const match = cidr.match(/^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/);
   if (!match) throw new Error(`Invalid CIDR: ${cidr}`);

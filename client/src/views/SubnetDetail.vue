@@ -870,19 +870,9 @@ const rangeDialogHeader = computed(() => {
 
 function gridTooltip(ip) {
   const lines = [ip.address];
-  const pseudoData = {
-    ip_display_status: ip.ipDisplayStatus,
-    ip_status_severity: ip.ipStatusSeverity,
-    address_type: ip.addressType,
-    address_type_tooltip: ip.addressTypeTooltip,
-    ip_lifecycle_status: ip.ipLifecycleStatus,
-    status: ip.status, range_type_name: ip.rangeType, reservation_note: ip.reservationNote,
-    has_dhcp_reservation: ip.hasDhcpReservation, hostname: ip.hostname,
-    mac_address: ip.mac, last_seen_mac: null,
-    is_online: ip.isOnline ? 1 : 0, is_rogue: ip.isConflict ? 1 : 0, rogue_reason: ip.conflictReason,
-    dhcp_expires_at: ip.dhcpExpiresAt || null
-  };
-  const state = ipLifecycleDisplay(pseudoData);
+  // Reuse the classification the cell was painted from. Re-deriving it here is
+  // how the tooltip and the fill came to disagree. See audit #41.
+  const state = ip.state;
   lines.push(`Status: ${state.status}`);
   if (state.addressType?.label) {
     lines.push(`Type: ${state.addressType.label}${state.tooltip ? ` (${state.tooltip})` : ''}`);
@@ -899,6 +889,32 @@ function gridTooltip(ip) {
   if (ip.lastSeen) lines.push(`Last seen: ${formatDate(ip.lastSeen)}`);
   if (ip.conflictReason) lines.push(`Warning: ${ip.conflictReason}`);
   return lines.join('\n');
+}
+
+// The row shape the shared classifier expects, built from what the grid knows
+// about one address. Extracted so the cell fill and the tooltip classify from
+// exactly the same input rather than each assembling their own.
+function gridPseudoData({ addr, assignInfo, rangeInfo }) {
+  return {
+    ip_address: addr,
+    ip_display_status: assignInfo?.ip_display_status || null,
+    ip_status_severity: assignInfo?.ip_status_severity || null,
+    address_type: assignInfo?.address_type || null,
+    address_type_tooltip: assignInfo?.address_type_tooltip || null,
+    ip_lifecycle_status: assignInfo?.ip_lifecycle_status || assignInfo?.status || 'available',
+    status: assignInfo?.status || 'available',
+    range_type_name: rangeInfo?.rangeType || null,
+    reservation_note: assignInfo?.reservation_note || null,
+    has_dhcp_reservation: assignInfo?.has_dhcp_reservation || 0,
+    hostname: assignInfo?.hostname || null,
+    mac_address: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
+    last_seen_mac: null,
+    is_online: assignInfo?.is_online === 1 ? 1 : 0,
+    is_rogue: assignInfo?.is_rogue === 1 ? 1 : 0,
+    is_local_address: assignInfo?.is_local_address || 0,
+    rogue_reason: assignInfo?.rogue_reason || null,
+    dhcp_expires_at: assignInfo?.dhcp_expires_at || null,
+  };
 }
 
 const ipGrid = computed(() => {
@@ -947,8 +963,24 @@ const ipGrid = computed(() => {
     const isDnsConfigured = !isDhcpReservation && assignInfo?.address_type === 'static DNS';
     const isUserLocked = assignInfo?.status === 'locked' && !isSystemRange;
 
+    // Classify ONCE, here, and hand the result to both the fill below and the
+    // tooltip (see gridTooltip). The tooltip used to re-derive it from this
+    // cell, so the two could describe the same square differently: the ladder
+    // had no branch for rogue or for one of our own interface addresses, so a
+    // rogue address was painted in the ordinary pool tint, indistinguishable
+    // from free space unless you happened to hover it. The grid is the
+    // at-a-glance view of a subnet, so the one classification an operator most
+    // needs to spot was the one the colour could not express.
+    // See REVIEW.md, duplicate-logic audit #41.
+    const cellState = ipLifecycleDisplay(gridPseudoData({
+      addr, assignInfo, rangeInfo,
+    }));
+    const cellTypeClass = cellState.addressType?.className || null;
+
     let cellColor;
     if (isSystemRange) cellColor = rangeInfo.color;
+    else if (cellTypeClass === 'type-rogue')  cellColor = 'var(--cid-rogue)';
+    else if (cellTypeClass === 'type-system') cellColor = 'var(--cid-system)';
     else if (isDhcpReservation) cellColor = 'var(--p-blue-700)';
     else if (isDnsConfigured)   cellColor = 'var(--p-green-300)';
     else if (isUserLocked)      cellColor = 'var(--p-violet-500)';
@@ -984,7 +1016,8 @@ const ipGrid = computed(() => {
       isOnline: assignInfo?.is_online === 1,
       lastSeen: assignInfo?.last_seen_at || null,
       isConflict: assignInfo?.is_rogue === 1,
-      conflictReason: assignInfo?.rogue_reason || null
+      conflictReason: assignInfo?.rogue_reason || null,
+      state: cellState
     });
   }
 

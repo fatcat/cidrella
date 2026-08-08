@@ -285,8 +285,7 @@ import {
   displayCell,
   displayExpiry,
   displayHostnameCell,
-  displayMacAddress
-} from '../utils/format.js';
+  displayMacAddress, isOnlineFlag } from '../utils/format.js';
 import { ipToLong } from '../utils/ip.js';
 import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
 import { loadJson } from '../utils/storage.js';
@@ -530,9 +529,10 @@ function normalizedText(value) {
 }
 
 function normalizedOnline(value) {
-  if (value === true || value === 1 || value === '1') return 1;
-  if (value === false || value === 0 || value === '0') return 0;
-  return null;
+  // Sorting wants a number, so map the shared three-state flag onto 1/0/null
+  // rather than keeping a second copy of the coercion. See audit #48.
+  const state = isOnlineFlag(value);
+  return state === null ? null : (state ? 1 : 0);
 }
 
 function normalizedExpiry(value) {

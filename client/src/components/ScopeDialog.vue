@@ -122,7 +122,7 @@ import Popover from 'primevue/popover';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
-import { parseCidr, dhcpRangeDefaults } from '../utils/ip.js';
+import { parseCidr, dhcpRangeDefaults , netmaskFor} from '../utils/ip.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError } from '../utils/format.js';
@@ -220,6 +220,20 @@ function addOptionSelection(selected, code) {
   if (!selected.includes(numericCode)) selected.push(numericCode);
 }
 
+// Both of these used to be hand-rolled here, in a file that already imports
+// parseCidr and uses it 60 lines below. Neither validated its input, and the
+// values they produce are written into DHCP option 1 (subnet mask) and option 28
+// (broadcast), so a malformed subnet_cidr silently produced a /32 mask rather
+// than an error. See REVIEW.md, duplicate-logic audit #50.
+function computeBroadcast(cidr) {
+  if (!cidr) return null;
+  try { return parseCidr(cidr).broadcast; } catch { return null; }
+}
+function computeMask(cidr) {
+  if (!cidr) return null;
+  try { return netmaskFor(parseCidr(cidr).prefix); } catch { return null; }
+}
+
 function setOptionValue(selected, values, code, value, { overwrite = true } = {}) {
   if (value == null || value === '') return;
   const numericCode = Number(code);
@@ -261,25 +275,7 @@ function toggleOption(code, checked) {
   }
 }
 
-function computeBroadcast(cidr) {
-  if (!cidr) return null;
-  const [netIp, pfx] = cidr.split('/');
-  const p = parseInt(pfx, 10);
-  if (p < 0 || p > 32) return null;
-  const m = p === 0 ? 0 : (0xFFFFFFFF << (32 - p)) >>> 0;
-  const parts = netIp.split('.').map(Number);
-  const ipL = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-  const bcast = (ipL | ~m) >>> 0;
-  return [((bcast) >>> 24) & 255, ((bcast) >>> 16) & 255, ((bcast) >>> 8) & 255, bcast & 255].join('.');
-}
 
-function computeMask(cidr) {
-  if (!cidr) return null;
-  const pfx = parseInt(cidr.split('/')[1], 10);
-  if (pfx < 0 || pfx > 32) return null;
-  const m = pfx === 0 ? 0 : (0xFFFFFFFF << (32 - pfx)) >>> 0;
-  return [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255].join('.');
-}
 
 // Auto-populate network-dependent options when a subnet is selected
 watch(() => form.value.subnet_id, (subnetId, oldSubnetId) => {

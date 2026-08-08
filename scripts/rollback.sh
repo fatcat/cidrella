@@ -67,17 +67,26 @@ emit_event() {
 # Rollback must be standalone, no dependence on the installation being
 # rolled back. Inline the bundled-runtime check so this script stays
 # self-contained even if /usr/local/bin/cidrella-node was wiped.
+# MUST stay a copy: this script sources nothing on purpose (see above), so it
+# cannot use resolve_node from lib/slots.sh. It is kept deliberately identical
+# in behavior to that one, and scripts/test-harness/resolve-node-differential.sh
+# asserts the two agree. If you change one, change both.
+# See REVIEW.md, duplicate-logic audit #33.
 resolve_node() {
   local slot="${1:-}"
-  if [ -n "$slot" ] && [ -x "$slot/runtime/node/bin/node" ]; then
-    printf '%s\n' "$slot/runtime/node/bin/node"
+  local candidate
+  for candidate in \
+    "${slot:+$slot/runtime/node/bin/node}" \
+    "/opt/cidrella/runtime/node/bin/node" \
+    "/usr/local/bin/cidrella-node"
+  do
+    [ -n "$candidate" ] && [ -x "$candidate" ] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  if command -v node >/dev/null 2>&1; then
+    command -v node
     return 0
   fi
-  if [ -x "/opt/cidrella/runtime/node/bin/node" ]; then
-    printf '%s\n' "/opt/cidrella/runtime/node/bin/node"
-    return 0
-  fi
-  printf '%s\n' "/usr/bin/node"
+  return 1
 }
 
 AUTO_YES=false
@@ -135,8 +144,16 @@ read_version() {
   local dir="$1"
   if [ -f "$dir/package.json" ]; then
     local node_bin
-    node_bin=$(resolve_node "$dir")
-    "$node_bin" -e "console.log(require('$dir/package.json').version)" 2>/dev/null || echo "unknown"
+    # resolve_node can now return nonzero instead of an untested path, so guard
+    # it: under set -e a bare assignment from a failing substitution aborts.
+    node_bin=$(resolve_node "$dir" || true)
+    if [ -n "$node_bin" ]; then
+      "$node_bin" -e "console.log(require('$dir/package.json').version)" 2>/dev/null || echo "unknown"
+    else
+      # No node anywhere. Fall back to reading the file directly rather than
+      # reporting "unknown", which is what read_slot_version does in lib/slots.sh.
+      sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$dir/package.json" | head -n 1
+    fi
   else
     echo "unknown"
   fi
