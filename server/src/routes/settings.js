@@ -4,7 +4,7 @@ import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { pruneEvents, clearStaleDynamicMetadata } from '../models/ip-address.js';
 import * as Setting from '../models/setting.js';
-import { GEOIP_MODES, validateInterfaceConfig, validPortOrError, isIntInRangeCoercing } from '../utils/validation.js';
+import { validateInterfaceConfig, validPortOrError, isIntInRangeCoercing } from '../utils/validation.js';
 
 const router = Router();
 
@@ -74,14 +74,20 @@ const SETTING_SCHEMA = {
     validate: v => typeof v === 'string' && v.length <= 64 ? null : 'must be an ISO-8601-ish string',
     normalize: v => v
   },
-  geoip_enabled: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
-  },
-  geoip_mode: {
-    validate: v => typeof v === 'string' && GEOIP_MODES.has(v) ? null : `must be one of: ${[...GEOIP_MODES].join(', ')}`,
-    normalize: v => v
-  },
+  // geoip_enabled and geoip_mode are deliberately NOT editable here, for the
+  // same reason as the dnssec/forwarder/rogue-dhcp keys below. PUT
+  // /api/geoip/settings persists AND applies: it calls loadGeoipRules(),
+  // loadGeoipAllowlist() and loadMmdb(). A bare settings PUT persisted the
+  // value and applied nothing.
+  //
+  // geoip_mode was the dangerous one, because it is not re-read per query.
+  // dns-proxy.js caches it in the module-level `geoipMode` (line 63), refreshed
+  // only by loadGeoipRules(), and shouldBlock() branches on that cached copy
+  // alone. Switching to "allowlist" through /api/settings stored allowlist, the
+  // UI read allowlist back, and the resolver kept running the blocklist arm
+  // until the next restart. That fails OPEN: the operator believes DNS is
+  // restricted to approved countries while everything not explicitly listed is
+  // still being permitted. See REVIEW.md, duplicate-logic audit #17.
   geoip_proxy_port: {
     validate: v => validPortOrError(v, 'geoip_proxy_port'),
     normalize: v => String(v)

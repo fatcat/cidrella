@@ -169,6 +169,7 @@ import Checkbox from 'primevue/checkbox';
 import StatusDot from '../components/StatusDot.vue';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
+import { isValidIpv4 } from '../utils/ip.js';
 
 const store = useDnsStore();
 const toast = useToast();
@@ -337,7 +338,10 @@ const soaDirty = computed(() => {
     f.soa_expire !== s.soa_expire || f.soa_minimum_ttl !== s.soa_minimum_ttl;
 });
 
-const ipv4Re = /^(\d{1,3}\.){3}\d{1,3}$/;
+// Was a local /^(\d{1,3}\.){3}\d{1,3}$/, which checks shape but not octet range,
+// so 999.999.999.999 passed the gate and got sent to the forwarder-test endpoint.
+// utils/ip.js already exports the range-checking predicate.
+// See REVIEW.md, duplicate-logic audit #43.
 
 function fwdDotKind(fwd) {
   if (fwd.status === 'reachable') return 'ok';
@@ -360,7 +364,7 @@ function removeForwarder(i) {
 
 async function testForwarder(fwd) {
   const ip = fwd.ip.trim();
-  if (!ip || !ipv4Re.test(ip)) {
+  if (!ip || !isValidIpv4(ip)) {
     fwd.status = null;
     return;
   }
