@@ -11,7 +11,7 @@ import * as IpAddress from '../models/ip-address.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import * as Range from '../models/range.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
-import { sanitizeForLog } from '../utils/validation.js';
+import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
@@ -309,8 +309,9 @@ router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
     if (err) return res.status(400).json({ error: `description ${err}` });
   }
   if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
-    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
-      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
+    const vlanErr = vlanIdError(vlan_id);
+    if (vlanErr) {
+      return res.status(400).json({ error: vlanErr });
     }
   }
 
@@ -512,8 +513,9 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     return res.status(400).json({ error: 'gateway_address must be a string' });
   }
   if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
-    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
-      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
+    const vlanErr = vlanIdError(vlan_id);
+    if (vlanErr) {
+      return res.status(400).json({ error: vlanErr });
     }
   }
   if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
@@ -1256,8 +1258,9 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     if (err) return res.status(400).json({ error: `description ${err}` });
   }
   if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
-    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
-      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
+    const vlanErr = vlanIdError(vlan_id);
+    if (vlanErr) {
+      return res.status(400).json({ error: vlanErr });
     }
   }
   if (create_dhcp_scope !== undefined && typeof create_dhcp_scope !== 'boolean') {

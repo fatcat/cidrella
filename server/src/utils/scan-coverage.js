@@ -27,6 +27,17 @@ const INTERVAL_MS = {
   '4h': 4 * 60 * 60 * 1000,
 };
 
+// The keys that mean "do scan", derived from INTERVAL_MS rather than retyped,
+// so adding an interval to the map cannot leave the SQL arm behind. All keys
+// are literal identifiers from the map above, so interpolating them into SQL
+// below introduces no injection surface, but assert the shape anyway: this
+// module builds SQL strings and a future key with a quote in it should fail
+// loudly here rather than silently produce a broken predicate.
+const SCANNING_INTERVAL_KEYS = Object.keys(INTERVAL_MS).filter(k => INTERVAL_MS[k] !== null);
+for (const k of SCANNING_INTERVAL_KEYS) {
+  if (!/^[0-9a-z]+$/.test(k)) throw new Error(`unsafe scan-interval key: ${k}`);
+}
+
 /**
  * Resolve a stored scan-interval value to milliseconds, or null when the
  * interval means "never scan".
@@ -76,20 +87,39 @@ export function effectiveIntervalSql(alias = 's') {
  * SQL predicate: will the scheduler ever probe this address.
  *
  * Mirrors the scheduler's subnet filter plus the per-IP `scan_enabled` override
- * that `shouldScanIp` applies in utils/scanner.js. The interval arm mirrors
- * `intervalToMs` returning null: empty, 'off', and a non-positive integer all
- * mean never.
+ * that `shouldScanIp` applies in utils/scanner.js.
+ *
+ * The interval arm is an ALLOWLIST because `intervalToMs` is one. It used to be
+ * a denylist, `TRIM(interval) NOT IN ('', 'off', '0')`, while the comment here
+ * claimed the two mirrored each other. They did not, and the gap was silent in
+ * the worst direction: any value outside the map, say '2h' or '10m' or '00',
+ * made `intervalToMs` return null so the scheduler skipped the subnet forever,
+ * while this predicate reported it scanner-covered so `bulkMarkStale` refused
+ * to touch it. Nothing scanned those addresses and nothing was allowed to age
+ * them out, so every host in the subnet stayed "online" permanently.
+ * See REVIEW.md, duplicate-logic audit #5.
  *
  * `subnetAlias` is the `subnets` alias, `ipAlias` the `ip_addresses` alias.
  */
 export function scannerCoveredSql(subnetAlias = 's', ipAlias = 'ip') {
   const interval = effectiveIntervalSql(subnetAlias);
+  const named = SCANNING_INTERVAL_KEYS.map(k => `'${k}'`).join(', ');
   return `(
     ${subnetAlias}.status = 'allocated'
     AND ${subnetAlias}.total_addresses <= ${MAX_SCAN_SIZE}
     AND ${scanEnabledSql(subnetAlias)}
     AND ${interval} IS NOT NULL
-    AND TRIM(${interval}) NOT IN ('', 'off', '0')
+    AND (
+      TRIM(${interval}) IN (${named})
+      OR (
+        -- The same back-compat branch intervalToMs has: an all-digit string
+        -- that parses above zero. GLOB '*[^0-9]*' is how SQLite spells "has a
+        -- non-digit", which keeps '00' and '1h30m' out of this arm.
+        TRIM(${interval}) != ''
+        AND TRIM(${interval}) NOT GLOB '*[^0-9]*'
+        AND CAST(TRIM(${interval}) AS INTEGER) > 0
+      )
+    )
     AND (${ipAlias}.scan_enabled IS NULL OR ${ipAlias}.scan_enabled != 0)
   )`;
 }

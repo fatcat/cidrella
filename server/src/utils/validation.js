@@ -144,3 +144,22 @@ export function validateSoaFields(fields = {}) {
 
   return null;
 }
+
+// VLAN 0 is reserved for 802.1p priority tagging and 4095 is reserved, so the
+// assignable range is 1-4094. That is what migration 014 enforces on the
+// `vlans` table (CHECK vlan_id >= 1 AND vlan_id <= 4094), but subnets.vlan_id
+// is a bare INTEGER and routes/subnets.js checked 0-4094 in three places, so a
+// subnet could hold vlan_id = 0 that no vlans row is allowed to exist for.
+// detectVlanCollision guards with `vlanId == null`, which 0 passes, so those
+// subnets also skipped collision detection.
+// See REVIEW.md, duplicate-logic audit #16.
+export const VLAN_ID_MIN = 1;
+export const VLAN_ID_MAX = 4094;
+
+/** Null when the VLAN id is assignable, else the operator-facing reason. */
+export function vlanIdError(value) {
+  if (!Number.isInteger(value) || value < VLAN_ID_MIN || value > VLAN_ID_MAX) {
+    return `VLAN ID must be an integer ${VLAN_ID_MIN}-${VLAN_ID_MAX}`;
+  }
+  return null;
+}

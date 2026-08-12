@@ -11,14 +11,16 @@
  */
 
 import { readFileSync } from 'fs';
+import { MAC_RE, NULL_MAC } from './mac.js';
 
 const ARP_TABLE_PATH = '/proc/net/arp';
-const INCOMPLETE_MAC = '00:00:00:00:00:00';
+// NULL_MAC/MAC_RE come from utils/mac.js, shared with dhcp-fingerprint.js.
+// See REVIEW.md, duplicate-logic audit #13.
+const INCOMPLETE_MAC = NULL_MAC;
 const CACHE_TTL_MS = 5000;
 
-// A canonical 6-octet MAC anywhere in the text. Deliberately not anchored to
-// any one arping implementation's phrasing, see parseArpingMac.
-const MAC_RE = /\b([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})\b/;
+// The canonical MAC pattern is shared, deliberately not anchored to any one
+// arping implementation's phrasing. See parseArpingMac.
 
 let cached = null;
 let cachedAt = 0;

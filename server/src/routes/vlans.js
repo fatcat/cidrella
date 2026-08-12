@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
+import { vlanIdError } from '../utils/validation.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as Vlan from '../models/vlan.js';
 
@@ -43,7 +44,7 @@ router.get('/search', requirePerm('subnets:read'), (req, res) => {
 router.post('/', requirePerm('subnets:write'), (req, res) => {
   const body = req.body || {};
   const { vlan_id, name, subnet_id } = body;
-  if (!Number.isInteger(vlan_id) || vlan_id < 1 || vlan_id > 4094) return res.status(400).json({ error: 'VLAN ID must be an integer 1-4094' });
+  { const err = vlanIdError(vlan_id); if (err) return res.status(400).json({ error: err }); }
   if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Name is required' });
   const nameErr = validateDisplayString(name.trim(), { maxLength: 255, allowEmpty: false });
   if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
@@ -95,8 +96,9 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 
   const body = req.body || {};
   const { vlan_id, name } = body;
-  if (vlan_id !== undefined && (!Number.isInteger(vlan_id) || vlan_id < 1 || vlan_id > 4094)) {
-    return res.status(400).json({ error: 'VLAN ID must be an integer 1-4094' });
+  if (vlan_id !== undefined) {
+    const err = vlanIdError(vlan_id);
+    if (err) return res.status(400).json({ error: err });
   }
   if (name !== undefined) {
     if (typeof name !== 'string') return res.status(400).json({ error: 'name must be a string' });

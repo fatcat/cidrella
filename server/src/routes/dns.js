@@ -13,7 +13,8 @@ import {
   updateRecord,
   deleteRecord,
   fqdnForRecordName,
-  normalizeRecordNameForZone
+  normalizeRecordNameForZone,
+  cnameTargetError
 } from '../models/dns-record.js';
 import {
   createZone,
@@ -162,33 +163,8 @@ function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecordId = n
   return null;
 }
 
-function cnameTargetError(db, target, zone) {
-  const normalized = normalizeDnsName(target);
-  const zoneName = normalizeDnsName(zone.name);
-
-  if (!isValidDomain(normalized)) return 'Invalid target domain';
-  if (!normalized.includes('.')) return 'CNAME target must be fully qualified';
-  if (!normalized.endsWith(`.${zoneName}`) && normalized !== zoneName) {
-    return `CNAME target must be inside ${zone.name}`;
-  }
-
-  const known = db.prepare(`
-    SELECT 1
-    FROM dns_records r
-    JOIN dns_zones z ON z.id = r.zone_id
-    WHERE z.enabled = 1
-      AND z.type = 'forward'
-      AND r.enabled = 1
-      AND r.type IN ('A', 'CNAME')
-      AND lower(CASE WHEN r.name = '@' THEN z.name ELSE r.name || '.' || z.name END) = ?
-    LIMIT 1
-  `).get(normalized);
-
-  if (!known) {
-    return `CNAME target must already exist as an enabled A or CNAME record in ${zone.name}`;
-  }
-  return null;
-}
+// cnameTargetError now lives in models/dns-record.js so the Pi-hole import path
+// enforces the same three rules. See REVIEW.md, duplicate-logic audit #18.
 
 function validateRecord(type, { name, value, priority, weight, port }, zoneName, db = null, zone = null) {
   switch (type) {

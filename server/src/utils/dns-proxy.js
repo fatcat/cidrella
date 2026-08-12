@@ -22,7 +22,7 @@ import {
   GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
   PROXY_HEALTH_CHECK_MS, PROXY_MAX_RESTART_ATTEMPTS, PROXY_RESTART_DELAY_MS,
   PROXY_TCP_IDLE_TIMEOUT_MS, PROXY_MAX_TCP_CONNECTIONS, PROXY_TCP_RELAY_TIMEOUT_MS,
-  resolveDnsmasqInternalPort,
+  resolveDnsmasqInternalPort, resolveDnsListenPort,
 } from '../config/defaults.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
@@ -767,7 +767,11 @@ export function startProxy() {
     proxyLog('warn', 'No LAN addresses found, proxy has nothing to bind to');
     return;
   }
-  const listenPort = Number(getSetting('dns_listen_port')) || 53;
+  // Shared with the dnsmasq config writer. `Number(x) || 53` used to live here,
+  // which accepted any non-zero number, so a stored 70000 became a bind attempt
+  // on 70000 while dnsmasq stayed on 53.
+  // See REVIEW.md, duplicate-logic audit #10.
+  const listenPort = resolveDnsListenPort(getSetting('dns_listen_port'));
 
   let bindCount = 0;
   for (const addr of addresses) {

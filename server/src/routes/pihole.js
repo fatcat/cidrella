@@ -9,7 +9,7 @@ import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { createReservation } from '../models/dhcp-reservation.js';
-import { importRecords } from '../models/dns-record.js';
+import { importRecords, cnameTargetError, fqdnForRecordName } from '../models/dns-record.js';
 
 const router = Router();
 
@@ -118,7 +118,16 @@ function validateImportArray(value, field) {
   return value;
 }
 
-function validateImportRecord(record, zoneName) {
+/**
+ * `db` and `batchFqdns` are optional so the shape checks stay usable without a
+ * zone row. When both are present the CNAME target goes through the same
+ * `cnameTargetError` the UI create path uses, which is the point: this function
+ * used to accept any syntactically valid domain, so an import could land a
+ * CNAME in a local zone pointing at an arbitrary external host, or at nothing,
+ * that the same appliance refuses if you type it into the DNS page.
+ * See REVIEW.md, duplicate-logic audit #18.
+ */
+function validateImportRecord(record, zoneName, db = null, zone = null, batchFqdns = null) {
   if (!isValidRecordName(record.name)) return 'Invalid hostname';
   const nameErr = validateDnsmasqConfigValue(record.name, { allowComma: false });
   if (nameErr) return `hostname ${nameErr}`;
@@ -134,6 +143,10 @@ function validateImportRecord(record, zoneName) {
     }
     const valueErr = validateDnsmasqConfigValue(record.value, { allowComma: false });
     if (valueErr) return `CNAME target ${valueErr}`;
+    if (db && zone) {
+      const targetErr = cnameTargetError(db, record.value, zone, batchFqdns);
+      if (targetErr) return targetErr;
+    }
     return null;
   }
   return 'Unsupported record type';
@@ -313,13 +326,25 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   }
 
   // Import CNAME records, merge: skip exact dupes, update if same name but different target
+  //
+  // The A records above are already in recordsToImport, and their FQDNs count as
+  // valid targets even though none of them is in the DB yet: nothing is inserted
+  // until importRecords runs below. Without this set, a Pi-hole file that
+  // defines a host and a CNAME pointing at it (the normal case) would be
+  // rejected for referencing a record that "does not exist".
+  const batchFqdns = new Set(
+    recordsToImport
+      .filter(r => r.type === 'A' || r.type === 'CNAME')
+      .map(r => String(fqdnForRecordName(r.name, zone.name)).trim().replace(/\.$/, '').toLowerCase())
+  );
   if (cnameRows.length > 0) {
     for (const c of cnameRows) {
       if (!c || typeof c !== 'object') return res.status(400).json({ error: 'cnames entries must be objects' });
       if (typeof c.alias !== 'string' || typeof c.target !== 'string') return res.status(400).json({ error: 'cnames alias and target must be strings' });
       const record = { type: 'CNAME', name: recordName(c.alias.trim(), zone.name), value: c.target.trim() };
-      const err = validateImportRecord(record, zone.name);
+      const err = validateImportRecord(record, zone.name, db, zone, batchFqdns);
       if (err) return res.status(400).json({ error: `CNAME record ${record.name || '?'}: ${err}` });
+      batchFqdns.add(String(fqdnForRecordName(record.name, zone.name)).trim().replace(/\.$/, '').toLowerCase());
       recordsToImport.push(record);
     }
   }

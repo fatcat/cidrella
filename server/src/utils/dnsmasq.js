@@ -4,7 +4,7 @@ import os from 'os';
 import { execFileSync, execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
-import { DATA_DIR, resolveDnsmasqInternalPort, ENCRYPTED_FORWARDER_PORT } from '../config/defaults.js';
+import { DATA_DIR, resolveDnsmasqInternalPort, resolveDnsListenPort, DEFAULT_DNS_LISTEN_PORT, ENCRYPTED_FORWARDER_PORT } from '../config/defaults.js';
 import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
@@ -479,10 +479,11 @@ export function applyInterfaceConfig(_db) {
   //   LAN-facing DNS on the configured `dns_listen_port` (default 53).
   // Bypass mode: proxy is dead, dnsmasq listens on `dns_listen_port` + LAN IPs directly.
   // DHCP always needs interface= directives for LAN interfaces.
-  let configuredListenPort = 53;
+  // resolveDnsListenPort is shared with dns-proxy.js, which used to range-check
+  // this differently. See REVIEW.md, duplicate-logic audit #10.
+  let configuredListenPort = DEFAULT_DNS_LISTEN_PORT;
   try {
-    const p = Number(getSetting('dns_listen_port'));
-    if (Number.isInteger(p) && p >= 1 && p <= 65535) configuredListenPort = p;
+    configuredListenPort = resolveDnsListenPort(getSetting('dns_listen_port'));
   } catch { /* default 53 */ }
   const internalPort = resolveDnsmasqInternalPort(configuredListenPort);
   const dnsPort = !dnsEnabled ? 0 : proxyBypass ? configuredListenPort : internalPort;

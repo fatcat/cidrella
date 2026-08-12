@@ -1,3 +1,5 @@
+import { isValidDomain } from '../utils/ip.js';
+
 function normalizeDnsName(name) {
   return String(name || '').trim().replace(/\.$/, '').toLowerCase();
 }
@@ -96,6 +98,53 @@ const DNS_ASSIGNED_SELECT = `
  * why it was centralized in the first place. See REVIEW.md, duplicate-logic
  * audit #19.
  */
+/**
+ * Is this a legal CNAME target for `zone`?
+ *
+ * Lived in routes/dns.js, so only the UI create/update path enforced it.
+ * routes/pihole.js validated an imported CNAME with `isValidDomain` alone, which
+ * skipped all three rules below: an import could therefore write a CNAME in a
+ * local zone pointing at an arbitrary external domain, or at nothing at all,
+ * that the same appliance would refuse if you typed it into the UI.
+ * See REVIEW.md, duplicate-logic audit #18.
+ *
+ * `extraKnownFqdns` exists for the import path and is the reason this could not
+ * simply be called as-is from there. The rule "target must already exist" is
+ * evaluated against the DB, but a bulk import validates every record BEFORE
+ * inserting any of them, so a CNAME pointing at an A record in the same batch
+ * would be rejected even though the finished import is perfectly consistent.
+ * Callers importing a batch pass the batch's own FQDNs in.
+ */
+export function cnameTargetError(db, target, zone, extraKnownFqdns = null) {
+  const normalized = normalizeDnsName(target);
+  const zoneName = normalizeDnsName(zone.name);
+
+  if (!isValidDomain(normalized)) return 'Invalid target domain';
+  if (!normalized.includes('.')) return 'CNAME target must be fully qualified';
+  if (!normalized.endsWith(`.${zoneName}`) && normalized !== zoneName) {
+    return `CNAME target must be inside ${zone.name}`;
+  }
+
+  if (extraKnownFqdns && extraKnownFqdns.has(normalized)) return null;
+
+  const known = db.prepare(`
+    SELECT 1
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE z.enabled = 1
+      AND z.type = 'forward'
+      AND r.enabled = 1
+      AND r.type IN ('A', 'CNAME')
+      AND lower(CASE WHEN r.name = '@' THEN z.name ELSE r.name || '.' || z.name END) = ?
+    LIMIT 1
+  `).get(normalized);
+
+  if (!known) {
+    return `CNAME target must already exist as an enabled A or CNAME record in ${zone.name}`;
+  }
+  return null;
+}
+
 export function staticDnsClaimSql(ipColumn) {
   return `EXISTS (
     SELECT 1

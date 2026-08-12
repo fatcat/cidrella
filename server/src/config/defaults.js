@@ -115,6 +115,8 @@ export const GITHUB_REPO              = 'fatcat/cidrella';    // owner/repo for 
 // same bind address. 5353 is the historical default.
 export const DNSMASQ_INTERNAL_PORT     = 5353;
 export const DNSMASQ_INTERNAL_PORT_ALT = 5354;
+// LAN-facing DNS port when dns_listen_port is unset or unusable.
+export const DEFAULT_DNS_LISTEN_PORT   = 53;
 // Loopback port the in-Node encrypted-forwarder stub binds; dnsmasq forwards
 // here (server=127.0.0.1#<port>) when DoT/DoH forwarding is enabled. 5356 avoids
 // 5353 (mDNS, dnsmasq internal) and 5355 (LLMNR).
@@ -131,6 +133,27 @@ export const ENCRYPTED_FORWARDER_TIMEOUT_MS = 5000;
 export function resolveDnsmasqInternalPort(lanListenPort) {
   if (Number(lanListenPort) === DNSMASQ_INTERNAL_PORT) return DNSMASQ_INTERNAL_PORT_ALT;
   return DNSMASQ_INTERNAL_PORT;
+}
+
+/**
+ * The LAN-facing DNS port, from a stored `dns_listen_port` value, falling back
+ * to 53 for anything that is not a usable port.
+ *
+ * Two callers resolved this differently. `utils/dnsmasq.js` range-checked and
+ * fell back to 53; `utils/dns-proxy.js` used `Number(value) || 53`, which
+ * accepts anything non-zero, so a stored 70000 became a bind attempt on 70000
+ * while the dnsmasq config it is supposed to sit in front of stayed on 53.
+ * `/api/settings` validates this key, so the bad value only arrives from a
+ * restored or hand-edited DB, which is exactly when the two halves disagreeing
+ * is hardest to diagnose.
+ * See REVIEW.md, duplicate-logic audit #10.
+ *
+ * @param {unknown} rawValue stored dns_listen_port
+ * @returns {number} a port in 1-65535, or 53
+ */
+export function resolveDnsListenPort(rawValue) {
+  const p = Number(rawValue);
+  return Number.isInteger(p) && p >= 1 && p <= 65535 ? p : DEFAULT_DNS_LISTEN_PORT;
 }
 export const ANALYTICS_FLUSH_INTERVAL_MS  = 5000;              // 5 seconds
 export const ANALYTICS_RETENTION_CLEANUP_MS = 6 * 60 * 60 * 1000; // 6 hours
