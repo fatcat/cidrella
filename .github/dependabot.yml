@@ -15,6 +15,28 @@ updates:
       routine:
         update-types: ["minor", "patch"]
         patterns: ["*"]
+    ignore:
+      # The PrimeVue family is held at its current majors on purpose, so stop
+      # reopening these three every week.
+      #
+      # PrimeVue 5 added client-side license enforcement: it paints a watermark
+      # over the UI unless a signed key is registered, and the key is renewed
+      # yearly. 4.5.5 is MIT and stays MIT, because a relicense is not
+      # retroactive, so the pinned version is safe indefinitely. primeicons 8
+      # and @primeuix/themes 3 are the matching majors of the same family and
+      # only make sense alongside PrimeVue 5. build-release.sh already refuses
+      # all three. See the v0.4.16 release notes for the full reasoning.
+      #
+      # This suppresses the automated PRs, not the security alerts: an advisory
+      # against the pinned version still shows up in the Security tab, it just
+      # arrives without a ready-made major-version bump attached. Revisit only
+      # if the licensing changes or we move off PrimeVue.
+      - dependency-name: "primevue"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "primeicons"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@primeuix/themes"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 5
 
   # Keep the Actions workflows' pinned action versions current.
