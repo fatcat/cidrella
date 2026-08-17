@@ -86,6 +86,31 @@ describe('PUT /api/blocklists/settings', () => {
     expect(res.status).toBe(200);
     expect((await request(app).get('/api/blocklists/settings')).body).not.toHaveProperty('evil_key');
   });
+
+  it('round-trips blocklist_max_feed_mb as the string the UI sends', async () => {
+    const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: '256' });
+    expect(res.status).toBe(200);
+    expect((await request(app).get('/api/blocklists/settings')).body.blocklist_max_feed_mb).toBe('256');
+  });
+
+  it('accepts blocklist_max_feed_mb at both ends of the range, as string or number', async () => {
+    for (const good of ['1', '128', '2048', 64]) {
+      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: good });
+      expect(res.status, `value ${JSON.stringify(good)}`).toBe(200);
+    }
+  });
+
+  it('rejects out-of-range and non-numeric blocklist_max_feed_mb', async () => {
+    for (const bad of [0, 2049, -1, 'abc', '', '12.5', { a: 1 }, ['128'], true]) {
+      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: bad });
+      expect(res.status, `value ${JSON.stringify(bad)}`).toBe(400);
+    }
+  });
+
+  it('exposes blocklist_max_feed_mb on GET so the UI can populate the field', async () => {
+    expect((await request(app).get('/api/blocklists/settings')).body)
+      .toHaveProperty('blocklist_max_feed_mb');
+  });
 });
 
 describe('schedule vocabulary single-sourcing (v0.4.16)', () => {

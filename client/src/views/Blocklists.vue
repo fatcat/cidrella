@@ -31,6 +31,12 @@
         <Select v-model="settings.blocklist_update_schedule" :options="scheduleOptions"
                 optionLabel="label" optionValue="value" size="small" style="width: 10rem" />
       </div>
+      <div class="schedule-group">
+        <label class="schedule-label" title="Largest single feed download to accept. Raise this if a category fails with a size error.">
+          Max Feed Size (MB):
+        </label>
+        <InputText v-model="maxFeedMb" type="number" min="1" max="2048" size="small" style="width: 6rem" />
+      </div>
       <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" :disabled="!settingsDirty" />
       <Button label="Refresh All" icon="pi pi-refresh" size="small" severity="secondary"
               @click="doRefreshAll" :loading="refreshingAll" />
@@ -144,7 +150,7 @@ const noRecursion = ref(false);
 const toast = useToast();
 
 const stats = ref({ enabled_categories: 0, total_domains: 0, whitelist_count: 0, last_update: null });
-const settings = reactive({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily' });
+const settings = reactive({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily', blocklist_max_feed_mb: '128' });
 const blocklistEnabled = ref(true);
 const savedBlocklistEnabled = ref(true);
 // Show the toggle OFF (and locked) while recursion is disabled. Blocking is
@@ -154,10 +160,15 @@ const blocklistEnabledDisplay = computed({
   set: (v) => { if (!noRecursion.value) blocklistEnabled.value = v; },
 });
 const savedSchedule = ref('daily');
+// Kept as a string: the settings API is string-typed and InputText gives us a
+// string anyway, so comparing against savedMaxFeedMb stays a plain !==.
+const maxFeedMb = ref('128');
+const savedMaxFeedMb = ref('128');
 
 const settingsDirty = computed(() => {
   return blocklistEnabled.value !== savedBlocklistEnabled.value ||
-    settings.blocklist_update_schedule !== savedSchedule.value;
+    settings.blocklist_update_schedule !== savedSchedule.value ||
+    String(maxFeedMb.value) !== savedMaxFeedMb.value;
 });
 
 const scheduleOptions = [
@@ -295,10 +306,12 @@ async function doSaveSettings() {
     await store.updateSettings({
       blocklist_enabled: blocklistEnabled.value ? 'true' : 'false',
       blocklist_redirect_ip: settings.blocklist_redirect_ip,
-      blocklist_update_schedule: settings.blocklist_update_schedule
+      blocklist_update_schedule: settings.blocklist_update_schedule,
+      blocklist_max_feed_mb: String(maxFeedMb.value)
     });
     savedBlocklistEnabled.value = blocklistEnabled.value;
     savedSchedule.value = settings.blocklist_update_schedule;
+    savedMaxFeedMb.value = String(maxFeedMb.value);
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -317,6 +330,8 @@ onMounted(async () => {
   blocklistEnabled.value = fetchedSettings.blocklist_enabled !== 'false';
   savedBlocklistEnabled.value = blocklistEnabled.value;
   savedSchedule.value = settings.blocklist_update_schedule;
+  maxFeedMb.value = settings.blocklist_max_feed_mb || '128';
+  savedMaxFeedMb.value = String(maxFeedMb.value);
   try { noRecursion.value = !!(await dnsStore.getForwarders()).no_recursion; } catch { /* ignore */ }
 });
 </script>

@@ -64,11 +64,20 @@ let geoipMode = 'blocklist';        // 'blocklist' or 'allowlist'
 let geoipAllowEntries = [];         // parsed IP/CIDR entries never GeoIP-blocked
 let whitelistSet = null;            // Set<string>, single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
 
-// Blocklist state, domains loaded from DB for in-proxy blocking.
-// A single Map is enough: Map.has() gives membership and Map.get() gives the
-// category for metrics. Keeping a separate Set duplicates index overhead for
-// large lists and can push small hosts into V8 heap pressure.
-let blocklistDomainMap = null;      // Map<string, string>, domain → category_slug
+// Blocklist state. Domains are NOT held in memory: they are looked up per
+// query against blocklist_domains, which is a WITHOUT ROWID table keyed on
+// (domain, category_slug), so the table is its own index.
+//
+// This used to be a Map of every enabled domain. That had a hard V8 ceiling of
+// 16,777,216 entries ("Map maximum size exceeded"), cost several hundred MB
+// resident, and had to be rebuilt from scratch on every whitelist edit and
+// category toggle, which took about 2.8s at 2.65M domains and blocked DNS for
+// all of it. Measured against that same list, the SQLite lookup costs 8.1us
+// per query including the full label walk (~124k q/s), and there is no reload.
+// The hot path already does synchronous SQLite per query via
+// recordDnsQueryLiveness, so this is not a new class of work.
+let blocklistLookupStmt = null;     // cached prepared statement, see getLookupStmt
+let blocklistCategories = null;     // Set<string>, enabled category slugs
 let blocklistEnabled = false;
 let blocklistRedirectIp = '';
 let blocklistBlockedDelta = 0;
@@ -329,7 +338,8 @@ function encodeServfail(query) {
   });
 }
 
-// Load blocklist domains from DB into a domain -> category Map.
+// Refresh the small pieces of blocklist state we do keep in memory: the two
+// settings and the set of enabled category slugs. Domains stay in SQLite.
 export function loadBlocklist() {
   const db = getDb();
   const enabled = getSetting('blocklist_enabled');
@@ -337,42 +347,60 @@ export function loadBlocklist() {
   blocklistRedirectIp = getSetting('blocklist_redirect_ip') || '';
 
   if (!blocklistEnabled) {
-    blocklistDomainMap = null;
-    proxyLog('info', 'Blocklist disabled, cleared in-memory set');
+    blocklistCategories = null;
+    proxyLog('info', 'Blocklist disabled');
     return;
   }
 
-  const stmt = db.prepare(`
-    SELECT DISTINCT bd.domain, bd.category_slug
-    FROM blocklist_domains bd
-    JOIN blocklist_categories bc ON bd.category_slug = bc.slug
-    WHERE bc.enabled = 1
-      AND bd.domain NOT IN (SELECT domain FROM blocklist_whitelist)
-  `);
+  const rows = db.prepare('SELECT slug FROM blocklist_categories WHERE enabled = 1').all();
+  blocklistCategories = new Set(rows.map(r => r.slug));
+  proxyLog('info', 'Blocklist enabled', { categories: blocklistCategories.size });
+}
 
-  const newMap = new Map();
-  for (const row of stmt.iterate()) {
-    if (!newMap.has(row.domain)) {
-      newMap.set(row.domain, row.category_slug);
-    }
+// The lookup statement is cached across queries but re-prepared if the DB
+// handle changes (tests swap it, and a restore reopens it).
+let blocklistLookupDb = null;
+function getLookupStmt(db) {
+  if (!blocklistLookupStmt || blocklistLookupDb !== db) {
+    blocklistLookupStmt = db.prepare(
+      'SELECT category_slug FROM blocklist_domains WHERE domain = ?'
+    ).pluck();
+    blocklistLookupDb = db;
   }
+  return blocklistLookupStmt;
+}
 
-  blocklistDomainMap = newMap;
-  proxyLog('info', 'Blocklist loaded', { domains: newMap.size });
+// Total domains across enabled categories, for the status endpoint.
+function countEnabledDomains() {
+  try {
+    return getDb().prepare(
+      'SELECT COALESCE(SUM(domain_count), 0) AS c FROM blocklist_categories WHERE enabled = 1'
+    ).pluck().get() || 0;
+  } catch {
+    return 0;
+  }
 }
 
 // Check query domain against blocklist (walks domain hierarchy for subdomain matching)
 function checkBlocklist(queryName) {
-  if (!blocklistEnabled || !blocklistDomainMap) return null;
+  if (!blocklistEnabled || !blocklistCategories || blocklistCategories.size === 0) return null;
+
+  // The allowlist used to be folded into the Map at load time by a
+  // "NOT IN (SELECT domain FROM blocklist_whitelist)" clause, so this function
+  // never had to think about it. Now that domains are read live, the check has
+  // to happen here or allowlisted domains would start getting blocked.
+  if (isWhitelisted(queryName)) return null;
 
   const name = queryName.toLowerCase();
   const labels = name.split('.');
+  const stmt = getLookupStmt(getDb());
 
   // Walk hierarchy: sub.evil.com → evil.com (stop before single-label TLD)
   for (let i = 0; i < labels.length - 1; i++) {
     const candidate = labels.slice(i).join('.');
-    if (blocklistDomainMap.has(candidate)) {
-      return blocklistDomainMap.get(candidate) || 'unknown';
+    // A domain can appear in several categories; the first enabled one wins.
+    for (const slug of stmt.all(candidate)) {
+      if (blocklistCategories.has(slug)) return slug || 'unknown';
     }
   }
   return null;
@@ -1044,8 +1072,10 @@ export function getProxyStatus() {
     statsTotal,
     statsBlocked,
     statsAllowed,
-    blocklistLoaded: blocklistDomainMap !== null,
-    blocklistDomainCount: blocklistDomainMap?.size || 0,
+    blocklistLoaded: blocklistCategories !== null,
+    // Summed from the per-category counters the refresh already maintains.
+    // A COUNT(*) here would scan the whole domains table on every status poll.
+    blocklistDomainCount: blocklistCategories === null ? 0 : countEnabledDomains(),
   };
 }
 

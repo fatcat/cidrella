@@ -5,6 +5,7 @@ import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig, SCHEDULE_HOURS } from '../utils/blocklist.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
 import { isValidIpv4, isValidDomain } from '../utils/ip.js';
+import { isIntInRangeCoercing } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
 
@@ -147,7 +148,7 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
 
 // GET /api/blocklists/settings
 router.get('/settings', requirePerm('dns:read'), (req, res) => {
-  const keys = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule'];
+  const keys = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule', 'blocklist_max_feed_mb'];
   const settings = {};
   for (const key of keys) {
     settings[key] = getSetting(key) || '';
@@ -158,7 +159,7 @@ router.get('/settings', requirePerm('dns:read'), (req, res) => {
 // PUT /api/blocklists/settings
 router.put('/settings', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
-  const allowed = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule'];
+  const allowed = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule', 'blocklist_max_feed_mb'];
 
   // Settings are stored as strings, so the toggle arrives as 'true'/'false'.
   // The enum checks also reject non-string types (arrays, objects, booleans).
@@ -178,6 +179,15 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
       && req.body.blocklist_redirect_ip !== ''
       && (typeof req.body.blocklist_redirect_ip !== 'string' || !isValidIpv4(req.body.blocklist_redirect_ip))) {
     return res.status(400).json({ error: 'blocklist_redirect_ip must be a valid IPv4 address or empty' });
+  }
+
+  // Per-feed download ceiling. Coercing variant because this surface is
+  // string-typed end to end (the UI posts "128", not 128). The upper bound is
+  // a sanity rail, not a capability claim: a feed that big would take minutes
+  // to import and gigabytes of disk.
+  if (req.body.blocklist_max_feed_mb !== undefined
+      && !isIntInRangeCoercing(req.body.blocklist_max_feed_mb, 1, 2048)) {
+    return res.status(400).json({ error: 'blocklist_max_feed_mb must be an integer 1-2048' });
   }
 
   for (const key of allowed) {
