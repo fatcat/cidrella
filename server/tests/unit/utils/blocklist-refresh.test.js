@@ -177,7 +177,7 @@ describe('refreshCategory', () => {
     const before = domainsFor('malware');
 
     openPinnedOutboundStream.mockResolvedValue(failingFeed(['brand-new.example.com'], TOO_LARGE_CODE));
-    await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/Maximum feed size/);
+    await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/Max Feed Size \(MB\)/);
 
     // Nothing added, nothing swept: staging absorbed the partial feed.
     expect(domainsFor('malware')).toEqual(before);
@@ -194,7 +194,7 @@ describe('refreshCategory', () => {
 
     await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/Feed is 51 MB, over the 128 MB limit/);
     expect(getDb().prepare("SELECT last_error FROM blocklist_categories WHERE slug='malware'").pluck().get())
-      .toMatch(/Maximum feed size/);
+      .toMatch(/Max Feed Size \(MB\)/);
   });
 
   it('says "compressed" when the measured size was the gzip transfer size', async () => {
@@ -217,6 +217,36 @@ describe('refreshCategory', () => {
     await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/no valid domains/);
 
     expect(domainsFor('malware')).toEqual(['bad.example.com', 'evil.example.com']);
+  });
+
+  it('records last_error when the write phase fails after a good download', async () => {
+    openPinnedOutboundStream.mockResolvedValue(feed('keep-me.example.com\n'));
+    await refreshCategory(getDb(), 'malware');
+
+    // Simulate the driver throwing during the staged-to-live apply (disk full,
+    // SQLITE_BUSY). The download succeeded, so the download-phase catch cannot
+    // cover this; without its own handler the category kept claiming success.
+    const db = getDb();
+    const realPrepare = db.prepare.bind(db);
+    const spy = vi.spyOn(db, 'prepare').mockImplementation((sql) => {
+      if (sql.includes('INSERT OR IGNORE INTO blocklist_domains')) {
+        throw new Error('database or disk is full');
+      }
+      return realPrepare(sql);
+    });
+
+    try {
+      openPinnedOutboundStream.mockResolvedValue(feed('brand-new.example.com\n'));
+      await expect(refreshCategory(db, 'malware')).rejects.toThrow(/Storing the feed failed/);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const lastError = getDb().prepare("SELECT last_error FROM blocklist_categories WHERE slug='malware'").pluck().get();
+    expect(lastError).toMatch(/disk is full/);
+    expect(lastError).toMatch(/still in place/);
+    // And the previous list survived.
+    expect(domainsFor('malware')).toEqual(['keep-me.example.com']);
   });
 
   it('records a non-2xx as last_error and keeps existing domains', async () => {

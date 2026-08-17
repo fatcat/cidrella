@@ -80,7 +80,10 @@ function yieldToLoop() {
   return new Promise(resolve => setImmediate(resolve));
 }
 
-const RAISE_HINT = 'Raise "Maximum feed size" in blocklist settings, '
+// Quote the field's real label, verbatim. An operator who searches the UI for
+// the phrase in this error has to find it: the label is "Max Feed Size (MB)"
+// in Blocklists.vue. Keep the two in sync if either changes.
+const RAISE_HINT = 'Raise "Max Feed Size (MB)" under Settings > Filtering > Categories, '
   + 'or point this category at a smaller source.';
 
 function tooLargeMessage(cause, maxBytes) {
@@ -218,27 +221,42 @@ async function runRefresh(db, slug) {
 
   // Apply. Inserts first, in chunks, so there is never a window where a
   // still-listed domain is absent from the table.
-  const applyChunk = db.prepare(`
-    INSERT OR IGNORE INTO blocklist_domains (domain, category_slug)
-    SELECT domain, ? FROM blocklist_stage WHERE domain > ? ORDER BY domain LIMIT ?
-  `);
-  const nextCursor = db.prepare(
-    'SELECT domain FROM blocklist_stage WHERE domain > ? ORDER BY domain LIMIT 1 OFFSET ?'
-  ).pluck();
+  //
+  // The whole write phase needs the same last_error treatment as the download
+  // phase, statement preparation included. Without it a failure here (disk
+  // full, SQLITE_BUSY, anything the driver throws) propagated uncaught: the
+  // refresh was genuinely broken but the category still showed its previous
+  // last_error, or none at all, so the UI and the status endpoint both claimed
+  // everything was fine.
+  try {
+    const applyChunk = db.prepare(`
+      INSERT OR IGNORE INTO blocklist_domains (domain, category_slug)
+      SELECT domain, ? FROM blocklist_stage WHERE domain > ? ORDER BY domain LIMIT ?
+    `);
+    const nextCursor = db.prepare(
+      'SELECT domain FROM blocklist_stage WHERE domain > ? ORDER BY domain LIMIT 1 OFFSET ?'
+    ).pluck();
 
-  let cursor = '';
-  for (;;) {
-    const boundary = nextCursor.get(cursor, BLOCKLIST_INSERT_BATCH - 1);
-    applyChunk.run(slug, cursor, BLOCKLIST_INSERT_BATCH);
-    if (!boundary) break;
-    cursor = boundary;
-    await yieldToLoop();
+    let cursor = '';
+    for (;;) {
+      const boundary = nextCursor.get(cursor, BLOCKLIST_INSERT_BATCH - 1);
+      applyChunk.run(slug, cursor, BLOCKLIST_INSERT_BATCH);
+      if (!boundary) break;
+      cursor = boundary;
+      await yieldToLoop();
+    }
+
+    // Sweep. One statement, so it is atomic with respect to readers.
+    db.prepare(
+      'DELETE FROM blocklist_domains WHERE category_slug = ? AND domain NOT IN (SELECT domain FROM blocklist_stage)'
+    ).run(slug);
+  } catch (err) {
+    // Leave staging alone rather than clearing it: the next refresh clears it
+    // defensively anyway, and on a disk-full failure a DELETE is another write
+    // that would just throw again and mask this message.
+    fail(`Storing the feed failed after it downloaded: ${err.message}. `
+      + 'The previously stored domains for this category are still in place.');
   }
-
-  // Sweep. One statement, so it is atomic with respect to readers.
-  db.prepare(
-    'DELETE FROM blocklist_domains WHERE category_slug = ? AND domain NOT IN (SELECT domain FROM blocklist_stage)'
-  ).run(slug);
   clearStage();
 
   db.prepare(`UPDATE blocklist_categories SET
