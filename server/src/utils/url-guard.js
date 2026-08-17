@@ -2,6 +2,8 @@ import dns from 'dns';
 import http from 'http';
 import https from 'https';
 import net from 'net';
+import { PassThrough, Transform, pipeline } from 'node:stream';
+import { createGunzip } from 'node:zlib';
 
 // SSRF guard for outbound HTTP fetches. The Pi-hole probe / fetch path and
 // the blocklist source_url field both accept operator-supplied URLs that
@@ -181,6 +183,134 @@ export async function requestPinnedOutboundUrl(rawUrl, {
       req.end();
     } catch (err) {
       resolve({ ok: false, error: err.message });
+    }
+  });
+}
+
+/** Error code carried by both size caps in openPinnedOutboundStream. */
+export const TOO_LARGE_CODE = 'E_FEED_TOO_LARGE';
+
+/**
+ * Transform that aborts the pipe once more than `limit` bytes pass through.
+ * `stage` is 'wire' or 'decompressed' so the caller can tell which cap tripped.
+ */
+function byteCap(limit, stage) {
+  let seen = 0;
+  return new Transform({
+    transform(chunk, _enc, cb) {
+      seen += chunk.length;
+      if (seen > limit) {
+        const err = new Error(`Response exceeded the ${limit} byte limit (${stage})`);
+        err.code = TOO_LARGE_CODE;
+        err.limitBytes = limit;
+        err.stage = stage;
+        return cb(err);
+      }
+      cb(null, chunk);
+    },
+  });
+}
+
+/**
+ * Streaming sibling of requestPinnedOutboundUrl, for responses too big to hold
+ * in memory. Same SSRF posture: the hostname is validated once and the socket
+ * connects to that exact IP, with Host and SNI preserved. Redirects are still
+ * NOT followed, a 3xx comes back as a non-ok status with the Location header
+ * intact. Do not "fix" that by switching to fetch() or follow-redirects, the
+ * pinned lookup below is the only thing closing the DNS rebinding window.
+ *
+ * Resolves to `{ ok, status, statusText, headers, stream }` once response
+ * headers arrive. `stream` is present only for 2xx; the caller consumes it
+ * (for await, readline, pipe) and must handle an 'error' event, which is how
+ * a size overrun mid-download surfaces. Non-2xx resolves with no stream and
+ * the connection torn down, so a 304 costs nothing.
+ *
+ * Two independent size caps, both `maxBytes`:
+ *   - wire bytes, so a huge body cannot be streamed at us indefinitely
+ *   - decompressed bytes, because we advertise gzip and the source URL is
+ *     operator-editable, which makes a zip bomb a real input
+ * A Content-Length over the cap is rejected before any body is read.
+ */
+export async function openPinnedOutboundStream(rawUrl, {
+  headers = {},
+  timeout = 5000,
+  maxBytes = 10 * 1024 * 1024,
+  acceptGzip = true,
+} = {}) {
+  const check = rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
+    ? rawUrl
+    : await validateOutboundUrl(rawUrl);
+  if (!check.ok) return { ok: false, error: check.reason };
+
+  const parsed = new URL(check.url);
+  const requestHeaders = { ...headers, Host: parsed.host };
+  const hasAcceptEncoding = Object.keys(requestHeaders)
+    .some(h => h.toLowerCase() === 'accept-encoding');
+  if (acceptGzip && !hasAcceptEncoding) requestHeaders['Accept-Encoding'] = 'gzip';
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value) => { if (!settled) { settled = true; resolve(value); } };
+
+    const mod = parsed.protocol === 'https:' ? https : http;
+    const reqOpts = {
+      hostname: check.ip,
+      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      path: parsed.pathname + (parsed.search || ''),
+      method: 'GET',
+      timeout,
+      headers: requestHeaders,
+      servername: parsed.hostname,
+      lookup: (_hostname, _opts, cb) => cb(null, check.ip, 4),
+    };
+
+    try {
+      const req = mod.request(reqOpts, (resp) => {
+        const status = resp.statusCode;
+        const base = { status, statusText: resp.statusMessage, headers: resp.headers };
+
+        // Non-2xx (including the 304 we ask for on a conditional GET) carries
+        // nothing we want to read. Tear the socket down rather than draining,
+        // so an oversized error body cannot be pushed at us.
+        if (status < 200 || status >= 300) {
+          req.destroy();
+          return settle({ ok: false, ...base });
+        }
+
+        const encoding = String(resp.headers['content-encoding'] || '').toLowerCase();
+
+        // Cheapest rejection: the server already told us it is too big. Note
+        // that under gzip this is the transfer size, which is smaller than the
+        // feed the operator sees, so it can only ever reject early, never
+        // falsely. The decompressed cap below is what actually bounds us.
+        const declared = Number(resp.headers['content-length']);
+        if (Number.isFinite(declared) && declared > maxBytes) {
+          req.destroy();
+          const err = new Error(`Response exceeded the ${maxBytes} byte limit (content-length)`);
+          err.code = TOO_LARGE_CODE;
+          err.limitBytes = maxBytes;
+          err.actualBytes = declared;
+          err.compressed = encoding === 'gzip';
+          err.stage = 'content-length';
+          return settle({ ok: false, ...base, error: err.message, cause: err });
+        }
+        const out = new PassThrough();
+        const stages = [resp, byteCap(maxBytes, 'wire')];
+        if (encoding === 'gzip') stages.push(createGunzip(), byteCap(maxBytes, 'decompressed'));
+        stages.push(out);
+
+        // pipeline destroys `out` with the error, so a cap trip or a socket
+        // failure reaches the consumer as an 'error' on the stream it holds.
+        pipeline(...stages, () => {});
+
+        settle({ ok: true, ...base, stream: out });
+      });
+
+      req.on('error', (err) => settle({ ok: false, error: err.message }));
+      req.on('timeout', () => { req.destroy(); settle({ ok: false, error: 'Connection timed out' }); });
+      req.end();
+    } catch (err) {
+      settle({ ok: false, error: err.message });
     }
   });
 }

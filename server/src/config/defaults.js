@@ -41,6 +41,11 @@ export const DEFAULTS = {
   rogue_dhcp_detection_enabled: 'false',
   rogue_dhcp_probe_interval_min: '15',
   blocklist_update_schedule: 'daily',
+  // Per-feed download ceiling in MB. Upstream lists grow: the Block List
+  // Project malware feed passed 51MB / 2.65M entries in 2026 and broke the old
+  // hardcoded 20MB cap. 128 leaves real headroom while still refusing a
+  // runaway or hostile source URL. Read fresh on every refresh.
+  blocklist_max_feed_mb:   '128',
   backup_schedule:         'off',
   backup_retention_count:  '7',
   installation_complete:   'false',
@@ -104,6 +109,12 @@ export const PROXY_TCP_IDLE_TIMEOUT_MS    = 10000;            // close idle clie
 export const PROXY_MAX_TCP_CONNECTIONS    = 1000;            // concurrent client TCP conn cap
 export const PROXY_TCP_RELAY_TIMEOUT_MS   = 5000;            // upstream-to-dnsmasq TCP relay timeout
 export const BLOCKLIST_DOWNLOAD_TIMEOUT_MS = 60000;
+// Rows per write transaction while importing a feed. The DNS proxy shares this
+// process and better-sqlite3 is synchronous, so an unbounded transaction is an
+// unbounded DNS outage. At 25k the malware feed (2.65M domains) blocks for at
+// most ~60ms per batch instead of ~4s in one go, with no loss in total
+// throughput. Also the page size for the staged-to-live apply loop.
+export const BLOCKLIST_INSERT_BATCH        = 25000;
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;      // 1 hour
 export const UPDATE_CHECK_DELAY_MS    = 0;                    // check immediately on startup
 export const GITHUB_REPO              = 'fatcat/cidrella';    // owner/repo for update checks
