@@ -1,44 +1,27 @@
-// Compact IPv4 + IPv6 single-IP / CIDR matcher (no dependencies). Used by the
-// GeoIP IP allowlist to test resolved answer IPs against allowed addresses/ranges.
-// (The IPv4-only helpers in ip.js can't handle the AAAA answers GeoIP also sees.)
+// IPv4 + IPv6 single-IP / CIDR matcher. Used by the GeoIP IP allowlist to test
+// resolved answer IPs against allowed addresses/ranges.
+//
+// The parsing and formatting primitives moved to ./address.js, which is the
+// shared address core the IPAM side uses too. This module keeps its own public
+// API and, deliberately, its own STRICTER parsing options: the allowlist stores
+// canonicalized values in the database, so widening what parses here would
+// change what an existing stored row means. Zone ids and IPv4-mapped v6 are
+// therefore refused here even though address.js accepts them.
+//
+// `cidr-match-equivalence.test.js` pins this module's verdicts against the
+// pre-refactor implementation over a fixture table. If you change STRICT or the
+// formatter, that test is the thing that should go red.
+
+import { parseIp, formatIp } from './address.js';
+
+// The parsing rules this module has always had. Anything looser belongs in
+// address.js, behind its own options, not here.
+const STRICT = { zoneId: false, mapV4: false, embeddedV4: false };
 
 // Parse an IP string to { v: BigInt, bits: 32|128 } or null.
 function ipToBigInt(ip) {
-  if (typeof ip !== 'string') return null;
-  ip = ip.trim();
-  if (ip.includes(':')) {
-    // IPv6 (no zone-id support). Exactly one "::" allowed.
-    if (ip.indexOf('::') !== ip.lastIndexOf('::')) return null;
-    const hasDoubleColon = ip.includes('::');
-    const [head, tail = ''] = hasDoubleColon ? ip.split('::') : [ip, ''];
-    const headParts = head ? head.split(':') : [];
-    const tailParts = tail ? tail.split(':') : [];
-    let parts;
-    if (hasDoubleColon) {
-      const fill = 8 - headParts.length - tailParts.length;
-      if (fill < 0) return null;
-      parts = [...headParts, ...Array(fill).fill('0'), ...tailParts];
-    } else {
-      parts = headParts;
-    }
-    if (parts.length !== 8) return null;
-    let v = 0n;
-    for (const p of parts) {
-      if (!/^[0-9a-fA-F]{1,4}$/.test(p)) return null;
-      v = (v << 16n) + BigInt(parseInt(p, 16));
-    }
-    return { v, bits: 128 };
-  }
-  const o = ip.split('.');
-  if (o.length !== 4) return null;
-  let v = 0n;
-  for (const p of o) {
-    if (!/^\d{1,3}$/.test(p)) return null;
-    const n = Number(p);
-    if (n > 255) return null;
-    v = (v << 8n) + BigInt(n);
-  }
-  return { v, bits: 32 };
+  const parsed = parseIp(ip, STRICT);
+  return parsed ? { v: parsed.value, bits: parsed.bits } : null;
 }
 
 // Parse a single-IP or CIDR string into { bits, network, mask } or null.
@@ -65,41 +48,13 @@ export function isValidIpOrCidr(entry) {
 
 // Render a parsed entry back to its one canonical string: host bits masked
 // off, explicit /prefix, IPv6 lowercased and zero-compressed (RFC 5952).
+// The address half is formatIp's job now.
 // Storing this form makes the allowlist's UNIQUE(value) mean "unique
 // network" instead of "unique spelling" ('10.5.5.5/8', '010.0.0.0/8', and
 // '10.0.0.0/8' all become '10.0.0.0/8').
 export function formatCidrEntry(entry) {
   if (!entry || typeof entry.network !== 'bigint') return null;
-  if (entry.bits === 32) {
-    const octets = [];
-    for (let shift = 24n; shift >= 0n; shift -= 8n) {
-      octets.push(((entry.network >> shift) & 0xffn).toString(10));
-    }
-    return `${octets.join('.')}/${entry.prefix}`;
-  }
-  // IPv6: emit 8 hextets, then compress the longest run of >=2 zero groups
-  // (leftmost wins a tie, per RFC 5952 s4.2.3).
-  const groups = [];
-  for (let shift = 112n; shift >= 0n; shift -= 16n) {
-    groups.push(((entry.network >> shift) & 0xffffn).toString(16));
-  }
-  let bestStart = -1, bestLen = 0;
-  for (let i = 0; i < 8;) {
-    if (groups[i] !== '0') { i++; continue; }
-    let j = i;
-    while (j < 8 && groups[j] === '0') j++;
-    if (j - i > bestLen) { bestStart = i; bestLen = j - i; }
-    i = j;
-  }
-  let addr;
-  if (bestLen >= 2) {
-    const head = groups.slice(0, bestStart).join(':');
-    const tail = groups.slice(bestStart + bestLen).join(':');
-    addr = `${head}::${tail}`;
-  } else {
-    addr = groups.join(':');
-  }
-  return `${addr}/${entry.prefix}`;
+  return `${formatIp(entry.network, entry.bits)}/${entry.prefix}`;
 }
 
 // Parse + reformat in one step; null for invalid input.
