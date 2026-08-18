@@ -195,9 +195,14 @@ const forwardersDirty = computed(() => {
   return current.some((ip, i) => ip !== saved[i]);
 });
 
+// Starts empty and is filled from GET /api/dns/soa-defaults on load. These used
+// to be literals that had drifted from the server (soa_minimum_ttl 900 here
+// against 1800 there, audit #38). If the fetch fails the fields stay blank and
+// savedSoa stays null, which already keeps the Save button disabled, so the
+// control refuses itself rather than offering invented numbers.
 const soaForm = ref({
-  soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
-  soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 900
+  soa_primary_ns: '', soa_admin_email: '',
+  soa_refresh: null, soa_retry: null, soa_expire: null, soa_minimum_ttl: null
 });
 const savedSoa = ref(null);
 const savingSoa = ref(false);

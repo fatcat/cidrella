@@ -25,7 +25,7 @@
       </template>
       <Column field="value" header="IP / CIDR" sortable />
       <Column field="reason" header="Reason">
-        <template #body="{ data }">{{ data.reason || '—' }}</template>
+        <template #body="{ data }">{{ data.reason || EMPTY_CELL }}</template>
       </Column>
       <Column header="" style="width: 4rem">
         <template #body="{ data }">
@@ -44,7 +44,7 @@ import InputText from 'primevue/inputtext';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import EmptyState from '../../components/EmptyState.vue';
-import { apiError } from '../../utils/format.js';
+import { apiError, EMPTY_CELL } from '../../utils/format.js';
 import { useGeoipStore } from '../../stores/geoip.js';
 
 const store = useGeoipStore();

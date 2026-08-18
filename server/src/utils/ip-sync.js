@@ -6,6 +6,7 @@
  */
 
 import { ipToLong } from './ip.js';
+import { activeLeaseSql, infiniteLeaseFirstSql } from './lease-sql.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
 import { setPtrForIp, dnsAssignedIpSet, fqdnForRecordName } from '../models/dns-record.js';
@@ -76,9 +77,9 @@ export function resolveCanonicalHostname(db, subnetId, ip) {
       AND ip_address = ?
       AND hostname IS NOT NULL
       AND trim(hostname) != ''
-      AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+      AND ${activeLeaseSql()}
     ORDER BY
-      CASE WHEN expires_at = 'infinite' THEN 1 ELSE 0 END DESC,
+      ${infiniteLeaseFirstSql()},
       datetime(expires_at) DESC,
       id DESC
     LIMIT 1
@@ -190,7 +191,7 @@ export function reconcileDnsOrphans(db) {
         SELECT 1 FROM dhcp_leases dl
         WHERE dl.subnet_id = ip.subnet_id
           AND dl.ip_address = ip.ip_address
-          AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+          AND ${activeLeaseSql('dl')}
       )
       AND NOT EXISTS (
         SELECT 1 FROM dns_records r
@@ -229,7 +230,7 @@ export function reconcileDuplicateDhcpMacRows(db) {
       ON dl.subnet_id = ip.subnet_id
      AND dl.ip_address = ip.ip_address
      AND lower(dl.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
-     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+     AND ${activeLeaseSql('dl')}
     LEFT JOIN dhcp_reservations dr
       ON dr.subnet_id = ip.subnet_id
      AND dr.ip_address = ip.ip_address
@@ -275,7 +276,7 @@ export function reconcileUnbackedDhcpLeaseRows(db, activeLeases = []) {
       ON dl.subnet_id = ip.subnet_id
      AND dl.ip_address = ip.ip_address
      AND lower(dl.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
-     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+     AND ${activeLeaseSql('dl')}
     LEFT JOIN dhcp_reservations dr
       ON dr.subnet_id = ip.subnet_id
      AND dr.ip_address = ip.ip_address
@@ -313,7 +314,7 @@ export function pruneStaleDhcpHostRows(db, maxAgeHours = 24) {
       ON dl.subnet_id = ip.subnet_id
      AND dl.ip_address = ip.ip_address
      AND lower(dl.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
-     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+     AND ${activeLeaseSql('dl')}
     LEFT JOIN dhcp_reservations dr
       ON dr.subnet_id = ip.subnet_id
      AND dr.ip_address = ip.ip_address
@@ -400,9 +401,9 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
       FROM dhcp_leases
       WHERE subnet_id = ?
         AND ip_address = ?
-        AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+        AND ${activeLeaseSql()}
       ORDER BY
-        CASE WHEN expires_at = 'infinite' THEN 1 ELSE 0 END DESC,
+        ${infiniteLeaseFirstSql()},
         datetime(expires_at) DESC,
         id DESC
       LIMIT 1

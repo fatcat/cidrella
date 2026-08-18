@@ -1,4 +1,5 @@
 import { isValidDomain } from '../utils/ip.js';
+import { activeLeaseSql, infiniteLeaseFirstSql } from '../utils/lease-sql.js';
 
 function normalizeDnsName(name) {
   return String(name || '').trim().replace(/\.$/, '').toLowerCase();
@@ -142,6 +143,106 @@ export function cnameTargetError(db, target, zone, extraKnownFqdns = null) {
   if (!known) {
     return `CNAME target must already exist as an enabled A or CNAME record in ${zone.name}`;
   }
+  return null;
+}
+
+/**
+ * Does giving `ip` the name `recordName` in `zoneName` clash with a name the
+ * appliance already has for that address?
+ *
+ * Returns { hostname, source } for the first clash found, or null. Sources are
+ * checked most-authoritative first: a DHCP reservation, then an active lease,
+ * then an existing manual A record.
+ *
+ * The rule is that one address gets one name; a second name for the same host
+ * should be a CNAME. Both the DNS page and the Pi-hole importer enforce it now
+ * (duplicate-logic audit #18). It lived in routes/dns.js, so only the UI
+ * applied it and an import could quietly give one IP a second name.
+ *
+ * `ignoreFqdns` is the import path's equivalent of cnameTargetError's
+ * `extraKnownFqdns`, and exists for the same reason: a bulk import is validated
+ * against the DB as it stands BEFORE anything is inserted, so without it a file
+ * that legitimately maps one IP to two names would import cleanly the first
+ * time and fail on every re-import. Callers importing a batch pass the batch's
+ * own FQDNs. It relaxes ONLY the manual-A-record check, never the reservation
+ * or lease checks, which are about state the import does not own.
+ */
+function hostnameMatches(candidate, proposed, domainName) {
+  const c = normalizeDnsName(candidate);
+  const p = normalizeDnsName(proposed);
+  const d = normalizeDnsName(domainName);
+  if (!c || !p) return false;
+  if (c === p) return true;
+  if (d && !c.includes('.') && `${c}.${d}` === p) return true;
+  if (d && !p.includes('.') && `${p}.${d}` === c) return true;
+  return false;
+}
+
+export function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecordId = null, ignoreFqdns = null) {
+  const proposed = fqdnForRecordName(recordName, zoneName);
+
+  const reservation = db.prepare(`
+    SELECT r.hostname, s.domain_name
+    FROM dhcp_reservations r
+    JOIN subnets s ON s.id = r.subnet_id
+    WHERE r.ip_address = ?
+      AND r.enabled = 1
+      AND r.hostname IS NOT NULL
+      AND trim(r.hostname) != ''
+    ORDER BY s.prefix_length DESC, r.id DESC
+    LIMIT 1
+  `).get(ip);
+  if (reservation?.hostname && !hostnameMatches(reservation.hostname, proposed, reservation.domain_name)) {
+    return { hostname: reservation.hostname, source: 'reserved DHCP' };
+  }
+
+  const lease = db.prepare(`
+    SELECT l.hostname, s.domain_name
+    FROM dhcp_leases l
+    JOIN subnets s ON s.id = l.subnet_id
+    WHERE l.ip_address = ?
+      AND l.hostname IS NOT NULL
+      AND trim(l.hostname) != ''
+      AND ${activeLeaseSql('l')}
+    ORDER BY
+      s.prefix_length DESC,
+      ${infiniteLeaseFirstSql('l')},
+      datetime(l.expires_at) DESC,
+      l.id DESC
+    LIMIT 1
+  `).get(ip);
+  if (lease?.hostname && !hostnameMatches(lease.hostname, proposed, lease.domain_name)) {
+    return { hostname: lease.hostname, source: 'dynamic DHCP' };
+  }
+
+  const excludeClause = excludeRecordId ? 'AND r.id != ?' : '';
+  const params = excludeRecordId ? [ip, excludeRecordId] : [ip];
+  const existingRecords = db.prepare(`
+    SELECT r.name, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE r.type = 'A'
+      AND r.enabled = 1
+      AND z.enabled = 1
+      AND z.type = 'forward'
+      AND r.value = ?
+      AND COALESCE(r.source, 'manual') = 'manual'
+      ${excludeClause}
+    ORDER BY lower(z.name), lower(r.name), r.id
+  `).all(...params);
+
+  for (const record of existingRecords) {
+    const hostname = fqdnForRecordName(record.name, record.zone_name);
+    // A record the CALLER is itself importing is not a conflict with the
+    // caller. Without this, re-importing a file that legitimately gives one IP
+    // two names would succeed the first time (neither name is in the DB yet)
+    // and fail every time after, which makes the importer non-idempotent.
+    if (ignoreFqdns && ignoreFqdns.has(normalizeDnsName(hostname))) continue;
+    if (!hostnameMatches(hostname, proposed, null)) {
+      return { hostname, source: 'static DNS' };
+    }
+  }
+
   return null;
 }
 

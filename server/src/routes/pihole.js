@@ -7,9 +7,14 @@ import { syncDnsToIp } from '../utils/ip-sync.js';
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
-import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
+import { validateDnsmasqConfigValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
 import { createReservation } from '../models/dhcp-reservation.js';
-import { importRecords, cnameTargetError, fqdnForRecordName } from '../models/dns-record.js';
+import { importRecords, cnameTargetError, fqdnForRecordName, findAHostnameConflict } from '../models/dns-record.js';
+
+// How many offending records the human-readable `error` string names before it
+// defers to the structured `problems` array. Enough to fix a typical bad file
+// in one pass without producing an error message nobody will read.
+const MAX_REPORTED_PROBLEMS = 20;
 
 const router = Router();
 
@@ -101,14 +106,6 @@ function recordName(hostname, zoneName) {
   if (hostname === zoneName) return '@';
   const suffix = `.${zoneName}`;
   return hostname.endsWith(suffix) ? hostname.slice(0, -suffix.length) : hostname;
-}
-
-function isValidRecordName(name) {
-  if (name === '@') return true;
-  return typeof name === 'string'
-    && name.length > 0
-    && name.length <= 253
-    && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(name.replace(/\.$/, ''));
 }
 
 function validateImportArray(value, field) {
@@ -314,13 +311,21 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   }
 
   // Import A records, merge: skip exact dupes, update if same name but different value
+  // Every problem is collected rather than returned on sight. Nothing is
+  // imported if there is even one, but an operator fixing a file should see the
+  // whole list in one response instead of re-uploading once per bad row.
+  const problems = [];
+  const problem = (type, name, value, reason) => {
+    problems.push({ type, name: name || '?', value: value ?? null, reason });
+  };
+
   if (hostRows.length > 0) {
     for (const h of hostRows) {
       if (!h || typeof h !== 'object') return res.status(400).json({ error: 'hosts entries must be objects' });
       if (typeof h.hostname !== 'string') return res.status(400).json({ error: 'hosts hostname must be a string' });
       const record = { type: 'A', name: recordName(h.hostname.trim(), zone.name), value: h.ip };
       const err = validateImportRecord(record, zone.name);
-      if (err) return res.status(400).json({ error: `A record ${record.name || '?'}: ${err}` });
+      if (err) { problem('A', record.name, record.value, err); continue; }
       recordsToImport.push(record);
     }
   }
@@ -343,10 +348,39 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
       if (typeof c.alias !== 'string' || typeof c.target !== 'string') return res.status(400).json({ error: 'cnames alias and target must be strings' });
       const record = { type: 'CNAME', name: recordName(c.alias.trim(), zone.name), value: c.target.trim() };
       const err = validateImportRecord(record, zone.name, db, zone, batchFqdns);
-      if (err) return res.status(400).json({ error: `CNAME record ${record.name || '?'}: ${err}` });
+      if (err) { problem('CNAME', record.name, record.value, err); continue; }
       batchFqdns.add(String(fqdnForRecordName(record.name, zone.name)).trim().replace(/\.$/, '').toLowerCase());
       recordsToImport.push(record);
     }
+  }
+
+  // One address gets one name. The DNS page has always refused to give an IP a
+  // second hostname and told the operator to use a CNAME; the importer did not,
+  // so a file could quietly do what the UI forbids (duplicate-logic audit #18).
+  //
+  // Checked against the DB as it stands, with this import's OWN names excluded,
+  // so a file that legitimately maps one IP to two names is not judged against
+  // itself and re-importing the same file stays idempotent.
+  for (const record of recordsToImport.filter(r => r.type === 'A')) {
+    const conflict = findAHostnameConflict(db, record.value, record.name, zone.name, null, batchFqdns);
+    if (conflict) {
+      problem('A', record.name, record.value,
+        `${record.value} is already named ${conflict.hostname} (${conflict.source}). One address gets one name; add a CNAME instead.`);
+    }
+  }
+
+  // Nothing is imported when anything is wrong. Partial imports leave the
+  // operator guessing which half landed.
+  if (problems.length > 0) {
+    const shown = problems.slice(0, MAX_REPORTED_PROBLEMS);
+    const lines = shown.map(p => `${p.type} ${p.name}${p.value ? ` (${p.value})` : ''}: ${p.reason}`);
+    const more = problems.length - shown.length;
+    return res.status(400).json({
+      error: `Import rejected, nothing was imported. ${problems.length} record${problems.length === 1 ? '' : 's'} could not be validated:\n` +
+        lines.map(l => `  - ${l}`).join('\n') +
+        (more > 0 ? `\n  ...and ${more} more (see problems).` : ''),
+      problems,
+    });
   }
 
   const importResult = importRecords(db, zone, recordsToImport);

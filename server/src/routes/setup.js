@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { passwordPolicyError, PASSWORD_POLICY } from '../auth/password-policy.js';
 import bcrypt from 'bcryptjs';
 import { getDb } from '../db/init.js';
 import * as User from '../models/user.js';
@@ -24,7 +25,12 @@ function setupIsClosed(db) {
 // GET /api/setup/status: tell the client whether the wizard should appear.
 router.get('/status', (req, res) => {
   const db = getDb();
-  res.json({ setup_required: !setupIsClosed(db) });
+  // password_policy is served so the wizard can validate and describe the rule
+  // without keeping its own copy, which had already drifted (audit #39).
+  res.json({
+    setup_required: !setupIsClosed(db),
+    password_policy: PASSWORD_POLICY,
+  });
 });
 
 // POST /api/setup: complete first-run setup. Available ONLY when no user
@@ -54,11 +60,9 @@ router.post('/', async (req, res) => {
     if (username.length < 3 || username.length > 64) {
       return res.status(400).json({ error: 'Username must be 3–64 characters' });
     }
-    if (password.length < 8 || password.length > 1024) {
-      return res.status(400).json({ error: 'Password must be 8–1024 characters' });
-    }
-    if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/\d/.test(password)) {
-      return res.status(400).json({ error: 'Password must contain uppercase, lowercase, and a number' });
+    {
+      const pwErr = passwordPolicyError(password);
+      if (pwErr) return res.status(400).json({ error: pwErr });
     }
 
     const hash = await bcrypt.hash(password, 10);

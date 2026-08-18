@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue';
+import { saveJson } from '../utils/storage.js';
 
 function readKeys(storageKey, defaults) {
   try {
@@ -24,7 +25,7 @@ export function useColumnPreferences(storageKey, columns) {
 
   function setVisibleColumns(nextColumns) {
     visibleKeys.value = nextColumns.map(c => c.key);
-    try { localStorage.setItem(storageKey, JSON.stringify(visibleKeys.value)); } catch {}
+    saveJson(storageKey, visibleKeys.value)
   }
 
   function resetColumns() {

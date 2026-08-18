@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { activeLeaseSql } from '../utils/lease-sql.js';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
@@ -1484,7 +1485,14 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       is_rogue: 0,
       rogue_reason: null,
       has_dhcp_reservation: 0,
-      has_static_dns: 0,
+      // has_static_dns is deliberately NOT set. enrichIpViewRows fills it only
+      // when the field is `undefined`, because a persisted row already carries
+      // an authoritative value computed in SQL and recomputing would be waste.
+      // Setting 0 here opted every synthesized row out of that fallback, so an
+      // address with a manual A record rendered "available" from this route and
+      // static-DNS from /api/dhcp/scopes, which omits the field and gets it
+      // right (duplicate-logic audit #23). All four callers of this function
+      // run enrichIpViewRows, so leaving it out is safe.
       dhcp_expires_at: null,
       range_type_id: range?.range_type_id || null,
       range_type_name: range?.range_type_name || null,
@@ -1533,7 +1541,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       LEFT JOIN dhcp_leases dl
         ON dl.subnet_id = ip.subnet_id
        AND dl.ip_address = ip.ip_address
-       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+       AND ${activeLeaseSql('dl')}
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
 
@@ -1585,7 +1593,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       LEFT JOIN dhcp_leases dl
         ON dl.subnet_id = ip.subnet_id
        AND dl.ip_address = ip.ip_address
-       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+       AND ${activeLeaseSql('dl')}
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
 
@@ -1637,7 +1645,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       LEFT JOIN dhcp_leases dl
         ON dl.subnet_id = ip.subnet_id
        AND dl.ip_address = ip.ip_address
-       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+       AND ${activeLeaseSql('dl')}
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
 
@@ -1690,7 +1698,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     LEFT JOIN dhcp_leases dl
       ON dl.subnet_id = ip.subnet_id
      AND dl.ip_address = ip.ip_address
-     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+     AND ${activeLeaseSql('dl')}
     WHERE ip.subnet_id = ?
   `).all(req.params.id);
 

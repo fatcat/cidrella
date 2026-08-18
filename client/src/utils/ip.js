@@ -257,3 +257,65 @@ export function subtractCidr(parentCidr, childCidr) {
 
   return remainder;
 }
+
+/**
+ * Validate a DHCP pool against its subnet. Returns an operator-facing message,
+ * or null when the pool is fine.
+ *
+ * There were three DHCP-pool checks in the client and they did not agree
+ * (duplicate-logic audit #53): the network wizard applied the full rule, the
+ * Configure dialog applied nothing at all, and ScopeDialog.save() checked only
+ * that the fields were non-empty. A start after the end was blocked in one and
+ * submitted from the other two, so the same mistake either got a useful message
+ * or a server 400 depending on which dialog you happened to open.
+ *
+ * `label` prefixes the messages, because the wizard calls these fields
+ * "DHCP Scope Start IP" while the scope dialog calls them "Start IP".
+ */
+export function dhcpPoolError(startIp, endIp, subnetCidr, { label = '' } = {}) {
+  const S = label ? `${label} Start IP` : 'Start IP';
+  const E = label ? `${label} End IP` : 'End IP';
+
+  const start = (startIp || '').trim();
+  const end = (endIp || '').trim();
+  if (!start || !end) return `${S} and ${E} are required`;
+  if (!isValidIpv4(start)) return `${S} must be a valid IPv4 address`;
+  if (!isValidIpv4(end)) return `${E} must be a valid IPv4 address`;
+
+  const startLong = ipToLong(start);
+  const endLong = ipToLong(end);
+  if (startLong > endLong) return `${S} must be less than or equal to ${E}`;
+
+  // Containment needs a subnet. Callers that do not have one yet still get the
+  // shape and ordering checks above, which is the half that was missing.
+  if (!subnetCidr || !isValidCidr(subnetCidr)) return null;
+  const parsed = parseCidr(subnetCidr);
+  const firstUsableLong = ipToLong(parsed.firstUsable);
+  const lastUsableLong = ipToLong(parsed.lastUsable);
+  if (startLong < firstUsableLong || startLong > lastUsableLong) {
+    return `${S} must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  if (endLong < firstUsableLong || endLong > lastUsableLong) {
+    return `${E} must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  return null;
+}
+
+/**
+ * Validate a CIDR the user typed. Returns a message or null.
+ *
+ * `supernet` additionally applies the reserved-range rule that
+ * validateSupernet encodes. Three client CIDR checks existed and only one ran
+ * that rule, so `10.0.0.0/7` was refused inline in the supernet dialog and
+ * silently became a server 400 in the other two (duplicate-logic audit #54).
+ * The server enforces it either way, so this is about telling the operator
+ * which field is wrong instead of surfacing a generic failure.
+ */
+export function cidrValidationError(cidr, { supernet = false } = {}) {
+  const value = (cidr || '').trim();
+  if (!value) return null;
+  if (!isValidCidr(value)) return 'Invalid CIDR notation';
+  if (!supernet) return null;
+  const result = validateSupernet(normalizeCidr(value));
+  return result.valid ? null : result.error;
+}

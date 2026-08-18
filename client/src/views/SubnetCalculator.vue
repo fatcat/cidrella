@@ -70,7 +70,7 @@ import ContextMenu from 'primevue/contextmenu';
 import Toast from 'primevue/toast';
 import { useSubnetStore } from '../stores/subnets.js';
 import { apiError } from '../utils/format.js';
-import { loadJson } from '../utils/storage.js';
+import { loadJson, saveJson } from '../utils/storage.js';
 
 const STORAGE_KEY = 'cidrella-subnet-calc';
 const store = useSubnetStore();
@@ -94,10 +94,10 @@ async function calculate() {
     const result = await store.calculateSubnets(cidr.value, newPrefix.value);
     parent.value = result.parent;
     subnets.value = result.subnets;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    saveJson(STORAGE_KEY, {
       cidr: cidr.value, newPrefix: newPrefix.value,
       parent: result.parent, subnets: result.subnets
-    }));
+    });
   } catch (err) {
     error.value = apiError(err);
     parent.value = null;

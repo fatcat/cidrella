@@ -10,6 +10,7 @@ import dnsPacket from 'dns-packet';
 import maxmind from 'maxmind';
 import { LRUCache } from 'lru-cache';
 import { getDb, getSetting, setSetting } from '../db/init.js';
+import { selectInterfaceNames } from './interface-config.js';
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyInterfaceConfig, restartDnsmasq } from './dnsmasq.js';
@@ -193,14 +194,32 @@ export function loadWhitelist() {
   proxyLog('info', 'Whitelist loaded', { count: whitelistSet.size });
 }
 
-// Is this query domain on the global allowlist? Walks the label hierarchy so a
-// whitelisted example.com also exempts sub.example.com (same matching as the
-// blocklist). Returns false when nothing is whitelisted.
+/**
+ * Walk a name from most to least specific, stopping before the bare TLD:
+ * 'a.b.example.com' yields 'a.b.example.com', then 'b.example.com', then
+ * 'example.com'. Input is lowercased here so callers do not each have to.
+ *
+ * The allowlist and the blocklist both match this way and used to carry
+ * separate copies of the loop (duplicate-logic audit #12). That is worse than
+ * ordinary duplication: if the allowlist ever stopped one level earlier than
+ * the blocklist, a domain the operator explicitly permitted would be silently
+ * blocked, and nothing would report it. One walk means the two cannot disagree
+ * about what "example.com covers sub.example.com" means.
+ */
+export function* domainSuffixes(name) {
+  if (!name) return;
+  const labels = String(name).toLowerCase().split('.');
+  for (let i = 0; i < labels.length - 1; i++) {
+    yield labels.slice(i).join('.');
+  }
+}
+
+// Is this query domain on the global allowlist? Returns false when nothing is
+// whitelisted.
 function isWhitelisted(queryName) {
   if (!whitelistSet || whitelistSet.size === 0 || !queryName) return false;
-  const labels = queryName.toLowerCase().split('.');
-  for (let i = 0; i < labels.length - 1; i++) {
-    if (whitelistSet.has(labels.slice(i).join('.'))) return true;
+  for (const candidate of domainSuffixes(queryName)) {
+    if (whitelistSet.has(candidate)) return true;
   }
   return false;
 }
@@ -231,28 +250,13 @@ function getListenAddresses() {
   const sysIfaces = os.networkInterfaces();
   const addresses = [];
 
-  if (Object.keys(ifaceConfig).length > 0) {
-    // Explicit config, bind to IPs on configured interfaces.
-    // Use Object.hasOwn to avoid prototype-chain lookups: if ifName is
-    // 'constructor' / '__proto__' / 'toString', naked indexing would
-    // return a non-array object and crash the for…of. The validator
-    // rejects these at write time, but this guard is defense-in-depth
-    // for any stored config that predates the validator fix.
-    for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
-      if (!cfg.dns) continue;
-      const addrs = Object.hasOwn(sysIfaces, ifName) ? sysIfaces[ifName] : null;
-      if (!addrs) continue;
-      for (const a of addrs) {
-        if (a.family === 'IPv4') addresses.push(a.address);
-      }
-    }
-  } else {
-    // No explicit config, bind to all non-loopback IPv4 addresses
-    for (const [ifName, addrs] of Object.entries(sysIfaces)) {
-      if (ifName === 'lo') continue;
-      for (const a of addrs) {
-        if (a.family === 'IPv4') addresses.push(a.address);
-      }
+  // Interface selection is shared with dnsmasq.js and dhcp-probe.js so the
+  // three cannot drift about which interfaces are in play (audit #9). What we
+  // do with them, collecting IPv4 bind addresses, stays here.
+  const { names } = selectInterfaceNames('dns', { config: ifaceConfig, sysIfaces });
+  for (const ifName of names) {
+    for (const a of sysIfaces[ifName] || []) {
+      if (a.family === 'IPv4') addresses.push(a.address);
     }
   }
 
@@ -391,13 +395,9 @@ function checkBlocklist(queryName) {
   // to happen here or allowlisted domains would start getting blocked.
   if (isWhitelisted(queryName)) return null;
 
-  const name = queryName.toLowerCase();
-  const labels = name.split('.');
   const stmt = getLookupStmt(getDb());
 
-  // Walk hierarchy: sub.evil.com → evil.com (stop before single-label TLD)
-  for (let i = 0; i < labels.length - 1; i++) {
-    const candidate = labels.slice(i).join('.');
+  for (const candidate of domainSuffixes(queryName)) {
     // A domain can appear in several categories; the first enabled one wins.
     for (const slug of stmt.all(candidate)) {
       if (blocklistCategories.has(slug)) return slug || 'unknown';

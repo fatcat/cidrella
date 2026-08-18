@@ -698,7 +698,7 @@ import TabPanel from 'primevue/tabpanel';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { validateSupernet, isValidCidr, isValidIpv4, normalizeCidr, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, ipToLong, dhcpRangeDefaults, gatewayIpFromPosition, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
+import { isValidCidr, isValidIpv4, normalizeCidr, dhcpPoolError, cidrValidationError, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, dhcpRangeDefaults, gatewayIpFromPosition, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -818,10 +818,10 @@ async function wizardSaveInterfaces() {
 }
 
 const wizardCidrError = computed(() => {
-  const cidr = (wizardNet.value.cidr || '').trim();
-  if (!cidr) return null;
-  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
-  return null;
+  // Runs the reserved-range rule too, which this used to skip. 10.0.0.0/7 was
+  // caught inline by the supernet dialog and eaten as a server 400 here
+  // (duplicate-logic audit #54).
+  return cidrValidationError(wizardNet.value.cidr, { supernet: true });
 });
 
 const wizardAutoName = computed(() => {
@@ -860,27 +860,9 @@ const wizardDhcpScopeError = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
   if (!cidr || !isValidCidr(cidr)) return null;
 
-  const parsed = parseCidr(cidr);
   const startIp = (wizardNet.value.dhcp_start_ip || wizardDhcpDefaults.value.start || '').trim();
   const endIp = (wizardNet.value.dhcp_end_ip || wizardDhcpDefaults.value.end || '').trim();
-
-  if (!startIp || !endIp) return 'DHCP Scope Start IP and DHCP Scope End IP are required';
-  if (!isValidIpv4(startIp)) return 'DHCP Scope Start IP must be a valid IPv4 address';
-  if (!isValidIpv4(endIp)) return 'DHCP Scope End IP must be a valid IPv4 address';
-
-  const startLong = ipToLong(startIp);
-  const endLong = ipToLong(endIp);
-  const firstUsableLong = ipToLong(parsed.firstUsable);
-  const lastUsableLong = ipToLong(parsed.lastUsable);
-
-  if (startLong > endLong) return 'DHCP Scope Start IP must be less than or equal to DHCP Scope End IP';
-  if (startLong < firstUsableLong || startLong > lastUsableLong) {
-    return `DHCP Scope Start IP must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
-  }
-  if (endLong < firstUsableLong || endLong > lastUsableLong) {
-    return `DHCP Scope End IP must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
-  }
-  return null;
+  return dhcpPoolError(startIp, endIp, cidr, { label: 'DHCP Scope' });
 });
 
 watch(() => wizardNet.value.gateway_position, () => {
@@ -1166,13 +1148,7 @@ function openCreateFolderFromEdit() {
 }
 
 const supernetValidationError = computed(() => {
-  const cidr = supernetForm.value.cidr.trim();
-  if (!cidr) return null;
-  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
-  const normalized = normalizeCidr(cidr);
-  const result = validateSupernet(normalized);
-  if (!result.valid) return result.error;
-  return null;
+  return cidrValidationError(supernetForm.value.cidr, { supernet: true });
 });
 
 const supernetAutoName = computed(() => {

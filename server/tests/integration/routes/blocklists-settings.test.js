@@ -131,19 +131,34 @@ describe('schedule vocabulary single-sourcing (v0.4.16)', () => {
 // extra TLD requirement, which is deliberate for a public-domain allowlist.
 // See REVIEW.md, duplicate-logic audit #21.
 describe('whitelist domain validation matches the shared validator', () => {
+  // These two names are built from labels of 63 characters or fewer on purpose.
+  // They used to be a single 249-character label, which hits the 253 total cap
+  // but is not a legal domain: RFC 1035 caps a LABEL at 63 octets, and
+  // isValidDomain now enforces that (duplicate-logic audit #7). With the old
+  // fixture the over-cap case was rejected for the label length rather than the
+  // total, so it would have passed even with the 253 cap deleted. Keeping the
+  // labels legal is what makes these tests actually about the total cap.
   it('rejects a name longer than 253 characters', async () => {
-    const tooLong = `${'a'.repeat(250)}.com`;
-    expect(tooLong.length).toBeGreaterThan(253);
+    const tooLong = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(62)].join('.');
+    expect(tooLong.length).toBe(254);
+    expect(tooLong.split('.').every(l => l.length <= 63)).toBe(true);
     const res = await request(app).post('/api/blocklists/whitelist').send({ domain: tooLong });
     expect(res.status).toBe(400);
   });
 
   it('accepts a name at the limit, so the cap is not off by one', async () => {
-    const label = 'a'.repeat(249);
-    const ok = `${label}.com`;
+    const ok = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(61)].join('.');
     expect(ok.length).toBe(253);
+    expect(ok.split('.').every(l => l.length <= 63)).toBe(true);
     const res = await request(app).post('/api/blocklists/whitelist').send({ domain: ok });
     expect(res.status).toBe(201);
+  });
+
+  it('rejects a label longer than 63 characters even when the total fits', async () => {
+    const badLabel = `${'a'.repeat(64)}.com`;
+    expect(badLabel.length).toBeLessThan(253);
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: badLabel });
+    expect(res.status).toBe(400);
   });
 
   it('still requires a TLD, which is this route being deliberately stricter', async () => {

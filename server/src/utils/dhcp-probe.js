@@ -16,6 +16,8 @@
 
 import dgram from 'dgram';
 import os from 'os';
+import { selectInterfaceNames } from './interface-config.js';
+import { localIpv4Set } from './local-addresses.js';
 import { getDb, getSetting } from '../db/init.js';
 import { upsertRogueEvent, authorizedIpSet } from '../models/rogue-dhcp.js';
 
@@ -143,15 +145,23 @@ export function classifyOffer(offer, { selfIps, authorized }) {
 }
 
 // CIDRella's own non-internal IPv4 addresses (lowercased Set), always trusted.
+/**
+ * The appliance's own IPv4 addresses, so an offer from us is not read as a
+ * rogue server.
+ *
+ * Delegates to localIpv4Set, which answered the identical question in a second
+ * place (duplicate-logic audit #4). Kept as a named export because the probe
+ * and its tests both refer to it, and because the name says what it means HERE:
+ * "self" in the rogue-DHCP sense.
+ *
+ * Two harmless differences from the old private copy, both checked: it no
+ * longer lowercases (an IPv4 string has no letters to fold), and it reads
+ * through a 60 second cache instead of re-enumerating on every call. The cache
+ * exists because the UI can rebind interfaces at runtime, and `force` is
+ * available if a caller ever needs to defeat it.
+ */
 export function getSelfIps() {
-  const set = new Set();
-  for (const addrs of Object.values(os.networkInterfaces())) {
-    if (!addrs) continue;
-    for (const a of addrs) {
-      if (a.family === 'IPv4' && !a.internal) set.add(a.address.toLowerCase());
-    }
-  }
-  return set;
+  return localIpv4Set();
 }
 
 function directedBroadcast(address, netmask) {
@@ -197,18 +207,11 @@ export function getLanInterfaces() {
     }
   };
 
-  if (Object.keys(ifaceConfig).length > 0) {
-    for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
-      if (!cfg.dhcp) continue; // only interfaces CIDRella serves DHCP on (not dns-only)
-      pushFrom(ifName);
-    }
-  } else {
-    // Fresh deploy, dnsmasq binds DHCP to every real interface, so probe them all.
-    for (const ifName of Object.keys(sysIfaces)) {
-      if (ifName === 'lo') continue;
-      pushFrom(ifName);
-    }
-  }
+  // Shared with dnsmasq.js and dns-proxy.js (audit #9). This used to carry a
+  // comment claiming it "mirrors dnsmasq.js exactly", which stated the drift
+  // risk without doing anything about it.
+  const { names } = selectInterfaceNames('dhcp', { config: ifaceConfig, sysIfaces });
+  for (const ifName of names) pushFrom(ifName);
   return result;
 }
 

@@ -123,6 +123,8 @@ export function lineDataset({ label, data, color = 1, fill = false, alpha = null
   };
 }
 
+// Values here must exist in ranges.js when they are intraday, or the axis
+// labelling in dateFormat.js will show a date where a time belongs (#60/#F19).
 export const RANGE_OPTIONS = [
   { label: 'Last 1 hour', value: '1h' },
   { label: 'Last 4 hours', value: '4h' },

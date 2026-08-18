@@ -14,7 +14,8 @@ import {
   deleteRecord,
   fqdnForRecordName,
   normalizeRecordNameForZone,
-  cnameTargetError
+  cnameTargetError,
+  findAHostnameConflict
 } from '../models/dns-record.js';
 import {
   createZone,
@@ -25,18 +26,11 @@ import {
 const router = Router();
 
 // Validation helpers
-import { isValidIpv4, isValidDomain, validateDisplayString } from '../utils/ip.js';
+import { isValidIpv4, isValidDomain, validateDisplayString, ipToLong } from '../utils/ip.js';
 import { isBlockedIpv4 } from '../utils/url-guard.js';
-import { isValidPtrName, validateTxtValue } from '../utils/dnsmasq-escape.js';
+import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
 import { validateSoaFields, isIntInRange } from '../utils/validation.js';
-const HOSTNAME_RE = /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/;
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
-
-function isValidHostname(name) {
-  if (name === '@') return true;
-  if (typeof name !== 'string' || name.length > 253) return false;
-  return HOSTNAME_RE.test(name.replace(/\.$/, ''));
-}
 
 function normalizeDnsName(name) {
   return String(name || '').trim().replace(/\.$/, '').toLowerCase();
@@ -44,8 +38,10 @@ function normalizeDnsName(name) {
 
 function findSubnetDomainForIp(db, ip) {
   if (!isValidIpv4(ip)) return null;
-  const octets = ip.split('.').map(Number);
-  const ipLong = ((octets[0] << 24) >>> 0) + (octets[1] << 16) + (octets[2] << 8) + octets[3];
+  // Was a fourth hand-rolled copy of the octet arithmetic in a file that could
+  // simply import it (duplicate-logic audit #11). isValidIpv4 above already
+  // guarantees ipToLong will not throw.
+  const ipLong = ipToLong(ip);
 
   const subnets = db.prepare(`
     SELECT id, network_address, prefix_length, domain_name
@@ -89,79 +85,6 @@ function fqdnFor(name, zoneName) {
   return fqdnForRecordName(name, zoneName);
 }
 
-function hostnameMatches(candidate, proposed, domainName) {
-  const c = normalizeDnsName(candidate);
-  const p = normalizeDnsName(proposed);
-  const d = normalizeDnsName(domainName);
-  if (!c || !p) return false;
-  if (c === p) return true;
-  if (d && !c.includes('.') && `${c}.${d}` === p) return true;
-  if (d && !p.includes('.') && `${p}.${d}` === c) return true;
-  return false;
-}
-
-function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecordId = null) {
-  const proposed = fqdnFor(recordName, zoneName);
-
-  const reservation = db.prepare(`
-    SELECT r.hostname, s.domain_name
-    FROM dhcp_reservations r
-    JOIN subnets s ON s.id = r.subnet_id
-    WHERE r.ip_address = ?
-      AND r.enabled = 1
-      AND r.hostname IS NOT NULL
-      AND trim(r.hostname) != ''
-    ORDER BY s.prefix_length DESC, r.id DESC
-    LIMIT 1
-  `).get(ip);
-  if (reservation?.hostname && !hostnameMatches(reservation.hostname, proposed, reservation.domain_name)) {
-    return { hostname: reservation.hostname, source: 'reserved DHCP' };
-  }
-
-  const lease = db.prepare(`
-    SELECT l.hostname, s.domain_name
-    FROM dhcp_leases l
-    JOIN subnets s ON s.id = l.subnet_id
-    WHERE l.ip_address = ?
-      AND l.hostname IS NOT NULL
-      AND trim(l.hostname) != ''
-      AND (l.expires_at = 'infinite' OR datetime(l.expires_at) > datetime('now'))
-    ORDER BY
-      s.prefix_length DESC,
-      CASE WHEN l.expires_at = 'infinite' THEN 1 ELSE 0 END DESC,
-      datetime(l.expires_at) DESC,
-      l.id DESC
-    LIMIT 1
-  `).get(ip);
-  if (lease?.hostname && !hostnameMatches(lease.hostname, proposed, lease.domain_name)) {
-    return { hostname: lease.hostname, source: 'dynamic DHCP' };
-  }
-
-  const excludeClause = excludeRecordId ? 'AND r.id != ?' : '';
-  const params = excludeRecordId ? [ip, excludeRecordId] : [ip];
-  const existingRecords = db.prepare(`
-    SELECT r.name, z.name AS zone_name
-    FROM dns_records r
-    JOIN dns_zones z ON z.id = r.zone_id
-    WHERE r.type = 'A'
-      AND r.enabled = 1
-      AND z.enabled = 1
-      AND z.type = 'forward'
-      AND r.value = ?
-      AND COALESCE(r.source, 'manual') = 'manual'
-      ${excludeClause}
-    ORDER BY lower(z.name), lower(r.name), r.id
-  `).all(...params);
-
-  for (const record of existingRecords) {
-    const hostname = fqdnFor(record.name, record.zone_name);
-    if (!hostnameMatches(hostname, proposed, null)) {
-      return { hostname, source: 'static DNS' };
-    }
-  }
-
-  return null;
-}
 
 // cnameTargetError now lives in models/dns-record.js so the Pi-hole import path
 // enforces the same three rules. See REVIEW.md, duplicate-logic audit #18.
@@ -169,7 +92,7 @@ function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecordId = n
 function validateRecord(type, { name, value, priority, weight, port }, zoneName, db = null, zone = null) {
   switch (type) {
     case 'A':
-      if (!isValidHostname(name)) return 'Invalid hostname';
+      if (!isValidRecordName(name)) return 'Invalid hostname';
       if (!isValidIpv4(value)) return 'Invalid IPv4 address';
       break;
     case 'CNAME':
@@ -177,7 +100,7 @@ function validateRecord(type, { name, value, priority, weight, port }, zoneName,
         const nameErr = cnameNameErrorForZone(name, zoneName);
         if (nameErr) return nameErr;
       }
-      if (!isValidHostname(name)) return 'Invalid hostname';
+      if (!isValidRecordName(name)) return 'Invalid hostname';
       if (db && zone) {
         const targetErr = cnameTargetError(db, value, zone);
         if (targetErr) return targetErr;
@@ -192,12 +115,12 @@ function validateRecord(type, { name, value, priority, weight, port }, zoneName,
       }
       break;
     case 'MX':
-      if (!isValidHostname(name)) return 'Invalid hostname';
+      if (!isValidRecordName(name)) return 'Invalid hostname';
       if (!isValidDomain(value)) return 'Invalid mail server domain';
       if (!isIntInRange(priority, 0, 65535)) return 'Priority must be an integer 0-65535';
       break;
     case 'TXT':
-      if (!isValidHostname(name)) return 'Invalid hostname';
+      if (!isValidRecordName(name)) return 'Invalid hostname';
       // TXT values end up inside a quoted dnsmasq directive; a newline would
       // terminate the quoted span and let an attacker append directives.
       // validateTxtValue enforces string + no CR/LF/control chars.

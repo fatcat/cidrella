@@ -4,6 +4,7 @@ import os from 'os';
 import { execFileSync, execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
+import { selectInterfaceNames } from './interface-config.js';
 import { DATA_DIR, resolveDnsmasqInternalPort, resolveDnsListenPort, DEFAULT_DNS_LISTEN_PORT, ENCRYPTED_FORWARDER_PORT } from '../config/defaults.js';
 import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
@@ -495,15 +496,16 @@ export function applyInterfaceConfig(_db) {
   if (sysIfaces.lo?.some(a => a.family === 'IPv6')) {
     newDirectives.push('listen-address=::1');
   }
-  const hasExplicitConfig = Object.keys(ifaceConfig).length > 0;
+  // Interface SELECTION is shared with dns-proxy.js and dhcp-probe.js so the
+  // three cannot disagree about which interfaces are in play (audit #9). The
+  // directive emission below is dnsmasq's alone and stays here. 'any' because
+  // dnsmasq needs an interface= line for a DNS-only interface too.
+  const { explicit: hasExplicitConfig, names: selectedIfNames } =
+    selectInterfaceNames('any', { config: ifaceConfig, sysIfaces });
 
   if (hasExplicitConfig) {
-    for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
-      if (!cfg.dns && !cfg.dhcp) continue;
-      // Skip any stored ifName that isn't a real host interface, guards
-      // against prototype-chain lookups (constructor/__proto__/toString)
-      // in stored config that predates the validator fix for C1.
-      if (!Object.hasOwn(sysIfaces, ifName)) continue;
+    for (const ifName of selectedIfNames) {
+      const cfg = ifaceConfig[ifName];
       // interface= needed for DHCP binding (and DNS in bypass mode)
       newDirectives.push(`interface=${ifName}`);
       // In bypass mode, dnsmasq also needs listen-address for DNS on LAN IPs
@@ -521,8 +523,8 @@ export function applyInterfaceConfig(_db) {
     }
   } else {
     // Fresh deploy, bind DHCP to all real interfaces
-    for (const [ifName, addrs] of Object.entries(sysIfaces)) {
-      if (ifName === 'lo') continue;
+    for (const ifName of selectedIfNames) {
+      const addrs = sysIfaces[ifName] || [];
       if (dhcpEnabled) {
         newDirectives.push(`interface=${ifName}`);
       } else {

@@ -17,24 +17,24 @@
         <span class="stat-label">DNS Proxy</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ proxyStats?.queriesPerMin ?? '—' }}</span>
+        <span class="stat-value">{{ proxyStats?.queriesPerMin ?? EMPTY_CELL }}</span>
         <span class="stat-label">Queries / min</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ proxyStats ? proxyStats.cacheHitRate + '%' : '—' }}</span>
+        <span class="stat-value">{{ proxyStats ? proxyStats.cacheHitRate + '%' : EMPTY_CELL }}</span>
         <span class="stat-label">Cache Hit Rate</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ proxyStats ? (proxyStats.avgLatency / 1000).toFixed(2) + ' ms' : '—' }}</span>
+        <span class="stat-value">{{ proxyStats ? (proxyStats.avgLatency / 1000).toFixed(2) + ' ms' : EMPTY_CELL }}</span>
         <span class="stat-label">Avg Latency</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ proxyStats?.peakPending ?? '—' }}</span>
+        <span class="stat-value">{{ proxyStats?.peakPending ?? EMPTY_CELL }}</span>
         <span class="stat-label">Peak Pending</span>
       </div>
       <div class="stat">
         <span class="stat-value" :class="{ 'text-danger': proxyStats?.timeouts > 0 }">
-          {{ proxyStats?.timeouts ?? '—' }}
+          {{ proxyStats?.timeouts ?? EMPTY_CELL }}
         </span>
         <span class="stat-label">Timeouts</span>
       </div>
@@ -102,6 +102,7 @@
 
 <script setup>
 import { computed, onMounted } from 'vue';
+import { EMPTY_CELL } from '../utils/format.js';
 import { formatEpoch } from '../utils/dateFormat.js';
 import Select from 'primevue/select';
 import Button from 'primevue/button';
@@ -200,7 +201,7 @@ const latencyData = computed(() => {
   };
 });
 
-const latencyOptions = makeLineOptions({ yLabel: 'ms', tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? '—'} ms` });
+const latencyOptions = makeLineOptions({ yLabel: 'ms', tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? EMPTY_CELL} ms` });
 
 // ── Query Throughput ───────────────────────────────────
 const throughputData = computed(() => {
@@ -350,7 +351,7 @@ const memoryData = computed(() => {
   };
 });
 
-const memoryOptions = makeLineOptions({ yLabel: 'MB', tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? '—'} MB` });
+const memoryOptions = makeLineOptions({ yLabel: 'MB', tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? EMPTY_CELL} MB` });
 
 // ── CPU Usage ──────────────────────────────────────────
 const cpuData = computed(() => {
@@ -366,7 +367,7 @@ const cpuData = computed(() => {
   };
 });
 
-const cpuOptions = makeLineOptions({ yLabel: '%', tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? '—'}%` });
+const cpuOptions = makeLineOptions({ yLabel: '%', tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? EMPTY_CELL}%` });
 
 // ── Data fetching ──────────────────────────────────────
 async function refreshAll() {

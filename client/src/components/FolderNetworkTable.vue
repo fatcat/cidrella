@@ -41,9 +41,9 @@
             <span class="cidr-text">{{ item.node.data.cidr }}</span>
           </span>
         </span>
-        <span class="col col-name">{{ item.node.data.name || '—' }}</span>
-        <span class="col col-vlan">{{ item.node.data.vlan_id || '—' }}</span>
-        <span class="col col-desc">{{ item.node.data.description || '—' }}</span>
+        <span class="col col-name">{{ item.node.data.name || EMPTY_CELL }}</span>
+        <span class="col col-vlan">{{ item.node.data.vlan_id || EMPTY_CELL }}</span>
+        <span class="col col-desc">{{ item.node.data.description || EMPTY_CELL }}</span>
         <span class="col col-scan">
           <span v-if="item.node.data.status === 'allocated'" class="scan-badge" :class="scanClass(item.node)">{{ scanLabel(item.node) }}</span>
           <span v-else>—</span>
@@ -68,6 +68,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue';
+import { EMPTY_CELL } from '../utils/format.js';
 import Button from 'primevue/button';
 import { useSubnetStore } from '../stores/subnets.js';
 

@@ -44,6 +44,25 @@ export function isValidPtrName(name) {
 }
 
 /**
+ * DNS record `name` column: the label or labels to the LEFT of the zone name,
+ * so "www", "mail.eu", or "@" for the zone apex.
+ *
+ * Underscores are allowed, because _acme-challenge and friends are ordinary
+ * record names. A trailing dot is tolerated and ignored: that is normal FQDN
+ * spelling and shows up in imported files.
+ *
+ * This was two byte-identical copies, `isValidHostname` in routes/dns.js and
+ * `isValidRecordName` in routes/pihole.js (duplicate-logic audit #20). It lives
+ * here beside isValidPtrName because both answer the same question: is this
+ * safe to interpolate into a dnsmasq directive.
+ */
+export function isValidRecordName(name) {
+  if (name === '@') return true;
+  if (typeof name !== 'string' || name.length === 0 || name.length > 253) return false;
+  return /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/.test(name.replace(/\.$/, ''));
+}
+
+/**
  * TXT record `value` column lands inside `txt-record=<fqdn>,"..."`. The
  * writer escapes `"` but nothing else, we must refuse anything that would
  * terminate the line prematurely or emit a new directive.

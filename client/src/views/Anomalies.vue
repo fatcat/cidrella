@@ -242,6 +242,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { EMPTY_CELL, apiError } from '../utils/format.js';
 import DataTable from 'primevue/datatable';
 import Column from 'primevue/column';
 import Tag from 'primevue/tag';
@@ -317,7 +318,7 @@ const RATIO_FEATURES = new Set([
 ]);
 
 function formatFeatureValue(feature, value) {
-  if (value == null) return '--';
+  if (value == null) return EMPTY_CELL;
   if (COUNT_FEATURES.has(feature)) return Math.round(value).toLocaleString();
   if (RATIO_FEATURES.has(feature)) return (value * 100).toFixed(1) + '%';
   return value.toFixed(2); // entropy, diversity, depth
@@ -355,7 +356,7 @@ function severityColor(severity) {
 
 
 function formatTime(iso) {
-  if (!iso) return '--';
+  if (!iso) return EMPTY_CELL;
   return formatDateTime(iso);
 }
 
@@ -398,7 +399,7 @@ async function confirmWhitelist() {
     whitelistDialogVisible.value = false;
     toast.add({ severity: 'success', summary: 'Client whitelisted', detail: whitelistTarget.value.client_ip, life: 3000 });
   } catch (err) {
-    const msg = err.response?.data?.error || 'Failed to whitelist client';
+    const msg = apiError(err);
     toast.add({ severity: 'error', summary: msg, life: 4000 });
   }
 }

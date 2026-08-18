@@ -257,7 +257,7 @@ import { defineAsyncComponent } from 'vue';
 const DnsPanel = defineAsyncComponent(() => import('../components/DnsPanel.vue'));
 const DhcpPanel = defineAsyncComponent(() => import('../components/DhcpPanel.vue'));
 import { useSubnetStore } from '../stores/subnets.js';
-import { loadJson } from '../utils/storage.js';
+import { loadJson, saveJson } from '../utils/storage.js';
 import { collectAllocatedSubnets } from '../utils/tree.js';
 import { apiError } from '../utils/format.js';
 import { applyNameTemplate, canMergeCidrs } from '../utils/ip.js';
@@ -284,13 +284,13 @@ function persistState() {
   _persistTimer = setTimeout(() => {
     _persistTimer = null;
     try {
-      localStorage.setItem('cidrella_b_selected_subnet_id', JSON.stringify(selectedSubnetId.value));
-      localStorage.setItem('cidrella_b_selected_folder_id', JSON.stringify(selectedFolder.value?.id || null));
-      localStorage.setItem('cidrella_b_sidebar_mode', JSON.stringify(sidebarMode.value));
-      localStorage.setItem('cidrella_b_expanded_folders', JSON.stringify(expandedFolders.value));
-      localStorage.setItem('cidrella_b_browse_expanded', JSON.stringify(browseExpanded.value));
-      localStorage.setItem('cidrella_b_expanded_unallocated', JSON.stringify(expandedUnallocated.value));
-      localStorage.setItem('cidrella_b_active_tab', JSON.stringify(activeTab.value));
+      saveJson('cidrella_b_selected_subnet_id', selectedSubnetId.value);
+      saveJson('cidrella_b_selected_folder_id', selectedFolder.value?.id || null);
+      saveJson('cidrella_b_sidebar_mode', sidebarMode.value);
+      saveJson('cidrella_b_expanded_folders', expandedFolders.value);
+      saveJson('cidrella_b_browse_expanded', browseExpanded.value);
+      saveJson('cidrella_b_expanded_unallocated', expandedUnallocated.value);
+      saveJson('cidrella_b_active_tab', activeTab.value);
     } catch { /* */ }
   }, 300);
 }

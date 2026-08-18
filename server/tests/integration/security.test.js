@@ -740,7 +740,12 @@ describe('blocklist search query type confusion', () => {
   it('returns an empty result, not a 500, when q is supplied twice (array)', async () => {
     const res = await request(app).get('/api/blocklists/search?q=aaa&q=bbb');
     expect(res.status).toBe(200);
-    expect(res.body).toMatchObject({ items: [], total: 0 });
+    // `total` was dropped when the endpoint stopped running a COUNT(DISTINCT)
+    // full scan on every search; the guard reports `hasMore` instead. The
+    // property this test exists for is unchanged: an array-typed q is refused
+    // by the typeof check rather than reaching SQL.
+    expect(res.body).toMatchObject({ items: [], hasMore: false });
+    expect(res.body.total, 'total is gone, not renamed').toBeUndefined();
   });
 
   it('still serves normal string queries', async () => {

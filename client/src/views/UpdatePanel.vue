@@ -230,6 +230,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { apiError } from '../utils/format.js';
 import Button from 'primevue/button';
 import ProgressBar from 'primevue/progressbar';
 import ToggleSwitch from 'primevue/toggleswitch';
@@ -338,7 +339,7 @@ async function checkForUpdate() {
       toast.add({ severity: 'info', summary: 'Up to date', detail: 'No updates available', life: 3000 });
     }
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Check failed', detail: err.response?.data?.error || 'Could not check for updates', life: 4000 });
+    toast.add({ severity: 'error', summary: 'Check failed', detail: apiError(err), life: 4000 });
   } finally {
     checking.value = false;
   }
@@ -356,7 +357,7 @@ async function startInstall() {
     toast.add({ severity: 'info', summary: 'Update started', detail: 'Installing update...', life: 3000 });
     startPolling();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Update failed', detail: err.response?.data?.error || 'Could not start update', life: 5000 });
+    toast.add({ severity: 'error', summary: 'Update failed', detail: apiError(err), life: 5000 });
   } finally {
     installing.value = false;
   }
@@ -386,7 +387,7 @@ async function resetUpdateState() {
     toast.add({
       severity: 'error',
       summary: 'Could not clear update state',
-      detail: err.response?.data?.error || 'Server did not accept the request',
+      detail: apiError(err),
       life: 4000,
     });
   }

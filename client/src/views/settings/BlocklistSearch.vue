@@ -29,12 +29,18 @@
     </DataTable>
     <EmptyState v-else icon="pi-search" title="Search the blocklists"
                 description="Enter a domain (or part of one) to see whether the enabled categories block it." />
-    <div class="search-pagination" v-if="searchResults.total > searchLimit">
+    <!--
+      Page number without a total. The server cannot produce an exact match
+      count without a second full scan of a table that holds millions of rows,
+      so it reports only whether another page exists. See the comment on
+      GET /api/blocklists/search.
+    -->
+    <div class="search-pagination" v-if="searchResults.hasMore || searchPage > 1">
       <Button label="Previous" severity="secondary" size="small" :disabled="searchPage <= 1"
               @click="searchPage--; doSearch(true)" />
-      <span class="page-info">Page {{ searchPage }} of {{ Math.ceil(searchResults.total / searchLimit) }}</span>
+      <span class="page-info">Page {{ searchPage }}</span>
       <Button label="Next" severity="secondary" size="small"
-              :disabled="searchPage >= Math.ceil(searchResults.total / searchLimit)"
+              :disabled="!searchResults.hasMore"
               @click="searchPage++; doSearch(true)" />
     </div>
   </div>
@@ -55,7 +61,7 @@ const store = useBlocklistStore();
 const toast = useToast();
 
 const searchQuery = ref('');
-const searchResults = ref({ items: [], total: 0 });
+const searchResults = ref({ items: [], hasMore: false });
 const searchPage = ref(1);
 const searchLimit = 50;
 const searching = ref(false);

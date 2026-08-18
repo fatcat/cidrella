@@ -25,7 +25,7 @@
       </template>
       <Column field="domain" header="Domain" sortable />
       <Column field="reason" header="Reason">
-        <template #body="{ data }">{{ data.reason || '—' }}</template>
+        <template #body="{ data }">{{ data.reason || EMPTY_CELL }}</template>
       </Column>
       <Column field="created_at" header="Added" style="width: 10rem">
         <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
@@ -43,6 +43,7 @@
 
 <script setup>
 import { ref, computed } from 'vue';
+import { EMPTY_CELL } from '../utils/format.js';
 import InputText from 'primevue/inputtext';
 import EmptyState from './EmptyState.vue';
 import Button from 'primevue/button';

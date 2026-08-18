@@ -288,7 +288,7 @@ import {
   displayMacAddress, isOnlineFlag } from '../utils/format.js';
 import { ipToLong } from '../utils/ip.js';
 import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
-import { loadJson } from '../utils/storage.js';
+import { loadJson, saveJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
 
 // No props needed, shows all scopes globally
@@ -416,9 +416,9 @@ function onMacInput(event) {
 const dhcpSearch = ref(loadJson('cidrella_dhcp_search', ''));
 const dhcpAllSearch = ref(loadJson('cidrella_dhcp_all_search', ''));
 const showAvailableDhcp = ref(loadJson('cidrella_dhcp_show_available', true));
-watch(dhcpSearch, (val) => { try { localStorage.setItem('cidrella_dhcp_search', JSON.stringify(val)); } catch {} });
-watch(dhcpAllSearch, (val) => { try { localStorage.setItem('cidrella_dhcp_all_search', JSON.stringify(val)); } catch {} });
-watch(showAvailableDhcp, (val) => { try { localStorage.setItem('cidrella_dhcp_show_available', JSON.stringify(val)); } catch {} });
+watch(dhcpSearch, (val) => { saveJson('cidrella_dhcp_search', val) });
+watch(dhcpAllSearch, (val) => { saveJson('cidrella_dhcp_all_search', val) });
+watch(showAvailableDhcp, (val) => { saveJson('cidrella_dhcp_show_available', val) });
 
 // Lease context menu
 const leaseContextMenuRef = ref();
@@ -642,7 +642,7 @@ async function reloadSelectedScopeAddresses() {
 
 function selectScope(scope) {
   selectedScope.value = scope;
-  try { localStorage.setItem('cidrella_dhcp_selected_scope_id', JSON.stringify(scope?.id || null)); } catch {}
+  saveJson('cidrella_dhcp_selected_scope_id', scope?.id || null)
   reloadSelectedScopeAddresses();
 }
 

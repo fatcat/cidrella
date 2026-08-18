@@ -29,7 +29,7 @@
       <span class="info-bar-sep"></span>
       <span class="info-bar-pair"><span class="info-bar-label">Gateway</span> <span class="info-bar-val">{{ subnet.gateway_address }}</span></span>
       <span class="info-bar-sep"></span>
-      <span class="info-bar-pair"><span class="info-bar-label">VLAN</span> <span class="info-bar-val">{{ subnet.vlan_id ?? '—' }}</span></span>
+      <span class="info-bar-pair"><span class="info-bar-label">VLAN</span> <span class="info-bar-val">{{ subnet.vlan_id ?? EMPTY_CELL }}</span></span>
       <span class="info-bar-sep"></span>
       <span v-if="subnet.domain_name" class="info-bar-pair"><span class="info-bar-label">Domain</span> <span class="info-bar-val">{{ subnet.domain_name }}</span></span>
       <span v-if="subnet.domain_name" class="info-bar-sep"></span>
@@ -54,7 +54,7 @@
       </div>
       <div class="info-card">
         <div class="info-label">VLAN</div>
-        <div class="info-value">{{ subnet.vlan_id ?? '—' }}</div>
+        <div class="info-value">{{ subnet.vlan_id ?? EMPTY_CELL }}</div>
       </div>
       <div v-if="subnet.domain_name" class="info-card">
         <div class="info-label">Domain</div>
@@ -177,7 +177,7 @@
               </template>
             </Column>
             <Column field="description" header="Description">
-              <template #body="{ data }">{{ data.description ?? '—' }}</template>
+              <template #body="{ data }">{{ data.description ?? EMPTY_CELL }}</template>
             </Column>
           </DataTable>
         </div>
@@ -393,7 +393,7 @@
     </Dialog>
 
     <!-- Host "more info" dialog -->
-    <HostInfoDialog v-model:visible="showHostInfo" :host="hostInfoRow" />
+    <HostInfoDialog v-model:visible="showHostInfo" :host="hostInfoRow" :domain-name="subnet?.domain_name" />
 
     <Toast />
   </div>
@@ -432,7 +432,7 @@ import ColumnHeaderTooltip from '../components/table/ColumnHeaderTooltip.vue';
 import OnlineStatusCell from '../components/table/OnlineStatusCell.vue';
 import StatusText from '../components/table/StatusText.vue';
 import { useSubnetStore } from '../stores/subnets.js';
-import { loadJson } from '../utils/storage.js';
+import { loadJson, saveJson } from '../utils/storage.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import api from '../api/client.js';
@@ -593,7 +593,7 @@ function saveTableState() {
       sortField: sortField.value,
       sortOrder: sortOrder.value,
     };
-    localStorage.setItem('cidrella_ip_table_state', JSON.stringify(all));
+    saveJson('cidrella_ip_table_state', all);
   } catch {}
 }
 function restoreTableState() {
@@ -631,7 +631,7 @@ function loadSubnetTab() {
 }
 const activeTab = ref(loadSubnetTab());
 watch(activeTab, (val) => {
-  try { localStorage.setItem('cidrella_subnet_detail_tab', JSON.stringify(val)); } catch {}
+  saveJson('cidrella_subnet_detail_tab', val)
 });
 
 // Search / filter
@@ -647,7 +647,7 @@ watch(ipSearch, (_val) => {
 });
 
 watch(showAvailableIps, (val) => {
-  try { localStorage.setItem('cidrella_network_show_available', JSON.stringify(val)); } catch {}
+  saveJson('cidrella_network_show_available', val)
   currentPage.value = 1;
   store.invalidateDetailCache(props.subnetId);
   loadIpPage(1, currentPageSize.value);

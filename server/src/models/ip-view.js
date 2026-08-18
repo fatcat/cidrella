@@ -149,6 +149,11 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
       row.ip_lifecycle_status = row.status || 'available';
     }
 
+    // `undefined` is the sentinel for "nobody has computed this yet". A
+    // persisted row arrives with the value already computed in SQL and must
+    // keep it. A synthesized placeholder must leave the field OFF rather than
+    // defaulting it to 0, or it silently opts out of this fallback and renders
+    // as available while a manual A record points at it (audit #23).
     if (row.has_static_dns === undefined) {
       row.has_static_dns = staticDnsIps.has(row.ip_address) ? 1 : 0;
     }

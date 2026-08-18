@@ -1396,22 +1396,44 @@ info "Verifying new version..."
 #   2. systemd Environment=HTTPS_PORT=... (from unit or drop-in override)
 #   3. Fallback: probe 443 then 8443 in order
 discover_verify_port() {
-  local p
-  # DB (authoritative in v0.4.15+). sqlite3 is NOT guaranteed on the host.
-  # Missing or unreadable DB silently falls through.
-  if command -v sqlite3 >/dev/null 2>&1 && [ -r "$DATA_DIR/cidrella.db" ]; then
-    p=$(sqlite3 "$DATA_DIR/cidrella.db" \
-          "SELECT value FROM settings WHERE key='https_port' AND value != '' LIMIT 1" 2>/dev/null)
-    if [ -n "$p" ] && [ "$p" -ge 1 ] 2>/dev/null && [ "$p" -le 65535 ] 2>/dev/null; then
-      printf '%s' "$p"; return
-    fi
+  local db_val env_val node
+  # Tier 1, the DB: authoritative in v0.4.15+, written by routes/interfaces.js
+  # when an admin changes the port in the UI.
+  #
+  # Read with the BUNDLED Node and better-sqlite3, the same way this script
+  # already checkpoints the WAL before snapshotting. It used to shell out to the
+  # sqlite3 CLI, which install.sh never installs, so on a real appliance this
+  # tier silently never fired: every update probed 8443 regardless of what was
+  # configured, and once the UI port differed from 8443 or 443 the post-switch
+  # health check failed and rolled back a healthy slot.
+  # (REVIEW.md duplicate-logic audit #37)
+  db_val=""
+  node=$(resolve_node "$INSTALL_LINK" 2>/dev/null || true)
+  if [ -n "$node" ] && [ -r "$DATA_DIR/cidrella.db" ]; then
+    db_val=$(sudo -u cidrella "$node" -e "
+      try {
+        const Database = require('$INSTALL_LINK/server/node_modules/better-sqlite3');
+        const db = new Database('$DATA_DIR/cidrella.db', { readonly: true });
+        const row = db.prepare(\"SELECT value FROM settings WHERE key='https_port'\").get();
+        db.close();
+        if (row && row.value) process.stdout.write(String(row.value));
+      } catch (e) { /* unreadable DB or missing module: fall through */ }
+    " 2>/dev/null || true)
   fi
-  # systemd env: catches the install.sh drop-in override.
-  p=$(systemctl show cidrella -p Environment 2>/dev/null \
+  # Same query through the sqlite3 CLI if an operator happens to have it. A
+  # cheap second chance, no longer the only one.
+  if ! valid_port "$db_val" && command -v sqlite3 >/dev/null 2>&1 && [ -r "$DATA_DIR/cidrella.db" ]; then
+    db_val=$(sqlite3 "$DATA_DIR/cidrella.db" \
+          "SELECT value FROM settings WHERE key='https_port' AND value != '' LIMIT 1" 2>/dev/null || true)
+  fi
+
+  # Tier 2, the systemd environment: catches install.sh's drop-in override.
+  env_val=$(systemctl show cidrella -p Environment 2>/dev/null \
         | grep -oE 'HTTPS_PORT=[0-9]+' | head -1 | sed 's/HTTPS_PORT=//')
-  if [ -n "$p" ]; then printf '%s' "$p"; return; fi
-  # Final fallback.
-  printf '8443'
+
+  # Tier 3, the hardcoded default. resolve_port lives in lib/slots.sh so the
+  # ladder is shared, and matches resolvePort() in server/src/utils/http-server.js.
+  resolve_port "$db_val" "$env_val" 8443
 }
 VERIFY_PORT=$(discover_verify_port)
 info "Verify port: $VERIFY_PORT"

@@ -73,7 +73,7 @@
             <div class="scope-option-value">
               <template v-if="form.selectedOptions.includes(opt.code)">
                 <Select v-if="opt.type === 'select'" v-model="form.optionValues[opt.code]"
-                        :options="opt.choices" size="small" :placeholder="defaultValues[opt.code] || '—'" showClear />
+                        :options="opt.choices" size="small" :placeholder="defaultValues[opt.code] || EMPTY_CELL" showClear />
                 <InputNumber v-else-if="opt.type === 'number'" v-model="form.optionValues[opt.code]"
                              size="small" :useGrouping="false" :placeholder="defaultValues[opt.code] || '0'" />
                 <InputText v-else v-model="form.optionValues[opt.code]" size="small"
@@ -122,10 +122,10 @@ import Popover from 'primevue/popover';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
-import { parseCidr, dhcpRangeDefaults , netmaskFor} from '../utils/ip.js';
+import { parseCidr, dhcpRangeDefaults, netmaskFor, dhcpPoolError } from '../utils/ip.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
-import { apiError } from '../utils/format.js';
+import { apiError, EMPTY_CELL } from '../utils/format.js';
 
 const toast = useToast();
 const dhcpStore = useDhcpStore();
@@ -408,7 +408,27 @@ async function onNetworkCreated() {
 
 const emit = defineEmits(['saved']);
 
+/**
+ * The pool this dialog is about to submit, or null when it is fine.
+ *
+ * This dialog used to check only that the fields were non-empty, so a start
+ * after the end went to the server and came back as a 400, while the network
+ * wizard caught the same mistake inline with a useful message
+ * (duplicate-logic audit #53). Same shared validator now.
+ */
+const poolError = computed(() => {
+  // Only meaningful when the operator is typing a pool by hand. Picking an
+  // existing range means the bounds come from the server.
+  if (!form.value.start_ip && !form.value.end_ip) return null;
+  const subnet = subnetsList.value?.find(sn => sn.id === form.value.subnet_id);
+  return dhcpPoolError(form.value.start_ip, form.value.end_ip, subnet?.cidr || null);
+});
+
 async function save() {
+  if (poolError.value) {
+    toast.add({ severity: 'warn', summary: 'Check the pool', detail: poolError.value, life: 5000 });
+    return;
+  }
   saving.value = true;
   try {
     // Send all selected options to the server. The server strips inherited

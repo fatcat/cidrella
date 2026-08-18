@@ -208,3 +208,39 @@ semver_eq() { [ "$(semver_cmp "$1" "$2")" = "0" ]; }
 # Backwards-compat shim for scripts written against the old helper name. Prints
 # "major minor patch" (no prerelease). New code should use _semver_core.
 _semver_parts() { _semver_core "$1"; }
+
+# ─── Port resolution ────────────────────────────────────────────────────────
+# The web-port fallback ladder: DB value, then environment value, then the
+# hardcoded default. This MUST agree with resolvePort() in
+# server/src/utils/http-server.js, which the running server uses to decide what
+# it actually listens on. If the two disagree, update.sh probes the wrong port
+# after switching slots, the health check fails, and a perfectly healthy slot is
+# rolled back. That was a live bug: the old inline copy in update.sh only read
+# the DB via the sqlite3 CLI, which install.sh never installs, so the DB tier
+# never fired at all. (REVIEW.md duplicate-logic audit #37)
+#
+# bash cannot import the JS, so the pair is held together by
+# server/tests/unit/utils/port-resolution-differential.test.js rather than by
+# hope. Change one side and that test goes red.
+
+# True when $1 is a plain integer in 1..65535.
+#
+# Deliberately STRICTER than the JS side, which uses parseInt and therefore
+# accepts '8443abc' and ' 8443'. Matching parseInt exactly in bash is a rabbit
+# hole for inputs that cannot occur: routes/interfaces.js validates and writes
+# String(Number), and the env value comes from install.sh's own drop-in. The
+# differential test asserts the one-directional property that matters, which is
+# that anything this accepts, the JS resolves identically.
+valid_port() {
+  case "$1" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
+}
+
+# resolve_port <db_value> <env_value> <fallback>
+resolve_port() {
+  if valid_port "$1"; then printf '%s' "$1"; return; fi
+  if valid_port "$2"; then printf '%s' "$2"; return; fi
+  printf '%s' "$3"
+}

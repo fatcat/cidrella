@@ -22,7 +22,7 @@
     <div class="header-status">
       <button class="status-chip status-chip-scan" :class="scanChipClass" data-track="header-chip-scan"
               @click="toggleOpsPopover" :title="`Scanner: ${scanDisplay}`">
-        <StatusDot :kind="activeScans.length ? 'ok' : 'muted'" :label="dotLabel(activeScans.length ? 'ok' : 'muted')" />
+        <StatusDot :kind="scanState.dot" :label="scanState.dotLabel" />
         <span class="status-chip-label">{{ scanChipText }}</span>
       </button>
       <button class="status-chip status-chip-wide" :class="dnsChipClass" data-track="header-chip-dnsmasq"
@@ -112,8 +112,8 @@
         </div>
         <div class="status-popover-row"><span></span><span class="status-popover-label">New anomalies</span><span class="status-popover-val">{{ anomalyCount }}</span></div>
         <div class="status-popover-row"><span></span><span class="status-popover-label">Active anomalies</span><span class="status-popover-val">{{ anomalySummary?.total_active ?? 0 }}</span></div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">Clients monitored</span><span class="status-popover-val">{{ anomalySummary?.clients_monitored ?? '—' }}</span></div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">Clients learning</span><span class="status-popover-val">{{ anomalySummary?.clients_learning ?? '—' }}</span></div>
+        <div class="status-popover-row"><span></span><span class="status-popover-label">Clients monitored</span><span class="status-popover-val">{{ anomalySummary?.clients_monitored ?? EMPTY_CELL }}</span></div>
+        <div class="status-popover-row"><span></span><span class="status-popover-label">Clients learning</span><span class="status-popover-val">{{ anomalySummary?.clients_learning ?? EMPTY_CELL }}</span></div>
         <div class="status-popover-row"><span></span><span class="status-popover-label">Last scored</span><span class="status-popover-val">{{ timeAgo(anomalySummary?.daemon?.last_score) }}</span></div>
         <div class="status-popover-row"><span></span><span class="status-popover-label">Last trained</span><span class="status-popover-val">{{ timeAgo(anomalySummary?.daemon?.last_train) }}</span></div>
         <div v-if="anomalySummary?.daemon?.score_duration_sec != null" class="status-popover-row">
@@ -180,6 +180,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import { deriveScanState } from '../utils/scanState.js';
 import { useRouter, useRoute } from 'vue-router';
 import Popover from 'primevue/popover';
 import Select from 'primevue/select';
@@ -190,7 +191,7 @@ import { useAnomalyStore } from '../stores/anomalies.js';
 import { formatTimeOnly } from '../utils/dateFormat.js';
 import api from '../api/client.js';
 import { formatRelativeTime as timeAgo } from '../utils/dateFormat.js';
-import { formatBytes as formatBytes } from '../utils/format.js';
+import { formatBytes as formatBytes, EMPTY_CELL } from '../utils/format.js';
 
 const router = useRouter();
 const route = useRoute();
@@ -248,7 +249,7 @@ function toggleAnomalyPopover(event) {
 
 const userInitials = computed(() => {
   const n = auth.user?.username || '';
-  return (n.slice(0, 2) || '—').toUpperCase();
+  return (n.slice(0, 2) || EMPTY_CELL).toUpperCase();
 });
 
 const opsIssue = computed(() =>
@@ -323,7 +324,7 @@ const cpuPercent = computed(() => {
 const cpuPercentText = computed(() => `${cpuPercent.value}%`);
 
 const ramDisplay = computed(() => {
-  if (!health.value?.memory) return '--';
+  if (!health.value?.memory) return EMPTY_CELL;
   const used = formatBytes(health.value.memory.used);
   const total = formatBytes(health.value.memory.total);
   return `${used} / ${total}`;
@@ -338,7 +339,7 @@ const ramPercent = computed(() => {
 const ramPercentText = computed(() => `${ramPercent.value}%`);
 
 const diskDisplay = computed(() => {
-  if (!health.value?.disk) return '--';
+  if (!health.value?.disk) return EMPTY_CELL;
   const pct = health.value.disk.percent;
   const used = formatBytes(health.value.disk.used);
   return `${used} (${pct}%)`;
@@ -367,30 +368,14 @@ const diskStatusClass = computed(() => {
   return 'card-ok';
 });
 
-const scanDisplay = computed(() => {
-  const scans = activeScans.value;
-  if (!scans.length) return 'scanner idle';
+// Scanner state comes from utils/scanState.js so it is one derivation with one
+// test, rather than four derivations in this file that disagreed (audit #55).
+const scanState = computed(() => deriveScanState(activeScans.value));
 
-  const running = scans.filter(s => s.status === 'running');
-  if (!running.length) return 'Scanner Active';
-
-  const totalIps = running.reduce((sum, s) => sum + (s.total_ips || 0), 0);
-  const scannedIps = running.reduce((sum, s) => sum + (s.scanned_ips || 0), 0);
-  if (totalIps > 0) return `Scanner Active: ${Math.round((scannedIps / totalIps) * 100)}%`;
-  return 'Scanner Active';
-});
-
-const scanChipText = computed(() => {
-  const scans = activeScans.value;
-  if (!scans.length) return 'Scanner idle';
-  const running = scans.filter(s => s.status === 'running');
-  if (!running.length) return 'Scanner pending';
-
-  const totalIps = running.reduce((sum, s) => sum + (s.total_ips || 0), 0);
-  const scannedIps = running.reduce((sum, s) => sum + (s.scanned_ips || 0), 0);
-  if (totalIps > 0) return `Scanner active ${Math.round((scannedIps / totalIps) * 100)}%`;
-  return 'Scanner active';
-});
+// The tooltip and the visible label are the SAME text now. They disagreed
+// before, which is the bug this finding names.
+const scanDisplay = computed(() => scanState.value.label);
+const scanChipText = computed(() => scanState.value.label);
 
 const nextScanTimeOnly = computed(() => {
   return formatTimeOnly(nextScanTime.value);
@@ -460,7 +445,7 @@ const diskChipClass = computed(() => resourceChip(diskStatusClass.value));
 const cpuDotKind = computed(() => resourceDotKind(cpuStatusClass.value));
 const ramDotKind = computed(() => resourceDotKind(ramStatusClass.value));
 const diskDotKind = computed(() => resourceDotKind(diskStatusClass.value));
-const scanChipClass = computed(() => activeScans.value.length ? 'chip-active' : 'chip-idle');
+const scanChipClass = computed(() => scanState.value.chipClass);
 const anomalyChipClass = computed(() => {
   if (anomalyStatus.value === 'running') return 'chip-ok';
   if (anomalyStatus.value === 'off') return 'chip-idle';

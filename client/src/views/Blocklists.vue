@@ -80,7 +80,7 @@
     </Column>
     <Column header="Domains" style="width: 7rem">
       <template #body="{ data }">
-        {{ data.domain_count > 0 ? formatNumber(data.domain_count) : '—' }}
+        {{ data.domain_count > 0 ? formatNumber(data.domain_count) : EMPTY_CELL }}
       </template>
     </Column>
     <Column header="Last Updated" style="width: 10rem">
@@ -131,7 +131,7 @@
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
-import { formatNumber, apiError } from '../utils/format.js';
+import { formatNumber, apiError, EMPTY_CELL } from '../utils/format.js';
 import { useToast } from 'primevue/usetoast';
 import EmptyState from '../components/EmptyState.vue';
 import Button from 'primevue/button';

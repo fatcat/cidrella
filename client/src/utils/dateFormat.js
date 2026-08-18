@@ -1,4 +1,5 @@
 import { useAuthStore } from '../stores/auth.js';
+import { isIntradayRange } from './ranges.js';
 
 function hourOption() {
   const fmt = useAuthStore().timeFormat;
@@ -89,7 +90,7 @@ export function formatScanDate(dateStr) {
 export function formatEpoch(epoch, range) {
   const d = new Date(epoch * 1000);
   const opts = hourOption();
-  if (range === '1h' || range === '4h' || range === '12h' || range === '24h') {
+  if (isIntradayRange(range)) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...opts });
   }
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +

@@ -261,7 +261,7 @@ router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
 router.get('/search', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   const { q, page = 1, limit = 50 } = req.query;
-  if (typeof q !== 'string' || q.length < 2) return res.json({ items: [], total: 0 });
+  if (typeof q !== 'string' || q.length < 2) return res.json({ items: [], hasMore: false, page: 1, limit: 50 });
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
@@ -269,14 +269,24 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
   const escaped = q.replace(/[\\%_]/g, '\\$&');
   const searchTerm = `%${escaped}%`;
 
-  const total = db.prepare(`
-    SELECT COUNT(DISTINCT bd.domain) as c
-    FROM blocklist_domains bd
-    JOIN blocklist_categories bc ON bd.category_slug = bc.slug
-    WHERE bc.enabled = 1 AND bd.domain LIKE ? ESCAPE '\\'
-  `).get(searchTerm).c;
-
-  const items = db.prepare(`
+  // No COUNT here, deliberately.
+  //
+  // `LIKE '%...%'` cannot use the primary key, so every query is a full scan of
+  // blocklist_domains, which migration 053 sized at 2.65 million rows for the
+  // malware category alone. The paged SELECT below survives that because the
+  // table is WITHOUT ROWID keyed on (domain, category_slug): it streams in
+  // domain order with no temp b-tree, so LIMIT lets it stop as soon as it has a
+  // page. A COUNT can never stop early, so it scanned all 2.65M rows on every
+  // search regardless of how quickly the page filled.
+  //
+  // Measured on a synthetic 2.65M-row table: COUNT 148ms + page 3ms for a
+  // narrow match, and 110ms + 117ms for a search that matches nothing. Dropping
+  // the COUNT removes a whole scan from every request.
+  //
+  // One extra row is fetched instead. Its presence is all the UI needs to
+  // decide whether a Next button should be live, and it costs nothing: the scan
+  // was already going to produce it or hit the end of the table.
+  const rows = db.prepare(`
     SELECT bd.domain, GROUP_CONCAT(bc.slug, ', ') as categories
     FROM blocklist_domains bd
     JOIN blocklist_categories bc ON bd.category_slug = bc.slug
@@ -284,7 +294,10 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
     GROUP BY bd.domain
     ORDER BY bd.domain
     LIMIT ? OFFSET ?
-  `).all(searchTerm, limitNum, offset);
+  `).all(searchTerm, limitNum + 1, offset);
+
+  const hasMore = rows.length > limitNum;
+  const items = hasMore ? rows.slice(0, limitNum) : rows;
 
   const whitelisted = new Set(
     db.prepare('SELECT domain FROM blocklist_whitelist').all().map(r => r.domain)
@@ -294,7 +307,10 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
     item.whitelisted = whitelisted.has(item.domain);
   }
 
-  res.json({ items, total, page: pageNum, limit: limitNum });
+  // `hasMore` rather than a total. An exact count of matches across 2.65M rows
+  // cannot be produced without a second full scan, and the UI only ever used it
+  // to decide whether Next was clickable.
+  res.json({ items, hasMore, page: pageNum, limit: limitNum });
 });
 
 export default router;

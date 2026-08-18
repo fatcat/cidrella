@@ -68,6 +68,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { saveJson } from '../utils/storage.js';
 import { useRouter } from 'vue-router';
 import Select from 'primevue/select';
 import Button from 'primevue/button';
@@ -77,7 +78,7 @@ import {
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { useDashboardStore } from '../stores/dashboard.js';
 import { RANGE_OPTIONS, makeDoughnutData } from '../utils/chart-config.js';
-import { formatNumber } from '../utils/format.js';
+import { formatNumber, EMPTY_CELL } from '../utils/format.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import DoughnutTableCard from '../components/DoughnutTableCard.vue';
 import '../assets/analytics-layout.css';
@@ -90,17 +91,17 @@ const router = useRouter();
 const rangeOptions = RANGE_OPTIONS;
 const selectedRange = computed({ get: () => store.selectedRange, set: (v) => store.setRange(v) });
 
-const systemStats = ref({ subnets: '--', dns_zones: '--', dhcp_scopes: '--', dhcp_leases: '--' });
+const systemStats = ref({ subnets: EMPTY_CELL, dns_zones: EMPTY_CELL, dhcp_scopes: EMPTY_CELL, dhcp_leases: EMPTY_CELL });
 
 async function fetchSystemStats() {
   try {
     const res = await api.get('/health/system');
     const s = res.data?.stats || {};
     systemStats.value = {
-      subnets: s.subnets ?? '--',
-      dns_zones: s.dns_zones ?? '--',
-      dhcp_scopes: s.dhcp_scopes ?? '--',
-      dhcp_leases: s.dhcp_leases ?? '--',
+      subnets: s.subnets ?? EMPTY_CELL,
+      dns_zones: s.dns_zones ?? EMPTY_CELL,
+      dhcp_scopes: s.dhcp_scopes ?? EMPTY_CELL,
+      dhcp_leases: s.dhcp_leases ?? EMPTY_CELL,
     };
   } catch { /* ignore */ }
 }
@@ -118,7 +119,7 @@ const summary = computed(() => {
 });
 
 function goToTab(tab) {
-  localStorage.setItem('cidrella_b_active_tab', JSON.stringify(tab));
+  saveJson('cidrella_b_active_tab', tab);
   router.push('/networks');
 }
 

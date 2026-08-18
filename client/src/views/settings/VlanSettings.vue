@@ -18,7 +18,7 @@
       <Column field="vlan_id" header="VLAN ID" sortable style="width: 6rem" />
       <Column field="name" header="Name" sortable />
       <Column field="subnet_names" header="Network" sortable>
-        <template #body="{ data }">{{ data.subnet_names || '—' }}</template>
+        <template #body="{ data }">{{ data.subnet_names || EMPTY_CELL }}</template>
       </Column>
     </DataTable>
 
@@ -74,7 +74,7 @@ import InputText from 'primevue/inputtext';
 import ContextMenu from 'primevue/contextmenu';
 import { useToast } from 'primevue/usetoast';
 import { useSubnetStore } from '../../stores/subnets.js';
-import { apiError } from '../../utils/format.js';
+import { apiError, EMPTY_CELL, subnetLabel } from '../../utils/format.js';
 import api from '../../api/client.js';
 
 const store = useSubnetStore();
@@ -96,7 +96,7 @@ const availableNetworks = computed(() => {
   function collect(subnets) {
     for (const s of subnets) {
       if (s.status === 'allocated' && !s.vlan_id && !usedVlanIds.has(s.vlan_id)) {
-        result.push({ label: `${s.cidr} — ${s.name || s.cidr}`, value: s.id });
+        result.push({ label: subnetLabel(s), value: s.id });
       }
       if (s.children) collect(s.children);
     }

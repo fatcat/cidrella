@@ -13,6 +13,7 @@
           <label for="password">Password</label>
           <Password id="password" v-model="password" :feedback="false" toggleMask autocomplete="new-password"
                     :disabled="loading" class="w-full" inputClass="w-full" />
+          <small v-if="passwordPolicy" class="skip-hint">{{ passwordPolicy.description }}</small>
         </div>
         <div class="field">
           <label for="confirmPassword">Confirm Password</label>
@@ -36,7 +37,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import InputText from 'primevue/inputtext';
 import Password from 'primevue/password';
@@ -44,6 +45,7 @@ import Button from 'primevue/button';
 import Message from 'primevue/message';
 import { useOperationsStore } from '../stores/operations.js';
 import { apiError } from '../utils/format.js';
+import api from '../api/client.js';
 
 const router = useRouter();
 const opsStore = useOperationsStore();
@@ -56,6 +58,38 @@ const skipping = ref(false);
 const error = ref('');
 const completed = ref(false);
 
+// The password rule is the SERVER's, fetched rather than restated here. This
+// used to be a local `length < 8` check that had drifted from
+// routes/setup.js, which also requires uppercase, lowercase and a digit, so a
+// password the wizard accepted was rejected only after submit
+// (duplicate-logic audit #39).
+//
+// There is deliberately NO literal fallback. docs/CROSS-TIER-DUPLICATION.md is
+// explicit that the fallback IS the duplicate. If the fetch fails we simply do
+// not pre-validate and let the server be the judge, which is correct rather
+// than merely convenient: the server is the only authority either way.
+const passwordPolicy = ref(null);
+
+onMounted(async () => {
+  try {
+    const res = await api.get('/setup/status');
+    passwordPolicy.value = res.data?.password_policy ?? null;
+  } catch { /* server decides on submit */ }
+});
+
+function passwordPolicyError(value) {
+  if (!value) return 'Password is required';
+  const p = passwordPolicy.value;
+  if (!p) return null; // policy unknown, the server will enforce it
+  if (value.length < p.minLength || value.length > p.maxLength) {
+    return `Password must be ${p.minLength}-${p.maxLength} characters`;
+  }
+  if (p.requireUppercase && !/[A-Z]/.test(value)) return p.description;
+  if (p.requireLowercase && !/[a-z]/.test(value)) return p.description;
+  if (p.requireDigit && !/\d/.test(value)) return p.description;
+  return null;
+}
+
 async function handleSetup() {
   error.value = '';
 
@@ -63,8 +97,9 @@ async function handleSetup() {
     error.value = 'Username must be at least 3 characters';
     return;
   }
-  if (!password.value || password.value.length < 8) {
-    error.value = 'Password must be at least 8 characters';
+  const pwErr = passwordPolicyError(password.value);
+  if (pwErr) {
+    error.value = pwErr;
     return;
   }
   if (password.value !== confirmPassword.value) {

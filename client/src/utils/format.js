@@ -108,3 +108,21 @@ export function displayExpiry(expiresAt, formatDate, { reserved = false } = {}) 
   if (expiresAt === 'infinite') return 'Never';
   return formatDate(expiresAt);
 }
+
+/**
+ * Label for a subnet in a picker or tree node: "10.0.0.0/24 — Office LAN",
+ * falling back to the CIDR alone when there is no name.
+ *
+ * This was written out four times with three different null behaviours
+ * (duplicate-logic audit #60/#F17). Two of them interpolated a missing name
+ * directly, so a subnet with no name rendered "10.0.0.0/24 — undefined" in the
+ * network and VLAN settings pickers.
+ *
+ * The em-dash here is the documented `value — value` label separator and is an
+ * intentional survivor of the repo prose rule, not prose.
+ */
+export function subnetLabel(subnet) {
+  if (!subnet || !subnet.cidr) return '';
+  const name = typeof subnet.name === 'string' ? subnet.name.trim() : '';
+  return name ? `${subnet.cidr} — ${name}` : subnet.cidr;
+}

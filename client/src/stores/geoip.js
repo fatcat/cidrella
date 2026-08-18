@@ -4,7 +4,6 @@ import api from '../api/client.js';
 
 export const useGeoipStore = defineStore('geoip', () => {
   const rules = ref([]);
-  const whitelist = ref([]);
   const ipAllowlist = ref([]);
   const status = ref(null);
   const stats = ref({ total: 0, blocked: 0, allowed: 0 });
@@ -62,24 +61,15 @@ export const useGeoipStore = defineStore('geoip', () => {
     return res.data;
   }
 
-  // Single global allowlist, shared with category blocking
-  // (the /api/blocklists/whitelist endpoint backs one list for both).
-  async function fetchWhitelist() {
-    const res = await api.get('/blocklists/whitelist');
-    whitelist.value = res.data;
-    return res.data;
-  }
-
-  async function addWhitelist(domain, reason) {
-    const res = await api.post('/blocklists/whitelist', { domain, reason });
-    await fetchWhitelist();
-    return res.data;
-  }
-
-  async function removeWhitelist(id) {
-    await api.delete(`/blocklists/whitelist/${id}`);
-    await fetchWhitelist();
-  }
+  // The domain-whitelist wrapper that used to sit here was a second copy of the
+  // one in stores/blocklists.js against the same /api/blocklists/whitelist
+  // endpoint, and nothing read it (duplicate-logic audit #59). Deleted rather
+  // than wired up: the settings shell keeps its panels alive with <keep-alive>,
+  // so a second cached copy of one server-side list would go stale the moment
+  // either view edited it. Use stores/blocklists.js.
+  //
+  // Not to be confused with the GeoIP IP/CIDR allowlist below, which is a
+  // different list on a different endpoint.
 
   // GeoIP IP/CIDR allowlist. Addresses/ranges never GeoIP-blocked.
   async function fetchIpAllowlist() {
@@ -100,10 +90,9 @@ export const useGeoipStore = defineStore('geoip', () => {
   }
 
   return {
-    rules, whitelist, ipAllowlist, status, stats, loading,
+    rules, ipAllowlist, status, stats, loading,
     fetchStatus, fetchRules, addRules, toggleRule, deleteRule,
     updateSettings, refreshDb, fetchStats,
-    fetchWhitelist, addWhitelist, removeWhitelist,
     fetchIpAllowlist, addIpAllow, removeIpAllow
   };
 });

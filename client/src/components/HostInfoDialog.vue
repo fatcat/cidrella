@@ -13,7 +13,7 @@
       <section>
         <h5>Identity</h5>
         <div class="hi-row"><span class="hi-label">IP address</span><span class="hi-val mono">{{ host.ip_address }}</span></div>
-        <div class="hi-row"><span class="hi-label">Hostname</span><span class="hi-val">{{ host.hostname || dash }}</span></div>
+        <div class="hi-row"><span class="hi-label">Hostname</span><span class="hi-val">{{ displayHostnameCell(host.hostname, domainName) }}</span></div>
         <div class="hi-row"><span class="hi-label">MAC</span><span class="hi-val mono">{{ mac || dash }}</span></div>
         <div class="hi-row"><span class="hi-label">Manufacturer</span><span class="hi-val">{{ host.vendor || dash }}</span></div>
       </section>
@@ -56,7 +56,7 @@ import { ref, computed, watch } from 'vue';
 import Dialog from 'primevue/dialog';
 import Button from 'primevue/button';
 import StatusDot from './StatusDot.vue';
-import { displayOnlineStatus, EMPTY_CELL } from '../utils/format.js';
+import { displayOnlineStatus, EMPTY_CELL, displayHostnameCell } from '../utils/format.js';
 import { useToast } from 'primevue/usetoast';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
@@ -65,6 +65,11 @@ import { formatDateTime } from '../utils/dateFormat.js';
 const props = defineProps({
   visible: { type: Boolean, default: false },
   host: { type: Object, default: null },
+  // The subnet's domain, so the hostname here reads the same as the hostname in
+  // the table that opened this dialog. Without it the table showed 'laptop' and
+  // the dialog showed 'laptop.home.lan' for the same row
+  // (duplicate-logic audit #56).
+  domainName: { type: String, default: null },
 });
 const emit = defineEmits(['update:visible']);
 const toast = useToast();

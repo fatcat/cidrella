@@ -6,6 +6,7 @@
  */
 
 import { getSetting } from '../db/init.js';
+import { activeLeaseSql } from '../utils/lease-sql.js';
 import { scannerCoveredSql } from '../utils/scan-coverage.js';
 import { isLocalAddress } from '../utils/local-addresses.js';
 import * as DnsRecord from './dns-record.js';
@@ -243,7 +244,7 @@ function addressClaim(db, subnetId, ip, row = null) {
   const lease = db.prepare(`
     SELECT 1 FROM dhcp_leases
      WHERE subnet_id = ? AND ip_address = ?
-       AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+       AND ${activeLeaseSql()}
      LIMIT 1
   `).get(subnetId, ip);
   if (lease) return { claimed: true, hostname: null };

@@ -84,7 +84,7 @@
               </Column>
               <Column field="name" header="Name" sortable />
               <Column field="description" header="Description">
-                <template #body="{ data }">{{ data.description ?? '—' }}</template>
+                <template #body="{ data }">{{ data.description ?? EMPTY_CELL }}</template>
               </Column>
               <Column header="Type" style="width: 7rem">
                 <template #body="{ data }">
@@ -151,7 +151,7 @@ import ContextMenu from 'primevue/contextmenu';
 import { useToast } from 'primevue/usetoast';
 import { useSubnetStore } from '../../stores/subnets.js';
 import { applyNameTemplate } from '../../utils/ip.js';
-import { apiError } from '../../utils/format.js';
+import { apiError, EMPTY_CELL, subnetLabel } from '../../utils/format.js';
 import { collectAllocatedSubnets } from '../../utils/tree.js';
 import api from '../../api/client.js';
 
@@ -206,7 +206,7 @@ const allocatedSubnets = computed(() => {
   for (const f of store.folders) {
     if (!f.subnets) continue;
     for (const s of collectAllocatedSubnets(f.subnets)) {
-      result.push({ label: `${s.cidr} — ${s.name}`, value: s.id });
+      result.push({ label: subnetLabel(s), value: s.id });
     }
   }
   return result;
