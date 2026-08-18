@@ -115,6 +115,14 @@ export const BLOCKLIST_DOWNLOAD_TIMEOUT_MS = 60000;
 // most ~60ms per batch instead of ~4s in one go, with no loss in total
 // throughput. Also the page size for the staged-to-live apply loop.
 export const BLOCKLIST_INSERT_BATCH        = 25000;
+
+// Wireshark manuf download (utils/mac-vendor.js). Not operator-tunable: it is a
+// single fixed upstream file, unlike blocklist feeds which the operator points
+// wherever they like. The cap exists so a broken or hostile upstream cannot
+// hand us an unbounded body; the real file is around 5MB, so 32MB is generous
+// headroom rather than a tight fit.
+export const MANUF_DOWNLOAD_TIMEOUT_MS     = 30000;
+export const MANUF_MAX_BYTES               = 32 * 1024 * 1024;
 export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;      // 1 hour
 export const UPDATE_CHECK_DELAY_MS    = 0;                    // check immediately on startup
 export const GITHUB_REPO              = 'fatcat/cidrella';    // owner/repo for update checks

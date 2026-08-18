@@ -90,7 +90,7 @@
           <span class="status-popover-val">{{ diskDisplay }}</span>
         </div>
         <div class="status-popover-row">
-          <StatusDot :kind="activeScans.length ? 'ok' : 'muted'" :label="dotLabel(activeScans.length ? 'ok' : 'muted')" />
+          <StatusDot :kind="scanState.dot" :label="scanState.dotLabel" />
           <span class="status-popover-label">Scanner</span>
           <span class="status-popover-val">{{ scanDisplay }}</span>
         </div>

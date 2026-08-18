@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { mount } from '@vue/test-utils';
 import { defineComponent } from 'vue';
 
@@ -77,5 +80,35 @@ describe('#55: StatusDot really does accept "info"', () => {
     });
     const w = mount(Host);
     expect(w.find('.sd-info').exists()).toBe(true);
+  });
+});
+
+
+describe('#55: every consumer actually uses the shared derivation', () => {
+  // The unit tests above exercise deriveScanState in isolation, which cannot
+  // catch a CONSUMER that ignores it. That is exactly what happened: the header
+  // chip was switched over and the ops-popover row 70 lines below was missed,
+  // so a queued scan showed "Scanner pending" next to a green OK dot. The
+  // release notes claimed all three renderings agreed. They did not.
+  const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../src');
+  const header = fs.readFileSync(path.join(SRC, 'components/HeaderBar.vue'), 'utf8');
+
+  it('HeaderBar derives scanner state in exactly one place', () => {
+    // The old shape, in any of its spellings.
+    const inline = header.match(/activeScans\.(length|value\.length)\s*(\?|>)/g) || [];
+    expect(inline, `un-unified scanner logic still in HeaderBar: ${inline.join(', ')}`).toEqual([]);
+  });
+
+  it('both scanner StatusDots read from scanState', () => {
+    const dots = header.match(/<StatusDot[^>]*>/g) || [];
+    const scannerDots = dots.filter(d => d.includes('scanState'));
+    // One in the header chip, one in the ops popover. If a third scanner
+    // rendering is added it should come from scanState too.
+    expect(scannerDots.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('the guard is not vacuous: it matches the shape that was actually wrong', () => {
+    const wasWrong = `<StatusDot :kind="activeScans.length ? 'ok' : 'muted'" />`;
+    expect(/activeScans\.(length|value\.length)\s*(\?|>)/.test(wasWrong)).toBe(true);
   });
 });
