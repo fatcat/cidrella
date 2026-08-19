@@ -13,8 +13,9 @@
  *
  * See REVIEW.md, duplicate-logic audit #47.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setActivePinia, createPinia } from 'pinia';
+import { mount } from '@vue/test-utils';
 
 const post = vi.fn();
 vi.mock('../../../src/api/client.js', () => ({
@@ -32,6 +33,30 @@ const { usePiholeImport } = await import('../../../src/composables/usePiholeImpo
 
 const toast = { add: vi.fn() };
 
+/**
+ * Run a composable inside a real component instance.
+ *
+ * usePiholeImport registers `onUnmounted` to clear its debounce timer, and the
+ * comment where it does so records that the timer used to outlive the
+ * component. Calling the composable bare, as these tests originally did, means
+ * Vue has no instance to attach that hook to: it warned nine times per run
+ * ("onUnmounted is called when there is no active component instance"), and the
+ * cleanup path was never executed by any test.
+ *
+ * So this is not warning suppression. It puts the composable in the context it
+ * is written for, which is also the only way the unmount behavior can be
+ * asserted at all (see the teardown test at the bottom).
+ */
+const mounted = [];
+function inSetup(fn) {
+  let result;
+  mounted.push(mount({ setup() { result = fn(); return () => null; } }));
+  return result;
+}
+afterEach(() => {
+  mounted.splice(0).forEach(wrapper => wrapper.unmount());
+});
+
 beforeEach(() => {
   setActivePinia(createPinia());
   post.mockReset();
@@ -46,20 +71,20 @@ const previewWithoutZone = { zoneName: null, hosts: [], cnames: [], dhcpHosts: [
 
 describe('zone resolution', () => {
   it('uses the zone the file declares', () => {
-    const pi = usePiholeImport({ toast });
+    const pi = inSetup(() => usePiholeImport({ toast }));
     pi.preview.value = { ...previewWithoutZone, zoneName: 'declared.lan' };
     expect(pi.resolveZoneName()).toBe('declared.lan');
   });
 
   it('falls back to the caller-supplied zone when the file declares none', () => {
     // The wizard case. Without this, the import failed with "No zone found".
-    const pi = usePiholeImport({ toast, fallbackZoneName: () => 'from-step-2.lan' });
+    const pi = inSetup(() => usePiholeImport({ toast, fallbackZoneName: () => 'from-step-2.lan' }));
     pi.preview.value = previewWithoutZone;
     expect(pi.resolveZoneName()).toBe('from-step-2.lan');
   });
 
   it('prefers the declared zone over the fallback', () => {
-    const pi = usePiholeImport({ toast, fallbackZoneName: () => 'from-step-2.lan' });
+    const pi = inSetup(() => usePiholeImport({ toast, fallbackZoneName: () => 'from-step-2.lan' }));
     pi.preview.value = { ...previewWithoutZone, zoneName: 'declared.lan' };
     expect(pi.resolveZoneName()).toBe('declared.lan');
   });
@@ -67,7 +92,7 @@ describe('zone resolution', () => {
   it('has no fallback when the caller supplies none', () => {
     // The Settings case: there is no wizard domain, and inventing one would be
     // worse than saying so.
-    const pi = usePiholeImport({ toast });
+    const pi = inSetup(() => usePiholeImport({ toast }));
     pi.preview.value = previewWithoutZone;
     expect(pi.resolveZoneName()).toBeFalsy();
   });
@@ -75,7 +100,7 @@ describe('zone resolution', () => {
 
 describe('executeImport', () => {
   it('creates the fallback zone and imports, rather than failing', async () => {
-    const pi = usePiholeImport({ toast, fallbackZoneName: () => 'from-step-2.lan' });
+    const pi = inSetup(() => usePiholeImport({ toast, fallbackZoneName: () => 'from-step-2.lan' }));
     pi.preview.value = previewWithoutZone;
     createZone.mockResolvedValue({ id: 42, name: 'from-step-2.lan', type: 'forward' });
     post.mockResolvedValue({ data: { results: { hosts: 1 } } });
@@ -88,7 +113,7 @@ describe('executeImport', () => {
   });
 
   it('reuses an existing forward zone instead of creating a duplicate', async () => {
-    const pi = usePiholeImport({ toast });
+    const pi = inSetup(() => usePiholeImport({ toast }));
     pi.preview.value = { ...previewWithoutZone, zoneName: 'existing.lan' };
     zones.push({ id: 7, name: 'existing.lan', type: 'forward' });
     post.mockResolvedValue({ data: { results: {} } });
@@ -100,7 +125,7 @@ describe('executeImport', () => {
   });
 
   it('reports when there is no zone and nothing to fall back to', async () => {
-    const pi = usePiholeImport({ toast });
+    const pi = inSetup(() => usePiholeImport({ toast }));
     pi.preview.value = previewWithoutZone;
     await pi.executeImport();
     expect(post).not.toHaveBeenCalled();
@@ -108,7 +133,7 @@ describe('executeImport', () => {
   });
 
   it('does nothing without a preview', async () => {
-    const pi = usePiholeImport({ toast });
+    const pi = inSetup(() => usePiholeImport({ toast }));
     await pi.executeImport();
     expect(post).not.toHaveBeenCalled();
   });
@@ -116,10 +141,47 @@ describe('executeImport', () => {
 
 describe('cleanUrl', () => {
   it('normalizes what the operator types', () => {
-    const { cleanUrl } = usePiholeImport({ toast });
+    const { cleanUrl } = inSetup(() => usePiholeImport({ toast }));
     expect(cleanUrl('pi.hole')).toBe('http://pi.hole');
     expect(cleanUrl('  https://pi.hole/admin/  ')).toBe('https://pi.hole');
     expect(cleanUrl('http://10.0.0.5:8080/x')).toBe('http://10.0.0.5:8080');
     expect(cleanUrl('')).toBe('');
+  });
+});
+
+describe('teardown', () => {
+  // The composable clears its debounce timer in onUnmounted, and the comment at
+  // that line records that the timer used to outlive the component. Nothing
+  // asserted it, because every test called the composable outside a component
+  // instance, so the hook was never registered and Vue warned instead. Now that
+  // the tests run it in a real instance, the guarantee is testable.
+  it('clears the pending URL probe when the component unmounts', () => {
+    vi.useFakeTimers();
+    try {
+      const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+      const wrapper = mount({
+        setup() {
+          const pi = usePiholeImport({ toast });
+          // Typing schedules the debounced probe (600ms in the composable).
+          pi.url.value = 'http://pi.hole';
+          return () => null;
+        },
+      });
+
+      const clearsBefore = clearSpy.mock.calls.length;
+      wrapper.unmount();
+      expect(
+        clearSpy.mock.calls.length,
+        'unmount should clear the debounce timer'
+      ).toBeGreaterThan(clearsBefore);
+
+      // And the probe must not fire after the component is gone.
+      post.mockReset();
+      vi.advanceTimersByTime(5000);
+      expect(post, 'no probe should run after unmount').not.toHaveBeenCalled();
+      clearSpy.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
