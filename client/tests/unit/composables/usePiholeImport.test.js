@@ -158,6 +158,8 @@ describe('teardown', () => {
   it('clears the pending URL probe when the component unmounts', () => {
     vi.useFakeTimers();
     try {
+      // Both spies are installed AFTER useFakeTimers, so they wrap the fakes.
+      const setSpy = vi.spyOn(globalThis, 'setTimeout');
       const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
       const wrapper = mount({
         setup() {
@@ -168,18 +170,26 @@ describe('teardown', () => {
         },
       });
 
-      const clearsBefore = clearSpy.mock.calls.length;
+      // Identify THE debounce timer by its delay rather than asserting that
+      // "some timer was cleared". A count-based assertion passes whenever
+      // anything else happens to call clearTimeout during unmount, which is an
+      // accident of the test environment rather than a property of the code.
+      const debounceIdx = setSpy.mock.calls.findIndex(([, delay]) => delay === 600);
+      expect(debounceIdx, 'typing should schedule the 600ms debounce').toBeGreaterThanOrEqual(0);
+      const debounceId = setSpy.mock.results[debounceIdx].value;
+
       wrapper.unmount();
       expect(
-        clearSpy.mock.calls.length,
-        'unmount should clear the debounce timer'
-      ).toBeGreaterThan(clearsBefore);
+        clearSpy.mock.calls.map(([id]) => id),
+        'unmount should clear the debounce timer specifically'
+      ).toContain(debounceId);
 
       // And the probe must not fire after the component is gone.
       post.mockReset();
       vi.advanceTimersByTime(5000);
       expect(post, 'no probe should run after unmount').not.toHaveBeenCalled();
       clearSpy.mockRestore();
+      setSpy.mockRestore();
     } finally {
       vi.useRealTimers();
     }
