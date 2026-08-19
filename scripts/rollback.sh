@@ -227,7 +227,23 @@ info "Reloading systemd..."
 systemctl daemon-reload
 
 info "Starting CIDRella..."
-systemctl start cidrella
+# Clear the start-limit counter first. This script is run precisely when the
+# active version is broken, and a broken version has usually been crashlooping
+# under Restart=always, burning StartLimitBurst=5 per StartLimitIntervalSec=60.
+# Once that budget is gone systemd refuses the next start with "Start request
+# repeated too quickly", and it refuses it for the GOOD slot too, because the
+# limit belongs to the UNIT and not to the code the symlink points at. This is
+# the manual last line of defense, so it must not be defeated by a rate limit
+# the broken version burned through. Observed on testerella 2026-08-19.
+systemctl reset-failed cidrella 2>/dev/null || true
+
+# Not fatal: this script runs under `set -euo pipefail`, so a bare start that
+# fails would abort here and skip both the readiness wait below and the
+# operator-facing failure message that tells them what to do next. Let the
+# check below decide.
+if ! systemctl start cidrella; then
+  warn "systemctl start returned non-zero, checking service state below"
+fi
 
 # Wait for service to come up
 info "Waiting for service to start..."

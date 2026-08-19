@@ -1357,7 +1357,23 @@ systemctl daemon-reload
 
 track_progress "switching" 90 "Restarting CIDRella..."
 info "Restarting cidrella service (dnsmasq stays running)..."
-systemctl restart cidrella
+# Deliberately NOT fatal. This script runs under `set -euo pipefail` with
+# `trap on_error ERR`, so a bare `systemctl restart` that fails aborted the
+# whole update HERE, before PHASE 7, which is the only caller of the
+# auto-rollback block. The appliance was then left with the symlink pointing at
+# the NEW (broken) slot, the service down, and no rollback events at all. That
+# is the exact outcome the A/B design exists to prevent, and it produced a nasty
+# asymmetry: a version that starts but is unhealthy WAS auto-rolled back, while
+# a version that will not start at all was NOT, even though the second case is
+# the likelier one (bad native module, missing file, capability problem).
+# Proven on testerella 2026-08-19 by failing ExecStartPre for the target slot.
+# Letting the failure through means the health poll below sees a dead service,
+# VERIFY_OK stays false, and the existing auto-rollback runs.
+# See REVIEW.md, "Auto-rollback is bypassed when the new version fails to START".
+if ! systemctl restart cidrella; then
+  warn "New version failed to start, continuing to health verification for auto-rollback"
+  emit_event switchover fail reason=service-start-failed "version=$NEW_VERSION"
+fi
 
 # Restore any enabled-but-inactive auxiliary services after the switchover.
 # On 2026-04-12 prod had cidrella-anomaly stopped (cause unknown) and the
@@ -1548,7 +1564,28 @@ if [ -f "$SNAPSHOT_DIR/analytics.duckdb" ]; then
 fi
 
 systemctl daemon-reload
-systemctl restart cidrella
+
+# Clear the start-limit counter before restarting the restored version.
+#
+# The broken slot has almost certainly been crashlooping under Restart=always,
+# and every retry burns one of StartLimitBurst=5 per StartLimitIntervalSec=60
+# (see scripts/systemd/cidrella.service). Once that budget is gone systemd
+# refuses the next start outright with "Start request repeated too quickly", and
+# it refuses it for the GOOD slot too, because the limit belongs to the UNIT and
+# not to whatever code the symlink happened to point at. Without this the
+# rollback swapped the symlink back correctly and then could not start the
+# healthy version, leaving the appliance down: exactly the outcome auto-rollback
+# exists to prevent. Observed on testerella 2026-08-19.
+systemctl reset-failed cidrella 2>/dev/null || true
+
+# Same reason the switchover restart above is guarded: a bare restart under
+# `set -e` + `trap on_error ERR` aborts the script here, which would skip the
+# ROLLBACK_OK verification below and the operator-facing "rollback failed too"
+# reporting, and emit a misleading generic update-fail event instead. Let it
+# through and let the check below decide what actually happened.
+if ! systemctl restart cidrella; then
+  warn "Rollback restart returned non-zero, verifying service state below"
+fi
 
 # Verify rollback worked
 ROLLBACK_OK=false
