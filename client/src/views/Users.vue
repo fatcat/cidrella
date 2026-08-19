@@ -129,16 +129,16 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { formatDateOnly } from '../utils/dateFormat.js';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import ContextMenu from 'primevue/contextmenu';
-import Dialog from 'primevue/dialog';
-import InputText from 'primevue/inputtext';
-import Select from 'primevue/select';
-import Toast from 'primevue/toast';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import ContextMenu from '../ui/ContextMenu.js';
+import Dialog from '../ui/Dialog.js';
+import InputText from '../ui/InputText.js';
+import Select from '../ui/Select.js';
+import Toast from '../ui/Toast.js';
 import { useAuthStore } from '../stores/auth.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';

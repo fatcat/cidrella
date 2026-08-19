@@ -84,15 +84,15 @@
 </template>
 
 <script setup>
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
-import Message from 'primevue/message';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
-import TabPanel from 'primevue/tabpanel';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import InputText from '../ui/InputText.js';
+import Message from '../ui/Message.js';
+import Tabs from '../ui/Tabs.js';
+import TabList from '../ui/TabList.js';
+import Tab from '../ui/Tab.js';
+import TabPanels from '../ui/TabPanels.js';
+import TabPanel from '../ui/TabPanel.js';
 import { usePiholeImport } from '../composables/usePiholeImport.js';
 
 defineProps({

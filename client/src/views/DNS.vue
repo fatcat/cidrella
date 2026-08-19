@@ -158,14 +158,14 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Select from 'primevue/select';
-import RadioButton from 'primevue/radiobutton';
-import Checkbox from 'primevue/checkbox';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Select from '../ui/Select.js';
+import RadioButton from '../ui/RadioButton.js';
+import Checkbox from '../ui/Checkbox.js';
 import StatusDot from '../components/StatusDot.vue';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';

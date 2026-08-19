@@ -7,7 +7,7 @@
 
 <script setup>
 import { ref } from 'vue';
-import Dialog from 'primevue/dialog';
+import Dialog from '../ui/Dialog.js';
 import PiholeImportPanel from './PiholeImportPanel.vue';
 
 defineEmits(['imported']);

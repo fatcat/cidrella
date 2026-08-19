@@ -60,14 +60,14 @@
 
 <script setup>
 import { ref, computed } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import ContextMenu from 'primevue/contextmenu';
-import Toast from 'primevue/toast';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import ContextMenu from '../ui/ContextMenu.js';
+import Toast from '../ui/Toast.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import { apiError } from '../utils/format.js';
 import { loadJson, saveJson } from '../utils/storage.js';

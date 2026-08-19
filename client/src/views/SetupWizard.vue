@@ -39,10 +39,10 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import InputText from 'primevue/inputtext';
-import Password from 'primevue/password';
-import Button from 'primevue/button';
-import Message from 'primevue/message';
+import InputText from '../ui/InputText.js';
+import Password from '../ui/Password.js';
+import Button from '../ui/Button.js';
+import Message from '../ui/Message.js';
 import { useOperationsStore } from '../stores/operations.js';
 import { apiError } from '../utils/format.js';
 import api from '../api/client.js';

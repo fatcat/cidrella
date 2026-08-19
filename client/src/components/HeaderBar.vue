@@ -182,8 +182,8 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { deriveScanState } from '../utils/scanState.js';
 import { useRouter, useRoute } from 'vue-router';
-import Popover from 'primevue/popover';
-import Select from 'primevue/select';
+import Popover from '../ui/Popover.js';
+import Select from '../ui/Select.js';
 import StatusDot from './StatusDot.vue';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';

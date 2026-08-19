@@ -139,16 +139,16 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import Button from 'primevue/button';
+import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import Select from 'primevue/select';
-import InputText from 'primevue/inputtext';
-import ToggleSwitch from 'primevue/toggleswitch';
-import ContextMenu from 'primevue/contextmenu';
-import { useToast } from 'primevue/usetoast';
+import DataTable from '../../ui/DataTable.js';
+import Column from '../../ui/Column.js';
+import Dialog from '../../ui/Dialog.js';
+import Select from '../../ui/Select.js';
+import InputText from '../../ui/InputText.js';
+import ToggleSwitch from '../../ui/ToggleSwitch.js';
+import ContextMenu from '../../ui/ContextMenu.js';
+import { useToast } from '../../ui/useToast.js';
 import { useSubnetStore } from '../../stores/subnets.js';
 import { applyNameTemplate } from '../../utils/ip.js';
 import { apiError, EMPTY_CELL, subnetLabel } from '../../utils/format.js';

@@ -132,15 +132,15 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
 import { formatNumber, apiError, EMPTY_CELL } from '../utils/format.js';
-import { useToast } from 'primevue/usetoast';
+import { useToast } from '../ui/useToast.js';
 import EmptyState from '../components/EmptyState.vue';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
-import Select from 'primevue/select';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Toast from 'primevue/toast';
-import ToggleSwitch from 'primevue/toggleswitch';
+import Button from '../ui/Button.js';
+import InputText from '../ui/InputText.js';
+import Select from '../ui/Select.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Toast from '../ui/Toast.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
 import { useBlocklistStore } from '../stores/blocklists.js';
 import { useDnsStore } from '../stores/dns.js';
 

@@ -375,25 +375,25 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import IconField from 'primevue/iconfield';
-import InputIcon from 'primevue/inputicon';
-import Select from 'primevue/select';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
-import TabPanel from 'primevue/tabpanel';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Dialog from '../ui/Dialog.js';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import IconField from '../ui/IconField.js';
+import InputIcon from '../ui/InputIcon.js';
+import Select from '../ui/Select.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Tabs from '../ui/Tabs.js';
+import TabList from '../ui/TabList.js';
+import Tab from '../ui/Tab.js';
+import TabPanels from '../ui/TabPanels.js';
+import TabPanel from '../ui/TabPanel.js';
 
-import ContextMenu from 'primevue/contextmenu';
-import Toast from 'primevue/toast';
+import ContextMenu from '../ui/ContextMenu.js';
+import Toast from '../ui/Toast.js';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';

@@ -231,11 +231,11 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { apiError } from '../utils/format.js';
-import Button from 'primevue/button';
-import ProgressBar from 'primevue/progressbar';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Dialog from 'primevue/dialog';
-import { useToast } from 'primevue/usetoast';
+import Button from '../ui/Button.js';
+import ProgressBar from '../ui/ProgressBar.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Dialog from '../ui/Dialog.js';
+import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
 import { formatRelativeTime as formatRelative } from '../utils/dateFormat.js';
 

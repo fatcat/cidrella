@@ -44,12 +44,12 @@
 <script setup>
 import { ref, computed } from 'vue';
 import { EMPTY_CELL } from '../utils/format.js';
-import InputText from 'primevue/inputtext';
+import InputText from '../ui/InputText.js';
 import EmptyState from './EmptyState.vue';
-import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import ContextMenu from 'primevue/contextmenu';
+import Button from '../ui/Button.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import ContextMenu from '../ui/ContextMenu.js';
 import { formatDateTime } from '../utils/dateFormat.js';
 
 const props = defineProps({

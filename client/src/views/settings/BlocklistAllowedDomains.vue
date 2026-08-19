@@ -19,7 +19,7 @@
 
 <script setup>
 import { onMounted } from 'vue';
-import { useToast } from 'primevue/usetoast';
+import { useToast } from '../../ui/useToast.js';
 import DomainWhitelist from '../../components/DomainWhitelist.vue';
 import { apiError } from '../../utils/format.js';
 import { useBlocklistStore } from '../../stores/blocklists.js';

@@ -137,15 +137,15 @@
 import { ref, computed, onMounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
 import { apiError, EMPTY_CELL } from '../utils/format.js';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Toast from 'primevue/toast';
-import ToggleSwitch from 'primevue/toggleswitch';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Toast from '../ui/Toast.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
 import StatusBadge from '../components/StatusBadge.vue';
 import { useRogueDhcpStore } from '../stores/rogueDhcp.js';
 

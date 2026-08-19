@@ -166,9 +166,9 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import { EMPTY_CELL } from '../utils/format.js';
-import Select from 'primevue/select';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
+import Select from '../ui/Select.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
 import { Doughnut, Line } from 'vue-chartjs';
 import {
   Chart as ChartJS,

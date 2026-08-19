@@ -28,8 +28,8 @@
 
 <script setup>
 import { computed } from 'vue';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
 import { Doughnut } from 'vue-chartjs';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { makeDoughnutOptions } from '../utils/chart-config.js';

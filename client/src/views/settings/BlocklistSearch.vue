@@ -48,11 +48,11 @@
 
 <script setup>
 import { ref } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
+import { useToast } from '../../ui/useToast.js';
+import Button from '../../ui/Button.js';
+import InputText from '../../ui/InputText.js';
+import DataTable from '../../ui/DataTable.js';
+import Column from '../../ui/Column.js';
 import EmptyState from '../../components/EmptyState.vue';
 import { apiError } from '../../utils/format.js';
 import { useBlocklistStore } from '../../stores/blocklists.js';

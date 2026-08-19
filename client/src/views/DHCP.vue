@@ -105,16 +105,16 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import Select from 'primevue/select';
-import Popover from 'primevue/popover';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Dialog from '../ui/Dialog.js';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import Select from '../ui/Select.js';
+import Popover from '../ui/Popover.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';

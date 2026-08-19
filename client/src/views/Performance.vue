@@ -104,8 +104,8 @@
 import { computed, onMounted } from 'vue';
 import { EMPTY_CELL } from '../utils/format.js';
 import { formatEpoch } from '../utils/dateFormat.js';
-import Select from 'primevue/select';
-import Button from 'primevue/button';
+import Select from '../ui/Select.js';
+import Button from '../ui/Button.js';
 import {
   Chart as ChartJS,
   CategoryScale, LinearScale, PointElement, LineElement,

@@ -240,15 +240,15 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import ContextMenu from 'primevue/contextmenu';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import ContextMenu from '../ui/ContextMenu.js';
 import EmptyState from '../components/EmptyState.vue';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
-import TabPanel from 'primevue/tabpanel';
+import Tabs from '../ui/Tabs.js';
+import TabList from '../ui/TabList.js';
+import Tab from '../ui/Tab.js';
+import TabPanels from '../ui/TabPanels.js';
+import TabPanel from '../ui/TabPanel.js';
 import SubnetDetail from './SubnetDetail.vue';
 import FolderNetworkTable from '../components/FolderNetworkTable.vue';
 import NetworkDialogs from '../components/NetworkDialogs.vue';

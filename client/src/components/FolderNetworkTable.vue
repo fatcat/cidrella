@@ -69,7 +69,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue';
 import { EMPTY_CELL } from '../utils/format.js';
-import Button from 'primevue/button';
+import Button from '../ui/Button.js';
 import { useSubnetStore } from '../stores/subnets.js';
 
 const props = defineProps({

@@ -40,9 +40,9 @@
 
 <script setup>
 import { ref } from 'vue';
-import Button from 'primevue/button';
-import Dialog from 'primevue/dialog';
-import PickList from 'primevue/picklist';
+import Button from '../../ui/Button.js';
+import Dialog from '../../ui/Dialog.js';
+import PickList from '../../ui/PickList.js';
 
 const props = defineProps({
   tableName: { type: String, required: true },

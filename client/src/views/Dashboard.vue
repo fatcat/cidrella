@@ -70,8 +70,8 @@
 import { ref, computed, onMounted } from 'vue';
 import { saveJson } from '../utils/storage.js';
 import { useRouter } from 'vue-router';
-import Select from 'primevue/select';
-import Button from 'primevue/button';
+import Select from '../ui/Select.js';
+import Button from '../ui/Button.js';
 import {
   Chart as ChartJS, ArcElement, Tooltip, Legend,
 } from 'chart.js';

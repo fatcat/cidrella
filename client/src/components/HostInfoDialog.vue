@@ -53,11 +53,11 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue';
-import Dialog from 'primevue/dialog';
-import Button from 'primevue/button';
+import Dialog from '../ui/Dialog.js';
+import Button from '../ui/Button.js';
 import StatusDot from './StatusDot.vue';
 import { displayOnlineStatus, EMPTY_CELL, displayHostnameCell } from '../utils/format.js';
-import { useToast } from 'primevue/usetoast';
+import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
 import { formatDateTime } from '../utils/dateFormat.js';
