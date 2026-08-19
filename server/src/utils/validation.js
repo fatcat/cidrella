@@ -150,8 +150,9 @@ export function validateSoaFields(fields = {}) {
 // `vlans` table (CHECK vlan_id >= 1 AND vlan_id <= 4094), but subnets.vlan_id
 // is a bare INTEGER and routes/subnets.js checked 0-4094 in three places, so a
 // subnet could hold vlan_id = 0 that no vlans row is allowed to exist for.
-// detectVlanCollision guards with `vlanId == null`, which 0 passes, so those
-// subnets also skipped collision detection.
+// detectVlanCollision guards with `vlanId == null`, which 0 does NOT trip
+// (`0 == null` is false), so two subnets both holding vlan_id = 0 reported a
+// collision on a VLAN that is not allowed to exist in the first place.
 // See REVIEW.md, duplicate-logic audit #16.
 export const VLAN_ID_MIN = 1;
 export const VLAN_ID_MAX = 4094;
