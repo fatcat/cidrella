@@ -27,7 +27,9 @@ router.get('/', requireAdmin, (req, res) => {
   const users = db.prepare(
     `SELECT u.id, u.username, u.role, u.kind, u.must_change_password, u.created_at, u.updated_at,
             (SELECT COUNT(*) FROM api_tokens t
-              WHERE t.user_id = u.id AND t.revoked_at IS NULL) AS active_tokens
+              WHERE t.user_id = u.id
+                AND t.revoked_at IS NULL
+                AND (t.expires_at IS NULL OR t.expires_at > datetime('now'))) AS active_tokens
        FROM users u ORDER BY u.created_at`
   ).all();
   res.json(users);

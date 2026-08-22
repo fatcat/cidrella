@@ -451,9 +451,12 @@ async function loadTokens() {
 async function createToken() {
   saving.value = true;
   try {
+    // Send the raw string. Coercing with Number() here turned a typo into NaN,
+    // which JSON serialises to null, which the server cannot tell apart from an
+    // omitted field and so read as "never". Validation belongs in one place.
     const res = await api.post(`/users/${tokenUser.value.id}/tokens`, {
       name: tokenForm.value.name,
-      expires_in_days: Number(tokenForm.value.expires_in_days || 0)
+      expires_in_days: tokenForm.value.expires_in_days
     });
     revealedToken.value = res.data.token;
     showTokenRevealDialog.value = true;

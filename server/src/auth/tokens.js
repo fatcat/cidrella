@@ -34,11 +34,16 @@ export function generateToken() {
  * Zero, null and undefined all mean "never", which is stored as NULL.
  */
 export function expiryFromDays(days) {
-  if (days === undefined || days === null || days === '' || Number(days) === 0) return null;
-  const n = Number(days);
+  const raw = typeof days === 'string' ? days.trim() : days;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  // Checked before the zero test, so a value that is not a number is an error
+  // rather than quietly becoming "never". Number('') is 0 and Number('x') is
+  // NaN, which is why the empty case is handled above and separately.
   if (!Number.isFinite(n) || n < 0 || !Number.isInteger(n)) {
     throw new Error('expires_in_days must be a whole number of days, or 0 for never');
   }
+  if (n === 0) return null;
   const d = new Date(Date.now() + n * 86_400_000);
   return d.toISOString().slice(0, 19).replace('T', ' ');
 }

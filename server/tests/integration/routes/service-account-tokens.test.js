@@ -142,11 +142,53 @@ describe('api tokens', () => {
 
   it('rejects a nonsense expiry rather than silently making it never', async () => {
     const acct = await makeServiceAccount('poller-badexp');
-    for (const bad of [-1, 1.5, 'soon']) {
+    // Strings included because the field is free text in the UI and the client
+    // now forwards it verbatim, so the server is the only thing validating it.
+    for (const bad of [-1, 1.5, 'soon', '30d', '1.5', 'NaN']) {
       const res = await request(app).post(`/api/users/${acct.id}/tokens`)
         .send({ name: 'k', expires_in_days: bad });
-      expect(res.status).toBe(400);
+      expect(res.status, `expires_in_days=${JSON.stringify(bad)} should be refused`).toBe(400);
     }
+  });
+
+  it('treats a blank field as never, which is a choice rather than a typo', async () => {
+    const acct = await makeServiceAccount('poller-blank');
+    for (const blank of ['', '   ']) {
+      const res = await request(app).post(`/api/users/${acct.id}/tokens`)
+        .send({ name: 'k', expires_in_days: blank });
+      expect(res.status).toBe(201);
+      expect(res.body.expires_at).toBeNull();
+    }
+  });
+
+  it('accepts a numeric expiry sent as a string, which is what the form produces', async () => {
+    const acct = await makeServiceAccount('poller-strexp');
+    const res = await request(app).post(`/api/users/${acct.id}/tokens`)
+      .send({ name: 'k', expires_in_days: '30' });
+    expect(res.status).toBe(201);
+    expect(res.body.expires_at).toBeTruthy();
+
+    const never = await request(app).post(`/api/users/${acct.id}/tokens`)
+      .send({ name: 'k2', expires_in_days: '0' });
+    expect(never.body.expires_at).toBeNull();
+  });
+
+  it('counts only tokens that could actually authenticate', async () => {
+    const acct = await makeServiceAccount('poller-count');
+    const live = await request(app).post(`/api/users/${acct.id}/tokens`).send({ name: 'live' });
+    const dead = await request(app).post(`/api/users/${acct.id}/tokens`).send({ name: 'dead' });
+    const gone = await request(app).post(`/api/users/${acct.id}/tokens`).send({ name: 'gone' });
+
+    db.prepare("UPDATE api_tokens SET expires_at = datetime('now', '-1 day') WHERE id = ?")
+      .run(dead.body.id);
+    await request(app).delete(`/api/users/${acct.id}/tokens/${gone.body.id}`);
+
+    // An expired token cannot authenticate, so showing it in the count would
+    // tell an admin an integration still has access when it does not.
+    const list = await request(app).get('/api/users');
+    const row = list.body.find(u => u.id === acct.id);
+    expect(row.active_tokens).toBe(1);
+    expect(tokens.resolveApiToken(db, live.body.token).error).toBeUndefined();
   });
 
   it('rejects an expired token', async () => {
