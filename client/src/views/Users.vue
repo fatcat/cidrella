@@ -14,6 +14,15 @@
                         :actions="[{ label: 'Add User', icon: 'pi-plus', dataTrack: 'sys-add-user-empty', onClick: () => openCreateDialog() }]" />
       </template>
       <Column field="username" header="Username" sortable style="min-width: 10rem" />
+      <Column header="Type" sortable sortField="kind" style="min-width: 9rem">
+        <template #body="{ data }">
+          <span v-if="data.kind === 'service'" class="kind-tag" data-track="sys-user-service">
+            <i class="pi pi-cog"></i> service
+            <span class="token-count">{{ data.active_tokens || 0 }} token{{ data.active_tokens === 1 ? '' : 's' }}</span>
+          </span>
+          <span v-else class="kind-plain">person</span>
+        </template>
+      </Column>
       <Column header="Role" sortable sortField="role" style="min-width: 10rem">
         <template #body="{ data }">{{ roleLabel(data.role) }}</template>
       </Column>
@@ -58,6 +67,16 @@
           <Select v-model="createForm.role" :options="ROLES" optionLabel="label" optionValue="value"
                   class="w-full" placeholder="Select role" :loading="rolesLoading" />
         </div>
+        <div class="field">
+          <label>Account type</label>
+          <Select v-model="createForm.kind" :options="ACCOUNT_KINDS" optionLabel="label" optionValue="value"
+                  class="w-full" data-track="sys-user-kind" />
+          <small class="field-hint">
+            {{ createForm.kind === 'service'
+              ? 'For a machine. No password, cannot sign in, authenticates with an API token you issue after creating it.'
+              : 'For a person. Gets a one-time password and must change it at first sign-in.' }}
+          </small>
+        </div>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showCreateDialog = false" />
@@ -99,6 +118,77 @@
       </div>
       <template #footer>
         <Button label="Done" @click="showPasswordDialog = false" />
+      </template>
+    </Dialog>
+
+    <!-- API Tokens Dialog -->
+    <Dialog v-model:visible="showTokensDialog" :header="`API Tokens: ${tokenUser?.username || ''}`"
+            modal :style="{ width: '40rem' }">
+      <div class="tokens-panel">
+        <p class="password-note">
+          A token carries this account's role ({{ roleLabel(tokenUser?.role) }}) and nothing more.
+          It is shown once when created. Revoke it here if it leaks.
+        </p>
+
+        <DataTable :value="tokenList" :loading="tokensLoading" size="small">
+          <template #empty>
+            <span class="kind-plain">No tokens yet.</span>
+          </template>
+          <Column field="name" header="Name" style="min-width: 8rem" />
+          <Column header="Token" style="min-width: 9rem">
+            <template #body="{ data }"><code>{{ data.prefix }}…</code></template>
+          </Column>
+          <Column header="Expires" style="min-width: 8rem">
+            <template #body="{ data }">{{ data.expires_at ? formatDate(data.expires_at) : 'never' }}</template>
+          </Column>
+          <Column header="Last used" style="min-width: 8rem">
+            <template #body="{ data }">{{ data.last_used_at ? formatDate(data.last_used_at) : 'never' }}</template>
+          </Column>
+          <Column header="" style="width: 6rem">
+            <template #body="{ data }">
+              <span v-if="data.revoked_at" class="kind-plain">revoked</span>
+              <Button v-else icon="pi pi-ban" severity="danger" text size="small" title="Revoke"
+                      data-track="sys-token-revoke" @click="revokeToken(data)" />
+            </template>
+          </Column>
+        </DataTable>
+
+        <div class="token-new">
+          <div class="field">
+            <label>New token name</label>
+            <InputText v-model="tokenForm.name" class="w-full" placeholder="switchmap"
+                       data-track="sys-token-name" />
+          </div>
+          <div class="field">
+            <label>Expires in (days)</label>
+            <InputText v-model="tokenForm.expires_in_days" class="w-full" placeholder="0" />
+            <small class="field-hint">0 means never. An unattended poller has nobody to renew it.</small>
+          </div>
+          <Button label="Create token" icon="pi pi-plus" :loading="saving"
+                  data-track="sys-token-create" @click="createToken" />
+        </div>
+      </div>
+      <template #footer>
+        <Button label="Close" @click="showTokensDialog = false" />
+      </template>
+    </Dialog>
+
+    <!-- Token Reveal Dialog -->
+    <Dialog v-model:visible="showTokenRevealDialog" header="API Token" modal
+            :style="{ width: '34rem' }" :closable="false">
+      <div class="password-reveal">
+        <p class="password-warning">
+          <i class="pi pi-exclamation-triangle" style="color: var(--p-orange-500)"></i>
+          This token will not be shown again. Copy it now.
+        </p>
+        <div class="password-field">
+          <InputText :modelValue="revealedToken" class="w-full" readonly />
+          <Button icon="pi pi-copy" severity="secondary" size="small" title="Copy" @click="copyToken" />
+        </div>
+        <p class="password-note">Store it where the client reads it, not in a shell history or a ticket.</p>
+      </div>
+      <template #footer>
+        <Button label="Done" @click="showTokenRevealDialog = false" />
       </template>
     </Dialog>
 
@@ -171,8 +261,22 @@ const users = ref([]);
 const loading = ref(false);
 const saving = ref(false);
 
+const ACCOUNT_KINDS = [
+  { value: 'person', label: 'Person' },
+  { value: 'service', label: 'Service account' }
+];
+
 const showCreateDialog = ref(false);
-const createForm = ref({ username: '', role: 'readonly' });
+const createForm = ref({ username: '', role: 'readonly', kind: 'person' });
+
+const showTokensDialog = ref(false);
+const tokenUser = ref(null);
+const tokenList = ref([]);
+const tokensLoading = ref(false);
+const tokenForm = ref({ name: '', expires_in_days: '0' });
+
+const showTokenRevealDialog = ref(false);
+const revealedToken = ref('');
 
 const showEditDialog = ref(false);
 const editingUser = ref(null);
@@ -194,9 +298,13 @@ const userContextMenuItems = computed(() => {
   const u = selectedUser.value;
   if (!u) return [];
   const items = [
-    { label: 'Edit Role', icon: 'pi pi-pencil', command: () => openEditDialog(u) },
-    { label: 'Reset Password', icon: 'pi pi-key', command: () => confirmResetPassword(u) }
+    { label: 'Edit Role', icon: 'pi pi-pencil', command: () => openEditDialog(u) }
   ];
+  if (u.kind === 'service') {
+    items.push({ label: 'API Tokens', icon: 'pi pi-key', command: () => openTokensDialog(u) });
+  } else {
+    items.push({ label: 'Reset Password', icon: 'pi pi-key', command: () => confirmResetPassword(u) });
+  }
   if (u.id !== currentUserId) {
     items.push({ label: 'Delete User', icon: 'pi pi-trash', command: () => confirmDelete(u) });
   }
@@ -242,10 +350,17 @@ async function createUser() {
   try {
     const res = await api.post('/users', createForm.value);
     showCreateDialog.value = false;
+    await loadUsers();
+    if (res.data.kind === 'service') {
+      // No password exists to show. Go straight to issuing a token, which is
+      // the only way this account can be used at all.
+      toast.add({ severity: 'success', summary: 'Service account created', life: 3000 });
+      openTokensDialog(res.data);
+      return;
+    }
     revealedPassword.value = res.data.password;
     showPasswordDialog.value = true;
     toast.add({ severity: 'success', summary: 'User created', life: 3000 });
-    await loadUsers();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
@@ -313,6 +428,61 @@ async function deleteUser() {
   }
 }
 
+async function openTokensDialog(user) {
+  tokenUser.value = user;
+  tokenForm.value = { name: '', expires_in_days: '0' };
+  showTokensDialog.value = true;
+  await loadTokens();
+}
+
+async function loadTokens() {
+  if (!tokenUser.value) return;
+  tokensLoading.value = true;
+  try {
+    const res = await api.get(`/users/${tokenUser.value.id}/tokens`);
+    tokenList.value = res.data;
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally {
+    tokensLoading.value = false;
+  }
+}
+
+async function createToken() {
+  saving.value = true;
+  try {
+    const res = await api.post(`/users/${tokenUser.value.id}/tokens`, {
+      name: tokenForm.value.name,
+      expires_in_days: Number(tokenForm.value.expires_in_days || 0)
+    });
+    revealedToken.value = res.data.token;
+    showTokenRevealDialog.value = true;
+    tokenForm.value = { name: '', expires_in_days: '0' };
+    await loadTokens();
+    await loadUsers();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally {
+    saving.value = false;
+  }
+}
+
+async function revokeToken(token) {
+  try {
+    await api.delete(`/users/${tokenUser.value.id}/tokens/${token.id}`);
+    toast.add({ severity: 'success', summary: 'Token revoked', life: 3000 });
+    await loadTokens();
+    await loadUsers();
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  }
+}
+
+function copyToken() {
+  navigator.clipboard.writeText(revealedToken.value);
+  toast.add({ severity: 'info', summary: 'Copied to clipboard', life: 2000 });
+}
+
 function copyPassword() {
   navigator.clipboard.writeText(revealedPassword.value);
   toast.add({ severity: 'info', summary: 'Copied to clipboard', life: 2000 });
@@ -327,6 +497,31 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.kind-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+.kind-tag .token-count {
+  color: var(--p-text-muted-color);
+  font-size: 0.78rem;
+}
+.kind-plain { color: var(--p-text-muted-color); }
+.field-hint {
+  display: block;
+  margin-top: 0.25rem;
+  color: var(--p-text-muted-color);
+}
+.tokens-panel { display: flex; flex-direction: column; gap: 1rem; }
+.token-new {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--p-content-border-color);
+}
+
 .card-header {
   display: flex;
   align-items: center;

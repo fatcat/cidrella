@@ -105,6 +105,15 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // A service account has no usable password and must never obtain a login
+    // JWT. Its password_hash is a discarded random value, so bcrypt above can
+    // never match anyway, but refusing by kind means the rule is stated rather
+    // than relied upon as a side effect.
+    if (user.kind === 'service') {
+      audit(user.id, 'login_failed', 'user', user.id, { reason: 'service_account' });
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
     const token = generateToken(user);
     audit(user.id, 'login', 'user', user.id, null);
 

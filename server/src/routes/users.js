@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { getDb, audit } from '../db/init.js';
 import { ROLES, requireRole } from '../auth/roles.js';
+import { generateToken, expiryFromDays } from '../auth/tokens.js';
 import * as User from '../models/user.js';
 
 const router = Router();
@@ -24,7 +25,10 @@ router.get('/roles', requireAdmin, (req, res) => {
 router.get('/', requireAdmin, (req, res) => {
   const db = getDb();
   const users = db.prepare(
-    'SELECT id, username, role, must_change_password, created_at, updated_at FROM users ORDER BY created_at'
+    `SELECT u.id, u.username, u.role, u.kind, u.must_change_password, u.created_at, u.updated_at,
+            (SELECT COUNT(*) FROM api_tokens t
+              WHERE t.user_id = u.id AND t.revoked_at IS NULL) AS active_tokens
+       FROM users u ORDER BY u.created_at`
   ).all();
   res.json(users);
 });
@@ -32,6 +36,7 @@ router.get('/', requireAdmin, (req, res) => {
 // POST /api/users: create user with random password
 router.post('/', requireAdmin, async (req, res) => {
   const { username, role } = req.body;
+  const kind = req.body.kind === 'service' ? 'service' : 'person';
 
   if (!username || !username.trim()) {
     return res.status(400).json({ error: 'Username is required' });
@@ -53,18 +58,32 @@ router.post('/', requireAdmin, async (req, res) => {
   }
 
   try {
+    // A service account gets a password nobody ever learns: the hash is of
+    // random bytes that are discarded here. Combined with the kind check in the
+    // login route it cannot authenticate interactively at all. The column is
+    // NOT NULL, which is why a value is written rather than left empty.
     const password = crypto.randomBytes(9).toString('base64');
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(
+      kind === 'service' ? crypto.randomBytes(32).toString('base64') : password,
+      10
+    );
 
     const user = User.createUser(db, {
       username: username.trim().toLowerCase(),
       passwordHash: hash,
       role,
-      mustChangePassword: true
+      kind,
+      // A machine has nobody to walk through a first-login password change, and
+      // the flag would lock every route until one happened.
+      mustChangePassword: kind !== 'service'
     });
 
-    audit(req.user.id, 'user_created', 'user', user.id, { username: username.trim(), role });
+    audit(req.user.id, 'user_created', 'user', user.id, { username: username.trim(), role, kind });
 
+    if (kind === 'service') {
+      res.status(201).json({ ...user, active_tokens: 0 });
+      return;
+    }
     res.status(201).json({ ...user, password });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Internal server error' });
@@ -130,6 +149,103 @@ router.post('/:id/reset-password', requireAdmin, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message || 'Internal server error' });
   }
+});
+
+// ─── API tokens ──────────────────────────────────────────
+//
+// Tokens belong to service accounts only. Letting a person's account carry a
+// long-lived credential would mean a human leaving the organisation takes a
+// working key with them, and the account it belongs to still passes every
+// permission check.
+
+const TOKEN_NAME_RE = /^[A-Za-z0-9 ._-]{1,64}$/;
+
+function serviceAccountOr404(db, id, res) {
+  const user = db.prepare('SELECT id, username, role, kind FROM users WHERE id = ?').get(id);
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return null;
+  }
+  if (user.kind !== 'service') {
+    res.status(400).json({ error: 'Only service accounts can hold API tokens' });
+    return null;
+  }
+  return user;
+}
+
+// GET /api/users/:id/tokens: metadata only, the secret is never recoverable
+router.get('/:id/tokens', requireAdmin, (req, res) => {
+  const db = getDb();
+  const user = serviceAccountOr404(db, req.params.id, res);
+  if (!user) return;
+
+  const tokens = db.prepare(`
+    SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at
+    FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC
+  `).all(user.id);
+  res.json(tokens);
+});
+
+// POST /api/users/:id/tokens: mint one, returned in the clear exactly once
+router.post('/:id/tokens', requireAdmin, (req, res) => {
+  const db = getDb();
+  const user = serviceAccountOr404(db, req.params.id, res);
+  if (!user) return;
+
+  const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  if (!TOKEN_NAME_RE.test(name)) {
+    return res.status(400).json({
+      error: 'Token name is required, up to 64 characters of letters, numbers, spaces, dots, hyphens or underscores'
+    });
+  }
+
+  let expiresAt;
+  try {
+    expiresAt = expiryFromDays(req.body?.expires_in_days);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const { token, hash, prefix } = generateToken();
+  const result = db.prepare(`
+    INSERT INTO api_tokens (user_id, name, token_hash, prefix, created_by, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(user.id, name, hash, prefix, req.user.id, expiresAt);
+
+  audit(req.user.id, 'api_token_created', 'user', user.id, {
+    username: user.username, token_id: result.lastInsertRowid, name,
+    expires_at: expiresAt || 'never'
+  });
+
+  const row = db.prepare(`
+    SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at
+    FROM api_tokens WHERE id = ?
+  `).get(result.lastInsertRowid);
+
+  // The only time the secret leaves the server.
+  res.status(201).json({ ...row, token });
+});
+
+// DELETE /api/users/:id/tokens/:tokenId: revoke, keeping the row as history
+router.delete('/:id/tokens/:tokenId', requireAdmin, (req, res) => {
+  const db = getDb();
+  const user = serviceAccountOr404(db, req.params.id, res);
+  if (!user) return;
+
+  const token = db.prepare('SELECT id, name, revoked_at FROM api_tokens WHERE id = ? AND user_id = ?')
+    .get(req.params.tokenId, user.id);
+  if (!token) {
+    return res.status(404).json({ error: 'Token not found' });
+  }
+  if (token.revoked_at) {
+    return res.status(409).json({ error: 'Token already revoked' });
+  }
+
+  db.prepare("UPDATE api_tokens SET revoked_at = datetime('now') WHERE id = ?").run(token.id);
+  audit(req.user.id, 'api_token_revoked', 'user', user.id, {
+    username: user.username, token_id: token.id, name: token.name
+  });
+  res.json({ message: 'Token revoked' });
 });
 
 export default router;
