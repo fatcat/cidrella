@@ -52,13 +52,19 @@ Current owners:
 
 Terminology:
 
-- `assignment_status`: whether an address is available, in use, reserved, or
-  rogue.
+- `allocation_state`: the mutually exclusive authority for an address.
+- `ip_display_status`: a derived value of available, DHCP Scope, or in use.
 - `address_type`: how an assigned address was instantiated, such as
-  static DNS, reserved DHCP, or dynamic DHCP. Available addresses should not
-  have a type.
+  static DNS, reserved DHCP, dynamic DHCP, or SLAAC. Rogue is a derived
+  classification for an online unassigned address. Available addresses should
+  not have a type.
 - `online_status`: active/passive liveness state, independent of assignment.
 - `hostname`: one primary hostname for an IP. Additional names should be CNAMEs.
+
+The executable vocabulary and allowed state transitions live in
+`server/src/models/ip-lifecycle.js`. Normalized protocol ownership and topology
+projection are recorded in `docs/adr/001-ip-protocol-table-ownership.md` and
+`docs/adr/002-ip-topology-projection.md`.
 
 ## Current Write Owners
 
