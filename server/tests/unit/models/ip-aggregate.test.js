@@ -74,6 +74,17 @@ describe('canonical IP aggregate schema', () => {
 });
 
 describe('canonical IP read aggregate', () => {
+  it('adds canonical identity to synthesized protocol rows', () => {
+    expect(buildIpAggregate({
+      ip_address: '2001:0DB8:0:0:0:0:0:90',
+      has_static_dns: 1
+    })).toMatchObject({
+      ip_address: '2001:db8::90',
+      address_family: 6,
+      address_type: 'static DNS'
+    });
+  });
+
   it('projects allocation, SLAAC, pool, and conflict states without changing liveness', () => {
     expect(buildIpAggregate({ allocation_state: 'slaac', is_online: 0 })).toMatchObject({
       allocation_state: 'slaac',
@@ -96,4 +107,3 @@ describe('canonical IP read aggregate', () => {
     });
   });
 });
-

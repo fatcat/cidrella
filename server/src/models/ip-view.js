@@ -3,6 +3,7 @@ import { localIpv4Set } from '../utils/local-addresses.js';
 import { lookupFingerprintBatch } from './device-fingerprint.js';
 import * as DnsRecord from './dns-record.js';
 import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
+import { addressFamily, canonicalizeIp, sortKey } from '../utils/address.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -109,7 +110,14 @@ export function computeIpView(row) {
 }
 
 export function buildIpAggregate(row) {
-  return { ...row, ...computeIpView(row) };
+  const canonical = canonicalizeIp(row.ip_address);
+  return {
+    ...row,
+    ip_address: canonical || row.ip_address,
+    address_family: row.address_family ?? addressFamily(row.ip_address),
+    address_sort_key: row.address_sort_key ?? sortKey(row.ip_address),
+    ...computeIpView(row)
+  };
 }
 
 export function applyIpView(row) {
