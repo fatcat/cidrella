@@ -584,6 +584,13 @@ the same address without client inference.
 
 ### Phase 4: Central transition service
 
+Status: complete. Implemented, tested, committed, and pushed in `64a69cc`.
+
+Validation: 1,007 server tests passed with 10 later-phase cases pending, 133
+client tests passed, lint, database ownership, and diff checks passed on
+2026-09-02. The commit review passed and identified the competing DNS and DHCP
+claim rejection that Phase 5 implements next.
+
 - Route DNS A-record writes through the lifecycle service.
 - Route future AAAA writes through the same lifecycle service rather than an
   IPv6-specific owner.
