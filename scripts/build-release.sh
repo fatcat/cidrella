@@ -714,7 +714,7 @@ fi
 echo "[1/7] Building client..."
 if [ "$DRY_RUN" = false ]; then
   cd "$PROJECT_DIR/client"
-  npm ci --silent
+  npm ci
   npx vite build
   echo "  Client built successfully."
 else
