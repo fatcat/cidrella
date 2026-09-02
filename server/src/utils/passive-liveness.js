@@ -11,9 +11,13 @@
 import fs from 'fs';
 import path from 'path';
 import { readLogTail } from './log-reader.js';
-import { pruneStaleDhcpHostRows } from './ip-sync.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
-import * as IpAddress from '../models/ip-address.js';
+import {
+  markStalePassiveAddresses,
+  pruneStaleDhcpAddresses,
+  pruneLifecycleEvents,
+  retireStaleDynamicAddresses
+} from '../services/ip-lifecycle-service.js';
 import {
   DATA_DIR,
   PASSIVE_LIVENESS_POLL_MS,
@@ -61,10 +65,10 @@ export function startPassiveLivenessWatcher(db) {
     // Staleness sweep (every ~60 seconds), also clears rogue on stale IPs
     if (now - lastStaleCheck >= 60000) {
       const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
-      IpAddress.bulkMarkStale(db, staleMinutes);
-      pruneStaleDhcpHostRows(db);
-      IpAddress.pruneEvents(db);
-      IpAddress.clearStaleDynamicMetadata(db);
+      markStalePassiveAddresses(db, staleMinutes);
+      pruneStaleDhcpAddresses(db);
+      pruneLifecycleEvents(db);
+      retireStaleDynamicAddresses(db);
       lastStaleCheck = now;
 
     }

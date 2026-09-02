@@ -93,13 +93,13 @@ export function upsert(db, subnetId, ip, fields = {}) {
     hostname, mac_address, status, is_online, last_seen_mac,
     is_rogue, rogue_reason, last_scanned_at, detection_source,
     allocation_state, allocation_source_type, allocation_source_id,
-    preferred_until, valid_until, dhcp_version
+    preferred_until, valid_until, dhcp_version, reservation_note, scan_enabled
   } = fields;
 
   const existing = db.prepare(`
     SELECT id, hostname, mac_address, status, is_online, allocation_state,
            allocation_source_type, allocation_source_id, preferred_until,
-           valid_until, dhcp_version
+           valid_until, dhcp_version, reservation_note, scan_enabled
     FROM ip_addresses
     WHERE subnet_id = ? AND ip_address = ?
       AND COALESCE(interface_id, '') = COALESCE(?, '')
@@ -165,7 +165,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
       ['allocation_source_id', allocation_source_id],
       ['preferred_until', preferred_until],
       ['valid_until', valid_until],
-      ['dhcp_version', dhcp_version]
+      ['dhcp_version', dhcp_version],
+      ['reservation_note', reservation_note],
+      ['scan_enabled', scan_enabled]
     ]) {
       if (value !== undefined && value !== existing[column]) {
         updates.push(`${column} = ?`);
@@ -193,13 +195,14 @@ export function upsert(db, subnetId, ip, fields = {}) {
       is_rogue, rogue_reason, last_scanned_at,
       first_seen_at, detection_source, allocation_state,
       allocation_source_type, allocation_source_id, address_family,
-      address_sort_key, interface_id, preferred_until, valid_until, dhcp_version
+      address_sort_key, interface_id, preferred_until, valid_until, dhcp_version,
+      reservation_note, scan_enabled
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ${is_online ? "datetime('now')" : 'NULL'}, ?,
       ?, ?, ?,
       ${hasActivity ? "datetime('now')" : 'NULL'}, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
     )
   `).run(
     subnetId, ip, hostname || null, mac_address || null, status || 'available',
@@ -208,7 +211,8 @@ export function upsert(db, subnetId, ip, fields = {}) {
     detection_source || null, allocation_state || 'unassigned',
     allocation_source_type || null, allocation_source_id || null,
     identity.addressFamily, identity.addressSortKey, identity.interfaceId,
-    preferred_until || null, valid_until || null, dhcp_version || null
+    preferred_until || null, valid_until || null, dhcp_version || null,
+    reservation_note || null, scan_enabled ?? null
   );
   return result.lastInsertRowid;
 }
@@ -301,7 +305,7 @@ function addressClaim(db, subnetId, ip, row = null) {
   if (lease) return { claimed: true, hostname: null };
 
   const reservation = db.prepare(
-    'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? LIMIT 1'
+    'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? AND enabled = 1 LIMIT 1'
   ).get(subnetId, ip);
   if (reservation) return { claimed: true, hostname: null };
 
@@ -377,25 +381,23 @@ export function recordPassiveActivity(db, subnetId, ip, {
   if (!createRogue && !claimed) return { changes: 0 };
 
   const isRogue = createRogue && !claimed;
-  const result = db.prepare(`
-    INSERT INTO ip_addresses (
-      subnet_id, ip_address, status, is_online,
-      last_seen_at, last_seen_mac, hostname,
-      is_rogue, rogue_reason,
-      first_seen_at, detection_source
-    ) VALUES (
-      ?, ?, 'available', 1,
-      datetime('now'), ?, ?,
-      ?, ?,
-      datetime('now'), ?
-    )
-  `).run(subnetId, ip, mac || null, dnsHostname, isRogue ? 1 : 0, isRogue ? rogueReason : null, source);
+  const newId = upsert(db, subnetId, ip, {
+    status: 'available',
+    is_online: 1,
+    last_seen_mac: mac || null,
+    hostname: dnsHostname,
+    is_rogue: isRogue ? 1 : 0,
+    rogue_reason: isRogue ? rogueReason : null,
+    detection_source: source,
+    allocation_state: dnsHostname ? 'static_dns' : 'unassigned',
+    allocation_source_type: dnsHostname ? 'dns' : null
+  });
 
-  emit(db, result.lastInsertRowid, subnetId, ip, 'online', { source });
+  emit(db, newId, subnetId, ip, 'online', { source });
   if (isRogue) {
-    emit(db, result.lastInsertRowid, subnetId, ip, 'rogue_detected', { newValue: rogueReason, source });
+    emit(db, newId, subnetId, ip, 'rogue_detected', { newValue: rogueReason, source });
   }
-  return result;
+  return { changes: 1, lastInsertRowid: newId };
 }
 
 /**
@@ -691,20 +693,21 @@ export function moveToSubnet(db, id, ip, targetSubnetId) {
 }
 
 export function ensureAddress(db, subnetId, ip, status = 'available') {
-  return db.prepare(
-    'INSERT OR IGNORE INTO ip_addresses (subnet_id, ip_address, status) VALUES (?, ?, ?)'
-  ).run(subnetId, ip, status);
+  const identity = canonicalIdentity(ip);
+  const existing = db.prepare(
+    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+  ).get(subnetId, identity.ip);
+  if (existing) return { changes: 0, lastInsertRowid: existing.id };
+  const id = upsert(db, subnetId, identity.ip, { status });
+  return { changes: 1, lastInsertRowid: id };
 }
 
 export function ensureAddresses(db, subnetId, entries) {
   if (!Array.isArray(entries) || entries.length === 0) return { changes: 0 };
 
-  const insert = db.prepare(
-    'INSERT OR IGNORE INTO ip_addresses (subnet_id, ip_address, status) VALUES (?, ?, ?)'
-  );
   let changes = 0;
   for (const entry of entries) {
-    const result = insert.run(subnetId, entry.ip, entry.status || 'available');
+    const result = ensureAddress(db, subnetId, entry.ip, entry.status || 'available');
     changes += result.changes || 0;
   }
   return { changes };
@@ -846,26 +849,16 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
         effectiveReason = null;
       }
     }
-    db.prepare(`
-      INSERT INTO ip_addresses (
-        subnet_id, ip_address, status, is_online,
-        last_seen_at, last_seen_mac, mac_address,
-        is_rogue, rogue_reason, last_scanned_at,
-        first_seen_at, detection_source
-      ) VALUES (
-        ?, ?, 'available', 1,
-        datetime('now'), ?, ?,
-        ?, ?, datetime('now'),
-        datetime('now'), 'scanner'
-      )
-    `).run(
-      subnetId, ip,
-      mac || null, mac || null,
-      effectiveConflict ? 1 : 0, effectiveConflict ? effectiveReason : null
-    );
-    const newId = db.prepare(
-      'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-    ).get(subnetId, ip).id;
+    const newId = upsert(db, subnetId, ip, {
+      status: 'available',
+      is_online: 1,
+      last_seen_mac: mac || null,
+      mac_address: mac || null,
+      is_rogue: effectiveConflict ? 1 : 0,
+      rogue_reason: effectiveConflict ? effectiveReason : null,
+      last_scanned_at: new Date().toISOString(),
+      detection_source: 'scanner'
+    });
     emit(db, newId, subnetId, ip, 'scanned', { newValue: 'responded', source: 'scanner' });
     emit(db, newId, subnetId, ip, 'online', { source: 'scanner' });
     if (effectiveConflict) {
@@ -895,13 +888,11 @@ export function setStatus(db, subnetId, ip, status, reservationNote = null) {
       emit(db, existing.id, subnetId, ip, 'status_changed', { oldValue: existing.old_status, newValue: status, source: 'manual' });
     }
   } else {
-    db.prepare(`
-      INSERT INTO ip_addresses (subnet_id, ip_address, status, reservation_note, detection_source)
-      VALUES (?, ?, ?, ?, 'manual')
-    `).run(subnetId, ip, status, reservationNote);
-    const newId = db.prepare(
-      'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-    ).get(subnetId, ip).id;
+    const newId = upsert(db, subnetId, ip, {
+      status,
+      reservation_note: reservationNote,
+      detection_source: 'manual'
+    });
     emit(db, newId, subnetId, ip, 'status_changed', { newValue: status, source: 'manual' });
   }
 }
@@ -925,12 +916,10 @@ export function setScanEnabled(db, subnetId, ip, scanEnabled) {
       emit(db, existing.id, subnetId, ip, 'scan_enabled_changed', { oldValue: oldLabel, newValue: newLabel, source: 'manual' });
     }
   } else {
+    const newId = upsert(db, subnetId, ip, { status: 'available' });
     db.prepare(
-      "INSERT INTO ip_addresses (subnet_id, ip_address, status, scan_enabled) VALUES (?, ?, 'available', ?)"
-    ).run(subnetId, ip, scanEnabled);
-    const newId = db.prepare(
-      'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-    ).get(subnetId, ip).id;
+      "UPDATE ip_addresses SET scan_enabled = ?, updated_at = datetime('now') WHERE id = ?"
+    ).run(scanEnabled, newId);
     const newLabel = scanEnabled === 1 || scanEnabled === true ? 'enabled' : scanEnabled === 0 || scanEnabled === false ? 'disabled' : 'inherit';
     emit(db, newId, subnetId, ip, 'scan_enabled_changed', { newValue: newLabel, source: 'manual' });
   }
@@ -953,7 +942,10 @@ export function emitEvent(db, subnetId, ip, eventType, { oldValue, newValue, sou
  * Find an IP record by subnet and address.
  */
 export function findBySubnetAndIp(db, subnetId, ip) {
+  const identity = canonicalIdentity(ip);
   return db.prepare(
-    'SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+    `SELECT * FROM ip_addresses
+     WHERE subnet_id = ? AND ip_address = ?
+       AND COALESCE(interface_id, '') = COALESCE(?, '')`
+  ).get(subnetId, identity.ip, identity.interfaceId);
 }

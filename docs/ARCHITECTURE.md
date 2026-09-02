@@ -44,8 +44,12 @@ Networks, DHCP, and DNS views, so those views must not infer conflicting state.
 
 Current owners:
 
-- `server/src/models/ip-address.js` owns IP lifecycle writes, liveness writes,
-  rogue state, stale cleanup, and event emission.
+- `server/src/services/ip-lifecycle-service.js` owns allocation transitions,
+  liveness workflows, rogue reconciliation, and stale cleanup across protocol
+  and topology sources.
+- `server/src/models/ip-address.js` is the low-level lifecycle repository. It
+  persists canonical rows and events only for the lifecycle service and its
+  temporary `utils/ip-sync.js` compatibility adapter.
 - `server/src/models/ip-view.js` owns the canonical IP API/read projection used
   to render assignment status, address type, online state, hostnames, MAC
   details, and range context.
@@ -74,7 +78,8 @@ remaining consolidation opportunities.
 
 | Domain | Current Owner |
 | --- | --- |
-| IP lifecycle and IP events | `models/ip-address.js` |
+| IP lifecycle transitions and liveness workflows | `services/ip-lifecycle-service.js` |
+| IP lifecycle persistence and IP events | `models/ip-address.js` |
 | IP read projection | `models/ip-view.js` |
 | Scan runs and results | `models/scan-run.js` |
 | DNS records, PTR helpers, SOA bumps, Pi-hole DNS imports | `models/dns-record.js` |

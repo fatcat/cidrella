@@ -1,5 +1,10 @@
 import { parseCidr, ipToLong, longToIp, applyNameTemplate } from '../utils/ip.js';
-import * as IpAddress from '../models/ip-address.js';
+import {
+  lifecycleRepository as IpAddress,
+  protectTopologyAddress,
+  releaseTopologyAddress
+} from './ip-lifecycle-service.js';
+import { ALLOCATION_STATE } from '../models/ip-lifecycle.js';
 import * as DnsTopology from './subnet-dns-topology.js';
 import * as DhcpTopology from './subnet-dhcp-topology.js';
 
@@ -109,9 +114,11 @@ export function updateSubnetDetails(db, subnet, fields) {
       }
 
       if (subnet.gateway_address && IpAddress.findBySubnetAndIp(db, subnet.id, subnet.gateway_address)) {
-        IpAddress.setStatus(db, subnet.id, subnet.gateway_address, 'available', null);
+        releaseTopologyAddress(db, subnet.id, subnet.gateway_address);
       }
-      IpAddress.setStatus(db, subnet.id, fields.gateway_address, 'locked', 'Default gateway');
+      protectTopologyAddress(
+        db, subnet.id, fields.gateway_address, ALLOCATION_STATE.GATEWAY, 'Default gateway'
+      );
     }
 
     DnsTopology.ensureForwardZoneForDomainChange(db, fields.domainChange);
@@ -161,7 +168,12 @@ export function configureSubnet(db, subnet, parsed, fields) {
 
       for (let ipLong = ipStart; ipLong <= ipEnd; ipLong++) {
         const ipStatus = (gwLong !== null && ipLong === gwLong) ? 'locked' : 'available';
-        entries.push({ ip: longToIp(ipLong), status: ipStatus });
+        entries.push({
+          ip: longToIp(ipLong),
+          status: ipStatus,
+          allocation_state: ipStatus === 'locked' ? ALLOCATION_STATE.GATEWAY : undefined,
+          reservation_note: ipStatus === 'locked' ? 'Default gateway' : undefined
+        });
       }
       IpAddress.ensureAddresses(db, subnet.id, entries);
     }

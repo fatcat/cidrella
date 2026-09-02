@@ -8,7 +8,10 @@ import {
   validateSupernet, applyNameTemplate, canMergeCidrs, isValidDomain,
   validateDisplayString, isValidIpv4
 } from '../utils/ip.js';
-import * as IpAddress from '../models/ip-address.js';
+import {
+  lifecycleRepository as IpAddress,
+  setLegacyManualStatus
+} from '../services/ip-lifecycle-service.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import * as Range from '../models/range.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
@@ -1808,7 +1811,7 @@ router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((r
         skipped.push(ip);
         continue;
       }
-      IpAddress.setStatus(db, subnet.id, ip, status, reservationNote);
+      setLegacyManualStatus(db, subnet.id, ip, status, reservationNote);
       updated.push(ip);
     }
   });
@@ -1844,7 +1847,7 @@ router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((re
   // When locking, store the note; when unlocking, clear it
   const reservationNote = status === 'locked' ? (note || null) : null;
 
-  IpAddress.setStatus(db, subnet.id, ipAddress, status, reservationNote);
+  setLegacyManualStatus(db, subnet.id, ipAddress, status, reservationNote);
 
   audit(req.user.id, 'ip_status_changed', 'ip_address', subnet.id, { ip_address: ipAddress, status, note: reservationNote });
   res.json({ ip_address: ipAddress, status, reservation_note: reservationNote });

@@ -375,6 +375,23 @@ for (const rule of STRICT_TABLE_RULES) {
   }
 }
 
+const directIpModelImports = collectMatches(
+  files,
+  /from\s+['"][^'"]*models\/ip-address\.js['"]/g,
+  file => {
+    const rel = relPath(file);
+    return rel === 'server/src/services/ip-lifecycle-service.js'
+      || rel === 'server/src/utils/ip-sync.js';
+  }
+);
+if (directIpModelImports.length > 0) {
+  failures += directIpModelImports.length;
+  console.error('IP lifecycle ownership violation: application callers must use services/ip-lifecycle-service.js');
+  for (const finding of directIpModelImports) {
+    console.error(`  ${finding.file}:${finding.line} ${finding.match}`);
+  }
+}
+
 const broadFindings = collectMatches(files, BROAD_WRITE_PATTERN, broadAllow);
 if (SHOW_REPORT && broadFindings.length > 0) {
   console.log(`DB ownership report: ${broadFindings.length} direct write statement(s) remain outside model/service allowlist.`);

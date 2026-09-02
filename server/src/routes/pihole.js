@@ -3,7 +3,7 @@ import { parse as parseToml } from 'smol-toml';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { ipToLong, isClientMac, isValidMac, isValidIpv4, isValidDomain } from '../utils/ip.js';
-import { syncDnsToIp } from '../utils/ip-sync.js';
+import { allocateStaticDns, deallocateStaticDns } from '../services/ip-lifecycle-service.js';
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
@@ -383,7 +383,19 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     });
   }
 
-  const importResult = importRecords(db, zone, recordsToImport);
+  const importDnsWorkflow = db.transaction(() => {
+    const importResult = importRecords(db, zone, recordsToImport);
+    if (zone.enabled) {
+      for (const record of importResult.aRecordsToSync) {
+        if (record.previousValue && record.previousValue !== record.value) {
+          deallocateStaticDns(db, record.name, record.previousValue, zone.name);
+        }
+        allocateStaticDns(db, record.name, record.value, zone.name, record.id);
+      }
+    }
+    return importResult;
+  });
+  const importResult = importDnsWorkflow();
   results.a = {
     created: importResult.results.A.created,
     updated: importResult.results.A.updated,
@@ -396,10 +408,6 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     skipped: importResult.results.CNAME.skipped,
     failed: importResult.results.CNAME.failed
   };
-  for (const r of importResult.aRecordsToSync) {
-    syncDnsToIp(db, r.name, r.value, zone.name);
-  }
-
   // Import DHCP reservations
   if (dhcpRows.length > 0) {
     // Find all leaf subnets to match IPs against

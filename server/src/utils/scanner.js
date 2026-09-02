@@ -5,7 +5,7 @@ import { parseArpingMac, readArpCache } from './arp-cache.js';
 import { localIpv4Set } from './local-addresses.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
-import * as IpAddress from '../models/ip-address.js';
+import { observeScanResult, reconcileScanRogues } from '../services/ip-lifecycle-service.js';
 import * as ScanRun from '../models/scan-run.js';
 import * as DnsRecord from '../models/dns-record.js';
 
@@ -295,7 +295,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
       const conflictIps = new Set();
       for (const sr of scanResults) {
-        IpAddress.updateFromScan(db, subnetId, sr.ip_address, {
+        observeScanResult(db, subnetId, sr.ip_address, {
           responded: sr.responded,
           mac: sr.mac_address,
           isConflict: sr.is_conflict,
@@ -307,7 +307,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
       // Clear rogue on IPs in this subnet that weren't flagged in this scan
       // (only for full subnet scans, targeted probes shouldn't clear other IPs)
       if (!isTargeted) {
-        IpAddress.clearRogueForSubnet(db, subnetId, conflictIps);
+        reconcileScanRogues(db, subnetId, conflictIps);
       }
     }
 

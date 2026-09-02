@@ -174,3 +174,35 @@ describe('#18: the idempotency trap', () => {
     expect(res.body.problems.map(p => p.name).sort()).toEqual(['host-a', 'host-b']);
   });
 });
+
+describe('Pi-hole import lifecycle ownership', () => {
+  it('moves allocation authority when an imported A record changes address', async () => {
+    const subnetId = db.prepare(`
+      INSERT INTO subnets
+        (cidr, name, prefix_length, network_address, broadcast_address,
+         total_addresses, status, depth, domain_name)
+      VALUES ('10.9.0.0/24', 'import lifecycle', 24, '10.9.0.0',
+              '10.9.0.255', 256, 'allocated', 0, 'audit.lan')
+    `).run().lastInsertRowid;
+    const { invalidateSubnetCache } = await import('../../../src/utils/ip-sync.js');
+    invalidateSubnetCache();
+
+    expect((await post({ hosts: [{ hostname: 'moving', ip: '10.9.0.40' }] })).status).toBe(200);
+    expect((await post({ hosts: [{ hostname: 'moving', ip: '10.9.0.41' }] })).status).toBe(200);
+
+    const oldAddress = db.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = '10.9.0.40'
+    `).get(subnetId);
+    const newAddress = db.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = '10.9.0.41'
+    `).get(subnetId);
+    expect(oldAddress).toMatchObject({
+      allocation_state: 'unassigned', allocation_source_type: null, hostname: null
+    });
+    expect(newAddress).toMatchObject({
+      allocation_state: 'static_dns', allocation_source_type: 'dns', hostname: 'moving.audit.lan'
+    });
+  });
+});

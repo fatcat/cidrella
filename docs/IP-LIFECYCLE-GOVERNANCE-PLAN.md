@@ -51,7 +51,7 @@ concepts.
 
 | Concept | Meaning | Values |
 | --- | --- | --- |
-| Allocation state | The mutually exclusive way the address is governed. | `unassigned`, `reserved`, `static_dns`, `dynamic_dhcp`, `static_dhcp`, `slaac`, `system`, `gateway` |
+| Allocation state | The mutually exclusive way the address is governed. | `unassigned`, `reserved`, `static_dns`, `dynamic_dhcp`, `static_dhcp`, `slaac`, `system`, `gateway`, `quarantined` |
 | Display status | The address's user-facing availability. | `available`, `DHCP Scope`, `in use` |
 | Liveness | Whether CIDRella currently believes a host is present. | `online`, `offline`, plus observation timestamps |
 | Address family | The protocol family of the canonical address. | `4`, `6` |

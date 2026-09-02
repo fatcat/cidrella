@@ -1,4 +1,4 @@
-import { syncLeasesToIps } from '../utils/ip-sync.js';
+import { observeDhcpLeases } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
@@ -12,10 +12,10 @@ export function replaceLeases(db, leases) {
     for (const l of leases) {
       insert.run(l.ip, l.mac, l.hostname, l.clientId, l.expiresAt, l.subnetId);
     }
+    observeDhcpLeases(db, leases);
   });
 
   replace();
-  syncLeasesToIps(db, leases);
 }
 
 /**

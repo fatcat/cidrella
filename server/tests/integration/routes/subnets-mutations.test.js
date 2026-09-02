@@ -165,6 +165,64 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
     expect(getA.body.domain_name).toBeNull();
     expect(getB.body.domain_name).toBeNull();
   });
+
+  it('disabling, re-enabling, and deleting a zone updates IP allocation authority', async () => {
+    const s = await mkSubnet({
+      cidr: '10.37.0.0/24', name: 'zone-lifecycle', status: 'allocated', gateway_address: '10.37.0.1'
+    });
+    await configure(s.id, {
+      name: 'zone-lifecycle', create_reverse_dns: false, create_dhcp_scope: false,
+      domain_name: 'zone-lifecycle.test'
+    });
+    const zone = await findZone('zone-lifecycle.test');
+    const created = await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'host', type: 'A', value: '10.37.0.50'
+    });
+    expect(created.status).toBe(201);
+
+    const { getDb } = await import('../../../src/db/init.js');
+    const db = getDb();
+    expect(db.prepare(`
+      SELECT allocation_state, allocation_source_type
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?
+    `).get(s.id, '10.37.0.1')).toMatchObject({
+      allocation_state: 'gateway',
+      allocation_source_type: 'topology'
+    });
+    const allocation = () => db.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?
+    `).get(s.id, '10.37.0.50');
+    expect(allocation()).toMatchObject({
+      allocation_state: 'static_dns',
+      allocation_source_type: 'dns',
+      hostname: 'host.zone-lifecycle.test'
+    });
+
+    const disabled = await request(app).put(`/api/dns/zones/${zone.id}`).send({ enabled: false });
+    expect(disabled.status).toBe(200);
+    expect(allocation()).toMatchObject({
+      allocation_state: 'unassigned',
+      allocation_source_type: null,
+      hostname: null
+    });
+
+    const enabled = await request(app).put(`/api/dns/zones/${zone.id}`).send({ enabled: true });
+    expect(enabled.status).toBe(200);
+    expect(allocation()).toMatchObject({
+      allocation_state: 'static_dns',
+      allocation_source_type: 'dns',
+      hostname: 'host.zone-lifecycle.test'
+    });
+
+    const deleted = await request(app).delete(`/api/dns/zones/${zone.id}`);
+    expect(deleted.status).toBe(200);
+    expect(allocation()).toMatchObject({
+      allocation_state: 'unassigned',
+      allocation_source_type: null,
+      hostname: null
+    });
+  });
 });
 
 // --- DNS record rename clears stale ip_addresses.hostname --------------

@@ -77,6 +77,7 @@ import { initAnalyticsDb } from './db/duckdb.js';
 import { getCapabilityWarning } from './utils/capabilities.js';
 import { captureBootServiceHealth } from './utils/service-health.js';
 import { markBackendReady } from './utils/startup-status.js';
+import { reconcileLegacyLifecycleMetadata } from './services/ip-lifecycle-service.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -115,20 +116,17 @@ async function main() {
   // Clear any ip_addresses rows whose DNS-sourced hostname no longer has a
   // backing A record (historic orphans from pre-refactor cleanup paths).
   try {
-    const {
-      reconcileDnsOrphans,
-      reconcileDuplicateDhcpMacRows,
-      reconcileUnbackedDhcpLeaseRows,
-      pruneStaleDhcpHostRows
-    } = await import('./utils/ip-sync.js');
-    const n = reconcileDnsOrphans(getDb());
-    const dhcpN = reconcileDuplicateDhcpMacRows(getDb());
-    const unbackedDhcpN = reconcileUnbackedDhcpLeaseRows(getDb());
-    const staleDhcpN = pruneStaleDhcpHostRows(getDb());
+    const reconciliation = reconcileLegacyLifecycleMetadata(getDb());
+    const n = reconciliation.dnsOrphans;
+    const dhcpN = reconciliation.duplicateDhcpMacs;
+    const unbackedDhcpN = reconciliation.unbackedDhcp;
+    const staleDhcpN = reconciliation.staleDhcp;
+    const expiredDhcpN = reconciliation.expiredDhcpAllocations;
     if (n > 0) console.log(`Reconciled ${n} orphan DNS-sourced ip_addresses row(s)`);
     if (dhcpN > 0) console.log(`Reconciled ${dhcpN} duplicate DHCP ip_addresses row(s)`);
     if (unbackedDhcpN > 0) console.log(`Reconciled ${unbackedDhcpN} unbacked DHCP ip_addresses row(s)`);
     if (staleDhcpN > 0) console.log(`Pruned ${staleDhcpN} stale DHCP ip_addresses row(s)`);
+    if (expiredDhcpN > 0) console.log(`Released ${expiredDhcpN} expired DHCP allocation(s)`);
   } catch (err) {
     console.warn('IP metadata reconciliation skipped:', err?.message || err);
   }

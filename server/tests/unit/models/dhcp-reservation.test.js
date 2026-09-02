@@ -110,4 +110,39 @@ describe('DHCP reservation ownership', () => {
     expect(ip).toBeUndefined();
     expect(ptrValue(ptrZoneId, '25')).toBe('');
   });
+
+  it('removes and restores allocation authority when disabled and re-enabled', () => {
+    const subnetId = createSubnet();
+    const ptrZoneId = createReverseZone();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+    const reservation = DhcpReservation.createReservation(db, subnet, {
+      mac_address: 'aa:bb:cc:dd:ee:03',
+      ip_address: '10.60.0.27',
+      hostname: 'toggle-host'
+    });
+
+    const disabled = DhcpReservation.updateReservation(db, reservation, subnet, {
+      mac_address: reservation.mac_address,
+      ip_address: reservation.ip_address,
+      enabled: false
+    });
+    expect(disabled.enabled).toBe(0);
+    expect(db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.27'))
+      .toBeUndefined();
+    expect(ptrValue(ptrZoneId, '27')).toBe('');
+
+    const enabled = DhcpReservation.updateReservation(db, disabled, subnet, {
+      mac_address: disabled.mac_address,
+      ip_address: disabled.ip_address,
+      enabled: true
+    });
+    const ip = db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.27');
+    expect(enabled.enabled).toBe(1);
+    expect(ip).toMatchObject({
+      allocation_state: 'static_dhcp',
+      allocation_source_type: 'dhcp_reservation',
+      allocation_source_id: reservation.id
+    });
+    expect(ptrValue(ptrZoneId, '27')).toBe('toggle-host.reservation.test');
+  });
 });

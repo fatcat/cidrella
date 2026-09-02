@@ -2,7 +2,7 @@ import net from 'net';
 import { PASSIVE_LIVENESS_DEBOUNCE_MS } from '../config/defaults.js';
 import { findSubnetForIp } from './ip-sync.js';
 import { lookupArpMac } from './arp-cache.js';
-import * as IpAddress from '../models/ip-address.js';
+import { observePassiveActivity } from '../services/ip-lifecycle-service.js';
 
 const lastPassiveWrite = new Map();
 let lastDebouncePrune = Date.now();
@@ -47,7 +47,7 @@ export function recordDnsQueryLiveness(db, ip, { createRogue = false, source = '
   // find on the network, and the MAC is what makes that possible. Off-link
   // clients simply miss here, which is correct, the only MAC ARP could offer
   // for those is the gateway's.
-  const result = IpAddress.recordPassiveActivity(db, subnet.id, ip, {
+  const result = observePassiveActivity(db, subnet.id, ip, {
     mac: lookupArpMac(ip),
     source,
     createRogue

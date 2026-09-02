@@ -505,21 +505,26 @@ export function importRecords(db, zone, records) {
       const nameKey = `${r.type}|${name}`;
       const existing = existingByNameType.get(nameKey);
       try {
+        let recordId;
+        let previousValue = null;
         if (existing) {
           updateRecordValue.run(r.value, existing.id);
+          recordId = existing.id;
+          previousValue = existing.value;
           existingExact.delete(`${r.type}|${name}|${existing.value}`);
           existingExact.add(exactKey);
           existingByNameType.set(nameKey, { id: existing.id, value: r.value });
           results[r.type].updated++;
         } else {
           const result = insertRecord.run(zone.id, name, r.type, r.value);
+          recordId = result.lastInsertRowid;
           existingExact.add(exactKey);
           existingByNameType.set(nameKey, { id: result.lastInsertRowid, value: r.value });
           results[r.type].created++;
         }
         changed = true;
         if (r.type === 'A') {
-          aRecordsToSync.push({ name, value: r.value });
+          aRecordsToSync.push({ id: recordId, name, value: r.value, previousValue });
         }
       } catch {
         results[r.type].failed++;

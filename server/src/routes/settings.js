@@ -2,7 +2,10 @@ import { Router } from 'express';
 import { getDb, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
-import { pruneEvents, clearStaleDynamicMetadata } from '../models/ip-address.js';
+import {
+  pruneLifecycleEvents,
+  retireStaleDynamicAddresses
+} from '../services/ip-lifecycle-service.js';
 import * as Setting from '../models/setting.js';
 import { validateInterfaceConfig, validPortOrError, isIntInRangeCoercing } from '../utils/validation.js';
 
@@ -214,10 +217,10 @@ router.put('/bulk', requireRole('admin'), (req, res) => {
   Setting.upsertSettings(db, normalized);
 
   if (settings.ip_history_retention_days !== undefined) {
-    pruneEvents(db);
+    pruneLifecycleEvents(db);
   }
   if (settings.offline_metadata_retention_days !== undefined) {
-    clearStaleDynamicMetadata(db);
+    retireStaleDynamicAddresses(db);
   }
 
   audit(req.user.id, 'settings_bulk_updated', 'setting', null, { keys: entries.map(([k]) => k) });
@@ -240,10 +243,10 @@ router.put('/:key', requirePerm('system:write'), (req, res) => {
   setSetting(key, check.normalized);
 
   if (key === 'ip_history_retention_days') {
-    pruneEvents(getDb());
+    pruneLifecycleEvents(getDb());
   }
   if (key === 'offline_metadata_retention_days') {
-    clearStaleDynamicMetadata(getDb());
+    retireStaleDynamicAddresses(getDb());
   }
 
   audit(req.user.id, 'setting_updated', 'setting', null, { key, value: check.normalized });

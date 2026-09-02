@@ -1,8 +1,8 @@
 import {
-  syncDhcpReservationToIp,
-  clearDhcpReservationFromIp,
-  syncPtrForIp
-} from '../utils/ip-sync.js';
+  allocateStaticDhcp,
+  deallocateStaticDhcp
+} from '../services/ip-lifecycle-service.js';
+import { syncPtrForIp } from '../utils/ip-sync.js';
 
 function reservationFqdn(hostname, subnet) {
   if (!hostname) return '';
@@ -31,10 +31,10 @@ export function createReservation(db, subnet, fields) {
       fields.description || null
     );
 
-    syncDhcpReservationToIp(db, subnet.id, fields.ip_address, {
+    allocateStaticDhcp(db, subnet.id, fields.ip_address, {
       hostname: fields.hostname || null,
       mac_address: fields.mac_address
-    });
+    }, result.lastInsertRowid);
     syncPtrForIp(db, subnet.id, fields.ip_address, reservationFqdn(fields.hostname, subnet));
 
     return result.lastInsertRowid;
@@ -59,16 +59,22 @@ export function updateReservation(db, reservation, subnet, fields) {
     );
 
     if (fields.ip_address !== reservation.ip_address) {
-      clearDhcpReservationFromIp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
+      deallocateStaticDhcp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
       syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '');
     }
 
     const newHostname = fields.hostname !== undefined ? (fields.hostname || null) : reservation.hostname;
-    syncDhcpReservationToIp(db, reservation.subnet_id, fields.ip_address, {
-      hostname: newHostname,
-      mac_address: fields.mac_address
-    });
-    syncPtrForIp(db, reservation.subnet_id, fields.ip_address, reservationFqdn(newHostname, subnet));
+    const newEnabled = fields.enabled !== undefined ? fields.enabled : reservation.enabled;
+    if (newEnabled) {
+      allocateStaticDhcp(db, reservation.subnet_id, fields.ip_address, {
+        hostname: newHostname,
+        mac_address: fields.mac_address
+      }, reservation.id);
+      syncPtrForIp(db, reservation.subnet_id, fields.ip_address, reservationFqdn(newHostname, subnet));
+    } else {
+      deallocateStaticDhcp(db, reservation.subnet_id, fields.ip_address, fields.mac_address);
+      syncPtrForIp(db, reservation.subnet_id, fields.ip_address, '');
+    }
   });
 
   update();
@@ -78,7 +84,7 @@ export function updateReservation(db, reservation, subnet, fields) {
 export function deleteReservation(db, reservation) {
   const del = db.transaction(() => {
     db.prepare('DELETE FROM dhcp_reservations WHERE id = ?').run(reservation.id);
-    clearDhcpReservationFromIp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
+    deallocateStaticDhcp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
     syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '');
   });
 
