@@ -562,6 +562,15 @@ desired behavior from legacy behavior.
 
 ### Phase 3: Canonical schema and aggregate
 
+Status: complete. Implemented, tested, committed, and pushed in `5b8ae94` and
+`77cde61`.
+
+Validation: 997 server tests passed with 10 later-phase cases pending, 133
+client tests passed, lint and database ownership checks passed, and the final
+follow-up review passed on 2026-09-02. The initial review process timed out
+after its five-minute limit, so the missed canonical synthesized-row case was
+reviewed locally, corrected, and accepted by the follow-up review.
+
 - Add the explicit allocation state and source reference.
 - Add canonical address family, sort key, and nullable interface context using
   the phase-0 shared address core.
