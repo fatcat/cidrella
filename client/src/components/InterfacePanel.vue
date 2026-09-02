@@ -126,15 +126,15 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import { useToast } from 'primevue/usetoast';
+import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import DataTable from 'primevue/datatable';
+import DataTable from '../ui/DataTable.js';
 import EmptyState from './EmptyState.vue';
-import Column from 'primevue/column';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Button from 'primevue/button';
-import Tag from 'primevue/tag';
+import Column from '../ui/Column.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Button from '../ui/Button.js';
+import Tag from '../ui/Tag.js';
 
 const toast = useToast();
 const loading = ref(false);

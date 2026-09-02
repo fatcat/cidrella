@@ -29,7 +29,7 @@
       <span class="info-bar-sep"></span>
       <span class="info-bar-pair"><span class="info-bar-label">Gateway</span> <span class="info-bar-val">{{ subnet.gateway_address }}</span></span>
       <span class="info-bar-sep"></span>
-      <span class="info-bar-pair"><span class="info-bar-label">VLAN</span> <span class="info-bar-val">{{ subnet.vlan_id ?? '—' }}</span></span>
+      <span class="info-bar-pair"><span class="info-bar-label">VLAN</span> <span class="info-bar-val">{{ subnet.vlan_id ?? EMPTY_CELL }}</span></span>
       <span class="info-bar-sep"></span>
       <span v-if="subnet.domain_name" class="info-bar-pair"><span class="info-bar-label">Domain</span> <span class="info-bar-val">{{ subnet.domain_name }}</span></span>
       <span v-if="subnet.domain_name" class="info-bar-sep"></span>
@@ -54,7 +54,7 @@
       </div>
       <div class="info-card">
         <div class="info-label">VLAN</div>
-        <div class="info-value">{{ subnet.vlan_id ?? '—' }}</div>
+        <div class="info-value">{{ subnet.vlan_id ?? EMPTY_CELL }}</div>
       </div>
       <div v-if="subnet.domain_name" class="info-card">
         <div class="info-label">Domain</div>
@@ -177,7 +177,7 @@
               </template>
             </Column>
             <Column field="description" header="Description">
-              <template #body="{ data }">{{ data.description ?? '—' }}</template>
+              <template #body="{ data }">{{ data.description ?? EMPTY_CELL }}</template>
             </Column>
           </DataTable>
         </div>
@@ -393,7 +393,7 @@
     </Dialog>
 
     <!-- Host "more info" dialog -->
-    <HostInfoDialog v-model:visible="showHostInfo" :host="hostInfoRow" />
+    <HostInfoDialog v-model:visible="showHostInfo" :host="hostInfoRow" :domain-name="subnet?.domain_name" />
 
     <Toast />
   </div>
@@ -404,25 +404,25 @@
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import InputText from 'primevue/inputtext';
-import IconField from 'primevue/iconfield';
-import InputIcon from 'primevue/inputicon';
-import Select from 'primevue/select';
-import ContextMenu from 'primevue/contextmenu';
-import Toast from 'primevue/toast';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
-import TabPanel from 'primevue/tabpanel';
-import Tag from 'primevue/tag';
-import ToggleSwitch from 'primevue/toggleswitch';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Dialog from '../ui/Dialog.js';
+import InputText from '../ui/InputText.js';
+import IconField from '../ui/IconField.js';
+import InputIcon from '../ui/InputIcon.js';
+import Select from '../ui/Select.js';
+import ContextMenu from '../ui/ContextMenu.js';
+import Toast from '../ui/Toast.js';
+import Tabs from '../ui/Tabs.js';
+import TabList from '../ui/TabList.js';
+import Tab from '../ui/Tab.js';
+import TabPanels from '../ui/TabPanels.js';
+import TabPanel from '../ui/TabPanel.js';
+import Tag from '../ui/Tag.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
 import ScopeDialog from '../components/ScopeDialog.vue';
 import HostInfoDialog from '../components/HostInfoDialog.vue';
 import ScanToggle from '../components/ScanToggle.vue';
@@ -432,7 +432,7 @@ import ColumnHeaderTooltip from '../components/table/ColumnHeaderTooltip.vue';
 import OnlineStatusCell from '../components/table/OnlineStatusCell.vue';
 import StatusText from '../components/table/StatusText.vue';
 import { useSubnetStore } from '../stores/subnets.js';
-import { loadJson } from '../utils/storage.js';
+import { loadJson, saveJson } from '../utils/storage.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import api from '../api/client.js';
@@ -593,7 +593,7 @@ function saveTableState() {
       sortField: sortField.value,
       sortOrder: sortOrder.value,
     };
-    localStorage.setItem('cidrella_ip_table_state', JSON.stringify(all));
+    saveJson('cidrella_ip_table_state', all);
   } catch {}
 }
 function restoreTableState() {
@@ -631,7 +631,7 @@ function loadSubnetTab() {
 }
 const activeTab = ref(loadSubnetTab());
 watch(activeTab, (val) => {
-  try { localStorage.setItem('cidrella_subnet_detail_tab', JSON.stringify(val)); } catch {}
+  saveJson('cidrella_subnet_detail_tab', val)
 });
 
 // Search / filter
@@ -647,7 +647,7 @@ watch(ipSearch, (_val) => {
 });
 
 watch(showAvailableIps, (val) => {
-  try { localStorage.setItem('cidrella_network_show_available', JSON.stringify(val)); } catch {}
+  saveJson('cidrella_network_show_available', val)
   currentPage.value = 1;
   store.invalidateDetailCache(props.subnetId);
   loadIpPage(1, currentPageSize.value);
@@ -870,19 +870,9 @@ const rangeDialogHeader = computed(() => {
 
 function gridTooltip(ip) {
   const lines = [ip.address];
-  const pseudoData = {
-    ip_display_status: ip.ipDisplayStatus,
-    ip_status_severity: ip.ipStatusSeverity,
-    address_type: ip.addressType,
-    address_type_tooltip: ip.addressTypeTooltip,
-    ip_lifecycle_status: ip.ipLifecycleStatus,
-    status: ip.status, range_type_name: ip.rangeType, reservation_note: ip.reservationNote,
-    has_dhcp_reservation: ip.hasDhcpReservation, hostname: ip.hostname,
-    mac_address: ip.mac, last_seen_mac: null,
-    is_online: ip.isOnline ? 1 : 0, is_rogue: ip.isConflict ? 1 : 0, rogue_reason: ip.conflictReason,
-    dhcp_expires_at: ip.dhcpExpiresAt || null
-  };
-  const state = ipLifecycleDisplay(pseudoData);
+  // Reuse the classification the cell was painted from. Re-deriving it here is
+  // how the tooltip and the fill came to disagree. See audit #41.
+  const state = ip.state;
   lines.push(`Status: ${state.status}`);
   if (state.addressType?.label) {
     lines.push(`Type: ${state.addressType.label}${state.tooltip ? ` (${state.tooltip})` : ''}`);
@@ -899,6 +889,32 @@ function gridTooltip(ip) {
   if (ip.lastSeen) lines.push(`Last seen: ${formatDate(ip.lastSeen)}`);
   if (ip.conflictReason) lines.push(`Warning: ${ip.conflictReason}`);
   return lines.join('\n');
+}
+
+// The row shape the shared classifier expects, built from what the grid knows
+// about one address. Extracted so the cell fill and the tooltip classify from
+// exactly the same input rather than each assembling their own.
+function gridPseudoData({ addr, assignInfo, rangeInfo }) {
+  return {
+    ip_address: addr,
+    ip_display_status: assignInfo?.ip_display_status || null,
+    ip_status_severity: assignInfo?.ip_status_severity || null,
+    address_type: assignInfo?.address_type || null,
+    address_type_tooltip: assignInfo?.address_type_tooltip || null,
+    ip_lifecycle_status: assignInfo?.ip_lifecycle_status || assignInfo?.status || 'available',
+    status: assignInfo?.status || 'available',
+    range_type_name: rangeInfo?.rangeType || null,
+    reservation_note: assignInfo?.reservation_note || null,
+    has_dhcp_reservation: assignInfo?.has_dhcp_reservation || 0,
+    hostname: assignInfo?.hostname || null,
+    mac_address: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
+    last_seen_mac: null,
+    is_online: assignInfo?.is_online === 1 ? 1 : 0,
+    is_rogue: assignInfo?.is_rogue === 1 ? 1 : 0,
+    is_local_address: assignInfo?.is_local_address || 0,
+    rogue_reason: assignInfo?.rogue_reason || null,
+    dhcp_expires_at: assignInfo?.dhcp_expires_at || null,
+  };
 }
 
 const ipGrid = computed(() => {
@@ -947,8 +963,24 @@ const ipGrid = computed(() => {
     const isDnsConfigured = !isDhcpReservation && assignInfo?.address_type === 'static DNS';
     const isUserLocked = assignInfo?.status === 'locked' && !isSystemRange;
 
+    // Classify ONCE, here, and hand the result to both the fill below and the
+    // tooltip (see gridTooltip). The tooltip used to re-derive it from this
+    // cell, so the two could describe the same square differently: the ladder
+    // had no branch for rogue or for one of our own interface addresses, so a
+    // rogue address was painted in the ordinary pool tint, indistinguishable
+    // from free space unless you happened to hover it. The grid is the
+    // at-a-glance view of a subnet, so the one classification an operator most
+    // needs to spot was the one the colour could not express.
+    // See REVIEW.md, duplicate-logic audit #41.
+    const cellState = ipLifecycleDisplay(gridPseudoData({
+      addr, assignInfo, rangeInfo,
+    }));
+    const cellTypeClass = cellState.addressType?.className || null;
+
     let cellColor;
     if (isSystemRange) cellColor = rangeInfo.color;
+    else if (cellTypeClass === 'type-rogue')  cellColor = 'var(--cid-rogue)';
+    else if (cellTypeClass === 'type-system') cellColor = 'var(--cid-system)';
     else if (isDhcpReservation) cellColor = 'var(--p-blue-700)';
     else if (isDnsConfigured)   cellColor = 'var(--p-green-300)';
     else if (isUserLocked)      cellColor = 'var(--p-violet-500)';
@@ -984,7 +1016,8 @@ const ipGrid = computed(() => {
       isOnline: assignInfo?.is_online === 1,
       lastSeen: assignInfo?.last_seen_at || null,
       isConflict: assignInfo?.is_rogue === 1,
-      conflictReason: assignInfo?.rogue_reason || null
+      conflictReason: assignInfo?.rogue_reason || null,
+      state: cellState
     });
   }
 

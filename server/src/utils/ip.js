@@ -225,18 +225,6 @@ export function calculateSubnets(cidr, newPrefix) {
   return results;
 }
 
-/**
- * Validate that an IP string is well-formed.
- */
-export function isValidIp(ip) {
-  try {
-    ipToLong(ip);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
 
@@ -350,10 +338,37 @@ export function subtractCidr(parentCidr, childCidr) {
   return remainder;
 }
 
-// Domain name validation, shared by dns.js and subnets.js
-const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
+// Domain name validation. Shared by dns.js, dhcp.js, subnets.js, blocklists.js,
+// models/dns-record.js and the Pi-hole importer: 15 call sites, so read the
+// notes before changing it.
+//
+// Validated per label rather than with one flat character class. The old regex
+// allowed any mix of alphanumerics, dots and hyphens between a leading and
+// trailing alphanumeric, which let through two shapes that are never a domain:
+//
+//   'sub..evil.com'   an empty label
+//   '10.0.0.1'        a dotted-quad, which reached the dnsmasq writers as a
+//                     "domain". That is the one with teeth and the reason this
+//                     was worth touching at all.
+//
+// A SINGLE label is still accepted, on purpose. 'lan', 'local' and 'home' are
+// legitimate values for a subnet or scope domain_name, dnsmasq takes
+// 'domain=lan' quite happily, and existing installs hold exactly those. A
+// caller that genuinely needs two or more labels has to say so itself rather
+// than have this refuse a config that has always worked.
+//
+// Mixed case is accepted rather than rejected. DNS is case-insensitive and the
+// storage side normalizes (migration 052_normalize_dns_names), so rejecting
+// 'Evil.COM' would be enforcing the wrong thing at the wrong layer.
+const DOMAIN_LABEL_RE = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/;
+const IPV4_LITERAL_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
+
 export function isValidDomain(name) {
-  return typeof name === 'string' && name.length > 0 && name.length <= 253 && DOMAIN_RE.test(name);
+  if (typeof name !== 'string' || name.length === 0 || name.length > 253) return false;
+  // A dotted-quad is an address, not a name, whatever field it arrived in.
+  if (IPV4_LITERAL_RE.test(name)) return false;
+  const labels = name.split('.');
+  return labels.every(l => l.length > 0 && l.length <= 63 && DOMAIN_LABEL_RE.test(l));
 }
 
 /**

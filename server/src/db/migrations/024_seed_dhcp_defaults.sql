@@ -2,4 +2,4 @@
 INSERT OR IGNORE INTO dhcp_option_defaults (option_code, value, updated_at)
 VALUES
   (51, '3600', datetime('now')),
-  (42, '157.245.125.229,45.79.214.107,137.190.2.4,23.157.160.168', datetime('now'));
+  (42, '162.244.81.139,23.155.72.147,66.85.78.80,66.118.229.14', datetime('now'));

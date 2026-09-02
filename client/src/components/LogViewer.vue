@@ -29,8 +29,8 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
 import api from '../api/client.js';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
+import Button from '../ui/Button.js';
+import InputText from '../ui/InputText.js';
 const logPre = ref(null);
 const lines = ref([]);
 const connected = ref(false);

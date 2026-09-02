@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { getDb } from '../db/init.js';
+import { looksLikeApiToken, resolveApiToken } from './tokens.js';
 
 // Paths that don't require authentication.
 //
@@ -50,6 +51,20 @@ export function authMiddleware(req, res, next) {
 
   const token = authHeader.slice(7);
   const db = getDb();
+
+  // A service account presents an API token rather than a login JWT. It is
+  // checked before the JWT path and never falls through to it: a string that
+  // carries the token prefix is a token, and if it does not resolve the answer
+  // is 401, not "maybe it is a JWT".
+  if (looksLikeApiToken(token)) {
+    const { user, error } = resolveApiToken(db, token);
+    if (error) {
+      return res.status(401).json({ error });
+    }
+    req.user = user;
+    return next();
+  }
+
   const secret = getJwtSecret(db);
 
   if (!secret) {

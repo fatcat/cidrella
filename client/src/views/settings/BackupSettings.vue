@@ -116,21 +116,22 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import Button from 'primevue/button';
+import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import Select from 'primevue/select';
-import InputText from 'primevue/inputtext';
-import ContextMenu from 'primevue/contextmenu';
-import { useToast } from 'primevue/usetoast';
+import DataTable from '../../ui/DataTable.js';
+import Column from '../../ui/Column.js';
+import Dialog from '../../ui/Dialog.js';
+import Select from '../../ui/Select.js';
+import InputText from '../../ui/InputText.js';
+import ContextMenu from '../../ui/ContextMenu.js';
+import { useToast } from '../../ui/useToast.js';
 import { useSubnetStore } from '../../stores/subnets.js';
 import { useOperationsStore } from '../../stores/operations.js';
 import { useAuthStore } from '../../stores/auth.js';
 import { apiError } from '../../utils/format.js';
 import { formatDateTime } from '../../utils/dateFormat.js';
 import api from '../../api/client.js';
+import { formatBytes as formatSize } from '../../utils/format.js';
 
 const store = useSubnetStore();
 const opsStore = useOperationsStore();
@@ -296,14 +297,6 @@ async function doResetDatabase() {
   }
 }
 
-function formatSize(bytes) {
-  if (!bytes) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB'];
-  let i = 0;
-  let size = bytes;
-  while (size >= 1024 && i < units.length - 1) { size /= 1024; i++; }
-  return `${size.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
-}
 
 onMounted(async () => {
   await Promise.all([

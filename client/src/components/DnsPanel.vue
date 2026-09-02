@@ -188,11 +188,11 @@
                 <span v-else-if="col.key === 'record_type'" class="type-badge">{{ data.record_type }}</span>
                 <span v-else-if="col.key === 'value' && data.record_type === 'A'" class="ip-mono">{{ displayCell(data.value) }}</span>
                 <template v-else-if="col.key === 'value'">{{ displayCell(data.value) }}</template>
-                <template v-else-if="col.key === 'priority'">{{ data.priority ?? '—' }}</template>
-                <template v-else-if="col.key === 'port'">{{ data.port ?? '—' }}</template>
+                <template v-else-if="col.key === 'priority'">{{ data.priority ?? EMPTY_CELL }}</template>
+                <template v-else-if="col.key === 'port'">{{ data.port ?? EMPTY_CELL }}</template>
                 <template v-else-if="col.key === 'ttl'">
                   <template v-if="data.ttl != null">{{ data.ttl }}</template>
-                  <span v-else class="cell-muted">{{ selectedZone?.soa_minimum_ttl ?? '—' }}</span>
+                  <span v-else class="cell-muted">{{ selectedZone?.soa_minimum_ttl ?? EMPTY_CELL }}</span>
                 </template>
                 <StatusText
                   v-else-if="col.key === 'enabled'"
@@ -375,30 +375,30 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import IconField from 'primevue/iconfield';
-import InputIcon from 'primevue/inputicon';
-import Select from 'primevue/select';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
-import TabPanel from 'primevue/tabpanel';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Dialog from '../ui/Dialog.js';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import IconField from '../ui/IconField.js';
+import InputIcon from '../ui/InputIcon.js';
+import Select from '../ui/Select.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Tabs from '../ui/Tabs.js';
+import TabList from '../ui/TabList.js';
+import Tab from '../ui/Tab.js';
+import TabPanels from '../ui/TabPanels.js';
+import TabPanel from '../ui/TabPanel.js';
 
-import ContextMenu from 'primevue/contextmenu';
-import Toast from 'primevue/toast';
+import ContextMenu from '../ui/ContextMenu.js';
+import Toast from '../ui/Toast.js';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
-import { apiError, displayCell, displayHostnameCell } from '../utils/format.js';
-import { ipToLong } from '../utils/ip.js';
-import { loadJson } from '../utils/storage.js';
+import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';
+import { ipToLong, isValidIpv4 } from '../utils/ip.js';
+import { loadJson, saveJson } from '../utils/storage.js';
 import { addressTypeForDnsSource } from '../utils/ipLifecycleDisplay.js';
 import EmptyState from './EmptyState.vue';
 import AddressTypePill from './table/AddressTypePill.vue';
@@ -503,7 +503,7 @@ function ptrRecordIp(record) {
   return combined.split('.').reverse().join('.');
 }
 function displayDnsName(record) {
-  if (!record?.name) return '—';
+  if (!record?.name) return EMPTY_CELL;
   if (record.name === '@') return selectedZone.value?.name || '@';
   return displayHostnameCell(`${record.name}.${selectedZone.value?.name || ''}`, selectedZone.value?.name);
 }
@@ -584,10 +584,13 @@ function toggleGroup(key) {
 const showZoneDialog = ref(false);
 const editingZone = ref(null);
 const savingZone = ref(false);
+// SOA fields start empty and are filled from the server in openZoneDialog. No
+// literals here: they were a second, drifting copy of the server's defaults
+// (audit #38).
 const zoneForm = ref({
   name: '', type: 'forward', description: '', enabled: true,
-  soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
-  soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 900
+  soa_primary_ns: '', soa_admin_email: '',
+  soa_refresh: null, soa_retry: null, soa_expire: null, soa_minimum_ttl: null
 });
 const zoneTypes = [
   { label: 'Forward', value: 'forward' },
@@ -603,7 +606,7 @@ const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
 
 const dnsSearch = ref(loadJson('cidrella_dns_search', ''));
 watch(dnsSearch, (val) => {
-  try { localStorage.setItem('cidrella_dns_search', JSON.stringify(val)); } catch {}
+  saveJson('cidrella_dns_search', val)
 });
 const filteredRecords = computed(() => {
   let base = [...records.value];
@@ -614,10 +617,12 @@ const filteredRecords = computed(() => {
   if (isReverse.value) {
     base = base.map(r => {
       const ip = ptrRecordIp(r);
-      const parts = (ip || '').split('.').map(Number);
-      const ipLong = parts.length === 4 && parts.every(Number.isFinite)
-        ? ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0
-        : null;
+      // utils/ip.js is already imported by this file. The inline copy that used
+      // to live here returned null for unparseable input where ipToLong returns
+      // 0, so a malformed reverse-zone row sorted to the opposite end of the
+      // table depending on which code path produced it (audit #52). Guard with
+      // the shared validator and use the shared conversion.
+      const ipLong = isValidIpv4(ip) ? ipToLong(ip) : null;
       return { ...r, _ip_long: ipLong };
     });
   }
@@ -674,12 +679,12 @@ const valuePlaceholder = computed(() => {
 
 // Persist zone tab selection
 watch(zoneTab, (val) => {
-  try { localStorage.setItem('cidrella_dns_zone_tab', JSON.stringify(val)); } catch {}
+  saveJson('cidrella_dns_zone_tab', val)
 });
 
 async function selectZone(zone) {
   selectedZone.value = zone;
-  try { localStorage.setItem('cidrella_dns_selected_zone_id', JSON.stringify(zone?.id || null)); } catch {}
+  saveJson('cidrella_dns_selected_zone_id', zone?.id || null)
   loadingRecords.value = true;
   try {
     const fetched = await store.getRecords(zone.id);
@@ -697,20 +702,43 @@ async function selectZone(zone) {
 // Zone CRUD
 async function openZoneDialog(zone = null) {
   editingZone.value = zone;
+
+  // SOA defaults come from the server and are NOT mirrored here.
+  //
+  // There used to be a literal fallback for when this fetch failed, and it had
+  // drifted: soa_minimum_ttl was 900 here against 1800 in the server's config
+  // (duplicate-logic audit #38). Nobody reviews the sad path, which is exactly
+  // where a stale copy survives. docs/CROSS-TIER-DUPLICATION.md is explicit
+  // about this: if the fetch fails the UI refuses to offer the control rather
+  // than inventing a value, because a zone created from invented defaults is
+  // worse than a zone not created.
+  let soaDefaults;
+  try {
+    soaDefaults = await store.getSoaDefaults();
+  } catch (err) {
+    toast.add({
+      severity: 'error',
+      summary: 'Could not load SOA defaults',
+      detail: `${apiError(err)}. The zone editor needs them, so it has not been opened.`,
+      life: 6000
+    });
+    return;
+  }
+
   if (zone) {
     zoneForm.value = {
       name: zone.name, type: zone.type,
       description: zone.description || '', enabled: !!zone.enabled,
-      soa_primary_ns: zone.soa_primary_ns || 'ns1.localhost',
-      soa_admin_email: zone.soa_admin_email || 'admin.localhost',
-      soa_refresh: zone.soa_refresh ?? 3600, soa_retry: zone.soa_retry ?? 900,
-      soa_expire: zone.soa_expire ?? 604800, soa_minimum_ttl: zone.soa_minimum_ttl ?? 900
+      // A stored zone can hold NULL in these columns. Fall back to the SERVER's
+      // defaults, not to a second set of numbers written down over here.
+      soa_primary_ns: zone.soa_primary_ns || soaDefaults.soa_primary_ns,
+      soa_admin_email: zone.soa_admin_email || soaDefaults.soa_admin_email,
+      soa_refresh: zone.soa_refresh ?? soaDefaults.soa_refresh,
+      soa_retry: zone.soa_retry ?? soaDefaults.soa_retry,
+      soa_expire: zone.soa_expire ?? soaDefaults.soa_expire,
+      soa_minimum_ttl: zone.soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl
     };
   } else {
-    // Load SOA defaults from settings
-    let soaDefaults = { soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
-      soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 900 };
-    try { soaDefaults = await store.getSoaDefaults(); } catch { /* use local defaults */ }
     zoneForm.value = {
       name: '', type: zoneTab.value || 'forward',
       description: '', enabled: true,

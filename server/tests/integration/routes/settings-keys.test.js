@@ -21,6 +21,15 @@ const APPLY_COUPLED_KEYS = [
   'forwarder_encrypted_upstreams',
   'rogue_dhcp_detection_enabled',
   'rogue_dhcp_probe_interval_min',
+  // geoip_mode is the one with teeth. dns-proxy.js caches it in a module-level
+  // `geoipMode` refreshed only by loadGeoipRules(), and shouldBlock() branches
+  // on that cached copy alone, so a bare settings write stored "allowlist"
+  // while the resolver kept running the blocklist arm until restart. That
+  // direction fails OPEN: everything not explicitly listed stays permitted
+  // while the operator believes the opposite. geoip_enabled joins it because
+  // only PUT /api/geoip/settings also calls loadMmdb().
+  'geoip_enabled',
+  'geoip_mode',
 ];
 
 describe('PUT /api/settings/:key, apply-coupled keys are not editable', () => {

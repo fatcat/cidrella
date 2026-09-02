@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   ipToLong, longToIp, parseCidr, isIpInSubnet, isIpInRange,
   normalizeCidr, rangesOverlap, cidrsOverlap, isSubnetOf,
-  isValidIp, isValidCidr, canMergeCidrs, calculateSubnets,
+  isValidIpv4, isValidCidr, canMergeCidrs, calculateSubnets,
   subtractCidr, applyNameTemplate, validateSupernet, ipRange
 } from '../../../src/utils/ip.js';
 
@@ -233,19 +233,42 @@ describe('isSubnetOf', () => {
   });
 });
 
-// ── isValidIp / isValidCidr ──────────────────────────────
+// ── isValidIpv4 / isValidCidr ────────────────────────────
 
-describe('isValidIp', () => {
+// These cases used to test isValidIp(), a second, laxer IPv4 validator that
+// sat next to this one with the more generic name and ZERO production callers.
+// It delegated to ipToLong() and so mapped each octet through Number(), which
+// accepts hex, exponent and whitespace forms, and read a trailing dot as a
+// fourth octet of 0. It was deleted rather than fixed. The "malformed input"
+// cases below are the ones that told the two apart, kept so nobody reintroduces
+// a permissive validator under a friendlier name. See REVIEW.md, duplicate-logic
+// audit #6.
+describe('isValidIpv4', () => {
   it('returns true for valid IPs', () => {
-    expect(isValidIp('0.0.0.0')).toBe(true);
-    expect(isValidIp('192.168.1.1')).toBe(true);
-    expect(isValidIp('255.255.255.255')).toBe(true);
+    expect(isValidIpv4('0.0.0.0')).toBe(true);
+    expect(isValidIpv4('192.168.1.1')).toBe(true);
+    expect(isValidIpv4('255.255.255.255')).toBe(true);
   });
 
   it('returns false for invalid IPs', () => {
-    expect(isValidIp('256.0.0.0')).toBe(false);
-    expect(isValidIp('abc')).toBe(false);
-    expect(isValidIp('')).toBe(false);
+    expect(isValidIpv4('256.0.0.0')).toBe(false);
+    expect(isValidIpv4('abc')).toBe(false);
+    expect(isValidIpv4('')).toBe(false);
+  });
+
+  it('rejects the malformed forms the deleted isValidIp accepted', () => {
+    expect(isValidIpv4('1.2.3.')).toBe(false);        // was read as 1.2.3.0
+    expect(isValidIpv4('1.2.3.0x0a')).toBe(false);    // hex octet
+    expect(isValidIpv4('1.2.3.4e0')).toBe(false);     // exponent octet
+    expect(isValidIpv4('  10.0.0.1')).toBe(false);    // leading whitespace
+    expect(isValidIpv4('10.0.0.1\n')).toBe(false);    // trailing newline
+    expect(isValidIpv4('1.2.3.4.5')).toBe(false);     // five octets
+  });
+
+  it('rejects non-string input without throwing', () => {
+    expect(isValidIpv4(null)).toBe(false);
+    expect(isValidIpv4(undefined)).toBe(false);
+    expect(isValidIpv4(123)).toBe(false);
   });
 });
 

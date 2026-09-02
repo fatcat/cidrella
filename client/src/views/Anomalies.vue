@@ -242,15 +242,16 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Tag from 'primevue/tag';
-import Button from 'primevue/button';
-import Dialog from 'primevue/dialog';
-import Select from 'primevue/select';
-import Popover from 'primevue/popover';
-import ConfirmPopup from 'primevue/confirmpopup';
-import InputText from 'primevue/inputtext';
+import { EMPTY_CELL, apiError } from '../utils/format.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Tag from '../ui/Tag.js';
+import Button from '../ui/Button.js';
+import Dialog from '../ui/Dialog.js';
+import Select from '../ui/Select.js';
+import Popover from '../ui/Popover.js';
+import ConfirmPopup from '../ui/ConfirmPopup.js';
+import InputText from '../ui/InputText.js';
 import {
   Chart as ChartJS,
   CategoryScale, LinearScale, PointElement, LineElement,
@@ -262,8 +263,9 @@ import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import '../assets/analytics-layout.css';
 import { chartColor, chartFill } from '../utils/chart-config.js';
 import { formatDateTime } from '../utils/dateFormat.js';
-import { useToast } from 'primevue/usetoast';
-import { useConfirm } from 'primevue/useconfirm';
+import { useToast } from '../ui/useToast.js';
+import { useConfirm } from '../ui/useConfirm.js';
+import { formatRelativeTime as timeAgo } from '../utils/dateFormat.js';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, Filler);
 ChartJS.defaults.elements.line.borderWidth = 1;
@@ -316,7 +318,7 @@ const RATIO_FEATURES = new Set([
 ]);
 
 function formatFeatureValue(feature, value) {
-  if (value == null) return '--';
+  if (value == null) return EMPTY_CELL;
   if (COUNT_FEATURES.has(feature)) return Math.round(value).toLocaleString();
   if (RATIO_FEATURES.has(feature)) return (value * 100).toFixed(1) + '%';
   return value.toFixed(2); // entropy, diversity, depth
@@ -352,20 +354,9 @@ function severityColor(severity) {
   return 'info';
 }
 
-function timeAgo(iso) {
-  if (!iso) return '—';
-  const seconds = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function formatTime(iso) {
-  if (!iso) return '--';
+  if (!iso) return EMPTY_CELL;
   return formatDateTime(iso);
 }
 
@@ -408,7 +399,7 @@ async function confirmWhitelist() {
     whitelistDialogVisible.value = false;
     toast.add({ severity: 'success', summary: 'Client whitelisted', detail: whitelistTarget.value.client_ip, life: 3000 });
   } catch (err) {
-    const msg = err.response?.data?.error || 'Failed to whitelist client';
+    const msg = apiError(err);
     toast.add({ severity: 'error', summary: msg, life: 4000 });
   }
 }

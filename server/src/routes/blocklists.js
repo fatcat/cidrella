@@ -4,7 +4,8 @@ import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
 import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig, SCHEDULE_HOURS } from '../utils/blocklist.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
-import { isValidIpv4 } from '../utils/ip.js';
+import { isValidIpv4, isValidDomain } from '../utils/ip.js';
+import { isIntInRangeCoercing } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
 
@@ -147,7 +148,7 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
 
 // GET /api/blocklists/settings
 router.get('/settings', requirePerm('dns:read'), (req, res) => {
-  const keys = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule'];
+  const keys = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule', 'blocklist_max_feed_mb'];
   const settings = {};
   for (const key of keys) {
     settings[key] = getSetting(key) || '';
@@ -158,7 +159,7 @@ router.get('/settings', requirePerm('dns:read'), (req, res) => {
 // PUT /api/blocklists/settings
 router.put('/settings', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
-  const allowed = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule'];
+  const allowed = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule', 'blocklist_max_feed_mb'];
 
   // Settings are stored as strings, so the toggle arrives as 'true'/'false'.
   // The enum checks also reject non-string types (arrays, objects, booleans).
@@ -178,6 +179,15 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
       && req.body.blocklist_redirect_ip !== ''
       && (typeof req.body.blocklist_redirect_ip !== 'string' || !isValidIpv4(req.body.blocklist_redirect_ip))) {
     return res.status(400).json({ error: 'blocklist_redirect_ip must be a valid IPv4 address or empty' });
+  }
+
+  // Per-feed download ceiling. Coercing variant because this surface is
+  // string-typed end to end (the UI posts "128", not 128). The upper bound is
+  // a sanity rail, not a capability claim: a feed that big would take minutes
+  // to import and gigabytes of disk.
+  if (req.body.blocklist_max_feed_mb !== undefined
+      && !isIntInRangeCoercing(req.body.blocklist_max_feed_mb, 1, 2048)) {
+    return res.status(400).json({ error: 'blocklist_max_feed_mb must be an integer 1-2048' });
   }
 
   for (const key of allowed) {
@@ -208,9 +218,19 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   // array, object) would throw on .trim()/.toLowerCase() and 500.
   if (typeof domain !== 'string' || !domain) return res.status(400).json({ error: 'Domain is required' });
 
-  const DOMAIN_RE = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,}$/;
-  if (!DOMAIN_RE.test(domain.trim())) {
+  // Shape and the 253-char cap come from the shared validator. This route used
+  // to inline its own regex with NO length bound at all, so a 300-character
+  // name was accepted here and rejected everywhere else.
+  //
+  // The extra TLD requirement is deliberate and stays: this is a public-domain
+  // allowlist, so a single-label name like "intranet" is not meaningful here
+  // even though isValidDomain accepts it. See REVIEW.md, duplicate-logic audit #21.
+  const trimmed = domain.trim();
+  if (!isValidDomain(trimmed)) {
     return res.status(400).json({ error: 'Invalid domain name' });
+  }
+  if (!/\.[a-zA-Z]{2,}$/.test(trimmed)) {
+    return res.status(400).json({ error: 'Domain must include a top-level domain' });
   }
 
   const normalized = domain.toLowerCase().trim();
@@ -241,7 +261,7 @@ router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
 router.get('/search', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   const { q, page = 1, limit = 50 } = req.query;
-  if (typeof q !== 'string' || q.length < 2) return res.json({ items: [], total: 0 });
+  if (typeof q !== 'string' || q.length < 2) return res.json({ items: [], hasMore: false, page: 1, limit: 50 });
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
@@ -249,14 +269,24 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
   const escaped = q.replace(/[\\%_]/g, '\\$&');
   const searchTerm = `%${escaped}%`;
 
-  const total = db.prepare(`
-    SELECT COUNT(DISTINCT bd.domain) as c
-    FROM blocklist_domains bd
-    JOIN blocklist_categories bc ON bd.category_slug = bc.slug
-    WHERE bc.enabled = 1 AND bd.domain LIKE ? ESCAPE '\\'
-  `).get(searchTerm).c;
-
-  const items = db.prepare(`
+  // No COUNT here, deliberately.
+  //
+  // `LIKE '%...%'` cannot use the primary key, so every query is a full scan of
+  // blocklist_domains, which migration 053 sized at 2.65 million rows for the
+  // malware category alone. The paged SELECT below survives that because the
+  // table is WITHOUT ROWID keyed on (domain, category_slug): it streams in
+  // domain order with no temp b-tree, so LIMIT lets it stop as soon as it has a
+  // page. A COUNT can never stop early, so it scanned all 2.65M rows on every
+  // search regardless of how quickly the page filled.
+  //
+  // Measured on a synthetic 2.65M-row table: COUNT 148ms + page 3ms for a
+  // narrow match, and 110ms + 117ms for a search that matches nothing. Dropping
+  // the COUNT removes a whole scan from every request.
+  //
+  // One extra row is fetched instead. Its presence is all the UI needs to
+  // decide whether a Next button should be live, and it costs nothing: the scan
+  // was already going to produce it or hit the end of the table.
+  const rows = db.prepare(`
     SELECT bd.domain, GROUP_CONCAT(bc.slug, ', ') as categories
     FROM blocklist_domains bd
     JOIN blocklist_categories bc ON bd.category_slug = bc.slug
@@ -264,7 +294,10 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
     GROUP BY bd.domain
     ORDER BY bd.domain
     LIMIT ? OFFSET ?
-  `).all(searchTerm, limitNum, offset);
+  `).all(searchTerm, limitNum + 1, offset);
+
+  const hasMore = rows.length > limitNum;
+  const items = hasMore ? rows.slice(0, limitNum) : rows;
 
   const whitelisted = new Set(
     db.prepare('SELECT domain FROM blocklist_whitelist').all().map(r => r.domain)
@@ -274,7 +307,10 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
     item.whitelisted = whitelisted.has(item.domain);
   }
 
-  res.json({ items, total, page: pageNum, limit: limitNum });
+  // `hasMore` rather than a total. An exact count of matches across 2.65M rows
+  // cannot be produced without a second full scan, and the UI only ever used it
+  // to decide whether Next was clickable.
+  res.json({ items, hasMore, page: pageNum, limit: limitNum });
 });
 
 export default router;

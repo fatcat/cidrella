@@ -6,6 +6,7 @@
  */
 
 import { getSetting } from '../db/init.js';
+import { activeLeaseSql } from '../utils/lease-sql.js';
 import { scannerCoveredSql } from '../utils/scan-coverage.js';
 import { isLocalAddress } from '../utils/local-addresses.js';
 import * as DnsRecord from './dns-record.js';
@@ -213,9 +214,29 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
  * scanner warns about, where restored lease history keeps a name after the lease
  * is long gone.
  */
-function addressClaim(db, subnetId, ip) {
+function addressClaim(db, subnetId, ip, row = null) {
   // An address the appliance itself holds is obviously in use, and by us.
   if (isLocalAddress(ip)) return { claimed: true, hostname: null };
+
+  // Operator intent recorded on the row. `row` is optional only because not
+  // every caller has one to hand, so pass it whenever you do.
+  //
+  // The scanner has always honored these two arms and the passive path never
+  // did, which is the bug this parameter exists to close: an address flagged
+  // rogue BEFORE an admin locked it stayed flagged forever on any subnet the
+  // scanner does not cover. setStatus() does not clear is_rogue, and
+  // computeIpView orders its rogue branch ahead of its locked branch, so such
+  // a row rendered as ROGUE rather than LOCKED indefinitely.
+  //
+  // detection_source === 'dns' is a weaker signal than the live A-record check
+  // below, because it can outlive the record that set it. It is kept because
+  // the scanner has always honored it, and the two paths agreeing matters more
+  // than trimming it. Dropping it is a separate decision with its own blast
+  // radius, not something to smuggle into a unification.
+  if (row) {
+    if (row.status === 'locked' || row.status === 'assigned') return { claimed: true, hostname: null };
+    if (row.detection_source === 'dns') return { claimed: true, hostname: null };
+  }
 
   const dnsHostname = DnsRecord.dnsAssignedHostname(db, ip);
   if (dnsHostname) return { claimed: true, hostname: dnsHostname };
@@ -223,7 +244,7 @@ function addressClaim(db, subnetId, ip) {
   const lease = db.prepare(`
     SELECT 1 FROM dhcp_leases
      WHERE subnet_id = ? AND ip_address = ?
-       AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+       AND ${activeLeaseSql()}
      LIMIT 1
   `).get(subnetId, ip);
   if (lease) return { claimed: true, hostname: null };
@@ -274,11 +295,14 @@ export function recordPassiveActivity(db, subnetId, ip, {
   createRogue = false,
   rogueReason = PASSIVE_ROGUE_REASON
 } = {}) {
+  // status and detection_source are selected because addressClaim() reads them.
+  // They were missing here originally, which is why this path could not see the
+  // operator-intent arms the scanner path honored.
   const existing = db.prepare(
-    'SELECT id, is_rogue, rogue_reason, hostname FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_rogue, rogue_reason, hostname, status, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
-  const { claimed, hostname: dnsHostname } = addressClaim(db, subnetId, ip);
+  const { claimed, hostname: dnsHostname } = addressClaim(db, subnetId, ip, existing);
 
   if (existing) {
     const result = markOnline(db, subnetId, ip, { mac, source });
@@ -691,50 +715,19 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     'SELECT id, is_online, is_rogue, status, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
-  // Re-check: if scanner says conflict but the IP now has a static assignment
-  // (reservation/DNS added after the assignment map was built), don't mark rogue
+  // Re-check: the scanner built its assignment map before this row was read, so
+  // a reservation, lease, DNS record or operator lock may have appeared since.
+  //
+  // This asks addressClaim() rather than re-deriving the answer. It used to be
+  // forty lines of inline checks that answered the same question with a
+  // DIFFERENT set of arms from the passive path, and a fourth hand-rolled copy
+  // of the static-DNS predicate that models/dns-record.js exists to centralize.
+  // The two paths disagreeing is what left a locked address flagged rogue.
   let effectiveConflict = isConflict;
   let effectiveReason = conflictReason;
-  if (isConflict && existing && (existing.status === 'assigned' || existing.status === 'locked' || existing.detection_source === 'dns')) {
+  if (isConflict && addressClaim(db, subnetId, ip, existing).claimed) {
     effectiveConflict = 0;
     effectiveReason = null;
-  } else if (isConflict) {
-    const hasReservation = db.prepare(
-      'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? LIMIT 1'
-    ).get(subnetId, ip);
-    if (hasReservation) {
-      effectiveConflict = 0;
-      effectiveReason = null;
-    } else {
-      const hasActiveLease = db.prepare(`
-        SELECT 1 FROM dhcp_leases
-        WHERE subnet_id = ?
-          AND ip_address = ?
-          AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
-        LIMIT 1
-      `).get(subnetId, ip);
-      if (hasActiveLease) {
-        effectiveConflict = 0;
-        effectiveReason = null;
-      } else {
-        const hasStaticDns = db.prepare(`
-          SELECT 1
-          FROM dns_records r
-          JOIN dns_zones z ON z.id = r.zone_id
-          WHERE r.type = 'A'
-            AND r.enabled = 1
-            AND z.enabled = 1
-            AND z.type = 'forward'
-            AND r.value = ?
-            AND COALESCE(r.source, 'manual') = 'manual'
-          LIMIT 1
-        `).get(ip);
-        if (hasStaticDns) {
-          effectiveConflict = 0;
-          effectiveReason = null;
-        }
-      }
-    }
   }
 
   if (existing) {

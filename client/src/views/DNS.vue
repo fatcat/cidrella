@@ -158,17 +158,18 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Select from 'primevue/select';
-import RadioButton from 'primevue/radiobutton';
-import Checkbox from 'primevue/checkbox';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Select from '../ui/Select.js';
+import RadioButton from '../ui/RadioButton.js';
+import Checkbox from '../ui/Checkbox.js';
 import StatusDot from '../components/StatusDot.vue';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
+import { isValidIpv4 } from '../utils/ip.js';
 
 const store = useDnsStore();
 const toast = useToast();
@@ -194,9 +195,14 @@ const forwardersDirty = computed(() => {
   return current.some((ip, i) => ip !== saved[i]);
 });
 
+// Starts empty and is filled from GET /api/dns/soa-defaults on load. These used
+// to be literals that had drifted from the server (soa_minimum_ttl 900 here
+// against 1800 there, audit #38). If the fetch fails the fields stay blank and
+// savedSoa stays null, which already keeps the Save button disabled, so the
+// control refuses itself rather than offering invented numbers.
 const soaForm = ref({
-  soa_primary_ns: 'ns1.localhost', soa_admin_email: 'admin.localhost',
-  soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 900
+  soa_primary_ns: '', soa_admin_email: '',
+  soa_refresh: null, soa_retry: null, soa_expire: null, soa_minimum_ttl: null
 });
 const savedSoa = ref(null);
 const savingSoa = ref(false);
@@ -337,7 +343,10 @@ const soaDirty = computed(() => {
     f.soa_expire !== s.soa_expire || f.soa_minimum_ttl !== s.soa_minimum_ttl;
 });
 
-const ipv4Re = /^(\d{1,3}\.){3}\d{1,3}$/;
+// Was a local /^(\d{1,3}\.){3}\d{1,3}$/, which checks shape but not octet range,
+// so 999.999.999.999 passed the gate and got sent to the forwarder-test endpoint.
+// utils/ip.js already exports the range-checking predicate.
+// See REVIEW.md, duplicate-logic audit #43.
 
 function fwdDotKind(fwd) {
   if (fwd.status === 'reachable') return 'ok';
@@ -360,7 +369,7 @@ function removeForwarder(i) {
 
 async function testForwarder(fwd) {
   const ip = fwd.ip.trim();
-  if (!ip || !ipv4Re.test(ip)) {
+  if (!ip || !isValidIpv4(ip)) {
     fwd.status = null;
     return;
   }

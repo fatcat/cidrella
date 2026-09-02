@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia';
+import { collectAllocatedSubnets } from '../utils/tree.js';
+import { subnetLabel } from '../utils/format.js';
 import { ref, computed } from 'vue';
 import api from '../api/client.js';
 import { ipToLong } from '../utils/ip.js';
@@ -34,7 +36,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     });
     return sorted.map(s => ({
       key: `subnet-${s.id}`,
-      label: s.status === 'allocated' ? `${s.cidr} — ${s.name}` : s.cidr,
+      label: s.status === 'allocated' ? subnetLabel(s) : s.cidr,
       data: { ...s, type: 'subnet' },
       leaf: (s.child_count || 0) === 0 && (!s.children || s.children.length === 0),
       children: s.children && s.children.length > 0 ? toSubnetNodes(s.children) : undefined,
@@ -58,16 +60,10 @@ export const useSubnetStore = defineStore('subnets', () => {
 
   // Allocated-only tree: flat two-tier (folders -> allocated subnets, no nesting)
   const allocatedTreeNodes = computed(() => {
-    function collectAllocated(nodes) {
-      const result = [];
-      for (const n of nodes) {
-        if (n.status === 'allocated') result.push(n);
-        if (n.children) result.push(...collectAllocated(n.children));
-      }
-      return result;
-    }
+    // collectAllocatedSubnets from utils/tree.js, which this used to
+    // reimplement without its query filter (audit #60/#F16).
     return folders.value.map(f => {
-      const allocated = f.subnets ? collectAllocated(f.subnets) : [];
+      const allocated = f.subnets ? collectAllocatedSubnets(f.subnets) : [];
       const sorted = [...allocated].sort((a, b) => {
         const aNet = ipToLong(a.network_address);
         const bNet = ipToLong(b.network_address);
@@ -81,7 +77,7 @@ export const useSubnetStore = defineStore('subnets', () => {
         leaf: sorted.length === 0,
         children: sorted.map(s => ({
           key: `subnet-${s.id}`,
-          label: s.name ? `${s.cidr} — ${s.name}` : s.cidr,
+          label: subnetLabel(s),
           data: { ...s, type: 'subnet' },
           leaf: true,
           children: [],

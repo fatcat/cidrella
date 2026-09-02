@@ -1,4 +1,5 @@
 import { execFile } from 'child_process';
+import { activeLeaseSql } from './lease-sql.js';
 import { parseCidr, longToIp } from './ip.js';
 import { parseArpingMac, readArpCache } from './arp-cache.js';
 import { localIpv4Set } from './local-addresses.js';
@@ -163,7 +164,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   const activeLeases = db.prepare(`
     SELECT ip_address, mac_address, hostname FROM dhcp_leases
     WHERE subnet_id = ?
-      AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+      AND ${activeLeaseSql()}
   `).all(subnetId);
   for (const l of activeLeases) {
     if (!assignmentMap.has(l.ip_address)) {

@@ -73,7 +73,7 @@
             <div class="scope-option-value">
               <template v-if="form.selectedOptions.includes(opt.code)">
                 <Select v-if="opt.type === 'select'" v-model="form.optionValues[opt.code]"
-                        :options="opt.choices" size="small" :placeholder="defaultValues[opt.code] || '—'" showClear />
+                        :options="opt.choices" size="small" :placeholder="defaultValues[opt.code] || EMPTY_CELL" showClear />
                 <InputNumber v-else-if="opt.type === 'number'" v-model="form.optionValues[opt.code]"
                              size="small" :useGrouping="false" :placeholder="defaultValues[opt.code] || '0'" />
                 <InputText v-else v-model="form.optionValues[opt.code]" size="small"
@@ -111,21 +111,21 @@
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import Dialog from 'primevue/dialog';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import Select from 'primevue/select';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Popover from 'primevue/popover';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import Dialog from '../ui/Dialog.js';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import Select from '../ui/Select.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Popover from '../ui/Popover.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
-import { parseCidr, dhcpRangeDefaults } from '../utils/ip.js';
+import { parseCidr, dhcpRangeDefaults, netmaskFor, dhcpPoolError } from '../utils/ip.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
-import { apiError } from '../utils/format.js';
+import { apiError, EMPTY_CELL } from '../utils/format.js';
 
 const toast = useToast();
 const dhcpStore = useDhcpStore();
@@ -220,6 +220,20 @@ function addOptionSelection(selected, code) {
   if (!selected.includes(numericCode)) selected.push(numericCode);
 }
 
+// Both of these used to be hand-rolled here, in a file that already imports
+// parseCidr and uses it 60 lines below. Neither validated its input, and the
+// values they produce are written into DHCP option 1 (subnet mask) and option 28
+// (broadcast), so a malformed subnet_cidr silently produced a /32 mask rather
+// than an error. See REVIEW.md, duplicate-logic audit #50.
+function computeBroadcast(cidr) {
+  if (!cidr) return null;
+  try { return parseCidr(cidr).broadcast; } catch { return null; }
+}
+function computeMask(cidr) {
+  if (!cidr) return null;
+  try { return netmaskFor(parseCidr(cidr).prefix); } catch { return null; }
+}
+
 function setOptionValue(selected, values, code, value, { overwrite = true } = {}) {
   if (value == null || value === '') return;
   const numericCode = Number(code);
@@ -261,25 +275,7 @@ function toggleOption(code, checked) {
   }
 }
 
-function computeBroadcast(cidr) {
-  if (!cidr) return null;
-  const [netIp, pfx] = cidr.split('/');
-  const p = parseInt(pfx, 10);
-  if (p < 0 || p > 32) return null;
-  const m = p === 0 ? 0 : (0xFFFFFFFF << (32 - p)) >>> 0;
-  const parts = netIp.split('.').map(Number);
-  const ipL = ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-  const bcast = (ipL | ~m) >>> 0;
-  return [((bcast) >>> 24) & 255, ((bcast) >>> 16) & 255, ((bcast) >>> 8) & 255, bcast & 255].join('.');
-}
 
-function computeMask(cidr) {
-  if (!cidr) return null;
-  const pfx = parseInt(cidr.split('/')[1], 10);
-  if (pfx < 0 || pfx > 32) return null;
-  const m = pfx === 0 ? 0 : (0xFFFFFFFF << (32 - pfx)) >>> 0;
-  return [(m >>> 24) & 255, (m >>> 16) & 255, (m >>> 8) & 255, m & 255].join('.');
-}
 
 // Auto-populate network-dependent options when a subnet is selected
 watch(() => form.value.subnet_id, (subnetId, oldSubnetId) => {
@@ -412,7 +408,27 @@ async function onNetworkCreated() {
 
 const emit = defineEmits(['saved']);
 
+/**
+ * The pool this dialog is about to submit, or null when it is fine.
+ *
+ * This dialog used to check only that the fields were non-empty, so a start
+ * after the end went to the server and came back as a 400, while the network
+ * wizard caught the same mistake inline with a useful message
+ * (duplicate-logic audit #53). Same shared validator now.
+ */
+const poolError = computed(() => {
+  // Only meaningful when the operator is typing a pool by hand. Picking an
+  // existing range means the bounds come from the server.
+  if (!form.value.start_ip && !form.value.end_ip) return null;
+  const subnet = subnetsList.value?.find(sn => sn.id === form.value.subnet_id);
+  return dhcpPoolError(form.value.start_ip, form.value.end_ip, subnet?.cidr || null);
+});
+
 async function save() {
+  if (poolError.value) {
+    toast.add({ severity: 'warn', summary: 'Check the pool', detail: poolError.value, life: 5000 });
+    return;
+  }
   saving.value = true;
   try {
     // Send all selected options to the server. The server strips inherited

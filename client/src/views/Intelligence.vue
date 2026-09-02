@@ -80,10 +80,10 @@
 
 <script setup>
 import { computed, onMounted } from 'vue';
-import Select from 'primevue/select';
-import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
+import Select from '../ui/Select.js';
+import Button from '../ui/Button.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
 import {
   Chart as ChartJS, ArcElement, Tooltip, Legend,
 } from 'chart.js';

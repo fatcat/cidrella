@@ -1,0 +1,176 @@
+import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { createTestApp } from '../../helpers/test-app.js';
+
+vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+  const original = await importOriginal();
+  return { ...original, regenerateConfigs: vi.fn(), generateReverseNames: original.generateReverseNames };
+});
+vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
+  const original = await importOriginal();
+  return { ...original, regenerateDhcpConfigs: vi.fn() };
+});
+
+const { default: piholeRouter } = await import('../../../src/routes/pihole.js');
+const { default: request } = await import('supertest');
+
+/**
+ * Duplicate-logic audit #18, the half that was open on a product decision.
+ *
+ * The DNS page refuses to give one IP a second hostname and tells the operator
+ * to use a CNAME. The Pi-hole importer skipped that check entirely, so a file
+ * could quietly do what the UI forbids.
+ *
+ * Decision taken: reject the whole import and import NOTHING, but the error
+ * must name every offending record rather than being a bare 400. Both halves
+ * are load-bearing and both are tested here.
+ */
+let tmpDir, app, db;
+
+async function freshDb() {
+  const setup = await setupTestDb();
+  tmpDir = setup.tmpDir;
+  db = setup.db;
+  app = createTestApp(piholeRouter, '/api/pihole');
+  db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('audit.lan','forward',1)").run();
+  return db.prepare("SELECT id FROM dns_zones WHERE name = 'audit.lan'").get().id;
+}
+
+let zoneId;
+beforeEach(async () => { zoneId = await freshDb(); });
+afterAll(() => cleanupTestDb(tmpDir));
+
+const post = (body) => request(app).post("/api/pihole/import").send({ zoneId, ...body });
+const countRecords = () => db.prepare('SELECT COUNT(*) FROM dns_records').pluck().get();
+
+describe('#18: a conflicting A record is rejected and named', () => {
+  it('refuses a second name for an address that already has one', async () => {
+    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, enabled, source) VALUES (?, 'nas', 'A', '10.9.0.5', 1, 'manual')").run(zoneId);
+
+    const res = await post({ hosts: [{ hostname: 'fileserver', ip: '10.9.0.5' }] });
+
+    expect(res.status).toBe(400);
+    // The error must be diagnostic on its own: which record, which address,
+    // what it clashes with, and what to do instead.
+    expect(res.body.error).toContain('fileserver');
+    expect(res.body.error).toContain('10.9.0.5');
+    expect(res.body.error).toContain('nas.audit.lan');
+    expect(res.body.error).toMatch(/CNAME/);
+    expect(res.body.problems).toHaveLength(1);
+    expect(res.body.problems[0]).toMatchObject({ type: 'A', name: 'fileserver', value: '10.9.0.5' });
+  });
+
+  it('names the DHCP reservation when that is the source of the clash', async () => {
+    db.prepare("INSERT INTO subnets (cidr, name, prefix_length, network_address, broadcast_address, total_addresses, status, depth, domain_name) VALUES ('10.9.0.0/24','s',24,'10.9.0.0','10.9.0.255',256,'allocated',0,'audit.lan')").run();
+    const subnetId = db.prepare("SELECT id FROM subnets WHERE cidr='10.9.0.0/24'").pluck().get();
+    db.prepare("INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, enabled) VALUES (?, 'aa:bb:cc:dd:ee:ff', '10.9.0.7', 'printer', 1)").run(subnetId);
+
+    const res = await post({ hosts: [{ hostname: 'scanner', ip: '10.9.0.7' }] });
+    expect(res.status).toBe(400);
+    expect(res.body.problems[0].reason).toContain('printer');
+    expect(res.body.problems[0].reason).toContain('reserved DHCP');
+  });
+
+  it('allows the SAME name for the address, which is a re-statement not a clash', async () => {
+    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, enabled, source) VALUES (?, 'nas', 'A', '10.9.0.5', 1, 'manual')").run(zoneId);
+    const res = await post({ hosts: [{ hostname: 'nas', ip: '10.9.0.5' }] });
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('#18: nothing is imported when anything is wrong', () => {
+  it('imports none of the good records alongside a bad one', async () => {
+    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, enabled, source) VALUES (?, 'nas', 'A', '10.9.0.5', 1, 'manual')").run(zoneId);
+    const before = countRecords();
+
+    const res = await post({
+      hosts: [
+        { hostname: 'good-one', ip: '10.9.0.10' },
+        { hostname: 'good-two', ip: '10.9.0.11' },
+        { hostname: 'clashes', ip: '10.9.0.5' },
+      ],
+    });
+
+    expect(res.status).toBe(400);
+    // The whole point of the decision: no partial import.
+    expect(countRecords(), 'nothing should have been written').toBe(before);
+  });
+});
+
+describe('#18: EVERY offender is reported, not just the first', () => {
+  it('lists all bad records in one response', async () => {
+    const res = await post({
+      hosts: [
+        { hostname: 'ok', ip: '10.9.0.10' },
+        { hostname: 'bad-ip-1', ip: '999.1.1.1' },
+        { hostname: 'bad-ip-2', ip: 'not-an-ip' },
+        { hostname: 'bad-ip-3', ip: '10.9.0.300' },
+      ],
+    });
+
+    expect(res.status).toBe(400);
+    // Before this change the handler returned on the first bad row, so an
+    // operator fixing a file re-uploaded once per problem.
+    expect(res.body.problems).toHaveLength(3);
+    const names = res.body.problems.map(p => p.name).sort();
+    expect(names).toEqual(['bad-ip-1', 'bad-ip-2', 'bad-ip-3']);
+    for (const n of names) expect(res.body.error).toContain(n);
+    expect(res.body.error).toContain('3 records');
+  });
+
+  it('reports A and CNAME problems together', async () => {
+    const res = await post({
+      hosts: [{ hostname: 'bad-ip', ip: 'nope' }],
+      cnames: [{ alias: 'www', target: 'somewhere.else.example.com' }],
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.problems.map(p => p.type).sort()).toEqual(['A', 'CNAME']);
+  });
+
+  it('caps the human-readable message but keeps every problem in the array', async () => {
+    const hosts = Array.from({ length: 25 }, (_, i) => ({ hostname: `bad${i}`, ip: 'not-an-ip' }));
+    const res = await post({ hosts });
+    expect(res.status).toBe(400);
+    expect(res.body.problems).toHaveLength(25);
+    expect(res.body.error).toContain('and 5 more');
+  });
+});
+
+describe('#18: the idempotency trap', () => {
+  it('a file mapping one IP to two names imports, and re-imports, cleanly', async () => {
+    // Neither name is in the DB on the first pass, so nothing clashes. On the
+    // second pass both exist, and without excluding the import's own names each
+    // would be judged against the other and the file would never import twice.
+    const body = {
+      hosts: [
+        { hostname: 'host-a', ip: '10.9.0.20' },
+        { hostname: 'host-b', ip: '10.9.0.20' },
+      ],
+    };
+
+    const first = await post(body);
+    expect(first.status, JSON.stringify(first.body)).toBe(200);
+
+    const second = await post(body);
+    expect(second.status, `re-import failed: ${JSON.stringify(second.body)}`).toBe(200);
+  });
+
+  it('but a name from OUTSIDE the import still clashes, so the check is not just disabled', async () => {
+    const body = {
+      hosts: [
+        { hostname: 'host-a', ip: '10.9.0.30' },
+        { hostname: 'host-b', ip: '10.9.0.30' },
+      ],
+    };
+    expect((await post(body)).status).toBe(200);
+
+    // A name for that same address that this import does NOT own.
+    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, enabled, source) VALUES (?, 'outsider', 'A', '10.9.0.30', 1, 'manual')").run(zoneId);
+
+    const res = await post(body);
+    expect(res.status, 'an outside name must still clash').toBe(400);
+    expect(res.body.error).toContain('outsider.audit.lan');
+    // Both imported names clash with it, and both are reported.
+    expect(res.body.problems.map(p => p.name).sort()).toEqual(['host-a', 'host-b']);
+  });
+});

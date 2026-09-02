@@ -84,18 +84,16 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
-import Message from 'primevue/message';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
-import TabPanel from 'primevue/tabpanel';
-import api from '../api/client.js';
-import { apiError } from '../utils/format.js';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import InputText from '../ui/InputText.js';
+import Message from '../ui/Message.js';
+import Tabs from '../ui/Tabs.js';
+import TabList from '../ui/TabList.js';
+import Tab from '../ui/Tab.js';
+import TabPanels from '../ui/TabPanels.js';
+import TabPanel from '../ui/TabPanel.js';
+import { usePiholeImport } from '../composables/usePiholeImport.js';
 
 defineProps({
   showCancel: { type: Boolean, default: false }
@@ -104,142 +102,14 @@ defineProps({
 const emit = defineEmits(['imported', 'cancel']);
 const toast = useToast();
 
-const piholeTab = ref('online');
-const piholeUrl = ref('');
-const piholePassword = ref('');
-const probeStatus = ref(null);
-const probeError = ref('');
-const needsPassword = ref(false);
-const fetching = ref(false);
-const parsing = ref(false);
-const importing = ref(false);
-const preview = ref(null);
-const importResults = ref(null);
-const fileContent = ref(null);
-const fileInput = ref(null);
-
-function cleanUrl(raw) {
-  let url = raw.trim();
-  if (!url) return '';
-  if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
-  try {
-    const parsed = new URL(url);
-    return `${parsed.protocol}//${parsed.host}`;
-  } catch {
-    return url;
-  }
-}
-
-let probeTimer = null;
-
-async function probe() {
-  const url = cleanUrl(piholeUrl.value);
-  if (!url) { probeStatus.value = null; return; }
-  if (url !== piholeUrl.value.trim()) piholeUrl.value = url;
-  try {
-    const res = await api.post('/pihole/probe', { url, password: piholePassword.value || undefined });
-    if (res.data.reachable) {
-      probeStatus.value = 'ok';
-      needsPassword.value = res.data.needsPassword;
-      probeError.value = '';
-    } else {
-      probeStatus.value = 'fail';
-      probeError.value = res.data.error || 'Could not connect';
-    }
-  } catch (err) {
-    probeStatus.value = 'fail';
-    probeError.value = apiError(err);
-  }
-}
-
-watch(piholeUrl, (val) => {
-  clearTimeout(probeTimer);
-  probeStatus.value = null;
-  probeError.value = '';
-  const trimmed = val?.trim();
-  if (!trimmed) return;
-  probeTimer = setTimeout(() => probe(), 600);
-});
-
-async function fetchConfig() {
-  fetching.value = true;
-  try {
-    const res = await api.post('/pihole/fetch', {
-      url: piholeUrl.value.trim(),
-      password: piholePassword.value || undefined
-    });
-    preview.value = res.data;
-    importResults.value = null;
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Fetch failed', detail: apiError(err), life: 5000 });
-  } finally { fetching.value = false; }
-}
-
-function onFileSelect(event) {
-  const file = event.target.files[0];
-  if (!file) { fileContent.value = null; return; }
-  const reader = new FileReader();
-  reader.onload = (e) => { fileContent.value = e.target.result; };
-  reader.readAsText(file);
-}
-
-async function parseFile() {
-  parsing.value = true;
-  try {
-    const res = await api.post('/pihole/parse', fileContent.value, {
-      headers: { 'Content-Type': 'text/plain' }
-    });
-    preview.value = res.data;
-    importResults.value = null;
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Parse failed', detail: apiError(err), life: 5000 });
-  } finally { parsing.value = false; }
-}
-
-async function executeImport() {
-  if (!preview.value) return;
-  importing.value = true;
-  try {
-    const { useDnsStore } = await import('../stores/dns.js');
-    const dnsStore = useDnsStore();
-    await dnsStore.fetchZones();
-    const domainName = preview.value.zoneName;
-
-    let zone = dnsStore.zones.find(z => z.name === domainName && z.type === 'forward');
-    if (!zone && domainName) {
-      zone = await dnsStore.createZone({ name: domainName, type: 'forward' });
-    }
-    if (!zone) {
-      toast.add({ severity: 'error', summary: 'No zone found', detail: 'Could not find or create a forward DNS zone for import', life: 5000 });
-      return;
-    }
-
-    const res = await api.post('/pihole/import', {
-      zoneId: zone.id,
-      hosts: preview.value.hosts,
-      cnames: preview.value.cnames,
-      dhcpHosts: preview.value.dhcpHosts,
-    });
-    importResults.value = res.data.results;
-    toast.add({ severity: 'success', summary: 'Pi-hole import complete', life: 3000 });
-    emit('imported');
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Import failed', detail: apiError(err), life: 5000 });
-  } finally { importing.value = false; }
-}
-
-function resetState() {
-  piholeTab.value = 'online';
-  piholeUrl.value = '';
-  piholePassword.value = '';
-  probeStatus.value = null;
-  probeError.value = '';
-  needsPassword.value = false;
-  preview.value = null;
-  importResults.value = null;
-  fileContent.value = null;
-  if (fileInput.value) fileInput.value.value = '';
-}
+// All of this used to live here and again, inline, in NetworkDialogs.vue's
+// wizard step 3. See composables/usePiholeImport.js and audit #47.
+const {
+  tab: piholeTab, url: piholeUrl, password: piholePassword,
+  probeStatus, probeError, needsPassword,
+  fetching, parsing, importing, preview, importResults, fileContent, fileInput,
+  fetchConfig, onFileSelect, parseFile, executeImport, resetState,
+} = usePiholeImport({ toast, onImported: () => emit('imported') });
 
 defineExpose({ resetState });
 </script>

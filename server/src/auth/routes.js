@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { passwordPolicyError } from './password-policy.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
@@ -104,6 +105,15 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // A service account has no usable password and must never obtain a login
+    // JWT. Its password_hash is a discarded random value, so bcrypt above can
+    // never match anyway, but refusing by kind means the rule is stated rather
+    // than relied upon as a side effect.
+    if (user.kind === 'service') {
+      audit(user.id, 'login_failed', 'user', user.id, { reason: 'service_account' });
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
     const token = generateToken(user);
     audit(user.id, 'login', 'user', user.id, null);
 
@@ -143,11 +153,13 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Current password and new password are required' });
     }
 
-    if (new_password.length < 8) {
-      return res.status(400).json({ error: 'New password must be at least 8 characters' });
-    }
-    if (new_password.length > 1024) {
-      return res.status(400).json({ error: 'New password too long' });
+    // Same policy the first-run wizard enforces. These two used to disagree:
+    // setup demanded uppercase + lowercase + digit and this route demanded only
+    // a length, so the policy could be escaped by changing the password
+    // immediately after install (duplicate-logic audit #39).
+    {
+      const pwErr = passwordPolicyError(new_password);
+      if (pwErr) return res.status(400).json({ error: pwErr });
     }
 
     const db = getDb();

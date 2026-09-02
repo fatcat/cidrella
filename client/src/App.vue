@@ -4,7 +4,7 @@
 </template>
 
 <script setup>
-import Toast from 'primevue/toast';
+import Toast from './ui/Toast.js';
 </script>
 
 <style>
@@ -272,14 +272,6 @@ body {
   gap: 0.25rem;
   align-items: center;
   line-height: 1;
-}
-
-/* Fix PrimeVue TabView ink bar sizing incorrectly on initial mount */
-.p-tabview-ink-bar {
-  display: none !important;
-}
-.p-tabview-tablist-item-active > .p-tabview-tab-header {
-  border-bottom-color: var(--p-primary-color) !important;
 }
 
 /* Uniform toast style: dark background, light text */

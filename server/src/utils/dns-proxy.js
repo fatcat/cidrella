@@ -10,6 +10,7 @@ import dnsPacket from 'dns-packet';
 import maxmind from 'maxmind';
 import { LRUCache } from 'lru-cache';
 import { getDb, getSetting, setSetting } from '../db/init.js';
+import { selectInterfaceNames } from './interface-config.js';
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyInterfaceConfig, restartDnsmasq } from './dnsmasq.js';
@@ -22,7 +23,7 @@ import {
   GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
   PROXY_HEALTH_CHECK_MS, PROXY_MAX_RESTART_ATTEMPTS, PROXY_RESTART_DELAY_MS,
   PROXY_TCP_IDLE_TIMEOUT_MS, PROXY_MAX_TCP_CONNECTIONS, PROXY_TCP_RELAY_TIMEOUT_MS,
-  resolveDnsmasqInternalPort,
+  resolveDnsmasqInternalPort, resolveDnsListenPort,
 } from '../config/defaults.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
@@ -64,11 +65,20 @@ let geoipMode = 'blocklist';        // 'blocklist' or 'allowlist'
 let geoipAllowEntries = [];         // parsed IP/CIDR entries never GeoIP-blocked
 let whitelistSet = null;            // Set<string>, single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
 
-// Blocklist state, domains loaded from DB for in-proxy blocking.
-// A single Map is enough: Map.has() gives membership and Map.get() gives the
-// category for metrics. Keeping a separate Set duplicates index overhead for
-// large lists and can push small hosts into V8 heap pressure.
-let blocklistDomainMap = null;      // Map<string, string>, domain → category_slug
+// Blocklist state. Domains are NOT held in memory: they are looked up per
+// query against blocklist_domains, which is a WITHOUT ROWID table keyed on
+// (domain, category_slug), so the table is its own index.
+//
+// This used to be a Map of every enabled domain. That had a hard V8 ceiling of
+// 16,777,216 entries ("Map maximum size exceeded"), cost several hundred MB
+// resident, and had to be rebuilt from scratch on every whitelist edit and
+// category toggle, which took about 2.8s at 2.65M domains and blocked DNS for
+// all of it. Measured against that same list, the SQLite lookup costs 8.1us
+// per query including the full label walk (~124k q/s), and there is no reload.
+// The hot path already does synchronous SQLite per query via
+// recordDnsQueryLiveness, so this is not a new class of work.
+let blocklistLookupStmt = null;     // cached prepared statement, see getLookupStmt
+let blocklistCategories = null;     // Set<string>, enabled category slugs
 let blocklistEnabled = false;
 let blocklistRedirectIp = '';
 let blocklistBlockedDelta = 0;
@@ -184,14 +194,32 @@ export function loadWhitelist() {
   proxyLog('info', 'Whitelist loaded', { count: whitelistSet.size });
 }
 
-// Is this query domain on the global allowlist? Walks the label hierarchy so a
-// whitelisted example.com also exempts sub.example.com (same matching as the
-// blocklist). Returns false when nothing is whitelisted.
+/**
+ * Walk a name from most to least specific, stopping before the bare TLD:
+ * 'a.b.example.com' yields 'a.b.example.com', then 'b.example.com', then
+ * 'example.com'. Input is lowercased here so callers do not each have to.
+ *
+ * The allowlist and the blocklist both match this way and used to carry
+ * separate copies of the loop (duplicate-logic audit #12). That is worse than
+ * ordinary duplication: if the allowlist ever stopped one level earlier than
+ * the blocklist, a domain the operator explicitly permitted would be silently
+ * blocked, and nothing would report it. One walk means the two cannot disagree
+ * about what "example.com covers sub.example.com" means.
+ */
+export function* domainSuffixes(name) {
+  if (!name) return;
+  const labels = String(name).toLowerCase().split('.');
+  for (let i = 0; i < labels.length - 1; i++) {
+    yield labels.slice(i).join('.');
+  }
+}
+
+// Is this query domain on the global allowlist? Returns false when nothing is
+// whitelisted.
 function isWhitelisted(queryName) {
   if (!whitelistSet || whitelistSet.size === 0 || !queryName) return false;
-  const labels = queryName.toLowerCase().split('.');
-  for (let i = 0; i < labels.length - 1; i++) {
-    if (whitelistSet.has(labels.slice(i).join('.'))) return true;
+  for (const candidate of domainSuffixes(queryName)) {
+    if (whitelistSet.has(candidate)) return true;
   }
   return false;
 }
@@ -222,28 +250,13 @@ function getListenAddresses() {
   const sysIfaces = os.networkInterfaces();
   const addresses = [];
 
-  if (Object.keys(ifaceConfig).length > 0) {
-    // Explicit config, bind to IPs on configured interfaces.
-    // Use Object.hasOwn to avoid prototype-chain lookups: if ifName is
-    // 'constructor' / '__proto__' / 'toString', naked indexing would
-    // return a non-array object and crash the for…of. The validator
-    // rejects these at write time, but this guard is defense-in-depth
-    // for any stored config that predates the validator fix.
-    for (const [ifName, cfg] of Object.entries(ifaceConfig)) {
-      if (!cfg.dns) continue;
-      const addrs = Object.hasOwn(sysIfaces, ifName) ? sysIfaces[ifName] : null;
-      if (!addrs) continue;
-      for (const a of addrs) {
-        if (a.family === 'IPv4') addresses.push(a.address);
-      }
-    }
-  } else {
-    // No explicit config, bind to all non-loopback IPv4 addresses
-    for (const [ifName, addrs] of Object.entries(sysIfaces)) {
-      if (ifName === 'lo') continue;
-      for (const a of addrs) {
-        if (a.family === 'IPv4') addresses.push(a.address);
-      }
+  // Interface selection is shared with dnsmasq.js and dhcp-probe.js so the
+  // three cannot drift about which interfaces are in play (audit #9). What we
+  // do with them, collecting IPv4 bind addresses, stays here.
+  const { names } = selectInterfaceNames('dns', { config: ifaceConfig, sysIfaces });
+  for (const ifName of names) {
+    for (const a of sysIfaces[ifName] || []) {
+      if (a.family === 'IPv4') addresses.push(a.address);
     }
   }
 
@@ -329,7 +342,8 @@ function encodeServfail(query) {
   });
 }
 
-// Load blocklist domains from DB into a domain -> category Map.
+// Refresh the small pieces of blocklist state we do keep in memory: the two
+// settings and the set of enabled category slugs. Domains stay in SQLite.
 export function loadBlocklist() {
   const db = getDb();
   const enabled = getSetting('blocklist_enabled');
@@ -337,42 +351,56 @@ export function loadBlocklist() {
   blocklistRedirectIp = getSetting('blocklist_redirect_ip') || '';
 
   if (!blocklistEnabled) {
-    blocklistDomainMap = null;
-    proxyLog('info', 'Blocklist disabled, cleared in-memory set');
+    blocklistCategories = null;
+    proxyLog('info', 'Blocklist disabled');
     return;
   }
 
-  const stmt = db.prepare(`
-    SELECT DISTINCT bd.domain, bd.category_slug
-    FROM blocklist_domains bd
-    JOIN blocklist_categories bc ON bd.category_slug = bc.slug
-    WHERE bc.enabled = 1
-      AND bd.domain NOT IN (SELECT domain FROM blocklist_whitelist)
-  `);
+  const rows = db.prepare('SELECT slug FROM blocklist_categories WHERE enabled = 1').all();
+  blocklistCategories = new Set(rows.map(r => r.slug));
+  proxyLog('info', 'Blocklist enabled', { categories: blocklistCategories.size });
+}
 
-  const newMap = new Map();
-  for (const row of stmt.iterate()) {
-    if (!newMap.has(row.domain)) {
-      newMap.set(row.domain, row.category_slug);
-    }
+// The lookup statement is cached across queries but re-prepared if the DB
+// handle changes (tests swap it, and a restore reopens it).
+let blocklistLookupDb = null;
+function getLookupStmt(db) {
+  if (!blocklistLookupStmt || blocklistLookupDb !== db) {
+    blocklistLookupStmt = db.prepare(
+      'SELECT category_slug FROM blocklist_domains WHERE domain = ?'
+    ).pluck();
+    blocklistLookupDb = db;
   }
+  return blocklistLookupStmt;
+}
 
-  blocklistDomainMap = newMap;
-  proxyLog('info', 'Blocklist loaded', { domains: newMap.size });
+// Total domains across enabled categories, for the status endpoint.
+function countEnabledDomains() {
+  try {
+    return getDb().prepare(
+      'SELECT COALESCE(SUM(domain_count), 0) AS c FROM blocklist_categories WHERE enabled = 1'
+    ).pluck().get() || 0;
+  } catch {
+    return 0;
+  }
 }
 
 // Check query domain against blocklist (walks domain hierarchy for subdomain matching)
 function checkBlocklist(queryName) {
-  if (!blocklistEnabled || !blocklistDomainMap) return null;
+  if (!blocklistEnabled || !blocklistCategories || blocklistCategories.size === 0) return null;
 
-  const name = queryName.toLowerCase();
-  const labels = name.split('.');
+  // The allowlist used to be folded into the Map at load time by a
+  // "NOT IN (SELECT domain FROM blocklist_whitelist)" clause, so this function
+  // never had to think about it. Now that domains are read live, the check has
+  // to happen here or allowlisted domains would start getting blocked.
+  if (isWhitelisted(queryName)) return null;
 
-  // Walk hierarchy: sub.evil.com → evil.com (stop before single-label TLD)
-  for (let i = 0; i < labels.length - 1; i++) {
-    const candidate = labels.slice(i).join('.');
-    if (blocklistDomainMap.has(candidate)) {
-      return blocklistDomainMap.get(candidate) || 'unknown';
+  const stmt = getLookupStmt(getDb());
+
+  for (const candidate of domainSuffixes(queryName)) {
+    // A domain can appear in several categories; the first enabled one wins.
+    for (const slug of stmt.all(candidate)) {
+      if (blocklistCategories.has(slug)) return slug || 'unknown';
     }
   }
   return null;
@@ -767,7 +795,11 @@ export function startProxy() {
     proxyLog('warn', 'No LAN addresses found, proxy has nothing to bind to');
     return;
   }
-  const listenPort = Number(getSetting('dns_listen_port')) || 53;
+  // Shared with the dnsmasq config writer. `Number(x) || 53` used to live here,
+  // which accepted any non-zero number, so a stored 70000 became a bind attempt
+  // on 70000 while dnsmasq stayed on 53.
+  // See REVIEW.md, duplicate-logic audit #10.
+  const listenPort = resolveDnsListenPort(getSetting('dns_listen_port'));
 
   let bindCount = 0;
   for (const addr of addresses) {
@@ -1040,8 +1072,10 @@ export function getProxyStatus() {
     statsTotal,
     statsBlocked,
     statsAllowed,
-    blocklistLoaded: blocklistDomainMap !== null,
-    blocklistDomainCount: blocklistDomainMap?.size || 0,
+    blocklistLoaded: blocklistCategories !== null,
+    // Summed from the per-category counters the refresh already maintains.
+    // A COUNT(*) here would scan the whole domains table on every status poll.
+    blocklistDomainCount: blocklistCategories === null ? 0 : countEnabledDomains(),
   };
 }
 

@@ -18,7 +18,7 @@
       <Column field="vlan_id" header="VLAN ID" sortable style="width: 6rem" />
       <Column field="name" header="Name" sortable />
       <Column field="subnet_names" header="Network" sortable>
-        <template #body="{ data }">{{ data.subnet_names || '—' }}</template>
+        <template #body="{ data }">{{ data.subnet_names || EMPTY_CELL }}</template>
       </Column>
     </DataTable>
 
@@ -63,18 +63,18 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import Button from 'primevue/button';
+import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import Select from 'primevue/select';
-import InputNumber from 'primevue/inputnumber';
-import InputText from 'primevue/inputtext';
-import ContextMenu from 'primevue/contextmenu';
-import { useToast } from 'primevue/usetoast';
+import DataTable from '../../ui/DataTable.js';
+import Column from '../../ui/Column.js';
+import Dialog from '../../ui/Dialog.js';
+import Select from '../../ui/Select.js';
+import InputNumber from '../../ui/InputNumber.js';
+import InputText from '../../ui/InputText.js';
+import ContextMenu from '../../ui/ContextMenu.js';
+import { useToast } from '../../ui/useToast.js';
 import { useSubnetStore } from '../../stores/subnets.js';
-import { apiError } from '../../utils/format.js';
+import { apiError, EMPTY_CELL, subnetLabel } from '../../utils/format.js';
 import api from '../../api/client.js';
 
 const store = useSubnetStore();
@@ -96,7 +96,7 @@ const availableNetworks = computed(() => {
   function collect(subnets) {
     for (const s of subnets) {
       if (s.status === 'allocated' && !s.vlan_id && !usedVlanIds.has(s.vlan_id)) {
-        result.push({ label: `${s.cidr} — ${s.name || s.cidr}`, value: s.id });
+        result.push({ label: subnetLabel(s), value: s.id });
       }
       if (s.children) collect(s.children);
     }

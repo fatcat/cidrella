@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { activeLeaseSql } from '../utils/lease-sql.js';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
@@ -11,11 +12,12 @@ import * as IpAddress from '../models/ip-address.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import * as Range from '../models/range.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
-import { sanitizeForLog } from '../utils/validation.js';
+import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
 import { gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
+import { staticDnsClaimSql } from '../models/dns-record.js';
 
 const router = Router();
 
@@ -130,6 +132,23 @@ function dhcpRangeDefaults(parsed) {
   poolStart = Math.max(poolStart, parsed.networkLong + 1);
   poolEnd = Math.min(poolEnd, parsed.broadcastLong - 1);
   return { startLong: poolStart, endLong: poolEnd };
+}
+
+// One rule for folder_id, shared by POST /, PUT /:id and POST /:id/configure.
+// The three used to disagree in two separate ways. On type, {"folder_id": "3"}
+// was accepted by POST, accepted by PUT and rejected by /configure, though all
+// three then hit the same lookup, which SQLite resolves under integer affinity
+// anyway. On existence, POST gated its lookup on `if (folder_id)` (so 0 skipped
+// it), PUT did the lookup with no type check, and /configure did both but as
+// two separate blocks. Both checks matter, so both run here, once.
+// The client binds this to a Select over folder objects, so it sends an integer.
+// See REVIEW.md, duplicate-logic audit #22.
+function folderIdError(db, folderId) {
+  if (folderId === undefined || folderId === null) return null;
+  if (!Number.isInteger(folderId)) return 'folder_id must be an integer or null';
+  const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folderId);
+  if (!folder) return 'Folder not found';
+  return null;
 }
 
 function validateDhcpScopeBounds(parsed, startIp, endIp) {
@@ -291,13 +310,9 @@ router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
     if (err) return res.status(400).json({ error: `description ${err}` });
   }
   if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
-    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
-      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
-    }
-  }
-  if (folder_id !== undefined && folder_id !== null) {
-    if (!Number.isInteger(folder_id) && typeof folder_id !== 'string') {
-      return res.status(400).json({ error: 'folder_id must be an integer or null' });
+    const vlanErr = vlanIdError(vlan_id);
+    if (vlanErr) {
+      return res.status(400).json({ error: vlanErr });
     }
   }
 
@@ -330,9 +345,9 @@ router.post('/', requirePerm('subnets:write'), asyncHandler((req, res) => {
   }
 
   // Validate folder exists if provided
-  if (folder_id) {
-    const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
-    if (!folder) return res.status(400).json({ error: 'Folder not found' });
+  {
+    const err = folderIdError(db, folder_id);
+    if (err) return res.status(400).json({ error: err });
   }
 
   const result = insertSubnet(db, {
@@ -499,8 +514,9 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     return res.status(400).json({ error: 'gateway_address must be a string' });
   }
   if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
-    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
-      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
+    const vlanErr = vlanIdError(vlan_id);
+    if (vlanErr) {
+      return res.status(400).json({ error: vlanErr });
     }
   }
   if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
@@ -538,9 +554,9 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   // Validate folder_id if provided. Any subnet (root or child) can be
   // assigned to a folder, children in the tree view are promoted to a
   // root-level node of the chosen folder, detached from their CIDR parent.
-  if (folder_id !== undefined && folder_id !== null) {
-    const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
-    if (!folder) return res.status(400).json({ error: 'Folder not found' });
+  {
+    const err = folderIdError(db, folder_id);
+    if (err) return res.status(400).json({ error: err });
   }
 
   // Post-decouple: `domain_name` is just a pointer to a forward zone by
@@ -1243,8 +1259,9 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     if (err) return res.status(400).json({ error: `description ${err}` });
   }
   if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
-    if (!Number.isInteger(vlan_id) || vlan_id < 0 || vlan_id > 4094) {
-      return res.status(400).json({ error: 'vlan_id must be an integer 0-4094' });
+    const vlanErr = vlanIdError(vlan_id);
+    if (vlanErr) {
+      return res.status(400).json({ error: vlanErr });
     }
   }
   if (create_dhcp_scope !== undefined && typeof create_dhcp_scope !== 'boolean') {
@@ -1258,9 +1275,6 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   }
   if (domain_name && !isValidDomain(domain_name)) {
     return res.status(400).json({ error: 'Invalid domain name format' });
-  }
-  if (folder_id !== undefined && folder_id !== null && !Number.isInteger(folder_id)) {
-    return res.status(400).json({ error: 'folder_id must be an integer' });
   }
 
   const db = getDb();
@@ -1282,9 +1296,9 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   }
 
   // Validate folder_id if provided
-  if (folder_id !== undefined && folder_id !== null) {
-    const folder = db.prepare('SELECT id FROM folders WHERE id = ?').get(folder_id);
-    if (!folder) return res.status(400).json({ error: 'Folder not found' });
+  {
+    const err = folderIdError(db, folder_id);
+    if (err) return res.status(400).json({ error: err });
   }
 
   // Post-decouple: no forward-zone ownership conflict possible. A subnet's
@@ -1471,7 +1485,14 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       is_rogue: 0,
       rogue_reason: null,
       has_dhcp_reservation: 0,
-      has_static_dns: 0,
+      // has_static_dns is deliberately NOT set. enrichIpViewRows fills it only
+      // when the field is `undefined`, because a persisted row already carries
+      // an authoritative value computed in SQL and recomputing would be waste.
+      // Setting 0 here opted every synthesized row out of that fallback, so an
+      // address with a manual A record rendered "available" from this route and
+      // static-DNS from /api/dhcp/scopes, which omits the field and gets it
+      // right (duplicate-logic audit #23). All four callers of this function
+      // run enrichIpViewRows, so leaving it out is safe.
       dhcp_expires_at: null,
       range_type_id: range?.range_type_id || null,
       range_type_name: range?.range_type_name || null,
@@ -1514,23 +1535,13 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       SELECT ip.*,
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
         dl.expires_at as dhcp_expires_at,
-        CASE WHEN EXISTS (
-          SELECT 1
-          FROM dns_records r
-          JOIN dns_zones z ON z.id = r.zone_id
-          WHERE r.type = 'A'
-            AND r.enabled = 1
-            AND z.enabled = 1
-            AND z.type = 'forward'
-            AND r.value = ip.ip_address
-            AND COALESCE(r.source, 'manual') = 'manual'
-        ) THEN 1 ELSE 0 END as has_static_dns
+        CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
       FROM ip_addresses ip
       LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
       LEFT JOIN dhcp_leases dl
         ON dl.subnet_id = ip.subnet_id
        AND dl.ip_address = ip.ip_address
-       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+       AND ${activeLeaseSql('dl')}
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
 
@@ -1576,23 +1587,13 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       SELECT ip.*,
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
         dl.expires_at as dhcp_expires_at,
-        CASE WHEN EXISTS (
-          SELECT 1
-          FROM dns_records r
-          JOIN dns_zones z ON z.id = r.zone_id
-          WHERE r.type = 'A'
-            AND r.enabled = 1
-            AND z.enabled = 1
-            AND z.type = 'forward'
-            AND r.value = ip.ip_address
-            AND COALESCE(r.source, 'manual') = 'manual'
-        ) THEN 1 ELSE 0 END as has_static_dns
+        CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
       FROM ip_addresses ip
       LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
       LEFT JOIN dhcp_leases dl
         ON dl.subnet_id = ip.subnet_id
        AND dl.ip_address = ip.ip_address
-       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+       AND ${activeLeaseSql('dl')}
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
 
@@ -1638,23 +1639,13 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       SELECT ip.*,
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
         dl.expires_at as dhcp_expires_at,
-        CASE WHEN EXISTS (
-          SELECT 1
-          FROM dns_records r
-          JOIN dns_zones z ON z.id = r.zone_id
-          WHERE r.type = 'A'
-            AND r.enabled = 1
-            AND z.enabled = 1
-            AND z.type = 'forward'
-            AND r.value = ip.ip_address
-            AND COALESCE(r.source, 'manual') = 'manual'
-        ) THEN 1 ELSE 0 END as has_static_dns
+        CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
       FROM ip_addresses ip
       LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
       LEFT JOIN dhcp_leases dl
         ON dl.subnet_id = ip.subnet_id
        AND dl.ip_address = ip.ip_address
-       AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+       AND ${activeLeaseSql('dl')}
       WHERE ip.subnet_id = ?
     `).all(req.params.id);
 
@@ -1701,23 +1692,13 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     SELECT ip.*,
       CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
       dl.expires_at as dhcp_expires_at,
-      CASE WHEN EXISTS (
-        SELECT 1
-        FROM dns_records r
-        JOIN dns_zones z ON z.id = r.zone_id
-        WHERE r.type = 'A'
-          AND r.enabled = 1
-          AND z.enabled = 1
-          AND z.type = 'forward'
-          AND r.value = ip.ip_address
-          AND COALESCE(r.source, 'manual') = 'manual'
-      ) THEN 1 ELSE 0 END as has_static_dns
+      CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
     FROM ip_addresses ip
     LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
     LEFT JOIN dhcp_leases dl
       ON dl.subnet_id = ip.subnet_id
      AND dl.ip_address = ip.ip_address
-     AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+     AND ${activeLeaseSql('dl')}
     WHERE ip.subnet_id = ?
   `).all(req.params.id);
 

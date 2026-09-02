@@ -2,7 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # dev/** covers the release-line branches (dev/0.4.17 and successors) so
+    # work there gets the same gates as main instead of only at PR time. A
+    # pattern rather than a literal branch name, or this needs editing every
+    # release. Spike branches are deliberately excluded: they are throwaway.
+    branches: [main, 'dev/**']
   pull_request:
     branches: [main]
   workflow_dispatch:

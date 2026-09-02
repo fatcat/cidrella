@@ -41,9 +41,9 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
-import Password from 'primevue/password';
-import Button from 'primevue/button';
-import Message from 'primevue/message';
+import Password from '../ui/Password.js';
+import Button from '../ui/Button.js';
+import Message from '../ui/Message.js';
 import { apiError } from '../utils/format.js';
 
 const router = useRouter();

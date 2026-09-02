@@ -253,23 +253,23 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
 
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Dialog from 'primevue/dialog';
-import InputText from 'primevue/inputtext';
-import IconField from 'primevue/iconfield';
-import InputIcon from 'primevue/inputicon';
-import Select from 'primevue/select';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Dialog from '../ui/Dialog.js';
+import InputText from '../ui/InputText.js';
+import IconField from '../ui/IconField.js';
+import InputIcon from '../ui/InputIcon.js';
+import Select from '../ui/Select.js';
 
-import ContextMenu from 'primevue/contextmenu';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
-import TabPanel from 'primevue/tabpanel';
+import ContextMenu from '../ui/ContextMenu.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Tabs from '../ui/Tabs.js';
+import TabList from '../ui/TabList.js';
+import Tab from '../ui/Tab.js';
+import TabPanels from '../ui/TabPanels.js';
+import TabPanel from '../ui/TabPanel.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import EmptyState from './EmptyState.vue';
 import AddressTypePill from './table/AddressTypePill.vue';
@@ -285,11 +285,10 @@ import {
   displayCell,
   displayExpiry,
   displayHostnameCell,
-  displayMacAddress
-} from '../utils/format.js';
+  displayMacAddress, isOnlineFlag } from '../utils/format.js';
 import { ipToLong } from '../utils/ip.js';
 import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
-import { loadJson } from '../utils/storage.js';
+import { loadJson, saveJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
 
 // No props needed, shows all scopes globally
@@ -417,9 +416,9 @@ function onMacInput(event) {
 const dhcpSearch = ref(loadJson('cidrella_dhcp_search', ''));
 const dhcpAllSearch = ref(loadJson('cidrella_dhcp_all_search', ''));
 const showAvailableDhcp = ref(loadJson('cidrella_dhcp_show_available', true));
-watch(dhcpSearch, (val) => { try { localStorage.setItem('cidrella_dhcp_search', JSON.stringify(val)); } catch {} });
-watch(dhcpAllSearch, (val) => { try { localStorage.setItem('cidrella_dhcp_all_search', JSON.stringify(val)); } catch {} });
-watch(showAvailableDhcp, (val) => { try { localStorage.setItem('cidrella_dhcp_show_available', JSON.stringify(val)); } catch {} });
+watch(dhcpSearch, (val) => { saveJson('cidrella_dhcp_search', val) });
+watch(dhcpAllSearch, (val) => { saveJson('cidrella_dhcp_all_search', val) });
+watch(showAvailableDhcp, (val) => { saveJson('cidrella_dhcp_show_available', val) });
 
 // Lease context menu
 const leaseContextMenuRef = ref();
@@ -530,9 +529,10 @@ function normalizedText(value) {
 }
 
 function normalizedOnline(value) {
-  if (value === true || value === 1 || value === '1') return 1;
-  if (value === false || value === 0 || value === '0') return 0;
-  return null;
+  // Sorting wants a number, so map the shared three-state flag onto 1/0/null
+  // rather than keeping a second copy of the coercion. See audit #48.
+  const state = isOnlineFlag(value);
+  return state === null ? null : (state ? 1 : 0);
 }
 
 function normalizedExpiry(value) {
@@ -642,7 +642,7 @@ async function reloadSelectedScopeAddresses() {
 
 function selectScope(scope) {
   selectedScope.value = scope;
-  try { localStorage.setItem('cidrella_dhcp_selected_scope_id', JSON.stringify(scope?.id || null)); } catch {}
+  saveJson('cidrella_dhcp_selected_scope_id', scope?.id || null)
   reloadSelectedScopeAddresses();
 }
 

@@ -34,12 +34,48 @@ function normalizeVersion(version) {
   return String(version || '').replace(/^v/, '');
 }
 
+// Prerelease-aware ordering. The previous version split on '.' and ran each
+// segment through parseInt, so "24.19.0-rc.1" became [24,19,0,1] (parseInt
+// stops at the '-') and therefore ranked ABOVE "24.19.0". It decides the Node
+// security/LTS comparison and the s6-overlay check, and both read upstream
+// indexes that do contain -rc and -nightly tags, so that inversion could
+// recommend a prerelease runtime as if it were newer than the stable release.
+//
+// Same rules as server/src/utils/semver.js and scripts/lib/slots.sh: a version
+// WITHOUT a prerelease outranks the same core WITH one, numeric identifiers
+// compare numerically, and a shorter identifier list ranks below a longer one
+// sharing its prefix. Kept as a local copy rather than an import because this
+// script is CommonJS build tooling and semver.js is an ESM server module.
+// See REVIEW.md, duplicate-logic audit #34.
 function compareVersions(a, b) {
-  const pa = normalizeVersion(a).split('.').map((n) => Number.parseInt(n, 10) || 0);
-  const pb = normalizeVersion(b).split('.').map((n) => Number.parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
-    const diff = (pa[i] || 0) - (pb[i] || 0);
+  const parse = (v) => {
+    const clean = normalizeVersion(v).split('+')[0];
+    const [core, pre] = clean.split(/-(.*)/, 2);
+    const nums = core.split('.').map((n) => Number.parseInt(n, 10) || 0);
+    return { nums, pre: pre ? pre.split('.') : [] };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < Math.max(pa.nums.length, pb.nums.length); i += 1) {
+    const diff = (pa.nums[i] || 0) - (pb.nums[i] || 0);
     if (diff !== 0) return diff;
+  }
+  if (pa.pre.length === 0 && pb.pre.length === 0) return 0;
+  if (pa.pre.length === 0) return 1;   // release outranks its own prerelease
+  if (pb.pre.length === 0) return -1;
+  for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i += 1) {
+    const x = pa.pre[i];
+    const y = pb.pre[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xN = /^\d+$/.test(x);
+    const yN = /^\d+$/.test(y);
+    if (xN && yN) {
+      const d = Number.parseInt(x, 10) - Number.parseInt(y, 10);
+      if (d !== 0) return d;
+    } else if (xN) return -1;
+    else if (yN) return 1;
+    else if (x !== y) return x < y ? -1 : 1;
   }
   return 0;
 }

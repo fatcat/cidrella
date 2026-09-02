@@ -1,11 +1,11 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import PrimeVue from 'primevue/config';
-import { updatePreset, updateSurfacePalette } from '@primeuix/themes';
-import Aura from '@primeuix/themes/aura';
-import ToastService from 'primevue/toastservice';
-import ConfirmationService from 'primevue/confirmationservice';
-import Tooltip from 'primevue/tooltip';
+import { UiPlugin, ToastService, ConfirmationService, Tooltip } from './ui/plugin.js';
+import { updatePreset, updateSurfacePalette, BasePreset } from './ui/theme.js';
+// primeicons is a SEPARATE MIT package, unaffected by the PrimeVue relicense,
+// and backs 269 `pi pi-*` usages across the app. It stays regardless of which
+// widget library sits behind ./ui, so it is imported directly rather than
+// through the seam.
 import 'primeicons/primeicons.css';
 
 import App from './App.vue';
@@ -30,9 +30,9 @@ if (import.meta.env.VITE_TRACKING) {
     initTracker({ router, apiClient: api, pinia });
   });
 }
-app.use(PrimeVue, {
+app.use(UiPlugin, {
   theme: {
-    preset: Aura,
+    preset: BasePreset,
     options: {
       darkModeSelector: '.p-dark'
     }
@@ -42,7 +42,9 @@ app.use(ToastService);
 app.use(ConfirmationService);
 app.directive('tooltip', Tooltip);
 
-// Theme switching. Listen for theme change events and update PrimeVue preset
+// Theme switching. stores/theme.js emits `ipam:theme-change` carrying plain hex
+// ramps and imports nothing from the widget library, so this listener is the
+// only place the 13-theme system meets it. Both calls come through ./ui/theme.js.
 function buildPalette(colorName, customPalette) {
   if (customPalette) return { ...customPalette };
   const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];

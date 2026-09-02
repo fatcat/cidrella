@@ -25,7 +25,7 @@
       </template>
       <Column field="domain" header="Domain" sortable />
       <Column field="reason" header="Reason">
-        <template #body="{ data }">{{ data.reason || '—' }}</template>
+        <template #body="{ data }">{{ data.reason || EMPTY_CELL }}</template>
       </Column>
       <Column field="created_at" header="Added" style="width: 10rem">
         <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
@@ -43,12 +43,13 @@
 
 <script setup>
 import { ref, computed } from 'vue';
-import InputText from 'primevue/inputtext';
+import { EMPTY_CELL } from '../utils/format.js';
+import InputText from '../ui/InputText.js';
 import EmptyState from './EmptyState.vue';
-import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import ContextMenu from 'primevue/contextmenu';
+import Button from '../ui/Button.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import ContextMenu from '../ui/ContextMenu.js';
 import { formatDateTime } from '../utils/dateFormat.js';
 
 const props = defineProps({

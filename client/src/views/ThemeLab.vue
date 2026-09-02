@@ -65,7 +65,7 @@
           </Column>
           <Column field="hostname" header="Hostname" />
           <Column header="MAC">
-            <template #body="{ data }"><span :class="{ 'cell-muted': !data.mac }">{{ data.mac || '—' }}</span></template>
+            <template #body="{ data }"><span :class="{ 'cell-muted': !data.mac }">{{ data.mac || EMPTY_CELL }}</span></template>
           </Column>
           <Column field="seen" header="Last Seen" />
         </DataTable>
@@ -165,9 +165,10 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue';
-import Select from 'primevue/select';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
+import { EMPTY_CELL } from '../utils/format.js';
+import Select from '../ui/Select.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
 import { Doughnut, Line } from 'vue-chartjs';
 import {
   Chart as ChartJS,
@@ -273,9 +274,9 @@ const semanticTokens = [
 const tableRows = [
   { ip: '10.0.0.8', status: statusStates[0], type: ADDRESS_TYPE_STATIC_DNS, hostname: 'testerella', mac: 'BC:24:11:FD:8D:F5', seen: '11:21' },
   { ip: '10.0.0.27', status: statusStates[1], type: ADDRESS_TYPE_DYNAMIC_DHCP, hostname: 'withings-device', mac: '00:24:E4:EE:96:16', seen: 'yesterday' },
-  { ip: '10.0.0.65', status: statusStates[2], type: ADDRESS_TYPE_RESERVED_DHCP, hostname: 'printer', mac: null, seen: '—' },
+  { ip: '10.0.0.65', status: statusStates[2], type: ADDRESS_TYPE_RESERVED_DHCP, hostname: 'printer', mac: null, seen: EMPTY_CELL },
   { ip: '10.0.0.242', status: statusStates[3], type: ADDRESS_TYPE_ROGUE, hostname: 'unknown', mac: 'A4:CF:99:08:3A:CD', seen: 'now' },
-  { ip: '10.0.0.255', status: statusStates[4], type: ADDRESS_TYPE_SYSTEM, hostname: 'broadcast', mac: null, seen: '—' },
+  { ip: '10.0.0.255', status: statusStates[4], type: ADDRESS_TYPE_SYSTEM, hostname: 'broadcast', mac: null, seen: EMPTY_CELL },
 ];
 
 const doughnutItems = [

@@ -13,6 +13,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import { extractMac } from './mac.js';
 import { readLogTail } from './log-reader.js';
 import { lookupVendor } from './mac-vendor.js';
 import { classify, normalizeOpt55 } from './device-classifier.js';
@@ -23,7 +24,8 @@ const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
 // "<ts> dnsmasq-dhcp[pid]: <xid> <content>"  → captures xid + content
 const DHCP_LINE_RE = /dnsmasq-dhcp\[\d+\]:\s+(\d+)\s+(.*)$/;
-const MAC_RE = /\b([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})\b/;
+// MAC parsing lives in utils/mac.js so this file and arp-cache.js cannot drift
+// on what counts as a MAC. See REVIEW.md, duplicate-logic audit #13.
 
 // Bounded per-transaction accumulator so a busy network can't grow it without limit.
 const MAX_PENDING = 1000;
@@ -61,8 +63,11 @@ export function ingestLine(line, pending) {
     const codes = normalizeOpt55(content.slice('requested options:'.length).trim());
     if (codes) ensure().opt55 = codes;
   } else if (/^DHCP(DISCOVER|REQUEST|ACK|INFORM)\b/.test(content)) {
-    const mac = content.match(MAC_RE);
-    if (mac) ensure().mac = mac[1].toLowerCase();
+    // extractMac returns null for 00:00:00:00:00:00, which the local regex
+    // accepted: a DHCP packet with no client hwaddr used to fingerprint the
+    // null MAC as if it were a device.
+    const mac = extractMac(content);
+    if (mac) ensure().mac = mac;
     if (content.startsWith('DHCPACK')) {
       const final = tx;
       pending.delete(xid);

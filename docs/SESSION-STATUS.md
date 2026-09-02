@@ -2,6 +2,11 @@
 
 Updated: 2026-05-29
 
+> **STALE.** This describes v0.4.15. As of 2026-08-19 the project is cutting **v0.4.17-pre.2**,
+> with v0.4.16 shipped on 2026-08-12. Treat the state below as history until it is refreshed.
+> For what actually shipped, [RELEASE-NOTES.md](../RELEASE-NOTES.md) is canonical. For work in
+> flight, see [BACKLOG.md](../BACKLOG.md).
+
 ## Current State
 
 CIDRella 0.4.15 is ready for an extended field-test period. The project tree
@@ -66,14 +71,14 @@ Production validation:
 
 ## Next Resume
 
-Recommended next steps after the field-test period:
+**Moved to [BACKLOG.md](../BACKLOG.md) on 2026-08-19**, as part of consolidating four scattered
+backlogs into one.
 
-- Review production behavior after the rebuilt 0.4.15 upgrade.
-- Remove the legacy `duckdb` / `raw-socket` placeholder bridge in a future
-  release once there are no supported pre-bootstrap updaters to bridge from.
-- Consider splitting updater bootstrap into an explicit tiny
-  `cidrella-bootstrap-update` entrypoint so the stable bootstrap contract is
-  easier to reason about and test.
-- Add a real upgrade-path harness scenario when practical; current harness
-  coverage is stronger for fresh installs than for old-version-to-new-version
-  updates.
+All four items that were listed here have since been resolved, and are recorded as such rather
+than carried over:
+- Review production behavior after the rebuilt 0.4.15 upgrade: done, v0.4.16 shipped 2026-08-12.
+- Remove the legacy `duckdb` / `raw-socket` placeholder bridge: removed in v0.4.16.
+- Split updater bootstrap into a `cidrella-bootstrap-update` entrypoint: closed WON'T-DO on
+  2026-07-23, see BACKLOG.md for the reasoning.
+- Add a real upgrade-path harness scenario: shipped, and it has now run repeatedly against
+  published pre-releases including 0.4.16 -> 0.4.17-pre.2.

@@ -64,10 +64,10 @@
         </Column>
         <Column field="server_ip" header="Server IP" />
         <Column field="offered_gateway" header="Offered gateway">
-          <template #body="{ data }">{{ data.offered_gateway || '—' }}</template>
+          <template #body="{ data }">{{ data.offered_gateway || EMPTY_CELL }}</template>
         </Column>
         <Column field="offered_dns" header="Offered DNS">
-          <template #body="{ data }">{{ data.offered_dns || '—' }}</template>
+          <template #body="{ data }">{{ data.offered_dns || EMPTY_CELL }}</template>
         </Column>
         <Column field="relay_ip" header="Via relay">
           <template #body="{ data }">
@@ -78,7 +78,7 @@
           </template>
         </Column>
         <Column field="iface" header="Interface">
-          <template #body="{ data }">{{ data.iface || '—' }}</template>
+          <template #body="{ data }">{{ data.iface || EMPTY_CELL }}</template>
         </Column>
         <Column field="last_seen_at" header="Last seen">
           <template #body="{ data }">{{ formatDate(data.last_seen_at) }}</template>
@@ -115,10 +115,10 @@
         </template>
         <Column field="server_ip" header="Server IP" />
         <Column field="server_mac" header="MAC">
-          <template #body="{ data }">{{ data.server_mac || '—' }}</template>
+          <template #body="{ data }">{{ data.server_mac || EMPTY_CELL }}</template>
         </Column>
         <Column field="description" header="Description">
-          <template #body="{ data }">{{ data.description || '—' }}</template>
+          <template #body="{ data }">{{ data.description || EMPTY_CELL }}</template>
         </Column>
         <Column header="" style="width: 4rem">
           <template #body="{ data }">
@@ -136,16 +136,16 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
-import { apiError } from '../utils/format.js';
-import { useToast } from 'primevue/usetoast';
-import Button from 'primevue/button';
+import { apiError, EMPTY_CELL } from '../utils/format.js';
+import { useToast } from '../ui/useToast.js';
+import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
-import InputText from 'primevue/inputtext';
-import InputNumber from 'primevue/inputnumber';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import Toast from 'primevue/toast';
-import ToggleSwitch from 'primevue/toggleswitch';
+import InputText from '../ui/InputText.js';
+import InputNumber from '../ui/InputNumber.js';
+import DataTable from '../ui/DataTable.js';
+import Column from '../ui/Column.js';
+import Toast from '../ui/Toast.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
 import StatusBadge from '../components/StatusBadge.vue';
 import { useRogueDhcpStore } from '../stores/rogueDhcp.js';
 

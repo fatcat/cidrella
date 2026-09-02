@@ -3,7 +3,10 @@
  * Downloads and refreshes the OUI database every 24 hours.
  */
 
+import readline from 'node:readline';
 import { getDb } from '../db/init.js';
+import { openPinnedOutboundStream, TOO_LARGE_CODE } from './url-guard.js';
+import { MANUF_DOWNLOAD_TIMEOUT_MS, MANUF_MAX_BYTES } from '../config/defaults.js';
 
 const MANUF_URL = 'https://www.wireshark.org/download/automated/data/manuf';
 const REFRESH_INTERVAL = 24 * 60 * 60 * 1000; // 24 hours
@@ -53,56 +56,99 @@ function lookupByPrefixes(db, prefixes, column) {
 /**
  * Parse the Wireshark manuf file into an array of vendor entries.
  */
-function parseManuf(text) {
-  const entries = [];
-  for (const line of text.split('\n')) {
-    if (!line || line.startsWith('#')) continue;
+/**
+ * Parse ONE line of the Wireshark manuf file. Returns an entry or null for a
+ * comment, a blank, or anything malformed.
+ *
+ * Split out from parseManuf so the download path can stream the file line by
+ * line instead of holding all of it as one string, and so the rule itself is
+ * testable without a network fetch. Exported for the tests only.
+ */
+export function parseManufLine(line) {
+  if (!line || line.startsWith('#')) return null;
 
-    // Format: PREFIX<tab>SHORT_NAME<tab>FULL_NAME
-    // PREFIX can be: AA:BB:CC (24-bit), AA:BB:CC:DD:D0/28 (28-bit), AA:BB:CC:DD:EE/36 (36-bit)
-    const parts = line.split('\t');
-    if (parts.length < 2) continue;
+  // Format: PREFIX<tab>SHORT_NAME<tab>FULL_NAME
+  // PREFIX can be: AA:BB:CC (24-bit), AA:BB:CC:DD:D0/28 (28-bit), AA:BB:CC:DD:EE/36 (36-bit)
+  const parts = line.split('\t');
+  if (parts.length < 2) return null;
 
-    const rawPrefix = parts[0].trim();
-    const shortName = parts[1]?.trim() || null;
-    const vendorName = parts[2]?.trim() || shortName;
-    if (!rawPrefix || !vendorName) continue;
+  const rawPrefix = parts[0].trim();
+  const shortName = parts[1]?.trim() || null;
+  const vendorName = parts[2]?.trim() || shortName;
+  if (!rawPrefix || !vendorName) return null;
 
-    let prefix;
-    let prefixLength = 24;
+  let prefix;
+  let prefixLength = 24;
 
-    const slashIdx = rawPrefix.indexOf('/');
-    if (slashIdx !== -1) {
-      prefix = rawPrefix.slice(0, slashIdx).toUpperCase();
-      prefixLength = parseInt(rawPrefix.slice(slashIdx + 1), 10);
-    } else {
-      prefix = rawPrefix.toUpperCase();
-    }
-
-    // Normalize: ensure consistent colon-separated uppercase hex
-    if (!/^[0-9A-F]{2}(:[0-9A-F]{2}){2,}$/.test(prefix)) continue;
-
-    entries.push({ prefix, prefixLength, shortName, vendorName });
+  const slashIdx = rawPrefix.indexOf('/');
+  if (slashIdx !== -1) {
+    prefix = rawPrefix.slice(0, slashIdx).toUpperCase();
+    prefixLength = parseInt(rawPrefix.slice(slashIdx + 1), 10);
+  } else {
+    prefix = rawPrefix.toUpperCase();
   }
-  return entries;
+
+  // Normalize: ensure consistent colon-separated uppercase hex
+  if (!/^[0-9A-F]{2}(:[0-9A-F]{2}){2,}$/.test(prefix)) return null;
+
+  return { prefix, prefixLength, shortName, vendorName };
 }
 
 /**
  * Download the Wireshark manuf file and populate the mac_vendors table.
+ *
+ * Exported so the download hardening can be tested without a network call.
+ * The scheduler below is the only production caller.
  */
-async function refreshVendorDb() {
+export async function refreshVendorDb() {
   const db = getDb();
 
   try {
     console.log('MAC vendor DB: downloading Wireshark manuf file...');
-    const response = await fetch(MANUF_URL);
-    if (!response.ok) {
-      console.error(`MAC vendor DB: download failed (HTTP ${response.status})`);
+
+    // Goes through the shared outbound guard rather than bare fetch(), for the
+    // two things fetch() does not give us: a timeout and a size cap. The old
+    // code called response.text(), which buffers the entire body into one
+    // string with no ceiling, so a broken or hostile upstream could hand us an
+    // arbitrarily large response. It also had no timeout at all, so a hung
+    // connection stalled the refresh indefinitely.
+    //
+    // This is NOT about SSRF: MANUF_URL is a hardcoded wireshark.org constant,
+    // not operator input, so there is nowhere to redirect it. The guard is used
+    // because it already implements the cap, the timeout and gzip handling that
+    // the blocklist downloader needed for the same reasons.
+    const res = await openPinnedOutboundStream(MANUF_URL, {
+      timeout: MANUF_DOWNLOAD_TIMEOUT_MS,
+      maxBytes: MANUF_MAX_BYTES,
+    });
+
+    if (!res.ok) {
+      if (res.cause?.code === TOO_LARGE_CODE) {
+        console.error(`MAC vendor DB: download exceeded ${Math.round(MANUF_MAX_BYTES / 1024 / 1024)}MB, refusing (upstream file should be around 5MB)`);
+      } else {
+        console.error(`MAC vendor DB: download failed (${res.error || `HTTP ${res.status} ${res.statusText}`})`);
+      }
       return;
     }
 
-    const text = await response.text();
-    const entries = parseManuf(text);
+    // Streamed line by line so the file is never held whole in memory. The
+    // parse rule lives in parseManufLine, shared with the tests.
+    const entries = [];
+    try {
+      const rl = readline.createInterface({ input: res.stream, crlfDelay: Infinity });
+      for await (const line of rl) {
+        const entry = parseManufLine(line);
+        if (entry) entries.push(entry);
+      }
+    } catch (err) {
+      if (err?.code === TOO_LARGE_CODE) {
+        console.error(`MAC vendor DB: download exceeded ${Math.round(MANUF_MAX_BYTES / 1024 / 1024)}MB mid-stream, refusing`);
+      } else {
+        console.error(`MAC vendor DB: read failed (${err.message})`);
+      }
+      return;
+    }
+
     if (entries.length < 1000) {
       console.error(`MAC vendor DB: parsed only ${entries.length} entries, skipping (possible bad download)`);
       return;

@@ -1,32 +1,39 @@
 <!--
-  The "A" half of the A+C Settings shell: a left rail (all areas, grouped, + an
-  "All Settings" back-to-grid affordance) and a sub-tab strip for the active area,
-  rendering the active sub-tab's component. Driven entirely by settingsAreas.js.
-  Navigation is emitted up to Settings.vue, which owns the router.
+  The Settings shell body: a left rail listing every area, grouped, and a sub-tab
+  strip for the active one. Driven entirely by settingsAreas.js. Navigation is
+  emitted up to Settings.vue, which owns the router.
+
+  The card-grid front door was removed in v0.4.17, and with it the "All Settings"
+  rail button and the breadcrumb link that existed only to go back to it. The
+  rail already listed the same eight areas in the same groups, so the grid was a
+  click in front of the navigation. Its search moved here, because filtering the
+  rail is the one thing the grid did that the rail could not.
 -->
 <template>
   <div class="settings-area">
     <nav class="sa-rail" aria-label="Settings areas">
-      <button type="button" class="sa-rail-home" data-track="settings-all" @click="$emit('home')">
-        <i class="pi pi-th-large"></i><span>All Settings</span>
-      </button>
-      <template v-for="group in groups" :key="group">
+      <div class="sa-search-wrap">
+        <i class="pi pi-search sa-search-ic"></i>
+        <input v-model="search" type="search" class="sa-search" data-track="settings-search"
+               placeholder="Search settings" aria-label="Search settings" />
+      </div>
+      <template v-for="group in visibleGroups" :key="group">
         <div class="sa-group">{{ group }}</div>
         <!-- Plain nav buttons, not a tab widget: aria-current marks the active
              area. Don't add role="tab" here. A tab role outside a tablist
              (and without tabpanel/keyboard wiring) misleads assistive tech. -->
-        <button v-for="a in areasInGroup(group)" :key="a.id" type="button"
+        <button v-for="a in matchingAreasInGroup(group)" :key="a.id" type="button"
                 class="sa-rail-item" :class="{ active: a.id === areaId }"
                 :aria-current="a.id === areaId ? 'page' : undefined" :data-track="a.dataTrack"
                 @click="$emit('area', a.id)">
           <i :class="a.icon"></i><span>{{ a.label }}</span>
         </button>
       </template>
+      <p v-if="visibleGroups.length === 0" class="sa-no-match">No settings match “{{ search }}”.</p>
     </nav>
 
     <section class="sa-content" v-if="area">
       <div class="sa-head">
-        <span class="sa-crumb"><button type="button" class="sa-crumb-link" @click="$emit('home')">Settings</button> › <b>{{ area.label }}</b></span>
         <h2 class="sa-title">{{ area.label }}</h2>
       </div>
 
@@ -48,16 +55,15 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { SETTINGS_AREAS, SETTINGS_GROUPS, findArea } from '../../config/settingsAreas.js';
 
 const props = defineProps({
   areaId: { type: String, required: true },
   sec: { type: String, default: '' },
 });
-defineEmits(['home', 'area', 'sec']);
+defineEmits(['area', 'sec']);
 
-const groups = SETTINGS_GROUPS;
 const area = computed(() => findArea(props.areaId));
 const subtabs = computed(() => area.value?.subtabs || []);
 const activeSecId = computed(() => {
@@ -66,9 +72,31 @@ const activeSecId = computed(() => {
 });
 const activeSubtab = computed(() => subtabs.value.find(s => s.id === activeSecId.value) || null);
 
-function areasInGroup(group) {
-  return SETTINGS_AREAS.filter(a => a.group === group);
+const search = ref('');
+
+/**
+ * Rail filter. Matches the same three things the card grid's search matched:
+ * the area label, its blurb, and the labels of its sub-tabs. The blurb is no
+ * longer rendered anywhere, but it stays searchable on purpose: it is the only
+ * place a word like "DNSSEC" is associated with the DNS area, which is exactly
+ * the lookup this box exists for.
+ */
+function areaMatches(a, q) {
+  if (!q) return true;
+  return a.label.toLowerCase().includes(q)
+    || a.blurb.toLowerCase().includes(q)
+    || a.subtabs.some(st => st.label.toLowerCase().includes(q));
 }
+
+function matchingAreasInGroup(group) {
+  const q = search.value.trim().toLowerCase();
+  return SETTINGS_AREAS.filter(a => a.group === group && areaMatches(a, q));
+}
+
+// A group header with nothing under it is noise, so groups collapse out of the
+// rail entirely once the filter empties them.
+const visibleGroups = computed(() =>
+  SETTINGS_GROUPS.filter(g => matchingAreasInGroup(g).length > 0));
 </script>
 
 <style scoped>
@@ -77,15 +105,24 @@ function areasInGroup(group) {
 /* Rail */
 .sa-rail { width: 210px; flex: 0 0 auto; overflow: auto; padding: 0.75rem 0.5rem;
   border-right: 1px solid var(--p-content-border-color); background: var(--p-content-background); }
-.sa-rail-home, .sa-rail-item {
+.sa-rail-item {
   display: flex; align-items: center; gap: 0.55rem; width: 100%; text-align: left;
   background: none; border: none; cursor: pointer; color: var(--p-text-color);
   font-size: var(--app-fs-sm); padding: 0.42rem 0.6rem; border-radius: 6px; }
-.sa-rail-home { color: var(--p-primary-color); margin-bottom: 0.4rem; }
-.sa-rail-home:hover, .sa-rail-item:hover { background: var(--p-content-hover-background); }
+.sa-rail-item:hover { background: var(--p-content-hover-background); }
 .sa-rail-item.active { background: color-mix(in srgb, var(--p-primary-color) 16%, transparent);
   color: var(--p-primary-color); font-weight: 600; }
-.sa-rail-item .pi, .sa-rail-home .pi { width: 16px; text-align: center; opacity: 0.85; }
+.sa-rail-item .pi { width: 16px; text-align: center; opacity: 0.85; }
+.sa-search-wrap { position: relative; margin: 0 0.2rem 0.6rem; }
+.sa-search-ic { position: absolute; left: 0.5rem; top: 50%; transform: translateY(-50%);
+  font-size: 0.75rem; color: var(--p-text-muted-color); pointer-events: none; }
+.sa-search { width: 100%; padding: 0.35rem 0.5rem 0.35rem 1.6rem; border-radius: 6px;
+  font-size: var(--app-fs-xs); color: var(--p-text-color);
+  background: var(--p-content-hover-background);
+  border: 1px solid var(--p-content-border-color); }
+.sa-search:focus { outline: none; border-color: var(--p-primary-color); }
+.sa-no-match { color: var(--p-text-muted-color); font-size: var(--app-fs-xs);
+  padding: 0.4rem 0.6rem; line-height: 1.4; }
 .sa-group { color: var(--p-text-muted-color); font-size: 10.5px; text-transform: uppercase;
   letter-spacing: 0.6px; margin: 0.8rem 0.55rem 0.25rem; }
 
@@ -102,14 +139,6 @@ function areasInGroup(group) {
    root with an internal scrollHeight="flex" table. Clip the panel so ONLY that
    table scrolls (no outer scrollbar). */
 .sa-panel.fill { overflow: hidden; }
-.sa-crumb { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); }
-.sa-crumb-link {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
- color: var(--p-primary-color); cursor: pointer; }
-.sa-crumb b { color: var(--p-text-color); }
 .sa-title { margin: 0.15rem 0 0.9rem; font-size: 1.25rem; font-weight: 650; }
 .sa-subtabs { display: flex; gap: 0.25rem; border-bottom: 1px solid var(--p-content-border-color);
   margin-bottom: 1.1rem; flex-wrap: wrap; }

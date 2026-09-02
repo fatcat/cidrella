@@ -63,19 +63,19 @@
 
 <script setup>
 import { ref, watch, onMounted, defineAsyncComponent } from 'vue';
-import { useToast } from 'primevue/usetoast';
-import Tabs from 'primevue/tabs';
-import TabList from 'primevue/tablist';
-import Tab from 'primevue/tab';
-import TabPanels from 'primevue/tabpanels';
+import { useToast } from '../../ui/useToast.js';
+import Tabs from '../../ui/Tabs.js';
+import TabList from '../../ui/TabList.js';
+import Tab from '../../ui/Tab.js';
+import TabPanels from '../../ui/TabPanels.js';
 import EmptyState from '../../components/EmptyState.vue';
-import TabPanel from 'primevue/tabpanel';
-import Button from 'primevue/button';
-import DataTable from 'primevue/datatable';
-import Column from 'primevue/column';
-import MultiSelect from 'primevue/multiselect';
+import TabPanel from '../../ui/TabPanel.js';
+import Button from '../../ui/Button.js';
+import DataTable from '../../ui/DataTable.js';
+import Column from '../../ui/Column.js';
+import MultiSelect from '../../ui/MultiSelect.js';
 import { formatDateTime } from '../../utils/dateFormat.js';
-import { apiError } from '../../utils/format.js';
+import { apiError, EMPTY_CELL } from '../../utils/format.js';
 import api from '../../api/client.js';
 
 const LogViewer = defineAsyncComponent(() => import('../../components/LogViewer.vue'));
@@ -142,14 +142,14 @@ function actionColor(action) {
 }
 
 function formatDetails(details) {
-  if (!details) return '—';
+  if (!details) return EMPTY_CELL;
   try {
     const obj = typeof details === 'string' ? JSON.parse(details) : details;
     const parts = [];
     for (const [k, v] of Object.entries(obj)) {
       if (v !== null && v !== undefined) parts.push(`${k}: ${v}`);
     }
-    return parts.join(', ') || '—';
+    return parts.join(', ') || EMPTY_CELL;
   } catch { return String(details); }
 }
 

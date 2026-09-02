@@ -191,7 +191,7 @@ export NPM_CONFIG_CACHE
 # cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
 # through to /usr/bin/node. Bumping this version requires a release + testerella
 # validation, not a hot swap.
-BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.19.0}"
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.20.0}"
 NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
@@ -714,7 +714,7 @@ fi
 echo "[1/7] Building client..."
 if [ "$DRY_RUN" = false ]; then
   cd "$PROJECT_DIR/client"
-  npm ci --silent
+  npm ci
   npx vite build
   echo "  Client built successfully."
 else

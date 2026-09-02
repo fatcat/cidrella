@@ -123,6 +123,8 @@ source "$LIB_DIR/log.sh"
 source "$LIB_DIR/slots.sh"
 # shellcheck source=scripts/lib/verify.sh
 source "$LIB_DIR/verify.sh"
+# shellcheck source=scripts/lib/preflight.sh
+source "$LIB_DIR/preflight.sh"
 # shellcheck source=scripts/lib/systemd-install.sh
 source "$LIB_DIR/systemd-install.sh"
 # rotation.sh is optional. Pre-v0.4.9 slots don't ship it. The rotation
@@ -153,20 +155,10 @@ NC=$'\033[0m'
 # ─── Node binary resolver ─────────────────────────────────
 # Phase 0 plumbing for Phase 2's bundled-Node release. Prefers a
 # slot-local bundled runtime if present; falls back to /usr/bin/node.
-# Pass the slot directory whose bundled runtime you want (the
-# target slot for preflight, the active slot for DB maintenance).
-resolve_node() {
-  local slot="${1:-}"
-  if [ -n "$slot" ] && [ -x "$slot/runtime/node/bin/node" ]; then
-    printf '%s\n' "$slot/runtime/node/bin/node"
-    return 0
-  fi
-  if [ -x "/opt/cidrella/runtime/node/bin/node" ]; then
-    printf '%s\n' "/opt/cidrella/runtime/node/bin/node"
-    return 0
-  fi
-  printf '%s\n' "/usr/bin/node"
-}
+# resolve_node lives in lib/slots.sh (sourced above). The local copy that used
+# to sit here checked only the slot runtimes and then printed /usr/bin/node
+# without testing it, so a host with node anywhere else got a path that does not
+# exist and no way to detect that. See REVIEW.md, duplicate-logic audit #33.
 
 is_preflight_health_acceptable() {
   local node_bin="$1"
@@ -254,7 +246,11 @@ write_failed_progress_if_needed() {
   [ ! -f "$PROGRESS_FILE" ] && return 0
 
   local state status_node
-  status_node="$(resolve_node "$INSTALL_LINK")"
+  # Non-fatal: this only reads a progress file for reporting. If no node can be
+  # resolved there is nothing to report, so bail out quietly rather than letting
+  # set -e kill the update over a status read.
+  status_node="$(resolve_node "$INSTALL_LINK" || true)"
+  [ -n "$status_node" ] || return 0
   state=$("$status_node" -e '
     const fs = require("fs");
     try {
@@ -524,21 +520,46 @@ info "Target slot:  $TARGET_SLOT"
 
 # Read current version (via active slot's node, which may be bundled in future)
 if [ -f "$INSTALL_LINK/package.json" ]; then
-  ACTIVE_NODE=$(resolve_node "$INSTALL_LINK")
-  CURRENT_VERSION=$("$ACTIVE_NODE" -e "console.log(require('$INSTALL_LINK/package.json').version)" 2>/dev/null || echo "unknown")
+  # read_slot_version (lib/slots.sh) rather than a local node one-liner. The
+  # local version depended entirely on resolve_node succeeding and collapsed to
+  # the string "unknown" on any failure, and "unknown" is not inert: it disables
+  # the pre-signature downgrade guard, the major/minor guard, the post-signature
+  # downgrade guard AND the min_from skip-upgrade gate, so the update proceeds
+  # unconditionally. read_slot_version tries the cidrella-node wrapper, then
+  # PATH, then falls back to parsing package.json with sed, so it returns a real
+  # version even on a host with no usable node. That leaves "unknown" meaning
+  # what it should: there is genuinely no package.json to read.
+  # See REVIEW.md, duplicate-logic audit #31 and #33.
+  CURRENT_VERSION=$(read_slot_version "$INSTALL_LINK" 2>/dev/null || echo "unknown")
+  [ -n "$CURRENT_VERSION" ] || CURRENT_VERSION="unknown"
 fi
 info "Current version: v${CURRENT_VERSION}"
 emit_event preflight pass "from_version=$CURRENT_VERSION" "active_slot=$ACTIVE_SLOT" "target_slot=$TARGET_SLOT"
 
 # ─── Disk space check ────────────────────────────────────
-# Need room for: tarball download + extracted tarball + populated target slot
-AVAILABLE_MB=$(df -BM /opt | tail -1 | awk '{print $4}' | tr -d 'M')
-if [ "$AVAILABLE_MB" -lt "$MIN_FREE_MB" ]; then
-  err "Insufficient disk space on /opt: ${AVAILABLE_MB}MB free, need at least ${MIN_FREE_MB}MB."
-  write_progress "failed" 2 "Update failed" "Insufficient disk space: ${AVAILABLE_MB}MB free"
+# Need room for: tarball download + extracted tarball + populated target slot.
+#
+# Uses check_disk from lib/preflight.sh rather than an inline df. The inline
+# version ran `df -BM /opt | tail -1`, and df wraps onto a second line when the
+# device name is long (an LVM path such as /dev/mapper/vg--system-lv--opt--storage),
+# so `$4` picked up the USE PERCENTAGE instead of the free megabytes. The
+# comparison then failed with "integer expression expected", and because it sat
+# in an `if` condition neither `set -e` nor the ERR trap fired, so the check
+# PASSED and the update proceeded with unknown free space, failing mid-extraction
+# instead. check_disk uses `df -Pm`, and POSIX output is guaranteed one line per
+# filesystem. See REVIEW.md, duplicate-logic audit #30.
+#
+# REQ_MIN_DISK_MB is pinned to the value this check has actually enforced in the
+# field. requirements.json says 2000, but nothing ever loaded it (load_requirements
+# has no callers), so 2000 has never run anywhere. Raising the bar 5x here would
+# start refusing upgrades on tight-disk appliances that upgrade fine today, which
+# is not a change to make as a side effect of fixing a parsing bug.
+REQ_MIN_DISK_MB="$MIN_FREE_MB"
+if ! check_disk /opt; then
+  write_progress "failed" 2 "Update failed" "Insufficient disk space on /opt"
   exit 1
 fi
-info "Disk space: ${AVAILABLE_MB}MB free on /opt (ok)"
+info "Disk space: ok (>= ${MIN_FREE_MB}MB free on /opt)"
 
 # ─── DNS fallback injection ──────────────────────────────
 # If /etc/resolv.conf points at localhost (CIDRella itself), we may lose DNS
@@ -858,7 +879,16 @@ info "Pre-flight validation..."
 # command-not-found, and stderr was discarded by `2>/dev/null`, which the
 # script then misreported as "syntax errors". Result: CLI updates appeared
 # broken on bundled-Node-only hosts. Fixed in v0.4.11.
-PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT")
+if ! PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT"); then
+  # resolve_node returns nonzero rather than emitting an untested /usr/bin/node,
+  # so name the failure instead of dying bare under set -e or failing later with
+  # a confusing "command not found".
+  err "Pre-flight failed: no usable node runtime found."
+  err "  Looked for: ${TARGET_SLOT}/runtime/node/bin/node, /opt/cidrella/runtime/node/bin/node,"
+  err "              /usr/local/bin/cidrella-node, then node on PATH."
+  write_progress "failed" 5 "Update failed" "No usable node runtime found"
+  exit 1
+fi
 if [ -n "$RELEASE_NODE_VERSION" ]; then
   TARGET_NODE_VERSION=$("$PREFLIGHT_NODE" --version 2>/dev/null || true)
   if [ "$TARGET_NODE_VERSION" != "v${RELEASE_NODE_VERSION}" ]; then
@@ -950,7 +980,16 @@ chown cidrella:cidrella "$PREFLIGHT_DATA"
 
 # Start new version on temp port with throwaway data dir, so it doesn't
 # touch production DB and we can verify all subsystems come up clean.
-PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT")
+if ! PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT"); then
+  # resolve_node returns nonzero rather than emitting an untested /usr/bin/node,
+  # so name the failure instead of dying bare under set -e or failing later with
+  # a confusing "command not found".
+  err "Pre-flight failed: no usable node runtime found."
+  err "  Looked for: ${TARGET_SLOT}/runtime/node/bin/node, /opt/cidrella/runtime/node/bin/node,"
+  err "              /usr/local/bin/cidrella-node, then node on PATH."
+  write_progress "failed" 5 "Update failed" "No usable node runtime found"
+  exit 1
+fi
 sudo -u cidrella env \
   HTTPS_PORT=$PREFLIGHT_PORT \
   HTTP_PORT=$((PREFLIGHT_PORT + 1)) \
@@ -1035,7 +1074,7 @@ chown -R cidrella:cidrella "$DATA_DIR/snapshots"
 
 # SQLite: checkpoint WAL so the .db file is up to date, then copy
 if [ -f "$DATA_DIR/cidrella.db" ]; then
-  ACTIVE_NODE=$(resolve_node "$INSTALL_LINK")
+  ACTIVE_NODE=$(resolve_node "$INSTALL_LINK" || true)
   sudo -u cidrella "$ACTIVE_NODE" -e "
     const Database = require('$INSTALL_LINK/server/node_modules/better-sqlite3');
     const db = new Database('$DATA_DIR/cidrella.db');
@@ -1318,7 +1357,23 @@ systemctl daemon-reload
 
 track_progress "switching" 90 "Restarting CIDRella..."
 info "Restarting cidrella service (dnsmasq stays running)..."
-systemctl restart cidrella
+# Deliberately NOT fatal. This script runs under `set -euo pipefail` with
+# `trap on_error ERR`, so a bare `systemctl restart` that fails aborted the
+# whole update HERE, before PHASE 7, which is the only caller of the
+# auto-rollback block. The appliance was then left with the symlink pointing at
+# the NEW (broken) slot, the service down, and no rollback events at all. That
+# is the exact outcome the A/B design exists to prevent, and it produced a nasty
+# asymmetry: a version that starts but is unhealthy WAS auto-rolled back, while
+# a version that will not start at all was NOT, even though the second case is
+# the likelier one (bad native module, missing file, capability problem).
+# Proven on testerella 2026-08-19 by failing ExecStartPre for the target slot.
+# Letting the failure through means the health poll below sees a dead service,
+# VERIFY_OK stays false, and the existing auto-rollback runs.
+# See REVIEW.md, "Auto-rollback is bypassed when the new version fails to START".
+if ! systemctl restart cidrella; then
+  warn "New version failed to start, continuing to health verification for auto-rollback"
+  emit_event switchover fail reason=service-start-failed "version=$NEW_VERSION"
+fi
 
 # Restore any enabled-but-inactive auxiliary services after the switchover.
 # On 2026-04-12 prod had cidrella-anomaly stopped (cause unknown) and the
@@ -1357,22 +1412,44 @@ info "Verifying new version..."
 #   2. systemd Environment=HTTPS_PORT=... (from unit or drop-in override)
 #   3. Fallback: probe 443 then 8443 in order
 discover_verify_port() {
-  local p
-  # DB (authoritative in v0.4.15+). sqlite3 is NOT guaranteed on the host.
-  # Missing or unreadable DB silently falls through.
-  if command -v sqlite3 >/dev/null 2>&1 && [ -r "$DATA_DIR/cidrella.db" ]; then
-    p=$(sqlite3 "$DATA_DIR/cidrella.db" \
-          "SELECT value FROM settings WHERE key='https_port' AND value != '' LIMIT 1" 2>/dev/null)
-    if [ -n "$p" ] && [ "$p" -ge 1 ] 2>/dev/null && [ "$p" -le 65535 ] 2>/dev/null; then
-      printf '%s' "$p"; return
-    fi
+  local db_val env_val node
+  # Tier 1, the DB: authoritative in v0.4.15+, written by routes/interfaces.js
+  # when an admin changes the port in the UI.
+  #
+  # Read with the BUNDLED Node and better-sqlite3, the same way this script
+  # already checkpoints the WAL before snapshotting. It used to shell out to the
+  # sqlite3 CLI, which install.sh never installs, so on a real appliance this
+  # tier silently never fired: every update probed 8443 regardless of what was
+  # configured, and once the UI port differed from 8443 or 443 the post-switch
+  # health check failed and rolled back a healthy slot.
+  # (REVIEW.md duplicate-logic audit #37)
+  db_val=""
+  node=$(resolve_node "$INSTALL_LINK" 2>/dev/null || true)
+  if [ -n "$node" ] && [ -r "$DATA_DIR/cidrella.db" ]; then
+    db_val=$(sudo -u cidrella "$node" -e "
+      try {
+        const Database = require('$INSTALL_LINK/server/node_modules/better-sqlite3');
+        const db = new Database('$DATA_DIR/cidrella.db', { readonly: true });
+        const row = db.prepare(\"SELECT value FROM settings WHERE key='https_port'\").get();
+        db.close();
+        if (row && row.value) process.stdout.write(String(row.value));
+      } catch (e) { /* unreadable DB or missing module: fall through */ }
+    " 2>/dev/null || true)
   fi
-  # systemd env: catches the install.sh drop-in override.
-  p=$(systemctl show cidrella -p Environment 2>/dev/null \
+  # Same query through the sqlite3 CLI if an operator happens to have it. A
+  # cheap second chance, no longer the only one.
+  if ! valid_port "$db_val" && command -v sqlite3 >/dev/null 2>&1 && [ -r "$DATA_DIR/cidrella.db" ]; then
+    db_val=$(sqlite3 "$DATA_DIR/cidrella.db" \
+          "SELECT value FROM settings WHERE key='https_port' AND value != '' LIMIT 1" 2>/dev/null || true)
+  fi
+
+  # Tier 2, the systemd environment: catches install.sh's drop-in override.
+  env_val=$(systemctl show cidrella -p Environment 2>/dev/null \
         | grep -oE 'HTTPS_PORT=[0-9]+' | head -1 | sed 's/HTTPS_PORT=//')
-  if [ -n "$p" ]; then printf '%s' "$p"; return; fi
-  # Final fallback.
-  printf '8443'
+
+  # Tier 3, the hardcoded default. resolve_port lives in lib/slots.sh so the
+  # ladder is shared, and matches resolvePort() in server/src/utils/http-server.js.
+  resolve_port "$db_val" "$env_val" 8443
 }
 VERIFY_PORT=$(discover_verify_port)
 info "Verify port: $VERIFY_PORT"
@@ -1487,7 +1564,28 @@ if [ -f "$SNAPSHOT_DIR/analytics.duckdb" ]; then
 fi
 
 systemctl daemon-reload
-systemctl restart cidrella
+
+# Clear the start-limit counter before restarting the restored version.
+#
+# The broken slot has almost certainly been crashlooping under Restart=always,
+# and every retry burns one of StartLimitBurst=5 per StartLimitIntervalSec=60
+# (see scripts/systemd/cidrella.service). Once that budget is gone systemd
+# refuses the next start outright with "Start request repeated too quickly", and
+# it refuses it for the GOOD slot too, because the limit belongs to the UNIT and
+# not to whatever code the symlink happened to point at. Without this the
+# rollback swapped the symlink back correctly and then could not start the
+# healthy version, leaving the appliance down: exactly the outcome auto-rollback
+# exists to prevent. Observed on testerella 2026-08-19.
+systemctl reset-failed cidrella 2>/dev/null || true
+
+# Same reason the switchover restart above is guarded: a bare restart under
+# `set -e` + `trap on_error ERR` aborts the script here, which would skip the
+# ROLLBACK_OK verification below and the operator-facing "rollback failed too"
+# reporting, and emit a misleading generic update-fail event instead. Let it
+# through and let the check below decide what actually happened.
+if ! systemctl restart cidrella; then
+  warn "Rollback restart returned non-zero, verifying service state below"
+fi
 
 # Verify rollback worked
 ROLLBACK_OK=false

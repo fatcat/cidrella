@@ -230,12 +230,14 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-import Button from 'primevue/button';
-import ProgressBar from 'primevue/progressbar';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Dialog from 'primevue/dialog';
-import { useToast } from 'primevue/usetoast';
+import { apiError } from '../utils/format.js';
+import Button from '../ui/Button.js';
+import ProgressBar from '../ui/ProgressBar.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Dialog from '../ui/Dialog.js';
+import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
+import { formatRelativeTime as formatRelative } from '../utils/dateFormat.js';
 
 const toast = useToast();
 
@@ -301,16 +303,6 @@ function stepClass(key) {
   return 'pending';
 }
 
-function formatRelative(iso) {
-  if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
 
 async function fetchVersionInfo() {
   try {
@@ -347,7 +339,7 @@ async function checkForUpdate() {
       toast.add({ severity: 'info', summary: 'Up to date', detail: 'No updates available', life: 3000 });
     }
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Check failed', detail: err.response?.data?.error || 'Could not check for updates', life: 4000 });
+    toast.add({ severity: 'error', summary: 'Check failed', detail: apiError(err), life: 4000 });
   } finally {
     checking.value = false;
   }
@@ -365,7 +357,7 @@ async function startInstall() {
     toast.add({ severity: 'info', summary: 'Update started', detail: 'Installing update...', life: 3000 });
     startPolling();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Update failed', detail: err.response?.data?.error || 'Could not start update', life: 5000 });
+    toast.add({ severity: 'error', summary: 'Update failed', detail: apiError(err), life: 5000 });
   } finally {
     installing.value = false;
   }
@@ -395,7 +387,7 @@ async function resetUpdateState() {
     toast.add({
       severity: 'error',
       summary: 'Could not clear update state',
-      detail: err.response?.data?.error || 'Server did not accept the request',
+      detail: apiError(err),
       life: 4000,
     });
   }

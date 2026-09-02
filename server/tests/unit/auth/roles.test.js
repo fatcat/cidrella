@@ -143,3 +143,33 @@ describe('system scope (v0.4.16)', () => {
     }
   });
 });
+
+describe('#27: the superuser rule is defined once', () => {
+  it('isSuperuser is driven by the ROLES wildcard, not a hardcoded name', async () => {
+    const { isSuperuser } = await import('../../../src/auth/roles.js');
+    expect(isSuperuser('admin')).toBe(true);
+    expect(isSuperuser('readonly')).toBe(false);
+    expect(isSuperuser('nope')).toBe(false);
+    expect(isSuperuser(undefined)).toBe(false);
+  });
+
+  it('every wildcard role in ROLES passes BOTH gates, not just one', async () => {
+    const { ROLES, hasPermission, requireRole, isSuperuser } =
+      await import('../../../src/auth/roles.js');
+
+    const wildcards = Object.keys(ROLES).filter(r => ROLES[r].permissions.includes('*'));
+    expect(wildcards.length, 'fixture needs at least one wildcard role').toBeGreaterThan(0);
+
+    for (const role of wildcards) {
+      // permission gate
+      expect(hasPermission(role, 'anything:at:all'), role).toBe(true);
+      expect(isSuperuser(role), role).toBe(true);
+      // role gate, asking for a role this one is NOT in
+      let passed = false;
+      requireRole('some_other_role')({ user: { role } }, {
+        status: () => ({ json: () => {} }),
+      }, () => { passed = true; });
+      expect(passed, `${role} should pass requireRole via the wildcard`).toBe(true);
+    }
+  });
+});

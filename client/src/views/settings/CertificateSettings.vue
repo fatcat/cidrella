@@ -121,10 +121,10 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
-import Button from 'primevue/button';
-import InputText from 'primevue/inputtext';
-import Select from 'primevue/select';
-import { useToast } from 'primevue/usetoast';
+import Button from '../../ui/Button.js';
+import InputText from '../../ui/InputText.js';
+import Select from '../../ui/Select.js';
+import { useToast } from '../../ui/useToast.js';
 import { useOperationsStore } from '../../stores/operations.js';
 import { apiError } from '../../utils/format.js';
 

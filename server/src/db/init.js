@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { upsertSettingWithConflict } from '../models/setting.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -185,8 +186,23 @@ export async function ensureDefaults() {
 /**
  * Upsert a setting. Standardized across the codebase.
  */
+/**
+ * Write one setting.
+ *
+ * Delegates to models/setting.js rather than carrying its own SQL. This used to
+ * be `INSERT OR REPLACE`, which is not the same statement as the model's
+ * `ON CONFLICT(key) DO UPDATE`: OR REPLACE deletes the existing row and inserts
+ * a new one, so it would drop the old values of any column the INSERT does not
+ * name, and fire delete triggers and ON DELETE cascades. The two agree today
+ * only because `settings` is exactly (key, value) with no triggers. Adding an
+ * `updated_at` column, which is an obvious future change, would have made them
+ * disagree silently (duplicate-logic audit #28).
+ *
+ * models/setting.js has no imports of its own, so this direction creates no
+ * cycle.
+ */
 export function setSetting(key, value) {
-  getDb().prepare("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)").run(key, String(value));
+  return upsertSettingWithConflict(getDb(), key, value);
 }
 
 export function audit(userId, action, entityType, entityId, details) {

@@ -86,6 +86,31 @@ describe('PUT /api/blocklists/settings', () => {
     expect(res.status).toBe(200);
     expect((await request(app).get('/api/blocklists/settings')).body).not.toHaveProperty('evil_key');
   });
+
+  it('round-trips blocklist_max_feed_mb as the string the UI sends', async () => {
+    const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: '256' });
+    expect(res.status).toBe(200);
+    expect((await request(app).get('/api/blocklists/settings')).body.blocklist_max_feed_mb).toBe('256');
+  });
+
+  it('accepts blocklist_max_feed_mb at both ends of the range, as string or number', async () => {
+    for (const good of ['1', '128', '2048', 64]) {
+      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: good });
+      expect(res.status, `value ${JSON.stringify(good)}`).toBe(200);
+    }
+  });
+
+  it('rejects out-of-range and non-numeric blocklist_max_feed_mb', async () => {
+    for (const bad of [0, 2049, -1, 'abc', '', '12.5', { a: 1 }, ['128'], true]) {
+      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: bad });
+      expect(res.status, `value ${JSON.stringify(bad)}`).toBe(400);
+    }
+  });
+
+  it('exposes blocklist_max_feed_mb on GET so the UI can populate the field', async () => {
+    expect((await request(app).get('/api/blocklists/settings')).body)
+      .toHaveProperty('blocklist_max_feed_mb');
+  });
 });
 
 describe('schedule vocabulary single-sourcing (v0.4.16)', () => {
@@ -97,6 +122,53 @@ describe('schedule vocabulary single-sourcing (v0.4.16)', () => {
     for (const hours of Object.values(SCHEDULE_HOURS)) {
       expect(Number.isInteger(hours) && hours >= 0).toBe(true);
     }
+  });
+});
+
+// The whitelist route used to inline its own domain regex with NO length bound,
+// so a 300-character name was accepted here and rejected by every other route.
+// It now uses the shared isValidDomain (shape + 253 cap) and keeps its own
+// extra TLD requirement, which is deliberate for a public-domain allowlist.
+// See REVIEW.md, duplicate-logic audit #21.
+describe('whitelist domain validation matches the shared validator', () => {
+  // These two names are built from labels of 63 characters or fewer on purpose.
+  // They used to be a single 249-character label, which hits the 253 total cap
+  // but is not a legal domain: RFC 1035 caps a LABEL at 63 octets, and
+  // isValidDomain now enforces that (duplicate-logic audit #7). With the old
+  // fixture the over-cap case was rejected for the label length rather than the
+  // total, so it would have passed even with the 253 cap deleted. Keeping the
+  // labels legal is what makes these tests actually about the total cap.
+  it('rejects a name longer than 253 characters', async () => {
+    const tooLong = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(62)].join('.');
+    expect(tooLong.length).toBe(254);
+    expect(tooLong.split('.').every(l => l.length <= 63)).toBe(true);
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: tooLong });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts a name at the limit, so the cap is not off by one', async () => {
+    const ok = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(61)].join('.');
+    expect(ok.length).toBe(253);
+    expect(ok.split('.').every(l => l.length <= 63)).toBe(true);
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: ok });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects a label longer than 63 characters even when the total fits', async () => {
+    const badLabel = `${'a'.repeat(64)}.com`;
+    expect(badLabel.length).toBeLessThan(253);
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: badLabel });
+    expect(res.status).toBe(400);
+  });
+
+  it('still requires a TLD, which is this route being deliberately stricter', async () => {
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: 'intranet' });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts an ordinary domain', async () => {
+    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: 'example.com' });
+    expect(res.status).toBe(201);
   });
 });
 

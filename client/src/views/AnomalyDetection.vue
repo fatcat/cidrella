@@ -91,10 +91,11 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted, watch } from 'vue';
-import ToggleSwitch from 'primevue/toggleswitch';
-import Select from 'primevue/select';
-import InputNumber from 'primevue/inputnumber';
-import Button from 'primevue/button';
+import { EMPTY_CELL } from '../utils/format.js';
+import ToggleSwitch from '../ui/ToggleSwitch.js';
+import Select from '../ui/Select.js';
+import InputNumber from '../ui/InputNumber.js';
+import Button from '../ui/Button.js';
 import { useAnomalyStore } from '../stores/anomalies.js';
 
 const store = useAnomalyStore();
@@ -134,7 +135,7 @@ const statusIndicatorClass = computed(() => {
 
 const statusLabel = computed(() => {
   const s = store.summary;
-  if (!s) return '—';
+  if (!s) return EMPTY_CELL;
   if (!s.enabled) return 'Disabled';
   if (s.daemon && s.daemon.stale) return 'Stalled';
   if (s.daemon) return 'Running';

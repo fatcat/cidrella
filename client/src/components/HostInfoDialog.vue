@@ -13,7 +13,7 @@
       <section>
         <h5>Identity</h5>
         <div class="hi-row"><span class="hi-label">IP address</span><span class="hi-val mono">{{ host.ip_address }}</span></div>
-        <div class="hi-row"><span class="hi-label">Hostname</span><span class="hi-val">{{ host.hostname || dash }}</span></div>
+        <div class="hi-row"><span class="hi-label">Hostname</span><span class="hi-val">{{ displayHostnameCell(host.hostname, domainName) }}</span></div>
         <div class="hi-row"><span class="hi-label">MAC</span><span class="hi-val mono">{{ mac || dash }}</span></div>
         <div class="hi-row"><span class="hi-label">Manufacturer</span><span class="hi-val">{{ host.vendor || dash }}</span></div>
       </section>
@@ -41,7 +41,7 @@
         <h5>Liveness</h5>
         <div class="hi-row"><span class="hi-label">Status</span><span class="hi-val">{{ host.ip_display_status || host.status || dash }}</span></div>
         <div class="hi-row"><span class="hi-label">Online</span>
-          <span class="hi-val"><StatusDot :kind="host.is_online ? 'ok' : 'muted'" :label="host.is_online ? 'Online' : 'Offline'" class="hi-dot" />{{ host.is_online ? 'Online' : 'Offline' }}</span>
+          <span class="hi-val"><StatusDot :kind="onlineState.known ? (onlineState.label === 'Online' ? 'ok' : 'muted') : 'muted'" :label="onlineState.label" class="hi-dot" />{{ onlineState.label }}</span>
         </div>
         <div class="hi-row"><span class="hi-label">Last seen</span><span class="hi-val">{{ host.last_seen_at ? fmt(host.last_seen_at) : dash }}</span></div>
         <div class="hi-row" v-if="host.dhcp_expires_at"><span class="hi-label">Lease expires</span><span class="hi-val">{{ fmt(host.dhcp_expires_at) }}</span></div>
@@ -53,10 +53,11 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue';
-import Dialog from 'primevue/dialog';
-import Button from 'primevue/button';
+import Dialog from '../ui/Dialog.js';
+import Button from '../ui/Button.js';
 import StatusDot from './StatusDot.vue';
-import { useToast } from 'primevue/usetoast';
+import { displayOnlineStatus, EMPTY_CELL, displayHostnameCell } from '../utils/format.js';
+import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
 import { formatDateTime } from '../utils/dateFormat.js';
@@ -64,11 +65,22 @@ import { formatDateTime } from '../utils/dateFormat.js';
 const props = defineProps({
   visible: { type: Boolean, default: false },
   host: { type: Object, default: null },
+  // The subnet's domain, so the hostname here reads the same as the hostname in
+  // the table that opened this dialog. Without it the table showed 'laptop' and
+  // the dialog showed 'laptop.home.lan' for the same row
+  // (duplicate-logic audit #56).
+  domainName: { type: String, default: null },
 });
 const emit = defineEmits(['update:visible']);
 const toast = useToast();
 
-const dash = '—';
+const dash = EMPTY_CELL;
+
+// Liveness read through the shared three-state flag. The inline
+// `host.is_online ? ... : ...` this replaces treated the STRING '0' as online
+// (non-empty strings are truthy) and reported an unknown address as Offline
+// rather than unknown. See REVIEW.md, duplicate-logic audit #48.
+const onlineState = computed(() => displayOnlineStatus(props.host?.is_online));
 const fmt = formatDateTime;
 const fp = ref(null);
 const loading = ref(false);

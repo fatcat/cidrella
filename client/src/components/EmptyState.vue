@@ -19,7 +19,7 @@
 </template>
 
 <script setup>
-import Button from 'primevue/button';
+import Button from '../ui/Button.js';
 
 defineProps({
   icon: { type: String, default: null },

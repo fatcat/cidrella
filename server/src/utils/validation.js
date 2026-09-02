@@ -89,6 +89,29 @@ export function isIntInRange(v, lo, hi) {
   return typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
 }
 
+/**
+ * As isIntInRange, but also accepts a string of digits.
+ *
+ * This exists because the settings surface is string-typed end to end: the
+ * `settings` table column is TEXT, and the client's Select controls carry string
+ * option values ('3', '7', ...), so `PUT /api/settings/:key` legitimately
+ * receives "30" rather than 30. The strict validator would reject every
+ * retention setting the UI can send.
+ *
+ * The two used to be one name with two behaviors: routes/settings.js and
+ * routes/dns.js each carried a local `isIntInRange`, one coercing and one not,
+ * so "30" was accepted by the settings route and rejected by the DNS zone
+ * route. Naming the coercion is the point. Reach for the strict one unless the
+ * input genuinely arrives as a string, and never silently swap one for the
+ * other. See REVIEW.md, duplicate-logic audit #14.
+ */
+export function isIntInRangeCoercing(v, lo, hi) {
+  const n = typeof v === 'number'
+    ? v
+    : (typeof v === 'string' && /^-?\d+$/.test(v) ? parseInt(v, 10) : NaN);
+  return Number.isInteger(n) && n >= lo && n <= hi;
+}
+
 export function validateSoaFields(fields = {}) {
   const {
     soa_primary_ns,
@@ -119,5 +142,25 @@ export function validateSoaFields(fields = {}) {
     if (!isIntInRange(value, 0, 2147483647)) return `${field} must be an integer 0-2147483647`;
   }
 
+  return null;
+}
+
+// VLAN 0 is reserved for 802.1p priority tagging and 4095 is reserved, so the
+// assignable range is 1-4094. That is what migration 014 enforces on the
+// `vlans` table (CHECK vlan_id >= 1 AND vlan_id <= 4094), but subnets.vlan_id
+// is a bare INTEGER and routes/subnets.js checked 0-4094 in three places, so a
+// subnet could hold vlan_id = 0 that no vlans row is allowed to exist for.
+// detectVlanCollision guards with `vlanId == null`, which 0 does NOT trip
+// (`0 == null` is false), so two subnets both holding vlan_id = 0 reported a
+// collision on a VLAN that is not allowed to exist in the first place.
+// See REVIEW.md, duplicate-logic audit #16.
+export const VLAN_ID_MIN = 1;
+export const VLAN_ID_MAX = 4094;
+
+/** Null when the VLAN id is assignable, else the operator-facing reason. */
+export function vlanIdError(value) {
+  if (!Number.isInteger(value) || value < VLAN_ID_MIN || value > VLAN_ID_MAX) {
+    return `VLAN ID must be an integer ${VLAN_ID_MIN}-${VLAN_ID_MAX}`;
+  }
   return null;
 }

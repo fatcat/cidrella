@@ -14,6 +14,8 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { formatRelativeTime } from '../utils/dateFormat.js';
+import { EMPTY_CELL } from '../utils/format.js';
 import { useAuthStore } from '../stores/auth.js';
 import api from '../api/client.js';
 
@@ -55,12 +57,18 @@ const sessionExpiringSoon = computed(() => {
 
 const lastSyncText = computed(() => {
   if (!lastSync.value) return null;
-  const sec = Math.floor((now.value - lastSync.value) / 1000);
-  if (sec < 60) return `${sec}s AGO`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m AGO`;
-  const hr = Math.floor(min / 60);
-  return `${hr}h AGO`;
+  // Reading the shared clock keeps this recomputing every tick.
+  // formatRelativeTime reads Date.now() itself, so without this the footer
+  // would freeze at whatever it said when the component mounted.
+  void now.value;
+  // The local copy that used to live here had no days bucket and no finite
+  // guard, so 30 hours rendered "30h AGO" and an unparseable timestamp
+  // rendered "NaNh AGO" (duplicate-logic audit #57, sibling of #42).
+  const rel = formatRelativeTime(lastSync.value);
+  if (rel === EMPTY_CELL) return null;
+  // The footer is uppercase by design, hence the fold rather than a second
+  // formatter.
+  return rel.toUpperCase();
 });
 
 async function fetchVersion() {
