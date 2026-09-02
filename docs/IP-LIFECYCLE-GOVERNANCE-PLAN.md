@@ -1,6 +1,6 @@
 # IP Lifecycle Governance Plan
 
-Status: proposed  
+Status: implementation in progress
 Branch: `plan/ip-lifecycle-governance`  
 Baseline: CIDRella 0.4.17 plus IPv6 phase-0 address primitives
 
@@ -525,6 +525,11 @@ The choice between blocking and quarantine is a release-design decision.
 ## Implementation Phases
 
 ### Phase 1: Lock the contract
+
+Status: complete. Implemented, tested, committed, and pushed in `4f1a4f3`.
+
+Validation: 985 server tests, 133 client tests, ESLint, database ownership
+checks, and diff checks passed on 2026-09-02.
 
 - Approve the nine semantic decisions above.
 - Write the allocation-state, address-family capability, and display-status
