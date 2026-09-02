@@ -1,8 +1,8 @@
 # IP Lifecycle Governance Plan
 
-Status: implementation in progress
-Branch: `plan/ip-lifecycle-governance`  
-Baseline: CIDRella 0.4.17 plus IPv6 phase-0 address primitives
+- Status: implementation in progress
+- Branch: `plan/ip-lifecycle-governance`
+- Baseline: CIDRella 0.4.17 plus IPv6 phase-0 address primitives
 
 ## Purpose
 
