@@ -31,17 +31,16 @@ describe('computeIpView: rogue inference respects a DNS claim', () => {
       .toBe(ADDRESS_TYPE.ROGUE);
   });
 
-  it('keeps an explicitly flagged rogue flagged, a DNS name does not excuse a conflict', () => {
-    // The stored flag can carry a real reason such as a MAC mismatch, so the
-    // is_rogue branch is deliberately NOT softened by has_static_dns.
+  it('keeps allocation type separate from a reported address conflict', () => {
     const row = view({
       is_online: 1,
       is_rogue: 1,
       rogue_reason: 'MAC mismatch (expected aa:bb:cc:dd:ee:ff, got 11:22:33:44:55:66)',
       has_static_dns: 1,
     });
-    expect(row.address_type).toBe(ADDRESS_TYPE.ROGUE);
-    expect(row.address_type_tooltip).toContain('MAC mismatch');
+    expect(row.address_type).toBe(ADDRESS_TYPE.STATIC_DNS);
+    expect(row.address_conflict).toBe(true);
+    expect(row.address_conflict_reason).toContain('MAC mismatch');
   });
 
   it('prefers reservation and lease labels over a DNS claim', () => {

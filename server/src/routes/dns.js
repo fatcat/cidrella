@@ -22,6 +22,7 @@ import {
   updateZone,
   deleteZone
 } from '../models/dns-zone.js';
+import { enrichIpViewRows } from '../models/ip-view.js';
 
 const router = Router();
 
@@ -31,6 +32,11 @@ import { isBlockedIpv4 } from '../utils/url-guard.js';
 import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
 import { validateSoaFields, isIntInRange } from '../utils/validation.js';
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
+
+function enrichDnsAddressRecords(db, records) {
+  enrichIpViewRows(db, records.filter(record => record.type === 'A' || record.type === 'AAAA'));
+  return records;
+}
 
 function normalizeDnsName(name) {
   return String(name || '').trim().replace(/\.$/, '').toLowerCase();
@@ -174,14 +180,22 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
-    SELECT r.*, r.type AS record_type, r.source AS dns_source, ip.is_online
+    SELECT r.*, r.type AS record_type, r.source AS dns_source,
+      CASE WHEN r.type IN ('A', 'AAAA') THEN r.value END AS ip_address,
+      ip.subnet_id, ip.hostname, ip.mac_address,
+      ip.last_seen_mac, ip.status, ip.is_online, ip.is_rogue, ip.rogue_reason,
+      ip.detection_source, ip.last_seen_at, ip.last_scanned_at,
+      ip.reservation_note, ip.scan_enabled, ip.allocation_state,
+      ip.allocation_source_type, ip.allocation_source_id, ip.address_family,
+      ip.address_sort_key, ip.interface_id, ip.preferred_until, ip.valid_until,
+      ip.dhcp_version
     FROM dns_records r
-    LEFT JOIN ip_addresses ip ON r.type = 'A' AND ip.ip_address = r.value
+    LEFT JOIN ip_addresses ip ON r.type IN ('A', 'AAAA') AND ip.ip_address = r.value
     WHERE r.zone_id = ?
     ORDER BY r.type, r.name
   `).all(zone.id);
 
-  res.json({ ...zone, records });
+  res.json({ ...zone, records: enrichDnsAddressRecords(db, records) });
 });
 
 // POST /api/dns/zones: zones are subnet-agnostic. Any number of subnets
@@ -305,13 +319,21 @@ router.get('/zones/:zoneId/records', requirePerm('dns:read'), (req, res) => {
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
-    SELECT r.*, r.type AS record_type, r.source AS dns_source, ip.is_online
+    SELECT r.*, r.type AS record_type, r.source AS dns_source,
+      CASE WHEN r.type IN ('A', 'AAAA') THEN r.value END AS ip_address,
+      ip.subnet_id, ip.hostname, ip.mac_address,
+      ip.last_seen_mac, ip.status, ip.is_online, ip.is_rogue, ip.rogue_reason,
+      ip.detection_source, ip.last_seen_at, ip.last_scanned_at,
+      ip.reservation_note, ip.scan_enabled, ip.allocation_state,
+      ip.allocation_source_type, ip.allocation_source_id, ip.address_family,
+      ip.address_sort_key, ip.interface_id, ip.preferred_until, ip.valid_until,
+      ip.dhcp_version
     FROM dns_records r
-    LEFT JOIN ip_addresses ip ON r.type = 'A' AND ip.ip_address = r.value
+    LEFT JOIN ip_addresses ip ON r.type IN ('A', 'AAAA') AND ip.ip_address = r.value
     WHERE r.zone_id = ?
     ORDER BY r.type, r.name
   `).all(zone.id);
-  res.json(records);
+  res.json(enrichDnsAddressRecords(db, records));
 });
 
 // POST /api/dns/zones/:zoneId/records

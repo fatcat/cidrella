@@ -69,7 +69,11 @@ export function ipLifecycleDisplay(data) {
     };
   }
 
-  const isDhcpScope = data.range_type_name === 'DHCP Scope';
+  const isDhcpScope = data.range_type_name === 'DHCP Scope'
+    || data.range_type_name === 'DHCP Pool'
+    || data.in_dynamic_pool === true || data.in_dynamic_pool === 1
+    || data.in_dynamic_pool === '1'
+    || data.ip_lifecycle_status === 'dhcp' || data.status === 'dhcp';
   const isLeaseExpired = data.dhcp_expires_at && data.dhcp_expires_at !== 'infinite'
     && new Date(data.dhcp_expires_at) < new Date();
   const hasActiveLease = data.dhcp_expires_at && !isLeaseExpired;
@@ -143,7 +147,7 @@ export function ipLifecycleDisplay(data) {
   }
 
   if (isDhcpScope) {
-    return { status: 'available', statusSeverity: 'secondary', addressType: null };
+    return { status: 'DHCP Scope', statusSeverity: 'secondary', addressType: null };
   }
 
   return { status: 'available', statusSeverity: 'secondary', addressType: null };

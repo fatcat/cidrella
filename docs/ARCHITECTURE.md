@@ -144,6 +144,7 @@ generators should read and emit, not invent persistence semantics.
 Expected low-level write exceptions:
 
 - migrations in `server/src/db/migrations/`
+- the startup-only canonical address backfill in `server/src/db/ip-identity.js`
 - DB initialization in `server/src/db/init.js`
 - backup and restore implementation
 - DuckDB analytics adapter

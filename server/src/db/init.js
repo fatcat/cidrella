@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { DEFAULTS } from '../config/defaults.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
+import { backfillCanonicalIpIdentity } from './ip-identity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
@@ -57,6 +58,10 @@ export async function initDb(dataDir) {
   db.pragma('foreign_keys = ON');
 
   runMigrations();
+  const identityBackfill = backfillCanonicalIpIdentity(db);
+  if (identityBackfill.conflicts > 0) {
+    console.warn(`Found ${identityBackfill.conflicts} canonical IP identity conflict(s) for reconciliation`);
+  }
   await ensureDefaults();
 
   return db;

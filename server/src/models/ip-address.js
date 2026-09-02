@@ -9,12 +9,35 @@ import { getSetting } from '../db/init.js';
 import { activeLeaseSql } from '../utils/lease-sql.js';
 import { scannerCoveredSql } from '../utils/scan-coverage.js';
 import { isLocalAddress } from '../utils/local-addresses.js';
+import { canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import * as DnsRecord from './dns-record.js';
 
 // The reason string the passive path stamps on an address it has never seen
 // assigned. Exported because the self-heal below matches on it exactly rather
 // than on a substring, so an unrelated rogue reason is never cleared by mistake.
 export const PASSIVE_ROGUE_REASON = 'passive DNS query from unassigned address';
+
+function canonicalIdentity(ip, interfaceId) {
+  const parsed = parseIp(ip);
+  if (!parsed) throw new Error(`Invalid IP address: ${ip}`);
+  const effectiveInterface = interfaceId ?? parsed.zoneId ?? null;
+  if (parsed.zoneId && interfaceId && parsed.zoneId !== interfaceId) {
+    throw new Error('IPv6 zone identifier does not match interface context');
+  }
+  const isV6LinkLocal = parsed.bits === 128
+    && parsed.value >= 0xfe800000000000000000000000000000n
+    && parsed.value <= 0xfebfffffffffffffffffffffffffffffn;
+  if (isV6LinkLocal && !effectiveInterface) {
+    throw new Error('IPv6 link-local addresses require interface context');
+  }
+  const canonical = canonicalizeIp(ip);
+  return {
+    ip: canonical,
+    addressFamily: parsed.bits === 32 ? 4 : 6,
+    addressSortKey: sortKey(canonical),
+    interfaceId: effectiveInterface
+  };
+}
 
 /**
  * Record an IP lifecycle event.
@@ -64,14 +87,23 @@ export function getSubnetEvents(db, subnetId, { hours = 24, limit = 200 } = {}) 
  * Never overwrites first_seen_at on UPDATE (write-once).
  */
 export function upsert(db, subnetId, ip, fields = {}) {
+  const identity = canonicalIdentity(ip, fields.interface_id);
+  ip = identity.ip;
   const {
     hostname, mac_address, status, is_online, last_seen_mac,
-    is_rogue, rogue_reason, last_scanned_at, detection_source
+    is_rogue, rogue_reason, last_scanned_at, detection_source,
+    allocation_state, allocation_source_type, allocation_source_id,
+    preferred_until, valid_until, dhcp_version
   } = fields;
 
-  const existing = db.prepare(
-    'SELECT id, hostname, mac_address, status, is_online FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = db.prepare(`
+    SELECT id, hostname, mac_address, status, is_online, allocation_state,
+           allocation_source_type, allocation_source_id, preferred_until,
+           valid_until, dhcp_version
+    FROM ip_addresses
+    WHERE subnet_id = ? AND ip_address = ?
+      AND COALESCE(interface_id, '') = COALESCE(?, '')
+  `).get(subnetId, ip, identity.interfaceId);
 
   if (existing) {
     const updates = [];
@@ -127,6 +159,19 @@ export function upsert(db, subnetId, ip, fields = {}) {
       updates.push('detection_source = ?');
       params.push(detection_source);
     }
+    for (const [column, value] of [
+      ['allocation_state', allocation_state],
+      ['allocation_source_type', allocation_source_type],
+      ['allocation_source_id', allocation_source_id],
+      ['preferred_until', preferred_until],
+      ['valid_until', valid_until],
+      ['dhcp_version', dhcp_version]
+    ]) {
+      if (value !== undefined && value !== existing[column]) {
+        updates.push(`${column} = ?`);
+        params.push(value);
+      }
+    }
 
     if (updates.length > 0) {
       updates.push("updated_at = datetime('now')");
@@ -146,18 +191,24 @@ export function upsert(db, subnetId, ip, fields = {}) {
       subnet_id, ip_address, hostname, mac_address, status,
       is_online, last_seen_at, last_seen_mac,
       is_rogue, rogue_reason, last_scanned_at,
-      first_seen_at, detection_source
+      first_seen_at, detection_source, allocation_state,
+      allocation_source_type, allocation_source_id, address_family,
+      address_sort_key, interface_id, preferred_until, valid_until, dhcp_version
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ${is_online ? "datetime('now')" : 'NULL'}, ?,
       ?, ?, ?,
-      ${hasActivity ? "datetime('now')" : 'NULL'}, ?
+      ${hasActivity ? "datetime('now')" : 'NULL'}, ?, ?,
+      ?, ?, ?, ?, ?, ?, ?, ?
     )
   `).run(
     subnetId, ip, hostname || null, mac_address || null, status || 'available',
     is_online || 0, last_seen_mac || null,
     is_rogue || 0, rogue_reason || null, last_scanned_at || null,
-    detection_source || null
+    detection_source || null, allocation_state || 'unassigned',
+    allocation_source_type || null, allocation_source_id || null,
+    identity.addressFamily, identity.addressSortKey, identity.interfaceId,
+    preferred_until || null, valid_until || null, dhcp_version || null
   );
   return result.lastInsertRowid;
 }

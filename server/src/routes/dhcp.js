@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { isIpInSubnet, ipToLong, longToIp, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
+import { sortKey } from '../utils/address.js';
 import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
@@ -632,7 +633,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
   }
 
   // Sort by IP address
-  unified.sort((a, b) => ipToLong(a.ip_address) - ipToLong(b.ip_address));
+  unified.sort((a, b) => sortKey(a.ip_address).localeCompare(sortKey(b.ip_address)));
 
   return enrichDhcpRows(db, unified);
 }

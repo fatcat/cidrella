@@ -2,6 +2,7 @@ import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import { localIpv4Set } from '../utils/local-addresses.js';
 import { lookupFingerprintBatch } from './device-fingerprint.js';
 import * as DnsRecord from './dns-record.js';
+import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -9,6 +10,9 @@ export const ADDRESS_TYPE = {
   RESERVED_DHCP: 'reserved DHCP',
   SYSTEM: 'system',
   GATEWAY: 'gateway',
+  RESERVED: 'reserved',
+  SLAAC: 'SLAAC',
+  QUARANTINED: 'quarantined',
   LOCKED: 'locked',
   ROGUE: 'rogue'
 };
@@ -31,41 +35,57 @@ export function computeIpView(row) {
   const isOnline = truthy(row.is_online);
   const isRogue = truthy(row.is_rogue);
   const isStaticDns = hasStaticDns || (row.detection_source === 'dns' && !!row.hostname);
+  const hasCanonicalState = Boolean(row.allocation_state);
+
+  let allocationState = row.allocation_state || ALLOCATION_STATE.UNASSIGNED;
+  if (allocationState === ALLOCATION_STATE.UNASSIGNED) {
+    if (hasDhcpReservation) allocationState = ALLOCATION_STATE.STATIC_DHCP;
+    else if (hasActiveLease) allocationState = ALLOCATION_STATE.DYNAMIC_DHCP;
+    else if (isStaticDns || ipLifecycleStatus === 'assigned') allocationState = ALLOCATION_STATE.STATIC_DNS;
+    else if (ipLifecycleStatus === 'locked') allocationState = ALLOCATION_STATE.RESERVED;
+  }
 
   let addressType = null;
-  let displayStatus = 'available';
+  const inDynamicPool = truthy(row.in_dynamic_pool)
+    || row.range_type_name === 'DHCP Scope'
+    || row.range_type_name === 'DHCP Pool'
+    || ipLifecycleStatus === 'dhcp';
+  let displayStatus = displayStatusFor({ allocationState, inDynamicPool });
   let statusSeverity = 'secondary';
   let tooltip = null;
 
-  if (row.range_type_name === 'Network' || row.range_type_name === 'Broadcast') {
+  if (allocationState === ALLOCATION_STATE.SYSTEM
+      || row.range_type_name === 'Network' || row.range_type_name === 'Broadcast') {
+    allocationState = ALLOCATION_STATE.SYSTEM;
     addressType = ADDRESS_TYPE.SYSTEM;
-  } else if (row.range_type_name === 'Gateway') {
+  } else if (allocationState === ALLOCATION_STATE.GATEWAY || row.range_type_name === 'Gateway') {
+    allocationState = ALLOCATION_STATE.GATEWAY;
     addressType = ADDRESS_TYPE.GATEWAY;
   } else if (truthy(row.is_local_address)) {
     // An address the appliance itself holds. Ahead of the isRogue branch on
     // purpose, so a row mislabelled by the old behaviour reads correctly
     // straight away rather than waiting for the next scan to clear the flag.
+    allocationState = ALLOCATION_STATE.SYSTEM;
     addressType = ADDRESS_TYPE.SYSTEM;
     tooltip = 'This CIDRella interface';
-  } else if (isRogue) {
+  } else if (allocationState === ALLOCATION_STATE.QUARANTINED) {
+    addressType = ADDRESS_TYPE.QUARANTINED;
+    tooltip = row.allocation_conflict_reason || 'Conflicting allocation claims';
+  } else if (allocationState === ALLOCATION_STATE.RESERVED) {
+    addressType = hasCanonicalState ? ADDRESS_TYPE.RESERVED : ADDRESS_TYPE.LOCKED;
+    tooltip = row.reservation_note || null;
+  } else if (allocationState === ALLOCATION_STATE.STATIC_DNS) {
+    addressType = ADDRESS_TYPE.STATIC_DNS;
+  } else if (allocationState === ALLOCATION_STATE.STATIC_DHCP) {
+    addressType = ADDRESS_TYPE.RESERVED_DHCP;
+  } else if (allocationState === ALLOCATION_STATE.DYNAMIC_DHCP) {
+    addressType = ADDRESS_TYPE.DYNAMIC_DHCP;
+  } else if (allocationState === ALLOCATION_STATE.SLAAC) {
+    addressType = ADDRESS_TYPE.SLAAC;
+  } else if (allocationState === ALLOCATION_STATE.UNASSIGNED && isRogue) {
     addressType = ADDRESS_TYPE.ROGUE;
     tooltip = row.rogue_reason || null;
-  } else if (isOnline && ipLifecycleStatus === 'available' && !hasDhcpReservation && !row.hostname && !hasActiveLease && !hasStaticDns) {
-    addressType = ADDRESS_TYPE.ROGUE;
-  } else if (hasDhcpReservation) {
-    addressType = ADDRESS_TYPE.RESERVED_DHCP;
-  } else if (hasActiveLease) {
-    addressType = ADDRESS_TYPE.DYNAMIC_DHCP;
-  } else if (ipLifecycleStatus === 'locked') {
-    addressType = ADDRESS_TYPE.LOCKED;
-    tooltip = row.reservation_note || null;
-  } else if (ipLifecycleStatus === 'assigned' || isStaticDns) {
-    addressType = ADDRESS_TYPE.STATIC_DNS;
-  } else if (isOnline && (ipLifecycleStatus === 'available' || ipLifecycleStatus === 'dhcp')) {
-    // No hasStaticDns guard needed here: the isStaticDns branch directly above
-    // already claimed every such row. The guard belongs on the earlier
-    // available-and-online branch, which runs BEFORE that claim and was
-    // therefore labelling DNS-named hosts rogue on sight.
+  } else if (allocationState === ALLOCATION_STATE.UNASSIGNED && isOnline) {
     addressType = ADDRESS_TYPE.ROGUE;
   }
 
@@ -75,6 +95,11 @@ export function computeIpView(row) {
   }
 
   return {
+    allocation_state: allocationState,
+    address_conflict: allocationState !== ALLOCATION_STATE.UNASSIGNED && isRogue,
+    address_conflict_reason: allocationState !== ALLOCATION_STATE.UNASSIGNED && isRogue
+      ? (row.rogue_reason || null)
+      : null,
     ip_lifecycle_status: ipLifecycleStatus,
     ip_display_status: displayStatus,
     ip_status_severity: statusSeverity,
@@ -83,9 +108,13 @@ export function computeIpView(row) {
   };
 }
 
+export function buildIpAggregate(row) {
+  return { ...row, ...computeIpView(row) };
+}
+
 export function applyIpView(row) {
-  const view = computeIpView(row);
-  Object.assign(row, view);
+  Object.assign(row, buildIpAggregate(row));
+  const view = row;
   row.computed_type = view.address_type || 'available';
   return row;
 }
@@ -110,7 +139,10 @@ export function getIpStateMap(db, rows) {
     const stateRows = db.prepare(`
       SELECT subnet_id, ip_address, hostname, mac_address, last_seen_mac, status,
              is_online, is_rogue, rogue_reason, detection_source,
-             last_seen_at, last_scanned_at, reservation_note, scan_enabled
+             last_seen_at, last_scanned_at, reservation_note, scan_enabled,
+             allocation_state, allocation_source_type, allocation_source_id,
+             address_family, address_sort_key, interface_id, preferred_until,
+             valid_until, dhcp_version
         FROM ip_addresses
        WHERE ip_address IN (${chunk.map(() => '?').join(',')})
     `).all(...chunk);
@@ -132,6 +164,15 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
     const state = stateMap.get(`${row.subnet_id}:${row.ip_address}`);
     if (state) {
       row.ip_lifecycle_status = state.status || 'available';
+      row.allocation_state = state.allocation_state;
+      row.allocation_source_type = state.allocation_source_type;
+      row.allocation_source_id = state.allocation_source_id;
+      row.address_family = state.address_family;
+      row.address_sort_key = state.address_sort_key;
+      row.interface_id = state.interface_id;
+      row.preferred_until = state.preferred_until;
+      row.valid_until = state.valid_until;
+      row.dhcp_version = state.dhcp_version;
       row.is_online = !!state.is_online;
       row.is_rogue = state.is_rogue || 0;
       row.rogue_reason = state.rogue_reason || null;

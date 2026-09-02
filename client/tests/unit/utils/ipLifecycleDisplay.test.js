@@ -49,7 +49,7 @@ describe('ipLifecycleDisplay', () => {
     expect(display.addressType).toMatchObject({ label: 'rogue', className: 'type-rogue' });
   });
 
-  it('does not show offline retained DHCP lifecycle rows as assigned without a current lease row', () => {
+  it('shows offline unassigned DHCP-pool rows as DHCP Scope', () => {
     const display = ipLifecycleDisplay({
       range_type_name: 'DHCP Scope',
       status: 'available',
@@ -57,7 +57,7 @@ describe('ipLifecycleDisplay', () => {
       is_online: 0,
       dhcp_expires_at: null
     });
-    expect(display.status).toBe('available');
+    expect(display.status).toBe('DHCP Scope');
     expect(display.addressType).toBeNull();
   });
 
@@ -88,9 +88,9 @@ describe('ipLifecycleDisplay', () => {
     expect(display.addressType).toMatchObject({ label: 'static DNS', className: 'type-static-dns' });
   });
 
-  it('does not assign a Type for available addresses inside DHCP scopes', () => {
+  it('uses DHCP Scope status without assigning an address Type', () => {
     const display = ipLifecycleDisplay({ range_type_name: 'DHCP Scope' });
-    expect(display.status).toBe('available');
+    expect(display.status).toBe('DHCP Scope');
     expect(display.addressType).toBeNull();
   });
 
@@ -113,7 +113,7 @@ describe('ipLifecycleDisplay', () => {
     expect(display.addressType).toMatchObject({ label: 'rogue', className: 'type-rogue' });
   });
 
-  it('does not infer static DNS from a stale hostname without DNS ownership', () => {
+  it('keeps stale unowned hostnames untyped but identifies pool membership', () => {
     const display = ipLifecycleDisplay({
       status: 'dhcp',
       hostname: 'espressif',
@@ -122,7 +122,7 @@ describe('ipLifecycleDisplay', () => {
       is_online: 0,
       dhcp_expires_at: null
     });
-    expect(display.status).toBe('available');
+    expect(display.status).toBe('DHCP Scope');
     expect(display.addressType).toBeNull();
   });
 
