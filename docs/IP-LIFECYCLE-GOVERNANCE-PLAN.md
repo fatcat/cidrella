@@ -607,6 +607,14 @@ changes canonical IP allocation or liveness fields.
 
 ### Phase 5: Enforce DHCP and DNS exclusions
 
+Status: complete. Implemented, tested, committed, and pushed in `88b1ec5` and
+`0bd835e`.
+
+Validation: 1,023 server tests passed with the three Phase 6/7 cases pending,
+133 client tests passed, lint and database ownership checks passed, and the
+commit review findings were corrected and accepted by follow-up review on
+2026-09-03.
+
 - Implement reserved-address exclusion in generated dnsmasq configuration.
 - Validate leases against enabled scope bounds.
 - Reject A or AAAA DNS allocations inside same-family dynamic pools.
