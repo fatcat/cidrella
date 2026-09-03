@@ -9,7 +9,7 @@ import { ipToLong } from './ip.js';
 import { activeLeaseSql, infiniteLeaseFirstSql } from './lease-sql.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
-import { setPtrForIp, dnsAssignedIpSet, fqdnForRecordName } from '../models/dns-record.js';
+import { setPtrForIp, fqdnForRecordName } from '../models/dns-record.js';
 
 // Cached leaf subnets, invalidated on subnet CRUD via invalidateSubnetCache()
 let leafSubnetCache = null;
@@ -297,48 +297,6 @@ export function reconcileUnbackedDhcpLeaseRows(db, activeLeases = []) {
 }
 
 /**
- * Remove stale DHCP host rows once they are no longer useful recent history.
- *
- * A DHCP row with no active lease/reservation is only a remembered lease. Keep
- * it briefly so the UI can show where a device was seen, then clear it so the
- * address returns to a reusable state.
- */
-export function pruneStaleDhcpHostRows(db, maxAgeHours = 24) {
-  const hours = Number.isFinite(maxAgeHours) && maxAgeHours > 0 ? maxAgeHours : 24;
-  const offset = `-${hours} hours`;
-
-  const staleRows = db.prepare(`
-    SELECT ip.id, ip.ip_address
-    FROM ip_addresses ip
-    LEFT JOIN dhcp_leases dl
-      ON dl.subnet_id = ip.subnet_id
-     AND dl.ip_address = ip.ip_address
-     AND lower(dl.mac_address) = lower(COALESCE(NULLIF(ip.mac_address, ''), NULLIF(ip.last_seen_mac, '')))
-     AND ${activeLeaseSql('dl')}
-    LEFT JOIN dhcp_reservations dr
-      ON dr.subnet_id = ip.subnet_id
-     AND dr.ip_address = ip.ip_address
-     AND dr.enabled = 1
-    WHERE (ip.status = 'dhcp' OR ip.detection_source = 'dhcp_lease')
-      AND dl.id IS NULL
-      AND dr.id IS NULL
-      AND ip.status NOT IN ('locked', 'assigned')
-      AND datetime(COALESCE(ip.last_seen_at, ip.updated_at, ip.created_at)) < datetime('now', ?)
-  `).all(offset);
-
-  if (staleRows.length === 0) return 0;
-
-  // This deletes the whole row, MAC included, which also takes vendor and
-  // device with it. An address a manual A record points at is admin-declared,
-  // so it keeps what was learned until that record is deleted.
-  const declaredByDns = dnsAssignedIpSet(db);
-  const deletable = staleRows.filter(row => !declaredByDns.has(row.ip_address));
-  if (deletable.length === 0) return 0;
-
-  return IpAddress.deleteByIds(db, deletable.map(row => row.id)).changes;
-}
-
-/**
  * Upsert the PTR record for a given IP inside a subnet's reverse zone.
  * `hostname` should be a non-empty FQDN to set, or falsy to clear the PTR.
  * If the target reverse zone doesn't exist (reverse DNS wasn't created for
@@ -496,5 +454,4 @@ export function syncLeasesToIps(db, leases) {
   }
   reconcileDuplicateDhcpMacRows(db);
   reconcileUnbackedDhcpLeaseRows(db, leases);
-  pruneStaleDhcpHostRows(db);
 }

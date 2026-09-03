@@ -26,13 +26,15 @@ RUN S6_ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; arm) echo "armhf";; 
 # Install system dependencies
 RUN apk add --no-cache \
     dnsmasq \
+    dnsmasq-utils \
     openssl \
     arping \
     iputils \
     bind-tools \
     sudo \
     tzdata \
-    libcap
+    libcap && \
+    command -v dhcp_release
 
 # Create non-root user for Node.js
 RUN addgroup -g 65532 cidrella && \

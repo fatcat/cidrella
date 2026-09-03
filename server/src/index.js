@@ -127,13 +127,17 @@ async function main() {
     const n = reconciliation.dnsOrphans;
     const dhcpN = reconciliation.duplicateDhcpMacs;
     const unbackedDhcpN = reconciliation.unbackedDhcp;
-    const staleDhcpN = reconciliation.staleDhcp;
     const expiredDhcpN = reconciliation.expiredDhcpAllocations;
+    const retiredN = reconciliation.retirement?.retired || 0;
+    const deferredRetirementN = reconciliation.retirement?.deferred || 0;
     if (n > 0) console.log(`Reconciled ${n} orphan DNS-sourced ip_addresses row(s)`);
     if (dhcpN > 0) console.log(`Reconciled ${dhcpN} duplicate DHCP ip_addresses row(s)`);
     if (unbackedDhcpN > 0) console.log(`Reconciled ${unbackedDhcpN} unbacked DHCP ip_addresses row(s)`);
-    if (staleDhcpN > 0) console.log(`Pruned ${staleDhcpN} stale DHCP ip_addresses row(s)`);
     if (expiredDhcpN > 0) console.log(`Released ${expiredDhcpN} expired DHCP allocation(s)`);
+    if (retiredN > 0) console.log(`Retired ${retiredN} continuously offline IP address(es)`);
+    if (deferredRetirementN > 0) {
+      console.warn(`Deferred ${deferredRetirementN} IP retirement(s) because dnsmasq lease release failed`);
+    }
   } catch (err) {
     console.warn('IP metadata reconciliation skipped:', err?.message || err);
   }

@@ -316,9 +316,9 @@ info "Installing system dependencies..."
 if ! apt-get update -qq >/dev/null 2>&1; then
   warn "apt-get update failed; continuing with existing package lists"
 fi
-if ! apt-get install -y -qq build-essential arping iputils-ping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1; then
+if ! apt-get install -y -qq build-essential arping iputils-ping openssl curl dnsutils dnsmasq-utils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib >/dev/null 2>&1; then
   err "apt-get failed installing base dependencies. Run this to see why:"
-  err "  apt-get update && apt-get install -y build-essential arping iputils-ping openssl curl dnsutils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib"
+  err "  apt-get update && apt-get install -y build-essential arping iputils-ping openssl curl dnsutils dnsmasq-utils rsync sudo minisign libcap2-bin python3 python3-setuptools python3-sklearn python3-numpy python3-joblib"
   exit 1
 fi
 if ! command -v openssl >/dev/null 2>&1; then

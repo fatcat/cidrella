@@ -668,6 +668,39 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
     expect(row.has_static_dns).toBe(0);
     expect(row.dhcp_expires_at).toBeNull();
   });
+
+  it('shows retained lease history as expired without occupying a scope address', async () => {
+    const s = await mkSubnet({
+      cidr: '10.45.0.0/24', name: 'scope-expired', status: 'allocated',
+      gateway_address: '10.45.0.1'
+    });
+    await configure(s.id, {
+      name: 'scope-expired', create_reverse_dns: false, create_dhcp_scope: true,
+      dhcp_start_ip: '10.45.0.100', dhcp_end_ip: '10.45.0.110'
+    });
+    const scopes = await request(app).get('/api/dhcp/scopes');
+    const scope = scopes.body.find(sc => sc.subnet_id === s.id);
+    const { getDb } = await import('../../../src/db/init.js');
+    getDb().prepare(`
+      INSERT INTO dhcp_leases
+        (subnet_id, ip_address, mac_address, hostname, expires_at)
+      VALUES (?, '10.45.0.104', 'aa:bb:cc:dd:ee:45', 'expired-host', '2000-01-01T00:00:00.000Z')
+    `).run(s.id);
+
+    const leases = await request(app).get('/api/dhcp/leases');
+    const history = leases.body.find(row => row.subnet_id === s.id && row.ip_address === '10.45.0.104');
+    expect(history).toMatchObject({
+      dhcp_assignment_type: 'dynamic',
+      lease_status: 'expired',
+      hostname: 'expired-host'
+    });
+
+    const addresses = await request(app).get(`/api/dhcp/scopes/${scope.id}/addresses`);
+    expect(addresses.body.find(row => row.ip_address === '10.45.0.104')).toMatchObject({
+      dhcp_assignment_type: null,
+      lease_status: 'available'
+    });
+  });
 });
 
 // --- Child-folder assignment ------------------------------------------

@@ -264,12 +264,14 @@ describe('recordPassiveActivity: addresses named in DNS are not rogue', () => {
 });
 
 describe('markOffline', () => {
-  it('deletes ephemeral IPs (no hostname, not locked/assigned, no reservation)', () => {
+  it('retains learned data and starts the continuous-offline interval', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.22', { is_online: 1, is_rogue: 1, rogue_reason: 'test' });
     IpAddress.markOffline(db, subnetId, '10.0.1.22');
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.22');
 
-    expect(row).toBeUndefined();
+    expect(row).toMatchObject({ is_online: 0, is_rogue: 0, rogue_reason: null });
+    expect(row.last_seen_at).toBeTruthy();
+    expect(row.offline_since_at).toBeTruthy();
   });
 
   it('keeps persistent IPs (with hostname) and clears rogue', () => {
@@ -280,6 +282,7 @@ describe('markOffline', () => {
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
     expect(row.rogue_reason).toBeNull();
+    expect(row.offline_since_at).toBeTruthy();
   });
 
   it('keeps DHCP rows offline even without a hostname', () => {
@@ -302,8 +305,7 @@ describe('markOffline', () => {
 // ── bulkMarkStale ───────────────────────────────────────
 
 describe('bulkMarkStale', () => {
-  it('deletes stale ephemeral IPs', () => {
-    // Ephemeral IP last seen 2 hours ago, should be deleted
+  it('marks stale ephemeral IPs offline without retiring their metadata yet', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.30', {
       is_online: 1,
       is_rogue: 1,
@@ -321,7 +323,8 @@ describe('bulkMarkStale', () => {
     const stale = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.30');
     const fresh = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.31');
 
-    expect(stale).toBeUndefined();
+    expect(stale).toMatchObject({ is_online: 0, is_rogue: 0 });
+    expect(stale.offline_since_at).toBeTruthy();
     expect(fresh.is_online).toBe(1);
   });
 
@@ -452,7 +455,7 @@ describe('upsert liveness events', () => {
   });
 });
 
-// ── isAdminDeclared / clearStaleDynamicMetadata ─────────
+// ── isAdminDeclared ──────────────────────────────────────
 
 describe('isAdminDeclared', () => {
   function addForwardARecord(ip, name = 'declared', zoneName = 'declared.test', source = 'manual') {
@@ -494,95 +497,6 @@ describe('isAdminDeclared', () => {
     db.prepare(`INSERT INTO dhcp_leases (subnet_id, ip_address, mac_address, hostname, expires_at)
                 VALUES (?, '10.0.1.47', 'aa:bb:cc:dd:ee:47', 'leased', 'infinite')`).run(subnetId);
     expect(IpAddress.isAdminDeclared(db, { subnet_id: subnetId, ip_address: '10.0.1.47', status: 'dhcp' })).toBe(false);
-  });
-});
-
-describe('clearStaleDynamicMetadata', () => {
-  function seedOffline(ip, fields = {}) {
-    IpAddress.upsert(db, subnetId, ip, { is_online: 1, ...fields });
-    db.prepare(`UPDATE ip_addresses SET is_online = 0, last_seen_at = datetime('now', '-30 days')
-                 WHERE subnet_id = ? AND ip_address = ?`).run(subnetId, ip);
-  }
-
-  it('deletes a long-offline dynamic row outright', () => {
-    seedOffline('10.0.1.50', {
-      hostname: 'old-laptop', mac_address: 'aa:bb:cc:dd:ee:50',
-      status: 'dhcp', detection_source: 'dhcp_lease'
-    });
-
-    IpAddress.clearStaleDynamicMetadata(db);
-
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.50')).toBeUndefined();
-  });
-
-  it('clears learned fields but keeps a row carrying operator text', () => {
-    seedOffline('10.0.1.51', {
-      hostname: 'old-phone', mac_address: 'aa:bb:cc:dd:ee:51',
-      status: 'dhcp', detection_source: 'dhcp_lease'
-    });
-    db.prepare("UPDATE ip_addresses SET description = 'kids tablet' WHERE subnet_id = ? AND ip_address = '10.0.1.51'")
-      .run(subnetId);
-
-    IpAddress.clearStaleDynamicMetadata(db);
-
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.51');
-    expect(row).toBeTruthy();
-    expect(row.description).toBe('kids tablet');
-    expect(row.hostname).toBeNull();
-    expect(row.mac_address).toBeNull();
-    expect(row.last_seen_mac).toBeNull();
-    expect(row.last_seen_at).toBeNull();
-    expect(row.detection_source).toBeNull();
-    expect(row.status).toBe('available');
-  });
-
-  it('spares a reservation, a static DNS record, locked, and assigned', () => {
-    db.prepare(`INSERT INTO dhcp_reservations (subnet_id, ip_address, mac_address, hostname, enabled)
-                VALUES (?, '10.0.1.52', 'aa:bb:cc:dd:ee:52', 'printer', 1)`).run(subnetId);
-    seedOffline('10.0.1.52', { mac_address: 'aa:bb:cc:dd:ee:52', hostname: 'printer', status: 'dhcp' });
-
-    const zoneId = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('spare.test', 'forward', 1)")
-      .run().lastInsertRowid;
-    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, 'nas', 'A', '10.0.1.53', 'manual', 1)")
-      .run(zoneId);
-    seedOffline('10.0.1.53', { mac_address: 'aa:bb:cc:dd:ee:53', hostname: 'nas', status: 'dhcp' });
-
-    seedOffline('10.0.1.54', { mac_address: 'aa:bb:cc:dd:ee:54', status: 'locked' });
-    seedOffline('10.0.1.55', { mac_address: 'aa:bb:cc:dd:ee:55', status: 'assigned' });
-
-    IpAddress.clearStaleDynamicMetadata(db);
-
-    for (const ip of ['10.0.1.52', '10.0.1.53', '10.0.1.54', '10.0.1.55']) {
-      const row = IpAddress.findBySubnetAndIp(db, subnetId, ip);
-      expect(row, `${ip} should survive`).toBeTruthy();
-      expect(row.mac_address, `${ip} should keep its MAC`).toBeTruthy();
-      expect(row.last_seen_at, `${ip} should keep last_seen_at`).toBeTruthy();
-    }
-  });
-
-  it('leaves a recently offline dynamic row alone', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.56', {
-      hostname: 'asleep', mac_address: 'aa:bb:cc:dd:ee:56', status: 'dhcp'
-    });
-    db.prepare(`UPDATE ip_addresses SET is_online = 0, last_seen_at = datetime('now', '-1 hours')
-                 WHERE subnet_id = ? AND ip_address = '10.0.1.56'`).run(subnetId);
-
-    IpAddress.clearStaleDynamicMetadata(db);
-
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.56');
-    expect(row.mac_address).toBe('aa:bb:cc:dd:ee:56');
-  });
-
-  it('leaves an online row alone however old its last_seen_at', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.57', {
-      is_online: 1, mac_address: 'aa:bb:cc:dd:ee:57', status: 'dhcp'
-    });
-    db.prepare(`UPDATE ip_addresses SET last_seen_at = datetime('now', '-30 days')
-                 WHERE subnet_id = ? AND ip_address = '10.0.1.57'`).run(subnetId);
-
-    IpAddress.clearStaleDynamicMetadata(db);
-
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.57')).toBeTruthy();
   });
 });
 
@@ -747,7 +661,7 @@ describe('updateFromScan', () => {
     expect(row.rogue_reason).toBeNull();
   });
 
-  it('deletes ephemeral IPs when they do not respond', () => {
+  it('starts retirement timing when an ephemeral IP does not respond', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.52', { is_online: 1 });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.52', {
@@ -755,7 +669,8 @@ describe('updateFromScan', () => {
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.52');
-    expect(row).toBeUndefined();
+    expect(row).toMatchObject({ is_online: 0, is_rogue: 0 });
+    expect(row.offline_since_at).toBeTruthy();
   });
 
   it('creates new row for responding rogue with no existing record', () => {
@@ -840,7 +755,7 @@ describe('setScanEnabled', () => {
   });
 });
 
-// ── lifecycle: rogue cleared on offline ─────────────────
+// ── lifecycle: rogue classification ends on offline ─────
 
 describe('rogue device goes offline', () => {
   it('bulkMarkStale ignores rows on a scanned subnet, leaving them to the scanner', () => {
@@ -864,7 +779,7 @@ describe('rogue device goes offline', () => {
     }
   });
 
-  it('bulkMarkStale deletes stale passive ephemeral rows', () => {
+  it('bulkMarkStale retains stale passive metadata for retirement', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.84', {
       is_online: 1,
       detection_source: 'passive'
@@ -876,7 +791,8 @@ describe('rogue device goes offline', () => {
     IpAddress.bulkMarkStale(db, 60);
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.84');
-    expect(row).toBeUndefined();
+    expect(row).toMatchObject({ is_online: 0, is_rogue: 0 });
+    expect(row.offline_since_at).toBeTruthy();
   });
 
   it('bulkMarkStale keeps stale passive persistent rows and clears rogue status', () => {
@@ -896,7 +812,7 @@ describe('rogue device goes offline', () => {
     expect(row.rogue_reason).toBeNull();
   });
 
-  it('markOffline deletes ephemeral rogue', () => {
+  it('markOffline retains ephemeral rogue metadata until retirement', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.81', {
       is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch'
     });
@@ -904,7 +820,8 @@ describe('rogue device goes offline', () => {
     IpAddress.markOffline(db, subnetId, '10.0.1.81');
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.81');
-    expect(row).toBeUndefined();
+    expect(row).toMatchObject({ is_online: 0, is_rogue: 0, rogue_reason: null });
+    expect(row.offline_since_at).toBeTruthy();
   });
 
   it('markOffline keeps persistent rogue (locked status) and clears rogue', () => {

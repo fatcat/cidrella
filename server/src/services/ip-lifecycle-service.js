@@ -15,6 +15,11 @@ import {
 import { findEnabledScopeForIp } from '../models/dhcp-scope.js';
 import { isValidIpv4, parseCidr, ipToLong } from '../utils/ip.js';
 import { isLocalAddress } from '../utils/local-addresses.js';
+import { deleteDynamicDhcpRecordsByIps } from '../models/dns-record.js';
+import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease.js';
+import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
+
+export const OFFLINE_RETIREMENT_MS = 60 * 60 * 1000;
 
 export class IpLifecycleConflictError extends Error {
   constructor(message, details = {}) {
@@ -259,22 +264,103 @@ export function markStalePassiveAddresses(db, staleMinutes) {
   return IpAddress.bulkMarkStale(db, staleMinutes);
 }
 
-export function retireStaleDynamicAddresses(db) {
-  return IpAddress.clearStaleDynamicMetadata(db);
-}
+export function retireStaleDynamicAddresses(db, {
+  now = new Date(),
+  limit = 500,
+  releaseLease = releaseDnsmasqLease
+} = {}) {
+  const nowDate = now instanceof Date ? now : new Date(now);
+  if (!Number.isFinite(nowDate.getTime())) throw new Error('Invalid retirement clock');
+  const nowIso = nowDate.toISOString();
+  const cutoff = new Date(nowDate.getTime() - OFFLINE_RETIREMENT_MS).toISOString();
+  const batchLimit = Math.max(1, Math.min(500, Number.parseInt(limit, 10) || 500));
+  let candidates = [];
+  let dnsRecordsRemoved = 0;
+  const leasesByAddress = new Map();
+  const stickyRelease = { released: 0, skipped: 0, failed: 0 };
 
-export function pruneStaleDhcpAddresses(db, maxAgeHours) {
-  return IpSync.pruneStaleDhcpHostRows(db, maxAgeHours);
+  db.transaction(() => {
+    IpAddress.startMissingRetirementWindows(db, nowIso);
+    candidates = IpAddress.findRetirementCandidates(db, cutoff, nowIso, batchLimit);
+  })();
+
+  // A live dnsmasq lease is external authority. Release it before clearing the
+  // database so a missing utility or network error cannot let the next lease
+  // sync resurrect metadata that CIDRella has already retired.
+  const eligible = [];
+  for (const row of candidates) {
+    const key = `${row.subnet_id}|${row.ip_address}`;
+    const leases = findLeasesByAddress(db, row.subnet_id, row.ip_address);
+    leasesByAddress.set(key, leases);
+    let releaseFailed = false;
+    for (const lease of leases) {
+      const rawExpiry = String(lease.expires_at || '');
+      const parsedExpiry = Date.parse(
+        rawExpiry.includes('T') || /(?:Z|[+-]\d\d:\d\d)$/.test(rawExpiry)
+          ? rawExpiry
+          : `${rawExpiry.replace(' ', 'T')}Z`
+      );
+      const isActive = rawExpiry === 'infinite'
+        || !Number.isFinite(parsedExpiry)
+        || parsedExpiry > nowDate.getTime();
+      if (!isActive) continue;
+
+      let result;
+      try {
+        result = releaseLease(lease);
+      } catch (err) {
+        result = { released: false, error: err?.message || String(err) };
+      }
+      if (result?.released) stickyRelease.released++;
+      else if (result?.skipped) stickyRelease.skipped++;
+      else stickyRelease.failed++;
+      if (!result?.released) releaseFailed = true;
+    }
+    if (!releaseFailed) eligible.push(row);
+  }
+
+  db.transaction(() => {
+    if (eligible.length === 0) return;
+
+    for (const row of eligible) {
+      if (row.allocation_state === ALLOCATION_STATE.DYNAMIC_DHCP) {
+        assertAllocationTransition(
+          db, row.subnet_id, row.ip_address,
+          ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DHCP_LEASE
+        );
+      } else if (row.allocation_state === ALLOCATION_STATE.SLAAC) {
+        assertAllocationTransition(
+          db, row.subnet_id, row.ip_address,
+          ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.SLAAC
+        );
+      }
+      deleteLeasesByAddress(db, row.subnet_id, row.ip_address);
+      IpAddress.retireLearnedMetadata(db, row);
+    }
+    dnsRecordsRemoved = deleteDynamicDhcpRecordsByIps(
+      db, eligible
+    );
+  })();
+
+  return {
+    retired: eligible.length,
+    deferred: candidates.length - eligible.length,
+    dnsRecordsRemoved,
+    leasesRemoved: eligible.reduce((count, row) => (
+      count + (leasesByAddress.get(`${row.subnet_id}|${row.ip_address}`)?.length || 0)
+    ), 0),
+    stickyRelease
+  };
 }
 
 export function reconcileLegacyLifecycleMetadata(db) {
   const result = {
     dnsOrphans: IpSync.reconcileDnsOrphans(db),
     duplicateDhcpMacs: IpSync.reconcileDuplicateDhcpMacRows(db),
-    unbackedDhcp: IpSync.reconcileUnbackedDhcpLeaseRows(db),
-    staleDhcp: IpSync.pruneStaleDhcpHostRows(db)
+    unbackedDhcp: IpSync.reconcileUnbackedDhcpLeaseRows(db)
   };
   result.expiredDhcpAllocations = reconcileExpiredDhcpAllocations(db);
+  result.retirement = retireStaleDynamicAddresses(db);
   return result;
 }
 

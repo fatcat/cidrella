@@ -67,6 +67,14 @@ if [ -f /opt/cidrella/scripts/cidrella-npm ]; then
     || echo "  post-install.sh: warning: could not install cidrella-npm wrapper" >&2
 fi
 
+# Dynamic address retirement asks dnsmasq to discard its in-memory sticky
+# lease through the dnsmasq-supported dhcp_release utility. Older native
+# installations do not have the separate Debian utility package yet.
+if ! command -v dhcp_release >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+  apt-get install -y -qq dnsmasq-utils >/dev/null 2>&1 \
+    || echo "  post-install.sh: warning: could not install dnsmasq-utils; retired DHCP leases may be re-imported until it is installed" >&2
+fi
+
 # ─── v0.4.9 post-install work ──────────────────────────────
 #
 # v0.4.9 itself has nothing version-specific to do, the hook convention

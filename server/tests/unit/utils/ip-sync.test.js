@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import {
   clearDnsFromIp,
-  pruneStaleDhcpHostRows,
   reconcileDnsOrphans,
   reconcileDuplicateDhcpMacRows,
   reconcileUnbackedDhcpLeaseRows,
@@ -324,129 +323,6 @@ describe('reconcileDuplicateDhcpMacRows', () => {
   });
 });
 
-describe('pruneStaleDhcpHostRows', () => {
-  it('removes offline DHCP rows older than 24 hours with no active lease or reservation', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.70', {
-      hostname: 'old-watch',
-      mac_address: '00:24:e4:ee:96:16',
-      status: 'dhcp',
-      is_online: 0,
-      detection_source: 'dhcp_lease'
-    });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.70'")
-      .run(subnetId);
-
-    expect(pruneStaleDhcpHostRows(db)).toBe(1);
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.70')).toBeUndefined();
-  });
-
-  it('spares a row a manual A record points at', () => {
-    // Deleting the row takes the MAC with it, and vendor and device with that.
-    // A static DNS entry is an admin declaration, so it keeps what was learned.
-    const zoneId = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('prune.test', 'forward', 1)")
-      .run().lastInsertRowid;
-    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, 'nas', 'A', '10.0.1.72', 'manual', 1)")
-      .run(zoneId);
-
-    IpAddress.upsert(db, subnetId, '10.0.1.72', {
-      hostname: 'nas',
-      mac_address: '00:24:e4:ee:96:18',
-      status: 'dhcp',
-      is_online: 0,
-      detection_source: 'dhcp_lease'
-    });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.72'")
-      .run(subnetId);
-
-    expect(pruneStaleDhcpHostRows(db)).toBe(0);
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.72');
-    expect(row).toBeTruthy();
-    expect(row.mac_address).toBe('00:24:e4:ee:96:18');
-  });
-
-  it('spares a locked row', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.73', {
-      mac_address: '00:24:e4:ee:96:19',
-      status: 'locked',
-      is_online: 0,
-      detection_source: 'dhcp_lease'
-    });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.73'")
-      .run(subnetId);
-
-    expect(pruneStaleDhcpHostRows(db)).toBe(0);
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.73')).toBeTruthy();
-  });
-
-  it('keeps recent offline DHCP rows', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.71', {
-      hostname: 'recent-watch',
-      mac_address: '00:24:e4:ee:96:17',
-      status: 'dhcp',
-      is_online: 0,
-      detection_source: 'dhcp_lease'
-    });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-23 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.71'")
-      .run(subnetId);
-
-    expect(pruneStaleDhcpHostRows(db)).toBe(0);
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.71')).toBeTruthy();
-  });
-
-  it('keeps stale DHCP rows with active lease backing', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.72', {
-      hostname: 'leased-watch',
-      mac_address: '00:24:e4:ee:96:18',
-      status: 'dhcp',
-      is_online: 0,
-      detection_source: 'dhcp_lease'
-    });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.72'")
-      .run(subnetId);
-    db.prepare(`
-      INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id)
-      VALUES ('10.0.1.72', '00:24:e4:ee:96:18', 'leased-watch', NULL, datetime('now', '+1 hour'), ?)
-    `).run(subnetId);
-
-    expect(pruneStaleDhcpHostRows(db)).toBe(0);
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.72')).toBeTruthy();
-  });
-
-  it('keeps stale DHCP rows with reservation backing', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.73', {
-      hostname: 'reserved-watch',
-      mac_address: '00:24:e4:ee:96:19',
-      status: 'dhcp',
-      is_online: 0,
-      detection_source: 'dhcp_lease'
-    });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.73'")
-      .run(subnetId);
-    db.prepare(`
-      INSERT INTO dhcp_reservations (subnet_id, ip_address, mac_address, hostname, enabled)
-      VALUES (?, '10.0.1.73', '00:24:e4:ee:96:19', 'reserved-watch', 1)
-    `).run(subnetId);
-
-    expect(pruneStaleDhcpHostRows(db)).toBe(0);
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.73')).toBeTruthy();
-  });
-
-  it('removes stale DHCP lease history even if the imported row says online', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.74', {
-      hostname: 'imported-phone',
-      mac_address: '00:24:e4:ee:96:20',
-      status: 'dhcp',
-      is_online: 1,
-      detection_source: 'dhcp_lease'
-    });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-25 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.74'")
-      .run(subnetId);
-
-    expect(pruneStaleDhcpHostRows(db)).toBe(1);
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.74')).toBeUndefined();
-  });
-});
-
 describe('reconcileUnbackedDhcpLeaseRows', () => {
   it('turns DHCP lease rows without active backing into available history', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.75', {
@@ -461,7 +337,9 @@ describe('reconcileUnbackedDhcpLeaseRows', () => {
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.75');
     expect(row.status).toBe('available');
-    expect(row.is_online).toBe(0);
+    // Lease authority and observed liveness are independent. The offline
+    // detector owns the edge that starts retirement timing.
+    expect(row.is_online).toBe(1);
     expect(row.hostname).toBe('restored-lease');
     expect(row.mac_address).toBe('00:24:e4:ee:96:21');
   });

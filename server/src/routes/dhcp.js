@@ -608,10 +608,15 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
     ORDER BY dr.ip_address
   `).all(...reservationArgs);
 
-  // Build a map of leases by MAC+IP for matching
+  const now = Date.now();
+  const isActiveLease = lease => lease.expires_at === 'infinite'
+    || (Date.parse(lease.expires_at) > now);
+
+  // Build a map of active leases by MAC+IP for matching. Expired rows remain
+  // visible as short-lived history but cannot make a reservation look online.
   const leaseMap = new Map();
   for (const l of leases) {
-    leaseMap.set(`${l.mac_address}:${l.ip_address}`, l);
+    if (isActiveLease(l)) leaseMap.set(`${l.mac_address}:${l.ip_address}`, l);
   }
 
   const unified = [];
@@ -661,7 +666,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
         subnet_domain_name: l.subnet_domain_name,
         folder_id: l.folder_id,
         enabled: true,
-        lease_status: 'active',
+        lease_status: isActiveLease(l) ? 'active' : 'expired',
         expires_at: l.expires_at,
         reservation_id: null,
         created_at: l.created_at,
@@ -689,7 +694,9 @@ router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
   `).get(req.params.id);
   if (!scope) return res.status(404).json({ error: 'DHCP scope not found' });
 
-  const assignedByIp = new Map(getUnifiedDhcpRows(db, { subnetId: scope.subnet_id }).map(row => [row.ip_address, row]));
+  const assignedByIp = new Map(getUnifiedDhcpRows(db, { subnetId: scope.subnet_id })
+    .filter(row => row.dhcp_assignment_type === 'reserved' || row.lease_status === 'active')
+    .map(row => [row.ip_address, row]));
   const start = ipToLong(scope.start_ip);
   const end = ipToLong(scope.end_ip);
   const rows = [];

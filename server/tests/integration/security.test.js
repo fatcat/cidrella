@@ -543,17 +543,10 @@ describe('H7: settings per-key schema rejects shape abuse', () => {
     expect(disabled.body.value).toBe('0');
   });
 
-  it('accepts an in-range offline_metadata_retention_days', async () => {
+  it('rejects the obsolete configurable offline metadata retention period', async () => {
     const res = await request(app).put('/api/settings/offline_metadata_retention_days').send({ value: '14' });
-    expect(res.status).toBe(200);
-    expect(res.body.value).toBe('14');
-  });
-
-  it('rejects out-of-range and non-numeric offline_metadata_retention_days', async () => {
-    for (const value of [0, 3651, 'abc', { a: 1 }]) {
-      const res = await request(app).put('/api/settings/offline_metadata_retention_days').send({ value });
-      expect(res.status, `value ${JSON.stringify(value)} should be rejected`).toBe(400);
-    }
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/cannot be modified/);
   });
 });
 

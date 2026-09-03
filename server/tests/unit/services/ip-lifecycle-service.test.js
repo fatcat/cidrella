@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../../helpers/test-db.js';
+import { getDb, initDb } from '../../../src/db/init.js';
 import {
   allocateStaticDns,
   allocateStaticDhcp,
@@ -9,7 +10,9 @@ import {
   observeDhcpv6Lease,
   observeNeighbor,
   observeRouterAdvertisement,
+  observeScanResult,
   observeSlaac,
+  retireStaleDynamicAddresses,
   setManualReservation
 } from '../../../src/services/ip-lifecycle-service.js';
 
@@ -168,6 +171,232 @@ describe('IP lifecycle service allocation boundary', () => {
     expect(dhcpLeaseRejectionReason(db, {
       subnetId, ip: '10.99.0.24', mac: 'aa:bb:cc:dd:ee:24'
     })).toMatch(/reserved to dynamic_dhcp/);
+  });
+});
+
+describe('one-hour continuous-offline retirement', () => {
+  const baseTime = new Date('2031-05-20T12:00:00.000Z');
+
+  function seedDynamic(ip = '10.99.0.23') {
+    createDynamicScope();
+    const lease = {
+      ip,
+      mac: 'aa:bb:cc:dd:ee:23',
+      hostname: 'dynamic-host',
+      clientId: 'client-23',
+      expiresAt: 'infinite',
+      subnetId,
+      observedActivity: true
+    };
+    db.prepare(`
+      INSERT INTO dhcp_leases
+        (subnet_id, ip_address, mac_address, hostname, client_id, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(subnetId, lease.ip, lease.mac, lease.hostname, lease.clientId, lease.expiresAt);
+    observeDhcpLeases(db, [lease]);
+    return lease;
+  }
+
+  function setOfflineAt(ip, timestamp) {
+    db.prepare(`
+      UPDATE ip_addresses
+      SET is_online = 0, offline_since_at = ?, last_seen_at = ?
+      WHERE subnet_id = ? AND ip_address = ?
+    `).run(timestamp, timestamp, subnetId, ip);
+  }
+
+  function seedDynamicDns(ip) {
+    const forwardZoneId = db.prepare(`
+      INSERT INTO dns_zones (name, type, enabled)
+      VALUES ('service.test', 'forward', 1)
+    `).run().lastInsertRowid;
+    const reverseZoneId = db.prepare(`
+      INSERT INTO dns_zones (name, type, enabled)
+      VALUES ('0.99.10.in-addr.arpa', 'reverse', 1)
+    `).run().lastInsertRowid;
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'dynamic-host', 'A', ?, 'dhcp', 1)
+    `).run(forwardZoneId, ip);
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, enabled)
+      VALUES (?, '23', 'PTR', 'dynamic-host.service.test', 1)
+    `).run(reverseZoneId);
+  }
+
+  it('keeps dynamic observations at 59 minutes and retires them at 60 minutes', () => {
+    const lease = seedDynamic();
+    seedDynamicDns(lease.ip);
+    db.prepare(`
+      UPDATE ip_addresses SET description = 'operator note', scan_enabled = 0
+      WHERE subnet_id = ? AND ip_address = ?
+    `).run(subnetId, lease.ip);
+    setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
+    const releaseLease = vi.fn(() => ({ released: true }));
+
+    const beforeBoundary = retireStaleDynamicAddresses(db, {
+      now: new Date('2031-05-20T11:59:00.000Z'), releaseLease
+    });
+    expect(beforeBoundary.retired).toBe(0);
+    expect(address(lease.ip)).toMatchObject({
+      hostname: lease.hostname,
+      mac_address: lease.mac,
+      allocation_state: 'dynamic_dhcp'
+    });
+    expect(releaseLease).not.toHaveBeenCalled();
+
+    const atBoundary = retireStaleDynamicAddresses(db, { now: baseTime, releaseLease });
+    expect(atBoundary).toEqual({
+      retired: 1,
+      deferred: 0,
+      dnsRecordsRemoved: 1,
+      leasesRemoved: 1,
+      stickyRelease: { released: 1, skipped: 0, failed: 0 }
+    });
+    expect(releaseLease).toHaveBeenCalledWith(expect.objectContaining({
+      ip_address: lease.ip,
+      mac_address: lease.mac,
+      client_id: lease.clientId
+    }));
+    expect(address(lease.ip)).toMatchObject({
+      hostname: null,
+      mac_address: null,
+      last_seen_at: null,
+      offline_since_at: null,
+      allocation_state: 'unassigned',
+      description: 'operator note',
+      scan_enabled: 0
+    });
+    expect(db.prepare('SELECT id FROM dhcp_leases WHERE ip_address = ?').get(lease.ip)).toBeUndefined();
+    expect(db.prepare('SELECT id FROM dns_records WHERE value = ?').all(lease.ip)).toEqual([]);
+    expect(db.prepare("SELECT id FROM dns_records WHERE type = 'PTR'").all()).toEqual([]);
+
+    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease }).retired).toBe(0);
+    expect(releaseLease).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels retirement when activity resumes before the boundary', () => {
+    const lease = seedDynamic();
+    setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
+
+    observeScanResult(db, subnetId, lease.ip, {
+      responded: 1,
+      mac: lease.mac,
+      isConflict: 0,
+      conflictReason: null
+    });
+    expect(address(lease.ip).offline_since_at).toBeNull();
+
+    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired)
+      .toBe(0);
+    expect(address(lease.ip)).toMatchObject({ is_online: 1, allocation_state: 'dynamic_dhcp' });
+  });
+
+  it('uses the persisted offline edge across restarts and handles a future clock safely', async () => {
+    const lease = seedDynamic();
+    db.prepare(`
+      UPDATE ip_addresses SET is_online = 0, offline_since_at = NULL
+      WHERE subnet_id = ? AND ip_address = ?
+    `).run(subnetId, lease.ip);
+
+    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired)
+      .toBe(0);
+    expect(address(lease.ip).offline_since_at).toBe('2031-05-20 12:00:00');
+
+    db.close();
+    await initDb(tmpDir);
+    db = getDb();
+
+    expect(retireStaleDynamicAddresses(db, {
+      now: new Date('2031-05-20T12:59:00.000Z'), releaseLease: vi.fn()
+    }).retired).toBe(0);
+
+    // A backwards clock step leaves the persisted edge in the future and must
+    // never turn into a negative elapsed interval or immediate retirement.
+    expect(retireStaleDynamicAddresses(db, {
+      now: new Date('2031-05-20T10:00:00.000Z'), releaseLease: vi.fn()
+    }).retired).toBe(0);
+    expect(retireStaleDynamicAddresses(db, {
+      now: new Date('2031-05-20T13:00:00.000Z'),
+      releaseLease: vi.fn(() => ({ released: true }))
+    }).retired).toBe(1);
+  });
+
+  it('defers database cleanup when an active sticky lease cannot be released', () => {
+    const lease = seedDynamic();
+    setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
+
+    const result = retireStaleDynamicAddresses(db, {
+      now: baseTime,
+      releaseLease: vi.fn(() => ({ released: false, error: 'network unavailable' }))
+    });
+
+    expect(result).toMatchObject({
+      retired: 0,
+      deferred: 1,
+      leasesRemoved: 0,
+      stickyRelease: { released: 0, skipped: 0, failed: 1 }
+    });
+    expect(address(lease.ip)).toMatchObject({
+      hostname: lease.hostname,
+      mac_address: lease.mac,
+      allocation_state: 'dynamic_dhcp'
+    });
+    expect(db.prepare('SELECT id FROM dhcp_leases WHERE ip_address = ?').get(lease.ip)).toBeTruthy();
+  });
+
+  it('retires rogue and expired SLAAC observations but preserves live authority', () => {
+    db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, status, is_online, is_rogue, rogue_reason,
+         hostname, mac_address, detection_source, allocation_state,
+         address_family, address_sort_key, offline_since_at)
+      VALUES (?, '10.99.0.40', 'available', 0, 0, NULL,
+              'rogue-host', 'aa:bb:cc:dd:ee:40', 'scanner', 'unassigned',
+              4, '40000000000000000000000000a630028', '2031-05-20T11:00:00.000Z')
+    `).run(subnetId);
+    observeSlaac(db, subnetId, '2001:db8::41', {
+      interfaceId: 'eth0',
+      preferredUntil: '2031-05-20T10:00:00.000Z',
+      validUntil: '2031-05-20T11:00:00.000Z'
+    });
+    setOfflineAt('2001:db8::41', '2031-05-20T11:00:00.000Z');
+    observeSlaac(db, subnetId, '2001:db8::42', {
+      interfaceId: 'eth0',
+      preferredUntil: '2031-05-20T13:00:00.000Z',
+      validUntil: '2031-05-20T14:00:00.000Z'
+    });
+    setOfflineAt('2001:db8::42', '2031-05-20T11:00:00.000Z');
+
+    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired)
+      .toBe(2);
+    expect(address('10.99.0.40')).toMatchObject({ hostname: null, allocation_state: 'unassigned' });
+    expect(address('2001:db8::41')).toMatchObject({ valid_until: null, allocation_state: 'unassigned' });
+    expect(address('2001:db8::42')).toMatchObject({
+      valid_until: '2031-05-20T14:00:00.000Z',
+      allocation_state: 'slaac'
+    });
+  });
+
+  it('preserves observations for every administrative and protected state', () => {
+    for (const [index, state] of [
+      'static_dns', 'static_dhcp', 'reserved', 'system', 'gateway'
+    ].entries()) {
+      const ip = `10.99.0.${50 + index}`;
+      db.prepare(`
+        INSERT INTO ip_addresses
+          (subnet_id, ip_address, hostname, mac_address, status, is_online,
+           allocation_state, detection_source, offline_since_at)
+        VALUES (?, ?, ?, ?, 'assigned', 0, ?, 'scanner', '2031-05-20T10:00:00.000Z')
+      `).run(subnetId, ip, `${state}-host`, `aa:bb:cc:dd:ef:${50 + index}`, state);
+    }
+
+    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired)
+      .toBe(0);
+    for (const state of ['static_dns', 'static_dhcp', 'reserved', 'system', 'gateway']) {
+      expect(db.prepare('SELECT hostname, mac_address FROM ip_addresses WHERE hostname = ?')
+        .get(`${state}-host`)).toBeTruthy();
+    }
   });
 });
 

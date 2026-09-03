@@ -12,12 +12,13 @@ let scopeId;
 let zoneId;
 let reverseZoneId;
 let syncDhcpDnsRecords;
+let replaceLeases;
 
 beforeAll(async () => {
   const setup = await setupTestDb();
   db = setup.db;
   tmpDir = setup.tmpDir;
-  ({ syncDhcpDnsRecords } = await import('../../../src/models/dhcp-lease.js'));
+  ({ syncDhcpDnsRecords, replaceLeases } = await import('../../../src/models/dhcp-lease.js'));
 
   db.prepare(`
     INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length, total_addresses, status, domain_name)
@@ -48,9 +49,41 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+  db.prepare('DELETE FROM ip_events').run();
+  db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnetId);
+  db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ?').run(subnetId);
   db.prepare('DELETE FROM dns_records').run();
   db.prepare('DELETE FROM dhcp_reservations').run();
   db.prepare('UPDATE dhcp_scopes SET enabled = 1 WHERE id = ?').run(scopeId);
+});
+
+describe('replaceLeases', () => {
+  it('keeps a vanished lease as expired identity until offline retirement', () => {
+    const lease = {
+      ip: '10.0.1.54',
+      mac: 'aa:bb:cc:dd:ee:54',
+      hostname: 'departed-host',
+      clientId: 'client-54',
+      expiresAt: 'infinite',
+      subnetId
+    };
+    replaceLeases(db, [lease]);
+
+    replaceLeases(db, []);
+
+    const retained = db.prepare(`
+      SELECT *, datetime(expires_at) <= datetime('now') AS expired
+      FROM dhcp_leases WHERE subnet_id = ? AND ip_address = ?
+    `).get(subnetId, lease.ip);
+    expect(retained).toMatchObject({
+      mac_address: lease.mac,
+      hostname: lease.hostname,
+      client_id: lease.clientId,
+      expired: 1
+    });
+    expect(db.prepare('SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+      .get(subnetId, lease.ip).allocation_state).toBe('unassigned');
+  });
 });
 
 describe('syncDhcpDnsRecords', () => {
@@ -147,7 +180,7 @@ describe('syncDhcpDnsRecords', () => {
     expect(ptr.value).toBe('new-host.example.test');
   });
 
-  it('clears the PTR record when a dynamic lease DNS record is removed', () => {
+  it('keeps dynamic DNS and PTR during the one-hour offline retention window', () => {
     syncDhcpDnsRecords(db, [{
       ip: '10.0.1.53',
       mac: 'aa:bb:cc:dd:ee:53',
@@ -166,7 +199,7 @@ describe('syncDhcpDnsRecords', () => {
       WHERE zone_id = ? AND type = 'PTR' AND name = '53'
     `).get(reverseZoneId);
 
-    expect(record).toBeUndefined();
-    expect(ptr.value).toBe('10.0.1.53');
+    expect(record).toBeTruthy();
+    expect(ptr.value).toBe('lease-host.example.test');
   });
 });

@@ -463,6 +463,58 @@ export function deleteRecord(db, zone, record) {
   del();
 }
 
+export function deleteDynamicDhcpRecordsByIps(db, addresses) {
+  const recordsById = new Map();
+  for (const address of addresses || []) {
+    const ip = typeof address === 'string' ? address : address.ip_address;
+    const subnetId = typeof address === 'string' ? null : address.subnet_id;
+    let zoneNames = [];
+    if (subnetId != null) {
+      zoneNames = db.prepare(`
+        SELECT DISTINCT COALESCE(NULLIF(s.domain_name, ''), NULLIF(sub.domain_name, '')) AS name
+        FROM subnets sub
+        LEFT JOIN dhcp_scopes s ON s.subnet_id = sub.id AND s.enabled = 1
+        WHERE sub.id = ?
+      `).all(subnetId).map(row => row.name).filter(Boolean);
+    }
+    if (subnetId != null && zoneNames.length === 0) continue;
+    const zoneFilter = zoneNames.length > 0
+      ? `AND z.name IN (${zoneNames.map(() => '?').join(',')})`
+      : '';
+    const matches = db.prepare(`
+      SELECT r.*, z.name AS zone_name, z.type AS zone_type
+      FROM dns_records r
+      JOIN dns_zones z ON z.id = r.zone_id
+      WHERE r.type = 'A' AND r.source = 'dhcp' AND r.value = ?
+        ${zoneFilter}
+    `).all(ip, ...zoneNames);
+    for (const record of matches) recordsById.set(record.id, record);
+  }
+  const records = [...recordsById.values()];
+
+  for (const record of records) {
+    const reverse = findReversePtrLocation(db, record.value, { enabledOnly: true });
+    const ptr = reverse && db.prepare(`
+      SELECT id FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = ? AND lower(value) = lower(?)
+    `).get(
+      reverse.zone.id,
+      reverse.ptrName,
+      fqdnForRecordName(record.name, record.zone_name)
+    );
+    deleteRecord(db, {
+      id: record.zone_id,
+      name: record.zone_name,
+      type: record.zone_type
+    }, record);
+    if (ptr) {
+      db.prepare('DELETE FROM dns_records WHERE id = ?').run(ptr.id);
+      bumpZoneSerial(db, reverse.zone.id);
+    }
+  }
+  return records.length;
+}
+
 export function importRecords(db, zone, records) {
   const importTxn = db.transaction(() => {
     const existingExact = new Set();

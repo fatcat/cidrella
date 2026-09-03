@@ -43,9 +43,7 @@
         </div>
         <div class="field">
           <label>Offline Host Detail Retention</label>
-          <Select v-model="settings.offline_metadata_retention_days" :options="historyRetentionOptions" optionLabel="label" optionValue="value"
-                  class="w-full" style="max-width: 16rem;" />
-          <small class="field-help">How long a dynamically assigned address keeps what was learned about it (MAC, hostname, vendor, device) after the host goes offline. Addresses with a static DNS record, a DHCP reservation, or a manual assignment keep theirs until you delete the record.</small>
+          <small class="field-help">Dynamic and rogue host details are retired after one continuous hour offline. Static DNS and DHCP assignments keep their observations until the assignment is changed or removed.</small>
         </div>
         <hr style="border: none; border-top: 1px solid var(--p-surface-border); margin: 0.75rem 0;" />
         <div class="field">
@@ -165,8 +163,7 @@ const settings = ref({
   subnet_name_template: '%1.%2.%3.%4/%bitmask',
   default_scan_interval: 'off',
   default_scan_enabled: true,
-  ip_history_retention_days: '7',
-  offline_metadata_retention_days: '7'
+  ip_history_retention_days: '7'
 });
 const savedSettings = ref(null);
 
@@ -177,8 +174,7 @@ const settingsDirty = computed(() => {
   return c.subnet_name_template !== s.subnet_name_template ||
     c.default_scan_interval !== s.default_scan_interval ||
     c.default_scan_enabled !== s.default_scan_enabled ||
-    c.ip_history_retention_days !== s.ip_history_retention_days ||
-    c.offline_metadata_retention_days !== s.offline_metadata_retention_days;
+    c.ip_history_retention_days !== s.ip_history_retention_days;
 });
 const scanIntervalOptions = [
   { label: 'Off', value: 'off' },
@@ -241,7 +237,6 @@ async function saveSettings() {
         default_scan_interval: settings.value.default_scan_interval === 'off' ? '' : settings.value.default_scan_interval,
         default_scan_enabled: settings.value.default_scan_enabled ? '1' : '0',
         ip_history_retention_days: settings.value.ip_history_retention_days,
-        offline_metadata_retention_days: settings.value.offline_metadata_retention_days,
       }
     });
     savedSettings.value = { ...settings.value };
@@ -344,8 +339,7 @@ onMounted(async () => {
       subnet_name_template: data.subnet_name_template || '%1.%2.%3.%4/%bitmask',
       default_scan_interval: data.default_scan_interval || 'off',
       default_scan_enabled: data.default_scan_enabled === '1' || data.default_scan_enabled === true,
-      ip_history_retention_days: data.ip_history_retention_days || '7',
-      offline_metadata_retention_days: data.offline_metadata_retention_days || '7'
+      ip_history_retention_days: data.ip_history_retention_days || '7'
     };
     settings.value = { ...vals };
     savedSettings.value = { ...vals };

@@ -2,11 +2,29 @@ import { observeDhcpLeases } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
+export function findLeasesByAddress(db, subnetId, ip) {
+  return db.prepare(`
+    SELECT ip_address, mac_address, client_id, expires_at
+    FROM dhcp_leases
+    WHERE subnet_id = ? AND ip_address = ?
+  `).all(subnetId, ip);
+}
+
+export function deleteLeasesByAddress(db, subnetId, ip) {
+  return db.prepare(
+    'DELETE FROM dhcp_leases WHERE subnet_id = ? AND ip_address = ?'
+  ).run(subnetId, ip);
+}
+
 export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
   const replace = db.transaction(() => {
     const previous = new Map(db.prepare(`
-      SELECT subnet_id, ip_address, mac_address, expires_at FROM dhcp_leases
+      SELECT subnet_id, ip_address, mac_address, hostname, client_id, expires_at, last_seen
+      FROM dhcp_leases
     `).all().map(lease => [`${lease.subnet_id}|${lease.ip_address}`, lease]));
+    const reservationKeys = new Set(db.prepare(`
+      SELECT subnet_id, ip_address FROM dhcp_reservations WHERE enabled = 1
+    `).all().map(row => `${row.subnet_id}|${row.ip_address}`));
     db.prepare('DELETE FROM dhcp_leases').run();
     const insert = db.prepare(`
       INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id, last_seen)
@@ -23,6 +41,31 @@ export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
     });
     for (const l of observedLeases) {
       insert.run(l.ip, l.mac, l.hostname, l.clientId, l.expiresAt, l.subnetId);
+    }
+    const currentKeys = new Set(observedLeases.map(lease => `${lease.subnetId}|${lease.ip}`));
+    const retainExpired = db.prepare(`
+      INSERT INTO dhcp_leases
+        (ip_address, mac_address, hostname, client_id, expires_at, subnet_id, last_seen)
+      VALUES (?, ?, ?, ?,
+        CASE
+          WHEN ? = 'infinite' OR datetime(?) > datetime('now') THEN datetime('now')
+          ELSE ?
+        END,
+        ?, ?)
+    `);
+    for (const [key, old] of previous) {
+      if (currentKeys.has(key) || reservationKeys.has(key)) continue;
+      retainExpired.run(
+        old.ip_address,
+        old.mac_address,
+        old.hostname,
+        old.client_id,
+        old.expires_at,
+        old.expires_at,
+        old.expires_at,
+        old.subnet_id,
+        old.last_seen
+      );
     }
     observeDhcpLeases(db, observedLeases, { prevalidated: lifecycleValidated });
   });
@@ -156,13 +199,18 @@ export function syncDhcpDnsRecords(db, leases) {
     const zoneIds = [...processedZoneIds];
     const placeholders = zoneIds.map(() => '?').join(',');
     const staleRecords = db.prepare(
-      `SELECT r.id, r.name, r.value, z.name AS zone_name
+      `SELECT r.id, r.name, r.value, r.source, z.name AS zone_name
        FROM dns_records r
        JOIN dns_zones z ON z.id = r.zone_id
        WHERE r.source IN ('dhcp', 'reservation') AND r.zone_id IN (${placeholders})`
     ).all(...zoneIds);
     for (const r of staleRecords) {
       if (!activeRecordIds.has(r.id)) {
+        // A vanished dynamic lease loses allocation authority immediately, but
+        // its generated name remains with the learned host metadata until the
+        // one-hour continuous-offline retirement boundary. A replacement name
+        // for the same active IP still removes this stale row immediately.
+        if (r.source === 'dhcp' && !activeIps.has(r.value)) continue;
         if (!activeIps.has(r.value)) {
           clearPtrForARecord(db, r.name, r.value, r.zone_name);
         }

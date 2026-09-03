@@ -131,6 +131,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
       if (is_online) {
         updates.push("last_seen_at = datetime('now')");
         updates.push("first_seen_at = COALESCE(first_seen_at, datetime('now'))");
+        updates.push('offline_since_at = NULL');
+      } else {
+        updates.push("offline_since_at = COALESCE(offline_since_at, datetime('now'))");
       }
       // Edge-only, matching markOnline. Without this a liveness flip is
       // invisible in ip_events, which is how a lease-sync overwrite of the
@@ -196,13 +199,13 @@ export function upsert(db, subnetId, ip, fields = {}) {
       first_seen_at, detection_source, allocation_state,
       allocation_source_type, allocation_source_id, address_family,
       address_sort_key, interface_id, preferred_until, valid_until, dhcp_version,
-      reservation_note, scan_enabled
+      reservation_note, scan_enabled, offline_since_at
     ) VALUES (
       ?, ?, ?, ?, ?,
       ?, ${is_online ? "datetime('now')" : 'NULL'}, ?,
       ?, ?, ?,
       ${hasActivity ? "datetime('now')" : 'NULL'}, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
     )
   `).run(
     subnetId, ip, hostname || null, mac_address || null, status || 'available',
@@ -231,6 +234,7 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
     'is_online = 1',
     "last_seen_at = datetime('now')",
     "first_seen_at = COALESCE(first_seen_at, datetime('now'))",
+    'offline_since_at = NULL',
     "updated_at = datetime('now')"
   ];
   const params = [];
@@ -401,30 +405,12 @@ export function recordPassiveActivity(db, subnetId, ip, {
 }
 
 /**
- * Check whether an IP record should be kept when going offline.
- *
- * This answers "is there anything here worth keeping right now", NOT "should
- * this be kept forever". Those are different questions and conflating them
- * would delete a dynamic host's MAC the moment it went quiet, which is what the
- * retention window exists to decide. Only a row with nothing on it at all is
- * dropped here, such as a scan blip on an unassigned address.
- *
- * How long learned data then survives is clearStaleDynamicMetadata's call:
- * admin-declared addresses keep it indefinitely, dynamic ones age out.
- */
-function shouldKeepOffline(db, row) {
-  if (row.scan_enabled !== null && row.scan_enabled !== undefined) return true;
-  if (row.hostname || row.mac_address || row.last_seen_mac) return true;
-  return isAdminDeclared(db, row);
-}
-
-/**
- * Mark a single IP as offline. Also clears rogue status.
- * Ephemeral IPs (dynamic leases, rogues, scan-only) are deleted.
+ * Mark a single IP as offline and start its continuous-offline interval.
+ * Learned data and rogue evidence survive until the retirement boundary.
  */
 export function markOffline(db, subnetId, ip) {
   const existing = db.prepare(
-    'SELECT id, is_online, is_rogue, status, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_online, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
   if (!existing) return { changes: 0 };
 
@@ -434,14 +420,10 @@ export function markOffline(db, subnetId, ip) {
   if (existing.is_rogue) {
     emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'offline' });
   }
-
-  if (!shouldKeepOffline(db, existing)) {
-    return db.prepare('DELETE FROM ip_addresses WHERE id = ?').run(existing.id);
-  }
-
   return db.prepare(`
     UPDATE ip_addresses SET
       is_online = 0, is_rogue = 0, rogue_reason = NULL,
+      offline_since_at = COALESCE(offline_since_at, datetime('now')),
       updated_at = datetime('now')
     WHERE id = ?
   `).run(existing.id);
@@ -457,8 +439,8 @@ export function markOffline(db, subnetId, ip) {
  * the short staleness window and the much longer scan interval. Coverage is
  * decided by the same predicate the scheduler uses, see utils/scan-coverage.js.
  *
- * Ephemeral IPs are deleted, declared ones are marked offline.
- * Also clears rogue status for stale IPs (rogue device went away).
+ * Every stale row is retained until its one-hour retirement boundary. This
+ * function owns only the online-to-offline edge.
  */
 export function bulkMarkStale(db, staleMinutes) {
   const offset = `-${staleMinutes} minutes`;
@@ -473,99 +455,109 @@ export function bulkMarkStale(db, staleMinutes) {
       AND NOT ${scannerCoveredSql('s', 'ip')}
   `).all(offset);
 
-  const toDelete = [];
-  const toUpdate = [];
-
   for (const row of staleIps) {
     emit(db, row.id, row.subnet_id, row.ip_address, 'offline', { source: 'stale' });
     if (row.is_rogue) {
       emit(db, row.id, row.subnet_id, row.ip_address, 'rogue_cleared', { source: 'stale' });
     }
-    if (shouldKeepOffline(db, row)) {
-      toUpdate.push(row.id);
-    } else {
-      toDelete.push(row.id);
-    }
   }
 
-  if (toUpdate.length > 0) {
+  if (staleIps.length > 0) {
     const updateStmt = db.prepare(`
       UPDATE ip_addresses SET
         is_online = 0, is_rogue = 0, rogue_reason = NULL,
+        offline_since_at = COALESCE(offline_since_at, datetime('now')),
         updated_at = datetime('now')
       WHERE id = ?
     `);
-    for (const id of toUpdate) updateStmt.run(id);
+    for (const row of staleIps) updateStmt.run(row.id);
   }
 
-  if (toDelete.length > 0) {
-    const deleteStmt = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
-    for (const id of toDelete) deleteStmt.run(id);
-  }
-
-  return { changes: toUpdate.length + toDelete.length, deleted: toDelete.length, updated: toUpdate.length };
+  return { changes: staleIps.length, deleted: 0, updated: staleIps.length };
 }
 
 /**
- * Clear learned metadata from dynamically assigned addresses that have been
- * offline past the retention window. Reads offline_metadata_retention_days from
- * settings (default 7).
- *
- * Admin-declared addresses (static DNS record, DHCP reservation, locked or
- * assigned status) are never touched. They keep everything learned about them
- * until the admin deletes the declaration.
- *
- * Only the observed columns are cleared. Vendor, device type and OS family need
- * no handling: models/ip-view.js derives all three from the MAC at read time, so
- * clearing the MAC clears them too. The fingerprint itself lives in its own
- * MAC-keyed table, so an operator override survives and re-attaches if that MAC
- * comes back. Lease expiry likewise comes from a join, not a column here.
- *
- * A row with nothing left to say is deleted rather than left as an empty husk.
+ * Return a bounded batch whose continuous offline interval has reached the
+ * fixed retirement boundary. Static and still-valid SLAAC allocations are not
+ * candidates.
  */
-export function clearStaleDynamicMetadata(db) {
-  const val = getSetting('offline_metadata_retention_days');
-  const retentionDays = parseInt(val, 10) || 7;
-  const offset = `-${retentionDays} days`;
-
-  const candidates = db.prepare(`
-    SELECT id, subnet_id, ip_address, status, reservation_note, description, scan_enabled
+export function findRetirementCandidates(db, cutoff, now, limit = 500) {
+  return db.prepare(`
+    SELECT *
     FROM ip_addresses
     WHERE is_online = 0
-      AND last_seen_at IS NOT NULL
-      AND last_seen_at < datetime('now', ?)
-  `).all(offset);
+      AND offline_since_at IS NOT NULL
+      AND datetime(offline_since_at) <= datetime(?)
+      AND (
+        allocation_state = 'dynamic_dhcp'
+        OR (allocation_state = 'slaac' AND valid_until IS NOT NULL AND datetime(valid_until) <= datetime(?))
+        OR (
+          allocation_state = 'unassigned'
+          AND status NOT IN ('locked', 'assigned')
+          AND NOT EXISTS (
+            SELECT 1 FROM dhcp_reservations dr
+            WHERE dr.subnet_id = ip_addresses.subnet_id
+              AND dr.ip_address = ip_addresses.ip_address
+              AND dr.enabled = 1
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM dns_records r
+            JOIN dns_zones z ON z.id = r.zone_id
+            WHERE r.type = 'A' AND r.enabled = 1 AND z.enabled = 1
+              AND z.type = 'forward'
+              AND COALESCE(r.source, 'manual') = 'manual'
+              AND r.value = ip_addresses.ip_address
+          )
+          AND (is_rogue = 1 OR status = 'dhcp' OR detection_source IN (
+            'dhcp_lease', 'slaac', 'scanner', 'passive', 'neighbor_discovery'
+          ))
+        )
+      )
+    ORDER BY datetime(offline_since_at), id
+    LIMIT ?
+  `).all(cutoff, now, limit);
+}
 
-  const toClear = [];
-  const toDelete = [];
+export function startMissingRetirementWindows(db, now) {
+  return db.prepare(`
+    UPDATE ip_addresses
+    SET offline_since_at = datetime(?), updated_at = datetime('now')
+    WHERE is_online = 0
+      AND offline_since_at IS NULL
+      AND (
+        allocation_state IN ('dynamic_dhcp', 'slaac')
+        OR is_rogue = 1
+        OR status = 'dhcp'
+        OR detection_source IN ('dhcp_lease', 'slaac', 'scanner', 'passive', 'neighbor_discovery')
+      )
+  `).run(now);
+}
 
-  for (const row of candidates) {
-    if (isAdminDeclared(db, row)) continue;
-    // Keeping anything an operator typed, plus a per-IP scan override.
-    const hasOperatorData = !!row.reservation_note || !!row.description
-      || (row.scan_enabled !== null && row.scan_enabled !== undefined);
-    if (hasOperatorData) toClear.push(row.id);
-    else toDelete.push(row.id);
+/**
+ * Clear address-bound observations while retaining identity and any fields an
+ * operator authored, such as description, reservation note, or scan policy.
+ */
+export function retireLearnedMetadata(db, row) {
+  if (row.is_rogue) {
+    emit(db, row.id, row.subnet_id, row.ip_address, 'rogue_cleared', { source: 'retirement' });
   }
-
-  if (toClear.length > 0) {
-    const clearStmt = db.prepare(`
-      UPDATE ip_addresses SET
-        hostname = NULL, mac_address = NULL, last_seen_mac = NULL,
-        last_seen_at = NULL, first_seen_at = NULL, last_scanned_at = NULL,
-        detection_source = NULL, status = 'available',
-        updated_at = datetime('now')
-      WHERE id = ?
-    `);
-    for (const id of toClear) clearStmt.run(id);
-  }
-
-  if (toDelete.length > 0) {
-    const deleteStmt = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
-    for (const id of toDelete) deleteStmt.run(id);
-  }
-
-  return { changes: toClear.length + toDelete.length, cleared: toClear.length, deleted: toDelete.length };
+  const result = db.prepare(`
+    UPDATE ip_addresses SET
+      hostname = NULL, mac_address = NULL, last_seen_mac = NULL,
+      last_seen_at = NULL, first_seen_at = NULL, last_scanned_at = NULL,
+      offline_since_at = NULL, detection_source = NULL,
+      is_rogue = 0, rogue_reason = NULL, status = 'available',
+      allocation_state = 'unassigned', allocation_source_type = NULL,
+      allocation_source_id = NULL, preferred_until = NULL, valid_until = NULL,
+      dhcp_version = NULL, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(row.id);
+  emit(db, row.id, row.subnet_id, row.ip_address, 'retired', {
+    oldValue: row.allocation_state,
+    newValue: 'unassigned',
+    source: 'retirement'
+  });
+  return result;
 }
 
 /**
@@ -724,7 +716,6 @@ export function clearDhcpAssignmentsByIds(db, ids) {
   const clear = db.prepare(`
     UPDATE ip_addresses
        SET status = 'available',
-           is_online = 0,
            updated_at = datetime('now')
      WHERE id = ?
   `);
@@ -755,7 +746,8 @@ export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
     UPDATE ip_addresses SET
       is_rogue = 0, rogue_reason = NULL,
       updated_at = datetime('now')
-    WHERE subnet_id = ? AND is_rogue = 1 AND ip_address NOT IN (${placeholders})
+    WHERE subnet_id = ? AND is_rogue = 1
+      AND ip_address NOT IN (${placeholders})
   `).run(subnetId, ...exceptIps);
 }
 
@@ -785,18 +777,6 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
   }
 
   if (existing) {
-    if (!responded && !shouldKeepOffline(db, existing)) {
-      emit(db, existing.id, subnetId, ip, 'scanned', { newValue: 'no_response', source: 'scanner' });
-      if (existing.is_online) {
-        emit(db, existing.id, subnetId, ip, 'offline', { source: 'scanner' });
-      }
-      if (existing.is_rogue) {
-        emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'scanner' });
-      }
-      db.prepare('DELETE FROM ip_addresses WHERE id = ?').run(existing.id);
-      return;
-    }
-
     const updates = [
       'is_online = ?',
       "last_scanned_at = datetime('now')",
@@ -808,6 +788,9 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     if (responded) {
       updates.push("last_seen_at = datetime('now')");
       updates.push("first_seen_at = COALESCE(first_seen_at, datetime('now'))");
+      updates.push('offline_since_at = NULL');
+    } else {
+      updates.push("offline_since_at = COALESCE(offline_since_at, datetime('now'))");
     }
     if (mac) {
       updates.push('last_seen_mac = ?');
@@ -817,10 +800,15 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       params.push(mac);
     }
 
-    updates.push('is_rogue = ?');
-    params.push(effectiveConflict ? 1 : 0);
-    updates.push('rogue_reason = ?');
-    params.push(effectiveConflict ? effectiveReason : null);
+    if (responded) {
+      updates.push('is_rogue = ?');
+      params.push(effectiveConflict ? 1 : 0);
+      updates.push('rogue_reason = ?');
+      params.push(effectiveConflict ? effectiveReason : null);
+    } else {
+      updates.push('is_rogue = 0');
+      updates.push('rogue_reason = NULL');
+    }
 
     params.push(existing.id);
     db.prepare(`UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`).run(...params);

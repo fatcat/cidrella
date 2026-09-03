@@ -14,10 +14,10 @@ import { readLogTail } from './log-reader.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import {
   markStalePassiveAddresses,
-  pruneStaleDhcpAddresses,
   pruneLifecycleEvents,
   retireStaleDynamicAddresses
 } from '../services/ip-lifecycle-service.js';
+import { queueRegen } from './after-commit.js';
 import {
   DATA_DIR,
   PASSIVE_LIVENESS_POLL_MS,
@@ -66,9 +66,16 @@ export function startPassiveLivenessWatcher(db) {
     if (now - lastStaleCheck >= 60000) {
       const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
       markStalePassiveAddresses(db, staleMinutes);
-      pruneStaleDhcpAddresses(db);
       pruneLifecycleEvents(db);
-      retireStaleDynamicAddresses(db);
+      const retirement = retireStaleDynamicAddresses(db);
+      if (retirement.dnsRecordsRemoved > 0) queueRegen('regenerate_dns');
+      if (retirement.retired > 0 || retirement.deferred > 0) {
+        console.log(
+          `[ip-retirement] retired=${retirement.retired} deferred=${retirement.deferred} `
+          + `dns=${retirement.dnsRecordsRemoved} leases=${retirement.leasesRemoved} `
+          + `sticky_skipped=${retirement.stickyRelease.skipped} sticky_failed=${retirement.stickyRelease.failed}`
+        );
+      }
       lastStaleCheck = now;
 
     }

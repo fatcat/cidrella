@@ -97,7 +97,5 @@ describe('0.4.17 lifecycle characterization', () => {
 });
 
 describe('target lifecycle behavior captured before implementation', () => {
-  it.todo('retires learned dynamic and rogue metadata after one hour offline');
-  it.todo('preserves static assignment observations indefinitely');
   it.todo('upgrades and restores 0.4.17 fixtures without silent claim loss');
 });
