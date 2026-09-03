@@ -158,11 +158,13 @@ export function deallocateStaticDhcp(db, subnetId, ip, macAddress) {
   );
 }
 
-export function observeDhcpLeases(db, leases) {
-  for (const lease of leases) {
-    if (!lease.subnetId) continue;
-    const rejection = dhcpLeaseRejectionReason(db, lease);
-    if (rejection) throw new IpLifecycleConflictError(rejection, { ip: lease.ip });
+export function observeDhcpLeases(db, leases, { prevalidated = false } = {}) {
+  if (!prevalidated) {
+    for (const lease of leases) {
+      if (!lease.subnetId) continue;
+      const rejection = dhcpLeaseRejectionReason(db, lease);
+      if (rejection) throw new IpLifecycleConflictError(rejection, { ip: lease.ip });
+    }
   }
   IpSync.syncLeasesToIps(db, leases);
   for (const lease of leases) {

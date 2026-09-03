@@ -319,7 +319,7 @@ export function syncLeases(db) {
     }
   }
 
-  replaceLeases(db, acceptedLeases);
+  replaceLeases(db, acceptedLeases, { lifecycleValidated: true });
 
   // Remove legacy dhcp-leases.hosts (hostnames now managed via dns_records)
   const legacyHostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');

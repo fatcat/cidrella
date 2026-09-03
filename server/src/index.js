@@ -191,11 +191,19 @@ async function main() {
   // doubles as "make sure DNS is up" and change-detection must not lose that.
   // (The blocklist scheduler's one-time legacy blocklist.conf blanking ~10s
   // in has its own restart guard and stays separate on purpose.)
-  const { ifaceChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
-    const ifaceChanged = applyInterfaceConfig(getDb());
-    const confChanged = regenerateDnsmasqConf(getDb());
-    return { ifaceChanged, confChanged, changed: ifaceChanged || confChanged };
-  });
+  let ifaceChanged = false;
+  let confChanged = false;
+  try {
+    ({ ifaceChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
+      const ifaceChanged = applyInterfaceConfig(getDb());
+      const confChanged = regenerateDnsmasqConf(getDb());
+      return { ifaceChanged, confChanged, changed: ifaceChanged || confChanged };
+    }));
+  } catch (err) {
+    // The validated writer restored the last config. Keep the management API
+    // available so the operator can correct the stored setting or record.
+    console.error('dnsmasq config generation failed; retained previous config:', err.message);
+  }
   try {
     // Restart when the config changed, when OUR unit is down (the specific
     // unit, not any dnsmasq on the host), or when a previous restart failed

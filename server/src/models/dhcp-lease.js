@@ -2,7 +2,7 @@ import { observeDhcpLeases } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
-export function replaceLeases(db, leases) {
+export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
   const replace = db.transaction(() => {
     const previous = new Map(db.prepare(`
       SELECT subnet_id, ip_address, mac_address, expires_at FROM dhcp_leases
@@ -24,7 +24,7 @@ export function replaceLeases(db, leases) {
     for (const l of observedLeases) {
       insert.run(l.ip, l.mac, l.hostname, l.clientId, l.expiresAt, l.subnetId);
     }
-    observeDhcpLeases(db, observedLeases);
+    observeDhcpLeases(db, observedLeases, { prevalidated: lifecycleValidated });
   });
 
   replace();
