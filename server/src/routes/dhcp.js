@@ -7,7 +7,14 @@ import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
-import { createScope, updateScope, deleteScope, gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
+import {
+  createScope,
+  updateScope,
+  deleteScope,
+  gatewayInPoolConflict,
+  gatewayInPoolError,
+  dynamicPoolConflict
+} from '../models/dhcp-scope.js';
 import {
   createReservation,
   updateReservation,
@@ -133,10 +140,22 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   if (range.range_type_name !== 'DHCP Scope') {
     return res.status(400).json({ error: 'Range must be of type DHCP Scope' });
   }
+  if (range.subnet_id !== Number(subnet_id)) {
+    return res.status(400).json({ error: 'Range does not belong to the selected subnet' });
+  }
 
   // Validate subnet
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet_id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+
+  const poolConflict = dynamicPoolConflict(db, subnet, range.start_ip, range.end_ip);
+  if (poolConflict) {
+    return res.status(409).json({
+      error: poolConflict.error,
+      conflict_type: poolConflict.type,
+      ip_address: poolConflict.ip_address
+    });
+  }
 
   // Check no existing scope for this range
   const existing = db.prepare('SELECT id FROM dhcp_scopes WHERE range_id = ?').get(range_id);
@@ -251,12 +270,12 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   if (end_ip !== undefined && !isValidIpv4(end_ip)) {
     return res.status(400).json({ error: 'Invalid end IP address' });
   }
+  const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
+  const scopeSubnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
+  const newStart = start_ip || range.start_ip;
+  const newEnd = end_ip || range.end_ip;
   if (start_ip !== undefined || end_ip !== undefined) {
-    const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
-    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
-    const newStart = start_ip || range.start_ip;
-    const newEnd = end_ip || range.end_ip;
-    if (!isIpInSubnet(newStart, subnet.cidr) || !isIpInSubnet(newEnd, subnet.cidr)) {
+    if (!isIpInSubnet(newStart, scopeSubnet.cidr) || !isIpInSubnet(newEnd, scopeSubnet.cidr)) {
       return res.status(400).json({ error: 'IP addresses must be within the subnet' });
     }
     if (ipToLong(newStart) > ipToLong(newEnd)) {
@@ -264,11 +283,22 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     }
     // Block a resize that would place the subnet's gateway inside the pool.
     // Shared with the range routes and /configure, which write the same row.
-    const conflict = gatewayInPoolConflict(subnet, newStart, newEnd);
+    const conflict = gatewayInPoolConflict(scopeSubnet, newStart, newEnd);
     if (conflict) {
       return res.status(409).json({
         error: gatewayInPoolError(conflict),
         gateway_address: conflict.gateway_address
+      });
+    }
+  }
+  const effectiveEnabled = enabled !== undefined ? enabled : Boolean(scope.enabled);
+  if (effectiveEnabled) {
+    const poolConflict = dynamicPoolConflict(db, scopeSubnet, newStart, newEnd);
+    if (poolConflict) {
+      return res.status(409).json({
+        error: poolConflict.error,
+        conflict_type: poolConflict.type,
+        ip_address: poolConflict.ip_address
       });
     }
   }
@@ -352,9 +382,17 @@ export function reservationIpRejectionReason(db, subnet, ipAddress) {
     return 'Cannot reserve the gateway address';
   }
   const row = db.prepare(
-    'SELECT status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT status, allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnet.id, ipAddress);
-  if (row && row.status === 'locked') return 'Cannot reserve a locked IP';
+  if (row && ['system', 'gateway'].includes(row.allocation_state)) {
+    return `Cannot reserve a protected ${row.allocation_state} IP`;
+  }
+  if (row && ['static_dns', 'dynamic_dhcp', 'slaac', 'quarantined'].includes(row.allocation_state)) {
+    return `Cannot reserve an IP allocated as ${row.allocation_state}`;
+  }
+  if (row && row.status === 'locked' && row.allocation_state !== 'reserved') {
+    return 'Cannot reserve a locked IP';
+  }
   return null;
 }
 

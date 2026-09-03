@@ -3,7 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { ipToLong, isIpInSubnet, isValidIpv4, rangesOverlap, validateDisplayString } from '../utils/ip.js';
 import * as Range from '../models/range.js';
-import { gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
+import { dynamicPoolConflict } from '../models/dhcp-scope.js';
 
 const router = Router({ mergeParams: true });
 
@@ -65,30 +65,13 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   const rangeType = db.prepare('SELECT * FROM range_types WHERE id = ?').get(range_type_id);
   if (!rangeType) return res.status(404).json({ error: 'Range type not found' });
 
-  // Check for locked IPs in the range (for DHCP Scope ranges)
   if (rangeType.name === 'DHCP Scope') {
-    // Same invariant PUT /api/dhcp/scopes/:id enforces: this row becomes the
-    // dnsmasq dhcp-range, so the gateway must not sit inside it.
-    const conflict = gatewayInPoolConflict(subnet, start_ip, end_ip);
+    const conflict = dynamicPoolConflict(db, subnet, start_ip, end_ip);
     if (conflict) {
       return res.status(409).json({
-        error: gatewayInPoolError(conflict),
-        gateway_address: conflict.gateway_address
-      });
-    }
-
-    const startLong = ipToLong(start_ip);
-    const endLong = ipToLong(end_ip);
-    const reservedIps = db.prepare(
-      `SELECT ip_address FROM ip_addresses WHERE subnet_id = ? AND status = 'locked'`
-    ).all(subnetId).filter(r => {
-      const l = ipToLong(r.ip_address);
-      return l >= startLong && l <= endLong;
-    });
-
-    if (reservedIps.length > 0) {
-      return res.status(400).json({
-        error: `Range contains ${reservedIps.length} reserved IP(s): ${reservedIps.slice(0, 5).map(r => r.ip_address).join(', ')}${reservedIps.length > 5 ? '...' : ''}`
+        error: conflict.error,
+        conflict_type: conflict.type,
+        ip_address: conflict.ip_address
       });
     }
   }
@@ -177,15 +160,16 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   // This row may be what dnsmasq serves as a dhcp-range. Guard on the
   // authoritative signal, an attached scope, rather than only on the type
   // name, plus the effective type for a range being retyped into a pool.
-  const attachedScope = db.prepare('SELECT id FROM dhcp_scopes WHERE range_id = ?').get(range.id);
+  const attachedScope = db.prepare('SELECT id, enabled FROM dhcp_scopes WHERE range_id = ?').get(range.id);
   const effectiveTypeId = range_type_id ?? range.range_type_id;
   const effectiveType = db.prepare('SELECT name FROM range_types WHERE id = ?').get(effectiveTypeId);
-  if (attachedScope || effectiveType?.name === 'DHCP Scope') {
-    const conflict = gatewayInPoolConflict(subnet, newStart, newEnd);
+  if ((attachedScope?.enabled) || (!attachedScope && effectiveType?.name === 'DHCP Scope')) {
+    const conflict = dynamicPoolConflict(db, subnet, newStart, newEnd);
     if (conflict) {
       return res.status(409).json({
-        error: gatewayInPoolError(conflict),
-        gateway_address: conflict.gateway_address
+        error: conflict.error,
+        conflict_type: conflict.type,
+        ip_address: conflict.ip_address
       });
     }
   }

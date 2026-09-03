@@ -26,7 +26,12 @@
  */
 
 import { getDb } from '../db/init.js';
-import { regenerateConfigs as regenDnsConfigs, regenerateDnsmasqConf, restartDnsmasq } from './dnsmasq.js';
+import {
+  regenerateConfigs as regenDnsConfigs,
+  regenerateDnsmasqConf,
+  restartDnsmasq,
+  withValidatedDnsmasqUpdate
+} from './dnsmasq.js';
 import { regenerateDhcpConfigs } from './dhcp.js';
 
 // Hook name → function(db). All hooks must accept a db handle and return void.
@@ -41,7 +46,10 @@ import { regenerateDhcpConfigs } from './dhcp.js';
 const HOOK_REGISTRY = {
   regenerate_dns:  (db) => regenDnsConfigs(db),
   regenerate_dhcp: (db) => regenerateDhcpConfigs(db),
-  regenerate_dnsmasq_conf: (db) => { regenerateDnsmasqConf(db); restartDnsmasq(); },
+  regenerate_dnsmasq_conf: (db) => {
+    const changed = withValidatedDnsmasqUpdate(() => regenerateDnsmasqConf(db));
+    if (changed) restartDnsmasq();
+  },
 };
 
 const HOOK_ORDER = ['regenerate_dns', 'regenerate_dhcp', 'regenerate_dnsmasq_conf'];

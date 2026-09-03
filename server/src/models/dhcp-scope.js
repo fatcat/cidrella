@@ -1,4 +1,5 @@
-import { ipToLong } from '../utils/ip.js';
+import { ipToLong, isValidIpv4, parseCidr } from '../utils/ip.js';
+import { localIpv4Set } from '../utils/local-addresses.js';
 
 // The one definition of "this DHCP pool would swallow the subnet's gateway".
 //
@@ -25,6 +26,100 @@ export function gatewayInPoolConflict(subnet, startIp, endIp) {
 export function gatewayInPoolError(conflict) {
   return `Pool ${conflict.start_ip}–${conflict.end_ip} would include the subnet gateway ` +
     `${conflict.gateway_address}. Shrink the pool or change the gateway first.`;
+}
+
+export function findEnabledScopeForIp(db, subnetId, ipAddress) {
+  const ipLong = ipToLong(ipAddress);
+  const scopes = db.prepare(`
+    SELECT s.id, s.subnet_id, r.start_ip, r.end_ip
+    FROM dhcp_scopes s
+    JOIN ranges r ON r.id = s.range_id
+    WHERE s.subnet_id = ? AND s.enabled = 1
+  `).all(subnetId);
+  return scopes.find(scope => {
+    return ipLong >= ipToLong(scope.start_ip) && ipLong <= ipToLong(scope.end_ip);
+  }) || null;
+}
+
+export function staticDnsConflictsInPool(db, startIp, endIp) {
+  const startLong = ipToLong(startIp);
+  const endLong = ipToLong(endIp);
+  return db.prepare(`
+    SELECT r.id, r.name, r.value AS ip_address, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE r.type = 'A'
+      AND r.enabled = 1
+      AND z.enabled = 1
+      AND z.type = 'forward'
+      AND COALESCE(r.source, 'manual') = 'manual'
+  `).all().filter(record => {
+    if (!isValidIpv4(record.ip_address)) return false;
+    const value = ipToLong(record.ip_address);
+    return value >= startLong && value <= endLong;
+  });
+}
+
+export function dynamicPoolConflict(db, subnet, startIp, endIp) {
+  const parsed = parseCidr(subnet.cidr);
+  const startLong = ipToLong(startIp);
+  const endLong = ipToLong(endIp);
+  if (startLong <= parsed.networkLong || endLong >= parsed.broadcastLong) {
+    return {
+      type: 'system',
+      ip_address: startLong <= parsed.networkLong ? parsed.network : parsed.broadcast,
+      error: 'DHCP pools may contain host addresses only'
+    };
+  }
+
+  const gatewayConflict = gatewayInPoolConflict(subnet, startIp, endIp);
+  if (gatewayConflict) {
+    return {
+      type: 'gateway',
+      ip_address: gatewayConflict.gateway_address,
+      error: gatewayInPoolError(gatewayConflict)
+    };
+  }
+
+  const staticDns = staticDnsConflictsInPool(db, startIp, endIp)[0];
+  if (staticDns) {
+    return {
+      type: 'static_dns',
+      ip_address: staticDns.ip_address,
+      record_id: staticDns.id,
+      error: `DHCP pool conflicts with static DNS allocation ${staticDns.ip_address} (${staticDns.name}.${staticDns.zone_name})`
+    };
+  }
+
+  const protectedRow = db.prepare(`
+    SELECT ip_address, allocation_state
+    FROM ip_addresses
+    WHERE subnet_id = ? AND allocation_state IN ('system', 'gateway')
+  `).all(subnet.id).find(row => {
+    if (!isValidIpv4(row.ip_address)) return false;
+    const value = ipToLong(row.ip_address);
+    return value >= startLong && value <= endLong;
+  });
+  if (protectedRow) {
+    return {
+      type: protectedRow.allocation_state,
+      ip_address: protectedRow.ip_address,
+      error: `DHCP pool conflicts with protected ${protectedRow.allocation_state} address ${protectedRow.ip_address}`
+    };
+  }
+
+  const localAddress = [...localIpv4Set()].find(ip => {
+    const value = ipToLong(ip);
+    return value >= startLong && value <= endLong;
+  });
+  if (localAddress) {
+    return {
+      type: 'system',
+      ip_address: localAddress,
+      error: `DHCP pool conflicts with CIDRella service address ${localAddress}`
+    };
+  }
+  return null;
 }
 
 function computeInheritedOptions(subnet) {

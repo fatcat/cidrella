@@ -481,6 +481,7 @@ export function syncLeasesToIps(db, leases) {
       hostname: reservation ? undefined : (l.hostname || undefined),
       mac_address: l.mac || undefined,
       status: 'dhcp',
+      is_online: !reservation && l.observedActivity === true ? 1 : undefined,
       last_seen_mac: l.mac || undefined,
       detection_source: 'dhcp_lease'
     });

@@ -4,7 +4,9 @@ import {
   allocateStaticDns,
   allocateStaticDhcp,
   deallocateStaticDhcp,
+  dhcpLeaseRejectionReason,
   observeDhcpLeases,
+  observeDhcpv6Lease,
   observeNeighbor,
   observeRouterAdvertisement,
   observeSlaac,
@@ -27,6 +29,9 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  db.prepare('DELETE FROM dhcp_scope_options').run();
+  db.prepare('DELETE FROM dhcp_scopes WHERE subnet_id = ?').run(subnetId);
+  db.prepare('DELETE FROM ranges WHERE subnet_id = ?').run(subnetId);
   db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnetId);
   db.prepare('DELETE FROM dhcp_reservations WHERE subnet_id = ?').run(subnetId);
   db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ?').run(subnetId);
@@ -39,6 +44,19 @@ afterAll(() => cleanupTestDb(tmpDir));
 function address(ip) {
   return db.prepare('SELECT * FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
     .get(subnetId, ip);
+}
+
+function createDynamicScope(start = '10.99.0.20', end = '10.99.0.30') {
+  const rangeTypeId = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'")
+    .get().id;
+  const rangeId = db.prepare(`
+    INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
+    VALUES (?, ?, ?, ?)
+  `).run(subnetId, rangeTypeId, start, end).lastInsertRowid;
+  db.prepare(`
+    INSERT INTO dhcp_scopes (subnet_id, range_id, lease_time, enabled)
+    VALUES (?, ?, '24h', 1)
+  `).run(subnetId, rangeId);
 }
 
 describe('IP lifecycle service allocation boundary', () => {
@@ -108,13 +126,15 @@ describe('IP lifecycle service allocation boundary', () => {
   });
 
   it('releases dynamic allocation authority when a lease disappears', () => {
+    createDynamicScope();
     const lease = {
       ip: '10.99.0.23',
       mac: 'aa:bb:cc:dd:ee:23',
       hostname: 'dynamic-host',
       clientId: null,
       expiresAt: 'infinite',
-      subnetId
+      subnetId,
+      observedActivity: true
     };
     db.prepare(`
       INSERT INTO dhcp_leases
@@ -124,7 +144,8 @@ describe('IP lifecycle service allocation boundary', () => {
     observeDhcpLeases(db, [lease]);
     expect(address(lease.ip)).toMatchObject({
       allocation_state: 'dynamic_dhcp',
-      allocation_source_type: 'dhcp_lease'
+      allocation_source_type: 'dhcp_lease',
+      is_online: 1
     });
 
     db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ? AND ip_address = ?')
@@ -136,9 +157,43 @@ describe('IP lifecycle service allocation boundary', () => {
       allocation_source_id: null
     });
   });
+
+  it('rejects dynamic leases outside pools and on reserved addresses', () => {
+    createDynamicScope();
+    expect(dhcpLeaseRejectionReason(db, {
+      subnetId, ip: '10.99.0.40', mac: 'aa:bb:cc:dd:ee:40'
+    })).toMatch(/outside an enabled DHCP scope/);
+
+    setManualReservation(db, subnetId, '10.99.0.24', true, 'hold');
+    expect(dhcpLeaseRejectionReason(db, {
+      subnetId, ip: '10.99.0.24', mac: 'aa:bb:cc:dd:ee:24'
+    })).toMatch(/reserved to dynamic_dhcp/);
+  });
 });
 
 describe('future IPv6 lifecycle adapters', () => {
+  it('records DHCPv6 allocation without deriving gateway authority', () => {
+    observeDhcpv6Lease(db, subnetId, '2001:db8::97', {
+      duid: '00:04:11:22:33:44:55:66',
+      iaid: '7',
+      preferredUntil: '2029-12-31T23:00:00.000Z',
+      validUntil: '2030-01-01T00:00:00.000Z',
+      poolValidated: true,
+      routerAddress: '2001:db8::1'
+    });
+    expect(address('2001:db8::97')).toMatchObject({
+      allocation_state: 'dynamic_dhcp',
+      allocation_source_type: 'dhcp_lease',
+      dhcp_version: 6,
+      is_online: 1
+    });
+    expect(() => observeDhcpv6Lease(db, subnetId, '2001:db8::96', {
+      duid: '00:04:11:22:33:44:55:66',
+      iaid: '8',
+      validUntil: '2030-01-01T00:00:00.000Z'
+    })).toThrow(/validated enabled-pool membership/);
+  });
+
   it('records SLAAC lifetimes and interface context', () => {
     observeSlaac(db, subnetId, '2001:0DB8::99', {
       interfaceId: 'eth0',

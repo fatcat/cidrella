@@ -155,6 +155,21 @@ describe('syncLeasesToIps', () => {
     expect(row.last_seen_at).toBeNull();
   });
 
+  it('marks a dynamic host online when lease acquisition or renewal is observed', () => {
+    syncLeasesToIps(db, [{
+      subnetId,
+      ip: '10.0.1.92',
+      mac: 'aa:bb:cc:dd:ee:92',
+      hostname: 'renewed-host',
+      expiresAt: '2030-01-01T00:00:00.000Z',
+      observedActivity: true
+    }]);
+
+    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.92');
+    expect(row.is_online).toBe(1);
+    expect(row.last_seen_at).toBeTruthy();
+  });
+
   it('does not overwrite a scanner no-response verdict', () => {
     // End-to-end shape of the bug: the scanner proves the host is gone, then
     // any other device renewing its lease rewrites the file and re-syncs.

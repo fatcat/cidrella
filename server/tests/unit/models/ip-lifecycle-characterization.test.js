@@ -82,7 +82,7 @@ describe('0.4.17 lifecycle characterization', () => {
     expect(fixtures.ipv6Subnet.broadcast).toBeNull();
   });
 
-  it('captures dnsmasq scope output that lacks a locked-address exclusion', () => {
+  it('excludes administratively reserved addresses from dnsmasq dynamic ranges', () => {
     regenerateScopeConfigs(db);
     const output = fs.readFileSync(
       path.join(tmpDir, 'dnsmasq', 'conf.d', `dhcp-scope-${scopeId}.conf`),
@@ -90,19 +90,13 @@ describe('0.4.17 lifecycle characterization', () => {
     );
 
     expect(output).toContain('dhcp-range=set:scope');
-    expect(output).toContain('10.77.0.20,10.77.0.200');
-    expect(output).not.toContain('10.77.0.40');
+    expect(output).toContain('10.77.0.20,10.77.0.39');
+    expect(output).toContain('10.77.0.41,10.77.0.200');
+    expect(output).not.toContain('10.77.0.20,10.77.0.200');
   });
 });
 
 describe('target lifecycle behavior captured before implementation', () => {
-  it.todo('rejects or quarantines a dynamic lease on a reserved address');
-  it.todo('rejects simultaneous static DNS and static DHCP claims');
-  it.todo('folds equivalent and IPv4-mapped address spellings into one identity');
-  it.todo('requires interface context for IPv6 link-local persistence');
-  it.todo('excludes reserved addresses inside dynamic pools from dnsmasq leases');
-  it.todo('rejects static DNS inside an enabled same-family dynamic pool');
-  it.todo('ignores disabled DNS, reservation, and scope rows as live claims');
   it.todo('retires learned dynamic and rogue metadata after one hour offline');
   it.todo('preserves static assignment observations indefinitely');
   it.todo('upgrades and restores 0.4.17 fixtures without silent claim loss');

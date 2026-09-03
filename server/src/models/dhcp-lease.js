@@ -4,15 +4,27 @@ import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } fro
 
 export function replaceLeases(db, leases) {
   const replace = db.transaction(() => {
+    const previous = new Map(db.prepare(`
+      SELECT subnet_id, ip_address, mac_address, expires_at FROM dhcp_leases
+    `).all().map(lease => [`${lease.subnet_id}|${lease.ip_address}`, lease]));
     db.prepare('DELETE FROM dhcp_leases').run();
     const insert = db.prepare(`
       INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id, last_seen)
       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
     `);
-    for (const l of leases) {
+    const observedLeases = leases.map(lease => {
+      const old = previous.get(`${lease.subnetId}|${lease.ip}`);
+      return {
+        ...lease,
+        observedActivity: !old
+          || String(old.mac_address).toLowerCase() !== String(lease.mac || '').toLowerCase()
+          || old.expires_at !== lease.expiresAt
+      };
+    });
+    for (const l of observedLeases) {
       insert.run(l.ip, l.mac, l.hostname, l.clientId, l.expiresAt, l.subnetId);
     }
-    observeDhcpLeases(db, leases);
+    observeDhcpLeases(db, observedLeases);
   });
 
   replace();

@@ -59,7 +59,14 @@ import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/dhcp-probe.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
-import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq, isCidrellaDnsmasqRunning, dnsmasqRestartPending } from './utils/dnsmasq.js';
+import {
+  applyInterfaceConfig,
+  regenerateDnsmasqConf,
+  restartDnsmasq,
+  isCidrellaDnsmasqRunning,
+  dnsmasqRestartPending,
+  withValidatedDnsmasqUpdate
+} from './utils/dnsmasq.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
@@ -184,8 +191,11 @@ async function main() {
   // doubles as "make sure DNS is up" and change-detection must not lose that.
   // (The blocklist scheduler's one-time legacy blocklist.conf blanking ~10s
   // in has its own restart guard and stays separate on purpose.)
-  const ifaceChanged = applyInterfaceConfig(getDb());
-  const confChanged = regenerateDnsmasqConf(getDb());
+  const { ifaceChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
+    const ifaceChanged = applyInterfaceConfig(getDb());
+    const confChanged = regenerateDnsmasqConf(getDb());
+    return { ifaceChanged, confChanged, changed: ifaceChanged || confChanged };
+  });
   try {
     // Restart when the config changed, when OUR unit is down (the specific
     // unit, not any dnsmasq on the host), or when a previous restart failed

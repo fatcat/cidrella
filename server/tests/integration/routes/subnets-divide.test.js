@@ -255,12 +255,15 @@ describe('POST /api/subnets/:id/divide, lossy-artifact cleanup with force_lossy'
     });
     expect(resvRes.status).toBe(201);
 
-    // DNS A record pointing at the same IP.
+    // A separate DNS allocation at 10.19.2.0 becomes the network address of
+    // the second /23. DNS and static DHCP can no longer claim the same IP, so
+    // use the two distinct boundary addresses to exercise both cleanup paths.
     const zones = await request(app).get('/api/dns/zones');
     const fwd = zones.body.find(z => z.name === 'lossy-cleanup.test');
-    await request(app).post(`/api/dns/zones/${fwd.id}/records`).send({
-      name: 'doomed', type: 'A', value: '10.19.1.255'
+    const dnsRes = await request(app).post(`/api/dns/zones/${fwd.id}/records`).send({
+      name: 'doomed-dns', type: 'A', value: '10.19.2.0'
     });
+    expect(dnsRes.status).toBe(201);
 
     // Execute with both force flags.
     const divRes = await divide(parent.id, { new_prefix: 23, force: true, force_lossy: true });
@@ -269,6 +272,7 @@ describe('POST /api/subnets/:id/divide, lossy-artifact cleanup with force_lossy'
     // Cleanup summary is echoed back.
     expect(divRes.body.lossy_cleanup).toBeDefined();
     expect(divRes.body.lossy_cleanup.ips).toContain('10.19.1.255');
+    expect(divRes.body.lossy_cleanup.ips).toContain('10.19.2.0');
     expect(divRes.body.lossy_cleanup.removed.reservations).toBeGreaterThanOrEqual(1);
     expect(divRes.body.lossy_cleanup.removed.dns_records).toBeGreaterThanOrEqual(1);
 
@@ -278,7 +282,7 @@ describe('POST /api/subnets/:id/divide, lossy-artifact cleanup with force_lossy'
 
     // The A record is actually gone.
     const recs = await request(app).get(`/api/dns/zones/${fwd.id}/records`);
-    expect(recs.body.find(r => r.value === '10.19.1.255')).toBeUndefined();
+    expect(recs.body.find(r => r.value === '10.19.2.0')).toBeUndefined();
   });
 });
 

@@ -9,12 +9,81 @@ import { DATA_DIR, resolveDnsmasqInternalPort, resolveDnsListenPort, DEFAULT_DNS
 import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
+const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
 const DNSMASQ_CONF = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.conf');
 
 export function atomicWrite(filePath, content) {
   const tmpPath = filePath + '.tmp.' + process.pid;
   fs.writeFileSync(tmpPath, content, 'utf-8');
   fs.renameSync(tmpPath, filePath);
+}
+
+function collectConfigFiles(target, files = new Map()) {
+  if (!fs.existsSync(target)) return files;
+  const stat = fs.lstatSync(target);
+  if (stat.isFile()) {
+    files.set(target, { content: fs.readFileSync(target), mode: stat.mode });
+    return files;
+  }
+  if (!stat.isDirectory()) return files;
+  for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
+    if (entry.isFile() || entry.isDirectory()) {
+      collectConfigFiles(path.join(target, entry.name), files);
+    }
+  }
+  return files;
+}
+
+function snapshotDnsmasqConfig() {
+  const files = new Map();
+  for (const target of [DNSMASQ_CONF, HOSTS_DIR, CONF_DIR, DHCP_HOSTS_DIR]) {
+    collectConfigFiles(target, files);
+  }
+  return files;
+}
+
+function restoreDnsmasqConfig(snapshot) {
+  const current = snapshotDnsmasqConfig();
+  for (const filePath of current.keys()) {
+    if (!snapshot.has(filePath)) fs.unlinkSync(filePath);
+  }
+  for (const [filePath, saved] of snapshot) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const tmpPath = `${filePath}.rollback.${process.pid}`;
+    fs.writeFileSync(tmpPath, saved.content);
+    fs.chmodSync(tmpPath, saved.mode);
+    fs.renameSync(tmpPath, filePath);
+  }
+}
+
+export function validateDnsmasqConfig() {
+  if (!fs.existsSync(DNSMASQ_CONF)) return { ok: true, skipped: 'no-config' };
+  try {
+    execFileSync('dnsmasq', ['--test', `--conf-file=${DNSMASQ_CONF}`], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    return { ok: true, skipped: null };
+  } catch (err) {
+    if (err?.code === 'ENOENT' && process.env.NODE_ENV !== 'production') {
+      return { ok: true, skipped: 'dnsmasq-not-installed' };
+    }
+    const detail = err?.stderr?.toString?.().trim() || err?.message || 'unknown validation error';
+    throw new Error(`dnsmasq configuration validation failed: ${detail}`);
+  }
+}
+
+export function withValidatedDnsmasqUpdate(update) {
+  const snapshot = snapshotDnsmasqConfig();
+  try {
+    const result = update();
+    const changed = typeof result === 'boolean' ? result : Boolean(result?.changed);
+    if (changed) validateDnsmasqConfig();
+    return result;
+  } catch (err) {
+    restoreDnsmasqConfig(snapshot);
+    throw err;
+  }
 }
 
 /**
@@ -377,6 +446,7 @@ function setRestartPending(pending) {
 }
 
 export function signalDnsmasq() {
+  validateDnsmasqConfig();
   // Reload dnsmasq via systemctl. cidrella-dnsmasq.service has
   // ExecReload=/bin/kill -HUP $MAINPID (added in v0.4.11), and the cidrella
   // service account is authorized to reload that exact unit by
@@ -405,6 +475,7 @@ export function signalDnsmasq() {
 }
 
 export function restartDnsmasq() {
+  validateDnsmasqConfig();
   // Native installs: polkit-gated systemctl restart (no sudo).
   try {
     execFileSync('systemctl', ['restart', 'cidrella-dnsmasq'], { stdio: 'pipe' });
@@ -547,8 +618,11 @@ export function applyInterfaceConfig(_db) {
 }
 
 export function regenerateConfigs(db) {
-  const hostsChanged = regenerateHostsDir(db);
-  const confChanged = regenerateConfDir(db);
+  const { hostsChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
+    const hostsChanged = regenerateHostsDir(db);
+    const confChanged = regenerateConfDir(db);
+    return { hostsChanged, confChanged, changed: hostsChanged || confChanged };
+  });
 
   // dnsmasq rereads hostsdir/dhcp-hostsdir on SIGHUP, but it does not reread
   // the main config file or conf-dir includes. CNAME/MX/TXT/SRV/PTR records

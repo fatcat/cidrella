@@ -19,7 +19,7 @@ import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
-import { gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
+import { gatewayInPoolConflict, gatewayInPoolError, dynamicPoolConflict } from '../models/dhcp-scope.js';
 import { staticDnsClaimSql } from '../models/dns-record.js';
 
 const router = Router();
@@ -1349,6 +1349,19 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     }
     if (poolStart <= poolEnd) {
       dhcpPool = { startLong: poolStart, endLong: poolEnd };
+      const conflict = dynamicPoolConflict(
+        db,
+        { ...subnet, gateway_address: gw },
+        longToIp(poolStart),
+        longToIp(poolEnd)
+      );
+      if (conflict) {
+        return res.status(409).json({
+          error: conflict.error,
+          conflict_type: conflict.type,
+          ip_address: conflict.ip_address
+        });
+      }
     }
   }
 

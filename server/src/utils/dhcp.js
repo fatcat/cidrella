@@ -2,8 +2,14 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { atomicWrite, signalDnsmasq, restartDnsmasq, cleanStaleFiles } from './dnsmasq.js';
-import { parseCidr, isIpInSubnet } from './ip.js';
+import {
+  atomicWrite,
+  signalDnsmasq,
+  restartDnsmasq,
+  cleanStaleFiles,
+  withValidatedDnsmasqUpdate
+} from './dnsmasq.js';
+import { parseCidr, isIpInSubnet, ipToLong, longToIp } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
@@ -11,6 +17,7 @@ import { isValidIpv4 } from './ip.js';
 import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
 import { replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { upsertServerDnsDefault } from '../models/dhcp-option.js';
+import { dhcpLeaseRejectionReason } from '../services/ip-lifecycle-service.js';
 
 /**
  * Resolve a hostname to an IPv4 address. Returns the IP string, or null on failure.
@@ -41,7 +48,23 @@ const LEASE_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.leases');
  * Uses tagging so options only apply to the correct scope's range.
  * Merges: scope options > global defaults > legacy columns (fallback).
  */
-function generateScopeConfig(scope, globalDefaults, scopeOptions) {
+function dynamicRangeSegments(scope, excludedIps) {
+  const start = ipToLong(scope.start_ip);
+  const end = ipToLong(scope.end_ip);
+  const excluded = [...new Set(excludedIps
+    .map(ipToLong)
+    .filter(value => value >= start && value <= end))].sort((a, b) => a - b);
+  const segments = [];
+  let cursor = start;
+  for (const value of excluded) {
+    if (cursor < value) segments.push([cursor, value - 1]);
+    cursor = value + 1;
+  }
+  if (cursor <= end) segments.push([cursor, end]);
+  return segments;
+}
+
+function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = []) {
   const tag = `scope${scope.id}`;
   const lines = [];
 
@@ -67,7 +90,9 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions) {
     leaseTime = `${mergedOptions.get(51)}s`;
     mergedOptions.delete(51);
   }
-  lines.push(`dhcp-range=set:${tag},${scope.start_ip},${scope.end_ip},${scope.netmask},${leaseTime}`);
+  for (const [start, end] of dynamicRangeSegments(scope, excludedIps)) {
+    lines.push(`dhcp-range=set:${tag},${longToIp(start)},${longToIp(end)},${scope.netmask},${leaseTime}`);
+  }
 
   // 3. Legacy column fallback: only if no scope_options exist for that code
   if (scopeOptions.length === 0) {
@@ -165,6 +190,17 @@ export function regenerateScopeConfigs(db) {
     scopeOptionsMap.get(opt.scope_id).push(opt);
   }
 
+  const reservedBySubnet = new Map();
+  const reservedRows = db.prepare(`
+    SELECT subnet_id, ip_address
+    FROM ip_addresses
+    WHERE allocation_state = 'reserved' OR status = 'locked'
+  `).all();
+  for (const row of reservedRows) {
+    if (!reservedBySubnet.has(row.subnet_id)) reservedBySubnet.set(row.subnet_id, []);
+    reservedBySubnet.get(row.subnet_id).push(row.ip_address);
+  }
+
   const activeIds = new Set();
   let changed = false;
 
@@ -175,7 +211,9 @@ export function regenerateScopeConfigs(db) {
 
     const filePath = path.join(CONF_DIR, `dhcp-scope-${scope.id}.conf`);
     const scopeOpts = scopeOptionsMap.get(scope.id) || [];
-    const newContent = generateScopeConfig(scope, globalDefaults, scopeOpts);
+    const newContent = generateScopeConfig(
+      scope, globalDefaults, scopeOpts, reservedBySubnet.get(scope.subnet_id) || []
+    );
 
     let oldContent = '';
     try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* file doesn't exist */ }
@@ -269,24 +307,39 @@ export function syncLeases(db) {
     }
   }
 
-  replaceLeases(db, leases);
+  const acceptedLeases = [];
+  let rejected = 0;
+  for (const lease of leases) {
+    const rejection = dhcpLeaseRejectionReason(db, lease);
+    if (rejection) {
+      rejected++;
+      console.warn(`Rejected lease ${lease.ip}: ${rejection}`);
+    } else {
+      acceptedLeases.push(lease);
+    }
+  }
+
+  replaceLeases(db, acceptedLeases);
 
   // Remove legacy dhcp-leases.hosts (hostnames now managed via dns_records)
   const legacyHostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
   try { if (fs.existsSync(legacyHostsPath)) fs.unlinkSync(legacyHostsPath); } catch { /* ignore */ }
 
   // Sync DHCP hostnames (leases + reservations) into dns_records
-  syncDhcpDnsRecords(db, leases);
+  syncDhcpDnsRecords(db, acceptedLeases);
 
-  return { synced: leases.length };
+  return { synced: acceptedLeases.length, rejected };
 }
 
 /**
  * Orchestrator: regenerate all DHCP configs and sync DNS records.
  */
 export function regenerateDhcpConfigs(db) {
-  const confChanged = regenerateScopeConfigs(db);
-  const resChanged = regenerateReservations(db);
+  const { confChanged, resChanged } = withValidatedDnsmasqUpdate(() => {
+    const confChanged = regenerateScopeConfigs(db);
+    const resChanged = regenerateReservations(db);
+    return { confChanged, resChanged, changed: confChanged || resChanged };
+  });
   // Sync DHCP hostnames (leases + reservations) into dns_records
   const leases = db.prepare('SELECT ip_address as ip, hostname, mac_address as mac, subnet_id as subnetId FROM dhcp_leases').all()
     .map(l => ({

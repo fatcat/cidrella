@@ -13,7 +13,7 @@ import { getDb, getSetting, setSetting } from '../db/init.js';
 import { selectInterfaceNames } from './interface-config.js';
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
-import { applyInterfaceConfig, restartDnsmasq } from './dnsmasq.js';
+import { applyInterfaceConfig, restartDnsmasq, withValidatedDnsmasqUpdate } from './dnsmasq.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import { parseCidrEntry, ipInAny } from './cidr-match.js';
 import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
@@ -948,7 +948,7 @@ function activateBypass() {
     // Must be synchronous before restartDnsmasq, queueRegen would defer
     // the conf write into a microtask that fires AFTER the restart.
     setSetting('dns_proxy_bypass', 'true');
-    applyInterfaceConfig(getDb());
+    withValidatedDnsmasqUpdate(() => applyInterfaceConfig(getDb()));
     restartDnsmasq();
     proxyLog('info', 'dnsmasq reconfigured for bypass mode (port 53 on LAN)');
   } catch (err) {
@@ -962,7 +962,7 @@ function deactivateBypass() {
   try {
     const db = getDb();
     Setting.deleteSetting(db, 'dns_proxy_bypass');
-    applyInterfaceConfig(db);
+    withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db));
     restartDnsmasq();
   } catch (err) {
     proxyLog('error', 'Failed to deactivate bypass', { error: err.message });

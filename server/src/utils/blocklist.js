@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'node:readline';
 import { getDb, getSetting } from '../db/init.js';
-import { atomicWrite, restartDnsmasq } from './dnsmasq.js';
+import { atomicWrite, restartDnsmasq, withValidatedDnsmasqUpdate } from './dnsmasq.js';
 import { loadBlocklist, loadWhitelist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 import { DATA_DIR, BLOCKLIST_DOWNLOAD_TIMEOUT_MS, BLOCKLIST_INSERT_BATCH } from '../config/defaults.js';
@@ -312,7 +312,10 @@ export function generateBlocklistConfig(_db) {
   try {
     const existing = fs.existsSync(BLOCKLIST_CONF) ? fs.readFileSync(BLOCKLIST_CONF, 'utf-8') : '';
     if (existing !== '') {
-      atomicWrite(BLOCKLIST_CONF, '');
+      withValidatedDnsmasqUpdate(() => {
+        atomicWrite(BLOCKLIST_CONF, '');
+        return true;
+      });
       restartDnsmasq();
     }
   } catch { /* ignore cleanup errors */ }

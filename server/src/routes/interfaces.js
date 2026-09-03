@@ -3,7 +3,13 @@ import os from 'os';
 import fs from 'fs';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { applyInterfaceConfig, restartDnsmasq, isCidrellaDnsmasqRunning, dnsmasqRestartPending } from '../utils/dnsmasq.js';
+import {
+  applyInterfaceConfig,
+  restartDnsmasq,
+  isCidrellaDnsmasqRunning,
+  dnsmasqRestartPending,
+  withValidatedDnsmasqUpdate
+} from '../utils/dnsmasq.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
 import {
   applyHttpRedirectConfig, applyHttpsPortChange, applyHttpPortChange,
@@ -226,7 +232,7 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   // which would leave dnsmasq running the old conf until the next regen.
   // A no-op save (nothing effectively changed, our unit healthy) skips the
   // restart so clicking Save can't blip DNS/DHCP for the whole LAN.
-  const ifaceChanged = applyInterfaceConfig(db);
+  const ifaceChanged = withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db));
 
   let dnsmasqStatus = 'restarted';
   if (ifaceChanged || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
