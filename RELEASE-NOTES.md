@@ -63,6 +63,12 @@ against the possibility.
   static DHCP client-to-address binding, from an IP Reservation, an
   administrative hold with no DHCP client identity. Canonical Type labels use
   those exact terms while stored states and API identifiers remain unchanged.
+- Every non-reserved IP row in the DHCP table now offers **Add DHCP
+  Reservation**. The dialog carries over the row's network and IP plus any
+  known MAC address and hostname.
+- Network, DNS, and DHCP IP-row context menus now consistently offer **Probe
+  Now**, including protected network or broadcast addresses and managed DNS
+  rows.
 - Managed IPv4 reverse zones now contain one PTR row for every usable address
   in subnets up to 65,536 usable addresses. Each row shows the canonical DNS or
   DHCP hostname when one exists and the IP address itself as a generated

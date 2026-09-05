@@ -427,7 +427,7 @@ import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import api from '../api/client.js';
 import { ipToLong, longToIp } from '../utils/ip.js';
 import { ipLifecycleDisplay } from '../utils/ipLifecycleDisplay.js';
-import { isImmutableNetworkAddress } from '../utils/rowContextMenu.js';
+import { isImmutableNetworkAddress, probeNowMenuItem } from '../utils/rowContextMenu.js';
 import {
   EMPTY_CELL,
   apiError,
@@ -638,11 +638,15 @@ const tableContextMenuItems = computed(() => {
   if (!row) return [];
 
   if (isImmutableNetworkAddress(row)) {
-    return [{
-      label: `Protected ${row.range_type_name.toLowerCase()} address`,
-      icon: 'pi pi-lock',
-      disabled: true
-    }];
+    return [
+      {
+        label: `Protected ${row.range_type_name.toLowerCase()} address`,
+        icon: 'pi pi-lock',
+        disabled: true
+      },
+      { separator: true },
+      probeNowMenuItem(() => probeIpNow(row.ip_address))
+    ];
   }
 
   const range = findRangeForIp(row.ip_address);
@@ -1131,7 +1135,7 @@ function buildContextMenuItems(selectedIps) {
 
     // Probe
     items.push({ separator: true });
-    items.push({ label: `Probe ${ip.address}`, icon: 'pi pi-wifi', command: () => probeIpNow(ip.address) });
+    items.push(probeNowMenuItem(() => probeIpNow(ip.address)));
   } else {
     // Multi-select. Skip system-owned IPs (network/broadcast/gateway),
     // their allocations cannot be changed here. The bulk-allocation

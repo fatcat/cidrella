@@ -397,9 +397,15 @@ import ContextMenu from '../ui/ContextMenu.js';
 import Toast from '../ui/Toast.js';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
+import api from '../api/client.js';
 import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';
 import { ipToLong, isValidIpv4 } from '../utils/ip.js';
-import { isEditableDnsRecord, managedDnsRecordMenuItem } from '../utils/rowContextMenu.js';
+import {
+  dnsRecordProbeIp,
+  isEditableDnsRecord,
+  managedDnsRecordMenuItem,
+  probeNowMenuItem
+} from '../utils/rowContextMenu.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import EmptyState from './EmptyState.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
@@ -653,12 +659,23 @@ const selectedRecord = ref(null);
 const recordContextMenuItems = computed(() => {
   const r = selectedRecord.value;
   if (!r) return [];
+  const items = [];
   const managedItem = managedDnsRecordMenuItem(r);
-  if (managedItem) return [managedItem];
-  return [
-    { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
-    { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
-  ];
+  if (managedItem) {
+    items.push(managedItem);
+  } else {
+    items.push(
+      { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
+      { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
+    );
+  }
+
+  const ip = dnsRecordProbeIp(r, isReverse.value ? ptrRecordIp(r) : null);
+  if (ip) {
+    items.push({ separator: true });
+    items.push(probeNowMenuItem(() => probeDnsRecord(ip, r.subnet_id)));
+  }
+  return items;
 });
 function onRecordRightClick(event) {
   selectedRecord.value = event.data;
@@ -668,6 +685,33 @@ function onRecordRightClick(event) {
 }
 function onRecordDoubleClick(event) {
   if (isEditableDnsRecord(event.data)) openRecordDialog(event.data);
+}
+
+async function probeDnsRecord(ip, subnetId) {
+  toast.add({ severity: 'info', summary: 'Probing...', detail: `Sending probe to ${ip}`, life: 2000 });
+  try {
+    const payload = subnetId ? { ip, subnet_id: subnetId } : { ip };
+    const res = await api.post('/scans/probe', payload);
+    const result = res.data;
+    if (result.responded) {
+      toast.add({
+        severity: 'success',
+        summary: `${ip} is Online`,
+        detail: `Method: ${result.method.toUpperCase()}${result.mac ? ` · MAC: ${result.mac}` : ''}`,
+        life: 5000
+      });
+    } else {
+      toast.add({
+        severity: 'warn',
+        summary: `${ip} is Offline`,
+        detail: `No response via ${result.method.toUpperCase()}`,
+        life: 5000
+      });
+    }
+    if (selectedZone.value) await selectZone(selectedZone.value);
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Probe Failed', detail: apiError(err), life: 5000 });
+  }
 }
 
 // Delete dialogs

@@ -253,7 +253,11 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
-import { isEditableDhcpReservation } from '../utils/rowContextMenu.js';
+import {
+  canAddDhcpReservation,
+  isEditableDhcpReservation,
+  probeNowMenuItem
+} from '../utils/rowContextMenu.js';
 
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
@@ -434,14 +438,14 @@ const leaseContextMenuItems = computed(() => {
       { label: 'Edit DHCP Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
       { label: 'Delete DHCP Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
     );
-  } else if (r.mac_address && r.ip_address) {
+  } else if (canAddDhcpReservation(r)) {
     items.push(
-      { label: 'Convert to DHCP Reservation', icon: 'pi pi-lock', command: () => convertLeaseToReservation(r) }
+      { label: 'Add DHCP Reservation', icon: 'pi pi-plus', command: () => addDhcpReservationFromRow(r) }
     );
   }
   if (r.ip_address) {
     if (items.length) items.push({ separator: true });
-    items.push({ label: 'Probe Now', icon: 'pi pi-wifi', command: () => probeIp(r) });
+    items.push(probeNowMenuItem(() => probeIp(r)));
   }
   return items;
 });
@@ -728,12 +732,12 @@ async function loadReservationNetworks() {
   allocatedSubnets.value = flattenTree(allSubnets);
 }
 
-function convertLeaseToReservation(lease) {
+function addDhcpReservationFromRow(row) {
   openReservationDialog(null, {
-    subnet_id: lease.subnet_id,
-    mac_address: lease.mac_address,
-    ip_address: lease.ip_address,
-    hostname: lease.hostname || '',
+    subnet_id: row.subnet_id,
+    mac_address: row.mac_address || '',
+    ip_address: row.ip_address,
+    hostname: row.hostname || '',
   });
 }
 
