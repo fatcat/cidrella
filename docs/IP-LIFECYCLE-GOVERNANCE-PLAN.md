@@ -219,8 +219,11 @@ reconciliation backstops where practical.
    same-family DHCP dynamic pool.
 6. A reserved address cannot be dynamically leased, even when it lies inside a
    scope.
-7. System and gateway addresses cannot be reserved or allocated through DNS or
-   DHCP.
+7. System and gateway addresses cannot be reserved or allocated through DHCP.
+   A manual A or AAAA record may name a configured gateway or CIDRella service
+   address, but the record is descriptive and does not replace topology as the
+   address's allocation authority. Network, broadcast, and subnet-router
+   anycast addresses still cannot be named or allocated.
 8. An active static DNS, static DHCP, or dynamic DHCP allocation cannot be
    classified as rogue.
 9. An expired or missing dynamic lease immediately ends dynamic allocation.
@@ -294,6 +297,9 @@ unassigned|reserved -> static_dns
 - Create/update A or AAAA records and the IP allocation atomically.
 - Set the canonical hostname immediately.
 - Do not infer liveness from configuration.
+- When the target is a configured gateway or CIDRella service address, create
+  the DNS record and set its display hostname without changing the protected
+  `gateway` or `system` allocation state.
 
 ### Allocate through static DHCP
 
@@ -433,7 +439,9 @@ allocation-state column. It must not contain display statuses.
 
 Own DNS protocol details and relationships: zone, RR type, name, value, TTL,
 priority, enabled state, and record provenance. Enabled manual A and AAAA
-records must be consistent with the IP's `static_dns` allocation.
+records must be consistent with the IP's `static_dns` allocation, except when
+they name a configured gateway or CIDRella service address whose allocation
+authority remains protected topology.
 
 ### DHCP tables
 

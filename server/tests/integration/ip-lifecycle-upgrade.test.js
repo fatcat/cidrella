@@ -42,6 +42,30 @@ afterEach(() => {
 });
 
 describe('0.4.17 IP lifecycle upgrade', () => {
+  it('treats DNS names on gateways and CIDRella service addresses as non-owning metadata', () => {
+    const { db } = legacyDatabase();
+    const { subnetId, zoneId } = seedLegacyLifecycleContradictions(db);
+    db.prepare(`
+      INSERT INTO ip_addresses (subnet_id, ip_address, status)
+      VALUES (?, '10.77.0.1', 'locked'), (?, '10.77.0.2', 'locked')
+    `).run(subnetId, subnetId);
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'gateway', 'A', '10.77.0.1', 'manual', 1),
+             (?, 'cidrella', 'A', '10.77.0.2', 'manual', 1)
+    `).run(zoneId, zoneId);
+
+    const inventory = inventoryLegacyIpLifecycle(db, {
+      localAddresses: new Set(['10.77.0.2'])
+    });
+
+    expect(inventory.conflicts.filter(conflict => (
+      conflict.ip_address === '10.77.0.1' || conflict.ip_address === '10.77.0.2'
+    ))).toEqual([]);
+    expect(inventory.summary.protocol_claims_on_protected_addresses).toBe(0);
+    db.close();
+  });
+
   it('inventories ambiguous claims and blocks before schema mutation', async () => {
     const { db, dbPath, tmpDir } = legacyDatabase();
     const { zoneId } = seedLegacyLifecycleContradictions(db);
@@ -105,6 +129,14 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       VALUES (?, 'static-host', 'A', '10.77.0.10', 'manual', 1)
     `).run(zoneId);
     db.prepare(`
+      INSERT INTO ip_addresses (subnet_id, ip_address, hostname, status, detection_source)
+      VALUES (?, '10.77.0.1', 'gateway.legacy.test', 'locked', 'dns')
+    `).run(subnetId);
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'gateway', 'A', '10.77.0.1', 'manual', 1)
+    `).run(zoneId);
+    db.prepare(`
       INSERT INTO dhcp_leases (subnet_id, ip_address, mac_address, hostname, expires_at)
       VALUES (?, '10.77.0.30', 'aa:bb:cc:dd:ee:30', 'dynamic-host', 'infinite')
     `).run(subnetId);
@@ -133,8 +165,14 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       .toBe('static_dns');
     expect(upgraded.prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.30'").get().allocation_state)
       .toBe('dynamic_dhcp');
-    expect(upgraded.prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.1'").get().allocation_state)
-      .toBe('gateway');
+    expect(upgraded.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname
+      FROM ip_addresses WHERE ip_address = '10.77.0.1'
+    `).get()).toEqual({
+      allocation_state: 'gateway',
+      allocation_source_type: 'topology',
+      hostname: 'gateway.legacy.test'
+    });
     expect(upgraded.prepare('PRAGMA table_info(ip_addresses)').all().map(row => row.name))
       .not.toContain('status');
     expect(upgraded.prepare("SELECT COUNT(*) AS count FROM dns_records WHERE zone_id = ?").get(zoneId).count)

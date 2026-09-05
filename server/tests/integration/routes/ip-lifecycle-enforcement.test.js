@@ -215,14 +215,38 @@ describe('scope conflicts in both operation orders', () => {
 });
 
 describe('protected topology addresses', () => {
-  it('rejects DNS and static DHCP claims for the gateway', async () => {
+  it('allows a DNS name for the gateway without transferring allocation ownership', async () => {
     const subnetId = createSubnet();
     const zoneId = createZone();
 
-    expect((await postA(zoneId, 'gateway', '10.120.0.1')).status).toBe(409);
+    const created = await postA(zoneId, 'gateway', '10.120.0.1');
+    expect(created.status).toBe(201);
+    expect(db.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname, detection_source
+      FROM ip_addresses WHERE ip_address = '10.120.0.1'
+    `).get()).toEqual({
+      allocation_state: 'gateway',
+      allocation_source_type: 'topology',
+      hostname: 'gateway.lifecycle.test',
+      detection_source: 'topology'
+    });
+
     expect((await postReservation(subnetId, '10.120.0.1')).status).toBe(400);
-    expect(db.prepare('SELECT COUNT(*) AS count FROM dns_records').get().count).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS count FROM dns_records').get().count).toBe(1);
     expect(db.prepare('SELECT COUNT(*) AS count FROM dhcp_reservations').get().count).toBe(0);
+
+    const removed = await request(app)
+      .delete(`/api/dns/zones/${zoneId}/records/${created.body.id}`);
+    expect(removed.status).toBe(200);
+    expect(db.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname, detection_source
+      FROM ip_addresses WHERE ip_address = '10.120.0.1'
+    `).get()).toEqual({
+      allocation_state: 'gateway',
+      allocation_source_type: 'topology',
+      hostname: null,
+      detection_source: 'topology'
+    });
   });
 
   it.each([

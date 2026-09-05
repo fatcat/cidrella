@@ -38,19 +38,53 @@ export class IpLifecycleConflictError extends Error {
   }
 }
 
-function protectedAddressReason(db, subnetId, ip) {
+function protectedAddress(db, subnetId, ip) {
   if (!isValidIpv4(ip)) return null;
   const subnet = db.prepare(
     'SELECT cidr, gateway_address FROM subnets WHERE id = ?'
   ).get(subnetId);
-  if (!subnet) return 'Address does not belong to a managed subnet';
+  if (!subnet) {
+    return {
+      state: null,
+      dnsNameAllowed: false,
+      reason: 'Address does not belong to a managed subnet'
+    };
+  }
   const parsed = parseCidr(subnet.cidr);
   const value = ipToLong(ip);
-  if (value === parsed.networkLong) return 'Network address is protected';
-  if (value === parsed.broadcastLong) return 'Broadcast address is protected';
-  if (subnet.gateway_address === ip) return 'Gateway address is protected';
-  if (isLocalAddress(ip)) return 'CIDRella service address is protected';
+  if (value === parsed.networkLong) {
+    return {
+      state: ALLOCATION_STATE.SYSTEM,
+      dnsNameAllowed: false,
+      reason: 'Network address is protected'
+    };
+  }
+  if (value === parsed.broadcastLong) {
+    return {
+      state: ALLOCATION_STATE.SYSTEM,
+      dnsNameAllowed: false,
+      reason: 'Broadcast address is protected'
+    };
+  }
+  if (subnet.gateway_address === ip) {
+    return {
+      state: ALLOCATION_STATE.GATEWAY,
+      dnsNameAllowed: true,
+      reason: 'Gateway address is protected'
+    };
+  }
+  if (isLocalAddress(ip)) {
+    return {
+      state: ALLOCATION_STATE.SYSTEM,
+      dnsNameAllowed: true,
+      reason: 'CIDRella service address is protected'
+    };
+  }
   return null;
+}
+
+function protectedAddressReason(db, subnetId, ip) {
+  return protectedAddress(db, subnetId, ip)?.reason || null;
 }
 
 function assertAllocationTransition(db, subnetId, ip, targetState, source) {
@@ -121,6 +155,18 @@ export function allocateStaticDns(db, recordName, ip, zoneName, recordId = null)
       }
     );
   }
+  const protectedTarget = protectedAddress(db, subnet.id, ip);
+  if (protectedTarget?.dnsNameAllowed) {
+    protectTopologyAddress(
+      db, subnet.id, ip, protectedTarget.state,
+      existing?.reservation_note || `Protected ${protectedTarget.state} address`
+    );
+    IpSync.syncDnsToIp(db, recordName, ip, zoneName);
+    // DNS supplies the display name, not allocation authority. Keep topology
+    // as the protected row's detection source and canonical owner.
+    IpAddress.upsert(db, subnet.id, ip, { detection_source: 'topology' });
+    return IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+  }
   assertAllocationTransition(db, subnet.id, ip, ALLOCATION_STATE.STATIC_DNS, LIFECYCLE_SOURCE.DNS);
   IpSync.syncDnsToIp(db, recordName, ip, zoneName);
   return setCanonicalAllocation(
@@ -131,6 +177,13 @@ export function allocateStaticDns(db, recordName, ip, zoneName, recordId = null)
 export function deallocateStaticDns(db, recordName, ip, zoneName) {
   const subnet = IpSync.findSubnetForIp(db, ip);
   if (!subnet) return null;
+  const existing = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+  if ([ALLOCATION_STATE.SYSTEM, ALLOCATION_STATE.GATEWAY]
+    .includes(existing?.allocation_state)) {
+    IpSync.clearDnsFromIp(db, recordName, ip, zoneName);
+    IpAddress.upsert(db, subnet.id, ip, { detection_source: 'topology' });
+    return IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+  }
   assertAllocationTransition(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DNS);
   IpSync.clearDnsFromIp(db, recordName, ip, zoneName);
   return setCanonicalAllocation(

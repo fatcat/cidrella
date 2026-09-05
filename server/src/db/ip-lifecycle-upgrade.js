@@ -167,6 +167,15 @@ function issueKey(category, subnetId, ip) {
   return `${category}|${subnetId}|${canonicalizeIp(ip) || ip}`;
 }
 
+function canNameProtectedAddress(facts, subnetId, ip) {
+  const subnet = facts.subnetById.get(subnetId);
+  const canonical = canonicalizeIp(ip) || ip;
+  return Boolean(subnet && (
+    canonical === canonicalizeIp(subnet.gateway_address)
+    || facts.localAddresses.has(canonical)
+  ));
+}
+
 export function inventoryLegacyIpLifecycle(db, options = {}) {
   const facts = loadFacts(db, options);
   const issues = new Map();
@@ -225,7 +234,8 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
         [dnsLabel(record), ...matchingScopes.map(scopeLabel)]
       );
     }
-    if (facts.protectedKind(subnetId, ip)) {
+    if (facts.protectedKind(subnetId, ip)
+        && !canNameProtectedAddress(facts, subnetId, ip)) {
       const protectedKind = facts.protectedKind(subnetId, ip);
       addIssue(
         'protocol_claim_on_protected_address', subnetId, ip,
@@ -234,7 +244,8 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
         [dnsLabel(record), `${protectedKind} address ${ip}`]
       );
     }
-    if (facts.reservationByKey.has(key)) {
+    if (!canNameProtectedAddress(facts, subnetId, ip)
+        && facts.reservationByKey.has(key)) {
       const reservation = facts.reservationByKey.get(key);
       addIssue(
         'competing_dns_and_dhcp_reservation', subnetId, ip,
@@ -242,7 +253,8 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
         `Choose which assignment owns ${ip}. Disable or move the ${record.type} record for ${dnsHostname(record)}, or disable or move ${reservationLabel(reservation)}.`,
         [dnsLabel(record), reservationLabel(reservation)]
       );
-    } else if (facts.leaseByKey.has(key)) {
+    } else if (!canNameProtectedAddress(facts, subnetId, ip)
+        && facts.leaseByKey.has(key)) {
       const lease = facts.leaseByKey.get(key);
       addIssue(
         'competing_dns_and_dynamic_lease', subnetId, ip,
@@ -298,7 +310,7 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
 
   for (const row of facts.ips) {
     const key = identityKey(row.subnet_id, row.ip_address);
-    if (row.status === 'locked'
+    if (row.status === 'locked' && !facts.protectedKind(row.subnet_id, row.ip_address)
         && (facts.dnsByKey.has(key) || facts.reservationByKey.has(key) || facts.leaseByKey.has(key))) {
       const protocolClaims = [
         ...(facts.dnsByKey.get(key) || []).map(dnsLabel),
@@ -416,7 +428,9 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
     const claims = new Set();
     if (facts.protectedKind(subnetId, ip)) claims.add('topology');
     if (row?.status === 'locked' && !facts.protectedKind(subnetId, ip)) claims.add('admin_reservation');
-    if (facts.dnsByKey.has(key)) claims.add('dns');
+    if (facts.dnsByKey.has(key) && !canNameProtectedAddress(facts, subnetId, ip)) {
+      claims.add('dns');
+    }
     if ((facts.dnsByKey.get(key)?.length || 0) > 1) claims.add('duplicate_dns_claim');
     if (facts.reservationByKey.has(key)) claims.add('dhcp_reservation');
     else if (facts.leaseByKey.has(key)) claims.add('dhcp_lease');
@@ -472,8 +486,10 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
       )).length,
       protocol_claims_on_protected_addresses: [...claimKeys].filter(key => {
         const [subnetText, ip] = key.split('|');
-        return facts.protectedKind(Number(subnetText), ip)
-          && (facts.dnsByKey.has(key) || facts.reservationByKey.has(key) || facts.leaseByKey.has(key));
+        const subnetId = Number(subnetText);
+        return facts.protectedKind(subnetId, ip)
+          && ((facts.dnsByKey.has(key) && !canNameProtectedAddress(facts, subnetId, ip))
+            || facts.reservationByKey.has(key) || facts.leaseByKey.has(key));
       }).length,
       locked_addresses_inside_enabled_pool: facts.ips.filter(row => (
         row.status === 'locked' && facts.inEnabledPool(row.subnet_id, row.ip_address)

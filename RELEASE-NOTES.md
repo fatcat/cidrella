@@ -17,10 +17,16 @@ security: false
 ### Breaking changes
 
 This release removes the legacy `ip_addresses.status` field in favor of the
-canonical allocation state and source model. Integrations that depend on the
+new canonical allocation state and source model. Integrations that depend on the
 old field or its status semantics must be updated, and upgrades with ambiguous
 DNS or DHCP claims require operator reconciliation before migration can
 continue.
+
+If your system has a conflict with the new allocation model you will be warned
+during upgrade. The upgrade will not go forward and you will be given a set of
+instructions to reconcile the conflicts. This should be a rare occurrence but
+I was not able to guarantee recent CIDRella versions would completely guard
+against the possibility.
 
 ### New
 
@@ -39,6 +45,10 @@ continue.
   on versions that include lifecycle-report support; an automatic rollback to
   v0.4.17 requires reading the same report from the CLI because that older UI
   predates the download control.
+- Manual A records may name a configured gateway or CIDRella service address
+  without taking ownership of it. The address remains protected as `gateway`
+  or `system`; DHCP reservations and leases on protected addresses are still
+  rejected.
 - Pi-hole import rejects the entire batch when more than one A record targets
   the same canonical IP. The response lists every affected record and explains
   the CNAME remediation, so the source can be corrected and imported later.
