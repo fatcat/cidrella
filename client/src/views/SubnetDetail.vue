@@ -438,6 +438,7 @@ import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import api from '../api/client.js';
 import { ipToLong, longToIp } from '../utils/ip.js';
 import { ipLifecycleDisplay } from '../utils/ipLifecycleDisplay.js';
+import { isImmutableNetworkAddress } from '../utils/rowContextMenu.js';
 import {
   EMPTY_CELL,
   apiError,
@@ -693,8 +694,6 @@ const tableContextIp = ref(null);
 
 function onTableRowContextMenu(event) {
   const row = event.data;
-  // Skip Network/Broadcast
-  if (row.range_type_name === 'Network' || row.range_type_name === 'Broadcast') return;
   tableContextIp.value = row;
   if (tableContextMenuItems.value.length) {
     tableContextMenuRef.value.show(event.originalEvent);
@@ -704,6 +703,9 @@ function onTableRowContextMenu(event) {
 const tableContextMenuItems = computed(() => {
   const row = tableContextIp.value;
   if (!row) return [];
+
+  const infoItem = { label: 'More info', icon: 'pi pi-info-circle', command: () => openHostInfo(row) };
+  if (isImmutableNetworkAddress(row)) return [infoItem];
 
   const range = findRangeForIp(row.ip_address);
   const ip = {
@@ -716,7 +718,7 @@ const tableContextMenuItems = computed(() => {
   };
 
   return [
-    { label: 'More info', icon: 'pi pi-info-circle', command: () => openHostInfo(row) },
+    infoItem,
     ...buildContextMenuItems([ip]),
   ];
 });

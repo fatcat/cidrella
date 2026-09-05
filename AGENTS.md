@@ -36,3 +36,16 @@ suite, `npm run lint`, and `npm run check:db-ownership`.
   `CLAUDE.md`; they apply to all agents despite the filename.
 - The maintainer owns commits, tags, and pushes. Prepare changes but do not
   perform those operations unless explicitly requested.
+
+## SSH from the agent sandbox
+
+The host's `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` is a valid
+root-owned symlink to the root-owned mode `0644` file at
+`/usr/lib/systemd/ssh_config.d/20-systemd-ssh-proxy.conf`. The agent sandbox
+may expose these protected system paths as owned by `nobody:nogroup`, causing
+OpenSSH to report `Bad owner or permissions`.
+
+Do not change the host's ownership or permissions in response to this sandbox
+artifact. Bypass the sandbox-visible global SSH configuration with
+`ssh -F /dev/null` and supply the required identity and connection options
+explicitly.

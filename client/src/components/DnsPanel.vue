@@ -398,6 +398,7 @@ import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';
 import { ipToLong, isValidIpv4 } from '../utils/ip.js';
+import { managedDnsRecordMenuItem } from '../utils/rowContextMenu.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import EmptyState from './EmptyState.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
@@ -651,7 +652,8 @@ const selectedRecord = ref(null);
 const recordContextMenuItems = computed(() => {
   const r = selectedRecord.value;
   if (!r) return [];
-  if (['dns', 'dhcp', 'reservation', 'placeholder'].includes(r.dns_source)) return [];
+  const managedItem = managedDnsRecordMenuItem(r);
+  if (managedItem) return [managedItem];
   return [
     { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
     { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
