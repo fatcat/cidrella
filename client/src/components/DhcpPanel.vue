@@ -130,6 +130,7 @@
                      :sortField="dhcpSortField"
                      :sortOrder="dhcpSortOrder"
                      @sort="onDhcpSort"
+                     @row-dblclick="onLeaseDoubleClick"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <template #empty>
               <EmptyState icon="pi-list" :title="selectedScope ? 'No addresses in this DHCP scope' : 'No DHCP leases or reservations'" />
@@ -252,6 +253,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import { formatDateTime } from '../utils/dateFormat.js';
+import { isEditableDhcpReservation } from '../utils/rowContextMenu.js';
 
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
@@ -476,6 +478,9 @@ function onLeaseRightClick(event) {
   if (leaseContextMenuItems.value.length) {
     leaseContextMenuRef.value.show(event.originalEvent);
   }
+}
+function onLeaseDoubleClick(event) {
+  if (isEditableDhcpReservation(event.data)) openReservationDialog(event.data);
 }
 
 function dhcpMatchSearch(item, query) {

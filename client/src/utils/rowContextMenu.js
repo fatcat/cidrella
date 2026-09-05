@@ -16,6 +16,14 @@ export function managedDnsRecordMenuItem(record) {
   };
 }
 
+export function isEditableDnsRecord(record) {
+  return !!record && !MANAGED_DNS_SOURCE_LABELS[record.dns_source];
+}
+
+export function isEditableDhcpReservation(row) {
+  return row?.dhcp_assignment_type === 'reserved';
+}
+
 export function isImmutableNetworkAddress(row) {
   return row?.range_type_name === 'Network' || row?.range_type_name === 'Broadcast';
 }

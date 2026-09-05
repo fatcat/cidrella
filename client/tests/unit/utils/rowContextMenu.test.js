@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  isEditableDhcpReservation,
+  isEditableDnsRecord,
   isImmutableNetworkAddress,
   managedDnsRecordMenuItem
 } from '../../../src/utils/rowContextMenu.js';
@@ -21,6 +23,18 @@ describe('row context menu policy', () => {
   it('leaves operator-managed DNS rows editable', () => {
     expect(managedDnsRecordMenuItem({ dns_source: 'manual' })).toBeNull();
     expect(managedDnsRecordMenuItem({ dns_source: null })).toBeNull();
+    expect(isEditableDnsRecord({ dns_source: 'manual' })).toBe(true);
+    expect(isEditableDnsRecord({ dns_source: null })).toBe(true);
+  });
+
+  it.each(['dns', 'dhcp', 'reservation', 'placeholder'])('does not double-click edit %s-managed DNS rows', (source) => {
+    expect(isEditableDnsRecord({ dns_source: source })).toBe(false);
+  });
+
+  it('only double-click edits DHCP reservation rows', () => {
+    expect(isEditableDhcpReservation({ dhcp_assignment_type: 'reserved' })).toBe(true);
+    expect(isEditableDhcpReservation({ dhcp_assignment_type: 'dynamic' })).toBe(false);
+    expect(isEditableDhcpReservation({ dhcp_assignment_type: 'available' })).toBe(false);
   });
 
   it('treats only the network and broadcast identities as immutable table rows', () => {

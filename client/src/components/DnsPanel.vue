@@ -163,6 +163,7 @@
                      paginator :rows="dnsRows" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
                      @page="onDnsPage"
+                     @row-dblclick="onRecordDoubleClick"
                      @row-contextmenu="onRecordRightClick"
                      :contextMenu="true">
             <template #empty>
@@ -398,7 +399,7 @@ import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';
 import { ipToLong, isValidIpv4 } from '../utils/ip.js';
-import { managedDnsRecordMenuItem } from '../utils/rowContextMenu.js';
+import { isEditableDnsRecord, managedDnsRecordMenuItem } from '../utils/rowContextMenu.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import EmptyState from './EmptyState.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
@@ -664,6 +665,9 @@ function onRecordRightClick(event) {
   if (recordContextMenuItems.value.length) {
     recordContextMenu.value.show(event.originalEvent);
   }
+}
+function onRecordDoubleClick(event) {
+  if (isEditableDnsRecord(event.data)) openRecordDialog(event.data);
 }
 
 // Delete dialogs
