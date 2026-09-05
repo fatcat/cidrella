@@ -142,8 +142,8 @@ export function syncDhcpDnsRecords(db, leases) {
   const updateSource = db.prepare(`
     UPDATE dns_records SET source = ?, updated_at = datetime('now') WHERE id = ?
   `);
-  const syncPtr = (zone, recordName, ip) => {
-    const result = syncPtrForARecord(db, recordName, ip, zone.name);
+  const syncPtr = (zone, recordName, ip, source) => {
+    const result = syncPtrForARecord(db, recordName, ip, zone.name, { source });
     if (result?.conflict) {
       console.warn(
         `Skipping DHCP PTR sync for ${ip}: ${result.conflict.existing} already owns ${result.conflict.reverseZone}`
@@ -184,13 +184,13 @@ export function syncDhcpDnsRecords(db, leases) {
         }
         activeRecordIds.add(existing.id);
         activeIps.add(l.ip);
-        if (syncPtr(zone, recordName, l.ip)) configChanged = true;
+        if (syncPtr(zone, recordName, l.ip, l.source || 'dhcp')) configChanged = true;
       }
     } else {
       const result = insertDhcp.run(zone.id, recordName, l.ip, l.source || 'dhcp');
       activeRecordIds.add(result.lastInsertRowid);
       activeIps.add(l.ip);
-      syncPtr(zone, recordName, l.ip);
+      syncPtr(zone, recordName, l.ip, l.source || 'dhcp');
       configChanged = true;
     }
   }

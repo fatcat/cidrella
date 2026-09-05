@@ -131,7 +131,7 @@ describe('GET /api/subnets/:id', () => {
 });
 
 describe('POST /api/subnets/:id/configure', () => {
-  it('creates reverse zones without pre-populating empty PTR placeholders', async () => {
+  it('creates an IP-valued PTR placeholder for every usable address', async () => {
     const createRes = await request(app)
       .post('/api/subnets')
       .send({ cidr: '192.168.50.0/24', name: 'Reverse No Placeholders' });
@@ -157,7 +157,11 @@ describe('POST /api/subnets/:id/configure', () => {
       SELECT COUNT(*) AS count FROM dns_records
       WHERE zone_id = ? AND type = 'PTR'
     `).get(zone.id).count;
-    expect(ptrCount).toBe(0);
+    expect(ptrCount).toBe(254);
+    expect(db.prepare(`
+      SELECT value, source FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '33'
+    `).get(zone.id)).toEqual({ value: '192.168.50.33', source: 'placeholder' });
   });
 });
 

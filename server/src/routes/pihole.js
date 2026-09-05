@@ -10,7 +10,13 @@ import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guar
 import { validateDnsmasqConfigValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
 import { canonicalizeIp } from '../utils/address.js';
 import { createReservation } from '../models/dhcp-reservation.js';
-import { importRecords, cnameTargetError, fqdnForRecordName, findAHostnameConflict } from '../models/dns-record.js';
+import {
+  importRecords,
+  cnameTargetError,
+  fqdnForRecordName,
+  findAHostnameConflict,
+  syncPtrForARecord
+} from '../models/dns-record.js';
 
 // How many offending records the human-readable `error` string names before it
 // defers to the structured `problems` array. Enough to fix a typical bad file
@@ -412,6 +418,18 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   const importDnsWorkflow = db.transaction(() => {
     const importResult = importRecords(db, zone, recordsToImport);
     if (zone.enabled) {
+      // Reconcile every A row in the submitted batch, including exact records
+      // that importRecords skipped. Re-importing a valid file must repair a
+      // missing/stale PTR just as creating the record does.
+      for (const record of recordsToImport.filter(item => item.type === 'A')) {
+        const ptrResult = syncPtrForARecord(db, record.name, record.value, zone.name);
+        if (ptrResult?.conflict) {
+          const err = new Error('PTR conflict');
+          err.code = 'PTR_CONFLICT';
+          err.conflict = ptrResult.conflict;
+          throw err;
+        }
+      }
       for (const record of importResult.aRecordsToSync) {
         if (record.previousValue && record.previousValue !== record.value) {
           deallocateStaticDns(db, record.name, record.previousValue, zone.name);
@@ -421,7 +439,18 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     }
     return importResult;
   });
-  const importResult = importDnsWorkflow();
+  let importResult;
+  try {
+    importResult = importDnsWorkflow();
+  } catch (err) {
+    if (err.code === 'PTR_CONFLICT') {
+      return res.status(409).json({
+        error: 'Import rejected, nothing was imported. The PTR for this IP points at a different hostname.',
+        ptr_conflict: err.conflict
+      });
+    }
+    throw err;
+  }
   results.a = {
     created: importResult.results.A.created,
     updated: importResult.results.A.updated,

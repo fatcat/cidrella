@@ -110,11 +110,11 @@ describe('syncDhcpDnsRecords', () => {
     });
 
     const ptr = db.prepare(`
-      SELECT value FROM dns_records
+      SELECT value, source FROM dns_records
       WHERE zone_id = ? AND type = 'PTR' AND name = '50'
     `).get(reverseZoneId);
 
-    expect(ptr.value).toBe('lease-host.example.test');
+    expect(ptr).toEqual({ value: 'lease-host.example.test', source: 'dhcp' });
   });
 
   it('keeps reservation hostname over dynamic lease hostname for the same IP', () => {
@@ -143,11 +143,11 @@ describe('syncDhcpDnsRecords', () => {
     });
 
     const ptr = db.prepare(`
-      SELECT value FROM dns_records
+      SELECT value, source FROM dns_records
       WHERE zone_id = ? AND type = 'PTR' AND name = '51'
     `).get(reverseZoneId);
 
-    expect(ptr.value).toBe('reserved-host.example.test');
+    expect(ptr).toEqual({ value: 'reserved-host.example.test', source: 'reservation' });
   });
 
   it('updates the PTR record when a dynamic lease hostname changes', () => {

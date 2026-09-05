@@ -1,4 +1,5 @@
 import { generateReverseNames } from '../utils/dnsmasq.js';
+import { reconcileManagedReverseDns } from '../models/dns-record.js';
 
 export function ensureForwardZone(db, domainName) {
   if (!domainName) return null;
@@ -23,6 +24,8 @@ export function createReverseZonesForSubnet(db, subnet) {
       `).run(reverseName, `Reverse zone for ${subnet.cidr}`);
     }
   }
+
+  return reconcileManagedReverseDns(db, { subnetIds: [subnet.id] });
 }
 
 export function ensureForwardZoneForDomainChange(db, domainChange) {

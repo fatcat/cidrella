@@ -1,5 +1,6 @@
-import { isValidDomain } from '../utils/ip.js';
+import { isValidDomain, longToIp, parseCidr } from '../utils/ip.js';
 import { activeLeaseSql, infiniteLeaseFirstSql } from '../utils/lease-sql.js';
+import { canonicalHostnameForAllocation } from './ip-lifecycle.js';
 
 function normalizeDnsName(name) {
   return String(name || '').trim().replace(/\.$/, '').toLowerCase();
@@ -274,13 +275,8 @@ export function dnsAssignedHostname(db, ip) {
 }
 
 export function findReversePtrLocation(db, ip, { enabledOnly = false } = {}) {
-  const octets = String(ip || '').split('.');
-  if (octets.length !== 4) return null;
-  const candidates = [
-    { name: `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: octets[3] },
-    { name: `${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}` },
-    { name: `${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}.${octets[1]}` }
-  ];
+  const candidates = reversePtrCandidates(ip);
+  if (candidates.length === 0) return null;
 
   const enabledSql = enabledOnly ? 'AND enabled = 1' : '';
   for (const candidate of candidates) {
@@ -293,7 +289,20 @@ export function findReversePtrLocation(db, ip, { enabledOnly = false } = {}) {
   return null;
 }
 
-export function syncPtrForARecord(db, recordName, ip, forwardZoneName, { force = false } = {}) {
+export function reversePtrCandidates(ip) {
+  const octets = String(ip || '').split('.');
+  if (octets.length !== 4) return [];
+  return [
+    { name: `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: octets[3] },
+    { name: `${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}` },
+    { name: `${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}.${octets[1]}` }
+  ];
+}
+
+export function syncPtrForARecord(db, recordName, ip, forwardZoneName, {
+  force = false,
+  source = 'dns'
+} = {}) {
   const match = findReversePtrLocation(db, ip, { enabledOnly: true });
   if (!match) return { updated: false };
 
@@ -314,34 +323,50 @@ export function syncPtrForARecord(db, recordName, ip, forwardZoneName, { force =
       }
     }
 
-    db.prepare("UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(fqdn, existing.id);
+    if (existing.value === fqdn && existing.source === source && existing.enabled === 1) {
+      return { updated: false };
+    }
+
+    db.prepare(`
+      UPDATE dns_records SET value = ?, source = ?, enabled = 1,
+        updated_at = datetime('now') WHERE id = ?
+    `).run(fqdn, source, existing.id);
   } else {
     db.prepare(
-      "INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, 'PTR', ?, 1)"
-    ).run(zone.id, ptrName, fqdn);
+      "INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, 'PTR', ?, ?, 1)"
+    ).run(zone.id, ptrName, fqdn, source);
   }
 
   bumpZoneSerial(db, zone.id);
   return { updated: true };
 }
 
-export function setPtrForIp(db, ip, hostname, { enabledOnly = false } = {}) {
+export function setPtrForIp(db, ip, hostname, {
+  enabledOnly = false,
+  source = hostname ? 'manual' : 'placeholder'
+} = {}) {
   const match = findReversePtrLocation(db, ip, { enabledOnly });
   if (!match) return { updated: false };
 
-  const fqdn = String(hostname || '').trim();
+  // An address covered by managed reverse DNS always has a visible row. When
+  // no real DNS/DHCP hostname exists, its canonical IP text is the placeholder.
+  const fqdn = String(hostname || ip).trim();
   const existing = db.prepare(
-    "SELECT id FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?"
+    "SELECT id, value, source, enabled FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?"
   ).get(match.zone.id, match.ptrName);
 
   if (existing) {
-    db.prepare("UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?")
-      .run(fqdn, existing.id);
+    if (existing.value === fqdn && existing.source === source && existing.enabled === 1) {
+      return { updated: false };
+    }
+    db.prepare(`
+      UPDATE dns_records SET value = ?, source = ?, enabled = 1,
+        updated_at = datetime('now') WHERE id = ?
+    `).run(fqdn, source, existing.id);
   } else if (fqdn) {
     db.prepare(
-      "INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, ?, 'PTR', ?, 1)"
-    ).run(match.zone.id, match.ptrName, fqdn);
+      "INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, 'PTR', ?, ?, 1)"
+    ).run(match.zone.id, match.ptrName, fqdn, source);
   } else {
     return { updated: false };
   }
@@ -350,8 +375,213 @@ export function setPtrForIp(db, ip, hostname, { enabledOnly = false } = {}) {
   return { updated: true };
 }
 
+/**
+ * Fill and repair the generated PTR projection for managed IPv4 subnets.
+ *
+ * Real names come from the protocol source selected by allocation_state. A
+ * missing/empty row becomes either that name or the bare-IP placeholder. An
+ * explicit non-placeholder PTR is left alone so this repair cannot erase a
+ * deliberate operator override.
+ */
+export function reconcileManagedReverseDns(db, {
+  subnetIds = null,
+  maxAddressesPerSubnet = 65536
+} = {}) {
+  const idFilter = Array.isArray(subnetIds) && subnetIds.length > 0
+    ? `AND id IN (${subnetIds.map(() => '?').join(',')})`
+    : '';
+  const subnets = db.prepare(`
+    SELECT id, cidr, prefix_length
+    FROM subnets
+    WHERE status = 'allocated' AND has_reverse_dns = 1 ${idFilter}
+    ORDER BY prefix_length DESC, id
+  `).all(...(idFilter ? subnetIds : []));
+  const zones = db.prepare(`
+    SELECT id, name FROM dns_zones
+    WHERE type = 'reverse' AND enabled = 1
+  `).all();
+  const zonesByName = new Map(zones.map(zone => [zone.name, zone]));
+
+  const protocolNames = new Map();
+  const rememberProtocolName = (ip, source, hostname) => {
+    if (!ip || !hostname) return;
+    if (!protocolNames.has(ip)) protocolNames.set(ip, new Map());
+    if (!protocolNames.get(ip).has(source)) {
+      protocolNames.get(ip).set(source, hostname);
+    }
+  };
+  const dhcpFqdn = (hostname, domainName) => domainName
+    ? fqdnForRecordName(hostname, domainName)
+    : normalizeDnsName(hostname);
+
+  for (const record of db.prepare(`
+    SELECT r.value AS ip_address, r.name, r.source, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE r.type = 'A' AND r.enabled = 1
+      AND z.type = 'forward' AND z.enabled = 1
+    ORDER BY r.id
+  `).all()) {
+    const source = ['dhcp', 'reservation'].includes(record.source) ? record.source : 'manual';
+    rememberProtocolName(
+      record.ip_address,
+      source,
+      fqdnForRecordName(record.name, record.zone_name)
+    );
+  }
+  for (const reservation of db.prepare(`
+    SELECT r.ip_address, r.hostname,
+      COALESCE(
+        (SELECT ds.domain_name FROM dhcp_scopes ds
+         WHERE ds.subnet_id = r.subnet_id AND ds.enabled = 1
+           AND ds.domain_name IS NOT NULL AND trim(ds.domain_name) != ''
+         ORDER BY ds.id LIMIT 1),
+        s.domain_name
+      ) AS domain_name
+    FROM dhcp_reservations r
+    JOIN subnets s ON s.id = r.subnet_id
+    WHERE r.enabled = 1 AND r.hostname IS NOT NULL AND trim(r.hostname) != ''
+    ORDER BY r.id
+  `).all()) {
+    rememberProtocolName(
+      reservation.ip_address,
+      'reservation',
+      dhcpFqdn(reservation.hostname, reservation.domain_name)
+    );
+  }
+  for (const lease of db.prepare(`
+    SELECT l.ip_address, l.hostname,
+      COALESCE(
+        (SELECT ds.domain_name FROM dhcp_scopes ds
+         WHERE ds.subnet_id = l.subnet_id AND ds.enabled = 1
+           AND ds.domain_name IS NOT NULL AND trim(ds.domain_name) != ''
+         ORDER BY ds.id LIMIT 1),
+        s.domain_name
+      ) AS domain_name
+    FROM dhcp_leases l
+    JOIN subnets s ON s.id = l.subnet_id
+    WHERE l.hostname IS NOT NULL AND trim(l.hostname) != ''
+      AND ${activeLeaseSql('l')}
+    ORDER BY ${infiniteLeaseFirstSql('l')}, datetime(l.expires_at) DESC, l.id DESC
+  `).all()) {
+    rememberProtocolName(
+      lease.ip_address,
+      'dhcp',
+      dhcpFqdn(lease.hostname, lease.domain_name)
+    );
+  }
+
+  const allocationByIdentity = new Map(db.prepare(`
+    SELECT subnet_id, ip_address, allocation_state FROM ip_addresses
+  `).all().map(row => [`${row.subnet_id}|${row.ip_address}`, row.allocation_state]));
+  const desired = new Map();
+  const skippedSubnets = [];
+
+  for (const subnet of subnets) {
+    const parsed = parseCidr(subnet.cidr);
+    if (parsed.usableCount > maxAddressesPerSubnet) {
+      skippedSubnets.push({ subnet_id: subnet.id, cidr: subnet.cidr, addresses: parsed.usableCount });
+      continue;
+    }
+    const first = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
+    const last = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
+    for (let value = first; value <= last; value++) {
+      const ip = longToIp(value);
+      const candidate = reversePtrCandidates(ip)
+        .find(item => zonesByName.has(item.name));
+      if (!candidate) continue;
+      const zone = zonesByName.get(candidate.name);
+      const key = `${zone.id}|${candidate.ptrName}`;
+      // More-specific subnets were visited first. Do not let an overlapping
+      // parent choose a different canonical allocation source for this PTR.
+      if (desired.has(key)) continue;
+
+      const names = protocolNames.get(ip);
+      const state = allocationByIdentity.get(`${subnet.id}|${ip}`);
+      const canonical = canonicalHostnameForAllocation({
+        allocationState: state,
+        dnsHostname: names?.get('manual') || null,
+        reservationHostname: names?.get('reservation') || null,
+        leaseHostname: names?.get('dhcp') || null
+      });
+      const hostname = canonical.hostname;
+      const source = canonical.source === 'dhcp_reservation'
+        ? 'reservation'
+        : canonical.source === 'dhcp_lease'
+          ? 'dhcp'
+          : canonical.source || 'placeholder';
+
+      desired.set(key, {
+        zoneId: zone.id,
+        ptrName: candidate.ptrName,
+        ip,
+        value: hostname || ip,
+        source
+      });
+    }
+  }
+
+  const zoneIds = [...new Set([...desired.values()].map(row => row.zoneId))];
+  const existing = new Map();
+  if (zoneIds.length > 0) {
+    const rows = db.prepare(`
+      SELECT id, zone_id, name, value, source, enabled FROM dns_records
+      WHERE type = 'PTR' AND zone_id IN (${zoneIds.map(() => '?').join(',')})
+    `).all(...zoneIds);
+    for (const row of rows) existing.set(`${row.zone_id}|${row.name}`, row);
+  }
+
+  const insert = db.prepare(`
+    INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+    VALUES (?, ?, 'PTR', ?, ?, 1)
+  `);
+  const update = db.prepare(`
+    UPDATE dns_records
+    SET value = ?, source = ?, enabled = 1, updated_at = datetime('now')
+    WHERE id = ?
+  `);
+  const touchZone = db.prepare(`
+    UPDATE dns_zones
+    SET soa_serial = soa_serial + 1, updated_at = datetime('now')
+    WHERE id = ?
+  `);
+
+  return db.transaction(() => {
+    let inserted = 0;
+    let updated = 0;
+    const changedZones = new Set();
+    for (const [key, row] of desired) {
+      const current = existing.get(key);
+      if (!current) {
+        insert.run(row.zoneId, row.ptrName, row.value, row.source);
+        inserted++;
+        changedZones.add(row.zoneId);
+        continue;
+      }
+      const currentValue = String(current.value || '').trim();
+      const isPlaceholder = currentValue === '' || /^\d+\.\d+\.\d+\.\d+$/.test(currentValue);
+      const sameValue = currentValue.toLowerCase() === row.value.toLowerCase();
+      const generatedRow = isPlaceholder
+        || ['dns', 'dhcp', 'reservation', 'placeholder'].includes(current.source)
+        || sameValue;
+      if (generatedRow && (!sameValue || current.source !== row.source || current.enabled !== 1)) {
+        update.run(row.value, row.source, current.id);
+        updated++;
+        changedZones.add(row.zoneId);
+      }
+    }
+    for (const zoneId of changedZones) touchZone.run(zoneId);
+    return {
+      inserted,
+      updated,
+      unchanged: desired.size - inserted - updated,
+      skipped_subnets: skippedSubnets
+    };
+  })();
+}
+
 export function clearPtrForIp(db, ip) {
-  return setPtrForIp(db, ip, ip, { enabledOnly: true });
+  return setPtrForIp(db, ip, ip, { enabledOnly: true, source: 'placeholder' });
 }
 
 export function clearPtrForARecord(db, recordName, ip, forwardZoneName) {

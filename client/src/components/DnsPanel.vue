@@ -415,8 +415,10 @@ const toast = useToast();
 const { rows: dnsRows, onPage: onDnsPage } = useRowsPreference('cidrella_dns_table_rows', 100);
 
 function dnsSourceLabel(source) {
+  if (source === 'dns') return 'Static DNS';
   if (source === 'dhcp') return 'DHCP lease';
   if (source === 'reservation') return 'DHCP reservation';
+  if (source === 'placeholder') return 'Placeholder';
   return 'Manual';
 }
 
@@ -457,7 +459,7 @@ const dnsForwardColumns = [
   { key: 'port', header: 'Port', description: 'Service port used by SRV records.', field: 'port', sortable: true, style: 'width: 4rem' },
   { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
   { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
-  { key: 'source', header: 'Source', description: 'How the DNS row was created: manually, from a DHCP lease, or from a DHCP reservation.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
+  { key: 'source', header: 'Source', description: 'How the DNS row was created: manually, from static DNS, from DHCP, or as a generated placeholder.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
   { key: 'online', header: 'Online', description: 'Current liveness state for A records with a known IP address.', field: 'is_online', sortable: true, style: 'width: 5rem' },
 ];
 
@@ -467,8 +469,8 @@ const dnsReverseColumns = [
   { key: 'name', header: 'Name', description: 'PTR record owner name inside the selected reverse zone.', field: 'name', sortable: true, style: 'width: 14rem' },
   { key: 'record_type', header: 'Record Type', description: 'DNS resource record type for the reverse-zone row.', field: 'record_type', sortable: true, style: 'width: 7rem' },
   { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
-  { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
-  { key: 'source', header: 'Source', description: 'How the DNS row was created: manually, from a DHCP lease, or from a DHCP reservation.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
+  { key: 'enabled', header: 'Enabled', description: 'Whether a real PTR hostname is eligible for generated DNS configuration. IP placeholders remain display-only.', field: 'enabled', sortable: true, style: 'width: 5rem' },
+  { key: 'source', header: 'Source', description: 'How the DNS row was created: manually, from static DNS, from DHCP, or as a generated placeholder.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
 ];
 
 const {
@@ -649,7 +651,7 @@ const selectedRecord = ref(null);
 const recordContextMenuItems = computed(() => {
   const r = selectedRecord.value;
   if (!r) return [];
-  if (r.dns_source === 'dhcp' || r.dns_source === 'reservation') return [];
+  if (['dns', 'dhcp', 'reservation', 'placeholder'].includes(r.dns_source)) return [];
   return [
     { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
     { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }

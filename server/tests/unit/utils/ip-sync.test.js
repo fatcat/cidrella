@@ -268,4 +268,35 @@ describe('allocation-owned hostname sync', () => {
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.92');
     expect(row.hostname).toBeNull();
   });
+
+  it('resets the PTR even when cached IP hostname metadata is stale', () => {
+    const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
+    const reverseZone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('1.0.10.in-addr.arpa', 'reverse', 1)").run();
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'static-name', 'A', '10.0.1.93', 'manual', 1)
+    `).run(zone.lastInsertRowid);
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, '93', 'PTR', 'static-name.example.test', 'dns', 1)
+    `).run(reverseZone.lastInsertRowid);
+    IpAddress.upsert(db, subnetId, '10.0.1.93', {
+      allocation_state: 'static_dns',
+      hostname: 'stale.example.test',
+      detection_source: 'dns'
+    });
+
+    db.prepare("DELETE FROM dns_records WHERE zone_id = ? AND name = 'static-name'")
+      .run(zone.lastInsertRowid);
+    clearDnsFromIp(db, 'static-name', '10.0.1.93', 'example.test');
+
+    expect(db.prepare(`
+      SELECT value, source FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '93'
+    `).get(reverseZone.lastInsertRowid)).toEqual({
+      value: '10.0.1.93',
+      source: 'placeholder'
+    });
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.93').hostname).toBeNull();
+  });
 });

@@ -65,9 +65,34 @@ Terminology:
 - `online_status`: active/passive liveness state, independent of assignment.
 - `hostname`: one primary hostname for an IP. Additional names should be CNAMEs.
 
-The executable vocabulary and allowed state transitions live in
-`server/src/models/ip-lifecycle.js`. Normalized protocol ownership and topology
-projection are recorded in `docs/adr/001-ip-protocol-table-ownership.md` and
+Allocation authority and naming are separate. A hostname or PTR value must not
+change an address from a protected `system` or `gateway` allocation, and
+allocation precedence must not be reimplemented as hostname precedence.
+For every usable IPv4 address in a managed subnet with reverse DNS enabled,
+reverse-DNS projection provides a PTR row when the subnet has at most 65,536
+usable addresses. Larger reverse zones remain supported without full
+placeholder materialization. The projection uses the canonical real hostname
+supplied by an enabled manual A record, DHCP reservation, or retained
+DHCP-derived DNS record when one exists. Otherwise it uses the canonical IP
+text as the placeholder value. An explicitly operator-created, non-placeholder
+PTR is an override and is not replaced by reconciliation. Generated PTR rows
+carry `dns`, `dhcp`, `reservation`, or `placeholder` provenance so they can
+safely converge when their source changes. Every path that creates, changes,
+removes, imports, migrates, or reconciles one of those facts must converge on
+the same PTR result through the shared DNS/IP lifecycle boundary.
+
+Hostname selection is centralized in `models/ip-lifecycle.js`. A `static_dns`,
+`system`, or `gateway` address takes its name from static DNS. A `static_dhcp`
+address takes its reservation name, and a `dynamic_dhcp` address takes its
+lease name. An address without a protocol-owned allocation may retain learned
+naming metadata during its retirement window; ties resolve as static DNS,
+reservation, then lease. This selection changes naming only and never changes
+`allocation_state`.
+
+The executable vocabulary, allowed state transitions, and canonical hostname
+selector live in `server/src/models/ip-lifecycle.js`. Normalized protocol
+ownership and topology projection are recorded in
+`docs/adr/001-ip-protocol-table-ownership.md` and
 `docs/adr/002-ip-topology-projection.md`.
 
 ## Current Write Owners

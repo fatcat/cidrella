@@ -67,6 +67,17 @@ broadcast address. A configured or learned router address is `gateway`.
 CIDRella's own service addresses are protected system addresses in both
 families.
 
+Reverse DNS is a naming projection, not an allocation claim. Every usable IPv4
+address in a managed subnet with reverse DNS enabled has one visible PTR row
+when the subnet has at most 65,536 usable addresses. Larger reverse zones
+remain supported without full placeholder materialization. The canonical
+hostname selector uses static DNS for `static_dns`, `system`, and `gateway`, a
+reservation name for `static_dhcp`, and a lease name for `dynamic_dhcp`.
+During learned-metadata retention, an address without a protocol-owned
+allocation resolves a naming tie as static DNS, reservation, then lease. With
+no real name, the PTR value is the canonical IP text. This selection never
+changes `allocation_state`.
+
 ## Decisions Required Before Implementation
 
 The following semantics need explicit approval because the 0.4.17 model and the
@@ -388,8 +399,9 @@ After one continuous hour offline:
 
 - Clear `last_seen_at`, observed MAC, dynamic hostname, rogue reason, and other
   address-bound learned metadata.
-- Remove the dynamic hostname and IPv4 or IPv6 PTR generated from the lease or
-  autonomous-address registration.
+- Remove the dynamic hostname generated from the lease or autonomous-address
+  registration. For managed IPv4 reverse DNS, restore the generated PTR to its
+  canonical IP placeholder rather than leaving a missing row.
 - Remove stale dnsmasq lease/sticky association state using a documented,
   testable mechanism.
 - Recompute display status as `DHCP Scope` or `available` for DHCP-managed
@@ -400,8 +412,8 @@ After one continuous hour offline:
 ### Administrative change or deletion
 
 - Rename hostnames immediately in the canonical IP and DNS read models.
-- Delete the old generated A or AAAA record and its PTR record in the same
-  transaction or
+- Delete the old generated A or AAAA record and restore its managed IPv4 PTR to
+  the canonical IP placeholder in the same transaction or
   after-commit unit as the new configuration.
 - Removing static DNS or static DHCP immediately transitions to `unassigned`
   unless another explicitly permitted allocation is created in the same
@@ -757,8 +769,8 @@ At minimum, automated tests must cover the following.
 | Dynamic host offline for 60 minutes | returned to scope, metadata/DNS cleared |
 | Rogue offline for 60 minutes | returned to scope/available, metadata cleared |
 | Static DNS/static DHCP offline indefinitely | last seen preserved |
-| Delete static DNS assignment | immediately unassigned and DNS/PTR removed |
-| Delete static DHCP assignment | immediately unassigned and generated DNS removed |
+| Delete static DNS assignment | immediately unassigned, forward DNS removed, managed IPv4 PTR reset to its IP placeholder |
+| Delete static DHCP assignment | immediately unassigned, generated forward DNS removed, managed IPv4 PTR reset to its IP placeholder |
 | Disable and re-enable configuration | live allocation follows enabled state |
 | Concurrent DNS and DHCP allocation attempts | exactly one commits |
 | Server restart during transition/cleanup | converges without duplicate events |

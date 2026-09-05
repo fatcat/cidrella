@@ -19,7 +19,8 @@ import {
   fqdnForRecordName,
   normalizeRecordNameForZone,
   cnameTargetError,
-  findAHostnameConflict
+  findAHostnameConflict,
+  reconcileManagedReverseDns
 } from '../models/dns-record.js';
 import {
   createZone,
@@ -253,6 +254,7 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     soa_expire,
     soa_minimum_ttl
   }, soaDefaults);
+  if (zone.type === 'reverse' && zone.enabled) reconcileManagedReverseDns(db);
   audit(req.user.id, 'zone_created', 'dns_zone', zone.id, { name, type });
 
   req.afterCommit('regenerate_dns');
@@ -297,6 +299,7 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
     });
     if (zone.name !== result.name || zone.enabled !== result.enabled) {
       reconcileStaticDnsZone(db, zone, result);
+      reconcileManagedReverseDns(db);
     }
     return result;
   });
@@ -324,6 +327,7 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
   db.transaction(() => {
     deleteZone(db, zone);
     reconcileStaticDnsZone(db, zone, null, addressRecords);
+    reconcileManagedReverseDns(db);
   })();
 
   audit(req.user.id, 'zone_deleted', 'dns_zone', zone.id, { name: zone.name });
@@ -486,8 +490,10 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ? AND zone_id = ?').get(req.params.id, zone.id);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  if (record.source === 'dhcp' || record.source === 'reservation') {
-    return res.status(403).json({ error: 'DHCP-managed records cannot be edited manually' });
+  if (['dns', 'dhcp', 'reservation', 'placeholder'].includes(record.source)) {
+    return res.status(403).json({
+      error: 'Generated DNS/PTR records cannot be edited manually; assign the hostname through DNS or DHCP'
+    });
   }
 
   // Type guards for string fields: if the client sent one explicitly but as
@@ -587,8 +593,10 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ? AND zone_id = ?').get(req.params.id, req.params.zoneId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  if (record.source === 'dhcp' || record.source === 'reservation') {
-    return res.status(403).json({ error: 'DHCP-managed records cannot be deleted manually' });
+  if (['dns', 'dhcp', 'reservation', 'placeholder'].includes(record.source)) {
+    return res.status(403).json({
+      error: 'Generated DNS/PTR records cannot be deleted manually; change the DNS or DHCP hostname source, or disable managed reverse DNS'
+    });
   }
 
   // Clear PTR and IP hostname when A record is deleted from a forward zone

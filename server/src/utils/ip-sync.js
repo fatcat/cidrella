@@ -10,6 +10,7 @@ import { activeLeaseSql, infiniteLeaseFirstSql } from './lease-sql.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
 import { setPtrForIp, fqdnForRecordName } from '../models/dns-record.js';
+import { canonicalHostnameForAllocation } from '../models/ip-lifecycle.js';
 
 // Cached leaf subnets, invalidated on subnet CRUD via invalidateSubnetCache()
 let leafSubnetCache = null;
@@ -54,6 +55,13 @@ function nonEmpty(value) {
   return typeof value === 'string' && value.trim() !== '';
 }
 
+function ptrSourceForCanonical(canonical) {
+  if (!canonical?.hostname) return 'placeholder';
+  if (canonical.source === 'dhcp_reservation') return 'reservation';
+  if (canonical.source === 'dhcp_lease') return 'dhcp';
+  return 'dns';
+}
+
 export function resolveCanonicalHostname(db, subnetId, ip) {
   const allocation = db.prepare(`
     SELECT allocation_state
@@ -61,57 +69,46 @@ export function resolveCanonicalHostname(db, subnetId, ip) {
     WHERE subnet_id = ? AND ip_address = ?
   `).get(subnetId, ip)?.allocation_state;
 
-  if (allocation === 'static_dhcp') {
-    const reservation = db.prepare(`
-      SELECT hostname
-      FROM dhcp_reservations
-      WHERE subnet_id = ? AND ip_address = ? AND enabled = 1
-      LIMIT 1
-    `).get(subnetId, ip);
-    return nonEmpty(reservation?.hostname)
-      ? { hostname: reservation.hostname.trim(), source: 'dhcp_reservation' }
-      : { hostname: null, source: null };
-  }
+  const reservation = db.prepare(`
+    SELECT hostname
+    FROM dhcp_reservations
+    WHERE subnet_id = ? AND ip_address = ? AND enabled = 1
+      AND hostname IS NOT NULL AND trim(hostname) != ''
+    LIMIT 1
+  `).get(subnetId, ip);
+  const lease = db.prepare(`
+    SELECT hostname
+    FROM dhcp_leases
+    WHERE subnet_id = ?
+      AND ip_address = ?
+      AND hostname IS NOT NULL
+      AND trim(hostname) != ''
+      AND ${activeLeaseSql()}
+    ORDER BY
+      ${infiniteLeaseFirstSql()},
+      datetime(expires_at) DESC,
+      id DESC
+    LIMIT 1
+  `).get(subnetId, ip);
+  const record = db.prepare(`
+    SELECT r.name, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE r.type = 'A'
+      AND r.enabled = 1
+      AND z.enabled = 1
+      AND z.type = 'forward'
+      AND r.value = ?
+      AND COALESCE(r.source, 'manual') = 'manual'
+    LIMIT 1
+  `).get(ip);
 
-  if (allocation === 'dynamic_dhcp') {
-    const lease = db.prepare(`
-      SELECT hostname
-      FROM dhcp_leases
-      WHERE subnet_id = ?
-        AND ip_address = ?
-        AND hostname IS NOT NULL
-        AND trim(hostname) != ''
-        AND ${activeLeaseSql()}
-      ORDER BY
-        ${infiniteLeaseFirstSql()},
-        datetime(expires_at) DESC,
-        id DESC
-      LIMIT 1
-    `).get(subnetId, ip);
-    return nonEmpty(lease?.hostname)
-      ? { hostname: lease.hostname.trim(), source: 'dhcp_lease' }
-      : { hostname: null, source: null };
-  }
-
-  if (allocation === 'static_dns') {
-    const record = db.prepare(`
-      SELECT r.name, z.name AS zone_name
-      FROM dns_records r
-      JOIN dns_zones z ON z.id = r.zone_id
-      WHERE r.type = 'A'
-        AND r.enabled = 1
-        AND z.enabled = 1
-        AND z.type = 'forward'
-        AND r.value = ?
-        AND COALESCE(r.source, 'manual') = 'manual'
-      LIMIT 1
-    `).get(ip);
-    return record
-      ? { hostname: fqdnForRecordName(record.name, record.zone_name), source: 'dns' }
-      : { hostname: null, source: null };
-  }
-
-  return { hostname: null, source: null };
+  return canonicalHostnameForAllocation({
+    allocationState: allocation,
+    dnsHostname: record ? fqdnForRecordName(record.name, record.zone_name) : null,
+    reservationHostname: nonEmpty(reservation?.hostname) ? reservation.hostname.trim() : null,
+    leaseHostname: nonEmpty(lease?.hostname) ? lease.hostname.trim() : null
+  });
 }
 
 function syncCanonicalHostname(db, subnetId, ip, { clearSource = false } = {}) {
@@ -149,11 +146,21 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
 
   const fqdn = fqdnForRecordName(recordName, zoneName);
   const existing = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+  let canonical;
 
-  if (existing && existing.hostname === fqdn) {
-    syncCanonicalHostname(db, subnet.id, ip, { clearSource: true });
+  if (existing && (existing.hostname === fqdn || existing.allocation_state === 'static_dns')) {
+    canonical = syncCanonicalHostname(db, subnet.id, ip, { clearSource: true });
     IpAddress.emitEvent(db, subnet.id, ip, 'dns_removed', { oldValue: fqdn, source: 'dns' });
+  } else {
+    canonical = resolveCanonicalHostname(db, subnet.id, ip);
   }
+
+  // PTR convergence is unconditional. A stale/mismatched ip_addresses
+  // hostname must not leave the removed A record behind in reverse DNS.
+  setPtrForIp(db, ip, canonical.hostname || ip, {
+    enabledOnly: true,
+    source: ptrSourceForCanonical(canonical)
+  });
 }
 
 /**
@@ -162,9 +169,11 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
  * If the target reverse zone doesn't exist (reverse DNS wasn't created for
  * this subnet), this is a no-op.
  */
-export function syncPtrForIp(db, subnetId, ip, hostname) {
+export function syncPtrForIp(db, subnetId, ip, hostname, { source = null } = {}) {
   void subnetId;
-  return setPtrForIp(db, ip, hostname);
+  return setPtrForIp(db, ip, hostname || ip, {
+    source: source || (hostname ? 'manual' : 'placeholder')
+  });
 }
 
 /**

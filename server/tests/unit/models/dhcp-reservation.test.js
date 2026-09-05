@@ -88,7 +88,7 @@ describe('DHCP reservation ownership', () => {
     expect(oldIp).toBeUndefined();
     expect(newIp.hostname).toBe('host-two');
     expect(newIp.mac_address).toBe('aa:bb:cc:dd:ee:02');
-    expect(ptrValue(ptrZoneId, '25')).toBe('');
+    expect(ptrValue(ptrZoneId, '25')).toBe('10.60.0.25');
     expect(ptrValue(ptrZoneId, '26')).toBe('host-two.reservation.test');
   });
 
@@ -108,7 +108,7 @@ describe('DHCP reservation ownership', () => {
     const ip = db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.25');
     expect(deleted).toBeUndefined();
     expect(ip).toBeUndefined();
-    expect(ptrValue(ptrZoneId, '25')).toBe('');
+    expect(ptrValue(ptrZoneId, '25')).toBe('10.60.0.25');
   });
 
   it('removes and restores allocation authority when disabled and re-enabled', () => {
@@ -129,7 +129,7 @@ describe('DHCP reservation ownership', () => {
     expect(disabled.enabled).toBe(0);
     expect(db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.27'))
       .toBeUndefined();
-    expect(ptrValue(ptrZoneId, '27')).toBe('');
+    expect(ptrValue(ptrZoneId, '27')).toBe('10.60.0.27');
 
     const enabled = DhcpReservation.updateReservation(db, disabled, subnet, {
       mac_address: disabled.mac_address,

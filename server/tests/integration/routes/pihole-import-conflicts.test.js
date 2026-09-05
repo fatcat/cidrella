@@ -168,6 +168,69 @@ describe('#18: duplicate A records inside one import', () => {
 });
 
 describe('Pi-hole import lifecycle ownership', () => {
+  it('rolls back the whole import when an existing PTR names another zone', async () => {
+    db.prepare(`
+      INSERT INTO subnets
+        (cidr, name, prefix_length, network_address, broadcast_address,
+         total_addresses, status, depth, domain_name, has_reverse_dns)
+      VALUES ('10.9.0.0/24', 'import conflict', 24, '10.9.0.0',
+              '10.9.0.255', 256, 'allocated', 0, 'audit.lan', 1)
+    `).run();
+    const reverseZoneId = db.prepare(`
+      INSERT INTO dns_zones (name, type, enabled)
+      VALUES ('0.9.10.in-addr.arpa', 'reverse', 1)
+    `).run().lastInsertRowid;
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, '43', 'PTR', 'legacy.other.test', 'manual', 1)
+    `).run(reverseZoneId);
+    const { invalidateSubnetCache } = await import('../../../src/utils/ip-sync.js');
+    invalidateSubnetCache();
+
+    const res = await post({ hosts: [{ hostname: 'imported', ip: '10.9.0.43' }] });
+
+    expect(res.status).toBe(409);
+    expect(res.body.ptr_conflict).toMatchObject({
+      existing: 'legacy.other.test',
+      proposed: 'imported.audit.lan'
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM dns_records WHERE type = 'A'").get())
+      .toEqual({ count: 0 });
+    expect(db.prepare('SELECT value FROM dns_records WHERE zone_id = ? AND name = ?')
+      .get(reverseZoneId, '43')).toEqual({ value: 'legacy.other.test' });
+  });
+
+  it('promotes the managed PTR placeholder to the imported DNS hostname', async () => {
+    const subnetId = db.prepare(`
+      INSERT INTO subnets
+        (cidr, name, prefix_length, network_address, broadcast_address,
+         total_addresses, status, depth, domain_name, has_reverse_dns)
+      VALUES ('10.9.0.0/24', 'import reverse', 24, '10.9.0.0',
+              '10.9.0.255', 256, 'allocated', 0, 'audit.lan', 1)
+    `).run().lastInsertRowid;
+    const reverseZoneId = db.prepare(`
+      INSERT INTO dns_zones (name, type, enabled)
+      VALUES ('0.9.10.in-addr.arpa', 'reverse', 1)
+    `).run().lastInsertRowid;
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, '42', 'PTR', '10.9.0.42', 'placeholder', 1)
+    `).run(reverseZoneId);
+    const { invalidateSubnetCache } = await import('../../../src/utils/ip-sync.js');
+    invalidateSubnetCache();
+
+    expect((await post({ hosts: [{ hostname: 'imported', ip: '10.9.0.42' }] })).status).toBe(200);
+
+    expect(db.prepare(`
+      SELECT value, source FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '42'
+    `).get(reverseZoneId)).toEqual({ value: 'imported.audit.lan', source: 'dns' });
+    expect(db.prepare(`
+      SELECT allocation_state FROM ip_addresses
+      WHERE subnet_id = ? AND ip_address = '10.9.0.42'
+    `).get(subnetId)).toEqual({ allocation_state: 'static_dns' });
+  });
+
   it('moves allocation authority when an imported A record changes address', async () => {
     const subnetId = db.prepare(`
       INSERT INTO subnets

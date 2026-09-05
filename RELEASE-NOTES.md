@@ -59,6 +59,13 @@ against the possibility.
 - DNS tables show record provenance as Source. They no longer infer IP
   allocation Type from `dns_source`; allocation labels come only from the
   server's canonical lifecycle projection.
+- Managed IPv4 reverse zones now contain one PTR row for every usable address
+  in subnets up to 65,536 usable addresses. Each row shows the canonical DNS or
+  DHCP hostname when one exists and the IP address itself as a generated
+  placeholder otherwise. Startup reconciliation fills gaps left by older
+  releases and repairs stale generated rows without overwriting an
+  operator-created PTR override. Larger reverse zones remain supported without
+  full placeholder materialization.
 - Lifecycle diagnostics are available from localhost deep health and the
   authenticated metrics API, including allocation counts, scope conflicts,
   online rogue hosts, retirement actions, and reconciliation outcome.

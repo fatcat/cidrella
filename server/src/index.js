@@ -23,6 +23,7 @@ process.on('uncaughtException', (err) => {
 
 import { initDb, getDb, getSetting } from './db/init.js';
 import * as Range from './models/range.js';
+import { reconcileManagedReverseDns } from './models/dns-record.js';
 import * as AuditLog from './models/audit-log.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
@@ -107,6 +108,27 @@ async function main() {
 
   // Remove redundant gateway options that should be inherited from subnet
   cleanupRedundantGatewayOptions(getDb());
+
+  // Reverse zones are a complete projection of usable managed addresses. Fill
+  // gaps left by older releases and replace empty/bare-IP placeholders with a
+  // canonical DNS or DHCP hostname when one exists.
+  try {
+    const ptrRepair = reconcileManagedReverseDns(getDb());
+    if (ptrRepair.inserted > 0 || ptrRepair.updated > 0) {
+      console.log(
+        `Reconciled reverse DNS: ${ptrRepair.inserted} PTR row(s) inserted, `
+        + `${ptrRepair.updated} updated`
+      );
+    }
+    for (const skipped of ptrRepair.skipped_subnets) {
+      console.warn(
+        `Reverse DNS placeholder reconciliation skipped ${skipped.cidr}: `
+        + `${skipped.addresses} usable addresses exceeds the 65536-address safety limit`
+      );
+    }
+  } catch (err) {
+    console.warn('Reverse DNS placeholder reconciliation skipped:', err?.message || err);
+  }
 
   // Rewrite GeoIP allowlist entries to canonical CIDR form and collapse
   // same-network duplicates (idempotent; runs before the proxy loads them).

@@ -35,7 +35,9 @@ export function createReservation(db, subnet, fields) {
       hostname: fields.hostname || null,
       mac_address: fields.mac_address
     }, result.lastInsertRowid);
-    syncPtrForIp(db, subnet.id, fields.ip_address, reservationFqdn(fields.hostname, subnet));
+    syncPtrForIp(db, subnet.id, fields.ip_address, reservationFqdn(fields.hostname, subnet), {
+      source: fields.hostname ? 'reservation' : 'placeholder'
+    });
 
     return result.lastInsertRowid;
   });
@@ -60,7 +62,7 @@ export function updateReservation(db, reservation, subnet, fields) {
 
     if (fields.ip_address !== reservation.ip_address) {
       deallocateStaticDhcp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
-      syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '');
+      syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '', { source: 'placeholder' });
     }
 
     const newHostname = fields.hostname !== undefined ? (fields.hostname || null) : reservation.hostname;
@@ -70,10 +72,12 @@ export function updateReservation(db, reservation, subnet, fields) {
         hostname: newHostname,
         mac_address: fields.mac_address
       }, reservation.id);
-      syncPtrForIp(db, reservation.subnet_id, fields.ip_address, reservationFqdn(newHostname, subnet));
+      syncPtrForIp(db, reservation.subnet_id, fields.ip_address, reservationFqdn(newHostname, subnet), {
+        source: newHostname ? 'reservation' : 'placeholder'
+      });
     } else {
       deallocateStaticDhcp(db, reservation.subnet_id, fields.ip_address, fields.mac_address);
-      syncPtrForIp(db, reservation.subnet_id, fields.ip_address, '');
+      syncPtrForIp(db, reservation.subnet_id, fields.ip_address, '', { source: 'placeholder' });
     }
   });
 
@@ -85,7 +89,7 @@ export function deleteReservation(db, reservation) {
   const del = db.transaction(() => {
     db.prepare('DELETE FROM dhcp_reservations WHERE id = ?').run(reservation.id);
     deallocateStaticDhcp(db, reservation.subnet_id, reservation.ip_address, reservation.mac_address);
-    syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '');
+    syncPtrForIp(db, reservation.subnet_id, reservation.ip_address, '', { source: 'placeholder' });
   });
 
   del();

@@ -332,6 +332,27 @@ describe('C2/H2: DNS record config injection', () => {
     expect(res.status).toBe(201);
   });
 
+  it('refuses manual edits and deletion of generated PTR placeholders', async () => {
+    const db = getDb();
+    const recordId = db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, '8', 'PTR', '10.88.99.8', 'placeholder', 1)
+    `).run(revZone.id).lastInsertRowid;
+
+    const edit = await request(app)
+      .put(`/api/dns/zones/${revZone.id}/records/${recordId}`)
+      .send({ value: 'replacement.injtest.example' });
+    const del = await request(app)
+      .delete(`/api/dns/zones/${revZone.id}/records/${recordId}`);
+
+    expect(edit.status).toBe(403);
+    expect(edit.body.error).toMatch(/assign the hostname through DNS or DHCP/i);
+    expect(del.status).toBe(403);
+    expect(del.body.error).toMatch(/disable managed reverse DNS/i);
+    expect(db.prepare('SELECT value FROM dns_records WHERE id = ?').get(recordId))
+      .toEqual({ value: '10.88.99.8' });
+  });
+
   it('accepts a normal TXT record', async () => {
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
       name: 'spf', type: 'TXT', value: 'v=spf1 include:_spf.example.com ~all'
@@ -378,6 +399,43 @@ describe('M9: PTR cross-zone conflict refuses silent overwrite', () => {
       name: 'host2', type: 'A', value: '10.66.77.50', force_ptr: true
     });
     expect(res.status).toBe(201);
+  });
+});
+
+describe('managed PTR projection follows forward-zone state', () => {
+  it('demotes to a placeholder on disable and restores the DNS name on re-enable', async () => {
+    const db = getDb();
+    db.prepare(`
+      INSERT INTO subnets
+        (cidr, name, prefix_length, network_address, broadcast_address,
+         total_addresses, status, depth, domain_name, has_reverse_dns)
+      VALUES ('10.65.44.0/30', 'zone toggle', 30, '10.65.44.0',
+              '10.65.44.3', 4, 'allocated', 0, 'toggle.example', 1)
+    `).run();
+    const reverse = await request(app).post('/api/dns/zones').send({
+      name: '44.65.10.in-addr.arpa', type: 'reverse'
+    });
+    const forward = await request(app).post('/api/dns/zones').send({
+      name: 'toggle.example', type: 'forward'
+    });
+    const created = await request(app)
+      .post(`/api/dns/zones/${forward.body.id}/records`)
+      .send({ name: 'host', type: 'A', value: '10.65.44.1' });
+    expect(created.status).toBe(201);
+
+    const ptr = () => db.prepare(`
+      SELECT value, source FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '1'
+    `).get(reverse.body.id);
+    expect(ptr()).toEqual({ value: 'host.toggle.example', source: 'dns' });
+
+    expect((await request(app).put(`/api/dns/zones/${forward.body.id}`).send({ enabled: false })).status)
+      .toBe(200);
+    expect(ptr()).toEqual({ value: '10.65.44.1', source: 'placeholder' });
+
+    expect((await request(app).put(`/api/dns/zones/${forward.body.id}`).send({ enabled: true })).status)
+      .toBe(200);
+    expect(ptr()).toEqual({ value: 'host.toggle.example', source: 'dns' });
   });
 });
 

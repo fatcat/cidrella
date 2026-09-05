@@ -31,6 +31,92 @@ beforeEach(() => {
 });
 
 describe('PTR record ownership', () => {
+  it('fills missing managed rows and promotes placeholders to canonical protocol names', () => {
+    const subnetId = db.prepare(`
+      INSERT INTO subnets (
+        cidr, name, network_address, broadcast_address, prefix_length,
+        total_addresses, gateway_address, status, domain_name, has_reverse_dns
+      ) VALUES (
+        '10.61.0.0/29', 'ptr-reconcile', '10.61.0.0', '10.61.0.7', 29,
+        8, '10.61.0.1', 'allocated', 'reconcile.test', 1
+      )
+    `).run().lastInsertRowid;
+    const reverseZoneId = createZone('0.61.10.in-addr.arpa');
+    const forwardZoneId = createZone('reconcile.test', 'forward');
+    db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, allocation_state, allocation_source_type)
+      VALUES (?, '10.61.0.2', 'static_dns', 'dns'),
+             (?, '10.61.0.3', 'static_dhcp', 'dhcp_reservation'),
+             (?, '10.61.0.5', 'dynamic_dhcp', 'dhcp_lease')
+    `).run(subnetId, subnetId, subnetId);
+    db.prepare(`
+      INSERT INTO dhcp_reservations
+        (subnet_id, ip_address, mac_address, hostname, enabled)
+      VALUES (?, '10.61.0.3', 'aa:bb:cc:dd:ee:03', 'dhcp-host', 1)
+    `).run(subnetId);
+    db.prepare(`
+      INSERT INTO dhcp_leases
+        (subnet_id, ip_address, mac_address, hostname, expires_at)
+      VALUES (?, '10.61.0.5', 'aa:bb:cc:dd:ee:05', 'lease-host', datetime('now', '+1 hour'))
+    `).run(subnetId);
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'dns-host', 'A', '10.61.0.2', 'manual', 1),
+             (?, '2', 'PTR', '10.61.0.2', 'manual', 1),
+             (?, '4', 'PTR', '', 'manual', 1)
+    `).run(forwardZoneId, reverseZoneId, reverseZoneId);
+
+    const first = DnsRecord.reconcileManagedReverseDns(db);
+    const second = DnsRecord.reconcileManagedReverseDns(db);
+    const ptrs = db.prepare(`
+      SELECT name, value, source FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR'
+      ORDER BY CAST(name AS INTEGER)
+    `).all(reverseZoneId);
+
+    expect(first).toMatchObject({ inserted: 4, updated: 2, unchanged: 0 });
+    expect(second).toMatchObject({ inserted: 0, updated: 0, unchanged: 6 });
+    expect(ptrs).toEqual([
+      { name: '1', value: '10.61.0.1', source: 'placeholder' },
+      { name: '2', value: 'dns-host.reconcile.test', source: 'dns' },
+      { name: '3', value: 'dhcp-host.reconcile.test', source: 'reservation' },
+      { name: '4', value: '10.61.0.4', source: 'placeholder' },
+      { name: '5', value: 'lease-host.reconcile.test', source: 'dhcp' },
+      { name: '6', value: '10.61.0.6', source: 'placeholder' }
+    ]);
+  });
+
+  it('repairs stale generated names but preserves explicit manual PTR overrides', () => {
+    const subnetId = db.prepare(`
+      INSERT INTO subnets (
+        cidr, name, network_address, broadcast_address, prefix_length,
+        total_addresses, status, has_reverse_dns
+      ) VALUES ('10.62.0.0/30', 'ptr-stale', '10.62.0.0', '10.62.0.3', 30, 4, 'allocated', 1)
+    `).run().lastInsertRowid;
+    const reverseZoneId = createZone('0.62.10.in-addr.arpa');
+    db.prepare(`
+      INSERT INTO ip_addresses (subnet_id, ip_address, allocation_state)
+      VALUES (?, '10.62.0.1', 'unassigned'), (?, '10.62.0.2', 'unassigned')
+    `).run(subnetId, subnetId);
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, '1', 'PTR', 'expired.ptr-stale.test', 'dhcp', 1),
+             (?, '2', 'PTR', 'operator.ptr-stale.test', 'manual', 1)
+    `).run(reverseZoneId, reverseZoneId);
+
+    DnsRecord.reconcileManagedReverseDns(db);
+
+    expect(getPtr(reverseZoneId, '1')).toMatchObject({
+      value: '10.62.0.1',
+      source: 'placeholder'
+    });
+    expect(getPtr(reverseZoneId, '2')).toMatchObject({
+      value: 'operator.ptr-stale.test',
+      source: 'manual'
+    });
+  });
+
   it('creates PTR records in the most-specific reverse zone', () => {
     createZone('10.in-addr.arpa');
     const zoneId = createZone('1.0.10.in-addr.arpa');
@@ -50,6 +136,7 @@ describe('PTR record ownership', () => {
     const ptr = getPtr(zoneId, '25');
 
     expect(ptr.value).toBe('10.0.1.25');
+    expect(ptr.source).toBe('placeholder');
   });
 
   it('detects cross-zone PTR conflicts unless forced', () => {

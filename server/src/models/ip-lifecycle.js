@@ -89,3 +89,36 @@ export function displayStatusFor({ allocationState, inDynamicPool = false }) {
   return inDynamicPool ? DISPLAY_STATUS.DHCP_SCOPE : DISPLAY_STATUS.AVAILABLE;
 }
 
+/**
+ * Select the one canonical hostname without changing allocation authority.
+ *
+ * Protected topology addresses may be named by static DNS. Allocations owned
+ * by DNS or DHCP accept only their owning protocol's name. States without a
+ * protocol owner use the available learned name in deterministic order. That
+ * final branch preserves DHCP names during the offline-retention window while
+ * the address itself is already unassigned.
+ */
+export function canonicalHostnameForAllocation({
+  allocationState,
+  dnsHostname = null,
+  reservationHostname = null,
+  leaseHostname = null
+}) {
+  if ([A.STATIC_DNS, A.SYSTEM, A.GATEWAY].includes(allocationState)) {
+    return dnsHostname ? { hostname: dnsHostname, source: S.DNS } : { hostname: null, source: null };
+  }
+  if (allocationState === A.STATIC_DHCP) {
+    return reservationHostname
+      ? { hostname: reservationHostname, source: S.DHCP_RESERVATION }
+      : { hostname: null, source: null };
+  }
+  if (allocationState === A.DYNAMIC_DHCP) {
+    return leaseHostname
+      ? { hostname: leaseHostname, source: S.DHCP_LEASE }
+      : { hostname: null, source: null };
+  }
+  if (dnsHostname) return { hostname: dnsHostname, source: S.DNS };
+  if (reservationHostname) return { hostname: reservationHostname, source: S.DHCP_RESERVATION };
+  if (leaseHostname) return { hostname: leaseHostname, source: S.DHCP_LEASE };
+  return { hostname: null, source: null };
+}
