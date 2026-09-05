@@ -19,15 +19,15 @@ fields produced by `server/src/models/ip-view.js`.
 | `interface_id` | Interface context required for scoped addresses such as IPv6 link-local. | identifier, null |
 | `ip_display_status` | User-facing availability derived by the server. | `available`, `DHCP Scope`, `in use` |
 | `ip_status_severity` | UI severity for `ip_display_status`. | `secondary`, `danger` |
-| `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `reserved DHCP`, `SLAAC`, `rogue`, `system`, `gateway`, `reserved` |
-| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, reservation note |
+| `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `DHCP Reservation`, `SLAAC`, `rogue`, `system`, `gateway`, `IP Reservation` |
+| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, IP Reservation note |
 | `computed_type` | Sort/search alias for `address_type`, or `available`. | same as `address_type`, plus `available` |
 | `is_online` | Current liveness state. | `0`/`1`, boolean in some API rows |
 | `last_seen_at` | Last observation time from scans, DHCP, or passive checks. | datetime/null |
 | `last_scanned_at` | Last active probe time. | datetime/null |
 | `in_dynamic_pool` | Whether the address belongs to an enabled same-family DHCP pool. | `0`/`1` |
 | `has_static_dns` | Whether an enabled manual DNS A or AAAA record backs the IP. | `0`/`1` |
-| `has_dhcp_reservation` | Whether a DHCP reservation backs the IP. | `0`/`1` |
+| `has_dhcp_reservation` | Whether a DHCP Reservation backs the IP. | `0`/`1` |
 | `dhcp_expires_at` | Active dynamic lease expiration. | datetime, `infinite`, null |
 | `dhcp_duid` | DHCPv6 client DUID retained by the lifecycle aggregate. | string/null |
 | `dhcp_iaid` | DHCPv6 identity association identifier retained with the DUID. | string/null |
@@ -59,29 +59,32 @@ DHCP read rows add DHCP-specific fields:
 | --- | --- |
 | `dhcp_assignment_type` | DHCP ownership shape: `dynamic`, `reserved`, or null. |
 | `lease_status` | DHCP lease availability/activity: `active`, `offline`, `available`, or `unavailable`. |
-| `expires_at` | Raw DHCP lease/reservation expiration display value. |
+| `expires_at` | Raw DHCP Lease or DHCP Reservation expiration display value. |
 
 Do not expose or consume bare `type` or `status` for DHCP table rows. Use
 `dhcp_assignment_type` and `lease_status`.
 
 `unavailable` means the address is not assigned by DHCP but is still not safe
-for dynamic lease use, such as a rogue online host, static DNS assignment, or
-reserved/system-owned address inside a DHCP scope.
+for dynamic lease use, such as a rogue online host, static DNS assignment, IP
+Reservation, or system-owned address inside a DHCP scope.
 
 ## IP Allocation Writes
 
-Manual holds use the canonical allocation vocabulary. Reserve or release one
-address with `PUT /api/subnets/:id/ips/:ip/allocation`:
+An IP Reservation is an administrative address hold without a DHCP client
+binding. Create or release one IP Reservation with
+`PUT /api/subnets/:id/ips/:ip/allocation`:
 
 ```json
 { "allocation_state": "reserved", "note": "printer" }
 ```
 
 Release it by sending `{"allocation_state":"unassigned"}`. For a contiguous
-range, use `PUT /api/subnets/:id/ips/bulk-allocation` with `start_ip`, `end_ip`,
-`allocation_state`, and an optional `note`. These endpoints accept only
-`reserved` and `unassigned`; DNS, DHCP, SLAAC, and topology allocations must be
-changed through their owning APIs.
+IP Reservation range, use `PUT /api/subnets/:id/ips/bulk-allocation` with
+`start_ip`, `end_ip`, `allocation_state`, and an optional `note`. These
+endpoints accept only the internal values `reserved` and `unassigned`; DNS,
+DHCP, SLAAC, and topology allocations must be changed through their owning
+APIs. A DHCP Reservation is a static DHCP client-to-address binding and is
+managed through `/api/dhcp/reservations`.
 
 ## DNS Rows
 
@@ -90,7 +93,7 @@ DNS read rows add DNS-specific fields:
 | Field | Meaning |
 | --- | --- |
 | `record_type` | DNS RR type: `A`, `AAAA`, `CNAME`, `PTR`, `MX`, `TXT`, `SRV`. |
-| `dns_source` | DNS row provenance: `manual`, `dns`, `dhcp`, `reservation`, or `placeholder`. Generated PTR rows use the latter four values; an operator-created PTR remains `manual`. |
+| `dns_source` | DNS row provenance: `manual`, `dns`, `dhcp`, `reservation`, or `placeholder`. The internal `reservation` value identifies a generated DHCP Reservation PTR. Generated PTR rows use the latter four values; an operator-created PTR remains `manual`. |
 
 DNS write APIs still accept `type` because the submitted form is a DNS record
 write model. UI read paths should use `record_type` and `dns_source`; form

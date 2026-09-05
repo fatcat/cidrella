@@ -39,7 +39,7 @@ competing authorities for the address's allocation state.
 - Delivering user-visible IPv6 management, DHCPv6, SLAAC, Router Advertisement,
   or Neighbor Discovery features. This plan defines the lifecycle contract they
   will use, while their implementation remains in the IPv6 project.
-- Flattening all DNS records, scopes, reservations, and lease history into one
+- Flattening all DNS records, scopes, DHCP Reservations, and lease history into one
   database row.
 - Replacing dnsmasq.
 - Changing unrelated subnet, DNS, or DHCP features.
@@ -57,6 +57,17 @@ concepts.
 | Address family | The protocol family of the canonical address. | `4`, `6` |
 | Dynamic-pool membership | Whether an address lies inside an enabled DHCPv4 or DHCPv6 dynamic pool. | boolean plus scope identity |
 
+User-facing text uses two exact terms for the otherwise overloaded word
+"reservation":
+
+- An **IP Reservation** is an administrative hold on an address. It has no
+  DHCP client identity and maps to the internal `reserved` allocation state.
+- A **DHCP Reservation** is a static DHCP client-to-address binding. It maps to
+  the internal `static_dhcp` allocation state and a `dhcp_reservations` row.
+
+UI labels, operator guidance, reports, and documentation must use these exact
+terms. Internal schema and API identifiers retain their existing names.
+
 `rogue` is an observed classification, not an allocation mechanism. A rogue is
 an online, unassigned host address. It can still be presented as the address
 type `rogue`, but it must not coexist with a legitimate allocation claim.
@@ -72,9 +83,10 @@ address in a managed subnet with reverse DNS enabled has one visible PTR row
 when the subnet has at most 65,536 usable addresses. Larger reverse zones
 remain supported without full placeholder materialization. The canonical
 hostname selector uses static DNS for `static_dns`, `system`, and `gateway`, a
-reservation name for `static_dhcp`, and a lease name for `dynamic_dhcp`.
+DHCP Reservation name for `static_dhcp`, and a DHCP Lease name for `dynamic_dhcp`.
 During learned-metadata retention, an address without a protocol-owned
-allocation resolves a naming tie as static DNS, reservation, then lease. With
+allocation resolves a naming tie as static DNS, DHCP Reservation, then DHCP
+Lease. With
 no real name, the PTR value is the canonical IP text. This selection never
 changes `allocation_state`.
 
@@ -83,10 +95,11 @@ changes `allocation_state`.
 The following semantics need explicit approval because the 0.4.17 model and the
 desired model use the same words differently.
 
-1. **Reserved versus static DHCP.** This plan treats `reserved` as an inactive
-   administrative hold with no MAC requirement, and `static_dhcp` as an active
-   MAC-to-IP reservation served by DHCP. Activating a reserved address replaces
-   its allocation state with `static_dns` or `static_dhcp`.
+1. **IP Reservation versus DHCP Reservation.** This plan treats `reserved` as
+   an inactive IP Reservation with no MAC requirement, and `static_dhcp` as an
+   active MAC-to-IP DHCP Reservation served by DHCP. Activating an IP
+   Reservation replaces its allocation state with `static_dns` or
+   `static_dhcp`.
 2. **DHCP Scope display precedence.** This plan uses `in use` for every assigned,
    rogue, system, or gateway address. An unassigned address inside an enabled
    DHCP scope displays `DHCP Scope`. An unassigned address outside a scope
@@ -96,7 +109,7 @@ desired model use the same words differently.
    same IP must be supported, the canonical-hostname selection rule must be
    specified instead.
 4. **Disabled configuration.** This plan treats disabled DNS records, DHCP
-   reservations, and DHCP scopes as non-authoritative. They remain stored for
+   Reservations, and DHCP scopes as non-authoritative. They remain stored for
    later re-enablement but do not allocate, protect, or classify an IP.
 5. **Lease history.** This plan keeps historical lease events outside the live
    allocation object. An expired lease is not an allocation claim.
@@ -228,9 +241,10 @@ reconciliation backstops where practical.
    gateway, or other system IPs.
 5. Static DNS A or AAAA allocation cannot use an address inside an enabled
    same-family DHCP dynamic pool.
-6. A reserved address cannot be dynamically leased, even when it lies inside a
+6. An IP Reservation cannot be dynamically leased, even when it lies inside a
    scope.
-7. System and gateway addresses cannot be reserved or allocated through DHCP.
+7. System and gateway addresses cannot become IP Reservations or be allocated
+   through DHCP.
    A manual A or AAAA record may name a configured gateway or CIDRella service
    address, but the record is descriptive and does not replace topology as the
    address's allocation authority. Network, broadcast, and subnet-router
@@ -240,17 +254,17 @@ reconciliation backstops where practical.
 9. An expired or missing dynamic lease immediately ends dynamic allocation.
    SLAAC authority ends when its valid lifetime expires or the address is
    explicitly withdrawn.
-10. Disabled DNS records, reservations, leases, and scopes do not create live
-    claims.
+10. Disabled DNS records, DHCP Reservations, leases, and scopes do not create
+    live claims.
 11. Scope creation, enabling, or resizing must reject conflicts with static DNS
     allocations and protected addresses before dnsmasq configuration changes.
 12. DNS allocation must reject scope membership and any existing incompatible
     allocation before creating the A or AAAA record and its PTR record.
-13. Static DHCP creation must reject every incompatible allocation before
-    creating the reservation and generated DNS records.
-14. Manual reserve/unreserve operations must reject or explicitly transition
-    existing DNS, DHCP, and system allocations. They cannot overwrite only a
-    display field.
+13. DHCP Reservation creation must reject every incompatible allocation before
+    creating the DHCP Reservation and generated DNS records.
+14. Create/release IP Reservation operations must reject or explicitly
+    transition existing DNS, DHCP, and system allocations. They cannot
+    overwrite only a display field.
 15. IPv6 link-local identities require interface/network context and cannot be
     allocated through global DNS or DHCP without an explicit supported use
     case.
@@ -271,10 +285,10 @@ are known.
 | Configured default gateway | `in use` | `gateway` |
 | Static DNS allocation | `in use` | `static DNS` |
 | Active dynamic lease | `in use` | `dynamic DHCP` |
-| Static DHCP allocation | `in use` | `reserved DHCP` |
+| Static DHCP allocation | `in use` | `DHCP Reservation` |
 | SLAAC allocation within its valid lifetime | `in use` | `SLAAC` |
 | Online unassigned host | `in use` | `rogue` |
-| Inactive administrative hold | `in use` | `reserved` |
+| Inactive administrative hold | `in use` | `IP Reservation` |
 | Unassigned address in enabled scope | `DHCP Scope` | empty |
 | Unassigned address outside enabled scope | `available` | empty |
 
@@ -286,7 +300,7 @@ offline retirement window elapses.
 
 ## Lifecycle Transitions
 
-### Administrative reserve
+### Create an IP Reservation
 
 ```text
 unassigned -> reserved
@@ -304,7 +318,7 @@ unassigned|reserved -> static_dns
 ```
 
 - Reject enabled DHCP scope membership.
-- Reject any active DHCP allocation or incompatible reservation.
+- Reject any active DHCP allocation or incompatible DHCP Reservation.
 - Create/update A or AAAA records and the IP allocation atomically.
 - Set the canonical hostname immediately.
 - Do not infer liveness from configuration.
@@ -322,7 +336,7 @@ unassigned|reserved -> static_dhcp
   normally binds a MAC. DHCPv6 can require a DUID/IAID rather than treating a
   MAC as universally authoritative.
 - Reject protected or incompatible allocations.
-- Create/update the DHCP reservation, generated DNS/PTR data, and IP allocation
+- Create/update the DHCP Reservation, generated DNS/PTR data, and IP allocation
   atomically.
 - Do not infer liveness from an infinite lease-file entry.
 
@@ -334,7 +348,7 @@ dynamic_dhcp -> dynamic_dhcp
 ```
 
 - Require the address to be in the serving enabled scope.
-- Reject reserved, static, system, and gateway addresses.
+- Reject IP Reservations, static allocations, system addresses, and gateways.
 - Record MAC, lease hostname, lease status, and expiration.
 - Treat the DHCP request/acknowledgement as passive liveness evidence: set
   online and refresh `last_seen_at`.
@@ -458,7 +472,7 @@ authority remains protected topology.
 ### DHCP tables
 
 - Scopes own DHCP configuration, protocol family, and address-range membership.
-- Reservations own DHCP-specific client identity and configuration for
+- DHCP Reservations own DHCP-specific client identity and configuration for
   `static_dhcp` allocations. A MAC is suitable for DHCPv4. DHCPv6 identity must
   preserve DUID and IAID semantics.
 - Leases record dnsmasq's current DHCPv4 or DHCPv6 lease facts and optional
@@ -494,12 +508,13 @@ Produce counts and detailed reports for:
 
 - IPs with more than one enabled allocation claim.
 - Manual A records inside enabled DHCP scopes.
-- Reservations or leases on system/gateway addresses.
-- Locked addresses inside scopes that dnsmasq can currently lease.
+- DHCP Reservations or leases on system/gateway addresses.
+- Legacy locked addresses, now called IP Reservations, inside scopes that
+  dnsmasq can currently lease.
 - Dynamic leases outside enabled scopes.
 - Disabled records that still look active in `ip_addresses`.
 - `assigned` rows without a backing manual A record.
-- `dhcp` rows without an enabled reservation or active lease.
+- `dhcp` rows without an enabled DHCP Reservation or active lease.
 - Allocated rows still marked rogue.
 - Duplicate IP rows across overlapping subnet ownership.
 - Noncanonical IPv6 spellings and IPv4-mapped duplicates if any phase-0
@@ -507,7 +522,8 @@ Produce counts and detailed reports for:
 - Link-local IPv6 rows lacking interface context.
 - AAAA, DHCPv6, or SLAAC facts that cannot map to one canonical address
   identity once those features exist.
-- Hostname/MAC disagreements among the IP, lease, reservation, and DNS sources.
+- Hostname/MAC disagreements among the IP, DHCP Lease, DHCP Reservation, and
+  DNS sources.
 
 ### Automatic reconciliation
 
@@ -573,7 +589,7 @@ pending, 133 client tests passed, and the commit review found no issues on
 - Add failing tests for every audited discrepancy before changing behavior.
 - Add database fixtures containing each contradictory state.
 - Add clean-install, upgrade, backup/restore, and disabled-record fixtures.
-- Capture dnsmasq output for reserved IPs inside scopes.
+- Capture dnsmasq output for IP Reservations inside scopes.
 - Add family-neutral fixtures for canonical IPv6, link-local scope, mapped IPv4,
   SLAAC lifetimes, DHCPv6 identity, and the absence of IPv6 broadcast.
 
@@ -620,8 +636,8 @@ claim rejection that Phase 5 implements next.
 - Route DNS A-record writes through the lifecycle service.
 - Route future AAAA writes through the same lifecycle service rather than an
   IPv6-specific owner.
-- Route static DHCP reservation writes through it.
-- Route manual reserve/unreserve operations through it.
+- Route DHCP Reservation writes through it.
+- Route create/release IP Reservation operations through it.
 - Route lease ingestion and expiry through it.
 - Define adapters for future DHCPv6 leases, SLAAC lifetimes, Neighbor
   Discovery, and Router Advertisement observations.
@@ -689,7 +705,7 @@ designed on three ambiguous findings across two enabled manual DNS records.
 After preserving those records but disabling their conflicting claims, the
 retry reported no conflicts and upgraded to schema 57. Reconciliation updated
 79 existing addresses and inserted 10 missing protocol/topology identities.
-All 4 subnets, 15 ranges, 3 scopes, 23 reservations, 17 leases, 8 zones, 154
+All 4 subnets, 15 ranges, 3 scopes, 23 DHCP Reservations, 17 leases, 8 zones, 154
 DNS records, and 4,185 lifecycle events were preserved. SQLite integrity,
 foreign keys, allocation-source invariants, generated dnsmasq syntax, and the
 deep health check passed. The generated configuration retains
@@ -730,9 +746,9 @@ schema 58 with SQLite integrity and foreign-key checks clean, no legacy
 `ip_addresses.status` column, no invalid allocation-source rows, and unchanged
 allocation counts. The deep health check passed and the CIDRella, anomaly, and
 dnsmasq services are active. DHCP remains disabled on testerella's only active
-Ethernet interface. Canonical single and bulk reservation mutations queue DHCP
-configuration regeneration after commit, including reservations inside a DHCP
-scope. Local validation passed 981 server tests, 131 client tests, ESLint,
+Ethernet interface. Canonical single and bulk IP Reservation mutations queue
+DHCP configuration regeneration after commit, including IP Reservations inside
+a DHCP scope. Local validation passed 981 server tests, 131 client tests, ESLint,
 database ownership, and the client production build.
 
 - Remove `assigned`, `locked`, and `dhcp` storage semantics after callers move.
@@ -749,16 +765,16 @@ At minimum, automated tests must cover the following.
 
 | Scenario | Expected result |
 | --- | --- |
-| Reserve an available address outside a scope | `reserved`, `in use` |
-| Reserve an available address inside a scope | excluded from dynamic DHCP |
-| Allocate reserved address through DNS outside scope | `static_dns` |
-| Allocate reserved address through static DHCP | `static_dhcp` |
+| Create an IP Reservation outside a scope | `reserved`, `in use` |
+| Create an IP Reservation inside a scope | excluded from dynamic DHCP |
+| Allocate an IP Reservation through DNS outside scope | `static_dns` |
+| Convert an IP Reservation to a DHCP Reservation | `static_dhcp` |
 | Create static DNS inside enabled scope | rejected, no partial record |
 | Create/expand/enable scope over static DNS | rejected, old config retained |
 | Dynamic lease inside enabled scope | `dynamic_dhcp`, online, last seen refreshed |
 | Dynamic lease outside enabled scope | rejected/quarantined and reported |
-| Dynamic lease targets reserved/static/system IP | rejected and conflict recorded |
-| Static DHCP targets network/broadcast/gateway | rejected |
+| Dynamic lease targets an IP Reservation or static/system IP | rejected and conflict recorded |
+| DHCP Reservation targets network/broadcast/gateway | rejected |
 | DNS query from assigned host | liveness updated, allocation unchanged |
 | DNS query from unassigned host | online rogue |
 | DHCP request from assigned client | liveness updated |
@@ -770,7 +786,7 @@ At minimum, automated tests must cover the following.
 | Rogue offline for 60 minutes | returned to scope/available, metadata cleared |
 | Static DNS/static DHCP offline indefinitely | last seen preserved |
 | Delete static DNS assignment | immediately unassigned, forward DNS removed, managed IPv4 PTR reset to its IP placeholder |
-| Delete static DHCP assignment | immediately unassigned, generated forward DNS removed, managed IPv4 PTR reset to its IP placeholder |
+| Delete DHCP Reservation | immediately unassigned, generated forward DNS removed, managed IPv4 PTR reset to its IP placeholder |
 | Disable and re-enable configuration | live allocation follows enabled state |
 | Concurrent DNS and DHCP allocation attempts | exactly one commits |
 | Server restart during transition/cleanup | converges without duplicate events |
@@ -868,7 +884,7 @@ The lifecycle remediation is complete only when:
 - Each address has one allocation state and contradictory writes are rejected.
 - Address identity and ordering are canonical and indexed for both IPv4 and
   IPv6, including link-local context and IPv4-mapped inputs.
-- Reserved addresses inside scopes cannot be dynamically leased.
+- IP Reservations inside scopes cannot be dynamically leased.
 - Static DNS cannot be created inside enabled scopes in either operation order.
 - Dynamic leases cannot exist outside enabled scopes.
 - SLAAC and DHCPv6 have explicit lifetime and client-identity semantics, and

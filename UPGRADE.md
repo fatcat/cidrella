@@ -138,8 +138,9 @@ for claims that cannot be resolved safely.
 
 Startup stops before any schema mutation when the report has
 `"outcome": "blocked"`. Each conflict includes the subnet, canonical IP,
-affected hostnames, records, reservations, leases, or scopes, the reason they
-conflict, and the decision required from the administrator. For example, if
+affected hostnames, DNS records, DHCP Reservations, IP Reservations, DHCP
+Leases, or DHCP Scopes, the reason they conflict, and the decision required
+from the administrator. For example, if
 `printer.example.com` and `cups.example.com` are both A records for
 `192.0.2.20`, the report says to keep one A record and convert the other name
 to a CNAME targeting the retained host.

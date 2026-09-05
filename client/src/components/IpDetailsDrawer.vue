@@ -168,7 +168,7 @@ function eventSeverity(type) {
 function sourceLabel(source) {
   const labels = {
     scanner: 'active scan', passive: 'passive (DNS log)', stale: 'staleness timeout',
-    dns: 'DNS', dhcp_reservation: 'DHCP reservation', dhcp_lease: 'DHCP lease',
+    dns: 'DNS', dhcp_reservation: 'DHCP Reservation', dhcp_lease: 'DHCP Lease',
     manual: 'manual', offline: 'went offline',
   };
   return labels[source] || source || '';

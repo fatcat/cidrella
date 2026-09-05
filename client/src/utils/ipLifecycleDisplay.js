@@ -9,7 +9,7 @@ export const ADDRESS_TYPE_DYNAMIC_DHCP = {
 };
 
 export const ADDRESS_TYPE_RESERVED_DHCP = {
-  label: 'reserved DHCP',
+  label: 'DHCP Reservation',
   className: 'type-reserved-dhcp'
 };
 
@@ -24,7 +24,7 @@ export const ADDRESS_TYPE_GATEWAY = {
 };
 
 export const ADDRESS_TYPE_RESERVED = {
-  label: 'reserved',
+  label: 'IP Reservation',
   className: 'type-reserved'
 };
 

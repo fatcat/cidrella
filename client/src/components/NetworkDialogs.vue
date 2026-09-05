@@ -240,7 +240,7 @@
           </div>
           <div class="preview-item">
             <span class="preview-count">{{ piholePreview.dhcpHosts.length }}</span>
-            <span class="preview-label">DHCP reservations</span>
+            <span class="preview-label">DHCP Reservations</span>
           </div>
         </div>
         <small v-if="piholePreview.zoneName" class="muted">Zone: {{ piholePreview.zoneName }}</small>
@@ -1254,7 +1254,7 @@ function lossyReasonLabel(row) {
   return row.reason;
 }
 function lossyCarriesLabel(carries) {
-  if (carries === 'dhcp_reservation') return 'DHCP reservation';
+  if (carries === 'dhcp_reservation') return 'DHCP Reservation';
   if (carries === 'ip_address') return 'IP record';
   if (carries === 'dns_record') return 'DNS A record';
   return carries;
@@ -1293,7 +1293,7 @@ function surfacePoolAdjustments(resp) {
   }
 }
 
-// When divide runs with force_lossy, the server deletes DHCP reservations,
+// When divide runs with force_lossy, the server deletes DHCP Reservations,
 // DNS A records, ip_addresses rows, and dhcp_leases for IPs that landed on
 // new boundaries. Surface the totals so the user knows what was cleaned up.
 function surfaceLossyCleanup(resp) {
@@ -1301,7 +1301,7 @@ function surfaceLossyCleanup(resp) {
   if (!c || !c.ips || c.ips.length === 0) return;
   const r = c.removed || {};
   const parts = [];
-  if (r.reservations) parts.push(`${r.reservations} reservation${r.reservations === 1 ? '' : 's'}`);
+  if (r.reservations) parts.push(`${r.reservations} DHCP Reservation${r.reservations === 1 ? '' : 's'}`);
   if (r.dns_records)  parts.push(`${r.dns_records} DNS A record${r.dns_records === 1 ? '' : 's'}`);
   if (r.leases)       parts.push(`${r.leases} DHCP lease${r.leases === 1 ? '' : 's'}`);
   if (r.ip_addresses) parts.push(`${r.ip_addresses} IP record${r.ip_addresses === 1 ? '' : 's'}`);

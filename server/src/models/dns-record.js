@@ -193,7 +193,7 @@ export function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecor
     LIMIT 1
   `).get(ip);
   if (reservation?.hostname && !hostnameMatches(reservation.hostname, proposed, reservation.domain_name)) {
-    return { hostname: reservation.hostname, source: 'reserved DHCP' };
+    return { hostname: reservation.hostname, source: 'DHCP Reservation' };
   }
 
   const lease = db.prepare(`

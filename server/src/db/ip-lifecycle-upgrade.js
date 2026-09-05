@@ -67,7 +67,7 @@ function dnsLabel(record) {
 function reservationLabel(reservation) {
   const hostname = reservation.hostname ? ` for host ${reservation.hostname}` : '';
   const mac = reservation.mac_address ? `, MAC ${reservation.mac_address}` : '';
-  return `DHCP reservation ${reservation.id}${hostname}${mac}`;
+  return `DHCP Reservation ${reservation.id}${hostname}${mac}`;
 }
 
 function leaseLabel(lease) {
@@ -285,7 +285,7 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
       addIssue(
         'protocol_claim_on_protected_address', lease.subnet_id, lease.ip_address,
         `${leaseLabel(lease)} assigns ${lease.ip_address}, but that IP is the protected ${kind} address on ${subnetLabel(facts.subnetById.get(lease.subnet_id))}.`,
-        `Release ${leaseLabel(lease)}, then correct the DHCP scope or reservation that allowed the protected address.`,
+        `Release ${leaseLabel(lease)}, then correct the DHCP Scope or DHCP Reservation that allowed the protected address.`,
         [leaseLabel(lease), `${kind} address ${lease.ip_address}`]
       );
     }
@@ -319,9 +319,9 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
       ].filter(Boolean);
       addIssue(
         'locked_address_with_protocol_claim', row.subnet_id, row.ip_address,
-        `IP ${row.ip_address} is manually reserved in Networks and is also claimed by ${naturalList(protocolClaims)}.`,
-        `Choose which assignment owns ${row.ip_address}. Release the manual Networks reservation, or disable or remove ${naturalList(protocolClaims)}.`,
-        [`Networks reservation for ${row.ip_address}`, ...protocolClaims]
+        `IP ${row.ip_address} has an IP Reservation in Networks and is also claimed by ${naturalList(protocolClaims)}.`,
+        `Choose which assignment owns ${row.ip_address}. Release the IP Reservation in Networks, or disable or remove ${naturalList(protocolClaims)}.`,
+        [`IP Reservation for ${row.ip_address}`, ...protocolClaims]
       );
     }
     if (isLinkLocalV6(row.ip_address) && !row.interface_id) {

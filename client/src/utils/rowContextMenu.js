@@ -1,7 +1,7 @@
 const MANAGED_DNS_SOURCE_LABELS = Object.freeze({
   dns: 'Managed by forward DNS record',
   dhcp: 'Managed by DHCP lease',
-  reservation: 'Managed by DHCP reservation',
+  reservation: 'Managed by DHCP Reservation',
   placeholder: 'Generated reverse DNS placeholder'
 });
 

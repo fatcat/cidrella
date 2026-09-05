@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-DNS records, DHCP reservations, and leases contain protocol details that do not
+DNS records, DHCP Reservations, and leases contain protocol details that do not
 belong in one wide IP row. Those tables historically also implied allocation
 state, which allowed different views and writers to disagree.
 
@@ -24,4 +24,3 @@ not a second allocation-state authority.
 - Cross-domain changes require one transaction and lifecycle transition.
 - Compatibility projections may expose legacy fields during migration, but no
   writer may use those projections as authority.
-

@@ -7,9 +7,9 @@ import {
 describe('ipLifecycleDisplay', () => {
   const cases = [
     ['static DNS', 'type-static-dns'],
-    ['reserved DHCP', 'type-reserved-dhcp'],
+    ['DHCP Reservation', 'type-reserved-dhcp'],
     ['dynamic DHCP', 'type-dynamic-dhcp'],
-    ['reserved', 'type-reserved'],
+    ['IP Reservation', 'type-reserved'],
     ['system', 'type-system'],
     ['gateway', 'type-gateway'],
     ['SLAAC', 'type-slaac'],

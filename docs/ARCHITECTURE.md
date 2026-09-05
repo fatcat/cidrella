@@ -59,11 +59,16 @@ Terminology:
 - `allocation_state`: the mutually exclusive authority for an address.
 - `ip_display_status`: a derived value of available, DHCP Scope, or in use.
 - `address_type`: how an assigned address was instantiated, such as
-  static DNS, reserved DHCP, dynamic DHCP, or SLAAC. Rogue is a derived
+  static DNS, DHCP Reservation, dynamic DHCP, IP Reservation, or SLAAC. Rogue is a derived
   classification for an online unassigned address. Available addresses should
   not have a type.
 - `online_status`: active/passive liveness state, independent of assignment.
 - `hostname`: one primary hostname for an IP. Additional names should be CNAMEs.
+- `IP Reservation`: an administrative address hold with no DHCP client
+  identity. Its internal allocation state is `reserved`.
+- `DHCP Reservation`: a static DHCP client-to-address binding. Its internal
+  allocation state is `static_dhcp` and its protocol row is stored in
+  `dhcp_reservations`.
 
 Allocation authority and naming are separate. A hostname or PTR value must not
 change an address from a protected `system` or `gateway` allocation, and
@@ -72,7 +77,7 @@ For every usable IPv4 address in a managed subnet with reverse DNS enabled,
 reverse-DNS projection provides a PTR row when the subnet has at most 65,536
 usable addresses. Larger reverse zones remain supported without full
 placeholder materialization. The projection uses the canonical real hostname
-supplied by an enabled manual A record, DHCP reservation, or retained
+supplied by an enabled manual A record, DHCP Reservation, or retained
 DHCP-derived DNS record when one exists. Otherwise it uses the canonical IP
 text as the placeholder value. An explicitly operator-created, non-placeholder
 PTR is an override and is not replaced by reconciliation. Generated PTR rows
@@ -83,11 +88,11 @@ the same PTR result through the shared DNS/IP lifecycle boundary.
 
 Hostname selection is centralized in `models/ip-lifecycle.js`. A `static_dns`,
 `system`, or `gateway` address takes its name from static DNS. A `static_dhcp`
-address takes its reservation name, and a `dynamic_dhcp` address takes its
-lease name. An address without a protocol-owned allocation may retain learned
-naming metadata during its retirement window; ties resolve as static DNS,
-reservation, then lease. This selection changes naming only and never changes
-`allocation_state`.
+address takes its DHCP Reservation name, and a `dynamic_dhcp` address takes its
+DHCP Lease name. An address without a protocol-owned allocation may retain
+learned naming metadata during its retirement window; ties resolve as static
+DNS, DHCP Reservation, then DHCP Lease. This selection changes naming only and
+never changes `allocation_state`.
 
 The executable vocabulary, allowed state transitions, and canonical hostname
 selector live in `server/src/models/ip-lifecycle.js`. Normalized protocol
@@ -110,7 +115,7 @@ remaining consolidation opportunities.
 | DNS records, PTR helpers, SOA bumps, Pi-hole DNS imports | `models/dns-record.js` |
 | DNS zones and zone/subnet domain pointer sync | `models/dns-zone.js` |
 | DHCP scopes and explicit scope options | `models/dhcp-scope.js` |
-| DHCP reservations and reservation IP/PTR sync | `models/dhcp-reservation.js` |
+| DHCP Reservations and DHCP Reservation IP/PTR sync | `models/dhcp-reservation.js` |
 | DHCP lease replacement and DHCP-derived DNS A sync | `models/dhcp-lease.js` |
 | DHCP option defaults/catalog maintenance | `models/dhcp-option.js` |
 | Ranges and range repair | `models/range.js` |

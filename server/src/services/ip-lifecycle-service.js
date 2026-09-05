@@ -284,7 +284,7 @@ export function dhcpLeaseRejectionReason(db, lease) {
     WHERE subnet_id = ? AND ip_address = ? AND enabled = 1
   `).get(lease.subnetId, lease.ip);
   if (reservation && String(reservation.mac_address).toLowerCase() !== String(lease.mac || '').toLowerCase()) {
-    return `DHCP lease ${lease.ip} does not match its static reservation client`;
+    return `DHCP Lease ${lease.ip} does not match its DHCP Reservation client`;
   }
   if (!reservation && !findEnabledScopeForIp(db, lease.subnetId, lease.ip)) {
     return `Dynamic lease ${lease.ip} is outside an enabled DHCP scope`;

@@ -10,7 +10,7 @@ describe('row context menu policy', () => {
   it.each([
     ['dns', 'Managed by forward DNS record'],
     ['dhcp', 'Managed by DHCP lease'],
-    ['reservation', 'Managed by DHCP reservation'],
+    ['reservation', 'Managed by DHCP Reservation'],
     ['placeholder', 'Generated reverse DNS placeholder']
   ])('gives %s-managed DNS rows an explanatory menu item', (source, label) => {
     expect(managedDnsRecordMenuItem({ dns_source: source })).toEqual({
@@ -31,7 +31,7 @@ describe('row context menu policy', () => {
     expect(isEditableDnsRecord({ dns_source: source })).toBe(false);
   });
 
-  it('only double-click edits DHCP reservation rows', () => {
+  it('only double-click edits DHCP Reservation rows', () => {
     expect(isEditableDhcpReservation({ dhcp_assignment_type: 'reserved' })).toBe(true);
     expect(isEditableDhcpReservation({ dhcp_assignment_type: 'dynamic' })).toBe(false);
     expect(isEditableDhcpReservation({ dhcp_assignment_type: 'available' })).toBe(false);

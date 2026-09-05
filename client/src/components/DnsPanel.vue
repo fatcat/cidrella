@@ -419,7 +419,7 @@ const { rows: dnsRows, onPage: onDnsPage } = useRowsPreference('cidrella_dns_tab
 function dnsSourceLabel(source) {
   if (source === 'dns') return 'Static DNS';
   if (source === 'dhcp') return 'DHCP lease';
-  if (source === 'reservation') return 'DHCP reservation';
+  if (source === 'reservation') return 'DHCP Reservation';
   if (source === 'placeholder') return 'Placeholder';
   return 'Manual';
 }
@@ -834,7 +834,7 @@ async function saveRecord() {
     // Warn (but don't block) when an A record points at an IP that sits
     // inside a DHCP dynamic pool. The DHCP server may hand that IP to a
     // different host, breaking the A record until the next renewal. A
-    // reservation would be the right tool if the user wants a stable
+    // DHCP Reservation would be the right tool if the user wants a stable
     // hostname for that MAC.
     if (recordForm.value.type === 'A' && recordForm.value.value) {
       const hit = findDhcpScopeForIp(recordForm.value.value);
@@ -842,7 +842,7 @@ async function saveRecord() {
         toast.add({
           severity: 'warn',
           summary: 'IP is inside a DHCP pool',
-          detail: `${recordForm.value.value} is inside the DHCP range on ${hit.cidr || 'a subnet'} (${hit.scope.start_ip}–${hit.scope.end_ip}). DHCP may reassign this address. Consider a reservation instead.`,
+          detail: `${recordForm.value.value} is inside the DHCP range on ${hit.cidr || 'a subnet'} (${hit.scope.start_ip}–${hit.scope.end_ip}). DHCP may reassign this address. Consider a DHCP Reservation instead.`,
           life: 8000
         });
       }

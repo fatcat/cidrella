@@ -99,7 +99,7 @@ export function syncDhcpDnsRecords(db, leases) {
       WHERE r.enabled = 1 AND r.hostname IS NOT NULL AND r.hostname != ''
     `).all();
   } catch (err) {
-    console.error('Failed to query DHCP reservations for DNS sync:', err.message);
+    console.error('Failed to query DHCP Reservations for DNS sync:', err.message);
     return;
   }
 

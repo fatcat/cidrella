@@ -109,7 +109,7 @@ describe('mutually exclusive DNS and DHCP allocation', () => {
       .toBeUndefined();
   });
 
-  it('rejects DNS over a hostname-less static DHCP reservation', async () => {
+  it('rejects DNS over a hostname-less DHCP Reservation', async () => {
     const subnetId = createSubnet();
     const zoneId = createZone();
     expect((await postReservation(subnetId, '10.120.0.50')).status).toBe(201);

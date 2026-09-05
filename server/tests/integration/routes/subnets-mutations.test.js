@@ -674,7 +674,7 @@ describe('canonical IP allocation endpoints', () => {
     expect(ips.body.ips[0]).toMatchObject({
       allocation_state: 'reserved',
       ip_display_status: 'in use',
-      address_type: 'reserved'
+      address_type: 'IP Reservation'
     });
     expect(ips.body.ips[0]).not.toHaveProperty('status');
 

@@ -248,10 +248,10 @@ const statusStates = [
 const semanticTokens = [
   { label: 'static DNS', token: '--cid-static-dns', addressType: ADDRESS_TYPE_STATIC_DNS },
   { label: 'dynamic DHCP', token: '--cid-dynamic-dhcp', addressType: ADDRESS_TYPE_DYNAMIC_DHCP },
-  { label: 'reserved DHCP', token: '--cid-reserved-dhcp', addressType: ADDRESS_TYPE_RESERVED_DHCP },
+  { label: 'DHCP Reservation', token: '--cid-reserved-dhcp', addressType: ADDRESS_TYPE_RESERVED_DHCP },
   { label: 'system', token: '--cid-system', addressType: ADDRESS_TYPE_SYSTEM },
   { label: 'gateway', token: '--cid-gateway', addressType: ADDRESS_TYPE_GATEWAY },
-  { label: 'reserved', token: '--cid-reserved', addressType: ADDRESS_TYPE_RESERVED },
+  { label: 'IP Reservation', token: '--cid-reserved', addressType: ADDRESS_TYPE_RESERVED },
   { label: 'rogue', token: '--cid-rogue', addressType: ADDRESS_TYPE_ROGUE },
   { label: 'unknown', token: '--cid-status-muted', addressType: ADDRESS_TYPE_UNKNOWN },
   { label: 'Online', token: '--cid-status-ok', status: statusStates[0] },

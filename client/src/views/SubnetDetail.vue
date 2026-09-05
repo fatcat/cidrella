@@ -201,7 +201,7 @@
             </span>
             <span class="legend-item">
               <span class="legend-swatch" style="background: var(--p-violet-500)"></span>
-              Reserved
+              IP Reservation
             </span>
             <span class="legend-item">
               <!-- Rogue is already rendered on the grid as a red outline +
@@ -325,10 +325,10 @@
     <!-- Scope Dialog (shared component) -->
     <ScopeDialog ref="scopeDialogRef" @saved="reloadData" />
 
-    <!-- Reserve IP Dialog -->
-    <Dialog v-model:visible="showReserveDialog" header="Reserve IP Address(es)" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
+    <!-- IP Reservation Dialog -->
+    <Dialog v-model:visible="showReserveDialog" header="Create IP Reservation" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
       <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
-        Reserved IPs are held and cannot be used for DHCP or static assignment.
+        An IP Reservation holds the selected address or range. While it exists, the address is unavailable for DHCP or DNS assignment.
       </p>
       <div class="form-grid">
         <div class="field">
@@ -347,14 +347,14 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
-        <Button label="Reserve" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
+        <Button label="Create IP Reservation" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
       </template>
     </Dialog>
 
-    <!-- Convert to Static DHCP Reservation Dialog -->
-    <Dialog v-model:visible="showStaticDhcpDialog" header="Create Static DHCP Reservation" modal :style="{ width: '28rem' }" data-track="dialog-static-dhcp">
+    <!-- Convert to DHCP Reservation Dialog -->
+    <Dialog v-model:visible="showStaticDhcpDialog" header="Create DHCP Reservation" modal :style="{ width: '28rem' }" data-track="dialog-static-dhcp">
       <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
-        Convert this dynamic DHCP assignment to a static reservation.
+        Convert this dynamic DHCP assignment to a DHCP Reservation.
       </p>
       <div class="form-grid">
         <div class="field">
@@ -377,7 +377,7 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showStaticDhcpDialog = false" />
-        <Button label="Create Reservation" icon="pi pi-check" data-track="btn-create-static-dhcp" @click="confirmStaticDhcp" :disabled="!staticDhcpForm.mac_address" />
+        <Button label="Create DHCP Reservation" icon="pi pi-check" data-track="btn-create-static-dhcp" @click="confirmStaticDhcp" :disabled="!staticDhcpForm.mac_address" />
       </template>
     </Dialog>
 
@@ -451,7 +451,7 @@ const dhcpStore = useDhcpStore();
 const networkTableColumns = [
   { key: 'ip_address', header: 'IP Address', description: 'Address within the selected network.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
   { key: 'status', header: 'Status', description: 'Whether the address is currently in use or available according to CIDRella lifecycle data.', field: 'ip_display_status', sortable: true, style: 'width: 7rem' },
-  { key: 'type', header: 'Type', description: 'How the address is allocated, such as static DNS, dynamic DHCP, reserved DHCP, rogue, gateway, system, or reserved.', field: 'computed_type', sortField: 'computed_type', sortable: true, style: 'width: 9.5rem' },
+  { key: 'type', header: 'Type', description: 'How the address is allocated, such as static DNS, dynamic DHCP, DHCP Reservation, IP Reservation, rogue, gateway, or system.', field: 'computed_type', sortField: 'computed_type', sortable: true, style: 'width: 9.5rem' },
   { key: 'hostname', header: 'Hostname', description: 'Best known hostname from DNS, DHCP, or passive observations.', field: 'hostname', sortable: true, style: 'width: 10rem' },
   { key: 'mac_address', header: 'MAC Address', description: 'Best known hardware address from DHCP or last-seen lifecycle data.', field: 'mac_address', sortField: 'mac_address', sortable: true, style: 'width: 10rem' },
   { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
@@ -475,14 +475,14 @@ const rangeTypes = ref([]);
 const loading = ref(false);
 const saving = ref(false);
 
-// Reserve IP dialog
+// IP Reservation dialog
 const showReserveDialog = ref(false);
 const reserveStartIp = ref('');
 const reserveEndIp = ref('');
 const reserveNote = ref('');
 const reserveScanEnabled = ref(null);
 
-// Convert to Static DHCP Reservation dialog
+// Convert to DHCP Reservation dialog
 const showStaticDhcpDialog = ref(false);
 const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', description: '' });
 const staticDhcpScanEnabled = ref(null);
@@ -663,7 +663,16 @@ const rangeContextMenuRef = ref(null);
 const selectedRange = ref(null);
 const rangeContextMenuItems = computed(() => {
   const r = selectedRange.value;
-  if (!r || !isEditableRange(r)) return [];
+  if (!r) return [];
+  if (r._synthetic) {
+    const plural = r.start_ip === r.end_ip ? '' : 's';
+    return [{
+      label: `Release IP Reservation${plural}`,
+      icon: 'pi pi-unlock',
+      command: () => bulkRelease(r.start_ip, r.end_ip)
+    }];
+  }
+  if (!isEditableRange(r)) return [];
   return [
     { label: r.range_type_name === 'DHCP Scope' ? 'Edit DHCP Scope' : 'Edit Range', icon: 'pi pi-pencil', command: () => r.range_type_name === 'DHCP Scope' ? editDhcpScope(r) : editRange(r) },
     { label: r.range_type_name === 'DHCP Scope' ? 'Delete DHCP Scope' : 'Delete Range', icon: 'pi pi-trash', command: () => confirmDeleteRange(r) }
@@ -713,9 +722,9 @@ const rangeTypeLegend = computed(() => {
 
 // Entries displayed in the Ranges table on the Grid View. System-range rows
 // (Network / Broadcast / Gateway) are hidden, they're implicit for every
-// allocated subnet and add noise. Reserved IPs from `ip_addresses` are injected
+// allocated subnet and add noise. IP Reservations from `ip_addresses` are injected
 // as synthetic rows so users can see which addresses are manually held. We
-// collapse consecutive reserved IPs into a single range (e.g. .5–.7 instead
+// collapse consecutive IP Reservations into a single range (e.g. .5–.7 instead
 // of three separate rows) to keep the table tidy.
 const visibleRanges = computed(() => {
   const filtered = ranges.value.filter(r => {
@@ -723,11 +732,11 @@ const visibleRanges = computed(() => {
     return !['Network', 'Broadcast', 'Gateway'].includes(r.range_type_name);
   });
 
-  // A reserved IP that overlaps a system range (Network / Broadcast / Gateway)
+  // An IP Reservation that overlaps a system range (Network / Broadcast / Gateway)
   // is topology-owned, createSystemRanges writes those rows automatically.
   // The grid-cell coloring already applies this same filter; we mirror it
   // here so the Ranges table doesn't list .0, .255, or the gateway IP as
-  // Reserved. Build a set of system-range IPs for quick lookup.
+  // as an IP Reservation. Build a set of system-range IPs for quick lookup.
   const systemIpLongs = new Set();
   for (const r of ranges.value) {
     if (!r.range_type_is_system) continue;
@@ -737,7 +746,7 @@ const visibleRanges = computed(() => {
     for (let l = s; l <= e; l++) systemIpLongs.add(l);
   }
 
-  // Group reserved IPs into contiguous ranges.
+  // Group IP Reservations into contiguous ranges.
   const reservedIps = (ips.value || [])
     .filter(ip => ip.allocation_state === 'reserved')
     .map(ip => ({ ip, long: ipToLong(ip.ip_address) }))
@@ -756,7 +765,7 @@ const visibleRanges = computed(() => {
     if (noteSet.length) parts.push(noteSet.join('; '));
     reservedRows.push({
       id: `reserved-${run.startLong}`,
-      range_type_name: 'Reserved',
+      range_type_name: 'IP Reservation',
       range_type_color: 'var(--p-violet-500)',
       range_type_is_system: 0,
       start_ip: run.startIp,
@@ -1076,29 +1085,29 @@ function buildContextMenuItems(selectedIps) {
       });
     }
 
-    // Reserve / Release (not for system ranges)
+    // Create / Release IP Reservation (not for system ranges)
     if (!isSystemReserved(ip)) {
       items.push({ separator: true });
       if (allocationState === 'reserved') {
         items.push({
-          label: 'Release Reservation',
+          label: 'Release IP Reservation',
           icon: 'pi pi-unlock',
           command: () => setIpReservation(ip.address, false)
         });
       } else {
         items.push({
-          label: `Reserve ${ip.address}`,
+          label: `Create IP Reservation for ${ip.address}`,
           icon: 'pi pi-lock',
           command: () => openReserveDialog(ip.address)
         });
       }
     }
 
-    // Convert dynamic DHCP to static reservation
+    // Convert dynamic DHCP to a DHCP Reservation
     if (ip.mac && (allocationState === 'dynamic_dhcp' || isDhcpScope)) {
       items.push({ separator: true });
       items.push({
-        label: 'Make Static DHCP Reservation',
+        label: 'Create DHCP Reservation',
         icon: 'pi pi-arrow-right-arrow-left',
         command: () => openStaticDhcpDialog(ip)
       });
@@ -1124,7 +1133,7 @@ function buildContextMenuItems(selectedIps) {
     items.push({ separator: true });
     items.push({ label: `Probe ${ip.address}`, icon: 'pi pi-wifi', command: () => probeIpNow(ip.address) });
   } else {
-    // Multi-select. Skip system-reserved IPs (network/broadcast/gateway),
+    // Multi-select. Skip system-owned IPs (network/broadcast/gateway),
     // their allocations cannot be changed here. The bulk-allocation
     // endpoint also silently skips them, so this is just UX symmetry.
     const reservable = selectedIps.filter(ip => !isSystemReserved(ip));
@@ -1157,14 +1166,14 @@ function buildContextMenuItems(selectedIps) {
     }
     if (anyUnreserved) {
       items.push({
-        label: `Reserve ${firstIp.address} – ${lastIp.address}`,
+        label: `Create IP Reservations for ${firstIp.address} – ${lastIp.address}`,
         icon: 'pi pi-lock',
         command: () => openReserveDialog(firstIp.address, lastIp.address)
       });
     }
     if (anyReserved) {
       items.push({
-        label: `Release ${firstIp.address} – ${lastIp.address}`,
+        label: `Release IP Reservations for ${firstIp.address} – ${lastIp.address}`,
         icon: 'pi pi-unlock',
         command: () => bulkRelease(firstIp.address, lastIp.address)
       });
@@ -1232,7 +1241,7 @@ async function confirmReserve() {
   } else {
     try {
       const result = await store.bulkSetIpAllocation(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'reserved', note);
-      toast.add({ severity: 'success', summary: `${result.count} IPs reserved`, life: 3000 });
+      toast.add({ severity: 'success', summary: `${result.count} IP Reservation${result.count === 1 ? '' : 's'} created`, life: 3000 });
       await reloadData();
     } catch (err) {
       toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1243,14 +1252,14 @@ async function confirmReserve() {
 async function setIpReservation(ipAddress, reserved, note) {
   try {
     await store.setIpAllocation(subnet.value.id, ipAddress, reserved ? 'reserved' : 'unassigned', note);
-    toast.add({ severity: 'success', summary: reserved ? 'IP reserved' : 'Reservation released', life: 3000 });
+    toast.add({ severity: 'success', summary: reserved ? 'IP Reservation created' : 'IP Reservation released', life: 3000 });
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
-// Release a contiguous reservation range. Topology-owned addresses are
+// Release a contiguous IP Reservation range. Topology-owned addresses are
 // silently skipped by the server.
 async function bulkRelease(startIp, endIp) {
   try {
@@ -1258,7 +1267,7 @@ async function bulkRelease(startIp, endIp) {
     const skipped = result?.skipped ? ` (${result.skipped} skipped)` : '';
     toast.add({
       severity: 'success',
-      summary: `${result.count} reservation${result.count === 1 ? '' : 's'} released${skipped}`,
+      summary: `${result.count} IP Reservation${result.count === 1 ? '' : 's'} released${skipped}`,
       life: 3000
     });
     await reloadData();
@@ -1291,7 +1300,7 @@ async function confirmStaticDhcp() {
       await api.put(`/subnets/${subnet.value.id}/ips/${staticDhcpForm.value.ip_address}/scan-enabled`, { scan_enabled: staticDhcpScanEnabled.value });
     }
     showStaticDhcpDialog.value = false;
-    toast.add({ severity: 'success', summary: 'Static DHCP reservation created', life: 3000 });
+    toast.add({ severity: 'success', summary: 'DHCP Reservation created', life: 3000 });
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });

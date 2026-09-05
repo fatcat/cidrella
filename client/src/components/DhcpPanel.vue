@@ -52,7 +52,7 @@
         <div class="dhcp-toolbar">
           <Button label="Add Scope" icon="pi pi-plus" size="small" text data-track="dhcp-add-scope" @click="openScopeDialog()" />
           <span class="toolbar-divider"></span>
-          <Button label="Add Reservation" icon="pi pi-plus" size="small" text data-track="dhcp-add-reservation" @click="openReservationDialog()" />
+          <Button label="Add DHCP Reservation" icon="pi pi-plus" size="small" text data-track="dhcp-add-reservation" @click="openReservationDialog()" />
           <span class="toolbar-divider"></span>
           <Button label="Sync Now" icon="pi pi-sync" size="small" text data-track="dhcp-sync-leases" @click="doSyncLeases" :loading="syncing" />
         </div>
@@ -133,7 +133,7 @@
                      @row-dblclick="onLeaseDoubleClick"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <template #empty>
-              <EmptyState icon="pi-list" :title="selectedScope ? 'No addresses in this DHCP scope' : 'No DHCP leases or reservations'" />
+              <EmptyState icon="pi-list" :title="selectedScope ? 'No addresses in this DHCP scope' : 'No DHCP Leases or DHCP Reservations'" />
             </template>
             <Column
               v-for="col in visibleDhcpColumns"
@@ -185,8 +185,8 @@
     <!-- Scope Dialog (shared component) -->
     <ScopeDialog ref="scopeDialogRef" @saved="onScopeSaved" />
 
-    <!-- Reservation Dialog -->
-    <Dialog v-model:visible="showReservationDialog" :header="editingReservation ? 'Edit Reservation' : 'Add Reservation'" data-track="dialog-dhcp-reservation"
+    <!-- DHCP Reservation Dialog -->
+    <Dialog v-model:visible="showReservationDialog" :header="editingReservation ? 'Edit DHCP Reservation' : 'Add DHCP Reservation'" data-track="dialog-dhcp-reservation"
             modal :style="{ width: '28rem' }">
       <div class="form-grid">
         <div class="field" v-if="!editingReservation">
@@ -236,9 +236,9 @@
       </template>
     </Dialog>
 
-    <!-- Delete Reservation Dialog -->
-    <Dialog v-model:visible="showDeleteReservationDialog" header="Delete Reservation" modal :style="{ width: '24rem' }" data-track="dialog-dhcp-delete-reservation">
-      <p>Delete reservation for <strong>{{ deletingReservation?.mac_address }}</strong> → {{ deletingReservation?.ip_address }}?</p>
+    <!-- Delete DHCP Reservation Dialog -->
+    <Dialog v-model:visible="showDeleteReservationDialog" header="Delete DHCP Reservation" modal :style="{ width: '24rem' }" data-track="dialog-dhcp-delete-reservation">
+      <p>Delete DHCP Reservation for <strong>{{ deletingReservation?.mac_address }}</strong> → {{ deletingReservation?.ip_address }}?</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteReservationDialog = false" />
         <Button label="Delete" severity="danger" @click="doDeleteReservation" :loading="savingReservation" />
@@ -303,12 +303,12 @@ const dhcpTableColumns = [
   { key: 'ip_address', header: 'IP Address', description: 'The address in the DHCP scope or global lease list.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
   { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
   { key: 'lease', header: 'Lease', description: 'Whether this DHCP scope address is actively leased, available, or inactive.', field: 'lease_status', sortable: true, style: 'width: 6rem' },
-  { key: 'type', header: 'Type', description: 'How the IP is instantiated, such as dynamic DHCP, reserved DHCP, static DNS, or rogue.', field: 'dhcp_assignment_type', sortField: 'computed_type', sortable: true, style: 'width: 9rem' },
-  { key: 'hostname', header: 'Hostname', description: 'Hostname supplied by the lease or reservation, shown relative to the subnet domain when possible.', field: 'hostname', sortable: true, style: 'width: 10rem' },
-  { key: 'mac_address', header: 'MAC Address', description: 'Client hardware address associated with the lease or reservation.', field: 'mac_address', sortable: true, style: 'width: 10rem' },
+  { key: 'type', header: 'Type', description: 'How the IP is instantiated, such as dynamic DHCP, DHCP Reservation, static DNS, or rogue.', field: 'dhcp_assignment_type', sortField: 'computed_type', sortable: true, style: 'width: 9rem' },
+  { key: 'hostname', header: 'Hostname', description: 'Hostname supplied by the DHCP Lease or DHCP Reservation, shown relative to the subnet domain when possible.', field: 'hostname', sortable: true, style: 'width: 10rem' },
+  { key: 'mac_address', header: 'MAC Address', description: 'Client hardware address associated with the DHCP Lease or DHCP Reservation.', field: 'mac_address', sortable: true, style: 'width: 10rem' },
   { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
   { key: 'network', header: 'Network', description: 'Network or subnet that contains this DHCP address.', field: 'subnet_name', sortField: 'network', sortable: true, style: 'width: 10rem' },
-  { key: 'expires_at', header: 'Expires', description: 'Lease expiration time; reservations do not expire.', field: 'expires_at', sortable: true, style: 'width: 9rem' },
+  { key: 'expires_at', header: 'Expires', description: 'DHCP Lease expiration time. DHCP Reservations do not expire.', field: 'expires_at', sortable: true, style: 'width: 9rem' },
 ];
 
 const {
@@ -329,7 +329,7 @@ const dhcpSortOrder = ref(1);
 const scopeDialogRef = ref(null);
 const savingScope = ref(false);
 
-// Reservation dialog
+// DHCP Reservation dialog
 const showReservationDialog = ref(false);
 const editingReservation = ref(null);
 const savingReservation = ref(false);
@@ -431,12 +431,12 @@ const leaseContextMenuItems = computed(() => {
   const items = [];
   if (r.dhcp_assignment_type === 'reserved') {
     items.push(
-      { label: 'Edit Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
-      { label: 'Delete Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
+      { label: 'Edit DHCP Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
+      { label: 'Delete DHCP Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
     );
   } else if (r.mac_address && r.ip_address) {
     items.push(
-      { label: 'Convert to Reservation', icon: 'pi pi-lock', command: () => convertLeaseToReservation(r) }
+      { label: 'Convert to DHCP Reservation', icon: 'pi pi-lock', command: () => convertLeaseToReservation(r) }
     );
   }
   if (r.ip_address) {
@@ -709,7 +709,7 @@ function reservationFormDefaults(overrides = {}) {
 
 async function loadReservationNetworks() {
   const res = await api.get('/subnets');
-  // Only show subnets that can actually accept a reservation: allocated
+  // Only show subnets that can actually accept a DHCP Reservation: allocated
   // leaves. Non-leaves (divided supernets) and unallocated subnets are
   // refused by the server anyway (R-audit MEDIUM #3), so hiding them
   // keeps the UI honest instead of offering choices the user can't use.
@@ -737,7 +737,7 @@ function convertLeaseToReservation(lease) {
   });
 }
 
-// Reservation CRUD
+// DHCP Reservation CRUD
 async function openReservationDialog(reservation = null, prefill = {}) {
   editingReservation.value = reservation;
   if (reservation) {
@@ -772,13 +772,13 @@ async function saveReservation() {
     if (editingReservation.value) {
       const resId = editingReservation.value.reservation_id || editingReservation.value.id;
       await store.updateReservation(resId, payload);
-      toast.add({ severity: 'success', summary: 'Reservation updated', life: 3000 });
+      toast.add({ severity: 'success', summary: 'DHCP Reservation updated', life: 3000 });
     } else {
       await store.createReservation({
         subnet_id: reservationForm.value.subnet_id,
         ...payload
       });
-      toast.add({ severity: 'success', summary: 'Reservation created', life: 3000 });
+      toast.add({ severity: 'success', summary: 'DHCP Reservation created', life: 3000 });
     }
     showReservationDialog.value = false;
     await reloadSelectedScopeAddresses();
@@ -800,7 +800,7 @@ async function doDeleteReservation() {
     const resId = deletingReservation.value.reservation_id || deletingReservation.value.id;
     await store.deleteReservation(resId);
     showDeleteReservationDialog.value = false;
-    toast.add({ severity: 'success', summary: 'Reservation deleted', life: 3000 });
+    toast.add({ severity: 'success', summary: 'DHCP Reservation deleted', life: 3000 });
     await reloadSelectedScopeAddresses();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });

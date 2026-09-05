@@ -44,7 +44,7 @@ beforeEach(() => {
   db.prepare('DELETE FROM subnets').run();
 });
 
-describe('DHCP reservation ownership', () => {
+describe('DHCP Reservation ownership', () => {
   it('creates reservation rows and syncs IP/PTR state', () => {
     const subnetId = createSubnet();
     const ptrZoneId = createReverseZone();

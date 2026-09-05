@@ -6,10 +6,10 @@ import { addressFamily, canonicalizeIp, sortKey } from '../utils/address.js';
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
   DYNAMIC_DHCP: 'dynamic DHCP',
-  RESERVED_DHCP: 'reserved DHCP',
+  RESERVED_DHCP: 'DHCP Reservation',
   SYSTEM: 'system',
   GATEWAY: 'gateway',
-  RESERVED: 'reserved',
+  RESERVED: 'IP Reservation',
   SLAAC: 'SLAAC',
   QUARANTINED: 'quarantined',
   ROGUE: 'rogue'

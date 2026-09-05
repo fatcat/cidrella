@@ -60,7 +60,7 @@ describe('#18: a conflicting A record is rejected and named', () => {
     expect(res.body.problems[0]).toMatchObject({ type: 'A', name: 'fileserver', value: '10.9.0.5' });
   });
 
-  it('names the DHCP reservation when that is the source of the clash', async () => {
+  it('names the DHCP Reservation when that is the source of the clash', async () => {
     db.prepare("INSERT INTO subnets (cidr, name, prefix_length, network_address, broadcast_address, total_addresses, status, depth, domain_name) VALUES ('10.9.0.0/24','s',24,'10.9.0.0','10.9.0.255',256,'allocated',0,'audit.lan')").run();
     const subnetId = db.prepare("SELECT id FROM subnets WHERE cidr='10.9.0.0/24'").pluck().get();
     db.prepare("INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, enabled) VALUES (?, 'aa:bb:cc:dd:ee:ff', '10.9.0.7', 'printer', 1)").run(subnetId);
@@ -68,7 +68,7 @@ describe('#18: a conflicting A record is rejected and named', () => {
     const res = await post({ hosts: [{ hostname: 'scanner', ip: '10.9.0.7' }] });
     expect(res.status).toBe(400);
     expect(res.body.problems[0].reason).toContain('printer');
-    expect(res.body.problems[0].reason).toContain('reserved DHCP');
+    expect(res.body.problems[0].reason).toContain('DHCP Reservation');
   });
 
   it('allows the SAME name for the address, which is a re-statement not a clash', async () => {
