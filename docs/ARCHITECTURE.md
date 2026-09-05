@@ -49,7 +49,7 @@ Current owners:
   and topology sources.
 - `server/src/models/ip-address.js` is the low-level lifecycle repository. It
   persists canonical rows and events only for the lifecycle service and its
-  temporary `utils/ip-sync.js` compatibility adapter.
+  internal protocol-metadata projection helper.
 - `server/src/models/ip-view.js` owns the canonical IP API/read projection used
   to render assignment status, address type, online state, hostnames, MAC
   details, and range context.

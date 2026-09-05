@@ -8,6 +8,14 @@ import bcrypt from 'bcryptjs';
 import { DEFAULTS } from '../config/defaults.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
 import { backfillCanonicalIpIdentity } from './ip-identity.js';
+import {
+  hasLegacyIpLifecycleTables,
+  inventoryLegacyIpLifecycle,
+  LIFECYCLE_MIGRATION_REPORT,
+  readLifecycleMigrationReport,
+  reconcileMigratedIpLifecycle,
+  writeLifecycleMigrationReport
+} from './ip-lifecycle-upgrade.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS_DIR = path.join(__dirname, 'migrations');
@@ -53,14 +61,76 @@ export async function initDb(dataDir) {
   const dbPath = path.join(dataDir, 'cidrella.db');
   db = new Database(dbPath);
 
-  // Enable WAL mode for better concurrent read performance
-  db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+
+  // Schema 54 is the 0.4.17 baseline. Inventory its lifecycle claims before
+  // any schema or data mutation. Ambiguous claims block with a durable report;
+  // safe stale compatibility state is reconciled after migrations complete.
+  const schemaTable = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'"
+  ).get();
+  const schemaBefore = schemaTable
+    ? (db.prepare('SELECT MAX(version) AS version FROM schema_version').get()?.version ?? 0)
+    : 0;
+  const legacyLifecycleUpgrade = schemaBefore > 0 && schemaBefore < 55
+    && hasLegacyIpLifecycleTables(db);
+  let lifecycleReport = null;
+  if (legacyLifecycleUpgrade) {
+    lifecycleReport = inventoryLegacyIpLifecycle(db);
+    lifecycleReport.schema_before = schemaBefore;
+    lifecycleReport.outcome = lifecycleReport.summary.blocking_conflicts > 0 ? 'blocked' : 'ready';
+    const reportPath = writeLifecycleMigrationReport(dataDir, lifecycleReport);
+    console.log(
+      `IP lifecycle migration inventory: ${lifecycleReport.summary.blocking_conflicts} blocking conflict(s); report ${reportPath}`
+    );
+    if (lifecycleReport.summary.blocking_conflicts > 0) {
+      db.close();
+      db = undefined;
+      throw new Error(
+        `IP lifecycle migration blocked by ${lifecycleReport.summary.blocking_conflicts} ambiguous claim(s). `
+        + `Resolve the entries in ${reportPath} and retry the upgrade.`
+      );
+    }
+  } else if (schemaBefore >= 55) {
+    const priorReport = readLifecycleMigrationReport(dataDir);
+    if (priorReport?.outcome === 'invalid') {
+      db.close();
+      db = undefined;
+      throw new Error(
+        `IP lifecycle migration report ${path.join(dataDir, LIFECYCLE_MIGRATION_REPORT)} `
+        + 'is unreadable. Restore the report or the pre-update database snapshot before retrying.'
+      );
+    }
+    const schemaWasLegacy = Number(priorReport?.schema_before) > 0
+      && Number(priorReport?.schema_before) < 55;
+    if (schemaWasLegacy && ['ready', 'reconciliation_pending'].includes(priorReport.outcome)) {
+      lifecycleReport = priorReport;
+      console.warn('Retrying incomplete IP lifecycle migration reconciliation');
+    }
+  }
+
+  // Enable WAL mode for better concurrent read performance only after the
+  // pre-migration inventory has accepted the database.
+  db.pragma('journal_mode = WAL');
 
   runMigrations();
   const identityBackfill = backfillCanonicalIpIdentity(db);
   if (identityBackfill.conflicts > 0) {
     console.warn(`Found ${identityBackfill.conflicts} canonical IP identity conflict(s) for reconciliation`);
+  }
+  if (lifecycleReport) {
+    lifecycleReport.outcome = 'reconciliation_pending';
+    lifecycleReport.schema_after = db.prepare(
+      'SELECT MAX(version) AS version FROM schema_version'
+    ).get()?.version ?? schemaBefore;
+    writeLifecycleMigrationReport(dataDir, lifecycleReport);
+    const reconciliation = reconcileMigratedIpLifecycle(db);
+    lifecycleReport.outcome = 'complete';
+    lifecycleReport.reconciliation = reconciliation;
+    writeLifecycleMigrationReport(dataDir, lifecycleReport);
+    console.log(
+      `IP lifecycle migration reconciliation complete: ${reconciliation.updated} updated, ${reconciliation.inserted} inserted`
+    );
   }
   await ensureDefaults();
 

@@ -1,8 +1,6 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
-import os from 'os';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import * as IpAddress from '../../../src/models/ip-address.js';
-import { resetLocalAddressCache } from '../../../src/utils/local-addresses.js';
 
 let db;
 let tmpDir;
@@ -35,13 +33,43 @@ beforeEach(() => {
 // ── upsert ──────────────────────────────────────────────
 
 describe('upsert', () => {
+  it('uses interface context only for IPv6 link-local identities', () => {
+    expect(() => IpAddress.upsert(db, subnetId, '2001:db8::10', {
+      interface_id: 'eth0'
+    })).toThrow(/only valid for IPv6 link-local/);
+    expect(() => IpAddress.upsert(db, subnetId, 'fe80::10', {
+      interface_id: '   '
+    })).toThrow(/require interface context/);
+
+    IpAddress.upsert(db, subnetId, 'fe80::10', { interface_id: 'eth0' });
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, 'fe80::10%eth0'))
+      .toMatchObject({ ip_address: 'fe80::10', interface_id: 'eth0' });
+  });
+
+  it('enforces interface scope for direct database writes', () => {
+    const insert = db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, address_family, address_sort_key, interface_id)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+    expect(() => insert.run(subnetId, '2001:db8::11', 6, 'key', 'eth0'))
+      .toThrow(/interface context/);
+    expect(() => insert.run(subnetId, '2001:db8::11', 6, 'key', ''))
+      .toThrow(/interface context/);
+    expect(() => insert.run(subnetId, 'fe80::11', 6, 'key', null))
+      .toThrow(/interface context/);
+    expect(() => insert.run(subnetId, 'fe80::11', 6, 'key', '   '))
+      .toThrow(/interface context/);
+  });
+
   it('inserts a new IP with defaults', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.10', { hostname: 'web1' });
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.10');
 
     expect(row).toBeTruthy();
     expect(row.hostname).toBe('web1');
-    expect(row.status).toBe('available');
+    expect(row.allocation_state).toBe('unassigned');
+    expect(row).not.toHaveProperty('status');
     expect(row.is_rogue).toBe(0);
   });
 
@@ -73,11 +101,11 @@ describe('upsert', () => {
   });
 
   it('skips no-op updates', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.14', { hostname: 'same', status: 'assigned' });
+    IpAddress.upsert(db, subnetId, '10.0.1.14', { hostname: 'same', allocation_state: 'static_dns' });
     const first = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.14');
 
     // Same values, updated_at should not change
-    IpAddress.upsert(db, subnetId, '10.0.1.14', { hostname: 'same', status: 'assigned' });
+    IpAddress.upsert(db, subnetId, '10.0.1.14', { hostname: 'same', allocation_state: 'static_dns' });
     const second = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.14');
 
     expect(second.updated_at).toBe(first.updated_at);
@@ -154,112 +182,48 @@ describe('recordPassiveActivity', () => {
 
     expect(row.is_online).toBe(1);
     expect(row.is_rogue).toBe(1);
-    expect(row.status).toBe('available');
+    expect(row.allocation_state).toBe('unassigned');
     expect(row.rogue_reason).toBe('passive DNS query from unassigned address');
   });
 });
 
-// Regression: an address named by a manual A record is one the operator declared
-// in use. The scanner always honoured that; this path did not, so any host with a
-// DNS name was flagged rogue the moment it sent its first query through the proxy.
-describe('recordPassiveActivity: addresses named in DNS are not rogue', () => {
-  function addForwardARecord(ip, name = 'pve-01', zoneName = 'example.test', source = 'manual') {
-    const zoneId = db.prepare('INSERT INTO dns_zones (name, type, enabled) VALUES (?, ?, 1)')
-      .run(zoneName, 'forward').lastInsertRowid;
-    db.prepare('INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, ?, ?, ?, 1)')
-      .run(zoneId, name, 'A', ip, source);
-    return zoneId;
-  }
+describe('recordPassiveActivity: canonical allocation owns claims', () => {
+  it('keeps an allocated address non-rogue and marks it online', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.30', {
+      allocation_state: 'static_dns',
+      hostname: 'pve-01.example.test'
+    });
 
-  it('creates the row online and named, not rogue, when DNS claims the address', () => {
-    addForwardARecord('10.0.1.30');
     IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.30', { createRogue: true });
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.30');
 
-    expect(row.is_online).toBe(1);
-    expect(row.is_rogue).toBe(0);
-    expect(row.rogue_reason).toBeNull();
-    expect(row.hostname).toBe('pve-01.example.test');
+    expect(row).toMatchObject({ is_online: 1, is_rogue: 0, allocation_state: 'static_dns' });
   });
 
-  it('creates the row even when createRogue is off, so liveness is not lost', () => {
-    addForwardARecord('10.0.1.31', 'nas');
-    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.31', { createRogue: false });
+  it('does not infer allocation from a raw DNS record', () => {
+    const zoneId = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)")
+      .run().lastInsertRowid;
+    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, 'nas', 'A', '10.0.1.31', 'manual', 1)")
+      .run(zoneId);
+
+    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.31', { createRogue: true });
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.31');
 
-    expect(row).toBeTruthy();
-    expect(row.is_online).toBe(1);
-    expect(row.is_rogue).toBe(0);
+    expect(row).toMatchObject({ is_online: 1, is_rogue: 1, allocation_state: 'unassigned' });
   });
 
-  it('clears a stale rogue flag left behind by the old behaviour', () => {
+  it('leaves an existing conflict classification alone', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.32', {
-      is_online: 1,
+      allocation_state: 'static_dns',
       is_rogue: 1,
-      rogue_reason: IpAddress.PASSIVE_ROGUE_REASON,
+      rogue_reason: 'MAC mismatch'
     });
-    addForwardARecord('10.0.1.32', 'printer');
 
     IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.32', { createRogue: true });
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.32');
 
-    expect(row.is_rogue).toBe(0);
-    expect(row.rogue_reason).toBeNull();
-    expect(row.hostname).toBe('printer.example.test');
-  });
-
-  it('leaves a MAC-mismatch rogue alone, a DNS name does not excuse a conflict', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.33', {
-      is_online: 1,
-      is_rogue: 1,
-      rogue_reason: 'MAC mismatch (expected aa:bb:cc:dd:ee:ff, got 11:22:33:44:55:66)',
-    });
-    addForwardARecord('10.0.1.33', 'squatted');
-
-    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.33', { createRogue: true });
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.33');
-
     expect(row.is_rogue).toBe(1);
-    expect(row.rogue_reason).toContain('MAC mismatch');
-  });
-
-  it('still flags an address no DNS record claims', () => {
-    addForwardARecord('10.0.1.34', 'elsewhere');   // a record, but for a different IP
-    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.35', { createRogue: true });
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.35');
-
-    expect(row.is_rogue).toBe(1);
-    expect(row.rogue_reason).toBe(IpAddress.PASSIVE_ROGUE_REASON);
-  });
-
-  it('ignores DHCP-sourced A records, those track a lease not an operator decision', () => {
-    addForwardARecord('10.0.1.36', 'leased', 'example.test', 'dhcp');
-    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.36', { createRogue: true });
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.36');
-
-    expect(row.is_rogue).toBe(1);
-  });
-
-  it('ignores A records in a disabled zone', () => {
-    const zoneId = addForwardARecord('10.0.1.37', 'offzone');
-    db.prepare('UPDATE dns_zones SET enabled = 0 WHERE id = ?').run(zoneId);
-
-    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.37', { createRogue: true });
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.37').is_rogue).toBe(1);
-  });
-
-  it('backfills the hostname so the offline sweep keeps the row', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.38', { is_online: 1 });
-    addForwardARecord('10.0.1.38', 'keepme');
-    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.38', { createRogue: true });
-
-    // Without the hostname, shouldKeepOffline() deletes the row and the next
-    // query recreates it, which is the flap that made these come and go.
-    IpAddress.markOffline(db, subnetId, '10.0.1.38');
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.38');
-
-    expect(row).toBeTruthy();
-    expect(row.hostname).toBe('keepme.example.test');
+    expect(row.rogue_reason).toBe('MAC mismatch');
   });
 });
 
@@ -269,7 +233,7 @@ describe('markOffline', () => {
     IpAddress.markOffline(db, subnetId, '10.0.1.22');
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.22');
 
-    expect(row).toMatchObject({ is_online: 0, is_rogue: 0, rogue_reason: null });
+    expect(row).toMatchObject({ is_online: 0, is_rogue: 0, rogue_reason: 'test' });
     expect(row.last_seen_at).toBeTruthy();
     expect(row.offline_since_at).toBeTruthy();
   });
@@ -281,13 +245,13 @@ describe('markOffline', () => {
 
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
-    expect(row.rogue_reason).toBeNull();
+    expect(row.rogue_reason).toBe('test');
     expect(row.offline_since_at).toBeTruthy();
   });
 
   it('keeps DHCP rows offline even without a hostname', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.24', {
-      status: 'dhcp',
+      allocation_state: 'dynamic_dhcp',
       mac_address: 'aa:bb:cc:dd:ee:24',
       is_online: 1,
       detection_source: 'dhcp_lease'
@@ -298,7 +262,7 @@ describe('markOffline', () => {
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.24');
     expect(row).toBeTruthy();
     expect(row.is_online).toBe(0);
-    expect(row.status).toBe('dhcp');
+    expect(row.allocation_state).toBe('dynamic_dhcp');
   });
 });
 
@@ -346,7 +310,7 @@ describe('bulkMarkStale', () => {
 
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
-    expect(row.rogue_reason).toBeNull();
+    expect(row.rogue_reason).toBe('rogue');
     expect(row.hostname).toBe('db-server');
   });
 
@@ -354,7 +318,7 @@ describe('bulkMarkStale', () => {
     // Holding a lease is not evidence the host is up, and with no scan interval
     // configured nothing else will ever disprove it.
     IpAddress.upsert(db, subnetId, '10.0.1.33', {
-      status: 'dhcp',
+      allocation_state: 'dynamic_dhcp',
       mac_address: 'aa:bb:cc:dd:ee:33',
       is_online: 1,
       detection_source: 'dhcp_lease'
@@ -377,7 +341,7 @@ describe('bulkMarkStale', () => {
     db.prepare('UPDATE subnets SET scan_interval = ? WHERE id = ?').run('30m', subnetId);
     try {
       IpAddress.upsert(db, subnetId, '10.0.1.34', {
-        status: 'dhcp',
+        allocation_state: 'dynamic_dhcp',
         mac_address: 'aa:bb:cc:dd:ee:34',
         is_online: 1,
         detection_source: 'dhcp_lease'
@@ -458,45 +422,16 @@ describe('upsert liveness events', () => {
 // ── isAdminDeclared ──────────────────────────────────────
 
 describe('isAdminDeclared', () => {
-  function addForwardARecord(ip, name = 'declared', zoneName = 'declared.test', source = 'manual') {
-    const zoneId = db.prepare('INSERT INTO dns_zones (name, type, enabled) VALUES (?, ?, 1)')
-      .run(zoneName, 'forward').lastInsertRowid;
-    db.prepare('INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, ?, ?, ?, 1)')
-      .run(zoneId, name, 'A', ip, source);
-  }
-
-  it('is true for a manual A record', () => {
-    addForwardARecord('10.0.1.40');
-    const row = { subnet_id: subnetId, ip_address: '10.0.1.40', status: 'available' };
-    expect(IpAddress.isAdminDeclared(db, row)).toBe(true);
+  it('recognizes only canonical administrative and static allocations', () => {
+    for (const allocation_state of ['reserved', 'static_dns', 'static_dhcp', 'system', 'gateway']) {
+      expect(IpAddress.isAdminDeclared(db, { allocation_state })).toBe(true);
+    }
   });
 
-  it('is false for a DHCP-synced A record, which is an observation not a declaration', () => {
-    addForwardARecord('10.0.1.41', 'synced', 'synced.test', 'dhcp');
-    const row = { subnet_id: subnetId, ip_address: '10.0.1.41', status: 'available' };
-    expect(IpAddress.isAdminDeclared(db, row)).toBe(false);
-  });
-
-  it('is true for an enabled DHCP reservation and false for a disabled one', () => {
-    db.prepare(`INSERT INTO dhcp_reservations (subnet_id, ip_address, mac_address, hostname, enabled)
-                VALUES (?, '10.0.1.42', 'aa:bb:cc:dd:ee:42', 'kept', 1)`).run(subnetId);
-    db.prepare(`INSERT INTO dhcp_reservations (subnet_id, ip_address, mac_address, hostname, enabled)
-                VALUES (?, '10.0.1.43', 'aa:bb:cc:dd:ee:43', 'off', 0)`).run(subnetId);
-
-    expect(IpAddress.isAdminDeclared(db, { subnet_id: subnetId, ip_address: '10.0.1.42', status: 'dhcp' })).toBe(true);
-    expect(IpAddress.isAdminDeclared(db, { subnet_id: subnetId, ip_address: '10.0.1.43', status: 'dhcp' })).toBe(false);
-  });
-
-  it('is true for locked and assigned, false for a plain dynamic lease row', () => {
-    expect(IpAddress.isAdminDeclared(db, { subnet_id: subnetId, ip_address: '10.0.1.44', status: 'locked' })).toBe(true);
-    expect(IpAddress.isAdminDeclared(db, { subnet_id: subnetId, ip_address: '10.0.1.45', status: 'assigned' })).toBe(true);
-    expect(IpAddress.isAdminDeclared(db, { subnet_id: subnetId, ip_address: '10.0.1.46', status: 'dhcp' })).toBe(false);
-  });
-
-  it('does not treat an active lease as a declaration', () => {
-    db.prepare(`INSERT INTO dhcp_leases (subnet_id, ip_address, mac_address, hostname, expires_at)
-                VALUES (?, '10.0.1.47', 'aa:bb:cc:dd:ee:47', 'leased', 'infinite')`).run(subnetId);
-    expect(IpAddress.isAdminDeclared(db, { subnet_id: subnetId, ip_address: '10.0.1.47', status: 'dhcp' })).toBe(false);
+  it('rejects observed and unassigned canonical allocations', () => {
+    for (const allocation_state of ['unassigned', 'dynamic_dhcp', 'slaac', 'quarantined']) {
+      expect(IpAddress.isAdminDeclared(db, { allocation_state })).toBe(false);
+    }
   });
 });
 
@@ -549,7 +484,7 @@ describe('rogue management', () => {
 
 describe('updateFromScan', () => {
   it('updates existing IP with scan results', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.50', { status: 'assigned', mac_address: 'aa:bb:cc:dd:ee:01' });
+    IpAddress.upsert(db, subnetId, '10.0.1.50', { allocation_state: 'static_dns', mac_address: 'aa:bb:cc:dd:ee:01' });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.50', {
       responded: 1, mac: 'aa:bb:cc:dd:ee:01', isConflict: 0, conflictReason: null
@@ -595,7 +530,7 @@ describe('updateFromScan', () => {
 
   it('marks restored DHCP lease history as rogue when it responds without active backing', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.57', {
-      status: 'dhcp',
+      allocation_state: 'unassigned',
       hostname: 'old-lease',
       mac_address: 'aa:bb:cc:dd:ee:57',
       detection_source: 'dhcp_lease'
@@ -615,7 +550,7 @@ describe('updateFromScan', () => {
 
   it('does not mark active DHCP leases as rogue on conflict re-check', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.58', {
-      status: 'dhcp',
+      allocation_state: 'dynamic_dhcp',
       hostname: 'active-lease',
       mac_address: 'aa:bb:cc:dd:ee:58',
       detection_source: 'dhcp_lease'
@@ -637,14 +572,14 @@ describe('updateFromScan', () => {
     expect(row.rogue_reason).toBeNull();
   });
 
-  it('does not mark IPs with backing static DNS records as rogue when detection_source is stale', () => {
+  it('does not mark canonical static DNS allocations rogue when detection_source is stale', () => {
     const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('stale-source.test', 'forward', 1)").run();
     db.prepare(`
       INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
       VALUES (?, 'testerella', 'A', '10.0.1.59', 'manual', 1)
     `).run(zone.lastInsertRowid);
     IpAddress.upsert(db, subnetId, '10.0.1.59', {
-      status: 'available',
+      allocation_state: 'static_dns',
       hostname: 'testerella.stale-source.test',
       detection_source: 'scanner'
     });
@@ -680,7 +615,7 @@ describe('updateFromScan', () => {
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.53');
     expect(row).toBeTruthy();
-    expect(row.status).toBe('available');
+    expect(row.allocation_state).toBe('unassigned');
     expect(row.is_online).toBe(1);
     expect(row.is_rogue).toBe(1);
     expect(row.rogue_reason).toBe('Rogue device (IP not assigned)');
@@ -713,28 +648,6 @@ describe('updateFromScan', () => {
   });
 });
 
-// ── setStatus ───────────────────────────────────────────
-
-describe('setStatus', () => {
-  it('creates new IP with status and note', () => {
-    IpAddress.setStatus(db, subnetId, '10.0.1.60', 'locked', 'Reserved for gateway');
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.60');
-
-    expect(row.status).toBe('locked');
-    expect(row.reservation_note).toBe('Reserved for gateway');
-    expect(row.detection_source).toBe('manual');
-  });
-
-  it('updates existing IP status', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.61', { status: 'available' });
-    IpAddress.setStatus(db, subnetId, '10.0.1.61', 'locked', 'test');
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.61');
-
-    expect(row.status).toBe('locked');
-    expect(row.reservation_note).toBe('test');
-  });
-});
-
 // ── setScanEnabled ──────────────────────────────────────
 
 describe('setScanEnabled', () => {
@@ -743,7 +656,7 @@ describe('setScanEnabled', () => {
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.70');
 
     expect(row.scan_enabled).toBe(0);
-    expect(row.status).toBe('available');
+    expect(row.allocation_state).toBe('unassigned');
   });
 
   it('updates scan_enabled on existing row', () => {
@@ -809,7 +722,7 @@ describe('rogue device goes offline', () => {
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.82');
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
-    expect(row.rogue_reason).toBeNull();
+    expect(row.rogue_reason).toBe('MAC mismatch');
   });
 
   it('markOffline retains ephemeral rogue metadata until retirement', () => {
@@ -820,13 +733,13 @@ describe('rogue device goes offline', () => {
     IpAddress.markOffline(db, subnetId, '10.0.1.81');
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.81');
-    expect(row).toMatchObject({ is_online: 0, is_rogue: 0, rogue_reason: null });
+    expect(row).toMatchObject({ is_online: 0, is_rogue: 0, rogue_reason: 'MAC mismatch' });
     expect(row.offline_since_at).toBeTruthy();
   });
 
-  it('markOffline keeps persistent rogue (locked status) and clears rogue', () => {
+  it('markOffline keeps persistent reserved rows and clears rogue', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.83', {
-      is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch', status: 'locked'
+      is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch', allocation_state: 'reserved'
     });
 
     IpAddress.markOffline(db, subnetId, '10.0.1.83');
@@ -834,42 +747,6 @@ describe('rogue device goes offline', () => {
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.83');
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
-    expect(row.rogue_reason).toBeNull();
-  });
-});
-
-// The appliance probes and resolves through its own interfaces, so both the
-// scanner and the passive DNS path see its own addresses answering. Neither
-// treated that as a claim, so an interface address without a DNS record was
-// recorded as a rogue device.
-describe('recordPassiveActivity: the appliance own addresses are not rogue', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    resetLocalAddressCache();
-  });
-
-  it('does not create a rogue row for a local address', () => {
-    resetLocalAddressCache();
-    vi.spyOn(os, 'networkInterfaces').mockReturnValue({
-      eth1: [{ address: '10.0.1.99', family: 'IPv4', internal: false }]
-    });
-
-    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.99', { createRogue: true });
-
-    const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.99');
-    expect(row).toBeTruthy();
-    expect(row.is_rogue).toBe(0);
-    expect(row.rogue_reason).toBeNull();
-  });
-
-  it('still creates a rogue row for an address that is not ours', () => {
-    resetLocalAddressCache();
-    vi.spyOn(os, 'networkInterfaces').mockReturnValue({
-      eth1: [{ address: '10.0.1.99', family: 'IPv4', internal: false }]
-    });
-
-    IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.98', { createRogue: true });
-
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.98').is_rogue).toBe(1);
+    expect(row.rogue_reason).toBe('MAC mismatch');
   });
 });

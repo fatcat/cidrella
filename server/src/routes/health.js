@@ -14,6 +14,7 @@ import { countUnacknowledged } from '../models/rogue-dhcp.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getCapabilityWarning, readProcessCapabilities } from '../utils/capabilities.js';
 import { getBootServiceHealth } from '../utils/service-health.js';
+import { getIpLifecycleDiagnostics } from '../utils/ip-lifecycle-diagnostics.js';
 
 const router = Router();
 
@@ -77,15 +78,27 @@ function requireLocalhost(req, res, next) {
 router.get('/deep', requireLocalhost, async (req, res) => {
   const checks = {};
   let allOk = true;
+  let sqliteDb = null;
 
   // SQLite, open + query + schema version
   try {
-    const db = getDb();
-    db.prepare('SELECT 1').get();
-    const row = db.prepare('SELECT MAX(version) AS v FROM schema_version').get();
+    sqliteDb = getDb();
+    sqliteDb.prepare('SELECT 1').get();
+    const row = sqliteDb.prepare('SELECT MAX(version) AS v FROM schema_version').get();
     checks.sqlite = { ok: true, schema_version: row?.v ?? 0 };
   } catch (err) {
     checks.sqlite = { ok: false, error: err.message };
+    allOk = false;
+  }
+
+  try {
+    if (!sqliteDb) throw new Error('Database unavailable');
+    const lifecycle = getIpLifecycleDiagnostics(sqliteDb);
+    const reconciliationOk = lifecycle.reconciliation.failures === 0;
+    checks.ip_lifecycle = { ok: reconciliationOk, ...lifecycle };
+    if (!reconciliationOk) allOk = false;
+  } catch (err) {
+    checks.ip_lifecycle = { ok: false, error: err.message };
     allOk = false;
   }
 
@@ -212,6 +225,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
       lastProbeAt: rogueProbe.lastProbeAt,
       unacknowledged: rogueUnacknowledged,
     },
+    ipLifecycle: getIpLifecycleDiagnostics(db),
     stats,
     timestamp: new Date().toISOString()
   });

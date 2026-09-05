@@ -66,14 +66,13 @@ describe('IP lifecycle service allocation boundary', () => {
   it('owns administrative reserve and release transitions', () => {
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, status, is_rogue, rogue_reason, allocation_state)
-      VALUES (?, '10.99.0.20', 'available', 1, 'observed conflict', 'unassigned')
+        (subnet_id, ip_address, is_rogue, rogue_reason, allocation_state)
+      VALUES (?, '10.99.0.20', 1, 'observed conflict', 'unassigned')
     `).run(subnetId);
     setManualReservation(db, subnetId, '10.99.0.20', true, 'printer hold');
     expect(address('10.99.0.20')).toMatchObject({
       allocation_state: 'reserved',
       allocation_source_type: 'admin_reservation',
-      status: 'locked',
       reservation_note: 'printer hold',
       is_rogue: 0,
       rogue_reason: null
@@ -82,8 +81,7 @@ describe('IP lifecycle service allocation boundary', () => {
     setManualReservation(db, subnetId, '10.99.0.20', false);
     expect(address('10.99.0.20')).toMatchObject({
       allocation_state: 'unassigned',
-      allocation_source_type: null,
-      status: 'available'
+      allocation_source_type: null
     });
   });
 
@@ -345,13 +343,43 @@ describe('one-hour continuous-offline retirement', () => {
     expect(db.prepare('SELECT id FROM dhcp_leases WHERE ip_address = ?').get(lease.ip)).toBeTruthy();
   });
 
+  it('retains rogue evidence for the full offline window', () => {
+    db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, hostname, mac_address, is_online, is_rogue,
+         rogue_reason, detection_source, allocation_state, address_family,
+         address_sort_key, offline_since_at)
+      VALUES (?, '10.99.0.39', 'observed-host', 'aa:bb:cc:dd:ee:39', 0, 0,
+              'Address is not allocated', 'scanner', 'unassigned', 4,
+              '40000000000000000000000000a630027', '2031-05-20T11:00:00.000Z')
+    `).run(subnetId);
+
+    expect(retireStaleDynamicAddresses(db, {
+      now: new Date('2031-05-20T11:59:00.000Z'), releaseLease: vi.fn()
+    }).retired).toBe(0);
+    expect(address('10.99.0.39')).toMatchObject({
+      hostname: 'observed-host',
+      mac_address: 'aa:bb:cc:dd:ee:39',
+      is_rogue: 0,
+      rogue_reason: 'Address is not allocated'
+    });
+
+    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired)
+      .toBe(1);
+    expect(address('10.99.0.39')).toMatchObject({
+      hostname: null,
+      mac_address: null,
+      rogue_reason: null
+    });
+  });
+
   it('retires rogue and expired SLAAC observations but preserves live authority', () => {
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, status, is_online, is_rogue, rogue_reason,
+        (subnet_id, ip_address, is_online, is_rogue, rogue_reason,
          hostname, mac_address, detection_source, allocation_state,
          address_family, address_sort_key, offline_since_at)
-      VALUES (?, '10.99.0.40', 'available', 0, 0, NULL,
+      VALUES (?, '10.99.0.40', 0, 0, NULL,
               'rogue-host', 'aa:bb:cc:dd:ee:40', 'scanner', 'unassigned',
               4, '40000000000000000000000000a630028', '2031-05-20T11:00:00.000Z')
     `).run(subnetId);
@@ -367,11 +395,17 @@ describe('one-hour continuous-offline retirement', () => {
       validUntil: '2031-05-20T14:00:00.000Z'
     });
     setOfflineAt('2001:db8::42', '2031-05-20T11:00:00.000Z');
+    observeSlaac(db, subnetId, 'fe80::43%eth0', {
+      preferredUntil: '2031-05-20T10:00:00.000Z',
+      validUntil: '2031-05-20T11:00:00.000Z'
+    });
+    setOfflineAt('fe80::43', '2031-05-20T11:00:00.000Z');
 
     expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired)
-      .toBe(2);
+      .toBe(3);
     expect(address('10.99.0.40')).toMatchObject({ hostname: null, allocation_state: 'unassigned' });
     expect(address('2001:db8::41')).toMatchObject({ valid_until: null, allocation_state: 'unassigned' });
+    expect(address('fe80::43')).toMatchObject({ valid_until: null, allocation_state: 'unassigned' });
     expect(address('2001:db8::42')).toMatchObject({
       valid_until: '2031-05-20T14:00:00.000Z',
       allocation_state: 'slaac'
@@ -385,9 +419,9 @@ describe('one-hour continuous-offline retirement', () => {
       const ip = `10.99.0.${50 + index}`;
       db.prepare(`
         INSERT INTO ip_addresses
-          (subnet_id, ip_address, hostname, mac_address, status, is_online,
+          (subnet_id, ip_address, hostname, mac_address, is_online,
            allocation_state, detection_source, offline_since_at)
-        VALUES (?, ?, ?, ?, 'assigned', 0, ?, 'scanner', '2031-05-20T10:00:00.000Z')
+        VALUES (?, ?, ?, ?, 0, ?, 'scanner', '2031-05-20T10:00:00.000Z')
       `).run(subnetId, ip, `${state}-host`, `aa:bb:cc:dd:ef:${50 + index}`, state);
     }
 
@@ -414,13 +448,23 @@ describe('future IPv6 lifecycle adapters', () => {
       allocation_state: 'dynamic_dhcp',
       allocation_source_type: 'dhcp_lease',
       dhcp_version: 6,
+      dhcp_duid: '00:04:11:22:33:44:55:66',
+      dhcp_iaid: '7',
       is_online: 1
     });
+    observeDhcpLeases(db, []);
+    expect(address('2001:db8::97').allocation_state).toBe('dynamic_dhcp');
     expect(() => observeDhcpv6Lease(db, subnetId, '2001:db8::96', {
       duid: '00:04:11:22:33:44:55:66',
       iaid: '8',
       validUntil: '2030-01-01T00:00:00.000Z'
     })).toThrow(/validated enabled-pool membership/);
+    expect(() => observeDhcpv6Lease(db, subnetId, '2001:db8::95', {
+      duid: '   ',
+      iaid: '',
+      validUntil: '2030-01-01T00:00:00.000Z',
+      poolValidated: true
+    })).toThrow(/DUID and IAID identity/);
   });
 
   it('records SLAAC lifetimes and interface context', () => {
@@ -433,7 +477,7 @@ describe('future IPv6 lifecycle adapters', () => {
     expect(address('2001:db8::99')).toMatchObject({
       allocation_state: 'slaac',
       allocation_source_type: 'slaac',
-      interface_id: 'eth0',
+      interface_id: null,
       detection_source: 'slaac_privacy'
     });
   });

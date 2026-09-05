@@ -4,30 +4,24 @@ import { computeIpView, ADDRESS_TYPE } from '../../../src/models/ip-view.js';
 // computeIpView decides the label on every row of the Networks table. It is a
 // pure function of one row, so it is cheap to pin down.
 //
-// Two of its branches INFER "rogue" from "online but nothing claims this
-// address". Both used to ignore has_static_dns even though the same function
-// computes it, so a host with a manual A record was labelled rogue on sight.
-
 function view(row) {
-  return computeIpView({ ip_address: '10.0.1.50', status: 'available', ...row });
+  return computeIpView({
+    ip_address: '10.0.1.50', allocation_state: 'unassigned', ...row
+  });
 }
 
-describe('computeIpView: rogue inference respects a DNS claim', () => {
+describe('computeIpView: canonical allocation', () => {
   it('labels an online unclaimed address rogue', () => {
     expect(view({ is_online: 1 }).address_type).toBe(ADDRESS_TYPE.ROGUE);
   });
 
-  it('labels the same address static DNS once a manual A record claims it', () => {
-    expect(view({ is_online: 1, has_static_dns: 1 }).address_type).toBe(ADDRESS_TYPE.STATIC_DNS);
-  });
-
-  it('does not infer rogue for a DHCP-status address that DNS claims', () => {
-    expect(view({ is_online: 1, ip_lifecycle_status: 'dhcp', has_static_dns: 1 }).address_type)
+  it('labels a canonical static DNS allocation', () => {
+    expect(view({ is_online: 1, allocation_state: 'static_dns' }).address_type)
       .toBe(ADDRESS_TYPE.STATIC_DNS);
   });
 
-  it('still labels a DHCP-status address rogue when nothing claims it', () => {
-    expect(view({ is_online: 1, ip_lifecycle_status: 'dhcp' }).address_type)
+  it('does not infer allocation from protocol-shaped compatibility facts', () => {
+    expect(view({ is_online: 1, has_static_dns: 1, has_dhcp_reservation: 1 }).address_type)
       .toBe(ADDRESS_TYPE.ROGUE);
   });
 
@@ -36,47 +30,26 @@ describe('computeIpView: rogue inference respects a DNS claim', () => {
       is_online: 1,
       is_rogue: 1,
       rogue_reason: 'MAC mismatch (expected aa:bb:cc:dd:ee:ff, got 11:22:33:44:55:66)',
-      has_static_dns: 1,
+      allocation_state: 'static_dns',
     });
     expect(row.address_type).toBe(ADDRESS_TYPE.STATIC_DNS);
     expect(row.address_conflict).toBe(true);
     expect(row.address_conflict_reason).toContain('MAC mismatch');
   });
 
-  it('prefers reservation and lease labels over a DNS claim', () => {
-    expect(view({ is_online: 1, has_dhcp_reservation: 1, has_static_dns: 1 }).address_type)
+  it('maps static and dynamic DHCP allocations directly', () => {
+    expect(view({ is_online: 1, allocation_state: 'static_dhcp' }).address_type)
       .toBe(ADDRESS_TYPE.RESERVED_DHCP);
-    expect(view({ is_online: 1, dhcp_expires_at: 'infinite', has_static_dns: 1 }).address_type)
+    expect(view({ is_online: 1, allocation_state: 'dynamic_dhcp' }).address_type)
       .toBe(ADDRESS_TYPE.DYNAMIC_DHCP);
   });
 
-  it('leaves system and gateway rows alone', () => {
-    expect(view({ is_online: 1, range_type_name: 'Gateway' }).address_type).toBe(ADDRESS_TYPE.GATEWAY);
-    expect(view({ is_online: 1, range_type_name: 'Broadcast' }).address_type).toBe(ADDRESS_TYPE.SYSTEM);
+  it('maps system and gateway allocations directly', () => {
+    expect(view({ is_online: 1, allocation_state: 'gateway' }).address_type).toBe(ADDRESS_TYPE.GATEWAY);
+    expect(view({ is_online: 1, allocation_state: 'system' }).address_type).toBe(ADDRESS_TYPE.SYSTEM);
   });
 
   it('an offline unclaimed address is not rogue, it is just available', () => {
     expect(view({ is_online: 0 }).address_type).toBeNull();
-  });
-});
-
-// CIDRella scans the networks it is attached to, so it probes its own interface
-// addresses and they always answer. That looked identical to an unknown host on
-// an unassigned address. Only the appliance addresses that happened to carry a
-// DNS record escaped, because a manual A record already counted as a claim.
-describe('computeIpView: the appliance own addresses are not rogue', () => {
-  it('labels a local address as system rather than rogue', () => {
-    const out = view({ is_online: 1, is_local_address: 1 });
-    expect(out.address_type).toBe(ADDRESS_TYPE.SYSTEM);
-    expect(out.ip_display_status).toBe('in use');
-  });
-
-  it('wins over a stored rogue flag, so old rows read correctly before the next scan', () => {
-    const out = view({ is_online: 1, is_local_address: 1, is_rogue: 1, rogue_reason: 'Rogue device (IP not assigned)' });
-    expect(out.address_type).toBe(ADDRESS_TYPE.SYSTEM);
-  });
-
-  it('still labels a non-local online unclaimed address rogue', () => {
-    expect(view({ is_online: 1, is_local_address: 0 }).address_type).toBe(ADDRESS_TYPE.ROGUE);
   });
 });

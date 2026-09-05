@@ -39,7 +39,7 @@
 
       <section>
         <h5>Liveness</h5>
-        <div class="hi-row"><span class="hi-label">Status</span><span class="hi-val">{{ host.ip_display_status || host.status || dash }}</span></div>
+        <div class="hi-row"><span class="hi-label">Status</span><span class="hi-val">{{ host.ip_display_status || dash }}</span></div>
         <div class="hi-row"><span class="hi-label">Online</span>
           <span class="hi-val"><StatusDot :kind="onlineState.known ? (onlineState.label === 'Online' ? 'ok' : 'muted') : 'muted'" :label="onlineState.label" class="hi-dot" />{{ onlineState.label }}</span>
         </div>

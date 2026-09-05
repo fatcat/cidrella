@@ -199,7 +199,7 @@
             </span>
             <span class="legend-item">
               <span class="legend-swatch" style="background: var(--p-violet-500)"></span>
-              Locked
+              Reserved
             </span>
             <span class="legend-item">
               <!-- Rogue is already rendered on the grid as a red outline +
@@ -323,10 +323,10 @@
     <!-- Scope Dialog (shared component) -->
     <ScopeDialog ref="scopeDialogRef" @saved="reloadData" />
 
-    <!-- Lock IP Dialog -->
-    <Dialog v-model:visible="showReserveDialog" header="Lock IP Address(es)" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
+    <!-- Reserve IP Dialog -->
+    <Dialog v-model:visible="showReserveDialog" header="Reserve IP Address(es)" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
       <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
-        Locked IPs are held and cannot be used for DHCP or static assignment.
+        Reserved IPs are held and cannot be used for DHCP or static assignment.
       </p>
       <div class="form-grid">
         <div class="field">
@@ -345,7 +345,7 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
-        <Button label="Lock" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
+        <Button label="Reserve" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
       </template>
     </Dialog>
 
@@ -461,7 +461,7 @@ const dhcpStore = useDhcpStore();
 const networkTableColumns = [
   { key: 'ip_address', header: 'IP Address', description: 'Address within the selected network.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
   { key: 'status', header: 'Status', description: 'Whether the address is currently in use or available according to CIDRella lifecycle data.', field: 'ip_display_status', sortable: true, style: 'width: 7rem' },
-  { key: 'type', header: 'Type', description: 'How the address is assigned or reserved, such as static DNS, dynamic DHCP, reserved DHCP, rogue, gateway, system, or locked.', field: 'computed_type', sortField: 'computed_type', sortable: true, style: 'width: 9.5rem' },
+  { key: 'type', header: 'Type', description: 'How the address is allocated, such as static DNS, dynamic DHCP, reserved DHCP, rogue, gateway, system, or reserved.', field: 'computed_type', sortField: 'computed_type', sortable: true, style: 'width: 9.5rem' },
   { key: 'hostname', header: 'Hostname', description: 'Best known hostname from DNS, DHCP, or passive observations.', field: 'hostname', sortable: true, style: 'width: 10rem' },
   { key: 'mac_address', header: 'MAC Address', description: 'Best known hardware address from DHCP or last-seen lifecycle data.', field: 'mac_address', sortField: 'mac_address', sortable: true, style: 'width: 10rem' },
   { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
@@ -537,7 +537,7 @@ function eventLabel(type) {
     rogue_detected: 'Rogue', rogue_cleared: 'Rogue Cleared',
     dns_added: 'DNS Added', dns_removed: 'DNS Removed',
     lease_obtained: 'Lease', hostname_changed: 'Hostname',
-    mac_changed: 'MAC Changed', status_changed: 'Status',
+    mac_changed: 'MAC Changed', allocation_changed: 'Allocation', status_changed: 'Legacy Status',
     scan_enabled_changed: 'Scan Toggle',
   };
   return labels[type] || type;
@@ -710,7 +710,7 @@ const tableContextMenuItems = computed(() => {
     address: row.ip_address,
     rangeId: range?.id || null,
     rangeType: row.range_type_name || null,
-    status: row.status || 'available',
+    allocationState: row.allocation_state || 'unassigned',
     mac: row.mac_address || row.last_seen_mac || null,
     hostname: row.hostname || null
   };
@@ -776,9 +776,9 @@ const rangeTypeLegend = computed(() => {
 
 // Entries displayed in the Ranges table on the Grid View. System-range rows
 // (Network / Broadcast / Gateway) are hidden, they're implicit for every
-// allocated subnet and add noise. Locked IPs from `ip_addresses` are injected
+// allocated subnet and add noise. Reserved IPs from `ip_addresses` are injected
 // as synthetic rows so users can see which addresses are manually held. We
-// collapse consecutive locked IPs into a single range (e.g. .5–.7 instead
+// collapse consecutive reserved IPs into a single range (e.g. .5–.7 instead
 // of three separate rows) to keep the table tidy.
 const visibleRanges = computed(() => {
   const filtered = ranges.value.filter(r => {
@@ -786,11 +786,11 @@ const visibleRanges = computed(() => {
     return !['Network', 'Broadcast', 'Gateway'].includes(r.range_type_name);
   });
 
-  // A locked IP that overlaps a system range (Network / Broadcast / Gateway)
-  // is not user-locked, createSystemRanges writes those rows automatically.
+  // A reserved IP that overlaps a system range (Network / Broadcast / Gateway)
+  // is topology-owned, createSystemRanges writes those rows automatically.
   // The grid-cell coloring already applies this same filter; we mirror it
   // here so the Ranges table doesn't list .0, .255, or the gateway IP as
-  // Locked. Build a set of system-range IPs for quick lookup.
+  // Reserved. Build a set of system-range IPs for quick lookup.
   const systemIpLongs = new Set();
   for (const r of ranges.value) {
     if (!r.range_type_is_system) continue;
@@ -800,14 +800,14 @@ const visibleRanges = computed(() => {
     for (let l = s; l <= e; l++) systemIpLongs.add(l);
   }
 
-  // Group locked IPs into contiguous ranges.
-  const lockedIps = (ips.value || [])
-    .filter(ip => ip.status === 'locked')
+  // Group reserved IPs into contiguous ranges.
+  const reservedIps = (ips.value || [])
+    .filter(ip => ip.allocation_state === 'reserved')
     .map(ip => ({ ip, long: ipToLong(ip.ip_address) }))
     .filter(({ long }) => !systemIpLongs.has(long))
     .sort((a, b) => a.long - b.long);
 
-  const lockedRows = [];
+  const reservedRows = [];
   let run = null;  // { startIp, endIp, startLong, endLong, hostnames:[], notes:[] }
   const flushRun = () => {
     if (!run) return;
@@ -817,9 +817,9 @@ const visibleRanges = computed(() => {
     const hostSet = [...new Set(run.hostnames.filter(Boolean))];
     if (hostSet.length) parts.push(`Host${hostSet.length > 1 ? 's' : ''}: ${hostSet.join(', ')}`);
     if (noteSet.length) parts.push(noteSet.join('; '));
-    lockedRows.push({
-      id: `locked-${run.startLong}`,
-      range_type_name: 'Locked',
+    reservedRows.push({
+      id: `reserved-${run.startLong}`,
+      range_type_name: 'Reserved',
       range_type_color: 'var(--p-violet-500)',
       range_type_is_system: 0,
       start_ip: run.startIp,
@@ -828,7 +828,7 @@ const visibleRanges = computed(() => {
       _synthetic: true
     });
   };
-  for (const { ip, long } of lockedIps) {
+  for (const { ip, long } of reservedIps) {
     if (run && long === run.endLong + 1) {
       run.endIp = ip.ip_address;
       run.endLong = long;
@@ -848,7 +848,7 @@ const visibleRanges = computed(() => {
   }
   flushRun();
 
-  return [...filtered, ...lockedRows];
+  return [...filtered, ...reservedRows];
 });
 
 const editableRangeTypes = computed(() => {
@@ -901,17 +901,14 @@ function gridPseudoData({ addr, assignInfo, rangeInfo }) {
     ip_status_severity: assignInfo?.ip_status_severity || null,
     address_type: assignInfo?.address_type || null,
     address_type_tooltip: assignInfo?.address_type_tooltip || null,
-    ip_lifecycle_status: assignInfo?.ip_lifecycle_status || assignInfo?.status || 'available',
-    status: assignInfo?.status || 'available',
+    allocation_state: assignInfo?.allocation_state || 'unassigned',
     range_type_name: rangeInfo?.rangeType || null,
     reservation_note: assignInfo?.reservation_note || null,
-    has_dhcp_reservation: assignInfo?.has_dhcp_reservation || 0,
     hostname: assignInfo?.hostname || null,
     mac_address: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
     last_seen_mac: null,
     is_online: assignInfo?.is_online === 1 ? 1 : 0,
     is_rogue: assignInfo?.is_rogue === 1 ? 1 : 0,
-    is_local_address: assignInfo?.is_local_address || 0,
     rogue_reason: assignInfo?.rogue_reason || null,
     dhcp_expires_at: assignInfo?.dhcp_expires_at || null,
   };
@@ -948,20 +945,7 @@ const ipGrid = computed(() => {
     const rangeInfo = ipRangeMap.get(i);
     const assignInfo = ipAssignMap.get(i);
 
-    // Color precedence (top wins):
-    //   1. System range (Network/Broadcast/Gateway), uses the range's own
-    //      color so gateway is orange and network/broadcast are gray.
-    //   2. DHCP reservation, dark blue, stands out from the pale DHCP-pool
-    //      tint that normally covers reservation IPs.
-    //   3. DNS-configured host (A record backing, no reservation), pale
-    //      green so users can see which IPs are claimed by DNS only.
-    //   4. User-locked (manually held, no system range), violet.
-    //   5. Range color (DHCP Scope, user-defined ranges).
-    //   6. Unassigned (no range, no assignment), surface-200.
     const isSystemRange = !!rangeInfo?.isSystem;
-    const isDhcpReservation = !!assignInfo?.has_dhcp_reservation;
-    const isDnsConfigured = !isDhcpReservation && assignInfo?.address_type === 'static DNS';
-    const isUserLocked = assignInfo?.status === 'locked' && !isSystemRange;
 
     // Classify ONCE, here, and hand the result to both the fill below and the
     // tooltip (see gridTooltip). The tooltip used to re-derive it from this
@@ -981,9 +965,9 @@ const ipGrid = computed(() => {
     if (isSystemRange) cellColor = rangeInfo.color;
     else if (cellTypeClass === 'type-rogue')  cellColor = 'var(--cid-rogue)';
     else if (cellTypeClass === 'type-system') cellColor = 'var(--cid-system)';
-    else if (isDhcpReservation) cellColor = 'var(--p-blue-700)';
-    else if (isDnsConfigured)   cellColor = 'var(--p-green-300)';
-    else if (isUserLocked)      cellColor = 'var(--p-violet-500)';
+    else if (cellTypeClass === 'type-reserved-dhcp') cellColor = 'var(--p-blue-700)';
+    else if (cellTypeClass === 'type-static-dns') cellColor = 'var(--p-green-300)';
+    else if (cellTypeClass === 'type-reserved') cellColor = 'var(--p-violet-500)';
     else                        cellColor = rangeInfo?.color || 'var(--p-surface-200)';
 
     // Column position within the 64-wide grid. Mark every 16th column's
@@ -1003,14 +987,12 @@ const ipGrid = computed(() => {
       rangeId: rangeInfo?.rangeId || null,
       hostname: assignInfo?.hostname || null,
       mac: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
-      status: assignInfo?.status || 'available',
-      ipLifecycleStatus: assignInfo?.ip_lifecycle_status || assignInfo?.status || 'available',
+      allocationState: assignInfo?.allocation_state || 'unassigned',
       ipDisplayStatus: assignInfo?.ip_display_status || null,
       ipStatusSeverity: assignInfo?.ip_status_severity || null,
       addressType: assignInfo?.address_type || null,
       addressTypeTooltip: assignInfo?.address_type_tooltip || null,
       reservationNote: assignInfo?.reservation_note || null,
-      hasDhcpReservation: assignInfo?.has_dhcp_reservation || 0,
       dhcpExpiresAt: assignInfo?.dhcp_expires_at || null,
       vendor: assignInfo?.vendor || null,
       isOnline: assignInfo?.is_online === 1,
@@ -1111,7 +1093,7 @@ function buildContextMenuItems(selectedIps) {
     const range = ip.rangeId ? ranges.value.find(r => r.id === ip.rangeId) : null;
     const isDhcpScope = range && range.range_type_name === 'DHCP Scope';
     const isGateway = range && range.range_type_name === 'Gateway';
-    const ipStatus = ip.status || 'available';
+    const allocationState = ip.allocationState || ip.allocation_state || 'unassigned';
 
     if (isGateway) {
       // Gateway IP: Edit, Delete, and create pool
@@ -1157,18 +1139,18 @@ function buildContextMenuItems(selectedIps) {
       });
     }
 
-    // Lock / Unlock (not for system ranges)
+    // Reserve / Release (not for system ranges)
     if (!isSystemReserved(ip)) {
       items.push({ separator: true });
-      if (ipStatus === 'locked') {
+      if (allocationState === 'reserved') {
         items.push({
-          label: 'Unlock',
+          label: 'Release Reservation',
           icon: 'pi pi-unlock',
-          command: () => setIpReservation(ip.address, 'available')
+          command: () => setIpReservation(ip.address, false)
         });
       } else {
         items.push({
-          label: `Lock ${ip.address}`,
+          label: `Reserve ${ip.address}`,
           icon: 'pi pi-lock',
           command: () => openReserveDialog(ip.address)
         });
@@ -1176,7 +1158,7 @@ function buildContextMenuItems(selectedIps) {
     }
 
     // Convert dynamic DHCP to static reservation
-    if (ip.mac && (ipStatus === 'dhcp' || isDhcpScope)) {
+    if (ip.mac && (allocationState === 'dynamic_dhcp' || isDhcpScope)) {
       items.push({ separator: true });
       items.push({
         label: 'Make Static DHCP Reservation',
@@ -1207,11 +1189,11 @@ function buildContextMenuItems(selectedIps) {
     items.push({ label: `Lifecycle of ${ip.address}`, icon: 'pi pi-history', command: () => openEventsDialog(ip.address) });
   } else {
     // Multi-select. Skip system-reserved IPs (network/broadcast/gateway),
-    // they can't be locked/unlocked by the user. The server-side bulk-status
+    // their allocations cannot be changed here. The bulk-allocation
     // endpoint also silently skips them, so this is just UX symmetry.
-    const unlockable = selectedIps.filter(ip => !isSystemReserved(ip));
-    const anyLocked = unlockable.some(ip => (ip.status || 'available') === 'locked');
-    const anyUnlocked = unlockable.some(ip => (ip.status || 'available') !== 'locked');
+    const reservable = selectedIps.filter(ip => !isSystemReserved(ip));
+    const anyReserved = reservable.some(ip => (ip.allocationState || 'unassigned') === 'reserved');
+    const anyUnreserved = reservable.some(ip => (ip.allocationState || 'unassigned') !== 'reserved');
 
     // If the contiguous selection is entirely inside ONE DHCP Scope range,
     // offer a bulk "Remove from Scope" that shrinks/splits that scope. When
@@ -1237,18 +1219,18 @@ function buildContextMenuItems(selectedIps) {
         command: () => removeRangeFromPool(coveringScope, firstIp.address, lastIp.address)
       });
     }
-    if (anyUnlocked) {
+    if (anyUnreserved) {
       items.push({
-        label: `Lock ${firstIp.address} – ${lastIp.address}`,
+        label: `Reserve ${firstIp.address} – ${lastIp.address}`,
         icon: 'pi pi-lock',
         command: () => openReserveDialog(firstIp.address, lastIp.address)
       });
     }
-    if (anyLocked) {
+    if (anyReserved) {
       items.push({
-        label: `Unlock ${firstIp.address} – ${lastIp.address}`,
+        label: `Release ${firstIp.address} – ${lastIp.address}`,
         icon: 'pi pi-unlock',
-        command: () => bulkUnlock(firstIp.address, lastIp.address)
+        command: () => bulkRelease(firstIp.address, lastIp.address)
       });
     }
   }
@@ -1307,14 +1289,14 @@ async function confirmReserve() {
   const scanEn = reserveScanEnabled.value;
   showReserveDialog.value = false;
   if (reserveStartIp.value === reserveEndIp.value) {
-    await setIpReservation(reserveStartIp.value, 'locked', note);
+    await setIpReservation(reserveStartIp.value, true, note);
     if (scanEn !== null) {
       await api.put(`/subnets/${subnet.value.id}/ips/${reserveStartIp.value}/scan-enabled`, { scan_enabled: scanEn });
     }
   } else {
     try {
-      const result = await store.bulkSetIpStatus(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'locked', note);
-      toast.add({ severity: 'success', summary: `${result.count} IPs locked`, life: 3000 });
+      const result = await store.bulkSetIpAllocation(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'reserved', note);
+      toast.add({ severity: 'success', summary: `${result.count} IPs reserved`, life: 3000 });
       await reloadData();
     } catch (err) {
       toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1322,27 +1304,25 @@ async function confirmReserve() {
   }
 }
 
-async function setIpReservation(ipAddress, status, note) {
+async function setIpReservation(ipAddress, reserved, note) {
   try {
-    await store.setIpStatus(subnet.value.id, ipAddress, status, note);
-    toast.add({ severity: 'success', summary: status === 'locked' ? 'IP locked' : 'IP unlocked', life: 3000 });
+    await store.setIpAllocation(subnet.value.id, ipAddress, reserved ? 'reserved' : 'unassigned', note);
+    toast.add({ severity: 'success', summary: reserved ? 'IP reserved' : 'Reservation released', life: 3000 });
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
-// Bulk-unlock a contiguous IP range via the same bulk endpoint used for lock.
-// Status 'available' clears any reservation note; system-reserved IPs in the
-// range (network/broadcast/gateway) are silently skipped server-side per the
-// ipStatusRejectionReason guard.
-async function bulkUnlock(startIp, endIp) {
+// Release a contiguous reservation range. Topology-owned addresses are
+// silently skipped by the server.
+async function bulkRelease(startIp, endIp) {
   try {
-    const result = await store.bulkSetIpStatus(subnet.value.id, startIp, endIp, 'available');
+    const result = await store.bulkSetIpAllocation(subnet.value.id, startIp, endIp, 'unassigned');
     const skipped = result?.skipped ? ` (${result.skipped} skipped)` : '';
     toast.add({
       severity: 'success',
-      summary: `${result.count} IP${result.count === 1 ? '' : 's'} unlocked${skipped}`,
+      summary: `${result.count} reservation${result.count === 1 ? '' : 's'} released${skipped}`,
       life: 3000
     });
     await reloadData();

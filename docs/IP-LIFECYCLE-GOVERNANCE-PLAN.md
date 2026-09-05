@@ -571,6 +571,12 @@ follow-up review passed on 2026-09-02. The initial review process timed out
 after its five-minute limit, so the missed canonical synthesized-row case was
 reviewed locally, corrected, and accepted by the follow-up review.
 
+Follow-up on 2026-09-04: migration 057 replaced the legacy
+`UNIQUE(subnet_id, ip_address)` constraint with the canonical interface-scoped
+identity. Upgrade coverage verifies that existing addresses and lifecycle
+events survive the table rebuild, and regression coverage verifies that the
+same IPv6 link-local address can exist independently on two interfaces.
+
 - Add the explicit allocation state and source reference.
 - Add canonical address family, sort key, and nullable interface context using
   the phase-0 shared address core.
@@ -629,6 +635,14 @@ is written.
 
 ### Phase 6: Retirement and cleanup
 
+Status: implementation complete in the working tree. The main implementation
+is in local commit `9cad51c`; the UTC lease-expiry consistency fix, Phase 3
+identity follow-up, and this status update are pending commit, review, and push.
+
+Validation: 1,027 server tests and 133 client tests passed, and ESLint, database
+ownership, client production build, and diff checks passed on 2026-09-04.
+Focused lease-expiry coverage also passed under UTC and America/New_York.
+
 - Replace the 24-hour DHCP-row and seven-day metadata defaults with the
   specified one-hour continuous-offline rule for dynamic, expired SLAAC, and
   rogue addresses.
@@ -641,6 +655,34 @@ minutes, renewed activity, restart during timeout, and static retention.
 
 ### Phase 7: Migrate existing installations
 
+Status: implementation complete in the working tree and upgrade-validated on
+testerella on 2026-09-04. Review, commit, and push are still pending.
+
+Follow-up on 2026-09-05: schema 59 adds interface-scope enforcement and DHCPv6
+client-identity storage. Startup now retries reconciliation when a prior run
+finished schema migration but left the durable report at `ready` or
+`reconciliation_pending`. Pi-hole import and legacy inventory reject multiple
+enabled address records for one canonical IP and list every affected name.
+
+Validation: a copy of testerella's 0.4.17 schema-54 database first blocked as
+designed on three ambiguous findings across two enabled manual DNS records.
+After preserving those records but disabling their conflicting claims, the
+retry reported no conflicts and upgraded to schema 57. Reconciliation updated
+79 existing addresses and inserted 10 missing protocol/topology identities.
+All 4 subnets, 15 ranges, 3 scopes, 23 reservations, 17 leases, 8 zones, 154
+DNS records, and 4,185 lifecycle events were preserved. SQLite integrity,
+foreign keys, allocation-source invariants, generated dnsmasq syntax, and the
+deep health check passed. The generated configuration retains
+`no-dhcp-interface=eth0`; testerella's other Ethernet interfaces are down, so
+it still cannot issue leases. The final local validation passed 1,027 server tests, 133
+client tests, ESLint, database ownership, and the client production build.
+
+The first live reconciliation exposed a legacy duplicate-MAC self-heal that
+deleted one unrelated rogue observation and its 49 events. That behavior was
+corrected to delete only stale DHCP-owned rows, and the observation plus all
+events were restored from the immediate pre-upgrade snapshot before final
+validation.
+
 - Run the inventory report before mutation.
 - Reconcile safe cases transactionally.
 - Handle ambiguous conflicts using the approved block-or-quarantine policy.
@@ -651,6 +693,27 @@ Exit criteria: representative 0.4.17 databases upgrade without silent data
 loss, invalid dnsmasq configuration, or contradictory live claims.
 
 ### Phase 8: Remove compatibility logic
+
+Status: complete in the working tree and upgrade-validated on testerella on
+2026-09-04. Review, commit, and push are still pending.
+
+Follow-up on 2026-09-05: DNS tables now present `dns_source` as provenance and
+contain no source-to-allocation mapping. Lifecycle metrics and deep-health
+diagnostics expose allocation, scope-conflict, rogue, retirement, and sanitized
+reconciliation counts. Operator, API, and pending release documentation cover
+the migration and recovery behavior.
+
+Validation: migration 058 was rehearsed against testerella's schema-57 backup,
+then applied through the inactive-slot upgrade path. The rehearsal preserved
+all 89 IP rows and 4,790 lifecycle events exactly. The live database reached
+schema 58 with SQLite integrity and foreign-key checks clean, no legacy
+`ip_addresses.status` column, no invalid allocation-source rows, and unchanged
+allocation counts. The deep health check passed and the CIDRella, anomaly, and
+dnsmasq services are active. DHCP remains disabled on testerella's only active
+Ethernet interface. Canonical single and bulk reservation mutations queue DHCP
+configuration regeneration after commit, including reservations inside a DHCP
+scope. Local validation passed 981 server tests, 131 client tests, ESLint,
+database ownership, and the client production build.
 
 - Remove `assigned`, `locked`, and `dhcp` storage semantics after callers move.
 - Remove server and client precedence trees that mask conflicts.

@@ -8,27 +8,34 @@
 import { getSetting } from '../db/init.js';
 import { activeLeaseSql } from '../utils/lease-sql.js';
 import { scannerCoveredSql } from '../utils/scan-coverage.js';
-import { isLocalAddress } from '../utils/local-addresses.js';
 import { canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
-import * as DnsRecord from './dns-record.js';
 
-// The reason string the passive path stamps on an address it has never seen
-// assigned. Exported because the self-heal below matches on it exactly rather
-// than on a substring, so an unrelated rogue reason is never cleared by mistake.
+// The reason string the passive path stamps on an unassigned address.
 export const PASSIVE_ROGUE_REASON = 'passive DNS query from unassigned address';
 
 function canonicalIdentity(ip, interfaceId) {
   const parsed = parseIp(ip);
   if (!parsed) throw new Error(`Invalid IP address: ${ip}`);
-  const effectiveInterface = interfaceId ?? parsed.zoneId ?? null;
-  if (parsed.zoneId && interfaceId && parsed.zoneId !== interfaceId) {
+  if (interfaceId !== undefined && interfaceId !== null && typeof interfaceId !== 'string') {
+    throw new Error('Interface context must be a string');
+  }
+  const explicitInterface = interfaceId?.trim() || null;
+  const parsedInterface = parsed.zoneId?.trim() || null;
+  const effectiveInterface = explicitInterface ?? parsedInterface;
+  if (parsedInterface && explicitInterface && parsedInterface !== explicitInterface) {
     throw new Error('IPv6 zone identifier does not match interface context');
+  }
+  if (effectiveInterface && !/^[a-zA-Z0-9._:-]{1,64}$/.test(effectiveInterface)) {
+    throw new Error('Invalid interface context');
   }
   const isV6LinkLocal = parsed.bits === 128
     && parsed.value >= 0xfe800000000000000000000000000000n
     && parsed.value <= 0xfebfffffffffffffffffffffffffffffn;
   if (isV6LinkLocal && !effectiveInterface) {
     throw new Error('IPv6 link-local addresses require interface context');
+  }
+  if (!isV6LinkLocal && effectiveInterface) {
+    throw new Error('Interface context is only valid for IPv6 link-local addresses');
   }
   const canonical = canonicalizeIp(ip);
   return {
@@ -90,16 +97,18 @@ export function upsert(db, subnetId, ip, fields = {}) {
   const identity = canonicalIdentity(ip, fields.interface_id);
   ip = identity.ip;
   const {
-    hostname, mac_address, status, is_online, last_seen_mac,
+    hostname, mac_address, is_online, last_seen_mac,
     is_rogue, rogue_reason, last_scanned_at, detection_source,
     allocation_state, allocation_source_type, allocation_source_id,
-    preferred_until, valid_until, dhcp_version, reservation_note, scan_enabled
+    preferred_until, valid_until, dhcp_version, dhcp_duid, dhcp_iaid,
+    reservation_note, scan_enabled
   } = fields;
 
   const existing = db.prepare(`
-    SELECT id, hostname, mac_address, status, is_online, allocation_state,
+    SELECT id, hostname, mac_address, is_online, allocation_state,
            allocation_source_type, allocation_source_id, preferred_until,
-           valid_until, dhcp_version, reservation_note, scan_enabled
+           valid_until, dhcp_version, dhcp_duid, dhcp_iaid,
+           reservation_note, scan_enabled
     FROM ip_addresses
     WHERE subnet_id = ? AND ip_address = ?
       AND COALESCE(interface_id, '') = COALESCE(?, '')
@@ -119,11 +128,6 @@ export function upsert(db, subnetId, ip, fields = {}) {
       updates.push('mac_address = ?');
       params.push(mac_address);
       events.push({ type: 'mac_changed', old: existing.mac_address, new: mac_address });
-    }
-    if (status !== undefined && status !== existing.status) {
-      updates.push('status = ?');
-      params.push(status);
-      events.push({ type: 'status_changed', old: existing.status, new: status });
     }
     if (is_online !== undefined) {
       updates.push('is_online = ?');
@@ -169,12 +173,17 @@ export function upsert(db, subnetId, ip, fields = {}) {
       ['preferred_until', preferred_until],
       ['valid_until', valid_until],
       ['dhcp_version', dhcp_version],
+      ['dhcp_duid', dhcp_duid],
+      ['dhcp_iaid', dhcp_iaid],
       ['reservation_note', reservation_note],
       ['scan_enabled', scan_enabled]
     ]) {
       if (value !== undefined && value !== existing[column]) {
         updates.push(`${column} = ?`);
         params.push(value);
+        if (column === 'allocation_state') {
+          events.push({ type: 'allocation_changed', old: existing.allocation_state, new: value });
+        }
       }
     }
 
@@ -193,30 +202,35 @@ export function upsert(db, subnetId, ip, fields = {}) {
   const hasActivity = is_online || mac_address || last_seen_mac;
   const result = db.prepare(`
     INSERT INTO ip_addresses (
-      subnet_id, ip_address, hostname, mac_address, status,
+      subnet_id, ip_address, hostname, mac_address,
       is_online, last_seen_at, last_seen_mac,
       is_rogue, rogue_reason, last_scanned_at,
       first_seen_at, detection_source, allocation_state,
       allocation_source_type, allocation_source_id, address_family,
       address_sort_key, interface_id, preferred_until, valid_until, dhcp_version,
-      reservation_note, scan_enabled, offline_since_at
+      dhcp_duid, dhcp_iaid, reservation_note, scan_enabled, offline_since_at
     ) VALUES (
-      ?, ?, ?, ?, ?,
+      ?, ?, ?, ?,
       ?, ${is_online ? "datetime('now')" : 'NULL'}, ?,
       ?, ?, ?,
       ${hasActivity ? "datetime('now')" : 'NULL'}, ?, ?,
-      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
+      ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
     )
   `).run(
-    subnetId, ip, hostname || null, mac_address || null, status || 'available',
+    subnetId, ip, hostname || null, mac_address || null,
     is_online || 0, last_seen_mac || null,
     is_rogue || 0, rogue_reason || null, last_scanned_at || null,
     detection_source || null, allocation_state || 'unassigned',
     allocation_source_type || null, allocation_source_id || null,
     identity.addressFamily, identity.addressSortKey, identity.interfaceId,
     preferred_until || null, valid_until || null, dhcp_version || null,
-    reservation_note || null, scan_enabled ?? null
+    dhcp_duid || null, dhcp_iaid ?? null, reservation_note || null, scan_enabled ?? null
   );
+  if (allocation_state && allocation_state !== 'unassigned') {
+    emit(db, result.lastInsertRowid, subnetId, ip, 'allocation_changed', {
+      oldValue: 'unassigned', newValue: allocation_state, source: allocation_source_type || detection_source
+    });
+  }
   return result.lastInsertRowid;
 }
 
@@ -261,59 +275,11 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
 }
 
 /**
- * Everything that makes an address legitimately in use, for an address we hold no
- * ip_addresses row for. This mirrors the assignment map the scanner builds in
- * utils/scanner.js: an operator's manual A record, an active DHCP lease, or a
- * DHCP reservation. The scanner has always consulted all three. The passive path
- * consulted NONE of them, so any host that resolved a name while CIDRella had no
- * row for it was recorded as rogue, including hosts holding a valid lease.
- *
- * `hostname` is returned only for the DNS claim. A lease hostname is deliberately
- * NOT propagated into ip_addresses.hostname: that is the stale-name trap the
- * scanner warns about, where restored lease history keeps a name after the lease
- * is long gone.
+ * Canonical allocation is the only claim authority. Protocol writers must
+ * establish it before observation paths evaluate liveness or rogue state.
  */
-function addressClaim(db, subnetId, ip, row = null) {
-  // An address the appliance itself holds is obviously in use, and by us.
-  if (isLocalAddress(ip)) return { claimed: true, hostname: null };
-
-  // Operator intent recorded on the row. `row` is optional only because not
-  // every caller has one to hand, so pass it whenever you do.
-  //
-  // The scanner has always honored these two arms and the passive path never
-  // did, which is the bug this parameter exists to close: an address flagged
-  // rogue BEFORE an admin locked it stayed flagged forever on any subnet the
-  // scanner does not cover. setStatus() does not clear is_rogue, and
-  // computeIpView orders its rogue branch ahead of its locked branch, so such
-  // a row rendered as ROGUE rather than LOCKED indefinitely.
-  //
-  // detection_source === 'dns' is a weaker signal than the live A-record check
-  // below, because it can outlive the record that set it. It is kept because
-  // the scanner has always honored it, and the two paths agreeing matters more
-  // than trimming it. Dropping it is a separate decision with its own blast
-  // radius, not something to smuggle into a unification.
-  if (row) {
-    if (row.status === 'locked' || row.status === 'assigned') return { claimed: true, hostname: null };
-    if (row.detection_source === 'dns') return { claimed: true, hostname: null };
-  }
-
-  const dnsHostname = DnsRecord.dnsAssignedHostname(db, ip);
-  if (dnsHostname) return { claimed: true, hostname: dnsHostname };
-
-  const lease = db.prepare(`
-    SELECT 1 FROM dhcp_leases
-     WHERE subnet_id = ? AND ip_address = ?
-       AND ${activeLeaseSql()}
-     LIMIT 1
-  `).get(subnetId, ip);
-  if (lease) return { claimed: true, hostname: null };
-
-  const reservation = db.prepare(
-    'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? AND enabled = 1 LIMIT 1'
-  ).get(subnetId, ip);
-  if (reservation) return { claimed: true, hostname: null };
-
-  return { claimed: false, hostname: null };
+function addressClaim(row) {
+  return Boolean(row?.allocation_state && row.allocation_state !== 'unassigned');
 }
 
 /**
@@ -321,25 +287,17 @@ function addressClaim(db, subnetId, ip, row = null) {
  * observed it? Declared addresses keep everything learned about them until the
  * admin removes the declaration. Observed ones are subject to cleanup.
  *
- * Declared means any of:
- *   - status 'locked' or 'assigned' (a manual assignment)
- *   - an enabled DHCP reservation
- *   - a manual A record in an enabled forward zone
+ * Declared means a canonical administrative or static allocation.
  *
  * Deliberately NOT the same as addressClaim(), which also counts an active
  * lease. A live lease is an observation that expires on its own. It says
  * nothing about what the admin intends for the address.
  */
 export function isAdminDeclared(db, row) {
+  void db;
   if (!row) return false;
-  if (row.status === 'locked' || row.status === 'assigned') return true;
-
-  const reservation = db.prepare(
-    'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? AND enabled = 1 LIMIT 1'
-  ).get(row.subnet_id, row.ip_address);
-  if (reservation) return true;
-
-  return !!DnsRecord.dnsAssignedHostname(db, row.ip_address);
+  return ['reserved', 'static_dns', 'static_dhcp', 'system', 'gateway']
+    .includes(row.allocation_state);
 }
 
 /**
@@ -354,31 +312,14 @@ export function recordPassiveActivity(db, subnetId, ip, {
   createRogue = false,
   rogueReason = PASSIVE_ROGUE_REASON
 } = {}) {
-  // status and detection_source are selected because addressClaim() reads them.
-  // They were missing here originally, which is why this path could not see the
-  // operator-intent arms the scanner path honored.
   const existing = db.prepare(
-    'SELECT id, is_rogue, rogue_reason, hostname, status, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_rogue, rogue_reason, hostname, allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
-  const { claimed, hostname: dnsHostname } = addressClaim(db, subnetId, ip, existing);
+  const claimed = addressClaim(existing);
 
   if (existing) {
     const result = markOnline(db, subnetId, ip, { mac, source });
-    // Self-heal rows already mislabelled by the old behaviour. Scoped to the
-    // "we never assigned this" reason on purpose: a MAC mismatch on a claimed
-    // address is a real conflict and must survive.
-    if (claimed && existing.is_rogue && existing.rogue_reason === PASSIVE_ROGUE_REASON) {
-      clearRogue(db, subnetId, ip);
-    }
-    // Backfill the name DNS already assigns so the row reads correctly in the
-    // UI. Survival across the offline sweep no longer depends on this: the
-    // manual A record that produced the name is itself what makes the address
-    // admin-declared (see isAdminDeclared).
-    if (dnsHostname && !existing.hostname) {
-      db.prepare("UPDATE ip_addresses SET hostname = ?, updated_at = datetime('now') WHERE id = ?")
-        .run(dnsHostname, existing.id);
-    }
     return result;
   }
 
@@ -386,15 +327,13 @@ export function recordPassiveActivity(db, subnetId, ip, {
 
   const isRogue = createRogue && !claimed;
   const newId = upsert(db, subnetId, ip, {
-    status: 'available',
     is_online: 1,
     last_seen_mac: mac || null,
-    hostname: dnsHostname,
     is_rogue: isRogue ? 1 : 0,
     rogue_reason: isRogue ? rogueReason : null,
     detection_source: source,
-    allocation_state: dnsHostname ? 'static_dns' : 'unassigned',
-    allocation_source_type: dnsHostname ? 'dns' : null
+    allocation_state: 'unassigned',
+    allocation_source_type: null
   });
 
   emit(db, newId, subnetId, ip, 'online', { source });
@@ -422,7 +361,7 @@ export function markOffline(db, subnetId, ip) {
   }
   return db.prepare(`
     UPDATE ip_addresses SET
-      is_online = 0, is_rogue = 0, rogue_reason = NULL,
+      is_online = 0, is_rogue = 0,
       offline_since_at = COALESCE(offline_since_at, datetime('now')),
       updated_at = datetime('now')
     WHERE id = ?
@@ -446,7 +385,7 @@ export function bulkMarkStale(db, staleMinutes) {
   const offset = `-${staleMinutes} minutes`;
 
   const staleIps = db.prepare(`
-    SELECT ip.id, ip.subnet_id, ip.ip_address, ip.is_rogue, ip.status,
+    SELECT ip.id, ip.subnet_id, ip.ip_address, ip.is_rogue,
            ip.hostname, ip.mac_address, ip.last_seen_mac, ip.scan_enabled
     FROM ip_addresses ip
     JOIN subnets s ON s.id = ip.subnet_id
@@ -465,7 +404,7 @@ export function bulkMarkStale(db, staleMinutes) {
   if (staleIps.length > 0) {
     const updateStmt = db.prepare(`
       UPDATE ip_addresses SET
-        is_online = 0, is_rogue = 0, rogue_reason = NULL,
+        is_online = 0, is_rogue = 0,
         offline_since_at = COALESCE(offline_since_at, datetime('now')),
         updated_at = datetime('now')
       WHERE id = ?
@@ -493,7 +432,6 @@ export function findRetirementCandidates(db, cutoff, now, limit = 500) {
         OR (allocation_state = 'slaac' AND valid_until IS NOT NULL AND datetime(valid_until) <= datetime(?))
         OR (
           allocation_state = 'unassigned'
-          AND status NOT IN ('locked', 'assigned')
           AND NOT EXISTS (
             SELECT 1 FROM dhcp_reservations dr
             WHERE dr.subnet_id = ip_addresses.subnet_id
@@ -508,7 +446,7 @@ export function findRetirementCandidates(db, cutoff, now, limit = 500) {
               AND COALESCE(r.source, 'manual') = 'manual'
               AND r.value = ip_addresses.ip_address
           )
-          AND (is_rogue = 1 OR status = 'dhcp' OR detection_source IN (
+          AND (is_rogue = 1 OR detection_source IN (
             'dhcp_lease', 'slaac', 'scanner', 'passive', 'neighbor_discovery'
           ))
         )
@@ -527,7 +465,6 @@ export function startMissingRetirementWindows(db, now) {
       AND (
         allocation_state IN ('dynamic_dhcp', 'slaac')
         OR is_rogue = 1
-        OR status = 'dhcp'
         OR detection_source IN ('dhcp_lease', 'slaac', 'scanner', 'passive', 'neighbor_discovery')
       )
   `).run(now);
@@ -546,10 +483,11 @@ export function retireLearnedMetadata(db, row) {
       hostname = NULL, mac_address = NULL, last_seen_mac = NULL,
       last_seen_at = NULL, first_seen_at = NULL, last_scanned_at = NULL,
       offline_since_at = NULL, detection_source = NULL,
-      is_rogue = 0, rogue_reason = NULL, status = 'available',
+      is_rogue = 0, rogue_reason = NULL,
       allocation_state = 'unassigned', allocation_source_type = NULL,
       allocation_source_id = NULL, preferred_until = NULL, valid_until = NULL,
-      dhcp_version = NULL, updated_at = datetime('now')
+      dhcp_version = NULL, dhcp_duid = NULL, dhcp_iaid = NULL,
+      updated_at = datetime('now')
     WHERE id = ?
   `).run(row.id);
   emit(db, row.id, row.subnet_id, row.ip_address, 'retired', {
@@ -611,27 +549,23 @@ export function removeOtherRowsForMac(db, subnetId, ip, mac) {
   if (!mac) return { changes: 0 };
   const normalizedMac = String(mac).toLowerCase();
   return db.prepare(`
-    DELETE FROM ip_addresses
-    WHERE (lower(mac_address) = ? OR lower(last_seen_mac) = ?)
-      AND NOT (subnet_id = ? AND ip_address = ?)
+    DELETE FROM ip_addresses AS stale
+    WHERE (lower(stale.mac_address) = ? OR lower(stale.last_seen_mac) = ?)
+      AND NOT (stale.subnet_id = ? AND stale.ip_address = ?)
+      AND stale.allocation_state = 'dynamic_dhcp'
+      AND NOT EXISTS (
+        SELECT 1 FROM dhcp_reservations reservation
+        WHERE reservation.subnet_id = stale.subnet_id
+          AND reservation.ip_address = stale.ip_address
+          AND reservation.enabled = 1
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM dhcp_leases lease
+        WHERE lease.subnet_id = stale.subnet_id
+          AND lease.ip_address = stale.ip_address
+          AND ${activeLeaseSql('lease')}
+      )
   `).run(normalizedMac, normalizedMac, subnetId, ip);
-}
-
-/**
- * Clear DNS/hostname ownership for selected IP rows.
- */
-export function clearHostnameByIds(db, ids) {
-  const uniqueIds = [...new Set((ids || []).filter(id => id !== null && id !== undefined))];
-  if (uniqueIds.length === 0) return { changes: 0 };
-
-  const clearRow = db.prepare(
-    "UPDATE ip_addresses SET hostname = NULL, detection_source = NULL, updated_at = datetime('now') WHERE id = ?"
-  );
-  let changes = 0;
-  db.transaction(() => {
-    for (const id of uniqueIds) changes += clearRow.run(id).changes;
-  })();
-  return { changes };
 }
 
 /**
@@ -684,13 +618,13 @@ export function moveToSubnet(db, id, ip, targetSubnetId) {
   return moved;
 }
 
-export function ensureAddress(db, subnetId, ip, status = 'available') {
+export function ensureAddress(db, subnetId, ip, fields = {}) {
   const identity = canonicalIdentity(ip);
   const existing = db.prepare(
     'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, identity.ip);
   if (existing) return { changes: 0, lastInsertRowid: existing.id };
-  const id = upsert(db, subnetId, identity.ip, { status });
+  const id = upsert(db, subnetId, identity.ip, fields);
   return { changes: 1, lastInsertRowid: id };
 }
 
@@ -699,30 +633,10 @@ export function ensureAddresses(db, subnetId, entries) {
 
   let changes = 0;
   for (const entry of entries) {
-    const result = ensureAddress(db, subnetId, entry.ip, entry.status || 'available');
+    const { ip, ...fields } = entry;
+    const result = ensureAddress(db, subnetId, ip, fields);
     changes += result.changes || 0;
   }
-  return { changes };
-}
-
-/**
- * Clear stale DHCP assignment ownership while keeping recent last-seen
- * metadata for short-term display.
- */
-export function clearDhcpAssignmentsByIds(db, ids) {
-  const uniqueIds = [...new Set((ids || []).filter(id => id !== null && id !== undefined))];
-  if (uniqueIds.length === 0) return { changes: 0 };
-
-  const clear = db.prepare(`
-    UPDATE ip_addresses
-       SET status = 'available',
-           updated_at = datetime('now')
-     WHERE id = ?
-  `);
-  let changes = 0;
-  db.transaction(() => {
-    for (const id of uniqueIds) changes += clear.run(id).changes;
-  })();
   return { changes };
 }
 
@@ -758,20 +672,14 @@ export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
  */
 export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, conflictReason }) {
   const existing = db.prepare(
-    'SELECT id, is_online, is_rogue, status, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT id, is_online, is_rogue, allocation_state, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnetId, ip);
 
-  // Re-check: the scanner built its assignment map before this row was read, so
-  // a reservation, lease, DNS record or operator lock may have appeared since.
-  //
-  // This asks addressClaim() rather than re-deriving the answer. It used to be
-  // forty lines of inline checks that answered the same question with a
-  // DIFFERENT set of arms from the passive path, and a fourth hand-rolled copy
-  // of the static-DNS predicate that models/dns-record.js exists to centralize.
-  // The two paths disagreeing is what left a locked address flagged rogue.
+  // Re-check the canonical row because its allocation may have changed after
+  // the scanner built its assignment map.
   let effectiveConflict = isConflict;
   let effectiveReason = conflictReason;
-  if (isConflict && addressClaim(db, subnetId, ip, existing).claimed) {
+  if (isConflict && addressClaim(existing)) {
     effectiveConflict = 0;
     effectiveReason = null;
   }
@@ -807,7 +715,6 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       params.push(effectiveConflict ? effectiveReason : null);
     } else {
       updates.push('is_rogue = 0');
-      updates.push('rogue_reason = NULL');
     }
 
     params.push(existing.id);
@@ -827,18 +734,7 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     }
   } else if (responded) {
     // Rogue device with no existing record, create one
-    // Re-check for reservation before inserting as rogue
-    if (effectiveConflict) {
-      const hasReservation = db.prepare(
-        'SELECT 1 FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? LIMIT 1'
-      ).get(subnetId, ip);
-      if (hasReservation) {
-        effectiveConflict = 0;
-        effectiveReason = null;
-      }
-    }
     const newId = upsert(db, subnetId, ip, {
-      status: 'available',
       is_online: 1,
       last_seen_mac: mac || null,
       mac_address: mac || null,
@@ -854,35 +750,6 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     }
   }
   // If no existing row and didn't respond, nothing to record
-}
-
-/**
- * Set IP status and reservation note (manual lock/unlock/assign).
- * Upserts, creates the row if it doesn't exist.
- */
-export function setStatus(db, subnetId, ip, status, reservationNote = null) {
-  const existing = db.prepare(
-    'SELECT id, status as old_status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
-
-  if (existing) {
-    db.prepare(`
-      UPDATE ip_addresses SET
-        status = ?, reservation_note = ?, detection_source = 'manual',
-        updated_at = datetime('now')
-      WHERE id = ?
-    `).run(status, reservationNote, existing.id);
-    if (status !== existing.old_status) {
-      emit(db, existing.id, subnetId, ip, 'status_changed', { oldValue: existing.old_status, newValue: status, source: 'manual' });
-    }
-  } else {
-    const newId = upsert(db, subnetId, ip, {
-      status,
-      reservation_note: reservationNote,
-      detection_source: 'manual'
-    });
-    emit(db, newId, subnetId, ip, 'status_changed', { newValue: status, source: 'manual' });
-  }
 }
 
 /**
@@ -904,7 +771,7 @@ export function setScanEnabled(db, subnetId, ip, scanEnabled) {
       emit(db, existing.id, subnetId, ip, 'scan_enabled_changed', { oldValue: oldLabel, newValue: newLabel, source: 'manual' });
     }
   } else {
-    const newId = upsert(db, subnetId, ip, { status: 'available' });
+    const newId = upsert(db, subnetId, ip);
     db.prepare(
       "UPDATE ip_addresses SET scan_enabled = ?, updated_at = datetime('now') WHERE id = ?"
     ).run(scanEnabled, newId);

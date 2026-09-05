@@ -22,11 +22,13 @@ import {
   ipLifecycleDisplay,
   ADDRESS_TYPE_ROGUE,
   ADDRESS_TYPE_SYSTEM,
-  ADDRESS_TYPE_LOCKED,
+  ADDRESS_TYPE_RESERVED,
   ADDRESS_TYPE_RESERVED_DHCP,
   ADDRESS_TYPE_STATIC_DNS,
   ADDRESS_TYPE_GATEWAY,
   ADDRESS_TYPE_DYNAMIC_DHCP,
+  ADDRESS_TYPE_SLAAC,
+  ADDRESS_TYPE_QUARANTINED,
 } from '../../../src/utils/ipLifecycleDisplay.js';
 
 // Mirrors the ladder in SubnetDetail.vue ipGrid.
@@ -43,7 +45,7 @@ describe('grid cell colour can express what the classifier emits', () => {
   it('paints a rogue address distinctly from free space', () => {
     // The bug: this fell through to the range colour, so a rogue address inside
     // a DHCP scope looked exactly like an unused one.
-    const state = ipLifecycleDisplay({ is_rogue: 1, status: 'available', is_online: 1 });
+    const state = ipLifecycleDisplay({ ip_display_status: 'in use', address_type: 'rogue' });
     expect(state.addressType?.className).toBe(ADDRESS_TYPE_ROGUE.className);
 
     const rogue = cellColour({ typeClass: state.addressType.className, rangeColour: POOL_TINT });
@@ -53,7 +55,7 @@ describe('grid cell colour can express what the classifier emits', () => {
   });
 
   it("paints one of our own interface addresses distinctly", () => {
-    const state = ipLifecycleDisplay({ is_local_address: 1, status: 'available' });
+    const state = ipLifecycleDisplay({ ip_display_status: 'in use', address_type: 'system' });
     expect(state.addressType?.className).toBe(ADDRESS_TYPE_SYSTEM.className);
 
     const own = cellColour({ typeClass: state.addressType.className, rangeColour: POOL_TINT });
@@ -61,7 +63,7 @@ describe('grid cell colour can express what the classifier emits', () => {
   });
 
   it('leaves a genuinely free address on the range colour', () => {
-    const state = ipLifecycleDisplay({ status: 'available', is_online: 0 });
+    const state = ipLifecycleDisplay({ ip_display_status: 'DHCP Scope', address_type: null });
     expect(state.addressType).toBeNull();
     expect(cellColour({ typeClass: null, rangeColour: POOL_TINT })).toBe(POOL_TINT);
   });
@@ -76,9 +78,10 @@ describe('grid cell colour can express what the classifier emits', () => {
     // Guards the ladder against a NEW address type being added upstream and
     // silently rendering as free space, which is how rogue went unnoticed.
     const all = [
-      ADDRESS_TYPE_ROGUE, ADDRESS_TYPE_SYSTEM, ADDRESS_TYPE_LOCKED,
+      ADDRESS_TYPE_ROGUE, ADDRESS_TYPE_SYSTEM, ADDRESS_TYPE_RESERVED,
       ADDRESS_TYPE_RESERVED_DHCP, ADDRESS_TYPE_STATIC_DNS,
       ADDRESS_TYPE_GATEWAY, ADDRESS_TYPE_DYNAMIC_DHCP,
+      ADDRESS_TYPE_SLAAC, ADDRESS_TYPE_QUARANTINED,
     ];
     for (const t of all) {
       const colour = cellColour({ typeClass: t.className, rangeColour: POOL_TINT });

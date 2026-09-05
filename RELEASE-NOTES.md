@@ -6,6 +6,37 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+### Pending IP lifecycle release
+
+- IP allocation now has one canonical state and transition boundary across
+  Networks, DNS, DHCP, imports, scans, and passive liveness. The legacy
+  `ip_addresses.status` storage field is removed by schema 58. Schema 59
+  enforces that interface context is present only for IPv6 link-local identity
+  and retains DHCPv6 DUID/IAID fields for future live adapters.
+- Upgrades from schema 54 inventory ambiguous claims before mutation and write
+  a mode-600 reconciliation report. Interrupted reconciliation is retried on
+  the next startup. Multiple enabled manual A or AAAA names for one IP block
+  migration until one address record remains and the aliases are CNAMEs.
+- Pi-hole import rejects the entire batch when more than one A record targets
+  the same canonical IP. The response lists every affected record and explains
+  the CNAME remediation, so the source can be corrected and imported later.
+- Learned dynamic and rogue metadata now retires after one continuous hour
+  offline. A temporary offline edge clears the active rogue flag but preserves
+  the reason and observations until retirement. Static administrative
+  assignments keep observations until the assignment is removed.
+- DNS tables show record provenance as Source. They no longer infer IP
+  allocation Type from `dns_source`; allocation labels come only from the
+  server's canonical lifecycle projection.
+- Lifecycle diagnostics are available from localhost deep health and the
+  authenticated metrics API, including allocation counts, scope conflicts,
+  online rogue hosts, retirement actions, and reconciliation outcome.
+
+The disposable-appliance live DHCP matrix and the full pre-release security
+pipeline remain release gates and are intentionally deferred until DHCP can be
+enabled on a test interface.
+
+---
+
 ## v0.4.17 — 2026-08-19
 
 ```yaml

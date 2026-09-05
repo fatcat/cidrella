@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../../helpers/test-db.js';
 import * as IpAddress from '../../../src/models/ip-address.js';
-import { buildIpAggregate } from '../../../src/models/ip-view.js';
+import { buildIpAggregate, enrichIpViewRows } from '../../../src/models/ip-view.js';
 
 let db;
 let tmpDir;
@@ -67,21 +67,36 @@ describe('canonical IP aggregate schema', () => {
     expect(() => IpAddress.upsert(db, subnetId, 'fe80::88', {}))
       .toThrow(/require interface context/);
 
-    IpAddress.upsert(db, subnetId, 'fe80::88%eth0', {});
-    const row = db.prepare("SELECT * FROM ip_addresses WHERE ip_address = 'fe80::88'").get();
-    expect(row.interface_id).toBe('eth0');
+    const eth0Id = IpAddress.upsert(db, subnetId, 'fe80::88%eth0', { hostname: 'eth0-host' });
+    const eth1Id = IpAddress.upsert(db, subnetId, 'fe80::88%eth1', { hostname: 'eth1-host' });
+    expect(eth1Id).not.toBe(eth0Id);
+
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, 'fe80::88%eth0'))
+      .toMatchObject({ id: eth0Id, ip_address: 'fe80::88', interface_id: 'eth0' });
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, 'fe80::88%eth1'))
+      .toMatchObject({ id: eth1Id, ip_address: 'fe80::88', interface_id: 'eth1' });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM ip_addresses WHERE ip_address = 'fe80::88'").get().count)
+      .toBe(2);
+
+    const rows = enrichIpViewRows(db, [
+      { subnet_id: subnetId, ip_address: 'fe80::88', interface_id: 'eth0' },
+      { subnet_id: subnetId, ip_address: 'fe80::88', interface_id: 'eth1' }
+    ], { fillFromIpAddress: true });
+    expect(rows.map(row => row.hostname)).toEqual(['eth0-host', 'eth1-host']);
   });
 });
 
 describe('canonical IP read aggregate', () => {
-  it('adds canonical identity to synthesized protocol rows', () => {
+  it('adds canonical identity without inferring allocation from protocol shape', () => {
     expect(buildIpAggregate({
       ip_address: '2001:0DB8:0:0:0:0:0:90',
-      has_static_dns: 1
+      has_static_dns: 1,
+      allocation_state: 'unassigned'
     })).toMatchObject({
       ip_address: '2001:db8::90',
       address_family: 6,
-      address_type: 'static DNS'
+      address_type: null,
+      allocation_state: 'unassigned'
     });
   });
 

@@ -17,29 +17,39 @@ fields produced by `server/src/models/ip-view.js`.
 | `address_family` | Canonical address family. | `4`, `6` |
 | `address_sort_key` | Fixed-width indexed key for numeric mixed-family ordering. | 33-character family-prefixed hexadecimal key |
 | `interface_id` | Interface context required for scoped addresses such as IPv6 link-local. | identifier, null |
-| `ip_lifecycle_status` | Temporary compatibility projection of legacy storage state. | `available`, `assigned`, `dhcp`, `locked` |
 | `ip_display_status` | User-facing availability derived by the server. | `available`, `DHCP Scope`, `in use` |
 | `ip_status_severity` | UI severity for `ip_display_status`. | `secondary`, `danger` |
 | `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `reserved DHCP`, `SLAAC`, `rogue`, `system`, `gateway`, `reserved` |
-| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, lock note |
+| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, reservation note |
 | `computed_type` | Sort/search alias for `address_type`, or `available`. | same as `address_type`, plus `available` |
 | `is_online` | Current liveness state. | `0`/`1`, boolean in some API rows |
 | `last_seen_at` | Last observation time from scans, DHCP, or passive checks. | datetime/null |
 | `last_scanned_at` | Last active probe time. | datetime/null |
 | `in_dynamic_pool` | Whether the address belongs to an enabled same-family DHCP pool. | `0`/`1` |
-| `has_static_dns` | Temporary compatibility fact for an enabled manual DNS A or AAAA record. | `0`/`1` |
+| `has_static_dns` | Whether an enabled manual DNS A or AAAA record backs the IP. | `0`/`1` |
 | `has_dhcp_reservation` | Whether a DHCP reservation backs the IP. | `0`/`1` |
 | `dhcp_expires_at` | Active dynamic lease expiration. | datetime, `infinite`, null |
+| `dhcp_duid` | DHCPv6 client DUID retained by the lifecycle aggregate. | string/null |
+| `dhcp_iaid` | DHCPv6 identity association identifier retained with the DUID. | string/null |
 
 UI table rendering should use `ip_display_status` for the displayed Status and
 `address_type`/`computed_type` for the displayed Type. It should not infer
-display Type from storage fields such as `ip_addresses.status`,
-`dns_records.source`, or DHCP lease row shape.
+display Type from DNS or DHCP row shape.
 
 The server canonicalizes every persisted address through
 `server/src/utils/address.js`. IPv4-mapped IPv6 input resolves to the canonical
-IPv4 identity. IPv6 link-local addresses require `interface_id`. API consumers
-must not use textual address spelling for identity or ordering.
+IPv4 identity. IPv6 link-local addresses require `interface_id`; global
+addresses must leave it null. API consumers must not use textual address
+spelling for identity or ordering.
+
+## Lifecycle Diagnostics
+
+`GET /api/metrics/ip-lifecycle` requires `analytics:read` and returns allocation
+counts by state, current scope conflicts, online rogue hosts, retirement
+activity, and the sanitized migration outcome. The localhost-only
+`GET /api/health/deep` response includes the same data as its `ip_lifecycle`
+check. Neither endpoint returns the migration report's address-level conflict
+details.
 
 ## DHCP Rows
 
@@ -56,7 +66,22 @@ Do not expose or consume bare `type` or `status` for DHCP table rows. Use
 
 `unavailable` means the address is not assigned by DHCP but is still not safe
 for dynamic lease use, such as a rogue online host, static DNS assignment, or
-locked/system-owned address inside a DHCP scope.
+reserved/system-owned address inside a DHCP scope.
+
+## IP Allocation Writes
+
+Manual holds use the canonical allocation vocabulary. Reserve or release one
+address with `PUT /api/subnets/:id/ips/:ip/allocation`:
+
+```json
+{ "allocation_state": "reserved", "note": "printer" }
+```
+
+Release it by sending `{"allocation_state":"unassigned"}`. For a contiguous
+range, use `PUT /api/subnets/:id/ips/bulk-allocation` with `start_ip`, `end_ip`,
+`allocation_state`, and an optional `note`. These endpoints accept only
+`reserved` and `unassigned`; DNS, DHCP, SLAAC, and topology allocations must be
+changed through their owning APIs.
 
 ## DNS Rows
 
@@ -79,7 +104,6 @@ that table:
 | Storage field | Scope |
 | --- | --- |
 | `ip_addresses.allocation_state` | Canonical mutually exclusive allocation state. |
-| `ip_addresses.status` | Temporary legacy compatibility state during migration. |
 | `subnets.status` | Network allocation state. |
 | `dns_records.type` | DNS RR type. |
 | `dns_records.source` | DNS record provenance. |

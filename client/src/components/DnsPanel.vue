@@ -199,7 +199,7 @@
                   :label="data.enabled ? 'Yes' : 'No'"
                   :className="data.enabled ? 'state-ok' : 'state-muted'"
                 />
-                <AddressTypePill v-else-if="col.key === 'source'" :display="addressTypeForDnsSource(data.dns_source)" />
+                <span v-else-if="col.key === 'source'" class="type-badge">{{ dnsSourceLabel(data.dns_source) }}</span>
                 <template v-else-if="col.key === 'online'">
                   <OnlineStatusCell
                     v-if="data.record_type === 'A' && data.is_online !== null && data.is_online !== undefined"
@@ -399,9 +399,7 @@ import { useDhcpStore } from '../stores/dhcp.js';
 import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';
 import { ipToLong, isValidIpv4 } from '../utils/ip.js';
 import { loadJson, saveJson } from '../utils/storage.js';
-import { addressTypeForDnsSource } from '../utils/ipLifecycleDisplay.js';
 import EmptyState from './EmptyState.vue';
-import AddressTypePill from './table/AddressTypePill.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
 import OnlineStatusCell from './table/OnlineStatusCell.vue';
@@ -415,6 +413,12 @@ const store = useDnsStore();
 const dhcpStore = useDhcpStore();
 const toast = useToast();
 const { rows: dnsRows, onPage: onDnsPage } = useRowsPreference('cidrella_dns_table_rows', 100);
+
+function dnsSourceLabel(source) {
+  if (source === 'dhcp') return 'DHCP lease';
+  if (source === 'reservation') return 'DHCP reservation';
+  return 'Manual';
+}
 
 // Find the first DHCP scope whose pool contains `ip`. Returns { scope, cidr }
 // or null. Used to warn when a user points a DNS A record at an IP inside a
@@ -453,7 +457,7 @@ const dnsForwardColumns = [
   { key: 'port', header: 'Port', description: 'Service port used by SRV records.', field: 'port', sortable: true, style: 'width: 4rem' },
   { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
   { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
-  { key: 'source', header: 'Type', description: 'How the DNS row was created: static DNS, dynamic DHCP, or reserved DHCP.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
+  { key: 'source', header: 'Source', description: 'How the DNS row was created: manually, from a DHCP lease, or from a DHCP reservation.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
   { key: 'online', header: 'Online', description: 'Current liveness state for A records with a known IP address.', field: 'is_online', sortable: true, style: 'width: 5rem' },
 ];
 
@@ -464,7 +468,7 @@ const dnsReverseColumns = [
   { key: 'record_type', header: 'Record Type', description: 'DNS resource record type for the reverse-zone row.', field: 'record_type', sortable: true, style: 'width: 7rem' },
   { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
   { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
-  { key: 'source', header: 'Type', description: 'How the DNS row was created: static DNS, dynamic DHCP, or reserved DHCP.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
+  { key: 'source', header: 'Source', description: 'How the DNS row was created: manually, from a DHCP lease, or from a DHCP reservation.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
 ];
 
 const {

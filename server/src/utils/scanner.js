@@ -1,13 +1,10 @@
 import { execFile } from 'child_process';
-import { activeLeaseSql } from './lease-sql.js';
 import { parseCidr, longToIp } from './ip.js';
 import { parseArpingMac, readArpCache } from './arp-cache.js';
-import { localIpv4Set } from './local-addresses.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
 import { observeScanResult, reconcileScanRogues } from '../services/ip-lifecycle-service.js';
 import * as ScanRun from '../models/scan-run.js';
-import * as DnsRecord from '../models/dns-record.js';
 
 /**
  * Run arping on a single IP. It only responds for directly-reachable peers;
@@ -151,69 +148,13 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   // Update scan status to running
   ScanRun.markRunning(db, scanId, totalIps);
 
-  // Get existing IP assignments for conflict detection
+  // Canonical allocation is the only assignment authority used by scans.
   const assignments = db.prepare(`
-    SELECT ip_address, mac_address, hostname, status FROM ip_addresses
-    WHERE subnet_id = ? AND status IN ('assigned', 'locked')
+    SELECT ip_address, mac_address, hostname, allocation_state
+    FROM ip_addresses
+    WHERE subnet_id = ? AND allocation_state != 'unassigned'
   `).all(subnetId);
   const assignmentMap = new Map(assignments.map(a => [a.ip_address, a]));
-
-  // Active DHCP leases are assigned. Historic ip_addresses rows with
-  // status='dhcp' are not enough; restored lease history may have no active
-  // lease on this instance.
-  const activeLeases = db.prepare(`
-    SELECT ip_address, mac_address, hostname FROM dhcp_leases
-    WHERE subnet_id = ?
-      AND ${activeLeaseSql()}
-  `).all(subnetId);
-  for (const l of activeLeases) {
-    if (!assignmentMap.has(l.ip_address)) {
-      assignmentMap.set(l.ip_address, { ip_address: l.ip_address, mac_address: l.mac_address, hostname: l.hostname, status: 'dhcp' });
-    }
-  }
-
-  // Also include DHCP reservations, an IP with a reservation is not rogue
-  // (covers cases where ip_addresses wasn't synced yet)
-  const reservations = db.prepare(`
-    SELECT ip_address, mac_address, hostname FROM dhcp_reservations
-    WHERE subnet_id = ?
-  `).all(subnetId);
-  for (const r of reservations) {
-    if (!assignmentMap.has(r.ip_address)) {
-      assignmentMap.set(r.ip_address, { ip_address: r.ip_address, mac_address: r.mac_address, hostname: r.hostname, status: 'dhcp' });
-    }
-  }
-
-  // Also include DNS-owned A records, not rogue. Do not trust stale
-  // ip_addresses.hostname alone; restored DHCP lease history can retain a
-  // hostname after the active lease is gone. Predicate lives in dns-record.js
-  // so the scanner, the IP view, and the passive path all agree on it.
-  const ipsToScanSet = new Set(ipsToScan);
-
-  // Our own interface addresses always answer a probe. Without this they look
-  // like an unknown host on an unassigned address and get flagged rogue.
-  for (const localIp of localIpv4Set()) {
-    if (ipsToScanSet.has(localIp) && !assignmentMap.has(localIp)) {
-      assignmentMap.set(localIp, {
-        ip_address: localIp,
-        mac_address: null,
-        hostname: null,
-        status: 'assigned'
-      });
-    }
-  }
-
-  const dnsAssigned = DnsRecord.listDnsAssignedIps(db).filter(r => ipsToScanSet.has(r.ip_address));
-  for (const d of dnsAssigned) {
-    if (!assignmentMap.has(d.ip_address)) {
-      assignmentMap.set(d.ip_address, {
-        ip_address: d.ip_address,
-        mac_address: null,
-        hostname: d.hostname,
-        status: 'assigned'
-      });
-    }
-  }
 
   try {
     // Scan in batches for reasonable speed

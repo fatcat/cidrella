@@ -160,12 +160,11 @@ export function cnameTargetError(db, target, zone, extraKnownFqdns = null) {
  * applied it and an import could quietly give one IP a second name.
  *
  * `ignoreFqdns` is the import path's equivalent of cnameTargetError's
- * `extraKnownFqdns`, and exists for the same reason: a bulk import is validated
- * against the DB as it stands BEFORE anything is inserted, so without it a file
- * that legitimately maps one IP to two names would import cleanly the first
- * time and fail on every re-import. Callers importing a batch pass the batch's
- * own FQDNs. It relaxes ONLY the manual-A-record check, never the reservation
- * or lease checks, which are about state the import does not own.
+ * `extraKnownFqdns`. A bulk import is validated against the DB before anything
+ * is inserted, so callers pass the batch's own FQDNs to keep re-importing the
+ * same valid records idempotent. The importer separately rejects multiple A
+ * records for one IP before using this exception. It relaxes only the manual-A
+ * check, never reservation or lease checks.
  */
 function hostnameMatches(candidate, proposed, domainName) {
   const c = normalizeDnsName(candidate);
@@ -233,10 +232,8 @@ export function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecor
 
   for (const record of existingRecords) {
     const hostname = fqdnForRecordName(record.name, record.zone_name);
-    // A record the CALLER is itself importing is not a conflict with the
-    // caller. Without this, re-importing a file that legitimately gives one IP
-    // two names would succeed the first time (neither name is in the DB yet)
-    // and fail every time after, which makes the importer non-idempotent.
+    // An exact A record the caller is re-importing is not a conflict with
+    // itself. Multiple names for one IP are rejected at the batch boundary.
     if (ignoreFqdns && ignoreFqdns.has(normalizeDnsName(hostname))) continue;
     if (!hostnameMatches(hostname, proposed, null)) {
       return { hostname, source: 'static DNS' };

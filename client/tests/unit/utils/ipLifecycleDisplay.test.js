@@ -1,190 +1,90 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addressTypeForDhcpAssignment,
-  addressTypeForDnsSource,
   ipLifecycleDisplay,
   ipLifecycleDisplayForDhcpRow
 } from '../../../src/utils/ipLifecycleDisplay.js';
 
-describe('address type display', () => {
-  it('maps DNS sources to the shared Type pills', () => {
-    expect(addressTypeForDnsSource('manual')).toMatchObject({ label: 'static DNS', className: 'type-static-dns' });
-    expect(addressTypeForDnsSource('dhcp')).toMatchObject({ label: 'dynamic DHCP', className: 'type-dynamic-dhcp' });
-    expect(addressTypeForDnsSource('reservation')).toMatchObject({ label: 'reserved DHCP', className: 'type-reserved-dhcp' });
-  });
-
-  it('maps DHCP rows to the shared Type pills', () => {
-    expect(addressTypeForDhcpAssignment('dynamic')).toMatchObject({ label: 'dynamic DHCP', className: 'type-dynamic-dhcp' });
-    expect(addressTypeForDhcpAssignment('reserved')).toMatchObject({ label: 'reserved DHCP', className: 'type-reserved-dhcp' });
-  });
-});
-
 describe('ipLifecycleDisplay', () => {
-  it('shows static DNS for DNS-backed addresses', () => {
-    expect(ipLifecycleDisplay({ status: 'assigned', hostname: 'host' }).addressType)
-      .toMatchObject({ label: 'static DNS', className: 'type-static-dns' });
+  const cases = [
+    ['static DNS', 'type-static-dns'],
+    ['reserved DHCP', 'type-reserved-dhcp'],
+    ['dynamic DHCP', 'type-dynamic-dhcp'],
+    ['reserved', 'type-reserved'],
+    ['system', 'type-system'],
+    ['gateway', 'type-gateway'],
+    ['SLAAC', 'type-slaac'],
+    ['quarantined', 'type-quarantined'],
+    ['rogue', 'type-rogue']
+  ];
+
+  it.each(cases)('formats the server-projected %s type', (address_type, className) => {
+    const display = ipLifecycleDisplay({
+      ip_display_status: 'in use',
+      ip_status_severity: 'danger',
+      address_type
+    });
+
+    expect(display.status).toBe('in use');
+    expect(display.addressType).toMatchObject({ label: address_type, className });
   });
 
-  it('shows reserved DHCP for DHCP reservations', () => {
-    expect(ipLifecycleDisplay({ has_dhcp_reservation: 1 }).addressType)
-      .toMatchObject({ label: 'reserved DHCP', className: 'type-reserved-dhcp' });
-  });
-
-  it('shows dynamic DHCP for active DHCP leases', () => {
+  it('renders the server-projected available state without a type', () => {
     expect(ipLifecycleDisplay({
-      range_type_name: 'DHCP Scope',
-      dhcp_expires_at: '2999-01-01T00:00:00Z'
-    }).addressType).toMatchObject({ label: 'dynamic DHCP', className: 'type-dynamic-dhcp' });
+      ip_display_status: 'available',
+      ip_status_severity: 'secondary',
+      address_type: null
+    })).toMatchObject({ status: 'available', addressType: null });
   });
 
-  it('shows online retained DHCP lifecycle rows as rogue without a current lease row', () => {
-    const display = ipLifecycleDisplay({
-      range_type_name: 'DHCP Scope',
-      status: 'dhcp',
-      hostname: 'host',
-      is_online: 1,
-      dhcp_expires_at: null
-    });
-    expect(display.status).toBe('in use');
-    expect(display.addressType).toMatchObject({ label: 'rogue', className: 'type-rogue' });
+  it('renders the server-projected DHCP Scope state without a type', () => {
+    expect(ipLifecycleDisplay({ ip_display_status: 'DHCP Scope', address_type: null }))
+      .toMatchObject({ status: 'DHCP Scope', addressType: null });
   });
 
-  it('shows offline unassigned DHCP-pool rows as DHCP Scope', () => {
-    const display = ipLifecycleDisplay({
-      range_type_name: 'DHCP Scope',
-      status: 'available',
-      hostname: 'host',
-      is_online: 0,
-      dhcp_expires_at: null
-    });
-    expect(display.status).toBe('DHCP Scope');
-    expect(display.addressType).toBeNull();
+  it('preserves the server tooltip', () => {
+    expect(ipLifecycleDisplay({
+      ip_display_status: 'in use',
+      address_type: 'quarantined',
+      address_type_tooltip: 'two claims'
+    }).tooltip).toBe('two claims');
   });
 
-  it('shows DNS-owned hostnames in a DHCP scope as static DNS', () => {
-    const display = ipLifecycleDisplay({
-      range_type_name: 'DHCP Scope',
-      status: 'available',
-      hostname: 'printer.example.test',
-      detection_source: 'dns',
-      is_online: 1,
-      dhcp_expires_at: null
-    });
-    expect(display.status).toBe('in use');
-    expect(display.addressType).toMatchObject({ label: 'static DNS', className: 'type-static-dns' });
+  it('formats an unknown future server type explicitly', () => {
+    expect(ipLifecycleDisplay({ ip_display_status: 'in use', address_type: 'future state' }).addressType)
+      .toMatchObject({ label: 'future state', className: 'type-unknown' });
   });
 
-  it('uses the backing DNS flag when detection_source is stale', () => {
+  it('does not infer availability or ownership from canonical or protocol facts', () => {
     const display = ipLifecycleDisplay({
-      range_type_name: 'DHCP Scope',
-      status: 'available',
-      hostname: 'testerella.example.test',
-      detection_source: 'scanner',
+      allocation_state: 'static_dns',
+      status: 'assigned',
+      has_dhcp_reservation: 1,
       has_static_dns: 1,
       is_online: 1,
-      dhcp_expires_at: null
-    });
-    expect(display.status).toBe('in use');
-    expect(display.addressType).toMatchObject({ label: 'static DNS', className: 'type-static-dns' });
-  });
-
-  it('uses DHCP Scope status without assigning an address Type', () => {
-    const display = ipLifecycleDisplay({ range_type_name: 'DHCP Scope' });
-    expect(display.status).toBe('DHCP Scope');
-    expect(display.addressType).toBeNull();
-  });
-
-  it('keeps rogue status as in use with rogue Type', () => {
-    const display = ipLifecycleDisplay({ is_rogue: 1, rogue_reason: 'unexpected host' });
-    expect(display.status).toBe('in use');
-    expect(display.addressType).toMatchObject({ label: 'rogue', className: 'type-rogue' });
-    expect(display.tooltip).toBe('unexpected host');
-  });
-
-  it('treats online available unassigned rows as rogue even when flags arrive as strings', () => {
-    const display = ipLifecycleDisplay({
-      status: 'available',
-      is_online: '1',
-      has_dhcp_reservation: '0',
-      hostname: null,
-      dhcp_expires_at: null
-    });
-    expect(display.status).toBe('in use');
-    expect(display.addressType).toMatchObject({ label: 'rogue', className: 'type-rogue' });
-  });
-
-  it('keeps stale unowned hostnames untyped but identifies pool membership', () => {
-    const display = ipLifecycleDisplay({
-      status: 'dhcp',
-      hostname: 'espressif',
-      detection_source: 'scanner',
-      has_static_dns: 0,
-      is_online: 0,
-      dhcp_expires_at: null
-    });
-    expect(display.status).toBe('DHCP Scope');
-    expect(display.addressType).toBeNull();
-  });
-
-  it('shows online DHCP scope rows without active leases as rogue', () => {
-    const display = ipLifecycleDisplayForDhcpRow({
-      dhcp_assignment_type: null,
-      lease_status: 'available',
-      ip_lifecycle_status: 'available',
-      is_online: 1,
-      hostname: 'restored-prod-lease',
-      mac_address: 'aa:bb:cc:dd:ee:ff',
-      dhcp_expires_at: null,
-      has_dhcp_reservation: 0,
-      has_static_dns: 0
+      is_rogue: 1
     });
 
-    expect(display.status).toBe('in use');
-    expect(display.addressType).toMatchObject({ label: 'rogue', className: 'type-rogue' });
-  });
-
-  it('shows DHCP scope rows with active leases as dynamic DHCP', () => {
-    const display = ipLifecycleDisplayForDhcpRow({
-      dhcp_assignment_type: 'dynamic',
-      lease_status: 'active',
-      ip_lifecycle_status: 'dhcp',
-      is_online: 1,
-      expires_at: '2999-01-01T00:00:00Z'
-    });
-
-    expect(display.addressType).toMatchObject({ label: 'dynamic DHCP', className: 'type-dynamic-dhcp' });
+    expect(display).toMatchObject({ status: 'unknown', addressType: null });
   });
 });
 
-// This module is the client-side fallback for the server's computeIpView, used
-// when a row arrives without address_type. It has to agree with the server, so
-// these mirror server/tests/unit/models/ip-view.test.js.
-describe('ipLifecycleDisplay: parity with the server projection', () => {
-  it('shows system for an address the appliance itself holds', () => {
-    expect(ipLifecycleDisplay({ is_online: 1, is_local_address: 1 }).addressType)
-      .toMatchObject({ label: 'system' });
+describe('ipLifecycleDisplayForDhcpRow', () => {
+  it('uses the canonical display projection supplied by the server', () => {
+    expect(ipLifecycleDisplayForDhcpRow({
+      allocation_state: 'dynamic_dhcp',
+      dhcp_assignment_type: 'dynamic',
+      ip_display_status: 'in use',
+      address_type: 'dynamic DHCP'
+    }).addressType).toMatchObject({ label: 'dynamic DHCP' });
   });
 
-  it('prefers system over a stored rogue flag', () => {
-    expect(ipLifecycleDisplay({ is_online: 1, is_local_address: 1, is_rogue: 1 }).addressType)
-      .toMatchObject({ label: 'system' });
-  });
+  it('does not infer a type from the DHCP row shape', () => {
+    const display = ipLifecycleDisplayForDhcpRow({
+      allocation_state: 'unassigned',
+      dhcp_assignment_type: 'reserved'
+    });
 
-  it('does not call a DNS-claimed address rogue', () => {
-    expect(ipLifecycleDisplay({ status: 'available', is_online: 1, has_static_dns: 1 }).addressType)
-      .toMatchObject({ label: 'static DNS' });
-  });
-
-  it('still shows rogue for an online address nothing claims', () => {
-    expect(ipLifecycleDisplay({ status: 'available', is_online: 1 }).addressType)
-      .toMatchObject({ label: 'rogue' });
-  });
-
-  // Known divergence, deliberately pinned rather than fixed here. The server's
-  // computeIpView defaults a missing status to 'available' and would label this
-  // rogue. This fallback leaves it undefined and returns no type. Real rows
-  // always carry a status, so it does not bite today.
-  it('returns no address type when the row carries no status at all', () => {
-    expect(ipLifecycleDisplay({ is_online: 1 }).addressType).toBeNull();
+    expect(display.status).toBe('unknown');
+    expect(display.addressType).toBeNull();
   });
 });

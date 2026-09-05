@@ -194,7 +194,7 @@ export function regenerateScopeConfigs(db) {
   const reservedRows = db.prepare(`
     SELECT subnet_id, ip_address
     FROM ip_addresses
-    WHERE allocation_state = 'reserved' OR status = 'locked'
+    WHERE allocation_state = 'reserved'
   `).all();
   for (const row of reservedRows) {
     if (!reservedBySubnet.has(row.subnet_id)) reservedBySubnet.set(row.subnet_id, []);

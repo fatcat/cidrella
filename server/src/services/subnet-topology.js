@@ -167,12 +167,11 @@ export function configureSubnet(db, subnet, parsed, fields) {
       const entries = [];
 
       for (let ipLong = ipStart; ipLong <= ipEnd; ipLong++) {
-        const ipStatus = (gwLong !== null && ipLong === gwLong) ? 'locked' : 'available';
+        const isGateway = gwLong !== null && ipLong === gwLong;
         entries.push({
           ip: longToIp(ipLong),
-          status: ipStatus,
-          allocation_state: ipStatus === 'locked' ? ALLOCATION_STATE.GATEWAY : undefined,
-          reservation_note: ipStatus === 'locked' ? 'Default gateway' : undefined
+          allocation_state: isGateway ? ALLOCATION_STATE.GATEWAY : ALLOCATION_STATE.UNASSIGNED,
+          reservation_note: isGateway ? 'Default gateway' : undefined
         });
       }
       IpAddress.ensureAddresses(db, subnet.id, entries);

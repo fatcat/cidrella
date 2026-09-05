@@ -57,7 +57,7 @@ body {
   --cid-reserved-dhcp: #6d28d9;
   --cid-system: #475569;
   --cid-gateway: #b45309;
-  --cid-locked: #0f766e;
+  --cid-reserved: #0f766e;
   --cid-rogue: #b91c1c;
 
   --cid-status-ok: #15803d;
@@ -94,7 +94,7 @@ body {
   --cid-reserved-dhcp: #c4b5fd;
   --cid-system: #94a3b8;
   --cid-gateway: #fbbf24;
-  --cid-locked: #5eead4;
+  --cid-reserved: #5eead4;
   --cid-rogue: #f87171;
 
   --cid-status-ok: #86efac;
@@ -184,7 +184,7 @@ body {
   --cid-reserved-dhcp: #b48ead;
   --cid-system: #aeb7c6;
   --cid-gateway: #ebcb8b;
-  --cid-locked: #8fbcbb;
+  --cid-reserved: #8fbcbb;
   --cid-rogue: #d8757f;
   --cid-status-ok: #a3be8c;
   --cid-status-warn: #ebcb8b;
@@ -215,7 +215,7 @@ body {
   --cid-reserved-dhcp: #c678dd;
   --cid-system: #9aa3b2;
   --cid-gateway: #e5c07b;
-  --cid-locked: #56b6c2;
+  --cid-reserved: #56b6c2;
   --cid-rogue: #e87d86;
   --cid-status-ok: #98c379;
   --cid-status-warn: #e5c07b;
@@ -404,9 +404,9 @@ body {
   background: color-mix(in srgb, var(--cid-gateway) 16%, transparent);
   color: var(--cid-gateway);
 }
-.address-type-pill.type-locked {
-  background: color-mix(in srgb, var(--cid-locked) 16%, transparent);
-  color: var(--cid-locked);
+.address-type-pill.type-reserved {
+  background: color-mix(in srgb, var(--cid-reserved) 16%, transparent);
+  color: var(--cid-reserved);
 }
 .address-type-pill.type-rogue {
   background: color-mix(in srgb, var(--cid-rogue) 16%, transparent);

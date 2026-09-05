@@ -129,6 +129,30 @@ Some releases have introduced changes that require a one-time manual step when u
 
 - **[v0.4.6 → v0.4.7](./UPGRADING-0.4.6-to-0.4.7.md)**: requires an `update.sh` hot-patch. v0.4.6's hardcoded binding check expected `bcrypt` (replaced by `bcryptjs` in v0.4.7) and its preflight probe spawns the new Node binary without capabilities (v0.4.7 ships a bundled Node that needs `setcap` before the raw-socket health check can run).
 
+#### IP lifecycle migration in the pending release
+
+The pending lifecycle release migrates a v0.4.17 schema-54 database through
+schema 59. Before changing the schema, startup writes
+`/var/lib/cidrella/ip-lifecycle-migration-report.json` with mode 600 and checks
+for claims that cannot be resolved safely.
+
+Startup stops before any schema mutation when the report has
+`"outcome": "blocked"`. Each conflict includes the subnet, canonical IP,
+reason, and a remediation. In particular, more than one enabled manual A or
+AAAA record for one IP must be reduced to one canonical address record. Keep
+the other names as CNAMEs, then restart CIDRella to retry the inventory.
+
+Safe upgrades move the report through `ready`, `reconciliation_pending`, and
+`complete`. If the process stops after migrations but before reconciliation,
+the next startup detects the pending report and retries reconciliation. Do not
+delete a `ready` or `reconciliation_pending` report to force startup. Restore
+the pre-update database snapshot if the listed remediation cannot be completed.
+
+Operators can inspect the sanitized outcome and lifecycle cleanup counts at
+`GET /api/health/deep` from localhost or `GET /api/metrics/ip-lifecycle` with
+the `analytics:read` permission. These endpoints do not expose the report's IP,
+hostname, or record details.
+
 ### Triggering from the API
 
 ```

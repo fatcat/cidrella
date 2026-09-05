@@ -55,7 +55,7 @@ export function createAutoScope(db, subnetId, parsed, gateway, domainName, pool)
 export function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName, defaults) {
   if (!defaults) return null;
 
-  const ipCount = db.prepare("SELECT COUNT(*) as c FROM ip_addresses WHERE subnet_id = ? AND status != 'available'").get(subnetId);
+  const ipCount = db.prepare("SELECT COUNT(*) as c FROM ip_addresses WHERE subnet_id = ? AND allocation_state != 'unassigned'").get(subnetId);
   if (ipCount.c > 0) return null;
   const leaseCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_leases WHERE subnet_id = ?').get(subnetId);
   if (leaseCount.c > 0) return null;

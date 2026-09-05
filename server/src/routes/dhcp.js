@@ -3,6 +3,7 @@ import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { isIpInSubnet, ipToLong, longToIp, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
 import { sortKey } from '../utils/address.js';
+import { isLeaseActive } from '../utils/lease-sql.js';
 import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
@@ -372,7 +373,7 @@ router.get('/reservations', requirePerm('dhcp:read'), (req, res) => {
 
 // Returns null if the IP is safe to reserve, or a string error reason otherwise.
 // Blocks the subnet's network address, broadcast, gateway, and any IP marked
-// locked in ip_addresses. Callers have already validated format + subnet bounds.
+// reserved in ip_addresses. Callers have already validated format + subnet bounds.
 export function reservationIpRejectionReason(db, subnet, ipAddress) {
   const parsed = parseCidr(subnet.cidr);
   const ipLong = ipToLong(ipAddress);
@@ -382,16 +383,13 @@ export function reservationIpRejectionReason(db, subnet, ipAddress) {
     return 'Cannot reserve the gateway address';
   }
   const row = db.prepare(
-    'SELECT status, allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnet.id, ipAddress);
   if (row && ['system', 'gateway'].includes(row.allocation_state)) {
     return `Cannot reserve a protected ${row.allocation_state} IP`;
   }
   if (row && ['static_dns', 'dynamic_dhcp', 'slaac', 'quarantined'].includes(row.allocation_state)) {
     return `Cannot reserve an IP allocated as ${row.allocation_state}`;
-  }
-  if (row && row.status === 'locked' && row.allocation_state !== 'reserved') {
-    return 'Cannot reserve a locked IP';
   }
   return null;
 }
@@ -609,14 +607,13 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
   `).all(...reservationArgs);
 
   const now = Date.now();
-  const isActiveLease = lease => lease.expires_at === 'infinite'
-    || (Date.parse(lease.expires_at) > now);
+  const leaseIsActive = lease => isLeaseActive(lease.expires_at, now);
 
   // Build a map of active leases by MAC+IP for matching. Expired rows remain
   // visible as short-lived history but cannot make a reservation look online.
   const leaseMap = new Map();
   for (const l of leases) {
-    if (isActiveLease(l)) leaseMap.set(`${l.mac_address}:${l.ip_address}`, l);
+    if (leaseIsActive(l)) leaseMap.set(`${l.mac_address}:${l.ip_address}`, l);
   }
 
   const unified = [];
@@ -666,7 +663,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
         subnet_domain_name: l.subnet_domain_name,
         folder_id: l.folder_id,
         enabled: true,
-        lease_status: isActiveLease(l) ? 'active' : 'expired',
+        lease_status: leaseIsActive(l) ? 'active' : 'expired',
         expires_at: l.expires_at,
         reservation_id: null,
         created_at: l.created_at,

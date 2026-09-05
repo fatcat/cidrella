@@ -1,76 +1,38 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import fs from 'fs';
-import path from 'path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../../helpers/test-db.js';
-import {
-  FAMILY_NEUTRAL_LIFECYCLE_FIXTURES,
-  seedLegacyLifecycleContradictions
-} from '../../fixtures/ip-lifecycle-0_4_17.js';
+import { FAMILY_NEUTRAL_LIFECYCLE_FIXTURES } from '../../fixtures/ip-lifecycle-0_4_17.js';
 import { addressFamily, canonicalizeIp, parseIp } from '../../../src/utils/address.js';
 
 let db;
 let tmpDir;
-let subnetId;
-let scopeId;
-let regenerateScopeConfigs;
 
 beforeAll(async () => {
   ({ db, tmpDir } = await setupTestDb());
-  ({ subnetId, scopeId } = seedLegacyLifecycleContradictions(db));
-  vi.resetModules();
-  ({ regenerateScopeConfigs } = await import('../../../src/utils/dhcp.js'));
 });
 
 afterAll(() => cleanupTestDb(tmpDir));
 
-describe('0.4.17 lifecycle characterization', () => {
-  it('permits a locked rogue address to also carry an active lease', () => {
-    const facts = db.prepare(`
-      SELECT ip.status, ip.is_rogue, lease.expires_at
-      FROM ip_addresses ip
-      JOIN dhcp_leases lease
-        ON lease.subnet_id = ip.subnet_id AND lease.ip_address = ip.ip_address
-      WHERE ip.subnet_id = ? AND ip.ip_address = '10.77.0.40'
-    `).get(subnetId);
+describe('canonical lifecycle schema', () => {
+  it('stores only the canonical allocation vocabulary', () => {
+    const columns = db.prepare('PRAGMA table_info(ip_addresses)').all().map(row => row.name);
 
-    expect(facts).toEqual({ status: 'locked', is_rogue: 1, expires_at: 'infinite' });
+    expect(columns).toContain('allocation_state');
+    expect(columns).not.toContain('status');
+    const tableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ip_addresses'").get().sql;
+    for (const state of ['unassigned', 'reserved', 'static_dns', 'static_dhcp', 'dynamic_dhcp', 'slaac', 'system', 'gateway', 'quarantined']) {
+      expect(tableSql).toContain(`'${state}'`);
+    }
   });
 
-  it('permits manual DNS and static DHCP to claim the same address', () => {
-    const facts = db.prepare(`
-      SELECT dns.name AS dns_name, reservation.hostname AS reservation_name
-      FROM dns_records dns
-      JOIN dhcp_reservations reservation ON reservation.ip_address = dns.value
-      WHERE reservation.subnet_id = ? AND dns.value = '10.77.0.50'
-    `).get(subnetId);
-
-    expect(facts).toEqual({ dns_name: 'dns-host', reservation_name: 'reserved-host' });
+  it('rejects a legacy allocation value', () => {
+    expect(() => db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, allocation_state, address_family, address_sort_key)
+      VALUES (1, '10.77.0.40', 'locked', 4, 'legacy')
+    `).run()).toThrow();
   });
 
-  it('permits equivalent IPv6 spellings and unscoped link-local rows', () => {
-    const rows = db.prepare(`
-      SELECT ip_address FROM ip_addresses
-      WHERE subnet_id = ? AND ip_address LIKE '%:%'
-      ORDER BY ip_address
-    `).all(subnetId).map(row => row.ip_address);
-
-    expect(rows).toEqual(['2001:0db8:0:0:0:0:0:60', '2001:db8::60', 'fe80::1']);
-  });
-
-  it('permits disabled protocol rows to leave active-looking IP state behind', () => {
-    const rows = db.prepare(`
-      SELECT ip_address, status, detection_source FROM ip_addresses
-      WHERE subnet_id = ? AND ip_address IN ('10.77.0.70', '10.77.0.71')
-      ORDER BY ip_address
-    `).all(subnetId);
-
-    expect(rows).toEqual([
-      { ip_address: '10.77.0.70', status: 'assigned', detection_source: 'dns' },
-      { ip_address: '10.77.0.71', status: 'dhcp', detection_source: 'dhcp_reservation' }
-    ]);
-  });
-
-  it('provides family-neutral fixtures for future adapters', () => {
+  it('keeps family-neutral address fixtures valid', () => {
     const fixtures = FAMILY_NEUTRAL_LIFECYCLE_FIXTURES;
     expect(canonicalizeIp(fixtures.canonicalIpv6.input)).toBe(fixtures.canonicalIpv6.canonical);
     expect(addressFamily(fixtures.canonicalIpv6.input)).toBe(fixtures.canonicalIpv6.family);
@@ -81,21 +43,4 @@ describe('0.4.17 lifecycle characterization', () => {
     expect(fixtures.slaac.temporary).toBe(true);
     expect(fixtures.ipv6Subnet.broadcast).toBeNull();
   });
-
-  it('excludes administratively reserved addresses from dnsmasq dynamic ranges', () => {
-    regenerateScopeConfigs(db);
-    const output = fs.readFileSync(
-      path.join(tmpDir, 'dnsmasq', 'conf.d', `dhcp-scope-${scopeId}.conf`),
-      'utf8'
-    );
-
-    expect(output).toContain('dhcp-range=set:scope');
-    expect(output).toContain('10.77.0.20,10.77.0.39');
-    expect(output).toContain('10.77.0.41,10.77.0.200');
-    expect(output).not.toContain('10.77.0.20,10.77.0.200');
-  });
-});
-
-describe('target lifecycle behavior captured before implementation', () => {
-  it.todo('upgrades and restores 0.4.17 fixtures without silent claim loss');
 });

@@ -15,14 +15,8 @@ const { default: subnetRouter } = await import('../../../src/routes/subnets.js')
 const { default: request } = await import('supertest');
 
 /**
- * Duplicate-logic audit #23.
- *
- * An address with a manual A record but no ip_addresses row gets SYNTHESIZED by
- * GET /api/subnets/:id/ips. That placeholder used to hardcode has_static_dns: 0,
- * and enrichIpViewRows treats anything other than `undefined` as "already
- * computed, do not touch", so the row came back as plain available. The same
- * address seen through the DHCP scope route came back as static-DNS, because
- * that builder omits the field and lets enrichment fill it.
+ * Phase 8 removes protocol-shape fallbacks. A raw DNS row without its canonical
+ * lifecycle transition must not silently become an allocation in read code.
  */
 let tmpDir, app, db;
 
@@ -34,8 +28,8 @@ beforeAll(async () => {
 });
 afterAll(() => cleanupTestDb(tmpDir));
 
-describe('#23: a synthesized row still reflects a manual A record', () => {
-  it('marks an unpersisted address that has a static A record', async () => {
+describe('canonical allocation has no protocol fallback', () => {
+  it('leaves an unpersisted address unassigned even if a raw A record exists', async () => {
     const created = await request(app).post('/api/subnets').send({
       cidr: '10.77.0.0/24', name: 'audit23', domain_name: 'audit.lan', status: 'allocated'
     });
@@ -63,12 +57,14 @@ describe('#23: a synthesized row still reflects a manual A record', () => {
 
     const row = res.body.ips.find(r => r.ip_address === '10.77.0.99');
     expect(row, 'synthesized row should be present').toBeTruthy();
-    expect(row.has_static_dns).toBe(1);
+    expect(row.allocation_state).toBe('unassigned');
+    expect(row.address_type).toBeNull();
 
     // A neighbour with no record must NOT be swept up, otherwise the assertion
     // above would also pass with the flag hardcoded to 1.
     const plain = res.body.ips.find(r => r.ip_address === '10.77.0.98');
     expect(plain, 'neighbour row should be present').toBeTruthy();
-    expect(plain.has_static_dns).toBe(0);
+    expect(plain.allocation_state).toBe('unassigned');
+    expect(plain.address_type).toBeNull();
   });
 });

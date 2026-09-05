@@ -225,16 +225,8 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
   });
 });
 
-// --- DNS record rename clears stale ip_addresses.hostname --------------
-//
-// Prior to the bug fix, PUT /api/dns/zones/:zoneId/records/:id only called
-// clearDnsFromIp when the record's VALUE changed. A name-only rename on the
-// same IP would leave the old FQDN on ip_addresses.hostname (still sort of
-// OK because syncDnsToIp then overwrites). The more dangerous path was
-// DELETE paths that skipped clearDnsFromIp (pre-refactor test data, SQL
-// edits), leaving orphan rows that later flagged as lossy on divide.
-// reconcileDnsOrphans on startup is the safety net.
-describe('ip-sync orphan cleanup', () => {
+// --- DNS record lifecycle keeps ip_addresses.hostname synchronized ------
+describe('DNS address metadata sync', () => {
   it('normalizes A-record names against the target IP subnet domain', async () => {
     const s = await mkSubnet({
       cidr: '10.83.0.0/24', name: 'dns-normalize', status: 'allocated', gateway_address: '10.83.0.1'
@@ -339,66 +331,6 @@ describe('ip-sync orphan cleanup', () => {
     expect(del.status).toBe(403);
   });
 
-  it('reconcileDnsOrphans clears hostname on ip_addresses rows without a backing DNS record', async () => {
-    const { reconcileDnsOrphans } = await import('../../../src/utils/ip-sync.js');
-    const { getDb } = await import('../../../src/db/init.js');
-    const db = getDb();
-
-    const s = await mkSubnet({
-      cidr: '10.81.0.0/24', name: 'orphan-src', status: 'allocated', gateway_address: '10.81.0.1'
-    });
-    await configure(s.id, {
-      name: 'orphan-src', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'orphan-src.test'
-    });
-
-    // Plant a phantom DNS-sourced row: hostname points at a zone-qualified
-    // FQDN that has no backing dns_records row. This simulates the pre-
-    // refactor orphan state.
-    db.prepare(`
-      INSERT OR REPLACE INTO ip_addresses
-        (subnet_id, ip_address, hostname, status, detection_source, updated_at)
-      VALUES (?, ?, ?, 'available', 'dns', datetime('now'))
-    `).run(s.id, '10.81.0.77', 'ghost.orphan-src.test');
-
-    const before = db.prepare('SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
-      .get(s.id, '10.81.0.77');
-    expect(before.hostname).toBe('ghost.orphan-src.test');
-
-    const cleared = reconcileDnsOrphans(db);
-    expect(cleared).toBeGreaterThanOrEqual(1);
-
-    const after = db.prepare('SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
-      .get(s.id, '10.81.0.77');
-    expect(after.hostname).toBeNull();
-    expect(after.detection_source).toBeNull();
-  });
-
-  it('reconcileDnsOrphans does NOT touch rows with a real backing A record', async () => {
-    const { reconcileDnsOrphans } = await import('../../../src/utils/ip-sync.js');
-    const { getDb } = await import('../../../src/db/init.js');
-    const db = getDb();
-
-    const s = await mkSubnet({
-      cidr: '10.82.0.0/24', name: 'orphan-keep', status: 'allocated', gateway_address: '10.82.0.1'
-    });
-    await configure(s.id, {
-      name: 'orphan-keep', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'orphan-keep.test'
-    });
-    const zone = await findZone('orphan-keep.test');
-    await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
-      name: 'keeper', type: 'A', value: '10.82.0.42'
-    });
-
-    // A-record create already wrote hostname='keeper.orphan-keep.test' with
-    // detection_source='dns', that's a REAL mapping. Reconcile must leave it.
-    reconcileDnsOrphans(db);
-
-    const row = db.prepare(
-      'SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-    ).get(s.id, '10.82.0.42');
-    expect(row.hostname).toBe('keeper.orphan-keep.test');
-    expect(row.detection_source).toBe('dns');
-  });
 });
 
 // --- PUT /:id CIDR reject + gateway-in-pool guards --------------------
@@ -642,7 +574,7 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
          SET hostname = 'restored-prod-lease',
              mac_address = 'aa:bb:cc:dd:ee:ff',
              last_seen_mac = 'aa:bb:cc:dd:ee:ff',
-             status = 'available',
+             allocation_state = 'unassigned',
              is_online = 1,
              detection_source = 'dhcp_lease',
              last_seen_at = datetime('now'),
@@ -659,13 +591,13 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
     expect(row).not.toHaveProperty('status');
     expect(row.dhcp_assignment_type).toBeNull();
     expect(row.lease_status).toBe('unavailable');
-    expect(row.ip_lifecycle_status).toBe('available');
+    expect(row.allocation_state).toBe('unassigned');
+    expect(row.ip_display_status).toBe('in use');
     expect(row.address_type).toBe('rogue');
     expect(row.is_online).toBe(true);
     expect(row.hostname).toBe('restored-prod-lease');
     expect(row.mac_address).toBe('aa:bb:cc:dd:ee:ff');
     expect(row.has_dhcp_reservation).toBe(0);
-    expect(row.has_static_dns).toBe(0);
     expect(row.dhcp_expires_at).toBeNull();
   });
 
@@ -684,7 +616,7 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
     getDb().prepare(`
       INSERT INTO dhcp_leases
         (subnet_id, ip_address, mac_address, hostname, expires_at)
-      VALUES (?, '10.45.0.104', 'aa:bb:cc:dd:ee:45', 'expired-host', '2000-01-01T00:00:00.000Z')
+      VALUES (?, '10.45.0.104', 'aa:bb:cc:dd:ee:45', 'expired-host', datetime('now', '-1 second'))
     `).run(s.id);
 
     const leases = await request(app).get('/api/dhcp/leases');
@@ -700,6 +632,102 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
       dhcp_assignment_type: null,
       lease_status: 'available'
     });
+  });
+});
+
+describe('canonical IP allocation endpoints', () => {
+  it('reserves and releases one address through allocation_state', async () => {
+    const s = await mkSubnet({
+      cidr: '10.46.0.0/24', name: 'canonical-allocation', status: 'allocated',
+      gateway_address: '10.46.0.1'
+    });
+    await configure(s.id, {
+      name: 'canonical-allocation', create_reverse_dns: false,
+      create_dhcp_scope: false, gateway_address: '10.46.0.1'
+    });
+
+    const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
+    regenerateDhcpConfigs.mockClear();
+
+    const reserve = await request(app)
+      .put(`/api/subnets/${s.id}/ips/10.46.0.50/allocation`)
+      .send({ allocation_state: 'reserved', note: 'printer hold' });
+    expect(reserve.status).toBe(200);
+    expect(reserve.body).toMatchObject({
+      ip_address: '10.46.0.50',
+      allocation_state: 'reserved',
+      reservation_note: 'printer hold'
+    });
+    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(1));
+
+    const { getDb } = await import('../../../src/db/init.js');
+    expect(getDb().prepare(`
+      SELECT allocation_state, allocation_source_type, reservation_note
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = '10.46.0.50'
+    `).get(s.id)).toEqual({
+      allocation_state: 'reserved',
+      allocation_source_type: 'admin_reservation',
+      reservation_note: 'printer hold'
+    });
+
+    const ips = await request(app).get(`/api/subnets/${s.id}/ips?search=10.46.0.50`);
+    expect(ips.body.ips[0]).toMatchObject({
+      allocation_state: 'reserved',
+      ip_display_status: 'in use',
+      address_type: 'reserved'
+    });
+    expect(ips.body.ips[0]).not.toHaveProperty('status');
+
+    const release = await request(app)
+      .put(`/api/subnets/${s.id}/ips/10.46.0.50/allocation`)
+      .send({ allocation_state: 'unassigned' });
+    expect(release.status).toBe(200);
+    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(2));
+    expect(getDb().prepare(`
+      SELECT allocation_state, allocation_source_type, reservation_note
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = '10.46.0.50'
+    `).get(s.id)).toEqual({
+      allocation_state: 'unassigned',
+      allocation_source_type: null,
+      reservation_note: null
+    });
+
+    const legacy = await request(app)
+      .put(`/api/subnets/${s.id}/ips/10.46.0.50/status`)
+      .send({ status: 'locked' });
+    expect(legacy.status).toBe(404);
+  });
+
+  it('bulk allocation skips protected topology addresses', async () => {
+    const s = await mkSubnet({
+      cidr: '10.47.0.0/24', name: 'canonical-bulk-allocation', status: 'allocated',
+      gateway_address: '10.47.0.1'
+    });
+    await configure(s.id, {
+      name: 'canonical-bulk-allocation', create_reverse_dns: false,
+      create_dhcp_scope: false, gateway_address: '10.47.0.1'
+    });
+
+    const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
+    regenerateDhcpConfigs.mockClear();
+
+    const reserve = await request(app)
+      .put(`/api/subnets/${s.id}/ips/bulk-allocation`)
+      .send({
+        start_ip: '10.47.0.0',
+        end_ip: '10.47.0.3',
+        allocation_state: 'reserved'
+      });
+    expect(reserve.status).toBe(200);
+    expect(reserve.body).toMatchObject({ count: 2, skipped: 2, allocation_state: 'reserved' });
+    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(1));
+
+    const { getDb } = await import('../../../src/db/init.js');
+    expect(getDb().prepare(`
+      SELECT ip_address FROM ip_addresses
+      WHERE subnet_id = ? AND allocation_state = 'reserved'
+      ORDER BY ip_address
+    `).all(s.id).map(row => row.ip_address)).toEqual(['10.47.0.2', '10.47.0.3']);
   });
 });
 

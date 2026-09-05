@@ -198,7 +198,7 @@ import {
 import {
   ADDRESS_TYPE_DYNAMIC_DHCP,
   ADDRESS_TYPE_GATEWAY,
-  ADDRESS_TYPE_LOCKED,
+  ADDRESS_TYPE_RESERVED,
   ADDRESS_TYPE_RESERVED_DHCP,
   ADDRESS_TYPE_ROGUE,
   ADDRESS_TYPE_STATIC_DNS,
@@ -232,7 +232,7 @@ const addressTypes = [
   ADDRESS_TYPE_RESERVED_DHCP,
   ADDRESS_TYPE_ROGUE,
   ADDRESS_TYPE_GATEWAY,
-  ADDRESS_TYPE_LOCKED,
+  ADDRESS_TYPE_RESERVED,
   ADDRESS_TYPE_SYSTEM,
   ADDRESS_TYPE_UNKNOWN,
 ];
@@ -251,7 +251,7 @@ const semanticTokens = [
   { label: 'reserved DHCP', token: '--cid-reserved-dhcp', addressType: ADDRESS_TYPE_RESERVED_DHCP },
   { label: 'system', token: '--cid-system', addressType: ADDRESS_TYPE_SYSTEM },
   { label: 'gateway', token: '--cid-gateway', addressType: ADDRESS_TYPE_GATEWAY },
-  { label: 'locked', token: '--cid-locked', addressType: ADDRESS_TYPE_LOCKED },
+  { label: 'reserved', token: '--cid-reserved', addressType: ADDRESS_TYPE_RESERVED },
   { label: 'rogue', token: '--cid-rogue', addressType: ADDRESS_TYPE_ROGUE },
   { label: 'unknown', token: '--cid-status-muted', addressType: ADDRESS_TYPE_UNKNOWN },
   { label: 'Online', token: '--cid-status-ok', status: statusStates[0] },

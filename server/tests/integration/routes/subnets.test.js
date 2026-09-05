@@ -187,8 +187,8 @@ describe('GET /api/subnets/:id/ips', () => {
         + " VALUES (?, 'A', 'claimed', ?, 1, 'manual')"
       ).run(zoneId, ip);
       db.prepare(
-        "INSERT INTO ip_addresses (subnet_id, ip_address, status, is_online, detection_source)"
-        + " VALUES (?, ?, 'available', 1, 'scanner')"
+        "INSERT INTO ip_addresses (subnet_id, ip_address, allocation_state, is_online, detection_source)"
+        + " VALUES (?, ?, 'static_dns', 1, 'scanner')"
       ).run(id, ip);
       return { id, ip };
     }
@@ -224,8 +224,8 @@ describe('GET /api/subnets/:id/ips', () => {
     `).run(createRes.body.id, scopeType.id);
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, hostname, mac_address, status, is_online, detection_source, last_seen_at)
-      VALUES (?, '10.77.0.20', 'restored-lease', '00:11:22:33:44:55', 'dhcp', 1, 'dhcp_lease', datetime('now'))
+        (subnet_id, ip_address, hostname, mac_address, allocation_state, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.77.0.20', 'restored-lease', '00:11:22:33:44:55', 'unassigned', 1, 'dhcp_lease', datetime('now'))
     `).run(createRes.body.id);
 
     const res = await request(app).get(`/api/subnets/${createRes.body.id}/ips?page=1&pageSize=64`);
@@ -249,8 +249,8 @@ describe('GET /api/subnets/:id/ips', () => {
     `).run(createRes.body.id, scopeType.id);
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, hostname, mac_address, status, is_online, detection_source, last_seen_at)
-      VALUES (?, '10.78.0.20', 'restored-lease', '00:11:22:33:44:56', 'available', 0, 'dhcp_lease', datetime('now'))
+        (subnet_id, ip_address, hostname, mac_address, allocation_state, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.78.0.20', 'restored-lease', '00:11:22:33:44:56', 'unassigned', 0, 'dhcp_lease', datetime('now'))
     `).run(createRes.body.id);
 
     const res = await request(app).get(`/api/subnets/${createRes.body.id}/ips?page=1&pageSize=64`);
@@ -268,8 +268,8 @@ describe('GET /api/subnets/:id/ips', () => {
 
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, hostname, mac_address, status, is_online, detection_source, last_seen_at)
-      VALUES (?, '10.75.0.17', 'espressif', 'd4:8c:49:17:52:b0', 'dhcp', 0, 'scanner', datetime('now'))
+        (subnet_id, ip_address, hostname, mac_address, allocation_state, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.75.0.17', 'espressif', 'd4:8c:49:17:52:b0', 'unassigned', 0, 'scanner', datetime('now'))
     `).run(createRes.body.id);
 
     const res = await request(app).get(`/api/subnets/${createRes.body.id}/ips?page=1&pageSize=64`);
@@ -294,8 +294,8 @@ describe('GET /api/subnets/:id/ips', () => {
     `).run(createRes.body.id, scopeType.id);
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, hostname, status, is_online, detection_source, last_seen_at)
-      VALUES (?, '10.79.0.20', 'printer.example.test', 'available', 1, 'dns', datetime('now'))
+        (subnet_id, ip_address, hostname, allocation_state, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.79.0.20', 'printer.example.test', 'static_dns', 1, 'dns', datetime('now'))
     `).run(createRes.body.id);
 
     const res = await request(app).get(`/api/subnets/${createRes.body.id}/ips?page=1&pageSize=64`);
@@ -323,8 +323,8 @@ describe('GET /api/subnets/:id/ips', () => {
     `).run(zone.lastInsertRowid);
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, hostname, status, is_online, detection_source, last_seen_at)
-      VALUES (?, '10.76.0.20', 'testerella.stale-source.test', 'available', 1, 'scanner', datetime('now'))
+        (subnet_id, ip_address, hostname, allocation_state, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.76.0.20', 'testerella.stale-source.test', 'static_dns', 1, 'scanner', datetime('now'))
     `).run(createRes.body.id);
 
     const res = await request(app).get(`/api/subnets/${createRes.body.id}/ips?page=1&pageSize=64`);
@@ -343,8 +343,8 @@ describe('GET /api/subnets/:id/ips', () => {
 
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, hostname, status, is_online, detection_source, last_seen_at)
-      VALUES (?, '10.74.0.3', 'named-host', 'assigned', 0, 'manual', datetime('now'))
+        (subnet_id, ip_address, hostname, allocation_state, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.74.0.3', 'named-host', 'static_dns', 0, 'manual', datetime('now'))
     `).run(createRes.body.id);
 
     const res = await request(app)
@@ -365,8 +365,8 @@ describe('GET /api/subnets/:id/ips', () => {
 
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, hostname, status, is_online, detection_source, last_seen_at)
-      VALUES (?, '10.73.0.3', 'assigned-host', 'assigned', 0, 'manual', datetime('now'))
+        (subnet_id, ip_address, hostname, allocation_state, is_online, detection_source, last_seen_at)
+      VALUES (?, '10.73.0.3', 'assigned-host', 'static_dns', 0, 'manual', datetime('now'))
     `).run(createRes.body.id);
 
     const res = await request(app)
@@ -377,7 +377,7 @@ describe('GET /api/subnets/:id/ips', () => {
     expect(res.body.ips.every(ip => ip.ip_display_status !== 'available')).toBe(true);
   });
 
-  it('classifies a persisted locked gateway row as gateway when available rows are suppressed', async () => {
+  it('classifies a persisted gateway allocation when available rows are suppressed', async () => {
     const createRes = await request(app)
       .post('/api/subnets')
       .send({ cidr: '10.72.0.0/29', name: 'Gateway Type', status: 'allocated', gateway_address: '10.72.0.1' });
@@ -390,8 +390,8 @@ describe('GET /api/subnets/:id/ips', () => {
     `).run(createRes.body.id, gatewayType.id);
     db.prepare(`
       INSERT INTO ip_addresses
-        (subnet_id, ip_address, status, reservation_note)
-      VALUES (?, '10.72.0.1', 'locked', 'Default gateway')
+        (subnet_id, ip_address, allocation_state, reservation_note)
+      VALUES (?, '10.72.0.1', 'gateway', 'Default gateway')
     `).run(createRes.body.id);
 
     const res = await request(app)

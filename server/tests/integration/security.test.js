@@ -665,8 +665,8 @@ describe('V1: validation gaps from route-specific write paths', () => {
     expect(subnet.status).toBe(201);
 
     const res = await request(app)
-      .put(`/api/subnets/${subnet.body.id}/ips/10.57.0.8/status`)
-      .send({ status: 'locked', note: 'outside' });
+      .put(`/api/subnets/${subnet.body.id}/ips/10.57.0.8/allocation`)
+      .send({ allocation_state: 'reserved', note: 'outside' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/within the subnet/i);
   });

@@ -136,42 +136,34 @@ describe('#18: EVERY offender is reported, not just the first', () => {
   });
 });
 
-describe('#18: the idempotency trap', () => {
-  it('a file mapping one IP to two names imports, and re-imports, cleanly', async () => {
-    // Neither name is in the DB on the first pass, so nothing clashes. On the
-    // second pass both exist, and without excluding the import's own names each
-    // would be judged against the other and the file would never import twice.
+describe('#18: duplicate A records inside one import', () => {
+  it('rejects the whole import and reports every A record sharing the IP', async () => {
     const body = {
       hosts: [
         { hostname: 'host-a', ip: '10.9.0.20' },
-        { hostname: 'host-b', ip: '10.9.0.20' },
+        // Equivalent spellings must collapse before duplicate detection.
+        { hostname: 'host-b', ip: '010.009.000.020' },
       ],
     };
 
-    const first = await post(body);
-    expect(first.status, JSON.stringify(first.body)).toBe(200);
-
-    const second = await post(body);
-    expect(second.status, `re-import failed: ${JSON.stringify(second.body)}`).toBe(200);
+    const before = countRecords();
+    const res = await post(body);
+    expect(res.status).toBe(400);
+    expect(countRecords()).toBe(before);
+    expect(res.body.problems.map(problem => problem.name).sort())
+      .toEqual(['host-a', 'host-b']);
+    for (const problem of res.body.problems) {
+      expect(problem.value).toBe('10.9.0.20');
+      expect(problem.reason).toContain('host-a.audit.lan');
+      expect(problem.reason).toContain('host-b.audit.lan');
+      expect(problem.reason).toMatch(/CNAME/);
+    }
   });
 
-  it('but a name from OUTSIDE the import still clashes, so the check is not just disabled', async () => {
-    const body = {
-      hosts: [
-        { hostname: 'host-a', ip: '10.9.0.30' },
-        { hostname: 'host-b', ip: '10.9.0.30' },
-      ],
-    };
+  it('still allows an unambiguous import to be repeated', async () => {
+    const body = { hosts: [{ hostname: 'host-a', ip: '10.9.0.30' }] };
     expect((await post(body)).status).toBe(200);
-
-    // A name for that same address that this import does NOT own.
-    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, enabled, source) VALUES (?, 'outsider', 'A', '10.9.0.30', 1, 'manual')").run(zoneId);
-
-    const res = await post(body);
-    expect(res.status, 'an outside name must still clash').toBe(400);
-    expect(res.body.error).toContain('outsider.audit.lan');
-    // Both imported names clash with it, and both are reported.
-    expect(res.body.problems.map(p => p.name).sort()).toEqual(['host-a', 'host-b']);
+    expect((await post(body)).status).toBe(200);
   });
 });
 
