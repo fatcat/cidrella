@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  addCnameMenuItem,
   canAddDhcpReservation,
   dnsRecordProbeIp,
   isEditableDhcpReservation,
@@ -70,5 +71,16 @@ describe('row context menu policy', () => {
     expect(dnsRecordProbeIp({ record_type: 'CNAME', value: 'host.example.com' })).toBeNull();
     expect(dnsRecordProbeIp({ record_type: 'AAAA', value: '2001:db8::1' })).toBeNull();
     expect(dnsRecordProbeIp({ record_type: 'A', value: 'not-an-ip' })).toBeNull();
+  });
+
+  it('offers Add CNAME only for A-record context menus', () => {
+    const command = () => {};
+    expect(addCnameMenuItem({ record_type: 'A' }, command)).toEqual({
+      label: 'Add CNAME',
+      icon: 'pi pi-plus',
+      command
+    });
+    expect(addCnameMenuItem({ record_type: 'CNAME' }, command)).toBeNull();
+    expect(addCnameMenuItem({ record_type: 'PTR' }, command)).toBeNull();
   });
 });

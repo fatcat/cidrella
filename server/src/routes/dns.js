@@ -38,7 +38,10 @@ import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dn
 import { validateSoaFields, isIntInRange } from '../utils/validation.js';
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
-function enrichDnsAddressRecords(db, records) {
+function enrichDnsAddressRecords(db, records, zoneName) {
+  for (const record of records) {
+    record.record_fqdn = fqdnForRecordName(record.name, zoneName);
+  }
   enrichIpViewRows(db, records.filter(record => record.type === 'A' || record.type === 'AAAA'));
   return records;
 }
@@ -200,7 +203,7 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
     ORDER BY r.type, r.name
   `).all(zone.id);
 
-  res.json({ ...zone, records: enrichDnsAddressRecords(db, records) });
+  res.json({ ...zone, records: enrichDnsAddressRecords(db, records, zone.name) });
 });
 
 // POST /api/dns/zones: zones are subnet-agnostic. Any number of subnets
@@ -341,7 +344,7 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
 // GET /api/dns/zones/:zoneId/records
 router.get('/zones/:zoneId/records', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
-  const zone = db.prepare('SELECT id FROM dns_zones WHERE id = ?').get(req.params.zoneId);
+  const zone = db.prepare('SELECT id, name FROM dns_zones WHERE id = ?').get(req.params.zoneId);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
@@ -359,7 +362,7 @@ router.get('/zones/:zoneId/records', requirePerm('dns:read'), (req, res) => {
     WHERE r.zone_id = ?
     ORDER BY r.type, r.name
   `).all(zone.id);
-  res.json(enrichDnsAddressRecords(db, records));
+  res.json(enrichDnsAddressRecords(db, records, zone.name));
 });
 
 // POST /api/dns/zones/:zoneId/records

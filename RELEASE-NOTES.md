@@ -68,7 +68,10 @@ against the possibility.
   known MAC address and hostname.
 - Network, DNS, and DHCP IP-row context menus now consistently offer **Probe
   Now**, including protected network or broadcast addresses and managed DNS
-  rows.
+  rows. The Network table no longer offers **Create DHCP Scope** from an
+  individual IP row; scope creation remains available from the Grid view.
+- Forward A-record context menus now offer **Add CNAME**. The existing A
+  record's fully qualified hostname is pre-filled as the CNAME target.
 - Managed IPv4 reverse zones now contain one PTR row for every usable address
   in subnets up to 65,536 usable addresses. Each row shows the canonical DNS or
   DHCP hostname when one exists and the IP address itself as a generated

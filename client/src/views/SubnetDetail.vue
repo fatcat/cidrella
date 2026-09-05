@@ -659,7 +659,7 @@ const tableContextMenuItems = computed(() => {
     hostname: row.hostname || null
   };
 
-  return buildContextMenuItems([ip]);
+  return buildContextMenuItems([ip], { allowCreateDhcpScope: false });
 });
 
 // Range context menu
@@ -1031,7 +1031,7 @@ function isSystemReserved(ip) {
   return rangeType === 'Network' || rangeType === 'Broadcast' || rangeType === 'Gateway';
 }
 
-function buildContextMenuItems(selectedIps) {
+function buildContextMenuItems(selectedIps, { allowCreateDhcpScope = true } = {}) {
   if (selectedIps.length === 0) return [];
 
   const items = [];
@@ -1046,15 +1046,17 @@ function buildContextMenuItems(selectedIps) {
     const allocationState = ip.allocationState || ip.allocation_state || 'unassigned';
 
     if (isGateway) {
-      // Gateway IP: Edit, Delete, and create pool
+      // Gateway IP: Edit and Delete. Grid view can also create a scope.
       items.push({ label: 'Edit Gateway', icon: 'pi pi-pencil', command: () => editRange(range) });
       items.push({ label: 'Delete Gateway', icon: 'pi pi-trash', command: () => confirmDeleteRange(range) });
-      items.push({ separator: true });
-      items.push({
-        label: 'Create DHCP Scope',
-        icon: 'pi pi-plus',
-        command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
-      });
+      if (allowCreateDhcpScope) {
+        items.push({ separator: true });
+        items.push({
+          label: 'Create DHCP Scope',
+          icon: 'pi pi-plus',
+          command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
+        });
+      }
     } else if (isDhcpScope) {
       // IP inside a DHCP Scope
       items.push({
@@ -1075,12 +1077,14 @@ function buildContextMenuItems(selectedIps) {
     } else if (range && isEditableRange(range)) {
       // Other editable range
       items.push({ label: `Edit ${range.range_type_name} Range`, icon: 'pi pi-pencil', command: () => editRange(range) });
-      items.push({
-        label: 'Create DHCP Scope',
-        icon: 'pi pi-plus',
-        command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
-      });
-    } else {
+      if (allowCreateDhcpScope) {
+        items.push({
+          label: 'Create DHCP Scope',
+          icon: 'pi pi-plus',
+          command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
+        });
+      }
+    } else if (allowCreateDhcpScope) {
       // No range or non-editable
       items.push({
         label: 'Create DHCP Scope',
@@ -1091,7 +1095,7 @@ function buildContextMenuItems(selectedIps) {
 
     // Create / Release IP Reservation (not for system ranges)
     if (!isSystemReserved(ip)) {
-      items.push({ separator: true });
+      if (items.length) items.push({ separator: true });
       if (allocationState === 'reserved') {
         items.push({
           label: 'Release IP Reservation',

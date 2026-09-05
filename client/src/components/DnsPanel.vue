@@ -401,6 +401,7 @@ import api from '../api/client.js';
 import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';
 import { ipToLong, isValidIpv4 } from '../utils/ip.js';
 import {
+  addCnameMenuItem,
   dnsRecordProbeIp,
   isEditableDnsRecord,
   managedDnsRecordMenuItem,
@@ -670,10 +671,18 @@ const recordContextMenuItems = computed(() => {
     );
   }
 
+  const rowActions = [];
+  const cnameItem = addCnameMenuItem(
+    r,
+    () => openRecordDialog(null, { type: 'CNAME', value: r.record_fqdn })
+  );
+  if (cnameItem) rowActions.push(cnameItem);
   const ip = dnsRecordProbeIp(r, isReverse.value ? ptrRecordIp(r) : null);
   if (ip) {
-    items.push({ separator: true });
-    items.push(probeNowMenuItem(() => probeDnsRecord(ip, r.subnet_id)));
+    rowActions.push(probeNowMenuItem(() => probeDnsRecord(ip, r.subnet_id)));
+  }
+  if (rowActions.length) {
+    items.push({ separator: true }, ...rowActions);
   }
   return items;
 });
@@ -849,7 +858,7 @@ async function doDeleteZone() {
 }
 
 // Record CRUD
-function openRecordDialog(record = null) {
+function openRecordDialog(record = null, defaults = {}) {
   editingRecord.value = record;
   if (record) {
     recordForm.value = {
@@ -859,7 +868,10 @@ function openRecordDialog(record = null) {
     };
   } else {
     const defaultType = selectedZone.value?.type === 'reverse' ? 'PTR' : 'A';
-    recordForm.value = { name: '', type: defaultType, value: '', priority: null, weight: null, port: null, ttl: null, enabled: true };
+    recordForm.value = {
+      name: '', type: defaultType, value: '', priority: null, weight: null,
+      port: null, ttl: null, enabled: true, ...defaults
+    };
   }
   showRecordDialog.value = true;
 }

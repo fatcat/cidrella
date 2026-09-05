@@ -50,3 +50,12 @@ export function dnsRecordProbeIp(record, ptrIp = null) {
 
   return isValidIpv4(candidate) ? candidate : null;
 }
+
+export function addCnameMenuItem(record, command) {
+  if (record?.record_type !== 'A') return null;
+  return {
+    label: 'Add CNAME',
+    icon: 'pi pi-plus',
+    command
+  };
+}
