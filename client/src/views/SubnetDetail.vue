@@ -97,10 +97,12 @@
           />
         </div>
         <DataTable :value="displayIps" stripedRows size="small"
+                   class="ip-address-table"
                    :loading="loadingPage"
                   
                    scrollable scrollHeight="flex"
                    dataKey="ip_address"
+                   @row-click="onTableRowClick"
                    @row-contextmenu="onTableRowContextMenu"
                    contextMenu
                    lazy paginator paginatorPosition="bottom"
@@ -379,21 +381,9 @@
       </template>
     </Dialog>
 
-    <!-- IP Lifecycle Events Dialog -->
-    <Dialog v-model:visible="showEventsDialog" :header="`Lifecycle — ${eventsIp}`" modal :style="{ width: '38rem' }" data-track="dialog-ip-events">
-      <div v-if="eventsLoading" class="events-loading">Loading events...</div>
-      <div v-else-if="eventsData.length === 0" class="events-empty">No events recorded for this IP.</div>
-      <div v-else class="events-list">
-        <div v-for="evt in eventsData" :key="evt.id" class="event-row">
-          <span class="event-time">{{ formatDate(evt.created_at) }}</span>
-          <Tag :severity="eventSeverity(evt.event_type)" :value="eventLabel(evt.event_type)" class="event-tag" />
-          <span class="event-detail">{{ eventDetail(evt) }}</span>
-        </div>
-      </div>
-    </Dialog>
-
-    <!-- Host "more info" dialog -->
-    <HostInfoDialog v-model:visible="showHostInfo" :host="hostInfoRow" :domain-name="subnet?.domain_name" />
+    <!-- IP details drawer -->
+    <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
+                     :subnet-id="subnet?.id" :domain-name="subnet?.domain_name" />
 
     <Toast />
   </div>
@@ -421,10 +411,9 @@ import TabList from '../ui/TabList.js';
 import Tab from '../ui/Tab.js';
 import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
-import Tag from '../ui/Tag.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import ScopeDialog from '../components/ScopeDialog.vue';
-import HostInfoDialog from '../components/HostInfoDialog.vue';
+import IpDetailsDrawer from '../components/IpDetailsDrawer.vue';
 import ScanToggle from '../components/ScanToggle.vue';
 import AddressTypePill from '../components/table/AddressTypePill.vue';
 import ColumnChooserButton from '../components/table/ColumnChooserButton.vue';
@@ -466,7 +455,7 @@ const networkTableColumns = [
   { key: 'hostname', header: 'Hostname', description: 'Best known hostname from DNS, DHCP, or passive observations.', field: 'hostname', sortable: true, style: 'width: 10rem' },
   { key: 'mac_address', header: 'MAC Address', description: 'Best known hardware address from DHCP or last-seen lifecycle data.', field: 'mac_address', sortField: 'mac_address', sortable: true, style: 'width: 10rem' },
   { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
-  { key: 'device', header: 'Device', description: 'Device type / OS family inferred passively from the DHCP fingerprint (options 55/60 + hostname) and MAC OUI. Right-click → More info for full detail.', field: 'os_family', sortable: true, style: 'width: 9rem' },
+  { key: 'device', header: 'Device', description: 'Device type / OS family inferred passively from the DHCP fingerprint (options 55/60 + hostname) and MAC OUI. Click the row for full detail.', field: 'os_family', sortable: true, style: 'width: 9rem' },
   { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
   { key: 'last_seen_at', header: 'Last Seen', description: 'Most recent time CIDRella observed this address through DHCP, DNS logs, or active scans.', field: 'last_seen_at', sortable: true, style: 'width: 10rem' },
   { key: 'dhcp_expires_at', header: 'Expires', description: 'DHCP lease expiration time when the address has a dynamic lease.', field: 'dhcp_expires_at', sortable: true, style: 'width: 9rem' },
@@ -498,76 +487,20 @@ const showStaticDhcpDialog = ref(false);
 const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', description: '' });
 const staticDhcpScanEnabled = ref(null);
 
-// Host "more info" dialog (full per-host metadata + device fingerprint)
-const showHostInfo = ref(false);
-const hostInfoRow = ref(null);
-function openHostInfo(row) {
-  hostInfoRow.value = row;
-  showHostInfo.value = true;
+// IP details drawer (full per-host metadata, device fingerprint, and lifecycle)
+const showIpDetails = ref(false);
+const ipDetailsRow = ref(null);
+function openIpDetails(row) {
+  ipDetailsRow.value = row;
+  showIpDetails.value = true;
+}
+function onTableRowClick(event) {
+  openIpDetails(event.data);
 }
 // Compact "Device" column: OS family preferred, else device type. Full detail
-// (manufacturer, confidence, raw fingerprint) lives in the More-info popup.
+// (manufacturer, confidence, raw fingerprint) lives in the details drawer.
 function deviceCell(row) {
   return row.os_family || row.device_type || EMPTY_CELL;
-}
-
-// IP Lifecycle Events dialog
-const showEventsDialog = ref(false);
-const eventsIp = ref('');
-const eventsData = ref([]);
-const eventsLoading = ref(false);
-
-async function openEventsDialog(ipAddress) {
-  eventsIp.value = ipAddress;
-  eventsData.value = [];
-  eventsLoading.value = true;
-  showEventsDialog.value = true;
-  try {
-    const { data } = await api.get(`/subnets/${subnet.value.id}/ips/${ipAddress}/events`);
-    eventsData.value = data.events || [];
-  } catch {
-    eventsData.value = [];
-  } finally {
-    eventsLoading.value = false;
-  }
-}
-
-function eventLabel(type) {
-  const labels = {
-    online: 'Online', offline: 'Offline', scanned: 'Scanned',
-    rogue_detected: 'Rogue', rogue_cleared: 'Rogue Cleared',
-    dns_added: 'DNS Added', dns_removed: 'DNS Removed',
-    lease_obtained: 'Lease', hostname_changed: 'Hostname',
-    mac_changed: 'MAC Changed', allocation_changed: 'Allocation', status_changed: 'Legacy Status',
-    scan_enabled_changed: 'Scan Toggle',
-  };
-  return labels[type] || type;
-}
-
-function eventSeverity(type) {
-  if (type === 'online' || type === 'dns_added' || type === 'lease_obtained') return 'success';
-  if (type === 'offline' || type === 'dns_removed') return 'secondary';
-  if (type === 'rogue_detected') return 'danger';
-  if (type === 'rogue_cleared') return 'warn';
-  return 'info';
-}
-
-function sourceLabel(source) {
-  const labels = {
-    scanner: 'active scan', passive: 'passive (DNS log)', stale: 'staleness timeout',
-    dns: 'DNS', dhcp_reservation: 'DHCP reservation', dhcp_lease: 'DHCP lease',
-    manual: 'manual', offline: 'went offline',
-  };
-  return labels[source] || source || '';
-}
-
-function eventDetail(evt) {
-  const parts = [];
-  if (evt.old_value && evt.new_value) parts.push(`${evt.old_value} → ${evt.new_value}`);
-  else if (evt.new_value) parts.push(evt.new_value);
-  else if (evt.old_value) parts.push(evt.old_value);
-  if (evt.source) parts.push(`(${sourceLabel(evt.source)})`);
-  return parts.join(' ');
 }
 
 // Resolve the effective scan_enabled for this subnet (subnet → folder → default true)
@@ -704,8 +637,13 @@ const tableContextMenuItems = computed(() => {
   const row = tableContextIp.value;
   if (!row) return [];
 
-  const infoItem = { label: 'More info', icon: 'pi pi-info-circle', command: () => openHostInfo(row) };
-  if (isImmutableNetworkAddress(row)) return [infoItem];
+  if (isImmutableNetworkAddress(row)) {
+    return [{
+      label: `Protected ${row.range_type_name.toLowerCase()} address`,
+      icon: 'pi pi-lock',
+      disabled: true
+    }];
+  }
 
   const range = findRangeForIp(row.ip_address);
   const ip = {
@@ -717,10 +655,7 @@ const tableContextMenuItems = computed(() => {
     hostname: row.hostname || null
   };
 
-  return [
-    infoItem,
-    ...buildContextMenuItems([ip]),
-  ];
+  return buildContextMenuItems([ip]);
 });
 
 // Range context menu
@@ -1185,10 +1120,9 @@ function buildContextMenuItems(selectedIps) {
       items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
     }
 
-    // Probe and lifecycle
+    // Probe
     items.push({ separator: true });
     items.push({ label: `Probe ${ip.address}`, icon: 'pi pi-wifi', command: () => probeIpNow(ip.address) });
-    items.push({ label: `Lifecycle of ${ip.address}`, icon: 'pi pi-history', command: () => openEventsDialog(ip.address) });
   } else {
     // Multi-select. Skip system-reserved IPs (network/broadcast/gateway),
     // their allocations cannot be changed here. The bulk-allocation
@@ -1474,6 +1408,8 @@ let _loadTimer = null;
 watch(() => props.subnetId, (newId, _oldId) => {
   gridSelection.value = new Set();
   ipSearch.value = '';
+  showIpDetails.value = false;
+  ipDetailsRow.value = null;
   if (_loadTimer) clearTimeout(_loadTimer);
   if (!newId) {
     subnet.value = null;
@@ -1760,43 +1696,6 @@ onUnmounted(() => {
 
 
 <style scoped>
-/* ── IP Lifecycle Events Dialog ── */
-.events-loading, .events-empty {
-  padding: 1.5rem;
-  text-align: center;
-  color: var(--p-text-muted-color);
-  font-size: 0.85rem;
-}
-.events-list {
-  max-height: 24rem;
-  overflow-y: auto;
-}
-.event-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
-  font-size: 0.8rem;
-}
-.event-time {
-  width: 9rem;
-  flex-shrink: 0;
-  color: var(--p-text-muted-color);
-  font-family: monospace;
-  font-size: 0.75rem;
-}
-.event-tag {
-  flex-shrink: 0;
-}
-.event-detail {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--p-text-color);
-}
-
 .ip-search-bar {
   display: flex;
   align-items: center;
@@ -1805,6 +1704,9 @@ onUnmounted(() => {
 }
 .ip-search-input {
   width: 22rem;
+}
+.ip-address-table :deep(.p-datatable-tbody > tr) {
+  cursor: pointer;
 }
 .available-toggle {
   display: inline-flex;

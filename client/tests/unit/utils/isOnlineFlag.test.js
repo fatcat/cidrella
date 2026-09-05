@@ -4,7 +4,7 @@
  * `is_online` was coerced four different ways: plain truthiness in
  * displayOnlineStatus, a strict two-state test in ipLifecycleDisplay.js, a
  * strict three-state one in DhcpPanel.vue, and an inline ternary in
- * HostInfoDialog.vue. The string '0' is truthy in JavaScript, so an offline
+ * IpDetailsDrawer.vue. The string '0' is truthy in JavaScript, so an offline
  * host read as "Online" in the column while the pill beside it read offline.
  *
  * String flags are not hypothetical here: ipLifecycleDisplay.test.js has a case
