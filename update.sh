@@ -193,10 +193,13 @@ is_preflight_health_acceptable() {
 
 # ─── Progress file helpers ────────────────────────────────
 
+PROGRESS_REASON_CODE=""
+PROGRESS_LIFECYCLE_REPORT_AVAILABLE=false
+
 write_progress() {
   local state="$1" pct="$2" message="$3" error="${4:-null}"
   [ -z "$PROGRESS_FILE" ] && return 0
-  local error_json
+  local error_json reason_code_json
   if [ "$error" = "null" ]; then
     error_json="null"
   else
@@ -204,8 +207,13 @@ write_progress() {
     escaped=$(printf '%s' "$error" | sed 's/\\/\\\\/g; s/"/\\"/g')
     error_json="\"$escaped\""
   fi
+  if [ -n "$PROGRESS_REASON_CODE" ]; then
+    reason_code_json="\"$PROGRESS_REASON_CODE\""
+  else
+    reason_code_json="null"
+  fi
   cat > "$PROGRESS_FILE" <<PEOF
-{"state":"$state","from_version":"$CURRENT_VERSION","to_version":"${NEW_VERSION:-unknown}","started_at":"$STARTED_AT","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","progress_pct":$pct,"message":"$message","error":$error_json,"pid":$$}
+{"state":"$state","from_version":"$CURRENT_VERSION","to_version":"${NEW_VERSION:-unknown}","started_at":"$STARTED_AT","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","progress_pct":$pct,"message":"$message","error":$error_json,"reason_code":$reason_code_json,"lifecycle_migration_report_available":$PROGRESS_LIFECYCLE_REPORT_AVAILABLE,"lifecycle_migration_report_download":"/api/version/ip-lifecycle-migration-report","pid":$$}
 PEOF
   chown cidrella:cidrella "$PROGRESS_FILE" 2>/dev/null || true
 }
@@ -1543,10 +1551,44 @@ fi
 # AUTO-ROLLBACK (new version failed to come up)
 # ═══════════════════════════════════════════════════════════
 
+ROLLBACK_FAILURE_DETAIL="Health check failed"
+LIFECYCLE_REPORT_FILE="$DATA_DIR/ip-lifecycle-migration-report.json"
+REPORT_NODE=$(resolve_node "$INSTALL_LINK" 2>/dev/null || true)
+if [ -n "$REPORT_NODE" ] && [ -r "$LIFECYCLE_REPORT_FILE" ]; then
+  LIFECYCLE_BLOCK_DETAIL=$(sudo -u cidrella "$REPORT_NODE" -e '
+    const fs = require("fs");
+    try {
+      const startedAt = Date.parse(process.argv[2]);
+      const reportMtime = fs.statSync(process.argv[1]).mtimeMs;
+      if (Number.isFinite(startedAt) && reportMtime < startedAt - 5000) process.exit(1);
+      const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+      if (report.outcome !== "blocked" || !Array.isArray(report.conflicts)) process.exit(1);
+      const clean = value => String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ");
+      const conflicts = report.conflicts.map((conflict, index) => (
+        `Conflict ${index + 1}: ${clean(conflict.reason)} Required action: ${clean(conflict.remediation)}`
+      ));
+      process.stdout.write(
+        `IP lifecycle migration blocked by ${report.conflicts.length} conflict(s). `
+        + `The database was not migrated. CIDRella will restore the previous version. `
+        + `Full report: ${process.argv[1]}. Resolve every conflict and run the update again. `
+        + conflicts.join(" ")
+      );
+    } catch {
+      process.exit(1);
+    }
+  ' "$LIFECYCLE_REPORT_FILE" "$STARTED_AT" 2>/dev/null) || LIFECYCLE_BLOCK_DETAIL=""
+  if [ -n "$LIFECYCLE_BLOCK_DETAIL" ]; then
+    ROLLBACK_FAILURE_DETAIL="$LIFECYCLE_BLOCK_DETAIL"
+    PROGRESS_REASON_CODE="ip_lifecycle_migration_blocked"
+    PROGRESS_LIFECYCLE_REPORT_AVAILABLE=true
+    err "$LIFECYCLE_BLOCK_DETAIL"
+  fi
+fi
+
 err "New version failed health check, auto-rolling back to v${CURRENT_VERSION}"
 emit_event health fail "version=$NEW_VERSION"
 emit_event rollback start "from=$NEW_VERSION" "to=$CURRENT_VERSION"
-write_progress "rolling_back" 95 "New version failed, auto-rolling back..." "Health check failed"
+write_progress "rolling_back" 95 "New version failed, auto-rolling back..." "$ROLLBACK_FAILURE_DETAIL"
 
 # Swap symlink back
 ln -sfn "$ACTIVE_SLOT" "$INSTALL_LINK"
@@ -1602,7 +1644,7 @@ if [ "$ROLLBACK_OK" = true ]; then
   err "Check logs: journalctl -u cidrella -n 100"
   emit_event rollback pass "restored_version=$CURRENT_VERSION"
   emit_event update end result=rolled-back "from=$CURRENT_VERSION" "to=$NEW_VERSION"
-  write_progress "failed" 100 "Update failed, rolled back to v${CURRENT_VERSION}" "Health check failed after update. Automatic rollback succeeded."
+  write_progress "failed" 100 "Update failed, rolled back to v${CURRENT_VERSION}" "$ROLLBACK_FAILURE_DETAIL Automatic rollback succeeded."
   exit 1
 else
   err "CRITICAL: rollback FAILED too! CIDRella is not running."

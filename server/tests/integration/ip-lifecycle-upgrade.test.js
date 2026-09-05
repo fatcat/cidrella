@@ -63,9 +63,22 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     expect(inventory.conflicts.find(conflict => conflict.category === 'multiple_static_dns_names'))
       .toMatchObject({
         ip_address: '10.77.0.10',
-        reason: expect.stringContaining('first-name.legacy.test'),
+        subnet: '10.77.0.0/24 (Lifecycle legacy fixture)',
+        affected_resources: expect.arrayContaining([
+          expect.stringContaining('first-name.legacy.test'),
+          expect.stringContaining('second-name.legacy.test')
+        ]),
+        reason: expect.stringMatching(
+          /Host first-name\.legacy\.test and Host second-name\.legacy\.test are enabled A records for the same IP 10\.77\.0\.10/
+        ),
         remediation: expect.stringContaining('CNAME')
       });
+    expect(inventory.conflicts.find(conflict => (
+      conflict.category === 'competing_dns_and_dhcp_reservation'
+    ))).toMatchObject({
+      reason: expect.stringMatching(/dns-host\.legacy\.test.*reserved-host.*aa:bb:cc:dd:ee:50/),
+      remediation: expect.stringContaining('Choose which assignment owns 10.77.0.50')
+    });
     db.close();
 
     await expect(initDb(tmpDir)).rejects.toThrow(/migration blocked/);

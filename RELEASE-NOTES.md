@@ -6,7 +6,23 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
-### Pending IP lifecycle release
+## v0.4.18 — 2026-09-05
+
+```yaml
+min_from: "0.4.17"
+breaking: true
+security: false
+```
+
+### Breaking changes
+
+This release removes the legacy `ip_addresses.status` field in favor of the
+canonical allocation state and source model. Integrations that depend on the
+old field or its status semantics must be updated, and upgrades with ambiguous
+DNS or DHCP claims require operator reconciliation before migration can
+continue.
+
+### New
 
 - IP allocation now has one canonical state and transition boundary across
   Networks, DNS, DHCP, imports, scans, and passive liveness. The legacy
@@ -17,6 +33,12 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
   a mode-600 reconciliation report. Interrupted reconciliation is retried on
   the next startup. Multiple enabled manual A or AAAA names for one IP block
   migration until one address record remains and the aliases are CNAMEs.
+- A blocked update now names every conflicting host, record, reservation,
+  lease, or scope and explains the required administrative choice. CLI updates
+  print the protected report path. The web update panel can download reports
+  on versions that include lifecycle-report support; an automatic rollback to
+  v0.4.17 requires reading the same report from the CLI because that older UI
+  predates the download control.
 - Pi-hole import rejects the entire batch when more than one A record targets
   the same canonical IP. The response lists every affected record and explains
   the CNAME remediation, so the source can be corrected and imported later.

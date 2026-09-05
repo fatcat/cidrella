@@ -44,6 +44,43 @@ function bestSubnet(subnets, ip) {
     .sort((left, right) => Number(right.prefix_length) - Number(left.prefix_length))[0] || null;
 }
 
+function naturalList(values) {
+  const items = values.filter(Boolean);
+  if (items.length < 2) return items[0] || '';
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
+}
+
+function subnetLabel(subnet) {
+  if (!subnet) return 'an unknown subnet';
+  return subnet.name ? `${subnet.cidr} (${subnet.name})` : subnet.cidr;
+}
+
+function dnsHostname(record) {
+  return record.name === '@' ? record.zone_name : `${record.name}.${record.zone_name}`;
+}
+
+function dnsLabel(record) {
+  return `host ${dnsHostname(record)} (${record.type} record ${record.id})`;
+}
+
+function reservationLabel(reservation) {
+  const hostname = reservation.hostname ? ` for host ${reservation.hostname}` : '';
+  const mac = reservation.mac_address ? `, MAC ${reservation.mac_address}` : '';
+  return `DHCP reservation ${reservation.id}${hostname}${mac}`;
+}
+
+function leaseLabel(lease) {
+  const hostname = lease.hostname ? ` for host ${lease.hostname}` : '';
+  const mac = lease.mac_address ? `, MAC ${lease.mac_address}` : '';
+  return `DHCP lease ${lease.id}${hostname}${mac}`;
+}
+
+function scopeLabel(scope) {
+  const description = scope.description ? ` (${scope.description})` : '';
+  return `DHCP scope ${scope.id}${description}, ${scope.start_ip}-${scope.end_ip}`;
+}
+
 function isLinkLocalV6(ip) {
   const parsed = parseIp(ip);
   return Boolean(parsed && parsed.bits === 128
@@ -53,12 +90,13 @@ function isLinkLocalV6(ip) {
 
 function loadFacts(db, { localAddresses = localIpv4Set() } = {}) {
   const subnets = db.prepare(`
-    SELECT id, cidr, network_address, broadcast_address, gateway_address,
+    SELECT id, cidr, name, network_address, broadcast_address, gateway_address,
            prefix_length, status
     FROM subnets
   `).all();
   const scopes = db.prepare(`
-    SELECT scope.id, scope.subnet_id, scope.enabled, range.start_ip, range.end_ip
+    SELECT scope.id, scope.subnet_id, scope.enabled, range.start_ip, range.end_ip,
+           range.description
     FROM dhcp_scopes scope
     JOIN ranges range ON range.id = scope.range_id
   `).all();
@@ -71,7 +109,8 @@ function loadFacts(db, { localAddresses = localIpv4Set() } = {}) {
     WHERE expires_at = 'infinite' OR datetime(expires_at) > datetime('now')
   `).all();
   const dns = db.prepare(`
-    SELECT record.id, record.name, record.value AS ip_address, zone.name AS zone_name
+    SELECT record.id, record.name, record.type, record.value AS ip_address,
+           zone.name AS zone_name
     FROM dns_records record
     JOIN dns_zones zone ON zone.id = record.zone_id
     WHERE record.type IN ('A', 'AAAA')
@@ -131,25 +170,42 @@ function issueKey(category, subnetId, ip) {
 export function inventoryLegacyIpLifecycle(db, options = {}) {
   const facts = loadFacts(db, options);
   const issues = new Map();
-  const addIssue = (category, subnetId, ip, reason, remediation) => {
+  const addIssue = (category, subnetId, ip, reason, remediation, affectedResources = []) => {
     const canonical = canonicalizeIp(ip) || ip;
     const key = issueKey(category, subnetId, canonical);
-    if (!issues.has(key)) {
-      issues.set(key, { category, subnet_id: subnetId, ip_address: canonical, reason, remediation });
+    const existing = issues.get(key);
+    if (existing) {
+      existing.affected_resources = [...new Set([
+        ...existing.affected_resources,
+        ...affectedResources
+      ])];
+      existing.reason = `${existing.reason} ${reason}`;
+      existing.remediation = `${existing.remediation} ${remediation}`;
+      return;
     }
+    issues.set(key, {
+      category,
+      subnet_id: subnetId,
+      subnet: subnetLabel(facts.subnetById.get(subnetId)),
+      ip_address: canonical,
+      affected_resources: affectedResources,
+      reason,
+      remediation
+    });
   };
 
   for (const [key, records] of facts.dnsByKey) {
     if (records.length < 2) continue;
     const [subnetText, ip] = key.split('|');
-    const recordNames = records.map(record => (
-      record.name === '@' ? record.zone_name : `${record.name}.${record.zone_name}`
-    ));
-    const recordIds = records.map(record => record.id);
+    const recordNames = records.map(dnsHostname);
+    const recordType = records.every(record => record.type === records[0].type)
+      ? `${records[0].type} records`
+      : 'address records';
     addIssue(
       'multiple_static_dns_names', Number(subnetText), ip,
-      `${records.length} enabled manual A records claim this address: ${recordNames.join(', ')}.`,
-      `Keep one canonical A record and convert the other names to CNAMEs. Affected record IDs: ${recordIds.join(', ')}.`
+      `${naturalList(recordNames.map(name => `Host ${name}`))} are enabled ${recordType} for the same IP ${ip}.`,
+      `Choose one host to keep as the ${records[0].type} record for ${ip}. Convert every other host name to a CNAME record that targets the chosen host.`,
+      records.map(dnsLabel)
     );
   }
 
@@ -157,31 +213,42 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
     const subnetId = record.subnet.id;
     const ip = record.ip_address;
     const key = identityKey(subnetId, ip);
-    if (facts.inEnabledPool(subnetId, ip)) {
+    const matchingScopes = facts.scopes.filter(scope => (
+      scope.enabled === 1 && scope.subnet_id === subnetId
+      && containsAddress(scope.start_ip, scope.end_ip, ip)
+    ));
+    if (matchingScopes.length) {
       addIssue(
         'manual_dns_inside_dynamic_pool', subnetId, ip,
-        'An enabled manual DNS allocation overlaps an enabled DHCP pool.',
-        `Disable or move DNS record ${record.id}, or resize the DHCP scope.`
+        `${dnsLabel(record)} assigns IP ${ip}, which is also available from ${naturalList(matchingScopes.map(scopeLabel))}.`,
+        `Move or disable the ${record.type} record for ${dnsHostname(record)}, or resize the listed DHCP scope so it no longer includes ${ip}.`,
+        [dnsLabel(record), ...matchingScopes.map(scopeLabel)]
       );
     }
     if (facts.protectedKind(subnetId, ip)) {
+      const protectedKind = facts.protectedKind(subnetId, ip);
       addIssue(
         'protocol_claim_on_protected_address', subnetId, ip,
-        `An enabled manual DNS record claims a protected ${facts.protectedKind(subnetId, ip)} address.`,
-        `Disable or move DNS record ${record.id}.`
+        `${dnsLabel(record)} assigns ${ip}, but ${ip} is the protected ${protectedKind} address on ${subnetLabel(record.subnet)}.`,
+        `Move or disable the ${record.type} record for ${dnsHostname(record)}. Protected ${protectedKind} addresses cannot be assigned to a host.`,
+        [dnsLabel(record), `${protectedKind} address ${ip}`]
       );
     }
     if (facts.reservationByKey.has(key)) {
+      const reservation = facts.reservationByKey.get(key);
       addIssue(
         'competing_dns_and_dhcp_reservation', subnetId, ip,
-        'Enabled manual DNS and static DHCP both claim this address.',
-        `Disable either DNS record ${record.id} or DHCP reservation ${facts.reservationByKey.get(key).id}.`
+        `${dnsLabel(record)} and ${reservationLabel(reservation)} both assign IP ${ip}.`,
+        `Choose which assignment owns ${ip}. Disable or move the ${record.type} record for ${dnsHostname(record)}, or disable or move ${reservationLabel(reservation)}.`,
+        [dnsLabel(record), reservationLabel(reservation)]
       );
     } else if (facts.leaseByKey.has(key)) {
+      const lease = facts.leaseByKey.get(key);
       addIssue(
         'competing_dns_and_dynamic_lease', subnetId, ip,
-        'Enabled manual DNS and a dynamic DHCP lease both claim this address.',
-        `Disable or move DNS record ${record.id}, or release the DHCP lease.`
+        `${dnsLabel(record)} and ${leaseLabel(lease)} both assign IP ${ip}.`,
+        `Choose which assignment owns ${ip}. Disable or move the ${record.type} record for ${dnsHostname(record)}, or release ${leaseLabel(lease)}.`,
+        [dnsLabel(record), leaseLabel(lease)]
       );
     }
   }
@@ -191,8 +258,9 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
     if (kind) {
       addIssue(
         'protocol_claim_on_protected_address', reservation.subnet_id, reservation.ip_address,
-        `An enabled DHCP reservation claims a protected ${kind} address.`,
-        `Disable or move DHCP reservation ${reservation.id}.`
+        `${reservationLabel(reservation)} assigns ${reservation.ip_address}, but that IP is the protected ${kind} address on ${subnetLabel(facts.subnetById.get(reservation.subnet_id))}.`,
+        `Disable or move ${reservationLabel(reservation)}. Protected ${kind} addresses cannot be assigned to a host.`,
+        [reservationLabel(reservation), `${kind} address ${reservation.ip_address}`]
       );
     }
   }
@@ -204,23 +272,26 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
     if (kind) {
       addIssue(
         'protocol_claim_on_protected_address', lease.subnet_id, lease.ip_address,
-        `An active DHCP lease claims a protected ${kind} address.`,
-        `Release DHCP lease ${lease.id} and correct the scope or reservation.`
+        `${leaseLabel(lease)} assigns ${lease.ip_address}, but that IP is the protected ${kind} address on ${subnetLabel(facts.subnetById.get(lease.subnet_id))}.`,
+        `Release ${leaseLabel(lease)}, then correct the DHCP scope or reservation that allowed the protected address.`,
+        [leaseLabel(lease), `${kind} address ${lease.ip_address}`]
       );
     }
     if (!reservation && !facts.inEnabledPool(lease.subnet_id, lease.ip_address)) {
       addIssue(
         'dynamic_lease_outside_enabled_pool', lease.subnet_id, lease.ip_address,
-        'An active dynamic lease is outside every enabled DHCP pool.',
-        `Release DHCP lease ${lease.id} or restore a matching enabled scope.`
+        `${leaseLabel(lease)} assigns ${lease.ip_address}, but that IP is outside every enabled DHCP scope on ${subnetLabel(facts.subnetById.get(lease.subnet_id))}.`,
+        `Release ${leaseLabel(lease)}, or enable or resize a DHCP scope so it includes ${lease.ip_address}.`,
+        [leaseLabel(lease)]
       );
     }
     if (reservation
         && String(reservation.mac_address).toLowerCase() !== String(lease.mac_address).toLowerCase()) {
       addIssue(
         'reservation_lease_client_mismatch', lease.subnet_id, lease.ip_address,
-        'The active lease client does not match the enabled reservation client.',
-        `Correct reservation ${reservation.id} or release DHCP lease ${lease.id}.`
+        `${reservationLabel(reservation)} and ${leaseLabel(lease)} both use IP ${lease.ip_address}, but their MAC addresses do not match.`,
+        `Correct ${reservationLabel(reservation)} to match the intended client, or release ${leaseLabel(lease)}.`,
+        [reservationLabel(reservation), leaseLabel(lease)]
       );
     }
   }
@@ -229,17 +300,24 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
     const key = identityKey(row.subnet_id, row.ip_address);
     if (row.status === 'locked'
         && (facts.dnsByKey.has(key) || facts.reservationByKey.has(key) || facts.leaseByKey.has(key))) {
+      const protocolClaims = [
+        ...(facts.dnsByKey.get(key) || []).map(dnsLabel),
+        facts.reservationByKey.has(key) ? reservationLabel(facts.reservationByKey.get(key)) : null,
+        facts.leaseByKey.has(key) ? leaseLabel(facts.leaseByKey.get(key)) : null
+      ].filter(Boolean);
       addIssue(
         'locked_address_with_protocol_claim', row.subnet_id, row.ip_address,
-        'A legacy administrative hold also has an enabled DNS or DHCP claim.',
-        'Remove the legacy hold or disable the protocol claim before retrying.'
+        `IP ${row.ip_address} is manually reserved in Networks and is also claimed by ${naturalList(protocolClaims)}.`,
+        `Choose which assignment owns ${row.ip_address}. Release the manual Networks reservation, or disable or remove ${naturalList(protocolClaims)}.`,
+        [`Networks reservation for ${row.ip_address}`, ...protocolClaims]
       );
     }
     if (isLinkLocalV6(row.ip_address) && !row.interface_id) {
       addIssue(
         'unscoped_ipv6_link_local', row.subnet_id, row.ip_address,
-        'An IPv6 link-local address has no interface context.',
-        'Remove the historical row or attach it to an interface before retrying.'
+        `Stored IPv6 link-local address ${row.ip_address} (IP row ${row.id}) has no interface, so it cannot be identified safely.`,
+        `Remove the stale ${row.ip_address} entry before retrying. If the address is active, allow CIDRella to rediscover it with the correct interface after the upgrade.`,
+        [`IP row ${row.id} for ${row.ip_address}`]
       );
     }
   }
@@ -247,10 +325,12 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
   for (const [key, rows] of facts.ipByKey) {
     if (rows.length <= 1) continue;
     const [subnetId] = key.split('|');
+    const rowLabels = rows.map(row => `IP row ${row.id} stored as ${row.ip_address}`);
     addIssue(
       'duplicate_canonical_identity', Number(subnetId), rows[0].ip_address,
-      `${rows.length} rows collapse to the same canonical address identity.`,
-      'Merge the duplicate rows before retrying the upgrade.'
+      `${naturalList(rowLabels)} all represent the same canonical IP ${canonicalizeIp(rows[0].ip_address) || rows[0].ip_address}.`,
+      `Keep the row that represents the current host and remove the duplicate historical rows before retrying. Preserve any hostname, MAC address, or notes that still belong to the current host.`,
+      rowLabels
     );
   }
 

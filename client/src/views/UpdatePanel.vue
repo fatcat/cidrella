@@ -160,10 +160,38 @@
           <p v-if="updateStatus.backup_path" class="rollback-hint">
             Rollback available at: <code>{{ updateStatus.backup_path }}</code>
           </p>
+          <p v-if="updateStatus.reason_code === 'ip_lifecycle_migration_blocked'"
+             class="rollback-hint">
+            CIDRella found IP allocation conflicts that require an administrator's
+            decision. Download the report, resolve every listed conflict, then run
+            the update again.
+          </p>
         </div>
-        <Button label="Dismiss" icon="pi pi-times" size="small" text
-                data-track="update-dismiss-error" @click="dismissStatus" />
+        <div class="result-actions">
+          <Button v-if="updateStatus.reason_code === 'ip_lifecycle_migration_blocked'
+                            && updateStatus.lifecycle_migration_report_available"
+                  label="Download reconciliation report" icon="pi pi-download"
+                  size="small" severity="secondary"
+                  data-track="update-download-lifecycle-report"
+                  @click="downloadLifecycleReport" />
+          <Button label="Dismiss" icon="pi pi-times" size="small" text
+                  data-track="update-dismiss-error" @click="dismissStatus" />
+        </div>
       </div>
+    </div>
+
+    <div v-if="updateStatus?.lifecycle_migration_report_available
+                   && updateStatus?.state !== 'failed'"
+         class="content-card report-available">
+      <i class="pi pi-file"></i>
+      <div>
+        <strong>IP lifecycle migration report available</strong>
+        <p>The report contains the migration outcome and any reconciliation details.</p>
+      </div>
+      <Button label="Download reconciliation report" icon="pi pi-download"
+              size="small" severity="secondary"
+              data-track="update-download-lifecycle-report-available"
+              @click="downloadLifecycleReport" />
     </div>
 
     <!-- Settings -->
@@ -369,6 +397,29 @@ async function dismissStatus() {
     updateStatus.value = { state: 'idle' };
     await fetchVersionInfo();
   } catch { /* ignore */ }
+}
+
+async function downloadLifecycleReport() {
+  try {
+    const endpoint = updateStatus.value?.lifecycle_migration_report_download
+      || '/version/ip-lifecycle-migration-report';
+    const res = await api.get(endpoint.replace(/^\/api/, ''), { responseType: 'blob' });
+    const url = URL.createObjectURL(res.data);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'ip-lifecycle-migration-report.json';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    toast.add({
+      severity: 'error',
+      summary: 'Download failed',
+      detail: apiError(err),
+      life: 5000,
+    });
+  }
 }
 
 // Header-level defense-in-depth: always reachable even when state is stuck
@@ -754,5 +805,29 @@ onUnmounted(() => {
   padding: 0.15rem 0.35rem;
   border-radius: 3px;
   font-size: 0.8rem;
+}
+.report-available {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.report-available > i {
+  color: var(--primary-color);
+  font-size: 1.25rem;
+}
+.report-available > div {
+  flex: 1;
+}
+.report-available p {
+  margin: 0.25rem 0 0;
+  color: var(--text-color-secondary);
+  font-size: 0.9rem;
+}
+.update-result .result-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 </style>
