@@ -10,7 +10,7 @@ beforeAll(async () => {
   tmpDir = setup.tmpDir;
 });
 afterAll(() => cleanupTestDb(tmpDir));
-beforeEach(() => getDb().exec('DELETE FROM device_fingerprints;'));
+beforeEach(() => getDb().exec('DELETE FROM device_fingerprints; DELETE FROM device_fingerprint_changes;'));
 
 describe('device-fingerprint model', () => {
   it('upserts and looks up in a batch (Map by mac)', () => {
@@ -67,6 +67,53 @@ describe('device-fingerprint model', () => {
     const info = DF.clearManual(db, 'aa:bb:cc:dd:ee:02');
     expect(info.changes).toBe(0);
     expect(DF.getByMac(db, 'aa:bb:cc:dd:ee:02').device_type).toBe('IoT');
+  });
+
+  describe('fingerprint drift', () => {
+    it('logs a change when device_type/os_family/vendor_class shift on an already-classified device', () => {
+      const db = getDb();
+      DF.upsertFingerprint(db, {
+        mac_address: 'aa:bb:cc:dd:ee:03', vendor_class: 'Samsung-TV', device_type: 'IoT', os_family: 'Tizen', confidence: 70, source: 'dhcp',
+      });
+      DF.upsertFingerprint(db, {
+        mac_address: 'aa:bb:cc:dd:ee:03', vendor_class: 'generic-linux', device_type: 'Computer', os_family: 'Linux', confidence: 70, source: 'dhcp',
+      });
+
+      const changes = DF.getFingerprintChanges(db, 'aa:bb:cc:dd:ee:03');
+      expect(changes.map(c => c.field).sort()).toEqual(['device_type', 'os_family', 'vendor_class']);
+      expect(changes.find(c => c.field === 'device_type')).toMatchObject({ previous_value: 'IoT', new_value: 'Computer' });
+    });
+
+    it('does not log drift for the first-ever classification', () => {
+      const db = getDb();
+      DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:04', device_type: 'IoT', confidence: 60, source: 'dhcp' });
+      expect(DF.getFingerprintChanges(db, 'aa:bb:cc:dd:ee:04')).toEqual([]);
+    });
+
+    it('does not log drift when a field is unchanged or newly filled in from null', () => {
+      const db = getDb();
+      DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:05', device_type: 'IoT', os_family: null, confidence: 60, source: 'dhcp' });
+      DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:05', device_type: 'IoT', os_family: 'Linux', confidence: 60, source: 'dhcp' });
+      expect(DF.getFingerprintChanges(db, 'aa:bb:cc:dd:ee:05')).toEqual([]);
+    });
+
+    it('does not log drift while a manual override is active', () => {
+      const db = getDb();
+      DF.setManual(db, 'aa:bb:cc:dd:ee:06', { device_type: 'Printer', os_family: 'Linux' });
+      DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:06', device_type: 'Computer', os_family: 'Windows', confidence: 80, source: 'dhcp' });
+      expect(DF.getFingerprintChanges(db, 'aa:bb:cc:dd:ee:06')).toEqual([]);
+    });
+
+    it('getFingerprintChanges respects the days window', () => {
+      const db = getDb();
+      DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:07', device_type: 'IoT', confidence: 60, source: 'dhcp' });
+      DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:07', device_type: 'Computer', confidence: 60, source: 'dhcp' });
+      db.prepare("UPDATE device_fingerprint_changes SET changed_at = datetime('now', '-100 days') WHERE mac_address = ?")
+        .run('aa:bb:cc:dd:ee:07');
+
+      expect(DF.getFingerprintChanges(db, 'aa:bb:cc:dd:ee:07', 30)).toEqual([]);
+      expect(DF.getFingerprintChanges(db, 'aa:bb:cc:dd:ee:07', 365)).toHaveLength(1);
+    });
   });
 });
 

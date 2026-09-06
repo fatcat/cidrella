@@ -3,6 +3,7 @@ import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { isValidIpv4 } from '../utils/ip.js';
+import { MAC_RE } from '../utils/mac.js';
 import { enrichWithHostnames } from '../utils/hostnames.js';
 import { DEFAULTS } from '../config/defaults.js';
 import * as Anomaly from '../models/anomaly.js';
@@ -162,7 +163,7 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
   ).all(days).map(parseScoreRow);
 
   const learning = db.prepare(
-    `SELECT client_ip, status, training_rows, trained_at FROM anomaly_models WHERE status = 'learning'`
+    `SELECT identity, client_ip, status, training_rows, trained_at FROM anomaly_models WHERE status = 'learning'`
   ).all();
 
   res.json({
@@ -171,11 +172,19 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
   });
 });
 
-// GET /api/anomalies/client/:ip: anomaly history for a client
-router.get('/client/:ip', requirePerm('analytics:read'), (req, res) => {
-  const { ip } = req.params;
-  if (!isValidIpv4(ip)) {
-    return res.status(400).json({ error: 'Invalid IP address' });
+const FULL_MAC_RE = new RegExp(`^${MAC_RE.source}$`, 'i');
+
+// An anomaly identity is either a MAC (survives an IP renewal) or, when
+// CIDRella has no DHCP lease for the client, the client's IP itself.
+function isValidIdentity(identity) {
+  return FULL_MAC_RE.test(identity) || isValidIpv4(identity);
+}
+
+// GET /api/anomalies/client/:identity: anomaly history for a client
+router.get('/client/:identity', requirePerm('analytics:read'), (req, res) => {
+  const { identity } = req.params;
+  if (!isValidIdentity(identity)) {
+    return res.status(400).json({ error: 'Invalid identity' });
   }
 
   const db = getDb();
@@ -183,24 +192,24 @@ router.get('/client/:ip', requirePerm('analytics:read'), (req, res) => {
 
   const rows = db.prepare(
     `SELECT * FROM anomaly_scores
-     WHERE client_ip = ?
+     WHERE identity = ?
      ORDER BY window_start DESC
      LIMIT ?`
-  ).all(ip, limit);
+  ).all(identity, limit);
   res.json(rows.map(parseScoreRow));
 });
 
-// GET /api/anomalies/client/:ip/model: model metadata
-router.get('/client/:ip/model', requirePerm('analytics:read'), (req, res) => {
-  const { ip } = req.params;
-  if (!isValidIpv4(ip)) {
-    return res.status(400).json({ error: 'Invalid IP address' });
+// GET /api/anomalies/client/:identity/model: model metadata
+router.get('/client/:identity/model', requirePerm('analytics:read'), (req, res) => {
+  const { identity } = req.params;
+  if (!isValidIdentity(identity)) {
+    return res.status(400).json({ error: 'Invalid identity' });
   }
 
   const db = getDb();
   const row = db.prepare(
-    `SELECT * FROM anomaly_models WHERE client_ip = ?`
-  ).get(ip);
+    `SELECT * FROM anomaly_models WHERE identity = ?`
+  ).get(identity);
   res.json(row || null);
 });
 
@@ -253,7 +262,8 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   if (!client_ip) return res.status(400).json({ error: 'client_ip is required' });
   if (!isValidIpv4(client_ip)) return res.status(400).json({ error: 'Invalid IP address' });
 
-  const existing = db.prepare('SELECT id FROM anomaly_whitelist WHERE client_ip = ?').get(client_ip);
+  const identity = Anomaly.resolveIdentity(db, client_ip);
+  const existing = db.prepare('SELECT id FROM anomaly_whitelist WHERE identity = ?').get(identity);
   if (existing) return res.status(409).json({ error: 'Already whitelisted' });
 
   const id = Anomaly.addWhitelistEntry(db, client_ip, reason);

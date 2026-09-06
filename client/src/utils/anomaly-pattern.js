@@ -72,6 +72,7 @@ function classifyGroup(events) {
 
   const latest = sorted[sorted.length - 1];
   return {
+    identity: latest.identity || latest.client_ip,
     client_ip: latest.client_ip,
     hostname: latest.hostname,
     pattern,
@@ -93,17 +94,23 @@ function classifyGroup(events) {
  * @param {Array} learning - rows from GET /api/anomalies/events (.learning)
  */
 export function classifyClients(events, learning = []) {
+  // Grouped by identity (a MAC when known, else the client's IP) rather
+  // than client_ip, so a device that renewed its IP mid-window shows up as
+  // one continuous client instead of two unrelated ones.
   const byClient = new Map();
   for (const e of events) {
-    if (!byClient.has(e.client_ip)) byClient.set(e.client_ip, []);
-    byClient.get(e.client_ip).push(e);
+    const key = e.identity || e.client_ip;
+    if (!byClient.has(key)) byClient.set(key, []);
+    byClient.get(key).push(e);
   }
 
   const clients = [...byClient.values()].map(classifyGroup);
 
   for (const l of learning) {
-    if (byClient.has(l.client_ip)) continue; // already flagged; learning status is stale
+    const key = l.identity || l.client_ip;
+    if (byClient.has(key)) continue; // already flagged; learning status is stale
     clients.push({
+      identity: key,
       client_ip: l.client_ip,
       hostname: l.hostname,
       pattern: 'learning',

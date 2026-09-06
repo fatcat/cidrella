@@ -3,10 +3,43 @@
 // device metadata the same way it attaches the OUI vendor.
 
 
+// Fields worth flagging when they drift on an existing, already-classified
+// device. dhcp_fingerprint (option 55) is excluded: its exact parameter
+// list can vary transaction to transaction even for the same device, which
+// would make it too noisy a signal. A manual override's fields never drift
+// here since upsertFingerprint keeps them sticky against fresh DHCP data.
+const DRIFT_FIELDS = ['device_type', 'os_family', 'vendor_class'];
+
+function logDrift(db, mac, before, after) {
+  if (!before) return; // first-ever classification isn't drift
+  const insert = db.prepare(`
+    INSERT INTO device_fingerprint_changes (mac_address, field, previous_value, new_value)
+    VALUES (?, ?, ?, ?)
+  `);
+  for (const field of DRIFT_FIELDS) {
+    const prev = before[field];
+    const next = after[field];
+    if (prev && next && prev !== next) {
+      insert.run(mac, field, prev, next);
+    }
+  }
+}
+
 // Insert or refresh a fingerprint. A 'manual' override is never clobbered by a
 // later 'dhcp' capture, we still bump last_seen_at and refresh the raw DHCP
-// signals, but keep the operator-set type/os/source.
+// signals, but keep the operator-set type/os/source. Any drift on an
+// already-classified device is logged to device_fingerprint_changes before
+// being overwritten.
 export function upsertFingerprint(db, fp) {
+  const mac = String(fp.mac_address).toLowerCase();
+  const before = getByMac(db, mac);
+  if (before && before.source !== 'manual') {
+    logDrift(db, mac, before, {
+      device_type: fp.device_type ?? null,
+      os_family: fp.os_family ?? null,
+      vendor_class: fp.vendor_class ?? null,
+    });
+  }
   return db.prepare(`
     INSERT INTO device_fingerprints
       (mac_address, dhcp_fingerprint, vendor_class, dhcp_hostname,
@@ -26,7 +59,7 @@ export function upsertFingerprint(db, fp) {
       source      = device_fingerprints.source,
       raw         = excluded.raw
   `).run({
-    mac_address: String(fp.mac_address).toLowerCase(),
+    mac_address: mac,
     dhcp_fingerprint: fp.dhcp_fingerprint ?? null,
     vendor_class: fp.vendor_class ?? null,
     dhcp_hostname: fp.dhcp_hostname ?? null,
@@ -41,6 +74,18 @@ export function upsertFingerprint(db, fp) {
 export function getByMac(db, mac) {
   if (!mac) return null;
   return db.prepare('SELECT * FROM device_fingerprints WHERE mac_address = ?').get(String(mac).toLowerCase()) || null;
+}
+
+// Recent fingerprint drift for a MAC, newest first. Each row is one changed
+// field (device_type/os_family/vendor_class), not one DHCP transaction.
+export function getFingerprintChanges(db, mac, days = 90) {
+  if (!mac) return [];
+  return db.prepare(`
+    SELECT field, previous_value, new_value, changed_at
+    FROM device_fingerprint_changes
+    WHERE mac_address = ? AND changed_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY changed_at DESC
+  `).all(String(mac).toLowerCase(), Math.max(1, Math.min(365, Number(days) || 90)));
 }
 
 // Batch lookup → Map<mac, {device_type, os_family, confidence}>. Mirrors

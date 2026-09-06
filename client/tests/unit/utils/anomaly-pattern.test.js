@@ -8,9 +8,10 @@ function iso(daysAgo, hour = 2) {
   return d.toISOString();
 }
 
-function event(client_ip, { daysAgo, hour = 2, score = 0.9, resolved = 0 } = {}) {
+function event(client_ip, { daysAgo, hour = 2, score = 0.9, resolved = 0, identity } = {}) {
   return {
     client_ip,
+    identity,
     window_start: iso(daysAgo, hour),
     anomaly_score: score,
     severity: 'high',
@@ -64,6 +65,24 @@ describe('classifyClients', () => {
     const learning = [{ client_ip: '10.0.0.8', training_rows: 2 }];
     const clients = classifyClients(events, learning);
     expect(clients.map(c => c.client_ip)).toEqual(['10.0.0.7', '10.0.0.6', '10.0.0.8']);
+  });
+
+  it('groups two different client_ips under the same identity as one client (IP renewal)', () => {
+    const events = [
+      event('10.0.0.9', { daysAgo: 3, score: 0.2, identity: 'aa:bb:cc:dd:ee:ff' }),
+      event('10.0.0.14', { daysAgo: 0, score: 0.9, resolved: 0, identity: 'aa:bb:cc:dd:ee:ff' }),
+    ];
+    const clients = classifyClients(events, []);
+    expect(clients).toHaveLength(1);
+    expect(clients[0].identity).toBe('aa:bb:cc:dd:ee:ff');
+    // Display still shows whichever IP the client was most recently seen at.
+    expect(clients[0].client_ip).toBe('10.0.0.14');
+  });
+
+  it('falls back to client_ip as the identity when none is provided', () => {
+    const events = [event('10.0.0.99', { daysAgo: 0 })];
+    const [client] = classifyClients(events, []);
+    expect(client.identity).toBe('10.0.0.99');
   });
 
   it('summaryCounts tallies each pattern bucket', () => {

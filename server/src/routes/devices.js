@@ -15,6 +15,17 @@ router.get('/:mac/fingerprint', requirePerm('dhcp:read'), (req, res) => {
   res.json(row || { mac_address: mac.toLowerCase(), device_type: null, os_family: null, confidence: 0, source: null });
 });
 
+// GET /api/devices/:mac/fingerprint/history: recent device_type/os_family/
+// vendor_class drift for this MAC -- e.g. a "Samsung/IoT" device suddenly
+// classifying as generic Linux, which can indicate MAC spoofing or a rogue
+// device taking over a trusted address.
+router.get('/:mac/fingerprint/history', requirePerm('dhcp:read'), (req, res) => {
+  const mac = req.params.mac;
+  if (!isValidMac(mac)) return res.status(400).json({ error: 'Invalid MAC address' });
+  const days = parseInt(req.query.days, 10) || 90;
+  res.json(DeviceFingerprint.getFingerprintChanges(getDb(), mac, days));
+});
+
 // PUT /api/devices/:mac/fingerprint: operator override of device type / OS.
 router.put('/:mac/fingerprint', requirePerm('dhcp:write'), (req, res) => {
   const mac = req.params.mac;

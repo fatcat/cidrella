@@ -60,9 +60,9 @@
           <span class="count">{{ filteredClients.length }} shown</span>
         </div>
         <div class="list" v-if="filteredClients.length" data-track="anomalies-client-list">
-          <div v-for="c in filteredClients" :key="c.client_ip"
-               class="host-row" :class="{ selected: c.client_ip === selectedIp }"
-               data-track="anomalies-client-click" @click="selectClient(c.client_ip)">
+          <div v-for="c in filteredClients" :key="c.identity"
+               class="host-row" :class="{ selected: c.identity === selectedIp }"
+               data-track="anomalies-client-click" @click="selectClient(c.identity)">
             <div class="host-id">
               <div class="name">{{ c.hostname || c.client_ip }}</div>
               <div class="ip">{{ c.client_ip }}</div>
@@ -98,6 +98,16 @@
             <div class="actions">
               <Button label="Whitelist" icon="pi pi-shield" severity="secondary" outlined size="small"
                       data-track="anomalies-whitelist" @click="handleWhitelist(selected)" />
+            </div>
+          </div>
+
+          <div class="fingerprint-warning" v-if="store.fingerprintChanges.length" data-track="anomalies-fingerprint-drift">
+            <i class="pi pi-exclamation-triangle"></i>
+            <div>
+              <strong>Device fingerprint changed</strong> {{ timeAgo(store.fingerprintChanges[0].changed_at) }} —
+              previously identified as <b>{{ store.fingerprintChanges[0].previous_value }}</b>,
+              now <b>{{ store.fingerprintChanges[0].new_value }}</b>. This can mean the physical device behind
+              this address changed, including MAC spoofing.
             </div>
           </div>
 
@@ -258,7 +268,7 @@ const counts = computed(() => summaryCounts(clients.value));
 const filteredClients = computed(() => patternFilter.value
   ? clients.value.filter(c => c.pattern === patternFilter.value)
   : clients.value);
-const selected = computed(() => clients.value.find(c => c.client_ip === selectedIp.value) || null);
+const selected = computed(() => clients.value.find(c => c.identity === selectedIp.value) || null);
 
 const peerScores = computed(() => clients.value.filter(c => c.latestScore != null).map(c => c.latestScore));
 
@@ -313,12 +323,13 @@ function formatTime(iso) {
   return formatDateTime(iso);
 }
 
-async function selectClient(ip) {
-  selectedIp.value = ip;
+async function selectClient(identity) {
+  selectedIp.value = identity;
   store.clearClient();
   await Promise.all([
-    store.fetchClientHistory(ip, 500),
-    store.fetchClientModel(ip),
+    store.fetchClientHistory(identity, 500),
+    store.fetchClientModel(identity),
+    store.fetchFingerprintChanges(identity),
   ]);
 }
 
@@ -388,7 +399,7 @@ async function confirmWhitelist() {
   try {
     await store.whitelistClient(whitelistTarget.value.client_ip, whitelistReason.value || null);
     whitelistDialogVisible.value = false;
-    if (selectedIp.value === whitelistTarget.value.client_ip) selectedIp.value = null;
+    if (selectedIp.value === whitelistTarget.value.identity) selectedIp.value = null;
     toast.add({ severity: 'success', summary: 'Client whitelisted', detail: whitelistTarget.value.client_ip, life: 3000 });
   } catch (err) {
     const msg = apiError(err);
@@ -402,7 +413,7 @@ async function refreshAll() {
 }
 
 watch(clients, (list) => {
-  if (!selectedIp.value && list.length) selectClient(list[0].client_ip);
+  if (!selectedIp.value && list.length) selectClient(list[0].identity);
 });
 
 onMounted(refreshAll);
@@ -496,6 +507,13 @@ useAutoRefresh(refreshAll);
 .factor-vals { font-family: monospace; font-size: .71rem; color: var(--p-text-muted-color); padding-left: 1.5rem; }
 .factor-vals b { color: var(--p-text-color); font-weight: 700; }
 .factor-desc { font-size: .72rem; color: var(--p-text-muted-color); padding-left: 1.5rem; margin-top: .15rem; }
+
+.fingerprint-warning {
+  display: flex; align-items: flex-start; gap: .6rem; padding: .75rem .9rem; margin-bottom: 1rem;
+  background: var(--cid-status-warn-bg, rgba(217, 119, 6, .1)); border: 1px solid var(--cid-status-warn); border-radius: 8px;
+  font-size: .82rem; color: var(--p-text-color);
+}
+.fingerprint-warning i { color: var(--cid-status-warn); margin-top: .15rem; }
 
 .learning-box { display: flex; align-items: center; gap: 1.2rem; padding: 1.2rem; background: var(--p-surface-ground); border: 1px solid var(--p-surface-border); border-radius: 8px; }
 .learning-box .lbig { font-family: monospace; font-size: 1.4rem; font-weight: 700; color: var(--p-primary-color); }

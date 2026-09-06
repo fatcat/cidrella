@@ -32,8 +32,25 @@ logging.basicConfig(
 )
 log = logging.getLogger("anomaly")
 
-# Cache: client_ip → median feature vector (populated during training)
+# Cache: identity → median feature vector (populated during training)
 _client_medians = {}
+
+
+def _active_targets():
+    """Active clients (by DNS-observed IP) paired with their resolved
+    identity, whitelisted identities excluded. Identity resolution happens
+    once per cycle here rather than deeper in the pipeline, since every
+    downstream step (whitelist check, model lookup, score storage,
+    auto-resolve) needs to agree on the same key for a given client_ip."""
+    active_ips = features.get_active_clients(hours=24)
+    whitelisted = storage.get_whitelisted_identities()
+    targets = []
+    for ip in active_ips:
+        identity = storage.resolve_identity(ip)
+        if identity in whitelisted:
+            continue
+        targets.append((ip, identity))
+    return targets
 
 
 def update_daemon_status_safe(**kwargs):
@@ -90,50 +107,50 @@ def train_all_clients():
     t0 = time.monotonic()
     sensitivity = get_sensitivity()
     min_hours = get_min_training_hours()
-    active_clients = features.get_active_clients(hours=24)
-    whitelisted = storage.get_whitelisted_clients()
-    if whitelisted:
-        active_clients = [c for c in active_clients if c not in whitelisted]
-    log.info("Training models for %d active clients (sensitivity=%s)", len(active_clients), sensitivity)
+    targets = _active_targets()
+    log.info("Training models for %d active clients (sensitivity=%s)", len(targets), sensitivity)
 
     trained = 0
     max_windows = 0
-    for client_ip in active_clients:
+    for client_ip, identity in targets:
         try:
-            # Check if client has enough history
+            # Check if client has enough history. DNS history is only ever
+            # observable per-IP (DuckDB has no MAC), so this is scoped to
+            # the current IP even though the model itself is identity-keyed.
             hours = features.get_client_history_hours(client_ip)
             if hours < min_hours:
-                meta = storage.get_model_metadata(client_ip)
+                meta = storage.get_model_metadata(identity)
                 if not meta:
-                    storage.update_model_metadata(client_ip, 0, status="learning")
-                log.debug("Client %s has %.1fh history (need %dh), skipping", client_ip, hours, min_hours)
+                    storage.update_model_metadata(identity, client_ip, 0, status="learning")
+                log.debug("Client %s (%s) has %.1fh history (need %dh), skipping",
+                          client_ip, identity, hours, min_hours)
                 continue
 
             # Extract training data
             training_data = features.extract_training_data(client_ip, TRAINING_LOOKBACK_DAYS)
             if training_data is None or len(training_data) < 10:
-                log.debug("Client %s: insufficient training windows (%s)", client_ip,
+                log.debug("Client %s (%s): insufficient training windows (%s)", client_ip, identity,
                           len(training_data) if training_data is not None else 0)
                 continue
 
             # Train model
-            models.train_model(client_ip, training_data, sensitivity)
-            storage.update_model_metadata(client_ip, len(training_data), status="active")
+            models.train_model(identity, training_data, sensitivity)
+            storage.update_model_metadata(identity, client_ip, len(training_data), status="active")
 
             # Cache median for explanation during scoring
-            _client_medians[client_ip] = np.median(training_data, axis=0)
+            _client_medians[identity] = np.median(training_data, axis=0)
 
             trained += 1
             if len(training_data) > max_windows:
                 max_windows = len(training_data)
-            log.info("Trained model for %s (%d windows)", client_ip, len(training_data))
+            log.info("Trained model for %s (%s, %d windows)", client_ip, identity, len(training_data))
 
         except Exception:
-            log.error("Failed to train model for %s: %s", client_ip, traceback.format_exc())
+            log.error("Failed to train model for %s (%s): %s", client_ip, identity, traceback.format_exc())
 
     elapsed = round(time.monotonic() - t0, 2)
     log.info("Training complete: %d/%d models trained in %.2fs (max %d windows)",
-             trained, len(active_clients), elapsed, max_windows)
+             trained, len(targets), elapsed, max_windows)
 
     update_daemon_status_safe(
         last_train=datetime.now(timezone.utc).isoformat(),
@@ -152,16 +169,13 @@ def score_all_clients():
     window_end = now.replace(minute=0, second=0, microsecond=0)
     window_start = window_end - timedelta(hours=FEATURE_WINDOW_HOURS)
 
-    active_clients = features.get_active_clients(hours=24)
-    whitelisted = storage.get_whitelisted_clients()
-    if whitelisted:
-        active_clients = [c for c in active_clients if c not in whitelisted]
+    targets = _active_targets()
     scored = 0
     anomalies = 0
 
-    for client_ip in active_clients:
+    for client_ip, identity in targets:
         try:
-            model = models.load_model(client_ip)
+            model = models.load_model(identity)
             if model is None:
                 continue
 
@@ -181,12 +195,13 @@ def score_all_clients():
             # Explain if anomalous using cached median from training
             top_features = None
             if is_anomaly:
-                median = _client_medians.get(client_ip)
+                median = _client_medians.get(identity)
                 if median is not None:
                     top_features = models.explain_anomaly(model, fv, median)
 
             # Save score
             storage.save_score(
+                identity=identity,
                 client_ip=client_ip,
                 window_start=window_start.isoformat(),
                 window_end=window_end.isoformat(),
@@ -199,16 +214,16 @@ def score_all_clients():
             scored += 1
             if is_anomaly:
                 anomalies += 1
-                log.warning("Anomaly: %s score=%.4f severity=%s features=%s",
-                            client_ip, score, severity, top_features)
+                log.warning("Anomaly: %s (%s) score=%.4f severity=%s features=%s",
+                            client_ip, identity, score, severity, top_features)
 
             # Auto-resolve check
-            resolved = storage.auto_resolve(client_ip, AUTO_RESOLVE_WINDOWS)
+            resolved = storage.auto_resolve(identity, AUTO_RESOLVE_WINDOWS)
             if resolved:
-                log.info("Auto-resolved %d anomalies for %s", resolved, client_ip)
+                log.info("Auto-resolved %d anomalies for %s", resolved, identity)
 
         except Exception:
-            log.error("Failed to score %s: %s", client_ip, traceback.format_exc())
+            log.error("Failed to score %s (%s): %s", client_ip, identity, traceback.format_exc())
 
     elapsed = round(time.monotonic() - t0, 2)
     scoring_interval = get_scoring_interval()
