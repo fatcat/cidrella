@@ -6,7 +6,7 @@
         <div v-if="items.length" class="doughnut-wrap">
           <Doughnut :data="chartData" :options="doughnutOptions" :plugins="[ChartDataLabels]" />
         </div>
-        <p v-else class="empty-chart">No data in this range.</p>
+        <p v-else class="empty-chart">{{ emptyText }}</p>
       </div>
       <div class="chart-card">
         <DataTable v-if="items.length" :value="items" size="small" style="margin: 0 10%">
@@ -20,7 +20,7 @@
             <template #body="{ data }">{{ formatNumber(Number(data.count)) }}</template>
           </Column>
         </DataTable>
-        <p v-else class="empty-chart">No data in this range.</p>
+        <p v-else class="empty-chart">{{ emptyText }}</p>
       </div>
     </div>
   </div>
@@ -41,6 +41,7 @@ defineProps({
   chartData: { type: Object, required: true },
   labelField: { type: String, default: null },
   labelHeader: { type: String, default: 'Label' },
+  emptyText: { type: String, default: 'No data in this range.' },
 });
 
 const doughnutOptions = computed(() => makeDoughnutOptions());

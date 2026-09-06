@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { requirePerm } from '../auth/require-perm.js';
 import { enrichWithHostnames } from '../utils/hostnames.js';
 import {
-  queryTopClients, queryTopDomains, queryTopBlocked,
+  queryTopClients, queryTopDomains, queryTopDomainsWithoutDnssec, queryTopBlocked,
   queryTopClientsByAction, queryTopDomainsByAction, queryTopBlockReasons,
   queryTopClientDomainPairsByAction,
   queryVolume, queryActionBreakdown,
@@ -57,6 +57,9 @@ router.get('/top-clients', auth, analyticsRoute(queryTopClients, { enrich: true 
 
 // GET /api/analytics/top-domains?range=24h&limit=20
 router.get('/top-domains', auth, analyticsRoute(queryTopDomains));
+
+// GET /api/analytics/dnssec/top-unsupported-domains?range=24h&limit=10
+router.get('/dnssec/top-unsupported-domains', auth, analyticsRoute(queryTopDomainsWithoutDnssec, { defaultLimit: '10' }));
 
 // GET /api/analytics/top-blocked?range=24h&limit=20
 router.get('/top-blocked', auth, analyticsRoute(queryTopBlocked));

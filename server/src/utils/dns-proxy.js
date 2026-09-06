@@ -298,6 +298,15 @@ function buildOptEcho(opt) {
   }];
 }
 
+// DNSSEC validation produces three states for analytics: secure, insecure,
+// and unknown. AD is meaningful only when validation is enabled and the
+// client did not ask dnsmasq to skip checking. Failed responses are not proof
+// that a queried domain lacks DNSSEC support.
+export function classifyDnssecSupport(response, { enabled, checkingDisabled = false } = {}) {
+  if (!enabled || checkingDisabled || response?.rcode !== 'NOERROR') return null;
+  return Boolean(response.flags & dnsPacket.AUTHENTIC_DATA);
+}
+
 // Create NXDOMAIN response for a query (echoes EDNS OPT when present)
 export function createNxdomainResponse(query) {
   return dnsPacket.encode({
@@ -546,6 +555,7 @@ function handleQuery(msg, rinfo, sock) {
       socket: sock,
       queryName: queryName || '',
       queryType,
+      checkingDisabled: !!query.flag_cd,
       opt: getQueryOpt(query),   // echoed on a synthesized GeoIP-block response
       timer,
       startNs
@@ -607,9 +617,14 @@ function handleDnsmasqResponse(msg) {
     const rcodeNames = ['NOERROR','FORMERR','SERVFAIL','NXDOMAIN','NOTIMP','REFUSED'];
     const rcode = response.rcode || rcodeNames[0];
     const firstIp = ips.length > 0 ? ips[0] : null;
+    const dnssecSupported = classifyDnssecSupport(response, {
+      enabled: getSetting('dnssec_enabled') === 'true',
+      checkingDisabled: pending.checkingDisabled,
+    });
     logDnsQuery({
       clientIp: pending.address, domain: pending.queryName, queryType: pending.queryType,
       responseCode: rcode, action: 'allowed', latencyUs, resolvedIp: firstIp,
+      dnssecSupported,
     });
   } catch (err) {
     proxyLog('error', 'Response processing error', { error: err.message });
@@ -734,11 +749,15 @@ async function handleTcpQuery(msg, clientSock) {
   statsAllowed++;
   statsTotal++;
   writeTcpMessage(clientSock, respMsg);
+  const dnssecSupported = classifyDnssecSupport(response, {
+    enabled: getSetting('dnssec_enabled') === 'true',
+    checkingDisabled: !!query.flag_cd,
+  });
   logDnsQuery({
     clientIp, domain: queryName || '', queryType,
     // response is null when decode failed and we relayed raw bytes, don't claim NOERROR.
     responseCode: response?.rcode || 'UNKNOWN', action: 'allowed',
-    latencyUs, resolvedIp: ips[0] || null,
+    latencyUs, resolvedIp: ips[0] || null, dnssecSupported,
   });
 }
 
