@@ -17,7 +17,7 @@
 
     <section class="lab-grid">
       <article class="lab-panel">
-        <h2>Address Types</h2>
+        <h2>Network Range Types</h2>
         <div class="sample-row">
           <AddressTypePill v-for="item in addressTypes" :key="item.label" :display="item" />
         </div>

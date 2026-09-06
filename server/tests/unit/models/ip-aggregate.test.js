@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../../helpers/test-db.js';
 import * as IpAddress from '../../../src/models/ip-address.js';
+import * as DeviceFingerprint from '../../../src/models/device-fingerprint.js';
 import { buildIpAggregate, enrichIpViewRows } from '../../../src/models/ip-view.js';
 
 let db;
@@ -87,6 +88,34 @@ describe('canonical IP aggregate schema', () => {
 });
 
 describe('canonical IP read aggregate', () => {
+  it('projects displayable DHCP fingerprint evidence with the device summary', () => {
+    DeviceFingerprint.upsertFingerprint(db, {
+      mac_address: 'aa:bb:cc:dd:ee:20',
+      dhcp_fingerprint: '1,3,6,15',
+      vendor_class: 'MSFT 5.0',
+      dhcp_hostname: 'DESKTOP-AGGREGATE',
+      device_type: 'Computer',
+      os_family: 'Windows',
+      confidence: 85,
+      source: 'dhcp'
+    });
+
+    const [row] = enrichIpViewRows(db, [{
+      subnet_id: subnetId,
+      ip_address: '10.88.0.19',
+      mac_address: 'AA:BB:CC:DD:EE:20'
+    }]);
+    expect(row).toMatchObject({
+      device_type: 'Computer',
+      os_family: 'Windows',
+      device_confidence: 85,
+      dhcp_fingerprint: '1,3,6,15',
+      dhcp_vendor_class: 'MSFT 5.0',
+      dhcp_fingerprint_hostname: 'DESKTOP-AGGREGATE',
+      device_fingerprint_source: 'dhcp'
+    });
+  });
+
   it('projects the effective scanning toggle from IP, subnet, then global settings', () => {
     db.prepare("UPDATE settings SET value = '1' WHERE key = 'default_scan_enabled'").run();
     const inherited = enrichIpViewRows(db, [{ subnet_id: subnetId, ip_address: '10.88.0.20' }]);
@@ -100,6 +129,35 @@ describe('canonical IP read aggregate', () => {
       subnet_id: subnetId, ip_address: '10.88.0.22', scan_enabled: 1
     }]);
     expect(ipEnabled[0].scanning_enabled).toBe(true);
+  });
+
+  it('projects custom Network Range Type metadata without changing allocation', () => {
+    const rangeTypeId = db.prepare(`
+      INSERT INTO range_types (name, color, is_system, description)
+      VALUES ('Printers', '#22c55e', 0, 'Organizational tag only')
+    `).run().lastInsertRowid;
+    db.prepare(`
+      INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
+      VALUES (?, ?, '10.88.0.40', '10.88.0.49')
+    `).run(subnetId, rangeTypeId);
+
+    const [tagged, untagged] = enrichIpViewRows(db, [
+      { subnet_id: subnetId, ip_address: '10.88.0.44', allocation_state: 'unassigned' },
+      { subnet_id: subnetId, ip_address: '10.88.0.50', allocation_state: 'unassigned' }
+    ]);
+
+    expect(tagged).toMatchObject({
+      allocation_state: 'unassigned',
+      network_range_type_id: Number(rangeTypeId),
+      network_range_type: 'Printers',
+      network_range_type_color: '#22c55e'
+    });
+    expect(untagged).toMatchObject({
+      allocation_state: 'unassigned',
+      network_range_type_id: null,
+      network_range_type: null,
+      network_range_type_color: null
+    });
   });
 
   it('adds canonical identity without inferring allocation from protocol shape', () => {

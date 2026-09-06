@@ -621,7 +621,14 @@ const filteredRecords = computed(() => {
   return base.filter(r =>
     (r.name && r.name.toLowerCase().includes(q)) ||
     (r.record_type && r.record_type.toLowerCase().includes(q)) ||
-    (r.value && r.value.toLowerCase().includes(q))
+    (r.value && r.value.toLowerCase().includes(q)) ||
+    (r.os_family && r.os_family.toLowerCase().includes(q)) ||
+    (r.device_type && r.device_type.toLowerCase().includes(q)) ||
+    String(r.device_confidence ?? '').includes(q) ||
+    (r.dhcp_fingerprint && r.dhcp_fingerprint.includes(q)) ||
+    (r.dhcp_vendor_class && r.dhcp_vendor_class.toLowerCase().includes(q)) ||
+    (r.dhcp_fingerprint_hostname && r.dhcp_fingerprint_hostname.toLowerCase().includes(q)) ||
+    (r.device_fingerprint_source && r.device_fingerprint_source.includes(q))
   );
 });
 const availableRecordTypes = computed(() => {

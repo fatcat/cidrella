@@ -291,6 +291,16 @@ export const useSubnetStore = defineStore('subnets', () => {
     await api.delete(`/subnets/${subnetId}/ranges/${rangeId}`);
   }
 
+  async function setNetworkRangeType(subnetId, rangeTypeId, ranges, acceptOverlaps = false) {
+    const res = await api.put(`/subnets/${subnetId}/ranges/set-type`, {
+      range_type_id: rangeTypeId,
+      ranges,
+      accept_overlaps: acceptOverlaps
+    });
+    invalidateDetailCache(subnetId);
+    return res.data;
+  }
+
   async function setIpAllocation(subnetId, ipAddress, allocationState, note) {
     const res = await api.put(`/subnets/${subnetId}/ips/${ipAddress}/allocation`, {
       allocation_state: allocationState,
@@ -372,7 +382,8 @@ export const useSubnetStore = defineStore('subnets', () => {
     divideSubnet, configureSubnet,
     getSubnetDetail, invalidateDetailCache, previewMerge, mergeSubnets, applyTemplate,
     getSettings, updateSetting,
-    getRanges, createRange, updateRange, deleteRange, setIpAllocation, bulkSetIpAllocation,
+    getRanges, createRange, updateRange, deleteRange, setNetworkRangeType,
+    setIpAllocation, bulkSetIpAllocation,
     getRangeTypes, createRangeType, updateRangeType, deleteRangeType,
     startScan, getScan, getScans, deleteScan,
     calculateSubnets

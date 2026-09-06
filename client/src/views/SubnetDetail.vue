@@ -250,7 +250,7 @@
             modal :style="{ width: '28rem' }" data-track="dialog-range-edit">
       <div class="form-grid">
         <div class="field" v-if="editingRange">
-          <label>Range Type *</label>
+          <label>{{ editingRange?.range_type_is_system ? 'System Role' : 'Network Range Type' }} *</label>
           <Select v-model="rangeForm.range_type_id" :options="editableRangeTypes"
                     optionLabel="name" optionValue="id" placeholder="Select type" class="w-full" />
         </div>
@@ -289,10 +289,25 @@
           <strong>{{ o.type }}</strong>: {{ o.start_ip }} – {{ o.end_ip }}
         </li>
       </ul>
-      <p>Do you want to create it anyway?</p>
+      <p>Accepting will replace only the overlapping portion and preserve the unaffected parts of the existing Network Range Types.</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showOverlapDialog = false" />
-        <Button label="Force Create" severity="warn" @click="forceCreateRange" :loading="saving" />
+        <Button label="Accept" severity="warn" @click="acceptRangeChange" :loading="saving" />
+      </template>
+    </Dialog>
+
+    <!-- Grid Network Range Type overlap warning -->
+    <Dialog v-model:visible="showRangeTypeOverlapDialog" header="Network Range Type Overlap" modal :style="{ width: '30rem' }" data-track="dialog-range-type-overlap">
+      <p>The selected addresses overlap existing Network Range Types:</p>
+      <ul>
+        <li v-for="o in rangeTypeOverlapDetails" :key="o.id">
+          <strong>{{ o.type }}</strong>: {{ o.start_ip }} – {{ o.end_ip }}
+        </li>
+      </ul>
+      <p>Accepting will change the selected addresses to <strong>{{ pendingNetworkRangeType?.name }}</strong> and preserve the unaffected parts of the existing ranges.</p>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="cancelNetworkRangeTypeOverlap" />
+        <Button label="Accept" severity="warn" @click="acceptNetworkRangeTypeChange" :loading="saving" />
       </template>
     </Dialog>
 
@@ -577,11 +592,15 @@ function bestPageSize(total) {
 
 const showRangeDialog = ref(false);
 const showOverlapDialog = ref(false);
+const showRangeTypeOverlapDialog = ref(false);
 const showDeleteRangeDialog = ref(false);
 const editingRange = ref(null);
 const deletingRange = ref(null);
 const overlapDetails = ref([]);
 const pendingRangeForm = ref(null);
+const rangeTypeOverlapDetails = ref([]);
+const pendingNetworkRangeType = ref(null);
+const pendingNetworkRangeSelections = ref([]);
 
 const rangeForm = ref({ range_type_id: null, start_ip: '', end_ip: '', description: '' });
 
@@ -636,7 +655,7 @@ const tableContextMenuItems = computed(() => {
     scanOverride: row.scan_enabled ?? null
   };
 
-  return buildContextMenuItems([ip], { allowCreateDhcpScope: false });
+  return buildContextMenuItems([ip], { allowCreateDhcpScope: false, allowSetRangeType: false });
 });
 
 // Range context menu
@@ -668,7 +687,11 @@ function onRangeRightClick(event) {
 
 function findRangeForIp(ipAddress) {
   const long = ipToLong(ipAddress);
-  return ranges.value.find(r => long >= ipToLong(r.start_ip) && long <= ipToLong(r.end_ip));
+  return ranges.value.find(r =>
+    r.range_type_is_system
+    && long >= ipToLong(r.start_ip)
+    && long <= ipToLong(r.end_ip)
+  );
 }
 
 const formatDate = formatDateTime;
@@ -699,6 +722,12 @@ const rangeTypeLegend = computed(() => {
   }
   return [...baseline, ...dynamic];
 });
+
+const assignableNetworkRangeTypes = computed(() =>
+  (rangeTypes.value || [])
+    .filter(type => !type.is_system)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+);
 
 // Entries displayed in the Ranges table on the Grid View. System-range rows
 // (Network / Broadcast / Gateway) are hidden, they're implicit for every
@@ -778,7 +807,9 @@ const visibleRanges = computed(() => {
 });
 
 const editableRangeTypes = computed(() => {
-  return rangeTypes.value.filter(rt => !rt.is_system || !['Network', 'Broadcast'].includes(rt.name));
+  if (!editingRange.value) return assignableNetworkRangeTypes.value;
+  if (!editingRange.value.range_type_is_system) return assignableNetworkRangeTypes.value;
+  return rangeTypes.value.filter(type => type.id === editingRange.value.range_type_id);
 });
 
 function isGatewayType(typeId) {
@@ -807,6 +838,7 @@ function gridTooltip(ip) {
   // tells them apart for quick identification.
   if (ip.rangeType === 'Network')   lines.push('Role: network');
   if (ip.rangeType === 'Broadcast') lines.push('Role: broadcast');
+  if (ip.networkRangeType) lines.push(`Network Range Type: ${ip.networkRangeType}`);
   if (ip.hostname) lines.push(`Host: ${displayHost(ip.hostname)}`);
   if (ip.mac) lines.push(`MAC: ${ip.mac}`);
   if (ip.vendor) lines.push(`Vendor: ${ip.vendor}`);
@@ -847,12 +879,14 @@ const ipGrid = computed(() => {
   const bcast = ipToLong(subnet.value.broadcast_address);
   const grid = [];
 
-  const ipRangeMap = new Map();
+  const functionalRangeMap = new Map();
+  const networkRangeTypeMap = new Map();
   for (const r of ranges.value) {
     const start = ipToLong(r.start_ip);
     const end = ipToLong(r.end_ip);
+    const targetMap = r.range_type_is_system ? functionalRangeMap : networkRangeTypeMap;
     for (let i = start; i <= end; i++) {
-      ipRangeMap.set(i, {
+      targetMap.set(i, {
         color: r.range_type_color,
         rangeType: r.range_type_name,
         rangeId: r.id,
@@ -868,10 +902,13 @@ const ipGrid = computed(() => {
 
   for (let i = net; i <= bcast; i++) {
     const addr = longToIp(i);
-    const rangeInfo = ipRangeMap.get(i);
+    const functionalRangeInfo = functionalRangeMap.get(i);
+    const networkRangeTypeInfo = networkRangeTypeMap.get(i);
+    const rangeInfo = networkRangeTypeInfo || functionalRangeInfo;
     const assignInfo = ipAssignMap.get(i);
 
-    const isSystemRange = !!rangeInfo?.isSystem;
+    const isProtectedSystemRange = ['Network', 'Broadcast', 'Gateway']
+      .includes(functionalRangeInfo?.rangeType);
 
     // Classify ONCE, here, and hand the result to both the fill below and the
     // tooltip (see gridTooltip). The tooltip used to re-derive it from this
@@ -883,12 +920,12 @@ const ipGrid = computed(() => {
     // needs to spot was the one the colour could not express.
     // See REVIEW.md, duplicate-logic audit #41.
     const cellState = ipLifecycleDisplay(gridPseudoData({
-      addr, assignInfo, rangeInfo,
+      addr, assignInfo, rangeInfo: functionalRangeInfo,
     }));
     const cellTypeClass = cellState.addressType?.className || null;
 
     let cellColor;
-    if (isSystemRange) cellColor = rangeInfo.color;
+    if (isProtectedSystemRange) cellColor = functionalRangeInfo.color;
     else if (cellTypeClass === 'type-rogue')  cellColor = 'var(--cid-rogue)';
     else if (cellTypeClass === 'type-system') cellColor = 'var(--cid-system)';
     else if (cellTypeClass === 'type-reserved-dhcp') cellColor = 'var(--p-blue-700)';
@@ -909,8 +946,10 @@ const ipGrid = computed(() => {
       lastOctet: i & 255,
       color: cellColor,
       isSectionRight,
-      rangeType: rangeInfo?.rangeType || null,
-      rangeId: rangeInfo?.rangeId || null,
+      rangeType: functionalRangeInfo?.rangeType || null,
+      rangeId: functionalRangeInfo?.rangeId || null,
+      networkRangeType: networkRangeTypeInfo?.rangeType || null,
+      networkRangeTypeColor: networkRangeTypeInfo?.color || null,
       hostname: assignInfo?.hostname || null,
       mac: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
       allocationState: assignInfo?.allocation_state || 'unassigned',
@@ -1009,7 +1048,10 @@ function isSystemReserved(ip) {
   return rangeType === 'Network' || rangeType === 'Broadcast' || rangeType === 'Gateway';
 }
 
-function buildContextMenuItems(selectedIps, { allowCreateDhcpScope = true } = {}) {
+function buildContextMenuItems(selectedIps, {
+  allowCreateDhcpScope = true,
+  allowSetRangeType = true
+} = {}) {
   if (selectedIps.length === 0) return [];
 
   const items = [];
@@ -1068,6 +1110,21 @@ function buildContextMenuItems(selectedIps, { allowCreateDhcpScope = true } = {}
         label: 'Create DHCP Scope',
         icon: 'pi pi-plus',
         command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
+      });
+    }
+
+    if (allowSetRangeType) {
+      if (items.length) items.push({ separator: true });
+      items.push({
+        label: 'Set Range Type',
+        icon: 'pi pi-tags',
+        items: assignableNetworkRangeTypes.value.length
+          ? assignableNetworkRangeTypes.value.map(type => ({
+              label: type.name,
+              icon: 'pi pi-tag',
+              command: () => setSelectedNetworkRangeType(type, selectedIps)
+            }))
+          : [{ label: 'No Network Range Types configured', disabled: true }]
       });
     }
 
@@ -1145,6 +1202,20 @@ function buildContextMenuItems(selectedIps, { allowCreateDhcpScope = true } = {}
         command: () => removeRangeFromPool(coveringScope, firstIp.address, lastIp.address)
       });
     }
+    if (allowSetRangeType) {
+      items.push({ separator: true });
+      items.push({
+        label: 'Set Range Type',
+        icon: 'pi pi-tags',
+        items: assignableNetworkRangeTypes.value.length
+          ? assignableNetworkRangeTypes.value.map(type => ({
+              label: type.name,
+              icon: 'pi pi-tag',
+              command: () => setSelectedNetworkRangeType(type, selectedIps)
+            }))
+          : [{ label: 'No Network Range Types configured', disabled: true }]
+      });
+    }
     if (anyUnreserved) {
       items.push({
         label: `Create IP Reservations for ${firstIp.address} – ${lastIp.address}`,
@@ -1162,6 +1233,81 @@ function buildContextMenuItems(selectedIps, { allowCreateDhcpScope = true } = {}
   }
 
   return items;
+}
+
+function selectedIpRuns(selectedIps) {
+  const sorted = [...selectedIps]
+    .map(ip => ({ address: ip.address, value: ipToLong(ip.address) }))
+    .sort((a, b) => a.value - b.value);
+  const runs = [];
+  for (const ip of sorted) {
+    const current = runs.at(-1);
+    if (current && ip.value <= current.endValue + 1) {
+      current.end_ip = ip.address;
+      current.endValue = ip.value;
+    } else {
+      runs.push({ start_ip: ip.address, end_ip: ip.address, endValue: ip.value });
+    }
+  }
+  return runs.map(({ start_ip, end_ip }) => ({ start_ip, end_ip }));
+}
+
+async function setSelectedNetworkRangeType(type, selectedIps) {
+  const selections = selectedIpRuns(selectedIps);
+  await applyNetworkRangeType(type, selections, false);
+}
+
+async function applyNetworkRangeType(type, selections, acceptOverlaps) {
+  saving.value = true;
+  try {
+    const result = await store.setNetworkRangeType(
+      subnet.value.id,
+      type.id,
+      selections,
+      acceptOverlaps
+    );
+    showRangeTypeOverlapDialog.value = false;
+    pendingNetworkRangeType.value = null;
+    pendingNetworkRangeSelections.value = [];
+    rangeTypeOverlapDetails.value = [];
+    const addressCount = selections.reduce((count, selection) =>
+      count + ipToLong(selection.end_ip) - ipToLong(selection.start_ip) + 1, 0);
+    toast.add({
+      severity: 'success',
+      summary: 'Network Range Type set',
+      detail: `${addressCount} address${addressCount === 1 ? '' : 'es'} tagged as ${type.name}`,
+      life: 3000
+    });
+    await reloadData();
+    return result;
+  } catch (err) {
+    if (err.response?.status === 409 && err.response?.data?.can_accept) {
+      pendingNetworkRangeType.value = type;
+      pendingNetworkRangeSelections.value = selections.map(selection => ({ ...selection }));
+      rangeTypeOverlapDetails.value = err.response.data.overlaps || [];
+      showRangeTypeOverlapDialog.value = true;
+    } else {
+      toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+    }
+  } finally {
+    saving.value = false;
+  }
+}
+
+function cancelNetworkRangeTypeOverlap() {
+  showRangeTypeOverlapDialog.value = false;
+  pendingNetworkRangeType.value = null;
+  pendingNetworkRangeSelections.value = [];
+  rangeTypeOverlapDetails.value = [];
+}
+
+async function acceptNetworkRangeTypeChange() {
+  if (!pendingNetworkRangeType.value || pendingNetworkRangeSelections.value.length === 0) return;
+  await applyNetworkRangeType(
+    pendingNetworkRangeType.value,
+    pendingNetworkRangeSelections.value,
+    true
+  );
 }
 
 function openReserveDialog(ipAddress, endIpAddress) {
@@ -1339,7 +1485,7 @@ async function loadData({ skipCache = false } = {}) {
 
   try {
     restoreTableState();
-    // Load IPs and address types in parallel
+    // Load IPs and Network Range Types in parallel
     const [, rt] = await Promise.all([
       loadIpPage(currentPage.value, currentPageSize.value, { skipCache }),
       store.getRangeTypes()
@@ -1470,7 +1616,7 @@ async function saveRange(force = false) {
   }
 }
 
-async function forceCreateRange() {
+async function acceptRangeChange() {
   rangeForm.value = pendingRangeForm.value;
   await saveRange(true);
 }

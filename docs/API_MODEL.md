@@ -28,12 +28,22 @@ fields produced by `server/src/models/ip-view.js`.
 | `last_scanned_at` | Last active probe time. | datetime/null |
 | `scan_enabled` | Nullable per-IP scanning override. Null means inherit from the subnet/global setting. | `0`/`1`/null |
 | `scanning_enabled` | Server-resolved effective scanning toggle for the IP. The server applies IP override, then subnet override, then the global default. | boolean |
+| `network_range_type_id` | Custom organizational Network Range Type covering the IP, when one exists. | integer/null |
+| `network_range_type` | Display name of the custom organizational Network Range Type. This does not affect allocation, DNS, DHCP, scanning, or topology. | string/null |
+| `network_range_type_color` | Validated display color for the custom organizational Network Range Type tag. | hex color/null |
 | `in_dynamic_pool` | Whether the address belongs to an enabled same-family DHCP pool. | `0`/`1` |
 | `has_static_dns` | Whether an enabled manual DNS A or AAAA record backs the IP. | `0`/`1` |
 | `has_dhcp_reservation` | Whether a DHCP Reservation backs the IP. | `0`/`1` |
 | `dhcp_expires_at` | Active dynamic lease expiration. | datetime, `infinite`, null |
 | `dhcp_duid` | DHCPv6 client DUID retained by the lifecycle aggregate. | string/null |
 | `dhcp_iaid` | DHCPv6 identity association identifier retained with the DUID. | string/null |
+| `device_type` | Best device category inferred from DHCP fingerprint evidence. | `Computer`, `Smartphone`, `Printer`, null |
+| `os_family` | Best operating-system family inferred from DHCP fingerprint evidence. | `Windows`, `macOS`, `Apple iOS`, `Android`, `Linux`, null |
+| `device_confidence` | Confidence of the strongest retained automatic fingerprint, or 100 for a manual override. | `0`–`100`, null |
+| `dhcp_fingerprint` | Normalized DHCP option 55 parameter-request list retained as fingerprint evidence. | comma-separated option codes, null |
+| `dhcp_vendor_class` | DHCP option 60 vendor-class identifier retained as fingerprint evidence. | string/null |
+| `dhcp_fingerprint_hostname` | Client hostname captured with the DHCP fingerprint. | string/null |
+| `device_fingerprint_source` | Whether the displayed classification is automatic or operator-supplied. | `dhcp`, `manual`, null |
 
 UI table rendering should use `ip_display_status` for the displayed Status and
 `address_type`/`computed_type` for the displayed Type. It should not infer

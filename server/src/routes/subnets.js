@@ -1461,7 +1461,9 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const SORTABLE_FIELDS = new Set([
     'ip_address', 'ip_display_status', 'allocation_state', 'allocation_source_type',
     'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at',
-    'dhcp_expires_at', 'computed_type', 'scanning_enabled', 'os_family',
+    'dhcp_expires_at', 'computed_type', 'scanning_enabled', 'network_range_type', 'os_family',
+    'device_type', 'device_confidence', 'dhcp_fingerprint',
+    'dhcp_vendor_class', 'dhcp_fingerprint_hostname', 'device_fingerprint_source',
     'name', 'record_type', 'value', 'priority', 'port', 'ttl', 'enabled',
     'dns_source', 'lease_status', 'subnet_name'
   ]);
@@ -1519,11 +1521,17 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   }
 
   function buildRangeLookup(ranges) {
-    return ranges.map(r => ({
-      ...r,
-      startLong: ipToLong(r.start_ip),
-      endLong: ipToLong(r.end_ip)
-    })).sort((a, b) => a.startLong - b.startLong);
+    // `range_type_*` remains the functional range projection used for DHCP
+    // scope and topology behavior. Custom organizational classifications are
+    // projected separately by ip-view as `network_range_type*`.
+    return ranges
+      .filter(range => range.range_type_is_system)
+      .map(r => ({
+        ...r,
+        startLong: ipToLong(r.start_ip),
+        endLong: ipToLong(r.end_ip)
+      }))
+      .sort((a, b) => a.startLong - b.startLong);
   }
 
   function rangeForIpLong(rangeLookup, ipLong) {
@@ -1582,6 +1590,14 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
           (ip.address_type && ip.address_type.toLowerCase().includes(search)) ||
           (ip.allocation_state && ip.allocation_state.toLowerCase().includes(search)) ||
           (ip.allocation_source_type && ip.allocation_source_type.toLowerCase().includes(search)) ||
+          (ip.network_range_type && ip.network_range_type.toLowerCase().includes(search)) ||
+          (ip.os_family && ip.os_family.toLowerCase().includes(search)) ||
+          (ip.device_type && ip.device_type.toLowerCase().includes(search)) ||
+          String(ip.device_confidence ?? '').includes(search) ||
+          (ip.dhcp_fingerprint && ip.dhcp_fingerprint.includes(search)) ||
+          (ip.dhcp_vendor_class && ip.dhcp_vendor_class.toLowerCase().includes(search)) ||
+          (ip.dhcp_fingerprint_hostname && ip.dhcp_fingerprint_hostname.toLowerCase().includes(search)) ||
+          (ip.device_fingerprint_source && ip.device_fingerprint_source.includes(search)) ||
           String(ip.scanning_enabled).includes(search)) {
         matched.push(ip);
       }

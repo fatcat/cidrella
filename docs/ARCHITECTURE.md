@@ -62,6 +62,9 @@ Terminology:
   static DNS, DHCP Reservation, dynamic DHCP, IP Reservation, or SLAAC. Rogue is a derived
   classification for an online unassigned address. Available addresses should
   not have a type.
+- `network_range_type`: an optional custom organizational tag projected from
+  a non-system range. It does not affect allocation, DNS, DHCP, scanning, or
+  topology. Custom Network Range Type ranges cannot overlap each other.
 - `online_status`: active/passive liveness state, independent of assignment.
 - `hostname`: one primary hostname for an IP. Additional names should be CNAMEs.
 - `IP Reservation`: an administrative address hold with no DHCP client

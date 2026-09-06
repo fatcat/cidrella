@@ -1,7 +1,7 @@
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import { lookupFingerprintBatch } from './device-fingerprint.js';
 import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
-import { addressFamily, canonicalizeIp, sortKey } from '../utils/address.js';
+import { addressFamily, canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import { resolveScanningEnabled } from '../utils/scan-coverage.js';
 
 export const ADDRESS_TYPE = {
@@ -132,6 +132,7 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
   const stateMap = fillFromIpAddress ? getIpStateMap(db, rows) : new Map();
   const subnetIds = [...new Set(rows.map(row => row.subnet_id).filter(id => id !== null && id !== undefined))];
   const subnetScanMap = new Map();
+  const networkRangeTypesBySubnet = new Map();
   const CHUNK_SIZE = 900;
   for (let i = 0; i < subnetIds.length; i += CHUNK_SIZE) {
     const chunk = subnetIds.slice(i, i + CHUNK_SIZE);
@@ -141,6 +142,24 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
        WHERE id IN (${chunk.map(() => '?').join(',')})
     `).all(...chunk);
     for (const subnet of subnetRows) subnetScanMap.set(subnet.id, subnet.scan_enabled);
+
+    const networkRangeRows = db.prepare(`
+      SELECT r.id, r.subnet_id, r.start_ip, r.end_ip,
+             rt.id as range_type_id, rt.name, rt.color
+        FROM ranges r
+        JOIN range_types rt ON rt.id = r.range_type_id
+       WHERE r.subnet_id IN (${chunk.map(() => '?').join(',')})
+         AND rt.is_system = 0
+       ORDER BY r.start_ip
+    `).all(...chunk);
+    for (const range of networkRangeRows) {
+      const start = parseIp(range.start_ip);
+      const end = parseIp(range.end_ip);
+      if (!start || !end || start.bits !== 32 || end.bits !== 32) continue;
+      const subnetRanges = networkRangeTypesBySubnet.get(range.subnet_id) || [];
+      subnetRanges.push({ ...range, start: start.value, end: end.value });
+      networkRangeTypesBySubnet.set(range.subnet_id, subnetRanges);
+    }
   }
   const globalScanDefault = db.prepare(
     "SELECT value FROM settings WHERE key = 'default_scan_enabled'"
@@ -173,6 +192,20 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
       if (!row.last_seen_mac && state.last_seen_mac) row.last_seen_mac = state.last_seen_mac;
     }
 
+    row.network_range_type_id = null;
+    row.network_range_type = null;
+    row.network_range_type_color = null;
+    const parsedAddress = parseIp(row.ip_address);
+    if (parsedAddress?.bits === 32) {
+      const matchingRange = (networkRangeTypesBySubnet.get(row.subnet_id) || [])
+        .find(range => parsedAddress.value >= range.start && parsedAddress.value <= range.end);
+      if (matchingRange) {
+        row.network_range_type_id = matchingRange.range_type_id;
+        row.network_range_type = matchingRange.name;
+        row.network_range_type_color = matchingRange.color;
+      }
+    }
+
     row.scanning_enabled = row.subnet_id === null || row.subnet_id === undefined
       ? false
       : resolveScanningEnabled(row.scan_enabled, subnetScanMap.get(row.subnet_id), globalScanDefault);
@@ -190,6 +223,10 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
     row.device_type = fp?.device_type || null;
     row.os_family = fp?.os_family || null;
     row.device_confidence = fp?.confidence ?? null;
+    row.dhcp_fingerprint = fp?.dhcp_fingerprint || null;
+    row.dhcp_vendor_class = fp?.vendor_class || null;
+    row.dhcp_fingerprint_hostname = fp?.dhcp_hostname || null;
+    row.device_fingerprint_source = fp?.source || null;
   }
 
   return rows;

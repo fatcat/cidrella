@@ -26,7 +26,7 @@ feature), not how an operator thinks:
 
 | Before (17 tabs) | After top-level page | Sub-tab |
 |---|---|---|
-| Network (general) | **General** | Naming / Scanning / Address Types |
+| Network (general) | **General** | Naming / Scanning / Network Range Types |
 | VLANs | **General** | VLANs |
 | Interfaces | **General** | Interfaces |
 | Calculator | **leaves Settings** → Tools / slide-over | n/a |
@@ -103,7 +103,7 @@ single-source-of-truth question.
   (reuse `.setting-group` bottom border).
 - **Collapsible "Advanced"** disclosure for DNSSEC/SOA, cert key-type/ECDSA,
   anomaly thresholds. Keep the common path short.
-- **Inline-edit small tables** (VLANs, Address Types), optional polish.
+- **Inline-edit small tables** (VLANs, Network Range Types), optional polish.
 - **One consistent Save model per page** (don't mix dirty-Save with auto-save).
 
 ## Discoverability with fewer entries

@@ -19,6 +19,16 @@ describe('shared IP table column catalog', () => {
     }
     expect(expected).toContain('source');
     expect(expected).toContain('scanning_enabled');
+    expect(expected).toContain('network_range_type');
+    expect(expected).toEqual(expect.arrayContaining([
+      'os_family',
+      'device_type',
+      'device_confidence',
+      'dhcp_fingerprint',
+      'dhcp_vendor_class',
+      'dhcp_fingerprint_hostname',
+      'device_fingerprint_source'
+    ]));
   });
 
   it('keeps each current table combination as its reset default', () => {

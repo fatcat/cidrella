@@ -25,6 +25,14 @@
     :label="leaseDisplay.label"
     :className="leaseDisplay.className"
   />
+  <span
+    v-else-if="column.key === 'network_range_type' && row.network_range_type"
+    class="network-range-type-tag"
+    :style="{ borderColor: row.network_range_type_color || undefined }"
+  >
+    <span class="network-range-type-dot" :style="{ background: row.network_range_type_color || undefined }"></span>
+    {{ row.network_range_type }}
+  </span>
   <span v-else-if="column.key === 'record_type' && row.record_type" class="type-badge">{{ row.record_type }}</span>
   <span v-else-if="column.key === 'source' && source !== EMPTY_CELL" class="type-badge">{{ source }}</span>
   <code v-else-if="column.key === 'mac_address' && plainValue !== EMPTY_CELL">{{ plainValue }}</code>
@@ -61,7 +69,7 @@ const lifecycle = computed(() => ipLifecycleDisplay(props.row));
 const leaseDisplay = computed(() => dhcpLeaseDisplay(props.row.lease_status));
 const source = computed(() => ipSourceLabel(props.row));
 const mono = computed(() =>
-  ['ip_address', 'record_name'].includes(props.column.key)
+  ['ip_address', 'record_name', 'dhcp_fingerprint', 'dhcp_vendor_class'].includes(props.column.key)
   || (props.column.key === 'value' && ['A', 'AAAA'].includes(props.row.record_type))
 );
 const muted = computed(() =>
@@ -94,6 +102,14 @@ const plainValue = computed(() => {
     case 'mac_address': return displayMacAddress(props.row.mac_address || props.row.last_seen_mac);
     case 'vendor': return displayCell(props.row.vendor);
     case 'device': return displayCell(props.row.os_family || props.row.device_type);
+    case 'device_confidence': return props.row.device_confidence == null
+      ? EMPTY_CELL
+      : `${props.row.device_confidence}%`;
+    case 'device_fingerprint_source': {
+      if (props.row.device_fingerprint_source === 'dhcp') return 'DHCP';
+      if (props.row.device_fingerprint_source === 'manual') return 'Manual';
+      return displayCell(props.row.device_fingerprint_source);
+    }
     case 'last_seen_at': return props.row.last_seen_at ? formatDateTime(props.row.last_seen_at) : EMPTY_CELL;
     case 'network': return displayCell(props.row.subnet_name || props.row.subnet_cidr);
     case 'expires': return displayExpiry(
@@ -114,5 +130,23 @@ const plainValue = computed(() => {
   letter-spacing: 0.02em;
   padding: 2px 6px;
   border-radius: 4px;
+}
+.network-range-type-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid var(--p-surface-border);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: var(--app-fs-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.network-range-type-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--p-text-muted-color);
+  flex: 0 0 auto;
 }
 </style>

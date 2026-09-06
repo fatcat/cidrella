@@ -227,7 +227,7 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
 
 // --- DNS record lifecycle keeps ip_addresses.hostname synchronized ------
 describe('DNS address metadata sync', () => {
-  it('projects one effective scanning value through Networks, DNS, and DHCP reads', async () => {
+  it('projects shared IP metadata through Networks, DNS, and DHCP reads', async () => {
     const s = await mkSubnet({
       cidr: '10.129.0.0/29', name: 'scan-read-model', status: 'allocated',
       gateway_address: '10.129.0.1', scan_enabled: false
@@ -241,23 +241,56 @@ describe('DNS address metadata sync', () => {
       .put(`/api/subnets/${s.id}/ips/10.129.0.2/scan-enabled`)
       .send({ scan_enabled: true });
     expect(override.status).toBe(200);
+    const { getDb } = await import('../../../src/db/init.js');
+    const DeviceFingerprint = await import('../../../src/models/device-fingerprint.js');
+    getDb().prepare(`
+      UPDATE ip_addresses SET mac_address = ? WHERE subnet_id = ? AND ip_address = ?
+    `).run('aa:bb:cc:dd:ee:29', s.id, '10.129.0.2');
+    const rangeTypeId = getDb().prepare(`
+      INSERT INTO range_types (name, color, is_system, description)
+      VALUES ('Read Model Tag 129', '#0ea5e9', 0, 'Organizational only')
+    `).run().lastInsertRowid;
+    getDb().prepare(`
+      INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
+      VALUES (?, ?, '10.129.0.2', '10.129.0.3')
+    `).run(s.id, rangeTypeId);
+    DeviceFingerprint.upsertFingerprint(getDb(), {
+      mac_address: 'aa:bb:cc:dd:ee:29',
+      dhcp_fingerprint: '1,3,6,15,31,33,43,44,46,47,121,249,252',
+      vendor_class: 'MSFT 5.0',
+      dhcp_hostname: 'DESKTOP-ROUTES',
+      device_type: 'Computer', os_family: 'Windows', confidence: 85, source: 'dhcp'
+    });
+
+    const fingerprint = {
+      device_type: 'Computer', os_family: 'Windows', device_confidence: 85,
+      dhcp_fingerprint: '1,3,6,15,31,33,43,44,46,47,121,249,252',
+      dhcp_vendor_class: 'MSFT 5.0',
+      dhcp_fingerprint_hostname: 'DESKTOP-ROUTES', device_fingerprint_source: 'dhcp'
+    };
+    const networkRangeType = {
+      network_range_type_id: Number(rangeTypeId),
+      network_range_type: 'Read Model Tag 129',
+      network_range_type_color: '#0ea5e9'
+    };
 
     const network = await request(app).get(`/api/subnets/${s.id}/ips?search=10.129.0.2`);
     expect(network.body.ips[0]).toMatchObject({
-      ip_address: '10.129.0.2', scan_enabled: 1, scanning_enabled: true
+      ip_address: '10.129.0.2', scan_enabled: 1, scanning_enabled: true,
+      ...fingerprint, ...networkRangeType
     });
 
     const zone = await findZone('0.129.10.in-addr.arpa');
     const dns = await request(app).get(`/api/dns/zones/${zone.id}/records`);
     expect(dns.body.find(row => row.ip_address === '10.129.0.2')).toMatchObject({
-      scan_enabled: 1, scanning_enabled: true
+      scan_enabled: 1, scanning_enabled: true, ...fingerprint, ...networkRangeType
     });
 
     const scopes = await request(app).get('/api/dhcp/scopes');
     const scope = scopes.body.find(row => row.subnet_id === s.id);
     const dhcp = await request(app).get(`/api/dhcp/scopes/${scope.id}/addresses`);
     expect(dhcp.body.find(row => row.ip_address === '10.129.0.2')).toMatchObject({
-      scan_enabled: 1, scanning_enabled: true
+      scan_enabled: 1, scanning_enabled: true, ...fingerprint, ...networkRangeType
     });
   });
 
@@ -562,6 +595,118 @@ describe('gateway-in-pool invariant holds on every route that writes a pool', ()
       .put(`/api/subnets/${s.id}/ranges/${scope.range_id}`)
       .send({ start_ip: '10.113.0.50', end_ip: '10.113.0.200', force: true });
     expect(ok.status).toBe(200);
+  });
+});
+
+describe('Network Range Type grid assignment', () => {
+  it('warns before overlap, then replaces only the accepted portion', async () => {
+    const s = await mkSubnet({
+      cidr: '10.115.0.0/24',
+      name: 'range-tags',
+      status: 'allocated',
+      gateway_address: '10.115.0.1'
+    });
+    await configure(s.id, {
+      name: 'range-tags',
+      create_reverse_dns: false,
+      create_dhcp_scope: false
+    });
+
+    const { getDb } = await import('../../../src/db/init.js');
+    const db = getDb();
+    const printersId = Number(db.prepare(`
+      INSERT INTO range_types (name, color, is_system, description)
+      VALUES ('Printers 115', '#22c55e', 0, 'Organizational only')
+    `).run().lastInsertRowid);
+    const camerasId = Number(db.prepare(`
+      INSERT INTO range_types (name, color, is_system, description)
+      VALUES ('Cameras 115', '#f97316', 0, 'Organizational only')
+    `).run().lastInsertRowid);
+
+    const first = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/set-type`)
+      .send({
+        range_type_id: printersId,
+        ranges: [
+          { start_ip: '10.115.0.10', end_ip: '10.115.0.20' },
+          { start_ip: '10.115.0.30', end_ip: '10.115.0.31' }
+        ]
+      });
+    expect(first.status).toBe(200);
+    expect(first.body.created).toHaveLength(2);
+
+    const warned = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/set-type`)
+      .send({
+        range_type_id: camerasId,
+        ranges: [{ start_ip: '10.115.0.15', end_ip: '10.115.0.17' }]
+      });
+    expect(warned.status).toBe(409);
+    expect(warned.body).toMatchObject({ can_accept: true });
+    expect(warned.body.overlaps).toEqual([
+      expect.objectContaining({ type: 'Printers 115', start_ip: '10.115.0.10', end_ip: '10.115.0.20' })
+    ]);
+
+    const unchanged = db.prepare(`
+      SELECT rt.name, r.start_ip, r.end_ip
+      FROM ranges r JOIN range_types rt ON rt.id = r.range_type_id
+      WHERE r.subnet_id = ? AND rt.is_system = 0
+      ORDER BY r.start_ip
+    `).all(s.id);
+    expect(unchanged).toEqual([
+      { name: 'Printers 115', start_ip: '10.115.0.10', end_ip: '10.115.0.20' },
+      { name: 'Printers 115', start_ip: '10.115.0.30', end_ip: '10.115.0.31' }
+    ]);
+
+    const accepted = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/set-type`)
+      .send({
+        range_type_id: camerasId,
+        ranges: [{ start_ip: '10.115.0.15', end_ip: '10.115.0.17' }],
+        accept_overlaps: true
+      });
+    expect(accepted.status).toBe(200);
+
+    const ranges = db.prepare(`
+      SELECT rt.name, r.start_ip, r.end_ip
+      FROM ranges r JOIN range_types rt ON rt.id = r.range_type_id
+      WHERE r.subnet_id = ? AND rt.is_system = 0
+      ORDER BY r.start_ip
+    `).all(s.id);
+    expect(ranges).toEqual([
+      { name: 'Printers 115', start_ip: '10.115.0.10', end_ip: '10.115.0.14' },
+      { name: 'Cameras 115', start_ip: '10.115.0.15', end_ip: '10.115.0.17' },
+      { name: 'Printers 115', start_ip: '10.115.0.18', end_ip: '10.115.0.20' },
+      { name: 'Printers 115', start_ip: '10.115.0.30', end_ip: '10.115.0.31' }
+    ]);
+
+    const detail = await request(app).get(`/api/subnets/${s.id}/ips?page=1&pageSize=64`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.ips.find(row => row.ip_address === '10.115.0.16')).toMatchObject({
+      allocation_state: 'unassigned',
+      network_range_type: 'Cameras 115',
+      network_range_type_color: '#f97316'
+    });
+  });
+
+  it('refuses functional system range types', async () => {
+    const s = await mkSubnet({
+      cidr: '10.116.0.0/24',
+      name: 'range-tags-system',
+      status: 'allocated',
+      gateway_address: '10.116.0.1'
+    });
+    const { getDb } = await import('../../../src/db/init.js');
+    const networkType = getDb().prepare("SELECT id FROM range_types WHERE name = 'Network'").get();
+
+    const response = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/set-type`)
+      .send({
+        range_type_id: networkType.id,
+        ranges: [{ start_ip: '10.116.0.10', end_ip: '10.116.0.20' }]
+      });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/custom Network Range Types only/);
   });
 });
 

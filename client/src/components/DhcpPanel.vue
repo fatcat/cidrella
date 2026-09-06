@@ -494,6 +494,13 @@ function dhcpMatchSearch(item, query) {
     (item.mac_address && item.mac_address.toLowerCase().includes(query)) ||
     (item.hostname && item.hostname.toLowerCase().includes(query)) ||
     (item.vendor && item.vendor.toLowerCase().includes(query)) ||
+    (item.os_family && item.os_family.toLowerCase().includes(query)) ||
+    (item.device_type && item.device_type.toLowerCase().includes(query)) ||
+    String(item.device_confidence ?? '').includes(query) ||
+    (item.dhcp_fingerprint && item.dhcp_fingerprint.includes(query)) ||
+    (item.dhcp_vendor_class && item.dhcp_vendor_class.toLowerCase().includes(query)) ||
+    (item.dhcp_fingerprint_hostname && item.dhcp_fingerprint_hostname.toLowerCase().includes(query)) ||
+    (item.device_fingerprint_source && item.device_fingerprint_source.includes(query)) ||
     (item.allocation_source_type && item.allocation_source_type.toLowerCase().includes(query)) ||
     (item.dhcp_assignment_type && item.dhcp_assignment_type.toLowerCase().includes(query)) ||
     (item.lease_status && item.lease_status.toLowerCase().includes(query)) ||

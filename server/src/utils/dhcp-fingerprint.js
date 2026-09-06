@@ -17,30 +17,35 @@ import { extractMac } from './mac.js';
 import { readLogTail } from './log-reader.js';
 import { lookupVendor } from './mac-vendor.js';
 import { classify, normalizeOpt55 } from './device-classifier.js';
-import { upsertFingerprint } from '../models/device-fingerprint.js';
+import { getByMac, upsertFingerprint } from '../models/device-fingerprint.js';
 import { DATA_DIR, DHCP_FINGERPRINT_POLL_MS } from '../config/defaults.js';
 
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
-// "<ts> dnsmasq-dhcp[pid]: <xid> <content>"  → captures xid + content
-const DHCP_LINE_RE = /dnsmasq-dhcp\[\d+\]:\s+(\d+)\s+(.*)$/;
+// "<ts> dnsmasq-dhcp[pid]: <xid> <content>". Include the process id in the
+// accumulator key so an xid reused after a dnsmasq restart cannot inherit the
+// previous process's partial transaction.
+const DHCP_LINE_RE = /dnsmasq-dhcp\[(\d+)\]:\s+(\d+)\s+(.*)$/;
 // MAC parsing lives in utils/mac.js so this file and arp-cache.js cannot drift
 // on what counts as a MAC. See REVIEW.md, duplicate-logic audit #13.
 
 // Bounded per-transaction accumulator so a busy network can't grow it without limit.
 const MAX_PENDING = 1000;
+const FINALIZE_QUIET_MS = 1000;
+const STALE_PENDING_MS = 60 * 1000;
 
 /**
  * Apply a single parsed log-dhcp line to the pending-transaction map.
- * Exported for unit testing. Returns the finalized record on a DHCPACK, else null.
+ * Exported for unit testing. ACKed records are finalized by drainFinalized()
+ * after dnsmasq has written their trailing option detail.
  */
-export function ingestLine(line, pending) {
+export function ingestLine(line, pending, now = Date.now()) {
   const m = line.match(DHCP_LINE_RE);
   if (!m) return null;
-  const xid = m[1];
-  const content = m[2];
+  const key = `${m[1]}:${m[2]}`;
+  const content = m[3];
 
-  let tx = pending.get(xid);
+  let tx = pending.get(key);
   const ensure = () => {
     if (!tx) {
       // evict oldest if at cap
@@ -48,9 +53,17 @@ export function ingestLine(line, pending) {
         const oldest = pending.keys().next().value;
         if (oldest !== undefined) pending.delete(oldest);
       }
-      tx = { mac: null, opt55: null, opt60: null, hostname: null };
-      pending.set(xid, tx);
+      tx = {
+        mac: null,
+        opt55: null,
+        opt60: null,
+        hostname: null,
+        ackSeen: false,
+        updatedAt: now
+      };
+      pending.set(key, tx);
     }
+    tx.updatedAt = now;
     return tx;
   };
 
@@ -61,36 +74,82 @@ export function ingestLine(line, pending) {
     if (h) ensure().hostname = h;
   } else if (content.startsWith('requested options:')) {
     const codes = normalizeOpt55(content.slice('requested options:'.length).trim());
-    if (codes) ensure().opt55 = codes;
+    if (codes) {
+      const current = ensure();
+      current.opt55 = current.opt55 ? `${current.opt55},${codes}` : codes;
+    }
   } else if (/^DHCP(DISCOVER|REQUEST|ACK|INFORM)\b/.test(content)) {
     // extractMac returns null for 00:00:00:00:00:00, which the local regex
     // accepted: a DHCP packet with no client hwaddr used to fingerprint the
     // null MAC as if it were a device.
+    const current = ensure();
     const mac = extractMac(content);
-    if (mac) ensure().mac = mac;
+    if (mac) current.mac = mac;
+    // Each incoming packet has its own option 55 list. dnsmasq logs that list
+    // after the outgoing OFFER/ACK, so reset it when the incoming packet starts
+    // and then append every trailing "requested options" fragment.
+    if (/^DHCP(DISCOVER|REQUEST|INFORM)\b/.test(content)) {
+      current.opt55 = null;
+      current.ackSeen = false;
+    }
     if (content.startsWith('DHCPACK')) {
-      const final = tx;
-      pending.delete(xid);
-      return final && final.mac ? final : null;
+      // Do not finalize here. dnsmasq emits requested-option detail after the
+      // ACK, so the watcher drains ACKed transactions after a short quiet
+      // period instead.
+      current.ackSeen = true;
     }
   }
   return null;
 }
 
+/**
+ * Return ACKed transactions after their trailing dnsmasq detail has arrived,
+ * and discard abandoned transactions so the bounded map does not retain stale
+ * evidence indefinitely.
+ */
+export function drainFinalized(pending, {
+  now = Date.now(),
+  quietMs = FINALIZE_QUIET_MS,
+  staleMs = STALE_PENDING_MS
+} = {}) {
+  const finalized = [];
+  for (const [key, tx] of pending) {
+    const idleMs = now - tx.updatedAt;
+    if (tx.ackSeen && tx.mac && idleMs >= quietMs) {
+      finalized.push({
+        mac: tx.mac,
+        opt55: tx.opt55,
+        opt60: tx.opt60,
+        hostname: tx.hostname
+      });
+      pending.delete(key);
+    } else if (idleMs >= staleMs) {
+      pending.delete(key);
+    }
+  }
+  return finalized;
+}
+
 // Classify + persist a finalized transaction.
 function persist(db, tx) {
+  const previous = getByMac(db, tx.mac);
+  // Renewals may omit any one signal. Reclassify from the newest complete
+  // evidence set instead of turning a partial packet into an empty fingerprint.
+  const opt55 = tx.opt55 || previous?.dhcp_fingerprint || null;
+  const opt60 = tx.opt60 || previous?.vendor_class || null;
+  const hostname = tx.hostname || previous?.dhcp_hostname || null;
   const vendor = tx.mac ? lookupVendor(tx.mac) : null;
   const { device_type, os_family, confidence } = classify({
-    opt55: tx.opt55, opt60: tx.opt60, hostname: tx.hostname, vendor,
+    opt55, opt60, hostname, vendor,
   });
   upsertFingerprint(db, {
     mac_address: tx.mac,
-    dhcp_fingerprint: tx.opt55,
-    vendor_class: tx.opt60,
-    dhcp_hostname: tx.hostname,
+    dhcp_fingerprint: opt55,
+    vendor_class: opt60,
+    dhcp_hostname: hostname,
     device_type, os_family, confidence,
     source: 'dhcp',
-    raw: JSON.stringify({ opt55: tx.opt55, opt60: tx.opt60, hostname: tx.hostname, vendor }),
+    raw: JSON.stringify({ opt55, opt60, hostname, vendor }),
   });
 }
 
@@ -105,12 +164,11 @@ export function startDhcpFingerprintWatcher(db) {
     try {
       const { lines, newOffset } = readLogTail(LOG_FILE, offset);
       offset = newOffset;
-      for (const line of lines) {
-        const finalized = ingestLine(line, pending);
-        if (finalized) {
-          try { persist(db, finalized); }
-          catch (err) { console.warn('[dhcp-fingerprint] persist failed:', err?.message || err); }
-        }
+      const now = Date.now();
+      for (const line of lines) ingestLine(line, pending, now);
+      for (const finalized of drainFinalized(pending, { now })) {
+        try { persist(db, finalized); }
+        catch (err) { console.warn('[dhcp-fingerprint] persist failed:', err?.message || err); }
       }
     } catch (err) {
       console.warn('[dhcp-fingerprint] poll error:', err?.message || err);
