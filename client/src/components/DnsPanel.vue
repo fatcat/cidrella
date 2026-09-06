@@ -179,37 +179,14 @@
               :sortField="col.sortField || col.field"
               :style="col.style"
             >
-              <template #header>
-                <ColumnHeaderTooltip :column="col" />
-              </template>
-              <template #body="{ data }">
-                <template v-if="col.key === 'hostname'">{{ displayDnsName(data) }}</template>
-                <template v-else-if="col.key === 'ptr_hostname'">{{ displayCell(data.value) }}</template>
-                <span v-else-if="col.key === 'ip_address' && data.value" class="ip-mono">{{ displayCell(ptrRecordIp(data)) }}</span>
-                <span v-else-if="col.key === 'ip_address'" class="cell-muted">—</span>
-                <span v-else-if="col.key === 'name'" class="ip-mono cell-muted">{{ data.name }}.{{ selectedZone.name }}</span>
-                <span v-else-if="col.key === 'record_type'" class="type-badge">{{ data.record_type }}</span>
-                <span v-else-if="col.key === 'value' && data.record_type === 'A'" class="ip-mono">{{ displayCell(data.value) }}</span>
-                <template v-else-if="col.key === 'value'">{{ displayCell(data.value) }}</template>
-                <template v-else-if="col.key === 'priority'">{{ data.priority ?? EMPTY_CELL }}</template>
-                <template v-else-if="col.key === 'port'">{{ data.port ?? EMPTY_CELL }}</template>
-                <template v-else-if="col.key === 'ttl'">
-                  <template v-if="data.ttl != null">{{ data.ttl }}</template>
-                  <span v-else class="cell-muted">{{ selectedZone?.soa_minimum_ttl ?? EMPTY_CELL }}</span>
-                </template>
-                <StatusText
-                  v-else-if="col.key === 'enabled'"
-                  :label="data.enabled ? 'Yes' : 'No'"
-                  :className="data.enabled ? 'state-ok' : 'state-muted'"
-                />
-                <span v-else-if="col.key === 'source'" class="type-badge">{{ dnsSourceLabel(data.dns_source) }}</span>
-                <template v-else-if="col.key === 'online'">
-                  <OnlineStatusCell
-                    v-if="data.record_type === 'A' && data.is_online !== null && data.is_online !== undefined"
-                    :value="data.is_online"
-                  />
-                  <span v-else class="cell-muted">—</span>
-                </template>
+            <template #header>
+              <ColumnHeaderTooltip :column="col" />
+            </template>
+            <template #body="{ data }">
+                <IpTableCell :column="col" :row="data" :view="dnsTableView"
+                             :domain-name="isReverse ? null : selectedZone?.name"
+                             :zone-name="selectedZone?.name"
+                             :soa-minimum-ttl="selectedZone?.soa_minimum_ttl" />
               </template>
             </Column>
           </DataTable>
@@ -373,7 +350,10 @@
     </Dialog>
 
     <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
-                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName" />
+                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName"
+                     :columns="visibleDnsColumns" :view="dnsTableView" table-name="DNS"
+                     :zone-name="selectedZone?.name"
+                     :soa-minimum-ttl="selectedZone?.soa_minimum_ttl" />
 
     <Toast />
   </div>
@@ -403,7 +383,7 @@ import Toast from '../ui/Toast.js';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
-import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';
+import { apiError } from '../utils/format.js';
 import { ipToLong, isValidIpv4 } from '../utils/ip.js';
 import {
   addCnameMenuItem,
@@ -416,12 +396,17 @@ import { loadJson, saveJson } from '../utils/storage.js';
 import EmptyState from './EmptyState.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
-import OnlineStatusCell from './table/OnlineStatusCell.vue';
-import StatusText from './table/StatusText.vue';
+import IpTableCell from './table/IpTableCell.vue';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import { useRowsPreference } from '../composables/useRowsPreference.js';
 import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 import IpDetailsDrawer from './IpDetailsDrawer.vue';
+import {
+  IP_TABLE_COLUMN_ALIASES,
+  IP_TABLE_DEFAULT_KEYS,
+  IP_TABLE_VIEW,
+  ipTableColumns
+} from '../utils/ipTableColumns.js';
 
 // No props needed, shows all zones globally
 
@@ -436,14 +421,6 @@ const {
   domainName: ipDetailsDomainName,
   openIpDetails
 } = useIpDetailsDrawer();
-
-function dnsSourceLabel(source) {
-  if (source === 'dns') return 'Static DNS';
-  if (source === 'dhcp') return 'DHCP lease';
-  if (source === 'reservation') return 'DHCP Reservation';
-  if (source === 'placeholder') return 'Placeholder';
-  return 'Manual';
-}
 
 // Find the first DHCP scope whose pool contains `ip`. Returns { scope, cidr }
 // or null. Used to warn when a user points a DNS A record at an IP inside a
@@ -473,39 +450,27 @@ function findDhcpScopeForIp(ip) {
 const zoneFilterText = ref('');
 const selectedZone = ref(null);
 const isReverse = computed(() => selectedZone.value?.type === 'reverse');
+const dnsTableView = computed(() => isReverse.value ? IP_TABLE_VIEW.DNS_REVERSE : IP_TABLE_VIEW.DNS_FORWARD);
 
-const dnsForwardColumns = [
-  { key: 'hostname', header: 'Hostname', description: 'DNS record owner name, shown relative to the selected forward zone.', field: 'name', sortable: true, style: 'width: 12rem' },
-  { key: 'record_type', header: 'Record Type', description: 'DNS resource record type, such as A, CNAME, MX, TXT, or SRV.', field: 'record_type', sortable: true, style: 'width: 7rem' },
-  { key: 'value', header: 'Value', description: 'Record target value, such as an IP address, alias target, mail exchanger, or text payload.', field: 'value', sortable: true, style: 'width: 14rem' },
-  { key: 'priority', header: 'Priority', description: 'Priority value used by MX and SRV records.', field: 'priority', sortable: true, style: 'width: 5rem' },
-  { key: 'port', header: 'Port', description: 'Service port used by SRV records.', field: 'port', sortable: true, style: 'width: 4rem' },
-  { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
-  { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
-  { key: 'source', header: 'Source', description: 'How the DNS row was created: manually, from static DNS, from DHCP, or as a generated placeholder.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
-  { key: 'online', header: 'Online', description: 'Current liveness state for A records with a known IP address.', field: 'is_online', sortable: true, style: 'width: 5rem' },
-];
-
-const dnsReverseColumns = [
-  { key: 'ptr_hostname', header: 'Hostname', description: 'Hostname returned by this PTR record.', field: 'value', sortable: true, style: 'width: 16rem' },
-  { key: 'ip_address', header: 'IP Address', description: 'IPv4 address reconstructed from the PTR record name and selected reverse zone.', field: '_ip_long', sortable: true, sortField: '_ip_long', style: 'width: 10rem' },
-  { key: 'name', header: 'Name', description: 'PTR record owner name inside the selected reverse zone.', field: 'name', sortable: true, style: 'width: 14rem' },
-  { key: 'record_type', header: 'Record Type', description: 'DNS resource record type for the reverse-zone row.', field: 'record_type', sortable: true, style: 'width: 7rem' },
-  { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
-  { key: 'enabled', header: 'Enabled', description: 'Whether a real PTR hostname is eligible for generated DNS configuration. IP placeholders remain display-only.', field: 'enabled', sortable: true, style: 'width: 5rem' },
-  { key: 'source', header: 'Source', description: 'How the DNS row was created: manually, from static DNS, from DHCP, or as a generated placeholder.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
-];
+const dnsForwardColumns = ipTableColumns(IP_TABLE_VIEW.DNS_FORWARD);
+const dnsReverseColumns = ipTableColumns(IP_TABLE_VIEW.DNS_REVERSE);
 
 const {
   visibleColumns: visibleDnsForwardColumns,
   setVisibleColumns: setVisibleDnsForwardColumns,
   resetColumns: resetDnsForwardColumns
-} = useColumnPreferences('cidrella_columns_dns_forward', dnsForwardColumns);
+} = useColumnPreferences('cidrella_columns_dns_forward', dnsForwardColumns, {
+  defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.DNS_FORWARD],
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DNS_FORWARD]
+});
 const {
   visibleColumns: visibleDnsReverseColumns,
   setVisibleColumns: setVisibleDnsReverseColumns,
   resetColumns: resetDnsReverseColumns
-} = useColumnPreferences('cidrella_columns_dns_reverse', dnsReverseColumns);
+} = useColumnPreferences('cidrella_columns_dns_reverse', dnsReverseColumns, {
+  defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.DNS_REVERSE],
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DNS_REVERSE]
+});
 
 const dnsTableColumns = computed(() => isReverse.value ? dnsReverseColumns : dnsForwardColumns);
 const visibleDnsColumns = computed(() => isReverse.value ? visibleDnsReverseColumns.value : visibleDnsForwardColumns.value);
@@ -531,11 +496,6 @@ function ptrRecordIp(record) {
   const combined = [recordLabel, zoneLabel].filter(Boolean).join('.');
   // combined is reverse-octet order, e.g. "5.1.0.10"
   return combined.split('.').reverse().join('.');
-}
-function displayDnsName(record) {
-  if (!record?.name) return EMPTY_CELL;
-  if (record.name === '@') return selectedZone.value?.name || '@';
-  return displayHostnameCell(`${record.name}.${selectedZone.value?.name || ''}`, selectedZone.value?.name);
 }
 const records = ref([]);
 const loadingRecords = ref(false);

@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import { IP_TABLE_VIEW, ipTableColumns } from '../../../src/utils/ipTableColumns.js';
 
 const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
 vi.mock('../../../src/api/client.js', () => ({
@@ -50,6 +51,34 @@ describe('IpDetailsDrawer liveness row', () => {
   it('uses the reduced desktop width while retaining the mobile viewport cap', () => {
     const w = mountDrawer({ ip_address: '10.0.0.5', is_online: false });
     expect(w.find('aside').attributes('data-width')).toBe('min(27rem, 92vw)');
+  });
+
+  it('shows exactly the columns visible in the table, using the shared empty value', () => {
+    const catalog = ipTableColumns(IP_TABLE_VIEW.NETWORKS);
+    const columns = ['status', 'source', 'scanning_enabled']
+      .map(key => catalog.find(column => column.key === key));
+    const w = mount(IpDetailsDrawer, {
+      props: {
+        visible: true,
+        host: { ip_address: '10.0.0.5', ip_display_status: 'in use', ip_status_severity: 'danger' },
+        columns,
+        view: IP_TABLE_VIEW.NETWORKS
+      },
+      global: {
+        stubs: {
+          Drawer: { template: '<aside><slot /></aside>' },
+          Button: true,
+          Tag: true
+        }
+      }
+    });
+
+    const fieldSection = w.find('.host-info section');
+    expect(fieldSection.findAll('.hi-label').map(label => label.text()))
+      .toEqual(['Status', 'Source', 'Scanning']);
+    expect(fieldSection.find('.status-text').classes()).toContain('state-err');
+    expect(fieldSection.findAll('.hi-val').map(value => value.text()))
+      .toEqual(['in use', '—', '—']);
   });
 
   it('closes on an outside click but stays open when another IP row is clicked', async () => {

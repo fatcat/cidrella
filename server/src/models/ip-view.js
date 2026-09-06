@@ -2,6 +2,7 @@ import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import { lookupFingerprintBatch } from './device-fingerprint.js';
 import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
 import { addressFamily, canonicalizeIp, sortKey } from '../utils/address.js';
+import { resolveScanningEnabled } from '../utils/scan-coverage.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -129,6 +130,21 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
   if (!rows?.length) return rows || [];
 
   const stateMap = fillFromIpAddress ? getIpStateMap(db, rows) : new Map();
+  const subnetIds = [...new Set(rows.map(row => row.subnet_id).filter(id => id !== null && id !== undefined))];
+  const subnetScanMap = new Map();
+  const CHUNK_SIZE = 900;
+  for (let i = 0; i < subnetIds.length; i += CHUNK_SIZE) {
+    const chunk = subnetIds.slice(i, i + CHUNK_SIZE);
+    const subnetRows = db.prepare(`
+      SELECT id, scan_enabled
+        FROM subnets
+       WHERE id IN (${chunk.map(() => '?').join(',')})
+    `).all(...chunk);
+    for (const subnet of subnetRows) subnetScanMap.set(subnet.id, subnet.scan_enabled);
+  }
+  const globalScanDefault = db.prepare(
+    "SELECT value FROM settings WHERE key = 'default_scan_enabled'"
+  ).get()?.value;
 
   for (const row of rows) {
     const state = stateMap.get(identityKey(row));
@@ -156,6 +172,10 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
       }
       if (!row.last_seen_mac && state.last_seen_mac) row.last_seen_mac = state.last_seen_mac;
     }
+
+    row.scanning_enabled = row.subnet_id === null || row.subnet_id === undefined
+      ? false
+      : resolveScanningEnabled(row.scan_enabled, subnetScanMap.get(row.subnet_id), globalScanDefault);
 
     applyIpView(row);
   }

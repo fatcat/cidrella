@@ -12,21 +12,23 @@
           data-track="dialog-host-info">
     <div v-if="host" class="host-info">
       <section>
-        <h5>Identity</h5>
-        <div class="hi-row"><span class="hi-label">IP address</span><span class="hi-val mono">{{ host.ip_address }}</span></div>
-        <div class="hi-row"><span class="hi-label">Hostname</span><span class="hi-val">{{ displayHostnameCell(host.hostname, domainName) }}</span></div>
-        <div class="hi-row"><span class="hi-label">MAC</span><span class="hi-val mono">{{ mac || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">Manufacturer</span><span class="hi-val">{{ host.vendor || dash }}</span></div>
+        <h5>{{ tableName }} fields</h5>
+        <div v-for="column in displayColumns" :key="column.key" class="hi-row">
+          <span class="hi-label">{{ column.header }}</span>
+          <span class="hi-val">
+            <IpTableCell :column="column" :row="host" :view="view"
+                         :domain-name="domainName" :zone-name="zoneName"
+                         :soa-minimum-ttl="soaMinimumTtl" />
+          </span>
+        </div>
       </section>
 
       <section>
-        <h5>Device <span v-if="confidence" class="hi-conf">· {{ confidence }}% confidence</span></h5>
-        <div class="hi-row"><span class="hi-label">Type</span><span class="hi-val">{{ deviceType || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">OS family</span><span class="hi-val">{{ osFamily || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">DHCP fingerprint</span><span class="hi-val mono small">{{ fp?.dhcp_fingerprint || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">Vendor class</span><span class="hi-val mono small">{{ fp?.vendor_class || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">Source</span>
-          <span class="hi-val">{{ fp?.source || dash }}
+        <h5>Device fingerprint <span v-if="confidence" class="hi-conf">· {{ confidence }}% confidence</span></h5>
+        <div class="hi-row"><span class="hi-label">DHCP fingerprint</span><span class="hi-val mono small" :class="{ 'cell-muted': !fp?.dhcp_fingerprint }">{{ fp?.dhcp_fingerprint || dash }}</span></div>
+        <div class="hi-row"><span class="hi-label">Vendor class</span><span class="hi-val mono small" :class="{ 'cell-muted': !fp?.vendor_class }">{{ fp?.vendor_class || dash }}</span></div>
+        <div class="hi-row"><span class="hi-label">Fingerprint source</span>
+          <span class="hi-val" :class="{ 'cell-muted': !fp?.source }">{{ fp?.source || dash }}
             <Button v-if="fp?.source === 'manual'" label="Reset to detected" size="small" text
                     icon="pi pi-undo" class="hi-reset" :loading="resetting"
                     data-track="host-info-reset-fingerprint" @click="resetFingerprint"
@@ -36,17 +38,6 @@
         <p v-if="!loading && !deviceType && !osFamily" class="hi-hint">
           No DHCP fingerprint yet. The device will be identified the next time it requests/renews a DHCP lease (static hosts won't fingerprint via DHCP).
         </p>
-      </section>
-
-      <section>
-        <h5>Liveness</h5>
-        <div class="hi-row"><span class="hi-label">Status</span><span class="hi-val">{{ host.ip_display_status || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">Online</span>
-          <span class="hi-val"><StatusDot :kind="onlineState.known ? (onlineState.label === 'Online' ? 'ok' : 'muted') : 'muted'" :label="onlineState.label" class="hi-dot" />{{ onlineState.label }}</span>
-        </div>
-        <div class="hi-row"><span class="hi-label">Last seen</span><span class="hi-val">{{ host.last_seen_at ? fmt(host.last_seen_at) : dash }}</span></div>
-        <div class="hi-row" v-if="host.dhcp_expires_at"><span class="hi-label">Lease expires</span><span class="hi-val">{{ fmt(host.dhcp_expires_at) }}</span></div>
-        <div class="hi-row" v-if="host.is_rogue"><span class="hi-label">Rogue</span><span class="hi-val hi-rogue">{{ host.rogue_reason || 'flagged' }}</span></div>
       </section>
 
       <section class="lifecycle-section">
@@ -70,12 +61,13 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import Drawer from '../ui/Drawer.js';
 import Button from '../ui/Button.js';
 import Tag from '../ui/Tag.js';
-import StatusDot from './StatusDot.vue';
-import { displayOnlineStatus, EMPTY_CELL, displayHostnameCell } from '../utils/format.js';
+import IpTableCell from './table/IpTableCell.vue';
+import { EMPTY_CELL } from '../utils/format.js';
 import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
 import { formatDateTime } from '../utils/dateFormat.js';
+import { IP_TABLE_DEFAULT_KEYS, IP_TABLE_VIEW, ipTableColumns } from '../utils/ipTableColumns.js';
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -86,11 +78,22 @@ const props = defineProps({
   // (duplicate-logic audit #56).
   domainName: { type: String, default: null },
   subnetId: { type: [Number, String], default: null },
+  columns: { type: Array, default: null },
+  view: { type: String, default: IP_TABLE_VIEW.NETWORKS },
+  tableName: { type: String, default: 'Networks' },
+  zoneName: { type: String, default: null },
+  soaMinimumTtl: { type: [Number, String], default: null }
 });
 const emit = defineEmits(['update:visible']);
 const toast = useToast();
 
 const dash = EMPTY_CELL;
+const displayColumns = computed(() => {
+  if (Array.isArray(props.columns)) return props.columns;
+  const catalog = ipTableColumns(props.view);
+  const byKey = new Map(catalog.map(column => [column.key, column]));
+  return IP_TABLE_DEFAULT_KEYS[props.view].map(key => byKey.get(key)).filter(Boolean);
+});
 
 function onDocumentClick(event) {
   if (!props.visible || !(event.target instanceof Element)) return;
@@ -106,7 +109,6 @@ onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick));
 // `host.is_online ? ... : ...` this replaces treated the STRING '0' as online
 // (non-empty strings are truthy) and reported an unknown address as Offline
 // rather than unknown. See REVIEW.md, duplicate-logic audit #48.
-const onlineState = computed(() => displayOnlineStatus(props.host?.is_online));
 const fmt = formatDateTime;
 const fp = ref(null);
 const loading = ref(false);
@@ -233,9 +235,7 @@ watch([
 .hi-val.mono { font-family: var(--font-mono, monospace); }
 .hi-val.small { font-size: var(--app-fs-xs); }
 .hi-reset { margin-left: 0.5rem; padding: 0 0.4rem; font-size: var(--app-fs-xs); }
-.hi-rogue { color: var(--p-red-400); }
 .hi-hint { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0.3rem 0 0; line-height: 1.4; }
-.hi-dot { margin-right: 0.4rem; }
 .lifecycle-section { display: flex; flex-direction: column; flex: 1; min-height: 12rem; }
 .events-state { padding: 1.5rem; text-align: center; color: var(--p-text-muted-color); font-size: var(--app-fs-sm); }
 .events-list { flex: 1; min-height: 0; max-height: 24rem; overflow-y: auto; padding-right: 0.25rem; }

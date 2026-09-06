@@ -227,6 +227,40 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
 
 // --- DNS record lifecycle keeps ip_addresses.hostname synchronized ------
 describe('DNS address metadata sync', () => {
+  it('projects one effective scanning value through Networks, DNS, and DHCP reads', async () => {
+    const s = await mkSubnet({
+      cidr: '10.129.0.0/29', name: 'scan-read-model', status: 'allocated',
+      gateway_address: '10.129.0.1', scan_enabled: false
+    });
+    await configure(s.id, {
+      name: 'scan-read-model', create_reverse_dns: true, create_dhcp_scope: true,
+      dhcp_start_ip: '10.129.0.2', dhcp_end_ip: '10.129.0.5',
+      domain_name: 'scan-read-model.test'
+    });
+    const override = await request(app)
+      .put(`/api/subnets/${s.id}/ips/10.129.0.2/scan-enabled`)
+      .send({ scan_enabled: true });
+    expect(override.status).toBe(200);
+
+    const network = await request(app).get(`/api/subnets/${s.id}/ips?search=10.129.0.2`);
+    expect(network.body.ips[0]).toMatchObject({
+      ip_address: '10.129.0.2', scan_enabled: 1, scanning_enabled: true
+    });
+
+    const zone = await findZone('0.129.10.in-addr.arpa');
+    const dns = await request(app).get(`/api/dns/zones/${zone.id}/records`);
+    expect(dns.body.find(row => row.ip_address === '10.129.0.2')).toMatchObject({
+      scan_enabled: 1, scanning_enabled: true
+    });
+
+    const scopes = await request(app).get('/api/dhcp/scopes');
+    const scope = scopes.body.find(row => row.subnet_id === s.id);
+    const dhcp = await request(app).get(`/api/dhcp/scopes/${scope.id}/addresses`);
+    expect(dhcp.body.find(row => row.ip_address === '10.129.0.2')).toMatchObject({
+      scan_enabled: 1, scanning_enabled: true
+    });
+  });
+
   it('projects reverse DNS rows through the same canonical IP read model', async () => {
     const s = await mkSubnet({
       cidr: '10.89.0.0/29', name: 'reverse-read-model', status: 'allocated', gateway_address: '10.89.0.1'

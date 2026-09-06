@@ -42,6 +42,15 @@ export function probeNowMenuItem(command) {
   };
 }
 
+export function scanToggleMenuItem(ipAddress, scanningEnabled, command) {
+  const enabled = scanningEnabled === true || scanningEnabled === 1 || scanningEnabled === '1';
+  return {
+    label: `${enabled ? 'Disable' : 'Enable'} scanning of ${ipAddress}`,
+    icon: enabled ? 'pi pi-eye-slash' : 'pi pi-eye',
+    command: () => command(!enabled)
+  };
+}
+
 export function dnsRecordProbeIp(record, ptrIp = null) {
   const type = record?.record_type;
   const candidate = type === 'A'

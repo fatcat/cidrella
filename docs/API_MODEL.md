@@ -13,6 +13,7 @@ fields produced by `server/src/models/ip-view.js`.
 | Field | Meaning | Typical values |
 | --- | --- | --- |
 | `allocation_state` | Mutually exclusive allocation authority. | `unassigned`, `reserved`, `static_dns`, `dynamic_dhcp`, `static_dhcp`, `slaac`, `system`, `gateway`, `quarantined` |
+| `allocation_source_type` | Owning protocol or topology source for the allocation. | `dns`, `dhcp_lease`, `dhcp_reservation`, `admin_reservation`, `topology`, null |
 | `allocation_source_id` | Protocol or topology row that backs the allocation, when applicable. | integer/string identifier, null |
 | `address_family` | Canonical address family. | `4`, `6` |
 | `address_sort_key` | Fixed-width indexed key for numeric mixed-family ordering. | 33-character family-prefixed hexadecimal key |
@@ -25,6 +26,8 @@ fields produced by `server/src/models/ip-view.js`.
 | `is_online` | Current liveness state. | `0`/`1`, boolean in some API rows |
 | `last_seen_at` | Last observation time from scans, DHCP, or passive checks. | datetime/null |
 | `last_scanned_at` | Last active probe time. | datetime/null |
+| `scan_enabled` | Nullable per-IP scanning override. Null means inherit from the subnet/global setting. | `0`/`1`/null |
+| `scanning_enabled` | Server-resolved effective scanning toggle for the IP. The server applies IP override, then subnet override, then the global default. | boolean |
 | `in_dynamic_pool` | Whether the address belongs to an enabled same-family DHCP pool. | `0`/`1` |
 | `has_static_dns` | Whether an enabled manual DNS A or AAAA record backs the IP. | `0`/`1` |
 | `has_dhcp_reservation` | Whether a DHCP Reservation backs the IP. | `0`/`1` |
@@ -34,7 +37,10 @@ fields produced by `server/src/models/ip-view.js`.
 
 UI table rendering should use `ip_display_status` for the displayed Status and
 `address_type`/`computed_type` for the displayed Type. It should not infer
-display Type from DNS or DHCP row shape.
+display Type from DNS or DHCP row shape. It should likewise render
+`scanning_enabled` directly instead of rebuilding scan-setting inheritance in
+the client. `scan_enabled` remains available only to distinguish an explicit
+per-IP override from an inherited value for editing actions.
 
 The server canonicalizes every persisted address through
 `server/src/utils/address.js`. IPv4-mapped IPv6 input resolves to the canonical

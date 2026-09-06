@@ -131,23 +131,8 @@
               <ColumnHeaderTooltip :column="col" />
             </template>
             <template #body="{ data }">
-              <span v-if="col.key === 'ip_address'" class="ip-mono">{{ displayCell(data.ip_address) }}</span>
-              <StatusText
-                v-else-if="col.key === 'status'"
-                :label="data._ipState.status"
-                :className="data._ipState.statusSeverity === 'danger' ? 'state-err' : 'state-muted'"
-              />
-              <AddressTypePill v-else-if="col.key === 'type'" :display="data._ipState.addressType" :tooltip="data._ipState.tooltip" />
-              <template v-else-if="col.key === 'hostname'">{{ displayHost(data.hostname) }}</template>
-              <template v-else-if="col.key === 'mac_address'">
-                <code v-if="data.mac_address || data.last_seen_mac">{{ displayMac(data.mac_address || data.last_seen_mac) }}</code>
-                <span v-else class="cell-muted">—</span>
-              </template>
-              <template v-else-if="col.key === 'vendor'">{{ displayCell(data.vendor) }}</template>
-              <template v-else-if="col.key === 'device'">{{ deviceCell(data) }}</template>
-              <OnlineStatusCell v-else-if="col.key === 'is_online'" :value="data.is_online" />
-              <template v-else-if="col.key === 'last_seen_at'">{{ data.last_seen_at ? formatDate(data.last_seen_at) : EMPTY_CELL }}</template>
-              <template v-else-if="col.key === 'dhcp_expires_at'">{{ displayExpiry(data.dhcp_expires_at, formatDate) }}</template>
+              <IpTableCell :column="col" :row="data" :view="IP_TABLE_VIEW.NETWORKS"
+                           :domain-name="subnet?.domain_name" />
             </template>
           </Column>
         </DataTable>
@@ -384,7 +369,9 @@
 
     <!-- IP details drawer -->
     <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
-                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName" />
+                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName"
+                     :columns="visibleNetworkColumns" :view="IP_TABLE_VIEW.NETWORKS"
+                     table-name="Networks" />
 
     <Toast />
   </div>
@@ -416,11 +403,9 @@ import ToggleSwitch from '../ui/ToggleSwitch.js';
 import ScopeDialog from '../components/ScopeDialog.vue';
 import IpDetailsDrawer from '../components/IpDetailsDrawer.vue';
 import ScanToggle from '../components/ScanToggle.vue';
-import AddressTypePill from '../components/table/AddressTypePill.vue';
 import ColumnChooserButton from '../components/table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from '../components/table/ColumnHeaderTooltip.vue';
-import OnlineStatusCell from '../components/table/OnlineStatusCell.vue';
-import StatusText from '../components/table/StatusText.vue';
+import IpTableCell from '../components/table/IpTableCell.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import { useDhcpStore } from '../stores/dhcp.js';
@@ -429,14 +414,17 @@ import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 import api from '../api/client.js';
 import { ipToLong, longToIp } from '../utils/ip.js';
 import { ipLifecycleDisplay } from '../utils/ipLifecycleDisplay.js';
-import { isImmutableNetworkAddress, probeNowMenuItem } from '../utils/rowContextMenu.js';
+import {
+  IP_TABLE_COLUMN_ALIASES,
+  IP_TABLE_DEFAULT_KEYS,
+  IP_TABLE_VIEW,
+  ipTableColumns
+} from '../utils/ipTableColumns.js';
+import { isImmutableNetworkAddress, probeNowMenuItem, scanToggleMenuItem } from '../utils/rowContextMenu.js';
 import {
   EMPTY_CELL,
   apiError,
-  displayCell,
-  displayExpiry,
-  displayHostnameCell,
-  displayMacAddress
+  displayHostnameCell
 } from '../utils/format.js';
 
 const props = defineProps({
@@ -450,32 +438,27 @@ const toast = useToast();
 const store = useSubnetStore();
 const dhcpStore = useDhcpStore();
 
-const networkTableColumns = [
-  { key: 'ip_address', header: 'IP Address', description: 'Address within the selected network.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
-  { key: 'status', header: 'Status', description: 'Whether the address is currently in use or available according to CIDRella lifecycle data.', field: 'ip_display_status', sortable: true, style: 'width: 7rem' },
-  { key: 'type', header: 'Type', description: 'How the address is allocated, such as static DNS, dynamic DHCP, DHCP Reservation, IP Reservation, rogue, gateway, or system.', field: 'computed_type', sortField: 'computed_type', sortable: true, style: 'width: 9.5rem' },
-  { key: 'hostname', header: 'Hostname', description: 'Best known hostname from DNS, DHCP, or passive observations.', field: 'hostname', sortable: true, style: 'width: 10rem' },
-  { key: 'mac_address', header: 'MAC Address', description: 'Best known hardware address from DHCP or last-seen lifecycle data.', field: 'mac_address', sortField: 'mac_address', sortable: true, style: 'width: 10rem' },
-  { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
-  { key: 'device', header: 'Device', description: 'Device type / OS family inferred passively from the DHCP fingerprint (options 55/60 + hostname) and MAC OUI. Click the row for full detail.', field: 'os_family', sortable: true, style: 'width: 9rem' },
-  { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
-  { key: 'last_seen_at', header: 'Last Seen', description: 'Most recent time CIDRella observed this address through DHCP, DNS logs, or active scans.', field: 'last_seen_at', sortable: true, style: 'width: 10rem' },
-  { key: 'dhcp_expires_at', header: 'Expires', description: 'DHCP lease expiration time when the address has a dynamic lease.', field: 'dhcp_expires_at', sortable: true, style: 'width: 9rem' },
-];
+const networkTableColumns = ipTableColumns(IP_TABLE_VIEW.NETWORKS);
 
 const {
   visibleColumns: visibleNetworkColumns,
   setVisibleColumns: setVisibleNetworkColumns,
   resetColumns: resetNetworkColumns
-} = useColumnPreferences('cidrella_columns_networks', networkTableColumns);
+} = useColumnPreferences('cidrella_columns_networks', networkTableColumns, {
+  defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.NETWORKS],
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.NETWORKS]
+});
 
 const subnet = ref(null);
 const ips = ref([]);
-const displayIps = computed(() => ips.value.map(ip => ({ ...ip, _ipState: ipLifecycleDisplay(ip) })));
+const displayIps = computed(() => ips.value);
 const ranges = ref([]);
 const rangeTypes = ref([]);
 const loading = ref(false);
 const saving = ref(false);
+const resolvedSubnetScanEnabled = computed(() =>
+  ips.value.find(row => row.scan_enabled == null && row.scanning_enabled != null)?.scanning_enabled ?? true
+);
 
 // IP Reservation dialog
 const showReserveDialog = ref(false);
@@ -504,21 +487,6 @@ function onTableRowClick(event) {
   });
 }
 const ipDetailRowClass = () => 'ip-detail-trigger';
-// Compact "Device" column: OS family preferred, else device type. Full detail
-// (manufacturer, confidence, raw fingerprint) lives in the details drawer.
-function deviceCell(row) {
-  return row.os_family || row.device_type || EMPTY_CELL;
-}
-
-// Resolve the effective scan_enabled for this subnet (subnet → folder → default true)
-const resolvedSubnetScanEnabled = computed(() => {
-  if (!subnet.value) return true;
-  if (subnet.value.scan_enabled !== null && subnet.value.scan_enabled !== undefined) return !!subnet.value.scan_enabled;
-  // Inherit from folder
-  const folder = store.folders?.find(f => f.id === subnet.value.folder_id);
-  return folder ? !!folder.scan_enabled : true;
-});
-
 // Server-side pagination state, persisted per-subnet
 function loadTableState() {
   const saved = loadJson('cidrella_ip_table_state', {});
@@ -663,7 +631,9 @@ const tableContextMenuItems = computed(() => {
     rangeType: row.range_type_name || null,
     allocationState: row.allocation_state || 'unassigned',
     mac: row.mac_address || row.last_seen_mac || null,
-    hostname: row.hostname || null
+    hostname: row.hostname || null,
+    scanningEnabled: row.scanning_enabled,
+    scanOverride: row.scan_enabled ?? null
   };
 
   return buildContextMenuItems([ip], { allowCreateDhcpScope: false });
@@ -704,7 +674,6 @@ function findRangeForIp(ipAddress) {
 const formatDate = formatDateTime;
 
 const displayHost = (hostname) => displayHostnameCell(hostname, subnet.value?.domain_name);
-const displayMac = displayMacAddress;
 
 // The legend always shows every possible color so users can learn it
 // without needing a subnet that happens to have one of each. User-defined
@@ -956,6 +925,8 @@ const ipGrid = computed(() => {
       lastSeen: assignInfo?.last_seen_at || null,
       isConflict: assignInfo?.is_rogue === 1,
       conflictReason: assignInfo?.rogue_reason || null,
+      scanningEnabled: assignInfo?.scanning_enabled,
+      scanOverride: assignInfo?.scan_enabled ?? null,
       state: cellState
     });
   }
@@ -1130,16 +1101,11 @@ function buildContextMenuItems(selectedIps, { allowCreateDhcpScope = true } = {}
 
     // Liveness scan toggle, resolve effective state (IP override → subnet default)
     items.push({ separator: true });
-    const ipData = ips.value.find(a => a.ip_address === ip.address);
-    const ipOverride = ipData?.scan_enabled ?? null;
-    const effectivelyEnabled = ipOverride !== null ? !!ipOverride : resolvedSubnetScanEnabled.value;
+    const ipOverride = ip.scanOverride ?? null;
+    const effectivelyEnabled = ip.scanningEnabled ?? resolvedSubnetScanEnabled.value;
     const hasOverride = ipOverride !== null;
 
-    if (effectivelyEnabled) {
-      items.push({ label: `Disable Scanning of ${ip.address}`, icon: 'pi pi-eye-slash', command: () => toggleIpScan(ip.address, false) });
-    } else {
-      items.push({ label: `Enable Scanning of ${ip.address}`, icon: 'pi pi-eye', command: () => toggleIpScan(ip.address, true) });
-    }
+    items.push(scanToggleMenuItem(ip.address, effectivelyEnabled, enabled => toggleIpScan(ip.address, enabled)));
     if (hasOverride) {
       items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
     }

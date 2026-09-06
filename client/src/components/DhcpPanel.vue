@@ -146,26 +146,12 @@
               :sortField="col.sortField || col.field"
               :style="col.style"
             >
-              <template #header>
-                <ColumnHeaderTooltip :column="col" />
-              </template>
-              <template #body="{ data }">
-                <span v-if="col.key === 'ip_address'" class="ip-mono">{{ displayCell(data.ip_address) }}</span>
-                <OnlineStatusCell v-else-if="col.key === 'is_online'" :value="data.is_online" />
-                <StatusText
-                  v-else-if="col.key === 'lease'"
-                  :label="dhcpLeaseStatusLabel(data.lease_status)"
-                  :className="dhcpLeaseStatusClass(data.lease_status)"
-                />
-                <AddressTypePill v-else-if="col.key === 'type'" :display="dhcpAddressTypeDisplay(data)" />
-                <template v-else-if="col.key === 'hostname'">{{ displayHost(data.hostname, selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name) }}</template>
-                <template v-else-if="col.key === 'mac_address'">
-                  <code v-if="data.mac_address">{{ displayMac(data.mac_address) }}</code>
-                  <span v-else class="cell-muted">—</span>
-                </template>
-                <template v-else-if="col.key === 'vendor'">{{ displayCell(data.vendor) }}</template>
-                <template v-else-if="col.key === 'network'">{{ displayCell(data.subnet_name || data.subnet_cidr) }}</template>
-                <template v-else-if="col.key === 'expires_at'">{{ displayExpiry(data.expires_at, formatDate, { reserved: data.dhcp_assignment_type === 'reserved' }) }}</template>
+            <template #header>
+              <ColumnHeaderTooltip :column="col" />
+            </template>
+            <template #body="{ data }">
+                <IpTableCell :column="col" :row="data" :view="IP_TABLE_VIEW.DHCP"
+                             :domain-name="selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name" />
               </template>
             </Column>
           </DataTable>
@@ -252,13 +238,14 @@
     <ContextMenu ref="leaseContextMenuRef" :model="leaseContextMenuItems" />
 
     <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
-                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName" />
+                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName"
+                     :columns="visibleDhcpColumns" :view="IP_TABLE_VIEW.DHCP"
+                     table-name="DHCP" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
-import { formatDateTime } from '../utils/dateFormat.js';
 import {
   canAddDhcpReservation,
   isEditableDhcpReservation,
@@ -284,22 +271,21 @@ import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import EmptyState from './EmptyState.vue';
-import AddressTypePill from './table/AddressTypePill.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
-import OnlineStatusCell from './table/OnlineStatusCell.vue';
-import StatusText from './table/StatusText.vue';
+import IpTableCell from './table/IpTableCell.vue';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import { useRowsPreference } from '../composables/useRowsPreference.js';
 import api from '../api/client.js';
-import {
-  apiError,
-  displayCell,
-  displayExpiry,
-  displayHostnameCell,
-  displayMacAddress, isOnlineFlag } from '../utils/format.js';
+import { apiError, isOnlineFlag } from '../utils/format.js';
 import { ipToLong } from '../utils/ip.js';
 import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
+import {
+  IP_TABLE_COLUMN_ALIASES,
+  IP_TABLE_DEFAULT_KEYS,
+  IP_TABLE_VIEW,
+  ipTableColumns
+} from '../utils/ipTableColumns.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
 import IpDetailsDrawer from './IpDetailsDrawer.vue';
@@ -318,23 +304,16 @@ const {
   openIpDetails
 } = useIpDetailsDrawer();
 
-const dhcpTableColumns = [
-  { key: 'ip_address', header: 'IP Address', description: 'The address in the DHCP scope or global lease list.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
-  { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
-  { key: 'lease', header: 'Lease', description: 'Whether this DHCP scope address is actively leased, available, or inactive.', field: 'lease_status', sortable: true, style: 'width: 6rem' },
-  { key: 'type', header: 'Type', description: 'How the IP is instantiated, such as dynamic DHCP, DHCP Reservation, static DNS, or rogue.', field: 'dhcp_assignment_type', sortField: 'computed_type', sortable: true, style: 'width: 9rem' },
-  { key: 'hostname', header: 'Hostname', description: 'Hostname supplied by the DHCP Lease or DHCP Reservation, shown relative to the subnet domain when possible.', field: 'hostname', sortable: true, style: 'width: 10rem' },
-  { key: 'mac_address', header: 'MAC Address', description: 'Client hardware address associated with the DHCP Lease or DHCP Reservation.', field: 'mac_address', sortable: true, style: 'width: 10rem' },
-  { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
-  { key: 'network', header: 'Network', description: 'Network or subnet that contains this DHCP address.', field: 'subnet_name', sortField: 'network', sortable: true, style: 'width: 10rem' },
-  { key: 'expires_at', header: 'Expires', description: 'DHCP Lease expiration time. DHCP Reservations do not expire.', field: 'expires_at', sortable: true, style: 'width: 9rem' },
-];
+const dhcpTableColumns = ipTableColumns(IP_TABLE_VIEW.DHCP);
 
 const {
   visibleColumns: visibleDhcpColumns,
   setVisibleColumns: setVisibleDhcpColumns,
   resetColumns: resetDhcpColumns
-} = useColumnPreferences('cidrella_columns_dhcp', dhcpTableColumns);
+} = useColumnPreferences('cidrella_columns_dhcp', dhcpTableColumns, {
+  defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.DHCP],
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DHCP]
+});
 
 const scopeTab = ref('scopes');
 const scopeFilterText = ref('');
@@ -515,6 +494,7 @@ function dhcpMatchSearch(item, query) {
     (item.mac_address && item.mac_address.toLowerCase().includes(query)) ||
     (item.hostname && item.hostname.toLowerCase().includes(query)) ||
     (item.vendor && item.vendor.toLowerCase().includes(query)) ||
+    (item.allocation_source_type && item.allocation_source_type.toLowerCase().includes(query)) ||
     (item.dhcp_assignment_type && item.dhcp_assignment_type.toLowerCase().includes(query)) ||
     (item.lease_status && item.lease_status.toLowerCase().includes(query)) ||
     (lifecycle.addressType?.label && lifecycle.addressType.label.toLowerCase().includes(query));
@@ -599,9 +579,6 @@ function compareDhcpRows(a, b, field, order) {
   return 0;
 }
 
-const displayHost = displayHostnameCell;
-const displayMac = displayMacAddress;
-
 // Delete dialogs
 const showDeleteScopeDialog = ref(false);
 const deletingScope = ref(null);
@@ -653,12 +630,6 @@ function dhcpLeaseStatusLabel(status) {
   return 'Inactive';
 }
 
-function dhcpLeaseStatusClass(status) {
-  if (status === 'active') return 'state-ok';
-  if (status === 'unavailable') return 'state-err';
-  return 'state-muted';
-}
-
 async function reloadSelectedScopeAddresses() {
   if (!selectedScope.value) return;
   loadingLeases.value = true;
@@ -676,8 +647,6 @@ function selectScope(scope) {
   saveJson('cidrella_dhcp_selected_scope_id', scope?.id || null)
   reloadSelectedScopeAddresses();
 }
-
-const formatDate = formatDateTime;
 
 // Scope dialog methods
 async function openScopeDialog(scope = null) {

@@ -1,17 +1,20 @@
 import { computed, ref } from 'vue';
 import { saveJson } from '../utils/storage.js';
 
-function readKeys(storageKey, defaults) {
+function readKeys(storageKey, defaults, aliases) {
   try {
     const parsed = JSON.parse(localStorage.getItem(storageKey));
-    if (Array.isArray(parsed)) return parsed;
+    if (Array.isArray(parsed)) {
+      return [...new Set(parsed.map(key => aliases[key] || key))];
+    }
   } catch {}
   return defaults;
 }
 
-export function useColumnPreferences(storageKey, columns) {
-  const defaultKeys = columns.map(c => c.key);
-  const visibleKeys = ref(readKeys(storageKey, defaultKeys));
+export function useColumnPreferences(storageKey, columns, options = {}) {
+  const defaultKeys = options.defaultKeys || columns.map(c => c.key);
+  const aliases = options.aliases || {};
+  const visibleKeys = ref(readKeys(storageKey, defaultKeys, aliases));
 
   const normalizedKeys = computed(() => {
     const valid = new Set(columns.map(c => c.key));
@@ -29,7 +32,8 @@ export function useColumnPreferences(storageKey, columns) {
   }
 
   function resetColumns() {
-    setVisibleColumns(columns);
+    const byKey = new Map(columns.map(c => [c.key, c]));
+    setVisibleColumns(defaultKeys.map(key => byKey.get(key)).filter(Boolean));
   }
 
   return {

@@ -87,6 +87,21 @@ describe('canonical IP aggregate schema', () => {
 });
 
 describe('canonical IP read aggregate', () => {
+  it('projects the effective scanning toggle from IP, subnet, then global settings', () => {
+    db.prepare("UPDATE settings SET value = '1' WHERE key = 'default_scan_enabled'").run();
+    const inherited = enrichIpViewRows(db, [{ subnet_id: subnetId, ip_address: '10.88.0.20' }]);
+    expect(inherited[0].scanning_enabled).toBe(true);
+
+    db.prepare('UPDATE subnets SET scan_enabled = 0 WHERE id = ?').run(subnetId);
+    const subnetDisabled = enrichIpViewRows(db, [{ subnet_id: subnetId, ip_address: '10.88.0.21' }]);
+    expect(subnetDisabled[0].scanning_enabled).toBe(false);
+
+    const ipEnabled = enrichIpViewRows(db, [{
+      subnet_id: subnetId, ip_address: '10.88.0.22', scan_enabled: 1
+    }]);
+    expect(ipEnabled[0].scanning_enabled).toBe(true);
+  });
+
   it('adds canonical identity without inferring allocation from protocol shape', () => {
     expect(buildIpAggregate({
       ip_address: '2001:0DB8:0:0:0:0:0:90',

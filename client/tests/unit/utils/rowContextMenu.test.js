@@ -7,7 +7,8 @@ import {
   isEditableDnsRecord,
   isImmutableNetworkAddress,
   managedDnsRecordMenuItem,
-  probeNowMenuItem
+  probeNowMenuItem,
+  scanToggleMenuItem
 } from '../../../src/utils/rowContextMenu.js';
 
 describe('row context menu policy', () => {
@@ -61,6 +62,18 @@ describe('row context menu policy', () => {
       label: 'Probe Now',
       icon: 'pi pi-wifi',
       command
+    });
+  });
+
+  it('offers the inverse action for the server-resolved IP scanning state', () => {
+    const command = () => {};
+    expect(scanToggleMenuItem('10.0.0.25', true, command)).toMatchObject({
+      label: 'Disable scanning of 10.0.0.25',
+      icon: 'pi pi-eye-slash'
+    });
+    expect(scanToggleMenuItem('10.0.0.26', false, command)).toMatchObject({
+      label: 'Enable scanning of 10.0.0.26',
+      icon: 'pi pi-eye'
     });
   });
 

@@ -1458,7 +1458,13 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const showAvailable = req.query.showAvailable !== 'false';
 
   // Sort params
-  const SORTABLE_FIELDS = new Set(['ip_address', 'ip_display_status', 'allocation_state', 'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at', 'dhcp_expires_at', 'computed_type']);
+  const SORTABLE_FIELDS = new Set([
+    'ip_address', 'ip_display_status', 'allocation_state', 'allocation_source_type',
+    'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at',
+    'dhcp_expires_at', 'computed_type', 'scanning_enabled', 'os_family',
+    'name', 'record_type', 'value', 'priority', 'port', 'ttl', 'enabled',
+    'dns_source', 'lease_status', 'subnet_name'
+  ]);
   const reqSortField = SORTABLE_FIELDS.has(req.query.sortField) ? req.query.sortField : null;
   const reqSortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
 
@@ -1574,7 +1580,9 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
           (ip.vendor && ip.vendor.toLowerCase().includes(search)) ||
           (ip.ip_display_status && ip.ip_display_status.toLowerCase().includes(search)) ||
           (ip.address_type && ip.address_type.toLowerCase().includes(search)) ||
-          (ip.allocation_state && ip.allocation_state.toLowerCase().includes(search))) {
+          (ip.allocation_state && ip.allocation_state.toLowerCase().includes(search)) ||
+          (ip.allocation_source_type && ip.allocation_source_type.toLowerCase().includes(search)) ||
+          String(ip.scanning_enabled).includes(search)) {
         matched.push(ip);
       }
     }
