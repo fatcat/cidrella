@@ -20,7 +20,8 @@ import {
   normalizeRecordNameForZone,
   cnameTargetError,
   findAHostnameConflict,
-  reconcileManagedReverseDns
+  reconcileManagedReverseDns,
+  ipForPtrRecord
 } from '../models/dns-record.js';
 import {
   createZone,
@@ -28,6 +29,7 @@ import {
   deleteZone
 } from '../models/dns-zone.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
+import { findSubnetForIp } from '../utils/ip-sync.js';
 
 const router = Router();
 
@@ -41,8 +43,14 @@ const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 function enrichDnsAddressRecords(db, records, zoneName) {
   for (const record of records) {
     record.record_fqdn = fqdnForRecordName(record.name, zoneName);
+    if (record.type === 'PTR') {
+      record.ip_address = ipForPtrRecord(record.name, zoneName);
+      if (record.ip_address) {
+        record.subnet_id = findSubnetForIp(db, record.ip_address)?.id ?? null;
+      }
+    }
   }
-  enrichIpViewRows(db, records.filter(record => record.type === 'A' || record.type === 'AAAA'));
+  enrichIpViewRows(db, records.filter(record => record.ip_address), { fillFromIpAddress: true });
   return records;
 }
 

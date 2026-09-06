@@ -157,12 +157,14 @@
 
           <DataTable :key="'records-' + selectedZone?.type" :value="filteredRecords" :loading="loadingRecords" stripedRows
                      size="small"
+                     :rowClass="recordRowClass"
                      scrollable scrollHeight="flex"
                      :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
                      removableSort
                      paginator :rows="dnsRows" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
                      @page="onDnsPage"
+                     @row-click="onRecordRowClick"
                      @row-dblclick="onRecordDoubleClick"
                      @row-contextmenu="onRecordRightClick"
                      :contextMenu="true">
@@ -370,6 +372,9 @@
       </template>
     </Dialog>
 
+    <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
+                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName" />
+
     <Toast />
   </div>
 </template>
@@ -415,6 +420,8 @@ import OnlineStatusCell from './table/OnlineStatusCell.vue';
 import StatusText from './table/StatusText.vue';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import { useRowsPreference } from '../composables/useRowsPreference.js';
+import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
+import IpDetailsDrawer from './IpDetailsDrawer.vue';
 
 // No props needed, shows all zones globally
 
@@ -422,6 +429,13 @@ const store = useDnsStore();
 const dhcpStore = useDhcpStore();
 const toast = useToast();
 const { rows: dnsRows, onPage: onDnsPage } = useRowsPreference('cidrella_dns_table_rows', 100);
+const {
+  visible: showIpDetails,
+  host: ipDetailsRow,
+  subnetId: ipDetailsSubnetId,
+  domainName: ipDetailsDomainName,
+  openIpDetails
+} = useIpDetailsDrawer();
 
 function dnsSourceLabel(source) {
   if (source === 'dns') return 'Static DNS';
@@ -510,6 +524,7 @@ function resetDnsColumns() {
 // record's host label(s) with the zone's arpa prefix and reversing. For zone
 // "0.10.in-addr.arpa" + record name "5.1" → "10.0.1.5".
 function ptrRecordIp(record) {
+  if (record?.ip_address) return record.ip_address;
   if (!selectedZone.value || selectedZone.value.type !== 'reverse') return record.name;
   const zoneLabel = (selectedZone.value.name || '').replace(/\.?in-addr\.arpa\.?$/, '');
   const recordLabel = record.name || '';
@@ -694,6 +709,14 @@ function onRecordRightClick(event) {
 }
 function onRecordDoubleClick(event) {
   if (isEditableDnsRecord(event.data)) openRecordDialog(event.data);
+}
+function onRecordRowClick(event) {
+  openIpDetails(event.data, {
+    domainName: isReverse.value ? null : selectedZone.value?.name
+  });
+}
+function recordRowClass(record) {
+  return record?.ip_address ? 'ip-detail-row' : null;
 }
 
 async function probeDnsRecord(ip, subnetId) {
@@ -1055,6 +1078,8 @@ defineExpose({ openZoneDialog });
 }
 .zone-item:hover { background: var(--p-highlight-background); }
 .zone-item.active { background: var(--p-highlight-background); border-left: 3px solid var(--p-primary-color); }
+
+:deep(.ip-detail-row) { cursor: pointer; }
 
 .zone-info { flex: 1; min-width: 0; }
 .zone-name {

@@ -29,7 +29,10 @@ const mountDrawer = (host) => mount(IpDetailsDrawer, {
   props: { visible: true, host },
   global: {
     stubs: {
-      Drawer: { template: '<aside><slot /></aside>' },
+      Drawer: {
+        props: ['dismissable', 'style'],
+        template: '<aside :data-dismissable="dismissable" :data-width="style && style.width"><slot /></aside>'
+      },
       Button: true,
       Tag: { props: ['value'], template: '<span class="event-tag">{{ value }}</span>' },
     },
@@ -44,6 +47,16 @@ function livenessText(w) {
 }
 
 describe('IpDetailsDrawer liveness row', () => {
+  it('uses the reduced desktop width while retaining the mobile viewport cap', () => {
+    const w = mountDrawer({ ip_address: '10.0.0.5', is_online: false });
+    expect(w.find('aside').attributes('data-width')).toBe('min(27rem, 92vw)');
+  });
+
+  it('dismisses the non-modal drawer when the user clicks outside it', () => {
+    const w = mountDrawer({ ip_address: '10.0.0.5', is_online: false });
+    expect(w.find('aside').attributes('data-dismissable')).toBe('true');
+  });
+
   it('renders Online for every online spelling, including the string', () => {
     for (const v of [true, 1, '1']) {
       expect(livenessText(mountDrawer({ ip_address: '10.0.0.5', is_online: v })), `is_online=${JSON.stringify(v)}`)

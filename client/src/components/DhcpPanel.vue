@@ -121,6 +121,7 @@
           </div>
 
           <DataTable :value="sortedDhcpRows"
+                     class="ip-detail-table"
                      :loading="loadingLeases" stripedRows
                      size="small" scrollable scrollHeight="flex"
                      paginator :rows="dhcpRows" paginatorPosition="bottom"
@@ -130,6 +131,7 @@
                      :sortField="dhcpSortField"
                      :sortOrder="dhcpSortOrder"
                      @sort="onDhcpSort"
+                     @row-click="onLeaseRowClick"
                      @row-dblclick="onLeaseDoubleClick"
                      @row-contextmenu="onLeaseRightClick" contextMenu>
             <template #empty>
@@ -247,6 +249,9 @@
 
     <!-- Lease Context Menu -->
     <ContextMenu ref="leaseContextMenuRef" :model="leaseContextMenuItems" />
+
+    <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
+                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName" />
   </div>
 </template>
 
@@ -296,12 +301,21 @@ import { ipToLong } from '../utils/ip.js';
 import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
+import IpDetailsDrawer from './IpDetailsDrawer.vue';
+import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 
 // No props needed, shows all scopes globally
 
 const store = useDhcpStore();
 const toast = useToast();
 const { rows: dhcpRows, onPage: onDhcpPage } = useRowsPreference('cidrella_dhcp_table_rows', 100);
+const {
+  visible: showIpDetails,
+  host: ipDetailsRow,
+  subnetId: ipDetailsSubnetId,
+  domainName: ipDetailsDomainName,
+  openIpDetails
+} = useIpDetailsDrawer();
 
 const dhcpTableColumns = [
   { key: 'ip_address', header: 'IP Address', description: 'The address in the DHCP scope or global lease list.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
@@ -485,6 +499,12 @@ function onLeaseRightClick(event) {
 }
 function onLeaseDoubleClick(event) {
   if (isEditableDhcpReservation(event.data)) openReservationDialog(event.data);
+}
+function onLeaseRowClick(event) {
+  const row = event.data;
+  openIpDetails(row, {
+    domainName: selectedScope.value?.subnet_domain_name || row?.subnet_domain_name
+  });
 }
 
 function dhcpMatchSearch(item, query) {
@@ -921,6 +941,10 @@ defineExpose({ openScopeDialog });
 .scope-item.active {
   background: var(--p-highlight-background);
   border-left-color: var(--p-primary-color);
+}
+
+.ip-detail-table :deep(.p-datatable-tbody > tr) {
+  cursor: pointer;
 }
 
 .scope-info {

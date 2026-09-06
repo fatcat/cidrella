@@ -383,7 +383,7 @@
 
     <!-- IP details drawer -->
     <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
-                     :subnet-id="subnet?.id" :domain-name="subnet?.domain_name" />
+                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName" />
 
     <Toast />
   </div>
@@ -424,6 +424,7 @@ import { useSubnetStore } from '../stores/subnets.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
+import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 import api from '../api/client.js';
 import { ipToLong, longToIp } from '../utils/ip.js';
 import { ipLifecycleDisplay } from '../utils/ipLifecycleDisplay.js';
@@ -488,14 +489,18 @@ const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', desc
 const staticDhcpScanEnabled = ref(null);
 
 // IP details drawer (full per-host metadata, device fingerprint, and lifecycle)
-const showIpDetails = ref(false);
-const ipDetailsRow = ref(null);
-function openIpDetails(row) {
-  ipDetailsRow.value = row;
-  showIpDetails.value = true;
-}
+const {
+  visible: showIpDetails,
+  host: ipDetailsRow,
+  subnetId: ipDetailsSubnetId,
+  domainName: ipDetailsDomainName,
+  openIpDetails
+} = useIpDetailsDrawer();
 function onTableRowClick(event) {
-  openIpDetails(event.data);
+  openIpDetails(event.data, {
+    subnetId: subnet.value?.id,
+    domainName: subnet.value?.domain_name
+  });
 }
 // Compact "Device" column: OS family preferred, else device type. Full detail
 // (manufacturer, confidence, raw fingerprint) lives in the details drawer.

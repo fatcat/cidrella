@@ -1,4 +1,4 @@
-import { isValidDomain, longToIp, parseCidr } from '../utils/ip.js';
+import { isValidDomain, isValidIpv4, longToIp, parseCidr } from '../utils/ip.js';
 import { activeLeaseSql, infiniteLeaseFirstSql } from '../utils/lease-sql.js';
 import { canonicalHostnameForAllocation } from './ip-lifecycle.js';
 
@@ -297,6 +297,17 @@ export function reversePtrCandidates(ip) {
     { name: `${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}` },
     { name: `${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}.${octets[1]}` }
   ];
+}
+
+export function ipForPtrRecord(recordName, zoneName) {
+  const zoneLabels = String(zoneName || '')
+    .toLowerCase()
+    .replace(/\.?in-addr\.arpa\.?$/, '')
+    .split('.')
+    .filter(Boolean);
+  const recordLabels = String(recordName || '').split('.').filter(Boolean);
+  const ip = [...recordLabels, ...zoneLabels].reverse().join('.');
+  return isValidIpv4(ip) ? ip : null;
 }
 
 export function syncPtrForARecord(db, recordName, ip, forwardZoneName, {

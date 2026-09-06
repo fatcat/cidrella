@@ -31,6 +31,19 @@ beforeEach(() => {
 });
 
 describe('PTR record ownership', () => {
+  it.each([
+    ['25', '1.0.10.in-addr.arpa', '10.0.1.25'],
+    ['25.1', '0.10.in-addr.arpa', '10.0.1.25'],
+    ['25.1.0', '10.in-addr.arpa', '10.0.1.25'],
+  ])('projects PTR owner %s in %s to its canonical IP', (name, zone, ip) => {
+    expect(DnsRecord.ipForPtrRecord(name, zone)).toBe(ip);
+  });
+
+  it('rejects a malformed PTR owner projection', () => {
+    expect(DnsRecord.ipForPtrRecord('999', '1.0.10.in-addr.arpa')).toBeNull();
+    expect(DnsRecord.ipForPtrRecord('host', '1.0.10.in-addr.arpa')).toBeNull();
+  });
+
   it('fills missing managed rows and promotes placeholders to canonical protocol names', () => {
     const subnetId = db.prepare(`
       INSERT INTO subnets (

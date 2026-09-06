@@ -227,6 +227,29 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
 
 // --- DNS record lifecycle keeps ip_addresses.hostname synchronized ------
 describe('DNS address metadata sync', () => {
+  it('projects reverse DNS rows through the same canonical IP read model', async () => {
+    const s = await mkSubnet({
+      cidr: '10.89.0.0/29', name: 'reverse-read-model', status: 'allocated', gateway_address: '10.89.0.1'
+    });
+    await configure(s.id, {
+      name: 'reverse-read-model', create_reverse_dns: true, create_dhcp_scope: false,
+      domain_name: 'reverse-read-model.test'
+    });
+
+    const zone = await findZone('0.89.10.in-addr.arpa');
+    const records = await request(app).get(`/api/dns/zones/${zone.id}/records`);
+    expect(records.status).toBe(200);
+
+    const gateway = records.body.find(record => record.name === '1');
+    expect(gateway).toMatchObject({
+      ip_address: '10.89.0.1',
+      subnet_id: s.id,
+      allocation_state: 'gateway',
+      address_type: 'gateway',
+      ip_display_status: 'in use'
+    });
+  });
+
   it('normalizes A-record names against the target IP subnet domain', async () => {
     const s = await mkSubnet({
       cidr: '10.83.0.0/24', name: 'dns-normalize', status: 'allocated', gateway_address: '10.83.0.1'

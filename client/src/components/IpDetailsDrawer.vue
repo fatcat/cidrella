@@ -8,7 +8,7 @@
 <template>
   <Drawer :visible="visible" @update:visible="v => emit('update:visible', v)"
           :header="`IP details — ${host?.ip_address || ''}`" position="right"
-          :modal="false" :dismissable="false" :style="{ width: 'min(36rem, 92vw)' }"
+          :modal="false" :dismissable="true" :style="{ width: 'min(27rem, 92vw)' }"
           data-track="dialog-host-info">
     <div v-if="host" class="host-info">
       <section>
