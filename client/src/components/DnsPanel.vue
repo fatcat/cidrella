@@ -716,7 +716,7 @@ function onRecordRowClick(event) {
   });
 }
 function recordRowClass(record) {
-  return record?.ip_address ? 'ip-detail-row' : null;
+  return record?.ip_address ? 'ip-detail-row ip-detail-trigger' : null;
 }
 
 async function probeDnsRecord(ip, subnetId) {

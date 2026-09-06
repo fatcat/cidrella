@@ -31,7 +31,7 @@ const mountDrawer = (host) => mount(IpDetailsDrawer, {
     stubs: {
       Drawer: {
         props: ['dismissable', 'style'],
-        template: '<aside :data-dismissable="dismissable" :data-width="style && style.width"><slot /></aside>'
+        template: '<aside :data-dismissable="dismissable" :data-width="style && style.width" data-track="dialog-host-info"><slot /></aside>'
       },
       Button: true,
       Tag: { props: ['value'], template: '<span class="event-tag">{{ value }}</span>' },
@@ -52,9 +52,22 @@ describe('IpDetailsDrawer liveness row', () => {
     expect(w.find('aside').attributes('data-width')).toBe('min(27rem, 92vw)');
   });
 
-  it('dismisses the non-modal drawer when the user clicks outside it', () => {
+  it('closes on an outside click but stays open when another IP row is clicked', async () => {
+    const outside = globalThis.document.createElement('button');
+    const nextIp = globalThis.document.createElement('button');
+    nextIp.className = 'ip-detail-trigger';
+    globalThis.document.body.append(outside, nextIp);
     const w = mountDrawer({ ip_address: '10.0.0.5', is_online: false });
-    expect(w.find('aside').attributes('data-dismissable')).toBe('true');
+
+    nextIp.click();
+    expect(w.emitted('update:visible')).toBeUndefined();
+
+    outside.click();
+    expect(w.emitted('update:visible')).toEqual([[false]]);
+
+    w.unmount();
+    outside.remove();
+    nextIp.remove();
   });
 
   it('renders Online for every online spelling, including the string', () => {

@@ -122,6 +122,7 @@
 
           <DataTable :value="sortedDhcpRows"
                      class="ip-detail-table"
+                     :rowClass="ipDetailRowClass"
                      :loading="loadingLeases" stripedRows
                      size="small" scrollable scrollHeight="flex"
                      paginator :rows="dhcpRows" paginatorPosition="bottom"
@@ -506,6 +507,7 @@ function onLeaseRowClick(event) {
     domainName: selectedScope.value?.subnet_domain_name || row?.subnet_domain_name
   });
 }
+const ipDetailRowClass = () => 'ip-detail-trigger';
 
 function dhcpMatchSearch(item, query) {
   const lifecycle = ipLifecycleDisplayForDhcpRow(item);

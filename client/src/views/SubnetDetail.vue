@@ -98,6 +98,7 @@
         </div>
         <DataTable :value="displayIps" stripedRows size="small"
                    class="ip-address-table"
+                   :rowClass="ipDetailRowClass"
                    :loading="loadingPage"
                   
                    scrollable scrollHeight="flex"
@@ -502,6 +503,7 @@ function onTableRowClick(event) {
     domainName: subnet.value?.domain_name
   });
 }
+const ipDetailRowClass = () => 'ip-detail-trigger';
 // Compact "Device" column: OS family preferred, else device type. Full detail
 // (manufacturer, confidence, raw fingerprint) lives in the details drawer.
 function deviceCell(row) {

@@ -8,7 +8,7 @@
 <template>
   <Drawer :visible="visible" @update:visible="v => emit('update:visible', v)"
           :header="`IP details — ${host?.ip_address || ''}`" position="right"
-          :modal="false" :dismissable="true" :style="{ width: 'min(27rem, 92vw)' }"
+          :modal="false" :dismissable="false" :style="{ width: 'min(27rem, 92vw)' }"
           data-track="dialog-host-info">
     <div v-if="host" class="host-info">
       <section>
@@ -66,7 +66,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import Drawer from '../ui/Drawer.js';
 import Button from '../ui/Button.js';
 import Tag from '../ui/Tag.js';
@@ -91,6 +91,16 @@ const emit = defineEmits(['update:visible']);
 const toast = useToast();
 
 const dash = EMPTY_CELL;
+
+function onDocumentClick(event) {
+  if (!props.visible || !(event.target instanceof Element)) return;
+  if (event.target.closest('[data-track="dialog-host-info"]')) return;
+  if (event.target.closest('.ip-detail-trigger')) return;
+  emit('update:visible', false);
+}
+
+onMounted(() => document.addEventListener('click', onDocumentClick));
+onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick));
 
 // Liveness read through the shared three-state flag. The inline
 // `host.is_online ? ... : ...` this replaces treated the STRING '0' as online
