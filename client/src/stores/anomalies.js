@@ -3,23 +3,24 @@ import { ref } from 'vue';
 import api from '../api/client.js';
 
 export const useAnomalyStore = defineStore('anomalies', () => {
-  const active = ref([]);
   const summary = ref(null);
+  const events = ref([]);
+  const learning = ref([]);
   const clientHistory = ref([]);
   const clientModel = ref(null);
   const settings = ref(null);
   const loading = ref(false);
 
-  async function fetchActive(severity = null) {
-    const params = severity ? `?severity=${severity}` : '';
-    const res = await api.get(`/anomalies/active${params}`);
-    active.value = res.data;
-    return res.data;
-  }
-
   async function fetchSummary() {
     const res = await api.get('/anomalies/summary');
     summary.value = res.data;
+    return res.data;
+  }
+
+  async function fetchEvents(days = 7) {
+    const res = await api.get(`/anomalies/events?days=${days}`);
+    events.value = res.data.events;
+    learning.value = res.data.learning;
     return res.data;
   }
 
@@ -35,49 +36,16 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     return res.data;
   }
 
-  async function deleteAnomaly(id) {
-    const removed = active.value.find(a => a.id === id);
-    await api.delete(`/anomalies/${id}`);
-    active.value = active.value.filter(a => a.id !== id);
-    if (summary.value && removed?.is_anomaly) {
-      summary.value.total_active = Math.max(0, summary.value.total_active - 1);
-      if (removed.id > (summary.value.acknowledged_through_id || 0)) {
-        summary.value.unacknowledged_active = Math.max(0, (summary.value.unacknowledged_active || 0) - 1);
-      }
-      const sev = removed?.severity;
-      if (sev && summary.value.by_severity[sev]) {
-        summary.value.by_severity[sev] = Math.max(0, summary.value.by_severity[sev] - 1);
-        if (summary.value.by_severity[sev] === 0) {
-          delete summary.value.by_severity[sev];
-        }
-      }
-    }
-  }
-
-  // Kept for backwards compat
-  async function dismissAnomaly(id) {
-    const dismissed = active.value.find(a => a.id === id);
-    await api.post(`/anomalies/${id}/dismiss`);
-    active.value = active.value.filter(a => a.id !== id);
-    if (summary.value) {
-      summary.value.total_active = Math.max(0, summary.value.total_active - 1);
-      if (dismissed?.id > (summary.value.acknowledged_through_id || 0)) {
-        summary.value.unacknowledged_active = Math.max(0, (summary.value.unacknowledged_active || 0) - 1);
-      }
-      const sev = dismissed?.severity;
-      if (sev && summary.value.by_severity[sev]) {
-        summary.value.by_severity[sev] = Math.max(0, summary.value.by_severity[sev] - 1);
-        if (summary.value.by_severity[sev] === 0) {
-          delete summary.value.by_severity[sev];
-        }
-      }
-    }
+  function clearClient() {
+    clientHistory.value = [];
+    clientModel.value = null;
   }
 
   async function whitelistClient(clientIp, reason) {
     await api.post('/anomalies/whitelist', { client_ip: clientIp, reason });
-    // Remove all entries for this client from the active list
-    active.value = active.value.filter(a => a.client_ip !== clientIp);
+    // Remove all entries for this client from every locally-held list
+    events.value = events.value.filter(e => e.client_ip !== clientIp);
+    learning.value = learning.value.filter(l => l.client_ip !== clientIp);
     if (summary.value) {
       await fetchSummary();
     }
@@ -103,12 +71,12 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     return res.data;
   }
 
-  async function fetchAll(severity = null) {
+  async function fetchAll() {
     loading.value = true;
     try {
       await Promise.all([
-        fetchActive(severity),
         fetchSummary(),
+        fetchEvents(),
       ]);
     } finally {
       loading.value = false;
@@ -116,9 +84,9 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   }
 
   return {
-    active, summary, clientHistory, clientModel, settings, loading,
-    fetchActive, fetchSummary, fetchClientHistory, fetchClientModel,
-    deleteAnomaly, dismissAnomaly, whitelistClient,
+    summary, events, learning, clientHistory, clientModel, settings, loading,
+    fetchSummary, fetchEvents, fetchClientHistory, fetchClientModel, clearClient,
+    whitelistClient,
     fetchSettings, updateSettings, acknowledgeCounter, fetchAll,
   };
 });

@@ -145,6 +145,32 @@ router.post('/acknowledge', requirePerm('analytics:write'), (req, res) => {
   });
 });
 
+// GET /api/anomalies/events: recent anomalous-window events across all clients,
+// grouped-ready for the client to classify by shape (escalating / recurring /
+// one-off). Unlike /active, this includes already-resolved events so a client
+// that auto-resolved (e.g. a recurring nightly job that goes quiet by day) is
+// not invisible between occurrences. Kept lightweight by only ever returning
+// is_anomaly=1 rows, never the full per-window score history.
+router.get('/events', requirePerm('analytics:read'), (req, res) => {
+  const db = getDb();
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 30);
+
+  const events = db.prepare(
+    `SELECT * FROM anomaly_scores
+     WHERE is_anomaly = 1 AND window_start >= datetime('now', '-' || ? || ' days')
+     ORDER BY client_ip, window_start`
+  ).all(days).map(parseScoreRow);
+
+  const learning = db.prepare(
+    `SELECT client_ip, status, training_rows, trained_at FROM anomaly_models WHERE status = 'learning'`
+  ).all();
+
+  res.json({
+    events: enrichWithHostnames(events),
+    learning: enrichWithHostnames(learning),
+  });
+});
+
 // GET /api/anomalies/client/:ip: anomaly history for a client
 router.get('/client/:ip', requirePerm('analytics:read'), (req, res) => {
   const { ip } = req.params;
