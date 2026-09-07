@@ -9,16 +9,16 @@ from config import (
 )
 
 
-def _model_path(identity):
-    """Sanitized path for an identity's model file (identity is a MAC or,
+def _model_path(device_key):
+    """Sanitized path for a device's model file (device_key is a MAC or,
     when no MAC is known for the client, its IP)."""
-    safe = identity.replace(".", "_").replace(":", "_")
+    safe = device_key.replace(".", "_").replace(":", "_")
     return MODELS_DIR / f"{safe}.joblib"
 
 
-def train_model(identity, training_data, sensitivity="medium"):
+def train_model(device_key, training_data, sensitivity="medium"):
     """
-    Train an Isolation Forest on the identity's historical feature data.
+    Train an Isolation Forest on the device's historical feature data.
     training_data: 2D numpy array (n_windows x n_features).
     Returns the trained model.
     """
@@ -34,14 +34,14 @@ def train_model(identity, training_data, sensitivity="medium"):
 
     # Save to disk
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, _model_path(identity))
+    joblib.dump(model, _model_path(device_key))
 
     return model
 
 
-def load_model(identity):
+def load_model(device_key):
     """Load a persisted model. Returns None if not found."""
-    p = _model_path(identity)
+    p = _model_path(device_key)
     if not p.exists():
         return None
     return joblib.load(p)
