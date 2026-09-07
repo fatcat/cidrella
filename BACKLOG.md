@@ -108,6 +108,39 @@ Remaining:
 Note the original design-bundle paths in the memory file point at 2026-04-18 `/tmp` locations
 that no longer exist.
 
+### Anomaly identity: full MAC scope (lease history + IP-spanning DNS aggregation)
+
+Migration 055 and the sidecar changes shipped the **minimal** half of this: `anomaly_scores`,
+`anomaly_models` and `anomaly_whitelist` are keyed by an `identity` resolved at train/score time
+(the MAC from the device's *current* DHCP lease, falling back to the IP when there is none). That
+closes the safety-critical bug — a device taking over another host's IP no longer inherits its
+learned baseline, and a whitelist entry now survives a renewal.
+
+What it does **not** close: feature extraction is still IP-keyed, because the DuckDB DNS log has
+no MAC column — `features.get_client_history_hours()` / `extract_training_data()` /
+`extract_features_with_history()` all take a `client_ip`. So when a device renews onto a new IP,
+its identity and whitelist carry over but its *observable history* resets, and it drops back to
+`learning` until it re-accumulates `anomaly_min_training_hours` at the new address.
+
+The full fix needs both halves:
+- A **lease-history table** (MAC, IP, first_seen, last_seen), since `dhcp_leases` only holds the
+  current binding and cannot answer "which IPs did this MAC hold over the training window".
+- **DuckDB queries that aggregate across that MAC's IP intervals** rather than a single IP,
+  time-bounding each IP to the window it was actually leased to that MAC (otherwise a recycled
+  address pulls the previous tenant's queries back into the baseline — the exact contamination
+  the minimal fix was for).
+
+Deliberately deferred: the minimal fix removes the wrong-baseline hazard, and a temporary
+`learning` reset after a renewal is a conservative failure mode (it under-reports, it does not
+mis-attribute). Do not start the full scope without the lease-history table — an IP-spanning
+query without lease intervals is worse than the current behavior.
+
+Also noted while doing this work, out of scope and unstarted:
+- The header bell badge still counts anomalous *windows*, not distinct clients, so it reads far
+  higher than the redesigned Anomalies page's per-client tiles.
+- Encrypted DNS (DoH/DoT) from a client bypasses the appliance's resolver entirely, so such a
+  device is invisible to scoring rather than flagged as quiet.
+
 ---
 
 ## Specs and invariants to honor when the work starts

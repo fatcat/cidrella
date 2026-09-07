@@ -17,7 +17,7 @@ beforeAll(async () => {
   app = createTestApp(deviceRouter, '/api/devices');
 });
 afterAll(() => cleanupTestDb(tmpDir));
-beforeEach(() => db.exec('DELETE FROM device_fingerprints;'));
+beforeEach(() => db.exec('DELETE FROM device_fingerprints; DELETE FROM device_fingerprint_changes;'));
 
 describe('GET /api/devices/:mac/fingerprint', () => {
   it('returns a stored fingerprint', async () => {
@@ -36,6 +36,28 @@ describe('GET /api/devices/:mac/fingerprint', () => {
 
   it('400s on an invalid MAC', async () => {
     expect((await request(app).get('/api/devices/not-a-mac/fingerprint')).status).toBe(400);
+  });
+});
+
+describe('GET /api/devices/:mac/fingerprint/history', () => {
+  it('reports device_type/os_family/vendor_class drift, newest first', async () => {
+    DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:ff', vendor_class: 'Samsung-TV', device_type: 'IoT', os_family: 'Tizen', confidence: 70, source: 'dhcp' });
+    DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:ff', vendor_class: 'generic-linux', device_type: 'Computer', os_family: 'Linux', confidence: 70, source: 'dhcp' });
+
+    const res = await request(app).get('/api/devices/aa:bb:cc:dd:ee:ff/fingerprint/history');
+    expect(res.status).toBe(200);
+    expect(res.body.map(c => c.field).sort()).toEqual(['device_type', 'os_family', 'vendor_class']);
+  });
+
+  it('is empty for a device with no drift', async () => {
+    DF.upsertFingerprint(db, { mac_address: 'aa:bb:cc:dd:ee:ff', device_type: 'IoT', confidence: 60, source: 'dhcp' });
+    const res = await request(app).get('/api/devices/aa:bb:cc:dd:ee:ff/fingerprint/history');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it('400s on an invalid MAC', async () => {
+    expect((await request(app).get('/api/devices/not-a-mac/fingerprint/history')).status).toBe(400);
   });
 });
 

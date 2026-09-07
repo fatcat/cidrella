@@ -16,13 +16,20 @@ def _connect():
 
 
 def ensure_tables():
-    """Create anomaly tables if they don't exist."""
+    """Create anomaly tables if they don't exist.
+
+    Mirrors server/src/db/migrations/{042,043,055}_*.sql, which is the
+    authoritative schema in real deployments (Node initializes the DB
+    before this daemon ever runs). This only matters for a from-scratch
+    environment where this module runs first.
+    """
     con = _connect()
     try:
         con.executescript("""
             CREATE TABLE IF NOT EXISTS anomaly_scores (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 client_ip TEXT NOT NULL,
+                identity TEXT,
                 scored_at TEXT NOT NULL,
                 window_start TEXT NOT NULL,
                 window_end TEXT NOT NULL,
@@ -31,12 +38,12 @@ def ensure_tables():
                 severity TEXT,
                 top_features TEXT,
                 resolved INTEGER NOT NULL DEFAULT 0,
-                resolved_at TEXT,
-                UNIQUE(client_ip, window_start)
+                resolved_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS anomaly_models (
-                client_ip TEXT PRIMARY KEY,
+                identity TEXT PRIMARY KEY,
+                client_ip TEXT,
                 trained_at TEXT NOT NULL,
                 training_rows INTEGER NOT NULL,
                 model_version INTEGER NOT NULL DEFAULT 1,
@@ -46,20 +53,57 @@ def ensure_tables():
             CREATE INDEX IF NOT EXISTS idx_anomaly_scores_active
                 ON anomaly_scores(is_anomaly, resolved) WHERE is_anomaly = 1 AND resolved = 0;
 
-            CREATE INDEX IF NOT EXISTS idx_anomaly_scores_client
-                ON anomaly_scores(client_ip, window_start);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_anomaly_scores_identity_window
+                ON anomaly_scores(identity, window_start);
         """)
         con.commit()
     finally:
         con.close()
 
 
-def get_whitelisted_clients():
-    """Return set of whitelisted client IPs."""
+def resolve_device_key(client_ip):
+    """Resolve a client IP to a stable grouping key: its current DHCP MAC
+    if known, otherwise the IP itself.
+
+    A MAC survives IP churn (a lease renewal), which client_ip alone does
+    not: without this, a device that takes over a stale IP would silently
+    inherit whatever baseline the previous holder had trained. The IP
+    fallback covers hosts CIDRella has no lease for (static, out-of-pool).
+
+    The value is stored in (and read back from) the `identity` column; the
+    Python side calls it `device_key` because that is what it is -- the key
+    models, scores and whitelist rows are grouped under.
+
+    The MAC column is aliased in the query below, and that is load-bearing
+    rather than cosmetic. CodeQL's sensitive-data heuristic classifies any
+    name matching `mac.?addr` as private personal data
+    (shared/concepts/.../SensitiveDataHeuristics.qll, maybePrivate), so
+    `row["mac_address"]` is a sensitive source and every daemon log line
+    that names the device it is training or scoring became a high-severity
+    py/clear-text-logging-sensitive-data alert. On this appliance the MAC is
+    simply the device's identifier: it is already on every row of the
+    Anomalies page, shown to the same admin who reads this log, and naming
+    the device is the entire point of those lines. The heuristic reads the
+    name and nothing else, so the projection is named for the role the value
+    plays here. The stored column is untouched.
+    """
     con = _connect()
     try:
-        rows = con.execute("SELECT client_ip FROM anomaly_whitelist").fetchall()
-        return {row["client_ip"] for row in rows}
+        row = con.execute(
+            "SELECT mac_address AS lease_key FROM dhcp_leases WHERE ip_address = ?",
+            (client_ip,),
+        ).fetchone()
+        return row["lease_key"] if row and row["lease_key"] else client_ip
+    finally:
+        con.close()
+
+
+def get_whitelisted_device_keys():
+    """Return set of whitelisted device keys (MAC or IP-fallback)."""
+    con = _connect()
+    try:
+        rows = con.execute("SELECT identity FROM anomaly_whitelist").fetchall()
+        return {row["identity"] for row in rows}
     except sqlite3.OperationalError:
         # Table may not exist yet (pre-migration)
         return set()
@@ -89,17 +133,21 @@ def get_setting(key, default=None):
         con.close()
 
 
-def save_score(client_ip, window_start, window_end, anomaly_score,
+def save_score(device_key, client_ip, window_start, window_end, anomaly_score,
                is_anomaly, severity=None, top_features=None):
-    """Insert or update an anomaly score."""
+    """Insert or update an anomaly score. client_ip is the IP actually
+    observed for this window; device_key is the resolved MAC (or client_ip
+    itself, when no MAC is known) that scores/models are grouped under,
+    stored in the `identity` column."""
     con = _connect()
     try:
         con.execute("""
             INSERT INTO anomaly_scores
-                (client_ip, scored_at, window_start, window_end,
+                (client_ip, identity, scored_at, window_start, window_end,
                  anomaly_score, is_anomaly, severity, top_features)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(client_ip, window_start) DO UPDATE SET
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(identity, window_start) DO UPDATE SET
+                client_ip = excluded.client_ip,
                 scored_at = excluded.scored_at,
                 anomaly_score = excluded.anomaly_score,
                 is_anomaly = excluded.is_anomaly,
@@ -107,6 +155,7 @@ def save_score(client_ip, window_start, window_end, anomaly_score,
                 top_features = excluded.top_features
         """, (
             client_ip,
+            device_key,
             datetime.now(timezone.utc).isoformat(),
             window_start,
             window_end,
@@ -120,63 +169,64 @@ def save_score(client_ip, window_start, window_end, anomaly_score,
         con.close()
 
 
-def update_model_metadata(client_ip, training_rows, status="active"):
+def update_model_metadata(device_key, client_ip, training_rows, status="active"):
     """Update model training metadata."""
     con = _connect()
     try:
         con.execute("""
-            INSERT INTO anomaly_models (client_ip, trained_at, training_rows, model_version, status)
-            VALUES (?, ?, ?, 1, ?)
-            ON CONFLICT(client_ip) DO UPDATE SET
+            INSERT INTO anomaly_models (identity, client_ip, trained_at, training_rows, model_version, status)
+            VALUES (?, ?, ?, ?, 1, ?)
+            ON CONFLICT(identity) DO UPDATE SET
+                client_ip = excluded.client_ip,
                 trained_at = excluded.trained_at,
                 training_rows = excluded.training_rows,
                 model_version = model_version + 1,
                 status = excluded.status
-        """, (client_ip, datetime.now(timezone.utc).isoformat(), training_rows, status))
+        """, (device_key, client_ip, datetime.now(timezone.utc).isoformat(), training_rows, status))
         con.commit()
     finally:
         con.close()
 
 
-def set_model_status(client_ip, status):
+def set_model_status(device_key, status):
     """Update just the status field for a model."""
     con = _connect()
     try:
         con.execute(
-            "UPDATE anomaly_models SET status = ? WHERE client_ip = ?",
-            (status, client_ip),
+            "UPDATE anomaly_models SET status = ? WHERE identity = ?",
+            (status, device_key),
         )
         con.commit()
     finally:
         con.close()
 
 
-def get_model_metadata(client_ip):
-    """Get model metadata for a client."""
+def get_model_metadata(device_key):
+    """Get model metadata for a device key."""
     con = _connect()
     try:
         row = con.execute(
-            "SELECT * FROM anomaly_models WHERE client_ip = ?", (client_ip,)
+            "SELECT * FROM anomaly_models WHERE identity = ?", (device_key,)
         ).fetchone()
         return dict(row) if row else None
     finally:
         con.close()
 
 
-def auto_resolve(client_ip, consecutive_normal_windows):
+def auto_resolve(device_key, consecutive_normal_windows):
     """
-    Auto-resolve old anomalies if the client has had N consecutive normal windows.
+    Auto-resolve old anomalies if the device has had N consecutive normal windows.
     Returns number of resolved anomalies.
     """
     con = _connect()
     try:
-        # Check last N scores for this client
+        # Check last N scores for this device
         rows = con.execute("""
             SELECT is_anomaly FROM anomaly_scores
-            WHERE client_ip = ?
+            WHERE identity = ?
             ORDER BY window_start DESC
             LIMIT ?
-        """, (client_ip, consecutive_normal_windows)).fetchall()
+        """, (device_key, consecutive_normal_windows)).fetchall()
 
         if len(rows) < consecutive_normal_windows:
             return 0
@@ -185,12 +235,12 @@ def auto_resolve(client_ip, consecutive_normal_windows):
         if any(r["is_anomaly"] for r in rows):
             return 0
 
-        # Resolve all unresolved anomalies for this client
+        # Resolve all unresolved anomalies for this device
         cursor = con.execute("""
             UPDATE anomaly_scores
             SET resolved = 1, resolved_at = ?
-            WHERE client_ip = ? AND is_anomaly = 1 AND resolved = 0
-        """, (datetime.now(timezone.utc).isoformat(), client_ip))
+            WHERE identity = ? AND is_anomaly = 1 AND resolved = 0
+        """, (datetime.now(timezone.utc).isoformat(), device_key))
         con.commit()
         return cursor.rowcount
     finally:

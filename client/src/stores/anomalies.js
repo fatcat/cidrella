@@ -8,6 +8,7 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   const learning = ref([]);
   const clientHistory = ref([]);
   const clientModel = ref(null);
+  const fingerprintChanges = ref([]);
   const settings = ref(null);
   const loading = ref(false);
 
@@ -36,9 +37,24 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     return res.data;
   }
 
+  // Recent device_type/os_family/vendor_class drift for a MAC identity --
+  // e.g. a device that suddenly classifies as a different kind of hardware,
+  // which can indicate spoofing or a rogue device taking over the address.
+  // Silently empty for an IP-fallback identity (no MAC, so no fingerprint).
+  async function fetchFingerprintChanges(identity) {
+    if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(identity)) {
+      fingerprintChanges.value = [];
+      return [];
+    }
+    const res = await api.get(`/devices/${identity}/fingerprint/history`);
+    fingerprintChanges.value = res.data;
+    return res.data;
+  }
+
   function clearClient() {
     clientHistory.value = [];
     clientModel.value = null;
+    fingerprintChanges.value = [];
   }
 
   async function whitelistClient(clientIp, reason) {
@@ -84,8 +100,8 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   }
 
   return {
-    summary, events, learning, clientHistory, clientModel, settings, loading,
-    fetchSummary, fetchEvents, fetchClientHistory, fetchClientModel, clearClient,
+    summary, events, learning, clientHistory, clientModel, fingerprintChanges, settings, loading,
+    fetchSummary, fetchEvents, fetchClientHistory, fetchClientModel, fetchFingerprintChanges, clearClient,
     whitelistClient,
     fetchSettings, updateSettings, acknowledgeCounter, fetchAll,
   };
