@@ -107,6 +107,7 @@ against the possibility.
   field. The DHCP parameter request list is deliberately excluded, since it
   varies between transactions on the same device and would be too noisy to be
   useful.
+- Anomaly detection mechanics and UI have received a much-needed overhaul.
 
 The disposable-appliance live DHCP matrix and the full pre-release security
 pipeline remain release gates and are intentionally deferred until DHCP can be
