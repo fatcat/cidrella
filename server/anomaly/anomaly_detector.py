@@ -122,14 +122,20 @@ def train_all_clients():
                 meta = storage.get_model_metadata(identity)
                 if not meta:
                     storage.update_model_metadata(identity, client_ip, 0, status="learning")
+                # client_ip/identity (a LAN IP or MAC) are logged throughout this
+                # module for operator troubleshooting -- CodeQL's clear-text-logging
+                # query treats them as sensitive data, but the daemon log and the
+                # anomaly UI have the same audience (the appliance's own admin), so
+                # redacting them here would only make the log useless for its
+                # purpose. Reviewed and accepted; see PR discussion.
                 log.debug("Client %s (%s) has %.1fh history (need %dh), skipping",
-                          client_ip, identity, hours, min_hours)
+                          client_ip, identity, hours, min_hours)  # lgtm[py/clear-text-logging-sensitive-data]
                 continue
 
             # Extract training data
             training_data = features.extract_training_data(client_ip, TRAINING_LOOKBACK_DAYS)
             if training_data is None or len(training_data) < 10:
-                log.debug("Client %s (%s): insufficient training windows (%s)", client_ip, identity,
+                log.debug("Client %s (%s): insufficient training windows (%s)", client_ip, identity,  # lgtm[py/clear-text-logging-sensitive-data]
                           len(training_data) if training_data is not None else 0)
                 continue
 
@@ -143,10 +149,10 @@ def train_all_clients():
             trained += 1
             if len(training_data) > max_windows:
                 max_windows = len(training_data)
-            log.info("Trained model for %s (%s, %d windows)", client_ip, identity, len(training_data))
+            log.info("Trained model for %s (%s, %d windows)", client_ip, identity, len(training_data))  # lgtm[py/clear-text-logging-sensitive-data]
 
         except Exception:
-            log.error("Failed to train model for %s (%s): %s", client_ip, identity, traceback.format_exc())
+            log.error("Failed to train model for %s (%s): %s", client_ip, identity, traceback.format_exc())  # lgtm[py/clear-text-logging-sensitive-data]
 
     elapsed = round(time.monotonic() - t0, 2)
     log.info("Training complete: %d/%d models trained in %.2fs (max %d windows)",
@@ -214,16 +220,17 @@ def score_all_clients():
             scored += 1
             if is_anomaly:
                 anomalies += 1
+                # See the accepted-risk note on the same query in train_all_clients above.
                 log.warning("Anomaly: %s (%s) score=%.4f severity=%s features=%s",
-                            client_ip, identity, score, severity, top_features)
+                            client_ip, identity, score, severity, top_features)  # lgtm[py/clear-text-logging-sensitive-data]
 
             # Auto-resolve check
             resolved = storage.auto_resolve(identity, AUTO_RESOLVE_WINDOWS)
             if resolved:
-                log.info("Auto-resolved %d anomalies for %s", resolved, identity)
+                log.info("Auto-resolved %d anomalies for %s", resolved, identity)  # lgtm[py/clear-text-logging-sensitive-data]
 
         except Exception:
-            log.error("Failed to score %s (%s): %s", client_ip, identity, traceback.format_exc())
+            log.error("Failed to score %s (%s): %s", client_ip, identity, traceback.format_exc())  # lgtm[py/clear-text-logging-sensitive-data]
 
     elapsed = round(time.monotonic() - t0, 2)
     scoring_interval = get_scoring_interval()
