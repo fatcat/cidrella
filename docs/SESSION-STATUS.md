@@ -1,84 +1,91 @@
 # Session Status
 
-Updated: 2026-05-29
+Updated: 2026-09-07
 
-> **STALE.** This describes v0.4.15. As of 2026-08-19 the project is cutting **v0.4.17-pre.2**,
-> with v0.4.16 shipped on 2026-08-12. Treat the state below as history until it is refreshed.
-> For what actually shipped, [RELEASE-NOTES.md](../RELEASE-NOTES.md) is canonical. For work in
-> flight, see [BACKLOG.md](../BACKLOG.md).
+Snapshot of where the tree stands. [RELEASE-NOTES.md](../RELEASE-NOTES.md) is canonical
+for what actually shipped. [BACKLOG.md](../BACKLOG.md) is the one place for work in
+flight.
 
 ## Current State
 
-CIDRella 0.4.15 is ready for an extended field-test period. The project tree
-was clean before this status file was updated, and the final release gates
-passed from the current code.
+`main` is at `fb5f333`, version **0.4.18, built but not released**. v0.4.17 shipped
+2026-09-02.
 
-Completed for 0.4.15:
+**0.4.18 is a breaking release.** `min_from` is 0.4.17, the legacy
+`ip_addresses.status` field is removed, and schema runs to **61**. Upgrades from
+schema 54 inventory ambiguous DNS and DHCP claims before mutating anything and can
+refuse to proceed until an operator reconciles them.
 
-- Node runtime moved to bundled Node 24.
-- Frontend stack moved to Vite 8, Vue Router 5, and Pinia 3.
-- Server stack moved to Express 5 and `better-sqlite3` 12.
-- Analytics moved from legacy `duckdb` to `@duckdb/node-api` /
-  `@duckdb/node-bindings`.
-- `raw-socket` / `net-ping` were removed; active liveness uses `arping`
-  followed by system `ping`.
-- Large blocklist startup memory was reduced by streaming SQLite rows and
-  using a single domain-to-category map.
-- Crash recovery was added:
-  - `server/src/launcher.js` supervises early backend startup.
-  - `/var/lib/cidrella/runtime/backend-startup-status.json` records early
-    startup state and failure output.
-  - Safe mode starts after repeated early backend failures and serves a
-    diagnostic page/API on 443 and 8443 when available.
-  - Recent systemd/journal crash context is surfaced through
-    `/api/health/system` and the header Ops chip after recovery.
-- The updater was hardened:
-  - `update.sh` marks `update-status.json` failed on nonzero exits.
-  - `update.sh` can bootstrap into the verified target release's updater
-    after signature, `RELEASE.json`, downgrade, and `min_from` checks.
-  - `scripts/build-release.sh` adds harmless legacy placeholder files for
-    pre-bootstrap pre.4 updaters that still check old `duckdb` /
-    `raw-socket` binding paths.
-- Docker docs and compose defaults were improved for DHCP/L2/networking
-  deployment concerns.
+Landed since 0.4.17:
+
+- **IP lifecycle governance.** One canonical allocation state and transition boundary
+  across Networks, DNS, DHCP, imports, scans, and passive liveness. Schema 55 through
+  59. Merged from `plan/ip-lifecycle-governance` in `bd15d7f`.
+- **Anomalies page redesign.** Pattern-based triage: flagged clients are classified by
+  the shape of their score history (escalating, recurring, resolved one-off, learning
+  baseline) and the detector's per-window history is exposed as a timeline. Backed by
+  a new `GET /api/anomalies/events`, since `/active` returns only currently-unresolved
+  rows and hid recurring and resolved anomalies between occurrences. PR #26.
+- **Anomaly identity keyed by MAC** wherever a current DHCP lease makes one known,
+  falling back to the IP for static hosts. Schema 60. A device taking over an IP no
+  longer inherits the previous holder's learned baseline. PR #27.
+- **Device fingerprint change history.** Reclassification of device type, OS family,
+  or vendor class on a MAC is recorded rather than overwritten in place. Schema 61.
+  PR #27.
+- **Pre-release tags now pin to the built commit.** `build-release.sh` passed no
+  `--target` to `gh release create`, so pre-release tags were created at the default
+  branch head instead of at what was built.
+
+Two merge details worth knowing, both from folding PR #27 onto the lifecycle work:
+
+- PR #27's migrations were renumbered from 055/056 to **060/061**. The lifecycle merge
+  had already taken 055 through 059, and `server/src/db/init.js` keys applied
+  migrations by the integer filename prefix and skips a version already recorded in
+  `schema_version`, so a duplicate number silently drops one file of the colliding
+  pair.
+- In `server/src/models/device-fingerprint.js`, fingerprint drift is measured against
+  the row as actually written, not against the incoming DHCP capture. The upsert
+  conflict clause keeps manual overrides sticky and keeps the strongest automatic
+  classification, so it can decline a weaker incoming value, and a write that never
+  happened is not drift.
 
 ## Validation
 
-Last full gate run:
+Last full gate run, at `fb5f333`:
 
-- `npm run test:server` passed: 29 files, 359 tests.
-- `npm run test:client` passed: 2 files, 25 tests.
-- `npm run check:db-ownership` passed.
-- `./scripts/build-release.sh --dry-run` passed.
+- `npm run lint` passed, zero findings.
+- `npm run test:server` passed: 88 files, 1038 tests.
+- `npm run test:client` passed: 26 files, 170 tests.
+- `npm run build:client` passed.
+- `scripts/check-release-version.js` passed (package.json 0.4.18 matches the
+  RELEASE-NOTES heading).
+- `scripts/build-releases-manifest.js --lint` passed, 22 releases parsed.
 
-Testerella validation:
+Not yet validated:
 
-- In-UI upgrade to the corrected 0.4.15 pre-release worked.
-- Safe mode was tested by intentionally sabotaging `server/src/index.js`.
-- Safe mode entered after 3 early failures, captured the thrown error and
-  stack, served diagnostics on 443 and 8443, and recovered cleanly after
-  restoring the file and restarting `cidrella`.
+- **0.4.18 has no release artifact.** The published `v0.4.18-pre.*` prereleases predate
+  both anomaly merges and the tail of the lifecycle work, so they do not represent this
+  tree.
+- **No upgrade run against 0.4.18.** Given the breaking migration path and the
+  reconciliation gate, an end-to-end 0.4.17 to 0.4.18 upgrade plus a rollback needs a
+  built artifact on testerella before release.
+- The disposable-appliance live DHCP matrix and the full pre-release security pipeline
+  remain release gates, deferred until DHCP can be enabled on a test interface.
 
-Production validation:
+Known bad metadata, not fixable in place:
 
-- The original 0.4.15 release was withdrawn after production's pre.4 updater
-  failed with stale native binding checks for `duckdb raw-socket`.
-- Current code contains the release-artifact compatibility bridge intended to
-  let that pre.4 updater pass the existence-only checks and reach the fixed
-  updater path.
-- Production should be retried only with a rebuilt 0.4.15 artifact from the
-  current tree.
+- The `v0.4.18-pre.1`, `v0.4.18-pre.2`, and `v0.4.18-pre.3` tags point at `1d3329f`,
+  which is 0.4.17 code, for the `--target` reason above. `v0.4.17-pre.4` is an orphan
+  tag with no release attached. The fix is forward-only. To learn what a given artifact
+  really contains, read `RELEASE.json` inside the signed tarball, which carries the
+  real commit.
 
 ## Next Resume
 
-**Moved to [BACKLOG.md](../BACKLOG.md) on 2026-08-19**, as part of consolidating four scattered
-backlogs into one.
+Work in flight lives in [BACKLOG.md](../BACKLOG.md), consolidated there on 2026-08-19.
+Do not restart a second list here.
 
-All four items that were listed here have since been resolved, and are recorded as such rather
-than carried over:
-- Review production behavior after the rebuilt 0.4.15 upgrade: done, v0.4.16 shipped 2026-08-12.
-- Remove the legacy `duckdb` / `raw-socket` placeholder bridge: removed in v0.4.16.
-- Split updater bootstrap into a `cidrella-bootstrap-update` entrypoint: closed WON'T-DO on
-  2026-07-23, see BACKLOG.md for the reasoning.
-- Add a real upgrade-path harness scenario: shipped, and it has now run repeatedly against
-  published pre-releases including 0.4.16 -> 0.4.17-pre.2.
+The one open thread specific to this snapshot: cut a 0.4.18 pre-release from `main` and
+run the upgrade and rollback validation against it on testerella. Everything the four
+items previously listed here tracked has been resolved and is recorded in BACKLOG.md
+and the release notes.
