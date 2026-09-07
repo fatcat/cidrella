@@ -38,8 +38,17 @@ export function initAnalyticsDb(dataDir) {
         action VARCHAR NOT NULL,
         block_reason VARCHAR,
         latency_us INTEGER,
-        resolved_ip VARCHAR
+        resolved_ip VARCHAR,
+        dnssec_supported BOOLEAN
       )
+    `);
+
+    // DuckDB analytics schema changes are applied in place because this file
+    // is an independent, rebuildable event store rather than the canonical
+    // SQLite database managed by numbered migrations.
+    await connection.run(`
+      ALTER TABLE dns_queries
+      ADD COLUMN IF NOT EXISTS dnssec_supported BOOLEAN
     `);
 
     // Start periodic flush
@@ -53,7 +62,7 @@ export function initAnalyticsDb(dataDir) {
 }
 
 // Buffer a DNS query for batch insert
-export function logDnsQuery({ clientIp, domain, queryType, responseCode, action, blockReason, latencyUs, resolvedIp }) {
+export function logDnsQuery({ clientIp, domain, queryType, responseCode, action, blockReason, latencyUs, resolvedIp, dnssecSupported }) {
   if (!connection) return;
   buffer.push({
     ts: new Date().toISOString(),
@@ -65,6 +74,7 @@ export function logDnsQuery({ clientIp, domain, queryType, responseCode, action,
     blockReason: blockReason || null,
     latencyUs: latencyUs != null ? Math.round(latencyUs) : null,
     resolvedIp: resolvedIp || null,
+    dnssecSupported: typeof dnssecSupported === 'boolean' ? dnssecSupported : null,
   });
 }
 
@@ -78,11 +88,11 @@ export function flushQueries() {
   const placeholders = [];
   const params = [];
   for (const row of rows) {
-    placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    params.push(row.ts, row.clientIp, row.domain, row.queryType, row.responseCode, row.action, row.blockReason, row.latencyUs, row.resolvedIp);
+    placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    params.push(row.ts, row.clientIp, row.domain, row.queryType, row.responseCode, row.action, row.blockReason, row.latencyUs, row.resolvedIp, row.dnssecSupported);
   }
 
-  const sql = `INSERT INTO dns_queries (ts, client_ip, domain, query_type, response_code, action, block_reason, latency_us, resolved_ip) VALUES ${placeholders.join(', ')}`;
+  const sql = `INSERT INTO dns_queries (ts, client_ip, domain, query_type, response_code, action, block_reason, latency_us, resolved_ip, dnssec_supported) VALUES ${placeholders.join(', ')}`;
 
   return connection.run(sql, params)
     .catch(err => console.error('[analytics] Flush error:', err.message));
@@ -149,6 +159,25 @@ export function queryTopClients(range, limit = 20) { return queryTopBy('client_i
 
 // Top queried domains
 export function queryTopDomains(range, limit = 20) { return queryTopBy('domain', range, limit); }
+
+// Most-requested domains whose successful answers were proven insecure by
+// the validating resolver. NULL means no conclusion was possible (for
+// example, validation was disabled), so it is deliberately excluded.
+export function queryTopDomainsWithoutDnssec(range, limit = 10) {
+  const interval = rangeToInterval(range);
+  return queryRaw(
+    `SELECT domain, COUNT(*) as count
+     FROM dns_queries
+     WHERE ts >= NOW() - INTERVAL '${interval}'
+       AND action = 'allowed'
+       AND response_code = 'NOERROR'
+       AND dnssec_supported = FALSE
+     GROUP BY domain
+     ORDER BY count DESC, domain ASC
+     LIMIT ?`,
+    [limit]
+  );
+}
 
 // Top clients filtered by action
 export function queryTopClientsByAction(range, action, limit = 10) { return queryTopByAction('client_ip', range, action, limit); }

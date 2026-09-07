@@ -75,6 +75,24 @@ export function scanEnabledSql(alias = 's') {
   `;
 }
 
+function scanBoolean(value) {
+  if (value === true || value === 1 || value === '1' || value === 'true') return true;
+  if (value === false || value === 0 || value === '0' || value === 'false') return false;
+  return null;
+}
+
+/**
+ * Resolve the configured scan toggle for one IP. This intentionally mirrors
+ * shouldScanIp after the subnet setting has inherited the global default.
+ */
+export function resolveScanningEnabled(ipOverride, subnetOverride, globalDefault) {
+  const ipValue = scanBoolean(ipOverride);
+  if (ipValue !== null) return ipValue;
+  const subnetValue = scanBoolean(subnetOverride);
+  if (subnetValue !== null) return subnetValue;
+  return scanBoolean(globalDefault) ?? true;
+}
+
 /**
  * SQL expression yielding the subnet's effective scan interval, falling back to
  * the default_scan_interval setting when the subnet has no override.

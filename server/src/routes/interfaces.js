@@ -3,7 +3,13 @@ import os from 'os';
 import fs from 'fs';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { applyInterfaceConfig, restartDnsmasq, isCidrellaDnsmasqRunning, dnsmasqRestartPending } from '../utils/dnsmasq.js';
+import {
+  applyInterfaceConfig,
+  restartDnsmasq,
+  isCidrellaDnsmasqRunning,
+  dnsmasqRestartPending,
+  withValidatedDnsmasqUpdate
+} from '../utils/dnsmasq.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
 import {
   applyHttpRedirectConfig, applyHttpsPortChange, applyHttpPortChange,
@@ -160,27 +166,42 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   }
 
   const db = getDb();
+  const dnsmasqSettingsChanged = [
+    interfaces,
+    dns_enabled,
+    dhcp_enabled,
+    dns_listen_port
+  ].some(value => value !== undefined);
 
-  // Non-port settings write immediately. Port settings wait until the
-  // live-swap succeeds, otherwise a swap failure would leave bad state on
-  // disk that breaks the next server restart.
-  db.transaction(() => {
-    if (interfaces !== undefined) {
-      Setting.upsertSettingWithConflict(db, 'interface_config', JSON.stringify(interfaces));
-    }
-    if (dns_enabled !== undefined) {
-      Setting.upsertSettingWithConflict(db, 'dns_enabled', String(dns_enabled));
-    }
-    if (dhcp_enabled !== undefined) {
-      Setting.upsertSettingWithConflict(db, 'dhcp_enabled', String(dhcp_enabled));
-    }
-    if (dns_listen_port !== undefined) {
-      Setting.upsertSettingWithConflict(db, 'dns_listen_port', String(Number(dns_listen_port)));
-    }
-    if (http_redirect_enabled !== undefined) {
-      Setting.upsertSettingWithConflict(db, 'http_redirect_enabled', http_redirect_enabled ? 'true' : 'false');
-    }
-  })();
+  // Validate the dnsmasq output inside the same transaction as the settings
+  // it reflects. A validation or filesystem failure restores both the old
+  // config files and the old database values.
+  let ifaceChanged;
+  try {
+    ifaceChanged = db.transaction(() => {
+      if (interfaces !== undefined) {
+        Setting.upsertSettingWithConflict(db, 'interface_config', JSON.stringify(interfaces));
+      }
+      if (dns_enabled !== undefined) {
+        Setting.upsertSettingWithConflict(db, 'dns_enabled', String(dns_enabled));
+      }
+      if (dhcp_enabled !== undefined) {
+        Setting.upsertSettingWithConflict(db, 'dhcp_enabled', String(dhcp_enabled));
+      }
+      if (dns_listen_port !== undefined) {
+        Setting.upsertSettingWithConflict(db, 'dns_listen_port', String(Number(dns_listen_port)));
+      }
+      if (http_redirect_enabled !== undefined) {
+        Setting.upsertSettingWithConflict(db, 'http_redirect_enabled', http_redirect_enabled ? 'true' : 'false');
+      }
+      return dnsmasqSettingsChanged
+        ? withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db))
+        : false;
+    })();
+  } catch (err) {
+    console.warn('Failed to validate dnsmasq interface config:', err.message);
+    return res.status(500).json({ error: `dnsmasq configuration update failed: ${err.message}` });
+  }
 
   // Live-apply the HTTP listener toggle + port changes. Order matters:
   // HTTPS port first (so the HTTP redirect's Location target closure picks
@@ -226,8 +247,6 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   // which would leave dnsmasq running the old conf until the next regen.
   // A no-op save (nothing effectively changed, our unit healthy) skips the
   // restart so clicking Save can't blip DNS/DHCP for the whole LAN.
-  const ifaceChanged = applyInterfaceConfig(db);
-
   let dnsmasqStatus = 'restarted';
   if (ifaceChanged || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
     try {

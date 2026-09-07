@@ -146,6 +146,31 @@ describe('GET /api/metrics/proxy-perf', () => {
   });
 });
 
+describe('GET /api/metrics/ip-lifecycle', () => {
+  it('returns allocation, conflict, rogue, retirement, and reconciliation metrics', async () => {
+    db.prepare(`
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, allocation_state, address_family, address_sort_key)
+      SELECT id, '192.0.2.20', 'unassigned', 4, 'key'
+      FROM subnets LIMIT 1
+    `).run();
+
+    const res = await request(app).get('/api/metrics/ip-lifecycle');
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      allocations: { unassigned: expect.any(Number), dynamic_dhcp: expect.any(Number) },
+      scope_conflicts: expect.any(Number),
+      rogue_hosts: expect.any(Number),
+      retirement: { total: expect.any(Number), last_24h: expect.any(Number) },
+      reconciliation: {
+        outcome: expect.any(String),
+        blocking_conflicts: expect.any(Number),
+        failures: expect.any(Number)
+      }
+    });
+  });
+});
+
 // ── GET /api/metrics/services ───────────────────────────────────
 
 describe('GET /api/metrics/services', () => {

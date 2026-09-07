@@ -129,6 +129,53 @@ Some releases have introduced changes that require a one-time manual step when u
 
 - **[v0.4.6 → v0.4.7](./UPGRADING-0.4.6-to-0.4.7.md)**: requires an `update.sh` hot-patch. v0.4.6's hardcoded binding check expected `bcrypt` (replaced by `bcryptjs` in v0.4.7) and its preflight probe spawns the new Node binary without capabilities (v0.4.7 ships a bundled Node that needs `setcap` before the raw-socket health check can run).
 
+#### IP lifecycle migration in v0.4.18
+
+v0.4.18 migrates a v0.4.17 schema-54 database through schema 59. Before
+changing the schema, startup writes
+`/var/lib/cidrella/ip-lifecycle-migration-report.json` with mode 600 and checks
+for claims that cannot be resolved safely.
+
+Startup stops before any schema mutation when the report has
+`"outcome": "blocked"`. Each conflict includes the subnet, canonical IP,
+affected hostnames, DNS records, DHCP Reservations, IP Reservations, DHCP
+Leases, or DHCP Scopes, the reason they conflict, and the decision required
+from the administrator. For example, if
+`printer.example.com` and `cups.example.com` are both A records for
+`192.0.2.20`, the report says to keep one A record and convert the other name
+to a CNAME targeting the retained host.
+
+For a CLI update, the failure output includes every conflict and the report
+path. Read the complete report with:
+
+```bash
+sudo cat /var/lib/cidrella/ip-lifecycle-migration-report.json
+```
+
+For an update started from Settings > Updates, the failure panel shows the same
+conflict descriptions. Versions that include lifecycle-report support also
+offer **Download reconciliation report**. The report contains local IP
+addresses, hostnames, MAC addresses, and internal row IDs, so only an
+administrator can download it. A v0.4.17 appliance that is automatically
+rolled back is again serving the v0.4.17 UI, which predates that button; use
+the protected CLI path above for this first migration hop.
+
+The A/B updater restores the previous application version and database when
+inventory blocks the migration. Correct every conflict in the restored
+version, then run the update again from either the CLI or Settings > Updates.
+Restarting the restored version alone does not retry the upgrade.
+
+Safe upgrades move the report through `ready`, `reconciliation_pending`, and
+`complete`. If the process stops after migrations but before reconciliation,
+the next startup detects the pending report and retries reconciliation. Do not
+delete a `ready` or `reconciliation_pending` report to force startup. Restore
+the pre-update database snapshot if the listed remediation cannot be completed.
+
+Operators can inspect the sanitized outcome and lifecycle cleanup counts at
+`GET /api/health/deep` from localhost or `GET /api/metrics/ip-lifecycle` with
+the `analytics:read` permission. These endpoints do not expose the report's IP,
+hostname, or record details.
+
 ### Triggering from the API
 
 ```

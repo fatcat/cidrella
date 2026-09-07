@@ -13,14 +13,14 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 - **DNS management**: Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation. An optional **"do not provide recursion"** mode makes CIDRella authoritative-only (answers its own zones, no external forwarding), which also disables forwarders, encryption, and domain/GeoIP filtering since they no longer apply.
 - **DNSSEC validation**: UI toggle that turns on dnsmasq DNSSEC validation against the root trust anchor, with a TCP-capable DNS proxy (so large/signed answers and validating-stub resolvers work) while blocklist + GeoIP filtering stay in place. NTP is enabled automatically and dnsmasq starts lenient on signature timestamps until the clock syncs.
 - **Encrypted forwarders (DoT/DoH)**: Optionally encrypt CIDRella→upstream DNS via DNS-over-TLS or DNS-over-HTTPS through a built-in stub (no external daemon), with preset unfiltered resolvers (Cloudflare/Google/Quad9/AdGuard) or custom. Fails closed (no silent plaintext fallback) and stays compatible with DNSSEC validation.
-- **DHCP management**: Scopes, global defaults for new scopes, per-scope options, reservations, dynamic lease tracking, and DHCP-derived DNS records.
+- **DHCP management**: Scopes, global defaults for new scopes, per-scope options, DHCP Reservations, dynamic lease tracking, and DHCP-derived DNS records.
 - **Rogue DHCP detection**: Scheduled active probe (DISCOVER broadcast) that flags unauthorized DHCP servers answering on CIDRella's segments. CIDRella's own server is auto-trusted, with a user allowlist for other legitimate servers. Surfaces a yellow warning on the Ops chip.
 - **Liveness and rogue detection**: Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
-- **Passive device/OS fingerprinting**: Identifies each DHCP client's device type and OS family from its DHCP fingerprint (options 55/60 + hostname) and MAC OUI, classified by an offline ruleset. Surfaced as a "Device" column and a per-host "More info" popup. No active scanning, no raw sockets.
+- **Passive device/OS fingerprinting**: Identifies each DHCP client's device type and OS family from its DHCP fingerprint (options 55/60 + hostname) and MAC OUI, classified by an offline ruleset. Surfaced as a "Device" column and the IP details drawer. No active scanning, no raw sockets.
 - **Analytics**: DNS query, blocked-domain, blocked-host, client/domain pair, and system performance views backed by DuckDB.
 - **Blocklists and GeoIP filtering**: Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy. Two distinct exemptions: a shared **domain whitelist** (always allow a domain everywhere) and a GeoIP **IP/CIDR allowlist** (never GeoIP-block specific addresses/ranges, IPv4 or IPv6, regardless of country).
 - **Anomaly detection**: Python sidecar for unusual query volume, new-domain patterns, beaconing, and DGA-like behavior with UI status/health reporting.
-- **Pi-hole import**: Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP reservations, and upstream DNS settings.
+- **Pi-hole import**: Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP Reservations, and upstream DNS settings.
 - **Operations and recovery**: Signed native updates, scheduled backups, restore validation, reset-password and reset-web-port tools, log viewing, and audit history.
 - **Certificate management**: Self-signed defaults, certificate upload, RSA/ECDSA CSR generation, and certificate/key validation.
 - **Role based access control**: Admin, DNS, DHCP, and readonly roles with permission-checked APIs and audited mutations.
@@ -129,7 +129,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership 
 |------|-------------|
 | admin | Full access to all features |
 | dns_admin | Manage DNS records and zones |
-| dhcp_admin | Manage DHCP scopes and reservations |
+| dhcp_admin | Manage DHCP Scopes and DHCP Reservations |
 | readonly_dns | View DNS configuration |
 | readonly_dhcp | View DHCP configuration |
 | readonly | View all configuration |

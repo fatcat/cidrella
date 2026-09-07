@@ -44,7 +44,7 @@ beforeEach(() => {
   db.prepare('DELETE FROM subnets').run();
 });
 
-describe('DHCP reservation ownership', () => {
+describe('DHCP Reservation ownership', () => {
   it('creates reservation rows and syncs IP/PTR state', () => {
     const subnetId = createSubnet();
     const ptrZoneId = createReverseZone();
@@ -88,7 +88,7 @@ describe('DHCP reservation ownership', () => {
     expect(oldIp).toBeUndefined();
     expect(newIp.hostname).toBe('host-two');
     expect(newIp.mac_address).toBe('aa:bb:cc:dd:ee:02');
-    expect(ptrValue(ptrZoneId, '25')).toBe('');
+    expect(ptrValue(ptrZoneId, '25')).toBe('10.60.0.25');
     expect(ptrValue(ptrZoneId, '26')).toBe('host-two.reservation.test');
   });
 
@@ -108,6 +108,41 @@ describe('DHCP reservation ownership', () => {
     const ip = db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.25');
     expect(deleted).toBeUndefined();
     expect(ip).toBeUndefined();
-    expect(ptrValue(ptrZoneId, '25')).toBe('');
+    expect(ptrValue(ptrZoneId, '25')).toBe('10.60.0.25');
+  });
+
+  it('removes and restores allocation authority when disabled and re-enabled', () => {
+    const subnetId = createSubnet();
+    const ptrZoneId = createReverseZone();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+    const reservation = DhcpReservation.createReservation(db, subnet, {
+      mac_address: 'aa:bb:cc:dd:ee:03',
+      ip_address: '10.60.0.27',
+      hostname: 'toggle-host'
+    });
+
+    const disabled = DhcpReservation.updateReservation(db, reservation, subnet, {
+      mac_address: reservation.mac_address,
+      ip_address: reservation.ip_address,
+      enabled: false
+    });
+    expect(disabled.enabled).toBe(0);
+    expect(db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.27'))
+      .toBeUndefined();
+    expect(ptrValue(ptrZoneId, '27')).toBe('10.60.0.27');
+
+    const enabled = DhcpReservation.updateReservation(db, disabled, subnet, {
+      mac_address: disabled.mac_address,
+      ip_address: disabled.ip_address,
+      enabled: true
+    });
+    const ip = db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.27');
+    expect(enabled.enabled).toBe(1);
+    expect(ip).toMatchObject({
+      allocation_state: 'static_dhcp',
+      allocation_source_type: 'dhcp_reservation',
+      allocation_source_id: reservation.id
+    });
+    expect(ptrValue(ptrZoneId, '27')).toBe('toggle-host.reservation.test');
   });
 });

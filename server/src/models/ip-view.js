@@ -1,15 +1,18 @@
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
-import { localIpv4Set } from '../utils/local-addresses.js';
 import { lookupFingerprintBatch } from './device-fingerprint.js';
-import * as DnsRecord from './dns-record.js';
+import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
+import { addressFamily, canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
+import { resolveScanningEnabled } from '../utils/scan-coverage.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
   DYNAMIC_DHCP: 'dynamic DHCP',
-  RESERVED_DHCP: 'reserved DHCP',
+  RESERVED_DHCP: 'DHCP Reservation',
   SYSTEM: 'system',
   GATEWAY: 'gateway',
-  LOCKED: 'locked',
+  RESERVED: 'IP Reservation',
+  SLAAC: 'SLAAC',
+  QUARANTINED: 'quarantined',
   ROGUE: 'rogue'
 };
 
@@ -17,55 +20,41 @@ function truthy(value) {
   return value === true || value === 1 || value === '1';
 }
 
-function activeLease(expiresAt) {
-  if (!expiresAt) return false;
-  if (expiresAt === 'infinite') return true;
-  return new Date(expiresAt) >= new Date();
-}
-
 export function computeIpView(row) {
-  const ipLifecycleStatus = row.ip_lifecycle_status || row.status || 'available';
-  const hasActiveLease = activeLease(row.dhcp_expires_at);
-  const hasDhcpReservation = truthy(row.has_dhcp_reservation);
-  const hasStaticDns = truthy(row.has_static_dns);
   const isOnline = truthy(row.is_online);
   const isRogue = truthy(row.is_rogue);
-  const isStaticDns = hasStaticDns || (row.detection_source === 'dns' && !!row.hostname);
+  const allocationState = row.allocation_state || ALLOCATION_STATE.UNASSIGNED;
 
   let addressType = null;
-  let displayStatus = 'available';
+  const inDynamicPool = truthy(row.in_dynamic_pool)
+    || row.range_type_name === 'DHCP Scope'
+    || row.range_type_name === 'DHCP Pool';
+  let displayStatus = displayStatusFor({ allocationState, inDynamicPool });
   let statusSeverity = 'secondary';
   let tooltip = null;
 
-  if (row.range_type_name === 'Network' || row.range_type_name === 'Broadcast') {
+  if (allocationState === ALLOCATION_STATE.SYSTEM) {
     addressType = ADDRESS_TYPE.SYSTEM;
-  } else if (row.range_type_name === 'Gateway') {
+  } else if (allocationState === ALLOCATION_STATE.GATEWAY) {
     addressType = ADDRESS_TYPE.GATEWAY;
-  } else if (truthy(row.is_local_address)) {
-    // An address the appliance itself holds. Ahead of the isRogue branch on
-    // purpose, so a row mislabelled by the old behaviour reads correctly
-    // straight away rather than waiting for the next scan to clear the flag.
-    addressType = ADDRESS_TYPE.SYSTEM;
-    tooltip = 'This CIDRella interface';
-  } else if (isRogue) {
+  } else if (allocationState === ALLOCATION_STATE.QUARANTINED) {
+    addressType = ADDRESS_TYPE.QUARANTINED;
+    tooltip = row.allocation_conflict_reason || 'Conflicting allocation claims';
+  } else if (allocationState === ALLOCATION_STATE.RESERVED) {
+    addressType = ADDRESS_TYPE.RESERVED;
+    tooltip = row.reservation_note || null;
+  } else if (allocationState === ALLOCATION_STATE.STATIC_DNS) {
+    addressType = ADDRESS_TYPE.STATIC_DNS;
+  } else if (allocationState === ALLOCATION_STATE.STATIC_DHCP) {
+    addressType = ADDRESS_TYPE.RESERVED_DHCP;
+  } else if (allocationState === ALLOCATION_STATE.DYNAMIC_DHCP) {
+    addressType = ADDRESS_TYPE.DYNAMIC_DHCP;
+  } else if (allocationState === ALLOCATION_STATE.SLAAC) {
+    addressType = ADDRESS_TYPE.SLAAC;
+  } else if (allocationState === ALLOCATION_STATE.UNASSIGNED && isRogue) {
     addressType = ADDRESS_TYPE.ROGUE;
     tooltip = row.rogue_reason || null;
-  } else if (isOnline && ipLifecycleStatus === 'available' && !hasDhcpReservation && !row.hostname && !hasActiveLease && !hasStaticDns) {
-    addressType = ADDRESS_TYPE.ROGUE;
-  } else if (hasDhcpReservation) {
-    addressType = ADDRESS_TYPE.RESERVED_DHCP;
-  } else if (hasActiveLease) {
-    addressType = ADDRESS_TYPE.DYNAMIC_DHCP;
-  } else if (ipLifecycleStatus === 'locked') {
-    addressType = ADDRESS_TYPE.LOCKED;
-    tooltip = row.reservation_note || null;
-  } else if (ipLifecycleStatus === 'assigned' || isStaticDns) {
-    addressType = ADDRESS_TYPE.STATIC_DNS;
-  } else if (isOnline && (ipLifecycleStatus === 'available' || ipLifecycleStatus === 'dhcp')) {
-    // No hasStaticDns guard needed here: the isStaticDns branch directly above
-    // already claimed every such row. The guard belongs on the earlier
-    // available-and-online branch, which runs BEFORE that claim and was
-    // therefore labelling DNS-named hosts rogue on sight.
+  } else if (allocationState === ALLOCATION_STATE.UNASSIGNED && isOnline) {
     addressType = ADDRESS_TYPE.ROGUE;
   }
 
@@ -75,7 +64,11 @@ export function computeIpView(row) {
   }
 
   return {
-    ip_lifecycle_status: ipLifecycleStatus,
+    allocation_state: allocationState,
+    address_conflict: allocationState !== ALLOCATION_STATE.UNASSIGNED && isRogue,
+    address_conflict_reason: allocationState !== ALLOCATION_STATE.UNASSIGNED && isRogue
+      ? (row.rogue_reason || null)
+      : null,
     ip_display_status: displayStatus,
     ip_status_severity: statusSeverity,
     address_type: addressType,
@@ -83,21 +76,30 @@ export function computeIpView(row) {
   };
 }
 
+export function buildIpAggregate(row) {
+  const canonical = canonicalizeIp(row.ip_address);
+  return {
+    ...row,
+    ip_address: canonical || row.ip_address,
+    address_family: row.address_family ?? addressFamily(row.ip_address),
+    address_sort_key: row.address_sort_key ?? sortKey(row.ip_address),
+    ...computeIpView(row)
+  };
+}
+
 export function applyIpView(row) {
-  const view = computeIpView(row);
-  Object.assign(row, view);
+  Object.assign(row, buildIpAggregate(row));
+  const view = row;
   row.computed_type = view.address_type || 'available';
   return row;
 }
 
-/**
- * Addresses claimed by a manual forward A record. Delegates to the single
- * definition in dns-record.js. The `ips` argument is accepted for call-site
- * compatibility but no longer needed to filter: the record set is bounded by
- * what the operator created, so one unchunked query beats N chunked ones.
- */
-export function getStaticDnsIpSet(db, _ips) {
-  return DnsRecord.dnsAssignedIpSet(db);
+function identityKey(row) {
+  return JSON.stringify([
+    row.subnet_id,
+    row.ip_address,
+    row.interface_id ?? null
+  ]);
 }
 
 export function getIpStateMap(db, rows) {
@@ -108,14 +110,17 @@ export function getIpStateMap(db, rows) {
     const chunk = addresses.slice(i, i + CHUNK_SIZE);
     if (!chunk.length) continue;
     const stateRows = db.prepare(`
-      SELECT subnet_id, ip_address, hostname, mac_address, last_seen_mac, status,
+      SELECT subnet_id, ip_address, hostname, mac_address, last_seen_mac,
              is_online, is_rogue, rogue_reason, detection_source,
-             last_seen_at, last_scanned_at, reservation_note, scan_enabled
+             last_seen_at, last_scanned_at, reservation_note, scan_enabled,
+             allocation_state, allocation_source_type, allocation_source_id,
+             address_family, address_sort_key, interface_id, preferred_until,
+             valid_until, dhcp_version
         FROM ip_addresses
        WHERE ip_address IN (${chunk.map(() => '?').join(',')})
     `).all(...chunk);
     for (const row of stateRows) {
-      map.set(`${row.subnet_id}:${row.ip_address}`, row);
+      map.set(identityKey(row), row);
     }
   }
   return map;
@@ -125,13 +130,53 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
   if (!rows?.length) return rows || [];
 
   const stateMap = fillFromIpAddress ? getIpStateMap(db, rows) : new Map();
-  const staticDnsIps = getStaticDnsIpSet(db, rows.map(r => r.ip_address));
-  const localIps = localIpv4Set();
+  const subnetIds = [...new Set(rows.map(row => row.subnet_id).filter(id => id !== null && id !== undefined))];
+  const subnetScanMap = new Map();
+  const networkRangeTypesBySubnet = new Map();
+  const CHUNK_SIZE = 900;
+  for (let i = 0; i < subnetIds.length; i += CHUNK_SIZE) {
+    const chunk = subnetIds.slice(i, i + CHUNK_SIZE);
+    const subnetRows = db.prepare(`
+      SELECT id, scan_enabled
+        FROM subnets
+       WHERE id IN (${chunk.map(() => '?').join(',')})
+    `).all(...chunk);
+    for (const subnet of subnetRows) subnetScanMap.set(subnet.id, subnet.scan_enabled);
+
+    const networkRangeRows = db.prepare(`
+      SELECT r.id, r.subnet_id, r.start_ip, r.end_ip,
+             rt.id as range_type_id, rt.name, rt.color
+        FROM ranges r
+        JOIN range_types rt ON rt.id = r.range_type_id
+       WHERE r.subnet_id IN (${chunk.map(() => '?').join(',')})
+         AND rt.is_system = 0
+       ORDER BY r.start_ip
+    `).all(...chunk);
+    for (const range of networkRangeRows) {
+      const start = parseIp(range.start_ip);
+      const end = parseIp(range.end_ip);
+      if (!start || !end || start.bits !== 32 || end.bits !== 32) continue;
+      const subnetRanges = networkRangeTypesBySubnet.get(range.subnet_id) || [];
+      subnetRanges.push({ ...range, start: start.value, end: end.value });
+      networkRangeTypesBySubnet.set(range.subnet_id, subnetRanges);
+    }
+  }
+  const globalScanDefault = db.prepare(
+    "SELECT value FROM settings WHERE key = 'default_scan_enabled'"
+  ).get()?.value;
 
   for (const row of rows) {
-    const state = stateMap.get(`${row.subnet_id}:${row.ip_address}`);
+    const state = stateMap.get(identityKey(row));
     if (state) {
-      row.ip_lifecycle_status = state.status || 'available';
+      row.allocation_state = state.allocation_state;
+      row.allocation_source_type = state.allocation_source_type;
+      row.allocation_source_id = state.allocation_source_id;
+      row.address_family = state.address_family;
+      row.address_sort_key = state.address_sort_key;
+      row.interface_id = state.interface_id;
+      row.preferred_until = state.preferred_until;
+      row.valid_until = state.valid_until;
+      row.dhcp_version = state.dhcp_version;
       row.is_online = !!state.is_online;
       row.is_rogue = state.is_rogue || 0;
       row.rogue_reason = state.rogue_reason || null;
@@ -145,21 +190,26 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
         row.mac_address = state.mac_address || state.last_seen_mac;
       }
       if (!row.last_seen_mac && state.last_seen_mac) row.last_seen_mac = state.last_seen_mac;
-    } else if (!row.ip_lifecycle_status) {
-      row.ip_lifecycle_status = row.status || 'available';
     }
 
-    // `undefined` is the sentinel for "nobody has computed this yet". A
-    // persisted row arrives with the value already computed in SQL and must
-    // keep it. A synthesized placeholder must leave the field OFF rather than
-    // defaulting it to 0, or it silently opts out of this fallback and renders
-    // as available while a manual A record points at it (audit #23).
-    if (row.has_static_dns === undefined) {
-      row.has_static_dns = staticDnsIps.has(row.ip_address) ? 1 : 0;
+    row.network_range_type_id = null;
+    row.network_range_type = null;
+    row.network_range_type_color = null;
+    const parsedAddress = parseIp(row.ip_address);
+    if (parsedAddress?.bits === 32) {
+      const matchingRange = (networkRangeTypesBySubnet.get(row.subnet_id) || [])
+        .find(range => parsedAddress.value >= range.start && parsedAddress.value <= range.end);
+      if (matchingRange) {
+        row.network_range_type_id = matchingRange.range_type_id;
+        row.network_range_type = matchingRange.name;
+        row.network_range_type_color = matchingRange.color;
+      }
     }
-    if (row.is_local_address === undefined) {
-      row.is_local_address = localIps.has(row.ip_address) ? 1 : 0;
-    }
+
+    row.scanning_enabled = row.subnet_id === null || row.subnet_id === undefined
+      ? false
+      : resolveScanningEnabled(row.scan_enabled, subnetScanMap.get(row.subnet_id), globalScanDefault);
+
     applyIpView(row);
   }
 
@@ -173,6 +223,10 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
     row.device_type = fp?.device_type || null;
     row.os_family = fp?.os_family || null;
     row.device_confidence = fp?.confidence ?? null;
+    row.dhcp_fingerprint = fp?.dhcp_fingerprint || null;
+    row.dhcp_vendor_class = fp?.vendor_class || null;
+    row.dhcp_fingerprint_hostname = fp?.dhcp_hostname || null;
+    row.device_fingerprint_source = fp?.source || null;
   }
 
   return rows;

@@ -1,5 +1,5 @@
 <!-- Network settings. Extracted from System.vue tab 0 (1:1): naming-template
-     settings, scan settings, and the Address Types / range-types table with
+     settings, scan settings, and the Network Range Types table with
      its add/edit/delete dialogs + its own row context menu. Loads on mount. -->
 <template>
   <div>
@@ -43,9 +43,7 @@
         </div>
         <div class="field">
           <label>Offline Host Detail Retention</label>
-          <Select v-model="settings.offline_metadata_retention_days" :options="historyRetentionOptions" optionLabel="label" optionValue="value"
-                  class="w-full" style="max-width: 16rem;" />
-          <small class="field-help">How long a dynamically assigned address keeps what was learned about it (MAC, hostname, vendor, device) after the host goes offline. Addresses with a static DNS record, a DHCP reservation, or a manual assignment keep theirs until you delete the record.</small>
+          <small class="field-help">Dynamic and rogue host details are retired after one continuous hour offline. Static DNS and DHCP assignments keep their observations until the assignment is changed or removed.</small>
         </div>
         <hr style="border: none; border-top: 1px solid var(--p-surface-border); margin: 0.75rem 0;" />
         <div class="field">
@@ -65,17 +63,20 @@
 
       <div class="content-card">
         <div class="card-header">
-          <h3>Address Types</h3>
-          <Button label="Add Type" icon="pi pi-plus" size="small" text data-track="sys-add-range-type" @click="showRangeTypeDialog = true" />
+          <h3>Network Range Types</h3>
+          <Button label="Add Range Type" icon="pi pi-plus" size="small" text data-track="sys-add-range-type" @click="showRangeTypeDialog = true" />
         </div>
+        <p class="field-help range-type-help">
+          Optional organizational labels for ranges in the IP grid. They do not change DNS, DHCP, scanning, allocation, or topology behavior.
+        </p>
         <div class="range-types-section">
-            <DataTable :value="rangeTypes" :loading="loadingRangeTypes" stripedRows size="small"
-                       :paginator="rangeTypes.length > 256" :rows="256"
+            <DataTable :value="customRangeTypes" :loading="loadingRangeTypes" stripedRows size="small"
+                       :paginator="customRangeTypes.length > 256" :rows="256"
                        :rowsPerPageOptions="[64, 128, 256, 512]"
                        @row-contextmenu="onRangeTypeRightClick" contextMenu
                        scrollable scrollHeight="flex">
               <template #empty>
-                <EmptyState icon="pi-tags" title="No address types" />
+                <EmptyState icon="pi-tags" title="No Network Range Types" description="Add a type, then assign it to selected addresses from the network grid." />
               </template>
               <Column header="Color" style="width: 4rem">
                 <template #body="{ data }">
@@ -86,13 +87,6 @@
               <Column field="description" header="Description">
                 <template #body="{ data }">{{ data.description ?? EMPTY_CELL }}</template>
               </Column>
-              <Column header="Type" style="width: 7rem">
-                <template #body="{ data }">
-                  <span :class="data.is_system ? 'badge badge-muted' : 'badge badge-primary'">
-                    {{ data.is_system ? 'System' : 'Custom' }}
-                  </span>
-                </template>
-              </Column>
             </DataTable>
         </div>
       </div>
@@ -100,8 +94,8 @@
 
     <ContextMenu ref="rangeTypeContextMenuRef" :model="rangeTypeContextMenuItems" />
 
-    <!-- Address Type Dialog -->
-    <Dialog v-model:visible="showRangeTypeDialog" :header="editingRangeType ? 'Edit Address Type' : 'Add Address Type'"
+    <!-- Network Range Type Dialog -->
+    <Dialog v-model:visible="showRangeTypeDialog" :header="editingRangeType ? 'Edit Network Range Type' : 'Add Network Range Type'"
             modal :style="{ width: '24rem' }">
       <div class="form-grid">
         <div class="field">
@@ -126,9 +120,9 @@
       </template>
     </Dialog>
 
-    <!-- Delete Address Type Dialog -->
-    <Dialog v-model:visible="showDeleteRangeTypeDialog" header="Delete Address Type" modal :style="{ width: '24rem' }">
-      <p>Delete address type <strong>{{ deletingRangeType?.name }}</strong>?</p>
+    <!-- Delete Network Range Type Dialog -->
+    <Dialog v-model:visible="showDeleteRangeTypeDialog" header="Delete Network Range Type" modal :style="{ width: '24rem' }">
+      <p>Delete Network Range Type <strong>{{ deletingRangeType?.name }}</strong>?</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteRangeTypeDialog = false" />
         <Button label="Delete" severity="danger" @click="doDeleteRangeType" :loading="savingRangeType" />
@@ -165,8 +159,7 @@ const settings = ref({
   subnet_name_template: '%1.%2.%3.%4/%bitmask',
   default_scan_interval: 'off',
   default_scan_enabled: true,
-  ip_history_retention_days: '7',
-  offline_metadata_retention_days: '7'
+  ip_history_retention_days: '7'
 });
 const savedSettings = ref(null);
 
@@ -177,8 +170,7 @@ const settingsDirty = computed(() => {
   return c.subnet_name_template !== s.subnet_name_template ||
     c.default_scan_interval !== s.default_scan_interval ||
     c.default_scan_enabled !== s.default_scan_enabled ||
-    c.ip_history_retention_days !== s.ip_history_retention_days ||
-    c.offline_metadata_retention_days !== s.offline_metadata_retention_days;
+    c.ip_history_retention_days !== s.ip_history_retention_days;
 });
 const scanIntervalOptions = [
   { label: 'Off', value: 'off' },
@@ -241,7 +233,6 @@ async function saveSettings() {
         default_scan_interval: settings.value.default_scan_interval === 'off' ? '' : settings.value.default_scan_interval,
         default_scan_enabled: settings.value.default_scan_enabled ? '1' : '0',
         ip_history_retention_days: settings.value.ip_history_retention_days,
-        offline_metadata_retention_days: settings.value.offline_metadata_retention_days,
       }
     });
     savedSettings.value = { ...settings.value };
@@ -253,8 +244,9 @@ async function saveSettings() {
   }
 }
 
-// Address Types
+// Network Range Types
 const rangeTypes = ref([]);
+const customRangeTypes = computed(() => rangeTypes.value.filter(type => !type.is_system));
 const loadingRangeTypes = ref(false);
 const savingRangeType = ref(false);
 const showRangeTypeDialog = ref(false);
@@ -315,15 +307,15 @@ async function doDeleteRangeType() {
   } finally { savingRangeType.value = false; }
 }
 
-// Address Types context menu
+// Network Range Types context menu
 const rangeTypeContextMenuRef = ref();
 const selectedRangeType = ref(null);
 const rangeTypeContextMenuItems = computed(() => {
   const r = selectedRangeType.value;
   if (!r || r.is_system) return [];
   return [
-    { label: 'Edit Type', icon: 'pi pi-pencil', command: () => editRangeType(r) },
-    { label: 'Delete Type', icon: 'pi pi-trash', command: () => confirmDeleteRangeType(r) }
+    { label: 'Edit Range Type', icon: 'pi pi-pencil', command: () => editRangeType(r) },
+    { label: 'Delete Range Type', icon: 'pi pi-trash', command: () => confirmDeleteRangeType(r) }
   ];
 });
 function onRangeTypeRightClick(event) {
@@ -344,8 +336,7 @@ onMounted(async () => {
       subnet_name_template: data.subnet_name_template || '%1.%2.%3.%4/%bitmask',
       default_scan_interval: data.default_scan_interval || 'off',
       default_scan_enabled: data.default_scan_enabled === '1' || data.default_scan_enabled === true,
-      ip_history_retention_days: data.ip_history_retention_days || '7',
-      offline_metadata_retention_days: data.offline_metadata_retention_days || '7'
+      ip_history_retention_days: data.ip_history_retention_days || '7'
     };
     settings.value = { ...vals };
     savedSettings.value = { ...vals };

@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { activeLeaseSql, infiniteLeaseFirstSql } from '../../../src/utils/lease-sql.js';
+import {
+  activeLeaseSql,
+  infiniteLeaseFirstSql,
+  isLeaseActive,
+  leaseExpiryMs
+} from '../../../src/utils/lease-sql.js';
 
 /**
  * Duplicate-logic audit #26. The active-lease predicate was hand-written in 13
@@ -67,7 +72,7 @@ describe('#26: the predicate actually runs and selects the right rows', () => {
 
 describe('#26: the known divergence from the JS twin', () => {
   it('is a sub-second boundary only, and is recorded on purpose', async () => {
-    // models/ip-view.js activeLease() uses millisecond precision and >=.
+    // isLeaseActive() uses millisecond precision and >=.
     // The SQL truncates to whole seconds and uses >. They can therefore
     // disagree only about a lease expiring within the current second. This
     // test exists so the divergence stays a decision rather than becoming a
@@ -82,5 +87,22 @@ describe('#26: the known divergence from the JS twin', () => {
     // SQL: expires exactly now is NOT active, because it uses strict >.
     expect(sqlSaysActive).toBe(0);
     db.close();
+  });
+});
+
+describe('JavaScript lease expiry parsing', () => {
+  it('treats SQLite datetime text as UTC rather than server local time', () => {
+    expect(leaseExpiryMs('2031-05-20 12:00:00'))
+      .toBe(Date.parse('2031-05-20T12:00:00Z'));
+    expect(isLeaseActive('2031-05-20 12:00:00', Date.parse('2031-05-20T12:00:01Z')))
+      .toBe(false);
+  });
+
+  it('supports ISO, infinite, empty, and invalid values', () => {
+    expect(isLeaseActive('2031-05-20T12:00:00.000Z', Date.parse('2031-05-20T11:59:59Z')))
+      .toBe(true);
+    expect(isLeaseActive('infinite')).toBe(true);
+    expect(isLeaseActive(null)).toBe(false);
+    expect(isLeaseActive('not-a-date')).toBe(false);
   });
 });

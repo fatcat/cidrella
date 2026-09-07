@@ -14,17 +14,34 @@ export function upsertFingerprint(db, fp) {
     VALUES (@mac_address, @dhcp_fingerprint, @vendor_class, @dhcp_hostname,
             @device_type, @os_family, @confidence, @source, @raw)
     ON CONFLICT(mac_address) DO UPDATE SET
-      dhcp_fingerprint = excluded.dhcp_fingerprint,
-      vendor_class     = excluded.vendor_class,
-      dhcp_hostname    = excluded.dhcp_hostname,
+      dhcp_fingerprint = COALESCE(excluded.dhcp_fingerprint, device_fingerprints.dhcp_fingerprint),
+      vendor_class     = COALESCE(excluded.vendor_class, device_fingerprints.vendor_class),
+      dhcp_hostname    = COALESCE(excluded.dhcp_hostname, device_fingerprints.dhcp_hostname),
       last_seen_at     = datetime('now'),
       updated_at       = datetime('now'),
-      -- don't let a fresh dhcp capture overwrite a manual override
-      device_type = CASE WHEN device_fingerprints.source = 'manual' THEN device_fingerprints.device_type ELSE excluded.device_type END,
-      os_family   = CASE WHEN device_fingerprints.source = 'manual' THEN device_fingerprints.os_family   ELSE excluded.os_family   END,
-      confidence  = CASE WHEN device_fingerprints.source = 'manual' THEN device_fingerprints.confidence  ELSE excluded.confidence  END,
+      -- Manual overrides stay sticky. Automatic results keep the strongest
+      -- classification seen so an incomplete renewal cannot erase or
+      -- downgrade useful evidence.
+      device_type = CASE
+        WHEN device_fingerprints.source = 'manual' THEN device_fingerprints.device_type
+        WHEN device_fingerprints.device_type IS NULL THEN excluded.device_type
+        WHEN excluded.confidence >= device_fingerprints.confidence
+          THEN COALESCE(excluded.device_type, device_fingerprints.device_type)
+        ELSE device_fingerprints.device_type
+      END,
+      os_family = CASE
+        WHEN device_fingerprints.source = 'manual' THEN device_fingerprints.os_family
+        WHEN device_fingerprints.os_family IS NULL THEN excluded.os_family
+        WHEN excluded.confidence >= device_fingerprints.confidence
+          THEN COALESCE(excluded.os_family, device_fingerprints.os_family)
+        ELSE device_fingerprints.os_family
+      END,
+      confidence = CASE
+        WHEN device_fingerprints.source = 'manual' THEN device_fingerprints.confidence
+        ELSE MAX(device_fingerprints.confidence, excluded.confidence)
+      END,
       source      = device_fingerprints.source,
-      raw         = excluded.raw
+      raw         = COALESCE(excluded.raw, device_fingerprints.raw)
   `).run({
     mac_address: String(fp.mac_address).toLowerCase(),
     dhcp_fingerprint: fp.dhcp_fingerprint ?? null,
@@ -43,7 +60,7 @@ export function getByMac(db, mac) {
   return db.prepare('SELECT * FROM device_fingerprints WHERE mac_address = ?').get(String(mac).toLowerCase()) || null;
 }
 
-// Batch lookup → Map<mac, {device_type, os_family, confidence}>. Mirrors
+// Batch lookup → Map<mac, fingerprint projection>. Mirrors
 // lookupVendorBatch so enrichIpViewRows can attach fields cheaply. Returns an
 // empty map fast when the table is empty.
 export function lookupFingerprintBatch(db, macs) {
@@ -53,7 +70,12 @@ export function lookupFingerprintBatch(db, macs) {
   const count = db.prepare('SELECT COUNT(*) AS c FROM device_fingerprints').get();
   if (!count || count.c === 0) return result;
 
-  const stmt = db.prepare('SELECT device_type, os_family, confidence FROM device_fingerprints WHERE mac_address = ?');
+  const stmt = db.prepare(`
+    SELECT dhcp_fingerprint, vendor_class, dhcp_hostname,
+           device_type, os_family, confidence, source
+      FROM device_fingerprints
+     WHERE mac_address = ?
+  `);
   for (const mac of macs) {
     if (!mac) continue;
     const row = stmt.get(String(mac).toLowerCase());

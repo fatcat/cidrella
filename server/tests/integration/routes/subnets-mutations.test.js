@@ -165,18 +165,158 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
     expect(getA.body.domain_name).toBeNull();
     expect(getB.body.domain_name).toBeNull();
   });
+
+  it('disabling, re-enabling, and deleting a zone updates IP allocation authority', async () => {
+    const s = await mkSubnet({
+      cidr: '10.37.0.0/24', name: 'zone-lifecycle', status: 'allocated', gateway_address: '10.37.0.1'
+    });
+    await configure(s.id, {
+      name: 'zone-lifecycle', create_reverse_dns: false, create_dhcp_scope: false,
+      domain_name: 'zone-lifecycle.test'
+    });
+    const zone = await findZone('zone-lifecycle.test');
+    const created = await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
+      name: 'host', type: 'A', value: '10.37.0.50'
+    });
+    expect(created.status).toBe(201);
+
+    const { getDb } = await import('../../../src/db/init.js');
+    const db = getDb();
+    expect(db.prepare(`
+      SELECT allocation_state, allocation_source_type
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?
+    `).get(s.id, '10.37.0.1')).toMatchObject({
+      allocation_state: 'gateway',
+      allocation_source_type: 'topology'
+    });
+    const allocation = () => db.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?
+    `).get(s.id, '10.37.0.50');
+    expect(allocation()).toMatchObject({
+      allocation_state: 'static_dns',
+      allocation_source_type: 'dns',
+      hostname: 'host.zone-lifecycle.test'
+    });
+
+    const disabled = await request(app).put(`/api/dns/zones/${zone.id}`).send({ enabled: false });
+    expect(disabled.status).toBe(200);
+    expect(allocation()).toMatchObject({
+      allocation_state: 'unassigned',
+      allocation_source_type: null,
+      hostname: null
+    });
+
+    const enabled = await request(app).put(`/api/dns/zones/${zone.id}`).send({ enabled: true });
+    expect(enabled.status).toBe(200);
+    expect(allocation()).toMatchObject({
+      allocation_state: 'static_dns',
+      allocation_source_type: 'dns',
+      hostname: 'host.zone-lifecycle.test'
+    });
+
+    const deleted = await request(app).delete(`/api/dns/zones/${zone.id}`);
+    expect(deleted.status).toBe(200);
+    expect(allocation()).toMatchObject({
+      allocation_state: 'unassigned',
+      allocation_source_type: null,
+      hostname: null
+    });
+  });
 });
 
-// --- DNS record rename clears stale ip_addresses.hostname --------------
-//
-// Prior to the bug fix, PUT /api/dns/zones/:zoneId/records/:id only called
-// clearDnsFromIp when the record's VALUE changed. A name-only rename on the
-// same IP would leave the old FQDN on ip_addresses.hostname (still sort of
-// OK because syncDnsToIp then overwrites). The more dangerous path was
-// DELETE paths that skipped clearDnsFromIp (pre-refactor test data, SQL
-// edits), leaving orphan rows that later flagged as lossy on divide.
-// reconcileDnsOrphans on startup is the safety net.
-describe('ip-sync orphan cleanup', () => {
+// --- DNS record lifecycle keeps ip_addresses.hostname synchronized ------
+describe('DNS address metadata sync', () => {
+  it('projects shared IP metadata through Networks, DNS, and DHCP reads', async () => {
+    const s = await mkSubnet({
+      cidr: '10.129.0.0/29', name: 'scan-read-model', status: 'allocated',
+      gateway_address: '10.129.0.1', scan_enabled: false
+    });
+    await configure(s.id, {
+      name: 'scan-read-model', create_reverse_dns: true, create_dhcp_scope: true,
+      dhcp_start_ip: '10.129.0.2', dhcp_end_ip: '10.129.0.5',
+      domain_name: 'scan-read-model.test'
+    });
+    const override = await request(app)
+      .put(`/api/subnets/${s.id}/ips/10.129.0.2/scan-enabled`)
+      .send({ scan_enabled: true });
+    expect(override.status).toBe(200);
+    const { getDb } = await import('../../../src/db/init.js');
+    const DeviceFingerprint = await import('../../../src/models/device-fingerprint.js');
+    getDb().prepare(`
+      UPDATE ip_addresses SET mac_address = ? WHERE subnet_id = ? AND ip_address = ?
+    `).run('aa:bb:cc:dd:ee:29', s.id, '10.129.0.2');
+    const rangeTypeId = getDb().prepare(`
+      INSERT INTO range_types (name, color, is_system, description)
+      VALUES ('Read Model Tag 129', '#0ea5e9', 0, 'Organizational only')
+    `).run().lastInsertRowid;
+    getDb().prepare(`
+      INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
+      VALUES (?, ?, '10.129.0.2', '10.129.0.3')
+    `).run(s.id, rangeTypeId);
+    DeviceFingerprint.upsertFingerprint(getDb(), {
+      mac_address: 'aa:bb:cc:dd:ee:29',
+      dhcp_fingerprint: '1,3,6,15,31,33,43,44,46,47,121,249,252',
+      vendor_class: 'MSFT 5.0',
+      dhcp_hostname: 'DESKTOP-ROUTES',
+      device_type: 'Computer', os_family: 'Windows', confidence: 85, source: 'dhcp'
+    });
+
+    const fingerprint = {
+      device_type: 'Computer', os_family: 'Windows', device_confidence: 85,
+      dhcp_fingerprint: '1,3,6,15,31,33,43,44,46,47,121,249,252',
+      dhcp_vendor_class: 'MSFT 5.0',
+      dhcp_fingerprint_hostname: 'DESKTOP-ROUTES', device_fingerprint_source: 'dhcp'
+    };
+    const networkRangeType = {
+      network_range_type_id: Number(rangeTypeId),
+      network_range_type: 'Read Model Tag 129',
+      network_range_type_color: '#0ea5e9'
+    };
+
+    const network = await request(app).get(`/api/subnets/${s.id}/ips?search=10.129.0.2`);
+    expect(network.body.ips[0]).toMatchObject({
+      ip_address: '10.129.0.2', scan_enabled: 1, scanning_enabled: true,
+      ...fingerprint, ...networkRangeType
+    });
+
+    const zone = await findZone('0.129.10.in-addr.arpa');
+    const dns = await request(app).get(`/api/dns/zones/${zone.id}/records`);
+    expect(dns.body.find(row => row.ip_address === '10.129.0.2')).toMatchObject({
+      scan_enabled: 1, scanning_enabled: true, ...fingerprint, ...networkRangeType
+    });
+
+    const scopes = await request(app).get('/api/dhcp/scopes');
+    const scope = scopes.body.find(row => row.subnet_id === s.id);
+    const dhcp = await request(app).get(`/api/dhcp/scopes/${scope.id}/addresses`);
+    expect(dhcp.body.find(row => row.ip_address === '10.129.0.2')).toMatchObject({
+      scan_enabled: 1, scanning_enabled: true, ...fingerprint, ...networkRangeType
+    });
+  });
+
+  it('projects reverse DNS rows through the same canonical IP read model', async () => {
+    const s = await mkSubnet({
+      cidr: '10.89.0.0/29', name: 'reverse-read-model', status: 'allocated', gateway_address: '10.89.0.1'
+    });
+    await configure(s.id, {
+      name: 'reverse-read-model', create_reverse_dns: true, create_dhcp_scope: false,
+      domain_name: 'reverse-read-model.test'
+    });
+
+    const zone = await findZone('0.89.10.in-addr.arpa');
+    const records = await request(app).get(`/api/dns/zones/${zone.id}/records`);
+    expect(records.status).toBe(200);
+
+    const gateway = records.body.find(record => record.name === '1');
+    expect(gateway).toMatchObject({
+      ip_address: '10.89.0.1',
+      subnet_id: s.id,
+      allocation_state: 'gateway',
+      address_type: 'gateway',
+      ip_display_status: 'in use'
+    });
+  });
+
   it('normalizes A-record names against the target IP subnet domain', async () => {
     const s = await mkSubnet({
       cidr: '10.83.0.0/24', name: 'dns-normalize', status: 'allocated', gateway_address: '10.83.0.1'
@@ -197,6 +337,13 @@ describe('ip-sync orphan cleanup', () => {
     });
     expect(external.status).toBe(201);
     expect(external.body.name).toBe('host-two.google.com.');
+
+    const records = await request(app).get(`/api/dns/zones/${zone.id}/records`);
+    expect(records.status).toBe(200);
+    expect(records.body.find(record => record.id === fqdn.body.id)?.record_fqdn)
+      .toBe('host-one.dns-normalize.test');
+    expect(records.body.find(record => record.id === external.body.id)?.record_fqdn)
+      .toBe('host-two.google.com.');
 
     const ips = await request(app).get(`/api/subnets/${s.id}/ips?page=1&pageSize=256`);
     const one = ips.body.ips.find(r => r.ip_address === '10.83.0.50');
@@ -281,66 +428,6 @@ describe('ip-sync orphan cleanup', () => {
     expect(del.status).toBe(403);
   });
 
-  it('reconcileDnsOrphans clears hostname on ip_addresses rows without a backing DNS record', async () => {
-    const { reconcileDnsOrphans } = await import('../../../src/utils/ip-sync.js');
-    const { getDb } = await import('../../../src/db/init.js');
-    const db = getDb();
-
-    const s = await mkSubnet({
-      cidr: '10.81.0.0/24', name: 'orphan-src', status: 'allocated', gateway_address: '10.81.0.1'
-    });
-    await configure(s.id, {
-      name: 'orphan-src', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'orphan-src.test'
-    });
-
-    // Plant a phantom DNS-sourced row: hostname points at a zone-qualified
-    // FQDN that has no backing dns_records row. This simulates the pre-
-    // refactor orphan state.
-    db.prepare(`
-      INSERT OR REPLACE INTO ip_addresses
-        (subnet_id, ip_address, hostname, status, detection_source, updated_at)
-      VALUES (?, ?, ?, 'available', 'dns', datetime('now'))
-    `).run(s.id, '10.81.0.77', 'ghost.orphan-src.test');
-
-    const before = db.prepare('SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
-      .get(s.id, '10.81.0.77');
-    expect(before.hostname).toBe('ghost.orphan-src.test');
-
-    const cleared = reconcileDnsOrphans(db);
-    expect(cleared).toBeGreaterThanOrEqual(1);
-
-    const after = db.prepare('SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
-      .get(s.id, '10.81.0.77');
-    expect(after.hostname).toBeNull();
-    expect(after.detection_source).toBeNull();
-  });
-
-  it('reconcileDnsOrphans does NOT touch rows with a real backing A record', async () => {
-    const { reconcileDnsOrphans } = await import('../../../src/utils/ip-sync.js');
-    const { getDb } = await import('../../../src/db/init.js');
-    const db = getDb();
-
-    const s = await mkSubnet({
-      cidr: '10.82.0.0/24', name: 'orphan-keep', status: 'allocated', gateway_address: '10.82.0.1'
-    });
-    await configure(s.id, {
-      name: 'orphan-keep', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'orphan-keep.test'
-    });
-    const zone = await findZone('orphan-keep.test');
-    await request(app).post(`/api/dns/zones/${zone.id}/records`).send({
-      name: 'keeper', type: 'A', value: '10.82.0.42'
-    });
-
-    // A-record create already wrote hostname='keeper.orphan-keep.test' with
-    // detection_source='dns', that's a REAL mapping. Reconcile must leave it.
-    reconcileDnsOrphans(db);
-
-    const row = db.prepare(
-      'SELECT hostname, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-    ).get(s.id, '10.82.0.42');
-    expect(row.hostname).toBe('keeper.orphan-keep.test');
-    expect(row.detection_source).toBe('dns');
-  });
 });
 
 // --- PUT /:id CIDR reject + gateway-in-pool guards --------------------
@@ -511,6 +598,118 @@ describe('gateway-in-pool invariant holds on every route that writes a pool', ()
   });
 });
 
+describe('Network Range Type grid assignment', () => {
+  it('warns before overlap, then replaces only the accepted portion', async () => {
+    const s = await mkSubnet({
+      cidr: '10.115.0.0/24',
+      name: 'range-tags',
+      status: 'allocated',
+      gateway_address: '10.115.0.1'
+    });
+    await configure(s.id, {
+      name: 'range-tags',
+      create_reverse_dns: false,
+      create_dhcp_scope: false
+    });
+
+    const { getDb } = await import('../../../src/db/init.js');
+    const db = getDb();
+    const printersId = Number(db.prepare(`
+      INSERT INTO range_types (name, color, is_system, description)
+      VALUES ('Printers 115', '#22c55e', 0, 'Organizational only')
+    `).run().lastInsertRowid);
+    const camerasId = Number(db.prepare(`
+      INSERT INTO range_types (name, color, is_system, description)
+      VALUES ('Cameras 115', '#f97316', 0, 'Organizational only')
+    `).run().lastInsertRowid);
+
+    const first = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/set-type`)
+      .send({
+        range_type_id: printersId,
+        ranges: [
+          { start_ip: '10.115.0.10', end_ip: '10.115.0.20' },
+          { start_ip: '10.115.0.30', end_ip: '10.115.0.31' }
+        ]
+      });
+    expect(first.status).toBe(200);
+    expect(first.body.created).toHaveLength(2);
+
+    const warned = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/set-type`)
+      .send({
+        range_type_id: camerasId,
+        ranges: [{ start_ip: '10.115.0.15', end_ip: '10.115.0.17' }]
+      });
+    expect(warned.status).toBe(409);
+    expect(warned.body).toMatchObject({ can_accept: true });
+    expect(warned.body.overlaps).toEqual([
+      expect.objectContaining({ type: 'Printers 115', start_ip: '10.115.0.10', end_ip: '10.115.0.20' })
+    ]);
+
+    const unchanged = db.prepare(`
+      SELECT rt.name, r.start_ip, r.end_ip
+      FROM ranges r JOIN range_types rt ON rt.id = r.range_type_id
+      WHERE r.subnet_id = ? AND rt.is_system = 0
+      ORDER BY r.start_ip
+    `).all(s.id);
+    expect(unchanged).toEqual([
+      { name: 'Printers 115', start_ip: '10.115.0.10', end_ip: '10.115.0.20' },
+      { name: 'Printers 115', start_ip: '10.115.0.30', end_ip: '10.115.0.31' }
+    ]);
+
+    const accepted = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/set-type`)
+      .send({
+        range_type_id: camerasId,
+        ranges: [{ start_ip: '10.115.0.15', end_ip: '10.115.0.17' }],
+        accept_overlaps: true
+      });
+    expect(accepted.status).toBe(200);
+
+    const ranges = db.prepare(`
+      SELECT rt.name, r.start_ip, r.end_ip
+      FROM ranges r JOIN range_types rt ON rt.id = r.range_type_id
+      WHERE r.subnet_id = ? AND rt.is_system = 0
+      ORDER BY r.start_ip
+    `).all(s.id);
+    expect(ranges).toEqual([
+      { name: 'Printers 115', start_ip: '10.115.0.10', end_ip: '10.115.0.14' },
+      { name: 'Cameras 115', start_ip: '10.115.0.15', end_ip: '10.115.0.17' },
+      { name: 'Printers 115', start_ip: '10.115.0.18', end_ip: '10.115.0.20' },
+      { name: 'Printers 115', start_ip: '10.115.0.30', end_ip: '10.115.0.31' }
+    ]);
+
+    const detail = await request(app).get(`/api/subnets/${s.id}/ips?page=1&pageSize=64`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.ips.find(row => row.ip_address === '10.115.0.16')).toMatchObject({
+      allocation_state: 'unassigned',
+      network_range_type: 'Cameras 115',
+      network_range_type_color: '#f97316'
+    });
+  });
+
+  it('refuses functional system range types', async () => {
+    const s = await mkSubnet({
+      cidr: '10.116.0.0/24',
+      name: 'range-tags-system',
+      status: 'allocated',
+      gateway_address: '10.116.0.1'
+    });
+    const { getDb } = await import('../../../src/db/init.js');
+    const networkType = getDb().prepare("SELECT id FROM range_types WHERE name = 'Network'").get();
+
+    const response = await request(app)
+      .put(`/api/subnets/${s.id}/ranges/set-type`)
+      .send({
+        range_type_id: networkType.id,
+        ranges: [{ start_ip: '10.116.0.10', end_ip: '10.116.0.20' }]
+      });
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/custom Network Range Types only/);
+  });
+});
+
 // folder_id is validated by one rule on all three routes that accept it. They
 // used to disagree on both type and existence, so the same body got 201, 200
 // and 400 depending on which route you sent it to.
@@ -584,7 +783,7 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
          SET hostname = 'restored-prod-lease',
              mac_address = 'aa:bb:cc:dd:ee:ff',
              last_seen_mac = 'aa:bb:cc:dd:ee:ff',
-             status = 'available',
+             allocation_state = 'unassigned',
              is_online = 1,
              detection_source = 'dhcp_lease',
              last_seen_at = datetime('now'),
@@ -601,14 +800,143 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
     expect(row).not.toHaveProperty('status');
     expect(row.dhcp_assignment_type).toBeNull();
     expect(row.lease_status).toBe('unavailable');
-    expect(row.ip_lifecycle_status).toBe('available');
+    expect(row.allocation_state).toBe('unassigned');
+    expect(row.ip_display_status).toBe('in use');
     expect(row.address_type).toBe('rogue');
     expect(row.is_online).toBe(true);
     expect(row.hostname).toBe('restored-prod-lease');
     expect(row.mac_address).toBe('aa:bb:cc:dd:ee:ff');
     expect(row.has_dhcp_reservation).toBe(0);
-    expect(row.has_static_dns).toBe(0);
     expect(row.dhcp_expires_at).toBeNull();
+  });
+
+  it('shows retained lease history as expired without occupying a scope address', async () => {
+    const s = await mkSubnet({
+      cidr: '10.45.0.0/24', name: 'scope-expired', status: 'allocated',
+      gateway_address: '10.45.0.1'
+    });
+    await configure(s.id, {
+      name: 'scope-expired', create_reverse_dns: false, create_dhcp_scope: true,
+      dhcp_start_ip: '10.45.0.100', dhcp_end_ip: '10.45.0.110'
+    });
+    const scopes = await request(app).get('/api/dhcp/scopes');
+    const scope = scopes.body.find(sc => sc.subnet_id === s.id);
+    const { getDb } = await import('../../../src/db/init.js');
+    getDb().prepare(`
+      INSERT INTO dhcp_leases
+        (subnet_id, ip_address, mac_address, hostname, expires_at)
+      VALUES (?, '10.45.0.104', 'aa:bb:cc:dd:ee:45', 'expired-host', datetime('now', '-1 second'))
+    `).run(s.id);
+
+    const leases = await request(app).get('/api/dhcp/leases');
+    const history = leases.body.find(row => row.subnet_id === s.id && row.ip_address === '10.45.0.104');
+    expect(history).toMatchObject({
+      dhcp_assignment_type: 'dynamic',
+      lease_status: 'expired',
+      hostname: 'expired-host'
+    });
+
+    const addresses = await request(app).get(`/api/dhcp/scopes/${scope.id}/addresses`);
+    expect(addresses.body.find(row => row.ip_address === '10.45.0.104')).toMatchObject({
+      dhcp_assignment_type: null,
+      lease_status: 'available'
+    });
+  });
+});
+
+describe('canonical IP allocation endpoints', () => {
+  it('reserves and releases one address through allocation_state', async () => {
+    const s = await mkSubnet({
+      cidr: '10.46.0.0/24', name: 'canonical-allocation', status: 'allocated',
+      gateway_address: '10.46.0.1'
+    });
+    await configure(s.id, {
+      name: 'canonical-allocation', create_reverse_dns: false,
+      create_dhcp_scope: false, gateway_address: '10.46.0.1'
+    });
+
+    const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
+    regenerateDhcpConfigs.mockClear();
+
+    const reserve = await request(app)
+      .put(`/api/subnets/${s.id}/ips/10.46.0.50/allocation`)
+      .send({ allocation_state: 'reserved', note: 'printer hold' });
+    expect(reserve.status).toBe(200);
+    expect(reserve.body).toMatchObject({
+      ip_address: '10.46.0.50',
+      allocation_state: 'reserved',
+      reservation_note: 'printer hold'
+    });
+    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(1));
+
+    const { getDb } = await import('../../../src/db/init.js');
+    expect(getDb().prepare(`
+      SELECT allocation_state, allocation_source_type, reservation_note
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = '10.46.0.50'
+    `).get(s.id)).toEqual({
+      allocation_state: 'reserved',
+      allocation_source_type: 'admin_reservation',
+      reservation_note: 'printer hold'
+    });
+
+    const ips = await request(app).get(`/api/subnets/${s.id}/ips?search=10.46.0.50`);
+    expect(ips.body.ips[0]).toMatchObject({
+      allocation_state: 'reserved',
+      ip_display_status: 'in use',
+      address_type: 'IP Reservation'
+    });
+    expect(ips.body.ips[0]).not.toHaveProperty('status');
+
+    const release = await request(app)
+      .put(`/api/subnets/${s.id}/ips/10.46.0.50/allocation`)
+      .send({ allocation_state: 'unassigned' });
+    expect(release.status).toBe(200);
+    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(2));
+    expect(getDb().prepare(`
+      SELECT allocation_state, allocation_source_type, reservation_note
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = '10.46.0.50'
+    `).get(s.id)).toEqual({
+      allocation_state: 'unassigned',
+      allocation_source_type: null,
+      reservation_note: null
+    });
+
+    const legacy = await request(app)
+      .put(`/api/subnets/${s.id}/ips/10.46.0.50/status`)
+      .send({ status: 'locked' });
+    expect(legacy.status).toBe(404);
+  });
+
+  it('bulk allocation skips protected topology addresses', async () => {
+    const s = await mkSubnet({
+      cidr: '10.47.0.0/24', name: 'canonical-bulk-allocation', status: 'allocated',
+      gateway_address: '10.47.0.1'
+    });
+    await configure(s.id, {
+      name: 'canonical-bulk-allocation', create_reverse_dns: false,
+      create_dhcp_scope: false, gateway_address: '10.47.0.1'
+    });
+
+    const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
+    regenerateDhcpConfigs.mockClear();
+
+    const reserve = await request(app)
+      .put(`/api/subnets/${s.id}/ips/bulk-allocation`)
+      .send({
+        start_ip: '10.47.0.0',
+        end_ip: '10.47.0.3',
+        allocation_state: 'reserved'
+      });
+    expect(reserve.status).toBe(200);
+    expect(reserve.body).toMatchObject({ count: 2, skipped: 2, allocation_state: 'reserved' });
+    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(1));
+
+    const { getDb } = await import('../../../src/db/init.js');
+    expect(getDb().prepare(`
+      SELECT ip_address FROM ip_addresses
+      WHERE subnet_id = ? AND allocation_state = 'reserved'
+      ORDER BY ip_address
+    `).all(s.id).map(row => row.ip_address)).toEqual(['10.47.0.2', '10.47.0.3']);
   });
 });
 

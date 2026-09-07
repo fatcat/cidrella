@@ -22,8 +22,11 @@ hands it a highly device-specific signature for free:
 from its log block (correlated by dnsmasq's transaction id), and on the `DHCPACK`
 classifies the signals with an **offline heuristic ruleset**
 (`server/src/data/device-fingerprints.js` + `utils/device-classifier.js`). The
-result is stored per-MAC in `device_fingerprints` and attached to IP rows during
-the normal IP-view enrichment (alongside the OUI vendor).
+collector retains dnsmasq's wrapped option-55 fragments and waits briefly after
+`DHCPACK` for the trailing option detail before classifying. The strongest result
+is stored per-MAC in `device_fingerprints` and attached to IP rows during the
+normal IP-view enrichment (alongside the OUI vendor). A partial renewal can add
+evidence but cannot erase a stronger result.
 
 Everything is offline and self-contained: **no cloud API, no raw sockets, no
 nmap, no dnsmasq restart**. A confidence score (0–100) reflects how strong the
@@ -31,7 +34,9 @@ match is; agreement across signals boosts it.
 
 ## What you get
 
-- A compact **Device** column (OS family / device type).
+- A compact **Device** column (OS family / device type), plus optional columns
+  for OS, device type, confidence, option 55, vendor class, captured hostname,
+  and fingerprint source.
 - A **"More info"** popup with identity, liveness, and the full device
   fingerprint: manufacturer, device type, OS family, confidence, and the raw
   option 55 / option 60 / hostname.

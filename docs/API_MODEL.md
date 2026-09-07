@@ -12,23 +12,60 @@ fields produced by `server/src/models/ip-view.js`.
 
 | Field | Meaning | Typical values |
 | --- | --- | --- |
-| `ip_lifecycle_status` | Internal IP lifecycle/control state from `ip_addresses`. | `available`, `assigned`, `dhcp`, `locked` |
-| `ip_display_status` | User-facing availability for tables. | `available`, `in use` |
+| `allocation_state` | Mutually exclusive allocation authority. | `unassigned`, `reserved`, `static_dns`, `dynamic_dhcp`, `static_dhcp`, `slaac`, `system`, `gateway`, `quarantined` |
+| `allocation_source_type` | Owning protocol or topology source for the allocation. | `dns`, `dhcp_lease`, `dhcp_reservation`, `admin_reservation`, `topology`, null |
+| `allocation_source_id` | Protocol or topology row that backs the allocation, when applicable. | integer/string identifier, null |
+| `address_family` | Canonical address family. | `4`, `6` |
+| `address_sort_key` | Fixed-width indexed key for numeric mixed-family ordering. | 33-character family-prefixed hexadecimal key |
+| `interface_id` | Interface context required for scoped addresses such as IPv6 link-local. | identifier, null |
+| `ip_display_status` | User-facing availability derived by the server. | `available`, `DHCP Scope`, `in use` |
 | `ip_status_severity` | UI severity for `ip_display_status`. | `secondary`, `danger` |
-| `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `reserved DHCP`, `rogue`, `system`, `gateway`, `locked` |
-| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, lock note |
+| `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `DHCP Reservation`, `SLAAC`, `rogue`, `system`, `gateway`, `IP Reservation` |
+| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, IP Reservation note |
 | `computed_type` | Sort/search alias for `address_type`, or `available`. | same as `address_type`, plus `available` |
 | `is_online` | Current liveness state. | `0`/`1`, boolean in some API rows |
 | `last_seen_at` | Last observation time from scans, DHCP, or passive checks. | datetime/null |
 | `last_scanned_at` | Last active probe time. | datetime/null |
-| `has_static_dns` | Whether an enabled manual DNS A record backs the IP. | `0`/`1` |
-| `has_dhcp_reservation` | Whether a DHCP reservation backs the IP. | `0`/`1` |
+| `scan_enabled` | Nullable per-IP scanning override. Null means inherit from the subnet/global setting. | `0`/`1`/null |
+| `scanning_enabled` | Server-resolved effective scanning toggle for the IP. The server applies IP override, then subnet override, then the global default. | boolean |
+| `network_range_type_id` | Custom organizational Network Range Type covering the IP, when one exists. | integer/null |
+| `network_range_type` | Display name of the custom organizational Network Range Type. This does not affect allocation, DNS, DHCP, scanning, or topology. | string/null |
+| `network_range_type_color` | Validated display color for the custom organizational Network Range Type tag. | hex color/null |
+| `in_dynamic_pool` | Whether the address belongs to an enabled same-family DHCP pool. | `0`/`1` |
+| `has_static_dns` | Whether an enabled manual DNS A or AAAA record backs the IP. | `0`/`1` |
+| `has_dhcp_reservation` | Whether a DHCP Reservation backs the IP. | `0`/`1` |
 | `dhcp_expires_at` | Active dynamic lease expiration. | datetime, `infinite`, null |
+| `dhcp_duid` | DHCPv6 client DUID retained by the lifecycle aggregate. | string/null |
+| `dhcp_iaid` | DHCPv6 identity association identifier retained with the DUID. | string/null |
+| `device_type` | Best device category inferred from DHCP fingerprint evidence. | `Computer`, `Smartphone`, `Printer`, null |
+| `os_family` | Best operating-system family inferred from DHCP fingerprint evidence. | `Windows`, `macOS`, `Apple iOS`, `Android`, `Linux`, null |
+| `device_confidence` | Confidence of the strongest retained automatic fingerprint, or 100 for a manual override. | `0`–`100`, null |
+| `dhcp_fingerprint` | Normalized DHCP option 55 parameter-request list retained as fingerprint evidence. | comma-separated option codes, null |
+| `dhcp_vendor_class` | DHCP option 60 vendor-class identifier retained as fingerprint evidence. | string/null |
+| `dhcp_fingerprint_hostname` | Client hostname captured with the DHCP fingerprint. | string/null |
+| `device_fingerprint_source` | Whether the displayed classification is automatic or operator-supplied. | `dhcp`, `manual`, null |
 
 UI table rendering should use `ip_display_status` for the displayed Status and
 `address_type`/`computed_type` for the displayed Type. It should not infer
-display Type from storage fields such as `ip_addresses.status`,
-`dns_records.source`, or DHCP lease row shape.
+display Type from DNS or DHCP row shape. It should likewise render
+`scanning_enabled` directly instead of rebuilding scan-setting inheritance in
+the client. `scan_enabled` remains available only to distinguish an explicit
+per-IP override from an inherited value for editing actions.
+
+The server canonicalizes every persisted address through
+`server/src/utils/address.js`. IPv4-mapped IPv6 input resolves to the canonical
+IPv4 identity. IPv6 link-local addresses require `interface_id`; global
+addresses must leave it null. API consumers must not use textual address
+spelling for identity or ordering.
+
+## Lifecycle Diagnostics
+
+`GET /api/metrics/ip-lifecycle` requires `analytics:read` and returns allocation
+counts by state, current scope conflicts, online rogue hosts, retirement
+activity, and the sanitized migration outcome. The localhost-only
+`GET /api/health/deep` response includes the same data as its `ip_lifecycle`
+check. Neither endpoint returns the migration report's address-level conflict
+details.
 
 ## DHCP Rows
 
@@ -38,14 +75,32 @@ DHCP read rows add DHCP-specific fields:
 | --- | --- |
 | `dhcp_assignment_type` | DHCP ownership shape: `dynamic`, `reserved`, or null. |
 | `lease_status` | DHCP lease availability/activity: `active`, `offline`, `available`, or `unavailable`. |
-| `expires_at` | Raw DHCP lease/reservation expiration display value. |
+| `expires_at` | Raw DHCP Lease or DHCP Reservation expiration display value. |
 
 Do not expose or consume bare `type` or `status` for DHCP table rows. Use
 `dhcp_assignment_type` and `lease_status`.
 
 `unavailable` means the address is not assigned by DHCP but is still not safe
-for dynamic lease use, such as a rogue online host, static DNS assignment, or
-locked/system-owned address inside a DHCP scope.
+for dynamic lease use, such as a rogue online host, static DNS assignment, IP
+Reservation, or system-owned address inside a DHCP scope.
+
+## IP Allocation Writes
+
+An IP Reservation is an administrative address hold without a DHCP client
+binding. Create or release one IP Reservation with
+`PUT /api/subnets/:id/ips/:ip/allocation`:
+
+```json
+{ "allocation_state": "reserved", "note": "printer" }
+```
+
+Release it by sending `{"allocation_state":"unassigned"}`. For a contiguous
+IP Reservation range, use `PUT /api/subnets/:id/ips/bulk-allocation` with
+`start_ip`, `end_ip`, `allocation_state`, and an optional `note`. These
+endpoints accept only the internal values `reserved` and `unassigned`; DNS,
+DHCP, SLAAC, and topology allocations must be changed through their owning
+APIs. A DHCP Reservation is a static DHCP client-to-address binding and is
+managed through `/api/dhcp/reservations`.
 
 ## DNS Rows
 
@@ -53,8 +108,9 @@ DNS read rows add DNS-specific fields:
 
 | Field | Meaning |
 | --- | --- |
-| `record_type` | DNS RR type: `A`, `CNAME`, `PTR`, `MX`, `TXT`, `SRV`. |
-| `dns_source` | DNS row provenance: `manual`, `dhcp`, `reservation`. |
+| `record_type` | DNS RR type: `A`, `AAAA`, `CNAME`, `PTR`, `MX`, `TXT`, `SRV`. |
+| `dns_source` | DNS row provenance: `manual`, `dns`, `dhcp`, `reservation`, or `placeholder`. The internal `reservation` value identifies a generated DHCP Reservation PTR. Generated PTR rows use the latter four values; an operator-created PTR remains `manual`. |
+| `record_fqdn` | Fully qualified owner name derived from the record name and its zone. This is a DNS record fact and is distinct from the canonical IP `hostname`. |
 
 DNS write APIs still accept `type` because the submitted form is a DNS record
 write model. UI read paths should use `record_type` and `dns_source`; form
@@ -67,7 +123,7 @@ that table:
 
 | Storage field | Scope |
 | --- | --- |
-| `ip_addresses.status` | IP lifecycle/control state, including lock state. |
+| `ip_addresses.allocation_state` | Canonical mutually exclusive allocation state. |
 | `subnets.status` | Network allocation state. |
 | `dns_records.type` | DNS RR type. |
 | `dns_records.source` | DNS record provenance. |

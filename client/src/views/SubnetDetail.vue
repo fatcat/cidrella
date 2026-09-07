@@ -97,10 +97,13 @@
           />
         </div>
         <DataTable :value="displayIps" stripedRows size="small"
+                   class="ip-address-table"
+                   :rowClass="ipDetailRowClass"
                    :loading="loadingPage"
                   
                    scrollable scrollHeight="flex"
                    dataKey="ip_address"
+                   @row-click="onTableRowClick"
                    @row-contextmenu="onTableRowContextMenu"
                    contextMenu
                    lazy paginator paginatorPosition="bottom"
@@ -128,23 +131,8 @@
               <ColumnHeaderTooltip :column="col" />
             </template>
             <template #body="{ data }">
-              <span v-if="col.key === 'ip_address'" class="ip-mono">{{ displayCell(data.ip_address) }}</span>
-              <StatusText
-                v-else-if="col.key === 'status'"
-                :label="data._ipState.status"
-                :className="data._ipState.statusSeverity === 'danger' ? 'state-err' : 'state-muted'"
-              />
-              <AddressTypePill v-else-if="col.key === 'type'" :display="data._ipState.addressType" :tooltip="data._ipState.tooltip" />
-              <template v-else-if="col.key === 'hostname'">{{ displayHost(data.hostname) }}</template>
-              <template v-else-if="col.key === 'mac_address'">
-                <code v-if="data.mac_address || data.last_seen_mac">{{ displayMac(data.mac_address || data.last_seen_mac) }}</code>
-                <span v-else class="cell-muted">—</span>
-              </template>
-              <template v-else-if="col.key === 'vendor'">{{ displayCell(data.vendor) }}</template>
-              <template v-else-if="col.key === 'device'">{{ deviceCell(data) }}</template>
-              <OnlineStatusCell v-else-if="col.key === 'is_online'" :value="data.is_online" />
-              <template v-else-if="col.key === 'last_seen_at'">{{ data.last_seen_at ? formatDate(data.last_seen_at) : EMPTY_CELL }}</template>
-              <template v-else-if="col.key === 'dhcp_expires_at'">{{ displayExpiry(data.dhcp_expires_at, formatDate) }}</template>
+              <IpTableCell :column="col" :row="data" :view="IP_TABLE_VIEW.NETWORKS"
+                           :domain-name="subnet?.domain_name" />
             </template>
           </Column>
         </DataTable>
@@ -199,7 +187,7 @@
             </span>
             <span class="legend-item">
               <span class="legend-swatch" style="background: var(--p-violet-500)"></span>
-              Locked
+              IP Reservation
             </span>
             <span class="legend-item">
               <!-- Rogue is already rendered on the grid as a red outline +
@@ -262,7 +250,7 @@
             modal :style="{ width: '28rem' }" data-track="dialog-range-edit">
       <div class="form-grid">
         <div class="field" v-if="editingRange">
-          <label>Range Type *</label>
+          <label>{{ editingRange?.range_type_is_system ? 'System Role' : 'Network Range Type' }} *</label>
           <Select v-model="rangeForm.range_type_id" :options="editableRangeTypes"
                     optionLabel="name" optionValue="id" placeholder="Select type" class="w-full" />
         </div>
@@ -301,10 +289,25 @@
           <strong>{{ o.type }}</strong>: {{ o.start_ip }} – {{ o.end_ip }}
         </li>
       </ul>
-      <p>Do you want to create it anyway?</p>
+      <p>Accepting will replace only the overlapping portion and preserve the unaffected parts of the existing Network Range Types.</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showOverlapDialog = false" />
-        <Button label="Force Create" severity="warn" @click="forceCreateRange" :loading="saving" />
+        <Button label="Accept" severity="warn" @click="acceptRangeChange" :loading="saving" />
+      </template>
+    </Dialog>
+
+    <!-- Grid Network Range Type overlap warning -->
+    <Dialog v-model:visible="showRangeTypeOverlapDialog" header="Network Range Type Overlap" modal :style="{ width: '30rem' }" data-track="dialog-range-type-overlap">
+      <p>The selected addresses overlap existing Network Range Types:</p>
+      <ul>
+        <li v-for="o in rangeTypeOverlapDetails" :key="o.id">
+          <strong>{{ o.type }}</strong>: {{ o.start_ip }} – {{ o.end_ip }}
+        </li>
+      </ul>
+      <p>Accepting will change the selected addresses to <strong>{{ pendingNetworkRangeType?.name }}</strong> and preserve the unaffected parts of the existing ranges.</p>
+      <template #footer>
+        <Button label="Cancel" severity="secondary" @click="cancelNetworkRangeTypeOverlap" />
+        <Button label="Accept" severity="warn" @click="acceptNetworkRangeTypeChange" :loading="saving" />
       </template>
     </Dialog>
 
@@ -323,10 +326,10 @@
     <!-- Scope Dialog (shared component) -->
     <ScopeDialog ref="scopeDialogRef" @saved="reloadData" />
 
-    <!-- Lock IP Dialog -->
-    <Dialog v-model:visible="showReserveDialog" header="Lock IP Address(es)" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
+    <!-- IP Reservation Dialog -->
+    <Dialog v-model:visible="showReserveDialog" header="Create IP Reservation" modal :style="{ width: '26rem' }" data-track="dialog-reserve-ip">
       <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
-        Locked IPs are held and cannot be used for DHCP or static assignment.
+        An IP Reservation holds the selected address or range. While it exists, the address is unavailable for DHCP or DNS assignment.
       </p>
       <div class="form-grid">
         <div class="field">
@@ -345,14 +348,14 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReserveDialog = false" />
-        <Button label="Lock" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
+        <Button label="Create IP Reservation" icon="pi pi-lock" data-track="btn-confirm-reserve" @click="confirmReserve" :disabled="!reserveNote.trim()" />
       </template>
     </Dialog>
 
-    <!-- Convert to Static DHCP Reservation Dialog -->
-    <Dialog v-model:visible="showStaticDhcpDialog" header="Create Static DHCP Reservation" modal :style="{ width: '28rem' }" data-track="dialog-static-dhcp">
+    <!-- Convert to DHCP Reservation Dialog -->
+    <Dialog v-model:visible="showStaticDhcpDialog" header="Create DHCP Reservation" modal :style="{ width: '28rem' }" data-track="dialog-static-dhcp">
       <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
-        Convert this dynamic DHCP assignment to a static reservation.
+        Convert this dynamic DHCP assignment to a DHCP Reservation.
       </p>
       <div class="form-grid">
         <div class="field">
@@ -375,25 +378,15 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showStaticDhcpDialog = false" />
-        <Button label="Create Reservation" icon="pi pi-check" data-track="btn-create-static-dhcp" @click="confirmStaticDhcp" :disabled="!staticDhcpForm.mac_address" />
+        <Button label="Create DHCP Reservation" icon="pi pi-check" data-track="btn-create-static-dhcp" @click="confirmStaticDhcp" :disabled="!staticDhcpForm.mac_address" />
       </template>
     </Dialog>
 
-    <!-- IP Lifecycle Events Dialog -->
-    <Dialog v-model:visible="showEventsDialog" :header="`Lifecycle — ${eventsIp}`" modal :style="{ width: '38rem' }" data-track="dialog-ip-events">
-      <div v-if="eventsLoading" class="events-loading">Loading events...</div>
-      <div v-else-if="eventsData.length === 0" class="events-empty">No events recorded for this IP.</div>
-      <div v-else class="events-list">
-        <div v-for="evt in eventsData" :key="evt.id" class="event-row">
-          <span class="event-time">{{ formatDate(evt.created_at) }}</span>
-          <Tag :severity="eventSeverity(evt.event_type)" :value="eventLabel(evt.event_type)" class="event-tag" />
-          <span class="event-detail">{{ eventDetail(evt) }}</span>
-        </div>
-      </div>
-    </Dialog>
-
-    <!-- Host "more info" dialog -->
-    <HostInfoDialog v-model:visible="showHostInfo" :host="hostInfoRow" :domain-name="subnet?.domain_name" />
+    <!-- IP details drawer -->
+    <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
+                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName"
+                     :columns="visibleNetworkColumns" :view="IP_TABLE_VIEW.NETWORKS"
+                     table-name="Networks" />
 
     <Toast />
   </div>
@@ -421,30 +414,32 @@ import TabList from '../ui/TabList.js';
 import Tab from '../ui/Tab.js';
 import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
-import Tag from '../ui/Tag.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import ScopeDialog from '../components/ScopeDialog.vue';
-import HostInfoDialog from '../components/HostInfoDialog.vue';
+import IpDetailsDrawer from '../components/IpDetailsDrawer.vue';
 import ScanToggle from '../components/ScanToggle.vue';
-import AddressTypePill from '../components/table/AddressTypePill.vue';
 import ColumnChooserButton from '../components/table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from '../components/table/ColumnHeaderTooltip.vue';
-import OnlineStatusCell from '../components/table/OnlineStatusCell.vue';
-import StatusText from '../components/table/StatusText.vue';
+import IpTableCell from '../components/table/IpTableCell.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
+import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 import api from '../api/client.js';
 import { ipToLong, longToIp } from '../utils/ip.js';
 import { ipLifecycleDisplay } from '../utils/ipLifecycleDisplay.js';
 import {
+  IP_TABLE_COLUMN_ALIASES,
+  IP_TABLE_DEFAULT_KEYS,
+  IP_TABLE_VIEW,
+  ipTableColumns
+} from '../utils/ipTableColumns.js';
+import { isImmutableNetworkAddress, probeNowMenuItem, scanToggleMenuItem } from '../utils/rowContextMenu.js';
+import {
   EMPTY_CELL,
   apiError,
-  displayCell,
-  displayExpiry,
-  displayHostnameCell,
-  displayMacAddress
+  displayHostnameCell
 } from '../utils/format.js';
 
 const props = defineProps({
@@ -458,126 +453,55 @@ const toast = useToast();
 const store = useSubnetStore();
 const dhcpStore = useDhcpStore();
 
-const networkTableColumns = [
-  { key: 'ip_address', header: 'IP Address', description: 'Address within the selected network.', field: 'ip_address', sortable: true, style: 'width: 10rem' },
-  { key: 'status', header: 'Status', description: 'Whether the address is currently in use or available according to CIDRella lifecycle data.', field: 'ip_display_status', sortable: true, style: 'width: 7rem' },
-  { key: 'type', header: 'Type', description: 'How the address is assigned or reserved, such as static DNS, dynamic DHCP, reserved DHCP, rogue, gateway, system, or locked.', field: 'computed_type', sortField: 'computed_type', sortable: true, style: 'width: 9.5rem' },
-  { key: 'hostname', header: 'Hostname', description: 'Best known hostname from DNS, DHCP, or passive observations.', field: 'hostname', sortable: true, style: 'width: 10rem' },
-  { key: 'mac_address', header: 'MAC Address', description: 'Best known hardware address from DHCP or last-seen lifecycle data.', field: 'mac_address', sortField: 'mac_address', sortable: true, style: 'width: 10rem' },
-  { key: 'vendor', header: 'Vendor', description: 'Hardware vendor inferred from the MAC address OUI.', field: 'vendor', sortable: true, style: 'width: 10rem' },
-  { key: 'device', header: 'Device', description: 'Device type / OS family inferred passively from the DHCP fingerprint (options 55/60 + hostname) and MAC OUI. Right-click → More info for full detail.', field: 'os_family', sortable: true, style: 'width: 9rem' },
-  { key: 'is_online', header: 'Online', description: 'Current liveness state from active probes and passive DHCP/DNS observations.', field: 'is_online', sortable: true, style: 'width: 5rem' },
-  { key: 'last_seen_at', header: 'Last Seen', description: 'Most recent time CIDRella observed this address through DHCP, DNS logs, or active scans.', field: 'last_seen_at', sortable: true, style: 'width: 10rem' },
-  { key: 'dhcp_expires_at', header: 'Expires', description: 'DHCP lease expiration time when the address has a dynamic lease.', field: 'dhcp_expires_at', sortable: true, style: 'width: 9rem' },
-];
+const networkTableColumns = ipTableColumns(IP_TABLE_VIEW.NETWORKS);
 
 const {
   visibleColumns: visibleNetworkColumns,
   setVisibleColumns: setVisibleNetworkColumns,
   resetColumns: resetNetworkColumns
-} = useColumnPreferences('cidrella_columns_networks', networkTableColumns);
+} = useColumnPreferences('cidrella_columns_networks', networkTableColumns, {
+  defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.NETWORKS],
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.NETWORKS]
+});
 
 const subnet = ref(null);
 const ips = ref([]);
-const displayIps = computed(() => ips.value.map(ip => ({ ...ip, _ipState: ipLifecycleDisplay(ip) })));
+const displayIps = computed(() => ips.value);
 const ranges = ref([]);
 const rangeTypes = ref([]);
 const loading = ref(false);
 const saving = ref(false);
+const resolvedSubnetScanEnabled = computed(() =>
+  ips.value.find(row => row.scan_enabled == null && row.scanning_enabled != null)?.scanning_enabled ?? true
+);
 
-// Reserve IP dialog
+// IP Reservation dialog
 const showReserveDialog = ref(false);
 const reserveStartIp = ref('');
 const reserveEndIp = ref('');
 const reserveNote = ref('');
 const reserveScanEnabled = ref(null);
 
-// Convert to Static DHCP Reservation dialog
+// Convert to DHCP Reservation dialog
 const showStaticDhcpDialog = ref(false);
 const staticDhcpForm = ref({ ip_address: '', mac_address: '', hostname: '', description: '' });
 const staticDhcpScanEnabled = ref(null);
 
-// Host "more info" dialog (full per-host metadata + device fingerprint)
-const showHostInfo = ref(false);
-const hostInfoRow = ref(null);
-function openHostInfo(row) {
-  hostInfoRow.value = row;
-  showHostInfo.value = true;
+// IP details drawer (full per-host metadata, device fingerprint, and lifecycle)
+const {
+  visible: showIpDetails,
+  host: ipDetailsRow,
+  subnetId: ipDetailsSubnetId,
+  domainName: ipDetailsDomainName,
+  openIpDetails
+} = useIpDetailsDrawer();
+function onTableRowClick(event) {
+  openIpDetails(event.data, {
+    subnetId: subnet.value?.id,
+    domainName: subnet.value?.domain_name
+  });
 }
-// Compact "Device" column: OS family preferred, else device type. Full detail
-// (manufacturer, confidence, raw fingerprint) lives in the More-info popup.
-function deviceCell(row) {
-  return row.os_family || row.device_type || EMPTY_CELL;
-}
-
-// IP Lifecycle Events dialog
-const showEventsDialog = ref(false);
-const eventsIp = ref('');
-const eventsData = ref([]);
-const eventsLoading = ref(false);
-
-async function openEventsDialog(ipAddress) {
-  eventsIp.value = ipAddress;
-  eventsData.value = [];
-  eventsLoading.value = true;
-  showEventsDialog.value = true;
-  try {
-    const { data } = await api.get(`/subnets/${subnet.value.id}/ips/${ipAddress}/events`);
-    eventsData.value = data.events || [];
-  } catch {
-    eventsData.value = [];
-  } finally {
-    eventsLoading.value = false;
-  }
-}
-
-function eventLabel(type) {
-  const labels = {
-    online: 'Online', offline: 'Offline', scanned: 'Scanned',
-    rogue_detected: 'Rogue', rogue_cleared: 'Rogue Cleared',
-    dns_added: 'DNS Added', dns_removed: 'DNS Removed',
-    lease_obtained: 'Lease', hostname_changed: 'Hostname',
-    mac_changed: 'MAC Changed', status_changed: 'Status',
-    scan_enabled_changed: 'Scan Toggle',
-  };
-  return labels[type] || type;
-}
-
-function eventSeverity(type) {
-  if (type === 'online' || type === 'dns_added' || type === 'lease_obtained') return 'success';
-  if (type === 'offline' || type === 'dns_removed') return 'secondary';
-  if (type === 'rogue_detected') return 'danger';
-  if (type === 'rogue_cleared') return 'warn';
-  return 'info';
-}
-
-function sourceLabel(source) {
-  const labels = {
-    scanner: 'active scan', passive: 'passive (DNS log)', stale: 'staleness timeout',
-    dns: 'DNS', dhcp_reservation: 'DHCP reservation', dhcp_lease: 'DHCP lease',
-    manual: 'manual', offline: 'went offline',
-  };
-  return labels[source] || source || '';
-}
-
-function eventDetail(evt) {
-  const parts = [];
-  if (evt.old_value && evt.new_value) parts.push(`${evt.old_value} → ${evt.new_value}`);
-  else if (evt.new_value) parts.push(evt.new_value);
-  else if (evt.old_value) parts.push(evt.old_value);
-  if (evt.source) parts.push(`(${sourceLabel(evt.source)})`);
-  return parts.join(' ');
-}
-
-// Resolve the effective scan_enabled for this subnet (subnet → folder → default true)
-const resolvedSubnetScanEnabled = computed(() => {
-  if (!subnet.value) return true;
-  if (subnet.value.scan_enabled !== null && subnet.value.scan_enabled !== undefined) return !!subnet.value.scan_enabled;
-  // Inherit from folder
-  const folder = store.folders?.find(f => f.id === subnet.value.folder_id);
-  return folder ? !!folder.scan_enabled : true;
-});
-
+const ipDetailRowClass = () => 'ip-detail-trigger';
 // Server-side pagination state, persisted per-subnet
 function loadTableState() {
   const saved = loadJson('cidrella_ip_table_state', {});
@@ -668,11 +592,15 @@ function bestPageSize(total) {
 
 const showRangeDialog = ref(false);
 const showOverlapDialog = ref(false);
+const showRangeTypeOverlapDialog = ref(false);
 const showDeleteRangeDialog = ref(false);
 const editingRange = ref(null);
 const deletingRange = ref(null);
 const overlapDetails = ref([]);
 const pendingRangeForm = ref(null);
+const rangeTypeOverlapDetails = ref([]);
+const pendingNetworkRangeType = ref(null);
+const pendingNetworkRangeSelections = ref([]);
 
 const rangeForm = ref({ range_type_id: null, start_ip: '', end_ip: '', description: '' });
 
@@ -693,8 +621,6 @@ const tableContextIp = ref(null);
 
 function onTableRowContextMenu(event) {
   const row = event.data;
-  // Skip Network/Broadcast
-  if (row.range_type_name === 'Network' || row.range_type_name === 'Broadcast') return;
   tableContextIp.value = row;
   if (tableContextMenuItems.value.length) {
     tableContextMenuRef.value.show(event.originalEvent);
@@ -705,20 +631,31 @@ const tableContextMenuItems = computed(() => {
   const row = tableContextIp.value;
   if (!row) return [];
 
+  if (isImmutableNetworkAddress(row)) {
+    return [
+      {
+        label: `Protected ${row.range_type_name.toLowerCase()} address`,
+        icon: 'pi pi-lock',
+        disabled: true
+      },
+      { separator: true },
+      probeNowMenuItem(() => probeIpNow(row.ip_address))
+    ];
+  }
+
   const range = findRangeForIp(row.ip_address);
   const ip = {
     address: row.ip_address,
     rangeId: range?.id || null,
     rangeType: row.range_type_name || null,
-    status: row.status || 'available',
+    allocationState: row.allocation_state || 'unassigned',
     mac: row.mac_address || row.last_seen_mac || null,
-    hostname: row.hostname || null
+    hostname: row.hostname || null,
+    scanningEnabled: row.scanning_enabled,
+    scanOverride: row.scan_enabled ?? null
   };
 
-  return [
-    { label: 'More info', icon: 'pi pi-info-circle', command: () => openHostInfo(row) },
-    ...buildContextMenuItems([ip]),
-  ];
+  return buildContextMenuItems([ip], { allowCreateDhcpScope: false, allowSetRangeType: false });
 });
 
 // Range context menu
@@ -726,7 +663,16 @@ const rangeContextMenuRef = ref(null);
 const selectedRange = ref(null);
 const rangeContextMenuItems = computed(() => {
   const r = selectedRange.value;
-  if (!r || !isEditableRange(r)) return [];
+  if (!r) return [];
+  if (r._synthetic) {
+    const plural = r.start_ip === r.end_ip ? '' : 's';
+    return [{
+      label: `Release IP Reservation${plural}`,
+      icon: 'pi pi-unlock',
+      command: () => bulkRelease(r.start_ip, r.end_ip)
+    }];
+  }
+  if (!isEditableRange(r)) return [];
   return [
     { label: r.range_type_name === 'DHCP Scope' ? 'Edit DHCP Scope' : 'Edit Range', icon: 'pi pi-pencil', command: () => r.range_type_name === 'DHCP Scope' ? editDhcpScope(r) : editRange(r) },
     { label: r.range_type_name === 'DHCP Scope' ? 'Delete DHCP Scope' : 'Delete Range', icon: 'pi pi-trash', command: () => confirmDeleteRange(r) }
@@ -741,13 +687,16 @@ function onRangeRightClick(event) {
 
 function findRangeForIp(ipAddress) {
   const long = ipToLong(ipAddress);
-  return ranges.value.find(r => long >= ipToLong(r.start_ip) && long <= ipToLong(r.end_ip));
+  return ranges.value.find(r =>
+    r.range_type_is_system
+    && long >= ipToLong(r.start_ip)
+    && long <= ipToLong(r.end_ip)
+  );
 }
 
 const formatDate = formatDateTime;
 
 const displayHost = (hostname) => displayHostnameCell(hostname, subnet.value?.domain_name);
-const displayMac = displayMacAddress;
 
 // The legend always shows every possible color so users can learn it
 // without needing a subnet that happens to have one of each. User-defined
@@ -774,11 +723,17 @@ const rangeTypeLegend = computed(() => {
   return [...baseline, ...dynamic];
 });
 
+const assignableNetworkRangeTypes = computed(() =>
+  (rangeTypes.value || [])
+    .filter(type => !type.is_system)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+);
+
 // Entries displayed in the Ranges table on the Grid View. System-range rows
 // (Network / Broadcast / Gateway) are hidden, they're implicit for every
-// allocated subnet and add noise. Locked IPs from `ip_addresses` are injected
+// allocated subnet and add noise. IP Reservations from `ip_addresses` are injected
 // as synthetic rows so users can see which addresses are manually held. We
-// collapse consecutive locked IPs into a single range (e.g. .5–.7 instead
+// collapse consecutive IP Reservations into a single range (e.g. .5–.7 instead
 // of three separate rows) to keep the table tidy.
 const visibleRanges = computed(() => {
   const filtered = ranges.value.filter(r => {
@@ -786,11 +741,11 @@ const visibleRanges = computed(() => {
     return !['Network', 'Broadcast', 'Gateway'].includes(r.range_type_name);
   });
 
-  // A locked IP that overlaps a system range (Network / Broadcast / Gateway)
-  // is not user-locked, createSystemRanges writes those rows automatically.
+  // An IP Reservation that overlaps a system range (Network / Broadcast / Gateway)
+  // is topology-owned, createSystemRanges writes those rows automatically.
   // The grid-cell coloring already applies this same filter; we mirror it
   // here so the Ranges table doesn't list .0, .255, or the gateway IP as
-  // Locked. Build a set of system-range IPs for quick lookup.
+  // as an IP Reservation. Build a set of system-range IPs for quick lookup.
   const systemIpLongs = new Set();
   for (const r of ranges.value) {
     if (!r.range_type_is_system) continue;
@@ -800,14 +755,14 @@ const visibleRanges = computed(() => {
     for (let l = s; l <= e; l++) systemIpLongs.add(l);
   }
 
-  // Group locked IPs into contiguous ranges.
-  const lockedIps = (ips.value || [])
-    .filter(ip => ip.status === 'locked')
+  // Group IP Reservations into contiguous ranges.
+  const reservedIps = (ips.value || [])
+    .filter(ip => ip.allocation_state === 'reserved')
     .map(ip => ({ ip, long: ipToLong(ip.ip_address) }))
     .filter(({ long }) => !systemIpLongs.has(long))
     .sort((a, b) => a.long - b.long);
 
-  const lockedRows = [];
+  const reservedRows = [];
   let run = null;  // { startIp, endIp, startLong, endLong, hostnames:[], notes:[] }
   const flushRun = () => {
     if (!run) return;
@@ -817,9 +772,9 @@ const visibleRanges = computed(() => {
     const hostSet = [...new Set(run.hostnames.filter(Boolean))];
     if (hostSet.length) parts.push(`Host${hostSet.length > 1 ? 's' : ''}: ${hostSet.join(', ')}`);
     if (noteSet.length) parts.push(noteSet.join('; '));
-    lockedRows.push({
-      id: `locked-${run.startLong}`,
-      range_type_name: 'Locked',
+    reservedRows.push({
+      id: `reserved-${run.startLong}`,
+      range_type_name: 'IP Reservation',
       range_type_color: 'var(--p-violet-500)',
       range_type_is_system: 0,
       start_ip: run.startIp,
@@ -828,7 +783,7 @@ const visibleRanges = computed(() => {
       _synthetic: true
     });
   };
-  for (const { ip, long } of lockedIps) {
+  for (const { ip, long } of reservedIps) {
     if (run && long === run.endLong + 1) {
       run.endIp = ip.ip_address;
       run.endLong = long;
@@ -848,11 +803,13 @@ const visibleRanges = computed(() => {
   }
   flushRun();
 
-  return [...filtered, ...lockedRows];
+  return [...filtered, ...reservedRows];
 });
 
 const editableRangeTypes = computed(() => {
-  return rangeTypes.value.filter(rt => !rt.is_system || !['Network', 'Broadcast'].includes(rt.name));
+  if (!editingRange.value) return assignableNetworkRangeTypes.value;
+  if (!editingRange.value.range_type_is_system) return assignableNetworkRangeTypes.value;
+  return rangeTypes.value.filter(type => type.id === editingRange.value.range_type_id);
 });
 
 function isGatewayType(typeId) {
@@ -881,6 +838,7 @@ function gridTooltip(ip) {
   // tells them apart for quick identification.
   if (ip.rangeType === 'Network')   lines.push('Role: network');
   if (ip.rangeType === 'Broadcast') lines.push('Role: broadcast');
+  if (ip.networkRangeType) lines.push(`Network Range Type: ${ip.networkRangeType}`);
   if (ip.hostname) lines.push(`Host: ${displayHost(ip.hostname)}`);
   if (ip.mac) lines.push(`MAC: ${ip.mac}`);
   if (ip.vendor) lines.push(`Vendor: ${ip.vendor}`);
@@ -901,17 +859,14 @@ function gridPseudoData({ addr, assignInfo, rangeInfo }) {
     ip_status_severity: assignInfo?.ip_status_severity || null,
     address_type: assignInfo?.address_type || null,
     address_type_tooltip: assignInfo?.address_type_tooltip || null,
-    ip_lifecycle_status: assignInfo?.ip_lifecycle_status || assignInfo?.status || 'available',
-    status: assignInfo?.status || 'available',
+    allocation_state: assignInfo?.allocation_state || 'unassigned',
     range_type_name: rangeInfo?.rangeType || null,
     reservation_note: assignInfo?.reservation_note || null,
-    has_dhcp_reservation: assignInfo?.has_dhcp_reservation || 0,
     hostname: assignInfo?.hostname || null,
     mac_address: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
     last_seen_mac: null,
     is_online: assignInfo?.is_online === 1 ? 1 : 0,
     is_rogue: assignInfo?.is_rogue === 1 ? 1 : 0,
-    is_local_address: assignInfo?.is_local_address || 0,
     rogue_reason: assignInfo?.rogue_reason || null,
     dhcp_expires_at: assignInfo?.dhcp_expires_at || null,
   };
@@ -924,12 +879,14 @@ const ipGrid = computed(() => {
   const bcast = ipToLong(subnet.value.broadcast_address);
   const grid = [];
 
-  const ipRangeMap = new Map();
+  const functionalRangeMap = new Map();
+  const networkRangeTypeMap = new Map();
   for (const r of ranges.value) {
     const start = ipToLong(r.start_ip);
     const end = ipToLong(r.end_ip);
+    const targetMap = r.range_type_is_system ? functionalRangeMap : networkRangeTypeMap;
     for (let i = start; i <= end; i++) {
-      ipRangeMap.set(i, {
+      targetMap.set(i, {
         color: r.range_type_color,
         rangeType: r.range_type_name,
         rangeId: r.id,
@@ -945,23 +902,13 @@ const ipGrid = computed(() => {
 
   for (let i = net; i <= bcast; i++) {
     const addr = longToIp(i);
-    const rangeInfo = ipRangeMap.get(i);
+    const functionalRangeInfo = functionalRangeMap.get(i);
+    const networkRangeTypeInfo = networkRangeTypeMap.get(i);
+    const rangeInfo = networkRangeTypeInfo || functionalRangeInfo;
     const assignInfo = ipAssignMap.get(i);
 
-    // Color precedence (top wins):
-    //   1. System range (Network/Broadcast/Gateway), uses the range's own
-    //      color so gateway is orange and network/broadcast are gray.
-    //   2. DHCP reservation, dark blue, stands out from the pale DHCP-pool
-    //      tint that normally covers reservation IPs.
-    //   3. DNS-configured host (A record backing, no reservation), pale
-    //      green so users can see which IPs are claimed by DNS only.
-    //   4. User-locked (manually held, no system range), violet.
-    //   5. Range color (DHCP Scope, user-defined ranges).
-    //   6. Unassigned (no range, no assignment), surface-200.
-    const isSystemRange = !!rangeInfo?.isSystem;
-    const isDhcpReservation = !!assignInfo?.has_dhcp_reservation;
-    const isDnsConfigured = !isDhcpReservation && assignInfo?.address_type === 'static DNS';
-    const isUserLocked = assignInfo?.status === 'locked' && !isSystemRange;
+    const isProtectedSystemRange = ['Network', 'Broadcast', 'Gateway']
+      .includes(functionalRangeInfo?.rangeType);
 
     // Classify ONCE, here, and hand the result to both the fill below and the
     // tooltip (see gridTooltip). The tooltip used to re-derive it from this
@@ -973,17 +920,17 @@ const ipGrid = computed(() => {
     // needs to spot was the one the colour could not express.
     // See REVIEW.md, duplicate-logic audit #41.
     const cellState = ipLifecycleDisplay(gridPseudoData({
-      addr, assignInfo, rangeInfo,
+      addr, assignInfo, rangeInfo: functionalRangeInfo,
     }));
     const cellTypeClass = cellState.addressType?.className || null;
 
     let cellColor;
-    if (isSystemRange) cellColor = rangeInfo.color;
+    if (isProtectedSystemRange) cellColor = functionalRangeInfo.color;
     else if (cellTypeClass === 'type-rogue')  cellColor = 'var(--cid-rogue)';
     else if (cellTypeClass === 'type-system') cellColor = 'var(--cid-system)';
-    else if (isDhcpReservation) cellColor = 'var(--p-blue-700)';
-    else if (isDnsConfigured)   cellColor = 'var(--p-green-300)';
-    else if (isUserLocked)      cellColor = 'var(--p-violet-500)';
+    else if (cellTypeClass === 'type-reserved-dhcp') cellColor = 'var(--p-blue-700)';
+    else if (cellTypeClass === 'type-static-dns') cellColor = 'var(--p-green-300)';
+    else if (cellTypeClass === 'type-reserved') cellColor = 'var(--p-violet-500)';
     else                        cellColor = rangeInfo?.color || 'var(--p-surface-200)';
 
     // Column position within the 64-wide grid. Mark every 16th column's
@@ -999,24 +946,26 @@ const ipGrid = computed(() => {
       lastOctet: i & 255,
       color: cellColor,
       isSectionRight,
-      rangeType: rangeInfo?.rangeType || null,
-      rangeId: rangeInfo?.rangeId || null,
+      rangeType: functionalRangeInfo?.rangeType || null,
+      rangeId: functionalRangeInfo?.rangeId || null,
+      networkRangeType: networkRangeTypeInfo?.rangeType || null,
+      networkRangeTypeColor: networkRangeTypeInfo?.color || null,
       hostname: assignInfo?.hostname || null,
       mac: assignInfo?.mac_address || assignInfo?.last_seen_mac || null,
-      status: assignInfo?.status || 'available',
-      ipLifecycleStatus: assignInfo?.ip_lifecycle_status || assignInfo?.status || 'available',
+      allocationState: assignInfo?.allocation_state || 'unassigned',
       ipDisplayStatus: assignInfo?.ip_display_status || null,
       ipStatusSeverity: assignInfo?.ip_status_severity || null,
       addressType: assignInfo?.address_type || null,
       addressTypeTooltip: assignInfo?.address_type_tooltip || null,
       reservationNote: assignInfo?.reservation_note || null,
-      hasDhcpReservation: assignInfo?.has_dhcp_reservation || 0,
       dhcpExpiresAt: assignInfo?.dhcp_expires_at || null,
       vendor: assignInfo?.vendor || null,
       isOnline: assignInfo?.is_online === 1,
       lastSeen: assignInfo?.last_seen_at || null,
       isConflict: assignInfo?.is_rogue === 1,
       conflictReason: assignInfo?.rogue_reason || null,
+      scanningEnabled: assignInfo?.scanning_enabled,
+      scanOverride: assignInfo?.scan_enabled ?? null,
       state: cellState
     });
   }
@@ -1099,7 +1048,10 @@ function isSystemReserved(ip) {
   return rangeType === 'Network' || rangeType === 'Broadcast' || rangeType === 'Gateway';
 }
 
-function buildContextMenuItems(selectedIps) {
+function buildContextMenuItems(selectedIps, {
+  allowCreateDhcpScope = true,
+  allowSetRangeType = true
+} = {}) {
   if (selectedIps.length === 0) return [];
 
   const items = [];
@@ -1111,18 +1063,20 @@ function buildContextMenuItems(selectedIps) {
     const range = ip.rangeId ? ranges.value.find(r => r.id === ip.rangeId) : null;
     const isDhcpScope = range && range.range_type_name === 'DHCP Scope';
     const isGateway = range && range.range_type_name === 'Gateway';
-    const ipStatus = ip.status || 'available';
+    const allocationState = ip.allocationState || ip.allocation_state || 'unassigned';
 
     if (isGateway) {
-      // Gateway IP: Edit, Delete, and create pool
+      // Gateway IP: Edit and Delete. Grid view can also create a scope.
       items.push({ label: 'Edit Gateway', icon: 'pi pi-pencil', command: () => editRange(range) });
       items.push({ label: 'Delete Gateway', icon: 'pi pi-trash', command: () => confirmDeleteRange(range) });
-      items.push({ separator: true });
-      items.push({
-        label: 'Create DHCP Scope',
-        icon: 'pi pi-plus',
-        command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
-      });
+      if (allowCreateDhcpScope) {
+        items.push({ separator: true });
+        items.push({
+          label: 'Create DHCP Scope',
+          icon: 'pi pi-plus',
+          command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
+        });
+      }
     } else if (isDhcpScope) {
       // IP inside a DHCP Scope
       items.push({
@@ -1143,12 +1097,14 @@ function buildContextMenuItems(selectedIps) {
     } else if (range && isEditableRange(range)) {
       // Other editable range
       items.push({ label: `Edit ${range.range_type_name} Range`, icon: 'pi pi-pencil', command: () => editRange(range) });
-      items.push({
-        label: 'Create DHCP Scope',
-        icon: 'pi pi-plus',
-        command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
-      });
-    } else {
+      if (allowCreateDhcpScope) {
+        items.push({
+          label: 'Create DHCP Scope',
+          icon: 'pi pi-plus',
+          command: () => scopeDialogRef.value.openNewWithPicker(subnet.value)
+        });
+      }
+    } else if (allowCreateDhcpScope) {
       // No range or non-editable
       items.push({
         label: 'Create DHCP Scope',
@@ -1157,29 +1113,44 @@ function buildContextMenuItems(selectedIps) {
       });
     }
 
-    // Lock / Unlock (not for system ranges)
+    if (allowSetRangeType) {
+      if (items.length) items.push({ separator: true });
+      items.push({
+        label: 'Set Range Type',
+        icon: 'pi pi-tags',
+        items: assignableNetworkRangeTypes.value.length
+          ? assignableNetworkRangeTypes.value.map(type => ({
+              label: type.name,
+              icon: 'pi pi-tag',
+              command: () => setSelectedNetworkRangeType(type, selectedIps)
+            }))
+          : [{ label: 'No Network Range Types configured', disabled: true }]
+      });
+    }
+
+    // Create / Release IP Reservation (not for system ranges)
     if (!isSystemReserved(ip)) {
-      items.push({ separator: true });
-      if (ipStatus === 'locked') {
+      if (items.length) items.push({ separator: true });
+      if (allocationState === 'reserved') {
         items.push({
-          label: 'Unlock',
+          label: 'Release IP Reservation',
           icon: 'pi pi-unlock',
-          command: () => setIpReservation(ip.address, 'available')
+          command: () => setIpReservation(ip.address, false)
         });
       } else {
         items.push({
-          label: `Lock ${ip.address}`,
+          label: `Create IP Reservation for ${ip.address}`,
           icon: 'pi pi-lock',
           command: () => openReserveDialog(ip.address)
         });
       }
     }
 
-    // Convert dynamic DHCP to static reservation
-    if (ip.mac && (ipStatus === 'dhcp' || isDhcpScope)) {
+    // Convert dynamic DHCP to a DHCP Reservation
+    if (ip.mac && (allocationState === 'dynamic_dhcp' || isDhcpScope)) {
       items.push({ separator: true });
       items.push({
-        label: 'Make Static DHCP Reservation',
+        label: 'Create DHCP Reservation',
         icon: 'pi pi-arrow-right-arrow-left',
         command: () => openStaticDhcpDialog(ip)
       });
@@ -1187,31 +1158,25 @@ function buildContextMenuItems(selectedIps) {
 
     // Liveness scan toggle, resolve effective state (IP override → subnet default)
     items.push({ separator: true });
-    const ipData = ips.value.find(a => a.ip_address === ip.address);
-    const ipOverride = ipData?.scan_enabled ?? null;
-    const effectivelyEnabled = ipOverride !== null ? !!ipOverride : resolvedSubnetScanEnabled.value;
+    const ipOverride = ip.scanOverride ?? null;
+    const effectivelyEnabled = ip.scanningEnabled ?? resolvedSubnetScanEnabled.value;
     const hasOverride = ipOverride !== null;
 
-    if (effectivelyEnabled) {
-      items.push({ label: `Disable Scanning of ${ip.address}`, icon: 'pi pi-eye-slash', command: () => toggleIpScan(ip.address, false) });
-    } else {
-      items.push({ label: `Enable Scanning of ${ip.address}`, icon: 'pi pi-eye', command: () => toggleIpScan(ip.address, true) });
-    }
+    items.push(scanToggleMenuItem(ip.address, effectivelyEnabled, enabled => toggleIpScan(ip.address, enabled)));
     if (hasOverride) {
       items.push({ label: 'Reset to Inherit', icon: 'pi pi-replay', command: () => toggleIpScan(ip.address, null) });
     }
 
-    // Probe and lifecycle
+    // Probe
     items.push({ separator: true });
-    items.push({ label: `Probe ${ip.address}`, icon: 'pi pi-wifi', command: () => probeIpNow(ip.address) });
-    items.push({ label: `Lifecycle of ${ip.address}`, icon: 'pi pi-history', command: () => openEventsDialog(ip.address) });
+    items.push(probeNowMenuItem(() => probeIpNow(ip.address)));
   } else {
-    // Multi-select. Skip system-reserved IPs (network/broadcast/gateway),
-    // they can't be locked/unlocked by the user. The server-side bulk-status
+    // Multi-select. Skip system-owned IPs (network/broadcast/gateway),
+    // their allocations cannot be changed here. The bulk-allocation
     // endpoint also silently skips them, so this is just UX symmetry.
-    const unlockable = selectedIps.filter(ip => !isSystemReserved(ip));
-    const anyLocked = unlockable.some(ip => (ip.status || 'available') === 'locked');
-    const anyUnlocked = unlockable.some(ip => (ip.status || 'available') !== 'locked');
+    const reservable = selectedIps.filter(ip => !isSystemReserved(ip));
+    const anyReserved = reservable.some(ip => (ip.allocationState || 'unassigned') === 'reserved');
+    const anyUnreserved = reservable.some(ip => (ip.allocationState || 'unassigned') !== 'reserved');
 
     // If the contiguous selection is entirely inside ONE DHCP Scope range,
     // offer a bulk "Remove from Scope" that shrinks/splits that scope. When
@@ -1237,23 +1202,112 @@ function buildContextMenuItems(selectedIps) {
         command: () => removeRangeFromPool(coveringScope, firstIp.address, lastIp.address)
       });
     }
-    if (anyUnlocked) {
+    if (allowSetRangeType) {
+      items.push({ separator: true });
       items.push({
-        label: `Lock ${firstIp.address} – ${lastIp.address}`,
+        label: 'Set Range Type',
+        icon: 'pi pi-tags',
+        items: assignableNetworkRangeTypes.value.length
+          ? assignableNetworkRangeTypes.value.map(type => ({
+              label: type.name,
+              icon: 'pi pi-tag',
+              command: () => setSelectedNetworkRangeType(type, selectedIps)
+            }))
+          : [{ label: 'No Network Range Types configured', disabled: true }]
+      });
+    }
+    if (anyUnreserved) {
+      items.push({
+        label: `Create IP Reservations for ${firstIp.address} – ${lastIp.address}`,
         icon: 'pi pi-lock',
         command: () => openReserveDialog(firstIp.address, lastIp.address)
       });
     }
-    if (anyLocked) {
+    if (anyReserved) {
       items.push({
-        label: `Unlock ${firstIp.address} – ${lastIp.address}`,
+        label: `Release IP Reservations for ${firstIp.address} – ${lastIp.address}`,
         icon: 'pi pi-unlock',
-        command: () => bulkUnlock(firstIp.address, lastIp.address)
+        command: () => bulkRelease(firstIp.address, lastIp.address)
       });
     }
   }
 
   return items;
+}
+
+function selectedIpRuns(selectedIps) {
+  const sorted = [...selectedIps]
+    .map(ip => ({ address: ip.address, value: ipToLong(ip.address) }))
+    .sort((a, b) => a.value - b.value);
+  const runs = [];
+  for (const ip of sorted) {
+    const current = runs.at(-1);
+    if (current && ip.value <= current.endValue + 1) {
+      current.end_ip = ip.address;
+      current.endValue = ip.value;
+    } else {
+      runs.push({ start_ip: ip.address, end_ip: ip.address, endValue: ip.value });
+    }
+  }
+  return runs.map(({ start_ip, end_ip }) => ({ start_ip, end_ip }));
+}
+
+async function setSelectedNetworkRangeType(type, selectedIps) {
+  const selections = selectedIpRuns(selectedIps);
+  await applyNetworkRangeType(type, selections, false);
+}
+
+async function applyNetworkRangeType(type, selections, acceptOverlaps) {
+  saving.value = true;
+  try {
+    const result = await store.setNetworkRangeType(
+      subnet.value.id,
+      type.id,
+      selections,
+      acceptOverlaps
+    );
+    showRangeTypeOverlapDialog.value = false;
+    pendingNetworkRangeType.value = null;
+    pendingNetworkRangeSelections.value = [];
+    rangeTypeOverlapDetails.value = [];
+    const addressCount = selections.reduce((count, selection) =>
+      count + ipToLong(selection.end_ip) - ipToLong(selection.start_ip) + 1, 0);
+    toast.add({
+      severity: 'success',
+      summary: 'Network Range Type set',
+      detail: `${addressCount} address${addressCount === 1 ? '' : 'es'} tagged as ${type.name}`,
+      life: 3000
+    });
+    await reloadData();
+    return result;
+  } catch (err) {
+    if (err.response?.status === 409 && err.response?.data?.can_accept) {
+      pendingNetworkRangeType.value = type;
+      pendingNetworkRangeSelections.value = selections.map(selection => ({ ...selection }));
+      rangeTypeOverlapDetails.value = err.response.data.overlaps || [];
+      showRangeTypeOverlapDialog.value = true;
+    } else {
+      toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+    }
+  } finally {
+    saving.value = false;
+  }
+}
+
+function cancelNetworkRangeTypeOverlap() {
+  showRangeTypeOverlapDialog.value = false;
+  pendingNetworkRangeType.value = null;
+  pendingNetworkRangeSelections.value = [];
+  rangeTypeOverlapDetails.value = [];
+}
+
+async function acceptNetworkRangeTypeChange() {
+  if (!pendingNetworkRangeType.value || pendingNetworkRangeSelections.value.length === 0) return;
+  await applyNetworkRangeType(
+    pendingNetworkRangeType.value,
+    pendingNetworkRangeSelections.value,
+    true
+  );
 }
 
 function openReserveDialog(ipAddress, endIpAddress) {
@@ -1307,14 +1361,14 @@ async function confirmReserve() {
   const scanEn = reserveScanEnabled.value;
   showReserveDialog.value = false;
   if (reserveStartIp.value === reserveEndIp.value) {
-    await setIpReservation(reserveStartIp.value, 'locked', note);
+    await setIpReservation(reserveStartIp.value, true, note);
     if (scanEn !== null) {
       await api.put(`/subnets/${subnet.value.id}/ips/${reserveStartIp.value}/scan-enabled`, { scan_enabled: scanEn });
     }
   } else {
     try {
-      const result = await store.bulkSetIpStatus(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'locked', note);
-      toast.add({ severity: 'success', summary: `${result.count} IPs locked`, life: 3000 });
+      const result = await store.bulkSetIpAllocation(subnet.value.id, reserveStartIp.value, reserveEndIp.value, 'reserved', note);
+      toast.add({ severity: 'success', summary: `${result.count} IP Reservation${result.count === 1 ? '' : 's'} created`, life: 3000 });
       await reloadData();
     } catch (err) {
       toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1322,27 +1376,25 @@ async function confirmReserve() {
   }
 }
 
-async function setIpReservation(ipAddress, status, note) {
+async function setIpReservation(ipAddress, reserved, note) {
   try {
-    await store.setIpStatus(subnet.value.id, ipAddress, status, note);
-    toast.add({ severity: 'success', summary: status === 'locked' ? 'IP locked' : 'IP unlocked', life: 3000 });
+    await store.setIpAllocation(subnet.value.id, ipAddress, reserved ? 'reserved' : 'unassigned', note);
+    toast.add({ severity: 'success', summary: reserved ? 'IP Reservation created' : 'IP Reservation released', life: 3000 });
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
-// Bulk-unlock a contiguous IP range via the same bulk endpoint used for lock.
-// Status 'available' clears any reservation note; system-reserved IPs in the
-// range (network/broadcast/gateway) are silently skipped server-side per the
-// ipStatusRejectionReason guard.
-async function bulkUnlock(startIp, endIp) {
+// Release a contiguous IP Reservation range. Topology-owned addresses are
+// silently skipped by the server.
+async function bulkRelease(startIp, endIp) {
   try {
-    const result = await store.bulkSetIpStatus(subnet.value.id, startIp, endIp, 'available');
+    const result = await store.bulkSetIpAllocation(subnet.value.id, startIp, endIp, 'unassigned');
     const skipped = result?.skipped ? ` (${result.skipped} skipped)` : '';
     toast.add({
       severity: 'success',
-      summary: `${result.count} IP${result.count === 1 ? '' : 's'} unlocked${skipped}`,
+      summary: `${result.count} IP Reservation${result.count === 1 ? '' : 's'} released${skipped}`,
       life: 3000
     });
     await reloadData();
@@ -1375,7 +1427,7 @@ async function confirmStaticDhcp() {
       await api.put(`/subnets/${subnet.value.id}/ips/${staticDhcpForm.value.ip_address}/scan-enabled`, { scan_enabled: staticDhcpScanEnabled.value });
     }
     showStaticDhcpDialog.value = false;
-    toast.add({ severity: 'success', summary: 'Static DHCP reservation created', life: 3000 });
+    toast.add({ severity: 'success', summary: 'DHCP Reservation created', life: 3000 });
     await reloadData();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1433,7 +1485,7 @@ async function loadData({ skipCache = false } = {}) {
 
   try {
     restoreTableState();
-    // Load IPs and address types in parallel
+    // Load IPs and Network Range Types in parallel
     const [, rt] = await Promise.all([
       loadIpPage(currentPage.value, currentPageSize.value, { skipCache }),
       store.getRangeTypes()
@@ -1492,6 +1544,8 @@ let _loadTimer = null;
 watch(() => props.subnetId, (newId, _oldId) => {
   gridSelection.value = new Set();
   ipSearch.value = '';
+  showIpDetails.value = false;
+  ipDetailsRow.value = null;
   if (_loadTimer) clearTimeout(_loadTimer);
   if (!newId) {
     subnet.value = null;
@@ -1562,7 +1616,7 @@ async function saveRange(force = false) {
   }
 }
 
-async function forceCreateRange() {
+async function acceptRangeChange() {
   rangeForm.value = pendingRangeForm.value;
   await saveRange(true);
 }
@@ -1778,43 +1832,6 @@ onUnmounted(() => {
 
 
 <style scoped>
-/* ── IP Lifecycle Events Dialog ── */
-.events-loading, .events-empty {
-  padding: 1.5rem;
-  text-align: center;
-  color: var(--p-text-muted-color);
-  font-size: 0.85rem;
-}
-.events-list {
-  max-height: 24rem;
-  overflow-y: auto;
-}
-.event-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
-  font-size: 0.8rem;
-}
-.event-time {
-  width: 9rem;
-  flex-shrink: 0;
-  color: var(--p-text-muted-color);
-  font-family: monospace;
-  font-size: 0.75rem;
-}
-.event-tag {
-  flex-shrink: 0;
-}
-.event-detail {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--p-text-color);
-}
-
 .ip-search-bar {
   display: flex;
   align-items: center;
@@ -1823,6 +1840,9 @@ onUnmounted(() => {
 }
 .ip-search-input {
   width: 22rem;
+}
+.ip-address-table :deep(.p-datatable-tbody > tr) {
+  cursor: pointer;
 }
 .available-toggle {
   display: inline-flex;

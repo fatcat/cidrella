@@ -5,6 +5,7 @@ import { getProxyStatus } from '../utils/dns-proxy.js';
 import { isDnsmasqRunning } from '../utils/dnsmasq.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
 import { VALID_RANGE_KEYS } from '../config/defaults.js';
+import { getIpLifecycleDiagnostics } from '../utils/ip-lifecycle-diagnostics.js';
 
 const router = Router();
 
@@ -65,6 +66,11 @@ router.get('/proxy-perf', requirePerm('analytics:read'), (req, res) => {
      FROM metrics_proxy_perf WHERE ts >= ? ORDER BY ts`
   ).all(cutoff);
   res.json(rows);
+});
+
+// GET /api/metrics/ip-lifecycle
+router.get('/ip-lifecycle', requirePerm('analytics:read'), (req, res) => {
+  res.json(getIpLifecycleDiagnostics(getDb()));
 });
 
 // GET /api/metrics/services

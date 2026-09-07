@@ -8,7 +8,10 @@ import {
   validateSupernet, applyNameTemplate, canMergeCidrs, isValidDomain,
   validateDisplayString, isValidIpv4
 } from '../utils/ip.js';
-import * as IpAddress from '../models/ip-address.js';
+import {
+  lifecycleRepository as IpAddress,
+  setManualReservation
+} from '../services/ip-lifecycle-service.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import * as Range from '../models/range.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
@@ -16,7 +19,7 @@ import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
-import { gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
+import { gatewayInPoolConflict, gatewayInPoolError, dynamicPoolConflict } from '../models/dhcp-scope.js';
 import { staticDnsClaimSql } from '../models/dns-record.js';
 
 const router = Router();
@@ -239,7 +242,7 @@ router.get('/', requirePerm('subnets:read'), asyncHandler((req, res) => {
     )
     SELECT s.*,
       (SELECT COUNT(*) FROM ranges WHERE subnet_id = s.id) as range_count,
-      (SELECT COUNT(*) FROM ip_addresses WHERE subnet_id = s.id AND status != 'available') as used_count,
+      (SELECT COUNT(*) FROM ip_addresses WHERE subnet_id = s.id AND allocation_state != 'unassigned') as used_count,
       (SELECT COUNT(*) FROM subnets WHERE parent_id = s.id) as child_count
     FROM subnets s
     WHERE s.id IN (SELECT id FROM subnet_tree)
@@ -275,7 +278,7 @@ router.get('/:id', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const subnet = db.prepare(`
     SELECT s.*,
       (SELECT COUNT(*) FROM ranges WHERE subnet_id = s.id) as range_count,
-      (SELECT COUNT(*) FROM ip_addresses WHERE subnet_id = s.id AND status != 'available') as used_count,
+      (SELECT COUNT(*) FROM ip_addresses WHERE subnet_id = s.id AND allocation_state != 'unassigned') as used_count,
       (SELECT COUNT(*) FROM subnets WHERE parent_id = s.id) as child_count
     FROM subnets s WHERE s.id = ?
   `).get(req.params.id);
@@ -753,10 +756,10 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
   }
 
   // ip_addresses rows: only count rows that carry meaningful state. A bare
-  // "available" row with no hostname/MAC/scan history is noise from the
+  // unassigned row with no hostname/MAC/scan history is noise from the
   // sync scheduler and safe to drop.
   const ips = db.prepare(
-    "SELECT ip_address, hostname, mac_address, status FROM ip_addresses WHERE subnet_id = ? AND (hostname IS NOT NULL OR mac_address IS NOT NULL OR status NOT IN ('available', 'locked'))"
+    "SELECT ip_address, hostname, mac_address, allocation_state FROM ip_addresses WHERE subnet_id = ? AND (hostname IS NOT NULL OR mac_address IS NOT NULL OR allocation_state != 'unassigned')"
   ).all(parentId);
   for (const ip of ips) {
     const cls = classify(ip.ip_address, ipToLong(ip.ip_address));
@@ -768,7 +771,7 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
       carries: 'ip_address',
       hostname: ip.hostname || null,
       mac: ip.mac_address || null,
-      status: ip.status || null,
+      allocation_state: ip.allocation_state,
     });
   }
 
@@ -859,7 +862,7 @@ function transferPerIpArtifactsToChildren(db, parentId) {
   const findChildForIp = (ipLong) =>
     childRanges.find(c => ipLong >= c.netLong && ipLong <= c.bcastLong);
 
-  // ip_addresses: parent's row has the live state (hostname/mac/status/scan).
+  // ip_addresses: parent's row has the live state and observed metadata.
   // If a row already exists under the child for the same IP (auto-populated
   // after the child was inserted), prefer the parent's and drop the dup.
   // We also rewrite `ip_events.subnet_id` for each moved row so history
@@ -882,7 +885,7 @@ function transferPerIpArtifactsToChildren(db, parentId) {
 //   - DNS A records pointing at a boundary IP: delete. The record resolves
 //     but the target is unusable.
 //   - ip_addresses rows on a boundary IP: delete. Next sync will recreate
-//     an appropriate 'locked' row via createSystemRanges.
+//     an appropriate protected allocation via createSystemRanges.
 //   - dhcp_leases on a boundary IP: delete the DB row. dnsmasq's on-disk
 //     lease remains valid until its client renews; dnsmasq will then
 //     refuse (IP is now outside the active pool) and the client gets a
@@ -1346,6 +1349,19 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     }
     if (poolStart <= poolEnd) {
       dhcpPool = { startLong: poolStart, endLong: poolEnd };
+      const conflict = dynamicPoolConflict(
+        db,
+        { ...subnet, gateway_address: gw },
+        longToIp(poolStart),
+        longToIp(poolEnd)
+      );
+      if (conflict) {
+        return res.status(409).json({
+          error: conflict.error,
+          conflict_type: conflict.type,
+          ip_address: conflict.ip_address
+        });
+      }
     }
   }
 
@@ -1442,7 +1458,15 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   const showAvailable = req.query.showAvailable !== 'false';
 
   // Sort params
-  const SORTABLE_FIELDS = new Set(['ip_address', 'ip_display_status', 'status', 'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at', 'dhcp_expires_at', 'computed_type']);
+  const SORTABLE_FIELDS = new Set([
+    'ip_address', 'ip_display_status', 'allocation_state', 'allocation_source_type',
+    'hostname', 'mac_address', 'vendor', 'is_online', 'last_seen_at',
+    'dhcp_expires_at', 'computed_type', 'scanning_enabled', 'network_range_type', 'os_family',
+    'device_type', 'device_confidence', 'dhcp_fingerprint',
+    'dhcp_vendor_class', 'dhcp_fingerprint_hostname', 'device_fingerprint_source',
+    'name', 'record_type', 'value', 'priority', 'port', 'ttl', 'enabled',
+    'dns_source', 'lease_status', 'subnet_name'
+  ]);
   const reqSortField = SORTABLE_FIELDS.has(req.query.sortField) ? req.query.sortField : null;
   const reqSortOrder = req.query.sortOrder === 'desc' ? -1 : 1;
 
@@ -1476,7 +1500,9 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     return {
       ip_address: addr,
       subnet_id: subnet.id,
-      status: (isGw || isNetwork || isBroadcast) ? 'locked' : 'available',
+      allocation_state: isGw
+        ? 'gateway'
+        : (isNetwork || isBroadcast) ? 'system' : 'unassigned',
       hostname: null,
       mac_address: null,
       is_online: 0,
@@ -1485,14 +1511,8 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
       is_rogue: 0,
       rogue_reason: null,
       has_dhcp_reservation: 0,
-      // has_static_dns is deliberately NOT set. enrichIpViewRows fills it only
-      // when the field is `undefined`, because a persisted row already carries
-      // an authoritative value computed in SQL and recomputing would be waste.
-      // Setting 0 here opted every synthesized row out of that fallback, so an
-      // address with a manual A record rendered "available" from this route and
-      // static-DNS from /api/dhcp/scopes, which omits the field and gets it
-      // right (duplicate-logic audit #23). All four callers of this function
-      // run enrichIpViewRows, so leaving it out is safe.
+      // Protocol fact fields stay absent for synthesized rows. Allocation and
+      // display come only from the canonical state above.
       dhcp_expires_at: null,
       range_type_id: range?.range_type_id || null,
       range_type_name: range?.range_type_name || null,
@@ -1501,11 +1521,17 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   }
 
   function buildRangeLookup(ranges) {
-    return ranges.map(r => ({
-      ...r,
-      startLong: ipToLong(r.start_ip),
-      endLong: ipToLong(r.end_ip)
-    })).sort((a, b) => a.startLong - b.startLong);
+    // `range_type_*` remains the functional range projection used for DHCP
+    // scope and topology behavior. Custom organizational classifications are
+    // projected separately by ip-view as `network_range_type*`.
+    return ranges
+      .filter(range => range.range_type_is_system)
+      .map(r => ({
+        ...r,
+        startLong: ipToLong(r.start_ip),
+        endLong: ipToLong(r.end_ip)
+      }))
+      .sort((a, b) => a.startLong - b.startLong);
   }
 
   function rangeForIpLong(rangeLookup, ipLong) {
@@ -1513,7 +1539,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   }
 
   function isAvailableIpRow(row) {
-    return (row.ip_display_status || row.status || 'available') === 'available';
+    return (row.ip_display_status || 'available') === 'available';
   }
 
   function enrichPersistedRows(rows, rangeLookup) {
@@ -1562,7 +1588,17 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
           (ip.vendor && ip.vendor.toLowerCase().includes(search)) ||
           (ip.ip_display_status && ip.ip_display_status.toLowerCase().includes(search)) ||
           (ip.address_type && ip.address_type.toLowerCase().includes(search)) ||
-          (ip.status && ip.status.toLowerCase().includes(search))) {
+          (ip.allocation_state && ip.allocation_state.toLowerCase().includes(search)) ||
+          (ip.allocation_source_type && ip.allocation_source_type.toLowerCase().includes(search)) ||
+          (ip.network_range_type && ip.network_range_type.toLowerCase().includes(search)) ||
+          (ip.os_family && ip.os_family.toLowerCase().includes(search)) ||
+          (ip.device_type && ip.device_type.toLowerCase().includes(search)) ||
+          String(ip.device_confidence ?? '').includes(search) ||
+          (ip.dhcp_fingerprint && ip.dhcp_fingerprint.includes(search)) ||
+          (ip.dhcp_vendor_class && ip.dhcp_vendor_class.toLowerCase().includes(search)) ||
+          (ip.dhcp_fingerprint_hostname && ip.dhcp_fingerprint_hostname.toLowerCase().includes(search)) ||
+          (ip.device_fingerprint_source && ip.device_fingerprint_source.includes(search)) ||
+          String(ip.scanning_enabled).includes(search)) {
         matched.push(ip);
       }
     }
@@ -1579,7 +1615,7 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     return res.json({ subnet, ips, ranges, totalIps: searchTotal, page, pageSize, totalPages: searchTotalPages, search });
   }
 
-  // ── Suppressed-available mode: return persisted occupied rows and synthesized locked rows only ──
+  // ── Suppressed-available mode: return occupied and protected rows only ──
   if (!showAvailable) {
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
 
@@ -1607,12 +1643,12 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
     const displayRows = allPersisted.filter(row => !isAvailableIpRow(row));
 
     const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
-    const lockedLongs = new Set([parsed.networkLong, parsed.broadcastLong]);
+    const protectedLongs = new Set([parsed.networkLong, parsed.broadcastLong]);
     if (gwLong !== null && gwLong >= parsed.networkLong && gwLong <= parsed.broadcastLong) {
-      lockedLongs.add(gwLong);
+      protectedLongs.add(gwLong);
     }
 
-    for (const ipLong of lockedLongs) {
+    for (const ipLong of protectedLongs) {
       if (!persistedByLong.has(ipLong)) {
         const row = makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong), gwLong);
         enrichIpViewRows(db, [row]);
@@ -1753,34 +1789,32 @@ router.get('/:id/ips', requirePerm('subnets:read'), asyncHandler((req, res) => {
   res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });
 }));
 
-// Returns a rejection string if the IP status change would violate subnet
-// invariants (network/broadcast must stay locked; gateway must not be
-// unlocked while it is the configured gateway), or null if the change is
-// allowed.
-function ipStatusRejectionReason(subnet, ip, status) {
+// Protected topology addresses cannot become operator reservations or be
+// released through the administrative reservation endpoint.
+function ipAllocationRejectionReason(subnet, ip) {
   const parsed = parseCidr(subnet.cidr);
   const ipLong = ipToLong(ip);
-  if ((ipLong === parsed.networkLong || ipLong === parsed.broadcastLong) && status !== 'locked') {
-    return 'Network and broadcast addresses must remain locked';
+  if (ipLong === parsed.networkLong || ipLong === parsed.broadcastLong) {
+    return 'Network and broadcast allocations are managed by subnet topology';
   }
-  if (subnet.gateway_address && ip === subnet.gateway_address && status !== 'locked') {
-    return 'Gateway address must remain locked while configured as the gateway';
+  if (subnet.gateway_address && ip === subnet.gateway_address) {
+    return 'Gateway allocation is managed by subnet topology';
   }
   return null;
 }
 
-// PUT /api/subnets/:id/ips/bulk-status: reserve or unreserve a range of IPs
-router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((req, res) => {
+// PUT /api/subnets/:id/ips/bulk-allocation: reserve or release a range of IPs
+router.put('/:id/ips/bulk-allocation', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-  const { start_ip, end_ip, status, note } = req.body;
+  const { start_ip, end_ip, allocation_state, note } = req.body;
   if (!start_ip || !end_ip) return res.status(400).json({ error: 'start_ip and end_ip are required' });
   if (typeof start_ip !== 'string' || !isValidIpv4(start_ip)) return res.status(400).json({ error: 'start_ip must be a valid IPv4 address' });
   if (typeof end_ip !== 'string' || !isValidIpv4(end_ip)) return res.status(400).json({ error: 'end_ip must be a valid IPv4 address' });
-  if (!['available', 'locked', 'assigned'].includes(status)) {
-    return res.status(400).json({ error: 'Invalid status' });
+  if (!['unassigned', 'reserved'].includes(allocation_state)) {
+    return res.status(400).json({ error: 'allocation_state must be reserved or unassigned' });
   }
   if (!isIpInSubnet(start_ip, subnet.cidr) || !isIpInSubnet(end_ip, subnet.cidr)) {
     return res.status(400).json({ error: 'IP range must be within the subnet' });
@@ -1795,7 +1829,7 @@ router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((r
   if (startLong > endLong) return res.status(400).json({ error: 'start_ip must be <= end_ip' });
   if (endLong - startLong > 1024) return res.status(400).json({ error: 'Range too large (max 1024 IPs)' });
 
-  const reservationNote = status === 'locked' ? (note || null) : null;
+  const reservationNote = allocation_state === 'reserved' ? (note || null) : null;
   const updated = [];
   const skipped = [];
 
@@ -1803,51 +1837,54 @@ router.put('/:id/ips/bulk-status', requirePerm('subnets:write'), asyncHandler((r
     for (let long = startLong; long <= endLong; long++) {
       const ip = longToIp(long);
       // Silently skip protected IPs (network/broadcast/gateway) so a bulk
-      // "mark this /24 as assigned" doesn't fail wholesale on three IPs.
-      if (ipStatusRejectionReason(subnet, ip, status)) {
+      // "reserve this /24" doesn't fail wholesale on three topology IPs.
+      if (ipAllocationRejectionReason(subnet, ip)) {
         skipped.push(ip);
         continue;
       }
-      IpAddress.setStatus(db, subnet.id, ip, status, reservationNote);
+      setManualReservation(db, subnet.id, ip, allocation_state === 'reserved', reservationNote);
       updated.push(ip);
     }
   });
   bulkUpdate();
 
-  audit(req.user.id, 'ip_status_changed', 'ip_address', subnet.id, {
-    start_ip, end_ip, count: updated.length, skipped: skipped.length, status, note: reservationNote
+  audit(req.user.id, 'ip_allocation_changed', 'ip_address', subnet.id, {
+    start_ip, end_ip, count: updated.length, skipped: skipped.length, allocation_state, note: reservationNote
   });
-  res.json({ count: updated.length, skipped: skipped.length, status, reservation_note: reservationNote });
+  if (updated.length > 0) req.afterCommit('regenerate_dhcp');
+  res.json({ count: updated.length, skipped: skipped.length, allocation_state, reservation_note: reservationNote });
 }));
 
-// PUT /api/subnets/:id/ips/:ip/status: reserve or unreserve an IP
-router.put('/:id/ips/:ip/status', requirePerm('subnets:write'), asyncHandler((req, res) => {
+// PUT /api/subnets/:id/ips/:ip/allocation: reserve or release an IP
+router.put('/:id/ips/:ip/allocation', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
   const ipAddress = req.params.ip;
-  const { status, note } = req.body;
+  const { allocation_state, note } = req.body;
   if (!isValidIpv4(ipAddress)) return res.status(400).json({ error: 'Invalid IP address' });
   if (!isIpInSubnet(ipAddress, subnet.cidr)) return res.status(400).json({ error: 'IP address must be within the subnet' });
-  if (!['available', 'locked', 'assigned'].includes(status)) {
-    return res.status(400).json({ error: 'Invalid status' });
+  if (!['unassigned', 'reserved'].includes(allocation_state)) {
+    return res.status(400).json({ error: 'allocation_state must be reserved or unassigned' });
   }
   if (note !== undefined) {
     const err = validateDisplayString(note, { maxLength: 1024 });
     if (err) return res.status(400).json({ error: `note ${err}` });
   }
 
-  const rejection = ipStatusRejectionReason(subnet, ipAddress, status);
+  const rejection = ipAllocationRejectionReason(subnet, ipAddress);
   if (rejection) return res.status(400).json({ error: rejection });
 
-  // When locking, store the note; when unlocking, clear it
-  const reservationNote = status === 'locked' ? (note || null) : null;
+  const reservationNote = allocation_state === 'reserved' ? (note || null) : null;
 
-  IpAddress.setStatus(db, subnet.id, ipAddress, status, reservationNote);
+  setManualReservation(db, subnet.id, ipAddress, allocation_state === 'reserved', reservationNote);
 
-  audit(req.user.id, 'ip_status_changed', 'ip_address', subnet.id, { ip_address: ipAddress, status, note: reservationNote });
-  res.json({ ip_address: ipAddress, status, reservation_note: reservationNote });
+  audit(req.user.id, 'ip_allocation_changed', 'ip_address', subnet.id, {
+    ip_address: ipAddress, allocation_state, note: reservationNote
+  });
+  req.afterCommit('regenerate_dhcp');
+  res.json({ ip_address: ipAddress, allocation_state, reservation_note: reservationNote });
 }));
 
 // PUT /:id/ips/:ip/scan-enabled: set per-IP liveness scan override

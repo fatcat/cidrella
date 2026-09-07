@@ -67,7 +67,6 @@ export const DEFAULTS = {
   https_port:              '',
   http_port:               '',
   ip_history_retention_days: '7',
-  offline_metadata_retention_days: '7',
   analytics_retention_days: '7',
   anomaly_detection_enabled: 'false',
   anomaly_scoring_interval_min: '15',

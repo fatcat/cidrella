@@ -3,13 +3,20 @@ import { parse as parseToml } from 'smol-toml';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { ipToLong, isClientMac, isValidMac, isValidIpv4, isValidDomain } from '../utils/ip.js';
-import { syncDnsToIp } from '../utils/ip-sync.js';
+import { allocateStaticDns, deallocateStaticDns } from '../services/ip-lifecycle-service.js';
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
 import { validateDnsmasqConfigValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
+import { canonicalizeIp } from '../utils/address.js';
 import { createReservation } from '../models/dhcp-reservation.js';
-import { importRecords, cnameTargetError, fqdnForRecordName, findAHostnameConflict } from '../models/dns-record.js';
+import {
+  importRecords,
+  cnameTargetError,
+  fqdnForRecordName,
+  findAHostnameConflict,
+  syncPtrForARecord
+} from '../models/dns-record.js';
 
 // How many offending records the human-readable `error` string names before it
 // defers to the structured `problems` array. Enough to fix a typical bad file
@@ -323,7 +330,11 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     for (const h of hostRows) {
       if (!h || typeof h !== 'object') return res.status(400).json({ error: 'hosts entries must be objects' });
       if (typeof h.hostname !== 'string') return res.status(400).json({ error: 'hosts hostname must be a string' });
-      const record = { type: 'A', name: recordName(h.hostname.trim(), zone.name), value: h.ip };
+      const record = {
+        type: 'A',
+        name: recordName(h.hostname.trim(), zone.name),
+        value: canonicalizeIp(h.ip) || h.ip
+      };
       const err = validateImportRecord(record, zone.name);
       if (err) { problem('A', record.name, record.value, err); continue; }
       recordsToImport.push(record);
@@ -354,14 +365,35 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     }
   }
 
-  // One address gets one name. The DNS page has always refused to give an IP a
-  // second hostname and told the operator to use a CNAME; the importer did not,
-  // so a file could quietly do what the UI forbids (duplicate-logic audit #18).
-  //
-  // Checked against the DB as it stands, with this import's OWN names excluded,
-  // so a file that legitimately maps one IP to two names is not judged against
-  // itself and re-importing the same file stays idempotent.
+  // One address gets one canonical A record. Reject every member of an
+  // ambiguous batch group so the operator can fix the whole group at once.
+  // This check must happen before ignoring the batch's own records during the
+  // existing-record check below, otherwise a first import can create the
+  // ambiguity and every later re-import treats it as legitimate history.
+  const duplicateBatchRecords = new Set();
+  const aRecordsByIp = new Map();
   for (const record of recordsToImport.filter(r => r.type === 'A')) {
+    if (!aRecordsByIp.has(record.value)) aRecordsByIp.set(record.value, []);
+    aRecordsByIp.get(record.value).push(record);
+  }
+  for (const [ip, records] of aRecordsByIp) {
+    if (records.length < 2) continue;
+    const hostnames = records.map(record => fqdnForRecordName(record.name, zone.name));
+    for (const record of records) {
+      duplicateBatchRecords.add(record);
+      problem(
+        'A', record.name, record.value,
+        `${ip} is assigned to multiple A records in this import: ${hostnames.join(', ')}. `
+          + 'Keep one canonical A record and convert each additional name to a CNAME.'
+      );
+    }
+  }
+
+  // Check the remaining unambiguous A records against existing DNS and DHCP
+  // names. Exact records from this batch are ignored so re-importing a valid
+  // one-name-per-address file remains idempotent.
+  for (const record of recordsToImport.filter(r => r.type === 'A')) {
+    if (duplicateBatchRecords.has(record)) continue;
     const conflict = findAHostnameConflict(db, record.value, record.name, zone.name, null, batchFqdns);
     if (conflict) {
       problem('A', record.name, record.value,
@@ -383,7 +415,42 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     });
   }
 
-  const importResult = importRecords(db, zone, recordsToImport);
+  const importDnsWorkflow = db.transaction(() => {
+    const importResult = importRecords(db, zone, recordsToImport);
+    if (zone.enabled) {
+      // Reconcile every A row in the submitted batch, including exact records
+      // that importRecords skipped. Re-importing a valid file must repair a
+      // missing/stale PTR just as creating the record does.
+      for (const record of recordsToImport.filter(item => item.type === 'A')) {
+        const ptrResult = syncPtrForARecord(db, record.name, record.value, zone.name);
+        if (ptrResult?.conflict) {
+          const err = new Error('PTR conflict');
+          err.code = 'PTR_CONFLICT';
+          err.conflict = ptrResult.conflict;
+          throw err;
+        }
+      }
+      for (const record of importResult.aRecordsToSync) {
+        if (record.previousValue && record.previousValue !== record.value) {
+          deallocateStaticDns(db, record.name, record.previousValue, zone.name);
+        }
+        allocateStaticDns(db, record.name, record.value, zone.name, record.id);
+      }
+    }
+    return importResult;
+  });
+  let importResult;
+  try {
+    importResult = importDnsWorkflow();
+  } catch (err) {
+    if (err.code === 'PTR_CONFLICT') {
+      return res.status(409).json({
+        error: 'Import rejected, nothing was imported. The PTR for this IP points at a different hostname.',
+        ptr_conflict: err.conflict
+      });
+    }
+    throw err;
+  }
   results.a = {
     created: importResult.results.A.created,
     updated: importResult.results.A.updated,
@@ -396,10 +463,6 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     skipped: importResult.results.CNAME.skipped,
     failed: importResult.results.CNAME.failed
   };
-  for (const r of importResult.aRecordsToSync) {
-    syncDnsToIp(db, r.name, r.value, zone.name);
-  }
-
   // Import DHCP reservations
   if (dhcpRows.length > 0) {
     // Find all leaf subnets to match IPs against

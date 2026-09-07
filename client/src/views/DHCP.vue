@@ -285,7 +285,8 @@ async function saveDefaults() {
 async function applyConfig() {
   try {
     const result = await store.applyConfig();
-    toast.add({ severity: 'success', summary: 'Config applied', detail: `${result.scopes} scopes, ${result.reservations} reservations`, life: 3000 });
+    const reservationLabel = `DHCP Reservation${result.reservations === 1 ? '' : 's'}`;
+    toast.add({ severity: 'success', summary: 'Config applied', detail: `${result.scopes} scopes, ${result.reservations} ${reservationLabel}`, life: 3000 });
     for (let i = 0; i < 3; i++) {
       setTimeout(() => window.dispatchEvent(new Event('ipam:stats-changed')), (i + 1) * 2000);
     }

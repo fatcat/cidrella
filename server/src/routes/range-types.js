@@ -38,7 +38,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 
   const db = getDb();
   const existing = db.prepare('SELECT id FROM range_types WHERE name = ?').get(name);
-  if (existing) return res.status(409).json({ error: 'Range type already exists' });
+  if (existing) return res.status(409).json({ error: 'Network Range Type already exists' });
 
   const type = RangeType.createRangeType(db, {
     name,
@@ -55,7 +55,7 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const type = db.prepare('SELECT * FROM range_types WHERE id = ?').get(req.params.id);
   if (!type) return res.status(404).json({ error: 'Range type not found' });
-  if (type.is_system) return res.status(403).json({ error: 'Cannot modify system address types' });
+  if (type.is_system) return res.status(403).json({ error: 'Cannot modify functional system range types' });
 
   const body = req.body || {};
   const { name, color, description } = body;
@@ -77,7 +77,7 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 
   if (name && name !== type.name) {
     const dup = db.prepare('SELECT id FROM range_types WHERE name = ? AND id != ?').get(name, type.id);
-    if (dup) return res.status(409).json({ error: 'Address type name already exists' });
+    if (dup) return res.status(409).json({ error: 'Network Range Type name already exists' });
   }
 
   const updated = RangeType.updateRangeType(db, type, { name, color, description });
@@ -89,13 +89,13 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const type = db.prepare('SELECT * FROM range_types WHERE id = ?').get(req.params.id);
-  if (!type) return res.status(404).json({ error: 'Address type not found' });
-  if (type.is_system) return res.status(403).json({ error: 'Cannot delete system address types' });
+  if (!type) return res.status(404).json({ error: 'Network Range Type not found' });
+  if (type.is_system) return res.status(403).json({ error: 'Cannot delete functional system range types' });
 
   // Check if in use
   const usageCount = db.prepare('SELECT COUNT(*) as count FROM ranges WHERE range_type_id = ?').get(type.id);
   if (usageCount.count > 0) {
-    return res.status(409).json({ error: `Address type is in use by ${usageCount.count} range(s)` });
+    return res.status(409).json({ error: `Network Range Type is in use by ${usageCount.count} range(s)` });
   }
 
   RangeType.deleteRangeType(db, type.id);

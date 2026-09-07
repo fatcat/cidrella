@@ -11,8 +11,8 @@
  * cycle no matter who pulls it in. Same reasoning as scan-coverage.js, which
  * this sits next to conceptually.
  *
- * KNOWN and deliberate divergence from the JavaScript twin,
- * `activeLease()` in models/ip-view.js. SQLite's datetime() truncates to whole
+ * KNOWN and deliberate divergence from the JavaScript twin below. SQLite's
+ * datetime() truncates to whole
  * seconds and this uses `>`; the JS builds a Date with millisecond precision
  * and uses `>=`. They therefore disagree for at most the one second in which a
  * lease expires, and only for a lease expiring exactly now. Unifying would mean
@@ -44,4 +44,20 @@ export function activeLeaseSql(alias = '') {
  */
 export function infiniteLeaseFirstSql(alias = '') {
   return `CASE WHEN ${col(alias)} = 'infinite' THEN 1 ELSE 0 END DESC`;
+}
+
+/** Parse dnsmasq ISO timestamps and SQLite's UTC datetime() text consistently. */
+export function leaseExpiryMs(expiresAt) {
+  if (expiresAt === 'infinite') return Infinity;
+  const raw = String(expiresAt || '').trim();
+  if (!raw) return NaN;
+  const zoned = raw.includes('T') || /(?:Z|[+-]\d\d:\d\d)$/.test(raw)
+    ? raw
+    : `${raw.replace(' ', 'T')}Z`;
+  return Date.parse(zoned);
+}
+
+export function isLeaseActive(expiresAt, now = Date.now()) {
+  const expiry = leaseExpiryMs(expiresAt);
+  return expiry === Infinity || (Number.isFinite(expiry) && expiry >= now);
 }

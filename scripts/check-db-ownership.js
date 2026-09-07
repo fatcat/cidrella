@@ -3,7 +3,8 @@
  * Guardrail for database write ownership.
  *
  * The first enforced rule is intentionally narrow: production writes to
- * ip_addresses must live in server/src/models/ip-address.js or migrations.
+ * ip_addresses must live in server/src/models/ip-address.js, migrations, or
+ * the startup-only canonical identity backfill.
  * Broader write findings are reported as architecture debt until each table
  * has an owner and can be made strict.
  */
@@ -30,11 +31,12 @@ const SKIP_DIRS = new Set([
 const STRICT_TABLE_RULES = [
   {
     table: 'ip_addresses',
-    ownerLabel: 'server/src/models/ip-address.js',
+    ownerLabel: 'server/src/models/ip-address.js or startup identity backfill',
     writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?ip_addresses\b/gi,
     allow(file) {
       const rel = relPath(file);
       return rel === 'server/src/models/ip-address.js'
+        || rel === 'server/src/db/ip-identity.js'
         || rel.startsWith('server/src/db/migrations/');
     },
   },
@@ -370,6 +372,23 @@ for (const rule of STRICT_TABLE_RULES) {
     for (const f of findings) {
       console.error(`  ${f.file}:${f.line} ${f.match}`);
     }
+  }
+}
+
+const directIpModelImports = collectMatches(
+  files,
+  /from\s+['"][^'"]*models\/ip-address\.js['"]/g,
+  file => {
+    const rel = relPath(file);
+    return rel === 'server/src/services/ip-lifecycle-service.js'
+      || rel === 'server/src/utils/ip-sync.js';
+  }
+);
+if (directIpModelImports.length > 0) {
+  failures += directIpModelImports.length;
+  console.error('IP lifecycle ownership violation: application callers must use services/ip-lifecycle-service.js');
+  for (const finding of directIpModelImports) {
+    console.error(`  ${finding.file}:${finding.line} ${finding.match}`);
   }
 }
 

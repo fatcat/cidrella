@@ -26,7 +26,7 @@ it returns "unsupported" / approximates, and that gap list is the migration map.
 ### Backend split (target)
 | Concern | dnsmasq today | Future owner |
 |---|---|---|
-| DHCP (subnets, pools, reservations, leases) | dnsmasq DHCP | **Kea** (Control Agent REST) |
+| DHCP (subnets, pools, DHCP Reservations, leases) | dnsmasq DHCP | **Kea** (Control Agent REST) |
 | Local DNS zones/records (A/CNAME/MX/TXT/SRV/PTR, SOA) | dnsmasq host/conf files | **PowerDNS Authoritative** (REST zones/rrsets) |
 | Recursion / forwarding / filtering / DNSSEC-validate / DoT-DoH | custom proxy + dnsmasq | **PowerDNS Recursor** (forward-zones, RPZ, Lua, native DoT/DoH) |
 
@@ -35,7 +35,7 @@ it returns "unsupported" / approximates, and that gap list is the migration map.
 | # | Seam | Where (file) | dnsmasq mechanism | Intent-named API op (proposed) | Kea/PowerDNS equivalent | Adapter gap |
 |---|---|---|---|---|---|---|
 | 1 | **DNS records/zones config** | `utils/dnsmasq.js` (`regenerateHostsDir`, `regenerateConfDir`, `regenerateDnsmasqConf`) | render `hosts.d/*.hosts` + `conf.d/zone-*.conf`, reload | `applyZones()` / `upsertRecord()` / `deleteRecord()` | PowerDNS Auth `PATCH /zones/:zone` (rrsets) | full file regen vs targeted rrset PATCH |
-| 2 | **DHCP scopes/reservations config** | `utils/dhcp.js` (`regenerateDhcpConfigs`, `generateScopeConfig`), `dhcp-hosts.d` | render `dhcp-range=`, `dhcp-host=`, options; reload | `applyDhcpScopes()` / `upsertReservation()` | Kea `subnet4`/`reservation` via `config-set`/`reservation-add` | per-scope option mapping; no API push |
+| 2 | **DHCP Scope/DHCP Reservation config** | `utils/dhcp.js` (`regenerateDhcpConfigs`, `generateScopeConfig`), `dhcp-hosts.d` | render `dhcp-range=`, `dhcp-host=`, options; reload | `applyDhcpScopes()` / `upsertReservation()` | Kea `subnet4`/`reservation` via `config-set`/`reservation-add` | per-scope option mapping; no API push |
 | 3 | **Lease ingestion** | `utils/dhcp.js` (`syncLeases`, `startLeaseWatcher`, `LEASE_FILE`), `models/dhcp-lease.js` | poll `dnsmasq.leases` file | `getLeases()` (+ change events) | Kea `lease4-get-all` / memfile/DB backend | file-poll vs API/DB; 10s latency |
 | 4 | **DHCP fingerprint capture** | `utils/dhcp-fingerprint.js` | parse `log-dhcp` text (opt55/60/hostname) | `getDhcpFingerprintEvents()` | Kea hooks (`flex-id`, lease cmds, packet callouts) | log-parse vs structured hook data |
 | 5 | **Recursion + filtering proxy** | `utils/dns-proxy.js` (blocklist, GeoIP, DNSSEC TCP relay, EDNS, bypass) | bespoke UDP/TCP proxy in front of dnsmasq | `setBlocklist()` / `setGeoPolicy()` / forward config | Recursor **RPZ** (blocklist), **Lua** (GeoIP), native validation | entire hand-rolled proxy → Recursor features |

@@ -13,6 +13,18 @@ import { DATA_DIR } from '../config/defaults.js';
 
 const router = Router();
 const STATUS_FILE = path.join(DATA_DIR, 'update-status.json');
+const LIFECYCLE_MIGRATION_REPORT_FILE = path.join(
+  DATA_DIR,
+  'ip-lifecycle-migration-report.json'
+);
+
+function lifecycleMigrationReportAvailable() {
+  try {
+    return fs.lstatSync(LIFECYCLE_MIGRATION_REPORT_FILE).isFile();
+  } catch {
+    return false;
+  }
+}
 
 // A status record is "stale" when it claims an update is in progress but no
 // process is actually backing it. This happens when the update worker dies
@@ -226,7 +238,44 @@ router.post('/check', requireRole('admin'), async (req, res) => {
 
 // GET /api/version/update-status: read update progress (admin only)
 router.get('/update-status', requireRole('admin'), (req, res) => {
-  res.json(readStatusFile());
+  const status = readStatusFile();
+  const reportAvailable = lifecycleMigrationReportAvailable();
+  res.json({
+    ...status,
+    lifecycle_migration_report_available: reportAvailable,
+    lifecycle_migration_report_download: reportAvailable
+      ? '/api/version/ip-lifecycle-migration-report'
+      : null,
+  });
+});
+
+// GET /api/version/ip-lifecycle-migration-report: download the detailed
+// administrator-only report left by a blocked or completed lifecycle upgrade.
+// The report contains hostnames, IPs, MAC addresses, and internal row IDs, so
+// it deliberately uses the same admin-only gate as installing an update.
+router.get('/ip-lifecycle-migration-report', requireRole('admin'), (req, res) => {
+  let stat;
+  try {
+    stat = fs.lstatSync(LIFECYCLE_MIGRATION_REPORT_FILE);
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      return res.status(404).json({ error: 'IP lifecycle migration report not found.' });
+    }
+    return res.status(500).json({ error: 'Unable to read IP lifecycle migration report.' });
+  }
+
+  if (!stat.isFile()) {
+    return res.status(404).json({ error: 'IP lifecycle migration report not found.' });
+  }
+
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader(
+    'Content-Disposition',
+    'attachment; filename="ip-lifecycle-migration-report.json"'
+  );
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  fs.createReadStream(LIFECYCLE_MIGRATION_REPORT_FILE).pipe(res);
 });
 
 // POST /api/version/install: trigger update installation (admin only)

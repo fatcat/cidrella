@@ -157,12 +157,15 @@
 
           <DataTable :key="'records-' + selectedZone?.type" :value="filteredRecords" :loading="loadingRecords" stripedRows
                      size="small"
+                     :rowClass="recordRowClass"
                      scrollable scrollHeight="flex"
                      :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
                      removableSort
                      paginator :rows="dnsRows" paginatorPosition="bottom"
                      :rowsPerPageOptions="[50, 100, 250, 500]"
                      @page="onDnsPage"
+                     @row-click="onRecordRowClick"
+                     @row-dblclick="onRecordDoubleClick"
                      @row-contextmenu="onRecordRightClick"
                      :contextMenu="true">
             <template #empty>
@@ -176,37 +179,14 @@
               :sortField="col.sortField || col.field"
               :style="col.style"
             >
-              <template #header>
-                <ColumnHeaderTooltip :column="col" />
-              </template>
-              <template #body="{ data }">
-                <template v-if="col.key === 'hostname'">{{ displayDnsName(data) }}</template>
-                <template v-else-if="col.key === 'ptr_hostname'">{{ displayCell(data.value) }}</template>
-                <span v-else-if="col.key === 'ip_address' && data.value" class="ip-mono">{{ displayCell(ptrRecordIp(data)) }}</span>
-                <span v-else-if="col.key === 'ip_address'" class="cell-muted">—</span>
-                <span v-else-if="col.key === 'name'" class="ip-mono cell-muted">{{ data.name }}.{{ selectedZone.name }}</span>
-                <span v-else-if="col.key === 'record_type'" class="type-badge">{{ data.record_type }}</span>
-                <span v-else-if="col.key === 'value' && data.record_type === 'A'" class="ip-mono">{{ displayCell(data.value) }}</span>
-                <template v-else-if="col.key === 'value'">{{ displayCell(data.value) }}</template>
-                <template v-else-if="col.key === 'priority'">{{ data.priority ?? EMPTY_CELL }}</template>
-                <template v-else-if="col.key === 'port'">{{ data.port ?? EMPTY_CELL }}</template>
-                <template v-else-if="col.key === 'ttl'">
-                  <template v-if="data.ttl != null">{{ data.ttl }}</template>
-                  <span v-else class="cell-muted">{{ selectedZone?.soa_minimum_ttl ?? EMPTY_CELL }}</span>
-                </template>
-                <StatusText
-                  v-else-if="col.key === 'enabled'"
-                  :label="data.enabled ? 'Yes' : 'No'"
-                  :className="data.enabled ? 'state-ok' : 'state-muted'"
-                />
-                <AddressTypePill v-else-if="col.key === 'source'" :display="addressTypeForDnsSource(data.dns_source)" />
-                <template v-else-if="col.key === 'online'">
-                  <OnlineStatusCell
-                    v-if="data.record_type === 'A' && data.is_online !== null && data.is_online !== undefined"
-                    :value="data.is_online"
-                  />
-                  <span v-else class="cell-muted">—</span>
-                </template>
+            <template #header>
+              <ColumnHeaderTooltip :column="col" />
+            </template>
+            <template #body="{ data }">
+                <IpTableCell :column="col" :row="data" :view="dnsTableView"
+                             :domain-name="isReverse ? null : selectedZone?.name"
+                             :zone-name="selectedZone?.name"
+                             :soa-minimum-ttl="selectedZone?.soa_minimum_ttl" />
               </template>
             </Column>
           </DataTable>
@@ -369,6 +349,12 @@
       </template>
     </Dialog>
 
+    <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
+                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName"
+                     :columns="visibleDnsColumns" :view="dnsTableView" table-name="DNS"
+                     :zone-name="selectedZone?.name"
+                     :soa-minimum-ttl="selectedZone?.soa_minimum_ttl" />
+
     <Toast />
   </div>
 </template>
@@ -396,18 +382,31 @@ import ContextMenu from '../ui/ContextMenu.js';
 import Toast from '../ui/Toast.js';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
-import { apiError, displayCell, displayHostnameCell, EMPTY_CELL } from '../utils/format.js';
+import api from '../api/client.js';
+import { apiError } from '../utils/format.js';
 import { ipToLong, isValidIpv4 } from '../utils/ip.js';
+import {
+  addCnameMenuItem,
+  dnsRecordProbeIp,
+  isEditableDnsRecord,
+  managedDnsRecordMenuItem,
+  probeNowMenuItem
+} from '../utils/rowContextMenu.js';
 import { loadJson, saveJson } from '../utils/storage.js';
-import { addressTypeForDnsSource } from '../utils/ipLifecycleDisplay.js';
 import EmptyState from './EmptyState.vue';
-import AddressTypePill from './table/AddressTypePill.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
-import OnlineStatusCell from './table/OnlineStatusCell.vue';
-import StatusText from './table/StatusText.vue';
+import IpTableCell from './table/IpTableCell.vue';
 import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import { useRowsPreference } from '../composables/useRowsPreference.js';
+import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
+import IpDetailsDrawer from './IpDetailsDrawer.vue';
+import {
+  IP_TABLE_COLUMN_ALIASES,
+  IP_TABLE_DEFAULT_KEYS,
+  IP_TABLE_VIEW,
+  ipTableColumns
+} from '../utils/ipTableColumns.js';
 
 // No props needed, shows all zones globally
 
@@ -415,6 +414,13 @@ const store = useDnsStore();
 const dhcpStore = useDhcpStore();
 const toast = useToast();
 const { rows: dnsRows, onPage: onDnsPage } = useRowsPreference('cidrella_dns_table_rows', 100);
+const {
+  visible: showIpDetails,
+  host: ipDetailsRow,
+  subnetId: ipDetailsSubnetId,
+  domainName: ipDetailsDomainName,
+  openIpDetails
+} = useIpDetailsDrawer();
 
 // Find the first DHCP scope whose pool contains `ip`. Returns { scope, cidr }
 // or null. Used to warn when a user points a DNS A record at an IP inside a
@@ -444,39 +450,27 @@ function findDhcpScopeForIp(ip) {
 const zoneFilterText = ref('');
 const selectedZone = ref(null);
 const isReverse = computed(() => selectedZone.value?.type === 'reverse');
+const dnsTableView = computed(() => isReverse.value ? IP_TABLE_VIEW.DNS_REVERSE : IP_TABLE_VIEW.DNS_FORWARD);
 
-const dnsForwardColumns = [
-  { key: 'hostname', header: 'Hostname', description: 'DNS record owner name, shown relative to the selected forward zone.', field: 'name', sortable: true, style: 'width: 12rem' },
-  { key: 'record_type', header: 'Record Type', description: 'DNS resource record type, such as A, CNAME, MX, TXT, or SRV.', field: 'record_type', sortable: true, style: 'width: 7rem' },
-  { key: 'value', header: 'Value', description: 'Record target value, such as an IP address, alias target, mail exchanger, or text payload.', field: 'value', sortable: true, style: 'width: 14rem' },
-  { key: 'priority', header: 'Priority', description: 'Priority value used by MX and SRV records.', field: 'priority', sortable: true, style: 'width: 5rem' },
-  { key: 'port', header: 'Port', description: 'Service port used by SRV records.', field: 'port', sortable: true, style: 'width: 4rem' },
-  { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
-  { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
-  { key: 'source', header: 'Type', description: 'How the DNS row was created: static DNS, dynamic DHCP, or reserved DHCP.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
-  { key: 'online', header: 'Online', description: 'Current liveness state for A records with a known IP address.', field: 'is_online', sortable: true, style: 'width: 5rem' },
-];
-
-const dnsReverseColumns = [
-  { key: 'ptr_hostname', header: 'Hostname', description: 'Hostname returned by this PTR record.', field: 'value', sortable: true, style: 'width: 16rem' },
-  { key: 'ip_address', header: 'IP Address', description: 'IPv4 address reconstructed from the PTR record name and selected reverse zone.', field: '_ip_long', sortable: true, sortField: '_ip_long', style: 'width: 10rem' },
-  { key: 'name', header: 'Name', description: 'PTR record owner name inside the selected reverse zone.', field: 'name', sortable: true, style: 'width: 14rem' },
-  { key: 'record_type', header: 'Record Type', description: 'DNS resource record type for the reverse-zone row.', field: 'record_type', sortable: true, style: 'width: 7rem' },
-  { key: 'ttl', header: 'TTL', description: 'Record time-to-live in seconds, or the zone default when no record TTL is set.', field: 'ttl', sortable: true, style: 'width: 6rem' },
-  { key: 'enabled', header: 'Enabled', description: 'Whether this DNS record is written to the generated DNS service configuration.', field: 'enabled', sortable: true, style: 'width: 5rem' },
-  { key: 'source', header: 'Type', description: 'How the DNS row was created: static DNS, dynamic DHCP, or reserved DHCP.', field: 'dns_source', sortable: true, style: 'width: 9rem' },
-];
+const dnsForwardColumns = ipTableColumns(IP_TABLE_VIEW.DNS_FORWARD);
+const dnsReverseColumns = ipTableColumns(IP_TABLE_VIEW.DNS_REVERSE);
 
 const {
   visibleColumns: visibleDnsForwardColumns,
   setVisibleColumns: setVisibleDnsForwardColumns,
   resetColumns: resetDnsForwardColumns
-} = useColumnPreferences('cidrella_columns_dns_forward', dnsForwardColumns);
+} = useColumnPreferences('cidrella_columns_dns_forward', dnsForwardColumns, {
+  defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.DNS_FORWARD],
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DNS_FORWARD]
+});
 const {
   visibleColumns: visibleDnsReverseColumns,
   setVisibleColumns: setVisibleDnsReverseColumns,
   resetColumns: resetDnsReverseColumns
-} = useColumnPreferences('cidrella_columns_dns_reverse', dnsReverseColumns);
+} = useColumnPreferences('cidrella_columns_dns_reverse', dnsReverseColumns, {
+  defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.DNS_REVERSE],
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DNS_REVERSE]
+});
 
 const dnsTableColumns = computed(() => isReverse.value ? dnsReverseColumns : dnsForwardColumns);
 const visibleDnsColumns = computed(() => isReverse.value ? visibleDnsReverseColumns.value : visibleDnsForwardColumns.value);
@@ -495,17 +489,13 @@ function resetDnsColumns() {
 // record's host label(s) with the zone's arpa prefix and reversing. For zone
 // "0.10.in-addr.arpa" + record name "5.1" → "10.0.1.5".
 function ptrRecordIp(record) {
+  if (record?.ip_address) return record.ip_address;
   if (!selectedZone.value || selectedZone.value.type !== 'reverse') return record.name;
   const zoneLabel = (selectedZone.value.name || '').replace(/\.?in-addr\.arpa\.?$/, '');
   const recordLabel = record.name || '';
   const combined = [recordLabel, zoneLabel].filter(Boolean).join('.');
   // combined is reverse-octet order, e.g. "5.1.0.10"
   return combined.split('.').reverse().join('.');
-}
-function displayDnsName(record) {
-  if (!record?.name) return EMPTY_CELL;
-  if (record.name === '@') return selectedZone.value?.name || '@';
-  return displayHostnameCell(`${record.name}.${selectedZone.value?.name || ''}`, selectedZone.value?.name);
 }
 const records = ref([]);
 const loadingRecords = ref(false);
@@ -631,7 +621,14 @@ const filteredRecords = computed(() => {
   return base.filter(r =>
     (r.name && r.name.toLowerCase().includes(q)) ||
     (r.record_type && r.record_type.toLowerCase().includes(q)) ||
-    (r.value && r.value.toLowerCase().includes(q))
+    (r.value && r.value.toLowerCase().includes(q)) ||
+    (r.os_family && r.os_family.toLowerCase().includes(q)) ||
+    (r.device_type && r.device_type.toLowerCase().includes(q)) ||
+    String(r.device_confidence ?? '').includes(q) ||
+    (r.dhcp_fingerprint && r.dhcp_fingerprint.includes(q)) ||
+    (r.dhcp_vendor_class && r.dhcp_vendor_class.toLowerCase().includes(q)) ||
+    (r.dhcp_fingerprint_hostname && r.dhcp_fingerprint_hostname.toLowerCase().includes(q)) ||
+    (r.device_fingerprint_source && r.device_fingerprint_source.includes(q))
   );
 });
 const availableRecordTypes = computed(() => {
@@ -645,16 +642,74 @@ const selectedRecord = ref(null);
 const recordContextMenuItems = computed(() => {
   const r = selectedRecord.value;
   if (!r) return [];
-  if (r.dns_source === 'dhcp' || r.dns_source === 'reservation') return [];
-  return [
-    { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
-    { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
-  ];
+  const items = [];
+  const managedItem = managedDnsRecordMenuItem(r);
+  if (managedItem) {
+    items.push(managedItem);
+  } else {
+    items.push(
+      { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
+      { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
+    );
+  }
+
+  const rowActions = [];
+  const cnameItem = addCnameMenuItem(
+    r,
+    () => openRecordDialog(null, { type: 'CNAME', value: r.record_fqdn })
+  );
+  if (cnameItem) rowActions.push(cnameItem);
+  const ip = dnsRecordProbeIp(r, isReverse.value ? ptrRecordIp(r) : null);
+  if (ip) {
+    rowActions.push(probeNowMenuItem(() => probeDnsRecord(ip, r.subnet_id)));
+  }
+  if (rowActions.length) {
+    items.push({ separator: true }, ...rowActions);
+  }
+  return items;
 });
 function onRecordRightClick(event) {
   selectedRecord.value = event.data;
   if (recordContextMenuItems.value.length) {
     recordContextMenu.value.show(event.originalEvent);
+  }
+}
+function onRecordDoubleClick(event) {
+  if (isEditableDnsRecord(event.data)) openRecordDialog(event.data);
+}
+function onRecordRowClick(event) {
+  openIpDetails(event.data, {
+    domainName: isReverse.value ? null : selectedZone.value?.name
+  });
+}
+function recordRowClass(record) {
+  return record?.ip_address ? 'ip-detail-row ip-detail-trigger' : null;
+}
+
+async function probeDnsRecord(ip, subnetId) {
+  toast.add({ severity: 'info', summary: 'Probing...', detail: `Sending probe to ${ip}`, life: 2000 });
+  try {
+    const payload = subnetId ? { ip, subnet_id: subnetId } : { ip };
+    const res = await api.post('/scans/probe', payload);
+    const result = res.data;
+    if (result.responded) {
+      toast.add({
+        severity: 'success',
+        summary: `${ip} is Online`,
+        detail: `Method: ${result.method.toUpperCase()}${result.mac ? ` · MAC: ${result.mac}` : ''}`,
+        life: 5000
+      });
+    } else {
+      toast.add({
+        severity: 'warn',
+        summary: `${ip} is Offline`,
+        detail: `No response via ${result.method.toUpperCase()}`,
+        life: 5000
+      });
+    }
+    if (selectedZone.value) await selectZone(selectedZone.value);
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Probe Failed', detail: apiError(err), life: 5000 });
   }
 }
 
@@ -793,7 +848,7 @@ async function doDeleteZone() {
 }
 
 // Record CRUD
-function openRecordDialog(record = null) {
+function openRecordDialog(record = null, defaults = {}) {
   editingRecord.value = record;
   if (record) {
     recordForm.value = {
@@ -803,7 +858,10 @@ function openRecordDialog(record = null) {
     };
   } else {
     const defaultType = selectedZone.value?.type === 'reverse' ? 'PTR' : 'A';
-    recordForm.value = { name: '', type: defaultType, value: '', priority: null, weight: null, port: null, ttl: null, enabled: true };
+    recordForm.value = {
+      name: '', type: defaultType, value: '', priority: null, weight: null,
+      port: null, ttl: null, enabled: true, ...defaults
+    };
   }
   showRecordDialog.value = true;
 }
@@ -822,7 +880,7 @@ async function saveRecord() {
     // Warn (but don't block) when an A record points at an IP that sits
     // inside a DHCP dynamic pool. The DHCP server may hand that IP to a
     // different host, breaking the A record until the next renewal. A
-    // reservation would be the right tool if the user wants a stable
+    // DHCP Reservation would be the right tool if the user wants a stable
     // hostname for that MAC.
     if (recordForm.value.type === 'A' && recordForm.value.value) {
       const hit = findDhcpScopeForIp(recordForm.value.value);
@@ -830,7 +888,7 @@ async function saveRecord() {
         toast.add({
           severity: 'warn',
           summary: 'IP is inside a DHCP pool',
-          detail: `${recordForm.value.value} is inside the DHCP range on ${hit.cidr || 'a subnet'} (${hit.scope.start_ip}–${hit.scope.end_ip}). DHCP may reassign this address. Consider a reservation instead.`,
+          detail: `${recordForm.value.value} is inside the DHCP range on ${hit.cidr || 'a subnet'} (${hit.scope.start_ip}–${hit.scope.end_ip}). DHCP may reassign this address. Consider a DHCP Reservation instead.`,
           life: 8000
         });
       }
@@ -987,6 +1045,8 @@ defineExpose({ openZoneDialog });
 }
 .zone-item:hover { background: var(--p-highlight-background); }
 .zone-item.active { background: var(--p-highlight-background); border-left: 3px solid var(--p-primary-color); }
+
+:deep(.ip-detail-row) { cursor: pointer; }
 
 .zone-info { flex: 1; min-width: 0; }
 .zone-name {

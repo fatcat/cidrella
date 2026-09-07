@@ -14,7 +14,7 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 import { frameTcpMessage, extractTcpMessages } from '../../../src/utils/dns-wire.js';
 import {
   relayQueryOverTcp,
-  createNxdomainResponse, createBlockedResponse, getQueryOpt,
+  createNxdomainResponse, createBlockedResponse, getQueryOpt, classifyDnssecSupport,
 } from '../../../src/utils/dns-proxy.js';
 
 const stubServers = [];
@@ -129,5 +129,25 @@ describe('EDNS echo on synthesized responses', () => {
     const opt = resp.additionals.find(a => a.type === 'OPT');
     expect(opt).toBeTruthy();
     expect(opt.flag_do).toBe(true);
+  });
+});
+
+describe('DNSSEC support classification', () => {
+  it('classifies validated and unsigned successful answers', () => {
+    expect(classifyDnssecSupport(
+      { rcode: 'NOERROR', flags: dnsPacket.AUTHENTIC_DATA },
+      { enabled: true },
+    )).toBe(true);
+    expect(classifyDnssecSupport(
+      { rcode: 'NOERROR', flags: 0 },
+      { enabled: true },
+    )).toBe(false);
+  });
+
+  it('leaves disabled, checking-disabled, and failed responses unknown', () => {
+    const unsigned = { rcode: 'NOERROR', flags: 0 };
+    expect(classifyDnssecSupport(unsigned, { enabled: false })).toBeNull();
+    expect(classifyDnssecSupport(unsigned, { enabled: true, checkingDisabled: true })).toBeNull();
+    expect(classifyDnssecSupport({ rcode: 'SERVFAIL', flags: 0 }, { enabled: true })).toBeNull();
   });
 });

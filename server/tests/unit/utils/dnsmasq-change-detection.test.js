@@ -19,6 +19,8 @@ let tmpDir;
 let DNSMASQ_CONF;
 let regenerateDnsmasqConf;
 let applyInterfaceConfig;
+let validateDnsmasqConfig;
+let withValidatedDnsmasqUpdate;
 
 const BASE_CONF = [
   'no-resolv',
@@ -35,10 +37,17 @@ beforeAll(async () => {
   fs.mkdirSync(path.join(tmpDir, 'dnsmasq'), { recursive: true });
   DNSMASQ_CONF = path.join(tmpDir, 'dnsmasq', 'dnsmasq.conf');
   vi.mocked(execFileSync).mockReturnValue('Compile time options: IPv6 DHCP DNSSEC inotify');
-  ({ regenerateDnsmasqConf, applyInterfaceConfig } = await import('../../../src/utils/dnsmasq.js'));
+  ({
+    regenerateDnsmasqConf,
+    applyInterfaceConfig,
+    validateDnsmasqConfig,
+    withValidatedDnsmasqUpdate
+  } = await import('../../../src/utils/dnsmasq.js'));
 });
 
 beforeEach(() => {
+  vi.mocked(execFileSync).mockReset();
+  vi.mocked(execFileSync).mockReturnValue('Compile time options: IPv6 DHCP DNSSEC inotify');
   fs.writeFileSync(DNSMASQ_CONF, BASE_CONF);
   settings = { dns_upstream_servers: ['8.8.8.8', '9.9.9.9'], dnssec_enabled: 'false' };
 });
@@ -118,5 +127,45 @@ describe('applyInterfaceConfig: change detection', () => {
   it('returns false when the conf file does not exist', () => {
     fs.rmSync(DNSMASQ_CONF);
     expect(applyInterfaceConfig({})).toBe(false);
+  });
+});
+
+describe('validated dnsmasq updates', () => {
+  it('tests the generated configuration with the configured root file', () => {
+    validateDnsmasqConfig();
+
+    expect(execFileSync).toHaveBeenCalledWith(
+      'dnsmasq',
+      ['--test', `--conf-file=${DNSMASQ_CONF}`],
+      {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe']
+      }
+    );
+  });
+
+  it('restores every changed config file when validation fails', () => {
+    const hostsDir = path.join(tmpDir, 'dnsmasq', 'hosts.d');
+    const existingHost = path.join(hostsDir, 'zone-1.hosts');
+    const newHost = path.join(hostsDir, 'zone-2.hosts');
+    fs.mkdirSync(hostsDir, { recursive: true });
+    fs.writeFileSync(existingHost, '10.0.0.10 old.example.test\n');
+
+    vi.mocked(execFileSync).mockImplementationOnce(() => {
+      const error = new Error('dnsmasq test failed');
+      error.stderr = Buffer.from('bad option at line 4');
+      throw error;
+    });
+
+    expect(() => withValidatedDnsmasqUpdate(() => {
+      fs.writeFileSync(DNSMASQ_CONF, 'invalid-directive\n');
+      fs.writeFileSync(existingHost, '10.0.0.11 changed.example.test\n');
+      fs.writeFileSync(newHost, '10.0.0.12 new.example.test\n');
+      return true;
+    })).toThrow('dnsmasq configuration validation failed: bad option at line 4');
+
+    expect(fs.readFileSync(DNSMASQ_CONF, 'utf8')).toBe(BASE_CONF);
+    expect(fs.readFileSync(existingHost, 'utf8')).toBe('10.0.0.10 old.example.test\n');
+    expect(fs.existsSync(newHost)).toBe(false);
   });
 });

@@ -23,6 +23,7 @@ process.on('uncaughtException', (err) => {
 
 import { initDb, getDb, getSetting } from './db/init.js';
 import * as Range from './models/range.js';
+import { reconcileManagedReverseDns } from './models/dns-record.js';
 import * as AuditLog from './models/audit-log.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
@@ -59,7 +60,14 @@ import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/dhcp-probe.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
-import { applyInterfaceConfig, regenerateDnsmasqConf, restartDnsmasq, isCidrellaDnsmasqRunning, dnsmasqRestartPending } from './utils/dnsmasq.js';
+import {
+  applyInterfaceConfig,
+  regenerateDnsmasqConf,
+  restartDnsmasq,
+  isCidrellaDnsmasqRunning,
+  dnsmasqRestartPending,
+  withValidatedDnsmasqUpdate
+} from './utils/dnsmasq.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
@@ -101,6 +109,27 @@ async function main() {
   // Remove redundant gateway options that should be inherited from subnet
   cleanupRedundantGatewayOptions(getDb());
 
+  // Reverse zones are a complete projection of usable managed addresses. Fill
+  // gaps left by older releases and replace empty/bare-IP placeholders with a
+  // canonical DNS or DHCP hostname when one exists.
+  try {
+    const ptrRepair = reconcileManagedReverseDns(getDb());
+    if (ptrRepair.inserted > 0 || ptrRepair.updated > 0) {
+      console.log(
+        `Reconciled reverse DNS: ${ptrRepair.inserted} PTR row(s) inserted, `
+        + `${ptrRepair.updated} updated`
+      );
+    }
+    for (const skipped of ptrRepair.skipped_subnets) {
+      console.warn(
+        `Reverse DNS placeholder reconciliation skipped ${skipped.cidr}: `
+        + `${skipped.addresses} usable addresses exceeds the 65536-address safety limit`
+      );
+    }
+  } catch (err) {
+    console.warn('Reverse DNS placeholder reconciliation skipped:', err?.message || err);
+  }
+
   // Rewrite GeoIP allowlist entries to canonical CIDR form and collapse
   // same-network duplicates (idempotent; runs before the proxy loads them).
   // Never let a surprising data shape in this table take the whole
@@ -110,27 +139,6 @@ async function main() {
     canonicalizeGeoipAllowlist(getDb());
   } catch (err) {
     console.error('GeoIP allowlist canonicalization failed (continuing with stored values):', err.message);
-  }
-
-  // Clear any ip_addresses rows whose DNS-sourced hostname no longer has a
-  // backing A record (historic orphans from pre-refactor cleanup paths).
-  try {
-    const {
-      reconcileDnsOrphans,
-      reconcileDuplicateDhcpMacRows,
-      reconcileUnbackedDhcpLeaseRows,
-      pruneStaleDhcpHostRows
-    } = await import('./utils/ip-sync.js');
-    const n = reconcileDnsOrphans(getDb());
-    const dhcpN = reconcileDuplicateDhcpMacRows(getDb());
-    const unbackedDhcpN = reconcileUnbackedDhcpLeaseRows(getDb());
-    const staleDhcpN = pruneStaleDhcpHostRows(getDb());
-    if (n > 0) console.log(`Reconciled ${n} orphan DNS-sourced ip_addresses row(s)`);
-    if (dhcpN > 0) console.log(`Reconciled ${dhcpN} duplicate DHCP ip_addresses row(s)`);
-    if (unbackedDhcpN > 0) console.log(`Reconciled ${unbackedDhcpN} unbacked DHCP ip_addresses row(s)`);
-    if (staleDhcpN > 0) console.log(`Pruned ${staleDhcpN} stale DHCP ip_addresses row(s)`);
-  } catch (err) {
-    console.warn('IP metadata reconciliation skipped:', err?.message || err);
   }
 
   // Repair stale system "Gateway" range rows whose start_ip doesn't match
@@ -186,8 +194,19 @@ async function main() {
   // doubles as "make sure DNS is up" and change-detection must not lose that.
   // (The blocklist scheduler's one-time legacy blocklist.conf blanking ~10s
   // in has its own restart guard and stays separate on purpose.)
-  const ifaceChanged = applyInterfaceConfig(getDb());
-  const confChanged = regenerateDnsmasqConf(getDb());
+  let ifaceChanged = false;
+  let confChanged = false;
+  try {
+    ({ ifaceChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
+      const ifaceChanged = applyInterfaceConfig(getDb());
+      const confChanged = regenerateDnsmasqConf(getDb());
+      return { ifaceChanged, confChanged, changed: ifaceChanged || confChanged };
+    }));
+  } catch (err) {
+    // The validated writer restored the last config. Keep the management API
+    // available so the operator can correct the stored setting or record.
+    console.error('dnsmasq config generation failed; retained previous config:', err.message);
+  }
   try {
     // Restart when the config changed, when OUR unit is down (the specific
     // unit, not any dnsmasq on the host), or when a previous restart failed

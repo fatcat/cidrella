@@ -1,6 +1,7 @@
 import { getSetting } from '../db/init.js';
 import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
 import { parseCidr, ipToLong, longToIp, getServerIpForSubnet } from '../utils/ip.js';
+import { dynamicPoolConflict } from '../models/dhcp-scope.js';
 
 export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
   const enabledRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1').all();
@@ -28,6 +29,14 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
 export function createAutoScope(db, subnetId, parsed, gateway, domainName, pool) {
   const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
   if (!dhcpType) return null;
+  const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+  const conflict = dynamicPoolConflict(
+    db,
+    { ...subnet, gateway_address: gateway },
+    longToIp(pool.startLong),
+    longToIp(pool.endLong)
+  );
+  if (conflict) throw new Error(conflict.error);
 
   const rangeResult = db.prepare(
     'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)'
@@ -46,7 +55,7 @@ export function createAutoScope(db, subnetId, parsed, gateway, domainName, pool)
 export function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName, defaults) {
   if (!defaults) return null;
 
-  const ipCount = db.prepare("SELECT COUNT(*) as c FROM ip_addresses WHERE subnet_id = ? AND status != 'available'").get(subnetId);
+  const ipCount = db.prepare("SELECT COUNT(*) as c FROM ip_addresses WHERE subnet_id = ? AND allocation_state != 'unassigned'").get(subnetId);
   if (ipCount.c > 0) return null;
   const leaseCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_leases WHERE subnet_id = ?').get(subnetId);
   if (leaseCount.c > 0) return null;

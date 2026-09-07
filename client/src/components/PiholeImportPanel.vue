@@ -54,7 +54,7 @@
         </div>
         <div class="preview-item">
           <span class="preview-count">{{ preview.dhcpHosts.length }}</span>
-          <span class="preview-label">DHCP reservations</span>
+          <span class="preview-label">DHCP Reservations</span>
         </div>
       </div>
       <small v-if="preview.zoneName" class="muted">Zone: {{ preview.zoneName }}</small>

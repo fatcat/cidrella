@@ -2,11 +2,20 @@ import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { isIpInSubnet, ipToLong, longToIp, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
+import { sortKey } from '../utils/address.js';
+import { isLeaseActive } from '../utils/lease-sql.js';
 import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
-import { createScope, updateScope, deleteScope, gatewayInPoolConflict, gatewayInPoolError } from '../models/dhcp-scope.js';
+import {
+  createScope,
+  updateScope,
+  deleteScope,
+  gatewayInPoolConflict,
+  gatewayInPoolError,
+  dynamicPoolConflict
+} from '../models/dhcp-scope.js';
 import {
   createReservation,
   updateReservation,
@@ -132,10 +141,22 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   if (range.range_type_name !== 'DHCP Scope') {
     return res.status(400).json({ error: 'Range must be of type DHCP Scope' });
   }
+  if (range.subnet_id !== Number(subnet_id)) {
+    return res.status(400).json({ error: 'Range does not belong to the selected subnet' });
+  }
 
   // Validate subnet
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet_id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+
+  const poolConflict = dynamicPoolConflict(db, subnet, range.start_ip, range.end_ip);
+  if (poolConflict) {
+    return res.status(409).json({
+      error: poolConflict.error,
+      conflict_type: poolConflict.type,
+      ip_address: poolConflict.ip_address
+    });
+  }
 
   // Check no existing scope for this range
   const existing = db.prepare('SELECT id FROM dhcp_scopes WHERE range_id = ?').get(range_id);
@@ -250,12 +271,12 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   if (end_ip !== undefined && !isValidIpv4(end_ip)) {
     return res.status(400).json({ error: 'Invalid end IP address' });
   }
+  const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
+  const scopeSubnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
+  const newStart = start_ip || range.start_ip;
+  const newEnd = end_ip || range.end_ip;
   if (start_ip !== undefined || end_ip !== undefined) {
-    const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
-    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
-    const newStart = start_ip || range.start_ip;
-    const newEnd = end_ip || range.end_ip;
-    if (!isIpInSubnet(newStart, subnet.cidr) || !isIpInSubnet(newEnd, subnet.cidr)) {
+    if (!isIpInSubnet(newStart, scopeSubnet.cidr) || !isIpInSubnet(newEnd, scopeSubnet.cidr)) {
       return res.status(400).json({ error: 'IP addresses must be within the subnet' });
     }
     if (ipToLong(newStart) > ipToLong(newEnd)) {
@@ -263,11 +284,22 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     }
     // Block a resize that would place the subnet's gateway inside the pool.
     // Shared with the range routes and /configure, which write the same row.
-    const conflict = gatewayInPoolConflict(subnet, newStart, newEnd);
+    const conflict = gatewayInPoolConflict(scopeSubnet, newStart, newEnd);
     if (conflict) {
       return res.status(409).json({
         error: gatewayInPoolError(conflict),
         gateway_address: conflict.gateway_address
+      });
+    }
+  }
+  const effectiveEnabled = enabled !== undefined ? enabled : Boolean(scope.enabled);
+  if (effectiveEnabled) {
+    const poolConflict = dynamicPoolConflict(db, scopeSubnet, newStart, newEnd);
+    if (poolConflict) {
+      return res.status(409).json({
+        error: poolConflict.error,
+        conflict_type: poolConflict.type,
+        ip_address: poolConflict.ip_address
       });
     }
   }
@@ -339,21 +371,26 @@ router.get('/reservations', requirePerm('dhcp:read'), (req, res) => {
   res.json(db.prepare(query).all(...params));
 });
 
-// Returns null if the IP is safe to reserve, or a string error reason otherwise.
+// Returns null if the IP can become a DHCP Reservation, or an error otherwise.
 // Blocks the subnet's network address, broadcast, gateway, and any IP marked
-// locked in ip_addresses. Callers have already validated format + subnet bounds.
+// reserved in ip_addresses. Callers have already validated format + subnet bounds.
 export function reservationIpRejectionReason(db, subnet, ipAddress) {
   const parsed = parseCidr(subnet.cidr);
   const ipLong = ipToLong(ipAddress);
-  if (ipLong === parsed.networkLong)   return 'Cannot reserve the network address';
-  if (ipLong === parsed.broadcastLong) return 'Cannot reserve the broadcast address';
+  if (ipLong === parsed.networkLong)   return 'A DHCP Reservation cannot use the network address';
+  if (ipLong === parsed.broadcastLong) return 'A DHCP Reservation cannot use the broadcast address';
   if (subnet.gateway_address && ipAddress === subnet.gateway_address) {
-    return 'Cannot reserve the gateway address';
+    return 'A DHCP Reservation cannot use the gateway address';
   }
   const row = db.prepare(
-    'SELECT status FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
+    'SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
   ).get(subnet.id, ipAddress);
-  if (row && row.status === 'locked') return 'Cannot reserve a locked IP';
+  if (row && ['system', 'gateway'].includes(row.allocation_state)) {
+    return `A DHCP Reservation cannot use a protected ${row.allocation_state} IP`;
+  }
+  if (row && ['static_dns', 'dynamic_dhcp', 'slaac', 'quarantined'].includes(row.allocation_state)) {
+    return `A DHCP Reservation cannot use an IP allocated as ${row.allocation_state}`;
+  }
   return null;
 }
 
@@ -399,7 +436,7 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet_id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-  // Reservations only make sense on an allocated leaf subnet. Refusing
+  // DHCP Reservations only make sense on an allocated leaf subnet. Refusing
   // non-leaf / unallocated targets closes a race where a POST commits after
   // a concurrent divide turns the target into an intermediate container,
   // which would leave the row invisible from any leaf's DHCP surface.
@@ -407,10 +444,10 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   // unallocated AND non-leaf) gets the clearer "not a leaf" message.
   const hasChildren = db.prepare('SELECT 1 FROM subnets WHERE parent_id = ? LIMIT 1').get(subnet.id);
   if (hasChildren) {
-    return res.status(400).json({ error: 'Subnet has child subnets. Reservations must be placed on a leaf.' });
+    return res.status(400).json({ error: 'Subnet has child subnets. DHCP Reservations must be placed on a leaf.' });
   }
   if (subnet.status !== 'allocated') {
-    return res.status(400).json({ error: 'Subnet is not allocated. Reservations require an allocated subnet.' });
+    return res.status(400).json({ error: 'Subnet is not allocated. DHCP Reservations require an allocated subnet.' });
   }
 
   if (!isIpInSubnet(ip_address, subnet.cidr)) {
@@ -422,11 +459,11 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
 
   // Check duplicate MAC in this subnet
   const dupMac = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ?').get(subnet_id, mac);
-  if (dupMac) return res.status(409).json({ error: 'MAC address already has a reservation in this subnet' });
+  if (dupMac) return res.status(409).json({ error: 'MAC address already has a DHCP Reservation in this subnet' });
 
   // Check duplicate IP in this subnet
   const dupIp = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ?').get(subnet_id, ip_address);
-  if (dupIp) return res.status(409).json({ error: 'IP address already reserved in this subnet' });
+  if (dupIp) return res.status(409).json({ error: 'IP address already has a DHCP Reservation in this subnet' });
 
   const reservation = createReservation(db, subnet, {
     mac_address: mac,
@@ -446,7 +483,7 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
 
   const reservation = db.prepare('SELECT * FROM dhcp_reservations WHERE id = ?').get(req.params.id);
-  if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
+  if (!reservation) return res.status(404).json({ error: 'DHCP Reservation not found' });
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(reservation.subnet_id);
 
@@ -494,13 +531,13 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   // Check duplicate MAC (excluding self)
   if (newMac !== reservation.mac_address) {
     const dupMac = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ? AND id != ?').get(reservation.subnet_id, newMac, reservation.id);
-    if (dupMac) return res.status(409).json({ error: 'MAC address already has a reservation in this subnet' });
+    if (dupMac) return res.status(409).json({ error: 'MAC address already has a DHCP Reservation in this subnet' });
   }
 
   // Check duplicate IP (excluding self)
   if (newIp !== reservation.ip_address) {
     const dupIp = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? AND id != ?').get(reservation.subnet_id, newIp, reservation.id);
-    if (dupIp) return res.status(409).json({ error: 'IP address already reserved in this subnet' });
+    if (dupIp) return res.status(409).json({ error: 'IP address already has a DHCP Reservation in this subnet' });
   }
 
   const updated = updateReservation(db, reservation, subnet, {
@@ -519,14 +556,14 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
 router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const reservation = db.prepare('SELECT * FROM dhcp_reservations WHERE id = ?').get(req.params.id);
-  if (!reservation) return res.status(404).json({ error: 'Reservation not found' });
+  if (!reservation) return res.status(404).json({ error: 'DHCP Reservation not found' });
 
   deleteReservation(db, reservation);
   audit(req.user.id, 'dhcp_reservation_deleted', 'dhcp_reservation', reservation.id, {
     mac: reservation.mac_address, ip: reservation.ip_address
   });
   req.afterCommit('regenerate_dhcp');
-  res.json({ message: 'Reservation deleted' });
+  res.json({ message: 'DHCP Reservation deleted' });
 });
 
 // ─── Leases ──────────────────────────────────────────────
@@ -569,10 +606,14 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
     ORDER BY dr.ip_address
   `).all(...reservationArgs);
 
-  // Build a map of leases by MAC+IP for matching
+  const now = Date.now();
+  const leaseIsActive = lease => isLeaseActive(lease.expires_at, now);
+
+  // Build a map of active leases by MAC+IP for matching. Expired rows remain
+  // visible as short-lived history but cannot make a reservation look online.
   const leaseMap = new Map();
   for (const l of leases) {
-    leaseMap.set(`${l.mac_address}:${l.ip_address}`, l);
+    if (leaseIsActive(l)) leaseMap.set(`${l.mac_address}:${l.ip_address}`, l);
   }
 
   const unified = [];
@@ -622,7 +663,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
         subnet_domain_name: l.subnet_domain_name,
         folder_id: l.folder_id,
         enabled: true,
-        lease_status: 'active',
+        lease_status: leaseIsActive(l) ? 'active' : 'expired',
         expires_at: l.expires_at,
         reservation_id: null,
         created_at: l.created_at,
@@ -632,7 +673,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
   }
 
   // Sort by IP address
-  unified.sort((a, b) => ipToLong(a.ip_address) - ipToLong(b.ip_address));
+  unified.sort((a, b) => sortKey(a.ip_address).localeCompare(sortKey(b.ip_address)));
 
   return enrichDhcpRows(db, unified);
 }
@@ -650,7 +691,9 @@ router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
   `).get(req.params.id);
   if (!scope) return res.status(404).json({ error: 'DHCP scope not found' });
 
-  const assignedByIp = new Map(getUnifiedDhcpRows(db, { subnetId: scope.subnet_id }).map(row => [row.ip_address, row]));
+  const assignedByIp = new Map(getUnifiedDhcpRows(db, { subnetId: scope.subnet_id })
+    .filter(row => row.dhcp_assignment_type === 'reserved' || row.lease_status === 'active')
+    .map(row => [row.ip_address, row]));
   const start = ipToLong(scope.start_ip);
   const end = ipToLong(scope.end_ip);
   const rows = [];

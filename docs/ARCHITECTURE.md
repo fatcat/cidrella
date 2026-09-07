@@ -44,21 +44,64 @@ Networks, DHCP, and DNS views, so those views must not infer conflicting state.
 
 Current owners:
 
-- `server/src/models/ip-address.js` owns IP lifecycle writes, liveness writes,
-  rogue state, stale cleanup, and event emission.
+- `server/src/services/ip-lifecycle-service.js` owns allocation transitions,
+  liveness workflows, rogue reconciliation, and stale cleanup across protocol
+  and topology sources.
+- `server/src/models/ip-address.js` is the low-level lifecycle repository. It
+  persists canonical rows and events only for the lifecycle service and its
+  internal protocol-metadata projection helper.
 - `server/src/models/ip-view.js` owns the canonical IP API/read projection used
   to render assignment status, address type, online state, hostnames, MAC
   details, and range context.
 
 Terminology:
 
-- `assignment_status`: whether an address is available, in use, reserved, or
-  rogue.
+- `allocation_state`: the mutually exclusive authority for an address.
+- `ip_display_status`: a derived value of available, DHCP Scope, or in use.
 - `address_type`: how an assigned address was instantiated, such as
-  static DNS, reserved DHCP, or dynamic DHCP. Available addresses should not
-  have a type.
+  static DNS, DHCP Reservation, dynamic DHCP, IP Reservation, or SLAAC. Rogue is a derived
+  classification for an online unassigned address. Available addresses should
+  not have a type.
+- `network_range_type`: an optional custom organizational tag projected from
+  a non-system range. It does not affect allocation, DNS, DHCP, scanning, or
+  topology. Custom Network Range Type ranges cannot overlap each other.
 - `online_status`: active/passive liveness state, independent of assignment.
 - `hostname`: one primary hostname for an IP. Additional names should be CNAMEs.
+- `IP Reservation`: an administrative address hold with no DHCP client
+  identity. Its internal allocation state is `reserved`.
+- `DHCP Reservation`: a static DHCP client-to-address binding. Its internal
+  allocation state is `static_dhcp` and its protocol row is stored in
+  `dhcp_reservations`.
+
+Allocation authority and naming are separate. A hostname or PTR value must not
+change an address from a protected `system` or `gateway` allocation, and
+allocation precedence must not be reimplemented as hostname precedence.
+For every usable IPv4 address in a managed subnet with reverse DNS enabled,
+reverse-DNS projection provides a PTR row when the subnet has at most 65,536
+usable addresses. Larger reverse zones remain supported without full
+placeholder materialization. The projection uses the canonical real hostname
+supplied by an enabled manual A record, DHCP Reservation, or retained
+DHCP-derived DNS record when one exists. Otherwise it uses the canonical IP
+text as the placeholder value. An explicitly operator-created, non-placeholder
+PTR is an override and is not replaced by reconciliation. Generated PTR rows
+carry `dns`, `dhcp`, `reservation`, or `placeholder` provenance so they can
+safely converge when their source changes. Every path that creates, changes,
+removes, imports, migrates, or reconciles one of those facts must converge on
+the same PTR result through the shared DNS/IP lifecycle boundary.
+
+Hostname selection is centralized in `models/ip-lifecycle.js`. A `static_dns`,
+`system`, or `gateway` address takes its name from static DNS. A `static_dhcp`
+address takes its DHCP Reservation name, and a `dynamic_dhcp` address takes its
+DHCP Lease name. An address without a protocol-owned allocation may retain
+learned naming metadata during its retirement window; ties resolve as static
+DNS, DHCP Reservation, then DHCP Lease. This selection changes naming only and
+never changes `allocation_state`.
+
+The executable vocabulary, allowed state transitions, and canonical hostname
+selector live in `server/src/models/ip-lifecycle.js`. Normalized protocol
+ownership and topology projection are recorded in
+`docs/adr/001-ip-protocol-table-ownership.md` and
+`docs/adr/002-ip-topology-projection.md`.
 
 ## Current Write Owners
 
@@ -68,13 +111,14 @@ remaining consolidation opportunities.
 
 | Domain | Current Owner |
 | --- | --- |
-| IP lifecycle and IP events | `models/ip-address.js` |
+| IP lifecycle transitions and liveness workflows | `services/ip-lifecycle-service.js` |
+| IP lifecycle persistence and IP events | `models/ip-address.js` |
 | IP read projection | `models/ip-view.js` |
 | Scan runs and results | `models/scan-run.js` |
 | DNS records, PTR helpers, SOA bumps, Pi-hole DNS imports | `models/dns-record.js` |
 | DNS zones and zone/subnet domain pointer sync | `models/dns-zone.js` |
 | DHCP scopes and explicit scope options | `models/dhcp-scope.js` |
-| DHCP reservations and reservation IP/PTR sync | `models/dhcp-reservation.js` |
+| DHCP Reservations and DHCP Reservation IP/PTR sync | `models/dhcp-reservation.js` |
 | DHCP lease replacement and DHCP-derived DNS A sync | `models/dhcp-lease.js` |
 | DHCP option defaults/catalog maintenance | `models/dhcp-option.js` |
 | Ranges and range repair | `models/range.js` |
@@ -138,6 +182,7 @@ generators should read and emit, not invent persistence semantics.
 Expected low-level write exceptions:
 
 - migrations in `server/src/db/migrations/`
+- the startup-only canonical address backfill in `server/src/db/ip-identity.js`
 - DB initialization in `server/src/db/init.js`
 - backup and restore implementation
 - DuckDB analytics adapter

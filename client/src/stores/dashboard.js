@@ -10,6 +10,7 @@ const METRIC_CONFIG = [
   { key: 'proxyPerf',             url: '/metrics/proxy-perf' },
   { key: 'topClients',            url: '/analytics/top-clients',          params: { limit: 10 } },
   { key: 'topDomains',            url: '/analytics/top-domains',          params: { limit: 10 } },
+  { key: 'dnssecUnsupportedDomains', url: '/analytics/dnssec/top-unsupported-domains', params: { limit: 10 } },
   { key: 'blocklistTopClients',   url: '/analytics/blocklist/top-clients', params: { limit: 10 } },
   { key: 'blocklistTopDomains',   url: '/analytics/blocklist/top-domains', params: { limit: 10 } },
   { key: 'blocklistTopCategories',url: '/analytics/blocklist/top-categories', params: { limit: 10 } },
@@ -26,6 +27,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     proxyPerf: [],
     topClients: [],
     topDomains: [],
+    dnssecUnsupportedDomains: [],
     blocklistTopClients: [],
     blocklistTopDomains: [],
     blocklistTopCategories: [],
@@ -73,6 +75,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const fetchProxyPerf             = (range) => fetchMetric('proxyPerf', range);
   const fetchTopClients            = (range) => fetchMetric('topClients', range);
   const fetchTopDomains            = (range) => fetchMetric('topDomains', range);
+  const fetchDnssecUnsupportedDomains = (range) => fetchMetric('dnssecUnsupportedDomains', range);
   const fetchBlocklistTopClients   = (range) => fetchMetric('blocklistTopClients', range);
   const fetchBlocklistTopDomains   = (range) => fetchMetric('blocklistTopDomains', range);
   const fetchBlocklistTopCategories= (range) => fetchMetric('blocklistTopCategories', range);
@@ -101,7 +104,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     fetchMetric,
     fetchTimeseries, fetchBlocklistHits, fetchGeoipHits, fetchProxyPerf, fetchServices,
     fetchSystemHealth,
-    fetchTopClients, fetchTopDomains,
+    fetchTopClients, fetchTopDomains, fetchDnssecUnsupportedDomains,
     fetchBlocklistTopClients, fetchBlocklistTopDomains, fetchBlocklistTopCategories, fetchBlocklistTopClientDomains,
     fetchGeoipTopClients, fetchGeoipTopDomains,
     fetchAll,

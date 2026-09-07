@@ -42,6 +42,16 @@ describe('classify', () => {
     expect(r.os_family).toBe('Android');
   });
 
+  it('accepts a conservative near-match when an OS adds one requested option', () => {
+    const r = classify({
+      opt55: '1,3,6,15,31,33,43,44,46,47,121,249,252,114'
+    });
+    expect(r.os_family).toBe('Windows');
+    expect(r.device_type).toBe('Computer');
+    expect(r.confidence).toBeGreaterThanOrEqual(70);
+    expect(r.confidence).toBeLessThan(80);
+  });
+
   it('boosts confidence when two signals agree on OS family', () => {
     const single = classify({ opt60: 'MSFT 5.0' });
     const agree = classify({ opt60: 'MSFT 5.0', hostname: 'DESKTOP-AB12CD' });

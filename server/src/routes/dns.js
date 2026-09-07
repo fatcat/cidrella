@@ -2,7 +2,11 @@ import { Router } from 'express';
 import { getDb, getSetting, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { queueRegen } from '../utils/after-commit.js';
-import { syncDnsToIp, clearDnsFromIp } from '../utils/ip-sync.js';
+import {
+  allocateStaticDns,
+  deallocateStaticDns,
+  reconcileStaticDnsZone
+} from '../services/ip-lifecycle-service.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
 import { dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
 import { ensureNtpEnabled, getNtpStatus, armDnssecTimecheckWhenSynced } from '../utils/timesync.js';
@@ -15,13 +19,17 @@ import {
   fqdnForRecordName,
   normalizeRecordNameForZone,
   cnameTargetError,
-  findAHostnameConflict
+  findAHostnameConflict,
+  reconcileManagedReverseDns,
+  ipForPtrRecord
 } from '../models/dns-record.js';
 import {
   createZone,
   updateZone,
   deleteZone
 } from '../models/dns-zone.js';
+import { enrichIpViewRows } from '../models/ip-view.js';
+import { findSubnetForIp } from '../utils/ip-sync.js';
 
 const router = Router();
 
@@ -31,6 +39,20 @@ import { isBlockedIpv4 } from '../utils/url-guard.js';
 import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
 import { validateSoaFields, isIntInRange } from '../utils/validation.js';
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
+
+function enrichDnsAddressRecords(db, records, zoneName) {
+  for (const record of records) {
+    record.record_fqdn = fqdnForRecordName(record.name, zoneName);
+    if (record.type === 'PTR') {
+      record.ip_address = ipForPtrRecord(record.name, zoneName);
+      if (record.ip_address) {
+        record.subnet_id = findSubnetForIp(db, record.ip_address)?.id ?? null;
+      }
+    }
+  }
+  enrichIpViewRows(db, records.filter(record => record.ip_address), { fillFromIpAddress: true });
+  return records;
+}
 
 function normalizeDnsName(name) {
   return String(name || '').trim().replace(/\.$/, '').toLowerCase();
@@ -174,14 +196,22 @@ router.get('/zones/:id', requirePerm('dns:read'), (req, res) => {
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
-    SELECT r.*, r.type AS record_type, r.source AS dns_source, ip.is_online
+    SELECT r.*, r.type AS record_type, r.source AS dns_source,
+      CASE WHEN r.type IN ('A', 'AAAA') THEN r.value END AS ip_address,
+      ip.subnet_id, ip.hostname, ip.mac_address,
+      ip.last_seen_mac, ip.is_online, ip.is_rogue, ip.rogue_reason,
+      ip.detection_source, ip.last_seen_at, ip.last_scanned_at,
+      ip.reservation_note, ip.scan_enabled, ip.allocation_state,
+      ip.allocation_source_type, ip.allocation_source_id, ip.address_family,
+      ip.address_sort_key, ip.interface_id, ip.preferred_until, ip.valid_until,
+      ip.dhcp_version
     FROM dns_records r
-    LEFT JOIN ip_addresses ip ON r.type = 'A' AND ip.ip_address = r.value
+    LEFT JOIN ip_addresses ip ON r.type IN ('A', 'AAAA') AND ip.ip_address = r.value
     WHERE r.zone_id = ?
     ORDER BY r.type, r.name
   `).all(zone.id);
 
-  res.json({ ...zone, records });
+  res.json({ ...zone, records: enrichDnsAddressRecords(db, records, zone.name) });
 });
 
 // POST /api/dns/zones: zones are subnet-agnostic. Any number of subnets
@@ -235,6 +265,7 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     soa_expire,
     soa_minimum_ttl
   }, soaDefaults);
+  if (zone.type === 'reverse' && zone.enabled) reconcileManagedReverseDns(db);
   audit(req.user.id, 'zone_created', 'dns_zone', zone.id, { name, type });
 
   req.afterCommit('regenerate_dns');
@@ -265,17 +296,25 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
     if (dup) return res.status(409).json({ error: 'Zone name already taken' });
   }
 
-  const updated = updateZone(db, zone, {
-    name,
-    description,
-    enabled,
-    soa_primary_ns,
-    soa_admin_email,
-    soa_refresh,
-    soa_retry,
-    soa_expire,
-    soa_minimum_ttl
+  const updateWorkflow = db.transaction(() => {
+    const result = updateZone(db, zone, {
+      name,
+      description,
+      enabled,
+      soa_primary_ns,
+      soa_admin_email,
+      soa_refresh,
+      soa_retry,
+      soa_expire,
+      soa_minimum_ttl
+    });
+    if (zone.name !== result.name || zone.enabled !== result.enabled) {
+      reconcileStaticDnsZone(db, zone, result);
+      reconcileManagedReverseDns(db);
+    }
+    return result;
   });
+  const updated = updateWorkflow();
   audit(req.user.id, 'zone_updated', 'dns_zone', zone.id, { changes: req.body });
 
   req.afterCommit('regenerate_dns');
@@ -288,7 +327,19 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
-  deleteZone(db, zone);
+  const addressRecords = db.prepare(`
+    SELECT id, name, value
+    FROM dns_records
+    WHERE zone_id = ?
+      AND type = 'A'
+      AND enabled = 1
+      AND COALESCE(source, 'manual') = 'manual'
+  `).all(zone.id);
+  db.transaction(() => {
+    deleteZone(db, zone);
+    reconcileStaticDnsZone(db, zone, null, addressRecords);
+    reconcileManagedReverseDns(db);
+  })();
 
   audit(req.user.id, 'zone_deleted', 'dns_zone', zone.id, { name: zone.name });
 
@@ -301,17 +352,25 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
 // GET /api/dns/zones/:zoneId/records
 router.get('/zones/:zoneId/records', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
-  const zone = db.prepare('SELECT id FROM dns_zones WHERE id = ?').get(req.params.zoneId);
+  const zone = db.prepare('SELECT id, name FROM dns_zones WHERE id = ?').get(req.params.zoneId);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
   const records = db.prepare(`
-    SELECT r.*, r.type AS record_type, r.source AS dns_source, ip.is_online
+    SELECT r.*, r.type AS record_type, r.source AS dns_source,
+      CASE WHEN r.type IN ('A', 'AAAA') THEN r.value END AS ip_address,
+      ip.subnet_id, ip.hostname, ip.mac_address,
+      ip.last_seen_mac, ip.is_online, ip.is_rogue, ip.rogue_reason,
+      ip.detection_source, ip.last_seen_at, ip.last_scanned_at,
+      ip.reservation_note, ip.scan_enabled, ip.allocation_state,
+      ip.allocation_source_type, ip.allocation_source_id, ip.address_family,
+      ip.address_sort_key, ip.interface_id, ip.preferred_until, ip.valid_until,
+      ip.dhcp_version
     FROM dns_records r
-    LEFT JOIN ip_addresses ip ON r.type = 'A' AND ip.ip_address = r.value
+    LEFT JOIN ip_addresses ip ON r.type IN ('A', 'AAAA') AND ip.ip_address = r.value
     WHERE r.zone_id = ?
     ORDER BY r.type, r.name
   `).all(zone.id);
-  res.json(records);
+  res.json(enrichDnsAddressRecords(db, records, zone.name));
 });
 
 // POST /api/dns/zones/:zoneId/records
@@ -396,16 +455,23 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
 
   let record;
   try {
-    ({ record } = createRecord(db, zone, {
-      name: normalizedName,
-      type,
-      value: normalizedValue,
-      priority,
-      weight,
-      port,
-      ttl,
-      enabled
-    }, { forcePtr: !!force_ptr }));
+    const createWorkflow = db.transaction(() => {
+      const created = createRecord(db, zone, {
+        name: normalizedName,
+        type,
+        value: normalizedValue,
+        priority,
+        weight,
+        port,
+        ttl,
+        enabled
+      }, { forcePtr: !!force_ptr });
+      if (type === 'A' && zone.type === 'forward' && zone.enabled && created.record.enabled) {
+        allocateStaticDns(db, normalizedName, normalizedValue, zone.name, created.record.id);
+      }
+      return created.record;
+    });
+    record = createWorkflow();
   } catch (err) {
     if (err.code === 'PTR_CONFLICT') {
       return res.status(409).json({
@@ -418,10 +484,6 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   }
 
   audit(req.user.id, 'record_created', 'dns_record', record.id, { zone: zone.name, name: normalizedName, type, value: normalizedValue });
-
-  if (type === 'A' && zone.type === 'forward') {
-    syncDnsToIp(db, normalizedName, normalizedValue, zone.name);
-  }
 
   req.afterCommit('regenerate_dns');
   res.status(201).json(record);
@@ -439,8 +501,10 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ? AND zone_id = ?').get(req.params.id, zone.id);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  if (record.source === 'dhcp' || record.source === 'reservation') {
-    return res.status(403).json({ error: 'DHCP-managed records cannot be edited manually' });
+  if (['dns', 'dhcp', 'reservation', 'placeholder'].includes(record.source)) {
+    return res.status(403).json({
+      error: 'Generated DNS/PTR records cannot be edited manually; assign the hostname through DNS or DHCP'
+    });
   }
 
   // Type guards for string fields: if the client sent one explicitly but as
@@ -502,33 +566,33 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     }
   }
 
-  const updated = updateRecord(db, zone, record, {
-    name: newName,
-    type: newType,
-    value: newValue,
-    priority: newPriority,
-    weight: newWeight,
-    port: newPort,
-    ttl: newTtl,
-    enabled
-  });
-  audit(req.user.id, 'record_updated', 'dns_record', record.id, { changes: req.body });
+  const updateWorkflow = db.transaction(() => {
+    const result = updateRecord(db, zone, record, {
+      name: newName,
+      type: newType,
+      value: newValue,
+      priority: newPriority,
+      weight: newWeight,
+      port: newPort,
+      ttl: newTtl,
+      enabled
+    });
 
-  // Sync PTR + ip_addresses when an A record is updated in a forward zone.
-  // Clear the OLD hostname whenever NAME OR VALUE changed, the previous
-  // version would skip the clear when only the name changed, leaving an
-  // orphan entry pointing at the old hostname on the IP.
-  if (newType === 'A' && zone.type === 'forward') {
-    if (record.value !== newValue) {
-      clearDnsFromIp(db, record.name, record.value, zone.name);
-    } else if (record.name !== newName) {
-      // Name-only change on the same IP: the ip_addresses row still has the
-      // old FQDN. syncDnsToIp below will overwrite it, but we clear
-      // explicitly so the `dns_removed` event is recorded.
-      clearDnsFromIp(db, record.name, record.value, zone.name);
+    const oldWasActiveAddress = record.type === 'A' && zone.type === 'forward'
+      && zone.enabled && record.enabled;
+    const newIsActiveAddress = newType === 'A' && zone.type === 'forward'
+      && zone.enabled && result.enabled;
+    if (oldWasActiveAddress && (!newIsActiveAddress
+        || record.value !== newValue || record.name !== newName)) {
+        deallocateStaticDns(db, record.name, record.value, zone.name);
     }
-    syncDnsToIp(db, newName, newValue, zone.name);
-  }
+    if (newIsActiveAddress) {
+      allocateStaticDns(db, newName, newValue, zone.name, result.id);
+    }
+    return result;
+  });
+  const updated = updateWorkflow();
+  audit(req.user.id, 'record_updated', 'dns_record', record.id, { changes: req.body });
 
   req.afterCommit('regenerate_dns');
   res.json(updated);
@@ -540,16 +604,21 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
   const record = db.prepare('SELECT * FROM dns_records WHERE id = ? AND zone_id = ?').get(req.params.id, req.params.zoneId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  if (record.source === 'dhcp' || record.source === 'reservation') {
-    return res.status(403).json({ error: 'DHCP-managed records cannot be deleted manually' });
+  if (['dns', 'dhcp', 'reservation', 'placeholder'].includes(record.source)) {
+    return res.status(403).json({
+      error: 'Generated DNS/PTR records cannot be deleted manually; change the DNS or DHCP hostname source, or disable managed reverse DNS'
+    });
   }
 
   // Clear PTR and IP hostname when A record is deleted from a forward zone
   const delZone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(record.zone_id);
-  deleteRecord(db, delZone, record);
-  if (record.type === 'A' && delZone?.type === 'forward') {
-    clearDnsFromIp(db, record.name, record.value, delZone.name);
-  }
+  db.transaction(() => {
+    deleteRecord(db, delZone, record);
+    if (record.type === 'A' && delZone?.type === 'forward'
+        && delZone.enabled && record.enabled) {
+      deallocateStaticDns(db, record.name, record.value, delZone.name);
+    }
+  })();
 
   audit(req.user.id, 'record_deleted', 'dns_record', record.id, { type: record.type, name: record.name });
 

@@ -48,6 +48,13 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
 
 ## Conventions
 
+- **Canonical IP model gate**: before changing IP allocation, address
+  classification, hostname selection, reverse DNS, DHCP/DNS synchronization,
+  topology projection, migration reconciliation, or related UI display logic,
+  follow the mandatory contract and validation rules in `AGENTS.md`. The
+  canonical semantics live in `docs/ARCHITECTURE.md`, `docs/API_MODEL.md`,
+  `docs/IP-LIFECYCLE-GOVERNANCE-PLAN.md`, and the IP ADRs. Do not introduce a
+  second precedence tree outside the lifecycle service and read model.
 - **Migrations** (`server/src/db/migrations/`) are numbered and append-only. Number 048 is
   intentionally skipped (burned by an orphan-migration incident). Never reuse it. New
   migrations take the next free number.

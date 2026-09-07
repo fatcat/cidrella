@@ -38,6 +38,10 @@
         <Button icon="pi pi-refresh" size="small" text rounded @click="refreshAll" :loading="store.loading" title="Refresh" />
       </div>
 
+      <DoughnutTableCard title="Top 10 Domains Without DNSSEC" :items="store.dnssecUnsupportedDomains"
+                         :chartData="dnssecUnsupportedChartData" labelField="domain" labelHeader="Domain"
+                         :emptyText="dnssecEmptyText" />
+
       <DoughnutTableCard title="Top 10 Blocked Domains" :items="store.blocklistTopDomains"
                          :chartData="blockedDomainsChartData" labelField="domain" labelHeader="Domain" />
 
@@ -110,6 +114,12 @@ const summary = computed(() => {
 });
 
 const blockedHostsChartData = computed(() => makeDoughnutData(store.blocklistTopClients, r => r.hostname || r.client_ip || 'unknown'));
+
+const dnssecUnsupportedChartData = computed(() => makeDoughnutData(store.dnssecUnsupportedDomains, r => r.domain || 'unknown'));
+
+const dnssecEmptyText = computed(() => store.systemHealth?.dnssec?.enabled
+  ? 'No domains without DNSSEC were observed in this range.'
+  : 'Enable DNSSEC validation to collect this data.');
 
 const blockedDomainsChartData = computed(() => makeDoughnutData(store.blocklistTopDomains, r => r.domain || 'unknown'));
 

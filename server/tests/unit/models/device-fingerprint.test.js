@@ -39,6 +39,36 @@ describe('device-fingerprint model', () => {
     expect(row.dhcp_fingerprint).toBe('1,3,6');
   });
 
+  it('does not erase a useful automatic result with an incomplete renewal', () => {
+    const db = getDb();
+    DF.upsertFingerprint(db, {
+      mac_address: 'aa:bb:cc:dd:ee:10',
+      dhcp_fingerprint: '1,3,6,15',
+      vendor_class: 'MSFT 5.0',
+      dhcp_hostname: 'DESKTOP-TEST',
+      device_type: 'Computer',
+      os_family: 'Windows',
+      confidence: 85,
+      source: 'dhcp'
+    });
+    DF.upsertFingerprint(db, {
+      mac_address: 'aa:bb:cc:dd:ee:10',
+      device_type: null,
+      os_family: null,
+      confidence: 0,
+      source: 'dhcp'
+    });
+
+    expect(DF.getByMac(db, 'aa:bb:cc:dd:ee:10')).toMatchObject({
+      dhcp_fingerprint: '1,3,6,15',
+      vendor_class: 'MSFT 5.0',
+      dhcp_hostname: 'DESKTOP-TEST',
+      device_type: 'Computer',
+      os_family: 'Windows',
+      confidence: 85
+    });
+  });
+
   it('getByMac is case-insensitive and returns null for unknown', () => {
     const db = getDb();
     DF.upsertFingerprint(db, { mac_address: '11:22:33:44:55:66', device_type: 'IoT', confidence: 60 });
@@ -69,4 +99,3 @@ describe('device-fingerprint model', () => {
     expect(DF.getByMac(db, 'aa:bb:cc:dd:ee:02').device_type).toBe('IoT');
   });
 });
-

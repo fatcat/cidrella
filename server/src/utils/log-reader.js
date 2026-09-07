@@ -48,6 +48,12 @@ export function readLogTail(filePath, offset, maxBytes = DEFAULT_MAX_READ_BYTES)
     try { fs.closeSync(fd); } catch { /* fd may be invalid */ }
   }
 
-  const lines = buf.toString('utf-8').split('\n').filter(l => l.trim());
-  return { lines, newOffset: offset + bytesToRead };
+  // Advance only through the last complete line. dnsmasq normally writes a
+  // line in one operation, but a poll or the 10 MB cap can still land between
+  // writes. Advancing over that fragment permanently loses it and is especially
+  // damaging to multi-line DHCP fingerprints.
+  const lastNewline = buf.lastIndexOf(0x0a);
+  if (lastNewline < 0) return { lines: [], newOffset: offset };
+  const lines = buf.subarray(0, lastNewline).toString('utf-8').split('\n').filter(l => l.trim());
+  return { lines, newOffset: offset + lastNewline + 1 };
 }

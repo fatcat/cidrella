@@ -60,7 +60,7 @@ describe('#18: a conflicting A record is rejected and named', () => {
     expect(res.body.problems[0]).toMatchObject({ type: 'A', name: 'fileserver', value: '10.9.0.5' });
   });
 
-  it('names the DHCP reservation when that is the source of the clash', async () => {
+  it('names the DHCP Reservation when that is the source of the clash', async () => {
     db.prepare("INSERT INTO subnets (cidr, name, prefix_length, network_address, broadcast_address, total_addresses, status, depth, domain_name) VALUES ('10.9.0.0/24','s',24,'10.9.0.0','10.9.0.255',256,'allocated',0,'audit.lan')").run();
     const subnetId = db.prepare("SELECT id FROM subnets WHERE cidr='10.9.0.0/24'").pluck().get();
     db.prepare("INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, enabled) VALUES (?, 'aa:bb:cc:dd:ee:ff', '10.9.0.7', 'printer', 1)").run(subnetId);
@@ -68,7 +68,7 @@ describe('#18: a conflicting A record is rejected and named', () => {
     const res = await post({ hosts: [{ hostname: 'scanner', ip: '10.9.0.7' }] });
     expect(res.status).toBe(400);
     expect(res.body.problems[0].reason).toContain('printer');
-    expect(res.body.problems[0].reason).toContain('reserved DHCP');
+    expect(res.body.problems[0].reason).toContain('DHCP Reservation');
   });
 
   it('allows the SAME name for the address, which is a re-statement not a clash', async () => {
@@ -136,41 +136,128 @@ describe('#18: EVERY offender is reported, not just the first', () => {
   });
 });
 
-describe('#18: the idempotency trap', () => {
-  it('a file mapping one IP to two names imports, and re-imports, cleanly', async () => {
-    // Neither name is in the DB on the first pass, so nothing clashes. On the
-    // second pass both exist, and without excluding the import's own names each
-    // would be judged against the other and the file would never import twice.
+describe('#18: duplicate A records inside one import', () => {
+  it('rejects the whole import and reports every A record sharing the IP', async () => {
     const body = {
       hosts: [
         { hostname: 'host-a', ip: '10.9.0.20' },
-        { hostname: 'host-b', ip: '10.9.0.20' },
+        // Equivalent spellings must collapse before duplicate detection.
+        { hostname: 'host-b', ip: '010.009.000.020' },
       ],
     };
 
-    const first = await post(body);
-    expect(first.status, JSON.stringify(first.body)).toBe(200);
-
-    const second = await post(body);
-    expect(second.status, `re-import failed: ${JSON.stringify(second.body)}`).toBe(200);
+    const before = countRecords();
+    const res = await post(body);
+    expect(res.status).toBe(400);
+    expect(countRecords()).toBe(before);
+    expect(res.body.problems.map(problem => problem.name).sort())
+      .toEqual(['host-a', 'host-b']);
+    for (const problem of res.body.problems) {
+      expect(problem.value).toBe('10.9.0.20');
+      expect(problem.reason).toContain('host-a.audit.lan');
+      expect(problem.reason).toContain('host-b.audit.lan');
+      expect(problem.reason).toMatch(/CNAME/);
+    }
   });
 
-  it('but a name from OUTSIDE the import still clashes, so the check is not just disabled', async () => {
-    const body = {
-      hosts: [
-        { hostname: 'host-a', ip: '10.9.0.30' },
-        { hostname: 'host-b', ip: '10.9.0.30' },
-      ],
-    };
+  it('still allows an unambiguous import to be repeated', async () => {
+    const body = { hosts: [{ hostname: 'host-a', ip: '10.9.0.30' }] };
     expect((await post(body)).status).toBe(200);
+    expect((await post(body)).status).toBe(200);
+  });
+});
 
-    // A name for that same address that this import does NOT own.
-    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, enabled, source) VALUES (?, 'outsider', 'A', '10.9.0.30', 1, 'manual')").run(zoneId);
+describe('Pi-hole import lifecycle ownership', () => {
+  it('rolls back the whole import when an existing PTR names another zone', async () => {
+    db.prepare(`
+      INSERT INTO subnets
+        (cidr, name, prefix_length, network_address, broadcast_address,
+         total_addresses, status, depth, domain_name, has_reverse_dns)
+      VALUES ('10.9.0.0/24', 'import conflict', 24, '10.9.0.0',
+              '10.9.0.255', 256, 'allocated', 0, 'audit.lan', 1)
+    `).run();
+    const reverseZoneId = db.prepare(`
+      INSERT INTO dns_zones (name, type, enabled)
+      VALUES ('0.9.10.in-addr.arpa', 'reverse', 1)
+    `).run().lastInsertRowid;
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, '43', 'PTR', 'legacy.other.test', 'manual', 1)
+    `).run(reverseZoneId);
+    const { invalidateSubnetCache } = await import('../../../src/utils/ip-sync.js');
+    invalidateSubnetCache();
 
-    const res = await post(body);
-    expect(res.status, 'an outside name must still clash').toBe(400);
-    expect(res.body.error).toContain('outsider.audit.lan');
-    // Both imported names clash with it, and both are reported.
-    expect(res.body.problems.map(p => p.name).sort()).toEqual(['host-a', 'host-b']);
+    const res = await post({ hosts: [{ hostname: 'imported', ip: '10.9.0.43' }] });
+
+    expect(res.status).toBe(409);
+    expect(res.body.ptr_conflict).toMatchObject({
+      existing: 'legacy.other.test',
+      proposed: 'imported.audit.lan'
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM dns_records WHERE type = 'A'").get())
+      .toEqual({ count: 0 });
+    expect(db.prepare('SELECT value FROM dns_records WHERE zone_id = ? AND name = ?')
+      .get(reverseZoneId, '43')).toEqual({ value: 'legacy.other.test' });
+  });
+
+  it('promotes the managed PTR placeholder to the imported DNS hostname', async () => {
+    const subnetId = db.prepare(`
+      INSERT INTO subnets
+        (cidr, name, prefix_length, network_address, broadcast_address,
+         total_addresses, status, depth, domain_name, has_reverse_dns)
+      VALUES ('10.9.0.0/24', 'import reverse', 24, '10.9.0.0',
+              '10.9.0.255', 256, 'allocated', 0, 'audit.lan', 1)
+    `).run().lastInsertRowid;
+    const reverseZoneId = db.prepare(`
+      INSERT INTO dns_zones (name, type, enabled)
+      VALUES ('0.9.10.in-addr.arpa', 'reverse', 1)
+    `).run().lastInsertRowid;
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, '42', 'PTR', '10.9.0.42', 'placeholder', 1)
+    `).run(reverseZoneId);
+    const { invalidateSubnetCache } = await import('../../../src/utils/ip-sync.js');
+    invalidateSubnetCache();
+
+    expect((await post({ hosts: [{ hostname: 'imported', ip: '10.9.0.42' }] })).status).toBe(200);
+
+    expect(db.prepare(`
+      SELECT value, source FROM dns_records
+      WHERE zone_id = ? AND type = 'PTR' AND name = '42'
+    `).get(reverseZoneId)).toEqual({ value: 'imported.audit.lan', source: 'dns' });
+    expect(db.prepare(`
+      SELECT allocation_state FROM ip_addresses
+      WHERE subnet_id = ? AND ip_address = '10.9.0.42'
+    `).get(subnetId)).toEqual({ allocation_state: 'static_dns' });
+  });
+
+  it('moves allocation authority when an imported A record changes address', async () => {
+    const subnetId = db.prepare(`
+      INSERT INTO subnets
+        (cidr, name, prefix_length, network_address, broadcast_address,
+         total_addresses, status, depth, domain_name)
+      VALUES ('10.9.0.0/24', 'import lifecycle', 24, '10.9.0.0',
+              '10.9.0.255', 256, 'allocated', 0, 'audit.lan')
+    `).run().lastInsertRowid;
+    const { invalidateSubnetCache } = await import('../../../src/utils/ip-sync.js');
+    invalidateSubnetCache();
+
+    expect((await post({ hosts: [{ hostname: 'moving', ip: '10.9.0.40' }] })).status).toBe(200);
+    expect((await post({ hosts: [{ hostname: 'moving', ip: '10.9.0.41' }] })).status).toBe(200);
+
+    const oldAddress = db.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = '10.9.0.40'
+    `).get(subnetId);
+    const newAddress = db.prepare(`
+      SELECT allocation_state, allocation_source_type, hostname
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = '10.9.0.41'
+    `).get(subnetId);
+    expect(oldAddress).toMatchObject({
+      allocation_state: 'unassigned', allocation_source_type: null, hostname: null
+    });
+    expect(newAddress).toMatchObject({
+      allocation_state: 'static_dns', allocation_source_type: 'dns', hostname: 'moving.audit.lan'
+    });
   });
 });
