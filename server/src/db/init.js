@@ -186,6 +186,13 @@ function runMigrations() {
 
   // Run each migration in a transaction so partial applies can't corrupt the schema
   const applyMigration = db.transaction((sql, version) => {
+    // Migration 060 shipped in v0.4.18-pre.4 and assumed anomaly_models was
+    // created by migration 042. Older installations can instead have the
+    // equivalent table created by the anomaly sidecar, which stores
+    // model_version rather than model_path. Keep the published migration
+    // immutable, but adapt that legacy shape inside the same transaction and
+    // retain its model versions for migration 062 to restore.
+    if (version === 60) prepareAnomalyIdentityMigration();
     db.exec(sql);
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
   });
@@ -206,6 +213,38 @@ function runMigrations() {
     console.log(`Schema version: ${currentVersion} (applied ${newCount} new migration${newCount !== 1 ? 's' : ''})`);
   } else {
     console.log(`Schema version: ${currentVersion} (up to date)`);
+  }
+}
+
+function prepareAnomalyIdentityMigration() {
+  const tableExists = db.prepare(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'anomaly_models'"
+  ).get();
+  if (!tableExists) return;
+
+  const columns = new Set(
+    db.prepare('PRAGMA table_info(anomaly_models)').all().map(column => column.name)
+  );
+  if (!columns.has('client_ip')) {
+    throw new Error('Migration 060 cannot upgrade anomaly_models without client_ip');
+  }
+
+  if (columns.has('model_version')) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS _migration_060_anomaly_model_versions (
+        client_ip TEXT PRIMARY KEY,
+        model_version INTEGER NOT NULL
+      );
+      INSERT INTO _migration_060_anomaly_model_versions (client_ip, model_version)
+      SELECT client_ip, COALESCE(model_version, 1)
+      FROM anomaly_models
+      WHERE 1
+      ON CONFLICT(client_ip) DO UPDATE SET model_version = excluded.model_version;
+    `);
+  }
+
+  if (!columns.has('model_path')) {
+    db.exec('ALTER TABLE anomaly_models ADD COLUMN model_path TEXT');
   }
 }
 

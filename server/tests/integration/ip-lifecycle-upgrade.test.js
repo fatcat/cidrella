@@ -150,7 +150,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       log.mockRestore();
     }
 
-    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(61);
+    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(62);
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     expect(upgraded.prepare("SELECT allocation_state, is_rogue FROM ip_addresses WHERE ip_address = '10.77.0.40'").get())
@@ -181,7 +181,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     const report = JSON.parse(fs.readFileSync(path.join(tmpDir, LIFECYCLE_MIGRATION_REPORT), 'utf8'));
     expect(report).toMatchObject({
       schema_before: 54,
-      schema_after: 61,
+      schema_after: 62,
       outcome: 'complete',
       reconciliation: { inserted: expect.any(Number), updated: expect.any(Number) }
     });
@@ -237,7 +237,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     );
     expect(completed).toMatchObject({
       schema_before: 54,
-      schema_after: 61,
+      schema_after: 62,
       outcome: 'complete',
       reconciliation: { updated: expect.any(Number), inserted: expect.any(Number) }
     });

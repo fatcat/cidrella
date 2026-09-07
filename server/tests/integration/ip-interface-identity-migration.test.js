@@ -88,7 +88,7 @@ describe('migrations 057-059 canonical IP identity', () => {
       });
     expect(db.pragma('foreign_key_check')).toEqual([]);
     expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get().version)
-      .toBe(61);
+      .toBe(62);
     expect(db.prepare('PRAGMA table_info(ip_addresses)').all().map(row => row.name))
       .toEqual(expect.arrayContaining(['dhcp_duid', 'dhcp_iaid']));
 
