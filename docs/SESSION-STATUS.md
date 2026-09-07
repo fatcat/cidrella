@@ -11,6 +11,9 @@ flight.
 Version is **0.4.18, not yet released**. v0.4.17 shipped 2026-09-02.
 `v0.4.18-pre.4` and `v0.4.18-pre.5` are published for validation.
 
+`main` is at `58f79ae` plus documentation-only commits on top, so the gate run
+below covers all current code.
+
 **0.4.18 is a breaking release.** `min_from` is 0.4.17, the legacy
 `ip_addresses.status` field is removed, and schema runs to **62**. Upgrades from
 schema 54 inventory ambiguous DNS and DHCP claims before mutating anything and can
@@ -84,7 +87,8 @@ Known bad metadata, not fixable in place:
 
 - The `v0.4.18-pre.1`, `v0.4.18-pre.2`, and `v0.4.18-pre.3` tags point at `1d3329f`,
   which is 0.4.17 code, for the `--target` reason above. `v0.4.17-pre.4` is an orphan
-  tag with no release attached. The fix is forward-only, and it is confirmed working:
+  tag with no release attached (that is the **0.4.17** line, unrelated to
+  `v0.4.18-pre.4` above). The fix is forward-only, and it is confirmed working:
   `v0.4.18-pre.4` and `v0.4.18-pre.5` each point at the exact commit they were built
   from rather than at the default branch head. To learn what a given artifact
   really contains, read `RELEASE.json` inside the signed tarball, which carries the
