@@ -64,8 +64,8 @@
                class="host-row" :class="{ selected: c.identity === selectedIp }"
                data-track="anomalies-client-click" @click="selectClient(c.identity)">
             <div class="host-id">
-              <div class="name">{{ c.hostname || c.client_ip }}</div>
-              <div class="ip">{{ c.client_ip }}</div>
+              <div class="name" :title="c.hostname || c.client_ip">{{ c.hostname || c.client_ip }}</div>
+              <div class="ip" :title="c.client_ip">{{ c.client_ip }}</div>
             </div>
             <span class="pattern-chip" :class="c.pattern">{{ PATTERNS[c.pattern].icon }} {{ PATTERNS[c.pattern].label }}</span>
             <span class="row-spark">
@@ -450,16 +450,28 @@ useAutoRefresh(refreshAll);
 .panel-head .count { font-size: .72rem; color: var(--p-text-muted-color); font-family: monospace; }
 
 .list { max-height: 74vh; overflow-y: auto; }
-.host-row { display: flex; align-items: center; gap: .6rem; padding: .6rem .9rem; border-bottom: 1px solid var(--p-surface-border); cursor: pointer; }
+.host-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto 4rem;
+  column-gap: .5rem; row-gap: .15rem; align-items: center;
+  padding: .6rem .75rem; border-bottom: 1px solid var(--p-surface-border); cursor: pointer;
+}
 .host-row:last-child { border-bottom: none; }
 .host-row:hover { background: var(--p-surface-ground); }
 .host-row.selected { background: color-mix(in srgb, var(--p-primary-color) 12%, transparent); box-shadow: inset 3px 0 0 var(--p-primary-color); }
-.host-id { flex: 1; min-width: 0; }
-.host-id .name { font-weight: 600; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.host-id .ip { font-family: monospace; font-size: .70rem; color: var(--p-text-muted-color); }
+.host-id { display: contents; }
+.host-id .name {
+  grid-column: 1 / 3; grid-row: 1; min-width: 0;
+  font-weight: 600; font-size: .82rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.host-id .ip {
+  grid-column: 1; grid-row: 2; min-width: 0;
+  font-family: monospace; font-size: .70rem; color: var(--p-text-muted-color);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .spark-empty { font-size: .68rem; font-family: monospace; color: var(--p-text-muted-color); }
 
 .pattern-chip {
+  grid-column: 2; grid-row: 2;
   font-size: .62rem; font-weight: 700; padding: .16rem .4rem; border-radius: 5px; text-transform: uppercase;
   letter-spacing: .03em; white-space: nowrap; background: var(--p-surface-ground); color: var(--p-text-muted-color);
 }
@@ -468,7 +480,11 @@ useAutoRefresh(refreshAll);
 .pattern-chip.flagged { color: var(--cid-status-warn); }
 .pattern-chip.learning { color: var(--p-primary-color); }
 
-.row-score { font-family: monospace; font-size: .78rem; font-weight: 700; width: 2.6rem; text-align: right; flex: none; }
+.row-spark { grid-column: 3; grid-row: 2; width: 4rem; height: 22px; line-height: 0; }
+.row-score {
+  grid-column: 3; grid-row: 1; justify-self: end;
+  font-family: monospace; font-size: .78rem; font-weight: 700; width: 2.6rem; text-align: right;
+}
 
 .detail { padding: 1rem 1.1rem 1.3rem; }
 .dhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; margin-bottom: .9rem; }
