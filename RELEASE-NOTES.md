@@ -6,7 +6,7 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
-## v0.4.18 — 2026-09-05
+## v0.4.18 — 2026-09-07
 
 ```yaml
 min_from: "0.4.17"
@@ -82,6 +82,31 @@ against the possibility.
 - Lifecycle diagnostics are available from localhost deep health and the
   authenticated metrics API, including allocation counts, scope conflicts,
   online rogue hosts, retirement actions, and reconciliation outcome.
+- **The Anomalies page is now a pattern-based triage view.** Flagged clients
+  are classified by the shape of their score history, escalating, recurring,
+  resolved one-off, or still learning a baseline, so a host that is genuinely
+  getting worse is separable from one that spiked once and recovered or from a
+  recurring scheduled job. Selecting a client opens the detector's per-window
+  history as a timeline rather than a single current score, alongside a score
+  gauge, an hour by day behavior heatmap, per-signal trend charts, and the
+  client's standing against the network percentile. A new
+  `GET /api/anomalies/events` endpoint backs the view. The existing `/active`
+  endpoint returns only currently-unresolved rows, which hid recurring and
+  resolved anomalies between occurrences.
+- **Anomaly detection is keyed by MAC address** wherever a current DHCP lease
+  makes one known, falling back to the IP for statically configured hosts
+  (schema 60). Scores, learned models, and the whitelist all follow the device,
+  so a device that takes over an IP no longer inherits the previous holder's
+  learned baseline. Existing rows are backfilled against the current lease
+  table, which is a best-effort approximation rather than an exact one because
+  historical lease-to-IP mapping is not retained.
+- **Device fingerprint changes are recorded instead of overwritten in place**
+  (schema 61). A MAC that suddenly reclassifies to a different device type, OS
+  family, or vendor class is a strong tell for spoofing or for a rogue device
+  taking over a trusted address, and that history is now kept per changed
+  field. The DHCP parameter request list is deliberately excluded, since it
+  varies between transactions on the same device and would be too noisy to be
+  useful.
 
 The disposable-appliance live DHCP matrix and the full pre-release security
 pipeline remain release gates and are intentionally deferred until DHCP can be
