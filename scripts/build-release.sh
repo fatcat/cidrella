@@ -23,7 +23,9 @@ set -euo pipefail
 #     --version 0.4.15-pre` pulls it.
 #   - No git tag is created locally; gh creates the remote tag when it
 #     publishes the release, so `gh release delete --cleanup-tag` is a
-#     one-command rollback.
+#     one-command rollback. The tag is pinned with --target to the commit
+#     that was built, so publishing from a feature branch does not plant
+#     the tag on the default branch.
 #   - For multi-iteration pre-releases, use dotted-numeric identifiers
 #     (pre.1, pre.2, pre.10). Those sort numerically per semver 2.0.
 #     Plain "pre2" vs "pre10" compares lexically and orders wrong.
@@ -71,6 +73,8 @@ OPTIONS
                            /releases/latest on other hosts skips it.
                          - Skips local git tag creation. `gh release delete
                            $TAG --cleanup-tag` cleans both release + tag.
+                         - The remote tag is pinned to the built commit, so
+                           the branch must be pushed before publishing.
 
                        Reaching a pre-release requires an explicit
                        `cidrella-update --version <base>-<suffix>` on each
@@ -666,6 +670,14 @@ for tool in gcc g++ make; do
   fi
 done
 
+# The commit being released. Pre-release tags are created server-side by
+# gh, and with no --target gh plants the tag on the DEFAULT branch head
+# rather than on what was actually built. That is how the v0.4.18-pre.1/2/3
+# tags ended up on main while the code came off a feature branch. Pin the
+# tag to this exact commit instead.
+RELEASE_COMMIT=$(git rev-parse HEAD)
+RELEASE_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+
 if [ "$BUILD_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
   # Check gh is installed
   if ! command -v gh &>/dev/null; then
@@ -685,6 +697,20 @@ if [ "$BUILD_ONLY" = false ] && [ "$DRY_RUN" = false ]; then
     echo ""
     git status --short
     exit 1
+  fi
+
+  # gh can only tag a commit GitHub already has. Real releases push their
+  # tag from here first (step 6), but a pre-release tag is created
+  # server-side at publish time, so an unpushed commit has nothing to
+  # anchor to.
+  if [ "$PRE_RELEASE" = true ]; then
+    if ! gh api "repos/{owner}/{repo}/commits/$RELEASE_COMMIT" --jq '.sha' &>/dev/null 2>&1; then
+      echo "Error: commit $RELEASE_COMMIT is not on GitHub yet."
+      echo "  Branch:  $RELEASE_BRANCH"
+      echo "  Tag:     $TAG (created by gh at publish time, pinned to this commit)"
+      echo "  Push the branch first: git push origin $RELEASE_BRANCH"
+      exit 1
+    fi
   fi
 
   # Pre-releases don't create a local git tag, the remote tag gets created
@@ -1258,6 +1284,7 @@ if [ "$BUILD_ONLY" = true ]; then
     echo "  gh release create $TAG \\"
     echo "    dist/$TARBALL dist/${TARBALL}.minisig \\"
     echo "    --title 'CIDRella $TAG (pre-release)' --prerelease \\"
+    echo "    --target $RELEASE_COMMIT \\"
     echo "    --notes 'Pre-release of ${BASE_VERSION} for validation. See RELEASE-NOTES.md.'"
     echo ""
     echo "To withdraw: gh release delete $TAG --cleanup-tag --yes"
@@ -1304,6 +1331,7 @@ if [ "$DRY_RUN" = false ]; then
       "$DIST_DIR/${TARBALL}.minisig" \
       --title "CIDRella $TAG (pre-release)" \
       --prerelease \
+      --target "$RELEASE_COMMIT" \
       --notes "Pre-release of v${BASE_VERSION} for validation. See RELEASE-NOTES.md for the v${BASE_VERSION} entry."
 
     RELEASE_URL=$(gh release view "$TAG" --json url -q '.url')
