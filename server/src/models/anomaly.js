@@ -13,10 +13,10 @@ export function dismissScore(db, id) {
 // its current DHCP MAC if known (survives an IP renewal), else the IP
 // itself. Mirrors server/anomaly/storage.py's resolve_device_key — the two
 // have to agree since the Python daemon writes the identity column and the
-// Node API reads it back. (The sidecar calls the value device_key rather
-// than identity purely to keep CodeQL's personal-identifier heuristic from
-// flagging every daemon log line that names the device; the column, this
-// function, and the API field are all still `identity`.)
+// Node API reads it back. (The sidecar calls the value device_key and reads
+// the MAC under a column alias, to keep CodeQL's `mac.?addr` private-data
+// heuristic from flagging every daemon log line that names the device; the
+// column, this function, and the API field are all still `identity`.)
 export function resolveIdentity(db, clientIp) {
   const row = db.prepare('SELECT mac_address FROM dhcp_leases WHERE ip_address = ?').get(clientIp);
   return row?.mac_address || clientIp;

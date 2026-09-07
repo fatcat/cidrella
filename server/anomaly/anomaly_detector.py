@@ -44,8 +44,7 @@ def _active_targets():
     same key for a given client_ip.
 
     `device_key` is the MAC (or IP fallback) stored in the `identity` column;
-    see storage.resolve_device_key for why the Python side avoids the name
-    `identity` for it."""
+    see storage.resolve_device_key for why the MAC is read under an alias."""
     active_ips = features.get_active_clients(hours=24)
     whitelisted = storage.get_whitelisted_device_keys()
     targets = []
