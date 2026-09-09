@@ -6,6 +6,8 @@ import { isDnsmasqRunning } from '../utils/dnsmasq.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
 import { VALID_RANGE_KEYS } from '../config/defaults.js';
 import { getIpLifecycleDiagnostics } from '../utils/ip-lifecycle-diagnostics.js';
+import { getNetworkDhcpDiagnostics } from '../utils/network-dhcp-diagnostics.js';
+import { listGenerations } from '../models/configuration-generation.js';
 
 const router = Router();
 
@@ -71,6 +73,14 @@ router.get('/proxy-perf', requirePerm('analytics:read'), (req, res) => {
 // GET /api/metrics/ip-lifecycle
 router.get('/ip-lifecycle', requirePerm('analytics:read'), (req, res) => {
   res.json(getIpLifecycleDiagnostics(getDb()));
+});
+
+router.get('/network-dhcp', requirePerm('analytics:read'), (req, res) => {
+  res.json(getNetworkDhcpDiagnostics(getDb()));
+});
+
+router.get('/configuration-generation', requirePerm('analytics:read'), (req, res) => {
+  res.json(listGenerations(getDb()));
 });
 
 // GET /api/metrics/services

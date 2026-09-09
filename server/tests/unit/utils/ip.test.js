@@ -309,6 +309,26 @@ describe('calculateSubnets', () => {
     expect(() => calculateSubnets('192.168.1.0/24', 24)).toThrow();
     expect(() => calculateSubnets('192.168.1.0/24', 33)).toThrow();
   });
+
+  it('allows exactly the configured child limit', () => {
+    const results = calculateSubnets('10.0.0.0/16', 24, 256);
+    expect(results).toHaveLength(256);
+    expect(results.at(-1).network).toBe('10.0.255.0');
+  });
+
+  it('rejects excessive division before enumerating addresses', () => {
+    expect(() => calculateSubnets('0.0.0.0/0', 32, 256))
+      .toThrow('Cannot divide into more than 256 subnets');
+  });
+
+  it('splits safely at the upper IPv4 boundary', () => {
+    const results = calculateSubnets('255.255.255.0/24', 25);
+    expect(results.map(result => `${result.network}/${result.prefix}`)).toEqual([
+      '255.255.255.0/25',
+      '255.255.255.128/25'
+    ]);
+    expect(results.at(-1).broadcast).toBe('255.255.255.255');
+  });
 });
 
 // ── canMergeCidrs ────────────────────────────────────────
@@ -329,12 +349,36 @@ describe('canMergeCidrs', () => {
     expect(result.merged_cidr).toBe('192.168.1.0/24');
   });
 
+  it('merges an unequal exact cover produced by carving', () => {
+    const result = canMergeCidrs([
+      '192.168.1.0/26', '192.168.1.64/26', '192.168.1.128/25'
+    ]);
+    expect(result).toMatchObject({ valid: true, merged_cidr: '192.168.1.0/24' });
+  });
+
+  it('merges the two halves of the full IPv4 address space', () => {
+    expect(canMergeCidrs(['0.0.0.0/1', '128.0.0.0/1']))
+      .toMatchObject({ valid: true, merged_cidr: '0.0.0.0/0' });
+  });
+
+  it('merges at the upper IPv4 boundary', () => {
+    expect(canMergeCidrs(['255.255.255.0/25', '255.255.255.128/25']))
+      .toMatchObject({ valid: true, merged_cidr: '255.255.255.0/24' });
+  });
+
   it('rejects single subnet', () => {
     expect(canMergeCidrs(['192.168.1.0/24']).valid).toBe(false);
   });
 
   it('rejects non-contiguous subnets', () => {
     expect(canMergeCidrs(['192.168.1.0/25', '192.168.2.0/25']).valid).toBe(false);
+  });
+
+  it('rejects duplicate and overlapping inputs explicitly', () => {
+    expect(canMergeCidrs(['192.168.1.0/25', '192.168.1.0/25']).error)
+      .toBe('Subnets must not overlap');
+    expect(canMergeCidrs(['192.168.1.0/24', '192.168.1.128/25']).error)
+      .toBe('Subnets must not overlap');
   });
 
   it('rejects different prefix lengths', () => {

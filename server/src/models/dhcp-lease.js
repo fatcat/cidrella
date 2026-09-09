@@ -1,5 +1,7 @@
 import { observeDhcpLeases } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from '../utils/after-commit.js';
+import { ipToLong } from '../utils/ip.js';
+import { resolveEffectiveScopeOptions } from './dhcp-scope.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
 export function findLeasesByAddress(db, subnetId, ip) {
@@ -79,17 +81,38 @@ export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
  */
 export function syncDhcpDnsRecords(db, leases) {
   const scopes = db.prepare(`
-    SELECT s.subnet_id, s.domain_name as scope_domain, sub.domain_name as subnet_domain
+    SELECT s.*, sub.cidr AS subnet_cidr, sub.gateway_address AS subnet_gateway,
+      sub.domain_name AS subnet_domain_name
     FROM dhcp_scopes s
     JOIN subnets sub ON s.subnet_id = sub.id
     WHERE s.enabled = 1
   `).all();
 
-  const subnetDomainMap = new Map();
-  for (const s of scopes) {
-    const domain = s.scope_domain || s.subnet_domain;
-    if (domain) subnetDomainMap.set(s.subnet_id, domain);
+  const scopesBySubnet = new Map();
+  const allDomains = new Set();
+  for (const scope of scopes) {
+    scope.pools = db.prepare(`
+      SELECT start_ip, end_ip FROM dhcp_scope_pools
+      WHERE scope_id = ? ORDER BY sort_order, id
+    `).all(scope.id);
+    const effective = resolveEffectiveScopeOptions(db, scope);
+    scope.effective_domain = effective.options.find(option => option.option_code === 15)?.value
+      || scope.subnet_domain_name || null;
+    if (scope.effective_domain) allDomains.add(scope.effective_domain);
+    if (!scopesBySubnet.has(scope.subnet_id)) scopesBySubnet.set(scope.subnet_id, []);
+    scopesBySubnet.get(scope.subnet_id).push(scope);
   }
+  const subnetDomains = new Map(db.prepare(
+    "SELECT id, domain_name FROM subnets WHERE domain_name IS NOT NULL AND domain_name != ''"
+  ).all().map(subnet => [subnet.id, subnet.domain_name]));
+  for (const domain of subnetDomains.values()) allDomains.add(domain);
+  const domainFor = (subnetId, ip) => {
+    const value = ipToLong(ip);
+    const scope = (scopesBySubnet.get(subnetId) || []).find(candidate =>
+      candidate.pools.some(pool => value >= ipToLong(pool.start_ip) && value <= ipToLong(pool.end_ip))
+    );
+    return scope?.effective_domain || subnetDomains.get(subnetId) || null;
+  };
 
   let reservations;
   try {
@@ -123,7 +146,7 @@ export function syncDhcpDnsRecords(db, leases) {
 
   const activeRecordIds = new Set();
   const processedZoneIds = new Set();
-  for (const domain of subnetDomainMap.values()) {
+  for (const domain of allDomains) {
     const z = zoneByName.get(domain);
     if (z) processedZoneIds.add(z.id);
   }
@@ -157,7 +180,7 @@ export function syncDhcpDnsRecords(db, leases) {
   for (const l of entries) {
     if (!l.hostname || !l.subnetId) continue;
 
-    const domain = subnetDomainMap.get(l.subnetId);
+    const domain = domainFor(l.subnetId, l.ip);
     if (!domain) continue;
 
     const zone = zoneByName.get(domain);

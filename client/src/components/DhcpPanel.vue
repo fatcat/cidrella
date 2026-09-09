@@ -609,19 +609,14 @@ const filteredLeases = computed(() => store.leases);
 const scopeGateway = computed(() => {
   const s = selectedScope.value;
   if (!s) return null;
-  // Check scope options first (option 3), then legacy column, then subnet fallback
-  const opt3 = s.options?.find(o => o.option_code === 3);
-  if (opt3?.value) return opt3.value;
-  return s.gateway || s.subnet_gateway || null;
+  return s.effective?.options?.find(option => option.option_code === 3)?.value || null;
 });
 
 const scopeLeaseTime = computed(() => {
   const s = selectedScope.value;
   if (!s) return null;
   // Option 51 overrides the scope's lease_time column
-  const opt51 = s.options?.find(o => o.option_code === 51);
-  if (opt51?.value) return `${opt51.value}s`;
-  return s.lease_time || null;
+  return s.effective?.lease_time || s.lease_time || null;
 });
 
 // Filter leases for selected scope

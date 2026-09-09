@@ -74,7 +74,6 @@ export function seedDefaultOptions(db) {
       insert.run(code, null, 1);
     }
     insert.run(42, DHCP_DEFAULT_NTP_SERVERS, 1);
-    insert.run(51, '3600', 1);
   });
 
   seed();

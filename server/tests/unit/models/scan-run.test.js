@@ -55,6 +55,22 @@ describe('scan run ownership', () => {
     expect(result.mac_address).toBe('aa:bb:cc:dd:ee:ff');
   });
 
+  it('invalidates a scan when its operating-network topology changes', () => {
+    const scanId = ScanRun.createPending(db, subnetId);
+    expect(ScanRun.targetIsCurrent(db, scanId)).toBe(true);
+    db.prepare(`
+      UPDATE subnets SET topology_revision = topology_revision + 1 WHERE id = ?
+    `).run(subnetId);
+    expect(ScanRun.targetIsCurrent(db, scanId)).toBe(false);
+
+    const replacement = ScanRun.createPending(db, subnetId);
+    expect(ScanRun.targetIsCurrent(db, replacement)).toBe(true);
+    db.prepare("UPDATE subnets SET status = 'unallocated' WHERE id = ?").run(subnetId);
+    expect(ScanRun.targetIsCurrent(db, replacement)).toBe(false);
+    expect(() => ScanRun.createPending(db, subnetId)).toThrow(/allocated subnet/);
+    db.prepare("UPDATE subnets SET status = 'allocated' WHERE id = ?").run(subnetId);
+  });
+
   it('does not delete running scans', () => {
     const scanId = ScanRun.createPending(db, subnetId);
     ScanRun.markRunning(db, scanId, 1);

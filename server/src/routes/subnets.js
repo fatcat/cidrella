@@ -19,6 +19,11 @@ import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
+import {
+  buildDividePlan,
+  buildMergePlan,
+  isCurrentTransformationPlan
+} from '../services/network-transformation-plan.js';
 import { gatewayInPoolConflict, gatewayInPoolError, dynamicPoolConflict } from '../models/dhcp-scope.js';
 import { staticDnsClaimSql } from '../models/dns-record.js';
 
@@ -191,12 +196,6 @@ function validateGatewayForSubnet(parsed, gateway) {
   return null;
 }
 
-// Helper: auto-create DHCP scope for a subnet if no existing hosts/leases/scopes
-function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName) {
-  const defaults = dhcpRangeDefaults(parsed);
-  return DhcpTopology.autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName, defaults);
-}
-
 // Helper: detect whether the given `vlan_id` is already assigned to one or
 // more other subnets. Same VLAN on different L3 subnets is legal in some
 // topologies (e.g. a VLAN spanning multiple IP supernets), but in practice
@@ -212,9 +211,10 @@ function detectVlanCollision(db, vlanId, currentSubnetId) {
 }
 
 // Helper: insert a subnet row
-function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, parent_id, folder_id, status, depth, domain_name }) {
+function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, gateway_policy, parent_id, folder_id, status, depth, domain_name, scan_interval, scan_enabled }) {
   return SubnetTopology.insertSubnet(db, {
-    cidr, name, description, vlan_id, gateway_address, parent_id, folder_id, status, depth, domain_name
+    cidr, name, description, vlan_id, gateway_address, gateway_policy, parent_id, folder_id, status, depth,
+    domain_name, scan_interval, scan_enabled
   });
 }
 
@@ -224,6 +224,14 @@ function insertSubnet(db, { cidr, name, description, vlan_id, gateway_address, p
 // flatten by re-parenting grandchildren directly to the parent and removing intermediaries.
 function consolidateIntermediate(db, parentId) {
   return SubnetTopology.consolidateIntermediate(db, parentId);
+}
+
+function sortSubnetsNumerically(rows) {
+  return rows.sort((left, right) => (
+    ipToLong(left.network_address) - ipToLong(right.network_address)
+      || left.prefix_length - right.prefix_length
+      || left.id - right.id
+  ));
 }
 
 // GET /api/subnets: return folder-grouped tree
@@ -248,6 +256,7 @@ router.get('/', requirePerm('subnets:read'), asyncHandler((req, res) => {
     WHERE s.id IN (SELECT id FROM subnet_tree)
     ORDER BY s.network_address, s.prefix_length
   `).all();
+  sortSubnetsNumerically(rows);
 
   const tree = buildTree(rows);
 
@@ -290,6 +299,7 @@ router.get('/:id', requirePerm('subnets:read'), asyncHandler((req, res) => {
       (SELECT COUNT(*) FROM subnets WHERE parent_id = s.id) as child_count
     FROM subnets s WHERE s.parent_id = ? ORDER BY s.network_address
   `).all(subnet.id);
+  sortSubnetsNumerically(children);
 
   res.json({ ...subnet, children });
 }));
@@ -399,8 +409,13 @@ router.post('/merge/preview', requirePerm('subnets:read'), asyncHandler((req, re
 
   const allocated = subnets.filter(s => s.status === 'allocated');
   const gatewaySubnet = allocated.find(s => s.gateway_address);
+  const gatewayPolicies = [...new Set(allocated.map(s => s.gateway_policy))];
+  const gatewayConflict = gatewayPolicies.length > 1
+    || (gatewayPolicies[0] === 'custom'
+      && new Set(allocated.map(s => s.gateway_address)).size > 1);
 
   const { conflict: domainConflict, zones: forwardZones } = detectForwardZoneConflict(db, subnets.map(s => s.id));
+  const plan = buildMergePlan(db, subnets, mergeResult.merged_cidr);
 
   res.json({
     merged_cidr: mergeResult.merged_cidr,
@@ -408,14 +423,17 @@ router.post('/merge/preview', requirePerm('subnets:read'), asyncHandler((req, re
     allocated_count: allocated.length,
     gateway_preserved: gatewaySubnet ? { cidr: gatewaySubnet.cidr, gateway: gatewaySubnet.gateway_address } : null,
     config_loss: allocated.filter(s => s !== gatewaySubnet).map(s => s.cidr),
+    gateway_policy: gatewayConflict ? null : (gatewayPolicies[0] || null),
+    gateway_policy_conflict: gatewayConflict,
     forward_zone_conflict: domainConflict,
-    forward_zones: forwardZones
+    forward_zones: forwardZones,
+    plan
   });
 }));
 
 // POST /api/subnets/merge: execute merge
 router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { subnet_ids } = req.body;
+  const { subnet_ids, plan_token, plan_id } = req.body;
   if (!Array.isArray(subnet_ids) || subnet_ids.length < 2) {
     return res.status(400).json({ error: 'At least 2 subnet IDs required' });
   }
@@ -440,16 +458,39 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
   if (!mergeResult.valid) {
     return res.status(400).json({ error: mergeResult.error });
   }
+  const currentPlan = buildMergePlan(db, subnets, mergeResult.merged_cidr);
+  if (plan_token && !isCurrentTransformationPlan(db, {
+    source_ids: currentPlan.source_ids, dependency_token: plan_token, plan_id,
+    current_plan: currentPlan
+  })) {
+    return res.status(409).json({ error: 'Transformation plan is stale', stale_plan: true, plan: currentPlan });
+  }
 
   // Forward-zone conflict gate: refuse to silently consolidate when the
   // children claim different forward-zone domains. The user must resolve the
   // clash themselves (rename or delete one of the zones) before merging.
   const childIds = subnets.map(s => s.id);
+  const allocated = subnets.filter(s => s.status === 'allocated');
+  const gatewayPolicies = [...new Set(allocated.map(s => s.gateway_policy))];
+  if (gatewayPolicies.length > 1
+      || (gatewayPolicies[0] === 'custom'
+        && new Set(allocated.map(s => s.gateway_address)).size > 1)) {
+    return res.status(409).json({
+      error: 'Cannot merge networks with conflicting gateway policies. Resolve the gateway policy first.'
+    });
+  }
   const { conflict: domainConflict, zones: forwardZones } = detectForwardZoneConflict(db, childIds);
   if (domainConflict) {
     return res.status(409).json({
       error: 'Cannot merge: child subnets own forward zones with different domain names. Rename or delete one before merging.',
       forward_zones: forwardZones
+    });
+  }
+  if (currentPlan.conflicts.length > 0) {
+    return res.status(409).json({
+      error: 'Cannot merge until all network and reservation conflicts are resolved.',
+      conflicts: currentPlan.conflicts,
+      plan: currentPlan
     });
   }
 
@@ -466,7 +507,9 @@ router.post('/merge', requirePerm('subnets:write'), asyncHandler((req, res) => {
     });
 
     const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-    const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ? ORDER BY network_address').all(parentId);
+    const children = sortSubnetsNumerically(
+      db.prepare('SELECT * FROM subnets WHERE parent_id = ?').all(parentId)
+    );
     res.json({ ...parent, children });
   } catch (err) {
     console.error('Merge error:', err);
@@ -497,7 +540,7 @@ router.post('/apply-template', requirePerm('subnets:write'), asyncHandler((req, 
 // PUT /api/subnets/:id: update subnet config
 router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   const body = req.body || {};
-  const { name, description, vlan_id, gateway_address, scan_interval, folder_id, domain_name, scan_enabled, cidr } = body;
+  const { name, description, vlan_id, gateway_address, gateway_policy, scan_interval, folder_id, domain_name, scan_enabled, cidr } = body;
 
   // v0.4.15 type guards. gateway_address as a number in v0.4.14 crashed
   // `ip.split is not a function`; the remaining fields fell into the same
@@ -515,6 +558,10 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   }
   if (gateway_address !== undefined && gateway_address !== null && typeof gateway_address !== 'string') {
     return res.status(400).json({ error: 'gateway_address must be a string' });
+  }
+  if (gateway_policy !== undefined
+      && !['first', 'last', 'custom', 'none'].includes(gateway_policy)) {
+    return res.status(400).json({ error: 'gateway_policy must be first, last, custom, or none' });
   }
   if (vlan_id !== undefined && vlan_id !== null && vlan_id !== '') {
     const vlanErr = vlanIdError(vlan_id);
@@ -537,6 +584,19 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+  const parsedSubnet = parseCidr(subnet.cidr);
+  const requestedPolicy = gateway_policy || (gateway_address !== undefined
+    ? SubnetTopology.gatewayPolicyForAddress(parsedSubnet, gateway_address) : subnet.gateway_policy);
+  if (requestedPolicy === 'custom' && !gateway_address) {
+    return res.status(400).json({ error: 'gateway_address is required for custom gateway policy' });
+  }
+  const requestedGateway = gateway_policy
+    ? SubnetTopology.resolveGatewayAddress(parsedSubnet, requestedPolicy, gateway_address)
+    : gateway_address;
+  {
+    const err = validateGatewayForSubnet(parsedSubnet, requestedGateway);
+    if (err) return res.status(400).json({ error: err });
+  }
 
   // CIDR can't be changed here, use /divide or /merge. The edit dialog
   // echoes the current CIDR back in the body, so we only reject when the
@@ -586,7 +646,8 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
   // subnet row update and the gateway range change together. Otherwise the
   // client can get a 500 with subnet.domain_name already changed on disk but
   // no corresponding zone rename, leaving the system in a split-brain state.
-  const gatewayChanged = gateway_address && gateway_address !== subnet.gateway_address;
+  const gatewayChanged = requestedGateway !== undefined
+    && (requestedGateway !== subnet.gateway_address || requestedPolicy !== subnet.gateway_policy);
 
   // Refuse a gateway change that would place the router inside an existing
   // DHCP pool: dnsmasq would hand out the gateway IP as a dynamic lease and
@@ -598,11 +659,11 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
       JOIN ranges r ON s.range_id = r.id
       WHERE s.subnet_id = ?
     `).all(subnet.id);
-    const gwLong = ipToLong(gateway_address);
+    const gwLong = requestedGateway ? ipToLong(requestedGateway) : null;
     for (const p of pools) {
-      if (gwLong >= ipToLong(p.start_ip) && gwLong <= ipToLong(p.end_ip)) {
+      if (gwLong != null && gwLong >= ipToLong(p.start_ip) && gwLong <= ipToLong(p.end_ip)) {
         return res.status(409).json({
-          error: `Gateway ${gateway_address} falls inside an existing DHCP pool (${p.start_ip}–${p.end_ip}). Shrink the pool or choose a gateway outside it.`,
+          error: `Gateway ${requestedGateway} falls inside an existing DHCP pool (${p.start_ip}–${p.end_ip}). Shrink the pool or choose a gateway outside it.`,
           dhcp_pool: { start_ip: p.start_ip, end_ip: p.end_ip }
         });
       }
@@ -613,7 +674,8 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
     name,
     description,
     vlan_id,
-    gateway_address,
+    gateway_address: requestedGateway,
+    gateway_policy: requestedPolicy,
     scan_interval,
     folder_id,
     domain_name,
@@ -639,7 +701,7 @@ router.put('/:id', requirePerm('subnets:write'), asyncHandler((req, res) => {
 
 // POST /api/subnets/:id/divide/preview: preview division without committing
 router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((req, res) => {
-  const { cidr, new_prefix } = req.body;
+  const { cidr, new_prefix, selected_cidrs, target_gateways } = req.body;
   const db = getDb();
   const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!parent) return res.status(404).json({ error: 'Subnet not found' });
@@ -655,7 +717,7 @@ router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((re
       if (targetPrefix <= parseCidr(parent.cidr).prefix || targetPrefix > 32) {
         return res.status(400).json({ error: 'Invalid target prefix' });
       }
-      const subnets = calculateSubnets(parent.cidr, targetPrefix);
+      const subnets = calculateSubnets(parent.cidr, targetPrefix, 256);
       const count = subnets.length;
       if (count > 256) {
         return res.status(400).json({ error: 'Cannot divide into more than 256 subnets' });
@@ -665,6 +727,9 @@ router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((re
         gatewaySubnet = subnets.find(s => isIpInSubnet(parent.gateway_address, `${s.network}/${s.prefix}`));
       }
       const childCidrs = subnets.map(s => `${s.network}/${s.prefix}`);
+      const plan = buildDividePlan(db, parent, {
+        newPrefix: targetPrefix, selectedCidrs: selected_cidrs, targetGateways: target_gateways
+      });
       return res.json({
         parent: parent.cidr,
         mode: 'equal',
@@ -672,7 +737,8 @@ router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((re
         count,
         is_allocated: parent.status === 'allocated',
         gateway_preserved: gatewaySubnet ? `${gatewaySubnet.network}/${gatewaySubnet.prefix}` : null,
-        lossy: detectLossyIpsForDivision(db, parent.id, childCidrs)
+        lossy: detectLossyIpsForDivision(db, parent.id, childCidrs),
+        plan
       });
     }
 
@@ -685,6 +751,7 @@ router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((re
     }
     const remainder = subtractCidr(parent.cidr, normalized);
     const childCidrs = [normalized, ...remainder];
+    const plan = buildDividePlan(db, parent, { cidr: normalized, targetGateways: target_gateways });
     res.json({
       parent: parent.cidr,
       mode: 'carve',
@@ -692,7 +759,8 @@ router.post('/:id/divide/preview', requirePerm('subnets:read'), asyncHandler((re
       remainder,
       is_allocated: parent.status === 'allocated',
       gateway_preserved: parent.gateway_address ? isIpInSubnet(parent.gateway_address, normalized) : null,
-      lossy: detectLossyIpsForDivision(db, parent.id, childCidrs)
+      lossy: detectLossyIpsForDivision(db, parent.id, childCidrs),
+      plan
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -746,6 +814,7 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     const cls = classify(r.ip_address, ipToLong(r.ip_address));
     if (!cls) continue;
     lossy.push({
+      record_id: r.id,
       ip: r.ip_address,
       child_cidr: cls.child_cidr,
       reason: cls.reason,
@@ -759,12 +828,17 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
   // unassigned row with no hostname/MAC/scan history is noise from the
   // sync scheduler and safe to drop.
   const ips = db.prepare(
-    "SELECT ip_address, hostname, mac_address, allocation_state FROM ip_addresses WHERE subnet_id = ? AND (hostname IS NOT NULL OR mac_address IS NOT NULL OR allocation_state != 'unassigned')"
+    "SELECT id, ip_address, hostname, mac_address, allocation_state, allocation_source_type FROM ip_addresses WHERE subnet_id = ? AND (hostname IS NOT NULL OR mac_address IS NOT NULL OR allocation_state != 'unassigned')"
   ).all(parentId);
   for (const ip of ips) {
     const cls = classify(ip.ip_address, ipToLong(ip.ip_address));
     if (!cls) continue;
+    // Existing network/broadcast/gateway rows are topology projections, not
+    // host facts. The post-transfer topology reconciler will retain, change,
+    // or release them according to the target CIDR.
+    if (ip.allocation_source_type === 'topology') continue;
     lossy.push({
+      record_id: ip.id,
       ip: ip.ip_address,
       child_cidr: cls.child_cidr,
       reason: cls.reason,
@@ -775,28 +849,51 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     });
   }
 
-  // DNS A records in the forward zone named by this subnet's domain_name:
-  // if the record value lands on a boundary IP, the record stays queryable
-  // post-divide but points at an unusable target. Post-decouple, the link
-  // from subnet → zone is via `subnets.domain_name = dns_zones.name`, so
-  // we join by name. A subnet with no domain_name simply has no records
-  // to flag here.
+  const parent = db.prepare('SELECT cidr FROM subnets WHERE id = ?').get(parentId);
+  // Manual A records may live in any forward zone, including a shared zone.
+  // Restrict by the source CIDR before classifying so unrelated records in
+  // that shared zone never become part of this operation.
   const aRecords = db.prepare(`
-    SELECT r.name AS name, r.value AS value, z.name AS zone_name
+    SELECT r.id, r.name AS name, r.value AS value, z.name AS zone_name
     FROM dns_records r
     JOIN dns_zones z ON r.zone_id = z.id
-    JOIN subnets s ON s.domain_name = z.name
-    WHERE s.id = ? AND z.type = 'forward' AND r.type = 'A' AND r.enabled = 1
-  `).all(parentId);
+    WHERE z.type = 'forward' AND z.enabled = 1
+      AND r.type = 'A' AND r.enabled = 1
+      AND COALESCE(r.source, 'manual') = 'manual'
+  `).all().filter(record => isValidIpv4(record.value)
+    && parent && isIpInSubnet(record.value, parent.cidr));
   for (const rec of aRecords) {
     const cls = classify(rec.value, ipToLong(rec.value));
     if (!cls) continue;
     lossy.push({
+      record_id: rec.id,
       ip: rec.value,
       child_cidr: cls.child_cidr,
       reason: cls.reason,
       carries: 'dns_record',
       hostname: rec.name === '@' ? rec.zone_name : `${rec.name}.${rec.zone_name}`
+    });
+  }
+
+
+  const leases = db.prepare(`
+    SELECT id, ip_address, mac_address, hostname, expires_at
+    FROM dhcp_leases
+    WHERE subnet_id = ?
+      AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+  `).all(parentId);
+  for (const lease of leases) {
+    const cls = classify(lease.ip_address, ipToLong(lease.ip_address));
+    if (!cls) continue;
+    lossy.push({
+      record_id: lease.id,
+      ip: lease.ip_address,
+      child_cidr: cls.child_cidr,
+      reason: cls.reason,
+      carries: 'dhcp_lease',
+      hostname: lease.hostname || null,
+      mac: lease.mac_address || null,
+      expires_at: lease.expires_at
     });
   }
 
@@ -835,7 +932,7 @@ function migrateConfigToChild(db, parentId, childId, childParsed, childGw, paren
   // dhcp_scopes config (lease time, DNS, options) got dropped on the floor,
   // leaving the inheriting child with a DHCP range but no working scope.
   poolAdjustments.push(...DhcpTopology.cloneParentScopesToChild(
-    db, parentId, childId, childParsed, childGw, excludeGatewayFromPool
+    db, parentId, childId, childParsed, childGw
   ));
 
   SubnetTopology.copyUserRangesToChild(db, parentId, childId, childParsed);
@@ -853,6 +950,7 @@ function migrateConfigToChild(db, parentId, childId, childParsed, childGw, paren
 // scan state) and dhcp_reservations linger pointing at an unallocated parent.
 function transferPerIpArtifactsToChildren(db, parentId) {
   DhcpTopology.moveReservationsToChildren(db, parentId);
+  DhcpTopology.moveLeasesToChildren(db, parentId);
   const children = db.prepare('SELECT id, cidr FROM subnets WHERE parent_id = ?').all(parentId);
   if (children.length === 0) return;
   const childRanges = children.map(c => {
@@ -875,7 +973,33 @@ function transferPerIpArtifactsToChildren(db, parentId) {
   }
 }
 
-// After divide, when the user has consented via `force_lossy`, delete the
+function reconcileChildTopology(db, parentId) {
+  const children = db.prepare('SELECT id FROM subnets WHERE parent_id = ?').all(parentId);
+  for (const child of children) SubnetTopology.reconcileSubnetTopology(db, child.id);
+}
+
+function conflictResolutionKey(item) {
+  return `${item.carries}:${Number(item.record_id)}`;
+}
+
+function validateConflictResolutions(lossy, resolutions) {
+  if (lossy.length === 0) return [];
+  if (!Array.isArray(resolutions)) return null;
+  const expected = new Map(lossy.map(item => [conflictResolutionKey(item), item]));
+  const accepted = new Map();
+  for (const resolution of resolutions) {
+    if (resolution?.action !== 'delete') throw new Error('Unsupported conflict resolution action');
+    const key = conflictResolutionKey(resolution || {});
+    if (!expected.has(key)) throw new Error(`Conflict resolution ${key} is not part of the current plan`);
+    if (accepted.has(key)) throw new Error(`Duplicate conflict resolution ${key}`);
+    accepted.set(key, expected.get(key));
+  }
+  if (accepted.size !== expected.size) return null;
+  return [...accepted.values()];
+}
+
+// After divide, delete only artifacts identified by the current plan and
+// individually accepted by record identity.
 // artifacts the lossy detector flagged. Their IPs are now on new children's
 // network/broadcast boundaries (or outside the selected children entirely)
 // and can't be valid hosts anymore.
@@ -891,22 +1015,31 @@ function transferPerIpArtifactsToChildren(db, parentId) {
 //     refuse (IP is now outside the active pool) and the client gets a
 //     fresh IP. No connection drop.
 //
-// `lossy` is the exact list returned by detectLossyIpsForDivision, so we
-// only touch rows that were surfaced (and user-acknowledged) upfront.
+// `lossy` is the exact resolved list validated against the current plan.
 // Returns a summary for the response body so the client can toast what
 // got removed.
-function cleanupLossyArtifactsAfterDivide(db, lossy) {
+function cleanupLossyArtifactsAfterDivide(db, parentId, lossy) {
   if (!Array.isArray(lossy) || lossy.length === 0) {
     return { ips: [], removed: { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 } };
   }
   const ipSet = new Set(lossy.map(l => l.ip));
   const removed = { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 };
-  const dhcpRemoved = DhcpTopology.deleteReservationsAndLeasesByIps(db, ipSet);
-  removed.reservations += dhcpRemoved.reservations;
-  removed.leases += dhcpRemoved.leases;
-  removed.dns_records += DnsTopology.deleteARecordsByIps(db, ipSet);
-  for (const ip of ipSet) {
-    removed.ip_addresses += IpAddress.deleteByIpAddress(db, ip).changes;
+  for (const item of lossy) {
+    if (!item.record_id) continue;
+    let result;
+    if (item.carries === 'dhcp_reservation') {
+      result = DhcpTopology.deleteChildReservationById(db, parentId, item.record_id);
+    } else if (item.carries === 'dhcp_lease') {
+      result = DhcpTopology.deleteChildLeaseById(db, parentId, item.record_id);
+    } else if (item.carries === 'dns_record') {
+      result = DnsTopology.deleteARecordByIdentity(db, item.record_id, item.ip);
+    } else if (item.carries === 'ip_address') {
+      result = IpAddress.deleteById(db, item.record_id);
+    } else continue;
+    if (item.carries === 'dhcp_reservation') removed.reservations += result.changes;
+    if (item.carries === 'dhcp_lease') removed.leases += result.changes;
+    if (item.carries === 'dns_record') removed.dns_records += result.changes;
+    if (item.carries === 'ip_address') removed.ip_addresses += result.changes;
   }
   return { ips: [...ipSet], removed };
 }
@@ -946,12 +1079,9 @@ function clearParentConfig(db, parentId) {
 
 // POST /api/subnets/:id/divide: execute division
 // `force` accepts destruction of the parent's allocated config.
-// `force_lossy` is a separate acknowledgement that any host IPs landing on
-// new network/broadcast boundaries will become unusable. We keep these
-// distinct so confirming "divide an allocated subnet" doesn't silently also
-// accept "lose a reservation and some A records."
+// Destructive conflicts require one explicit record-identity resolution each.
 router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { cidr, new_prefix, force, force_lossy, selected_cidrs } = req.body;
+  const { cidr, new_prefix, force, conflict_resolutions, selected_cidrs, target_gateways, plan_token, plan_id } = req.body;
   const db = getDb();
   const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
   if (!parent) return res.status(404).json({ error: 'Subnet not found' });
@@ -971,6 +1101,30 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
 
   const childDepth = parent.depth + 1;
   const parentParsed = parseCidr(parent.cidr);
+  let currentPlan;
+  try {
+    currentPlan = buildDividePlan(db, parent, {
+      newPrefix: new_prefix,
+      cidr: cidr ? normalizeCidr(cidr) : undefined,
+      selectedCidrs: selected_cidrs,
+      targetGateways: target_gateways
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  if (currentPlan.conflicts.length) {
+    return res.status(409).json({
+      error: 'Transformation conflicts must be resolved before execution.',
+      conflicts: currentPlan.conflicts,
+      plan: currentPlan
+    });
+  }
+  if (plan_token && !isCurrentTransformationPlan(db, {
+    source_ids: currentPlan.source_ids, dependency_token: plan_token, plan_id,
+    current_plan: currentPlan
+  })) {
+    return res.status(409).json({ error: 'Transformation plan is stale', stale_plan: true, plan: currentPlan });
+  }
 
   // Get name template
   const template = getSetting('subnet_name_template');
@@ -982,32 +1136,30 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       if (targetPrefix <= parentParsed.prefix || targetPrefix > 32) {
         return res.status(400).json({ error: 'Invalid target prefix' });
       }
-      let subnets = calculateSubnets(parent.cidr, targetPrefix);
+      let subnets = calculateSubnets(parent.cidr, targetPrefix, 256);
       if (subnets.length > 256) {
         return res.status(400).json({ error: 'Cannot divide into more than 256 subnets' });
       }
 
-      // Filter to selected CIDRs if provided
+      // Validate selected CIDRs, but retain every result as explicit ownership
+      // so a partial selection cannot strand or delete the remainder.
       if (Array.isArray(selected_cidrs) && selected_cidrs.length > 0) {
         const allCidrs = new Set(subnets.map(s => `${s.network}/${s.prefix}`));
         const invalid = selected_cidrs.filter(c => !allCidrs.has(c));
         if (invalid.length > 0) {
           return res.status(400).json({ error: `Invalid selected CIDRs: ${invalid.join(', ')}` });
         }
-        const selectedSet = new Set(selected_cidrs);
-        subnets = subnets.filter(s => selectedSet.has(`${s.network}/${s.prefix}`));
       }
 
-      // Lossy-IP gate: if any host's IP would fall on a new child's network
-      // or broadcast, require explicit force_lossy. Distinct from `force`
-      // (which covers the allocated-parent gate), see route comment above.
+      // Any host fact that becomes unusable needs its own reviewed action.
       const childCidrList = subnets.map(s => `${s.network}/${s.prefix}`);
       const lossy = detectLossyIpsForDivision(db, parent.id, childCidrList);
-      if (lossy.length > 0 && !force_lossy) {
+      const acceptedLossy = validateConflictResolutions(lossy, conflict_resolutions);
+      if (lossy.length > 0 && !acceptedLossy) {
         return res.status(409).json({
           error: `${lossy.length} host IP(s) would land on a new subnet's network/broadcast address and be unusable after divide.`,
           requires_confirmation: true,
-          can_force_lossy: true,
+          requires_conflict_resolutions: true,
           lossy
         });
       }
@@ -1017,72 +1169,34 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       let txnPoolAdjustments = [];
       let txnLossyCleanup = { ips: [], removed: { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 } };
       const txn = db.transaction(() => {
-        // Infer the parent's gateway POSITION (first / last / custom / none)
-        // so children can inherit the same relative choice, prior code only
-        // copied the parent's literal address into the one child that
-        // happened to contain it, and fell back to a global setting for the
-        // rest, producing divergent gateways within a single divide.
-        let inheritedPosition = null;
-        if (parent.status === 'allocated' && parent.gateway_address) {
-          if (parent.gateway_address === parentParsed.firstUsable) inheritedPosition = 'first';
-          else if (parent.gateway_address === parentParsed.lastUsable) inheritedPosition = 'last';
-          // else: custom address, let the old exact-match logic handle it
-        }
-
-        // Only used when the parent's gateway doesn't match a clean first/last
-        // boundary. Exactly one child's range will contain the literal address.
-        let customInheritIdx = -1;
-        if (inheritedPosition === null && parent.status === 'allocated' && parent.gateway_address) {
-          const gwLong = ipToLong(parent.gateway_address);
-          customInheritIdx = subnets.findIndex(s => gwLong >= s.networkLong && gwLong <= s.broadcastLong);
-        }
-
-        // Fallback position used when parent had no inferrable position and
-        // no matching range (or for children that don't contain the custom IP).
-        const fallbackPosition = inheritedPosition || getSetting('default_gateway_position') || 'first';
-
         const childIds = [];
         const poolAdjustmentsAll = [];
-        for (let i = 0; i < subnets.length; i++) {
-          const s = subnets[i];
+        const targetsByCidr = new Map(currentPlan.targets.map(target => [target.cidr, target]));
+        for (const s of subnets) {
           const sCidr = `${s.network}/${s.prefix}`;
-          const childParsed = parseCidr(sCidr);
-          const isCustomInheriting = i === customInheritIdx;
-          const isInheriting = inheritedPosition !== null || isCustomInheriting;
-          let childGw;
-          if (isCustomInheriting) {
-            childGw = parent.gateway_address;
-          } else if (fallbackPosition === 'none') {
-            childGw = null;
-          } else if (fallbackPosition === 'last') {
-            childGw = childParsed.lastUsable;
-          } else {
-            childGw = childParsed.firstUsable;
-          }
+          const target = targetsByCidr.get(sCidr);
+          const childGw = target.gateway.address;
 
           const result = insertSubnet(db, {
             cidr: sCidr,
             name: applyNameTemplate(template, sCidr),
-            description: isInheriting ? parent.description : null,
-            vlan_id: isInheriting ? parent.vlan_id : null,
+            description: parent.description,
+            vlan_id: parent.vlan_id,
             gateway_address: childGw,
+            gateway_policy: target.gateway.policy,
             parent_id: parent.id,
             status: parent.status === 'allocated' ? 'allocated' : 'unallocated',
             depth: childDepth,
             domain_name: parent.domain_name,
+            folder_id: parent.folder_id,
+            scan_interval: parent.scan_interval,
+            scan_enabled: parent.scan_enabled,
           });
 
-          if (isInheriting) {
-            const adj = migrateConfigToChild(db, parent.id, result.lastInsertRowid, s, childGw, parent.has_reverse_dns);
-            if (Array.isArray(adj) && adj.length) poolAdjustmentsAll.push(...adj);
-          } else {
-            // All children get Network/Broadcast/Gateway ranges
-            createSystemRanges(db, result.lastInsertRowid, childParsed, childGw);
-            // Auto-create DHCP scope for appropriately-sized allocated children
-            if (parent.status === 'allocated') {
-              autoCreateDhcpScope(db, result.lastInsertRowid, childParsed, childGw, parent.domain_name);
-            }
-          }
+          const adj = migrateConfigToChild(
+            db, parent.id, result.lastInsertRowid, s, childGw, parent.has_reverse_dns
+          );
+          if (Array.isArray(adj) && adj.length) poolAdjustmentsAll.push(...adj);
           childIds.push(result.lastInsertRowid);
         }
         // Pool adjustments bubble up via a closure variable, the return
@@ -1096,11 +1210,12 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         migrateParentZonesToChildren(db, parent.id);
 
         // Now that artifacts live under children, delete the ones the user
-        // acknowledged via force_lossy, their IPs sit on new boundaries
-        // and can't be valid hosts.
-        if (lossy.length > 0) {
-          txnLossyCleanup = cleanupLossyArtifactsAfterDivide(db, lossy);
+        // The accepted list was matched to this freshly computed plan by
+        // record identity, so no unrelated row is authorized for deletion.
+        if (acceptedLossy.length > 0) {
+          txnLossyCleanup = cleanupLossyArtifactsAfterDivide(db, parent.id, acceptedLossy);
         }
+        reconcileChildTopology(db, parent.id);
 
         clearParentConfig(db, parent.id);
 
@@ -1123,7 +1238,9 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
       });
 
       const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parent.id);
-      const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ? ORDER BY network_address').all(parent.id);
+      const children = sortSubnetsNumerically(
+        db.prepare('SELECT * FROM subnets WHERE parent_id = ?').all(parent.id)
+      );
       return res.json({
         ...updated,
         children,
@@ -1142,16 +1259,14 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
     }
 
     const remainder = subtractCidr(parent.cidr, normalized);
-    const childParsed = parseCidr(normalized);
-
-    // Lossy-IP gate: same guard as equal mode, gated on force_lossy (NOT force).
-    // Capture the list so the transaction can delete the flagged artifacts.
+    // Same exact-resolution gate as equal division.
     const carveLossy = detectLossyIpsForDivision(db, parent.id, [normalized, ...remainder]);
-    if (carveLossy.length > 0 && !force_lossy) {
+    const acceptedCarveLossy = validateConflictResolutions(carveLossy, conflict_resolutions);
+    if (carveLossy.length > 0 && !acceptedCarveLossy) {
       return res.status(409).json({
         error: `${carveLossy.length} host IP(s) would land on a new subnet's network/broadcast address and be unusable after divide.`,
         requires_confirmation: true,
-        can_force_lossy: true,
+        requires_conflict_resolutions: true,
         lossy: carveLossy
       });
     }
@@ -1159,64 +1274,39 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
     let carvePoolAdjustments = [];
     let carveLossyCleanup = { ips: [], removed: { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 } };
     const txn = db.transaction(() => {
-      let inheritingCidr = null;
-      if (parent.status === 'allocated' && parent.gateway_address) {
-        const gwLong = ipToLong(parent.gateway_address);
-        if (gwLong >= childParsed.networkLong && gwLong <= childParsed.broadcastLong) {
-          inheritingCidr = normalized;
-        } else {
-          for (const rCidr of remainder) {
-            const rParsed = parseCidr(rCidr);
-            if (gwLong >= rParsed.networkLong && gwLong <= rParsed.broadcastLong) {
-              inheritingCidr = rCidr;
-              break;
-            }
-          }
-        }
-      }
-
-      // Determine default gateway position for non-inheriting children
-      const gwPosition = getSetting('default_gateway_position');
-
-      // All children in the division
-      const allCidrs = [normalized, ...remainder];
-      for (const aCidr of allCidrs) {
+      for (const target of currentPlan.targets) {
+        const aCidr = target.cidr;
         const aParsed = parseCidr(aCidr);
-        const isInheriting = inheritingCidr === aCidr;
-        const childGw = isInheriting ? parent.gateway_address
-          : gwPosition === 'none' ? null
-          : (gwPosition === 'last' ? aParsed.lastUsable : aParsed.firstUsable);
+        const childGw = target.gateway.address;
 
         const result = insertSubnet(db, {
           cidr: aCidr,
           name: applyNameTemplate(template, aCidr),
-          description: isInheriting ? parent.description : null,
-          vlan_id: isInheriting ? parent.vlan_id : null,
+          description: parent.description,
+          vlan_id: parent.vlan_id,
           gateway_address: childGw,
+          gateway_policy: target.gateway.policy,
           parent_id: parent.id,
           status: parent.status === 'allocated' ? 'allocated' : 'unallocated',
           depth: childDepth,
           domain_name: parent.domain_name,
+          folder_id: parent.folder_id,
+          scan_interval: parent.scan_interval,
+          scan_enabled: parent.scan_enabled,
         });
 
-        if (isInheriting) {
-          const adj = migrateConfigToChild(db, parent.id, result.lastInsertRowid, aParsed, childGw, parent.has_reverse_dns);
-          if (Array.isArray(adj) && adj.length) carvePoolAdjustments.push(...adj);
-        } else {
-          // All children get Network/Broadcast/Gateway ranges
-          createSystemRanges(db, result.lastInsertRowid, aParsed, childGw);
-          // Auto-create DHCP scope for appropriately-sized allocated children
-          if (parent.status === 'allocated') {
-            autoCreateDhcpScope(db, result.lastInsertRowid, aParsed, childGw, parent.domain_name);
-          }
-        }
+        const adj = migrateConfigToChild(
+          db, parent.id, result.lastInsertRowid, aParsed, childGw, parent.has_reverse_dns
+        );
+        if (Array.isArray(adj) && adj.length) carvePoolAdjustments.push(...adj);
       }
 
       transferPerIpArtifactsToChildren(db, parent.id);
       migrateParentZonesToChildren(db, parent.id);
-      if (carveLossy.length > 0) {
-        carveLossyCleanup = cleanupLossyArtifactsAfterDivide(db, carveLossy);
+      if (acceptedCarveLossy.length > 0) {
+        carveLossyCleanup = cleanupLossyArtifactsAfterDivide(db, parent.id, acceptedCarveLossy);
       }
+      reconcileChildTopology(db, parent.id);
       clearParentConfig(db, parent.id);
 
       // Consolidate: if all siblings of parent are also intermediaries, flatten
@@ -1236,7 +1326,9 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
     });
 
     const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parent.id);
-    const children = db.prepare('SELECT * FROM subnets WHERE parent_id = ? ORDER BY network_address').all(parent.id);
+    const children = sortSubnetsNumerically(
+      db.prepare('SELECT * FROM subnets WHERE parent_id = ?').all(parent.id)
+    );
     res.json({
       ...updated,
       children,
@@ -1250,7 +1342,9 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
 
 // POST /api/subnets/:id/configure: allocate a subnet
 router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, res) => {
-  const { name, description, vlan_id, gateway_address, create_dhcp_scope, create_reverse_dns, folder_id, domain_name, dhcp_start_ip, dhcp_end_ip } = req.body;
+  const { name, description, vlan_id, gateway_address, gateway_policy, create_dhcp_scope,
+    create_reverse_dns, folder_id, domain_name, dhcp_start_ip, dhcp_end_ip,
+    scan_interval, scan_enabled } = req.body;
 
   if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Name is required' });
   {
@@ -1273,11 +1367,22 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   if (create_reverse_dns !== undefined && typeof create_reverse_dns !== 'boolean') {
     return res.status(400).json({ error: 'create_reverse_dns must be boolean' });
   }
+  if (scan_enabled !== undefined && scan_enabled !== null && typeof scan_enabled !== 'boolean') {
+    return res.status(400).json({ error: 'scan_enabled must be boolean or null' });
+  }
+  if (scan_interval !== undefined && scan_interval !== null
+      && (!Number.isInteger(scan_interval) || scan_interval < 0)) {
+    return res.status(400).json({ error: 'scan_interval must be a non-negative integer or null' });
+  }
   if (domain_name !== undefined && domain_name !== null && domain_name !== '' && typeof domain_name !== 'string') {
     return res.status(400).json({ error: 'domain_name must be a string' });
   }
   if (domain_name && !isValidDomain(domain_name)) {
     return res.status(400).json({ error: 'Invalid domain name format' });
+  }
+  if (gateway_policy !== undefined
+      && !['first', 'last', 'custom', 'none'].includes(gateway_policy)) {
+    return res.status(400).json({ error: 'gateway_policy must be first, last, custom, or none' });
   }
 
   const db = getDb();
@@ -1291,12 +1396,13 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
   }
 
   // Determine gateway
-  let gw = gateway_address;
-  if (!gw) {
-    const gwPosition = getSetting('default_gateway_position');
-    gw = gwPosition === 'none' ? null
-      : gwPosition === 'last' ? parsed.lastUsable : parsed.firstUsable;
+  const resolvedPolicy = gateway_policy
+    || (gateway_address ? SubnetTopology.gatewayPolicyForAddress(parsed, gateway_address)
+      : getSetting('default_gateway_position'));
+  if (resolvedPolicy === 'custom' && !gateway_address) {
+    return res.status(400).json({ error: 'gateway_address is required for custom gateway policy' });
   }
+  const gw = SubnetTopology.resolveGatewayAddress(parsed, resolvedPolicy, gateway_address);
 
   // Validate folder_id if provided
   {
@@ -1370,9 +1476,12 @@ router.post('/:id/configure', requirePerm('subnets:write'), asyncHandler((req, r
     description,
     vlan_id,
     gateway: gw,
+    gateway_policy: resolvedPolicy,
     create_reverse_dns,
     domain_name,
     folder_id,
+    scan_interval,
+    scan_enabled,
     create_dhcp_scope,
     dhcpPool
   });

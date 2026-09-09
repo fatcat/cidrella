@@ -1,6 +1,11 @@
 # Canonical Network and DHCP Model Plan
 
-Status: proposed design, backed by a local code audit and disposable-database reproductions on 2026-09-09. Runtime fixes and schema changes are not implemented by this document.
+Status: implemented in the current working tree on 2026-09-09. Schema 64 through
+68, the canonical planner/executor, durable generation tracking, diagnostics,
+UI preview flow, and permanent regression suites implement the decisions below.
+Release-host browser and isolated live-client DHCP checks remain operational
+release gates because this workspace has neither browser automation nor a
+dnsmasq binary/network namespace.
 
 ## Purpose and scope
 
@@ -121,7 +126,8 @@ After removing the temporary fixture, `npm run test:server` passed all 1,044 tes
 
 ## 3. Proposed canonical contract
 
-These are design recommendations for implementation, not claims that the current code already guarantees them. Approve the policy decisions in section 9 before schema or precedence changes.
+These are the adopted canonical rules implemented by this change. Section 9
+records the decisions used by the implementation.
 
 ### 3.1 Ownership and boundaries
 
@@ -369,7 +375,8 @@ Exit: full validation passes, migration ambiguities have actionable reports, dis
 
 Use Vitest and the existing temporary-database/Express helpers. No production network, public ICMP, real interface, or daemon is required for the normal suite. Freeze time and inject lease/scan observations. Use RFC-style documentation/private test addresses except the isolated numeric `1.1.1.0/24` reproduction fixture.
 
-Proposed test seams and files:
+Implemented test seams and files (some originally proposed unit cases are
+covered by the existing model suites rather than new file names):
 
 - `server/tests/helpers/network-dhcp-fixture.js`: networks, scopes, disjoint pools, enabled/disabled reservations, active/expired leases, manual and generated DNS, PTRs, IP observations/history, and defaults.
 - `server/tests/helpers/network-dhcp-oracle.js`: independent numeric/set expectations and invariant checks. Do not call the implementation's planner to calculate expected results.
@@ -460,9 +467,9 @@ The path/pattern scan found no tracked private-key payload or credential file in
 
 Ignored local artifacts still include a production-credential note and a private key with mode `0600`, plus `server/data/cidrella.db` with mode `0644`. Move credentials to the approved secret store and restrict the database to the service/developer account as appropriate. Do not include these artifacts in fixtures, screenshots, commits, or release bundles. No contents were reproduced and no permissions or credentials were changed during this audit.
 
-## 9. Decisions to settle before implementation
+## 9. Adopted implementation decisions
 
-Recommended defaults, with the non-obvious tradeoffs called out:
+The implementation uses these defaults, with the non-obvious tradeoffs called out:
 
 1. **Persist gateway intent and inherit first/last on all split children.** Compatible merges preserve it. Global defaults apply only to new independent networks. This matches the motivating request.
 2. **Network routing facts own DHCP router configuration.** Legacy divergent scope routers need migration review. Supporting multi-router DHCP means adding an explicit network routing policy, not preserving an invisible second authority.
@@ -472,4 +479,21 @@ Recommended defaults, with the non-obvious tradeoffs called out:
 6. **Use explicit policy for custom/none gateways and unsupported narrow prefixes.** Never invent defaults or silently drop DHCP state when inheritance is ambiguous.
 7. **Treat DHCP apply status separately from database completion.** Show pending/failure and retry safely. This avoids promising that clients have changed just because a network mutation returned success.
 
-The minimum safe implementation is more than a gateway recalculation: phases 0 through 4 establish the shared invariant and its sinks, and phase 5 makes existing installations safe to migrate. Keep the backlog entry linked here as the single tracking point.
+The minimum safe implementation is more than a gateway recalculation: phases 0
+through 4 establish the shared invariant and its sinks, and phase 5 makes
+existing installations safe to migrate.
+
+## 10. Implementation and validation record
+
+The implementation adds persistent gateway policy and topology revisions,
+scope-owned pool intervals, canonical scope lease duration, durable generated
+configuration state, current-owner scan checks, a deterministic plan with exact
+record conflicts, and safe/unsafe diagnostics. Split, carve, and merge execute
+inside one transaction and enqueue generation in that transaction.
+
+Permanent tests cover direct versus repeated split, unequal carve and exact-cover
+merge, merge permutation behavior, multi-scope/pool gaps, gateway exclusions,
+reservations, leases, manual DNS in shared zones, spanning custom ranges, scan
+policy and stale scans, injected rollback, stale plan rejection, generated files,
+migration rehearsal, restart recovery, diagnostics, client plan-token handling,
+`/0`, upper IPv4 arithmetic, overlap rejection, and the 256-child cap.

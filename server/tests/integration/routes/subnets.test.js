@@ -434,6 +434,29 @@ describe('GET /api/subnets/:id/ips', () => {
   });
 });
 
+describe('gateway policy edits', () => {
+  it('supports explicit none and releases the former gateway topology claim', async () => {
+    const create = await request(app).post('/api/subnets')
+      .send({ cidr: '203.0.113.248/29', name: 'Gateway policy edit' });
+    expect(create.status).toBe(201);
+    const configured = await request(app).post(`/api/subnets/${create.body.id}/configure`).send({
+      name: 'Gateway policy edit', gateway_policy: 'last',
+      create_reverse_dns: false, create_dhcp_scope: false
+    });
+    expect(configured.status).toBe(200);
+    expect(configured.body).toMatchObject({ gateway_policy: 'last', gateway_address: '203.0.113.254' });
+
+    const cleared = await request(app).put(`/api/subnets/${create.body.id}`)
+      .send({ gateway_policy: 'none' });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body).toMatchObject({ gateway_policy: 'none', gateway_address: null });
+    expect(db.prepare(`
+      SELECT allocation_state FROM ip_addresses
+      WHERE subnet_id = ? AND ip_address = '203.0.113.254'
+    `).get(create.body.id).allocation_state).toBe('unassigned');
+  });
+});
+
 describe('DELETE /api/subnets/:id', () => {
   it('deletes a subnet', async () => {
     // Create one to delete

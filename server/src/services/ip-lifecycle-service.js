@@ -468,6 +468,59 @@ export function releaseTopologyAddress(db, subnetId, ip) {
   );
 }
 
+/**
+ * Reconcile the topology-owned rows for one IPv4 subnet after its CIDR or
+ * gateway changes. This is the only topology-to-allocation bridge used by
+ * network transformations. A named former gateway falls back to its manual
+ * DNS claim instead of being incorrectly made available.
+ */
+export function reconcileTopologyAddresses(db, subnetId, parsed, gatewayAddress = null) {
+  const desired = new Map();
+  if (parsed.prefix < 31) {
+    desired.set(parsed.network, ALLOCATION_STATE.SYSTEM);
+    desired.set(parsed.broadcast, ALLOCATION_STATE.SYSTEM);
+  }
+  if (gatewayAddress) desired.set(gatewayAddress, ALLOCATION_STATE.GATEWAY);
+
+  const existing = db.prepare(`
+    SELECT ip_address FROM ip_addresses
+    WHERE subnet_id = ? AND allocation_source_type = 'topology'
+  `).all(subnetId);
+
+  for (const row of existing) {
+    if (desired.has(row.ip_address)) continue;
+    const dns = db.prepare(`
+      SELECT record.id, record.name, zone.name AS zone_name
+      FROM dns_records record
+      JOIN dns_zones zone ON zone.id = record.zone_id
+      WHERE record.value = ? AND record.type IN ('A', 'AAAA')
+        AND record.enabled = 1 AND zone.enabled = 1 AND zone.type = 'forward'
+        AND COALESCE(record.source, 'manual') = 'manual'
+      ORDER BY record.id LIMIT 1
+    `).get(row.ip_address);
+    if (dns) {
+      const hostname = dns.name === '@' ? dns.zone_name : `${dns.name}.${dns.zone_name}`;
+      setCanonicalAllocation(
+        db, subnetId, row.ip_address, ALLOCATION_STATE.STATIC_DNS,
+        LIFECYCLE_SOURCE.DNS, dns.id,
+        { hostname, reservation_note: null, detection_source: 'dns' }
+      );
+    } else {
+      setCanonicalAllocation(
+        db, subnetId, row.ip_address, ALLOCATION_STATE.UNASSIGNED, null, null,
+        { reservation_note: null, detection_source: null }
+      );
+    }
+  }
+
+  for (const [ip, state] of desired) {
+    protectTopologyAddress(
+      db, subnetId, ip, state,
+      state === ALLOCATION_STATE.GATEWAY ? 'Default gateway' : 'Protected topology address'
+    );
+  }
+}
+
 function ensureLifecycleAddresses(db, subnetId, entries) {
   let changes = 0;
   for (const entry of entries) {
@@ -574,6 +627,7 @@ export const lifecycleRepository = Object.freeze({
   getEvents: IpAddress.getEvents,
   setScanEnabled: IpAddress.setScanEnabled,
   moveToSubnet: IpAddress.moveToSubnet,
+  deleteById: IpAddress.deleteById,
   deleteBySubnet: IpAddress.deleteBySubnet,
   deleteByIpAddress: IpAddress.deleteByIpAddress,
   ensureAddresses: ensureLifecycleAddresses

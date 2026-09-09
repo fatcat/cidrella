@@ -14,7 +14,9 @@ import {
   deleteScope,
   gatewayInPoolConflict,
   gatewayInPoolError,
-  dynamicPoolConflict
+  dynamicPoolConflict,
+  getScopePools,
+  resolveEffectiveScopeOptions
 } from '../models/dhcp-scope.js';
 import {
   createReservation,
@@ -89,7 +91,13 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
   // Attach options and server IP to each scope
   const optStmt = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?');
   for (const scope of scopes) {
+    scope.pools = getScopePools(db, scope.id);
+    if (scope.pools.length) {
+      scope.start_ip = scope.pools[0].start_ip;
+      scope.end_ip = scope.pools[0].end_ip;
+    }
     scope.options = optStmt.all(scope.id);
+    scope.effective = resolveEffectiveScopeOptions(db, scope);
     if (scope.subnet_cidr) {
       scope.server_ip = getServerIpForSubnet(scope.subnet_cidr);
     }
@@ -694,11 +702,12 @@ router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
   const assignedByIp = new Map(getUnifiedDhcpRows(db, { subnetId: scope.subnet_id })
     .filter(row => row.dhcp_assignment_type === 'reserved' || row.lease_status === 'active')
     .map(row => [row.ip_address, row]));
-  const start = ipToLong(scope.start_ip);
-  const end = ipToLong(scope.end_ip);
   const rows = [];
-
-  for (let ipLong = start; ipLong <= end; ipLong++) {
+  scope.pools = getScopePools(db, scope.id);
+  for (const pool of scope.pools) {
+    const start = ipToLong(pool.start_ip);
+    const end = ipToLong(pool.end_ip);
+    for (let ipLong = start; ipLong <= end; ipLong++) {
     const ip = longToIp(ipLong);
     const assigned = assignedByIp.get(ip);
     if (assigned) {
@@ -723,6 +732,7 @@ router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
         created_at: null,
         updated_at: null
       });
+    }
     }
   }
 

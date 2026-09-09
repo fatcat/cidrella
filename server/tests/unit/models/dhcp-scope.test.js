@@ -75,6 +75,26 @@ describe('DHCP scope ownership', () => {
 
     expect(scope.lease_time).toBe('24h');
     expect(scope.options).toEqual([{ option_code: 6, value: '10.50.0.8' }]);
+    const router = scope.effective.options.find(option => option.option_code === 3);
+    expect(router).toEqual({ option_code: 3, value: '10.50.0.1', source: 'network' });
+  });
+
+  it('uses network topology for router, mask, and broadcast despite conflicting defaults', () => {
+    const subnetId = createSubnet();
+    const rangeId = createRange(subnetId);
+    db.prepare(`
+      UPDATE dhcp_option_defaults SET value = '10.99.99.1' WHERE option_code = 3
+    `).run();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+    const scope = DhcpScope.createScope(db, {
+      range_id: rangeId,
+      subnet_id: subnetId,
+      options: [{ code: 3, value: '10.88.88.1' }]
+    }, { subnet, defaultLeaseTime: '24h' });
+    const effective = Object.fromEntries(scope.effective.options.map(option => [option.option_code, option]));
+    expect(effective[1]).toMatchObject({ value: '255.255.255.0', source: 'network' });
+    expect(effective[3]).toMatchObject({ value: '10.50.0.1', source: 'network' });
+    expect(effective[28]).toMatchObject({ value: '10.50.0.255', source: 'network' });
   });
 
   it('updates scope fields, range bounds, and replaces explicit options', () => {

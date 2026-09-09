@@ -43,3 +43,8 @@ export function deleteARecordsByIps(db, ips) {
   }
   return removed;
 }
+
+export function deleteARecordByIdentity(db, id, ip) {
+  return db.prepare("DELETE FROM dns_records WHERE id = ? AND type = 'A' AND value = ?")
+    .run(id, ip);
+}

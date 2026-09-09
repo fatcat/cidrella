@@ -364,10 +364,16 @@
         </div>
       </div>
 
-      <div v-if="dividePreviewSubnets.length > 0 && dividePreviewSubnets.length <= 256" class="divide-preview">
-        <h4>Preview: {{ dividePreviewSubnets.length }} networks (/{{ divideTargetPrefix }})</h4>
+      <div v-if="authoritativeDivideTargets.length > 0 && authoritativeDivideTargets.length <= 256" class="divide-preview">
+        <h4>Preview: {{ authoritativeDivideTargets.length }} networks (/{{ divideTargetPrefix }})</h4>
         <ul class="remainder-list">
-          <li v-for="cidr in dividePreviewSubnets" :key="cidr">{{ cidr }}</li>
+          <li v-for="target in authoritativeDivideTargets" :key="target.cidr">
+            <strong>{{ target.cidr }}</strong>
+            · gateway {{ target.gateway?.address || 'none' }}
+            <template v-if="target.scopes?.length">
+              · {{ target.scopes.flatMap(scope => scope.intervals).length }} DHCP pool interval(s)
+            </template>
+          </li>
         </ul>
       </div>
       <div v-else-if="dividePreviewSubnets.length > 256" class="divide-preview divide-preview-warn">
@@ -390,25 +396,45 @@
         </div>
       </div>
 
-      <div v-if="carvePreview && !carveValidationError" class="divide-preview">
+      <div v-if="authoritativeDivideTargets.length && !carveValidationError" class="divide-preview">
         <h4>Result</h4>
         <ul class="remainder-list">
-          <li class="carved-highlight">{{ carveCidr }} (created)</li>
-          <li v-for="cidr in carvePreview" :key="cidr">{{ cidr }} (remainder)</li>
+          <li v-for="target in authoritativeDivideTargets" :key="target.cidr"
+              :class="{ 'carved-highlight': target.cidr === normalizeCidr(carveCidr) }">
+            <strong>{{ target.cidr }}</strong>
+            {{ target.cidr === normalizeCidr(carveCidr) ? '(created)' : '(remainder)' }}
+            · gateway {{ target.gateway?.address || 'none' }}
+          </li>
         </ul>
       </div>
     </template>
 
     <Message v-if="props.selectedNode?.data.status === 'allocated'" severity="warn" class="mt-3">
-      This network is allocated. Division will migrate its configuration to the child containing the gateway.
+      This network is allocated. Its configuration, scopes, pools, leases, and reservations will be projected to every resulting network.
     </Message>
+    <Message v-if="dividePreviewError" severity="error" class="mt-3">{{ dividePreviewError }}</Message>
+    <Message v-if="serverDividePreview?.plan?.conflicts?.length" severity="warn" class="mt-3">
+      Resolve {{ serverDividePreview.plan.conflicts.length }} reported transformation conflict(s) before dividing.
+    </Message>
+
+    <div v-if="props.selectedNode?.data.gateway_policy === 'custom'" class="divide-preview">
+      <h4>Gateway policy for resulting networks</h4>
+      <div v-for="cidr in divideResultCidrs" :key="`gateway-${cidr}`" class="field">
+        <label>{{ cidr }}</label>
+        <Select v-model="divideGatewayPolicies[cidr].policy"
+                :options="gatewayPolicyOptions" optionLabel="label" optionValue="value" />
+        <InputText v-if="divideGatewayPolicies[cidr].policy === 'custom'"
+                   v-model="divideGatewayPolicies[cidr].address"
+                   placeholder="Custom gateway address" />
+      </div>
+    </div>
 
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showDivide = false" />
       <Button v-if="divideMode === 'equal'" label="Divide" @click="executeDivide" :loading="saving"
-              :disabled="dividePreviewSubnets.length === 0 || dividePreviewSubnets.length > 256" />
+              :disabled="dividePreviewLoading || !!dividePreviewError || !authoritativeDivideTargets.length || !!serverDividePreview?.plan?.conflicts?.length" />
       <Button v-else label="Create Network" @click="executeCarve" :loading="saving"
-              :disabled="!!carveValidationError || !carveNetwork" />
+              :disabled="dividePreviewLoading || !!dividePreviewError || !!carveValidationError || !carveNetwork || !!serverDividePreview?.plan?.conflicts?.length" />
     </template>
   </Dialog>
 
@@ -647,11 +673,12 @@
     <template v-if="mergePreview">
       <p>Merging <strong>{{ mergePreview.source_cidrs.length }}</strong> networks into:</p>
       <p class="merge-result-cidr">{{ mergePreview.merged_cidr }}</p>
-      <div v-if="mergePreview.gateway_preserved" class="merge-info">
-        Gateway <strong>{{ mergePreview.gateway_preserved.gateway }}</strong> from {{ mergePreview.gateway_preserved.cidr }} will be preserved.
+      <div v-if="mergePreview.plan?.targets?.[0]?.gateway" class="merge-info">
+        Gateway policy <strong>{{ mergePreview.plan.targets[0].gateway.policy }}</strong>
+        resolves to <strong>{{ mergePreview.plan.targets[0].gateway.address || 'no gateway' }}</strong>.
       </div>
-      <div v-if="mergePreview.config_loss.length > 0" class="warn-text">
-        Configuration will be lost for: {{ mergePreview.config_loss.join(', ') }}
+      <div v-if="mergePreview.plan?.conflicts?.length" class="warn-text">
+        Resolve the reported network policy conflicts before merging.
       </div>
     </template>
     <template v-if="mergeError">
@@ -659,7 +686,7 @@
     </template>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showMerge = false" />
-      <Button v-if="mergePreview && !mergeError" label="Merge" severity="warn" @click="executeMerge" :loading="saving" />
+      <Button v-if="mergePreview && !mergeError && !mergePreview.plan?.conflicts?.length" label="Merge" severity="warn" @click="executeMerge" :loading="saving" />
     </template>
   </Dialog>
 
@@ -698,7 +725,7 @@ import TabPanel from '../ui/TabPanel.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { isValidCidr, isValidIpv4, normalizeCidr, dhcpPoolError, cidrValidationError, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, dhcpRangeDefaults, gatewayIpFromPosition, normalizeGatewayPositionDefault, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
+import { isValidCidr, isValidIpv4, normalizeCidr, dhcpPoolError, cidrValidationError, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, isIpInSubnet, parseCidr, dhcpRangeDefaults, gatewayIpFromPosition, normalizeGatewayPositionDefault, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -1233,6 +1260,75 @@ const dividePreviewSubnets = computed(() => {
   return calculateSubnets(parentCidr, targetPrefix);
 });
 
+const gatewayPolicyOptions = [
+  { label: 'First allocatable', value: 'first' },
+  { label: 'Last allocatable', value: 'last' },
+  { label: 'Custom', value: 'custom' },
+  { label: 'No gateway', value: 'none' }
+];
+const divideGatewayPolicies = ref({});
+const serverDividePreview = ref(null);
+const dividePreviewLoading = ref(false);
+const dividePreviewError = ref(null);
+let dividePreviewRequest = 0;
+const divideResultCidrs = computed(() => divideMode.value === 'equal'
+  ? dividePreviewSubnets.value
+  : (carvePreview.value ? [normalizeCidr(carveCidr.value), ...carvePreview.value] : []));
+
+watch(divideResultCidrs, (cidrs) => {
+  const parent = props.selectedNode?.data;
+  if (parent?.gateway_policy !== 'custom') return;
+  const next = {};
+  for (const cidr of cidrs) {
+    const existing = divideGatewayPolicies.value[cidr];
+    if (existing) next[cidr] = existing;
+    else if (parent.gateway_address && isIpInSubnet(parent.gateway_address, cidr)) {
+      next[cidr] = { policy: 'custom', address: parent.gateway_address };
+    } else next[cidr] = { policy: 'none', address: null };
+  }
+  divideGatewayPolicies.value = next;
+}, { immediate: true });
+
+function divideTargetGateways() {
+  if (props.selectedNode?.data.gateway_policy !== 'custom') return undefined;
+  return divideResultCidrs.value.map(cidr => ({ cidr, ...divideGatewayPolicies.value[cidr] }));
+}
+
+const authoritativeDivideTargets = computed(() => serverDividePreview.value?.plan?.targets || []);
+
+async function refreshDividePreview() {
+  if (!showDivide.value || !props.selectedNode?.data?.id) return;
+  if (divideMode.value === 'carve' && (carveValidationError.value || !carveNetwork.value)) {
+    serverDividePreview.value = null;
+    return;
+  }
+  const requestId = ++dividePreviewRequest;
+  dividePreviewLoading.value = true;
+  dividePreviewError.value = null;
+  try {
+    const preview = await store.previewDivide(props.selectedNode.data.id, {
+      ...(divideMode.value === 'equal'
+        ? { new_prefix: divideTargetPrefix.value }
+        : { cidr: normalizeCidr(carveCidr.value) }),
+      target_gateways: divideTargetGateways()
+    });
+    if (requestId === dividePreviewRequest) serverDividePreview.value = preview;
+  } catch (err) {
+    if (requestId === dividePreviewRequest) {
+      serverDividePreview.value = null;
+      dividePreviewError.value = apiError(err);
+    }
+  } finally {
+    if (requestId === dividePreviewRequest) dividePreviewLoading.value = false;
+  }
+}
+
+watch(
+  [showDivide, divideMode, divideTargetPrefix, carveCidr, divideGatewayPolicies],
+  refreshDividePreview,
+  { deep: true }
+);
+
 watch(divideSteps, (steps) => { divideCount.value = Math.pow(2, steps); });
 
 function onDivideCountInput(val) {
@@ -1243,10 +1339,7 @@ function onDivideCountInput(val) {
   divideCount.value = Math.pow(2, clamped);
 }
 
-// Lossy-divide confirmation dialog state. When the server returns 409 with
-// `can_force_lossy: true`, we capture the divide params here and open the
-// confirm dialog; on "Divide Anyway" we retry the same request with
-// `force_lossy: true`.
+// Destructive divide conflicts are accepted by exact record identity.
 const showLossyConfirm = ref(false);
 const lossyIps = ref([]);
 const pendingLossyDivide = ref(null);  // { mode: 'equal'|'carve', params, nodeId }
@@ -1267,14 +1360,22 @@ function lossyCarriesLabel(carries) {
 async function executeDivide() {
   const nodeId = props.selectedNode.data.id;
   const isAllocated = props.selectedNode.data.status === 'allocated';
-  const params = { new_prefix: divideTargetPrefix.value, force: isAllocated };
+  const params = {
+    new_prefix: divideTargetPrefix.value,
+    force: isAllocated,
+    target_gateways: divideTargetGateways()
+  };
   await runDivide(nodeId, 'equal', params);
 }
 
 async function executeCarve() {
   const nodeId = props.selectedNode.data.id;
   const isAllocated = props.selectedNode.data.status === 'allocated';
-  const params = { cidr: normalizeCidr(carveCidr.value), force: isAllocated };
+  const params = {
+    cidr: normalizeCidr(carveCidr.value),
+    force: isAllocated,
+    target_gateways: divideTargetGateways()
+  };
   await runDivide(nodeId, 'carve', params);
 }
 
@@ -1285,9 +1386,12 @@ function surfacePoolAdjustments(resp) {
   if (!Array.isArray(adjustments) || adjustments.length === 0) return;
   for (const a of adjustments) {
     const poolBefore = `${a.pool_was.start_ip}–${a.pool_was.end_ip}`;
-    const poolAfter = a.pool_now
+    const primaryPool = a.pool_now
       ? `${a.pool_now.start_ip}–${a.pool_now.end_ip}`
       : 'empty (whole pool was the gateway)';
+    const extraPools = (a.additional_pools || [])
+      .map(pool => `${pool.start_ip}–${pool.end_ip}`);
+    const poolAfter = [primaryPool, ...extraPools].join(', ');
     toast.add({
       severity: 'warn',
       summary: 'DHCP pool adjusted for gateway',
@@ -1297,7 +1401,7 @@ function surfacePoolAdjustments(resp) {
   }
 }
 
-// When divide runs with force_lossy, the server deletes DHCP Reservations,
+// When a reviewed divide runs, the server deletes DHCP Reservations,
 // DNS A records, ip_addresses rows, and dhcp_leases for IPs that landed on
 // new boundaries. Surface the totals so the user knows what was cleaned up.
 function surfaceLossyCleanup(resp) {
@@ -1336,7 +1440,7 @@ async function runDivide(nodeId, mode, params) {
     emit('network-divided', nodeId);
   } catch (err) {
     const body = err?.response?.data;
-    if (err?.response?.status === 409 && body?.can_force_lossy && Array.isArray(body.lossy)) {
+    if (err?.response?.status === 409 && body?.requires_conflict_resolutions && Array.isArray(body.lossy)) {
       // Surface the exact IPs; let the user confirm or cancel.
       lossyIps.value = body.lossy;
       pendingLossyDivide.value = { mode, params, nodeId };
@@ -1352,7 +1456,12 @@ async function confirmLossyDivide() {
   if (!p) { showLossyConfirm.value = false; return; }
   saving.value = true;
   try {
-    const resp = await store.divideSubnet(p.nodeId, { ...p.params, force_lossy: true });
+    const conflict_resolutions = lossyIps.value.map(row => ({
+      carries: row.carries,
+      record_id: row.record_id,
+      action: 'delete'
+    }));
+    const resp = await store.divideSubnet(p.nodeId, { ...p.params, conflict_resolutions });
     showLossyConfirm.value = false;
     showDivide.value = false;
     pendingLossyDivide.value = null;
@@ -1757,7 +1866,11 @@ const mergeError = ref(null);
 async function executeMerge() {
   saving.value = true;
   try {
-    await store.mergeSubnets(props.mergeSelectedIds);
+    await store.mergeSubnets(
+      props.mergeSelectedIds,
+      mergePreview.value?.plan?.dependency_token || null,
+      mergePreview.value?.plan?.plan_id || null
+    );
     showMerge.value = false;
     toast.add({ severity: 'success', summary: 'Networks merged', life: 3000 });
     emit('networks-merged');
@@ -1897,6 +2010,8 @@ function openDivide(node) {
     carveNetwork.value = '';
     carvePrefix.value = 25;
   }
+  serverDividePreview.value = null;
+  dividePreviewError.value = null;
   showDivide.value = true;
 }
 

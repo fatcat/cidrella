@@ -277,7 +277,10 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   // This row may be what dnsmasq serves as a dhcp-range. Guard on the
   // authoritative signal, an attached scope, rather than only on the type
   // name, plus the effective type for a range being retyped into a pool.
-  const attachedScope = db.prepare('SELECT id, enabled FROM dhcp_scopes WHERE range_id = ?').get(range.id);
+  const attachedScope = db.prepare(`
+    SELECT scope.id, scope.enabled FROM dhcp_scope_pools pool
+    JOIN dhcp_scopes scope ON scope.id = pool.scope_id WHERE pool.range_id = ?
+  `).get(range.id);
   const effectiveTypeId = range_type_id ?? range.range_type_id;
   const effectiveType = db.prepare('SELECT name FROM range_types WHERE id = ?').get(effectiveTypeId);
   if ((attachedScope?.enabled) || (!attachedScope && effectiveType?.name === 'DHCP Scope')) {
@@ -352,9 +355,10 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   // range_id=NULL, a ghost row no UI surfaces but which breaks future
   // scope creation on the same subnet. Force the user to delete the scope
   // first.
-  const attachedScope = db.prepare(
-    'SELECT id FROM dhcp_scopes WHERE range_id = ?'
-  ).get(range.id);
+  const attachedScope = db.prepare(`
+    SELECT scope.id FROM dhcp_scope_pools pool
+    JOIN dhcp_scopes scope ON scope.id = pool.scope_id WHERE pool.range_id = ?
+  `).get(range.id);
   if (attachedScope) {
     return res.status(409).json({
       error: 'This range has a DHCP scope attached. Delete the scope first, then remove the range.',

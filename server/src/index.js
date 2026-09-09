@@ -29,7 +29,7 @@ import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
 import { sanitizeForLog } from './utils/validation.js';
 import { authMiddleware } from './auth/middleware.js';
-import { afterCommitMiddleware } from './utils/after-commit.js';
+import { afterCommitMiddleware, resumePendingRegeneration } from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import subnetRoutes from './routes/subnets.js';
@@ -102,6 +102,7 @@ async function main() {
   // Initialize database
   await initDb(DATA_DIR);
   console.log('Database initialized');
+  resumePendingRegeneration();
 
   // Migrate legacy DHCP scope columns to scope_options table
   migrateLegacyScopeOptions(getDb());

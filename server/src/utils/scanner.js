@@ -232,6 +232,9 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
     // Update ip_addresses via model, liveness, MAC, rogue state, lifecycle fields
     if (updateModel) {
+      if (!ScanRun.targetIsCurrent(db, scanId)) {
+        throw new Error('Network topology changed during scan; results discarded');
+      }
       const scanResults = ScanRun.getMaterializedResults(db, scanId);
 
       const conflictIps = new Set();

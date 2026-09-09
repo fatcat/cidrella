@@ -173,12 +173,26 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  async function divideSubnet(id, { new_prefix, cidr, force, force_lossy, selected_cidrs }) {
-    const payload = { force };
-    if (force_lossy) payload.force_lossy = true;
+  async function previewDivide(id, { new_prefix, cidr, selected_cidrs, target_gateways }) {
+    const payload = {};
     if (new_prefix !== undefined) payload.new_prefix = new_prefix;
     if (cidr) payload.cidr = cidr;
     if (selected_cidrs?.length) payload.selected_cidrs = selected_cidrs;
+    if (target_gateways?.length) payload.target_gateways = target_gateways;
+    const res = await api.post(`/subnets/${id}/divide/preview`, payload);
+    return res.data;
+  }
+
+  async function divideSubnet(id, { new_prefix, cidr, force, conflict_resolutions, selected_cidrs, target_gateways }) {
+    const payload = { force };
+    if (conflict_resolutions?.length) payload.conflict_resolutions = conflict_resolutions;
+    if (new_prefix !== undefined) payload.new_prefix = new_prefix;
+    if (cidr) payload.cidr = cidr;
+    if (selected_cidrs?.length) payload.selected_cidrs = selected_cidrs;
+    if (target_gateways?.length) payload.target_gateways = target_gateways;
+    const preview = await previewDivide(id, { new_prefix, cidr, selected_cidrs, target_gateways });
+    payload.plan_token = preview.plan?.dependency_token;
+    payload.plan_id = preview.plan?.plan_id;
     const res = await api.post(`/subnets/${id}/divide`, payload);
     await fetchTree();
     // Response body carries `pool_adjustments` when the server had to shrink
@@ -247,8 +261,12 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  async function mergeSubnets(subnetIds) {
-    const res = await api.post('/subnets/merge', { subnet_ids: subnetIds });
+  async function mergeSubnets(subnetIds, planToken = null, planId = null) {
+    const res = await api.post('/subnets/merge', {
+      subnet_ids: subnetIds,
+      ...(planToken ? { plan_token: planToken } : {}),
+      ...(planId ? { plan_id: planId } : {})
+    });
     await fetchTree();
     return res.data;
   }
@@ -379,7 +397,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     folders, tree, treeNodes, allocatedTreeNodes, unallocatedTreeNodes, loading, subnetCount, toSubnetNodes,
     fetchTree, createFolder, updateFolder, deleteFolder, fetchFolders,
     createSupernet, updateSubnet, deleteSubnet,
-    divideSubnet, configureSubnet,
+    divideSubnet, previewDivide, configureSubnet,
     getSubnetDetail, invalidateDetailCache, previewMerge, mergeSubnets, applyTemplate,
     getSettings, updateSetting,
     getRanges, createRange, updateRange, deleteRange, setNetworkRangeType,

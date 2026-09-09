@@ -14,6 +14,7 @@ import * as Folder from '../models/folder.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
 import * as OperationMaintenance from '../services/operation-maintenance.js';
 import { syncServerDnsDefault } from '../utils/dhcp.js';
+import * as SubnetTopology from '../services/subnet-topology.js';
 
 import { DATA_DIR } from '../config/defaults.js';
 
@@ -32,6 +33,14 @@ const router = Router();
 
 // All operations routes require admin
 router.use(requireRole('admin'));
+
+router.post('/network-dhcp/repair-derived', (req, res) => {
+  const result = SubnetTopology.repairDerivedNetworkDhcpState(getDb());
+  req.afterCommit('regenerate_dns');
+  req.afterCommit('regenerate_dhcp');
+  audit(req.user.id, 'network_dhcp_derived_state_repaired', 'system', null, result);
+  res.json(result);
+});
 
 function certsDir() {
   const dir = path.join(DATA_DIR, 'certs');

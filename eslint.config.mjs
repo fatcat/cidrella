@@ -16,6 +16,7 @@ export default [
       'server/data/**',
       'screenshots/**',
       'scripts/test-harness/results/**',
+      'tmp/**',
     ],
   },
 

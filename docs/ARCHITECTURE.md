@@ -161,6 +161,22 @@ Topology services may call model functions and may own transaction boundaries.
 Routes should pass validated inputs and turn service results into HTTP
 responses.
 
+### Canonical network and DHCP transformations
+
+The network model owns normalized CIDR and persistent gateway intent (`first`,
+`last`, `custom`, or `none`). `gateway_address` is the resolved value and
+`topology_revision` is the concurrency boundary for transformation plans.
+Global Network Defaults initialize new independent networks only. They do not
+rewrite existing policy during split or merge.
+
+Split, carve, and merge compile through one deterministic plan and execute in
+one transaction. The transaction rehomes IP identities, DHCP scopes and pool
+intervals, reservations, leases, DNS/PTR projections, and organizational range
+fragments before removing source ownership. It then reconciles topology roles
+through the canonical IP lifecycle service. See
+[ADR 003](adr/003-network-dhcp-transformation-ownership.md) and the
+[Network/DHCP governance plan](NETWORK-DHCP-GOVERNANCE-PLAN.md).
+
 ## Liveness and Scanning
 
 Liveness comes from active and passive sources:

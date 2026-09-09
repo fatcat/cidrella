@@ -56,10 +56,14 @@ function createDynamicScope(start = '10.99.0.20', end = '10.99.0.30') {
     INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
     VALUES (?, ?, ?, ?)
   `).run(subnetId, rangeTypeId, start, end).lastInsertRowid;
-  db.prepare(`
+  const scopeId = db.prepare(`
     INSERT INTO dhcp_scopes (subnet_id, range_id, lease_time, enabled)
     VALUES (?, ?, '24h', 1)
-  `).run(subnetId, rangeId);
+  `).run(subnetId, rangeId).lastInsertRowid;
+  db.prepare(`
+    INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+    VALUES (?, ?, ?, ?)
+  `).run(scopeId, rangeId, start, end);
 }
 
 describe('IP lifecycle service allocation boundary', () => {

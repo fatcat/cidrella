@@ -32,12 +32,13 @@ describe('POST /api/operations/reset-database', () => {
     expect(res.status).toBe(200);
 
     const enabled = new Set(res.body.enabledDefaults);
-    for (const code of [1, 3, 6, 15, 42, 51, 119]) {
+    for (const code of [1, 3, 6, 15, 42, 119]) {
       expect(enabled.has(code), `option ${code} should be enabled by default`).toBe(true);
     }
+    expect(enabled.has(51)).toBe(false);
 
     expect(res.body.defaults[42]).toBe(DHCP_DEFAULT_NTP_SERVERS);
-    expect(res.body.defaults[51]).toBe('3600');
+    expect(res.body.defaults[51]).toBeUndefined();
     expect(res.body.defaults[6]).toContain(FALLBACK_SECONDARY_DNS);
     expect(res.body.defaults[6]).toMatch(/^(\d{1,3}\.){3}\d{1,3},9\.9\.9\.9$/);
   });

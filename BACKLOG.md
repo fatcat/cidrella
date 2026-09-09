@@ -91,9 +91,9 @@ A follow-up, not a defect.
 
 ## Deferred design work
 
-### Canonical Network/DHCP transformations
+### ~~Canonical Network/DHCP transformations~~ [FIXED]
 
-Analysis completed 2026-09-09, implementation not started. Disposable-database
+Implemented in the current working tree on 2026-09-09. Disposable-database
 tests reproduce stale IP allocations after split, parent router options copied
 to child scopes, lease deletion/detachment, and loss of all but one source's
 scopes on merge. Equal split and carve also use different gateway policies.
@@ -102,8 +102,8 @@ The [Network/DHCP governance plan](docs/NETWORK-DHCP-GOVERNANCE-PLAN.md) records
 the evidence, proposed ownership and inheritance contracts, migration safeguards,
 implementation phases, and synthetic cross-model regression matrix. It builds
 on the canonical IP model without adding a second allocation precedence tree.
-Production was not inspected or changed. Approve the policy decisions in the
-plan before implementation, particularly pool expansion and legacy router overrides.
+Production was not inspected or changed. The adopted policy preserves pool
+holes, makes network routing authoritative, and reports ambiguous repairs.
 
 ### UI redesign: remaining scope
 

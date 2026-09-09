@@ -46,8 +46,24 @@ export function findActiveForSubnet(db, subnetId) {
 }
 
 export function createPending(db, subnetId) {
-  const result = db.prepare("INSERT INTO network_scans (subnet_id, status) VALUES (?, 'pending')").run(subnetId);
+  const subnet = db.prepare(
+    "SELECT topology_revision FROM subnets WHERE id = ? AND status = 'allocated'"
+  ).get(subnetId);
+  if (!subnet) throw new Error('Scans require an allocated subnet');
+  const result = db.prepare(`
+    INSERT INTO network_scans (subnet_id, topology_revision, status)
+    VALUES (?, ?, 'pending')
+  `).run(subnetId, subnet.topology_revision);
   return result.lastInsertRowid;
+}
+
+export function targetIsCurrent(db, scanId) {
+  return !!db.prepare(`
+    SELECT 1 FROM network_scans scan
+    JOIN subnets subnet ON subnet.id = scan.subnet_id
+    WHERE scan.id = ? AND subnet.status = 'allocated'
+      AND subnet.topology_revision = scan.topology_revision
+  `).get(scanId);
 }
 
 export function createPendingIfIdle(db, subnetId) {

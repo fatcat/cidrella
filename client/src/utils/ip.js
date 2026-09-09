@@ -84,6 +84,13 @@ export function isSubnetOf(childCidr, parentCidr) {
          child.prefix > parent.prefix;
 }
 
+export function isIpInSubnet(ip, cidr) {
+  if (!isValidIpv4(ip)) return false;
+  const parsed = parseCidr(cidr);
+  const value = ipToLong(ip);
+  return value >= parsed.networkLong && value <= parsed.broadcastLong;
+}
+
 function cidrsOverlap(cidrA, cidrB) {
   const a = parseCidr(cidrA);
   const b = parseCidr(cidrB);
@@ -132,8 +139,9 @@ export function applyNameTemplate(template, cidr) {
 export function calculateSubnets(cidr, newPrefix) {
   const parent = parseCidr(cidr);
   if (newPrefix <= parent.prefix || newPrefix > 32) return [];
-  const count = 1 << (newPrefix - parent.prefix);
-  const subnetSize = 1 << (32 - newPrefix);
+  const count = 2 ** (newPrefix - parent.prefix);
+  if (!Number.isSafeInteger(count) || count > 256) return [];
+  const subnetSize = 2 ** (32 - newPrefix);
   const results = [];
   for (let i = 0; i < count; i++) {
     const netLong = (parent.networkLong + i * subnetSize) >>> 0;
@@ -147,29 +155,19 @@ export function canMergeCidrs(cidrs) {
 
   const parsed = cidrs.map(c => parseCidr(c)).sort((a, b) => a.networkLong - b.networkLong);
 
-  const prefix = parsed[0].prefix;
-  if (!parsed.every(p => p.prefix === prefix)) {
-    return { valid: false, error: 'All networks must have the same prefix length' };
-  }
-
-  const count = parsed.length;
-  if ((count & (count - 1)) !== 0) {
-    return { valid: false, error: 'Number of networks must be a power of 2' };
-  }
-
-  const subnetSize = (1 << (32 - prefix)) >>> 0;
   for (let i = 1; i < parsed.length; i++) {
-    if ((parsed[i].networkLong >>> 0) !== ((parsed[i - 1].networkLong + subnetSize) >>> 0)) {
+    if (parsed[i].networkLong !== parsed[i - 1].broadcastLong + 1) {
       return { valid: false, error: 'Networks must be contiguous' };
     }
   }
-
-  const stepsUp = Math.log2(count);
-  const newPrefix = prefix - stepsUp;
-  if (newPrefix < 0) return { valid: false, error: 'Resulting prefix would be invalid' };
-
-  const newMask = (0xFFFFFFFF << (32 - newPrefix)) >>> 0;
-  if (((parsed[0].networkLong & newMask) >>> 0) !== parsed[0].networkLong) {
+  const total = parsed.reduce((sum, subnet) => sum + subnet.totalAddresses, 0);
+  const exponent = Math.log2(total);
+  if (!Number.isInteger(exponent)) {
+    return { valid: false, error: 'Network union size must be a power of 2' };
+  }
+  const newPrefix = 32 - exponent;
+  if (parsed[0].networkLong % total !== 0
+      || parsed.at(-1).broadcastLong !== parsed[0].networkLong + total - 1) {
     return { valid: false, error: 'Networks do not align to a valid CIDR boundary' };
   }
 

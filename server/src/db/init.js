@@ -114,6 +114,8 @@ export async function initDb(dataDir) {
   db.pragma('journal_mode = WAL');
 
   runMigrations();
+  const { backfillGatewayPolicies } = await import('../services/subnet-topology.js');
+  backfillGatewayPolicies(db);
   const identityBackfill = backfillCanonicalIpIdentity(db);
   if (identityBackfill.conflicts > 0) {
     console.warn(`Found ${identityBackfill.conflicts} canonical IP identity conflict(s) for reconciliation`);

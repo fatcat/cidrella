@@ -162,6 +162,39 @@ describe('POST /api/subnets/merge: data preservation', () => {
 });
 
 describe('POST /api/subnets/merge: conflict detection', () => {
+  it('blocks duplicate DHCP Reservation identities without choosing a winner', async () => {
+    const parent = await createSubnet({ cidr: '10.26.0.0/23', name: 'M-reservation-conflict' });
+    await configure(parent.id, {
+      name: 'M-reservation-conflict', create_reverse_dns: false, create_dhcp_scope: false
+    });
+    const div = await request(app).post(`/api/subnets/${parent.id}/divide`)
+      .send({ new_prefix: 24, force: true });
+    expect(div.status).toBe(200);
+    const [left, right] = (await getChildren(parent.id)).sort((a, b) => a.id - b.id);
+    for (const [child, ip] of [[left, '10.26.0.40'], [right, '10.26.1.40']]) {
+      const created = await request(app).post('/api/dhcp/reservations').send({
+        subnet_id: child.id,
+        ip_address: ip,
+        mac_address: 'aa:bb:cc:26:00:40',
+        hostname: `host-${child.id}`
+      });
+      expect(created.status).toBe(201);
+    }
+
+    const preview = await request(app).post('/api/subnets/merge/preview')
+      .send({ subnet_ids: [right.id, left.id] });
+    expect(preview.body.plan.conflicts).toContainEqual(expect.objectContaining({
+      code: 'dhcp_reservation_identity_conflict',
+      field: 'mac_address',
+      value: 'aa:bb:cc:26:00:40'
+    }));
+    const merged = await request(app).post('/api/subnets/merge')
+      .send({ subnet_ids: [left.id, right.id] });
+    expect(merged.status).toBe(409);
+    expect((await request(app).get('/api/dhcp/reservations')).body
+      .filter(row => row.mac_address === 'aa:bb:cc:26:00:40')).toHaveLength(2);
+  });
+
   it('blocks with 409 when siblings own forward zones with different names', async () => {
     const parent = await createSubnet({ cidr: '10.23.0.0/23', name: 'M-conflict', status: 'allocated', gateway_address: '10.23.0.1' });
     await configure(parent.id, {

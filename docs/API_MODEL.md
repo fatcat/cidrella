@@ -89,6 +89,35 @@ Do not expose or consume bare `type` or `status` for DHCP table rows. Use
 for dynamic lease use, such as a rogue online host, static DNS assignment, IP
 Reservation, or system-owned address inside a DHCP scope.
 
+## Network Read Model
+
+Network responses expose `gateway_policy` as `first`, `last`, `custom`, or
+`none`, alongside the resolved `gateway_address`. Consumers preserve that
+policy rather than infer future split or merge behavior from the literal
+address. `topology_revision` changes whenever topology-owned configuration is
+mutated and is the concurrency boundary for transformation plans.
+
+Split, carve, and merge previews return resolved target networks, gateways,
+scope and pool lineage, exact conflicts, and a dependency token. Execution
+accepts that token and rejects it when a relevant network, DHCP, DNS, lease,
+reservation, or allocation fact changed. Database completion and generated
+configuration apply status are separate response facts.
+
+Transformation preview requires `subnets:read`; execution requires
+`subnets:write`. The latter is a compound topology permission and is currently
+administrator-only. Conflict resolutions can name only exact record identities
+returned by the current preview.
+
+`GET /api/metrics/configuration-generation` returns durable desired-generation
+records for DNS and DHCP. Each row reports `pending`, `applied`, or `failed`,
+with attempt/error details. A committed network mutation can therefore be
+successful while its generated configuration is still pending or failed; a
+later retry or process restart resumes pending work.
+
+DHCP scope `lease_time` is the sole lease-duration policy. Option 51 is not a
+separate global or per-scope override. Scope pools are returned as explicit
+intervals, and gaps remain intentional across transformations and generation.
+
 ## IP Allocation Writes
 
 An IP Reservation is an administrative address hold without a DHCP client

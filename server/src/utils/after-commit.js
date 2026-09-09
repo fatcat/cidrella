@@ -33,6 +33,13 @@ import {
   withValidatedDnsmasqUpdate
 } from './dnsmasq.js';
 import { regenerateDhcpConfigs } from './dhcp.js';
+import {
+  enqueueGeneration,
+  listGenerations,
+  markApplied,
+  markApplying,
+  markFailed
+} from '../models/configuration-generation.js';
 
 // Hook name → function(db). All hooks must accept a db handle and return void.
 // Ordering matters when one artifact depends on another: DHCP scope emit reads
@@ -75,9 +82,13 @@ function fireHook(name) {
   // queueMicrotask lets the res.on('finish') handler return before we start,
   // so the hook never delays flushing the HTTP response.
   queueMicrotask(() => {
+    const db = getDb();
+    const generation = markApplying(db, name)?.desired_generation || 0;
     try {
-      HOOK_REGISTRY[name](getDb());
+      HOOK_REGISTRY[name](db);
+      markApplied(db, name, generation);
     } catch (err) {
+      markFailed(db, name, err?.message || err);
       console.error(`[afterCommit] ${name} failed:`, err?.message || err);
     } finally {
       st.running = false;
@@ -102,7 +113,10 @@ export function afterCommitMiddleware(req, res, next) {
     // either didn't commit or was user-rejected; don't act on it.
     if (res.statusCode >= 400 || queue.size === 0) return;
     for (const name of HOOK_ORDER) {
-      if (queue.has(name)) fireHook(name);
+      if (queue.has(name)) {
+        enqueueGeneration(getDb(), name);
+        fireHook(name);
+      }
     }
   });
 
@@ -119,5 +133,14 @@ export function queueRegen(hookName) {
   if (!HOOK_REGISTRY[hookName]) {
     throw new Error(`Unknown afterCommit hook: ${hookName}`);
   }
+  enqueueGeneration(getDb(), hookName);
   fireHook(hookName);
+}
+
+export function resumePendingRegeneration() {
+  for (const row of listGenerations(getDb())) {
+    if (row.desired_generation > row.applied_generation || row.status !== 'applied') {
+      fireHook(row.hook_name);
+    }
+  }
 }

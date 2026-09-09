@@ -77,10 +77,16 @@ function createRange(subnetId, start = '10.120.0.20', end = '10.120.0.100') {
 }
 
 function createScope(subnetId, rangeId, enabled = 1) {
-  return db.prepare(`
+  const scopeId = db.prepare(`
     INSERT INTO dhcp_scopes (subnet_id, range_id, lease_time, enabled)
     VALUES (?, ?, '24h', ?)
   `).run(subnetId, rangeId, enabled).lastInsertRowid;
+  const range = db.prepare('SELECT start_ip, end_ip FROM ranges WHERE id = ?').get(rangeId);
+  db.prepare(`
+    INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+    VALUES (?, ?, ?, ?)
+  `).run(scopeId, rangeId, range.start_ip, range.end_ip);
+  return scopeId;
 }
 
 function postA(zoneId, name, ip) {

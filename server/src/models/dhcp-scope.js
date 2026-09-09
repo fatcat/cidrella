@@ -30,14 +30,37 @@ export function gatewayInPoolError(conflict) {
 export function findEnabledScopeForIp(db, subnetId, ipAddress) {
   const ipLong = ipToLong(ipAddress);
   const scopes = db.prepare(`
-    SELECT s.id, s.subnet_id, r.start_ip, r.end_ip
+    SELECT s.id, s.subnet_id, p.start_ip, p.end_ip
     FROM dhcp_scopes s
-    JOIN ranges r ON r.id = s.range_id
+    JOIN dhcp_scope_pools p ON p.scope_id = s.id
     WHERE s.subnet_id = ? AND s.enabled = 1
   `).all(subnetId);
   return scopes.find(scope => {
     return ipLong >= ipToLong(scope.start_ip) && ipLong <= ipToLong(scope.end_ip);
   }) || null;
+}
+
+export function getScopePools(db, scopeId) {
+  return db.prepare(`
+    SELECT id, scope_id, range_id, start_ip, end_ip, sort_order
+    FROM dhcp_scope_pools WHERE scope_id = ? ORDER BY sort_order, id
+  `).all(scopeId);
+}
+
+export function addScopePool(db, scopeId, subnetId, rangeTypeId, startIp, endIp,
+  description = 'DHCP scope', sortOrder = null) {
+  const range = db.prepare(`
+    INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(subnetId, rangeTypeId, startIp, endIp, description);
+  const order = sortOrder ?? db.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS value FROM dhcp_scope_pools WHERE scope_id = ?'
+  ).get(scopeId).value;
+  db.prepare(`
+    INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip, sort_order)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(scopeId, range.lastInsertRowid, startIp, endIp, order);
+  return range.lastInsertRowid;
 }
 
 export function staticDnsConflictsInPool(db, startIp, endIp) {
@@ -132,6 +155,58 @@ function computeInheritedOptions(subnet) {
   return inherited;
 }
 
+export function resolveEffectiveScopeOptions(db, scope) {
+  const values = new Map();
+  const provenance = new Map();
+  const set = (code, value, source) => {
+    if (value == null || value === '') return;
+    values.set(Number(code), String(value));
+    provenance.set(Number(code), source);
+  };
+  for (const row of db.prepare(
+    'SELECT option_code, value FROM dhcp_option_defaults WHERE value IS NOT NULL'
+  ).all()) {
+    if (Number(row.option_code) !== 51) set(row.option_code, row.value, 'global_default');
+  }
+
+  const explicit = scope.options || db.prepare(
+    'SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?'
+  ).all(scope.id);
+  for (const option of explicit) {
+    if (Number(option.option_code) !== 51) set(option.option_code, option.value, 'scope');
+  }
+
+  if (explicit.length === 0) {
+    set(3, scope.gateway, 'legacy_scope');
+    set(15, scope.domain_name, 'legacy_scope');
+    set(42, scope.ntp_servers, 'legacy_scope');
+    set(119, scope.domain_search, 'legacy_scope');
+  }
+
+  const cidr = scope.subnet_cidr || scope.cidr;
+  const gateway = scope.subnet_gateway ?? scope.gateway_address;
+  if (cidr) {
+    const parsed = parseCidr(cidr);
+    set(1, parsed.mask, 'network');
+    set(28, parsed.broadcast, 'network');
+  }
+  if (gateway) set(3, gateway, 'network');
+  else {
+    values.delete(3);
+    provenance.set(3, 'network_none');
+  }
+  if (!values.has(15)) set(15, scope.subnet_domain_name, 'network');
+  if (!values.has(119)) set(119, scope.subnet_domain_name, 'network');
+
+  return {
+    lease_time: scope.lease_time,
+    router_suppressed: !gateway,
+    options: [...values].map(([option_code, value]) => ({
+      option_code, value, source: provenance.get(option_code)
+    })).sort((a, b) => a.option_code - b.option_code)
+  };
+}
+
 function saveScopeOptions(db, scopeId, subnet, options, { replace = false } = {}) {
   if (!Array.isArray(options)) return;
   if (replace) {
@@ -142,6 +217,9 @@ function saveScopeOptions(db, scopeId, subnet, options, { replace = false } = {}
   const insertOpt = db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
   for (const opt of options) {
     if (opt.code && opt.value != null && opt.value !== '') {
+      if (Number(opt.code) === 51) {
+        throw new Error('DHCP option 51 is represented by the scope lease_time field');
+      }
       if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
       insertOpt.run(scopeId, opt.code, String(opt.value));
     }
@@ -151,7 +229,8 @@ function saveScopeOptions(db, scopeId, subnet, options, { replace = false } = {}
 function getScopeWithDetails(db, scopeId) {
   const scope = db.prepare(`
     SELECT s.*, r.start_ip, r.end_ip,
-      sub.cidr as subnet_cidr, sub.name as subnet_name, sub.gateway_address as subnet_gateway
+      sub.cidr as subnet_cidr, sub.name as subnet_name, sub.gateway_address as subnet_gateway,
+      sub.domain_name as subnet_domain_name
     FROM dhcp_scopes s
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id
@@ -159,7 +238,13 @@ function getScopeWithDetails(db, scopeId) {
   `).get(scopeId);
 
   if (scope) {
+    scope.pools = getScopePools(db, scopeId);
+    if (scope.pools.length) {
+      scope.start_ip = scope.pools[0].start_ip;
+      scope.end_ip = scope.pools[0].end_ip;
+    }
     scope.options = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?').all(scopeId);
+    scope.effective = resolveEffectiveScopeOptions(db, scope);
   }
   return scope;
 }
@@ -182,6 +267,11 @@ export function createScope(db, fields, { subnet, defaultLeaseTime }) {
     );
 
     saveScopeOptions(db, result.lastInsertRowid, subnet, fields.options);
+    const range = db.prepare('SELECT start_ip, end_ip FROM ranges WHERE id = ?').get(fields.range_id);
+    db.prepare(`
+      INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+      VALUES (?, ?, ?, ?)
+    `).run(result.lastInsertRowid, fields.range_id, range.start_ip, range.end_ip);
     return result.lastInsertRowid;
   });
 
@@ -207,11 +297,11 @@ export function updateScope(db, scope, fields, { subnet }) {
     );
 
     if (fields.start_ip !== undefined || fields.end_ip !== undefined) {
-      const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
-      db.prepare("UPDATE ranges SET start_ip = ?, end_ip = ?, updated_at = datetime('now') WHERE id = ?").run(
-        fields.start_ip || range.start_ip,
-        fields.end_ip || range.end_ip,
-        scope.range_id
+      const pool = getScopePools(db, scope.id)[0];
+      db.prepare("UPDATE dhcp_scope_pools SET start_ip = ?, end_ip = ?, updated_at = datetime('now') WHERE id = ?").run(
+        fields.start_ip || pool.start_ip,
+        fields.end_ip || pool.end_ip,
+        pool.id
       );
     }
 
@@ -224,9 +314,11 @@ export function updateScope(db, scope, fields, { subnet }) {
 
 export function deleteScope(db, scope) {
   const del = db.transaction(() => {
+    const rangeIds = getScopePools(db, scope.id).map(pool => pool.range_id);
     db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scope.id);
     db.prepare('DELETE FROM dhcp_scopes WHERE id = ?').run(scope.id);
-    db.prepare('DELETE FROM ranges WHERE id = ?').run(scope.range_id);
+    const deleteRange = db.prepare('DELETE FROM ranges WHERE id = ?');
+    for (const rangeId of rangeIds) deleteRange.run(rangeId);
   });
 
   del();

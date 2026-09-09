@@ -18,6 +18,7 @@ import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
 import { replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { upsertServerDnsDefault } from '../models/dhcp-option.js';
 import { dhcpLeaseRejectionReason } from '../services/ip-lifecycle-service.js';
+import { resolveEffectiveScopeOptions } from '../models/dhcp-scope.js';
 
 /**
  * Resolve a hostname to an IPv4 address. Returns the IP string, or null on failure.
@@ -49,26 +50,28 @@ const LEASE_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.leases');
  * Merges: scope options > global defaults > legacy columns (fallback).
  */
 function dynamicRangeSegments(scope, excludedIps) {
-  const start = ipToLong(scope.start_ip);
-  const end = ipToLong(scope.end_ip);
-  const excluded = [...new Set(excludedIps
-    .map(ipToLong)
-    .filter(value => value >= start && value <= end))].sort((a, b) => a - b);
   const segments = [];
-  let cursor = start;
-  for (const value of excluded) {
-    if (cursor < value) segments.push([cursor, value - 1]);
-    cursor = value + 1;
+  for (const pool of scope.pools || [{ start_ip: scope.start_ip, end_ip: scope.end_ip }]) {
+    const start = ipToLong(pool.start_ip);
+    const end = ipToLong(pool.end_ip);
+    const excluded = [...new Set(excludedIps.map(ipToLong)
+      .filter(value => value >= start && value <= end))].sort((a, b) => a - b);
+    let cursor = start;
+    for (const value of excluded) {
+      if (cursor < value) segments.push([cursor, value - 1]);
+      cursor = value + 1;
+    }
+    if (cursor <= end) segments.push([cursor, end]);
   }
-  if (cursor <= end) segments.push([cursor, end]);
   return segments;
 }
 
-function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = []) {
+function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = [], suppressRouter = false) {
   const tag = `scope${scope.id}`;
   const lines = [];
 
-  lines.push(`# DHCP scope for ${scope.subnet_cidr} (${scope.start_ip} - ${scope.end_ip})`);
+  const pools = scope.pools || [{ start_ip: scope.start_ip, end_ip: scope.end_ip }];
+  lines.push(`# DHCP scope for ${scope.subnet_cidr} (${pools.map(pool => `${pool.start_ip} - ${pool.end_ip}`).join(', ')})`);
 
   // Build merged options map: global defaults, then scope overrides
   const mergedOptions = new Map();
@@ -135,6 +138,10 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = 
   mergedOptions.delete(1);
   mergedOptions.delete(28);
 
+  // dnsmasq otherwise supplies its own address as router when option 3 is
+  // omitted. An explicit network gateway policy of none must suppress that.
+  if (suppressRouter) lines.push(`dhcp-option=tag:${tag},3`);
+
   // Emit dhcp-option lines, resolving hostnames to IPs where needed.
   // C3 fix: refuse to emit any option whose value would inject a directive
   // (newlines, =, or commas for non-list types). Skipping silently is
@@ -166,7 +173,7 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = 
  * Clears the DNS resolution cache each pass.
  * Returns true if any file changed (needs dnsmasq restart).
  */
-export function regenerateScopeConfigs(db) {
+export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
   dnsCache.clear();
   const scopes = db.prepare(`
     SELECT s.*, r.start_ip, r.end_ip,
@@ -177,18 +184,6 @@ export function regenerateScopeConfigs(db) {
     JOIN subnets sub ON s.subnet_id = sub.id
     WHERE s.enabled = 1
   `).all();
-
-  // Load global defaults
-  const defaultRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE value IS NOT NULL').all();
-  const globalDefaults = Object.fromEntries(defaultRows.map(r => [r.option_code, r.value]));
-
-  // Load all scope options
-  const allScopeOptions = db.prepare('SELECT scope_id, option_code, value FROM dhcp_scope_options').all();
-  const scopeOptionsMap = new Map();
-  for (const opt of allScopeOptions) {
-    if (!scopeOptionsMap.has(opt.scope_id)) scopeOptionsMap.set(opt.scope_id, []);
-    scopeOptionsMap.get(opt.scope_id).push(opt);
-  }
 
   const reservedBySubnet = new Map();
   const reservedRows = db.prepare(`
@@ -208,11 +203,17 @@ export function regenerateScopeConfigs(db) {
     activeIds.add(scope.id);
     const parsed = parseCidr(scope.subnet_cidr);
     scope.netmask = parsed.mask;
+    scope.pools = db.prepare(`
+      SELECT start_ip, end_ip FROM dhcp_scope_pools
+      WHERE scope_id = ? ORDER BY sort_order, id
+    `).all(scope.id);
 
-    const filePath = path.join(CONF_DIR, `dhcp-scope-${scope.id}.conf`);
-    const scopeOpts = scopeOptionsMap.get(scope.id) || [];
+    const filePath = path.join(confDir, `dhcp-scope-${scope.id}.conf`);
+    const effective = resolveEffectiveScopeOptions(db, scope);
+    scope.lease_time = effective.lease_time;
     const newContent = generateScopeConfig(
-      scope, globalDefaults, scopeOpts, reservedBySubnet.get(scope.subnet_id) || []
+      scope, {}, effective.options, reservedBySubnet.get(scope.subnet_id) || [],
+      effective.router_suppressed
     );
 
     let oldContent = '';
@@ -224,7 +225,7 @@ export function regenerateScopeConfigs(db) {
   }
 
   // Clean stale scope config files
-  if (cleanStaleFiles(CONF_DIR, 'dhcp-scope-', '.conf', activeIds)) changed = true;
+  if (cleanStaleFiles(confDir, 'dhcp-scope-', '.conf', activeIds)) changed = true;
 
   return changed;
 }

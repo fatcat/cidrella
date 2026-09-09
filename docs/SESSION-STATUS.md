@@ -1,6 +1,6 @@
 # Session Status
 
-Updated: 2026-09-07
+Updated: 2026-09-09
 
 Snapshot of where the tree stands. [RELEASE-NOTES.md](../RELEASE-NOTES.md) is canonical
 for what actually shipped. [BACKLOG.md](../BACKLOG.md) is the one place for work in
@@ -15,11 +15,18 @@ Version is **0.4.18, not yet released**. v0.4.17 shipped 2026-09-02.
 below covers all current code.
 
 **0.4.18 is a breaking release.** `min_from` is 0.4.17, the legacy
-`ip_addresses.status` field is removed, and schema runs to **62**. Upgrades from
+`ip_addresses.status` field is removed, and schema runs to **68** in the current
+working tree. Upgrades from
 schema 54 inventory ambiguous DNS and DHCP claims before mutating anything and can
 refuse to proceed until an operator reconciles them.
 
 Landed since 0.4.17:
+
+- **Canonical Network/DHCP governance (working tree, not committed).** Gateway
+  intent, scope pools, topology revisions, exact transformation plans,
+  transactional split/carve/merge, durable configuration generation, repair
+  diagnostics, and authoritative client previews are implemented with schema
+  64 through 68 and cross-model regression coverage.
 
 - **IP lifecycle governance.** One canonical allocation state and transition boundary
   across Networks, DNS, DHCP, imports, scans, and passive liveness. Schema 55 through
@@ -67,10 +74,8 @@ Last full gate run, at `58f79ae`:
 - `scripts/check-release-version.js` passed (package.json 0.4.18 matches the
   RELEASE-NOTES heading).
 - `scripts/build-releases-manifest.js --lint` passed, 22 releases parsed.
-- `npm run lint` is clean on every tracked source, but **exits nonzero** on untracked
-  scratch scripts under `tmp/`. `tmp/` is in `.gitignore` but not in the `ignores` list
-  in `eslint.config.mjs`, so a local scratch file breaks the documented lint gate for
-  everyone on that working copy. CI checks out clean and does not see it.
+- `npm run lint` ignores the gitignored `tmp/` scratch directory and checks tracked
+  source consistently in local and CI worktrees.
 
 Not yet validated:
 

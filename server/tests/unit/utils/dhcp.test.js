@@ -37,6 +37,10 @@ beforeAll(async () => {
     VALUES (?, ?, '24h')
   `).run(range.lastInsertRowid, subnetId);
   scopeId = scope.lastInsertRowid;
+  db.prepare(`
+    INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+    VALUES (?, ?, '10.0.1.20', '10.0.1.200')
+  `).run(scopeId, range.lastInsertRowid);
 
   const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)").run();
   zoneId = zone.lastInsertRowid;
@@ -201,5 +205,39 @@ describe('syncDhcpDnsRecords', () => {
 
     expect(record).toBeTruthy();
     expect(ptr.value).toBe('lease-host.example.test');
+  });
+
+  it('uses the effective domain of the scope containing each lease', () => {
+    db.prepare("UPDATE dhcp_scope_pools SET end_ip = '10.0.1.80' WHERE scope_id = ?").run(scopeId);
+    const typeId = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get().id;
+    const rangeId = db.prepare(`
+      INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
+      VALUES (?, ?, '10.0.1.100', '10.0.1.150')
+    `).run(subnetId, typeId).lastInsertRowid;
+    const secondScope = db.prepare(`
+      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time) VALUES (?, ?, '24h')
+    `).run(rangeId, subnetId).lastInsertRowid;
+    db.prepare(`
+      INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+      VALUES (?, ?, '10.0.1.100', '10.0.1.150')
+    `).run(secondScope, rangeId);
+    db.prepare(`
+      INSERT INTO dhcp_scope_options (scope_id, option_code, value)
+      VALUES (?, 15, 'scope-specific.test')
+    `).run(secondScope);
+    const specificZone = db.prepare(`
+      INSERT INTO dns_zones (name, type, enabled) VALUES ('scope-specific.test', 'forward', 1)
+    `).run().lastInsertRowid;
+
+    syncDhcpDnsRecords(db, [{
+      ip: '10.0.1.120', mac: 'aa:bb:cc:dd:01:20', hostname: 'scoped', subnetId
+    }]);
+
+    expect(db.prepare(`
+      SELECT name, value FROM dns_records WHERE zone_id = ? AND type = 'A'
+    `).get(specificZone)).toEqual({ name: 'scoped', value: '10.0.1.120' });
+    expect(db.prepare(`
+      SELECT id FROM dns_records WHERE zone_id = ? AND type = 'A' AND value = '10.0.1.120'
+    `).get(zoneId)).toBeUndefined();
   });
 });
