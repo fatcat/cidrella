@@ -52,6 +52,11 @@ display Type from DNS or DHCP row shape. It should likewise render
 the client. `scan_enabled` remains available only to distinguish an explicit
 per-IP override from an inherited value for editing actions.
 
+The `system` allocation/type is limited to topology-defined non-host addresses:
+IPv4 network and broadcast addresses and IPv6 subnet-router anycast. A
+CIDRella, DNS, or DHCP service role does not make a host address `system`. An
+enabled manual A or AAAA record allocates that address as `static_dns`.
+
 The server canonicalizes every persisted address through
 `server/src/utils/address.js`. IPv4-mapped IPv6 input resolves to the canonical
 IPv4 identity. IPv6 link-local addresses require `interface_id`; global

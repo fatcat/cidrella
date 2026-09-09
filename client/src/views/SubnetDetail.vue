@@ -206,10 +206,10 @@
                @mouseup="onGridMouseUp"
                @contextmenu.prevent="onGridContextMenu">
             <div v-for="(ip, idx) in ipGrid" :key="ip.address"
-                 class="ip-cell"
-                 v-tooltip.top="gridTooltip(ip)"
-                 :style="{ background: gridSelection.has(idx) ? 'var(--p-primary-200)' : ip.color }"
+                 class="ip-cell ip-detail-trigger"
+                 :style="{ background: ip.color }"
                  :data-idx="idx"
+                 @click="onGridCellClick($event, ip)"
                  :class="{
                    'ip-cell-selected': gridSelection.has(idx),
                    'ip-cell-conflict': ip.isConflict,
@@ -396,7 +396,6 @@
 
 <script setup>
 import { ref, computed, watch, onUnmounted } from 'vue';
-import { formatDateTime } from '../utils/dateFormat.js';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
@@ -438,8 +437,7 @@ import {
 import { isImmutableNetworkAddress, probeNowMenuItem, scanToggleMenuItem } from '../utils/rowContextMenu.js';
 import {
   EMPTY_CELL,
-  apiError,
-  displayHostnameCell
+  apiError
 } from '../utils/format.js';
 
 const props = defineProps({
@@ -694,10 +692,6 @@ function findRangeForIp(ipAddress) {
   );
 }
 
-const formatDate = formatDateTime;
-
-const displayHost = (hostname) => displayHostnameCell(hostname, subnet.value?.domain_name);
-
 // The legend always shows every possible color so users can learn it
 // without needing a subnet that happens to have one of each. User-defined
 // range types (non-system) still appear dynamically, those are specific
@@ -705,8 +699,8 @@ const displayHost = (hostname) => displayHostnameCell(hostname, subnet.value?.do
 const rangeTypeLegend = computed(() => {
   // Static baseline, always shown, in a deliberate order.
   const baseline = [
-    { name: 'System',      color: '#6b7280' },          // network + broadcast
-    { name: 'Gateway',     color: '#f59e0b' },
+    { name: 'System',      color: 'var(--cid-system)' }, // network + broadcast
+    { name: 'Gateway',     color: 'var(--cid-gateway)' },
     { name: 'DHCP Scope',  color: '#3b82f6' },
   ];
 
@@ -825,33 +819,8 @@ const rangeDialogHeader = computed(() => {
   return 'Add DHCP Scope';
 });
 
-function gridTooltip(ip) {
-  const lines = [ip.address];
-  // Reuse the classification the cell was painted from. Re-deriving it here is
-  // how the tooltip and the fill came to disagree. See audit #41.
-  const state = ip.state;
-  lines.push(`Status: ${state.status}`);
-  if (state.addressType?.label) {
-    lines.push(`Type: ${state.addressType.label}${state.tooltip ? ` (${state.tooltip})` : ''}`);
-  }
-  // Network and Broadcast both resolve to Type = "system"; the Role line
-  // tells them apart for quick identification.
-  if (ip.rangeType === 'Network')   lines.push('Role: network');
-  if (ip.rangeType === 'Broadcast') lines.push('Role: broadcast');
-  if (ip.networkRangeType) lines.push(`Network Range Type: ${ip.networkRangeType}`);
-  if (ip.hostname) lines.push(`Host: ${displayHost(ip.hostname)}`);
-  if (ip.mac) lines.push(`MAC: ${ip.mac}`);
-  if (ip.vendor) lines.push(`Vendor: ${ip.vendor}`);
-  if (ip.os_family || ip.device_type) lines.push(`Device: ${ip.os_family || ip.device_type}`);
-  lines.push(ip.isOnline ? 'Online' : 'Offline');
-  if (ip.lastSeen) lines.push(`Last seen: ${formatDate(ip.lastSeen)}`);
-  if (ip.conflictReason) lines.push(`Warning: ${ip.conflictReason}`);
-  return lines.join('\n');
-}
-
-// The row shape the shared classifier expects, built from what the grid knows
-// about one address. Extracted so the cell fill and the tooltip classify from
-// exactly the same input rather than each assembling their own.
+// The row shape the shared classifier and details drawer expect, built from
+// what the grid knows about one address.
 function gridPseudoData({ addr, assignInfo, rangeInfo }) {
   return {
     ip_address: addr,
@@ -907,25 +876,21 @@ const ipGrid = computed(() => {
     const rangeInfo = networkRangeTypeInfo || functionalRangeInfo;
     const assignInfo = ipAssignMap.get(i);
 
-    const isProtectedSystemRange = ['Network', 'Broadcast', 'Gateway']
-      .includes(functionalRangeInfo?.rangeType);
+    const isSystemAddress = ['Network', 'Broadcast'].includes(functionalRangeInfo?.rangeType);
+    const isGateway = functionalRangeInfo?.rangeType === 'Gateway';
 
-    // Classify ONCE, here, and hand the result to both the fill below and the
-    // tooltip (see gridTooltip). The tooltip used to re-derive it from this
-    // cell, so the two could describe the same square differently: the ladder
-    // had no branch for rogue or for one of our own interface addresses, so a
-    // rogue address was painted in the ordinary pool tint, indistinguishable
-    // from free space unless you happened to hover it. The grid is the
-    // at-a-glance view of a subnet, so the one classification an operator most
-    // needs to spot was the one the colour could not express.
+    // Classify once here. The colour ladder used to miss rogue and canonical
+    // system addresses, making them look like free space in the grid.
     // See REVIEW.md, duplicate-logic audit #41.
-    const cellState = ipLifecycleDisplay(gridPseudoData({
+    const gridRow = gridPseudoData({
       addr, assignInfo, rangeInfo: functionalRangeInfo,
-    }));
+    });
+    const cellState = ipLifecycleDisplay(gridRow);
     const cellTypeClass = cellState.addressType?.className || null;
 
     let cellColor;
-    if (isProtectedSystemRange) cellColor = functionalRangeInfo.color;
+    if (isSystemAddress) cellColor = 'var(--cid-system)';
+    else if (isGateway) cellColor = 'var(--cid-gateway)';
     else if (cellTypeClass === 'type-rogue')  cellColor = 'var(--cid-rogue)';
     else if (cellTypeClass === 'type-system') cellColor = 'var(--cid-system)';
     else if (cellTypeClass === 'type-reserved-dhcp') cellColor = 'var(--p-blue-700)';
@@ -966,7 +931,14 @@ const ipGrid = computed(() => {
       conflictReason: assignInfo?.rogue_reason || null,
       scanningEnabled: assignInfo?.scanning_enabled,
       scanOverride: assignInfo?.scan_enabled ?? null,
-      state: cellState
+      state: cellState,
+      detailsRow: {
+        ...gridRow,
+        ...assignInfo,
+        ip_address: addr,
+        network_range_type: networkRangeTypeInfo?.rangeType || assignInfo?.network_range_type || null,
+        network_range_type_color: networkRangeTypeInfo?.color || assignInfo?.network_range_type_color || null
+      }
     });
   }
 
@@ -978,6 +950,7 @@ const gridSelection = ref(new Set());
 const isDragging = ref(false);
 const dragStartIdx = ref(null);
 const lastClickedIdx = ref(null);
+const gridDragMoved = ref(false);
 
 function getCellIdx(event) {
   const cell = event.target.closest('.ip-cell');
@@ -989,6 +962,7 @@ function onGridMouseDown(event) {
   if (event.button !== 0) return;
   const idx = getCellIdx(event);
   if (idx === null) return;
+  gridDragMoved.value = false;
 
   if (event.shiftKey && lastClickedIdx.value !== null) {
     const start = Math.min(lastClickedIdx.value, idx);
@@ -1014,6 +988,7 @@ function onGridMouseMove(event) {
   if (!isDragging.value || dragStartIdx.value === null) return;
   const idx = getCellIdx(event);
   if (idx === null) return;
+  if (idx !== dragStartIdx.value) gridDragMoved.value = true;
 
   const start = Math.min(dragStartIdx.value, idx);
   const end = Math.max(dragStartIdx.value, idx);
@@ -1026,6 +1001,14 @@ function onGridMouseUp() {
   isDragging.value = false;
 }
 
+function onGridCellClick(event, ip) {
+  if (event.shiftKey || event.ctrlKey || event.metaKey || gridDragMoved.value) return;
+  openIpDetails(ip.detailsRow, {
+    subnetId: subnet.value?.id,
+    domainName: subnet.value?.domain_name
+  });
+}
+
 function isImmutableCell(idx) {
   if (idx === null || !ipGrid.value[idx]) return false;
   const rt = ipGrid.value[idx].rangeType;
@@ -1035,8 +1018,9 @@ function isImmutableCell(idx) {
 function onGridContextMenu(event) {
   const idx = getCellIdx(event);
   if (idx !== null && isImmutableCell(idx)) return;
-  if (idx !== null && gridSelection.value.size === 0) {
+  if (idx !== null && !gridSelection.value.has(idx)) {
     gridSelection.value = new Set([idx]);
+    lastClickedIdx.value = idx;
   }
   if (gridSelection.value.size > 0 && gridContextMenuItems.value.length) {
     gridContextMenuRef.value.show(event);
@@ -1050,13 +1034,25 @@ function isSystemReserved(ip) {
 
 function buildContextMenuItems(selectedIps, {
   allowCreateDhcpScope = true,
-  allowSetRangeType = true
+  allowSetRangeType = true,
+  showSelectionHeader = false,
+  conciseReservationLabel = false
 } = {}) {
   if (selectedIps.length === 0) return [];
 
   const items = [];
   const firstIp = selectedIps[0];
   const lastIp = selectedIps[selectedIps.length - 1];
+
+  if (showSelectionHeader) {
+    items.push({
+      label: selectedIps.length === 1
+        ? firstIp.address
+        : `${firstIp.address} – ${lastIp.address}`,
+      disabled: true
+    });
+    items.push({ separator: true });
+  }
 
   if (selectedIps.length === 1) {
     const ip = firstIp;
@@ -1139,7 +1135,7 @@ function buildContextMenuItems(selectedIps, {
         });
       } else {
         items.push({
-          label: `Create IP Reservation for ${ip.address}`,
+          label: conciseReservationLabel ? 'Create IP Reservation' : `Create IP Reservation for ${ip.address}`,
           icon: 'pi pi-lock',
           command: () => openReserveDialog(ip.address)
         });
@@ -1438,7 +1434,10 @@ const gridContextMenuItems = computed(() => {
   const sel = gridSelection.value;
   if (sel.size === 0) return [];
   const selectedIps = Array.from(sel).sort((a, b) => a - b).map(i => ipGrid.value[i]);
-  return buildContextMenuItems(selectedIps);
+  return buildContextMenuItems(selectedIps, {
+    showSelectionHeader: true,
+    conciseReservationLabel: true
+  });
 });
 
 
@@ -2069,11 +2068,11 @@ onUnmounted(() => {
     inset 0 -1px 0 var(--p-surface-border);
 }
 .ip-cell-selected {
-  outline: 2px solid var(--p-primary-500);
-  outline-offset: -1px;
-  z-index: 1;
+  outline: 3px solid var(--cid-grid-selection);
+  outline-offset: -2px;
+  z-index: 2;
 }
-.ip-cell-conflict {
+.ip-cell-conflict:not(.ip-cell-selected) {
   outline: 2px solid var(--p-red-500) !important;
   outline-offset: -1px;
 }

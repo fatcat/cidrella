@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ipToLong, longToIp, parseCidr } from '../../../src/utils/ip.js';
+import { gatewayIpFromPosition, ipToLong, longToIp, normalizeGatewayPositionDefault, parseCidr } from '../../../src/utils/ip.js';
 
 // Client-side IP utils mirror server-side. These tests catch drift
 
@@ -57,5 +57,18 @@ describe('parseCidr', () => {
   it('throws on invalid CIDR', () => {
     expect(() => parseCidr('not-a-cidr')).toThrow();
     expect(() => parseCidr('192.168.1.0/33')).toThrow();
+  });
+});
+
+describe('gatewayIpFromPosition', () => {
+  it('uses allocatable addresses rather than the network or broadcast address', () => {
+    expect(gatewayIpFromPosition('1.1.1.0/24', 'first')).toBe('1.1.1.1');
+    expect(gatewayIpFromPosition('1.1.1.0/24', 'last')).toBe('1.1.1.254');
+  });
+
+  it('normalizes persisted defaults to the supported positions', () => {
+    expect(normalizeGatewayPositionDefault('last')).toBe('last');
+    expect(normalizeGatewayPositionDefault('first')).toBe('first');
+    expect(normalizeGatewayPositionDefault(undefined)).toBe('first');
   });
 });

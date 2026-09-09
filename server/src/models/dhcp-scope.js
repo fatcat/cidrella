@@ -1,5 +1,4 @@
 import { ipToLong, isValidIpv4, parseCidr } from '../utils/ip.js';
-import { localIpv4Set } from '../utils/local-addresses.js';
 
 // The one definition of "this DHCP pool would swallow the subnet's gateway".
 //
@@ -108,17 +107,6 @@ export function dynamicPoolConflict(db, subnet, startIp, endIp) {
     };
   }
 
-  const localAddress = [...localIpv4Set()].find(ip => {
-    const value = ipToLong(ip);
-    return value >= startLong && value <= endLong;
-  });
-  if (localAddress) {
-    return {
-      type: 'system',
-      ip_address: localAddress,
-      error: `DHCP pool conflicts with CIDRella service address ${localAddress}`
-    };
-  }
   return null;
 }
 

@@ -92,11 +92,11 @@ export function displayStatusFor({ allocationState, inDynamicPool = false }) {
 /**
  * Select the one canonical hostname without changing allocation authority.
  *
- * Protected topology addresses may be named by static DNS. Allocations owned
- * by DNS or DHCP accept only their owning protocol's name. States without a
- * protocol owner use the available learned name in deterministic order. That
- * final branch preserves DHCP names during the offline-retention window while
- * the address itself is already unassigned.
+ * Gateways may be named by static DNS without changing topology ownership.
+ * Allocations owned by DNS or DHCP accept only their owning protocol's name.
+ * States without a protocol owner use the available learned name in
+ * deterministic order. That final branch preserves DHCP names during the
+ * offline-retention window while the address itself is already unassigned.
  */
 export function canonicalHostnameForAllocation({
   allocationState,
@@ -104,8 +104,11 @@ export function canonicalHostnameForAllocation({
   reservationHostname = null,
   leaseHostname = null
 }) {
-  if ([A.STATIC_DNS, A.SYSTEM, A.GATEWAY].includes(allocationState)) {
+  if ([A.STATIC_DNS, A.GATEWAY].includes(allocationState)) {
     return dnsHostname ? { hostname: dnsHostname, source: S.DNS } : { hostname: null, source: null };
+  }
+  if (allocationState === A.SYSTEM) {
+    return { hostname: null, source: null };
   }
   if (allocationState === A.STATIC_DHCP) {
     return reservationHostname

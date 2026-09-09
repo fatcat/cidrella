@@ -38,8 +38,8 @@ describe('AddressTypePill', () => {
 
   it('passes the tooltip through', () => {
     const w = mount(AddressTypePill, {
-      props: { display: { label: 'system', className: 'type-system' }, tooltip: 'This CIDRella interface' },
+      props: { display: { label: 'system', className: 'type-system' }, tooltip: 'Network address' },
     });
-    expect(w.attributes('data-tooltip')).toBe('This CIDRella interface');
+    expect(w.attributes('data-tooltip')).toBe('Network address');
   });
 });

@@ -226,6 +226,10 @@ export function gatewayIpFromPosition(cidr, position) {
   return position === 'last' ? p.lastUsable : p.firstUsable;
 }
 
+export function normalizeGatewayPositionDefault(value) {
+  return value === 'last' ? 'last' : 'first';
+}
+
 export function subtractCidr(parentCidr, childCidr) {
   const parent = parseCidr(parentCidr);
   const child = parseCidr(childCidr);

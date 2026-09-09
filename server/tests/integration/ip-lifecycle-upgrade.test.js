@@ -42,7 +42,7 @@ afterEach(() => {
 });
 
 describe('0.4.17 IP lifecycle upgrade', () => {
-  it('treats DNS names on gateways and CIDRella service addresses as non-owning metadata', () => {
+  it('keeps gateway DNS names non-owning while CIDRella DNS remains protocol ownership', () => {
     const { db } = legacyDatabase();
     const { subnetId, zoneId } = seedLegacyLifecycleContradictions(db);
     db.prepare(`
@@ -74,7 +74,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       VALUES (?, 'first-name', 'A', '10.77.0.10', 'manual', 1),
              (?, 'second-name', 'A', '10.77.0.10', 'manual', 1)
     `).run(zoneId, zoneId);
-    const inventory = inventoryLegacyIpLifecycle(db, { localAddresses: new Set() });
+    const inventory = inventoryLegacyIpLifecycle(db);
     expect(inventory.summary.blocking_conflicts).toBeGreaterThan(0);
     expect(inventory.conflicts.map(conflict => conflict.category)).toEqual(expect.arrayContaining([
       'locked_address_with_protocol_claim',
@@ -150,7 +150,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       log.mockRestore();
     }
 
-    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(62);
+    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(63);
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     expect(upgraded.prepare("SELECT allocation_state, is_rogue FROM ip_addresses WHERE ip_address = '10.77.0.40'").get())
@@ -181,7 +181,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     const report = JSON.parse(fs.readFileSync(path.join(tmpDir, LIFECYCLE_MIGRATION_REPORT), 'utf8'));
     expect(report).toMatchObject({
       schema_before: 54,
-      schema_after: 62,
+      schema_after: 63,
       outcome: 'complete',
       reconciliation: { inserted: expect.any(Number), updated: expect.any(Number) }
     });
@@ -199,7 +199,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       VALUES (?, 'static-host', 'A', '10.77.0.10', 'manual', 1)
     `).run(zoneId);
 
-    const report = inventoryLegacyIpLifecycle(db, { localAddresses: new Set() });
+    const report = inventoryLegacyIpLifecycle(db);
     expect(report.summary.blocking_conflicts).toBe(0);
     writeLifecycleMigrationReport(tmpDir, {
       ...report,
@@ -237,7 +237,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     );
     expect(completed).toMatchObject({
       schema_before: 54,
-      schema_after: 62,
+      schema_after: 63,
       outcome: 'complete',
       reconciliation: { updated: expect.any(Number), inserted: expect.any(Number) }
     });

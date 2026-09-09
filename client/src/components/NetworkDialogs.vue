@@ -698,7 +698,7 @@ import TabPanel from '../ui/TabPanel.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { isValidCidr, isValidIpv4, normalizeCidr, dhcpPoolError, cidrValidationError, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, dhcpRangeDefaults, gatewayIpFromPosition, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
+import { isValidCidr, isValidIpv4, normalizeCidr, dhcpPoolError, cidrValidationError, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, parseCidr, dhcpRangeDefaults, gatewayIpFromPosition, normalizeGatewayPositionDefault, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -1080,8 +1080,12 @@ async function onWizardClose() {
   resetPiholeState();
 }
 
-function openWizard() {
-  onWizardClose(); // reset
+async function openWizard() {
+  await onWizardClose(); // reset and finish any resource cleanup before reopening
+  try {
+    const settings = await store.getSettings();
+    wizardNet.value.gateway_position = normalizeGatewayPositionDefault(settings.default_gateway_position);
+  } catch { /* best effort, keep the server default */ }
   showWizard.value = true;
   loadWizardInterfaces();
 }
@@ -1469,7 +1473,7 @@ const dhcpDefaults = computed(() => {
 watch(showNetworkDialog, async (val) => {
   if (!val) {
     dropTargetFolderIdForConfigure.value = null;
-  } else {
+  } else if (networkDialogMode.value !== 'create') {
     try {
       const settings = await store.getSettings();
       resolvedGlobalScanEnabled.value = settings.default_scan_enabled !== '0';
@@ -1852,7 +1856,7 @@ function openQuickAddNetwork() {
   showSubnetDialog.value = true;
 }
 
-function openCreateNetwork(folderId) {
+async function openCreateNetwork(folderId) {
   networkDialogMode.value = 'create';
   networkForm.value = {
     cidr: '',
@@ -1869,9 +1873,15 @@ function openCreateNetwork(folderId) {
   };
   editVlanSelection.value = null;
   editDomainSelection.value = null;
-  // Default to first-address gateway for new allocations, most common pattern.
+  // Load before showing the dialog so a fast CIDR entry cannot race the saved
+  // default and accidentally retain the local fallback.
   gatewayPosition.value = 'first';
   loadForwardZones();
+  try {
+    const settings = await store.getSettings();
+    resolvedGlobalScanEnabled.value = settings.default_scan_enabled !== '0';
+    gatewayPosition.value = normalizeGatewayPositionDefault(settings.default_gateway_position);
+  } catch { /* best effort, keep the server defaults */ }
   showNetworkDialog.value = true;
 }
 

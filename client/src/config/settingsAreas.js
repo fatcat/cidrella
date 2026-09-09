@@ -13,10 +13,12 @@ import { defineAsyncComponent } from 'vue';
 export const SETTINGS_AREAS = [
   {
     id: 'general', label: 'General', icon: 'pi pi-cog', group: 'Configuration',
-    blurb: 'Naming, scanning, VLANs, interfaces', dataTrack: 'settings-area-general',
+    blurb: 'Network defaults, naming, scanning, VLANs, interfaces', dataTrack: 'settings-area-general',
     subtabs: [
       { id: 'naming', label: 'Naming & Scanning', dataTrack: 'settings-sec-naming',
         component: defineAsyncComponent(() => import('../views/settings/NetworkSettings.vue')) },
+      { id: 'network-defaults', label: 'Network Defaults', dataTrack: 'settings-sec-network-defaults',
+        component: defineAsyncComponent(() => import('../views/settings/NetworkDefaultsSettings.vue')) },
       { id: 'vlans', label: 'VLANs', dataTrack: 'settings-sec-vlans', fill: true,
         component: defineAsyncComponent(() => import('../views/settings/VlanSettings.vue')) },
       { id: 'interfaces', label: 'Interfaces', dataTrack: 'settings-sec-interfaces',

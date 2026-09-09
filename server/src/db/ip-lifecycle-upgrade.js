@@ -151,8 +151,7 @@ function loadFacts(db, { localAddresses = localIpv4Set() } = {}) {
     if (!subnet) return null;
     if (canonical === canonicalizeIp(subnet.gateway_address)) return 'gateway';
     if (canonical === canonicalizeIp(subnet.network_address)
-        || canonical === canonicalizeIp(subnet.broadcast_address)
-        || localAddresses.has(canonical)) return 'system';
+        || canonical === canonicalizeIp(subnet.broadcast_address)) return 'system';
     return null;
   };
 
@@ -172,8 +171,20 @@ function canNameProtectedAddress(facts, subnetId, ip) {
   const canonical = canonicalizeIp(ip) || ip;
   return Boolean(subnet && (
     canonical === canonicalizeIp(subnet.gateway_address)
-    || facts.localAddresses.has(canonical)
   ));
+}
+
+// Before the canonical aggregate, CIDRella's own address was stored as a
+// locked row. An enabled DNS record is enough to identify that historical
+// shape and migrate it to ordinary static DNS ownership. This exception is
+// inventory-only and never makes the address a protected topology allocation.
+function isLegacyLocalDnsAllocation(facts, row, key) {
+  const canonical = canonicalizeIp(row?.ip_address) || row?.ip_address;
+  return row?.status === 'locked'
+    && facts.localAddresses.has(canonical)
+    && facts.dnsByKey.has(key)
+    && !facts.reservationByKey.has(key)
+    && !facts.leaseByKey.has(key);
 }
 
 export function inventoryLegacyIpLifecycle(db, options = {}) {
@@ -311,6 +322,7 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
   for (const row of facts.ips) {
     const key = identityKey(row.subnet_id, row.ip_address);
     if (row.status === 'locked' && !facts.protectedKind(row.subnet_id, row.ip_address)
+        && !isLegacyLocalDnsAllocation(facts, row, key)
         && (facts.dnsByKey.has(key) || facts.reservationByKey.has(key) || facts.leaseByKey.has(key))) {
       const protocolClaims = [
         ...(facts.dnsByKey.get(key) || []).map(dnsLabel),
@@ -427,7 +439,8 @@ export function inventoryLegacyIpLifecycle(db, options = {}) {
     const subnetId = Number(subnetText);
     const claims = new Set();
     if (facts.protectedKind(subnetId, ip)) claims.add('topology');
-    if (row?.status === 'locked' && !facts.protectedKind(subnetId, ip)) claims.add('admin_reservation');
+    if (row?.status === 'locked' && !facts.protectedKind(subnetId, ip)
+        && !isLegacyLocalDnsAllocation(facts, row, key)) claims.add('admin_reservation');
     if (facts.dnsByKey.has(key) && !canNameProtectedAddress(facts, subnetId, ip)) {
       claims.add('dns');
     }
@@ -544,11 +557,6 @@ export function reconcileMigratedIpLifecycle(db, options = {}) {
     add(subnet.id, subnet.broadcast_address);
     add(subnet.id, subnet.gateway_address);
   }
-  for (const ip of facts.localAddresses) {
-    const subnet = bestSubnet(facts.subnets, ip);
-    if (subnet) add(subnet.id, ip);
-  }
-
   const rows = [];
   for (const candidate of candidates.values()) {
       const key = identityKey(candidate.subnetId, candidate.ip);

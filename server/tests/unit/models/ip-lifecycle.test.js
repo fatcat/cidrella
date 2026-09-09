@@ -52,6 +52,8 @@ describe('IP lifecycle contract', () => {
       .toEqual({ hostname: 'lease.example.test', source: 'dhcp_lease' });
     expect(canonicalHostnameForAllocation({ allocationState: 'gateway', ...names }))
       .toEqual({ hostname: 'dns.example.test', source: 'dns' });
+    expect(canonicalHostnameForAllocation({ allocationState: 'system', ...names }))
+      .toEqual({ hostname: null, source: null });
   });
 
   it('uses deterministic learned-name fallback without changing allocation', () => {

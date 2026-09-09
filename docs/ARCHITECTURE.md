@@ -59,9 +59,11 @@ Terminology:
 - `allocation_state`: the mutually exclusive authority for an address.
 - `ip_display_status`: a derived value of available, DHCP Scope, or in use.
 - `address_type`: how an assigned address was instantiated, such as
-  static DNS, DHCP Reservation, dynamic DHCP, IP Reservation, or SLAAC. Rogue is a derived
-  classification for an online unassigned address. Available addresses should
-  not have a type.
+  static DNS, DHCP Reservation, dynamic DHCP, IP Reservation, or SLAAC. System
+  is reserved for topology-defined non-host addresses: the IPv4 network and
+  broadcast addresses and the IPv6 subnet-router anycast address. Rogue is a
+  derived classification for an online unassigned address. Available addresses
+  should not have a type.
 - `network_range_type`: an optional custom organizational tag projected from
   a non-system range. It does not affect allocation, DNS, DHCP, scanning, or
   topology. Custom Network Range Type ranges cannot overlap each other.
@@ -89,8 +91,8 @@ safely converge when their source changes. Every path that creates, changes,
 removes, imports, migrates, or reconciles one of those facts must converge on
 the same PTR result through the shared DNS/IP lifecycle boundary.
 
-Hostname selection is centralized in `models/ip-lifecycle.js`. A `static_dns`,
-`system`, or `gateway` address takes its name from static DNS. A `static_dhcp`
+Hostname selection is centralized in `models/ip-lifecycle.js`. A `static_dns`
+or `gateway` address takes its name from static DNS. A `static_dhcp`
 address takes its DHCP Reservation name, and a `dynamic_dhcp` address takes its
 DHCP Lease name. An address without a protocol-owned allocation may retain
 learned naming metadata during its retirement window; ties resolve as static
@@ -102,6 +104,12 @@ selector live in `server/src/models/ip-lifecycle.js`. Normalized protocol
 ownership and topology projection are recorded in
 `docs/adr/001-ip-protocol-table-ownership.md` and
 `docs/adr/002-ip-topology-projection.md`.
+
+CIDRella's interface addresses have no special allocation state. When an
+enabled manual A or AAAA record names one, it is an ordinary `static_dns`
+allocation and receives the same DNS-versus-DHCP exclusion as every other
+static DNS address. DNS and DHCP service roles are capabilities, not allocation
+types.
 
 ## Current Write Owners
 

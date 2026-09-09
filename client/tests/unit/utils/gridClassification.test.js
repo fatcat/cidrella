@@ -5,10 +5,9 @@
  * tooltip on that same cell asked the eight-type shared classifier. Four types
  * had no branch, and two of them mattered: a ROGUE address was drawn in the
  * ordinary pool tint, indistinguishable from free space unless you hovered it,
- * and an address the appliance itself holds (the is_local_address fix from
- * 764d16a) was drawn the same way. The grid is the at-a-glance view of a subnet,
- * so the classification an operator most needs to spot was the one the colour
- * could not express.
+ * and a system allocation was drawn inconsistently depending on whether it
+ * came from a functional range or the canonical read model. The grid is the
+ * at-a-glance view of a subnet, so every system IP must use one stable color.
  *
  * These assert on the classifier plus the colour mapping the grid applies,
  * rather than mounting SubnetDetail, which needs the router, both stores and a
@@ -32,8 +31,9 @@ import {
 } from '../../../src/utils/ipLifecycleDisplay.js';
 
 // Mirrors the ladder in SubnetDetail.vue ipGrid.
-function cellColour({ typeClass, isSystemRange = false, rangeColour = null }) {
-  if (isSystemRange) return rangeColour;
+function cellColour({ typeClass, functionalRole = null, rangeColour = null }) {
+  if (functionalRole === 'Network' || functionalRole === 'Broadcast') return 'var(--cid-system)';
+  if (functionalRole === 'Gateway') return 'var(--cid-gateway)';
   if (typeClass === 'type-rogue') return 'var(--cid-rogue)';
   if (typeClass === 'type-system') return 'var(--cid-system)';
   return rangeColour || 'var(--p-surface-200)';
@@ -54,7 +54,7 @@ describe('grid cell colour can express what the classifier emits', () => {
     expect(rogue).toBe('var(--cid-rogue)');
   });
 
-  it("paints one of our own interface addresses distinctly", () => {
+  it('paints a canonical system address distinctly', () => {
     const state = ipLifecycleDisplay({ ip_display_status: 'in use', address_type: 'system' });
     expect(state.addressType?.className).toBe(ADDRESS_TYPE_SYSTEM.className);
 
@@ -68,10 +68,16 @@ describe('grid cell colour can express what the classifier emits', () => {
     expect(cellColour({ typeClass: null, rangeColour: POOL_TINT })).toBe(POOL_TINT);
   });
 
-  it('keeps system ranges on their own configurable colour', () => {
-    // Network/Broadcast/Gateway deliberately keep the range type's colour, which
-    // is operator-editable, rather than being taken over by the taxonomy token.
-    expect(cellColour({ typeClass: 'type-system', isSystemRange: true, rangeColour: 'grey' })).toBe('grey');
+  it('uses one system color for network and broadcast addresses', () => {
+    expect(cellColour({ typeClass: 'type-system', functionalRole: 'Network', rangeColour: 'grey' }))
+      .toBe('var(--cid-system)');
+    expect(cellColour({ typeClass: 'type-system', functionalRole: 'Broadcast', rangeColour: 'black' }))
+      .toBe('var(--cid-system)');
+  });
+
+  it('keeps the gateway on its separate gateway color', () => {
+    expect(cellColour({ typeClass: 'type-gateway', functionalRole: 'Gateway', rangeColour: 'grey' }))
+      .toBe('var(--cid-gateway)');
   });
 
   it('every type the classifier can emit maps to a colour or an explicit fallback', () => {

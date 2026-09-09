@@ -131,6 +131,31 @@ describe('GET /api/subnets/:id', () => {
 });
 
 describe('POST /api/subnets/:id/configure', () => {
+  it('uses the saved last allocatable address as the default gateway', async () => {
+    db.prepare("UPDATE settings SET value = 'last' WHERE key = 'default_gateway_position'").run();
+    try {
+      const createRes = await request(app)
+        .post('/api/subnets')
+        .send({ cidr: '198.51.100.0/24', name: 'Last Gateway Default' });
+      expect(createRes.status).toBe(201);
+
+      const configureRes = await request(app)
+        .post(`/api/subnets/${createRes.body.id}/configure`)
+        .send({
+          name: 'Last Gateway Default',
+          create_reverse_dns: false,
+          create_dhcp_scope: false
+        });
+
+      expect(configureRes.status).toBe(200);
+      expect(configureRes.body.gateway_address).toBe('198.51.100.254');
+      expect(configureRes.body.gateway_address).not.toBe('198.51.100.0');
+      expect(configureRes.body.gateway_address).not.toBe('198.51.100.255');
+    } finally {
+      db.prepare("UPDATE settings SET value = 'first' WHERE key = 'default_gateway_position'").run();
+    }
+  });
+
   it('creates an IP-valued PTR placeholder for every usable address', async () => {
     const createRes = await request(app)
       .post('/api/subnets')

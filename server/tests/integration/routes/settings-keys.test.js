@@ -45,4 +45,18 @@ describe('PUT /api/settings/:key, apply-coupled keys are not editable', () => {
     const res = await request(app).put('/api/settings/update_check_enabled').send({ value: 'true' });
     expect(res.status).toBe(200);
   });
+
+  it('accepts only first or last for the default gateway position', async () => {
+    const accepted = await request(app)
+      .put('/api/settings/default_gateway_position')
+      .send({ value: 'last' });
+    expect(accepted.status).toBe(200);
+    expect(accepted.body).toEqual({ key: 'default_gateway_position', value: 'last' });
+
+    const rejected = await request(app)
+      .put('/api/settings/default_gateway_position')
+      .send({ value: 'broadcast' });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toContain('must be "first" or "last"');
+  });
 });

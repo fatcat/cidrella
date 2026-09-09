@@ -55,7 +55,7 @@ body {
   --cid-static-dns: #1d4ed8;
   --cid-dynamic-dhcp: #166534;
   --cid-reserved-dhcp: #6d28d9;
-  --cid-system: #475569;
+  --cid-system: #6b7280;
   --cid-gateway: #b45309;
   --cid-reserved: #0f766e;
   --cid-rogue: #b91c1c;
@@ -65,6 +65,7 @@ body {
   --cid-status-err: #b91c1c;
   --cid-status-info: #1d4ed8;
   --cid-status-muted: #64748b;
+  --cid-grid-selection: var(--cid-status-warn);
 
   --cid-chart-1: #2563eb;
   --cid-chart-2: #166534;
@@ -92,7 +93,6 @@ body {
   --cid-static-dns: #93c5fd;
   --cid-dynamic-dhcp: #86efac;
   --cid-reserved-dhcp: #c4b5fd;
-  --cid-system: #94a3b8;
   --cid-gateway: #fbbf24;
   --cid-reserved: #5eead4;
   --cid-rogue: #f87171;
@@ -182,7 +182,6 @@ body {
   --cid-static-dns: #88c0d0;
   --cid-dynamic-dhcp: #a3be8c;
   --cid-reserved-dhcp: #b48ead;
-  --cid-system: #aeb7c6;
   --cid-gateway: #ebcb8b;
   --cid-reserved: #8fbcbb;
   --cid-rogue: #d8757f;
@@ -213,7 +212,6 @@ body {
   --cid-static-dns: #61afef;
   --cid-dynamic-dhcp: #98c379;
   --cid-reserved-dhcp: #c678dd;
-  --cid-system: #9aa3b2;
   --cid-gateway: #e5c07b;
   --cid-reserved: #56b6c2;
   --cid-rogue: #e87d86;

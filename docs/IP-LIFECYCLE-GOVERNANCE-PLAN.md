@@ -75,14 +75,15 @@ type `rogue`, but it must not coexist with a legitimate allocation claim.
 `system` and `gateway` are protected allocation states. An IPv4 network or
 broadcast address is `system`. IPv6 has a subnet-router anycast address but no
 broadcast address. A configured or learned router address is `gateway`.
-CIDRella's own service addresses are protected system addresses in both
-families.
+CIDRella's own interface and service addresses have no special allocation
+state. An enabled manual A or AAAA record owns such an address as `static_dns`.
+DNS and DHCP service roles are independent capabilities.
 
 Reverse DNS is a naming projection, not an allocation claim. Every usable IPv4
 address in a managed subnet with reverse DNS enabled has one visible PTR row
 when the subnet has at most 65,536 usable addresses. Larger reverse zones
 remain supported without full placeholder materialization. The canonical
-hostname selector uses static DNS for `static_dns`, `system`, and `gateway`, a
+hostname selector uses static DNS for `static_dns` and `gateway`, a
 DHCP Reservation name for `static_dhcp`, and a DHCP Lease name for `dynamic_dhcp`.
 During learned-metadata retention, an address without a protocol-owned
 allocation resolves a naming tie as static DNS, DHCP Reservation, then DHCP
@@ -244,11 +245,12 @@ reconciliation backstops where practical.
 6. An IP Reservation cannot be dynamically leased, even when it lies inside a
    scope.
 7. System and gateway addresses cannot become IP Reservations or be allocated
-   through DHCP.
-   A manual A or AAAA record may name a configured gateway or CIDRella service
-   address, but the record is descriptive and does not replace topology as the
-   address's allocation authority. Network, broadcast, and subnet-router
-   anycast addresses still cannot be named or allocated.
+   through DHCP. A manual A or AAAA record may name a configured gateway, but
+   the record is descriptive and does not replace topology as the address's
+   allocation authority. Network, broadcast, and subnet-router anycast
+   addresses still cannot be named or allocated. A CIDRella interface address
+   follows ordinary static DNS allocation rules and has no additional
+   local-address protection.
 8. An active static DNS, static DHCP, or dynamic DHCP allocation cannot be
    classified as rogue.
 9. An expired or missing dynamic lease immediately ends dynamic allocation.
@@ -281,7 +283,7 @@ are known.
 
 | Condition | Status | Type |
 | --- | --- | --- |
-| IPv4 network/broadcast, IPv6 subnet-router anycast, DNS/DHCP server, or appliance service address | `in use` | `system` |
+| IPv4 network/broadcast or IPv6 subnet-router anycast | `in use` | `system` |
 | Configured default gateway | `in use` | `gateway` |
 | Static DNS allocation | `in use` | `static DNS` |
 | Active dynamic lease | `in use` | `dynamic DHCP` |
@@ -322,9 +324,10 @@ unassigned|reserved -> static_dns
 - Create/update A or AAAA records and the IP allocation atomically.
 - Set the canonical hostname immediately.
 - Do not infer liveness from configuration.
-- When the target is a configured gateway or CIDRella service address, create
-  the DNS record and set its display hostname without changing the protected
-  `gateway` or `system` allocation state.
+- When the target is a configured gateway, create the DNS record and set its
+  display hostname without changing the protected `gateway` allocation state.
+- A CIDRella interface address follows this operation's ordinary `static_dns`
+  transition and DNS-versus-DHCP checks.
 
 ### Allocate through static DHCP
 
@@ -466,8 +469,8 @@ allocation-state column. It must not contain display statuses.
 Own DNS protocol details and relationships: zone, RR type, name, value, TTL,
 priority, enabled state, and record provenance. Enabled manual A and AAAA
 records must be consistent with the IP's `static_dns` allocation, except when
-they name a configured gateway or CIDRella service address whose allocation
-authority remains protected topology.
+they name a configured gateway whose allocation authority remains protected
+topology.
 
 ### DHCP tables
 
@@ -482,13 +485,14 @@ None of these tables independently decides the IP display type.
 
 ### Network topology
 
-Subnets, prefixes, interfaces, and system ranges remain the source for protected
-topology identities. For IPv4 this includes network, broadcast, and configured
-gateway addresses. For IPv6 it includes subnet-router anycast, interface-local
-service addresses, and routers learned from trusted Router Advertisements or
-configuration. The aggregate builder projects them as protected IP allocation
-states. This is the documented exception to storing all state directly on
-`ip_addresses`.
+Subnets, prefixes, and system ranges remain the source for protected topology
+identities. For IPv4 this includes network, broadcast, and configured gateway
+addresses. For IPv6 it includes subnet-router anycast and routers learned from
+trusted Router Advertisements or configuration. CIDRella interface-local
+service addresses are governed by their protocol allocation, normally an
+enabled manual A or AAAA record. The aggregate builder projects topology facts
+as protected IP allocation states. This is the documented exception to storing
+all state directly on `ip_addresses`.
 
 ### Client
 
@@ -503,6 +507,12 @@ Migration must be deterministic and must not silently choose between ambiguous
 administrative claims.
 
 ### Inventory before migration
+
+Legacy releases stored CIDRella's own interface address as a locked protected
+row. During pre-canonical migration only, a local locked row backed by enabled
+manual DNS is recognized as the historical service-address shape and migrated
+to ordinary `static_dns` ownership. Local-interface identity grants no ongoing
+allocation protection after migration.
 
 Produce counts and detailed reports for:
 

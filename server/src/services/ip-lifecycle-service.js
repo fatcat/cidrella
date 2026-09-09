@@ -13,7 +13,6 @@ import {
 } from '../models/ip-lifecycle.js';
 import { findEnabledScopeForIp } from '../models/dhcp-scope.js';
 import { isValidIpv4, parseCidr, ipToLong } from '../utils/ip.js';
-import { isLocalAddress } from '../utils/local-addresses.js';
 import { deleteDynamicDhcpRecordsByIps } from '../models/dns-record.js';
 import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease.js';
 import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
@@ -71,13 +70,6 @@ function protectedAddress(db, subnetId, ip) {
       state: ALLOCATION_STATE.GATEWAY,
       dnsNameAllowed: true,
       reason: 'Gateway address is protected'
-    };
-  }
-  if (isLocalAddress(ip)) {
-    return {
-      state: ALLOCATION_STATE.SYSTEM,
-      dnsNameAllowed: true,
-      reason: 'CIDRella service address is protected'
     };
   }
   return null;

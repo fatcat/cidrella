@@ -38,9 +38,27 @@ beforeEach(() => {
   db.prepare('DELETE FROM dhcp_scopes').run();
   db.prepare('DELETE FROM ranges').run();
   db.prepare('DELETE FROM subnets').run();
+  db.prepare('DELETE FROM dns_records').run();
+  db.prepare('DELETE FROM dns_zones').run();
 });
 
 describe('DHCP scope ownership', () => {
+  it('rejects a pool over CIDRella when an enabled DNS record owns its address', () => {
+    const subnetId = createSubnet();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+    const zoneId = db.prepare(`
+      INSERT INTO dns_zones (name, type, enabled)
+      VALUES ('scope.test', 'forward', 1)
+    `).run().lastInsertRowid;
+    db.prepare(`
+      INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+      VALUES (?, 'cidrella', 'A', '10.50.0.75', 'manual', 1)
+    `).run(zoneId);
+
+    expect(DhcpScope.dynamicPoolConflict(db, subnet, '10.50.0.50', '10.50.0.150'))
+      .toMatchObject({ type: 'static_dns', ip_address: '10.50.0.75' });
+  });
+
   it('creates scopes and skips option values inherited from the subnet', () => {
     const subnetId = createSubnet();
     const rangeId = createRange(subnetId);
