@@ -17,6 +17,29 @@ beforeEach(() => {
 });
 
 describe('subnet transformation client boundary', () => {
+  it('does not present a fully subdivided container as unallocated space', () => {
+    const store = useSubnetStore();
+    store.folders = [{
+      id: 1,
+      name: 'Lab',
+      subnets: [{
+        id: 10,
+        cidr: '1.1.1.0/24',
+        network_address: '1.1.1.0',
+        prefix_length: 24,
+        status: 'unallocated',
+        children: [
+          { id: 11, cidr: '1.1.1.0/25', network_address: '1.1.1.0', prefix_length: 25, status: 'allocated' },
+          { id: 12, cidr: '1.1.1.128/25', network_address: '1.1.1.128', prefix_length: 25, status: 'allocated' }
+        ]
+      }]
+    }];
+
+    expect(store.unallocatedTreeNodes).toEqual([]);
+    expect(store.allocatedTreeNodes[0].children.map(node => node.data.cidr))
+      .toEqual(['1.1.1.0/25', '1.1.1.128/25']);
+  });
+
   it('executes the exact server preview and carries reviewed record identities', async () => {
     const plan = { dependency_token: 'dependency', plan_id: 'plan' };
     post

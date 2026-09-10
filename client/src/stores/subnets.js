@@ -96,7 +96,8 @@ export const useSubnetStore = defineStore('subnets', () => {
       return nodes
         .map(s => {
           const filteredChildren = s.children ? filterForBrowse(s.children) : [];
-          if (filteredChildren.length > 0 || s.status === 'unallocated') {
+          const hasChildren = Array.isArray(s.children) && s.children.length > 0;
+          if (filteredChildren.length > 0 || (s.status === 'unallocated' && !hasChildren)) {
             return { ...s, children: filteredChildren };
           }
           return null;

@@ -3,7 +3,8 @@ import {
   ipToLong, longToIp, parseCidr, isIpInSubnet, isIpInRange,
   normalizeCidr, rangesOverlap, cidrsOverlap, isSubnetOf,
   isValidIpv4, isValidCidr, canMergeCidrs, calculateSubnets,
-  subtractCidr, applyNameTemplate, validateSupernet, ipRange
+  subtractCidr, applyNameTemplate, validateSupernet, ipRange,
+  isGloballyRoutableCidr
 } from '../../../src/utils/ip.js';
 
 // ── ipToLong / longToIp ──────────────────────────────────
@@ -437,6 +438,20 @@ describe('validateSupernet', () => {
 
   it('accepts public IP ranges', () => {
     expect(validateSupernet('8.8.8.0/24').valid).toBe(true);
+  });
+});
+
+describe('isGloballyRoutableCidr', () => {
+  it('identifies public Internet space', () => {
+    expect(isGloballyRoutableCidr('1.1.1.0/24')).toBe(true);
+    expect(isGloballyRoutableCidr('8.8.8.8/32')).toBe(true);
+  });
+
+  it('excludes private and special-purpose space', () => {
+    expect(isGloballyRoutableCidr('10.0.0.0/8')).toBe(false);
+    expect(isGloballyRoutableCidr('192.168.1.0/24')).toBe(false);
+    expect(isGloballyRoutableCidr('198.51.100.0/24')).toBe(false);
+    expect(isGloballyRoutableCidr('224.0.0.0/4')).toBe(false);
   });
 });
 

@@ -26,8 +26,8 @@ const IpDetailsDrawer = (await import('../../../src/components/IpDetailsDrawer.v
 // Render the drawer body inline so its content is in the DOM without PrimeVue's
 // overlay/teleport machinery. StatusDot is kept real: its label is part of what
 // the accessibility story depends on, so stubbing it would hide a regression.
-const mountDrawer = (host) => mount(IpDetailsDrawer, {
-  props: { visible: true, host },
+const mountDrawer = (host, props = {}) => mount(IpDetailsDrawer, {
+  props: { visible: true, host, ...props },
   global: {
     stubs: {
       Drawer: {
@@ -184,5 +184,30 @@ describe('IpDetailsDrawer liveness row', () => {
     expect(apiGet).toHaveBeenCalledWith('/subnets/2/ips/10.0.0.73/events');
     expect(w.find('.events-list').text()).toContain('Offline');
     expect(w.find('.events-list').text()).toContain('(staleness timeout)');
+  });
+
+  it('describes retirement as learned-data cleanup rather than retiring the address', async () => {
+    apiGet.mockResolvedValueOnce({
+      data: {
+        events: [{
+          id: 9,
+          event_type: 'retired',
+          old_value: 'unassigned',
+          new_value: 'unassigned',
+          created_at: '2026-09-05T14:00:00Z',
+          source: 'retirement'
+        }]
+      }
+    });
+
+    const w = mountDrawer({ ip_address: '10.0.0.74', is_online: false }, {
+      subnetId: 2
+    });
+    await flushPromises();
+
+    const history = w.find('.events-list').text();
+    expect(history).toContain('Metadata Expired');
+    expect(history).toContain('(automatic cleanup)');
+    expect(history).not.toContain('>retired<');
   });
 });

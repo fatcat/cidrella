@@ -151,7 +151,7 @@ describe('POST /api/subnets/:id/divide, data preservation', () => {
     expect(getDb().prepare('SELECT id FROM dhcp_leases WHERE id = ?').get(leaseId)).toBeDefined();
   });
 
-  it('canonically projects last gateways, boundaries, scopes, and leases across a two-way split', async () => {
+  it('canonically creates default scopes and transfers gateways, boundaries, and leases across a two-way split', async () => {
     const db = getDb();
     db.prepare("UPDATE settings SET value = 'last' WHERE key = 'default_gateway_position'").run();
     const parent = await createSubnet({ cidr: '192.0.2.0/24', name: 'Canonical split' });
@@ -191,8 +191,8 @@ describe('POST /api/subnets/:id/divide, data preservation', () => {
     `).all(children[0].id, children[1].id);
     expect(scopes.sort((a, b) => ipToLong(a.start_ip) - ipToLong(b.start_ip))
       .map(scope => [scope.start_ip, scope.end_ip, scope.router])).toEqual([
-      ['192.0.2.20', '192.0.2.125', '192.0.2.126'],
-      ['192.0.2.129', '192.0.2.240', '192.0.2.254']
+      ['192.0.2.17', '192.0.2.32', '192.0.2.126'],
+      ['192.0.2.145', '192.0.2.160', '192.0.2.254']
     ]);
     expect(db.prepare("SELECT subnet_id FROM dhcp_leases WHERE hostname = 'split-client'").get().subnet_id)
       .toBe(children[0].id);
@@ -207,7 +207,13 @@ describe('POST /api/subnets/:id/divide, data preservation', () => {
     expect(db.prepare("SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = '192.0.2.126'").get(parent.id).allocation_state)
       .toBe('unassigned');
     expect(db.prepare('SELECT COUNT(*) AS count FROM dhcp_scopes WHERE subnet_id = ?').get(parent.id).count)
-      .toBe(2);
+      .toBe(1);
+    expect(db.prepare(`
+      SELECT pool.start_ip, pool.end_ip
+      FROM dhcp_scope_pools pool
+      JOIN dhcp_scopes scope ON scope.id = pool.scope_id
+      WHERE scope.subnet_id = ?
+    `).get(parent.id)).toEqual({ start_ip: '192.0.2.33', end_ip: '192.0.2.64' });
     expect(db.prepare("SELECT subnet_id FROM dhcp_leases WHERE hostname = 'split-client'").get().subnet_id)
       .toBe(parent.id);
   });

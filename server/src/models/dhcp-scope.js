@@ -42,7 +42,7 @@ export function findEnabledScopeForIp(db, subnetId, ipAddress) {
 
 export function getScopePools(db, scopeId) {
   return db.prepare(`
-    SELECT id, scope_id, range_id, start_ip, end_ip, sort_order
+    SELECT *
     FROM dhcp_scope_pools WHERE scope_id = ? ORDER BY sort_order, id
   `).all(scopeId);
 }
@@ -303,6 +303,8 @@ export function updateScope(db, scope, fields, { subnet }) {
         fields.end_ip || pool.end_ip,
         pool.id
       );
+      db.prepare(`UPDATE dhcp_scope_pools SET topology_origin = 'configured',
+        source_scope_id = NULL, source_start_ip = NULL, source_end_ip = NULL WHERE id = ?`).run(pool.id);
     }
 
     saveScopeOptions(db, scope.id, subnet, fields.options, { replace: true });

@@ -166,6 +166,11 @@ responses.
 The network model owns normalized CIDR and persistent gateway intent (`first`,
 `last`, `custom`, or `none`). `gateway_address` is the resolved value and
 `topology_revision` is the concurrency boundary for transformation plans.
+
+Inherited/global scheduled scanning applies only to non-global IPv4 networks.
+Globally routable networks require an explicit per-network scan opt-in. Manual
+targeted scans remain explicit operations. This prevents an IPAM-only public
+prefix from causing Internet hosts to be classified as local rogue devices.
 Global Network Defaults initialize new independent networks only. They do not
 rewrite existing policy during split or merge.
 

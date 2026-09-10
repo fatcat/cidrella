@@ -597,14 +597,18 @@ describe('updateFromScan', () => {
   });
 
   it('starts retirement timing when an ephemeral IP does not respond', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.52', { is_online: 1 });
+    IpAddress.upsert(db, subnetId, '10.0.1.52', {
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'Rogue device (IP not assigned)'
+    });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.52', {
       responded: 0, mac: null, isConflict: 0, conflictReason: null
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.52');
-    expect(row).toMatchObject({ is_online: 0, is_rogue: 0 });
+    expect(row).toMatchObject({ is_online: 0, is_rogue: 0, rogue_reason: null });
     expect(row.offline_since_at).toBeTruthy();
   });
 

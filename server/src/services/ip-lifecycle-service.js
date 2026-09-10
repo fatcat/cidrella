@@ -508,7 +508,8 @@ export function reconcileTopologyAddresses(db, subnetId, parsed, gatewayAddress 
     } else {
       setCanonicalAllocation(
         db, subnetId, row.ip_address, ALLOCATION_STATE.UNASSIGNED, null, null,
-        { reservation_note: null, detection_source: null }
+        { reservation_note: null, detection_source: null, is_online: 0,
+          is_rogue: 0, rogue_reason: null, offline_since_at: null }
       );
     }
   }

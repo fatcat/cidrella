@@ -3,9 +3,14 @@ import { startScan } from './scanner.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
 import { intervalToMs, scanEnabledSql } from './scan-coverage.js';
 import * as ScanRun from '../models/scan-run.js';
+import { isGloballyRoutableCidr } from './ip.js';
 
 let timer = null;
 const SCHEDULER_TICK_MS = 60 * 1000;
+
+export function isAutomaticScanAllowed(subnet) {
+  return subnet.scan_enabled === 1 || !isGloballyRoutableCidr(subnet.cidr);
+}
 
 function checkScheduledScans() {
   const db = getDb();
@@ -20,6 +25,7 @@ function checkScheduledScans() {
   `).all();
 
   for (const subnet of subnets) {
+    if (!isAutomaticScanAllowed(subnet)) continue;
     const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
 
@@ -64,7 +70,7 @@ export function getNextScanTime() {
   if (!db) return null;
 
   const subnets = db.prepare(`
-    SELECT s.id,
+    SELECT s.id, s.cidr, s.scan_enabled,
       COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
     FROM subnets s
     WHERE s.status = 'allocated' AND s.total_addresses <= ${MAX_SCAN_SIZE}
@@ -74,6 +80,7 @@ export function getNextScanTime() {
   let earliest = null;
 
   for (const subnet of subnets) {
+    if (!isAutomaticScanAllowed(subnet)) continue;
     const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
     let nextTime;

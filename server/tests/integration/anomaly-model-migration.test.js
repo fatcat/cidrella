@@ -66,7 +66,7 @@ describe('anomaly model identity migration compatibility', () => {
     const upgraded = await finishUpgrade(legacyDb, tmpDir);
 
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version)
-      .toBe(68);
+      .toBe(69);
     expect(upgraded.prepare(`
       SELECT identity, client_ip, trained_at, training_rows, model_version, status
       FROM anomaly_models ORDER BY client_ip
@@ -108,7 +108,7 @@ describe('anomaly model identity migration compatibility', () => {
     const upgraded = await finishUpgrade(pre4Db, tmpDir);
 
     expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version)
-      .toBe(68);
+      .toBe(69);
     expect(upgraded.prepare(`
       SELECT model_version FROM anomaly_models WHERE identity = '10.0.0.90'
     `).get()).toEqual({ model_version: 1 });

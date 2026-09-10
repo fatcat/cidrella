@@ -14,7 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-LXC_HOST="testerella.the-mcnultys.org"
+LXC_HOST="testerella"
 LXC_USER="root"
 INSTALL_DIR="/opt/cidrella"
 SKIP_BUILD=false
@@ -52,8 +52,14 @@ echo -e "\n${BOLD}═══ CIDRella LXC Deploy ═══${NC}\n"
 
 info "Target: ${SSH_TARGET}:${INSTALL_DIR}"
 
-# Verify SSH connectivity
-if ! ssh -o ConnectTimeout=5 -o BatchMode=yes "$SSH_TARGET" true 2>/dev/null; then
+# Verify SSH connectivity. Automatically record a new test host, but keep
+# rejecting changed keys so a rebuilt or impersonated target is never trusted
+# silently. Leave stderr visible so SSH explains any key or config problem.
+if ! ssh \
+  -o ConnectTimeout=5 \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=accept-new \
+  "$SSH_TARGET" true; then
   err "Cannot connect to ${SSH_TARGET}. Check SSH config and keys."
 fi
 ok "SSH connection verified."

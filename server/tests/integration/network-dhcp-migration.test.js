@@ -85,7 +85,7 @@ describe('canonical Network/DHCP migration', () => {
     expect(upgraded.prepare('SELECT enabled_by_default FROM dhcp_option_defaults WHERE option_code = 51').get())
       .toBeUndefined();
     expect(upgraded.prepare('SELECT COUNT(*) AS count FROM dhcp_scope_pools').get().count).toBe(2);
-    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(68);
+    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(69);
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     upgraded.close();

@@ -164,7 +164,7 @@ function eventLabel(type) {
     dns_added: 'DNS Added', dns_removed: 'DNS Removed',
     lease_obtained: 'Lease', hostname_changed: 'Hostname',
     mac_changed: 'MAC Changed', allocation_changed: 'Allocation', status_changed: 'Legacy Status',
-    scan_enabled_changed: 'Scan Toggle',
+    scan_enabled_changed: 'Scan Toggle', retired: 'Metadata Expired',
   };
   return labels[type] || type;
 }
@@ -181,7 +181,7 @@ function sourceLabel(source) {
   const labels = {
     scanner: 'active scan', passive: 'passive (DNS log)', stale: 'staleness timeout',
     dns: 'DNS', dhcp_reservation: 'DHCP Reservation', dhcp_lease: 'DHCP Lease',
-    manual: 'manual', offline: 'went offline',
+    manual: 'manual', offline: 'went offline', retirement: 'automatic cleanup',
   };
   return labels[source] || source || '';
 }

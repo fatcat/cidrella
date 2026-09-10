@@ -500,14 +500,17 @@ export function mergeSubnets(db, subnets, mergeResult, options = {}) {
     const gatewaySubnet = allocated.find(s => s.gateway_address);
     const configSource = gatewaySubnet || allocated[0] || null;
     const childIds = subnets.map(s => s.id);
+    const dhcpScopeTemplate = DhcpTopology.captureScopeTemplate(db, childIds);
 
     if (mergeResult.merged_cidr === parent.cidr) {
       movePerIpArtifactsToSubnet(db, childIds, parent.id);
-      DhcpTopology.moveScopesToSubnet(db, childIds, parent.id, mergedParsed, mergedGateway);
       moveCustomRangesToSubnet(db, childIds, parent.id);
       deleteSubnetRowsWithRanges(db, subnets);
       restoreMergedParent(db, parent, mergedParsed, mergedGateway, mergedPolicy, configSource, allocated.length);
       reconcileSubnetTopology(db, parent.id);
+      DhcpTopology.createMergedDefaultScope(
+        db, dhcpScopeTemplate, parent.id, mergedParsed, mergedGateway
+      );
       return parent.id;
     }
 
@@ -529,11 +532,13 @@ export function mergeSubnets(db, subnets, mergeResult, options = {}) {
 
     const mergedId = result.lastInsertRowid;
     movePerIpArtifactsToSubnet(db, childIds, mergedId);
-    DhcpTopology.moveScopesToSubnet(db, childIds, mergedId, mergedParsed, mergedGateway);
     moveCustomRangesToSubnet(db, childIds, mergedId);
     deleteSubnetRowsWithRanges(db, subnets);
     createSystemRanges(db, mergedId, mergedParsed, mergedGateway);
     reconcileSubnetTopology(db, mergedId);
+    DhcpTopology.createMergedDefaultScope(
+      db, dhcpScopeTemplate, mergedId, mergedParsed, mergedGateway
+    );
     if (configSource?.has_reverse_dns) {
       setReverseDnsFlag(db, mergedId);
     }

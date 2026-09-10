@@ -371,7 +371,10 @@
             <strong>{{ target.cidr }}</strong>
             · gateway {{ target.gateway?.address || 'none' }}
             <template v-if="target.scopes?.length">
-              · {{ target.scopes.flatMap(scope => scope.intervals).length }} DHCP pool interval(s)
+              <template v-for="scope in target.scopes" :key="`${target.cidr}-${scope.source_scope_id}-${scope.origin}`">
+                · default DHCP pool
+                {{ scope.intervals.map(interval => `${interval.start_ip}–${interval.end_ip}`).join(', ') }}
+              </template>
             </template>
           </li>
         </ul>
@@ -404,13 +407,20 @@
             <strong>{{ target.cidr }}</strong>
             {{ target.cidr === normalizeCidr(carveCidr) ? '(created)' : '(remainder)' }}
             · gateway {{ target.gateway?.address || 'none' }}
+            <template v-for="scope in target.scopes || []" :key="`${target.cidr}-${scope.source_scope_id}-${scope.origin}`">
+              · default DHCP pool
+              {{ scope.intervals.map(interval => `${interval.start_ip}–${interval.end_ip}`).join(', ') }}
+            </template>
           </li>
         </ul>
       </div>
     </template>
 
     <Message v-if="props.selectedNode?.data.status === 'allocated'" severity="warn" class="mt-3">
-      This network is allocated. Its configuration, scopes, pools, leases, and reservations will be projected to every resulting network.
+      This network is allocated. Its configuration, leases, and reservations will be transferred to the resulting networks.
+    </Message>
+    <Message v-if="divideAddsDefaultScopes" severity="info" class="mt-3">
+      Because the source has a DHCP scope, each resulting network will receive the default-sized pool shown above. Existing pool bounds will not be retained.
     </Message>
     <Message v-if="dividePreviewError" severity="error" class="mt-3">{{ dividePreviewError }}</Message>
     <Message v-if="serverDividePreview?.plan?.conflicts?.length" severity="warn" class="mt-3">
@@ -639,13 +649,13 @@
 
   <!-- Delete Network Dialog -->
   <Dialog v-model:visible="showDelete" header="Delete Network" modal :style="{ width: '26rem' }" data-track="dialog-network-delete">
-    <template v-if="props.selectedNode">
-      <p>Delete <strong>{{ props.selectedNode.data.cidr }}</strong>?</p>
-      <p v-if="props.selectedNode.data.status === 'allocated'" class="warn-text">
+    <template v-if="dialogNetworkData">
+      <p>Delete <strong>{{ dialogNetworkData.cidr }}</strong>?</p>
+      <p v-if="dialogNetworkData.status === 'allocated'" class="warn-text">
         This will remove all configuration, ranges, and IP assignments.
       </p>
-      <p v-if="props.selectedNode.data.child_count > 0" class="warn-text">
-        This network has {{ props.selectedNode.data.child_count }} children that will also be affected.
+      <p v-if="dialogNetworkData.child_count > 0" class="warn-text">
+        This network has {{ dialogNetworkData.child_count }} children that will also be affected.
       </p>
     </template>
     <template #footer>
@@ -656,8 +666,8 @@
 
   <!-- Deallocate Network Dialog -->
   <Dialog v-model:visible="showDeallocate" header="Deallocate Network" modal :style="{ width: '26rem' }" data-track="dialog-network-deallocate">
-    <template v-if="props.selectedNode">
-      <p>Deallocate <strong>{{ props.selectedNode.data.cidr }}</strong>?</p>
+    <template v-if="dialogNetworkData">
+      <p>Deallocate <strong>{{ dialogNetworkData.cidr }}</strong>?</p>
       <p class="warn-text">
         This will remove all configuration, ranges, and IP assignments. The network block will remain as unallocated space.
       </p>
@@ -676,6 +686,11 @@
       <div v-if="mergePreview.plan?.targets?.[0]?.gateway" class="merge-info">
         Gateway policy <strong>{{ mergePreview.plan.targets[0].gateway.policy }}</strong>
         resolves to <strong>{{ mergePreview.plan.targets[0].gateway.address || 'no gateway' }}</strong>.
+      </div>
+      <div v-if="mergePreview.plan?.targets?.[0]?.scopes?.length" class="merge-info">
+        The result will receive default DHCP pool
+        <strong>{{ mergePreview.plan.targets[0].scopes[0].intervals[0].start_ip }}–{{ mergePreview.plan.targets[0].scopes[0].intervals[0].end_ip }}</strong>.
+        Existing child pool bounds will not be retained.
       </div>
       <div v-if="mergePreview.plan?.conflicts?.length" class="warn-text">
         Resolve the reported network policy conflicts before merging.
@@ -1295,6 +1310,8 @@ function divideTargetGateways() {
 }
 
 const authoritativeDivideTargets = computed(() => serverDividePreview.value?.plan?.targets || []);
+const divideAddsDefaultScopes = computed(() => authoritativeDivideTargets.value
+  .some(target => target.scopes?.some(scope => scope.origin === 'default')));
 
 async function refreshDividePreview() {
   if (!showDivide.value || !props.selectedNode?.data?.id) return;
@@ -1489,6 +1506,11 @@ function cancelLossyDivide() {
 const showNetworkDialog = ref(false);
 const networkDialogMode = ref('edit'); // 'create', 'configure', or 'edit'
 const networkForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '', scan_enabled: null });
+// Capture the row that opened this dialog. Some callers, such as the folder
+// table, open it for a row without selecting that row in the parent view.
+// Save must therefore not depend on the unrelated selectedNode prop.
+const activeNetworkData = ref(null);
+const dialogNetworkData = computed(() => activeNetworkData.value || props.selectedNode?.data || null);
 const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialog opens
 const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
@@ -1557,7 +1579,7 @@ const effectivePrefixLength = computed(() => {
     if (cidr && isValidCidr(cidr)) return parseCidr(cidr).prefix;
     return 32;
   }
-  return props.selectedNode?.data?.prefix_length ?? 32;
+  return activeNetworkData.value?.prefix_length ?? props.selectedNode?.data?.prefix_length ?? 32;
 });
 
 // Mirror of wizardDhcpRiskySize for the Edit/Create Network dialog. See
@@ -1574,7 +1596,7 @@ const dhcpDefaults = computed(() => {
     if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
     return dhcpRangeDefaults(parseCidr(cidr), networkForm.value.gateway_address || null);
   }
-  const d = props.selectedNode?.data;
+  const d = activeNetworkData.value || props.selectedNode?.data;
   if (!d) return { start: '', end: '' };
   return dhcpRangeDefaults(parseCidr(d.cidr), networkForm.value.gateway_address || null);
 });
@@ -1693,7 +1715,7 @@ async function searchVlans(event) {
 
 function onVlanSelect(event) {
   const vlan = event.value;
-  const currentVlanId = props.selectedNode?.data?.vlan_id;
+  const currentVlanId = activeNetworkData.value?.vlan_id ?? props.selectedNode?.data?.vlan_id;
   if (vlan.subnet_count > 0 && vlan.vlan_id !== currentVlanId) {
     pendingVlanSelection.value = vlan;
     showVlanWarning.value = true;
@@ -1713,7 +1735,7 @@ function confirmVlanAssignment() {
 function cancelVlanAssignment() {
   showVlanWarning.value = false;
   pendingVlanSelection.value = null;
-  const d = props.selectedNode?.data;
+  const d = activeNetworkData.value || props.selectedNode?.data;
   if (d?.vlan_id) {
     editVlanSelection.value = `VLAN ${d.vlan_id}`;
   } else {
@@ -1746,7 +1768,7 @@ function applyTemplateToEdit() {
   }
   const cidr = networkDialogMode.value === 'create'
     ? networkForm.value.cidr
-    : props.selectedNode.data.cidr;
+    : activeNetworkData.value?.cidr || props.selectedNode?.data?.cidr;
   if (cidr && isValidCidr(cidr)) {
     networkForm.value.name = applyNameTemplate(props.nameTemplate, cidr);
   }
@@ -1797,7 +1819,8 @@ async function executeNetworkSave() {
       toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
       emit('network-created');
     } else if (networkDialogMode.value === 'configure') {
-      const id = props.selectedNode.data.id;
+      const id = activeNetworkData.value?.id ?? props.selectedNode?.data?.id;
+      if (!id) throw new Error('No network selected for configuration');
       const payload = { ...networkForm.value };
       if (dropTargetFolderIdForConfigure.value) {
         payload.folder_id = dropTargetFolderIdForConfigure.value;
@@ -1813,7 +1836,8 @@ async function executeNetworkSave() {
       toast.add({ severity: 'success', summary: 'Network configured', life: 3000 });
       emit('network-configured', id);
     } else {
-      const id = props.selectedNode.data.id;
+      const id = activeNetworkData.value?.id ?? props.selectedNode?.data?.id;
+      if (!id) throw new Error('No network selected for editing');
       const editPayload = { ...networkForm.value };
       delete editPayload.create_dhcp_scope;
       delete editPayload.create_reverse_dns;
@@ -1834,10 +1858,12 @@ const showDelete = ref(false);
 async function executeDelete() {
   saving.value = true;
   try {
-    await store.deleteSubnet(props.selectedNode.data.id);
+    const id = dialogNetworkData.value?.id;
+    if (!id) throw new Error('No network selected for deletion');
+    await store.deleteSubnet(id);
     showDelete.value = false;
     toast.add({ severity: 'success', summary: 'Network deleted', life: 3000 });
-    emit('network-deleted', props.selectedNode.data.id);
+    emit('network-deleted', id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
@@ -1849,10 +1875,12 @@ const showDeallocate = ref(false);
 async function executeDeallocate() {
   saving.value = true;
   try {
-    await store.deleteSubnet(props.selectedNode.data.id);
+    const id = dialogNetworkData.value?.id;
+    if (!id) throw new Error('No network selected for deallocation');
+    await store.deleteSubnet(id);
     showDeallocate.value = false;
     toast.add({ severity: 'success', summary: 'Network deallocated', life: 3000 });
-    emit('network-deleted', props.selectedNode.data.id);
+    emit('network-deleted', id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally { saving.value = false; }
@@ -1970,6 +1998,7 @@ function openQuickAddNetwork() {
 }
 
 async function openCreateNetwork(folderId) {
+  activeNetworkData.value = null;
   networkDialogMode.value = 'create';
   networkForm.value = {
     cidr: '',
@@ -2022,6 +2051,7 @@ function openConfigure(node, folderId) {
 function openEdit(node, folderId) {
   const d = (node || props.selectedNode)?.data;
   if (!d) return;
+  activeNetworkData.value = d;
   const isUnconfigured = d.status === 'unallocated';
   networkDialogMode.value = isUnconfigured ? 'configure' : 'edit';
 
@@ -2065,11 +2095,17 @@ function openEdit(node, folderId) {
   showNetworkDialog.value = true;
 }
 
-function openDelete(_node) {
+function openDelete(node) {
+  const d = (node || props.selectedNode)?.data;
+  if (!d) return;
+  activeNetworkData.value = d;
   showDelete.value = true;
 }
 
-function openDeallocate(_node) {
+function openDeallocate(node) {
+  const d = (node || props.selectedNode)?.data;
+  if (!d) return;
+  activeNetworkData.value = d;
   showDeallocate.value = true;
 }
 

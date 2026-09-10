@@ -110,7 +110,99 @@ function relativeSemantics(rootCidr, leaves) {
 }
 
 describe('canonical cross-model network transformations', () => {
-  it('projects four child gateways and preserves pools, leases, reservations, and custom ranges', async () => {
+  it('previews and creates default-sized pools for every child of a scoped network', async () => {
+    const parent = await createAndConfigure('192.0.2.0/24', {
+      create_dhcp_scope: true,
+      dhcp_start_ip: '192.0.2.33',
+      dhcp_end_ip: '192.0.2.128'
+    });
+    const sourceScope = getDb().prepare(
+      'SELECT id, lease_time FROM dhcp_scopes WHERE subnet_id = ?'
+    ).get(parent.id);
+
+    const preview = await request(app)
+      .post(`/api/subnets/${parent.id}/divide/preview`)
+      .send({ new_prefix: 25 });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.plan.targets.map(target => ({
+      cidr: target.cidr,
+      origin: target.scopes[0].origin,
+      intervals: target.scopes[0].intervals.map(pool => [pool.start_ip, pool.end_ip])
+    }))).toEqual([
+      { cidr: '192.0.2.0/25', origin: 'default', intervals: [['192.0.2.17', '192.0.2.32']] },
+      { cidr: '192.0.2.128/25', origin: 'default', intervals: [['192.0.2.145', '192.0.2.160']] }
+    ]);
+
+    const result = await request(app).post(`/api/subnets/${parent.id}/divide`).send({
+      new_prefix: 25,
+      force: true,
+      plan_token: preview.body.plan.dependency_token,
+      plan_id: preview.body.plan.plan_id
+    });
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
+    expect(poolRows(result.body.children.map(child => child.id)).map(pool => [
+      pool.start_ip, pool.end_ip, pool.lease_time
+    ])).toEqual([
+      ['192.0.2.17', '192.0.2.32', sourceScope.lease_time],
+      ['192.0.2.145', '192.0.2.160', sourceScope.lease_time]
+    ]);
+    expect(result.body.pool_adjustments).toContainEqual(expect.objectContaining({
+      child_cidr: '192.0.2.0/25',
+      reason: 'default_scope_created',
+      pool_now: { start_ip: '192.0.2.17', end_ip: '192.0.2.32' }
+    }));
+    expect(result.body.pool_adjustments).toContainEqual(expect.objectContaining({
+      child_cidr: '192.0.2.128/25',
+      reason: 'default_scope_created',
+      pool_now: { start_ip: '192.0.2.145', end_ip: '192.0.2.160' }
+    }));
+
+    const children = result.body.children;
+    // "Any child has a scope" is sufficient. Remove the lower child's scope
+    // and verify merge still creates the merged network's default scope.
+    const lowerScope = getDb().prepare(
+      'SELECT id FROM dhcp_scopes WHERE subnet_id = ?'
+    ).get(children[0].id);
+    const lowerRangeIds = getDb().prepare(
+      'SELECT range_id FROM dhcp_scope_pools WHERE scope_id = ?'
+    ).all(lowerScope.id).map(row => row.range_id);
+    getDb().transaction(() => {
+      getDb().prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(lowerScope.id);
+      getDb().prepare('DELETE FROM dhcp_scopes WHERE id = ?').run(lowerScope.id);
+      for (const rangeId of lowerRangeIds) {
+        getDb().prepare('DELETE FROM ranges WHERE id = ?').run(rangeId);
+      }
+    })();
+    getDb().prepare(`UPDATE ip_addresses SET is_online = 1
+      WHERE subnet_id IN (?, ?) AND allocation_source_type = 'topology'`)
+      .run(...children.map(child => child.id));
+    const mergePreview = await request(app).post('/api/subnets/merge/preview')
+      .send({ subnet_ids: children.map(child => child.id) });
+    expect(mergePreview.body.plan.targets[0].scopes).toEqual([
+      expect.objectContaining({
+        origin: 'default',
+        intervals: [expect.objectContaining({ start_ip: '192.0.2.33', end_ip: '192.0.2.64' })]
+      })
+    ]);
+    const merged = await request(app).post('/api/subnets/merge').send({
+      subnet_ids: children.map(child => child.id),
+      plan_token: mergePreview.body.plan.dependency_token,
+      plan_id: mergePreview.body.plan.plan_id
+    });
+    expect(merged.status, JSON.stringify(merged.body)).toBe(200);
+    expect(poolRows([parent.id]).map(pool => [pool.start_ip, pool.end_ip]))
+      .toEqual([['192.0.2.33', '192.0.2.64']]);
+    expect(getDb().prepare(`SELECT ip_address, is_online, is_rogue, rogue_reason
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address IN
+      ('192.0.2.126', '192.0.2.127', '192.0.2.128') ORDER BY ip_address`)
+      .all(parent.id)).toEqual([
+      { ip_address: '192.0.2.126', is_online: 0, is_rogue: 0, rogue_reason: null },
+      { ip_address: '192.0.2.127', is_online: 0, is_rogue: 0, rogue_reason: null },
+      { ip_address: '192.0.2.128', is_online: 0, is_rogue: 0, rogue_reason: null }
+    ]);
+  });
+
+  it('creates four default pools and preserves gateways, leases, reservations, and custom ranges', async () => {
     const parent = await createAndConfigure('172.30.0.0/24', {
       create_dhcp_scope: true,
       dhcp_start_ip: '172.30.0.20',
@@ -155,10 +247,10 @@ describe('canonical cross-model network transformations', () => {
     expect(poolRows(children.map(child => child.id)).map(row => [
       row.start_ip, row.end_ip, row.router
     ])).toEqual([
-      ['172.30.0.20', '172.30.0.61', '172.30.0.62'],
-      ['172.30.0.65', '172.30.0.125', '172.30.0.126'],
-      ['172.30.0.129', '172.30.0.189', '172.30.0.190'],
-      ['172.30.0.193', '172.30.0.240', '172.30.0.254']
+      ['172.30.0.9', '172.30.0.16', '172.30.0.62'],
+      ['172.30.0.73', '172.30.0.80', '172.30.0.126'],
+      ['172.30.0.137', '172.30.0.144', '172.30.0.190'],
+      ['172.30.0.201', '172.30.0.208', '172.30.0.254']
     ]);
     expect(db.prepare("SELECT subnet_id FROM dhcp_leases WHERE hostname = 'leased-host'").get().subnet_id)
       .toBe(children[2].id);
@@ -176,7 +268,7 @@ describe('canonical cross-model network transformations', () => {
     ]);
   });
 
-  it('reverses an unequal carve without losing configured pool holes', async () => {
+  it('uses default pool sizing for both an unequal carve and its merge', async () => {
     const parent = await createAndConfigure('172.31.0.0/24', {
       create_dhcp_scope: true,
       dhcp_start_ip: '172.31.0.20',
@@ -188,9 +280,9 @@ describe('canonical cross-model network transformations', () => {
     ]);
     const before = poolRows(children.map(child => child.id)).map(row => [row.start_ip, row.end_ip]);
     expect(before).toEqual([
-      ['172.31.0.20', '172.31.0.61'],
-      ['172.31.0.65', '172.31.0.125'],
-      ['172.31.0.129', '172.31.0.240']
+      ['172.31.0.9', '172.31.0.16'],
+      ['172.31.0.73', '172.31.0.80'],
+      ['172.31.0.145', '172.31.0.160']
     ]);
 
     const preview = await request(app).post('/api/subnets/merge/preview')
@@ -203,8 +295,36 @@ describe('canonical cross-model network transformations', () => {
       plan_id: preview.body.plan.plan_id
     });
     expect(merged.status, JSON.stringify(merged.body)).toBe(200);
-    expect(poolRows([parent.id]).map(row => [row.start_ip, row.end_ip])).toEqual(before);
+    expect(poolRows([parent.id]).map(row => [row.start_ip, row.end_ip]))
+      .toEqual([['172.31.0.33', '172.31.0.64']]);
     expect(getDb().prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  });
+
+  it('blocks merge when child scope policies differ', async () => {
+    const parent = await createAndConfigure('10.232.0.0/24', {
+      create_dhcp_scope: true
+    });
+    const children = await previewAndDivide(parent.id, { new_prefix: 25 });
+    getDb().prepare(`UPDATE dhcp_scopes SET lease_time = '8h' WHERE subnet_id = ?`)
+      .run(children[1].id);
+
+    const preview = await request(app).post('/api/subnets/merge/preview')
+      .send({ subnet_ids: children.map(child => child.id).reverse() });
+    expect(preview.status, JSON.stringify(preview.body)).toBe(200);
+    expect(preview.body.plan.conflicts).toContainEqual(expect.objectContaining({
+      code: 'dhcp_scope_policy_conflict',
+      policy_variants: 2
+    }));
+
+    const merge = await request(app).post('/api/subnets/merge').send({
+      subnet_ids: children.map(child => child.id).reverse(),
+      plan_token: preview.body.plan.dependency_token,
+      plan_id: preview.body.plan.plan_id
+    });
+    expect(merge.status).toBe(409);
+    expect(merge.body.conflicts).toContainEqual(expect.objectContaining({
+      code: 'dhcp_scope_policy_conflict'
+    }));
   });
 
   it('makes direct and repeated subdivision semantically equivalent', async () => {

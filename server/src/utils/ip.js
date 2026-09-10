@@ -117,6 +117,31 @@ export const RESERVED_RANGES = [
   { cidr: '240.0.0.0/4',     name: 'Reserved (RFC1112)' },
 ];
 
+// IPv4 blocks that are not globally routable. Automatic scans may inherit the
+// global scan setting for these ranges. Globally routable space requires an
+// explicit per-network opt-in so merely documenting a public prefix cannot
+// turn CIDRella into an Internet scanner or classify unrelated hosts as rogue.
+const NON_GLOBAL_IPV4_RANGES = [
+  '0.0.0.0/8',
+  '10.0.0.0/8',
+  '100.64.0.0/10',
+  '127.0.0.0/8',
+  '169.254.0.0/16',
+  '172.16.0.0/12',
+  '192.0.0.0/24',
+  '192.0.2.0/24',
+  '192.168.0.0/16',
+  '198.18.0.0/15',
+  '198.51.100.0/24',
+  '203.0.113.0/24',
+  '224.0.0.0/4',
+  '240.0.0.0/4'
+];
+
+export function isGloballyRoutableCidr(cidr) {
+  return !NON_GLOBAL_IPV4_RANGES.some(special => cidrsOverlap(cidr, special));
+}
+
 /**
  * Validate a supernet CIDR against reserved range boundaries.
  * If the CIDR overlaps a reserved range, it must be fully within it.

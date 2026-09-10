@@ -715,6 +715,7 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       params.push(effectiveConflict ? effectiveReason : null);
     } else {
       updates.push('is_rogue = 0');
+      updates.push('rogue_reason = NULL');
     }
 
     params.push(existing.id);

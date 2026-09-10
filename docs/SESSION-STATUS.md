@@ -15,7 +15,7 @@ Version is **0.4.18, not yet released**. v0.4.17 shipped 2026-09-02.
 below covers all current code.
 
 **0.4.18 is a breaking release.** `min_from` is 0.4.17, the legacy
-`ip_addresses.status` field is removed, and schema runs to **68** in the current
+`ip_addresses.status` field is removed, and schema runs to **69** in the current
 working tree. Upgrades from
 schema 54 inventory ambiguous DNS and DHCP claims before mutating anything and can
 refuse to proceed until an operator reconciles them.
@@ -26,7 +26,7 @@ Landed since 0.4.17:
   intent, scope pools, topology revisions, exact transformation plans,
   transactional split/carve/merge, durable configuration generation, repair
   diagnostics, and authoritative client previews are implemented with schema
-  64 through 68 and cross-model regression coverage.
+  64 through 69 and cross-model regression coverage.
 
 - **IP lifecycle governance.** One canonical allocation state and transition boundary
   across Networks, DNS, DHCP, imports, scans, and passive liveness. Schema 55 through

@@ -1,7 +1,6 @@
 import crypto from 'crypto';
 import {
   calculateSubnets,
-  ipToLong,
   isIpInSubnet,
   isValidIpv4,
   longToIp,
@@ -9,6 +8,7 @@ import {
   subtractCidr
 } from '../utils/ip.js';
 import { resolveGatewayAddress } from './subnet-topology.js';
+import { defaultDhcpPoolForSubnet } from './subnet-dhcp-topology.js';
 
 function stableRows(db, sql, ids) {
   if (!ids.length) return [];
@@ -77,45 +77,66 @@ function targetGateway(parent, cidr, override = null) {
   return { policy, address: resolveGatewayAddress(parsed, policy) };
 }
 
-function projectedScopesForTarget(db, sourceIds, target) {
+function defaultScopesForTarget(db, sourceIds, target) {
   const parsed = parseCidr(target.cidr);
-  if (parsed.prefix >= 31) return [];
   const scopes = stableRows(
     db,
     'SELECT * FROM dhcp_scopes WHERE subnet_id IN (:ids) ORDER BY id',
     sourceIds
   );
-  const results = [];
+  if (!scopes.length) return [];
+  const source = scopes[0];
+  const pool = defaultDhcpPoolForSubnet(parsed, target.gateway.address);
+  if (!pool) return [];
+  return [{
+    source_scope_id: source.id,
+    origin: 'default',
+    reason: 'source_scope_present',
+    enabled: !!source.enabled,
+    lease_time: source.lease_time,
+    intervals: [{
+      source_pool_id: null,
+      start_ip: longToIp(pool.startLong),
+      end_ip: longToIp(pool.endLong)
+    }]
+  }];
+}
+
+function dhcpScopePolicyConflicts(db, sourceIds) {
+  const scopes = stableRows(
+    db,
+    'SELECT * FROM dhcp_scopes WHERE subnet_id IN (:ids) ORDER BY id',
+    sourceIds
+  );
+  if (scopes.length < 2) return [];
+  const signatures = new Map();
   for (const scope of scopes) {
-    const intervals = [];
-    for (const pool of stableRows(
+    const options = stableRows(
       db,
-      'SELECT * FROM dhcp_scope_pools WHERE scope_id IN (:ids) ORDER BY sort_order, id',
+      `SELECT option_code, value FROM dhcp_scope_options
+       WHERE scope_id IN (:ids) AND option_code NOT IN (1, 3, 28)
+       ORDER BY option_code`,
       [scope.id]
-    )) {
-      const start = Math.max(ipToLong(pool.start_ip), parsed.networkLong + 1);
-      const end = Math.min(ipToLong(pool.end_ip), parsed.broadcastLong - 1);
-      if (start > end) continue;
-      const gateway = target.gateway.address ? ipToLong(target.gateway.address) : null;
-      if (gateway == null || gateway < start || gateway > end) {
-        intervals.push({ source_pool_id: pool.id, start_ip: longToIp(start), end_ip: longToIp(end) });
-      } else {
-        if (start < gateway) intervals.push({
-          source_pool_id: pool.id, start_ip: longToIp(start), end_ip: longToIp(gateway - 1)
-        });
-        if (gateway < end) intervals.push({
-          source_pool_id: pool.id, start_ip: longToIp(gateway + 1), end_ip: longToIp(end)
-        });
-      }
-    }
-    if (intervals.length) results.push({
-      source_scope_id: scope.id,
+    );
+    const signature = JSON.stringify({
       enabled: !!scope.enabled,
       lease_time: scope.lease_time,
-      intervals
+      dns_servers: scope.dns_servers,
+      domain_name: scope.domain_name,
+      ntp_servers: scope.ntp_servers,
+      domain_search: scope.domain_search,
+      description: scope.description,
+      options
     });
+    if (!signatures.has(signature)) signatures.set(signature, []);
+    signatures.get(signature).push(scope.id);
   }
-  return results;
+  if (signatures.size < 2) return [];
+  return [{
+    code: 'dhcp_scope_policy_conflict',
+    scope_ids: scopes.map(scope => scope.id),
+    policy_variants: signatures.size
+  }];
 }
 
 function sealPlan(plan) {
@@ -203,10 +224,11 @@ export function buildDividePlan(db, parent, { newPrefix, cidr, selectedCidrs, ta
     gateway: targetGateway(parent, target.cidr, overrides.get(target.cidr))
   }));
   for (const target of plannedTargets) {
-    target.scopes = projectedScopesForTarget(db, [parent.id], target);
+    target.scopes = defaultScopesForTarget(db, [parent.id], target);
   }
   const customMissing = plannedTargets.some(target => target.gateway.policy === null);
   const conflicts = customMissing ? [{ code: 'custom_gateway_policy_required' }] : [];
+  conflicts.push(...dhcpScopePolicyConflicts(db, [parent.id]));
   conflicts.push(...gatewayClaimConflicts(db, plannedTargets, [parent.id]));
   return sealPlan({
     operation: 'divide',
@@ -262,8 +284,9 @@ export function buildMergePlan(db, subnets, mergedCidr) {
     [{ cidr: mergedCidr, gateway: { policy, address: gateway } }],
     ids
   ));
+  conflicts.push(...dhcpScopePolicyConflicts(db, ids));
   const target = { cidr: mergedCidr, gateway: { policy, address: gateway } };
-  target.scopes = projectedScopesForTarget(db, ids, target);
+  target.scopes = defaultScopesForTarget(db, ids, target);
   return sealPlan({
     operation: 'merge',
     source_ids: subnets.map(subnet => subnet.id),

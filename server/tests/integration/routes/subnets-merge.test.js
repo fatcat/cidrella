@@ -105,7 +105,7 @@ describe('POST /api/subnets/merge: data preservation', () => {
     expect(keepme.subnet_id).toBe(parent.id);
   });
 
-  it('preserves the configSource DHCP scope (R3 #1)', async () => {
+  it('creates the merged network default scope when its children had scopes', async () => {
     const parent = await createSubnet({ cidr: '10.21.0.0/23', name: 'M-scope', status: 'allocated', gateway_address: '10.21.0.1' });
     await configure(parent.id, {
       name: 'M-scope', create_reverse_dns: false, create_dhcp_scope: true,
@@ -117,19 +117,21 @@ describe('POST /api/subnets/merge: data preservation', () => {
     const children = await getChildren(parent.id);
     const [c0, c1] = children.sort((a, b) => a.cidr.localeCompare(b.cidr));
 
-    // Sanity: before the merge, c0 carries the inherited scope.
+    // Every child receives a default-sized scope because the parent had one.
     const before = await request(app).get('/api/dhcp/scopes');
     expect(before.body.some(s => s.subnet_id === c0.id)).toBe(true);
+    expect(before.body.some(s => s.subnet_id === c1.id)).toBe(true);
 
     const merge = await request(app).post('/api/subnets/merge').send({ subnet_ids: [c0.id, c1.id] });
     expect(merge.status).toBe(200);
 
-    // After merge the scope lives on the merged (parent) subnet.
+    // The merged network receives its own standard default-sized pool rather
+    // than restoring or unioning the child pool bounds.
     const after = await request(app).get('/api/dhcp/scopes');
-    const mergedScopes = after.body.filter(s => s.subnet_id === parent.id);
-    expect(mergedScopes.length).toBe(1);
-    expect(mergedScopes[0].start_ip).toBe('10.21.0.100');
-    expect(mergedScopes[0].end_ip).toBe('10.21.0.200');
+    const mergedScopes = after.body.filter(s => s.subnet_id === parent.id)
+      .sort((a, b) => a.start_ip.localeCompare(b.start_ip));
+    expect(mergedScopes.map(scope => [scope.start_ip, scope.end_ip]))
+      .toEqual([['10.21.0.65', '10.21.0.128']]);
   });
 
   it('preserves forward DNS zone across the merge', async () => {

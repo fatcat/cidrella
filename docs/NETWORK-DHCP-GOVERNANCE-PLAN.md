@@ -1,7 +1,7 @@
 # Canonical Network and DHCP Model Plan
 
 Status: implemented in the current working tree on 2026-09-09. Schema 64 through
-68, the canonical planner/executor, durable generation tracking, diagnostics,
+69, the canonical planner/executor, durable generation tracking, diagnostics,
 UI preview flow, and permanent regression suites implement the decisions below.
 Release-host browser and isolated live-client DHCP checks remain operational
 release gates because this workspace has neither browser automation nor a
@@ -184,7 +184,7 @@ Recommended end state:
 - Separate configured pool intent from effective dynamically offerable segments. Exclude protected topology and incompatible allocations using the IP contract. Manual reservations already use generated interval exclusions today. Enabled manual DNS must never become leaseable, including CIDRella's DNS-assigned IP.
 - Fixed DHCP reservations may lie within a configured scope, but cannot be dynamically offered to another client. Preserve existing reservation semantics rather than rejecting all non-unassigned addresses indiscriminately. Valid active dynamic leases are not themselves pool-definition conflicts.
 - Pool creation and resize retain the IP contract's rejection rules for static-DNS conflicts. A legacy conflicting scope needs an explicit split/repair decision. The generator also validates eligibility so a bypassed writer cannot emit an unsafe dynamic range.
-- Convenience defaults for a brand-new scope are not preservation rules. An existing valid pool can be projected into a small child even if that prefix gets no automatic default. An empty resulting pool is explicitly reported, not a reason to synthesize replacement capacity.
+- Split and merge preserve whether DHCP service is configured, not the old pool bounds. If any source network has a scope, each supported resulting operating network receives the same default-sized pool used when a new network is allocated with “Create DHCP scope.” Preview discloses the exact replacement interval. A source with no scope never gains one implicitly.
 
 One resolver returns both values and provenance:
 
@@ -211,21 +211,13 @@ All supported operations compile into one transformation plan over source and ta
 - Merge requires an exact, gap-free, non-overlapping union that is one aligned CIDR. Support unequal-size leaves whose exact union satisfies that rule so carve can be reversed. Initially retain the sibling requirement. Cross-parent reparenting requires a separate explicit operation.
 - Partial merges preserve unaffected siblings. Container consolidation and automatic buddy merge must go through the same planner or be restricted to provably empty, policy-compatible nodes.
 
-Scope split algorithm:
+Scope transformation algorithm:
 
-1. Load **all** source scopes, including disabled ones, their configured intervals and explicit option policy.
-2. Intersect each interval with each target's usable address domain using numeric interval operations.
-3. Subtract target gateways and other required exclusions without losing valid segments on either side. Report interval changes and addresses requiring conflict decisions.
-4. Carry scope policy and enabled state to every nonempty result. No source scope means no implicit new child scope.
-5. Recompute network-derived options for each target. Preserve unrelated explicit options and source lineage.
-
-Scope merge algorithm:
-
-1. Rehome every source scope/pool, not a selected configuration source.
-2. Recompute network-derived options against the merged network and resolve the resulting gateway conflict set.
-3. Preserve distinct scopes whose policies differ if that combination is supported and safe on one network. If a difference is network-wide or cannot be emitted unambiguously, block for an explicit decision.
-4. Coalesce scopes/adjacent intervals only when their normalized effective policy and provenance semantics are compatible. Equal current values with different inheritance modes are not necessarily compatible.
-5. Preserve holes by default. Merging networks does not authorize expanding a DHCP pool into formerly excluded child gateways/boundaries or filling deliberate pool gaps. Offer “expand pool” as a separately reviewed action if desired.
+1. Determine whether any source network has a DHCP scope, including a disabled scope.
+2. If no source scope exists, create no scope on the result.
+3. If a source scope exists, create exactly one default-sized pool on every supported resulting operating network. Use the same sizing function as allocation with “Create DHCP scope,” and disclose every interval in preview before execution.
+4. Preserve the source scope's enabled state, lease duration, description, and non-topology option policy. Recompute mask, router, and broadcast from each target network. If multiple source scopes differ on retained policy, block for resolution instead of choosing one.
+5. Do not project, union, or restore old configured pool bounds during split or merge. Topology transformation cannot infer whether old gaps or asymmetric pool sizes remain appropriate after the network boundary changes.
 
 Reservations and leases:
 
@@ -247,7 +239,7 @@ For last-usable policy:
 
 Usable addresses include the gateway address as a host position, but the configured gateway is not available for client allocation.
 
-For a parent pool `.20-.240`, the split yields `.20-.125` and `.129-.240`. Their effective DHCP routers are `.126` and `.254`, with `/25` masks. Merging preserves both pool intervals, uses router `.254` and a `/24` mask, and does not automatically add `.126-.128` to the pool. Those addresses become normal host positions, with allocation determined by any surviving claims.
+For a scoped `/24`, splitting into `/25` networks creates the standard `/25` default pools `.17-.32` and `.145-.160`. Their effective DHCP routers are `.126` and `.254`, with `/25` masks. Merging scoped children creates the standard `/24` default pool `.33-.64`, with router `.254` and a `/24` mask. Old pool bounds are not treated as intent for the newly shaped network.
 
 A four-way `/26` split produces gateways `.62`, `.126`, `.190`, and `.254`. All four must be canonical gateway allocations and all resulting scopes must use their own target network's routing facts.
 
@@ -473,7 +465,10 @@ The implementation uses these defaults, with the non-obvious tradeoffs called ou
 
 1. **Persist gateway intent and inherit first/last on all split children.** Compatible merges preserve it. Global defaults apply only to new independent networks. This matches the motivating request.
 2. **Network routing facts own DHCP router configuration.** Legacy divergent scope routers need migration review. Supporting multi-router DHCP means adding an explicit network routing policy, not preserving an invisible second authority.
-3. **Preserve DHCP pools, do not automatically expand them.** Merge all scopes and retain holes. Offer expansion separately if “combine scopes” is intended to include new capacity.
+3. **Preserve DHCP scope presence and replace pool bounds.** If any source
+   network has a scope, create one standard default-sized pool for every
+   supported result, inherit deterministic source policy, and disclose the
+   exact replacement in preview. Do not project, union, or restore old bounds.
 4. **Block conflicting active leases/admin claims by default.** Provide exact planned resolutions and operational warnings. Do not interpret “divide this network” as permission to delete unrelated or unlisted records.
 5. **Preserve all remainder space and support exact-cover unequal merges.** This makes carving reversible. Keep cross-parent merges out of the first implementation.
 6. **Use explicit policy for custom/none gateways and unsupported narrow prefixes.** Never invent defaults or silently drop DHCP state when inheritance is ambiguous.

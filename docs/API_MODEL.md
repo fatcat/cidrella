@@ -116,7 +116,17 @@ later retry or process restart resumes pending work.
 
 DHCP scope `lease_time` is the sole lease-duration policy. Option 51 is not a
 separate global or per-scope override. Scope pools are returned as explicit
-intervals, and gaps remain intentional across transformations and generation.
+intervals. Split and merge preserve scope presence rather than prior pool
+bounds: when any source network has a scope, preview gives every supported
+resulting network one standard-sized interval with `origin: "default"`.
+Execution creates exactly that disclosed interval and inherits deterministic
+source scope policy while rebasing network-derived options. Differing source
+scope policies produce a `dhcp_scope_policy_conflict` rather than being chosen
+by request order. With no source scope, transformations create no scope.
+
+An unallocated network row with child networks is a hierarchy container, not
+available address space. Clients must not list a fully subdivided container in
+an unallocated-space browser; its allocated leaves are the operating networks.
 
 ## IP Allocation Writes
 

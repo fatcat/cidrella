@@ -115,31 +115,9 @@ function createSystemRanges(db, subnetId, parsed, gatewayAddress) {
   return SubnetTopology.createSystemRanges(db, subnetId, parsed, gatewayAddress);
 }
 
-// Helper: nearest power of 2
-function nearestPow2(n) {
-  if (n <= 1) return 1;
-  const lower = Math.pow(2, Math.floor(Math.log2(n)));
-  const upper = lower * 2;
-  return (n - lower) <= (upper - n) ? lower : upper;
-}
-
-// Helper: compute default DHCP range for /21–/26 subnets
+// Keep API-created defaults and transformation-created defaults identical.
 function dhcpRangeDefaults(parsed) {
-  const size = parsed.broadcastLong - parsed.networkLong + 1;
-  const prefix = parsed.prefix;
-  if (prefix < 21 || prefix > 26) return null;
-  let poolEnd, poolSize;
-  if (prefix <= 23) {
-    poolEnd = parsed.networkLong + 128;
-    poolSize = 64;
-  } else {
-    poolEnd = parsed.networkLong + nearestPow2(size * 0.35);
-    poolSize = nearestPow2(size * 0.15);
-  }
-  let poolStart = poolEnd - poolSize + 1;
-  poolStart = Math.max(poolStart, parsed.networkLong + 1);
-  poolEnd = Math.min(poolEnd, parsed.broadcastLong - 1);
-  return { startLong: poolStart, endLong: poolEnd };
+  return DhcpTopology.defaultDhcpPoolForSubnet(parsed);
 }
 
 // One rule for folder_id, shared by POST /, PUT /:id and POST /:id/configure.
@@ -920,18 +898,17 @@ function excludeGatewayFromPool(clippedStart, clippedEnd, gwLong) {
 // Helper: migrate config from parent to inheriting child during division.
 // `childGw` is the new child's gateway IP (not the parent's, the divide
 // handler computes it per-child, e.g. firstUsable of each /24 after a /22
-// split). Returns a list of pool adjustments we had to make so the handler
-// can surface them in the response for user-facing warnings.
+// split). Scope presence is inherited, but the pool is deliberately recreated
+// with the normal default sizing for the child CIDR. Returns the disclosed
+// replacement pool for the response and confirmation UI.
 function migrateConfigToChild(db, parentId, childId, childParsed, childGw, parentHasReverseDns) {
   createSystemRanges(db, childId, childParsed, childGw);
 
   const poolAdjustments = [];
 
-  // Migrate DHCP scope ranges (and their scope config + options) if they fit
-  // and child is >= /29. Previously only the range row was moved, the
-  // dhcp_scopes config (lease time, DNS, options) got dropped on the floor,
-  // leaving the inheriting child with a DHCP range but no working scope.
-  poolAdjustments.push(...DhcpTopology.cloneParentScopesToChild(
+  // Preserve scope presence and policy, while giving the child a newly sized
+  // default pool and target-specific topology options.
+  poolAdjustments.push(...DhcpTopology.createDefaultScopeForChild(
     db, parentId, childId, childParsed, childGw
   ));
 
@@ -1069,8 +1046,8 @@ function detectForwardZoneConflict(db, childIds) {
 // Helper: clear parent config after division. Assumes per-IP artifacts (IP
 // addresses, reservations) and DNS zones have ALREADY been transferred to
 // children via transferPerIpArtifactsToChildren() and migrateParentZonesToChildren().
-// This call wipes parent-owned ranges, DHCP scopes (which migrateConfigToChild
-// CLONED rather than moved, the parent's originals need to go), and resets
+// This call wipes parent-owned ranges, DHCP scopes (migrateConfigToChild
+// created replacements on the children), and resets
 // the parent row's config fields.
 function clearParentConfig(db, parentId) {
   DhcpTopology.deleteDhcpStateForSubnet(db, parentId);
@@ -1164,8 +1141,8 @@ router.post('/:id/divide', requirePerm('subnets:write'), asyncHandler((req, res)
         });
       }
 
-      // Collected across child loop inside the txn so the response can
-      // surface "we shrank your pool to keep the gateway out" notices.
+      // Collected across the child loop so the response can surface every
+      // default-sized replacement pool disclosed by preview.
       let txnPoolAdjustments = [];
       let txnLossyCleanup = { ips: [], removed: { reservations: 0, ip_addresses: 0, dns_records: 0, leases: 0 } };
       const txn = db.transaction(() => {

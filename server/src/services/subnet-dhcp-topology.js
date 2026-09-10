@@ -1,7 +1,34 @@
 import { getSetting } from '../db/init.js';
 import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
 import { parseCidr, ipToLong, longToIp, getServerIpForSubnet } from '../utils/ip.js';
-import { addScopePool, dynamicPoolConflict, getScopePools } from '../models/dhcp-scope.js';
+import { dynamicPoolConflict } from '../models/dhcp-scope.js';
+
+function nearestPow2(n) {
+  if (n <= 1) return 1;
+  const lower = 2 ** Math.floor(Math.log2(n));
+  const upper = lower * 2;
+  return (n - lower) <= (upper - n) ? lower : upper;
+}
+
+export function defaultDhcpPoolForSubnet(parsed, gateway = null) {
+  if (parsed.prefix < 16 || parsed.prefix > 29) return null;
+  const size = parsed.totalAddresses;
+  let poolEnd;
+  let poolSize;
+  if (parsed.prefix >= 21 && parsed.prefix <= 23) {
+    poolEnd = parsed.networkLong + 128;
+    poolSize = 64;
+  } else {
+    poolEnd = parsed.networkLong + nearestPow2(size * 0.35);
+    poolSize = Math.max(2, nearestPow2(size * 0.15));
+  }
+  let startLong = Math.max(poolEnd - poolSize + 1, parsed.networkLong + 1);
+  let endLong = Math.min(poolEnd, parsed.broadcastLong - 1);
+  const gatewayLong = gateway ? ipToLong(gateway) : null;
+  if (gatewayLong === startLong) startLong++;
+  else if (gatewayLong === endLong) endLong--;
+  return startLong <= endLong ? { startLong, endLong } : null;
+}
 
 export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
   const enabledRows = db.prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1').all();
@@ -81,70 +108,63 @@ export function autoCreateDhcpScope(db, subnetId, parsed, gateway, domainName, d
   return createAutoScope(db, subnetId, parsed, gateway, domainName, { startLong, endLong });
 }
 
-export function cloneParentScopesToChild(db, parentId, childId, childParsed, childGw) {
-  const poolAdjustments = [];
+function firstScopeForSubnets(db, subnetIds) {
+  const ids = [...new Set((Array.isArray(subnetIds) ? subnetIds : [subnetIds]).map(Number))]
+    .filter(Number.isInteger)
+    .sort((a, b) => a - b);
+  if (!ids.length) return null;
+  const source = db.prepare(`SELECT * FROM dhcp_scopes
+    WHERE subnet_id IN (${ids.map(() => '?').join(',')})
+    ORDER BY subnet_id, id LIMIT 1`).get(...ids) || null;
+  if (!source) return null;
+  return {
+    ...source,
+    options: db.prepare(`SELECT option_code, value FROM dhcp_scope_options
+      WHERE scope_id = ? ORDER BY option_code`).all(source.id)
+  };
+}
 
-  const parentScopes = db.prepare('SELECT * FROM dhcp_scopes WHERE subnet_id = ?').all(parentId);
-
-  const gwLong = childGw ? ipToLong(childGw) : null;
-
-  for (const ps of parentScopes) {
-    const segments = [];
-    const sourcePools = getScopePools(db, ps.id);
-    for (const pool of sourcePools) {
-      const rStart = ipToLong(pool.start_ip);
-      const rEnd = ipToLong(pool.end_ip);
-      const clippedStart = Math.max(rStart, childParsed.networkLong + 1);
-      const clippedEnd = Math.min(rEnd, childParsed.broadcastLong - 1);
-      if (clippedStart > clippedEnd) continue;
-      const parts = gwLong == null || gwLong < clippedStart || gwLong > clippedEnd
-        ? [{ start: clippedStart, end: clippedEnd }]
-        : [{ start: clippedStart, end: gwLong - 1 }, { start: gwLong + 1, end: clippedEnd }]
-          .filter(segment => segment.start <= segment.end);
-      segments.push(...parts);
-      if (parts.length !== 1 || parts[0]?.start !== clippedStart || parts[0]?.end !== clippedEnd) {
-      poolAdjustments.push({
-        child_id: childId,
-        child_cidr: `${childParsed.network}/${childParsed.prefix}`,
-        gateway: childGw,
-        pool_was: { start_ip: longToIp(clippedStart), end_ip: longToIp(clippedEnd) },
-        pool_now: parts[0]
-          ? { start_ip: longToIp(parts[0].start), end_ip: longToIp(parts[0].end) }
-          : null,
-        additional_pools: parts.slice(1).map(segment => ({
-          start_ip: longToIp(segment.start), end_ip: longToIp(segment.end)
-        }))
-      });
-      }
-    }
-    if (!segments.length) continue;
-    const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1").get();
-    if (!dhcpType) continue;
-    const first = segments[0];
-    const newRange = db.prepare(
-      'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)'
-    ).run(childId, dhcpType.id, longToIp(first.start), longToIp(first.end), ps.description);
-    const newScope = db.prepare(`
-          INSERT INTO dhcp_scopes
-            (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway,
-             enabled, description, ntp_servers, domain_search)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(newRange.lastInsertRowid, childId, ps.lease_time, ps.dns_servers,
-      ps.domain_name, childGw, ps.enabled, ps.description, ps.ntp_servers, ps.domain_search);
-    db.prepare(`INSERT INTO dhcp_scope_pools
-      (scope_id, range_id, start_ip, end_ip, sort_order) VALUES (?, ?, ?, ?, 0)`)
-      .run(newScope.lastInsertRowid, newRange.lastInsertRowid,
-        longToIp(first.start), longToIp(first.end));
-    for (const [index, segment] of segments.slice(1).entries()) {
-      addScopePool(db, newScope.lastInsertRowid, childId, dhcpType.id,
-        longToIp(segment.start), longToIp(segment.end), ps.description, index + 1);
-    }
-    db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) SELECT ?, option_code, value FROM dhcp_scope_options WHERE scope_id = ?')
-      .run(newScope.lastInsertRowid, ps.id);
-    rebaseScopeTopologyOptions(db, newScope.lastInsertRowid, childParsed, childGw);
+function createDefaultScopeFromSource(db, source, targetId, parsed, gateway) {
+  const pool = defaultDhcpPoolForSubnet(parsed, gateway);
+  if (!source || !pool) return null;
+  const scopeId = createAutoScope(db, targetId, parsed, gateway, source.domain_name, pool);
+  db.prepare(`
+    UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
+      gateway = ?, enabled = ?, description = ?, ntp_servers = ?,
+      domain_search = ?, updated_at = datetime('now')
+    WHERE id = ?
+  `).run(source.lease_time, source.dns_servers, source.domain_name, gateway,
+    source.enabled, source.description, source.ntp_servers,
+    source.domain_search, scopeId);
+  db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scopeId);
+  const insertOption = db.prepare(`
+    INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)
+  `);
+  for (const option of source.options || []) {
+    insertOption.run(scopeId, option.option_code, option.value);
   }
+  rebaseScopeTopologyOptions(db, scopeId, parsed, gateway);
+  return { scopeId, pool };
+}
 
-  return poolAdjustments;
+export function createDefaultScopeForChild(db, parentId, childId, childParsed, childGw) {
+  const source = firstScopeForSubnets(db, parentId);
+  const created = createDefaultScopeFromSource(
+    db, source, childId, childParsed, childGw
+  );
+  if (!created) return [];
+  return [{
+    child_id: childId,
+    child_cidr: `${childParsed.network}/${childParsed.prefix}`,
+    gateway: childGw,
+    reason: 'default_scope_created',
+    pool_was: null,
+    pool_now: {
+      start_ip: longToIp(created.pool.startLong),
+      end_ip: longToIp(created.pool.endLong)
+    },
+    additional_pools: []
+  }];
 }
 
 export function deleteDhcpStateForSubnet(db, subnetId) {
@@ -251,23 +271,14 @@ export function rebaseScopeForNetwork(db, scopeId, parsed, gateway) {
     .run(gateway, scopeId);
 }
 
-export function moveScopesToSubnet(db, sourceIds, mergedId, parsed, gateway) {
-  const ids = (Array.isArray(sourceIds) ? sourceIds : [sourceIds])
-    .filter(id => id && id !== mergedId);
-  if (ids.length === 0) return;
-  const placeholders = ids.map(() => '?').join(',');
+export function captureScopeTemplate(db, sourceIds) {
+  return firstScopeForSubnets(db, sourceIds);
+}
 
-  db.prepare(`
-    UPDATE ranges SET subnet_id = ?
-    WHERE subnet_id IN (${placeholders})
-      AND range_type_id = (SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1)
-  `).run(mergedId, ...ids);
-
-  db.prepare(
-    `UPDATE dhcp_scopes SET subnet_id = ?, gateway = ? WHERE subnet_id IN (${placeholders})`
-  ).run(mergedId, gateway, ...ids);
-  const scopes = db.prepare('SELECT id FROM dhcp_scopes WHERE subnet_id = ?').all(mergedId);
-  for (const scope of scopes) rebaseScopeTopologyOptions(db, scope.id, parsed, gateway);
+export function createMergedDefaultScope(db, source, mergedId, parsed, gateway) {
+  return createDefaultScopeFromSource(
+    db, source, mergedId, parsed, gateway
+  );
 }
 
 export function deleteDhcpStateForSubtree(db, parentId) {

@@ -130,6 +130,29 @@ describe('getNextScanTime', () => {
     expect(getNextScanTime()).toBeNull();
   });
 
+  it('does not inherit automatic scanning for globally routable networks', () => {
+    db.prepare("UPDATE settings SET value = '15m' WHERE key = 'default_scan_interval'").run();
+    insertSubnet({
+      cidr: '1.1.1.0/24',
+      network: '1.1.1.0',
+      broadcast: '1.1.1.255'
+    });
+
+    expect(getNextScanTime()).toBeNull();
+  });
+
+  it('allows an explicit network opt-in for globally routable scans', () => {
+    db.prepare("UPDATE settings SET value = '15m' WHERE key = 'default_scan_interval'").run();
+    insertSubnet({
+      cidr: '1.1.1.0/24',
+      network: '1.1.1.0',
+      broadcast: '1.1.1.255',
+      scanEnabled: 1
+    });
+
+    expect(getNextScanTime()).toEqual(expect.any(String));
+  });
+
   it('includes the largest subnet allowed by manual scans', () => {
     db.prepare("UPDATE settings SET value = '15m' WHERE key = 'default_scan_interval'").run();
     insertSubnet({
