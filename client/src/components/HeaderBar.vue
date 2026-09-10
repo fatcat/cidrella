@@ -14,7 +14,7 @@
         <router-link to="/analytics" class="nav-link" :class="{ active: route.path === '/analytics' }" data-track="nav-analytics">
           Analytics
         </router-link>
-        <router-link to="/networks" class="nav-link" :class="{ active: route.path === '/networks' || route.path === '/' }" data-track="nav-networks">IP Management</router-link>
+        <router-link to="/networks" class="nav-link" :class="{ active: route.path.startsWith('/networks') || route.path === '/' }" data-track="nav-networks">IP Management</router-link>
         <router-link to="/system" class="nav-link" :class="{ active: route.path === '/system' }" data-track="nav-system">Settings</router-link>
       </nav>
     </div>

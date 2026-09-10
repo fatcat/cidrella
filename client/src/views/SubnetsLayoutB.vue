@@ -175,6 +175,9 @@
                     data-track="toolbar-merge" @click="dialogs.openMergeConfirm(mergeSelectedIdsRaw)" />
             <Button label="Cancel" size="small" severity="secondary" text data-track="toolbar-merge-cancel" @click="clearMergeSelection" />
           </template>
+          <router-link to="/networks-preview" class="workspace-preview-link" data-track="toolbar-workspace-preview">
+            <i class="pi pi-sparkles" /> Workspace concept
+          </router-link>
         </div>
         <SubnetDetail v-if="selectedSubnetId" :subnet-id="selectedSubnetId" :compact="true" />
         <FolderNetworkTable v-else-if="selectedFolder" :folder="selectedFolder"
@@ -1097,6 +1100,24 @@ onBeforeUnmount(() => {
   width: 1px;
   height: 1.2rem;
   background: var(--p-surface-border);
+}
+.workspace-preview-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--p-primary-color) 28%, var(--p-surface-border));
+  border-radius: 999px;
+  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--p-primary-color) 7%, transparent);
+  font-size: var(--app-fs-xs);
+  font-weight: 700;
+  text-decoration: none;
+}
+.workspace-preview-link:hover {
+  border-color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--p-primary-color) 12%, transparent);
 }
 .empty-detail {
   flex: 1;
