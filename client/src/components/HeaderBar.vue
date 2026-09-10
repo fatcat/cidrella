@@ -624,24 +624,11 @@ onUnmounted(() => {
 }
 
 
-.status-chip.chip-ok {
-  border-left: 3px solid var(--p-primary-color);
-}
-/* Status is conveyed by the dot only. Chip text stays the default color and
-   the left accent is uniform across all chips (red/yellow/green never tint the
-   text). chip-idle keeps its dimmed text since "idle" is an inactive state, not
-   a status color. */
-.status-chip.chip-active {
-  border-left: 3px solid var(--p-primary-color);
-}
+/* Status is conveyed by the dot only. Chip text stays the default color.
+   chip-idle keeps its dimmed text since "idle" is an inactive state, not a
+   status color. */
 .status-chip.chip-idle {
   color: var(--p-text-muted-color);
-}
-.status-chip.chip-warn {
-  border-left: 3px solid var(--p-primary-color);
-}
-.status-chip.chip-err {
-  border-left: 3px solid var(--p-primary-color);
 }
 .status-chip-ops {
   display: none;
