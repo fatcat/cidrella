@@ -299,9 +299,9 @@
               ><strong>{{ addressOverview.pool }}</strong>
             </div>
             <div>
-              <span :style="{ '--value': addressOverview.availablePercent }" /><small
-                >Available</small
-              ><strong>{{ addressOverview.available }}</strong>
+              <span :style="{ '--value': addressOverview.unassignedPercent }" /><small
+                >Unassigned</small
+              ><strong>{{ addressOverview.unassigned }}</strong>
             </div>
           </div>
         </section>
@@ -1211,18 +1211,36 @@ const showViewSummary = computed(
   () => Boolean(viewMeta.value.title) || viewsWithAside.includes(activeView.value),
 );
 
+// Network-scoped, and every figure is one the server already owns.
+//
+// This used to count addressRows, which is the loaded page, so it read
+// "Assigned 1" while the UTILIZATION tile above read "3 assigned" and its
+// three numbers summed to the page size under a heading saying 1,024.
+//
+// "Available" is deliberately gone rather than network-scoped. There is no
+// exact source for it: ip_display_status is not a column, it folds
+// allocation_state together with dynamic-pool membership and the rogue/online
+// promotion, and pool membership is decided in routes/subnets.js while the
+// rest of the rule lives in models/ip-view.js. Deriving it here as
+// total - assigned - pool would double-subtract every active lease, which is
+// an address that is both assigned and inside the pool range. Per AGENTS.md
+// the client must not reconstruct that, so the third figure is now
+// "Unassigned", the exact complement of the server's own used_count. It
+// overlaps the pool on purpose: these three do not partition the space and
+// are not presented as if they do.
 const addressOverview = computed(() => {
-  const total = Math.max(1, addressRows.value.length);
-  const assigned = addressRows.value.filter((row) => row.status === 'in use').length;
-  const pool = addressRows.value.filter((row) => row.status === 'DHCP Scope').length;
-  const available = addressRows.value.filter((row) => row.status === 'available').length;
+  const total = Math.max(1, addressTotal.value);
+  const assigned = Number(selectedNetwork.value.used_count) || 0;
+  const pool = sumScopeAddresses(networkScopes.value);
+  const unassigned = Math.max(0, total - assigned);
+  const pct = (n) => `${Math.round((n / total) * 100)}%`;
   return {
     assigned,
     pool,
-    available,
-    assignedPercent: `${Math.round((assigned / total) * 100)}%`,
-    poolPercent: `${Math.round((pool / total) * 100)}%`,
-    availablePercent: `${Math.round((available / total) * 100)}%`,
+    unassigned,
+    assignedPercent: pct(assigned),
+    poolPercent: pct(pool),
+    unassignedPercent: pct(unassigned),
   };
 });
 
