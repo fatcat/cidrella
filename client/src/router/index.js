@@ -34,6 +34,7 @@ const routes = [
       { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
       { path: 'networks', name: 'Networks', component: () => import('../views/SubnetsLayoutB.vue') },
       { path: 'networks-preview', name: 'NetworksWorkspacePreview', component: () => import('../views/NetworksWorkspacePreview.vue') },
+      { path: 'anomalies-preview', name: 'AnomaliesWorkspacePreview', component: () => import('../views/AnomaliesWorkspacePreview.vue') },
       { path: 'system', name: 'System', component: () => import('../views/Settings.vue') },
       // Redirects for old bookmarks
       { path: 'dashboard', redirect: '/analytics' },

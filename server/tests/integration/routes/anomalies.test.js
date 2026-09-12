@@ -1,6 +1,32 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
+
+// The evidence endpoint reads DuckDB, which no test fixture stands up. Stub
+// only the two query helpers and record their arguments: which IP and which
+// window the route asks for is the behavior under test, not the SQL.
+const { evidenceCalls, summaryCalls, evidenceRows } = vi.hoisted(() => ({
+  evidenceCalls: [],
+  summaryCalls: [],
+  evidenceRows: [],
+}));
+
+vi.mock('../../../src/db/duckdb.js', async (importOriginal) => ({
+  ...await importOriginal(),
+  queryClientWindowEvidence: (...args) => {
+    evidenceCalls.push(args);
+    return Promise.resolve(evidenceRows.slice(0, args[3]));
+  },
+  queryClientWindowSummary: (...args) => {
+    summaryCalls.push(args);
+    return Promise.resolve({
+      total_queries: evidenceRows.reduce((sum, row) => sum + row.count, 0),
+      distinct_domains: evidenceRows.length,
+      nxdomain_count: evidenceRows.filter(row => row.response_code === 'NXDOMAIN').length,
+      blocked_count: 0,
+    });
+  },
+}));
 
 const { default: anomalyRouter } = await import('../../../src/routes/anomalies.js');
 const { default: request } = await import('supertest');
@@ -201,5 +227,139 @@ describe('POST /api/anomalies/whitelist', () => {
 
     expect(db.prepare('SELECT COUNT(*) c FROM anomaly_scores WHERE identity = ?').get('aa:bb:cc:dd:ee:53').c).toBe(0);
     expect(db.prepare('SELECT COUNT(*) c FROM anomaly_models WHERE identity = ?').get('aa:bb:cc:dd:ee:53').c).toBe(0);
+  });
+});
+
+describe('anomaly evidence endpoint', () => {
+  function insertScoredWindow({ identity, clientIp, start, end, isAnomaly = 1 }) {
+    db.prepare(`
+      INSERT INTO anomaly_scores
+        (client_ip, identity, window_start, window_end, anomaly_score, is_anomaly, severity)
+      VALUES (?, ?, ?, ?, -0.62, ?, 'high')
+    `).run(clientIp, identity, start, end, isAnomaly);
+  }
+
+  beforeEach(() => {
+    evidenceCalls.length = 0;
+    summaryCalls.length = 0;
+    evidenceRows.length = 0;
+  });
+
+  it('rejects an identity that is neither a MAC nor an IPv4 address', async () => {
+    const res = await request(app).get('/api/anomalies/client/not-an-identity/evidence');
+    expect(res.status).toBe(400);
+  });
+
+  it('404s when the identity has no flagged window', async () => {
+    const res = await request(app).get('/api/anomalies/client/10.0.0.80/evidence');
+    expect(res.status).toBe(404);
+  });
+
+  it('defaults to the most recent flagged window', async () => {
+    insertScoredWindow({ identity: '10.0.0.81', clientIp: '10.0.0.81', start: '2026-09-10 01:00:00', end: '2026-09-10 02:00:00' });
+    insertScoredWindow({ identity: '10.0.0.81', clientIp: '10.0.0.81', start: '2026-09-10 05:00:00', end: '2026-09-10 06:00:00' });
+
+    const res = await request(app).get('/api/anomalies/client/10.0.0.81/evidence');
+    expect(res.status).toBe(200);
+    expect(res.body.window_start).toBe('2026-09-10 05:00:00');
+    expect(evidenceCalls[0].slice(0, 3)).toEqual(['10.0.0.81', '2026-09-10 05:00:00', '2026-09-10 06:00:00']);
+  });
+
+  it('honours an explicit window_start, including a window that was not flagged', async () => {
+    insertScoredWindow({ identity: '10.0.0.82', clientIp: '10.0.0.82', start: '2026-09-10 03:00:00', end: '2026-09-10 04:00:00', isAnomaly: 0 });
+
+    const res = await request(app)
+      .get('/api/anomalies/client/10.0.0.82/evidence')
+      .query({ window_start: '2026-09-10 03:00:00' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.is_anomaly).toBe(0);
+    expect(evidenceCalls[0][1]).toBe('2026-09-10 03:00:00');
+  });
+
+  // The bug this pins: an identity is a MAC, dns_queries is keyed by IP, and
+  // dhcp_leases only holds the CURRENT lease. Resolving the MAC's lease at
+  // request time would return whatever holds that address today.
+  it('queries the IP recorded on the score row, not the MAC current lease', async () => {
+    setLease('10.0.0.99', 'aa:bb:cc:dd:ee:90');
+    insertScoredWindow({
+      identity: 'aa:bb:cc:dd:ee:90', clientIp: '10.0.0.90',
+      start: '2026-09-10 07:00:00', end: '2026-09-10 08:00:00',
+    });
+
+    const res = await request(app).get('/api/anomalies/client/aa:bb:cc:dd:ee:90/evidence');
+
+    expect(res.status).toBe(200);
+    expect(res.body.client_ip).toBe('10.0.0.90');
+    expect(evidenceCalls[0][0]).toBe('10.0.0.90');
+    expect(summaryCalls[0][0]).toBe('10.0.0.90');
+  });
+
+  it('separates a pruned window from a client that was simply quiet', async () => {
+    insertScoredWindow({
+      identity: '10.0.0.83', clientIp: '10.0.0.83',
+      start: "2026-09-10 09:00:00", end: "2026-09-10 10:00:00",
+    });
+    const fresh = await request(app).get('/api/anomalies/client/10.0.0.83/evidence');
+    expect(fresh.body.evidence_available).toBe(false);
+
+    db.prepare('DELETE FROM anomaly_scores').run();
+    db.prepare(`
+      INSERT INTO anomaly_scores (client_ip, identity, window_start, window_end, anomaly_score, is_anomaly)
+      VALUES ('10.0.0.84', '10.0.0.84', datetime('now', '-20 days'), datetime('now', '-20 days', '+1 hour'), -0.62, 1)
+    `).run();
+
+    const old = await request(app).get('/api/anomalies/client/10.0.0.84/evidence');
+    expect(old.status).toBe(200);
+    expect(old.body.window_within_retention).toBe(false);
+    expect(old.body.retention_days).toBe(7);
+  });
+
+  // The scoring sidecar writes Python's datetime.isoformat(), so a real
+  // window_start looks like '2026-09-10T13:00:00+00:00'. DuckDB's TIMESTAMP
+  // cast will not take the offset suffix, so the route has to canonicalize
+  // before it queries. Tested against both shapes because rows written
+  // through SQLite's own datetime() use the space-separated form.
+  it('canonicalizes sidecar ISO window bounds before querying DuckDB', async () => {
+    insertScoredWindow({
+      identity: '10.0.0.86', clientIp: '10.0.0.86',
+      start: '2026-09-10T13:00:00+00:00', end: '2026-09-10T14:00:00+00:00',
+    });
+
+    const res = await request(app).get('/api/anomalies/client/10.0.0.86/evidence');
+
+    expect(res.status).toBe(200);
+    expect(evidenceCalls[0][1]).toBe('2026-09-10 13:00:00');
+    expect(evidenceCalls[0][2]).toBe('2026-09-10 14:00:00');
+    // The response still reports the window as it is stored, so the caller can
+    // pass it straight back as ?window_start.
+    expect(res.body.window_start).toBe('2026-09-10T13:00:00+00:00');
+  });
+
+  it('treats a millisecond Z timestamp as UTC for the retention check', async () => {
+    insertScoredWindow({
+      identity: '10.0.0.87', clientIp: '10.0.0.87',
+      start: '2026-09-10T15:00:00.000Z', end: '2026-09-10T16:00:00.000Z',
+    });
+
+    const res = await request(app).get('/api/anomalies/client/10.0.0.87/evidence');
+
+    expect(res.status).toBe(200);
+    expect(evidenceCalls[0][1]).toBe('2026-09-10 15:00:00');
+    expect(typeof res.body.window_within_retention).toBe('boolean');
+  });
+
+  it('reports truncation when the grouped rows hit the limit', async () => {
+    insertScoredWindow({ identity: '10.0.0.85', clientIp: '10.0.0.85', start: '2026-09-10 11:00:00', end: '2026-09-10 12:00:00' });
+    evidenceRows.push(
+      { domain: 'a.example.com', query_type: 'A', response_code: 'NXDOMAIN', action: 'allowed', count: 9 },
+      { domain: 'b.example.com', query_type: 'A', response_code: 'NOERROR', action: 'allowed', count: 4 },
+    );
+
+    const res = await request(app).get('/api/anomalies/client/10.0.0.85/evidence').query({ limit: 2 });
+    expect(res.body.rows).toHaveLength(2);
+    expect(res.body.truncated).toBe(true);
+    expect(res.body.evidence_available).toBe(true);
+    expect(evidenceCalls[0][3]).toBe(2);
   });
 });

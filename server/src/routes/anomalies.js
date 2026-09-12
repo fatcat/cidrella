@@ -5,6 +5,7 @@ import { requireRole } from '../auth/roles.js';
 import { isValidIpv4 } from '../utils/ip.js';
 import { MAC_RE } from '../utils/mac.js';
 import { enrichWithHostnames } from '../utils/hostnames.js';
+import { queryClientWindowEvidence, queryClientWindowSummary } from '../db/duckdb.js';
 import { DEFAULTS } from '../config/defaults.js';
 import * as Anomaly from '../models/anomaly.js';
 import * as Setting from '../models/setting.js';
@@ -174,6 +175,28 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
 
 const FULL_MAC_RE = new RegExp(`^${MAC_RE.source}$`, 'i');
 
+// anomaly_scores.window_start is whatever wrote the row. The scoring sidecar
+// writes Python's datetime.isoformat(), so '2026-09-07T02:00:00+00:00', while
+// anything written through SQLite's own datetime() is '2026-09-07 02:00:00'.
+// Both mean UTC. DuckDB's TIMESTAMP cast will not accept the offset suffix, so
+// window bounds are canonicalized before they reach a query.
+function windowToUtcMs(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return NaN;
+  const withT = raw.replace(' ', 'T');
+  // A space-separated SQLite timestamp carries no zone and is UTC by
+  // convention, so say so explicitly rather than letting Date.parse read it
+  // as local time.
+  const zoned = /([zZ]|[+-]\d{2}:?\d{2})$/.test(withT) ? withT : `${withT}Z`;
+  return Date.parse(zoned);
+}
+
+function windowToDuckTimestamp(value) {
+  const ms = windowToUtcMs(value);
+  if (!Number.isFinite(ms)) return String(value);
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+}
+
 // An anomaly identity is either a MAC (survives an IP renewal) or, when
 // CIDRella has no DHCP lease for the client, the client's IP itself.
 function isValidIdentity(identity) {
@@ -211,6 +234,83 @@ router.get('/client/:identity/model', requirePerm('analytics:read'), (req, res) 
     `SELECT * FROM anomaly_models WHERE identity = ?`
   ).get(identity);
   res.json(row || null);
+});
+
+// GET /api/anomalies/client/:identity/evidence: the DNS traffic behind a
+// scored window. Without ?window_start it answers for the most recent flagged
+// window, which is what a detail view opens on.
+//
+// The client IP comes from the score row, never from a fresh DHCP lookup. An
+// identity is a MAC wherever CIDRella had a lease at scoring time (migration
+// 060), dhcp_leases only holds the CURRENT lease, and dns_queries is keyed by
+// IP. So the score row's client_ip is the only historically accurate
+// MAC-to-IP mapping for that window. Resolving the MAC's lease today would
+// pull the traffic of whatever holds that address now.
+router.get('/client/:identity/evidence', requirePerm('analytics:read'), async (req, res) => {
+  const { identity } = req.params;
+  if (!isValidIdentity(identity)) {
+    return res.status(400).json({ error: 'Invalid identity' });
+  }
+
+  const db = getDb();
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+  const { window_start: windowStart } = req.query;
+
+  const scored = windowStart
+    ? db.prepare(
+      `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
+         FROM anomaly_scores WHERE identity = ? AND window_start = ?`
+    ).get(identity, windowStart)
+    : db.prepare(
+      `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
+         FROM anomaly_scores WHERE identity = ? AND is_anomaly = 1
+        ORDER BY window_start DESC LIMIT 1`
+    ).get(identity);
+
+  if (!scored) {
+    return res.status(404).json({
+      error: windowStart ? 'No scored window found for that identity and window_start' : 'No flagged window found for that identity'
+    });
+  }
+
+  // Analytics data is pruned on its own retention clock (default 7 days),
+  // while anomaly scores are kept for 30. A window older than the analytics
+  // retention still has a score and no traffic left to show. Report that as a
+  // distinct state: a pruned window and a client that was simply quiet both
+  // return zero rows, and they mean opposite things to whoever is triaging.
+  const retentionDays = Math.max(1, Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7));
+  const windowEndMs = windowToUtcMs(scored.window_end);
+  const withinRetention = Number.isFinite(windowEndMs)
+    ? (Date.now() - windowEndMs) < retentionDays * 86400000
+    : true;
+
+  const startTs = windowToDuckTimestamp(scored.window_start);
+  const endTs = windowToDuckTimestamp(scored.window_end);
+
+  try {
+    const [rows, summary] = await Promise.all([
+      queryClientWindowEvidence(scored.client_ip, startTs, endTs, limit),
+      queryClientWindowSummary(scored.client_ip, startTs, endTs),
+    ]);
+
+    res.json({
+      identity,
+      client_ip: scored.client_ip,
+      window_start: scored.window_start,
+      window_end: scored.window_end,
+      anomaly_score: scored.anomaly_score,
+      severity: scored.severity,
+      is_anomaly: scored.is_anomaly,
+      retention_days: retentionDays,
+      window_within_retention: withinRetention,
+      evidence_available: rows.length > 0,
+      truncated: rows.length === limit,
+      summary: summary || { total_queries: 0, distinct_domains: 0, nxdomain_count: 0, blocked_count: 0 },
+      rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // DELETE /api/anomalies/:id: delete an anomaly score

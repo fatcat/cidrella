@@ -274,6 +274,49 @@ export function queryClientDomains(clientIp, range, limit = 50) {
   );
 }
 
+// The DNS traffic behind one scored anomaly window: what the client actually
+// asked for between window_start and window_end, grouped so a 4,000 query
+// window reads as a handful of rows.
+//
+// Bounds are half-open (>= start, < end) to match the daemon's own feature
+// extraction (internal-analytics.js 'anomaly-client-window-events'), so the
+// rows here are the same rows that produced the score. Both sides compare a
+// SQLite UTC datetime string against DuckDB's timezone-naive TIMESTAMP, which
+// lines up because logDnsQuery writes toISOString().
+export function queryClientWindowEvidence(clientIp, windowStart, windowEnd, limit = 50) {
+  return queryRaw(
+    `SELECT domain, query_type, response_code, action,
+            COUNT(*) as count,
+            MIN(ts) as first_seen,
+            MAX(ts) as last_seen
+     FROM dns_queries
+     WHERE client_ip = ?
+       AND ts >= CAST(? AS TIMESTAMP)
+       AND ts < CAST(? AS TIMESTAMP)
+     GROUP BY domain, query_type, response_code, action
+     ORDER BY count DESC, domain
+     LIMIT ?`,
+    [clientIp, windowStart, windowEnd, limit]
+  );
+}
+
+// Totals for the same window. Separate from the grouped rows above because
+// those are truncated by LIMIT, and a summary computed from a truncated list
+// would understate every count.
+export function queryClientWindowSummary(clientIp, windowStart, windowEnd) {
+  return queryRaw(
+    `SELECT COUNT(*) as total_queries,
+            COUNT(DISTINCT domain) as distinct_domains,
+            COUNT(*) FILTER (WHERE response_code = 'NXDOMAIN') as nxdomain_count,
+            COUNT(*) FILTER (WHERE action LIKE 'blocked%') as blocked_count
+     FROM dns_queries
+     WHERE client_ip = ?
+       AND ts >= CAST(? AS TIMESTAMP)
+       AND ts < CAST(? AS TIMESTAMP)`,
+    [clientIp, windowStart, windowEnd]
+  ).then(rows => rows[0] || null);
+}
+
 // Clients that queried a specific domain
 export function queryDomainClients(domain, range, limit = 50) {
   const interval = rangeToInterval(range);

@@ -8,6 +8,7 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   const learning = ref([]);
   const clientHistory = ref([]);
   const clientModel = ref(null);
+  const clientEvidence = ref(null);
   const fingerprintChanges = ref([]);
   const settings = ref(null);
   const loading = ref(false);
@@ -37,6 +38,17 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     return res.data;
   }
 
+  // The DNS traffic behind one scored window: what the client actually asked
+  // for while it was being flagged. Omit windowStart to get the most recent
+  // flagged window, which is what a detail view opens on.
+  async function fetchClientEvidence(identity, { windowStart = null, limit = 50 } = {}) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (windowStart) params.set('window_start', windowStart);
+    const res = await api.get(`/anomalies/client/${identity}/evidence?${params}`);
+    clientEvidence.value = res.data;
+    return res.data;
+  }
+
   // Recent device_type/os_family/vendor_class drift for a MAC identity --
   // e.g. a device that suddenly classifies as a different kind of hardware,
   // which can indicate spoofing or a rogue device taking over the address.
@@ -54,6 +66,7 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   function clearClient() {
     clientHistory.value = [];
     clientModel.value = null;
+    clientEvidence.value = null;
     fingerprintChanges.value = [];
   }
 
@@ -100,8 +113,9 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   }
 
   return {
-    summary, events, learning, clientHistory, clientModel, fingerprintChanges, settings, loading,
-    fetchSummary, fetchEvents, fetchClientHistory, fetchClientModel, fetchFingerprintChanges, clearClient,
+    summary, events, learning, clientHistory, clientModel, clientEvidence, fingerprintChanges, settings, loading,
+    fetchSummary, fetchEvents, fetchClientHistory, fetchClientModel, fetchClientEvidence,
+    fetchFingerprintChanges, clearClient,
     whitelistClient,
     fetchSettings, updateSettings, acknowledgeCounter, fetchAll,
   };
