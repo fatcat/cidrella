@@ -22,10 +22,10 @@ Consolidated 2026-08-19 from four places that had drifted apart: `REVIEW.md` Act
 
 ## Blocked on a branch
 
-These cannot be fixed on `dev/0.4.17` because the files live on `ipv6-phase0`. They land on
-`dev/0.5.0` after that branch merges.
+**This section is empty as of 2026-09-12.** The files are all present on `dev/0.5.0` now, so
+nothing here was still blocked. Two items were fixed and one moved to design work below.
 
-### `parseV6` accepts a dotted-quad before `::`
+### ~~`parseV6` accepts a dotted-quad before `::`~~ [FIXED 2026-09-12, `a6e7537`]
 
 `server/src/utils/address.js`. RFC 4291 permits an embedded IPv4 literal only in the trailing
 two hextets. Verified against the real code: `canonicalizeIp('1.2.3.4::')` returns `'::102:304'`,
@@ -36,9 +36,13 @@ identical to the correct `'::1.2.3.4'`, instead of `null`. Cause: after the v4 t
 which short-circuits before this path, and it is the only production caller. It becomes reachable
 the moment the IPAM side starts parsing v6, which is **IPv6 Phase 1**.
 
-Fix with a test for v4-before-`::`, which no existing test covers.
+**[FIXED]** Guarded on `hasDoubleColon && tailParts.length === 0`, the exact "quad came from
+the head with a `::` after it" case. Four tests added, including one asserting the malformed
+form no longer canonicalizes onto the valid one, and one walking the legitimate spellings
+(`0:0:0:0:0:0:1.2.3.4` has no `::` at all, which is what stops the guard being written as the
+simpler, wrong tailParts-only check). Mutation tested 3 ways.
 
-### `client/vite.config.js` `server.fs.allow: ['..']` needs narrowing, not deleting
+### ~~`client/vite.config.js` `server.fs.allow: ['..']` needs narrowing~~ [FIXED 2026-09-12, `fb9f50a`]
 
 Validated 2026-08-18, and two earlier guesses about it were wrong in opposite directions.
 
@@ -57,22 +61,38 @@ breaks `npm run dev:client`.**
 can fetch `/@fs/<repo>/server/data/cidrella.db` (6.4MB). `.buildignore` excludes `/data/` from
 releases precisely because it leaks dev credentials and audit log contents.
 
-**Proposed fix**: `fs: { allow: ['.', '../server/src/utils'] }`. Verify by actually starting
-`npm run dev:client` after the change: if `fs.allow` replaces rather than extends the implicit
-project-root grant, the client root entry is load-bearing. A build will not exercise this.
+**[FIXED]** Applied exactly as proposed, `fs: { allow: ['.', '../server/src/utils'] }`. The
+exposure was confirmed live first, not assumed: `GET /@fs/<repo>/server/data/cidrella.db`
+returned HTTP 200 and all 6,717,440 bytes. After the change the database, root `package.json`,
+`.git/config` and `server/src/index.js` all return 403 while `server/src/utils/address.js`
+still returns 200 and the app runs. The client root entry IS load-bearing, as suspected.
 
-### Duplicate-logic audit #3
+### Duplicate-logic audit #3: the `ip.js` cross-tier pair
 
-Deferred by dependency, not stuck. Needs the shared-module seam that is IPv6 Phase 0. Detail in
-`REVIEW.md`.
+**No longer blocked, but it is design work, not a quick fix.** The shared-module seam it waited
+on exists and works: `client/shared-modules.js`, the `@shared` alias wired into both
+`vite.config.js` and `vitest.config.js`, and `client/tests/unit/utils/shared-address.test.js`
+passing.
+
+**Recovered 2026-09-12 and written down here because it was nearly lost.** `REVIEW.md` is
+gitignored and the review agent prunes resolved findings, so the numbered audit entry for #3 is
+gone. Memory recorded only its number and bucket. The surviving description is one line at
+`REVIEW.md:1011`: #3 is `ip.js`, one of the cross-tier pairs that **already diverge**, alongside
+#1 (ip-view) and #5 (scan-coverage). The same line gives the constraint that matters: diverging
+pairs "are NOT candidates for a lock-it-down test: fix them first, then lock."
+
+So the work is to reconcile the pair per the three-strategy rule in
+`docs/CROSS-TIER-DUPLICATION.md`, then add a differential test. **This touches address
+classification, so the canonical IP model gate in `AGENTS.md` applies before any change.**
 
 ---
 
 ## Open defects
 
-All LOW. None blocks a release.
+All LOW. None blocks a release. **All three resolved 2026-09-12**, one of them found to have
+been fixed already.
 
-### Four hover backgrounds never render, `--cid-surface-hover` is undefined
+### ~~Four hover backgrounds never render, `--cid-surface-hover` is undefined~~ [FIXED 2026-09-12, `d5bfea3`]
 
 Found while building the token shim in Phase 0b. The widget library never defined
 `--p-surface-hover`, so the alias does not exist and it computes to empty in all 6 themes.
@@ -88,24 +108,38 @@ Fix is one line in `client/src/ui/tokens.css`, aliasing `--cid-surface-hover` to
 theme. Held back deliberately: Phase 0b's rename commit is in `.git-blame-ignore-revs` and had to
 stay purely mechanical, and this changes rendering.
 
-`--cid-surface-content-muted` is the same shape of problem but harmless. Its two call sites in
-`NetworkDialogs.vue` both supply `var(--cid-text-muted-color)` as a fallback, so they render
-correctly today. Drop the dead first choice whenever that file is next touched.
+**[FIXED]** Aliased to `--p-content-hover-background`, the v4 name for the same thing. Verified
+across all 6 themes: it resolves everywhere, matches its source, and is distinct from the card
+colour it sits on, so the hover is visible rather than merely defined.
 
-### `dns-proxy.js` `evaluateResolvedPolicy` can name a non-blocked country
+`--cid-surface-content-muted` was dead the same way but harmless, since both call sites in
+`NetworkDialogs.vue` supplied `var(--cid-text-muted-color)` as a fallback. They now read that
+directly and the dead name is gone.
+
+### ~~`dns-proxy.js` `evaluateResolvedPolicy` can name a non-blocked country~~ [FIXED 2026-09-12, `f58ba45`]
 
 On a mixed answer set (one blocked-country IP among clean ones), `countryCodes` carries every
 looked-up code, so hit counting and the logged `blockReason` (first code) can name a country that
 was not the reason for the block. Faithful to pre-refactor behavior on both transports, and
 pinned + documented in `dns-proxy-policy.test.js`.
 
-Fix: filter `countryCodes` to the codes `shouldBlock` actually matched.
+**[FIXED]** `shouldBlock` became `blockingCountryCodes`, returning the matching subset instead
+of a boolean, and the caller narrows both `countryCodes` and `blockReason` to it. The empty-
+ruleset special case folds into the filter rather than being branched on.
 
-### `after-commit.js` `regenerate_dnsmasq_conf` restarts dnsmasq unconditionally
+The real cost was analytics, not the log line: `countryCodes` feeds `recordResolvedBlock`, which
+increments per-country hit counters, so clean countries were accumulating blocks they never
+caused. The test that pinned the old behaviour now asserts the correct one. A follow-up
+(`739ada9`) fixed a weakness the review caught in the new test: the multi-country case passed CN
+twice rather than two distinct blocked countries, because RU's only fixture IP sat inside the
+allowlisted `/24` and could never reach the lookup.
 
-Fine for request-driven mutations, where the config nearly always changed. It could adopt the
-writers' `changed` return value for restart-only-on-diff, the way boot already does.
-A follow-up, not a defect.
+### ~~`after-commit.js` `regenerate_dnsmasq_conf` restarts dnsmasq unconditionally~~ [ALREADY FIXED]
+
+**Stale entry, verified 2026-09-12.** It already does restart-on-diff and has since `88b1ec5`.
+`regenerateDnsmasqConf` returns `writeIfChanged(...)`, a boolean, and the hook reads
+`const changed = withValidatedDnsmasqUpdate(...); if (changed) restartDnsmasq();`. Exactly the
+change this entry proposed. Nothing to do.
 
 ---
 

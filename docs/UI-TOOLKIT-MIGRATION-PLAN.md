@@ -588,14 +588,29 @@ picks. Keep the curated list. If more flexibility is ever wanted, the cheap
 addition is a primary-hue override layered on top of the chosen theme using
 `updatePrimaryPalette`, not a switch to the compositional model.
 
-### Phase 4: `:deep()` selector cleanup
+### Phase 4: `:deep()` selector cleanup (NOT TRIGGERED, 2026-09-12)
 
-24 selectors reaching into vendor internals. If the new kit emits different
-class names, each needs rewriting. Small, but it is the one piece that cannot be
-shimmed, since it reaches past the shim by design.
+24 `:deep(.p-*)` selectors reaching into vendor internals, across 26 distinct
+classes. This phase is conditional, and **its condition is not met**: it reads
+"if the new kit emits different class names", and OpenVue removes none. Every
+one of the 19 classes our selectors target was confirmed present. So there is
+no work here for the OpenVue swap, and inventing some would be churn against a
+kit that already matches.
 
-Worth considering whether some of these should become proper component props or
-passthrough options instead of restored as selectors.
+The real trigger is a move to a kit outside the PrimeVue family, Element Plus
+being the documented candidate. That is when each of the 24 needs rewriting,
+and it is the one piece `tokens.css` cannot absorb, because a custom property
+cannot abstract a class name.
+
+Correction to an earlier figure in this document: the count is 24, not 46. The
+larger number came from grepping every `.p-*` mention in `client/src`, which
+also catches the global (non-`:deep`) rules in `App.vue`'s unscoped style
+block. Both are real, they just measure different things, and 24 is the number
+that matters for this phase.
+
+Still worth considering when it does trigger: whether some of these should
+become component props or passthrough options rather than being restored as
+selectors.
 
 ### Phase 5: dashboard grid (separate workstream, adoptable now)
 
