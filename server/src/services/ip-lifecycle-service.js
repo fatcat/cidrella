@@ -14,7 +14,7 @@ import {
 import { findEnabledScopeForIp } from '../models/dhcp-scope.js';
 import { isValidIpv4, parseCidr, ipToLong } from '../utils/ip.js';
 import { deleteDynamicDhcpRecordsByIps } from '../models/dns-record.js';
-import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease.js';
+import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease-queries.js';
 import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
 import { leaseExpiryMs } from '../utils/lease-sql.js';
 import { parseIp } from '../utils/address.js';
