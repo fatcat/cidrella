@@ -56,73 +56,7 @@
       </div>
     </section>
 
-    <section class="panel map-panel" v-if="mode === 'sample'">
-      <div class="panel-head">
-        <h2>Triage map, last 24 hours</h2>
-        <span class="panel-note">One dot per device. Click a dot to open it.</span>
-      </div>
-      <div class="map-body">
-        <svg class="map-svg" :viewBox="`0 0 ${MAP.w} ${MAP.h}`" role="img"
-             aria-label="Devices plotted by deviation from their own baseline against threat shape">
-          <rect :x="mapX(50)" :y="mapY(100)" :width="mapX(100) - mapX(50)" :height="mapY(50) - mapY(100)"
-                fill="var(--p-red-400)" opacity="0.07" />
-          <g v-for="tick in MAP_TICKS" :key="tick">
-            <line :x1="mapX(tick)" :y1="mapY(0)" :x2="mapX(tick)" :y2="mapY(100)"
-                  stroke="var(--preview-line)" stroke-width="1" />
-            <line :x1="mapX(0)" :y1="mapY(tick)" :x2="mapX(100)" :y2="mapY(tick)"
-                  stroke="var(--preview-line)" stroke-width="1" />
-            <text :x="mapX(tick)" :y="MAP.h - MAP.pad.b + 16" text-anchor="middle"
-                  class="axis-num">{{ tick }}</text>
-            <text :x="MAP.pad.l - 9" :y="mapY(tick) + 3" text-anchor="end" class="axis-num">{{ tick }}</text>
-          </g>
-          <text :x="(mapX(0) + mapX(100)) / 2" :y="MAP.h - 8" text-anchor="middle" class="axis-label">
-            Deviation from this device's own baseline
-          </text>
-          <text :x="14" :y="(mapY(0) + mapY(100)) / 2" text-anchor="middle" class="axis-label"
-                :transform="`rotate(-90 14 ${(mapY(0) + mapY(100)) / 2})`">
-            Threat shape index
-          </text>
-          <text :x="mapX(98)" :y="mapY(96)" text-anchor="end" class="quad-label hot">INVESTIGATE</text>
-          <text :x="mapX(2)" :y="mapY(96)" class="quad-label">Suspicious, steady</text>
-          <text :x="mapX(98)" :y="mapY(2)" text-anchor="end" class="quad-label">Just unusual</text>
-
-          <circle v-for="point in mapPoints" :key="point.id"
-                  class="map-dot" :class="{ selected: point.selected, actionable: point.actionable }"
-                  :cx="point.cx" :cy="point.cy" :r="point.r"
-                  :fill="point.color" :fill-opacity="point.actionable ? 0.85 : 0.45"
-                  :stroke="point.ringed ? point.color : 'transparent'" stroke-width="1.5" stroke-opacity="0.55"
-                  data-track="anomaly-preview-map-dot" @click="selectDevice(point.id)">
-            <title>{{ point.title }}</title>
-          </circle>
-          <text :x="leadLabel.x" :y="leadLabel.y" text-anchor="end" class="lead-label">{{ leadLabel.text }}</text>
-        </svg>
-
-        <div class="map-legend">
-          <div class="legend-row" v-for="entry in LEGEND" :key="entry.band">
-            <span class="legend-swatch" :style="{ background: BAND_COLORS[entry.band] }"></span>
-            <span>
-              <b>{{ entry.title }}</b>
-              <small>{{ entry.body }}</small>
-            </span>
-          </div>
-          <p class="legend-foot">
-            Dot size is query volume in the window. A ring means the device was flagged on 3 or more
-            of the last 24 windows.
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel missing-axis" v-else>
-      <i class="pi pi-info-circle" />
-      <p>
-        The triage map is sample only. Its vertical axis is a threat shape score over entropy, NXDOMAIN rate,
-        name length, subdomain depth and block rate, and nothing computes that yet. Switch back to Sample to
-        see the shape of it.
-      </p>
-    </section>
-
-    <div class="board">
+    <div class="triage-row">
       <section class="panel queue-panel" aria-label="Triage queue">
         <div class="panel-head">
           <h2>Queue</h2>
@@ -142,34 +76,130 @@
           No devices match this filter.
         </div>
         <div class="queue" v-else>
-          <button v-for="row in queueRows" :key="row.id" type="button" class="queue-row"
-                  :aria-current="row.id === selectedId" data-track="anomaly-preview-queue-row"
-                  @click="selectDevice(row.id)">
-            <span class="row-stripe" :style="{ background: BAND_COLORS[row.band] }"></span>
-            <span class="row-main">
-              <span class="row-who">
-                <b>{{ row.name }}</b>
-                <code>{{ row.ip }}</code>
+          <div v-for="row in queueRows" :key="row.id" class="queue-item"
+               :class="{ current: row.id === selectedId }">
+            <button type="button" class="queue-row"
+                    :aria-current="row.id === selectedId" data-track="anomaly-preview-queue-row"
+                    @click="selectDevice(row.id)">
+              <span class="row-stripe" :style="{ background: BAND_COLORS[row.band] }"></span>
+              <span class="row-main">
+                <span class="row-who">
+                  <b>{{ row.name }}</b>
+                  <code>{{ row.ip }}</code>
+                </span>
+                <span class="row-why">{{ row.why }}</span>
+                <span class="row-tags" v-if="row.tags.length">
+                  <span v-for="(tag, index) in row.tags" :key="tag"
+                        class="row-tag" :class="{ hot: index === 0 && row.band === 'critical' }">{{ tag }}</span>
+                </span>
               </span>
-              <span class="row-why">{{ row.why }}</span>
-              <span class="row-tags" v-if="row.tags.length">
-                <span v-for="(tag, index) in row.tags" :key="tag"
-                      class="row-tag" :class="{ hot: index === 0 && row.band === 'critical' }">{{ tag }}</span>
+              <span class="row-right">
+                <span class="row-urgency" :style="{ color: BAND_COLORS[row.band] }">{{ row.scoreLabel }}</span>
+                <svg v-if="row.spark.length > 1" class="row-spark" viewBox="0 0 76 20" width="76" height="20"
+                     aria-hidden="true">
+                  <path :d="sparkPath(row.spark)" fill="none" :stroke="BAND_COLORS[row.band]"
+                        stroke-width="1.4" stroke-linejoin="round" transform="translate(0 1)" />
+                </svg>
               </span>
-            </span>
-            <span class="row-right">
-              <span class="row-urgency" :style="{ color: BAND_COLORS[row.band] }">{{ row.scoreLabel }}</span>
-              <svg v-if="row.spark.length > 1" class="row-spark" viewBox="0 0 76 20" width="76" height="20"
-                   aria-hidden="true">
-                <path :d="sparkPath(row.spark)" fill="none" :stroke="BAND_COLORS[row.band]"
-                      stroke-width="1.4" stroke-linejoin="round" transform="translate(0 1)" />
-              </svg>
-            </span>
-          </button>
+            </button>
+            <button type="button" class="row-detail" data-track="anomaly-preview-row-detail"
+                    :aria-label="`Show detail for ${row.name}`" @click="openDetail(row.id)">
+              <i class="pi pi-window-maximize" aria-hidden="true" />
+              <span>Detail</span>
+            </button>
+          </div>
         </div>
       </section>
 
-      <section class="panel entity-panel" aria-live="polite">
+      <section class="panel map-panel" v-if="mode === 'sample'">
+        <div class="panel-head">
+          <h2>Triage map, last 24 hours</h2>
+          <span class="panel-note">One dot per device. Click a dot to open it.</span>
+        </div>
+        <div class="map-body">
+          <svg class="map-svg" :viewBox="`0 0 ${MAP.w} ${MAP.h}`" role="img"
+               aria-label="Devices plotted by deviation from their own baseline against threat shape">
+            <rect :x="mapX(50)" :y="mapY(100)" :width="mapX(100) - mapX(50)" :height="mapY(50) - mapY(100)"
+                  fill="var(--p-red-400)" opacity="0.07" />
+            <g v-for="tick in MAP_TICKS" :key="tick">
+              <line :x1="mapX(tick)" :y1="mapY(0)" :x2="mapX(tick)" :y2="mapY(100)"
+                    stroke="var(--preview-line)" stroke-width="1" />
+              <line :x1="mapX(0)" :y1="mapY(tick)" :x2="mapX(100)" :y2="mapY(tick)"
+                    stroke="var(--preview-line)" stroke-width="1" />
+              <text :x="mapX(tick)" :y="MAP.h - MAP.pad.b + 16" text-anchor="middle"
+                    class="axis-num">{{ tick }}</text>
+              <text :x="MAP.pad.l - 9" :y="mapY(tick) + 3" text-anchor="end" class="axis-num">{{ tick }}</text>
+            </g>
+            <text :x="(mapX(0) + mapX(100)) / 2" :y="MAP.h - 8" text-anchor="middle" class="axis-label">
+              Deviation from this device's own baseline
+            </text>
+            <text :x="14" :y="(mapY(0) + mapY(100)) / 2" text-anchor="middle" class="axis-label"
+                  :transform="`rotate(-90 14 ${(mapY(0) + mapY(100)) / 2})`">
+              Threat shape index
+            </text>
+            <text :x="mapX(98)" :y="mapY(96)" text-anchor="end" class="quad-label hot">INVESTIGATE</text>
+            <text :x="mapX(2)" :y="mapY(96)" class="quad-label">Suspicious, steady</text>
+            <text :x="mapX(98)" :y="mapY(2)" text-anchor="end" class="quad-label">Just unusual</text>
+
+            <circle v-for="point in mapPoints" :key="point.id"
+                    class="map-dot" :class="{ selected: point.selected, actionable: point.actionable }"
+                    :cx="point.cx" :cy="point.cy" :r="point.r"
+                    :fill="point.color" :fill-opacity="point.actionable ? 0.85 : 0.45"
+                    :stroke="point.ringed ? point.color : 'transparent'" stroke-width="1.5" stroke-opacity="0.55"
+                    data-track="anomaly-preview-map-dot" @click="selectDevice(point.id)">
+              <title>{{ point.title }}</title>
+            </circle>
+            <text :x="leadLabel.x" :y="leadLabel.y" text-anchor="end" class="lead-label">{{ leadLabel.text }}</text>
+          </svg>
+
+          <div class="map-legend">
+            <div class="legend-row" v-for="entry in LEGEND" :key="entry.band">
+              <span class="legend-swatch" :style="{ background: BAND_COLORS[entry.band] }"></span>
+              <span>
+                <b>{{ entry.title }}</b>
+                <small>{{ entry.body }}</small>
+              </span>
+            </div>
+            <p class="legend-foot">
+              Dot size is query volume in the window. A ring means the device was flagged on 3 or more
+              of the last 24 windows.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel missing-axis" v-else>
+        <i class="pi pi-info-circle" />
+        <p>
+          The triage map is sample only. Its vertical axis is a threat shape score over entropy, NXDOMAIN rate,
+          name length, subdomain depth and block rate, and nothing computes that yet. Switch back to Sample to
+          see the shape of it.
+        </p>
+      </section>
+    </div>
+
+    <div class="detail-backdrop" v-if="detailOpen" @click="closeDetail"></div>
+
+    <div class="board as-modal" v-if="detailOpen">
+      <section class="panel entity-panel" aria-live="polite" role="dialog" aria-modal="true"
+               :aria-label="`Detail for ${detail ? detail.name : 'device'}`">
+        <div class="detail-nav">
+          <button type="button" class="nav-button" :disabled="!hasPrev" data-track="anomaly-preview-detail-prev"
+                  @click="stepDetail(-1)">
+            <i class="pi pi-chevron-left" aria-hidden="true" /> Previous
+          </button>
+          <button type="button" class="nav-button" :disabled="!hasNext" data-track="anomaly-preview-detail-next"
+                  @click="stepDetail(1)">
+            Next <i class="pi pi-chevron-right" aria-hidden="true" />
+          </button>
+          <span class="detail-pos" v-if="detailIndex >= 0">{{ detailIndex + 1 }} of {{ queueRows.length }}</span>
+          <button type="button" class="nav-close" aria-label="Close detail" data-track="anomaly-preview-detail-close"
+                  @click="closeDetail">
+            <i class="pi pi-times" aria-hidden="true" />
+          </button>
+        </div>
+
+        <div class="entity-body">
         <div class="queue-state" v-if="!detail">
           {{ mode === 'live' ? 'Select a flagged device to see its history and evidence.' : 'Select a device.' }}
         </div>
@@ -354,6 +384,7 @@
                     @click="notify('Retrain baseline')">Retrain baseline</button>
           </div>
         </template>
+        </div>
       </section>
     </div>
 
@@ -691,6 +722,7 @@ function rcodeClass(response) {
 // ── data loading ─────────────────────────────────────────────────────
 async function setMode(next) {
   if (mode.value === next) return;
+  detailOpen.value = false;
   mode.value = next;
   selectedId.value = next === 'sample' ? REVIEW_DEVICES[0].id : null;
   store.clearClient();
@@ -729,22 +761,56 @@ async function selectLive(identity) {
   }
 }
 
+// Returns whether the device was actually selected. Callers that open the
+// detail dialog need to know: a refused selection leaves the previous device
+// in place, and opening on that would show the wrong device's evidence.
 function selectDevice(id) {
   if (mode.value === 'live') {
     const row = liveRows.value.find(entry => entry.id === id);
     if (!row?.reviewable) {
       notify('That device is still learning its baseline, there is nothing scored to review.');
-      return;
+      return false;
     }
     selectLive(id);
-    return;
+    return true;
   }
   if (!REVIEW_DEVICES.some(device => device.id === id)) {
     notify('That device is within baseline, nothing to review.');
-    return;
+    return false;
   }
   selectedId.value = id;
+  return true;
 }
+
+// The detail card doubles as a dialog. Next and previous walk the queue as it
+// is currently filtered, which is the list the user is looking at, so a filter
+// change re-bounds them rather than stepping through hidden devices.
+const detailOpen = ref(false);
+const detailIndex = computed(() => queueRows.value.findIndex(row => row.id === selectedId.value));
+const hasPrev = computed(() => detailIndex.value > 0);
+const hasNext = computed(() => detailIndex.value >= 0 && detailIndex.value < queueRows.value.length - 1);
+
+function openDetail(id) {
+  if (selectDevice(id)) detailOpen.value = true;
+}
+
+function closeDetail() {
+  detailOpen.value = false;
+}
+
+function stepDetail(delta) {
+  const next = queueRows.value[detailIndex.value + delta];
+  if (next) selectDevice(next.id);
+}
+
+function onDialogKeydown(event) {
+  if (!detailOpen.value) return;
+  if (event.key === 'Escape') { closeDetail(); return; }
+  if (event.key === 'ArrowLeft') stepDetail(-1);
+  if (event.key === 'ArrowRight') stepDetail(1);
+}
+window.addEventListener('keydown', onDialogKeydown);
+onUnmounted(() => window.removeEventListener('keydown', onDialogKeydown));
 
 function notify(message) {
   notice.value = message.endsWith('.') ? message : `${message}: concept only, nothing was changed.`;
@@ -772,6 +838,10 @@ onUnmounted(() => clearTimeout(noticeTimer));
   --preview-accent-soft: color-mix(in srgb, var(--preview-accent) 12%, transparent);
   --preview-line: color-mix(in srgb, var(--p-surface-border) 82%, transparent);
   --preview-muted: var(--p-text-muted-color);
+  --triage-row-min: 22rem;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   min-height: 100%;
   padding: 1.1rem;
   box-sizing: border-box;
@@ -780,7 +850,6 @@ onUnmounted(() => clearTimeout(noticeTimer));
     radial-gradient(circle at 80% 0%, color-mix(in srgb, var(--preview-accent) 7%, transparent), transparent 27rem),
     var(--p-surface-ground);
 }
-.anomaly-preview > * { max-width: 1680px; margin-left: auto; margin-right: auto; }
 button { font: inherit; color: inherit; }
 
 .preview-banner { display: flex; align-items: flex-end; justify-content: space-between; gap: 2rem; margin-bottom: 1rem; }
@@ -813,12 +882,12 @@ button { font: inherit; color: inherit; }
 .panel-head h2 { margin: 0; font-size: var(--app-fs-base); font-weight: 700; }
 .panel-note { color: var(--preview-muted); font-size: var(--app-fs-sm); }
 
-.map-panel, .missing-axis { margin-bottom: 1rem; }
+.map-panel, .missing-axis { margin-bottom: 0; }
 .missing-axis { display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.8rem 1rem; }
 .missing-axis i { margin-top: 0.15rem; color: var(--preview-accent); }
 .missing-axis p { margin: 0; max-width: 90ch; color: var(--preview-muted); font-size: var(--app-fs-sm); }
 .map-body { display: grid; grid-template-columns: minmax(0, 1fr) 16rem; }
-.map-svg { display: block; width: 100%; height: auto; padding: 0.5rem 0.6rem 0; }
+.map-svg { display: block; box-sizing: border-box; width: 100%; height: 100%; padding: 0.5rem 0.6rem 0; }
 .map-legend { padding: 0.9rem 1rem; border-left: 1px solid var(--preview-line); }
 .legend-row { display: flex; gap: 0.55rem; align-items: flex-start; margin-bottom: 0.75rem; }
 .legend-swatch { width: 0.62rem; height: 0.62rem; margin-top: 0.25rem; border-radius: 2px; flex: none; }
@@ -833,7 +902,52 @@ button { font: inherit; color: inherit; }
 .map-dot.actionable { cursor: pointer; }
 .map-dot.selected { stroke: var(--p-text-color); stroke-width: 2.5; stroke-opacity: 1; }
 
-.board { display: grid; grid-template-columns: 23rem minmax(0, 1fr); gap: 1rem; align-items: start; margin-bottom: 1rem; }
+/* One height shared by the queue and the map, taken from whatever the window
+   leaves over. Both panels are flex columns that fill it, and the queue list
+   scrolls inside its own panel rather than stretching the row. */
+.triage-row { display: grid; grid-template-columns: 27rem minmax(0, 1fr); gap: 1rem; align-items: stretch; flex: 1; min-height: var(--triage-row-min); margin-bottom: 1rem; }
+.triage-row > .panel { display: flex; min-height: 0; flex-direction: column; overflow: hidden; }
+.map-body { flex: 1; min-height: 0; }
+.map-legend { overflow-y: auto; }
+/* Live mode swaps the map for a short note. Stretching that to the full row
+   height would just be a tall empty box, so let it keep its own size. */
+.triage-row > .missing-axis { align-self: start; }
+.board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; margin-bottom: 1rem; }
+
+/* The detail card is the same element whether it is sitting at the bottom of
+   the page or opened as a dialog, so there is one copy of its markup. Opening
+   it just lifts it out with position: fixed. */
+.detail-backdrop {
+  position: fixed; inset: 0; z-index: 40;
+  background: color-mix(in srgb, #000 55%, transparent);
+}
+.board.as-modal {
+  position: fixed; z-index: 41; top: 5vh; left: 10vw; width: 80vw; height: 90vh; margin: 0;
+}
+.board.as-modal .entity-panel {
+  display: flex; min-height: 0; height: 100%; flex-direction: column; overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+/* Only the card body scrolls, so the nav stays put while reading a long one. */
+.board.as-modal .entity-body { flex: 1; min-height: 0; overflow-y: auto; }
+.detail-nav {
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.55rem 0.7rem;
+  border-bottom: 1px solid var(--preview-line); background: var(--p-surface-ground);
+}
+.nav-button {
+  display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.3rem 0.6rem;
+  border: 1px solid var(--preview-line); border-radius: 7px; background: var(--p-surface-card);
+  font-size: var(--app-fs-sm); font-weight: 700; cursor: pointer;
+}
+.nav-button:hover:not(:disabled) { border-color: var(--preview-accent); color: var(--preview-accent); }
+.nav-button:disabled { opacity: 0.45; cursor: default; }
+.detail-pos { color: var(--preview-muted); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
+.nav-close {
+  display: inline-flex; align-items: center; justify-content: center; width: 1.9rem; height: 1.9rem;
+  margin-left: auto; border: 1px solid var(--preview-line); border-radius: 7px;
+  background: var(--p-surface-card); color: var(--preview-muted); cursor: pointer;
+}
+.nav-close:hover { border-color: var(--preview-accent); color: var(--preview-accent); }
 
 .queue-filters { display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0.6rem 0.75rem; border-bottom: 1px solid var(--preview-line); }
 .chip { padding: 0.15rem 0.6rem; border: 1px solid var(--preview-line); border-radius: 999px; background: transparent; color: var(--preview-muted); font-size: 0.72rem; cursor: pointer; }
@@ -844,14 +958,23 @@ button { font: inherit; color: inherit; }
 .queue-state.error, .evidence-state.error { color: var(--p-red-400); }
 .evidence-state { padding: 0.6rem 0; }
 
-.queue { max-height: 38rem; overflow-y: auto; }
+.queue { flex: 1; min-height: 0; overflow-y: auto; }
+.queue-item { display: flex; align-items: stretch; border-bottom: 1px solid var(--preview-line); }
+.queue-item:hover { background: color-mix(in srgb, var(--p-surface-ground) 60%, transparent); }
+.queue-item.current { background: var(--preview-accent-soft); }
 .queue-row {
-  display: grid; grid-template-columns: 4px 1fr auto; gap: 0.6rem; width: 100%;
-  padding: 0.65rem 0.85rem 0.65rem 0; border: 0; border-bottom: 1px solid var(--preview-line);
+  display: grid; grid-template-columns: 4px 1fr auto; gap: 0.6rem; min-width: 0; flex: 1;
+  padding: 0.65rem 0.85rem 0.65rem 0; border: 0;
   background: transparent; text-align: left; cursor: pointer;
 }
-.queue-row:hover { background: color-mix(in srgb, var(--p-surface-ground) 60%, transparent); }
-.queue-row[aria-current="true"] { background: var(--preview-accent-soft); }
+.row-detail {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.22rem;
+  width: 4rem; flex: none; padding: 0 0.3rem; border: 0; border-left: 1px solid var(--preview-line);
+  background: transparent; color: var(--preview-muted); font-size: 0.6rem; font-weight: 700;
+  letter-spacing: 0.04em; cursor: pointer;
+}
+.row-detail i { font-size: 0.78rem; }
+.row-detail:hover { color: var(--preview-accent); background: var(--preview-accent-soft); }
 .row-stripe { border-radius: 0 2px 2px 0; }
 .row-who { display: flex; align-items: baseline; gap: 0.4rem; min-width: 0; }
 .row-who b { overflow: hidden; font-size: var(--app-fs-sm); font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
@@ -927,6 +1050,10 @@ td.qtype { color: var(--preview-muted); font-family: var(--font-mono, monospace)
 .preview-toast.visible { opacity: 1; }
 
 @media (max-width: 1180px) {
+  .anomaly-preview { height: auto; }
+  .board.as-modal { top: 2vh; left: 2vw; width: 96vw; height: 96vh; }
+  .triage-row { grid-template-columns: 1fr; flex: none; }
+  .triage-row > .panel { max-height: 34rem; }
   .board { grid-template-columns: 1fr; }
   .map-body { grid-template-columns: 1fr; }
   .map-legend { border-left: 0; border-top: 1px solid var(--preview-line); }

@@ -54,6 +54,15 @@ async function goLive(wrapper) {
   return wrapper;
 }
 
+// The detail card lives in a dialog and nowhere else, so anything asserting on
+// its contents has to open it. Row 0 is the worst-scoring device, which is the
+// one the fixtures below describe.
+async function openDetail(wrapper) {
+  await wrapper.findAll('.row-detail')[0].trigger('click');
+  await flushPromises();
+  return wrapper;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   api.get.mockImplementation((url) => {
@@ -96,13 +105,13 @@ describe('anomaly triage preview, live mode', () => {
   });
 
   it('reports a blocked query as BLOCKED even though its response code is NOERROR', async () => {
-    const wrapper = await goLive(mountPreview());
+    const wrapper = await openDetail(await goLive(mountPreview()));
     const codes = wrapper.findAll('.evidence-table .rcode').map(node => node.text());
     expect(codes).toEqual(['BLOCKED', 'NXDOMAIN']);
   });
 
   it('says the peer median is not collected rather than leaving the cell empty', async () => {
-    const wrapper = await goLive(mountPreview());
+    const wrapper = await openDetail(await goLive(mountPreview()));
     expect(wrapper.find('.signal-table').text()).toContain('not collected');
   });
 
@@ -129,7 +138,7 @@ describe('anomaly triage preview, live mode', () => {
       return Promise.resolve({ data: [WORST] });
     });
 
-    const wrapper = await goLive(mountPreview());
+    const wrapper = await openDetail(await goLive(mountPreview()));
     expect(wrapper.find('.evidence-state').text()).toContain('older than the 7 day analytics retention');
   });
 });
