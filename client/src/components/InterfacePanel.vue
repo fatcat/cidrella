@@ -460,10 +460,11 @@ onMounted(loadInterfaces);
   width: 6em;
   padding: 0.375rem 0.5rem;
   font-family: var(--font-mono, monospace);
-  /* Use PrimeVue v4 form-field tokens. The older --p-inputtext-* tokens are
-     unset in this build, so they fell back to the light --cid-surface-0, giving a
-     white field (with light text) that's invisible on dark themes. The
-     form-field tokens adapt to light/dark mode like the real InputText. */
+  /* Use the form-field tokens. The vendor's older inputtext tokens
+     (--p-inputtext-*) are unset in this build, so these fell back to the light
+     end of the surface ramp, giving a white field with light text that was
+     invisible on dark themes. The form-field tokens track light/dark the way
+     the real InputText does. */
   background: var(--cid-form-field-background, var(--cid-content-background));
   color: var(--cid-form-field-color, var(--cid-text-color));
   border: 1px solid var(--cid-form-field-border-color, var(--cid-surface-300));

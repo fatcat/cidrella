@@ -19,10 +19,10 @@ body {
 }
 
 /*
- * Custom surface hierarchy variables.
- * PrimeVue v4 Aura does NOT define --cid-surface-ground, --cid-surface-card,
- * or --cid-surface-border. We define them here using PrimeVue's numbered
- * surface palette tokens (--cid-surface-0 through --cid-surface-950).
+ * Semantic surface hierarchy. These four are ours: the widget library ships a
+ * numbered surface ramp but no named elevation steps, so we name them here.
+ * They build on the --cid-surface-* aliases in ui/tokens.css rather than
+ * reading vendor tokens directly, which is what keeps App.vue free of --p-*.
  *
  * Hierarchy (light): ground (gray-100) < card (white) < content (white)
  * Hierarchy (dark):  ground (zinc-950) < card (zinc-900) < content (zinc-800)

@@ -36,10 +36,13 @@ function cellColour({ typeClass, functionalRole = null, rangeColour = null }) {
   if (functionalRole === 'Gateway') return 'var(--cid-gateway)';
   if (typeClass === 'type-rogue') return 'var(--cid-rogue)';
   if (typeClass === 'type-system') return 'var(--cid-system)';
-  return rangeColour || 'var(--p-surface-200)';
+  return rangeColour || 'var(--cid-surface-200)';
 }
 
-const POOL_TINT = 'var(--p-dhcp-pool)';
+// Opaque stand-in for whatever colour a DHCP range supplies. The assertions
+// below only care that it differs from the address-type colours, so this is
+// deliberately not a real token.
+const POOL_TINT = 'rgb(1 2 3)';
 
 describe('grid cell colour can express what the classifier emits', () => {
   it('paints a rogue address distinctly from free space', () => {
