@@ -13,6 +13,10 @@
 # formatting only. See the "Formatting" section of CLAUDE.md.
 b9dd88948f7e0ab6dd73626b41135e78dbc57921
 
+# Design-token rename, --p-* to --cid-*, 2026-09-12. 57 files, 819 lines,
+# substitution only. See docs/UI-TOOLKIT-MIGRATION-PLAN.md Phase 0b.
+5244c85b40b6f95bac198f7f51b3cc0ada0f9cf0
+
 # Second Prettier pass, 2026-09-12. 6 files the first pass left unstable
 # (method chain with an object literal argument). Formatting only.
 5e5a2a0a2990d0f88e334529575375d6a1ef3132
