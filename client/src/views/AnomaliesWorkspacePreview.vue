@@ -182,7 +182,7 @@
               :y="mapY(100)"
               :width="mapX(100) - mapX(50)"
               :height="mapY(50) - mapY(100)"
-              fill="var(--p-red-400)"
+              fill="var(--cid-red-400)"
               opacity="0.07"
             />
             <g v-for="tick in MAP_TICKS" :key="tick">
@@ -391,7 +391,7 @@
                   :y="chart.bandTop"
                   :width="CHART.w - CHART.pad.l - CHART.pad.r"
                   :height="chart.bandHeight"
-                  fill="var(--p-green-400)"
+                  fill="var(--cid-green-400)"
                   opacity="0.13"
                 />
                 <text :x="CHART.pad.l + 6" :y="chart.bandTop + 12" class="axis-num">
@@ -415,7 +415,7 @@
                   :y1="chart.thresholdY"
                   :x2="CHART.w - CHART.pad.r"
                   :y2="chart.thresholdY"
-                  stroke="var(--p-orange-400)"
+                  stroke="var(--cid-orange-400)"
                   stroke-width="1.2"
                   stroke-dasharray="5 4"
                 />
@@ -447,7 +447,7 @@
                   :cy="chart.last.y"
                   r="4.2"
                   :fill="BAND_COLORS[detail.band]"
-                  stroke="var(--p-surface-card)"
+                  stroke="var(--cid-surface-card)"
                   stroke-width="1.5"
                 />
                 <text
@@ -1163,10 +1163,10 @@ onUnmounted(() => clearTimeout(noticeTimer));
 
 <style scoped>
 .anomaly-preview {
-  --preview-accent: var(--p-primary-color);
+  --preview-accent: var(--cid-primary-color);
   --preview-accent-soft: color-mix(in srgb, var(--preview-accent) 12%, transparent);
-  --preview-line: color-mix(in srgb, var(--p-surface-border) 82%, transparent);
-  --preview-muted: var(--p-text-muted-color);
+  --preview-line: color-mix(in srgb, var(--cid-surface-border) 82%, transparent);
+  --preview-muted: var(--cid-text-muted-color);
   --triage-row-min: 22rem;
   display: flex;
   flex-direction: column;
@@ -1174,14 +1174,14 @@ onUnmounted(() => clearTimeout(noticeTimer));
   min-height: 100%;
   padding: 1.1rem;
   box-sizing: border-box;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   background:
     radial-gradient(
       circle at 80% 0%,
       color-mix(in srgb, var(--preview-accent) 7%, transparent),
       transparent 27rem
     ),
-    var(--p-surface-ground);
+    var(--cid-surface-ground);
 }
 button {
   font: inherit;
@@ -1207,7 +1207,7 @@ button {
   font-size: var(--app-fs-base);
 }
 .preview-banner b {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-weight: 700;
 }
 .preview-kicker {
@@ -1240,7 +1240,7 @@ button {
   padding: 0.15rem;
   border: 1px solid var(--preview-line);
   border-radius: 999px;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
 }
 .mode-switch button {
   padding: 0.3rem 0.8rem;
@@ -1253,7 +1253,7 @@ button {
 }
 .mode-switch button[aria-pressed='true'] {
   background: var(--preview-accent-soft);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-weight: 700;
 }
 
@@ -1261,7 +1261,7 @@ button {
   display: flex;
   flex-wrap: wrap;
   margin-bottom: 1rem;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   border: 1px solid var(--preview-line);
   border-radius: 10px;
   overflow: hidden;
@@ -1296,17 +1296,17 @@ button {
   font-weight: 400;
 }
 .status-rail .v.lead {
-  color: var(--p-red-400);
+  color: var(--cid-red-400);
 }
 .status-rail .v.ok {
-  color: var(--p-green-400);
+  color: var(--cid-green-400);
 }
 .status-rail .v.warn {
-  color: var(--p-orange-400);
+  color: var(--cid-orange-400);
 }
 
 .panel {
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   border: 1px solid var(--preview-line);
   border-radius: 12px;
 }
@@ -1406,7 +1406,7 @@ button {
   font-size: 11px;
 }
 .quad-label.hot {
-  fill: var(--p-red-400);
+  fill: var(--cid-red-400);
   font-weight: 700;
 }
 .lead-label {
@@ -1418,7 +1418,7 @@ button {
   cursor: pointer;
 }
 .map-dot.selected {
-  stroke: var(--p-text-color);
+  stroke: var(--cid-text-color);
   stroke-width: 2.5;
   stroke-opacity: 1;
 }
@@ -1499,7 +1499,7 @@ button {
   gap: 0.5rem;
   padding: 0.55rem 0.7rem;
   border-bottom: 1px solid var(--preview-line);
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 .nav-button {
   display: inline-flex;
@@ -1508,7 +1508,7 @@ button {
   padding: 0.3rem 0.6rem;
   border: 1px solid var(--preview-line);
   border-radius: 7px;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   font-size: var(--app-fs-sm);
   font-weight: 700;
   cursor: pointer;
@@ -1535,7 +1535,7 @@ button {
   margin-left: auto;
   border: 1px solid var(--preview-line);
   border-radius: 7px;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   color: var(--preview-muted);
   cursor: pointer;
 }
@@ -1562,12 +1562,12 @@ button {
 }
 .chip:hover {
   border-color: var(--preview-accent);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .chip[aria-pressed='true'] {
   background: var(--preview-accent-soft);
   border-color: var(--preview-accent);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-weight: 700;
 }
 
@@ -1579,7 +1579,7 @@ button {
 }
 .queue-state.error,
 .evidence-state.error {
-  color: var(--p-red-400);
+  color: var(--cid-red-400);
 }
 .evidence-state {
   padding: 0.6rem 0;
@@ -1596,7 +1596,7 @@ button {
   border-bottom: 1px solid var(--preview-line);
 }
 .queue-item:hover {
-  background: color-mix(in srgb, var(--p-surface-ground) 60%, transparent);
+  background: color-mix(in srgb, var(--cid-surface-ground) 60%, transparent);
 }
 .queue-item.current {
   background: var(--preview-accent-soft);
@@ -1679,8 +1679,8 @@ button {
   font-size: 0.62rem;
 }
 .row-tag.hot {
-  border-color: var(--p-red-400);
-  color: var(--p-red-400);
+  border-color: var(--cid-red-400);
+  color: var(--cid-red-400);
 }
 .row-right {
   display: flex;
@@ -1787,7 +1787,7 @@ button {
   height: auto;
 }
 .threshold-label {
-  fill: var(--p-orange-400);
+  fill: var(--cid-orange-400);
   font-size: 10px;
 }
 
@@ -1800,7 +1800,7 @@ button {
   font-size: 0.75rem;
 }
 .evidence-summary b {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-family: var(--font-mono, monospace);
   font-variant-numeric: tabular-nums;
 }
@@ -1891,12 +1891,12 @@ td.qtype {
   font-size: 0.66rem;
 }
 .rcode.nx {
-  border-color: var(--p-orange-400);
-  color: var(--p-orange-400);
+  border-color: var(--cid-orange-400);
+  color: var(--cid-orange-400);
 }
 .rcode.blocked {
-  border-color: var(--p-purple-400);
-  color: var(--p-purple-400);
+  border-color: var(--cid-purple-400);
+  color: var(--cid-purple-400);
 }
 
 .entity-actions {
@@ -1909,7 +1909,7 @@ td.qtype {
   padding: 0.35rem 0.7rem;
   border: 1px solid var(--preview-line);
   border-radius: 6px;
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
   font-size: 0.75rem;
   cursor: pointer;
 }
@@ -1919,7 +1919,7 @@ td.qtype {
 .action.primary {
   border-color: var(--preview-accent);
   background: var(--preview-accent);
-  color: var(--p-primary-contrast-color);
+  color: var(--cid-primary-contrast-color);
   font-weight: 700;
 }
 
@@ -1957,8 +1957,8 @@ td.qtype {
   transform: translateX(-50%);
   padding: 0.5rem 1rem;
   border-radius: 7px;
-  background: var(--p-text-color);
-  color: var(--p-surface-ground);
+  background: var(--cid-text-color);
+  color: var(--cid-surface-ground);
   font-size: var(--app-fs-sm);
   opacity: 0;
   pointer-events: none;

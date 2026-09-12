@@ -6,13 +6,13 @@
   align-items: center;
   justify-content: center;
   min-height: 100vh;
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 
 .login-card,
 .setup-card {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 12px;
   padding: 2.5rem;
   width: 100%;
@@ -28,7 +28,7 @@
 
 .subtitle {
   text-align: center;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 0 1.5rem 0;
 }
 

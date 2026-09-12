@@ -83,13 +83,13 @@ onMounted(async () => {
 
 <style scoped>
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .content-card {
   margin: 0;
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 .content-card h3 {
@@ -108,7 +108,7 @@ onMounted(async () => {
 .field-help {
   display: block;
   margin-top: 0.4rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
   line-height: 1.4;
 }

@@ -155,7 +155,7 @@ async function addNetwork(row) {
   margin: 0;
 }
 .subtitle {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0.25rem 0 1.5rem 0;
 }
 .calc-form {
@@ -172,8 +172,8 @@ async function addNetwork(row) {
   font-weight: 600;
 }
 .parent-info {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 1rem 1.25rem;
   margin-bottom: 1.5rem;
@@ -189,7 +189,7 @@ async function addNetwork(row) {
   font-size: 0.9rem;
 }
 .lbl {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: inherit;
 }
 .results {
@@ -205,7 +205,7 @@ async function addNetwork(row) {
 }
 .error-msg {
   margin-top: 1rem;
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-weight: 600;
 }
 </style>

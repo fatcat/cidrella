@@ -470,11 +470,11 @@ onMounted(async () => {
   font-size: 0.9rem;
 }
 .country-item:hover {
-  background: var(--p-surface-hover);
+  background: var(--cid-surface-hover);
 }
 .country-code {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: monospace;
 }
 </style>

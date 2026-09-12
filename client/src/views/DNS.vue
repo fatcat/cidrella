@@ -639,7 +639,7 @@ onUnmounted(() => {
 }
 .section-hint {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 0 0.75rem;
   line-height: 1.4;
 }
@@ -659,12 +659,12 @@ onUnmounted(() => {
   margin-top: 0.25rem;
 }
 .fwd-testing {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-sm);
 }
 .forwarder-hint {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0.25rem 0 0;
   line-height: 1.4;
 }
@@ -691,8 +691,8 @@ onUnmounted(() => {
   width: 1rem;
   height: 1rem;
   border-radius: 50%;
-  background: var(--p-surface-200);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-200);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
   font-weight: 700;
   cursor: help;
@@ -702,7 +702,7 @@ onUnmounted(() => {
 .field-help {
   display: block;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin-top: 0.2rem;
 }
 .dnssec-form {
@@ -722,12 +722,12 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.4rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0;
   line-height: 1.4;
 }
 .dnssec-warn {
-  color: var(--p-red-400);
+  color: var(--cid-red-400);
 }
 .recursion-row {
   display: flex;
@@ -740,7 +740,7 @@ onUnmounted(() => {
   opacity: 0.45;
 }
 .recursion-note {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-style: italic;
 }
 .enc-form {

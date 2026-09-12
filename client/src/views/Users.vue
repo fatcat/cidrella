@@ -187,7 +187,7 @@
     >
       <div class="password-reveal">
         <p class="password-warning">
-          <i class="pi pi-exclamation-triangle" style="color: var(--p-orange-500)"></i>
+          <i class="pi pi-exclamation-triangle" style="color: var(--cid-orange-500)"></i>
           This password will not be shown again. Copy it now and provide it to the user.
         </p>
         <div class="password-field">
@@ -300,7 +300,7 @@
     >
       <div class="password-reveal">
         <p class="password-warning">
-          <i class="pi pi-exclamation-triangle" style="color: var(--p-orange-500)"></i>
+          <i class="pi pi-exclamation-triangle" style="color: var(--cid-orange-500)"></i>
           This token will not be shown again. Copy it now.
         </p>
         <div class="password-field">
@@ -666,16 +666,16 @@ onMounted(async () => {
   font-size: 0.85rem;
 }
 .kind-tag .token-count {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 0.78rem;
 }
 .kind-plain {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .field-hint {
   display: block;
   margin-top: 0.25rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .tokens-panel {
   display: flex;
@@ -687,7 +687,7 @@ onMounted(async () => {
   flex-direction: column;
   gap: 0.75rem;
   padding-top: 0.75rem;
-  border-top: 1px solid var(--p-content-border-color);
+  border-top: 1px solid var(--cid-content-border-color);
 }
 
 .card-header {
@@ -719,12 +719,12 @@ onMounted(async () => {
 }
 
 .badge-warn {
-  color: var(--p-orange-500);
+  color: var(--cid-orange-500);
   font-weight: 500;
 }
 
 .badge-ok {
-  color: var(--p-green-500);
+  color: var(--cid-green-500);
 }
 
 .password-reveal {
@@ -755,7 +755,7 @@ onMounted(async () => {
 .password-note {
   margin: 0;
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .text-sm {
@@ -763,6 +763,6 @@ onMounted(async () => {
 }
 
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>

@@ -171,7 +171,7 @@ const cells = computed(() => {
   align-items: center;
   gap: 0.4rem;
   font-size: 0.66rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin-top: 0.4rem;
 }
 .anomaly-heatmap-legend .grad {

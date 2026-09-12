@@ -83,8 +83,8 @@ const gridColor = computed(() => {
 
 <style scoped>
 .anomaly-feature-trend {
-  background: var(--p-surface-ground);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-ground);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 0.6rem 0.7rem;
 }
@@ -97,12 +97,12 @@ const gridColor = computed(() => {
   display: flex;
   justify-content: space-between;
   font-size: 0.68rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: monospace;
   margin-top: 0.2rem;
 }
 .fvals .now {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-weight: 700;
 }
 </style>

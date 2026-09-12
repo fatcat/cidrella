@@ -69,7 +69,7 @@
           >
         </div>
         <hr
-          style="border: none; border-top: 1px solid var(--p-surface-border); margin: 0.75rem 0"
+          style="border: none; border-top: 1px solid var(--cid-surface-border); margin: 0.75rem 0"
         />
         <div class="field">
           <label>On-Demand Scan</label>
@@ -448,13 +448,13 @@ onMounted(async () => {
 
 <style scoped>
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .content-card {
   margin: 0;
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 .content-card h3 {
@@ -493,17 +493,17 @@ onMounted(async () => {
   display: block;
   margin-top: 0.25rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .template-preview {
   margin-top: 0.5rem;
   padding: 0.4rem 0.75rem;
-  background: var(--p-surface-content);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-content);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 4px;
   font-family: monospace;
   font-size: var(--app-fs-sm);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .settings-actions {
   margin-top: 1rem;
@@ -515,7 +515,7 @@ onMounted(async () => {
   width: 14px;
   height: 14px;
   border-radius: 3px;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
 }
 .form-grid {
   display: flex;

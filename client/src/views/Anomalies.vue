@@ -555,19 +555,19 @@ useAutoRefresh(refreshAll);
   gap: 0.7rem;
 }
 .tile {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 0.7rem 0.85rem;
   cursor: pointer;
   transition: border-color 0.12s;
 }
 .tile:hover {
-  border-color: var(--p-primary-color);
+  border-color: var(--cid-primary-color);
 }
 .tile.on {
-  box-shadow: 0 0 0 1px var(--p-primary-color) inset;
-  border-color: var(--p-primary-color);
+  box-shadow: 0 0 0 1px var(--cid-primary-color) inset;
+  border-color: var(--cid-primary-color);
 }
 .tile .num {
   font-family: monospace;
@@ -581,7 +581,7 @@ useAutoRefresh(refreshAll);
   font-size: 0.66rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-weight: 600;
   margin-top: 0.1rem;
 }
@@ -592,13 +592,13 @@ useAutoRefresh(refreshAll);
   color: var(--cid-status-info);
 }
 .tile.resolved .num {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .tile.flagged .num {
   color: var(--cid-status-warn);
 }
 .tile.learning .num {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 
 .board {
@@ -614,14 +614,14 @@ useAutoRefresh(refreshAll);
 }
 
 .panel {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   overflow: hidden;
 }
 .panel-head {
   padding: 0.7rem 0.9rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -634,7 +634,7 @@ useAutoRefresh(refreshAll);
 }
 .panel-head .count {
   font-size: 0.72rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: monospace;
 }
 
@@ -649,18 +649,18 @@ useAutoRefresh(refreshAll);
   row-gap: 0.15rem;
   align-items: center;
   padding: 0.6rem 0.75rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   cursor: pointer;
 }
 .host-row:last-child {
   border-bottom: none;
 }
 .host-row:hover {
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 .host-row.selected {
-  background: color-mix(in srgb, var(--p-primary-color) 12%, transparent);
-  box-shadow: inset 3px 0 0 var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--cid-primary-color);
 }
 .host-id {
   display: contents;
@@ -681,7 +681,7 @@ useAutoRefresh(refreshAll);
   min-width: 0;
   font-family: monospace;
   font-size: 0.7rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -689,7 +689,7 @@ useAutoRefresh(refreshAll);
 .spark-empty {
   font-size: 0.68rem;
   font-family: monospace;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .pattern-chip {
@@ -702,8 +702,8 @@ useAutoRefresh(refreshAll);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   white-space: nowrap;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-ground);
+  color: var(--cid-text-muted-color);
 }
 .pattern-chip.escalating {
   color: var(--cid-status-err);
@@ -715,7 +715,7 @@ useAutoRefresh(refreshAll);
   color: var(--cid-status-warn);
 }
 .pattern-chip.learning {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 
 .row-spark {
@@ -753,12 +753,12 @@ useAutoRefresh(refreshAll);
 }
 .dhead .ip {
   font-family: monospace;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 0.82rem;
 }
 .dhead .meta {
   font-size: 0.74rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin-top: 0.3rem;
   display: flex;
   gap: 1rem;
@@ -774,7 +774,7 @@ useAutoRefresh(refreshAll);
 }
 .gauge-caption {
   font-size: 0.78rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   max-width: 340px;
 }
 .gauge-caption .trend-line {
@@ -792,7 +792,7 @@ useAutoRefresh(refreshAll);
   color: var(--cid-status-warn);
 }
 .gauge-caption.resolved .trend-line {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 
 .section {
@@ -802,7 +802,7 @@ useAutoRefresh(refreshAll);
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-weight: 700;
   margin-bottom: 0.5rem;
   display: flex;
@@ -817,8 +817,8 @@ useAutoRefresh(refreshAll);
 }
 
 .card {
-  background: var(--p-surface-ground);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-ground);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 0.75rem 0.85rem;
 }
@@ -834,7 +834,7 @@ useAutoRefresh(refreshAll);
 
 .factor {
   padding: 0.65rem 0;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 .factor:last-child {
   border-bottom: none;
@@ -847,7 +847,7 @@ useAutoRefresh(refreshAll);
 .factor-rank {
   font-family: monospace;
   font-size: 0.72rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   width: 1.1rem;
 }
 .factor-name {
@@ -867,13 +867,13 @@ useAutoRefresh(refreshAll);
 .factor-pct {
   font-family: monospace;
   font-size: 0.74rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   width: 2.4rem;
   text-align: right;
 }
 .factor-bar {
   height: 5px;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
   border-radius: 3px;
   overflow: hidden;
   margin: 0.35rem 0 0.3rem 1.5rem;
@@ -885,16 +885,16 @@ useAutoRefresh(refreshAll);
 .factor-vals {
   font-family: monospace;
   font-size: 0.71rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   padding-left: 1.5rem;
 }
 .factor-vals b {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-weight: 700;
 }
 .factor-desc {
   font-size: 0.72rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   padding-left: 1.5rem;
   margin-top: 0.15rem;
 }
@@ -909,7 +909,7 @@ useAutoRefresh(refreshAll);
   border: 1px solid var(--cid-status-warn);
   border-radius: 8px;
   font-size: 0.82rem;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .fingerprint-warning i {
   color: var(--cid-status-warn);
@@ -921,25 +921,25 @@ useAutoRefresh(refreshAll);
   align-items: center;
   gap: 1.2rem;
   padding: 1.2rem;
-  background: var(--p-surface-ground);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-ground);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 .learning-box .lbig {
   font-family: monospace;
   font-size: 1.4rem;
   font-weight: 700;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 .learning-box .lbig small {
   font-family: sans-serif;
   font-size: 0.65rem;
   font-weight: 600;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .progress-track {
   height: 6px;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
   border-radius: 3px;
   overflow: hidden;
   margin-top: 0.4rem;
@@ -947,26 +947,26 @@ useAutoRefresh(refreshAll);
 }
 .progress-fill {
   height: 100%;
-  background: var(--p-primary-color);
+  background: var(--cid-primary-color);
   border-radius: 3px;
 }
 .learning-note {
   font-size: 0.82rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   max-width: 420px;
 }
 
 .empty-state {
   text-align: center;
   padding: 3rem 1rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .empty-icon {
   font-size: 2.5rem;
-  color: var(--p-green-500);
+  color: var(--cid-green-500);
   margin-bottom: 0.5rem;
 }
 .text-muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>

@@ -433,22 +433,22 @@ onMounted(() => {
 .content-card {
   margin: 0;
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 .content-card h3 {
   font-size: var(--app-fs-lg);
   margin: 0 0 0.75rem;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .setting-group {
   margin-bottom: 1.5rem;
   padding-bottom: 1.5rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 .setting-group:last-child {
   border-bottom: none;
@@ -457,7 +457,7 @@ onMounted(() => {
 .setting-group h3 {
   margin: 0 0 0.75rem 0;
   font-size: var(--app-fs-lg);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .field {
   margin-bottom: 1rem;
@@ -472,14 +472,14 @@ onMounted(() => {
   display: block;
   margin-top: 0.25rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .cert-section {
   max-width: 48rem;
 }
 .cert-info-card {
-  background: var(--p-surface-ground);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-ground);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 1rem;
   font-size: var(--app-fs-sm);
@@ -521,7 +521,7 @@ onMounted(() => {
   position: relative;
 }
 .cert-drop-zone.drop-active .cert-textarea {
-  border-color: var(--p-primary-color);
+  border-color: var(--cid-primary-color);
   border-style: dashed;
 }
 .drop-overlay {
@@ -530,11 +530,11 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: color-mix(in srgb, var(--p-primary-color) 10%, transparent);
+  background: color-mix(in srgb, var(--cid-primary-color) 10%, transparent);
   border-radius: 6px;
   font-size: var(--app-fs-md);
   font-weight: 600;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   pointer-events: none;
 }
 .cert-textarea {
@@ -543,16 +543,16 @@ onMounted(() => {
   font-family: monospace;
   font-size: var(--app-fs-sm);
   padding: 0.5rem;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
   resize: vertical;
   overflow-y: auto;
 }
 .cert-textarea.cert-valid {
-  border-color: var(--p-green-500);
+  border-color: var(--cid-green-500);
 }
 .cert-textarea.cert-invalid {
-  border-color: var(--p-red-500);
+  border-color: var(--cid-red-500);
 }
 .cert-status {
   display: flex;
@@ -562,10 +562,10 @@ onMounted(() => {
   font-size: var(--app-fs-xs);
 }
 .cert-status-ok {
-  color: var(--p-green-500);
+  color: var(--cid-green-500);
 }
 .cert-status-err {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
 }
 .w-full {
   width: 100%;

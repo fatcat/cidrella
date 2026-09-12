@@ -262,8 +262,8 @@ onMounted(loadVlans);
 <style scoped>
 .content-card {
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 .card-header {
@@ -275,7 +275,7 @@ onMounted(loadVlans);
 .card-header h3 {
   margin: 0;
   font-size: var(--app-fs-lg);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .range-types-section {
   display: flex;

@@ -1263,17 +1263,17 @@ defineExpose({ openZoneDialog });
 }
 
 .zone-panel {
-  background: var(--p-content-background);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-content-background);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   overflow: hidden;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .zone-panel :deep(.p-tabpanels) {
   padding: 0;
 }
 .zone-panel :deep(.p-tablist) {
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 
 .panel-header {
@@ -1281,21 +1281,21 @@ defineExpose({ openZoneDialog });
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--p-surface-border);
-  background: var(--p-surface-ground);
-  color: var(--p-text-color);
+  border-bottom: 1px solid var(--cid-surface-border);
+  background: var(--cid-surface-ground);
+  color: var(--cid-text-color);
 }
 .panel-header h3 {
   margin: 0;
   font-size: var(--app-fs-md);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 
 .info-bar {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   padding: 0 0.75rem;
   gap: 0.6rem;
   height: 2.4rem;
@@ -1304,14 +1304,14 @@ defineExpose({ openZoneDialog });
 .info-bar-name {
   font-weight: 700;
   font-size: var(--app-fs-md);
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   font-family: monospace;
   white-space: nowrap;
 }
 .info-bar-sep {
   width: 1px;
   height: 1rem;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
   flex-shrink: 0;
 }
 .info-bar-pair {
@@ -1323,7 +1323,7 @@ defineExpose({ openZoneDialog });
 .info-bar-label {
   font-size: var(--app-fs-xs);
   text-transform: uppercase;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   letter-spacing: 0.08em;
 }
 .info-bar-val {
@@ -1336,7 +1336,7 @@ defineExpose({ openZoneDialog });
   display: flex;
   align-items: center;
   padding: 0 0.6rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   gap: 0.4rem;
   height: 2.4rem;
   box-sizing: border-box;
@@ -1344,18 +1344,18 @@ defineExpose({ openZoneDialog });
 }
 .search-icon {
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .sidebar-filter {
   flex: 1;
   border: none;
   background: transparent;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-size: var(--app-fs-sm);
   outline: none;
 }
 .sidebar-filter::placeholder {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .zone-list {
@@ -1369,15 +1369,15 @@ defineExpose({ openZoneDialog });
   align-items: center;
   padding: 0.6rem 1rem;
   cursor: pointer;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   transition: background 0.15s;
 }
 .zone-item:hover {
-  background: var(--p-highlight-background);
+  background: var(--cid-highlight-background);
 }
 .zone-item.active {
-  background: var(--p-highlight-background);
-  border-left: 3px solid var(--p-primary-color);
+  background: var(--cid-highlight-background);
+  border-left: 3px solid var(--cid-primary-color);
 }
 
 :deep(.ip-detail-row) {
@@ -1397,7 +1397,7 @@ defineExpose({ openZoneDialog });
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-family: monospace;
 }
 .zone-meta {
@@ -1409,7 +1409,7 @@ defineExpose({ openZoneDialog });
 
 .record-count {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .zone-actions {
@@ -1436,13 +1436,13 @@ defineExpose({ openZoneDialog });
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   flex-shrink: 0;
 }
 .dns-toolbar .toolbar-divider {
   width: 1px;
   height: 1.2rem;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
 }
 
 .type-badge {
@@ -1456,7 +1456,7 @@ defineExpose({ openZoneDialog });
 
 .badge-enabled {
   font-size: var(--app-fs-xs);
-  color: var(--p-green-500);
+  color: var(--cid-green-500);
 }
 
 .action-buttons {
@@ -1478,7 +1478,7 @@ defineExpose({ openZoneDialog });
 .empty-state {
   padding: 2rem 1rem;
   text-align: center;
-  color: var(--p-surface-400);
+  color: var(--cid-surface-400);
   font-size: var(--app-fs-base);
 }
 .empty-state.centered {
@@ -1491,7 +1491,7 @@ defineExpose({ openZoneDialog });
 .loading-state {
   padding: 2rem 1rem;
   text-align: center;
-  color: var(--p-surface-400);
+  color: var(--cid-surface-400);
 }
 
 .form-grid {
@@ -1507,7 +1507,7 @@ defineExpose({ openZoneDialog });
 }
 
 .soa-section {
-  border-top: 1px solid var(--p-surface-border);
+  border-top: 1px solid var(--cid-surface-border);
   padding-top: 0.75rem;
   margin-top: 0.25rem;
   display: flex;
@@ -1517,7 +1517,7 @@ defineExpose({ openZoneDialog });
 .soa-section h4 {
   margin: 0;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -1533,8 +1533,8 @@ defineExpose({ openZoneDialog });
   width: 1rem;
   height: 1rem;
   border-radius: 50%;
-  background: var(--p-surface-200);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-200);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
   font-weight: 700;
   cursor: help;
@@ -1550,7 +1550,7 @@ defineExpose({ openZoneDialog });
   display: block;
   margin-top: 0.4rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .zone-group-header {
@@ -1561,13 +1561,13 @@ defineExpose({ openZoneDialog });
   cursor: pointer;
   font-weight: 600;
   font-size: var(--app-fs-md);
-  color: var(--p-text-color);
-  background: var(--p-surface-ground);
-  border-bottom: 1px solid var(--p-surface-border);
+  color: var(--cid-text-color);
+  background: var(--cid-surface-ground);
+  border-bottom: 1px solid var(--cid-surface-border);
   transition: background 0.15s;
 }
 .zone-group-header:hover {
-  background: color-mix(in srgb, var(--p-surface-ground) 80%, var(--p-highlight-background));
+  background: color-mix(in srgb, var(--cid-surface-ground) 80%, var(--cid-highlight-background));
 }
 .zone-group-header .record-count {
   margin-left: auto;
@@ -1578,21 +1578,21 @@ defineExpose({ openZoneDialog });
 }
 
 .warn-text {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-weight: 500;
 }
 
 .ptr-preview {
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
 }
 .ptr-preview-value {
   font-family: monospace;
   font-size: var(--app-fs-md);
   font-weight: 600;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 
 @media (max-width: 900px) {

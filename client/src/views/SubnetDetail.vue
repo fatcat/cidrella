@@ -244,15 +244,15 @@
                   {{ rt.name }}
                 </span>
                 <span class="legend-item">
-                  <span class="legend-swatch" style="background: var(--p-blue-700)"></span>
+                  <span class="legend-swatch" style="background: var(--cid-blue-700)"></span>
                   DHCP Reservation
                 </span>
                 <span class="legend-item">
-                  <span class="legend-swatch" style="background: var(--p-green-300)"></span>
+                  <span class="legend-swatch" style="background: var(--cid-green-300)"></span>
                   DNS Configured
                 </span>
                 <span class="legend-item">
-                  <span class="legend-swatch" style="background: var(--p-violet-500)"></span>
+                  <span class="legend-swatch" style="background: var(--cid-violet-500)"></span>
                   IP Reservation
                 </span>
                 <span class="legend-item">
@@ -262,7 +262,7 @@
                   Rogue
                 </span>
                 <span class="legend-item">
-                  <span class="legend-swatch" style="background: var(--p-surface-200)"></span>
+                  <span class="legend-swatch" style="background: var(--cid-surface-200)"></span>
                   Unassigned
                 </span>
               </div>
@@ -472,7 +472,7 @@
       :style="{ width: '26rem' }"
       data-track="dialog-reserve-ip"
     >
-      <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
+      <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--cid-text-muted-color)">
         An IP Reservation holds the selected address or range. While it exists, the address is
         unavailable for DHCP or DNS assignment.
       </p>
@@ -526,7 +526,7 @@
       :style="{ width: '28rem' }"
       data-track="dialog-static-dhcp"
     >
-      <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--p-text-muted-color)">
+      <p style="margin: 0 0 0.75rem 0; font-size: 0.85rem; color: var(--cid-text-muted-color)">
         Convert this dynamic DHCP assignment to a DHCP Reservation.
       </p>
       <div class="form-grid">
@@ -979,7 +979,7 @@ const visibleRanges = computed(() => {
     reservedRows.push({
       id: `reserved-${run.startLong}`,
       range_type_name: 'IP Reservation',
-      range_type_color: 'var(--p-violet-500)',
+      range_type_color: 'var(--cid-violet-500)',
       range_type_is_system: 0,
       start_ip: run.startIp,
       end_ip: run.endIp,
@@ -1105,10 +1105,10 @@ const ipGrid = computed(() => {
     else if (isGateway) cellColor = 'var(--cid-gateway)';
     else if (cellTypeClass === 'type-rogue') cellColor = 'var(--cid-rogue)';
     else if (cellTypeClass === 'type-system') cellColor = 'var(--cid-system)';
-    else if (cellTypeClass === 'type-reserved-dhcp') cellColor = 'var(--p-blue-700)';
-    else if (cellTypeClass === 'type-static-dns') cellColor = 'var(--p-green-300)';
-    else if (cellTypeClass === 'type-reserved') cellColor = 'var(--p-violet-500)';
-    else cellColor = rangeInfo?.color || 'var(--p-surface-200)';
+    else if (cellTypeClass === 'type-reserved-dhcp') cellColor = 'var(--cid-blue-700)';
+    else if (cellTypeClass === 'type-static-dns') cellColor = 'var(--cid-green-300)';
+    else if (cellTypeClass === 'type-reserved') cellColor = 'var(--cid-violet-500)';
+    else cellColor = rangeInfo?.color || 'var(--cid-surface-200)';
 
     // Column position within the 64-wide grid. Mark every 16th column's
     // RIGHT edge with a thicker line so users can visually count IPs by
@@ -2153,7 +2153,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.4rem;
   margin-left: 0.5rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-sm);
   white-space: nowrap;
   text-transform: lowercase;
@@ -2175,7 +2175,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   padding: 0 0.75rem;
   gap: 0.6rem;
   height: 2.4rem;
@@ -2189,15 +2189,15 @@ onUnmounted(() => {
 .info-bar-cidr {
   font-size: 0.75rem;
   font-family: monospace;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-ground);
+  color: var(--cid-text-muted-color);
   padding: 0.1rem 0.35rem;
   border-radius: 4px;
 }
 .info-bar-sep {
   width: 1px;
   height: 1rem;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
   flex-shrink: 0;
 }
 .info-bar-pair {
@@ -2209,7 +2209,7 @@ onUnmounted(() => {
 .info-bar-label {
   font-size: 0.65rem;
   text-transform: uppercase;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   letter-spacing: 0.04em;
 }
 .info-bar-val {
@@ -2257,8 +2257,8 @@ onUnmounted(() => {
 }
 .cidr-badge {
   font-size: 0.85rem;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-ground);
+  color: var(--cid-text-muted-color);
   padding: 0.15rem 0.5rem;
   border-radius: 4px;
   margin-left: 0.5rem;
@@ -2272,14 +2272,14 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .info-card {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
   padding: 0.5rem 0.75rem;
 }
 .info-label {
   font-size: 0.7rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   text-transform: uppercase;
 }
 .info-value {
@@ -2310,13 +2310,13 @@ onUnmounted(() => {
   display: inline-block;
   padding: 0.1rem 0.4rem;
   border-radius: 4px;
-  color: var(--p-surface-900);
+  color: var(--cid-surface-900);
   font-size: 0.75rem;
   font-weight: 600;
 }
 .reservation-badge {
-  background: color-mix(in srgb, var(--p-orange-500) 25%, transparent) !important;
-  color: var(--p-orange-500);
+  background: color-mix(in srgb, var(--cid-orange-500) 25%, transparent) !important;
+  color: var(--cid-orange-500);
 }
 .action-buttons {
   display: flex;
@@ -2345,7 +2345,7 @@ onUnmounted(() => {
    see. */
 .legend-swatch-rogue {
   background: transparent;
-  outline: 2px solid var(--p-red-500);
+  outline: 2px solid var(--cid-red-500);
   outline-offset: -2px;
 }
 .ip-grid {
@@ -2360,8 +2360,8 @@ onUnmounted(() => {
      complete. */
   gap: 0;
   user-select: none;
-  border-top: 1px solid var(--p-surface-border);
-  border-left: 1px solid var(--p-surface-border);
+  border-top: 1px solid var(--cid-surface-border);
+  border-left: 1px solid var(--cid-surface-border);
 }
 .ip-cell {
   aspect-ratio: 1;
@@ -2375,8 +2375,8 @@ onUnmounted(() => {
   position: relative;
   transition: outline 0.1s;
   box-shadow:
-    inset -1px 0 0 var(--p-surface-border),
-    inset 0 -1px 0 var(--p-surface-border);
+    inset -1px 0 0 var(--cid-surface-border),
+    inset 0 -1px 0 var(--cid-surface-border);
 }
 .ip-cell-selected {
   outline: 3px solid var(--cid-grid-selection);
@@ -2384,7 +2384,7 @@ onUnmounted(() => {
   z-index: 2;
 }
 .ip-cell-conflict:not(.ip-cell-selected) {
-  outline: 2px solid var(--p-red-500) !important;
+  outline: 2px solid var(--cid-red-500) !important;
   outline-offset: -1px;
 }
 /* Every 16th column gets a thicker, slightly darker right edge so users
@@ -2393,8 +2393,8 @@ onUnmounted(() => {
    darken the right edge. */
 .ip-cell-section-right {
   box-shadow:
-    inset -2px 0 0 var(--p-surface-content),
-    inset 0 -1px 0 var(--p-surface-border);
+    inset -2px 0 0 var(--cid-surface-content),
+    inset 0 -1px 0 var(--cid-surface-border);
 }
 .conflict-dot {
   position: absolute;
@@ -2402,17 +2402,17 @@ onUnmounted(() => {
   right: 1px;
   width: 4px;
   height: 4px;
-  background: var(--p-red-500);
+  background: var(--cid-red-500);
   border-radius: 50%;
 }
 
 .grid-too-large {
   padding: 1.5rem;
   text-align: center;
-  color: var(--p-text-muted-color);
-  background: var(--p-surface-card);
+  color: var(--cid-text-muted-color);
+  background: var(--cid-surface-card);
   border-radius: 6px;
-  border: 1px dashed var(--p-surface-border);
+  border: 1px dashed var(--cid-surface-border);
   font-size: var(--app-fs-sm);
 }
 
@@ -2433,7 +2433,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 0.95rem;
 }
 .loading-overlay {
@@ -2449,8 +2449,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 12px;
   padding: 1.25rem 2rem;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
@@ -2472,13 +2472,13 @@ onUnmounted(() => {
   font-size: 0.8rem;
 }
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .field-help {
   display: block;
   margin-top: 0.2rem;
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 /* Scan toggle button group */
@@ -2486,7 +2486,7 @@ onUnmounted(() => {
   display: inline-flex;
   border-radius: 4px;
   overflow: hidden;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
 }
 .scan-toggle-btn {
   padding: 0.3rem 0.75rem;
@@ -2494,44 +2494,44 @@ onUnmounted(() => {
   font-weight: 500;
   border: none;
   cursor: pointer;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-ground);
+  color: var(--cid-text-muted-color);
   transition:
     background 0.15s,
     color 0.15s;
 }
 .scan-toggle-btn + .scan-toggle-btn {
-  border-left: 1px solid var(--p-surface-border);
+  border-left: 1px solid var(--cid-surface-border);
 }
 .scan-toggle-btn:hover {
-  background: var(--p-surface-200);
+  background: var(--cid-surface-200);
 }
 .p-dark .scan-toggle-btn:hover {
-  background: var(--p-surface-700);
+  background: var(--cid-surface-700);
 }
 .scan-inherit.active {
-  background: var(--p-surface-300);
-  color: var(--p-text-color);
+  background: var(--cid-surface-300);
+  color: var(--cid-text-color);
 }
 .p-dark .scan-inherit.active {
-  background: var(--p-surface-600);
+  background: var(--cid-surface-600);
 }
 .scan-enabled.active {
-  background: color-mix(in srgb, var(--p-green-500) 25%, transparent);
-  color: var(--p-green-500);
+  background: color-mix(in srgb, var(--cid-green-500) 25%, transparent);
+  color: var(--cid-green-500);
 }
 .scan-disabled.active {
-  background: color-mix(in srgb, var(--p-blue-500) 25%, transparent);
-  color: var(--p-blue-500);
+  background: color-mix(in srgb, var(--cid-blue-500) 25%, transparent);
+  color: var(--cid-blue-500);
 }
 .scan-enabled.resolved {
-  background: color-mix(in srgb, var(--p-green-500) 10%, transparent);
-  color: var(--p-green-500);
+  background: color-mix(in srgb, var(--cid-green-500) 10%, transparent);
+  color: var(--cid-green-500);
   opacity: 0.7;
 }
 .scan-disabled.resolved {
-  background: color-mix(in srgb, var(--p-blue-500) 10%, transparent);
-  color: var(--p-blue-500);
+  background: color-mix(in srgb, var(--cid-blue-500) 10%, transparent);
+  color: var(--cid-blue-500);
   opacity: 0.7;
 }
 </style>

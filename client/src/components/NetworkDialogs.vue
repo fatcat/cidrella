@@ -467,7 +467,7 @@
     </p>
     <p
       v-if="deletingFolder?.subnet_count > 0"
-      style="font-size: 0.85rem; color: var(--p-text-muted-color)"
+      style="font-size: 0.85rem; color: var(--cid-text-muted-color)"
     >
       {{ deletingFolder.subnet_count }} network(s) will be moved to ungrouped.
     </p>
@@ -1179,7 +1179,7 @@
     <p>
       Allocate <strong>{{ groupDropIds.length }}</strong> networks to this folder?
     </p>
-    <p style="font-size: 0.85rem; color: var(--p-text-muted-color)">
+    <p style="font-size: 0.85rem; color: var(--cid-text-muted-color)">
       Each network will be named using the current template and allocated with default settings.
     </p>
     <template #footer>
@@ -2875,26 +2875,26 @@ defineExpose({
 .field label {
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .field-error {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-size: 0.75rem;
 }
 .warn-text {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-size: 0.85rem;
 }
 .merge-result-cidr {
   font-size: 1.3rem;
   font-weight: 700;
   font-family: monospace;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   margin: 0.5rem 0;
 }
 .merge-info {
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin-bottom: 0.5rem;
 }
 .toggle-label {
@@ -2917,18 +2917,18 @@ defineExpose({
   font-size: var(--app-fs-base);
   font-family: inherit;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
-  background: var(--p-surface-card);
-  color: var(--p-text-color);
+  background: var(--cid-surface-card);
+  color: var(--cid-text-color);
   outline: none;
   transition:
     border-color 0.15s,
     box-shadow 0.15s;
 }
 .port-input-plain:focus {
-  border-color: var(--p-primary-color);
-  box-shadow: 0 0 0 1px var(--p-primary-color);
+  border-color: var(--cid-primary-color);
+  box-shadow: 0 0 0 1px var(--cid-primary-color);
 }
 .divide-mode-toggle {
   margin-bottom: 0.75rem;
@@ -2955,13 +2955,13 @@ defineExpose({
 }
 .divide-count-label {
   font-size: 0.8rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   white-space: nowrap;
 }
 .divide-preview {
   margin-top: 0.75rem;
   padding: 0.5rem 0.75rem;
-  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
+  background: color-mix(in srgb, var(--cid-primary-color) 8%, transparent);
   border-radius: 6px;
   max-height: 200px;
   overflow-y: auto;
@@ -2971,8 +2971,8 @@ defineExpose({
   font-size: 0.8rem;
 }
 .divide-preview-warn {
-  background: color-mix(in srgb, var(--p-red-500) 10%, transparent);
-  color: var(--p-red-500);
+  background: color-mix(in srgb, var(--cid-red-500) 10%, transparent);
+  color: var(--cid-red-500);
 }
 .remainder-list {
   list-style: none;
@@ -2985,7 +2985,7 @@ defineExpose({
   padding: 0.15rem 0;
 }
 .carved-highlight {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   font-weight: 600;
 }
 .carve-cidr-row {
@@ -3018,7 +3018,7 @@ defineExpose({
   gap: 0;
   margin-bottom: 1.25rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 .wizard-step {
   display: flex;
@@ -3034,40 +3034,40 @@ defineExpose({
   border-radius: 50%;
   font-size: 0.75rem;
   font-weight: 700;
-  background: var(--p-surface-200);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-200);
+  color: var(--cid-text-muted-color);
   transition: all 0.2s;
 }
 .step-label {
   font-size: 0.8rem;
   font-weight: 500;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   transition: color 0.2s;
 }
 .wizard-step.active .step-num {
-  background: var(--p-primary-color);
-  color: var(--p-surface-0);
+  background: var(--cid-primary-color);
+  color: var(--cid-surface-0);
 }
 .wizard-step.active .step-label {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-weight: 600;
 }
 .wizard-step.done .step-num {
-  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 20%, transparent);
+  color: var(--cid-primary-color);
 }
 .wizard-step.done .step-label {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .wizard-step-line {
   width: 3rem;
   height: 2px;
-  background: var(--p-surface-200);
+  background: var(--cid-surface-200);
   margin: 0 0.5rem;
   transition: background 0.2s;
 }
 .wizard-step-line.done {
-  background: var(--p-primary-color);
+  background: var(--cid-primary-color);
 }
 .wizard-footer {
   display: flex;
@@ -3086,20 +3086,20 @@ defineExpose({
   text-align: left;
   font-weight: 600;
   font-size: 0.8rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 .wizard-iface-table td {
   padding: 0.5rem;
-  border-bottom: 1px solid var(--p-surface-50);
+  border-bottom: 1px solid var(--cid-surface-50);
 }
 .wizard-iface-table .iface-name {
   font-weight: 600;
   font-family: var(--font-mono, monospace);
 }
 .wizard-iface-table .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 /* Pi-hole import styles */
@@ -3107,22 +3107,22 @@ defineExpose({
   min-height: 12rem;
 }
 .pihole-reachable {
-  border-color: var(--p-green-500) !important;
-  box-shadow: 0 0 0 1px var(--p-green-500);
+  border-color: var(--cid-green-500) !important;
+  box-shadow: 0 0 0 1px var(--cid-green-500);
 }
 .pihole-unreachable {
-  border-color: var(--p-red-500) !important;
-  box-shadow: 0 0 0 1px var(--p-red-500);
+  border-color: var(--cid-red-500) !important;
+  box-shadow: 0 0 0 1px var(--cid-red-500);
 }
 .field-warn {
-  color: var(--p-orange-500);
+  color: var(--cid-orange-500);
 }
 .pihole-preview {
   margin-top: 1rem;
   padding: 0.75rem;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
-  background: var(--p-surface-50);
+  background: var(--cid-surface-50);
 }
 .pihole-preview h4 {
   margin: 0 0 0.5rem;
@@ -3141,11 +3141,11 @@ defineExpose({
 .preview-count {
   font-size: 1.4rem;
   font-weight: 700;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 .preview-label {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .pihole-results {
   margin-top: 1rem;
@@ -3156,7 +3156,7 @@ defineExpose({
   display: inline-flex;
   border-radius: 4px;
   overflow: hidden;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
 }
 .scan-toggle-btn {
   padding: 0.3rem 0.75rem;
@@ -3164,46 +3164,46 @@ defineExpose({
   font-weight: 500;
   border: none;
   cursor: pointer;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-ground);
+  color: var(--cid-text-muted-color);
   transition:
     background 0.15s,
     color 0.15s;
 }
 .scan-toggle-btn + .scan-toggle-btn {
-  border-left: 1px solid var(--p-surface-border);
+  border-left: 1px solid var(--cid-surface-border);
 }
 .scan-toggle-btn:hover {
-  background: var(--p-surface-200);
+  background: var(--cid-surface-200);
 }
 .p-dark .scan-toggle-btn:hover {
-  background: var(--p-surface-700);
+  background: var(--cid-surface-700);
 }
 /* Active states */
 .scan-inherit.active {
-  background: var(--p-surface-300);
-  color: var(--p-text-color);
+  background: var(--cid-surface-300);
+  color: var(--cid-text-color);
 }
 .p-dark .scan-inherit.active {
-  background: var(--p-surface-600);
+  background: var(--cid-surface-600);
 }
 .scan-enabled.active {
-  background: color-mix(in srgb, var(--p-green-500) 25%, transparent);
-  color: var(--p-green-500);
+  background: color-mix(in srgb, var(--cid-green-500) 25%, transparent);
+  color: var(--cid-green-500);
 }
 .scan-disabled.active {
-  background: color-mix(in srgb, var(--p-blue-500) 25%, transparent);
-  color: var(--p-blue-500);
+  background: color-mix(in srgb, var(--cid-blue-500) 25%, transparent);
+  color: var(--cid-blue-500);
 }
 /* Resolved (inherited) indicator, subtle highlight */
 .scan-enabled.resolved {
-  background: color-mix(in srgb, var(--p-green-500) 10%, transparent);
-  color: var(--p-green-500);
+  background: color-mix(in srgb, var(--cid-green-500) 10%, transparent);
+  color: var(--cid-green-500);
   opacity: 0.7;
 }
 .scan-disabled.resolved {
-  background: color-mix(in srgb, var(--p-blue-500) 10%, transparent);
-  color: var(--p-blue-500);
+  background: color-mix(in srgb, var(--cid-blue-500) 10%, transparent);
+  color: var(--cid-blue-500);
   opacity: 0.7;
 }
 
@@ -3212,12 +3212,12 @@ defineExpose({
   margin-top: 1rem;
   max-height: 18rem;
   overflow-y: auto;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 4px;
 }
 .lossy-row {
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 .lossy-row:last-child {
   border-bottom: 0;
@@ -3234,7 +3234,7 @@ defineExpose({
   font-weight: 600;
 }
 .lossy-reason {
-  color: var(--p-surface-content-muted, var(--p-text-muted-color));
+  color: var(--cid-surface-content-muted, var(--cid-text-muted-color));
   font-size: var(--app-fs-xs);
 }
 .lossy-meta {
@@ -3242,7 +3242,7 @@ defineExpose({
   gap: 0.4rem;
   margin-top: 0.2rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-surface-content-muted, var(--p-text-muted-color));
+  color: var(--cid-surface-content-muted, var(--cid-text-muted-color));
 }
 .lossy-meta code {
   font-family: var(--font-mono, monospace);

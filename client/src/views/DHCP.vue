@@ -441,7 +441,7 @@ onMounted(async () => {
   font-size: var(--app-fs-sm);
 }
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .form-grid {
@@ -459,17 +459,17 @@ onMounted(async () => {
 /* Defaults table help icon */
 .option-help-icon {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   cursor: pointer;
   margin-left: 0.3rem;
   vertical-align: middle;
 }
 .option-help-icon:hover {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 
 /* Subtle highlight for enabled-by-default rows */
 :deep(.option-enabled-row) {
-  background: color-mix(in srgb, var(--p-primary-color) 6%, transparent) !important;
+  background: color-mix(in srgb, var(--cid-primary-color) 6%, transparent) !important;
 }
 </style>

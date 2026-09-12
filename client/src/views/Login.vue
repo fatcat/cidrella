@@ -84,6 +84,6 @@ async function handleLogin() {
 <style scoped>
 /* Login-specific: primary color on the h1 title */
 .login-card h1 {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 </style>

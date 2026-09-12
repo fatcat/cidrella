@@ -160,7 +160,7 @@ const plainValue = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 999px;
   padding: 2px 7px;
   font-size: var(--app-fs-xs);
@@ -171,7 +171,7 @@ const plainValue = computed(() => {
   width: 0.55rem;
   height: 0.55rem;
   border-radius: 50%;
-  background: var(--p-text-muted-color);
+  background: var(--cid-text-muted-color);
   flex: 0 0 auto;
 }
 </style>

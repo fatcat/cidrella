@@ -1095,8 +1095,8 @@ onBeforeUnmount(() => {
 .ipam-sidebar {
   width: 180px;
   flex-shrink: 0;
-  background: var(--p-surface-card);
-  border-right: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border-right: 1px solid var(--cid-surface-border);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -1112,7 +1112,7 @@ onBeforeUnmount(() => {
   gap: 0.5rem;
   padding: 0.5rem 1rem;
   font-size: var(--app-fs-base);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   text-decoration: none;
   cursor: pointer;
   border-left: 3px solid transparent;
@@ -1121,13 +1121,13 @@ onBeforeUnmount(() => {
     border-color 0.1s;
 }
 .ipam-nav-item:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
+  background: color-mix(in srgb, var(--cid-primary-color) 8%, transparent);
 }
 .ipam-nav-item.active {
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 15%, transparent);
+  color: var(--cid-primary-color);
   font-weight: 600;
-  border-left-color: var(--p-primary-color);
+  border-left-color: var(--cid-primary-color);
 }
 .ipam-nav-item i {
   width: 1.25rem;
@@ -1161,11 +1161,11 @@ onBeforeUnmount(() => {
 
 /* ── Sidebar ── */
 .sidebar-panel {
-  background: var(--p-content-background);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-content-background);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   overflow: hidden;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1195,7 +1195,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .sidebar-panel :deep(.p-tablist) {
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
   flex-shrink: 0;
 }
 
@@ -1203,7 +1203,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   padding: 0 0.6rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   gap: 0.4rem;
   height: 2.4rem;
   box-sizing: border-box;
@@ -1211,18 +1211,18 @@ onBeforeUnmount(() => {
 }
 .search-icon {
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .sidebar-filter {
   flex: 1;
   border: none;
   background: transparent;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-size: var(--app-fs-sm);
   outline: none;
 }
 .sidebar-filter::placeholder {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .sidebar-tree {
   flex: 1;
@@ -1233,7 +1233,7 @@ onBeforeUnmount(() => {
   padding: 1rem;
   text-align: center;
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 /* ── Tree items ── */
@@ -1244,25 +1244,25 @@ onBeforeUnmount(() => {
   padding: 0.5rem 1rem;
   font-weight: 600;
   font-size: var(--app-fs-md);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   cursor: pointer;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   transition: background 0.15s;
 }
 .tree-folder:hover {
-  background: var(--p-highlight-background);
+  background: var(--cid-highlight-background);
 }
 .tree-folder.drop-target {
-  background: var(--p-highlight-background);
+  background: var(--cid-highlight-background);
 }
 .ungrouped-zone {
-  border-top: 1px solid var(--p-surface-border);
+  border-top: 1px solid var(--cid-surface-border);
   margin-top: 0.25rem;
   font-weight: 500;
   opacity: 0.8;
 }
 .unallocated-zone {
-  border-top: 1px solid var(--p-surface-border);
+  border-top: 1px solid var(--cid-surface-border);
   margin-top: 0.25rem;
   font-weight: 500;
   opacity: 0.7;
@@ -1272,29 +1272,29 @@ onBeforeUnmount(() => {
 }
 .count-badge {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-weight: 400;
 }
 .tree-item {
   padding: 0.6rem 1rem 0.6rem 2rem;
   cursor: pointer;
   border-left: 3px solid transparent;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   transition: background 0.15s;
 }
 .tree-item[draggable='true'] {
   cursor: grab;
 }
 .tree-item:hover {
-  background: var(--p-highlight-background);
+  background: var(--cid-highlight-background);
 }
 .tree-item.active {
-  background: var(--p-highlight-background);
-  border-left-color: var(--p-primary-color);
+  background: var(--cid-highlight-background);
+  border-left-color: var(--cid-primary-color);
 }
 .tree-item.merge-selected {
-  background: color-mix(in srgb, var(--p-orange-500) 15%, transparent);
-  border-left-color: var(--p-orange-500);
+  background: color-mix(in srgb, var(--cid-orange-500) 15%, transparent);
+  border-left-color: var(--cid-orange-500);
 }
 .tree-item-row {
   display: flex;
@@ -1311,13 +1311,13 @@ onBeforeUnmount(() => {
   font-size: var(--app-fs-md);
   font-weight: 500;
   font-family: monospace;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .tree-item-meta {
   display: flex;
   gap: 0.5rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin-top: 0.15rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -1329,7 +1329,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .status-dot.allocated {
-  background: var(--p-green-500);
+  background: var(--cid-green-500);
 }
 .unalloc-label {
   font-style: italic;
@@ -1349,13 +1349,13 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   flex-shrink: 0;
 }
 .networks-toolbar .toolbar-divider {
   width: 1px;
   height: 1.2rem;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
 }
 .workspace-preview-link {
   display: inline-flex;
@@ -1363,17 +1363,17 @@ onBeforeUnmount(() => {
   gap: 0.35rem;
   margin-left: auto;
   padding: 0.3rem 0.55rem;
-  border: 1px solid color-mix(in srgb, var(--p-primary-color) 28%, var(--p-surface-border));
+  border: 1px solid color-mix(in srgb, var(--cid-primary-color) 28%, var(--cid-surface-border));
   border-radius: 999px;
-  color: var(--p-primary-color);
-  background: color-mix(in srgb, var(--p-primary-color) 7%, transparent);
+  color: var(--cid-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 7%, transparent);
   font-size: var(--app-fs-xs);
   font-weight: 700;
   text-decoration: none;
 }
 .workspace-preview-link:hover {
-  border-color: var(--p-primary-color);
-  background: color-mix(in srgb, var(--p-primary-color) 12%, transparent);
+  border-color: var(--cid-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 12%, transparent);
 }
 .empty-detail {
   flex: 1;
@@ -1382,7 +1382,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-base);
 }
 

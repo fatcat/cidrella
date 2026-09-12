@@ -143,8 +143,8 @@ const visibleGroups = computed(() =>
   flex: 0 0 auto;
   overflow: auto;
   padding: 0.75rem 0.5rem;
-  border-right: 1px solid var(--p-content-border-color);
-  background: var(--p-content-background);
+  border-right: 1px solid var(--cid-content-border-color);
+  background: var(--cid-content-background);
 }
 .sa-rail-item {
   display: flex;
@@ -155,17 +155,17 @@ const visibleGroups = computed(() =>
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-size: var(--app-fs-sm);
   padding: 0.42rem 0.6rem;
   border-radius: 6px;
 }
 .sa-rail-item:hover {
-  background: var(--p-content-hover-background);
+  background: var(--cid-content-hover-background);
 }
 .sa-rail-item.active {
-  background: color-mix(in srgb, var(--p-primary-color) 16%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 16%, transparent);
+  color: var(--cid-primary-color);
   font-weight: 600;
 }
 .sa-rail-item .pi {
@@ -183,7 +183,7 @@ const visibleGroups = computed(() =>
   top: 50%;
   transform: translateY(-50%);
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   pointer-events: none;
 }
 .sa-search {
@@ -191,22 +191,22 @@ const visibleGroups = computed(() =>
   padding: 0.35rem 0.5rem 0.35rem 1.6rem;
   border-radius: 6px;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-color);
-  background: var(--p-content-hover-background);
-  border: 1px solid var(--p-content-border-color);
+  color: var(--cid-text-color);
+  background: var(--cid-content-hover-background);
+  border: 1px solid var(--cid-content-border-color);
 }
 .sa-search:focus {
   outline: none;
-  border-color: var(--p-primary-color);
+  border-color: var(--cid-primary-color);
 }
 .sa-no-match {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
   padding: 0.4rem 0.6rem;
   line-height: 1.4;
 }
 .sa-group {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.6px;
@@ -250,7 +250,7 @@ const visibleGroups = computed(() =>
 .sa-subtabs {
   display: flex;
   gap: 0.25rem;
-  border-bottom: 1px solid var(--p-content-border-color);
+  border-bottom: 1px solid var(--cid-content-border-color);
   margin-bottom: 1.1rem;
   flex-wrap: wrap;
 }
@@ -258,17 +258,17 @@ const visibleGroups = computed(() =>
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-sm);
   padding: 0.55rem 0.85rem;
   border-bottom: 2px solid transparent;
 }
 .sa-subtab:hover {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .sa-subtab.active {
-  color: var(--p-primary-color);
-  border-bottom-color: var(--p-primary-color);
+  color: var(--cid-primary-color);
+  border-bottom-color: var(--cid-primary-color);
   font-weight: 600;
 }
 </style>

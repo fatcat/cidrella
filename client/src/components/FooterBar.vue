@@ -104,12 +104,12 @@ onUnmounted(() => {
   gap: 16px;
   height: 28px;
   padding: 0 12px;
-  background: var(--p-surface-card);
-  border-top: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border-top: 1px solid var(--cid-surface-border);
   font-family: monospace;
   font-size: var(--app-fs-xs);
   letter-spacing: 0.04em;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   flex-shrink: 0;
   user-select: none;
 }
@@ -128,10 +128,10 @@ onUnmounted(() => {
   background: currentColor;
 }
 .env-prod {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 .env-dev {
-  color: var(--p-orange-500);
+  color: var(--cid-orange-500);
 }
 .foot-item {
   text-transform: uppercase;
@@ -142,7 +142,7 @@ onUnmounted(() => {
   flex: 1;
 }
 .session-amber {
-  color: var(--p-orange-500);
+  color: var(--cid-orange-500);
   font-weight: 600;
 }
 </style>

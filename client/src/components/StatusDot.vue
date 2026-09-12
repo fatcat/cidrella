@@ -75,7 +75,7 @@ defineProps({
   height: 7px;
 }
 .sd-label {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-size: var(--app-fs-sm);
 }
 </style>

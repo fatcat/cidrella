@@ -688,8 +688,8 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   padding: 0.5rem 1rem;
-  background: var(--p-surface-card);
-  border-bottom: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border-bottom: 1px solid var(--cid-surface-border);
   flex-shrink: 0;
   gap: 1rem;
 }
@@ -707,7 +707,7 @@ onUnmounted(() => {
   text-decoration: none;
   font-size: 1.4rem;
   font-weight: 700;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   letter-spacing: 0.02em;
 }
 
@@ -721,7 +721,7 @@ onUnmounted(() => {
   /* +30% over --app-fs-sm (12px) per 2026-04-18 user request for a larger top menubar */
   font-size: calc(var(--app-fs-sm) * 1.3);
   font-weight: 500;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   padding: 0.3rem 0.6rem;
   border-radius: 4px;
   transition:
@@ -729,12 +729,12 @@ onUnmounted(() => {
     background 0.15s;
 }
 .nav-link:hover {
-  color: var(--p-text-color);
-  background: var(--p-surface-ground);
+  color: var(--cid-text-color);
+  background: var(--cid-surface-ground);
 }
 .nav-link.active {
-  color: var(--p-primary-color);
-  background: color-mix(in srgb, var(--p-primary-color) 10%, transparent);
+  color: var(--cid-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 10%, transparent);
   font-weight: 600;
 }
 
@@ -754,10 +754,10 @@ onUnmounted(() => {
   gap: 0.35rem;
   height: 28px;
   padding: 0 0.5rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   cursor: pointer;
   font-family: inherit;
   font-size: var(--app-fs-sm);
@@ -767,8 +767,8 @@ onUnmounted(() => {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
 }
 .status-chip:hover {
-  background: var(--p-surface-ground);
-  border-color: color-mix(in srgb, var(--p-primary-color) 35%, var(--p-surface-border));
+  background: var(--cid-surface-ground);
+  border-color: color-mix(in srgb, var(--cid-primary-color) 35%, var(--cid-surface-border));
 }
 .status-chip-label {
   font-weight: 700;
@@ -780,7 +780,7 @@ onUnmounted(() => {
    chip-idle keeps its dimmed text since "idle" is an inactive state, not a
    status color. */
 .status-chip.chip-idle {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .status-chip-ops {
   display: none;
@@ -825,14 +825,14 @@ onUnmounted(() => {
   border-radius: 6px;
   padding: 0.25rem 0.5rem;
   cursor: pointer;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   transition:
     background 0.15s,
     border-color 0.15s;
 }
 .user-menu-trigger:hover {
-  background: var(--p-surface-ground);
-  border-color: var(--p-surface-border);
+  background: var(--cid-surface-ground);
+  border-color: var(--cid-surface-border);
 }
 
 .username {
@@ -845,12 +845,12 @@ onUnmounted(() => {
   width: 24px;
   height: 24px;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 20%, transparent);
+  color: var(--cid-primary-color);
   font-size: var(--app-fs-xs);
   font-weight: 700;
   letter-spacing: 0.02em;
-  border: 1px solid color-mix(in srgb, var(--p-primary-color) 35%, transparent);
+  border: 1px solid color-mix(in srgb, var(--cid-primary-color) 35%, transparent);
   flex-shrink: 0;
 }
 .user-avatar.lg {
@@ -861,7 +861,7 @@ onUnmounted(() => {
 
 .user-chevron {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .user-menu-panel {
@@ -880,7 +880,7 @@ onUnmounted(() => {
 .user-menu-name {
   font-size: var(--app-fs-sm);
   font-weight: 600;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   line-height: 1.1;
   white-space: nowrap;
   overflow: hidden;
@@ -888,7 +888,7 @@ onUnmounted(() => {
 }
 .user-menu-role {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   margin-top: 3px;
@@ -904,14 +904,14 @@ onUnmounted(() => {
   font-size: var(--app-fs-xs);
   font-weight: 600;
   text-transform: uppercase;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin-bottom: 0.4rem;
   letter-spacing: 0.08em;
 }
 
 .user-menu-divider {
   height: 1px;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
   margin: 0.5rem 0;
 }
 
@@ -926,11 +926,11 @@ onUnmounted(() => {
   border-radius: 4px;
   cursor: pointer;
   font-size: var(--app-fs-sm);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   transition: background 0.15s;
 }
 .user-menu-item:hover {
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 
 .version-tag {
@@ -938,7 +938,7 @@ onUnmounted(() => {
   align-items: center;
   gap: 0.3rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-weight: 500;
 }
 
@@ -957,7 +957,7 @@ onUnmounted(() => {
   animation: pulse-update 2s ease-in-out infinite;
 }
 .update-badge:hover {
-  background: var(--p-blue-600);
+  background: var(--cid-blue-600);
 }
 
 @keyframes pulse-update {
@@ -988,19 +988,19 @@ onUnmounted(() => {
   font-size: var(--app-fs-sm);
 }
 .status-popover-row + .status-popover-row {
-  border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 60%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--cid-surface-border) 60%, transparent);
 }
 .status-popover-clickable {
   cursor: pointer;
 }
 .status-popover-clickable:hover {
-  background: var(--p-surface-100);
+  background: var(--cid-surface-100);
 }
 .status-popover-row-alert {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
 }
 .status-popover-label {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: var(--app-fs-xs);
@@ -1008,32 +1008,32 @@ onUnmounted(() => {
   font-weight: 600;
 }
 .status-popover-val {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-weight: 600;
   text-align: right;
 }
 .status-popover-footer {
   margin-top: 4px;
   padding: 6px 8px;
-  border-top: 1px solid var(--p-surface-border);
+  border-top: 1px solid var(--cid-surface-border);
   font-size: var(--app-fs-xs);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: monospace;
 }
 .status-popover-actions {
   margin-top: 4px;
   padding: 8px;
-  border-top: 1px solid var(--p-surface-border);
+  border-top: 1px solid var(--cid-surface-border);
   display: flex;
   justify-content: flex-end;
 }
 .status-popover-action {
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 4px;
-  background: var(--p-surface-card);
-  color: var(--p-text-color);
+  background: var(--cid-surface-card);
+  color: var(--cid-text-color);
   cursor: pointer;
   font: inherit;
   font-size: var(--app-fs-sm);
@@ -1041,8 +1041,8 @@ onUnmounted(() => {
   padding: 5px 8px;
 }
 .status-popover-action:hover:not(:disabled) {
-  background: var(--p-surface-ground);
-  border-color: color-mix(in srgb, var(--p-primary-color) 35%, var(--p-surface-border));
+  background: var(--cid-surface-ground);
+  border-color: color-mix(in srgb, var(--cid-primary-color) 35%, var(--cid-surface-border));
 }
 .status-popover-action:disabled {
   cursor: default;

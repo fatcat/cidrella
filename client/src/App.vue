@@ -20,19 +20,19 @@ body {
 
 /*
  * Custom surface hierarchy variables.
- * PrimeVue v4 Aura does NOT define --p-surface-ground, --p-surface-card,
- * or --p-surface-border. We define them here using PrimeVue's numbered
- * surface palette tokens (--p-surface-0 through --p-surface-950).
+ * PrimeVue v4 Aura does NOT define --cid-surface-ground, --cid-surface-card,
+ * or --cid-surface-border. We define them here using PrimeVue's numbered
+ * surface palette tokens (--cid-surface-0 through --cid-surface-950).
  *
  * Hierarchy (light): ground (gray-100) < card (white) < content (white)
  * Hierarchy (dark):  ground (zinc-950) < card (zinc-900) < content (zinc-800)
  *                    darkest → lightest, i.e. more ink = higher elevation.
  */
 :root {
-  --p-surface-ground: var(--p-surface-100);
-  --p-surface-card: var(--p-surface-0);
-  --p-surface-content: var(--p-surface-0);
-  --p-surface-border: var(--p-surface-200);
+  --cid-surface-ground: var(--cid-surface-100);
+  --cid-surface-card: var(--cid-surface-0);
+  --cid-surface-content: var(--cid-surface-0);
+  --cid-surface-border: var(--cid-surface-200);
 
   /* App type scale, dense by design. Pixel-based so they don't compound
      with browser font-size adjustments; rem-based spacing still scales. */
@@ -90,10 +90,10 @@ body {
   --cid-gauge-track: rgba(100, 116, 139, 0.18);
 }
 .p-dark {
-  --p-surface-ground: var(--p-surface-950);
-  --p-surface-card: var(--p-surface-900);
-  --p-surface-content: var(--p-surface-800);
-  --p-surface-border: var(--p-surface-700);
+  --cid-surface-ground: var(--cid-surface-950);
+  --cid-surface-card: var(--cid-surface-900);
+  --cid-surface-content: var(--cid-surface-800);
+  --cid-surface-border: var(--cid-surface-700);
 
   --cid-static-dns: #93c5fd;
   --cid-dynamic-dhcp: #86efac;
@@ -279,21 +279,21 @@ body {
 
 /* Uniform toast style: dark background, light text */
 .p-toast-message {
-  background: var(--p-surface-700) !important;
+  background: var(--cid-surface-700) !important;
   border: none !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
 }
 .p-toast-message-text,
 .p-toast-summary,
 .p-toast-detail {
-  color: var(--p-surface-0) !important;
+  color: var(--cid-surface-0) !important;
 }
 .p-toast-close-button {
-  color: var(--p-surface-300) !important;
+  color: var(--cid-surface-300) !important;
 }
 /* Circular icon backgrounds: white icon on colored circle */
 .p-toast-message-icon {
-  color: var(--p-surface-0) !important;
+  color: var(--cid-surface-0) !important;
   width: 1.75rem !important;
   height: 1.75rem !important;
   min-width: 1.75rem !important;
@@ -362,8 +362,8 @@ body {
   color: var(--cid-status-muted);
 }
 .badge-primary {
-  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 20%, transparent);
+  color: var(--cid-primary-color);
 }
 
 .badge-green-light {
@@ -385,7 +385,7 @@ body {
 
 /* Muted cell text - for placeholders and non-highlighted dense-table text. */
 .cell-muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: monospace;
   font-size: var(--app-fs-base);
 }
@@ -409,8 +409,8 @@ body {
   border-radius: 4px;
   line-height: 1.4;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--p-primary-color) 18%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 18%, transparent);
+  color: var(--cid-primary-color);
 }
 .taxonomy-tag.taxonomy-warn {
   background: color-mix(in srgb, var(--cid-status-warn) 16%, transparent);
@@ -522,8 +522,8 @@ body {
 
 /* Shared active menubar item styling */
 .menubar-active-item {
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 15%, transparent);
+  color: var(--cid-primary-color);
   font-weight: 600;
 }
 </style>

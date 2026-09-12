@@ -242,8 +242,8 @@ onMounted(() => {
 .content-card {
   margin: 0;
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 .padded-tab {
@@ -267,7 +267,7 @@ onMounted(() => {
 }
 .audit-details {
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   max-width: 30rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -283,7 +283,7 @@ onMounted(() => {
 }
 .page-info {
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .w-full {
   width: 100%;

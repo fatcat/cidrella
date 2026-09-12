@@ -842,14 +842,14 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   display: block;
   margin-top: 0.15rem;
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .or-divider {
   display: flex;
   align-items: center;
   gap: 0.75rem;
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: -0.25rem 0;
 }
 .or-divider::before,
@@ -857,13 +857,13 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   content: '';
   flex: 1;
   height: 1px;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
 }
 
 /* Scope dialog inline options */
 .scope-options-section {
   margin-top: 0.75rem;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -874,11 +874,11 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   padding: 0.5rem 0.75rem;
   cursor: pointer;
   user-select: none;
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
   transition: background 0.1s;
 }
 .scope-options-header:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 5%, var(--p-surface-ground));
+  background: color-mix(in srgb, var(--cid-primary-color) 5%, var(--cid-surface-ground));
 }
 .scope-options-title {
   font-size: 0.85rem;
@@ -886,7 +886,7 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
 }
 .scope-options-count {
   font-size: 0.75rem;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   margin-left: auto;
 }
 .scope-options-list {
@@ -898,11 +898,11 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   align-items: center;
   gap: 0.5rem;
   padding: 0.35rem 0.75rem;
-  border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
+  border-top: 1px solid color-mix(in srgb, var(--cid-surface-border) 50%, transparent);
   font-size: 0.8rem;
 }
 .scope-option-row:first-child {
-  border-top: 1px solid var(--p-surface-border);
+  border-top: 1px solid var(--cid-surface-border);
 }
 .scope-option-check {
   flex-shrink: 0;
@@ -919,16 +919,16 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
 }
 .scope-option-code {
   font-size: 0.7rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .scope-option-help {
   font-size: 0.7rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   cursor: pointer;
   margin-left: 0.15rem;
 }
 .scope-option-help:hover {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 .scope-option-group-header {
   padding: 0.3rem 0.75rem;
@@ -936,9 +936,9 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--p-text-muted-color);
-  background: var(--p-surface-ground);
-  border-top: 1px solid var(--p-surface-border);
+  color: var(--cid-text-muted-color);
+  background: var(--cid-surface-ground);
+  border-top: 1px solid var(--cid-surface-border);
 }
 .scope-option-value {
   flex: 1;
@@ -952,7 +952,7 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
 }
 .scope-option-default {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-style: italic;
 }
 
@@ -973,11 +973,11 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
 }
 .option-help-popover p {
   margin: 0 0 0.4rem 0;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .rfc-link {
   font-size: 0.75rem;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   text-decoration: none;
 }
 .rfc-link:hover {

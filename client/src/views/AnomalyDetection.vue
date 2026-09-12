@@ -272,8 +272,8 @@ watch(() => store.settings, loadFromSettings);
   gap: 1rem;
   align-items: end;
   padding: 0.75rem 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 
@@ -285,7 +285,7 @@ watch(() => store.settings, loadFromSettings);
 
 .setting-field-label {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   white-space: nowrap;
 }
 
@@ -295,8 +295,8 @@ watch(() => store.settings, loadFromSettings);
 
 .info-section {
   padding: 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 
@@ -308,14 +308,14 @@ watch(() => store.settings, loadFromSettings);
 
 .info-section p {
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 0 0.5rem;
   line-height: 1.5;
 }
 
 .info-section ul {
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 0 0.5rem;
   padding-left: 1.25rem;
   line-height: 1.8;

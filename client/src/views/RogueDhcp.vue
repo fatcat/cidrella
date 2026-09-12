@@ -399,7 +399,7 @@ onMounted(async () => {
 }
 .section-hint {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 0 0.5rem;
   line-height: 1.4;
 }
@@ -430,7 +430,7 @@ onMounted(async () => {
 }
 .rd-status {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0;
 }
 .rd-warn {

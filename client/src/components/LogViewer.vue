@@ -216,8 +216,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0.4rem 0.6rem;
-  background: var(--p-surface-ground);
-  border-bottom: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-ground);
+  border-bottom: 1px solid var(--cid-surface-border);
   border-radius: 6px 6px 0 0;
   gap: 0.5rem;
 }
@@ -231,7 +231,7 @@ onUnmounted(() => {
   padding: 0.3rem 0.75rem;
   border: none;
   background: transparent;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 0.8rem;
   font-weight: 600;
   border-radius: 4px;
@@ -239,11 +239,11 @@ onUnmounted(() => {
   transition: all 0.15s;
 }
 .log-tab:hover {
-  background: var(--p-surface-hover);
+  background: var(--cid-surface-hover);
 }
 .log-tab.active {
-  background: var(--p-primary-color);
-  color: var(--p-primary-contrast-color);
+  background: var(--cid-primary-color);
+  color: var(--cid-primary-contrast-color);
 }
 
 .log-actions {
@@ -263,9 +263,9 @@ onUnmounted(() => {
   gap: 0.4rem;
   padding: 0.2rem 0.6rem;
   font-size: 0.7rem;
-  color: var(--p-text-muted-color);
-  background: var(--p-surface-ground);
-  border-bottom: 1px solid var(--p-surface-border);
+  color: var(--cid-text-muted-color);
+  background: var(--cid-surface-ground);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 
 .status-dot {
@@ -274,10 +274,10 @@ onUnmounted(() => {
   border-radius: 50%;
 }
 .status-dot.connected {
-  background: var(--p-green-500);
+  background: var(--cid-green-500);
 }
 .status-dot.disconnected {
-  background: var(--p-red-500);
+  background: var(--cid-red-500);
 }
 
 .log-count {

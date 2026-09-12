@@ -25,6 +25,6 @@ import DebugPanel from './DebugPanel.vue';
   flex: 1;
   min-height: 0;
   overflow: auto;
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 </style>

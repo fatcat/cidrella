@@ -117,7 +117,7 @@ onMounted(() => store.fetchIpAllowlist());
 }
 .wl-hint {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 0 0.75rem;
   line-height: 1.4;
 }

@@ -1743,12 +1743,12 @@ onMounted(loadWorkspace);
 
 <style scoped>
 .workspace-preview {
-  --preview-accent: color-mix(in srgb, #14b8a6 78%, var(--p-text-color));
-  --preview-dns: color-mix(in srgb, #f59e0b 82%, var(--p-text-color));
-  --preview-dhcp: color-mix(in srgb, #8b5cf6 82%, var(--p-text-color));
+  --preview-accent: color-mix(in srgb, #14b8a6 78%, var(--cid-text-color));
+  --preview-dns: color-mix(in srgb, #f59e0b 82%, var(--cid-text-color));
+  --preview-dhcp: color-mix(in srgb, #8b5cf6 82%, var(--cid-text-color));
   --preview-accent-soft: color-mix(in srgb, var(--preview-accent) 12%, transparent);
-  --preview-line: color-mix(in srgb, var(--p-surface-border) 82%, transparent);
-  --preview-muted: var(--p-text-muted-color);
+  --preview-line: color-mix(in srgb, var(--cid-surface-border) 82%, transparent);
+  --preview-muted: var(--cid-text-muted-color);
   --workspace-font-micro: min(11pt, calc(0.58rem + var(--workspace-font-bump)));
   --workspace-font-small: min(11pt, calc(0.65rem + var(--workspace-font-bump)));
   --workspace-font-body: min(11pt, calc(var(--app-fs-sm) + var(--workspace-font-bump)));
@@ -1759,7 +1759,7 @@ onMounted(loadWorkspace);
   min-height: 100%;
   padding: 1.1rem;
   box-sizing: border-box;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   background:
     radial-gradient(
       circle at 78% 0%,
@@ -1771,7 +1771,7 @@ onMounted(loadWorkspace);
       color-mix(in srgb, var(--preview-accent) 8%, transparent),
       transparent 24rem
     ),
-    var(--p-surface-ground);
+    var(--cid-surface-ground);
 }
 button,
 input {
@@ -1822,7 +1822,7 @@ button {
   border: 1px solid var(--preview-line);
   border-radius: 8px;
   color: var(--preview-muted);
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   font-size: var(--workspace-font-body);
 }
 .font-sizer > span {
@@ -1851,7 +1851,7 @@ button {
 .font-sizer output {
   min-width: 3.6rem;
   padding: 0 0.18rem;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   text-align: center;
   font-weight: 750;
 }
@@ -1866,7 +1866,7 @@ button {
 .sample-pill {
   padding: 0.4rem 0.7rem;
   color: var(--preview-muted);
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   border: 1px solid var(--preview-line);
 }
 .sample-pill.live {
@@ -1890,7 +1890,7 @@ button {
   flex: 1;
   min-height: 650px;
   overflow: hidden;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   border: 1px solid var(--preview-line);
   border-radius: 14px;
   box-shadow: 0 18px 50px rgba(15, 23, 42, 0.1);
@@ -1900,7 +1900,7 @@ button {
   flex-direction: column;
   min-height: 0;
   border-right: 1px solid var(--preview-line);
-  background: color-mix(in srgb, var(--p-surface-ground) 65%, var(--p-surface-card));
+  background: color-mix(in srgb, var(--cid-surface-ground) 65%, var(--cid-surface-card));
 }
 .explorer-heading {
   display: flex;
@@ -1940,7 +1940,7 @@ button {
   align-items: center;
   gap: 0.5rem;
   border: 1px solid var(--preview-line);
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
 }
 .explorer-search {
   margin: 0 0.75rem 0.8rem;
@@ -1960,7 +1960,7 @@ button {
   border: 0;
   outline: 0;
   background: transparent;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-size: var(--app-fs-sm);
 }
 .explorer-search kbd {
@@ -1968,7 +1968,7 @@ button {
   border: 1px solid var(--preview-line);
   border-radius: 4px;
   color: var(--preview-muted);
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
   font-size: 0.62rem;
 }
 .estate-row {
@@ -1981,7 +1981,7 @@ button {
   border: 1px solid var(--preview-line);
   border-radius: 9px;
   text-align: left;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   cursor: pointer;
 }
 .estate-row:hover,
@@ -2100,7 +2100,7 @@ button {
 }
 .folder-select span {
   overflow: hidden;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-size: var(--app-fs-sm);
   font-weight: 750;
   text-overflow: ellipsis;
@@ -2129,7 +2129,7 @@ button {
 }
 .network-row:hover,
 .network-row.active {
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   box-shadow: inset 0 0 0 1px var(--preview-line);
 }
 .network-row.active {
@@ -2142,13 +2142,13 @@ button {
   height: 0.42rem;
   margin-top: 0.32rem;
   border-radius: 50%;
-  background: var(--p-green-500);
+  background: var(--cid-green-500);
 }
 .network-state.warning {
-  background: var(--p-orange-500);
+  background: var(--cid-orange-500);
 }
 .network-state.muted {
-  background: var(--p-surface-400);
+  background: var(--cid-surface-400);
 }
 .network-copy {
   display: flex;
@@ -2175,7 +2175,7 @@ button {
   margin-top: 0.22rem;
   overflow: hidden;
   border-radius: 99px;
-  background: var(--p-surface-200);
+  background: var(--cid-surface-200);
 }
 .mini-meter i {
   display: block;
@@ -2221,8 +2221,8 @@ button {
   align-items: center;
   gap: 0.55rem;
   padding: 0.55rem 0.8rem;
-  color: color-mix(in srgb, #dc2626 82%, var(--p-text-color));
-  background: color-mix(in srgb, #ef4444 9%, var(--p-surface-card));
+  color: color-mix(in srgb, #dc2626 82%, var(--cid-text-color));
+  background: color-mix(in srgb, #ef4444 9%, var(--cid-surface-card));
   border-bottom: 1px solid color-mix(in srgb, #ef4444 28%, var(--preview-line));
   font-size: 0.68rem;
 }
@@ -2322,8 +2322,8 @@ button {
   gap: 0.3rem;
   padding: 0.18rem 0.42rem;
   border-radius: 999px;
-  color: var(--p-green-600);
-  background: color-mix(in srgb, var(--p-green-500) 11%, transparent);
+  color: var(--cid-green-600);
+  background: color-mix(in srgb, var(--cid-green-500) 11%, transparent);
   font-size: 0.61rem;
   font-weight: 800;
   text-transform: uppercase;
@@ -2332,7 +2332,7 @@ button {
   width: 0.36rem;
   height: 0.36rem;
   border-radius: 50%;
-  background: var(--p-green-500);
+  background: var(--cid-green-500);
 }
 .context-actions {
   display: flex;
@@ -2350,7 +2350,7 @@ button {
   padding: 0 0.68rem;
   border: 1px solid var(--preview-line);
   border-radius: 7px;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   font-size: var(--app-fs-sm);
   font-weight: 700;
   cursor: pointer;
@@ -2360,7 +2360,7 @@ button {
 }
 .button.primary {
   border-color: var(--preview-accent);
-  color: var(--p-primary-contrast-color, white);
+  color: var(--cid-primary-contrast-color, white);
   background: var(--preview-accent);
 }
 .button.compact {
@@ -2419,13 +2419,13 @@ button {
   width: 0.34rem;
   height: 0.34rem;
   border-radius: 50%;
-  background: var(--p-green-500);
+  background: var(--cid-green-500);
 }
 .health-stat small.warning {
-  color: var(--p-orange-600);
+  color: var(--cid-orange-600);
 }
 .health-stat small.warning i {
-  background: var(--p-orange-500);
+  background: var(--cid-orange-500);
 }
 @container workspace-context (max-width: 1180px) {
   .context-overview {
@@ -2450,7 +2450,7 @@ button {
   flex-shrink: 0;
   gap: 0.18rem;
   padding: 0.48rem 0.75rem 0;
-  background: color-mix(in srgb, var(--p-surface-ground) 52%, var(--p-surface-card));
+  background: color-mix(in srgb, var(--cid-surface-ground) 52%, var(--cid-surface-card));
   border-bottom: 1px solid var(--preview-line);
 }
 .view-tabs button {
@@ -2473,7 +2473,7 @@ button {
 .view-tabs button span {
   padding: 0.08rem 0.3rem;
   border-radius: 999px;
-  background: var(--p-surface-200);
+  background: var(--cid-surface-200);
   color: var(--preview-muted);
   font-size: 0.59rem;
 }
@@ -2485,7 +2485,7 @@ button {
   gap: 1rem;
   padding: 0.7rem 1rem;
   border-bottom: 1px solid var(--preview-line);
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
 }
 .view-summary h3 {
   margin: 0.1rem 0;
@@ -2509,7 +2509,7 @@ button {
   padding: 0.48rem 0.58rem;
   border: 1px solid var(--preview-line);
   border-radius: 8px;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   text-align: left;
   cursor: pointer;
 }
@@ -2566,7 +2566,7 @@ button {
   align-self: center;
   overflow: hidden;
   border-radius: 99px;
-  background: var(--p-surface-200);
+  background: var(--cid-surface-200);
 }
 .address-overview > div > span::after {
   content: '';
@@ -2628,7 +2628,7 @@ button {
 }
 .legend-dot.system,
 .grid-key i.system {
-  background: var(--p-surface-500);
+  background: var(--cid-surface-500);
 }
 .table-card {
   display: flex;
@@ -2639,7 +2639,7 @@ button {
   overflow: hidden;
   border: 1px solid var(--preview-line);
   border-radius: 10px;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
 }
 .loading-bar {
   display: flex;
@@ -2674,7 +2674,7 @@ button {
   padding: 0 0.52rem;
   border: 1px solid var(--preview-line);
   border-radius: 7px;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   color: var(--preview-muted);
   font-size: 0.66rem;
   cursor: pointer;
@@ -2702,7 +2702,7 @@ button {
   width: 1.65rem;
   height: 0.92rem;
   border-radius: 99px;
-  background: var(--p-surface-300);
+  background: var(--cid-surface-300);
   transition: background 0.15s;
 }
 .available-switch span::after {
@@ -2730,7 +2730,7 @@ button {
   display: flex;
   padding: 0.12rem;
   border-radius: 7px;
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 .view-switcher button {
   display: inline-flex;
@@ -2745,7 +2745,7 @@ button {
   cursor: pointer;
 }
 .view-switcher button.active {
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   color: var(--preview-accent);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
@@ -2758,7 +2758,7 @@ button {
   align-items: center;
   gap: 0.6rem;
   padding: 0.42rem 0.65rem;
-  color: var(--p-primary-contrast-color, white);
+  color: var(--cid-primary-contrast-color, white);
   background: var(--preview-accent);
   font-size: 0.67rem;
 }
@@ -2787,7 +2787,7 @@ thead {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: color-mix(in srgb, var(--p-surface-ground) 78%, var(--p-surface-card));
+  background: color-mix(in srgb, var(--cid-surface-ground) 78%, var(--cid-surface-card));
 }
 th {
   height: 2rem;
@@ -2843,7 +2843,7 @@ tbody tr.selected {
 }
 .action-cell button:hover {
   color: var(--preview-accent);
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
 }
 .wide-cell {
   min-width: 135px;
@@ -2866,8 +2866,8 @@ tbody tr.selected {
 }
 .table-pill.in-use,
 .table-pill.active {
-  color: var(--p-red-600);
-  background: color-mix(in srgb, var(--p-red-500) 10%, transparent);
+  color: var(--cid-red-600);
+  background: color-mix(in srgb, var(--cid-red-500) 10%, transparent);
 }
 .table-pill.dhcp-scope,
 .table-pill.available {
@@ -2877,7 +2877,7 @@ tbody tr.selected {
 .table-pill.offline,
 .table-pill.expired {
   color: var(--preview-muted);
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 .table-pill.unavailable {
   color: var(--preview-dns);
@@ -2895,17 +2895,17 @@ tbody tr.selected {
   width: 0.38rem;
   height: 0.38rem;
   border-radius: 50%;
-  background: var(--p-green-500);
+  background: var(--cid-green-500);
 }
 .online-value.offline i,
 .enabled-value.off i {
-  background: var(--p-surface-400);
+  background: var(--cid-surface-400);
 }
 .online-value.unknown {
   color: var(--preview-muted);
 }
 .online-value.unknown i {
-  border: 1px solid var(--p-surface-400);
+  border: 1px solid var(--cid-surface-400);
   background: transparent;
 }
 .type-value {
@@ -2930,7 +2930,7 @@ tbody tr.selected {
   font-size: 1.4rem;
 }
 .no-results strong {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .table-footer {
   display: grid;
@@ -2993,17 +2993,17 @@ tbody tr.selected {
   min-height: 23px;
   border: 1px solid transparent;
   border-radius: 4px;
-  background: var(--p-surface-100);
+  background: var(--cid-surface-100);
   color: var(--preview-muted);
   font-size: 0.54rem;
   cursor: pointer;
 }
 .address-grid button:hover {
-  border-color: var(--p-text-color);
+  border-color: var(--cid-text-color);
   transform: translateY(-1px);
 }
 .address-grid button.system {
-  background: var(--p-surface-400);
+  background: var(--cid-surface-400);
   color: white;
 }
 .address-grid button.gateway {
@@ -3011,10 +3011,10 @@ tbody tr.selected {
   color: #111;
 }
 .address-grid button.infra {
-  background: color-mix(in srgb, #22d3ee 35%, var(--p-surface-card));
+  background: color-mix(in srgb, #22d3ee 35%, var(--cid-surface-card));
 }
 .address-grid button.dhcp {
-  background: color-mix(in srgb, var(--preview-accent) 22%, var(--p-surface-card));
+  background: color-mix(in srgb, var(--preview-accent) 22%, var(--cid-surface-card));
 }
 .address-grid button.dhcp-active {
   background: var(--preview-accent);
@@ -3025,13 +3025,13 @@ tbody tr.selected {
   color: #111;
 }
 .address-grid button.reserved {
-  background: color-mix(in srgb, var(--preview-dhcp) 64%, var(--p-surface-card));
+  background: color-mix(in srgb, var(--preview-dhcp) 64%, var(--cid-surface-card));
   color: white;
 }
 .address-grid button.rogue {
-  border: 2px solid var(--p-red-500);
-  background: color-mix(in srgb, var(--p-red-500) 12%, var(--p-surface-card));
-  color: var(--p-red-600);
+  border: 2px solid var(--cid-red-500);
+  background: color-mix(in srgb, var(--cid-red-500) 12%, var(--cid-surface-card));
+  color: var(--cid-red-600);
   font-weight: 800;
 }
 .grid-key {
@@ -3044,11 +3044,11 @@ tbody tr.selected {
   background: color-mix(in srgb, var(--preview-dns) 70%, #fde68a);
 }
 .grid-key i.rogue {
-  border: 2px solid var(--p-red-500);
+  border: 2px solid var(--cid-red-500);
 }
 .grid-key i.available {
   border: 1px solid var(--preview-line);
-  background: var(--p-surface-100);
+  background: var(--cid-surface-100);
 }
 .compact-grid-view {
   min-height: 0;
@@ -3072,7 +3072,7 @@ tbody tr.selected {
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: var(--p-surface-100);
+  background: var(--cid-surface-100);
   box-shadow:
     inset -1px 0 var(--preview-line),
     inset 0 -1px var(--preview-line);
@@ -3080,22 +3080,22 @@ tbody tr.selected {
 }
 .compact-address-grid button.section {
   box-shadow:
-    inset -2px 0 color-mix(in srgb, var(--preview-line) 75%, var(--p-text-color)),
+    inset -2px 0 color-mix(in srgb, var(--preview-line) 75%, var(--cid-text-color)),
     inset 0 -1px var(--preview-line);
 }
 .compact-address-grid button:hover {
   z-index: 1;
-  outline: 2px solid var(--p-text-color);
+  outline: 2px solid var(--cid-text-color);
   outline-offset: -1px;
 }
 .compact-address-grid button.system {
-  background: var(--p-surface-400);
+  background: var(--cid-surface-400);
 }
 .compact-address-grid button.gateway {
   background: var(--preview-dns);
 }
 .compact-address-grid button.dhcp {
-  background: color-mix(in srgb, var(--preview-accent) 22%, var(--p-surface-card));
+  background: color-mix(in srgb, var(--preview-accent) 22%, var(--cid-surface-card));
 }
 .compact-address-grid button.dhcp-active {
   background: var(--preview-accent);
@@ -3104,13 +3104,13 @@ tbody tr.selected {
   background: color-mix(in srgb, var(--preview-dns) 70%, #fde68a);
 }
 .compact-address-grid button.reserved {
-  background: color-mix(in srgb, var(--preview-dhcp) 64%, var(--p-surface-card));
+  background: color-mix(in srgb, var(--preview-dhcp) 64%, var(--cid-surface-card));
 }
 .compact-address-grid button.rogue {
   z-index: 1;
-  outline: 2px solid var(--p-red-500);
+  outline: 2px solid var(--cid-red-500);
   outline-offset: -2px;
-  background: color-mix(in srgb, var(--p-red-500) 12%, var(--p-surface-card));
+  background: color-mix(in srgb, var(--cid-red-500) 12%, var(--cid-surface-card));
 }
 .details-panel {
   position: absolute;
@@ -3123,7 +3123,7 @@ tbody tr.selected {
   flex-direction: column;
   overflow-y: auto;
   border-left: 1px solid var(--preview-line);
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   box-shadow: -12px 0 32px rgba(15, 23, 42, 0.13);
 }
 .details-head {
@@ -3155,13 +3155,13 @@ tbody tr.selected {
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  color: var(--p-green-600);
-  background: color-mix(in srgb, var(--p-green-500) 12%, transparent);
+  color: var(--cid-green-600);
+  background: color-mix(in srgb, var(--cid-green-500) 12%, transparent);
 }
 .detail-orb.offline,
 .detail-orb.unknown {
   color: var(--preview-muted);
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 .details-status > div {
   display: flex;
@@ -3285,7 +3285,7 @@ tbody tr.selected {
   padding: 0.35rem;
   border: 1px solid var(--preview-line);
   border-radius: 10px;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   box-shadow: 0 16px 45px rgba(15, 23, 42, 0.2);
 }
 .floating-menu > span {
@@ -3326,10 +3326,10 @@ tbody tr.selected {
   font-size: 0.59rem;
 }
 .floating-menu button.danger {
-  color: var(--p-red-600);
+  color: var(--cid-red-600);
 }
 .floating-menu button.danger > i {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
 }
 .create-menu {
   top: 7.8rem;
@@ -3360,8 +3360,8 @@ tbody tr.selected {
   box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--preview-accent) 40%, var(--preview-line));
   border-radius: 10px;
-  color: var(--p-text-color);
-  background: var(--p-surface-card);
+  color: var(--cid-text-color);
+  background: var(--cid-surface-card);
   box-shadow: 0 14px 40px rgba(15, 23, 42, 0.2);
 }
 .prototype-notice > i {

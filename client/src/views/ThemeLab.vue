@@ -474,12 +474,12 @@ const contrastRows = computed(() => {
   const cardBg = renderedColor(
     '.lab-panel',
     'background-color',
-    cssVar('--p-surface-card', '#1f2937'),
+    cssVar('--cid-surface-card', '#1f2937'),
   );
   const groundBg = renderedColor(
     '.theme-lab',
     'background-color',
-    cssVar('--p-surface-ground', '#111827'),
+    cssVar('--cid-surface-ground', '#111827'),
   );
   return semanticTokens.map((item) => {
     const { label, token } = item;
@@ -511,7 +511,7 @@ const contrastRows = computed(() => {
   flex-direction: column;
   gap: 1rem;
   min-height: 100vh;
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 
 .lab-header {
@@ -519,8 +519,8 @@ const contrastRows = computed(() => {
   justify-content: space-between;
   align-items: center;
   gap: 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 1rem 1.25rem;
 }
@@ -532,7 +532,7 @@ const contrastRows = computed(() => {
 
 .lab-header p {
   margin: 0.25rem 0 0;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-sm);
 }
 
@@ -547,8 +547,8 @@ const contrastRows = computed(() => {
 }
 
 .lab-panel {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 1rem;
   min-width: 0;
@@ -584,10 +584,10 @@ const contrastRows = computed(() => {
   padding: 0 0.5rem;
   width: auto;
   min-width: 0;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
-  background: var(--p-surface-card);
-  color: var(--p-text-color);
+  background: var(--cid-surface-card);
+  color: var(--cid-text-color);
   line-height: 1;
   white-space: nowrap;
 }
@@ -669,17 +669,17 @@ const contrastRows = computed(() => {
   row-gap: 0.1rem;
   align-items: center;
   text-align: left;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 0.5rem;
-  background: var(--p-surface-ground);
-  color: var(--p-text-color);
+  background: var(--cid-surface-ground);
+  color: var(--cid-text-color);
   cursor: pointer;
 }
 
 .swatch-card.active {
-  border-color: var(--p-primary-color);
-  background: color-mix(in srgb, var(--p-primary-color) 12%, transparent);
+  border-color: var(--cid-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 12%, transparent);
 }
 
 .swatch-dot {
@@ -687,11 +687,11 @@ const contrastRows = computed(() => {
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
 }
 
 .swatch-card small {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
 }
 
@@ -705,11 +705,11 @@ const contrastRows = computed(() => {
   width: 18px;
   height: 18px;
   border-radius: 4px;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
 }
 
 .contrast-table code {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .contrast-series-pill {

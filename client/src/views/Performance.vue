@@ -584,7 +584,7 @@ useAutoRefresh(refreshAll);
   font-size: 1rem;
   font-weight: 700;
   font-family: monospace;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   line-height: 1;
   margin-bottom: 2px;
 }
@@ -592,7 +592,7 @@ useAutoRefresh(refreshAll);
 .gauge-label {
   font-size: 0.75rem;
   font-weight: 600;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   text-transform: uppercase;
   margin-top: 0.25rem;
 }

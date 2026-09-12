@@ -46,10 +46,10 @@ export const FEATURES = {
 // queue. Kept separate from `severity` because a low-severity device can still
 // sit in a band worth drawing attention to (steady tunnel shape, for example).
 export const BAND_COLORS = {
-  critical: 'var(--p-red-400)',
-  suspicious: 'var(--p-orange-400)',
-  unusual: 'var(--p-yellow-500)',
-  quiet: 'var(--p-green-400)',
+  critical: 'var(--cid-red-400)',
+  suspicious: 'var(--cid-orange-400)',
+  unusual: 'var(--cid-yellow-500)',
+  quiet: 'var(--cid-green-400)',
 };
 
 export const REVIEW_DEVICES = [

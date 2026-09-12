@@ -406,8 +406,8 @@ watch(
   flex-direction: column;
   overflow-y: auto;
   border-left: 1px solid var(--preview-line);
-  color: var(--p-text-color);
-  background: var(--p-surface-card);
+  color: var(--cid-text-color);
+  background: var(--cid-surface-card);
   box-shadow: -12px 0 32px rgba(15, 23, 42, 0.13);
 }
 .panel-head {
@@ -462,13 +462,13 @@ watch(
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  color: var(--p-green-600);
-  background: color-mix(in srgb, var(--p-green-500) 12%, transparent);
+  color: var(--cid-green-600);
+  background: color-mix(in srgb, var(--cid-green-500) 12%, transparent);
 }
 .identity-orb.offline,
 .identity-orb.unknown {
   color: var(--preview-muted);
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 .identity > div {
   display: flex;
@@ -496,17 +496,17 @@ watch(
   gap: 0.4rem;
   padding: 0.55rem 0.9rem;
   border-bottom: 1px solid var(--preview-line);
-  color: var(--p-green-700);
-  background: color-mix(in srgb, var(--p-green-500) 9%, transparent);
+  color: var(--cid-green-700);
+  background: color-mix(in srgb, var(--cid-green-500) 9%, transparent);
   font-size: var(--workspace-font-small);
 }
 .feedback.warning {
-  color: var(--p-orange-700);
-  background: color-mix(in srgb, var(--p-orange-500) 10%, transparent);
+  color: var(--cid-orange-700);
+  background: color-mix(in srgb, var(--cid-orange-500) 10%, transparent);
 }
 .feedback.error {
-  color: var(--p-red-700);
-  background: color-mix(in srgb, var(--p-red-500) 9%, transparent);
+  color: var(--cid-red-700);
+  background: color-mix(in srgb, var(--cid-red-500) 9%, transparent);
 }
 dl {
   display: grid;
@@ -602,7 +602,7 @@ dd {
 }
 .quick-actions button.danger,
 .inline-action button.danger {
-  color: var(--p-red-600);
+  color: var(--cid-red-600);
 }
 .quick-actions button:disabled,
 .inline-action button:disabled {
@@ -631,7 +631,7 @@ dd {
   border-radius: 6px;
   outline: 0;
   color: inherit;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   font: inherit;
 }
 .inline-action textarea:focus {
@@ -644,13 +644,13 @@ dd {
 }
 .inline-action button.primary {
   border-color: var(--preview-accent);
-  color: var(--p-primary-contrast-color, white);
+  color: var(--cid-primary-contrast-color, white);
   background: var(--preview-accent);
 }
 .inline-action button.danger.solid {
-  border-color: var(--p-red-500);
+  border-color: var(--cid-red-500);
   color: white;
-  background: var(--p-red-500);
+  background: var(--cid-red-500);
 }
 .confirm-action p {
   margin: 0;
@@ -663,7 +663,7 @@ dd {
   grid-template-columns: repeat(3, 1fr);
   padding: 0.16rem;
   border-radius: 7px;
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 .segmented button {
   min-height: 1.8rem;
@@ -676,7 +676,7 @@ dd {
 }
 .segmented button.active {
   color: var(--preview-accent);
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 .segmented button:disabled {
@@ -743,13 +743,13 @@ dd {
   background: var(--preview-accent);
 }
 .event-marker.good i {
-  background: var(--p-green-500);
+  background: var(--cid-green-500);
 }
 .event-marker.danger i {
-  background: var(--p-red-500);
+  background: var(--cid-red-500);
 }
 .event-marker.muted i {
-  background: var(--p-surface-400);
+  background: var(--cid-surface-400);
 }
 .event-row > div {
   display: flex;

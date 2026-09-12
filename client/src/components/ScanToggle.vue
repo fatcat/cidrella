@@ -34,16 +34,19 @@
         Disabled
       </button>
     </div>
-    <small v-if="modelValue === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
+    <small
+      v-if="modelValue === null"
+      style="font-size: 0.75rem; color: var(--cid-text-muted-color)"
+    >
       Inherits from subnet: scanning is {{ resolvedEnabled ? 'enabled' : 'disabled' }} for this
       network
     </small>
     <small
       v-else-if="modelValue === true"
-      style="font-size: 0.75rem; color: var(--p-text-muted-color)"
+      style="font-size: 0.75rem; color: var(--cid-text-muted-color)"
       >Scanning is enabled for this network</small
     >
-    <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)"
+    <small v-else style="font-size: 0.75rem; color: var(--cid-text-muted-color)"
       >Scanning is disabled for this network</small
     >
   </div>
@@ -62,7 +65,7 @@ defineEmits(['update:modelValue']);
   display: inline-flex;
   border-radius: 4px;
   overflow: hidden;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
 }
 .scan-toggle-btn {
   padding: 0.3rem 0.75rem;
@@ -70,43 +73,43 @@ defineEmits(['update:modelValue']);
   background: none;
   border: none;
   cursor: pointer;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   transition:
     background 0.15s,
     color 0.15s;
 }
 .scan-toggle-btn + .scan-toggle-btn {
-  border-left: 1px solid var(--p-surface-border);
+  border-left: 1px solid var(--cid-surface-border);
 }
 .scan-toggle-btn:hover {
-  background: var(--p-surface-200);
+  background: var(--cid-surface-200);
 }
 :global(.p-dark) .scan-toggle-btn:hover {
-  background: var(--p-surface-700);
+  background: var(--cid-surface-700);
 }
 .scan-inherit.active {
-  background: var(--p-surface-300);
-  color: var(--p-text-color);
+  background: var(--cid-surface-300);
+  color: var(--cid-text-color);
 }
 :global(.p-dark) .scan-inherit.active {
-  background: var(--p-surface-600);
+  background: var(--cid-surface-600);
 }
 .scan-enabled.active {
-  background: color-mix(in srgb, var(--p-green-500) 25%, transparent);
-  color: var(--p-green-500);
+  background: color-mix(in srgb, var(--cid-green-500) 25%, transparent);
+  color: var(--cid-green-500);
 }
 .scan-disabled.active {
-  background: color-mix(in srgb, var(--p-blue-500) 25%, transparent);
-  color: var(--p-blue-500);
+  background: color-mix(in srgb, var(--cid-blue-500) 25%, transparent);
+  color: var(--cid-blue-500);
 }
 .scan-enabled.resolved {
-  background: color-mix(in srgb, var(--p-green-500) 10%, transparent);
-  color: var(--p-green-500);
+  background: color-mix(in srgb, var(--cid-green-500) 10%, transparent);
+  color: var(--cid-green-500);
   opacity: 0.7;
 }
 .scan-disabled.resolved {
-  background: color-mix(in srgb, var(--p-blue-500) 10%, transparent);
-  color: var(--p-blue-500);
+  background: color-mix(in srgb, var(--cid-blue-500) 10%, transparent);
+  color: var(--cid-blue-500);
   opacity: 0.7;
 }
 </style>

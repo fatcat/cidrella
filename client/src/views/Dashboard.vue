@@ -182,8 +182,8 @@ useAutoRefresh(refreshAll);
   flex-direction: column;
   align-items: center;
   padding: 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 
@@ -191,12 +191,12 @@ useAutoRefresh(refreshAll);
   font-size: var(--app-fs-3xl);
   font-weight: 700;
   font-family: monospace;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 
 .summary-label {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   text-transform: uppercase;
   letter-spacing: 0.08em;
   margin-top: 0.25rem;
@@ -210,7 +210,7 @@ useAutoRefresh(refreshAll);
 }
 
 .summary-card-link:hover {
-  border-color: var(--p-primary-color);
+  border-color: var(--cid-primary-color);
   transform: translateY(-2px);
 }
 </style>

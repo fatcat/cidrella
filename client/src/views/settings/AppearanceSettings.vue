@@ -69,18 +69,18 @@ function getThemeLabel(t) {
   align-items: center;
   gap: 0.65rem;
   padding: 0.6rem 0.75rem;
-  border: 2px solid var(--p-surface-border);
+  border: 2px solid var(--cid-surface-border);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.15s;
 }
 .theme-card:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
-  border-color: color-mix(in srgb, var(--p-primary-color) 40%, transparent);
+  background: color-mix(in srgb, var(--cid-primary-color) 8%, transparent);
+  border-color: color-mix(in srgb, var(--cid-primary-color) 40%, transparent);
 }
 .theme-card.theme-active {
-  border-color: var(--p-primary-color);
-  background: color-mix(in srgb, var(--p-primary-color) 12%, transparent);
+  border-color: var(--cid-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 12%, transparent);
 }
 .theme-swatch-dot {
   width: 28px;
@@ -101,15 +101,15 @@ function getThemeLabel(t) {
 }
 .theme-card-desc {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .theme-check {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   font-size: var(--app-fs-md);
   flex-shrink: 0;
 }
 .field-help {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>

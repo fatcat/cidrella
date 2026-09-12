@@ -294,10 +294,10 @@ watch(
 .host-info section h5 {
   margin: 0 0 0.4rem;
   font-size: var(--app-fs-sm);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .hi-conf {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-weight: 400;
   font-size: var(--app-fs-xs);
 }
@@ -309,10 +309,10 @@ watch(
   font-size: var(--app-fs-sm);
 }
 .hi-label {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .hi-val {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   word-break: break-word;
 }
 .hi-val.mono {
@@ -328,7 +328,7 @@ watch(
 }
 .hi-hint {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0.3rem 0 0;
   line-height: 1.4;
 }
@@ -341,7 +341,7 @@ watch(
 .events-state {
   padding: 1.5rem;
   text-align: center;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-sm);
 }
 .events-list {
@@ -356,13 +356,13 @@ watch(
   align-items: flex-start;
   gap: 0.5rem;
   padding: 0.45rem 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--cid-surface-border) 50%, transparent);
   font-size: var(--app-fs-sm);
 }
 .event-time {
   width: 8.5rem;
   flex-shrink: 0;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: monospace;
   font-size: var(--app-fs-xs);
 }
@@ -372,7 +372,7 @@ watch(
 .event-detail {
   flex: 1;
   min-width: 0;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   overflow-wrap: anywhere;
 }
 </style>

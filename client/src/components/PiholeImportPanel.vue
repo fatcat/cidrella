@@ -180,29 +180,29 @@ defineExpose({ resetState });
 .field label {
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .field-error {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-size: 0.75rem;
 }
 .field-warn {
-  color: var(--p-orange-500);
+  color: var(--cid-orange-500);
   font-size: 0.75rem;
 }
 .pihole-reachable {
-  border-color: var(--p-green-500) !important;
-  box-shadow: 0 0 0 1px var(--p-green-500);
+  border-color: var(--cid-green-500) !important;
+  box-shadow: 0 0 0 1px var(--cid-green-500);
 }
 .pihole-unreachable {
-  border-color: var(--p-red-500) !important;
-  box-shadow: 0 0 0 1px var(--p-red-500);
+  border-color: var(--cid-red-500) !important;
+  box-shadow: 0 0 0 1px var(--cid-red-500);
 }
 .pihole-preview {
   padding: 0.75rem;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
-  background: var(--p-surface-50);
+  background: var(--cid-surface-50);
 }
 .pihole-preview h4 {
   margin: 0 0 0.5rem;
@@ -221,11 +221,11 @@ defineExpose({ resetState });
 .preview-count {
   font-size: 1.4rem;
   font-weight: 700;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 .preview-label {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .import-actions {
   display: flex;
@@ -233,6 +233,6 @@ defineExpose({ resetState });
   gap: 0.5rem;
 }
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>

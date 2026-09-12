@@ -454,23 +454,23 @@ onMounted(loadInterfaces);
 }
 .port-readout {
   font-weight: 600;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .port-input {
   width: 6em;
   padding: 0.375rem 0.5rem;
   font-family: var(--font-mono, monospace);
   /* Use PrimeVue v4 form-field tokens. The older --p-inputtext-* tokens are
-     unset in this build, so they fell back to the light --p-surface-0, giving a
+     unset in this build, so they fell back to the light --cid-surface-0, giving a
      white field (with light text) that's invisible on dark themes. The
      form-field tokens adapt to light/dark mode like the real InputText. */
-  background: var(--p-form-field-background, var(--p-content-background));
-  color: var(--p-form-field-color, var(--p-text-color));
-  border: 1px solid var(--p-form-field-border-color, var(--p-surface-300));
-  border-radius: var(--p-form-field-border-radius, 4px);
+  background: var(--cid-form-field-background, var(--cid-content-background));
+  color: var(--cid-form-field-color, var(--cid-text-color));
+  border: 1px solid var(--cid-form-field-border-color, var(--cid-surface-300));
+  border-radius: var(--cid-form-field-border-radius, 4px);
 }
 .port-input:focus {
-  outline: 2px solid var(--p-primary-color);
+  outline: 2px solid var(--cid-primary-color);
   outline-offset: -1px;
 }
 .port-input:disabled {
@@ -478,11 +478,11 @@ onMounted(loadInterfaces);
   cursor: not-allowed;
 }
 .port-input-invalid {
-  border-color: var(--p-red-500, #ef4444);
-  background: color-mix(in srgb, var(--p-red-500, #ef4444) 8%, transparent);
+  border-color: var(--cid-red-500, #ef4444);
+  background: color-mix(in srgb, var(--cid-red-500, #ef4444) 8%, transparent);
 }
 .port-input-invalid:focus {
-  outline-color: var(--p-red-500, #ef4444);
+  outline-color: var(--cid-red-500, #ef4444);
 }
 /* Hide the native up/down spinners. Users requested plain entry fields. */
 .port-input::-webkit-outer-spin-button,
@@ -525,9 +525,9 @@ onMounted(loadInterfaces);
   font-size: 0.85em;
 }
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .warn-text {
-  color: var(--p-orange-400);
+  color: var(--cid-orange-400);
 }
 </style>

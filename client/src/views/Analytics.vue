@@ -82,8 +82,8 @@ watch(activeTab, (val) => {
 .ana-sidebar {
   width: 180px;
   flex-shrink: 0;
-  background: var(--p-surface-card);
-  border-right: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border-right: 1px solid var(--cid-surface-border);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
@@ -101,7 +101,7 @@ watch(activeTab, (val) => {
   gap: 0.5rem;
   padding: 0.5rem 1rem;
   font-size: var(--app-fs-base);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   text-decoration: none;
   cursor: pointer;
   border-left: 3px solid transparent;
@@ -111,14 +111,14 @@ watch(activeTab, (val) => {
 }
 
 .ana-nav-item:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
+  background: color-mix(in srgb, var(--cid-primary-color) 8%, transparent);
 }
 
 .ana-nav-item.active {
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 15%, transparent);
+  color: var(--cid-primary-color);
   font-weight: 600;
-  border-left-color: var(--p-primary-color);
+  border-left-color: var(--cid-primary-color);
   padding-left: calc(1rem - 0px); /* border replaces padding room */
 }
 
@@ -136,15 +136,15 @@ watch(activeTab, (val) => {
 .content-card {
   margin: 3% 7% 0;
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 
 .placeholder-card {
   text-align: center;
   padding: 4rem 2rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .placeholder-icon {
@@ -156,7 +156,7 @@ watch(activeTab, (val) => {
 .placeholder-card h3 {
   margin: 0 0 0.5rem;
   font-size: 1.1rem;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 
 .placeholder-card p {

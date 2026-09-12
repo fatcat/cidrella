@@ -489,12 +489,12 @@ onMounted(async () => {
   font-size: 0.8rem;
 }
 .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .page-info {
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .url-cell {
@@ -506,7 +506,7 @@ onMounted(async () => {
 .url-text {
   font-size: 0.75rem;
   font-family: monospace;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -514,7 +514,7 @@ onMounted(async () => {
   min-width: 0;
 }
 .url-custom {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   font-weight: 600;
 }
 .url-input {

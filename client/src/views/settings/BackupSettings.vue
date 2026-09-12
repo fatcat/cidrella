@@ -124,7 +124,7 @@
       </div>
 
       <div class="setting-group" v-if="authStore.user?.role === 'admin'">
-        <h3 style="color: var(--p-red-500)">Database Reset</h3>
+        <h3 style="color: var(--cid-red-500)">Database Reset</h3>
         <p class="field-help" style="margin-bottom: 0.75rem">
           Reset the application to a fresh state. This will delete all networks, DNS zones, DHCP
           scopes, users, audit logs, settings, and VLANs. TLS certificates, backup files, and
@@ -170,7 +170,7 @@
       modal
       :style="{ width: '28rem' }"
     >
-      <p style="color: var(--p-red-500); font-weight: 600">This action cannot be undone.</p>
+      <p style="color: var(--cid-red-500); font-weight: 600">This action cannot be undone.</p>
       <p>
         All application data will be permanently deleted and the database will be reinitialized. You
         will be logged out and a new admin account will be generated.
@@ -426,14 +426,14 @@ onMounted(async () => {
 .content-card {
   margin: 0;
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 .content-card h3 {
   font-size: var(--app-fs-lg);
   margin: 0 0 0.75rem;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .card-header {
   display: flex;
@@ -447,7 +447,7 @@ onMounted(async () => {
 .setting-group {
   margin-bottom: 1.5rem;
   padding-bottom: 1.5rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 .setting-group:last-child {
   border-bottom: none;
@@ -456,7 +456,7 @@ onMounted(async () => {
 .setting-group h3 {
   margin: 0 0 0.75rem 0;
   font-size: var(--app-fs-lg);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .field {
   margin-bottom: 1rem;
@@ -471,7 +471,7 @@ onMounted(async () => {
   display: block;
   margin-top: 0.25rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .action-buttons {
   display: flex;
@@ -487,10 +487,10 @@ onMounted(async () => {
 }
 .next-backup-value {
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .restore-warning {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-weight: 600;
 }
 .restore-row {

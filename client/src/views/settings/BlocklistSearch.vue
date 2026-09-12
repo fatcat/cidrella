@@ -142,6 +142,6 @@ async function doSearch(fromPagination = false) {
 }
 .page-info {
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>

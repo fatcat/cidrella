@@ -232,7 +232,7 @@ function statusLabel(node) {
   padding: 0 0.75rem;
   height: 2.4rem;
   box-sizing: border-box;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   flex-shrink: 0;
 }
 .folder-name {
@@ -241,11 +241,11 @@ function statusLabel(node) {
 }
 .folder-desc {
   font-size: 0.8rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .folder-count {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .table-area {
@@ -261,11 +261,11 @@ function statusLabel(node) {
   font-weight: 600;
   font-size: 0.7rem;
   text-transform: uppercase;
-  color: var(--p-text-muted-color);
-  border-bottom: 1px solid var(--p-surface-border);
+  color: var(--cid-text-muted-color);
+  border-bottom: 1px solid var(--cid-surface-border);
   position: sticky;
   top: 0;
-  background: var(--p-surface-card);
+  background: var(--cid-surface-card);
   z-index: 1;
 }
 
@@ -273,7 +273,7 @@ function statusLabel(node) {
   display: flex;
   padding: 0.4rem 0.75rem;
   align-items: center;
-  border-bottom: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--cid-surface-border) 50%, transparent);
   cursor: default;
   transition: background 0.1s;
 }
@@ -281,7 +281,7 @@ function statusLabel(node) {
   cursor: pointer;
 }
 .table-row.row-allocated:hover {
-  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
+  background: color-mix(in srgb, var(--cid-primary-color) 8%, transparent);
 }
 .table-row.row-unallocated {
   opacity: 0.7;
@@ -290,8 +290,8 @@ function statusLabel(node) {
   cursor: grab;
 }
 .table-row.row-merge-selected {
-  background: color-mix(in srgb, var(--p-orange-500) 15%, transparent);
-  border-left: 3px solid var(--p-orange-500);
+  background: color-mix(in srgb, var(--cid-orange-500) 15%, transparent);
+  border-left: 3px solid var(--cid-orange-500);
 }
 
 .col {
@@ -356,15 +356,15 @@ function statusLabel(node) {
   font-weight: 500;
 }
 .st-allocated {
-  background: color-mix(in srgb, var(--p-green-500) 20%, transparent);
-  color: var(--p-green-500);
+  background: color-mix(in srgb, var(--cid-green-500) 20%, transparent);
+  color: var(--cid-green-500);
 }
 .st-unallocated {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .st-divided {
-  background: color-mix(in srgb, var(--p-blue-500) 15%, transparent);
-  color: var(--p-blue-500);
+  background: color-mix(in srgb, var(--cid-blue-500) 15%, transparent);
+  color: var(--cid-blue-500);
 }
 
 .scan-badge {
@@ -375,21 +375,21 @@ function statusLabel(node) {
   font-weight: 500;
 }
 .scan-on {
-  background: color-mix(in srgb, var(--p-green-500) 20%, transparent);
-  color: var(--p-green-500);
+  background: color-mix(in srgb, var(--cid-green-500) 20%, transparent);
+  color: var(--cid-green-500);
 }
 .scan-off {
-  background: color-mix(in srgb, var(--p-red-500) 15%, transparent);
-  color: var(--p-red-500);
+  background: color-mix(in srgb, var(--cid-red-500) 15%, transparent);
+  color: var(--cid-red-500);
 }
 .scan-inherit {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .empty-state {
   padding: 2rem;
   text-align: center;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 0.85rem;
 }
 </style>

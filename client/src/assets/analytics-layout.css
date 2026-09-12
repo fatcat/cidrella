@@ -11,8 +11,8 @@
   display: flex;
   gap: 2rem;
   padding: 1rem 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   flex-wrap: wrap;
 }
@@ -31,7 +31,7 @@
 }
 .stat-label {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -59,7 +59,7 @@
 }
 .stat-sublabel {
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-style: italic;
   margin-top: 2px;
 }
@@ -72,8 +72,8 @@
 }
 
 .dashboard-content {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 1.5rem;
   display: flex;
@@ -98,8 +98,8 @@
 }
 
 .chart-card {
-  background: var(--p-surface-ground);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-ground);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 1rem;
 }
@@ -119,7 +119,7 @@
 }
 
 .empty-chart {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-sm);
   text-align: center;
   padding: 2rem 0;
@@ -137,8 +137,8 @@
   align-items: center;
   gap: 1rem;
   padding: 0.75rem 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   margin-bottom: 0.75rem;
   flex-wrap: wrap;
@@ -152,5 +152,5 @@
 
 .schedule-label {
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }

@@ -58,7 +58,7 @@
       </form>
 
       <div v-else class="setup-complete">
-        <i class="pi pi-check-circle" style="font-size: 3rem; color: var(--p-green-500)"></i>
+        <i class="pi pi-check-circle" style="font-size: 3rem; color: var(--cid-green-500)"></i>
         <p>Setup complete! Redirecting to login...</p>
       </div>
     </div>
@@ -171,7 +171,7 @@ async function handleSkip() {
 <style scoped>
 /* SetupWizard-specific styles */
 .setup-card h1 {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 .skip-row {
   display: flex;
@@ -182,7 +182,7 @@ async function handleSkip() {
 }
 .skip-hint {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .setup-complete {
   text-align: center;
@@ -190,6 +190,6 @@ async function handleSkip() {
 }
 .setup-complete p {
   margin-top: 1rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>
