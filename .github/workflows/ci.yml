@@ -68,6 +68,14 @@ jobs:
         # registration, tracked as a future refactor. This gate fails only
         # when a NEW cycle appears. madge can't parse Vue SFCs, so client/
         # is out of scope here.
+        #
+        # Only static imports count. The repo-root .madgerc sets
+        # skipAsyncImports, so a lazy `await import()` inside a function body
+        # (db/init.js reaching for subnet-topology at startup) is not an edge.
+        # Those resolve after module evaluation and cannot deadlock loading,
+        # which is the failure this gate exists to catch. Without that
+        # setting the same lazy import fanned out into eight chains and the
+        # gate had been red since 2026-09-07 with no real cycle behind it.
         run: |
           COUNT=$(npx -y madge --circular --extensions js --json server/src | jq 'length')
           echo "Circular dependency chains: $COUNT (baseline: 1)"

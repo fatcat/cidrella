@@ -4,20 +4,6 @@ import { ipToLong } from '../utils/ip.js';
 import { resolveEffectiveScopeOptions } from './dhcp-scope.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
-export function findLeasesByAddress(db, subnetId, ip) {
-  return db.prepare(`
-    SELECT ip_address, mac_address, client_id, expires_at
-    FROM dhcp_leases
-    WHERE subnet_id = ? AND ip_address = ?
-  `).all(subnetId, ip);
-}
-
-export function deleteLeasesByAddress(db, subnetId, ip) {
-  return db.prepare(
-    'DELETE FROM dhcp_leases WHERE subnet_id = ? AND ip_address = ?'
-  ).run(subnetId, ip);
-}
-
 export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
   const replace = db.transaction(() => {
     const previous = new Map(db.prepare(`
