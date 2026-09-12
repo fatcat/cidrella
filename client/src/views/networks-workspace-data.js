@@ -5,10 +5,11 @@ function humanize(value) {
   if (!value) return EMPTY_CELL;
   return String(value)
     .replaceAll('_', ' ')
-    .replace(/\b\w/g, letter => letter.toUpperCase());
+    .replace(/\b\w/g, letter => letter.toUpperCase())
+    .replace(/\b(Dhcp|Dns|Slaac|Arp)\b/g, match => match.toUpperCase());
 }
 
-function formatDuration(seconds) {
+export function formatDuration(seconds) {
   const value = Number(seconds);
   if (!Number.isFinite(value)) return EMPTY_CELL;
   if (value < 60) return `${value} sec`;
@@ -60,6 +61,47 @@ export function buildExplorerFolders(folders) {
     collectAllocatedNetworks(folder.subnets, folder, networks);
     return { id: folder.id, name: folder.name, networks };
   }).filter(folder => folder.networks.length > 0);
+}
+
+export function mapNetworkRows(networks) {
+  return (networks || []).map(network => ({
+    id: `network:${network.id}`,
+    name: network.name,
+    cidr: network.cidr,
+    folder: network.folder,
+    vlan: network.vlan != null ? `VLAN ${network.vlan}` : null,
+    domain: network.domain,
+    gateway: network.gateway,
+    utilization: `${network.used}%`,
+    status: humanize(network.status),
+    raw: network
+  }));
+}
+
+export function mapDnsZoneRows(zones, networkLabels = new Map()) {
+  return (zones || []).map(zone => ({
+    id: `zone:${zone.id}`,
+    name: zone.name,
+    zoneType: humanize(zone.type),
+    records: formatNumber(zone.record_count || 0),
+    networks: networkLabels.get(Number(zone.id)) || 'Unlinked',
+    description: zone.description || null,
+    enabled: zone.enabled === true || zone.enabled === 1 || zone.enabled === '1',
+    raw: zone
+  }));
+}
+
+export function mapDhcpScopeRows(scopes) {
+  return (scopes || []).map(scope => ({
+    id: `scope:${scope.id}`,
+    range: scope.start_ip === scope.end_ip ? scope.start_ip : `${scope.start_ip} – ${scope.end_ip}`,
+    network: scope.subnet_name || scope.subnet_cidr || null,
+    poolSize: `${formatNumber(sumScopeAddresses([scope]))} addresses`,
+    leaseTime: formatDuration(scope.effective?.lease_time || scope.lease_time),
+    description: scope.description || null,
+    enabled: scope.enabled === true || scope.enabled === 1 || scope.enabled === '1',
+    raw: scope
+  }));
 }
 
 function onlineValue(row, { unknownWhenUnaddressed = false } = {}) {
