@@ -3234,7 +3234,7 @@ defineExpose({
   font-weight: 600;
 }
 .lossy-reason {
-  color: var(--cid-surface-content-muted, var(--cid-text-muted-color));
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
 }
 .lossy-meta {
@@ -3242,7 +3242,7 @@ defineExpose({
   gap: 0.4rem;
   margin-top: 0.2rem;
   font-size: var(--app-fs-xs);
-  color: var(--cid-surface-content-muted, var(--cid-text-muted-color));
+  color: var(--cid-text-muted-color);
 }
 .lossy-meta code {
   font-family: var(--font-mono, monospace);

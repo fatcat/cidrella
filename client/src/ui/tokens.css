@@ -15,9 +15,11 @@
  * so var() indirection means --cid-* follows a theme change automatically
  * with no JS involvement. Do not copy hex values in here.
  *
- * Two names are deliberately absent because the kit never defined them and
- * they compute to empty in every theme: --p-surface-hover and
- * --p-surface-content-muted. Their call sites are tracked in BACKLOG.md.
+ * --cid-surface-hover has no --p-surface-hover behind it. That name was never
+ * defined by the library and computed to empty in every theme, so four hover
+ * backgrounds silently did not paint. It maps to the v4 name for the same
+ * thing instead. --p-surface-content-muted was dead in the same way and is
+ * simply gone, its two call sites now read the muted text colour directly.
  */
 :root {
   /* Raw palette. Kit-specific ramps, the least portable of the set. */
@@ -67,4 +69,7 @@
   --cid-form-field-border-color: var(--p-form-field-border-color);
   --cid-form-field-border-radius: var(--p-form-field-border-radius);
   --cid-form-field-color: var(--p-form-field-color);
+
+  /* Not a straight alias: see the note above. */
+  --cid-surface-hover: var(--p-content-hover-background);
 }
