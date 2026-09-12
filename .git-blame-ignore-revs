@@ -9,5 +9,6 @@
 # changes mixed in would make blame permanently skip that authorship, which is
 # worse than having no file at all.
 
-# (Pending) Prettier adoption sweep. Append the commit SHA here once the
-# formatting commit exists, since a commit cannot contain its own hash.
+# Prettier adoption sweep, 2026-09-12. 352 files (287 js, 64 vue, 1 css),
+# formatting only. See the "Formatting" section of CLAUDE.md.
+b9dd88948f7e0ab6dd73626b41135e78dbc57921
