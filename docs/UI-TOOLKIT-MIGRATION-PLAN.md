@@ -612,7 +612,7 @@ real:
 | distinct `.p-*` classes anywhere in `client/src` | 26 |
 
 The 14-class gap is `App.vue`'s global style block, which is unscoped and so
-needs no `:deep()`: 9 toast internals, plus `.p-button-icon`,
+needs no `:deep()`: 10 toast internals, plus `.p-button-icon`,
 `.p-datatable-thead`, `.p-menuitem` and `.p-dark`. One of those, `.p-dark`, is
 not a vendor class at all. It is the `darkModeSelector` we configure ourselves
 in `main.js`, so it survives any swap that keeps the option.
@@ -620,10 +620,6 @@ in `main.js`, so it survives any swap that keeps the option.
 The earlier "46" was a line count, not a class count, and the "19" was an
 illustrative spot-check rather than a measured set. For planning the Element
 Plus move, **24 sites over 26 classes** is the figure to use.
-
-Still worth considering when it does trigger: whether some of these should
-become component props or passthrough options rather than being restored as
-selectors.
 
 Still worth considering when it does trigger: whether some of these should
 become component props or passthrough options rather than being restored as
