@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
+import { rememberView } from '../utils/landing.js';
 
 import Login from '../views/Login.vue';
 import ChangePassword from '../views/ChangePassword.vue';
@@ -68,9 +69,20 @@ router.beforeEach(async (to) => {
     return true;
   }
 
-  // Redirect unauthenticated users to login
+  // Redirect unauthenticated users to login, carrying where they were headed
+  // so the login form can finish the trip.
+  //
+  // '/' is excluded, and so is anything the router redirected there from: by
+  // the time this guard runs, '/' has already become '/analytics' via its
+  // redirect route, and passing that on would look like the user asked for
+  // analytics and would outrank the page they were actually last on. Someone
+  // who types '/analytics' themselves still gets it, because then there is no
+  // redirectedFrom.
   if (!auth.isAuthenticated) {
-    return { name: 'Login' };
+    const wantsDefault = to.fullPath === '/' || to.redirectedFrom?.fullPath === '/';
+    return wantsDefault
+      ? { name: 'Login' }
+      : { name: 'Login', query: { redirect: to.fullPath } };
   }
 
   // Fetch user info if not loaded
@@ -87,6 +99,14 @@ router.beforeEach(async (to) => {
   }
 
   return true;
+});
+
+// Track the last real page each user visited. A session that expires mid-task
+// then sends them back where they were rather than to the default view.
+router.afterEach((to) => {
+  const auth = useAuthStore();
+  if (!auth.isAuthenticated) return;
+  rememberView(auth.user?.username, to);
 });
 
 export default router;

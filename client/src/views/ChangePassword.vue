@@ -39,14 +39,16 @@
 
 <script setup>
 import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
+import { landingPath } from '../utils/landing.js';
 import Password from '../ui/Password.js';
 import Button from '../ui/Button.js';
 import Message from '../ui/Message.js';
 import { apiError } from '../utils/format.js';
 
 const router = useRouter();
+const route = useRoute();
 const auth = useAuthStore();
 
 const currentPassword = ref('');
@@ -71,7 +73,7 @@ async function handleChange() {
   loading.value = true;
   try {
     await auth.changePassword(currentPassword.value, newPassword.value);
-    router.push('/');
+    router.push(landingPath(router, auth.user?.username, route.query.redirect));
   } catch (err) {
     error.value = apiError(err);
   } finally {

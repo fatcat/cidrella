@@ -21,8 +21,9 @@
 
 <script setup>
 import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
+import { landingPath } from '../utils/landing.js';
 import InputText from '../ui/InputText.js';
 import Password from '../ui/Password.js';
 import Button from '../ui/Button.js';
@@ -30,6 +31,7 @@ import Message from '../ui/Message.js';
 import { apiError } from '../utils/format.js';
 
 const router = useRouter();
+const route = useRoute();
 const auth = useAuthStore();
 
 const username = ref('');
@@ -43,9 +45,11 @@ async function handleLogin() {
   try {
     const data = await auth.login(username.value, password.value);
     if (data.user.must_change_password) {
-      router.push('/change-password');
+      // Hand the destination on rather than dropping it. The change-password
+      // step is in the way of where they were going, not the destination.
+      router.push({ path: '/change-password', query: route.query.redirect ? { redirect: route.query.redirect } : {} });
     } else {
-      router.push('/');
+      router.push(landingPath(router, data.user.username, route.query.redirect));
     }
   } catch (err) {
     error.value = apiError(err);
