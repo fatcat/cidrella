@@ -590,23 +590,40 @@ addition is a primary-hue override layered on top of the chosen theme using
 
 ### Phase 4: `:deep()` selector cleanup (NOT TRIGGERED, 2026-09-12)
 
-24 `:deep(.p-*)` selectors reaching into vendor internals, across 26 distinct
-classes. This phase is conditional, and **its condition is not met**: it reads
-"if the new kit emits different class names", and OpenVue removes none. Every
-one of the 19 classes our selectors target was confirmed present. So there is
-no work here for the OpenVue swap, and inventing some would be churn against a
-kit that already matches.
+This phase is conditional, and **its condition is not met**: it reads "if the
+new kit emits different class names", and OpenVue removes none. Verified by
+extracting every `p-*` class literal from both package trees and diffing the
+sets: zero removed, 21 added, all of them `p-treetable-filter-*` for a feature
+we do not use. So there is no work here for the OpenVue swap.
 
-The real trigger is a move to a kit outside the PrimeVue family, Element Plus
-being the documented candidate. That is when each of the 24 needs rewriting,
-and it is the one piece `tokens.css` cannot absorb, because a custom property
-cannot abstract a class name.
+The real trigger is a move outside the PrimeVue family, Element Plus being the
+documented candidate. That is when this work lands, and it is the one piece
+`tokens.css` cannot absorb, because a custom property cannot abstract a class
+name.
 
-Correction to an earlier figure in this document: the count is 24, not 46. The
-larger number came from grepping every `.p-*` mention in `client/src`, which
-also catches the global (non-`:deep`) rules in `App.vue`'s unscoped style
-block. Both are real, they just measure different things, and 24 is the number
-that matters for this phase.
+**The exposure, measured precisely, because this document has given three
+different numbers for it.** They count different things and all three were
+real:
+
+| What | Count |
+|---|---|
+| `:deep(.p-*)` call sites in scoped styles | 24 |
+| distinct classes used inside those `:deep()` calls | 12 |
+| distinct `.p-*` classes anywhere in `client/src` | 26 |
+
+The 14-class gap is `App.vue`'s global style block, which is unscoped and so
+needs no `:deep()`: 9 toast internals, plus `.p-button-icon`,
+`.p-datatable-thead`, `.p-menuitem` and `.p-dark`. One of those, `.p-dark`, is
+not a vendor class at all. It is the `darkModeSelector` we configure ourselves
+in `main.js`, so it survives any swap that keeps the option.
+
+The earlier "46" was a line count, not a class count, and the "19" was an
+illustrative spot-check rather than a measured set. For planning the Element
+Plus move, **24 sites over 26 classes** is the figure to use.
+
+Still worth considering when it does trigger: whether some of these should
+become component props or passthrough options rather than being restored as
+selectors.
 
 Still worth considering when it does trigger: whether some of these should
 become component props or passthrough options rather than being restored as
