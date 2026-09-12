@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import NetworksWorkspacePreview from '../../../src/views/NetworksWorkspacePreview.vue';
+import NetworksWorkspace from '../../../src/views/networks-workspace/NetworksWorkspace.vue';
 import api from '../../../src/api/client.js';
 
 vi.mock('../../../src/api/client.js', () => ({
@@ -269,6 +270,18 @@ async function enterTestNetwork(wrapper) {
 }
 
 describe('Networks workspace live preview', () => {
+  it('keeps the preview route as a thin workspace wrapper', () => {
+    const wrapper = mount(NetworksWorkspacePreview, {
+      global: {
+        stubs: {
+          NetworksWorkspace: true,
+        },
+      },
+    });
+
+    expect(wrapper.findComponent(NetworksWorkspace).exists()).toBe(true);
+  });
+
   beforeEach(() => {
     localStorage.clear();
     reservedIp33 = false;
