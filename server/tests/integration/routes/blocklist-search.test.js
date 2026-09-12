@@ -2,14 +2,18 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', () => ({ atomicWrite: vi.fn(), restartDnsmasq: vi.fn(), applyInterfaceConfig: vi.fn() }));
+vi.mock('../../../src/utils/dnsmasq.js', () => ({
+  atomicWrite: vi.fn(),
+  restartDnsmasq: vi.fn(),
+  applyInterfaceConfig: vi.fn(),
+}));
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 vi.mock('../../../src/utils/blocklist.js', async (importOriginal) => ({
   ...(await importOriginal()),
   ensureCategoryRows: vi.fn(),
   refreshCategory: vi.fn(),
   refreshAllEnabled: vi.fn(),
-  generateBlocklistConfig: vi.fn()
+  generateBlocklistConfig: vi.fn(),
 }));
 
 const { default: blocklistsRouter } = await import('../../../src/routes/blocklists.js');
@@ -43,14 +47,19 @@ beforeAll(async () => {
   db = s.db;
   app = createTestApp(blocklistsRouter, '/api/blocklists');
 
-  db.prepare("INSERT OR IGNORE INTO blocklist_categories (slug, enabled) VALUES ('malware', 1)").run();
+  db.prepare(
+    "INSERT OR IGNORE INTO blocklist_categories (slug, enabled) VALUES ('malware', 1)",
+  ).run();
   db.prepare("INSERT OR IGNORE INTO blocklist_categories (slug, enabled) VALUES ('ads', 1)").run();
   db.prepare("INSERT OR IGNORE INTO blocklist_categories (slug, enabled) VALUES ('off', 0)").run();
 
-  const ins = db.prepare('INSERT OR REPLACE INTO blocklist_domains (domain, category_slug) VALUES (?, ?)');
+  const ins = db.prepare(
+    'INSERT OR REPLACE INTO blocklist_domains (domain, category_slug) VALUES (?, ?)',
+  );
   db.transaction(() => {
     // 25 matches for 'needle', so a limit of 10 gives pages of 10 / 10 / 5.
-    for (let i = 0; i < 25; i++) ins.run(`n${String(i).padStart(2, '0')}.needle.example.com`, 'malware');
+    for (let i = 0; i < 25; i++)
+      ins.run(`n${String(i).padStart(2, '0')}.needle.example.com`, 'malware');
     // exactly 10, to probe the page boundary
     for (let i = 0; i < 10; i++) ins.run(`e${i}.exactten.example.com`, 'malware');
     // one domain in two enabled categories, to prove de-duplication
@@ -110,9 +119,9 @@ describe('search: the hasMore contract', () => {
 
 describe('search: results are unchanged by the rewrite', () => {
   it('paginates without overlap or gaps', async () => {
-    const p1 = (await search('needle', 1, 10)).body.items.map(i => i.domain);
-    const p2 = (await search('needle', 2, 10)).body.items.map(i => i.domain);
-    const p3 = (await search('needle', 3, 10)).body.items.map(i => i.domain);
+    const p1 = (await search('needle', 1, 10)).body.items.map((i) => i.domain);
+    const p2 = (await search('needle', 2, 10)).body.items.map((i) => i.domain);
+    const p3 = (await search('needle', 3, 10)).body.items.map((i) => i.domain);
     const all = [...p1, ...p2, ...p3];
     expect(all).toHaveLength(25);
     expect(new Set(all).size, 'pages must not overlap').toBe(25);
@@ -151,8 +160,13 @@ describe('search: results are unchanged by the rewrite', () => {
   });
 
   it('marks whitelisted domains', async () => {
-    db.prepare('INSERT OR IGNORE INTO blocklist_whitelist (domain) VALUES (?)').run('n00.needle.example.com');
+    db.prepare('INSERT OR IGNORE INTO blocklist_whitelist (domain) VALUES (?)').run(
+      'n00.needle.example.com',
+    );
     const res = await search('n00.needle');
-    expect(res.body.items[0]).toMatchObject({ domain: 'n00.needle.example.com', whitelisted: true });
+    expect(res.body.items[0]).toMatchObject({
+      domain: 'n00.needle.example.com',
+      whitelisted: true,
+    });
   });
 });

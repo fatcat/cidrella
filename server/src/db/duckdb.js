@@ -1,6 +1,10 @@
 import path from 'path';
 import { DuckDBInstance } from '@duckdb/node-api';
-import { DATA_DIR, ANALYTICS_FLUSH_INTERVAL_MS, ANALYTICS_RETENTION_CLEANUP_MS } from '../config/defaults.js';
+import {
+  DATA_DIR,
+  ANALYTICS_FLUSH_INTERVAL_MS,
+  ANALYTICS_RETENTION_CLEANUP_MS,
+} from '../config/defaults.js';
 import { getSetting } from './init.js';
 
 let instance = null;
@@ -24,7 +28,7 @@ export function initAnalyticsDb(dataDir) {
     // so a single heavy GROUP BY can't spike RSS on a small box.
     instance = await DuckDBInstance.create(dbPath, {
       memory_limit: '256MB',
-      threads: '2'
+      threads: '2',
     });
     connection = await instance.connect();
 
@@ -62,7 +66,17 @@ export function initAnalyticsDb(dataDir) {
 }
 
 // Buffer a DNS query for batch insert
-export function logDnsQuery({ clientIp, domain, queryType, responseCode, action, blockReason, latencyUs, resolvedIp, dnssecSupported }) {
+export function logDnsQuery({
+  clientIp,
+  domain,
+  queryType,
+  responseCode,
+  action,
+  blockReason,
+  latencyUs,
+  resolvedIp,
+  dnssecSupported,
+}) {
   if (!connection) return;
   buffer.push({
     ts: new Date().toISOString(),
@@ -89,13 +103,25 @@ export function flushQueries() {
   const params = [];
   for (const row of rows) {
     placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    params.push(row.ts, row.clientIp, row.domain, row.queryType, row.responseCode, row.action, row.blockReason, row.latencyUs, row.resolvedIp, row.dnssecSupported);
+    params.push(
+      row.ts,
+      row.clientIp,
+      row.domain,
+      row.queryType,
+      row.responseCode,
+      row.action,
+      row.blockReason,
+      row.latencyUs,
+      row.resolvedIp,
+      row.dnssecSupported,
+    );
   }
 
   const sql = `INSERT INTO dns_queries (ts, client_ip, domain, query_type, response_code, action, block_reason, latency_us, resolved_ip, dnssec_supported) VALUES ${placeholders.join(', ')}`;
 
-  return connection.run(sql, params)
-    .catch(err => console.error('[analytics] Flush error:', err.message));
+  return connection
+    .run(sql, params)
+    .catch((err) => console.error('[analytics] Flush error:', err.message));
 }
 
 // Validated range-to-interval mapping, only allows known safe values
@@ -113,8 +139,9 @@ function rangeToInterval(range) {
 // Converts BigInt values to Number for JSON serialization
 export function queryRaw(sql, params = []) {
   if (!connection) return Promise.resolve([]);
-  return connection.runAndReadAll(sql, params)
-    .then(reader => reader.getRowObjectsJS().map(safeRowForJson));
+  return connection
+    .runAndReadAll(sql, params)
+    .then((reader) => reader.getRowObjectsJS().map(safeRowForJson));
 }
 
 function safeRowForJson(row) {
@@ -135,7 +162,7 @@ function queryTopBy(column, range, limit = 20) {
      GROUP BY ${column}
      ORDER BY count DESC
      LIMIT ?`,
-    [limit]
+    [limit],
   );
 }
 
@@ -150,15 +177,19 @@ function queryTopByAction(column, range, action, limit = 10) {
      GROUP BY ${column}
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit]
+    [action, limit],
   );
 }
 
 // Top clients by query count
-export function queryTopClients(range, limit = 20) { return queryTopBy('client_ip', range, limit); }
+export function queryTopClients(range, limit = 20) {
+  return queryTopBy('client_ip', range, limit);
+}
 
 // Top queried domains
-export function queryTopDomains(range, limit = 20) { return queryTopBy('domain', range, limit); }
+export function queryTopDomains(range, limit = 20) {
+  return queryTopBy('domain', range, limit);
+}
 
 // Most-requested domains whose successful answers were proven insecure by
 // the validating resolver. NULL means no conclusion was possible (for
@@ -175,15 +206,19 @@ export function queryTopDomainsWithoutDnssec(range, limit = 10) {
      GROUP BY domain
      ORDER BY count DESC, domain ASC
      LIMIT ?`,
-    [limit]
+    [limit],
   );
 }
 
 // Top clients filtered by action
-export function queryTopClientsByAction(range, action, limit = 10) { return queryTopByAction('client_ip', range, action, limit); }
+export function queryTopClientsByAction(range, action, limit = 10) {
+  return queryTopByAction('client_ip', range, action, limit);
+}
 
 // Top domains filtered by action
-export function queryTopDomainsByAction(range, action, limit = 10) { return queryTopByAction('domain', range, action, limit); }
+export function queryTopDomainsByAction(range, action, limit = 10) {
+  return queryTopByAction('domain', range, action, limit);
+}
 
 // Top block reasons (category slugs or country codes) for a given action
 export function queryTopBlockReasons(range, action, limit = 10) {
@@ -197,7 +232,7 @@ export function queryTopBlockReasons(range, action, limit = 10) {
      GROUP BY block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit]
+    [action, limit],
   );
 }
 
@@ -212,7 +247,7 @@ export function queryTopClientDomainPairsByAction(range, action, limit = 20) {
      GROUP BY client_ip, domain, block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit]
+    [action, limit],
   );
 }
 
@@ -227,7 +262,7 @@ export function queryTopBlocked(range, limit = 20) {
      GROUP BY domain, action, block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [limit]
+    [limit],
   );
 }
 
@@ -243,7 +278,7 @@ export function queryVolume(range, interval = '5m') {
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${rangeInterval}'
      GROUP BY bucket
-     ORDER BY bucket`
+     ORDER BY bucket`,
   );
 }
 
@@ -255,7 +290,7 @@ export function queryActionBreakdown(range) {
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
      GROUP BY action
-     ORDER BY count DESC`
+     ORDER BY count DESC`,
   );
 }
 
@@ -270,7 +305,7 @@ export function queryClientDomains(clientIp, range, limit = 50) {
      GROUP BY domain
      ORDER BY count DESC
      LIMIT ?`,
-    [clientIp, limit]
+    [clientIp, limit],
   );
 }
 
@@ -296,7 +331,7 @@ export function queryClientWindowEvidence(clientIp, windowStart, windowEnd, limi
      GROUP BY domain, query_type, response_code, action
      ORDER BY count DESC, domain
      LIMIT ?`,
-    [clientIp, windowStart, windowEnd, limit]
+    [clientIp, windowStart, windowEnd, limit],
   );
 }
 
@@ -313,8 +348,8 @@ export function queryClientWindowSummary(clientIp, windowStart, windowEnd) {
      WHERE client_ip = ?
        AND ts >= CAST(? AS TIMESTAMP)
        AND ts < CAST(? AS TIMESTAMP)`,
-    [clientIp, windowStart, windowEnd]
-  ).then(rows => rows[0] || null);
+    [clientIp, windowStart, windowEnd],
+  ).then((rows) => rows[0] || null);
 }
 
 // Clients that queried a specific domain
@@ -328,23 +363,33 @@ export function queryDomainClients(domain, range, limit = 50) {
      GROUP BY client_ip
      ORDER BY count DESC
      LIMIT ?`,
-    [domain, limit]
+    [domain, limit],
   );
 }
 
 // Prune old data based on retention setting
 export function pruneOldData() {
   if (!connection) return Promise.resolve();
-  const days = Math.max(1, Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7));
+  const days = Math.max(
+    1,
+    Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7),
+  );
   const interval = rangeToInterval(`${days}d`) || `${days} DAYS`;
-  return connection.run(`DELETE FROM dns_queries WHERE ts < NOW() - INTERVAL '${interval}'`)
-    .catch(err => console.error('[analytics] Prune error:', err.message));
+  return connection
+    .run(`DELETE FROM dns_queries WHERE ts < NOW() - INTERVAL '${interval}'`)
+    .catch((err) => console.error('[analytics] Prune error:', err.message));
 }
 
 // Flush buffer and close DuckDB
 export async function closeAnalyticsDb() {
-  if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
-  if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
+  if (flushTimer) {
+    clearInterval(flushTimer);
+    flushTimer = null;
+  }
+  if (pruneTimer) {
+    clearInterval(pruneTimer);
+    pruneTimer = null;
+  }
 
   if (connection) {
     await flushQueries();

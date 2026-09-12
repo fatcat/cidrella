@@ -109,11 +109,26 @@ export const useDnsStore = defineStore('dns', () => {
   }
 
   return {
-    zones, loading,
-    fetchZones, getZone, createZone, updateZone, deleteZone,
-    getRecords, createRecord, updateRecord, deleteRecord,
-    applyConfig, getForwarders, updateForwarders, testForwarder,
-    getSoaDefaults, updateSoaDefaults, getDnssec, updateDnssec,
-    getEncryption, updateEncryption
+    zones,
+    loading,
+    fetchZones,
+    getZone,
+    createZone,
+    updateZone,
+    deleteZone,
+    getRecords,
+    createRecord,
+    updateRecord,
+    deleteRecord,
+    applyConfig,
+    getForwarders,
+    updateForwarders,
+    testForwarder,
+    getSoaDefaults,
+    updateSoaDefaults,
+    getDnssec,
+    updateDnssec,
+    getEncryption,
+    updateEncryption,
   };
 });

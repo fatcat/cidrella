@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { isValidIpOrCidr, parseCidrEntry, ipMatchesEntry, ipInAny, canonicalizeIpOrCidr } from '../../../src/utils/cidr-match.js';
+import {
+  isValidIpOrCidr,
+  parseCidrEntry,
+  ipMatchesEntry,
+  ipInAny,
+  canonicalizeIpOrCidr,
+} from '../../../src/utils/cidr-match.js';
 
 describe('isValidIpOrCidr', () => {
   it('accepts IPv4 + IPv4 CIDR', () => {

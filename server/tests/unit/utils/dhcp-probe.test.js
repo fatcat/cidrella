@@ -1,26 +1,53 @@
 import { describe, it, expect } from 'vitest';
-import { buildDiscover, parseOffer, classifyOffer, getSelfIps, runProbe, getProbeState } from '../../../src/utils/dhcp-probe.js';
+import {
+  buildDiscover,
+  parseOffer,
+  classifyOffer,
+  getSelfIps,
+  runProbe,
+  getProbeState,
+} from '../../../src/utils/dhcp-probe.js';
 
 // Build a realistic DHCP OFFER (BOOTREPLY) buffer for parse tests.
 function buildOffer({
-  xid = 0x12345678, msgType = 2, serverId = '10.0.0.1', gateway = '10.0.0.1',
-  dns = ['10.0.0.1', '9.9.9.9'], mask = '255.255.255.0', yiaddr = '10.0.0.50',
-  clientMac = 'aa:bb:cc:dd:ee:ff', cookie = 0x63825363, op = 2, giaddr = null,
+  xid = 0x12345678,
+  msgType = 2,
+  serverId = '10.0.0.1',
+  gateway = '10.0.0.1',
+  dns = ['10.0.0.1', '9.9.9.9'],
+  mask = '255.255.255.0',
+  yiaddr = '10.0.0.50',
+  clientMac = 'aa:bb:cc:dd:ee:ff',
+  cookie = 0x63825363,
+  op = 2,
+  giaddr = null,
 } = {}) {
   const buf = Buffer.alloc(300);
-  buf.writeUInt8(op, 0); buf.writeUInt8(1, 1); buf.writeUInt8(6, 2);
+  buf.writeUInt8(op, 0);
+  buf.writeUInt8(1, 1);
+  buf.writeUInt8(6, 2);
   buf.writeUInt32BE(xid >>> 0, 4);
   yiaddr.split('.').forEach((o, i) => buf.writeUInt8(+o, 16 + i));
   if (giaddr) giaddr.split('.').forEach((o, i) => buf.writeUInt8(+o, 24 + i));
   clientMac.split(':').forEach((h, i) => buf.writeUInt8(parseInt(h, 16), 28 + i));
   buf.writeUInt32BE(cookie, 236);
   let off = 240;
-  const writeIp = (ip) => ip.split('.').forEach(o => buf.writeUInt8(+o, off++));
-  buf.writeUInt8(53, off++); buf.writeUInt8(1, off++); buf.writeUInt8(msgType, off++);
-  buf.writeUInt8(54, off++); buf.writeUInt8(4, off++); writeIp(serverId);
-  buf.writeUInt8(1, off++); buf.writeUInt8(4, off++); writeIp(mask);
-  buf.writeUInt8(3, off++); buf.writeUInt8(4, off++); writeIp(gateway);
-  buf.writeUInt8(6, off++); buf.writeUInt8(4 * dns.length, off++); dns.forEach(writeIp);
+  const writeIp = (ip) => ip.split('.').forEach((o) => buf.writeUInt8(+o, off++));
+  buf.writeUInt8(53, off++);
+  buf.writeUInt8(1, off++);
+  buf.writeUInt8(msgType, off++);
+  buf.writeUInt8(54, off++);
+  buf.writeUInt8(4, off++);
+  writeIp(serverId);
+  buf.writeUInt8(1, off++);
+  buf.writeUInt8(4, off++);
+  writeIp(mask);
+  buf.writeUInt8(3, off++);
+  buf.writeUInt8(4, off++);
+  writeIp(gateway);
+  buf.writeUInt8(6, off++);
+  buf.writeUInt8(4 * dns.length, off++);
+  dns.forEach(writeIp);
   buf.writeUInt8(255, off++);
   return buf;
 }
@@ -29,9 +56,9 @@ describe('buildDiscover', () => {
   it('produces a 300-byte BOOTREQUEST with the broadcast flag + DISCOVER option', () => {
     const buf = buildDiscover({ xid: 0xdeadbeef, mac: '11:22:33:44:55:66' });
     expect(buf.length).toBe(300);
-    expect(buf.readUInt8(0)).toBe(1);              // op = BOOTREQUEST
-    expect(buf.readUInt16BE(10)).toBe(0x8000);     // broadcast flag
-    expect(buf.readUInt32BE(4)).toBe(0xdeadbeef);  // xid
+    expect(buf.readUInt8(0)).toBe(1); // op = BOOTREQUEST
+    expect(buf.readUInt16BE(10)).toBe(0x8000); // broadcast flag
+    expect(buf.readUInt32BE(4)).toBe(0xdeadbeef); // xid
     expect(buf.readUInt32BE(236)).toBe(0x63825363); // magic cookie
     // chaddr echoes the MAC
     expect(buf.readUInt8(28)).toBe(0x11);
@@ -102,7 +129,7 @@ describe('classifyOffer', () => {
   const selfIps = new Set(['10.0.0.1']);
   const authorized = new Set(['10.0.0.2']);
 
-  it('trusts CIDRella\'s own server (self)', () => {
+  it("trusts CIDRella's own server (self)", () => {
     const v = classifyOffer({ serverId: '10.0.0.1' }, { selfIps, authorized });
     expect(v).toEqual({ rogue: false, reason: 'self' });
   });

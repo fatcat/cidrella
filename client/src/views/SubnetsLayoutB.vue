@@ -3,9 +3,14 @@
     <!-- Left rail, mirrors Analytics / System layout (user-requested 2026-04-18) -->
     <aside class="ipam-sidebar">
       <nav class="ipam-nav">
-        <a v-for="item in menuItems" :key="item.key"
-           class="ipam-nav-item" :class="{ active: item.key === activeTab }"
-           :data-track="item.dataTrack" @click="activeTab = item.key">
+        <a
+          v-for="item in menuItems"
+          :key="item.key"
+          class="ipam-nav-item"
+          :class="{ active: item.key === activeTab }"
+          :data-track="item.dataTrack"
+          @click="activeTab = item.key"
+        >
           <i :class="item.icon"></i>
           <span>{{ item.label }}</span>
         </a>
@@ -13,204 +18,332 @@
     </aside>
 
     <div class="ipam-content">
-    <!-- Networks Tab -->
-    <div class="content-area" v-if="activeTab === 'networks'">
-      <!-- Left Sidebar -->
-      <div class="sidebar-panel">
-        <Tabs v-model:value="sidebarMode">
-          <TabList>
-            <Tab value="folders" data-track="sidebar-tab-folders"><i class="pi pi-folder" style="margin-right: 0.3rem" />Folders</Tab>
-            <Tab value="browse" data-track="sidebar-tab-browse"><i class="pi pi-list" style="margin-right: 0.3rem" />Browse Unallocated</Tab>
-          </TabList>
-          <TabPanels>
-            <TabPanel value="folders">
-              <div class="sidebar-search">
-                <i class="pi pi-search search-icon"></i>
-                <input type="text" v-model="filterText" placeholder="Filter networks..." class="sidebar-filter" data-track="sidebar-filter" />
-              </div>
+      <!-- Networks Tab -->
+      <div class="content-area" v-if="activeTab === 'networks'">
+        <!-- Left Sidebar -->
+        <div class="sidebar-panel">
+          <Tabs v-model:value="sidebarMode">
+            <TabList>
+              <Tab value="folders" data-track="sidebar-tab-folders"
+                ><i class="pi pi-folder" style="margin-right: 0.3rem" />Folders</Tab
+              >
+              <Tab value="browse" data-track="sidebar-tab-browse"
+                ><i class="pi pi-list" style="margin-right: 0.3rem" />Browse Unallocated</Tab
+              >
+            </TabList>
+            <TabPanels>
+              <TabPanel value="folders">
+                <div class="sidebar-search">
+                  <i class="pi pi-search search-icon"></i>
+                  <input
+                    type="text"
+                    v-model="filterText"
+                    placeholder="Filter networks..."
+                    class="sidebar-filter"
+                    data-track="sidebar-filter"
+                  />
+                </div>
 
-              <!-- Folders mode -->
-              <div class="sidebar-tree"
-             @dragover.prevent="onTreeContainerDragOver"
-             @dragenter.prevent="onTreeContainerDragEnter"
-             @dragleave="onTreeContainerDragLeave"
-             @drop.prevent="onTreeContainerDrop">
-          <template v-for="folder in filteredFolders" :key="'folder-' + folder.id">
-            <div class="tree-folder"
-                 :class="{ 'drop-target': dropTargetFolderId === folder.id }"
-                 @click="selectFolder(folder)"
-                 @contextmenu.prevent="openFolderContextMenu($event, folder)"
-                 @dragover.prevent="onFolderDragOver($event, folder.id)"
-                 @dragleave="onFolderDragLeave($event, folder.id)"
-                 @drop.prevent="onDropSubnet($event, folder.id)">
-              <i class="pi" :class="expandedFolders[folder.id] ? 'pi-chevron-down' : 'pi-chevron-right'" style="font-size:0.65rem"
-                 @click.stop="toggleFolder(folder.id)"></i>
-              <i class="pi pi-folder" style="font-size:0.8rem"></i>
-              <span class="folder-label">{{ folder.name }}</span>
-              <span class="count-badge">{{ allocatedSubnetsForFolder(folder).length }}</span>
-            </div>
-            <template v-if="expandedFolders[folder.id] || filterText.trim()">
-              <template v-for="subnet in allocatedSubnetsForFolder(folder)" :key="'subnet-' + subnet.id">
-                <div class="tree-item"
-                     :class="{
-                       active: selectedSubnetId === subnet.id,
-                       'merge-selected': isMergeSelected(subnet.id),
-                     }"
-                     :draggable="true"
-                     @dragstart="onFolderSubnetDragStart($event, subnet)"
-                     @click="selectSubnetById(subnet)"
-                     @contextmenu.prevent="openSubnetContextMenuById($event, subnet)">
-                  <div class="tree-item-row">
-                    <span class="item-name">{{ subnet.cidr }}</span>
-                    <span class="tree-item-actions">
-                      <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                              @click.stop="openSubnetEditById(subnet)" data-track="sidebar-net-edit" />
-                      <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                              @click.stop="openSubnetDeleteById(subnet)" data-track="sidebar-net-delete" />
-                    </span>
-                  </div>
-                  <div class="tree-item-meta">
-                    <span v-if="subnet.name">{{ subnet.name }}</span>
-                    <template v-if="subnet.vlan_id">
-                      <span>&middot;</span>
-                      <span>VLAN {{ subnet.vlan_id }}</span>
+                <!-- Folders mode -->
+                <div
+                  class="sidebar-tree"
+                  @dragover.prevent="onTreeContainerDragOver"
+                  @dragenter.prevent="onTreeContainerDragEnter"
+                  @dragleave="onTreeContainerDragLeave"
+                  @drop.prevent="onTreeContainerDrop"
+                >
+                  <template v-for="folder in filteredFolders" :key="'folder-' + folder.id">
+                    <div
+                      class="tree-folder"
+                      :class="{ 'drop-target': dropTargetFolderId === folder.id }"
+                      @click="selectFolder(folder)"
+                      @contextmenu.prevent="openFolderContextMenu($event, folder)"
+                      @dragover.prevent="onFolderDragOver($event, folder.id)"
+                      @dragleave="onFolderDragLeave($event, folder.id)"
+                      @drop.prevent="onDropSubnet($event, folder.id)"
+                    >
+                      <i
+                        class="pi"
+                        :class="expandedFolders[folder.id] ? 'pi-chevron-down' : 'pi-chevron-right'"
+                        style="font-size: 0.65rem"
+                        @click.stop="toggleFolder(folder.id)"
+                      ></i>
+                      <i class="pi pi-folder" style="font-size: 0.8rem"></i>
+                      <span class="folder-label">{{ folder.name }}</span>
+                      <span class="count-badge">{{
+                        allocatedSubnetsForFolder(folder).length
+                      }}</span>
+                    </div>
+                    <template v-if="expandedFolders[folder.id] || filterText.trim()">
+                      <template
+                        v-for="subnet in allocatedSubnetsForFolder(folder)"
+                        :key="'subnet-' + subnet.id"
+                      >
+                        <div
+                          class="tree-item"
+                          :class="{
+                            active: selectedSubnetId === subnet.id,
+                            'merge-selected': isMergeSelected(subnet.id),
+                          }"
+                          :draggable="true"
+                          @dragstart="onFolderSubnetDragStart($event, subnet)"
+                          @click="selectSubnetById(subnet)"
+                          @contextmenu.prevent="openSubnetContextMenuById($event, subnet)"
+                        >
+                          <div class="tree-item-row">
+                            <span class="item-name">{{ subnet.cidr }}</span>
+                            <span class="tree-item-actions">
+                              <Button
+                                icon="pi pi-pencil"
+                                severity="secondary"
+                                text
+                                rounded
+                                size="small"
+                                @click.stop="openSubnetEditById(subnet)"
+                                data-track="sidebar-net-edit"
+                              />
+                              <Button
+                                icon="pi pi-trash"
+                                severity="danger"
+                                text
+                                rounded
+                                size="small"
+                                @click.stop="openSubnetDeleteById(subnet)"
+                                data-track="sidebar-net-delete"
+                              />
+                            </span>
+                          </div>
+                          <div class="tree-item-meta">
+                            <span v-if="subnet.name">{{ subnet.name }}</span>
+                            <template v-if="subnet.vlan_id">
+                              <span>&middot;</span>
+                              <span>VLAN {{ subnet.vlan_id }}</span>
+                            </template>
+                          </div>
+                        </div>
+                      </template>
                     </template>
+                  </template>
+                  <!-- Ungrouped networks drop zone -->
+                  <div
+                    class="tree-folder ungrouped-zone"
+                    :class="{ 'drop-target': dropTargetFolderId === 'ungrouped' }"
+                    @dragover.prevent="onUngroupedDragOver"
+                    @dragleave="onUngroupedDragLeave"
+                    @drop.prevent="onDropUngrouped"
+                  >
+                    <i class="pi pi-inbox" style="font-size: 0.8rem"></i>
+                    <span class="folder-label">Ungrouped</span>
+                    <span class="count-badge">{{ ungroupedSubnets.length }}</span>
+                  </div>
+                  <template v-for="subnet in ungroupedSubnets" :key="'ungrouped-' + subnet.id">
+                    <div
+                      class="tree-item"
+                      :class="{
+                        active: selectedSubnetId === subnet.id,
+                        'merge-selected': isMergeSelected(subnet.id),
+                      }"
+                      :draggable="true"
+                      @dragstart="onUngroupedDragStart($event, subnet)"
+                      @click="selectSubnetById(subnet)"
+                      @contextmenu.prevent="openSubnetContextMenuById($event, subnet)"
+                    >
+                      <div class="tree-item-row">
+                        <span class="item-name">{{ subnet.cidr }}</span>
+                        <span class="tree-item-actions">
+                          <Button
+                            icon="pi pi-pencil"
+                            severity="secondary"
+                            text
+                            rounded
+                            size="small"
+                            @click.stop="openSubnetEditById(subnet)"
+                            data-track="sidebar-net-edit"
+                          />
+                          <Button
+                            icon="pi pi-trash"
+                            severity="danger"
+                            text
+                            rounded
+                            size="small"
+                            @click.stop="openSubnetDeleteById(subnet)"
+                            data-track="sidebar-net-delete"
+                          />
+                        </span>
+                      </div>
+                      <div class="tree-item-meta">
+                        <span v-if="subnet.name">{{ subnet.name }}</span>
+                        <template v-if="subnet.vlan_id">
+                          <span>&middot;</span>
+                          <span>VLAN {{ subnet.vlan_id }}</span>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <div
+                    v-if="filteredFolders.length === 0 && ungroupedSubnets.length === 0"
+                    class="sidebar-empty"
+                  >
+                    No folders or networks found.
                   </div>
                 </div>
-              </template>
-            </template>
-          </template>
-          <!-- Ungrouped networks drop zone -->
-          <div class="tree-folder ungrouped-zone"
-               :class="{ 'drop-target': dropTargetFolderId === 'ungrouped' }"
-               @dragover.prevent="onUngroupedDragOver"
-               @dragleave="onUngroupedDragLeave"
-               @drop.prevent="onDropUngrouped">
-            <i class="pi pi-inbox" style="font-size:0.8rem"></i>
-            <span class="folder-label">Ungrouped</span>
-            <span class="count-badge">{{ ungroupedSubnets.length }}</span>
-          </div>
-          <template v-for="subnet in ungroupedSubnets" :key="'ungrouped-' + subnet.id">
-            <div class="tree-item"
-                 :class="{
-                   active: selectedSubnetId === subnet.id,
-                   'merge-selected': isMergeSelected(subnet.id),
-                 }"
-                 :draggable="true"
-                 @dragstart="onUngroupedDragStart($event, subnet)"
-                 @click="selectSubnetById(subnet)"
-                 @contextmenu.prevent="openSubnetContextMenuById($event, subnet)">
-              <div class="tree-item-row">
-                <span class="item-name">{{ subnet.cidr }}</span>
-                <span class="tree-item-actions">
-                  <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                          @click.stop="openSubnetEditById(subnet)" data-track="sidebar-net-edit" />
-                  <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                          @click.stop="openSubnetDeleteById(subnet)" data-track="sidebar-net-delete" />
-                </span>
-              </div>
-              <div class="tree-item-meta">
-                <span v-if="subnet.name">{{ subnet.name }}</span>
-                <template v-if="subnet.vlan_id">
-                  <span>&middot;</span>
-                  <span>VLAN {{ subnet.vlan_id }}</span>
-                </template>
-              </div>
-            </div>
-          </template>
-          <div v-if="filteredFolders.length === 0 && ungroupedSubnets.length === 0" class="sidebar-empty">
-            No folders or networks found.
-          </div>
+              </TabPanel>
+              <TabPanel value="browse">
+                <div class="sidebar-search">
+                  <i class="pi pi-search search-icon"></i>
+                  <input
+                    type="text"
+                    v-model="filterText"
+                    placeholder="Filter networks..."
+                    class="sidebar-filter"
+                    data-track="sidebar-filter-browse"
+                  />
+                </div>
+                <div class="sidebar-tree">
+                  <template v-for="item in filteredBrowseNodes" :key="item.node.key">
+                    <div
+                      class="tree-item"
+                      :style="{ paddingLeft: 0.75 + item.depth * 1.2 + 'rem' }"
+                      :class="{
+                        active: selectedSubnetId === item.node.data.id,
+                        'merge-selected': isMergeSelected(item.node.data.id),
+                        'tree-item-unallocated': item.node.data.status === 'unallocated',
+                      }"
+                      @click="selectNode(item.node)"
+                      @contextmenu.prevent="openSubnetContextMenu($event, item.node)"
+                    >
+                      <div class="tree-item-row">
+                        <i
+                          v-if="item.node.children && item.node.children.length > 0"
+                          class="pi"
+                          :class="
+                            browseExpanded[item.node.key] ? 'pi-chevron-down' : 'pi-chevron-right'
+                          "
+                          style="font-size: 0.6rem; margin-right: 0.25rem"
+                          @click.stop="toggleBrowseExpand(item.node.key)"
+                        ></i>
+                        <span class="item-name">{{ item.node.data.cidr }}</span>
+                        <span
+                          v-if="item.node.data.status === 'allocated'"
+                          class="status-dot allocated"
+                        ></span>
+                      </div>
+                      <div class="tree-item-meta">
+                        <span v-if="item.node.data.name">{{ item.node.data.name }}</span>
+                        <span
+                          v-else-if="item.node.data.status === 'unallocated'"
+                          class="unalloc-label"
+                          >unallocated</span
+                        >
+                      </div>
+                    </div>
+                  </template>
+                  <div v-if="filteredBrowseNodes.length === 0" class="sidebar-empty">
+                    No networks found.
+                  </div>
+                </div>
+              </TabPanel>
+            </TabPanels>
+          </Tabs>
         </div>
-            </TabPanel>
-            <TabPanel value="browse">
-              <div class="sidebar-search">
-                <i class="pi pi-search search-icon"></i>
-                <input type="text" v-model="filterText" placeholder="Filter networks..." class="sidebar-filter" data-track="sidebar-filter-browse" />
-              </div>
-              <div class="sidebar-tree">
-                <template v-for="item in filteredBrowseNodes" :key="item.node.key">
-                  <div class="tree-item"
-                       :style="{ paddingLeft: (0.75 + item.depth * 1.2) + 'rem' }"
-                       :class="{
-                         active: selectedSubnetId === item.node.data.id,
-                         'merge-selected': isMergeSelected(item.node.data.id),
-                         'tree-item-unallocated': item.node.data.status === 'unallocated',
-                       }"
-                       @click="selectNode(item.node)"
-                       @contextmenu.prevent="openSubnetContextMenu($event, item.node)">
-                    <div class="tree-item-row">
-                      <i v-if="item.node.children && item.node.children.length > 0"
-                         class="pi" :class="browseExpanded[item.node.key] ? 'pi-chevron-down' : 'pi-chevron-right'"
-                         style="font-size:0.6rem; margin-right: 0.25rem"
-                         @click.stop="toggleBrowseExpand(item.node.key)"></i>
-                      <span class="item-name">{{ item.node.data.cidr }}</span>
-                      <span v-if="item.node.data.status === 'allocated'" class="status-dot allocated"></span>
-                    </div>
-                    <div class="tree-item-meta">
-                      <span v-if="item.node.data.name">{{ item.node.data.name }}</span>
-                      <span v-else-if="item.node.data.status === 'unallocated'" class="unalloc-label">unallocated</span>
-                    </div>
-                  </div>
-                </template>
-                <div v-if="filteredBrowseNodes.length === 0" class="sidebar-empty">
-                  No networks found.
-                </div>
-              </div>
-            </TabPanel>
-          </TabPanels>
-        </Tabs>
-      </div>
 
-      <!-- Right Detail Panel -->
-      <div class="detail-panel">
-        <div class="networks-toolbar">
-          <Button label="Add Folder" icon="pi pi-plus" size="small" data-track="toolbar-add-folder" @click="dialogs.openCreateFolder()" text />
-          <Button label="Add Network" icon="pi pi-plus" size="small" data-track="toolbar-add-network-top" @click="dialogs.openQuickAddNetwork()" text />
-          <template v-if="mergeSelectedIdsRaw.length > 0">
-            <span class="toolbar-divider"></span>
-            <span class="badge badge-orange">{{ mergeSelectedIdsRaw.length }} selected</span>
-            <Button v-if="mergeSelectedIdsRaw.length >= 2 && mergeValidation.valid"
-                    label="Merge" icon="pi pi-sitemap" size="small" severity="warn"
-                    data-track="toolbar-merge" @click="dialogs.openMergeConfirm(mergeSelectedIdsRaw)" />
-            <Button label="Cancel" size="small" severity="secondary" text data-track="toolbar-merge-cancel" @click="clearMergeSelection" />
-          </template>
-          <router-link to="/networks-preview" class="workspace-preview-link" data-track="toolbar-workspace-preview">
-            <i class="pi pi-sparkles" /> Workspace concept
-          </router-link>
-        </div>
-        <SubnetDetail v-if="selectedSubnetId" :subnet-id="selectedSubnetId" :compact="true" />
-        <FolderNetworkTable v-else-if="selectedFolder" :folder="selectedFolder"
+        <!-- Right Detail Panel -->
+        <div class="detail-panel">
+          <div class="networks-toolbar">
+            <Button
+              label="Add Folder"
+              icon="pi pi-plus"
+              size="small"
+              data-track="toolbar-add-folder"
+              @click="dialogs.openCreateFolder()"
+              text
+            />
+            <Button
+              label="Add Network"
+              icon="pi pi-plus"
+              size="small"
+              data-track="toolbar-add-network-top"
+              @click="dialogs.openQuickAddNetwork()"
+              text
+            />
+            <template v-if="mergeSelectedIdsRaw.length > 0">
+              <span class="toolbar-divider"></span>
+              <span class="badge badge-orange">{{ mergeSelectedIdsRaw.length }} selected</span>
+              <Button
+                v-if="mergeSelectedIdsRaw.length >= 2 && mergeValidation.valid"
+                label="Merge"
+                icon="pi pi-sitemap"
+                size="small"
+                severity="warn"
+                data-track="toolbar-merge"
+                @click="dialogs.openMergeConfirm(mergeSelectedIdsRaw)"
+              />
+              <Button
+                label="Cancel"
+                size="small"
+                severity="secondary"
+                text
+                data-track="toolbar-merge-cancel"
+                @click="clearMergeSelection"
+              />
+            </template>
+            <router-link
+              to="/networks-preview"
+              class="workspace-preview-link"
+              data-track="toolbar-workspace-preview"
+            >
+              <i class="pi pi-sparkles" /> Workspace concept
+            </router-link>
+          </div>
+          <SubnetDetail v-if="selectedSubnetId" :subnet-id="selectedSubnetId" :compact="true" />
+          <FolderNetworkTable
+            v-else-if="selectedFolder"
+            :folder="selectedFolder"
             :merge-selected-ids="mergeSelectedIdsRaw"
             @select-subnet="onFolderTableSelectSubnet"
             @merge-toggle="toggleMergeSelect"
             @context-menu="openSubnetContextMenu"
-            @edit-subnet="node => dialogs.openEdit(node)"
-            @delete-subnet="node => dialogs.openDelete(node)" />
-        <EmptyState v-else-if="isFirstRunEmpty"
-          icon="pi-sitemap"
-          title="No networks yet"
-          description="Add a folder to organize subnets, or add a network directly to get started."
-          :actions="[
-            { label: 'Add Folder', icon: 'pi-folder-plus', severity: 'secondary', dataTrack: 'empty-add-folder', onClick: () => dialogs.openCreateFolder() },
-            { label: 'Add Network', icon: 'pi-plus', severity: 'primary', dataTrack: 'empty-add-network', onClick: () => dialogs.openQuickAddNetwork() }
-          ]" />
-        <div v-else class="empty-detail">
-          <i class="pi pi-sitemap" style="font-size: 2rem; opacity: 0.3"></i>
-          <span>Select a network to view details</span>
+            @edit-subnet="(node) => dialogs.openEdit(node)"
+            @delete-subnet="(node) => dialogs.openDelete(node)"
+          />
+          <EmptyState
+            v-else-if="isFirstRunEmpty"
+            icon="pi-sitemap"
+            title="No networks yet"
+            description="Add a folder to organize subnets, or add a network directly to get started."
+            :actions="[
+              {
+                label: 'Add Folder',
+                icon: 'pi-folder-plus',
+                severity: 'secondary',
+                dataTrack: 'empty-add-folder',
+                onClick: () => dialogs.openCreateFolder(),
+              },
+              {
+                label: 'Add Network',
+                icon: 'pi-plus',
+                severity: 'primary',
+                dataTrack: 'empty-add-network',
+                onClick: () => dialogs.openQuickAddNetwork(),
+              },
+            ]"
+          />
+          <div v-else class="empty-detail">
+            <i class="pi pi-sitemap" style="font-size: 2rem; opacity: 0.3"></i>
+            <span>Select a network to view details</span>
+          </div>
         </div>
       </div>
-    </div>
 
-    <!-- DNS Tab -->
-    <div v-else-if="activeTab === 'dns'" class="tab-content">
-      <DnsPanel ref="dnsPanelRef" />
-    </div>
+      <!-- DNS Tab -->
+      <div v-else-if="activeTab === 'dns'" class="tab-content">
+        <DnsPanel ref="dnsPanelRef" />
+      </div>
 
-    <!-- DHCP Tab -->
-    <div v-else-if="activeTab === 'dhcp'" class="tab-content">
-      <DhcpPanel ref="dhcpPanelRef" />
-    </div>
+      <!-- DHCP Tab -->
+      <div v-else-if="activeTab === 'dhcp'" class="tab-content">
+        <DhcpPanel ref="dhcpPanelRef" />
+      </div>
     </div>
 
     <!-- Context Menus -->
@@ -218,21 +351,23 @@
     <ContextMenu ref="folderContextMenuRef" :model="folderContextMenuItems" />
 
     <!-- All Dialogs -->
-    <NetworkDialogs ref="dialogs"
-                    :selected-node="selectedNode"
-                    :name-template="nameTemplate"
-                    :merge-selected-ids="mergeSelectedIdsRaw"
-                    :folders="store.folders"
-                    @folder-created="onTreeChanged"
-                    @folder-updated="onTreeChanged"
-                    @folder-deleted="onFolderDeleted"
-                    @network-created="onNetworkCreated"
-                    @network-configured="onNetworkConfigured"
-                    @network-updated="onTreeChanged"
-                    @network-divided="onNetworkDivided"
-                    @network-deleted="onNetworkDeleted"
-                    @networks-merged="onNetworksMerged"
-                    @group-configured="onTreeChanged" />
+    <NetworkDialogs
+      ref="dialogs"
+      :selected-node="selectedNode"
+      :name-template="nameTemplate"
+      :merge-selected-ids="mergeSelectedIdsRaw"
+      :folders="store.folders"
+      @folder-created="onTreeChanged"
+      @folder-updated="onTreeChanged"
+      @folder-deleted="onFolderDeleted"
+      @network-created="onNetworkCreated"
+      @network-configured="onNetworkConfigured"
+      @network-updated="onTreeChanged"
+      @network-divided="onNetworkDivided"
+      @network-deleted="onNetworkDeleted"
+      @networks-merged="onNetworksMerged"
+      @group-configured="onTreeChanged"
+    />
 
     <!-- Scope dialog shared by the "Add DHCP Scope" context menu item. The
          subnet row is passed as `subnetCtx` so gateway, subnet-mask, and
@@ -275,9 +410,33 @@ const dhcpPanelRef = ref(null);
 const activeTab = ref(loadJson('cidrella_b_active_tab', 'networks'));
 
 const menuItems = computed(() => [
-  { key: 'networks', label: 'Networks', icon: 'pi pi-sitemap', dataTrack: 'tab-networks', command: () => { activeTab.value = 'networks'; } },
-  { key: 'dns', label: 'DNS', icon: 'pi pi-globe', dataTrack: 'tab-dns', command: () => { activeTab.value = 'dns'; } },
-  { key: 'dhcp', label: 'DHCP', icon: 'pi pi-server', dataTrack: 'tab-dhcp', command: () => { activeTab.value = 'dhcp'; } },
+  {
+    key: 'networks',
+    label: 'Networks',
+    icon: 'pi pi-sitemap',
+    dataTrack: 'tab-networks',
+    command: () => {
+      activeTab.value = 'networks';
+    },
+  },
+  {
+    key: 'dns',
+    label: 'DNS',
+    icon: 'pi pi-globe',
+    dataTrack: 'tab-dns',
+    command: () => {
+      activeTab.value = 'dns';
+    },
+  },
+  {
+    key: 'dhcp',
+    label: 'DHCP',
+    icon: 'pi pi-server',
+    dataTrack: 'tab-dhcp',
+    command: () => {
+      activeTab.value = 'dhcp';
+    },
+  },
 ]);
 
 // ── Persistence helpers ──
@@ -294,7 +453,9 @@ function persistState() {
       saveJson('cidrella_b_browse_expanded', browseExpanded.value);
       saveJson('cidrella_b_expanded_unallocated', expandedUnallocated.value);
       saveJson('cidrella_b_active_tab', activeTab.value);
-    } catch { /* */ }
+    } catch {
+      /* */
+    }
   }, 300);
 }
 
@@ -305,7 +466,9 @@ async function loadSettings() {
     const settings = await store.getSettings();
     if (settings.subnet_name_template) nameTemplate.value = settings.subnet_name_template;
     return settings;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 // ── Sidebar state ──
@@ -335,7 +498,10 @@ const scopeDialogRef = ref(null);
 
 // ── Folder operations ──
 function toggleFolder(folderId) {
-  expandedFolders.value = { ...expandedFolders.value, [folderId]: !expandedFolders.value[folderId] };
+  expandedFolders.value = {
+    ...expandedFolders.value,
+    [folderId]: !expandedFolders.value[folderId],
+  };
 }
 
 function selectFolder(folder) {
@@ -366,13 +532,21 @@ function selectSubnetById(subnet) {
     return;
   }
   clearMergeSelection();
-  const node = findNodeInTrees(subnet.id) || { data: subnet, key: `subnet-${subnet.id}`, children: [] };
+  const node = findNodeInTrees(subnet.id) || {
+    data: subnet,
+    key: `subnet-${subnet.id}`,
+    children: [],
+  };
   selectedNode.value = node;
   selectedSubnetId.value = subnet.id;
 }
 
 function openSubnetContextMenuById(event, subnet) {
-  const node = findNodeInTrees(subnet.id) || { data: subnet, key: `subnet-${subnet.id}`, children: [] };
+  const node = findNodeInTrees(subnet.id) || {
+    data: subnet,
+    key: `subnet-${subnet.id}`,
+    children: [],
+  };
   openSubnetContextMenu(event, node);
 }
 
@@ -416,9 +590,9 @@ function toggleBrowseExpand(key) {
 const filteredFolders = computed(() => {
   const q = filterText.value.toLowerCase().trim();
   // Exclude the virtual "Ungrouped" folder (id=null), shown separately
-  const realFolders = store.folders.filter(f => f.id !== null);
+  const realFolders = store.folders.filter((f) => f.id !== null);
   if (!q) return realFolders;
-  return realFolders.filter(f => {
+  return realFolders.filter((f) => {
     if (f.name.toLowerCase().includes(q)) return true;
     // Deep check: any subnet (allocated or not) matches
     if (f.subnets && allocatedSubnetsForFolder(f).length > 0) return true;
@@ -428,15 +602,15 @@ const filteredFolders = computed(() => {
 
 // Ungrouped subnets: from virtual folder with id=null (created by server)
 const ungroupedSubnets = computed(() => {
-  const ungroupedFolder = store.folders.find(f => f.id === null);
+  const ungroupedFolder = store.folders.find((f) => f.id === null);
   if (!ungroupedFolder?.subnets) return [];
   return collectAllocatedSubnets(ungroupedFolder.subnets, filterText.value.trim());
 });
 
 // True empty state, zero real folders AND zero subnets anywhere.
 const isFirstRunEmpty = computed(() => {
-  const realFolders = store.folders.filter(f => f.id !== null);
-  const anySubnets = store.folders.some(f => f.subnets && f.subnets.length > 0);
+  const realFolders = store.folders.filter((f) => f.id !== null);
+  const anySubnets = store.folders.some((f) => f.subnets && f.subnets.length > 0);
   return realFolders.length === 0 && !anySubnets;
 });
 
@@ -479,32 +653,56 @@ const subnetContextMenuItems = computed(() => {
   const items = [];
 
   if (d.status !== 'allocated') {
-    items.push({ label: 'Allocate', icon: 'pi pi-check-circle', command: () => dialogs.value.openEdit(node) });
+    items.push({
+      label: 'Allocate',
+      icon: 'pi pi-check-circle',
+      command: () => dialogs.value.openEdit(node),
+    });
   }
   if (isLeaf) {
-    items.push({ label: 'Divide', icon: 'pi pi-share-alt', command: () => dialogs.value.openDivide(node) });
+    items.push({
+      label: 'Divide',
+      icon: 'pi pi-share-alt',
+      command: () => dialogs.value.openDivide(node),
+    });
   }
   if (d.status === 'allocated') {
-    items.push({ label: 'Edit', icon: 'pi pi-pencil', command: () => dialogs.value.openEdit(node) });
+    items.push({
+      label: 'Edit',
+      icon: 'pi pi-pencil',
+      command: () => dialogs.value.openEdit(node),
+    });
   }
 
   if (d.parent_id) {
     if (mergeSelectedIdsRaw.value.length >= 2 && mergeValidation.value.valid) {
-      items.push({ label: 'Merge Selected', icon: 'pi pi-sitemap', command: () => dialogs.value.openMergeConfirm(mergeSelectedIdsRaw.value) });
+      items.push({
+        label: 'Merge Selected',
+        icon: 'pi pi-sitemap',
+        command: () => dialogs.value.openMergeConfirm(mergeSelectedIdsRaw.value),
+      });
     } else {
-      items.push({ label: 'Merge...', icon: 'pi pi-sitemap', command: () => {
-        if (!isMergeSelected(d.id)) toggleMergeSelect(d.id);
-        if (mergeSelectedIdsRaw.value.length >= 2 && mergeValidation.value.valid) {
-          dialogs.value.openMergeConfirm(mergeSelectedIdsRaw.value);
-        }
-      }});
+      items.push({
+        label: 'Merge...',
+        icon: 'pi pi-sitemap',
+        command: () => {
+          if (!isMergeSelected(d.id)) toggleMergeSelect(d.id);
+          if (mergeSelectedIdsRaw.value.length >= 2 && mergeValidation.value.valid) {
+            dialogs.value.openMergeConfirm(mergeSelectedIdsRaw.value);
+          }
+        },
+      });
     }
   }
 
   if (d.status === 'allocated') {
     const expected = applyNameTemplate(nameTemplate.value, d.cidr);
     if (d.name !== expected) {
-      items.push({ label: 'Apply Template', icon: 'pi pi-sync', command: () => dialogs.value.executeApplyTemplate([d.id]) });
+      items.push({
+        label: 'Apply Template',
+        icon: 'pi pi-sync',
+        command: () => dialogs.value.executeApplyTemplate([d.id]),
+      });
     }
   }
 
@@ -516,15 +714,25 @@ const subnetContextMenuItems = computed(() => {
     items.push({
       label: 'Add DHCP Scope',
       icon: 'pi pi-server',
-      command: () => scopeDialogRef.value?.openNewWithPicker(d)
+      command: () => scopeDialogRef.value?.openNewWithPicker(d),
     });
   }
 
   items.push({ separator: true });
   if (d.status === 'allocated') {
-    items.push({ label: 'Deallocate', icon: 'pi pi-undo', class: 'p-error', command: () => dialogs.value.openDeallocate(node) });
+    items.push({
+      label: 'Deallocate',
+      icon: 'pi pi-undo',
+      class: 'p-error',
+      command: () => dialogs.value.openDeallocate(node),
+    });
   } else {
-    items.push({ label: 'Delete', icon: 'pi pi-trash', class: 'p-error', command: () => dialogs.value.openDelete(node) });
+    items.push({
+      label: 'Delete',
+      icon: 'pi pi-trash',
+      class: 'p-error',
+      command: () => dialogs.value.openDelete(node),
+    });
   }
   return items;
 });
@@ -535,7 +743,12 @@ const folderContextMenuItems = computed(() => {
   return [
     { label: 'Edit Folder', icon: 'pi pi-pencil', command: () => dialogs.value.openEditFolder(f) },
     { separator: true },
-    { label: 'Delete Folder', icon: 'pi pi-trash', class: 'p-error', command: () => dialogs.value.openDeleteFolder(f) },
+    {
+      label: 'Delete Folder',
+      icon: 'pi pi-trash',
+      class: 'p-error',
+      command: () => dialogs.value.openDeleteFolder(f),
+    },
   ];
 });
 
@@ -547,7 +760,7 @@ function isMergeSelected(id) {
 }
 
 function findSubnetInTree(id, nodes) {
-  for (const f of (nodes || store.folders)) {
+  for (const f of nodes || store.folders) {
     if (nodes) {
       if (f.id === id) return f;
       if (f.children) {
@@ -572,23 +785,44 @@ function toggleMergeSelect(id) {
   }
   const subnet = findSubnetInTree(id);
   if (!subnet || !subnet.parent_id) {
-    toast.add({ severity: 'warn', summary: 'Cannot merge', detail: 'Root networks cannot be merged', life: 3000 });
+    toast.add({
+      severity: 'warn',
+      summary: 'Cannot merge',
+      detail: 'Root networks cannot be merged',
+      life: 3000,
+    });
     return;
   }
-  const hasChildren = (subnet.child_count || 0) > 0 || (subnet.children && subnet.children.length > 0);
+  const hasChildren =
+    (subnet.child_count || 0) > 0 || (subnet.children && subnet.children.length > 0);
   if (hasChildren) {
-    toast.add({ severity: 'warn', summary: 'Cannot merge', detail: 'Network has children and cannot be merged', life: 3000 });
+    toast.add({
+      severity: 'warn',
+      summary: 'Cannot merge',
+      detail: 'Network has children and cannot be merged',
+      life: 3000,
+    });
     return;
   }
   if (mergeSelectedIdsRaw.value.length > 0) {
     const firstSubnet = findSubnetInTree(mergeSelectedIdsRaw.value[0]);
     if (!firstSubnet) return;
     if (subnet.parent_id !== firstSubnet.parent_id) {
-      toast.add({ severity: 'warn', summary: 'Cannot merge', detail: 'Networks must be siblings (same parent)', life: 3000 });
+      toast.add({
+        severity: 'warn',
+        summary: 'Cannot merge',
+        detail: 'Networks must be siblings (same parent)',
+        life: 3000,
+      });
       return;
     }
     if (subnet.prefix_length !== firstSubnet.prefix_length) {
-      toast.add({ severity: 'warn', summary: 'Cannot merge', detail: 'All networks must have the same prefix length', life: 3000 });
+      toast.add({
+        severity: 'warn',
+        summary: 'Cannot merge',
+        detail: 'All networks must have the same prefix length',
+        life: 3000,
+      });
       return;
     }
   }
@@ -597,10 +831,12 @@ function toggleMergeSelect(id) {
 
 const mergeValidation = computed(() => {
   if (mergeSelectedIdsRaw.value.length < 2) return { valid: false, error: '' };
-  const cidrs = mergeSelectedIdsRaw.value.map(id => {
-    const s = findSubnetInTree(id);
-    return s?.cidr;
-  }).filter(Boolean);
+  const cidrs = mergeSelectedIdsRaw.value
+    .map((id) => {
+      const s = findSubnetInTree(id);
+      return s?.cidr;
+    })
+    .filter(Boolean);
   if (cidrs.length < 2) return { valid: false, error: 'Cannot find network' };
   return canMergeCidrs(cidrs);
 });
@@ -611,8 +847,12 @@ function clearMergeSelection() {
 
 // ── Ctrl key tracking ──
 const ctrlHeld = ref(false);
-function onKeyDown(e) { if (e.ctrlKey || e.metaKey) ctrlHeld.value = true; }
-function onKeyUp(e) { if (!e.ctrlKey && !e.metaKey) ctrlHeld.value = false; }
+function onKeyDown(e) {
+  if (e.ctrlKey || e.metaKey) ctrlHeld.value = true;
+}
+function onKeyUp(e) {
+  if (!e.ctrlKey && !e.metaKey) ctrlHeld.value = false;
+}
 
 // ── Drag & drop ──
 const dropTargetFolderId = ref(null);
@@ -665,8 +905,13 @@ async function onDropSubnet(event, folderId) {
 
   try {
     await store.updateSubnet(subnet.id, { folder_id: folderId });
-    const folder = store.folders.find(f => f.id === folderId);
-    toast.add({ severity: 'success', summary: 'Moved', detail: `${subnet.cidr} moved to ${folder?.name || 'folder'}`, life: 2000 });
+    const folder = store.folders.find((f) => f.id === folderId);
+    toast.add({
+      severity: 'success',
+      summary: 'Moved',
+      detail: `${subnet.cidr} moved to ${folder?.name || 'folder'}`,
+      life: 2000,
+    });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 3000 });
   }
@@ -695,7 +940,12 @@ async function onDropUngrouped(event) {
   if (!subnet || !subnet.folder_id) return;
   try {
     await store.updateSubnet(subnet.id, { folder_id: null });
-    toast.add({ severity: 'success', summary: 'Moved', detail: `${subnet.cidr} moved to ungrouped`, life: 2000 });
+    toast.add({
+      severity: 'success',
+      summary: 'Moved',
+      detail: `${subnet.cidr} moved to ungrouped`,
+      life: 2000,
+    });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 3000 });
   }
@@ -772,13 +1022,17 @@ function findNodeInTrees(subnetId) {
 }
 
 // Refresh stale folder/node refs after store updates
-watch(() => store.folders, () => {
-  if (selectedFolder.value) {
-    const fresh = store.folders.find(f => f.id === selectedFolder.value.id);
-    if (fresh) selectedFolder.value = fresh;
-  }
-  refreshSelectionRefs();
-}, { deep: false });
+watch(
+  () => store.folders,
+  () => {
+    if (selectedFolder.value) {
+      const fresh = store.folders.find((f) => f.id === selectedFolder.value.id);
+      if (fresh) selectedFolder.value = fresh;
+    }
+    refreshSelectionRefs();
+  },
+  { deep: false },
+);
 
 // ── Lifecycle ──
 onMounted(async () => {
@@ -814,7 +1068,7 @@ onMounted(async () => {
   if (!selectedSubnetId.value) {
     const savedFolderId = loadJson('cidrella_b_selected_folder_id', null);
     if (savedFolderId) {
-      const folder = store.folders.find(f => f.id === savedFolderId);
+      const folder = store.folders.find((f) => f.id === savedFolderId);
       if (folder) selectedFolder.value = folder;
     } else if (store.folders.length > 0) {
       selectedFolder.value = store.folders[0];
@@ -862,7 +1116,9 @@ onBeforeUnmount(() => {
   text-decoration: none;
   cursor: pointer;
   border-left: 3px solid transparent;
-  transition: background 0.1s, border-color 0.1s;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
 }
 .ipam-nav-item:hover {
   background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
@@ -1026,7 +1282,7 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid var(--p-surface-border);
   transition: background 0.15s;
 }
-.tree-item[draggable="true"] {
+.tree-item[draggable='true'] {
   cursor: grab;
 }
 .tree-item:hover {
@@ -1135,7 +1391,12 @@ onBeforeUnmount(() => {
   animation: pulse-glow 2s ease-in-out infinite;
 }
 @keyframes pulse-glow {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 </style>

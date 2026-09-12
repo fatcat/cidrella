@@ -1,23 +1,34 @@
 <template>
-  <div class="dhcp-panel" style="display: flex; flex-direction: column; height: 100%;">
+  <div class="dhcp-panel" style="display: flex; flex-direction: column; height: 100%">
     <div class="dhcp-layout">
       <!-- Scopes Sidebar -->
       <div class="scope-panel">
         <Tabs v-model:value="scopeTab">
           <TabList>
-            <Tab value="scopes" data-track="dhcp-tab-scopes"><i class="pi pi-server" style="margin-right: 0.3rem" />Scopes</Tab>
+            <Tab value="scopes" data-track="dhcp-tab-scopes"
+              ><i class="pi pi-server" style="margin-right: 0.3rem" />Scopes</Tab
+            >
           </TabList>
           <TabPanels>
             <TabPanel value="scopes">
               <div class="sidebar-search">
                 <i class="pi pi-search search-icon"></i>
-                <input type="text" v-model="scopeFilterText" placeholder="Filter scopes..." class="sidebar-filter" data-track="dhcp-sidebar-filter" />
+                <input
+                  type="text"
+                  v-model="scopeFilterText"
+                  placeholder="Filter scopes..."
+                  class="sidebar-filter"
+                  data-track="dhcp-sidebar-filter"
+                />
               </div>
               <div class="scope-list" v-if="!store.loading">
-                <div v-for="scope in filteredScopes" :key="scope.id"
-                     class="scope-item"
-                     :class="{ active: selectedScope?.id === scope.id }"
-                     @click="selectScope(scope)">
+                <div
+                  v-for="scope in filteredScopes"
+                  :key="scope.id"
+                  class="scope-item"
+                  :class="{ active: selectedScope?.id === scope.id }"
+                  @click="selectScope(scope)"
+                >
                   <div class="scope-info">
                     <div class="scope-name">
                       <i class="pi pi-server" />
@@ -29,10 +40,22 @@
                     </div>
                   </div>
                   <div class="scope-actions">
-                    <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                            @click.stop="openScopeDialog(scope)" />
-                    <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                            @click.stop="confirmDeleteScope(scope)" />
+                    <Button
+                      icon="pi pi-pencil"
+                      severity="secondary"
+                      text
+                      rounded
+                      size="small"
+                      @click.stop="openScopeDialog(scope)"
+                    />
+                    <Button
+                      icon="pi pi-trash"
+                      severity="danger"
+                      text
+                      rounded
+                      size="small"
+                      @click.stop="confirmDeleteScope(scope)"
+                    />
                   </div>
                 </div>
                 <div v-if="filteredScopes.length === 0" class="empty-state">
@@ -50,27 +73,77 @@
       <!-- Leases Panel -->
       <div class="leases-panel">
         <div class="dhcp-toolbar">
-          <Button label="Add Scope" icon="pi pi-plus" size="small" text data-track="dhcp-add-scope" @click="openScopeDialog()" />
+          <Button
+            label="Add Scope"
+            icon="pi pi-plus"
+            size="small"
+            text
+            data-track="dhcp-add-scope"
+            @click="openScopeDialog()"
+          />
           <span class="toolbar-divider"></span>
-          <Button label="Add DHCP Reservation" icon="pi pi-plus" size="small" text data-track="dhcp-add-reservation" @click="openReservationDialog()" />
+          <Button
+            label="Add DHCP Reservation"
+            icon="pi pi-plus"
+            size="small"
+            text
+            data-track="dhcp-add-reservation"
+            @click="openReservationDialog()"
+          />
           <span class="toolbar-divider"></span>
-          <Button label="Sync Now" icon="pi pi-sync" size="small" text data-track="dhcp-sync-leases" @click="doSyncLeases" :loading="syncing" />
+          <Button
+            label="Sync Now"
+            icon="pi pi-sync"
+            size="small"
+            text
+            data-track="dhcp-sync-leases"
+            @click="doSyncLeases"
+            :loading="syncing"
+          />
         </div>
 
         <!-- Scope info bar, only shown when a scope is selected -->
         <template v-if="selectedScope">
           <div class="info-bar">
-            <span class="info-bar-name">{{ selectedScope.subnet_name || selectedScope.subnet_cidr }}</span>
+            <span class="info-bar-name">{{
+              selectedScope.subnet_name || selectedScope.subnet_cidr
+            }}</span>
             <span class="info-bar-sep"></span>
-            <span class="info-bar-pair"><span class="info-bar-label">Range</span> <span class="info-bar-val">{{ selectedScope.start_ip }} — {{ selectedScope.end_ip }}</span></span>
+            <span class="info-bar-pair"
+              ><span class="info-bar-label">Range</span>
+              <span class="info-bar-val"
+                >{{ selectedScope.start_ip }} — {{ selectedScope.end_ip }}</span
+              ></span
+            >
             <span class="info-bar-sep"></span>
-            <span class="info-bar-pair"><span class="info-bar-label">Lease</span> <span class="info-bar-val">{{ scopeLeaseTime }}</span></span>
+            <span class="info-bar-pair"
+              ><span class="info-bar-label">Lease</span>
+              <span class="info-bar-val">{{ scopeLeaseTime }}</span></span
+            >
             <span class="info-bar-sep"></span>
-            <span v-if="scopeGateway" class="info-bar-pair"><span class="info-bar-label">Gateway</span> <span class="info-bar-val">{{ scopeGateway }}</span></span>
+            <span v-if="scopeGateway" class="info-bar-pair"
+              ><span class="info-bar-label">Gateway</span>
+              <span class="info-bar-val">{{ scopeGateway }}</span></span
+            >
             <span v-if="scopeGateway" class="info-bar-sep"></span>
-            <span v-if="selectedScope.domain_name || selectedScope.subnet_domain_name" class="info-bar-pair"><span class="info-bar-label">Domain</span> <span class="info-bar-val">{{ selectedScope.domain_name || selectedScope.subnet_domain_name }}</span></span>
-            <span v-if="selectedScope.domain_name || selectedScope.subnet_domain_name" class="info-bar-sep"></span>
-            <span class="info-bar-pair"><span class="info-bar-label">Status</span> <span class="info-bar-val">{{ selectedScope.enabled ? 'enabled' : 'disabled' }}</span></span>
+            <span
+              v-if="selectedScope.domain_name || selectedScope.subnet_domain_name"
+              class="info-bar-pair"
+              ><span class="info-bar-label">Domain</span>
+              <span class="info-bar-val">{{
+                selectedScope.domain_name || selectedScope.subnet_domain_name
+              }}</span></span
+            >
+            <span
+              v-if="selectedScope.domain_name || selectedScope.subnet_domain_name"
+              class="info-bar-sep"
+            ></span>
+            <span class="info-bar-pair"
+              ><span class="info-bar-label">Status</span>
+              <span class="info-bar-val">{{
+                selectedScope.enabled ? 'enabled' : 'disabled'
+              }}</span></span
+            >
           </div>
         </template>
 
@@ -86,14 +159,27 @@
           <div v-if="selectedScope" class="search-bar">
             <IconField>
               <InputIcon class="pi pi-search" />
-              <InputText v-model="dhcpSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
+              <InputText
+                v-model="dhcpSearch"
+                placeholder="Search by IP, MAC, hostname…"
+                size="small"
+                class="search-input"
+              />
             </IconField>
-            <Button v-if="dhcpSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpSearch = ''" />
+            <Button
+              v-if="dhcpSearch"
+              icon="pi pi-times"
+              severity="secondary"
+              text
+              rounded
+              size="small"
+              @click="dhcpSearch = ''"
+            />
             <label class="available-toggle">
               <ToggleSwitch v-model="showAvailableDhcp" />
               <span>show available</span>
             </label>
-<ColumnChooserButton
+            <ColumnChooserButton
               tableName="DHCP"
               :allColumns="dhcpTableColumns"
               :visibleColumns="visibleDhcpColumns"
@@ -104,9 +190,22 @@
           <div v-else class="search-bar">
             <IconField>
               <InputIcon class="pi pi-search" />
-              <InputText v-model="dhcpAllSearch" placeholder="Search by IP, MAC, hostname…" size="small" class="search-input" />
+              <InputText
+                v-model="dhcpAllSearch"
+                placeholder="Search by IP, MAC, hostname…"
+                size="small"
+                class="search-input"
+              />
             </IconField>
-            <Button v-if="dhcpAllSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dhcpAllSearch = ''" />
+            <Button
+              v-if="dhcpAllSearch"
+              icon="pi pi-times"
+              severity="secondary"
+              text
+              rounded
+              size="small"
+              @click="dhcpAllSearch = ''"
+            />
             <label class="available-toggle">
               <ToggleSwitch v-model="showAvailableDhcp" />
               <span>show available</span>
@@ -120,23 +219,39 @@
             />
           </div>
 
-          <DataTable :value="sortedDhcpRows"
-                     class="ip-detail-table"
-                     :rowClass="ipDetailRowClass"
-                     :loading="loadingLeases" stripedRows
-                     size="small" scrollable scrollHeight="flex"
-                     paginator :rows="dhcpRows" paginatorPosition="bottom"
-                     :rowsPerPageOptions="[50, 100, 250, 500]"
-                     @page="onDhcpPage"
-                     removableSort customSort
-                     :sortField="dhcpSortField"
-                     :sortOrder="dhcpSortOrder"
-                     @sort="onDhcpSort"
-                     @row-click="onLeaseRowClick"
-                     @row-dblclick="onLeaseDoubleClick"
-                     @row-contextmenu="onLeaseRightClick" contextMenu>
+          <DataTable
+            :value="sortedDhcpRows"
+            class="ip-detail-table"
+            :rowClass="ipDetailRowClass"
+            :loading="loadingLeases"
+            stripedRows
+            size="small"
+            scrollable
+            scrollHeight="flex"
+            paginator
+            :rows="dhcpRows"
+            paginatorPosition="bottom"
+            :rowsPerPageOptions="[50, 100, 250, 500]"
+            @page="onDhcpPage"
+            removableSort
+            customSort
+            :sortField="dhcpSortField"
+            :sortOrder="dhcpSortOrder"
+            @sort="onDhcpSort"
+            @row-click="onLeaseRowClick"
+            @row-dblclick="onLeaseDoubleClick"
+            @row-contextmenu="onLeaseRightClick"
+            contextMenu
+          >
             <template #empty>
-              <EmptyState icon="pi-list" :title="selectedScope ? 'No addresses in this DHCP scope' : 'No DHCP Leases or DHCP Reservations'" />
+              <EmptyState
+                icon="pi-list"
+                :title="
+                  selectedScope
+                    ? 'No addresses in this DHCP scope'
+                    : 'No DHCP Leases or DHCP Reservations'
+                "
+              />
             </template>
             <Column
               v-for="col in visibleDhcpColumns"
@@ -146,24 +261,38 @@
               :sortField="col.sortField || col.field"
               :style="col.style"
             >
-            <template #header>
-              <ColumnHeaderTooltip :column="col" />
-            </template>
-            <template #body="{ data }">
-                <IpTableCell :column="col" :row="data" :view="IP_TABLE_VIEW.DHCP"
-                             :domain-name="selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name" />
+              <template #header>
+                <ColumnHeaderTooltip :column="col" />
+              </template>
+              <template #body="{ data }">
+                <IpTableCell
+                  :column="col"
+                  :row="data"
+                  :view="IP_TABLE_VIEW.DHCP"
+                  :domain-name="
+                    selectedScope ? selectedScope.subnet_domain_name : data.subnet_domain_name
+                  "
+                />
               </template>
             </Column>
           </DataTable>
         </template>
 
-        <EmptyState v-else-if="store.scopes.length === 0"
+        <EmptyState
+          v-else-if="store.scopes.length === 0"
           icon="pi-server"
           title="No DHCP scopes yet"
           description="Add a scope to start handing out leases on a subnet."
           :actions="[
-            { label: 'Add Scope', icon: 'pi-plus', severity: 'primary', dataTrack: 'empty-add-scope', onClick: () => openScopeDialog() }
-          ]" />
+            {
+              label: 'Add Scope',
+              icon: 'pi-plus',
+              severity: 'primary',
+              dataTrack: 'empty-add-scope',
+              onClick: () => openScopeDialog(),
+            },
+          ]"
+        />
         <div v-else class="empty-state centered">
           <i class="pi pi-server" style="font-size: 2rem; opacity: 0.3"></i>
           <span>Select a scope to view leases</span>
@@ -175,26 +304,45 @@
     <ScopeDialog ref="scopeDialogRef" @saved="onScopeSaved" />
 
     <!-- DHCP Reservation Dialog -->
-    <Dialog v-model:visible="showReservationDialog" :header="editingReservation ? 'Edit DHCP Reservation' : 'Add DHCP Reservation'" data-track="dialog-dhcp-reservation"
-            modal :style="{ width: '28rem' }">
+    <Dialog
+      v-model:visible="showReservationDialog"
+      :header="editingReservation ? 'Edit DHCP Reservation' : 'Add DHCP Reservation'"
+      data-track="dialog-dhcp-reservation"
+      modal
+      :style="{ width: '28rem' }"
+    >
       <div class="form-grid">
         <div class="field" v-if="!editingReservation">
           <label>Network *</label>
-          <Select v-model="reservationForm.subnet_id" :options="allocatedSubnets" optionLabel="_label" optionValue="id"
-                  class="w-full" placeholder="Select network" />
+          <Select
+            v-model="reservationForm.subnet_id"
+            :options="allocatedSubnets"
+            optionLabel="_label"
+            optionValue="id"
+            class="w-full"
+            placeholder="Select network"
+          />
         </div>
         <div class="field">
           <label>MAC Address *</label>
-          <InputText :modelValue="reservationForm.mac_address"
-                     @keydown="onMacKeydown"
-                     @paste="onMacPaste"
-                     @input="onMacInput"
-                     class="w-full" placeholder="AA:BB:CC:DD:EE:FF"
-                     maxlength="17" autocomplete="off" />
+          <InputText
+            :modelValue="reservationForm.mac_address"
+            @keydown="onMacKeydown"
+            @paste="onMacPaste"
+            @input="onMacInput"
+            class="w-full"
+            placeholder="AA:BB:CC:DD:EE:FF"
+            maxlength="17"
+            autocomplete="off"
+          />
         </div>
         <div class="field">
           <label>IP Address *</label>
-          <InputText v-model="reservationForm.ip_address" class="w-full" placeholder="192.168.1.100" />
+          <InputText
+            v-model="reservationForm.ip_address"
+            class="w-full"
+            placeholder="192.168.1.100"
+          />
         </div>
         <div class="field">
           <label>Hostname</label>
@@ -211,13 +359,26 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showReservationDialog = false" />
-        <Button :label="editingReservation ? 'Save' : 'Create'" @click="saveReservation" :loading="savingReservation" />
+        <Button
+          :label="editingReservation ? 'Save' : 'Create'"
+          @click="saveReservation"
+          :loading="savingReservation"
+        />
       </template>
     </Dialog>
 
     <!-- Delete Scope Dialog -->
-    <Dialog v-model:visible="showDeleteScopeDialog" header="Delete Scope" modal :style="{ width: '24rem' }" data-track="dialog-dhcp-delete-scope">
-      <p>Delete DHCP scope for <strong>{{ deletingScope?.subnet_cidr }}</strong>?</p>
+    <Dialog
+      v-model:visible="showDeleteScopeDialog"
+      header="Delete Scope"
+      modal
+      :style="{ width: '24rem' }"
+      data-track="dialog-dhcp-delete-scope"
+    >
+      <p>
+        Delete DHCP scope for <strong>{{ deletingScope?.subnet_cidr }}</strong
+        >?
+      </p>
       <p class="text-sm muted">The underlying DHCP Scope range will be kept.</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteScopeDialog = false" />
@@ -226,21 +387,40 @@
     </Dialog>
 
     <!-- Delete DHCP Reservation Dialog -->
-    <Dialog v-model:visible="showDeleteReservationDialog" header="Delete DHCP Reservation" modal :style="{ width: '24rem' }" data-track="dialog-dhcp-delete-reservation">
-      <p>Delete DHCP Reservation for <strong>{{ deletingReservation?.mac_address }}</strong> → {{ deletingReservation?.ip_address }}?</p>
+    <Dialog
+      v-model:visible="showDeleteReservationDialog"
+      header="Delete DHCP Reservation"
+      modal
+      :style="{ width: '24rem' }"
+      data-track="dialog-dhcp-delete-reservation"
+    >
+      <p>
+        Delete DHCP Reservation for <strong>{{ deletingReservation?.mac_address }}</strong> →
+        {{ deletingReservation?.ip_address }}?
+      </p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteReservationDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteReservation" :loading="savingReservation" />
+        <Button
+          label="Delete"
+          severity="danger"
+          @click="doDeleteReservation"
+          :loading="savingReservation"
+        />
       </template>
     </Dialog>
 
     <!-- Lease Context Menu -->
     <ContextMenu ref="leaseContextMenuRef" :model="leaseContextMenuItems" />
 
-    <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
-                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName"
-                     :columns="visibleDhcpColumns" :view="IP_TABLE_VIEW.DHCP"
-                     table-name="DHCP" />
+    <IpDetailsDrawer
+      v-model:visible="showIpDetails"
+      :host="ipDetailsRow"
+      :subnet-id="ipDetailsSubnetId"
+      :domain-name="ipDetailsDomainName"
+      :columns="visibleDhcpColumns"
+      :view="IP_TABLE_VIEW.DHCP"
+      table-name="DHCP"
+    />
   </div>
 </template>
 
@@ -249,7 +429,7 @@ import { ref, computed, onMounted, watch } from 'vue';
 import {
   canAddDhcpReservation,
   isEditableDhcpReservation,
-  probeNowMenuItem
+  probeNowMenuItem,
 } from '../utils/rowContextMenu.js';
 
 import { useToast } from '../ui/useToast.js';
@@ -284,7 +464,7 @@ import {
   IP_TABLE_COLUMN_ALIASES,
   IP_TABLE_DEFAULT_KEYS,
   IP_TABLE_VIEW,
-  ipTableColumns
+  ipTableColumns,
 } from '../utils/ipTableColumns.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
@@ -301,7 +481,7 @@ const {
   host: ipDetailsRow,
   subnetId: ipDetailsSubnetId,
   domainName: ipDetailsDomainName,
-  openIpDetails
+  openIpDetails,
 } = useIpDetailsDrawer();
 
 const dhcpTableColumns = ipTableColumns(IP_TABLE_VIEW.DHCP);
@@ -309,10 +489,10 @@ const dhcpTableColumns = ipTableColumns(IP_TABLE_VIEW.DHCP);
 const {
   visibleColumns: visibleDhcpColumns,
   setVisibleColumns: setVisibleDhcpColumns,
-  resetColumns: resetDhcpColumns
+  resetColumns: resetDhcpColumns,
 } = useColumnPreferences('cidrella_columns_dhcp', dhcpTableColumns, {
   defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.DHCP],
-  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DHCP]
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DHCP],
 });
 
 const scopeTab = ref('scopes');
@@ -331,7 +511,14 @@ const savingScope = ref(false);
 const showReservationDialog = ref(false);
 const editingReservation = ref(null);
 const savingReservation = ref(false);
-const reservationForm = ref({ subnet_id: null, mac_address: '', ip_address: '', hostname: '', description: '', enabled: true });
+const reservationForm = ref({
+  subnet_id: null,
+  mac_address: '',
+  ip_address: '',
+  hostname: '',
+  description: '',
+  enabled: true,
+});
 const allocatedSubnets = ref([]);
 
 // ── MAC Address input sanitization ──
@@ -359,8 +546,19 @@ function warnInvalidMac() {
 
 function onMacKeydown(event) {
   // Allow nav / editing keys
-  const nav = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
-               'Home', 'End', 'Tab', 'Enter', 'Escape'];
+  const nav = [
+    'Backspace',
+    'Delete',
+    'ArrowLeft',
+    'ArrowRight',
+    'ArrowUp',
+    'ArrowDown',
+    'Home',
+    'End',
+    'Tab',
+    'Enter',
+    'Escape',
+  ];
   if (nav.includes(event.key)) return;
   if (event.ctrlKey || event.metaKey) return; // Cut/Copy/Paste/Select-All
   // Printable keys: must be hex or colon
@@ -386,7 +584,7 @@ function onMacPaste(event) {
 function macCursorFromHexCount(n) {
   if (n <= 0) return 0;
   if (n >= 12) return 17;
-  const colonsBefore = n % 2 === 0 ? (n / 2) - 1 : Math.floor(n / 2);
+  const colonsBefore = n % 2 === 0 ? n / 2 - 1 : Math.floor(n / 2);
   return n + Math.max(0, colonsBefore);
 }
 
@@ -408,7 +606,11 @@ function onMacInput(event) {
     const newCaret = macCursorFromHexCount(hexBefore);
     // Defer to after the value-assignment settles in the DOM.
     requestAnimationFrame(() => {
-      try { input.setSelectionRange(newCaret, newCaret); } catch { /* detached */ }
+      try {
+        input.setSelectionRange(newCaret, newCaret);
+      } catch {
+        /* detached */
+      }
     });
   }
 }
@@ -416,9 +618,15 @@ function onMacInput(event) {
 const dhcpSearch = ref(loadJson('cidrella_dhcp_search', ''));
 const dhcpAllSearch = ref(loadJson('cidrella_dhcp_all_search', ''));
 const showAvailableDhcp = ref(loadJson('cidrella_dhcp_show_available', true));
-watch(dhcpSearch, (val) => { saveJson('cidrella_dhcp_search', val) });
-watch(dhcpAllSearch, (val) => { saveJson('cidrella_dhcp_all_search', val) });
-watch(showAvailableDhcp, (val) => { saveJson('cidrella_dhcp_show_available', val) });
+watch(dhcpSearch, (val) => {
+  saveJson('cidrella_dhcp_search', val);
+});
+watch(dhcpAllSearch, (val) => {
+  saveJson('cidrella_dhcp_all_search', val);
+});
+watch(showAvailableDhcp, (val) => {
+  saveJson('cidrella_dhcp_show_available', val);
+});
 
 // Lease context menu
 const leaseContextMenuRef = ref();
@@ -429,13 +637,23 @@ const leaseContextMenuItems = computed(() => {
   const items = [];
   if (r.dhcp_assignment_type === 'reserved') {
     items.push(
-      { label: 'Edit DHCP Reservation', icon: 'pi pi-pencil', command: () => openReservationDialog(r) },
-      { label: 'Delete DHCP Reservation', icon: 'pi pi-trash', command: () => confirmDeleteReservation(r) }
+      {
+        label: 'Edit DHCP Reservation',
+        icon: 'pi pi-pencil',
+        command: () => openReservationDialog(r),
+      },
+      {
+        label: 'Delete DHCP Reservation',
+        icon: 'pi pi-trash',
+        command: () => confirmDeleteReservation(r),
+      },
     );
   } else if (canAddDhcpReservation(r)) {
-    items.push(
-      { label: 'Add DHCP Reservation', icon: 'pi pi-plus', command: () => addDhcpReservationFromRow(r) }
-    );
+    items.push({
+      label: 'Add DHCP Reservation',
+      icon: 'pi pi-plus',
+      command: () => addDhcpReservationFromRow(r),
+    });
   }
   if (r.ip_address) {
     if (items.length) items.push({ separator: true });
@@ -446,7 +664,12 @@ const leaseContextMenuItems = computed(() => {
 
 async function probeIp(lease) {
   const ip = lease.ip_address;
-  toast.add({ severity: 'info', summary: 'Probing...', detail: `Sending probe to ${ip}`, life: 2000 });
+  toast.add({
+    severity: 'info',
+    summary: 'Probing...',
+    detail: `Sending probe to ${ip}`,
+    life: 2000,
+  });
   try {
     const res = await api.post('/scans/probe', { ip, subnet_id: lease.subnet_id });
     const r = res.data;
@@ -455,14 +678,14 @@ async function probeIp(lease) {
         severity: 'success',
         summary: `${ip} is Online`,
         detail: `Method: ${r.method.toUpperCase()}${r.mac ? ` · MAC: ${r.mac}` : ''}`,
-        life: 5000
+        life: 5000,
       });
     } else {
       toast.add({
         severity: 'warn',
         summary: `${ip} is Offline`,
         detail: `No response via ${r.method.toUpperCase()}`,
-        life: 5000
+        life: 5000,
       });
     }
     // Refetch leases so the Online badge updates
@@ -483,14 +706,15 @@ function onLeaseDoubleClick(event) {
 function onLeaseRowClick(event) {
   const row = event.data;
   openIpDetails(row, {
-    domainName: selectedScope.value?.subnet_domain_name || row?.subnet_domain_name
+    domainName: selectedScope.value?.subnet_domain_name || row?.subnet_domain_name,
   });
 }
 const ipDetailRowClass = () => 'ip-detail-trigger';
 
 function dhcpMatchSearch(item, query) {
   const lifecycle = ipLifecycleDisplayForDhcpRow(item);
-  return (item.ip_address && item.ip_address.toLowerCase().includes(query)) ||
+  return (
+    (item.ip_address && item.ip_address.toLowerCase().includes(query)) ||
     (item.mac_address && item.mac_address.toLowerCase().includes(query)) ||
     (item.hostname && item.hostname.toLowerCase().includes(query)) ||
     (item.vendor && item.vendor.toLowerCase().includes(query)) ||
@@ -499,12 +723,14 @@ function dhcpMatchSearch(item, query) {
     String(item.device_confidence ?? '').includes(query) ||
     (item.dhcp_fingerprint && item.dhcp_fingerprint.includes(query)) ||
     (item.dhcp_vendor_class && item.dhcp_vendor_class.toLowerCase().includes(query)) ||
-    (item.dhcp_fingerprint_hostname && item.dhcp_fingerprint_hostname.toLowerCase().includes(query)) ||
+    (item.dhcp_fingerprint_hostname &&
+      item.dhcp_fingerprint_hostname.toLowerCase().includes(query)) ||
     (item.device_fingerprint_source && item.device_fingerprint_source.includes(query)) ||
     (item.allocation_source_type && item.allocation_source_type.toLowerCase().includes(query)) ||
     (item.dhcp_assignment_type && item.dhcp_assignment_type.toLowerCase().includes(query)) ||
     (item.lease_status && item.lease_status.toLowerCase().includes(query)) ||
-    (lifecycle.addressType?.label && lifecycle.addressType.label.toLowerCase().includes(query));
+    (lifecycle.addressType?.label && lifecycle.addressType.label.toLowerCase().includes(query))
+  );
 }
 
 function dhcpAddressTypeDisplay(row) {
@@ -514,19 +740,19 @@ function dhcpAddressTypeDisplay(row) {
 const searchedScopeLeases = computed(() => {
   const q = dhcpSearch.value.trim().toLowerCase();
   if (!q) return scopeLeases.value;
-  return scopeLeases.value.filter(r => dhcpMatchSearch(r, q));
+  return scopeLeases.value.filter((r) => dhcpMatchSearch(r, q));
 });
 
 const searchedAllLeases = computed(() => {
   const q = dhcpAllSearch.value.trim().toLowerCase();
   if (!q) return filteredLeases.value;
-  return filteredLeases.value.filter(r => dhcpMatchSearch(r, q));
+  return filteredLeases.value.filter((r) => dhcpMatchSearch(r, q));
 });
 
 const dhcpRowsForDisplay = computed(() => {
   const rows = selectedScope.value ? searchedScopeLeases.value : searchedAllLeases.value;
   if (showAvailableDhcp.value) return rows;
-  return rows.filter(row => ipLifecycleDisplayForDhcpRow(row).status !== 'available');
+  return rows.filter((row) => ipLifecycleDisplayForDhcpRow(row).status !== 'available');
 });
 
 const sortedDhcpRows = computed(() => {
@@ -538,11 +764,13 @@ const sortedDhcpRows = computed(() => {
 function onDhcpSort(event) {
   const nextOrder = event.sortOrder ?? 0;
   dhcpSortOrder.value = nextOrder;
-  dhcpSortField.value = nextOrder ? (event.sortField || event.field || null) : null;
+  dhcpSortField.value = nextOrder ? event.sortField || event.field || null : null;
 }
 
 function normalizedText(value) {
-  const text = String(value ?? '').trim().toLowerCase();
+  const text = String(value ?? '')
+    .trim()
+    .toLowerCase();
   return text || null;
 }
 
@@ -550,7 +778,7 @@ function normalizedOnline(value) {
   // Sorting wants a number, so map the shared three-state flag onto 1/0/null
   // rather than keeping a second copy of the coercion. See audit #48.
   const state = isOnlineFlag(value);
-  return state === null ? null : (state ? 1 : 0);
+  return state === null ? null : state ? 1 : 0;
 }
 
 function normalizedExpiry(value) {
@@ -596,11 +824,12 @@ const deletingReservation = ref(null);
 const filteredScopes = computed(() => {
   const q = scopeFilterText.value.trim().toLowerCase();
   if (!q) return store.scopes;
-  return store.scopes.filter(s =>
-    (s.subnet_name && s.subnet_name.toLowerCase().includes(q)) ||
-    (s.subnet_cidr && s.subnet_cidr.toLowerCase().includes(q)) ||
-    (s.start_ip && s.start_ip.includes(q)) ||
-    (s.end_ip && s.end_ip.includes(q))
+  return store.scopes.filter(
+    (s) =>
+      (s.subnet_name && s.subnet_name.toLowerCase().includes(q)) ||
+      (s.subnet_cidr && s.subnet_cidr.toLowerCase().includes(q)) ||
+      (s.start_ip && s.start_ip.includes(q)) ||
+      (s.end_ip && s.end_ip.includes(q)),
   );
 });
 
@@ -609,7 +838,7 @@ const filteredLeases = computed(() => store.leases);
 const scopeGateway = computed(() => {
   const s = selectedScope.value;
   if (!s) return null;
-  return s.effective?.options?.find(option => option.option_code === 3)?.value || null;
+  return s.effective?.options?.find((option) => option.option_code === 3)?.value || null;
 });
 
 const scopeLeaseTime = computed(() => {
@@ -646,7 +875,7 @@ async function reloadSelectedScopeAddresses() {
 
 function selectScope(scope) {
   selectedScope.value = scope;
-  saveJson('cidrella_dhcp_selected_scope_id', scope?.id || null)
+  saveJson('cidrella_dhcp_selected_scope_id', scope?.id || null);
   reloadSelectedScopeAddresses();
 }
 
@@ -665,7 +894,7 @@ async function onScopeSaved() {
   await store.fetchScopes();
   // Re-select if the scope was updated
   if (selectedScope.value) {
-    const fresh = store.scopes.find(s => s.id === selectedScope.value.id);
+    const fresh = store.scopes.find((s) => s.id === selectedScope.value.id);
     if (fresh) selectedScope.value = fresh;
   }
 }
@@ -700,7 +929,7 @@ function reservationFormDefaults(overrides = {}) {
     hostname: '',
     description: '',
     enabled: true,
-    ...overrides
+    ...overrides,
   };
 }
 
@@ -721,7 +950,7 @@ async function loadReservationNetworks() {
     }
     return result;
   };
-  const allSubnets = (res.data.folders || []).flatMap(f => f.subnets || []);
+  const allSubnets = (res.data.folders || []).flatMap((f) => f.subnets || []);
   allocatedSubnets.value = flattenTree(allSubnets);
 }
 
@@ -744,13 +973,15 @@ async function openReservationDialog(reservation = null, prefill = {}) {
       ip_address: reservation.ip_address,
       hostname: reservation.hostname || '',
       description: reservation.description || '',
-      enabled: reservation.enabled !== undefined ? !!reservation.enabled : true
+      enabled: reservation.enabled !== undefined ? !!reservation.enabled : true,
     });
   } else {
     reservationForm.value = reservationFormDefaults(prefill);
     try {
       await loadReservationNetworks();
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
   showReservationDialog.value = true;
 }
@@ -763,7 +994,7 @@ async function saveReservation() {
       ip_address: reservationForm.value.ip_address,
       hostname: reservationForm.value.hostname || null,
       description: reservationForm.value.description || null,
-      enabled: reservationForm.value.enabled
+      enabled: reservationForm.value.enabled,
     };
 
     if (editingReservation.value) {
@@ -773,7 +1004,7 @@ async function saveReservation() {
     } else {
       await store.createReservation({
         subnet_id: reservationForm.value.subnet_id,
-        ...payload
+        ...payload,
       });
       toast.add({ severity: 'success', summary: 'DHCP Reservation created', life: 3000 });
     }
@@ -812,7 +1043,12 @@ async function doSyncLeases() {
   try {
     const result = await store.syncLeases();
     await reloadSelectedScopeAddresses();
-    toast.add({ severity: 'success', summary: 'Leases synced', detail: `${result.synced} leases`, life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: 'Leases synced',
+      detail: `${result.synced} leases`,
+      life: 3000,
+    });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
@@ -821,14 +1057,11 @@ async function doSyncLeases() {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    store.fetchScopes(),
-    store.fetchLeases()
-  ]);
+  await Promise.all([store.fetchScopes(), store.fetchLeases()]);
   // Restore previously selected scope, or auto-select first
   const savedScopeId = loadJson('cidrella_dhcp_selected_scope_id', null);
   if (savedScopeId) {
-    const scope = filteredScopes.value.find(s => s.id === savedScopeId);
+    const scope = filteredScopes.value.find((s) => s.id === savedScopeId);
     if (scope) {
       selectScope(scope);
       return;
@@ -1001,11 +1234,36 @@ defineExpose({ openScopeDialog });
   height: 2.4rem;
   box-sizing: border-box;
 }
-.info-bar-name { font-weight: 700; font-size: var(--app-fs-md); color: var(--p-primary-color); font-family: monospace; white-space: nowrap; }
-.info-bar-sep { width: 1px; height: 1rem; background: var(--p-surface-border); flex-shrink: 0; }
-.info-bar-pair { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
-.info-bar-label { font-size: var(--app-fs-xs); text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.08em; }
-.info-bar-val { font-size: var(--app-fs-sm); font-weight: 600; font-family: monospace; }
+.info-bar-name {
+  font-weight: 700;
+  font-size: var(--app-fs-md);
+  color: var(--p-primary-color);
+  font-family: monospace;
+  white-space: nowrap;
+}
+.info-bar-sep {
+  width: 1px;
+  height: 1rem;
+  background: var(--p-surface-border);
+  flex-shrink: 0;
+}
+.info-bar-pair {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  white-space: nowrap;
+}
+.info-bar-label {
+  font-size: var(--app-fs-xs);
+  text-transform: uppercase;
+  color: var(--p-text-muted-color);
+  letter-spacing: 0.08em;
+}
+.info-bar-val {
+  font-size: var(--app-fs-sm);
+  font-weight: 600;
+  font-family: monospace;
+}
 
 .type-badge {
   font-size: var(--app-fs-xs);
@@ -1015,11 +1273,25 @@ defineExpose({ openScopeDialog });
   font-family: monospace;
   letter-spacing: 0.02em;
 }
-.badge-reserved { background: color-mix(in srgb, var(--p-primary-color) 15%, transparent); color: var(--p-primary-color); }
-.badge-dynamic { background: color-mix(in srgb, var(--p-surface-500) 15%, transparent); color: var(--p-text-color); }
+.badge-reserved {
+  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
+  color: var(--p-primary-color);
+}
+.badge-dynamic {
+  background: color-mix(in srgb, var(--p-surface-500) 15%, transparent);
+  color: var(--p-text-color);
+}
 
-.search-bar { display: flex; align-items: center; gap: 0.25rem; padding: 0.4rem 0; flex-shrink: 0; }
-.search-input { width: 22rem; }
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.4rem 0;
+  flex-shrink: 0;
+}
+.search-input {
+  width: 22rem;
+}
 .available-toggle {
   display: inline-flex;
   align-items: center;
@@ -1031,8 +1303,12 @@ defineExpose({ openScopeDialog });
   text-transform: lowercase;
 }
 
-.text-sm { font-size: var(--app-fs-sm); }
-.muted { color: var(--p-text-muted-color); }
+.text-sm {
+  font-size: var(--app-fs-sm);
+}
+.muted {
+  color: var(--p-text-muted-color);
+}
 
 code {
   font-family: monospace;

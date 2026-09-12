@@ -13,10 +13,7 @@ import { DATA_DIR } from '../config/defaults.js';
 
 const router = Router();
 const STATUS_FILE = path.join(DATA_DIR, 'update-status.json');
-const LIFECYCLE_MIGRATION_REPORT_FILE = path.join(
-  DATA_DIR,
-  'ip-lifecycle-migration-report.json'
-);
+const LIFECYCLE_MIGRATION_REPORT_FILE = path.join(DATA_DIR, 'ip-lifecycle-migration-report.json');
 
 function lifecycleMigrationReportAvailable() {
   try {
@@ -76,7 +73,7 @@ function isStaleInProgress(status) {
   if (isPidAlive(status.pid)) return false;
   const updatedAt = Date.parse(status.updated_at || status.started_at || '');
   if (!Number.isFinite(updatedAt)) return true;
-  return (Date.now() - updatedAt) > STALE_STATUS_GRACE_MS;
+  return Date.now() - updatedAt > STALE_STATUS_GRACE_MS;
 }
 
 // Mutate a stale record into a `failed` one in-place on disk. We do not
@@ -98,7 +95,9 @@ function reapStaleStatus(status) {
     state: 'failed',
     progress_pct: status.progress_pct || 0,
     message: 'Update worker did not report progress within the grace window',
-    error: status.error || 'The update worker did not record any progress for 180 seconds after starting. It may have exited, crashed, or never launched. Check the server log and `journalctl -u cidrella-update@*.service` for spawn or execution errors. If the update actually did succeed, the version shown above the panel will already be current.',
+    error:
+      status.error ||
+      'The update worker did not record any progress for 180 seconds after starting. It may have exited, crashed, or never launched. Check the server log and `journalctl -u cidrella-update@*.service` for spawn or execution errors. If the update actually did succeed, the version shown above the panel will already be current.',
     reason_code: 'worker_silent',
     updated_at: new Date().toISOString(),
     pid: null,
@@ -158,7 +157,9 @@ function resolvePendingUpdate() {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) chain = parsed;
     }
-  } catch { /* fall through to direct one-hop */ }
+  } catch {
+    /* fall through to direct one-hop */
+  }
 
   // Next-hop semantics: `version` is what the install handler will actually
   // install when the user clicks Install, i.e. chain[0], the first hop
@@ -183,7 +184,9 @@ function resolvePendingUpdate() {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) intermediateNotes = parsed;
     }
-  } catch { /* empty array fallback */ }
+  } catch {
+    /* empty array fallback */
+  }
 
   return {
     version: nextHop,
@@ -269,10 +272,7 @@ router.get('/ip-lifecycle-migration-report', requireRole('admin'), (req, res) =>
   }
 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader(
-    'Content-Disposition',
-    'attachment; filename="ip-lifecycle-migration-report.json"'
-  );
+  res.setHeader('Content-Disposition', 'attachment; filename="ip-lifecycle-migration-report.json"');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Content-Type-Options', 'nosniff');
   fs.createReadStream(LIFECYCLE_MIGRATION_REPORT_FILE).pipe(res);
@@ -281,7 +281,12 @@ router.get('/ip-lifecycle-migration-report', requireRole('admin'), (req, res) =>
 // POST /api/version/install: trigger update installation (admin only)
 router.post('/install', requireRole('admin'), (req, res) => {
   if (isDockerEnvironment()) {
-    return res.status(400).json({ error: 'Auto-update is not available in Docker deployments. Pull the latest image to update.' });
+    return res
+      .status(400)
+      .json({
+        error:
+          'Auto-update is not available in Docker deployments. Pull the latest image to update.',
+      });
   }
 
   const pending = resolvePendingUpdate();
@@ -351,7 +356,9 @@ router.post('/install', requireRole('admin'), (req, res) => {
       error: `systemctl start ${unitInstance} failed: ${stderr}`,
       updated_at: new Date().toISOString(),
     };
-    try { fs.writeFileSync(STATUS_FILE, JSON.stringify(failedStatus), 'utf8'); } catch {}
+    try {
+      fs.writeFileSync(STATUS_FILE, JSON.stringify(failedStatus), 'utf8');
+    } catch {}
     return res.status(500).json({ error: failedStatus.error });
   }
 

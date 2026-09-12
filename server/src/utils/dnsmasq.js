@@ -5,7 +5,13 @@ import { execFileSync, execSync } from 'child_process';
 import { parseCidr } from './ip.js';
 import { getSetting } from '../db/init.js';
 import { selectInterfaceNames } from './interface-config.js';
-import { DATA_DIR, resolveDnsmasqInternalPort, resolveDnsListenPort, DEFAULT_DNS_LISTEN_PORT, ENCRYPTED_FORWARDER_PORT } from '../config/defaults.js';
+import {
+  DATA_DIR,
+  resolveDnsmasqInternalPort,
+  resolveDnsListenPort,
+  DEFAULT_DNS_LISTEN_PORT,
+  ENCRYPTED_FORWARDER_PORT,
+} from '../config/defaults.js';
 import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
@@ -61,7 +67,7 @@ export function validateDnsmasqConfig() {
   try {
     execFileSync('dnsmasq', ['--test', `--conf-file=${DNSMASQ_CONF}`], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     return { ok: true, skipped: null };
   } catch (err) {
@@ -123,7 +129,11 @@ function directivesOf(content) {
  */
 function writeIfChanged(filePath, newContent) {
   let oldContent = '';
-  try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* doesn't exist yet */ }
+  try {
+    oldContent = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    /* doesn't exist yet */
+  }
   if (newContent === oldContent) return false;
   const directivesChanged = directivesOf(newContent) !== directivesOf(oldContent);
   atomicWrite(filePath, newContent);
@@ -148,8 +158,10 @@ function toFqdn(recordName, zoneName) {
   const raw = String(recordName || '').trim();
   const normalized = raw.replace(/\.$/, '');
   const zone = String(zoneName || '').replace(/\.$/, '');
-  if (normalized.toLowerCase() === zone.toLowerCase() ||
-      normalized.toLowerCase().endsWith(`.${zone.toLowerCase()}`)) {
+  if (
+    normalized.toLowerCase() === zone.toLowerCase() ||
+    normalized.toLowerCase().endsWith(`.${zone.toLowerCase()}`)
+  ) {
     return normalized;
   }
   if (normalized.includes('.')) {
@@ -189,24 +201,33 @@ export function generateReverseNames(cidr) {
 }
 
 export function regenerateHostsDir(db) {
-  const zones = db.prepare(`
+  const zones = db
+    .prepare(
+      `
     SELECT z.id, z.name FROM dns_zones z WHERE z.enabled = 1
-  `).all();
+  `,
+    )
+    .all();
 
   const activeIds = new Set();
   let changed = false;
 
   for (const zone of zones) {
-    const records = db.prepare(`
+    const records = db
+      .prepare(
+        `
       SELECT name, value FROM dns_records
       WHERE zone_id = ? AND type = 'A' AND enabled = 1
-    `).all(zone.id);
+    `,
+      )
+      .all(zone.id);
 
     if (records.length === 0) continue;
 
     activeIds.add(zone.id);
     const filePath = path.join(HOSTS_DIR, `zone-${zone.id}.hosts`);
-    const newContent = records.map(r => `${r.value} ${toFqdn(r.name, zone.name)}`).join('\n') + '\n';
+    const newContent =
+      records.map((r) => `${r.value} ${toFqdn(r.name, zone.name)}`).join('\n') + '\n';
     if (writeIfChanged(filePath, newContent)) changed = true;
   }
 
@@ -215,9 +236,13 @@ export function regenerateHostsDir(db) {
 }
 
 export function regenerateConfDir(db) {
-  const zones = db.prepare(`
+  const zones = db
+    .prepare(
+      `
     SELECT z.* FROM dns_zones z WHERE z.enabled = 1
-  `).all();
+  `,
+    )
+    .all();
 
   const activeIds = new Set();
   let changed = false;
@@ -231,16 +256,24 @@ export function regenerateConfDir(db) {
     // in-addr.arpa, so no whitespace, commas, or control chars).
     if (validateDnsmasqConfigValue(zone.name) != null) continue;
 
-    const records = db.prepare(`
+    const records = db
+      .prepare(
+        `
       SELECT name, type, value, priority, weight, port, ttl FROM dns_records
       WHERE zone_id = ? AND type NOT IN ('A', 'PTR') AND enabled = 1
-    `).all(zone.id);
+    `,
+      )
+      .all(zone.id);
 
     // PTR records with hostname values (not bare IPs) generate ptr-record= lines
-    const ptrRecords = db.prepare(`
+    const ptrRecords = db
+      .prepare(
+        `
       SELECT name, value FROM dns_records
       WHERE zone_id = ? AND type = 'PTR' AND enabled = 1 AND value LIKE '%.%' AND value NOT GLOB '[0-9]*.[0-9]*.[0-9]*.[0-9]*'
-    `).all(zone.id);
+    `,
+      )
+      .all(zone.id);
 
     if (records.length === 0 && ptrRecords.length === 0) continue;
 
@@ -249,7 +282,9 @@ export function regenerateConfDir(db) {
 
     // SOA comment for documentation
     if (zone.soa_primary_ns) {
-      lines.push(`# SOA: ${zone.soa_primary_ns} ${zone.soa_admin_email} ${zone.soa_serial || 1} ${zone.soa_refresh} ${zone.soa_retry} ${zone.soa_expire} ${zone.soa_minimum_ttl}`);
+      lines.push(
+        `# SOA: ${zone.soa_primary_ns} ${zone.soa_admin_email} ${zone.soa_serial || 1} ${zone.soa_refresh} ${zone.soa_retry} ${zone.soa_expire} ${zone.soa_minimum_ttl}`,
+      );
     }
 
     for (const r of records) {
@@ -369,19 +404,19 @@ export function regenerateDnsmasqConf(_db) {
   const lines = content.split('\n');
   // Strip existing server= lines and any DNSSEC-managed lines so regen is
   // idempotent regardless of which setting changed.
-  const filtered = lines.filter(line => !/^server=/.test(line) && !isManagedDnssecLine(line));
+  const filtered = lines.filter((line) => !/^server=/.test(line) && !isManagedDnssecLine(line));
 
   // Insert server lines after no-resolv or at the start. When recursion is
   // disabled, emit NO upstreams (authoritative-only). Otherwise, when encrypted
   // forwarding is on, send everything to the in-Node DoT/DoH stub on loopback
   // instead of the plain upstream IPs (the stub encrypts to the real upstreams).
-  const noResolvIdx = filtered.findIndex(l => l.trim() === 'no-resolv');
+  const noResolvIdx = filtered.findIndex((l) => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
   const serverLines = noRecursion
     ? []
-    : (encryption === 'tls' || encryption === 'https')
+    : encryption === 'tls' || encryption === 'https'
       ? [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`]
-      : servers.map(s => `server=${s}`);
+      : servers.map((s) => `server=${s}`);
   filtered.splice(insertIdx, 0, ...serverLines);
 
   // Append the DNSSEC block when enabled and the local dnsmasq supports it.
@@ -389,7 +424,9 @@ export function regenerateDnsmasqConf(_db) {
     if (dnsmasqSupportsDnssec()) {
       filtered.push(...buildDnssecLines());
     } else {
-      console.warn('[dnsmasq] dnssec_enabled is true but dnsmasq was not built with DNSSEC support, skipping DNSSEC directives');
+      console.warn(
+        '[dnsmasq] dnssec_enabled is true but dnsmasq was not built with DNSSEC support, skipping DNSSEC directives',
+      );
     }
   }
 
@@ -442,7 +479,9 @@ function setRestartPending(pending) {
     } else {
       fs.rmSync(RESTART_PENDING, { force: true });
     }
-  } catch { /* marker is best-effort */ }
+  } catch {
+    /* marker is best-effort */
+  }
 }
 
 export function signalDnsmasq() {
@@ -508,7 +547,7 @@ export function applyInterfaceConfig(_db) {
   const lines = content.split('\n');
 
   // Strip existing interface-related directives (not comments)
-  const filtered = lines.filter(line => {
+  const filtered = lines.filter((line) => {
     if (line.startsWith('#')) return true;
     if (/^listen-address=/.test(line)) return false;
     if (/^interface=/.test(line)) return false;
@@ -526,24 +565,32 @@ export function applyInterfaceConfig(_db) {
   try {
     const raw = getSetting('interface_config');
     if (raw) ifaceConfig = JSON.parse(raw);
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   try {
     const val = getSetting('dns_enabled');
     if (val === 'false') dnsEnabled = false;
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   try {
     const val = getSetting('dhcp_enabled');
     if (val === 'false') dhcpEnabled = false;
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   // Check for proxy bypass mode, dnsmasq takes over port 53 on LAN IPs
   let proxyBypass = false;
   try {
     const val = getSetting('dns_proxy_bypass');
     if (val === 'true') proxyBypass = true;
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   const sysIfaces = os.networkInterfaces();
 
@@ -556,23 +603,23 @@ export function applyInterfaceConfig(_db) {
   let configuredListenPort = DEFAULT_DNS_LISTEN_PORT;
   try {
     configuredListenPort = resolveDnsListenPort(getSetting('dns_listen_port'));
-  } catch { /* default 53 */ }
+  } catch {
+    /* default 53 */
+  }
   const internalPort = resolveDnsmasqInternalPort(configuredListenPort);
   const dnsPort = !dnsEnabled ? 0 : proxyBypass ? configuredListenPort : internalPort;
-  const newDirectives = [
-    'bind-dynamic',
-    'listen-address=127.0.0.1',
-    `port=${dnsPort}`,
-  ];
-  if (sysIfaces.lo?.some(a => a.family === 'IPv6')) {
+  const newDirectives = ['bind-dynamic', 'listen-address=127.0.0.1', `port=${dnsPort}`];
+  if (sysIfaces.lo?.some((a) => a.family === 'IPv6')) {
     newDirectives.push('listen-address=::1');
   }
   // Interface SELECTION is shared with dns-proxy.js and dhcp-probe.js so the
   // three cannot disagree about which interfaces are in play (audit #9). The
   // directive emission below is dnsmasq's alone and stays here. 'any' because
   // dnsmasq needs an interface= line for a DNS-only interface too.
-  const { explicit: hasExplicitConfig, names: selectedIfNames } =
-    selectInterfaceNames('any', { config: ifaceConfig, sysIfaces });
+  const { explicit: hasExplicitConfig, names: selectedIfNames } = selectInterfaceNames('any', {
+    config: ifaceConfig,
+    sysIfaces,
+  });
 
   if (hasExplicitConfig) {
     for (const ifName of selectedIfNames) {

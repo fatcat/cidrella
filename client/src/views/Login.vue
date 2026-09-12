@@ -6,11 +6,26 @@
       <form @submit.prevent="handleLogin">
         <div class="field">
           <label for="username">Username</label>
-          <InputText id="username" v-model="username" autocomplete="username" :disabled="loading" class="w-full" />
+          <InputText
+            id="username"
+            v-model="username"
+            autocomplete="username"
+            :disabled="loading"
+            class="w-full"
+          />
         </div>
         <div class="field">
           <label for="password">Password</label>
-          <Password id="password" v-model="password" :feedback="false" toggleMask autocomplete="current-password" :disabled="loading" class="w-full" inputClass="w-full" />
+          <Password
+            id="password"
+            v-model="password"
+            :feedback="false"
+            toggleMask
+            autocomplete="current-password"
+            :disabled="loading"
+            class="w-full"
+            inputClass="w-full"
+          />
         </div>
         <Message v-if="error" severity="error" :closable="false" class="mb-3">{{ error }}</Message>
         <Button type="submit" label="Sign In" :loading="loading" class="w-full" />
@@ -47,7 +62,10 @@ async function handleLogin() {
     if (data.user.must_change_password) {
       // Hand the destination on rather than dropping it. The change-password
       // step is in the way of where they were going, not the destination.
-      router.push({ path: '/change-password', query: route.query.redirect ? { redirect: route.query.redirect } : {} });
+      router.push({
+        path: '/change-password',
+        query: route.query.redirect ? { redirect: route.query.redirect } : {},
+      });
     } else {
       router.push(landingPath(router, data.user.username, route.query.redirect));
     }

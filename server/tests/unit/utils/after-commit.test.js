@@ -5,12 +5,13 @@ vi.mock('../../../src/utils/dnsmasq.js', () => ({
   regenerateConfigs: vi.fn(),
   regenerateDnsmasqConf: vi.fn(),
   restartDnsmasq: vi.fn(),
-  withValidatedDnsmasqUpdate: vi.fn(callback => callback())
+  withValidatedDnsmasqUpdate: vi.fn((callback) => callback()),
 }));
 vi.mock('../../../src/utils/dhcp.js', () => ({ regenerateDhcpConfigs: vi.fn() }));
 
 const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
-const { enqueueGeneration, findGeneration } = await import('../../../src/models/configuration-generation.js');
+const { enqueueGeneration, findGeneration } =
+  await import('../../../src/models/configuration-generation.js');
 const { resumePendingRegeneration } = await import('../../../src/utils/after-commit.js');
 
 let db;
@@ -22,10 +23,12 @@ beforeAll(async () => {
 
 beforeEach(() => {
   regenerateDhcpConfigs.mockReset();
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE configuration_generations
     SET desired_generation = 0, applied_generation = 0, status = 'applied', last_error = NULL
-  `).run();
+  `,
+  ).run();
 });
 
 afterAll(() => cleanupTestDb(tmpDir));
@@ -38,7 +41,7 @@ describe('durable after-commit recovery', () => {
       expect(findGeneration(db, 'regenerate_dhcp')).toMatchObject({
         desired_generation: 1,
         applied_generation: 1,
-        status: 'applied'
+        status: 'applied',
       });
     });
     expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(1);
@@ -54,7 +57,7 @@ describe('durable after-commit recovery', () => {
     await vi.waitFor(() => {
       expect(findGeneration(db, 'regenerate_dhcp')).toMatchObject({
         status: 'failed',
-        last_error: 'injected dnsmasq validation failure'
+        last_error: 'injected dnsmasq validation failure',
       });
     });
     resumePendingRegeneration();
@@ -63,7 +66,7 @@ describe('durable after-commit recovery', () => {
         desired_generation: 1,
         applied_generation: 1,
         status: 'applied',
-        last_error: null
+        last_error: null,
       });
     });
     error.mockRestore();

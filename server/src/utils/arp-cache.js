@@ -74,7 +74,7 @@ export function parseArpTable(text) {
  */
 export function readArpCache({ force = false } = {}) {
   const now = Date.now();
-  if (!force && cached && (now - cachedAt) < CACHE_TTL_MS) return cached;
+  if (!force && cached && now - cachedAt < CACHE_TTL_MS) return cached;
 
   let table;
   try {

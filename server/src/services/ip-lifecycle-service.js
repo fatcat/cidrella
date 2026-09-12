@@ -9,7 +9,7 @@ import * as IpSync from '../utils/ip-sync.js';
 import {
   ALLOCATION_STATE,
   LIFECYCLE_SOURCE,
-  canTransitionAllocation
+  canTransitionAllocation,
 } from '../models/ip-lifecycle.js';
 import { findEnabledScopeForIp } from '../models/dhcp-scope.js';
 import { isValidIpv4, parseCidr, ipToLong } from '../utils/ip.js';
@@ -39,14 +39,12 @@ export class IpLifecycleConflictError extends Error {
 
 function protectedAddress(db, subnetId, ip) {
   if (!isValidIpv4(ip)) return null;
-  const subnet = db.prepare(
-    'SELECT cidr, gateway_address FROM subnets WHERE id = ?'
-  ).get(subnetId);
+  const subnet = db.prepare('SELECT cidr, gateway_address FROM subnets WHERE id = ?').get(subnetId);
   if (!subnet) {
     return {
       state: null,
       dnsNameAllowed: false,
-      reason: 'Address does not belong to a managed subnet'
+      reason: 'Address does not belong to a managed subnet',
     };
   }
   const parsed = parseCidr(subnet.cidr);
@@ -55,21 +53,21 @@ function protectedAddress(db, subnetId, ip) {
     return {
       state: ALLOCATION_STATE.SYSTEM,
       dnsNameAllowed: false,
-      reason: 'Network address is protected'
+      reason: 'Network address is protected',
     };
   }
   if (value === parsed.broadcastLong) {
     return {
       state: ALLOCATION_STATE.SYSTEM,
       dnsNameAllowed: false,
-      reason: 'Broadcast address is protected'
+      reason: 'Broadcast address is protected',
     };
   }
   if (subnet.gateway_address === ip) {
     return {
       state: ALLOCATION_STATE.GATEWAY,
       dnsNameAllowed: true,
-      reason: 'Gateway address is protected'
+      reason: 'Gateway address is protected',
     };
   }
   return null;
@@ -82,8 +80,8 @@ function protectedAddressReason(db, subnetId, ip) {
 function assertAllocationTransition(db, subnetId, ip, targetState, source) {
   const existing = IpAddress.findBySubnetAndIp(db, subnetId, ip);
   const currentState = existing?.allocation_state || ALLOCATION_STATE.UNASSIGNED;
-  const topologyTarget = targetState === ALLOCATION_STATE.SYSTEM
-    || targetState === ALLOCATION_STATE.GATEWAY;
+  const topologyTarget =
+    targetState === ALLOCATION_STATE.SYSTEM || targetState === ALLOCATION_STATE.GATEWAY;
   if (targetState !== ALLOCATION_STATE.UNASSIGNED && !topologyTarget) {
     const protectedReason = protectedAddressReason(db, subnetId, ip);
     if (protectedReason) {
@@ -96,37 +94,39 @@ function assertAllocationTransition(db, subnetId, ip, targetState, source) {
   if (!canTransitionAllocation(currentState, targetState, source)) {
     throw new IpLifecycleConflictError(
       `Cannot change ${ip} from ${currentState} to ${targetState} via ${source}`,
-      { currentState, targetState, ip }
+      { currentState, targetState, ip },
     );
   }
   return existing;
 }
 
 function setCanonicalAllocation(db, subnetId, ip, state, sourceType, sourceId = null, fields = {}) {
-  const allocationFields = state === ALLOCATION_STATE.UNASSIGNED
-    ? {
-        preferred_until: null,
-        valid_until: null,
-        dhcp_version: null,
-        dhcp_duid: null,
-        dhcp_iaid: null
-      }
-    : { is_rogue: 0, rogue_reason: null };
+  const allocationFields =
+    state === ALLOCATION_STATE.UNASSIGNED
+      ? {
+          preferred_until: null,
+          valid_until: null,
+          dhcp_version: null,
+          dhcp_duid: null,
+          dhcp_iaid: null,
+        }
+      : { is_rogue: 0, rogue_reason: null };
   return IpAddress.upsert(db, subnetId, ip, {
     ...allocationFields,
     ...fields,
     allocation_state: state,
     allocation_source_type: sourceType,
-    allocation_source_id: sourceId
+    allocation_source_id: sourceId,
   });
 }
 
 function lifecycleIdentityIp(ip, interfaceId) {
   const parsed = parseIp(ip);
   if (!parsed) throw new Error(`Invalid IP address: ${ip}`);
-  const linkLocal = parsed.bits === 128
-    && parsed.value >= 0xfe800000000000000000000000000000n
-    && parsed.value <= 0xfebfffffffffffffffffffffffffffffn;
+  const linkLocal =
+    parsed.bits === 128 &&
+    parsed.value >= 0xfe800000000000000000000000000000n &&
+    parsed.value <= 0xfebfffffffffffffffffffffffffffffn;
   if (!linkLocal || parsed.zoneId || !interfaceId) return ip;
   return `${ip}%${interfaceId}`;
 }
@@ -143,15 +143,18 @@ export function allocateStaticDns(db, recordName, ip, zoneName, recordId = null)
         currentState: existing?.allocation_state || ALLOCATION_STATE.UNASSIGNED,
         targetState: ALLOCATION_STATE.STATIC_DNS,
         ip,
-        scopeId: scope.id
-      }
+        scopeId: scope.id,
+      },
     );
   }
   const protectedTarget = protectedAddress(db, subnet.id, ip);
   if (protectedTarget?.dnsNameAllowed) {
     protectTopologyAddress(
-      db, subnet.id, ip, protectedTarget.state,
-      existing?.reservation_note || `Protected ${protectedTarget.state} address`
+      db,
+      subnet.id,
+      ip,
+      protectedTarget.state,
+      existing?.reservation_note || `Protected ${protectedTarget.state} address`,
     );
     IpSync.syncDnsToIp(db, recordName, ip, zoneName);
     // DNS supplies the display name, not allocation authority. Keep topology
@@ -162,7 +165,12 @@ export function allocateStaticDns(db, recordName, ip, zoneName, recordId = null)
   assertAllocationTransition(db, subnet.id, ip, ALLOCATION_STATE.STATIC_DNS, LIFECYCLE_SOURCE.DNS);
   IpSync.syncDnsToIp(db, recordName, ip, zoneName);
   return setCanonicalAllocation(
-    db, subnet.id, ip, ALLOCATION_STATE.STATIC_DNS, LIFECYCLE_SOURCE.DNS, recordId
+    db,
+    subnet.id,
+    ip,
+    ALLOCATION_STATE.STATIC_DNS,
+    LIFECYCLE_SOURCE.DNS,
+    recordId,
   );
 }
 
@@ -170,28 +178,31 @@ export function deallocateStaticDns(db, recordName, ip, zoneName) {
   const subnet = IpSync.findSubnetForIp(db, ip);
   if (!subnet) return null;
   const existing = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
-  if ([ALLOCATION_STATE.SYSTEM, ALLOCATION_STATE.GATEWAY]
-    .includes(existing?.allocation_state)) {
+  if ([ALLOCATION_STATE.SYSTEM, ALLOCATION_STATE.GATEWAY].includes(existing?.allocation_state)) {
     IpSync.clearDnsFromIp(db, recordName, ip, zoneName);
     IpAddress.upsert(db, subnet.id, ip, { detection_source: 'topology' });
     return IpAddress.findBySubnetAndIp(db, subnet.id, ip);
   }
   assertAllocationTransition(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DNS);
   IpSync.clearDnsFromIp(db, recordName, ip, zoneName);
-  return setCanonicalAllocation(
-    db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, null, null
-  );
+  return setCanonicalAllocation(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, null, null);
 }
 
 export function reconcileStaticDnsZone(db, previousZone, currentZone = null, records = null) {
-  const addressRecords = records || db.prepare(`
+  const addressRecords =
+    records ||
+    db
+      .prepare(
+        `
     SELECT id, name, value
     FROM dns_records
     WHERE zone_id = ?
       AND type = 'A'
       AND enabled = 1
       AND COALESCE(source, 'manual') = 'manual'
-  `).all(previousZone.id);
+  `,
+      )
+      .all(previousZone.id);
 
   for (const record of addressRecords) {
     if (previousZone.type === 'forward' && previousZone.enabled) {
@@ -205,29 +216,45 @@ export function reconcileStaticDnsZone(db, previousZone, currentZone = null, rec
 
 export function allocateStaticDhcp(db, subnetId, ip, fields = {}, reservationId = null) {
   assertAllocationTransition(
-    db, subnetId, ip, ALLOCATION_STATE.STATIC_DHCP, LIFECYCLE_SOURCE.DHCP_RESERVATION
+    db,
+    subnetId,
+    ip,
+    ALLOCATION_STATE.STATIC_DHCP,
+    LIFECYCLE_SOURCE.DHCP_RESERVATION,
   );
   IpSync.syncDhcpReservationToIp(db, subnetId, ip, fields);
   return setCanonicalAllocation(
-    db, subnetId, ip, ALLOCATION_STATE.STATIC_DHCP,
-    LIFECYCLE_SOURCE.DHCP_RESERVATION, reservationId,
-    { dhcp_version: fields.dhcp_version || 4, dhcp_duid: null, dhcp_iaid: null }
+    db,
+    subnetId,
+    ip,
+    ALLOCATION_STATE.STATIC_DHCP,
+    LIFECYCLE_SOURCE.DHCP_RESERVATION,
+    reservationId,
+    { dhcp_version: fields.dhcp_version || 4, dhcp_duid: null, dhcp_iaid: null },
   );
 }
 
 export function deallocateStaticDhcp(db, subnetId, ip, macAddress) {
   assertAllocationTransition(
-    db, subnetId, ip, ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DHCP_RESERVATION
+    db,
+    subnetId,
+    ip,
+    ALLOCATION_STATE.UNASSIGNED,
+    LIFECYCLE_SOURCE.DHCP_RESERVATION,
   );
   IpSync.clearDhcpReservationFromIp(db, subnetId, ip, macAddress);
   const existing = IpAddress.findBySubnetAndIp(db, subnetId, ip);
   if (!existing) return null;
-  const state = existing.detection_source === 'dhcp_lease'
-    ? ALLOCATION_STATE.DYNAMIC_DHCP
-    : ALLOCATION_STATE.UNASSIGNED;
+  const state =
+    existing.detection_source === 'dhcp_lease'
+      ? ALLOCATION_STATE.DYNAMIC_DHCP
+      : ALLOCATION_STATE.UNASSIGNED;
   return setCanonicalAllocation(
-    db, subnetId, ip, state,
-    state === ALLOCATION_STATE.DYNAMIC_DHCP ? LIFECYCLE_SOURCE.DHCP_LEASE : null
+    db,
+    subnetId,
+    ip,
+    state,
+    state === ALLOCATION_STATE.DYNAMIC_DHCP ? LIFECYCLE_SOURCE.DHCP_LEASE : null,
   );
 }
 
@@ -242,26 +269,42 @@ export function observeDhcpLeases(db, leases, { prevalidated = false } = {}) {
   IpSync.syncLeasesToIps(db, leases);
   for (const lease of leases) {
     if (!lease.subnetId) continue;
-    const reservation = db.prepare(`
+    const reservation = db
+      .prepare(
+        `
       SELECT id FROM dhcp_reservations
       WHERE subnet_id = ? AND ip_address = ? AND enabled = 1
-    `).get(lease.subnetId, lease.ip);
+    `,
+      )
+      .get(lease.subnetId, lease.ip);
     if (reservation) {
       setCanonicalAllocation(
-        db, lease.subnetId, lease.ip, ALLOCATION_STATE.STATIC_DHCP,
-        LIFECYCLE_SOURCE.DHCP_RESERVATION, reservation.id,
-        { dhcp_version: 4, dhcp_duid: null, dhcp_iaid: null }
+        db,
+        lease.subnetId,
+        lease.ip,
+        ALLOCATION_STATE.STATIC_DHCP,
+        LIFECYCLE_SOURCE.DHCP_RESERVATION,
+        reservation.id,
+        { dhcp_version: 4, dhcp_duid: null, dhcp_iaid: null },
       );
     } else {
-      const leaseRow = db.prepare(`
+      const leaseRow = db
+        .prepare(
+          `
         SELECT id FROM dhcp_leases
         WHERE subnet_id = ? AND ip_address = ?
         ORDER BY id DESC LIMIT 1
-      `).get(lease.subnetId, lease.ip);
+      `,
+        )
+        .get(lease.subnetId, lease.ip);
       setCanonicalAllocation(
-        db, lease.subnetId, lease.ip, ALLOCATION_STATE.DYNAMIC_DHCP,
-        LIFECYCLE_SOURCE.DHCP_LEASE, leaseRow?.id || null,
-        { dhcp_version: 4, dhcp_duid: null, dhcp_iaid: null }
+        db,
+        lease.subnetId,
+        lease.ip,
+        ALLOCATION_STATE.DYNAMIC_DHCP,
+        LIFECYCLE_SOURCE.DHCP_LEASE,
+        leaseRow?.id || null,
+        { dhcp_version: 4, dhcp_duid: null, dhcp_iaid: null },
       );
     }
   }
@@ -271,11 +314,18 @@ export function observeDhcpLeases(db, leases, { prevalidated = false } = {}) {
 export function dhcpLeaseRejectionReason(db, lease) {
   if (!lease?.subnetId) return `DHCP lease ${lease?.ip || ''} has no managed subnet`;
   if (!isValidIpv4(lease.ip)) return `DHCP lease address ${lease.ip || ''} is invalid`;
-  const reservation = db.prepare(`
+  const reservation = db
+    .prepare(
+      `
     SELECT id, mac_address FROM dhcp_reservations
     WHERE subnet_id = ? AND ip_address = ? AND enabled = 1
-  `).get(lease.subnetId, lease.ip);
-  if (reservation && String(reservation.mac_address).toLowerCase() !== String(lease.mac || '').toLowerCase()) {
+  `,
+    )
+    .get(lease.subnetId, lease.ip);
+  if (
+    reservation &&
+    String(reservation.mac_address).toLowerCase() !== String(lease.mac || '').toLowerCase()
+  ) {
     return `DHCP Lease ${lease.ip} does not match its DHCP Reservation client`;
   }
   if (!reservation && !findEnabledScopeForIp(db, lease.subnetId, lease.ip)) {
@@ -294,7 +344,9 @@ export function dhcpLeaseRejectionReason(db, lease) {
 }
 
 export function reconcileExpiredDhcpAllocations(db) {
-  const expired = db.prepare(`
+  const expired = db
+    .prepare(
+      `
     SELECT ip.subnet_id, ip.ip_address
     FROM ip_addresses ip
     WHERE ip.allocation_state = ?
@@ -306,14 +358,25 @@ export function reconcileExpiredDhcpAllocations(db) {
           AND dl.ip_address = ip.ip_address
           AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
       )
-  `).all(ALLOCATION_STATE.DYNAMIC_DHCP);
+  `,
+    )
+    .all(ALLOCATION_STATE.DYNAMIC_DHCP);
 
   for (const row of expired) {
     assertAllocationTransition(
-      db, row.subnet_id, row.ip_address, ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DHCP_LEASE
+      db,
+      row.subnet_id,
+      row.ip_address,
+      ALLOCATION_STATE.UNASSIGNED,
+      LIFECYCLE_SOURCE.DHCP_LEASE,
     );
     setCanonicalAllocation(
-      db, row.subnet_id, row.ip_address, ALLOCATION_STATE.UNASSIGNED, null, null
+      db,
+      row.subnet_id,
+      row.ip_address,
+      ALLOCATION_STATE.UNASSIGNED,
+      null,
+      null,
     );
   }
   return expired.length;
@@ -335,11 +398,10 @@ export function markStalePassiveAddresses(db, staleMinutes) {
   return IpAddress.bulkMarkStale(db, staleMinutes);
 }
 
-export function retireStaleDynamicAddresses(db, {
-  now = new Date(),
-  limit = 500,
-  releaseLease = releaseDnsmasqLease
-} = {}) {
+export function retireStaleDynamicAddresses(
+  db,
+  { now = new Date(), limit = 500, releaseLease = releaseDnsmasqLease } = {},
+) {
   const nowDate = now instanceof Date ? now : new Date(now);
   if (!Number.isFinite(nowDate.getTime())) throw new Error('Invalid retirement clock');
   const nowIso = nowDate.toISOString();
@@ -367,9 +429,10 @@ export function retireStaleDynamicAddresses(db, {
     for (const lease of leases) {
       const rawExpiry = String(lease.expires_at || '');
       const parsedExpiry = leaseExpiryMs(rawExpiry);
-      const isActive = rawExpiry === 'infinite'
-        || !Number.isFinite(parsedExpiry)
-        || parsedExpiry > nowDate.getTime();
+      const isActive =
+        rawExpiry === 'infinite' ||
+        !Number.isFinite(parsedExpiry) ||
+        parsedExpiry > nowDate.getTime();
       if (!isActive) continue;
 
       let result;
@@ -395,31 +458,37 @@ export function retireStaleDynamicAddresses(db, {
         : row.ip_address;
       if (row.allocation_state === ALLOCATION_STATE.DYNAMIC_DHCP) {
         assertAllocationTransition(
-          db, row.subnet_id, identityIp,
-          ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DHCP_LEASE
+          db,
+          row.subnet_id,
+          identityIp,
+          ALLOCATION_STATE.UNASSIGNED,
+          LIFECYCLE_SOURCE.DHCP_LEASE,
         );
       } else if (row.allocation_state === ALLOCATION_STATE.SLAAC) {
         assertAllocationTransition(
-          db, row.subnet_id, identityIp,
-          ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.SLAAC
+          db,
+          row.subnet_id,
+          identityIp,
+          ALLOCATION_STATE.UNASSIGNED,
+          LIFECYCLE_SOURCE.SLAAC,
         );
       }
       deleteLeasesByAddress(db, row.subnet_id, row.ip_address);
       IpAddress.retireLearnedMetadata(db, row);
     }
-    dnsRecordsRemoved = deleteDynamicDhcpRecordsByIps(
-      db, eligible
-    );
+    dnsRecordsRemoved = deleteDynamicDhcpRecordsByIps(db, eligible);
   })();
 
   const result = {
     retired: eligible.length,
     deferred: candidates.length - eligible.length,
     dnsRecordsRemoved,
-    leasesRemoved: eligible.reduce((count, row) => (
-      count + (leasesByAddress.get(`${row.subnet_id}|${row.ip_address}`)?.length || 0)
-    ), 0),
-    stickyRelease
+    leasesRemoved: eligible.reduce(
+      (count, row) =>
+        count + (leasesByAddress.get(`${row.subnet_id}|${row.ip_address}`)?.length || 0),
+      0,
+    ),
+    stickyRelease,
   };
   lastRetirementDiagnostics = { last_run_at: nowIso, ...result };
   return result;
@@ -431,19 +500,23 @@ export function pruneLifecycleEvents(db) {
 
 export function setManualReservation(db, subnetId, ip, reserved, note = null) {
   assertAllocationTransition(
-    db, subnetId, ip,
+    db,
+    subnetId,
+    ip,
     reserved ? ALLOCATION_STATE.RESERVED : ALLOCATION_STATE.UNASSIGNED,
-    LIFECYCLE_SOURCE.ADMIN_RESERVATION
+    LIFECYCLE_SOURCE.ADMIN_RESERVATION,
   );
   return setCanonicalAllocation(
-    db, subnetId, ip,
+    db,
+    subnetId,
+    ip,
     reserved ? ALLOCATION_STATE.RESERVED : ALLOCATION_STATE.UNASSIGNED,
     reserved ? LIFECYCLE_SOURCE.ADMIN_RESERVATION : null,
     null,
     {
       reservation_note: reserved ? note : null,
-      detection_source: reserved ? 'manual' : null
-    }
+      detection_source: reserved ? 'manual' : null,
+    },
   );
 }
 
@@ -452,20 +525,24 @@ export function protectTopologyAddress(db, subnetId, ip, state, note = null) {
     throw new Error(`Invalid protected topology state: ${state}`);
   }
   assertAllocationTransition(db, subnetId, ip, state, LIFECYCLE_SOURCE.TOPOLOGY);
-  return setCanonicalAllocation(
-    db, subnetId, ip, state, LIFECYCLE_SOURCE.TOPOLOGY, null,
-    { reservation_note: note, detection_source: 'topology' }
-  );
+  return setCanonicalAllocation(db, subnetId, ip, state, LIFECYCLE_SOURCE.TOPOLOGY, null, {
+    reservation_note: note,
+    detection_source: 'topology',
+  });
 }
 
 export function releaseTopologyAddress(db, subnetId, ip) {
   assertAllocationTransition(
-    db, subnetId, ip, ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.TOPOLOGY
+    db,
+    subnetId,
+    ip,
+    ALLOCATION_STATE.UNASSIGNED,
+    LIFECYCLE_SOURCE.TOPOLOGY,
   );
-  return setCanonicalAllocation(
-    db, subnetId, ip, ALLOCATION_STATE.UNASSIGNED, null, null,
-    { reservation_note: null, detection_source: null }
-  );
+  return setCanonicalAllocation(db, subnetId, ip, ALLOCATION_STATE.UNASSIGNED, null, null, {
+    reservation_note: null,
+    detection_source: null,
+  });
 }
 
 /**
@@ -482,14 +559,20 @@ export function reconcileTopologyAddresses(db, subnetId, parsed, gatewayAddress 
   }
   if (gatewayAddress) desired.set(gatewayAddress, ALLOCATION_STATE.GATEWAY);
 
-  const existing = db.prepare(`
+  const existing = db
+    .prepare(
+      `
     SELECT ip_address FROM ip_addresses
     WHERE subnet_id = ? AND allocation_source_type = 'topology'
-  `).all(subnetId);
+  `,
+    )
+    .all(subnetId);
 
   for (const row of existing) {
     if (desired.has(row.ip_address)) continue;
-    const dns = db.prepare(`
+    const dns = db
+      .prepare(
+        `
       SELECT record.id, record.name, zone.name AS zone_name
       FROM dns_records record
       JOIN dns_zones zone ON zone.id = record.zone_id
@@ -497,27 +580,47 @@ export function reconcileTopologyAddresses(db, subnetId, parsed, gatewayAddress 
         AND record.enabled = 1 AND zone.enabled = 1 AND zone.type = 'forward'
         AND COALESCE(record.source, 'manual') = 'manual'
       ORDER BY record.id LIMIT 1
-    `).get(row.ip_address);
+    `,
+      )
+      .get(row.ip_address);
     if (dns) {
       const hostname = dns.name === '@' ? dns.zone_name : `${dns.name}.${dns.zone_name}`;
       setCanonicalAllocation(
-        db, subnetId, row.ip_address, ALLOCATION_STATE.STATIC_DNS,
-        LIFECYCLE_SOURCE.DNS, dns.id,
-        { hostname, reservation_note: null, detection_source: 'dns' }
+        db,
+        subnetId,
+        row.ip_address,
+        ALLOCATION_STATE.STATIC_DNS,
+        LIFECYCLE_SOURCE.DNS,
+        dns.id,
+        { hostname, reservation_note: null, detection_source: 'dns' },
       );
     } else {
       setCanonicalAllocation(
-        db, subnetId, row.ip_address, ALLOCATION_STATE.UNASSIGNED, null, null,
-        { reservation_note: null, detection_source: null, is_online: 0,
-          is_rogue: 0, rogue_reason: null, offline_since_at: null }
+        db,
+        subnetId,
+        row.ip_address,
+        ALLOCATION_STATE.UNASSIGNED,
+        null,
+        null,
+        {
+          reservation_note: null,
+          detection_source: null,
+          is_online: 0,
+          is_rogue: 0,
+          rogue_reason: null,
+          offline_since_at: null,
+        },
       );
     }
   }
 
   for (const [ip, state] of desired) {
     protectTopologyAddress(
-      db, subnetId, ip, state,
-      state === ALLOCATION_STATE.GATEWAY ? 'Default gateway' : 'Protected topology address'
+      db,
+      subnetId,
+      ip,
+      state,
+      state === ALLOCATION_STATE.GATEWAY ? 'Default gateway' : 'Protected topology address',
     );
   }
 }
@@ -528,8 +631,11 @@ function ensureLifecycleAddresses(db, subnetId, entries) {
     if ([ALLOCATION_STATE.SYSTEM, ALLOCATION_STATE.GATEWAY].includes(entry.allocation_state)) {
       const existed = IpAddress.findBySubnetAndIp(db, subnetId, entry.ip);
       protectTopologyAddress(
-        db, subnetId, entry.ip, entry.allocation_state || ALLOCATION_STATE.GATEWAY,
-        entry.reservation_note || 'Protected topology address'
+        db,
+        subnetId,
+        entry.ip,
+        entry.allocation_state || ALLOCATION_STATE.GATEWAY,
+        entry.reservation_note || 'Protected topology address',
       );
       if (!existed) changes++;
     } else {
@@ -539,41 +645,50 @@ function ensureLifecycleAddresses(db, subnetId, entries) {
   return { changes };
 }
 
-export function observeSlaac(db, subnetId, ip, {
-  interfaceId,
-  preferredUntil,
-  validUntil,
-  temporary = false
-}) {
+export function observeSlaac(
+  db,
+  subnetId,
+  ip,
+  { interfaceId, preferredUntil, validUntil, temporary = false },
+) {
   if (!validUntil) throw new Error('SLAAC valid lifetime is required');
   const identityIp = lifecycleIdentityIp(ip, interfaceId);
   assertAllocationTransition(
-    db, subnetId, identityIp, ALLOCATION_STATE.SLAAC, LIFECYCLE_SOURCE.SLAAC
+    db,
+    subnetId,
+    identityIp,
+    ALLOCATION_STATE.SLAAC,
+    LIFECYCLE_SOURCE.SLAAC,
   );
   return setCanonicalAllocation(
-    db, subnetId, identityIp, ALLOCATION_STATE.SLAAC, LIFECYCLE_SOURCE.SLAAC, null,
+    db,
+    subnetId,
+    identityIp,
+    ALLOCATION_STATE.SLAAC,
+    LIFECYCLE_SOURCE.SLAAC,
+    null,
     {
       preferred_until: preferredUntil || null,
       valid_until: validUntil,
-      detection_source: temporary ? 'slaac_privacy' : 'slaac'
-    }
+      detection_source: temporary ? 'slaac_privacy' : 'slaac',
+    },
   );
 }
 
-export function observeDhcpv6Lease(db, subnetId, ip, {
-  duid,
-  iaid,
-  preferredUntil,
-  validUntil,
-  poolValidated = false,
-  observedActivity = true
-} = {}) {
+export function observeDhcpv6Lease(
+  db,
+  subnetId,
+  ip,
+  { duid, iaid, preferredUntil, validUntil, poolValidated = false, observedActivity = true } = {},
+) {
   const normalizedDuid = typeof duid === 'string' ? duid.trim() : '';
-  const normalizedIaid = ['string', 'number'].includes(typeof iaid)
-    ? String(iaid).trim()
-    : '';
-  if (!normalizedDuid || !normalizedIaid
-      || normalizedDuid.length > 512 || normalizedIaid.length > 128) {
+  const normalizedIaid = ['string', 'number'].includes(typeof iaid) ? String(iaid).trim() : '';
+  if (
+    !normalizedDuid ||
+    !normalizedIaid ||
+    normalizedDuid.length > 512 ||
+    normalizedIaid.length > 128
+  ) {
     throw new Error('DHCPv6 lease requires DUID and IAID identity');
   }
   if (!validUntil) throw new Error('DHCPv6 valid lifetime is required');
@@ -581,10 +696,18 @@ export function observeDhcpv6Lease(db, subnetId, ip, {
     throw new Error('DHCPv6 lease requires validated enabled-pool membership');
   }
   assertAllocationTransition(
-    db, subnetId, ip, ALLOCATION_STATE.DYNAMIC_DHCP, LIFECYCLE_SOURCE.DHCP_LEASE
+    db,
+    subnetId,
+    ip,
+    ALLOCATION_STATE.DYNAMIC_DHCP,
+    LIFECYCLE_SOURCE.DHCP_LEASE,
   );
   return setCanonicalAllocation(
-    db, subnetId, ip, ALLOCATION_STATE.DYNAMIC_DHCP, LIFECYCLE_SOURCE.DHCP_LEASE,
+    db,
+    subnetId,
+    ip,
+    ALLOCATION_STATE.DYNAMIC_DHCP,
+    LIFECYCLE_SOURCE.DHCP_LEASE,
     null,
     {
       dhcp_version: 6,
@@ -593,8 +716,8 @@ export function observeDhcpv6Lease(db, subnetId, ip, {
       preferred_until: preferredUntil || null,
       valid_until: validUntil,
       is_online: observedActivity ? 1 : undefined,
-      detection_source: 'dhcpv6_lease'
-    }
+      detection_source: 'dhcpv6_lease',
+    },
   );
 }
 
@@ -607,19 +730,33 @@ export function observeNeighbor(db, subnetId, ip, { interfaceId, mac } = {}) {
     last_seen_mac: mac || undefined,
     is_rogue: isRogue ? 1 : 0,
     rogue_reason: isRogue ? 'Neighbor Discovery from unassigned address' : null,
-    detection_source: 'neighbor_discovery'
+    detection_source: 'neighbor_discovery',
   });
 }
 
-export function observeRouterAdvertisement(db, subnetId, ip, { interfaceId, trusted = false } = {}) {
+export function observeRouterAdvertisement(
+  db,
+  subnetId,
+  ip,
+  { interfaceId, trusted = false } = {},
+) {
   if (!trusted) throw new Error('Untrusted Router Advertisement cannot set gateway authority');
   const identityIp = lifecycleIdentityIp(ip, interfaceId);
   assertAllocationTransition(
-    db, subnetId, identityIp, ALLOCATION_STATE.GATEWAY, LIFECYCLE_SOURCE.TOPOLOGY
+    db,
+    subnetId,
+    identityIp,
+    ALLOCATION_STATE.GATEWAY,
+    LIFECYCLE_SOURCE.TOPOLOGY,
   );
   return setCanonicalAllocation(
-    db, subnetId, identityIp, ALLOCATION_STATE.GATEWAY, LIFECYCLE_SOURCE.TOPOLOGY,
-    null, { detection_source: 'router_advertisement' }
+    db,
+    subnetId,
+    identityIp,
+    ALLOCATION_STATE.GATEWAY,
+    LIFECYCLE_SOURCE.TOPOLOGY,
+    null,
+    { detection_source: 'router_advertisement' },
   );
 }
 
@@ -631,5 +768,5 @@ export const lifecycleRepository = Object.freeze({
   deleteById: IpAddress.deleteById,
   deleteBySubnet: IpAddress.deleteBySubnet,
   deleteByIpAddress: IpAddress.deleteByIpAddress,
-  ensureAddresses: ensureLifecycleAddresses
+  ensureAddresses: ensureLifecycleAddresses,
 });

@@ -59,7 +59,7 @@ export function ingestLine(line, pending, now = Date.now()) {
         opt60: null,
         hostname: null,
         ackSeen: false,
-        updatedAt: now
+        updatedAt: now,
       };
       pending.set(key, tx);
     }
@@ -107,11 +107,10 @@ export function ingestLine(line, pending, now = Date.now()) {
  * and discard abandoned transactions so the bounded map does not retain stale
  * evidence indefinitely.
  */
-export function drainFinalized(pending, {
-  now = Date.now(),
-  quietMs = FINALIZE_QUIET_MS,
-  staleMs = STALE_PENDING_MS
-} = {}) {
+export function drainFinalized(
+  pending,
+  { now = Date.now(), quietMs = FINALIZE_QUIET_MS, staleMs = STALE_PENDING_MS } = {},
+) {
   const finalized = [];
   for (const [key, tx] of pending) {
     const idleMs = now - tx.updatedAt;
@@ -120,7 +119,7 @@ export function drainFinalized(pending, {
         mac: tx.mac,
         opt55: tx.opt55,
         opt60: tx.opt60,
-        hostname: tx.hostname
+        hostname: tx.hostname,
       });
       pending.delete(key);
     } else if (idleMs >= staleMs) {
@@ -140,14 +139,19 @@ function persist(db, tx) {
   const hostname = tx.hostname || previous?.dhcp_hostname || null;
   const vendor = tx.mac ? lookupVendor(tx.mac) : null;
   const { device_type, os_family, confidence } = classify({
-    opt55, opt60, hostname, vendor,
+    opt55,
+    opt60,
+    hostname,
+    vendor,
   });
   upsertFingerprint(db, {
     mac_address: tx.mac,
     dhcp_fingerprint: opt55,
     vendor_class: opt60,
     dhcp_hostname: hostname,
-    device_type, os_family, confidence,
+    device_type,
+    os_family,
+    confidence,
     source: 'dhcp',
     raw: JSON.stringify({ opt55, opt60, hostname, vendor }),
   });
@@ -158,7 +162,11 @@ export function startDhcpFingerprintWatcher(db) {
   const pending = new Map();
 
   // Start at EOF, don't replay history.
-  try { offset = fs.statSync(LOG_FILE).size; } catch { /* not created yet */ }
+  try {
+    offset = fs.statSync(LOG_FILE).size;
+  } catch {
+    /* not created yet */
+  }
 
   function poll() {
     try {
@@ -167,8 +175,11 @@ export function startDhcpFingerprintWatcher(db) {
       const now = Date.now();
       for (const line of lines) ingestLine(line, pending, now);
       for (const finalized of drainFinalized(pending, { now })) {
-        try { persist(db, finalized); }
-        catch (err) { console.warn('[dhcp-fingerprint] persist failed:', err?.message || err); }
+        try {
+          persist(db, finalized);
+        } catch (err) {
+          console.warn('[dhcp-fingerprint] persist failed:', err?.message || err);
+        }
       }
     } catch (err) {
       console.warn('[dhcp-fingerprint] poll error:', err?.message || err);

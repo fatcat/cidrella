@@ -75,16 +75,21 @@ describe('the SQL concatenation and the JS builder agree on normalized rows', ()
     ['@', 'example.com'],
   ])('%s in %s', (rawName, rawZone) => {
     const zoneName = normalizeZoneName(rawZone);
-    db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES (?, 'forward', 1)").run(zoneName);
+    db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES (?, 'forward', 1)").run(
+      zoneName,
+    );
     const zoneId = db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(zoneName).id;
     const stored = normalizeRecordNameForZone(rawName, zoneName);
-    db.prepare("INSERT INTO dns_records (zone_id, type, name, value, enabled, source) VALUES (?, 'A', ?, '10.1.2.3', 1, 'manual')")
-      .run(zoneId, stored);
+    db.prepare(
+      "INSERT INTO dns_records (zone_id, type, name, value, enabled, source) VALUES (?, 'A', ?, '10.1.2.3', 1, 'manual')",
+    ).run(zoneId, stored);
 
-    const fromSql = db.prepare(
-      "SELECT CASE WHEN r.name = '@' THEN z.name ELSE r.name || '.' || z.name END AS f"
-      + ' FROM dns_records r JOIN dns_zones z ON z.id = r.zone_id'
-    ).get().f;
+    const fromSql = db
+      .prepare(
+        "SELECT CASE WHEN r.name = '@' THEN z.name ELSE r.name || '.' || z.name END AS f" +
+          ' FROM dns_records r JOIN dns_zones z ON z.id = r.zone_id',
+      )
+      .get().f;
 
     expect(fromSql).toBe(fqdnForRecordName(stored, zoneName));
   });

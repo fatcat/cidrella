@@ -45,7 +45,7 @@ export const useOperationsStore = defineStore('operations', () => {
   async function restoreBackup(file) {
     const res = await api.post('/operations/restore', file, {
       headers: { 'Content-Type': 'application/gzip' },
-      timeout: 120000
+      timeout: 120000,
     });
     return res.data;
   }
@@ -89,9 +89,20 @@ export const useOperationsStore = defineStore('operations', () => {
   }
 
   return {
-    backups, certInfo, loading,
-    createBackup, fetchBackups, deleteBackup, downloadBackup, restoreBackup,
-    fetchCertInfo, uploadCert, uploadSignedCert, generateCsr, resetCert,
-    getSetupStatus, completeSetup
+    backups,
+    certInfo,
+    loading,
+    createBackup,
+    fetchBackups,
+    deleteBackup,
+    downloadBackup,
+    restoreBackup,
+    fetchCertInfo,
+    uploadCert,
+    uploadSignedCert,
+    generateCsr,
+    resetCert,
+    getSetupStatus,
+    completeSetup,
   };
 });

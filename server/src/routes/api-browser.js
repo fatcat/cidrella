@@ -4,8 +4,10 @@ const router = Router();
 
 // Override CSP for api-browser pages, inline scripts are required for the self-contained UI
 router.use((req, res, next) => {
-  res.setHeader('Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'");
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'",
+  );
   next();
 });
 
@@ -77,9 +79,14 @@ function extractRoutes(app) {
   // Filter to /api* routes only, deduplicate, sort
   const seen = new Set();
   return routes
-    .filter(r => r.path.startsWith('/api') && !r.path.startsWith('/api-browser') && !r.path.startsWith('/api/setup'))
-    .map(r => ({ ...r, path: r.path.replace(/\/$/, '') || '/' }))
-    .filter(r => {
+    .filter(
+      (r) =>
+        r.path.startsWith('/api') &&
+        !r.path.startsWith('/api-browser') &&
+        !r.path.startsWith('/api/setup'),
+    )
+    .map((r) => ({ ...r, path: r.path.replace(/\/$/, '') || '/' }))
+    .filter((r) => {
       const key = `${r.method} ${r.path}`;
       if (seen.has(key)) return false;
       seen.add(key);

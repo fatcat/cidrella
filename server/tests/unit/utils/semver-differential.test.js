@@ -69,11 +69,9 @@ const PAIRS = [
 // One bash call per pair. Slower than batching through stdin, but a failure
 // then names the exact pair instead of an offset into a result list.
 function bashSemverCmp(a, b) {
-  return execFileSync(
-    'bash',
-    ['-c', '. "$1"; semver_cmp "$2" "$3"', 'bash', SLOTS_LIB, a, b],
-    { encoding: 'utf8' }
-  ).trim();
+  return execFileSync('bash', ['-c', '. "$1"; semver_cmp "$2" "$3"', 'bash', SLOTS_LIB, a, b], {
+    encoding: 'utf8',
+  }).trim();
 }
 
 describe('semver: the bash and JS implementations agree', () => {

@@ -34,9 +34,9 @@ app.use(UiPlugin, {
   theme: {
     preset: BasePreset,
     options: {
-      darkModeSelector: '.p-dark'
-    }
-  }
+      darkModeSelector: '.p-dark',
+    },
+  },
 });
 app.use(ToastService);
 app.use(ConfirmationService);
@@ -48,7 +48,7 @@ app.directive('tooltip', Tooltip);
 function buildPalette(colorName, customPalette) {
   if (customPalette) return { ...customPalette };
   const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
-  return Object.fromEntries(shades.map(s => [s, `{${colorName}.${s}}`]));
+  return Object.fromEntries(shades.map((s) => [s, `{${colorName}.${s}}`]));
 }
 
 window.addEventListener('ipam:theme-change', (e) => {
@@ -62,8 +62,8 @@ window.addEventListener('ipam:theme-change', (e) => {
       colorScheme: {
         light: { surface },
         dark: { surface },
-      }
-    }
+      },
+    },
   });
 
   updateSurfacePalette(surface);

@@ -19,18 +19,27 @@ import { parseCidrEntry, ipInAny } from './cidr-match.js';
 import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
 import {
   DATA_DIR,
-  GEOIP_CACHE_MAX, GEOIP_CACHE_TTL_MS, GEOIP_QUERY_TIMEOUT_MS,
-  GEOIP_DOWNLOAD_TIMEOUT_MS, GEOIP_CHECK_INTERVAL_MS, GEOIP_STARTUP_DELAY_MS,
-  PROXY_HEALTH_CHECK_MS, PROXY_MAX_RESTART_ATTEMPTS, PROXY_RESTART_DELAY_MS,
-  PROXY_TCP_IDLE_TIMEOUT_MS, PROXY_MAX_TCP_CONNECTIONS, PROXY_TCP_RELAY_TIMEOUT_MS,
-  resolveDnsmasqInternalPort, resolveDnsListenPort,
+  GEOIP_CACHE_MAX,
+  GEOIP_CACHE_TTL_MS,
+  GEOIP_QUERY_TIMEOUT_MS,
+  GEOIP_DOWNLOAD_TIMEOUT_MS,
+  GEOIP_CHECK_INTERVAL_MS,
+  GEOIP_STARTUP_DELAY_MS,
+  PROXY_HEALTH_CHECK_MS,
+  PROXY_MAX_RESTART_ATTEMPTS,
+  PROXY_RESTART_DELAY_MS,
+  PROXY_TCP_IDLE_TIMEOUT_MS,
+  PROXY_MAX_TCP_CONNECTIONS,
+  PROXY_TCP_RELAY_TIMEOUT_MS,
+  resolveDnsmasqInternalPort,
+  resolveDnsListenPort,
 } from '../config/defaults.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
 
 function resolveDbPath() {
   const p = getSetting('geoip_db_path');
-  return (!p || p === 'auto') ? DEFAULT_MMDB : p;
+  return !p || p === 'auto' ? DEFAULT_MMDB : p;
 }
 
 // Structured logging helper
@@ -44,9 +53,9 @@ function proxyLog(level, msg, extra) {
 }
 
 // Module state
-let proxyServers = [];         // Array of { socket, address }, one per LAN address on port 53 (UDP)
-let tcpServers = [];           // Array of { server, address }, TCP listener per LAN address (DNS-over-TCP)
-let activeTcpConnections = 0;  // concurrent client TCP connections (capped at PROXY_MAX_TCP_CONNECTIONS)
+let proxyServers = []; // Array of { socket, address }, one per LAN address on port 53 (UDP)
+let tcpServers = []; // Array of { server, address }, TCP listener per LAN address (DNS-over-TCP)
+let activeTcpConnections = 0; // concurrent client TCP connections (capped at PROXY_MAX_TCP_CONNECTIONS)
 let mmdbReader = null;
 let geoCache = null;
 let statsTotal = 0;
@@ -60,10 +69,10 @@ let bypassMode = false;
 let healthTimer = null;
 
 // GeoIP rule cache, reloaded on settings change, avoids per-query DB hits
-let geoipRuleSet = null;            // Set<string>, enabled country codes
-let geoipMode = 'blocklist';        // 'blocklist' or 'allowlist'
-let geoipAllowEntries = [];         // parsed IP/CIDR entries never GeoIP-blocked
-let whitelistSet = null;            // Set<string>, single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
+let geoipRuleSet = null; // Set<string>, enabled country codes
+let geoipMode = 'blocklist'; // 'blocklist' or 'allowlist'
+let geoipAllowEntries = []; // parsed IP/CIDR entries never GeoIP-blocked
+let whitelistSet = null; // Set<string>, single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
 
 // Blocklist state. Domains are NOT held in memory: they are looked up per
 // query against blocklist_domains, which is a WITHOUT ROWID table keyed on
@@ -77,8 +86,8 @@ let whitelistSet = null;            // Set<string>, single global allowlist (blo
 // per query including the full label walk (~124k q/s), and there is no reload.
 // The hot path already does synchronous SQLite per query via
 // recordDnsQueryLiveness, so this is not a new class of work.
-let blocklistLookupStmt = null;     // cached prepared statement, see getLookupStmt
-let blocklistCategories = null;     // Set<string>, enabled category slugs
+let blocklistLookupStmt = null; // cached prepared statement, see getLookupStmt
+let blocklistCategories = null; // Set<string>, enabled category slugs
 let blocklistEnabled = false;
 let blocklistRedirectIp = '';
 let blocklistBlockedDelta = 0;
@@ -106,7 +115,7 @@ let proxyStartupMs = null;
 // Pending queries: maps internal ID -> { address, port, originalId, timer, socket }
 const MAX_PENDING_QUERIES = 10000;
 let pendingQueries = new Map();
-let dnsmasqSocket = null;      // UDP socket for forwarding to dnsmasq on 127.0.0.1:5353
+let dnsmasqSocket = null; // UDP socket for forwarding to dnsmasq on 127.0.0.1:5353
 let nextQueryId = 1;
 
 // Linear scan of full 16-bit ID space for a free slot.
@@ -114,12 +123,11 @@ let nextQueryId = 1;
 function allocateQueryId() {
   const startId = nextQueryId;
   do {
-    nextQueryId = (nextQueryId + 1) & 0xFFFF;
+    nextQueryId = (nextQueryId + 1) & 0xffff;
     if (!pendingQueries.has(nextQueryId)) return nextQueryId;
   } while (nextQueryId !== startId);
   return null; // all 65536 IDs in-flight
 }
-
 
 // Load MMDB database file
 export async function loadMmdb() {
@@ -146,7 +154,10 @@ export function lookupCountry(ip) {
   if (!mmdbReader) return null;
 
   const cached = geoCache?.get(ip);
-  if (cached !== undefined) { cacheHits++; return cached; }
+  if (cached !== undefined) {
+    cacheHits++;
+    return cached;
+  }
 
   try {
     const result = mmdbReader.get(ip);
@@ -164,7 +175,7 @@ export function loadGeoipRules() {
   const db = getDb();
   geoipMode = getSetting('geoip_mode') || 'blocklist';
   const enabledRules = db.prepare('SELECT country_code FROM geoip_rules WHERE enabled = 1').all();
-  geoipRuleSet = new Set(enabledRules.map(r => r.country_code));
+  geoipRuleSet = new Set(enabledRules.map((r) => r.country_code));
   proxyLog('info', 'GeoIP rules loaded', { count: geoipRuleSet.size, mode: geoipMode });
 }
 
@@ -174,7 +185,7 @@ export function loadGeoipRules() {
 export function loadGeoipAllowlist() {
   const db = getDb();
   const rows = db.prepare('SELECT value FROM geoip_ip_allowlist').all();
-  geoipAllowEntries = rows.map(r => parseCidrEntry(r.value)).filter(Boolean);
+  geoipAllowEntries = rows.map((r) => parseCidrEntry(r.value)).filter(Boolean);
   proxyLog('info', 'GeoIP IP allowlist loaded', { count: geoipAllowEntries.length });
 }
 
@@ -190,7 +201,7 @@ function isGeoipAllowed(ip) {
 export function loadWhitelist() {
   const db = getDb();
   const rows = db.prepare('SELECT domain FROM blocklist_whitelist').all();
-  whitelistSet = new Set(rows.map(r => r.domain.toLowerCase()));
+  whitelistSet = new Set(rows.map((r) => r.domain.toLowerCase()));
   proxyLog('info', 'Whitelist loaded', { count: whitelistSet.size });
 }
 
@@ -233,9 +244,9 @@ function shouldBlock(countryCodes) {
   }
 
   if (geoipMode === 'blocklist') {
-    return countryCodes.some(cc => geoipRuleSet.has(cc));
+    return countryCodes.some((cc) => geoipRuleSet.has(cc));
   } else {
-    return countryCodes.some(cc => !geoipRuleSet.has(cc));
+    return countryCodes.some((cc) => !geoipRuleSet.has(cc));
   }
 }
 
@@ -245,7 +256,9 @@ function getListenAddresses() {
   try {
     const raw = getSetting('interface_config');
     if (raw) ifaceConfig = JSON.parse(raw);
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   const sysIfaces = os.networkInterfaces();
   const addresses = [];
@@ -269,12 +282,12 @@ function getListenAddresses() {
 // latent bug: synthesized NXDOMAIN/SERVFAIL replies were going out as NOERROR.)
 const RCODE = { NOERROR: 0, FORMERR: 1, SERVFAIL: 2, NXDOMAIN: 3, NOTIMP: 4, REFUSED: 5 };
 function responseFlags(rcodeName) {
-  return (dnsPacket.RECURSION_DESIRED | dnsPacket.RECURSION_AVAILABLE) | (RCODE[rcodeName] || 0);
+  return dnsPacket.RECURSION_DESIRED | dnsPacket.RECURSION_AVAILABLE | (RCODE[rcodeName] || 0);
 }
 
 // Pull the EDNS OPT pseudo-record (if any) from a decoded query's additionals.
 export function getQueryOpt(query) {
-  return query?.additionals?.find(a => a.type === 'OPT') || null;
+  return query?.additionals?.find((a) => a.type === 'OPT') || null;
 }
 
 // Build the additionals array for a synthesized response. When the client's
@@ -286,16 +299,18 @@ function buildOptEcho(opt) {
   if (!opt) return [];
   // dns-packet encodes the EDNS flags field from `flags` (not `flag_do`), so
   // the DO bit must be set there; `flag_do` is set too for symmetry on decode.
-  return [{
-    type: 'OPT',
-    name: '.',
-    udpPayloadSize: opt.udpPayloadSize || 1232,
-    extendedRcode: 0,
-    ednsVersion: 0,
-    flags: opt.flag_do ? dnsPacket.DNSSEC_OK : 0,
-    flag_do: !!opt.flag_do,
-    options: [],
-  }];
+  return [
+    {
+      type: 'OPT',
+      name: '.',
+      udpPayloadSize: opt.udpPayloadSize || 1232,
+      extendedRcode: 0,
+      ednsVersion: 0,
+      flags: opt.flag_do ? dnsPacket.DNSSEC_OK : 0,
+      flag_do: !!opt.flag_do,
+      options: [],
+    },
+  ];
 }
 
 // DNSSEC validation produces three states for analytics: secure, insecure,
@@ -316,7 +331,7 @@ export function createNxdomainResponse(query) {
     questions: query.questions,
     answers: [],
     authorities: [],
-    additionals: buildOptEcho(getQueryOpt(query))
+    additionals: buildOptEcho(getQueryOpt(query)),
   });
 }
 
@@ -329,10 +344,10 @@ export function createBlockedResponse(query) {
       flags: responseFlags('NOERROR'),
       questions: query.questions,
       answers: query.questions
-        .filter(q => q.type === 'A')
-        .map(q => ({ type: 'A', name: q.name, ttl: 300, data: blocklistRedirectIp })),
+        .filter((q) => q.type === 'A')
+        .map((q) => ({ type: 'A', name: q.name, ttl: 300, data: blocklistRedirectIp })),
       authorities: [],
-      additionals: buildOptEcho(getQueryOpt(query))
+      additionals: buildOptEcho(getQueryOpt(query)),
     });
   }
   return createNxdomainResponse(query);
@@ -347,7 +362,7 @@ function encodeServfail(query) {
     questions: query.questions || [],
     answers: [],
     authorities: [],
-    additionals: buildOptEcho(getQueryOpt(query))
+    additionals: buildOptEcho(getQueryOpt(query)),
   });
 }
 
@@ -356,7 +371,7 @@ function encodeServfail(query) {
 export function loadBlocklist() {
   const db = getDb();
   const enabled = getSetting('blocklist_enabled');
-  blocklistEnabled = (enabled === 'true');
+  blocklistEnabled = enabled === 'true';
   blocklistRedirectIp = getSetting('blocklist_redirect_ip') || '';
 
   if (!blocklistEnabled) {
@@ -366,7 +381,7 @@ export function loadBlocklist() {
   }
 
   const rows = db.prepare('SELECT slug FROM blocklist_categories WHERE enabled = 1').all();
-  blocklistCategories = new Set(rows.map(r => r.slug));
+  blocklistCategories = new Set(rows.map((r) => r.slug));
   proxyLog('info', 'Blocklist enabled', { categories: blocklistCategories.size });
 }
 
@@ -375,9 +390,9 @@ export function loadBlocklist() {
 let blocklistLookupDb = null;
 function getLookupStmt(db) {
   if (!blocklistLookupStmt || blocklistLookupDb !== db) {
-    blocklistLookupStmt = db.prepare(
-      'SELECT category_slug FROM blocklist_domains WHERE domain = ?'
-    ).pluck();
+    blocklistLookupStmt = db
+      .prepare('SELECT category_slug FROM blocklist_domains WHERE domain = ?')
+      .pluck();
     blocklistLookupDb = db;
   }
   return blocklistLookupStmt;
@@ -386,9 +401,14 @@ function getLookupStmt(db) {
 // Total domains across enabled categories, for the status endpoint.
 function countEnabledDomains() {
   try {
-    return getDb().prepare(
-      'SELECT COALESCE(SUM(domain_count), 0) AS c FROM blocklist_categories WHERE enabled = 1'
-    ).pluck().get() || 0;
+    return (
+      getDb()
+        .prepare(
+          'SELECT COALESCE(SUM(domain_count), 0) AS c FROM blocklist_categories WHERE enabled = 1',
+        )
+        .pluck()
+        .get() || 0
+    );
   } catch {
     return 0;
   }
@@ -448,7 +468,10 @@ export function recordInboundBlock(verdict) {
   statsBlocked++;
   statsTotal++;
   blocklistBlockedDelta++;
-  blocklistCategoryHits.set(verdict.blockReason, (blocklistCategoryHits.get(verdict.blockReason) || 0) + 1);
+  blocklistCategoryHits.set(
+    verdict.blockReason,
+    (blocklistCategoryHits.get(verdict.blockReason) || 0) + 1,
+  );
 }
 
 // Post-answer verdict: do the resolved IPs trip a GeoIP country block?
@@ -457,9 +480,9 @@ export function recordInboundBlock(verdict) {
 export function evaluateResolvedPolicy(queryName, ips, lookup = lookupCountry) {
   if (!ips || ips.length === 0) return { action: 'forward' };
   const countryCodes = ips
-    .filter(ip => !isGeoipAllowed(ip))
-    .map(ip => lookup(ip))
-    .filter(cc => cc !== null);
+    .filter((ip) => !isGeoipAllowed(ip))
+    .map((ip) => lookup(ip))
+    .filter((cc) => cc !== null);
   if (countryCodes.length > 0 && shouldBlock(countryCodes) && !isWhitelisted(queryName)) {
     return { action: 'block', blockReason: countryCodes[0], countryCodes };
   }
@@ -488,7 +511,10 @@ function handleQuery(msg, rinfo, sock) {
     try {
       recordDnsQueryLiveness(getDb(), rinfo.address, { createRogue: true, source: 'passive' });
     } catch (err) {
-      proxyLog('warn', 'Failed to record DNS-query liveness', { clientIp: rinfo.address, error: err.message });
+      proxyLog('warn', 'Failed to record DNS-query liveness', {
+        clientIp: rinfo.address,
+        error: err.message,
+      });
     }
 
     // Blocklist check, intercept before forwarding to dnsmasq
@@ -500,9 +526,12 @@ function handleQuery(msg, rinfo, sock) {
       const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
       recordLatency(latencyUs);
       logDnsQuery({
-        clientIp: rinfo.address, domain: queryName, queryType,
+        clientIp: rinfo.address,
+        domain: queryName,
+        queryType,
         responseCode: inbound.responseCode,
-        action: 'blocked_blocklist', blockReason: inbound.blockReason,
+        action: 'blocked_blocklist',
+        blockReason: inbound.blockReason,
         latencyUs,
       });
       return;
@@ -536,15 +565,25 @@ function handleQuery(msg, rinfo, sock) {
         const latencyUs = Number(process.hrtime.bigint() - p.startNs) / 1000;
         recordLatency(latencyUs);
         logDnsQuery({
-          clientIp: p.address, domain: p.queryName, queryType: p.queryType,
-          responseCode: 'SERVFAIL', action: 'allowed', latencyUs,
+          clientIp: p.address,
+          domain: p.queryName,
+          queryType: p.queryType,
+          responseCode: 'SERVFAIL',
+          action: 'allowed',
+          latencyUs,
         });
         try {
           // Echo the client's EDNS OPT (stored on the pending entry) so a
           // validating stub still gets a well-formed SERVFAIL.
-          const servfail = encodeServfail({ id: p.originalId, questions: [], additionals: p.opt ? [p.opt] : [] });
+          const servfail = encodeServfail({
+            id: p.originalId,
+            questions: [],
+            additionals: p.opt ? [p.opt] : [],
+          });
           p.socket.send(servfail, p.port, p.address);
-        } catch { /* ignore */ }
+        } catch {
+          /* ignore */
+        }
       }
     }, GEOIP_QUERY_TIMEOUT_MS);
 
@@ -556,15 +595,19 @@ function handleQuery(msg, rinfo, sock) {
       queryName: queryName || '',
       queryType,
       checkingDisabled: !!query.flag_cd,
-      opt: getQueryOpt(query),   // echoed on a synthesized GeoIP-block response
+      opt: getQueryOpt(query), // echoed on a synthesized GeoIP-block response
       timer,
-      startNs
+      startNs,
     });
 
     // Rewrite query ID and forward to dnsmasq on localhost:5353
     const fwdBuf = Buffer.from(msg);
     fwdBuf.writeUInt16BE(internalId, 0);
-    dnsmasqSocket.send(fwdBuf, resolveDnsmasqInternalPort(getSetting('dns_listen_port')), '127.0.0.1');
+    dnsmasqSocket.send(
+      fwdBuf,
+      resolveDnsmasqInternalPort(getSetting('dns_listen_port')),
+      '127.0.0.1',
+    );
   } catch (err) {
     proxyLog('error', 'Query processing error', { error: err.message });
   }
@@ -582,8 +625,8 @@ function handleDnsmasqResponse(msg) {
 
     // GeoIP check, inspect resolved IPs
     const ips = response.answers
-      .filter(a => a.type === 'A' || a.type === 'AAAA')
-      .map(a => a.data);
+      .filter((a) => a.type === 'A' || a.type === 'AAAA')
+      .map((a) => a.data);
 
     const resolved = evaluateResolvedPolicy(pending.queryName, ips);
     if (resolved.action === 'block') {
@@ -597,9 +640,14 @@ function handleDnsmasqResponse(msg) {
       const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
       recordLatency(latencyUs);
       logDnsQuery({
-        clientIp: pending.address, domain: pending.queryName, queryType: pending.queryType,
-        responseCode: 'NXDOMAIN', action: 'blocked_geoip',
-        blockReason: resolved.blockReason, latencyUs, resolvedIp: ips[0],
+        clientIp: pending.address,
+        domain: pending.queryName,
+        queryType: pending.queryType,
+        responseCode: 'NXDOMAIN',
+        action: 'blocked_geoip',
+        blockReason: resolved.blockReason,
+        latencyUs,
+        resolvedIp: ips[0],
       });
       return;
     }
@@ -614,7 +662,7 @@ function handleDnsmasqResponse(msg) {
     recordLatency(latencyUs);
 
     // Extract response code name and first resolved IP
-    const rcodeNames = ['NOERROR','FORMERR','SERVFAIL','NXDOMAIN','NOTIMP','REFUSED'];
+    const rcodeNames = ['NOERROR', 'FORMERR', 'SERVFAIL', 'NXDOMAIN', 'NOTIMP', 'REFUSED'];
     const rcode = response.rcode || rcodeNames[0];
     const firstIp = ips.length > 0 ? ips[0] : null;
     const dnssecSupported = classifyDnssecSupport(response, {
@@ -622,8 +670,13 @@ function handleDnsmasqResponse(msg) {
       checkingDisabled: pending.checkingDisabled,
     });
     logDnsQuery({
-      clientIp: pending.address, domain: pending.queryName, queryType: pending.queryType,
-      responseCode: rcode, action: 'allowed', latencyUs, resolvedIp: firstIp,
+      clientIp: pending.address,
+      domain: pending.queryName,
+      queryType: pending.queryType,
+      responseCode: rcode,
+      action: 'allowed',
+      latencyUs,
+      resolvedIp: firstIp,
       dnssecSupported,
     });
   } catch (err) {
@@ -642,7 +695,11 @@ function handleDnsmasqResponse(msg) {
 
 function writeTcpMessage(sock, payload) {
   if (!sock.writable) return;
-  try { sock.write(frameTcpMessage(payload)); } catch { /* client gone */ }
+  try {
+    sock.write(frameTcpMessage(payload));
+  } catch {
+    /* client gone */
+  }
 }
 
 /**
@@ -659,7 +716,11 @@ export function relayQueryOverTcp(reqMsg, host, port, timeoutMs) {
     const finish = (val) => {
       if (done) return;
       done = true;
-      try { upstream.destroy(); } catch { /* ignore */ }
+      try {
+        upstream.destroy();
+      } catch {
+        /* ignore */
+      }
       resolve(val);
     };
     upstream.on('connect', () => upstream.write(frameTcpMessage(reqMsg)));
@@ -703,16 +764,25 @@ async function handleTcpQuery(msg, clientSock) {
     const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
     recordLatency(latencyUs);
     logDnsQuery({
-      clientIp, domain: queryName, queryType,
+      clientIp,
+      domain: queryName,
+      queryType,
       responseCode: inbound.responseCode,
-      action: 'blocked_blocklist', blockReason: inbound.blockReason, latencyUs,
+      action: 'blocked_blocklist',
+      blockReason: inbound.blockReason,
+      latencyUs,
     });
     return;
   }
 
   // Relay to dnsmasq over TCP (same internal port it serves UDP on).
   const internalPort = resolveDnsmasqInternalPort(getSetting('dns_listen_port'));
-  const respMsg = await relayQueryOverTcp(msg, '127.0.0.1', internalPort, PROXY_TCP_RELAY_TIMEOUT_MS);
+  const respMsg = await relayQueryOverTcp(
+    msg,
+    '127.0.0.1',
+    internalPort,
+    PROXY_TCP_RELAY_TIMEOUT_MS,
+  );
   const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
   recordLatency(latencyUs);
 
@@ -720,16 +790,27 @@ async function handleTcpQuery(msg, clientSock) {
     timeoutCount++;
     statsTotal++;
     writeTcpMessage(clientSock, encodeServfail(query));
-    logDnsQuery({ clientIp, domain: queryName || '', queryType, responseCode: 'SERVFAIL', action: 'allowed', latencyUs });
+    logDnsQuery({
+      clientIp,
+      domain: queryName || '',
+      queryType,
+      responseCode: 'SERVFAIL',
+      action: 'allowed',
+      latencyUs,
+    });
     return;
   }
 
   // GeoIP check on the resolved answers, same policy as the UDP path.
   let response = null;
-  try { response = dnsPacket.decode(respMsg); } catch { /* relay raw below */ }
+  try {
+    response = dnsPacket.decode(respMsg);
+  } catch {
+    /* relay raw below */
+  }
 
   const ips = response
-    ? response.answers.filter(a => a.type === 'A' || a.type === 'AAAA').map(a => a.data)
+    ? response.answers.filter((a) => a.type === 'A' || a.type === 'AAAA').map((a) => a.data)
     : [];
 
   // Same verdict path as UDP's handleDnsmasqResponse.
@@ -738,9 +819,14 @@ async function handleTcpQuery(msg, clientSock) {
     recordResolvedBlock(resolved);
     writeTcpMessage(clientSock, createNxdomainResponse(query));
     logDnsQuery({
-      clientIp, domain: queryName || '', queryType,
-      responseCode: 'NXDOMAIN', action: 'blocked_geoip',
-      blockReason: resolved.blockReason, latencyUs, resolvedIp: ips[0],
+      clientIp,
+      domain: queryName || '',
+      queryType,
+      responseCode: 'NXDOMAIN',
+      action: 'blocked_geoip',
+      blockReason: resolved.blockReason,
+      latencyUs,
+      resolvedIp: ips[0],
     });
     return;
   }
@@ -754,17 +840,26 @@ async function handleTcpQuery(msg, clientSock) {
     checkingDisabled: !!query.flag_cd,
   });
   logDnsQuery({
-    clientIp, domain: queryName || '', queryType,
+    clientIp,
+    domain: queryName || '',
+    queryType,
     // response is null when decode failed and we relayed raw bytes, don't claim NOERROR.
-    responseCode: response?.rcode || 'UNKNOWN', action: 'allowed',
-    latencyUs, resolvedIp: ips[0] || null, dnssecSupported,
+    responseCode: response?.rcode || 'UNKNOWN',
+    action: 'allowed',
+    latencyUs,
+    resolvedIp: ips[0] || null,
+    dnssecSupported,
   });
 }
 
 // Accept a client TCP connection: buffer, deframe, dispatch each message.
 function onTcpConnection(clientSock) {
   if (activeTcpConnections >= PROXY_MAX_TCP_CONNECTIONS) {
-    try { clientSock.destroy(); } catch { /* ignore */ }
+    try {
+      clientSock.destroy();
+    } catch {
+      /* ignore */
+    }
     return;
   }
   activeTcpConnections++;
@@ -776,7 +871,11 @@ function onTcpConnection(clientSock) {
     if (closed) return;
     closed = true;
     activeTcpConnections--;
-    try { clientSock.destroy(); } catch { /* ignore */ }
+    try {
+      clientSock.destroy();
+    } catch {
+      /* ignore */
+    }
   };
 
   clientSock.on('data', (chunk) => {
@@ -785,7 +884,7 @@ function onTcpConnection(clientSock) {
     buf = rest;
     for (const m of messages) handleTcpQuery(m, clientSock);
     // Guard against a peer that sends a huge length prefix but never the body.
-    if (buf.length > 0xFFFF + 2) cleanup();
+    if (buf.length > 0xffff + 2) cleanup();
   });
   clientSock.on('timeout', cleanup);
   clientSock.on('error', cleanup);
@@ -827,7 +926,11 @@ export function startProxy() {
     sock.on('message', (msg, rinfo) => handleQuery(msg, rinfo, sock));
 
     sock.on('error', (err) => {
-      proxyLog('error', 'Proxy socket error', { address: addr, error: err.message, code: err.code });
+      proxyLog('error', 'Proxy socket error', {
+        address: addr,
+        error: err.message,
+        code: err.code,
+      });
       if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
         proxyLog('error', `Cannot bind port ${listenPort}`, { address: addr });
       }
@@ -835,7 +938,7 @@ export function startProxy() {
 
     sock.on('close', () => {
       // Remove from proxyServers array
-      const idx = proxyServers.findIndex(s => s.socket === sock);
+      const idx = proxyServers.findIndex((s) => s.socket === sock);
       if (idx >= 0) proxyServers.splice(idx, 1);
       if (proxyServers.length === 0) {
         proxyLog('warn', 'All proxy sockets closed');
@@ -863,7 +966,11 @@ export function startProxy() {
   for (const addr of addresses) {
     const tcpServer = net.createServer(onTcpConnection);
     tcpServer.on('error', (err) => {
-      proxyLog('error', 'Proxy TCP server error', { address: addr, error: err.message, code: err.code });
+      proxyLog('error', 'Proxy TCP server error', {
+        address: addr,
+        error: err.message,
+        code: err.code,
+      });
     });
     tcpServer.listen(listenPort, addr, () => {
       proxyLog('info', 'Proxy TCP listener bound', { address: `${addr}:${listenPort}` });
@@ -875,18 +982,30 @@ export function startProxy() {
 // Stop the DNS proxy
 export function stopProxy() {
   for (const { socket } of proxyServers) {
-    try { socket.close(); } catch { /* ignore */ }
+    try {
+      socket.close();
+    } catch {
+      /* ignore */
+    }
   }
   proxyServers = [];
 
   for (const { server } of tcpServers) {
-    try { server.close(); } catch { /* ignore */ }
+    try {
+      server.close();
+    } catch {
+      /* ignore */
+    }
   }
   tcpServers = [];
   activeTcpConnections = 0;
 
   if (dnsmasqSocket) {
-    try { dnsmasqSocket.close(); } catch { /* ignore */ }
+    try {
+      dnsmasqSocket.close();
+    } catch {
+      /* ignore */
+    }
     dnsmasqSocket = null;
   }
 
@@ -919,7 +1038,7 @@ function startHealthMonitor() {
       try {
         startProxy();
         // Give sockets a moment to bind
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 500));
         if (proxyServers.length > 0) {
           proxyLog('info', 'Proxy restarted successfully', { attempt });
           if (bypassMode) deactivateBypass();
@@ -929,7 +1048,7 @@ function startHealthMonitor() {
         proxyLog('error', 'Restart attempt failed', { attempt, error: err.message });
       }
       if (attempt < PROXY_MAX_RESTART_ATTEMPTS) {
-        await new Promise(r => setTimeout(r, PROXY_RESTART_DELAY_MS));
+        await new Promise((r) => setTimeout(r, PROXY_RESTART_DELAY_MS));
       }
     }
 
@@ -1038,7 +1157,7 @@ export async function downloadMmdb() {
   try {
     const response = await fetch(url, {
       signal: controller.signal,
-      headers: { 'User-Agent': 'CIDRella-GeoIP/1.0' }
+      headers: { 'User-Agent': 'CIDRella-GeoIP/1.0' },
     });
     clearTimeout(timeout);
 
@@ -1066,7 +1185,11 @@ export async function downloadMmdb() {
   } catch (err) {
     clearTimeout(timeout);
     // Clean up temp file
-    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* ignore */
+    }
     throw new Error(`Failed to download GeoIP database: ${err.message}`);
   }
 }
@@ -1081,7 +1204,7 @@ export function getProxyStatus() {
     running: proxyServers.length > 0,
     bypassed: bypassMode,
     port: 53,
-    listenAddresses: proxyServers.map(s => s.address),
+    listenAddresses: proxyServers.map((s) => s.address),
     tcpListeners: tcpServers.length,
     activeTcpConnections,
     dbLoaded: mmdbReader !== null,
@@ -1138,9 +1261,15 @@ export function getAndResetPerformanceMetrics() {
   if (samples.length === 0) {
     return {
       queryCount: 0,
-      latencyMin: null, latencyAvg: null, latencyMax: null, latencyP95: null,
-      cacheHits: hits, cacheMisses: misses,
-      timeouts, pendingQueries: pending, startupMs: proxyStartupMs,
+      latencyMin: null,
+      latencyAvg: null,
+      latencyMax: null,
+      latencyP95: null,
+      cacheHits: hits,
+      cacheMisses: misses,
+      timeouts,
+      pendingQueries: pending,
+      startupMs: proxyStartupMs,
     };
   }
 
@@ -1154,18 +1283,25 @@ export function getAndResetPerformanceMetrics() {
     latencyAvg: Math.round(sum / samples.length),
     latencyMax: Math.round(samples[samples.length - 1]),
     latencyP95: Math.round(samples[p95Idx]),
-    cacheHits: hits, cacheMisses: misses,
-    timeouts, pendingQueries: pending, startupMs: proxyStartupMs,
+    cacheHits: hits,
+    cacheMisses: misses,
+    timeouts,
+    pendingQueries: pending,
+    startupMs: proxyStartupMs,
   };
 }
 
 // Map schedule setting to interval in days
 function scheduleToDays(schedule) {
   switch (schedule) {
-    case 'weekly': return 7;
-    case 'biweekly': return 14;
-    case 'monthly': return 30;
-    default: return 0; // 'off'
+    case 'weekly':
+      return 7;
+    case 'biweekly':
+      return 14;
+    case 'monthly':
+      return 30;
+    default:
+      return 0; // 'off'
   }
 }
 

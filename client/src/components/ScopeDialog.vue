@@ -1,33 +1,72 @@
 <template>
   <!-- Scope Create/Edit Dialog -->
-  <Dialog v-model:visible="dialogVisible" :header="editing ? 'Edit Scope' : (showRangePicker ? 'Add Scope' : 'Configure DHCP Scope')"
-          modal :style="{ width: '36rem' }" data-track="dialog-dhcp-scope">
+  <Dialog
+    v-model:visible="dialogVisible"
+    :header="editing ? 'Edit Scope' : showRangePicker ? 'Add Scope' : 'Configure DHCP Scope'"
+    modal
+    :style="{ width: '36rem' }"
+    data-track="dialog-dhcp-scope"
+  >
     <div class="form-grid">
       <div class="field" v-if="showRangePicker">
         <label>Network *</label>
-        <div style="display: flex; gap: 0.5rem; align-items: center;">
-          <Select v-model="form.subnet_id" :options="subnetsList" optionLabel="_label" optionValue="id"
-                  class="w-full" placeholder="Select network" :disabled="!!form.range_id" />
-          <Button icon="pi pi-plus" severity="success" text rounded size="small"
-                  title="Add Network" @click="openAddNetwork" :disabled="!!form.range_id" />
+        <div style="display: flex; gap: 0.5rem; align-items: center">
+          <Select
+            v-model="form.subnet_id"
+            :options="subnetsList"
+            optionLabel="_label"
+            optionValue="id"
+            class="w-full"
+            placeholder="Select network"
+            :disabled="!!form.range_id"
+          />
+          <Button
+            icon="pi pi-plus"
+            severity="success"
+            text
+            rounded
+            size="small"
+            title="Add Network"
+            @click="openAddNetwork"
+            :disabled="!!form.range_id"
+          />
         </div>
       </div>
       <div class="field" v-if="showRangePicker">
         <label>DHCP Scope Range</label>
-        <Select v-model="form.range_id" :options="filteredRanges" optionLabel="_label" optionValue="id"
-                class="w-full" placeholder="Select an existing range" :loading="loadingRanges" showClear :disabled="!form.subnet_id" />
+        <Select
+          v-model="form.range_id"
+          :options="filteredRanges"
+          optionLabel="_label"
+          optionValue="id"
+          class="w-full"
+          placeholder="Select an existing range"
+          :loading="loadingRanges"
+          showClear
+          :disabled="!form.subnet_id"
+        />
         <small class="field-help">Only DHCP Scope ranges without existing scopes are shown</small>
       </div>
       <template v-if="showRangePicker && !form.range_id">
         <div class="or-divider"><span>or define a new range</span></div>
         <div class="field-row">
-          <div class="field" style="flex:1">
+          <div class="field" style="flex: 1">
             <label>Start IP *</label>
-            <InputText v-model="form.start_ip" class="w-full" placeholder="e.g. 192.168.1.10" :disabled="!form.subnet_id" />
+            <InputText
+              v-model="form.start_ip"
+              class="w-full"
+              placeholder="e.g. 192.168.1.10"
+              :disabled="!form.subnet_id"
+            />
           </div>
-          <div class="field" style="flex:1">
+          <div class="field" style="flex: 1">
             <label>End IP *</label>
-            <InputText v-model="form.end_ip" class="w-full" placeholder="e.g. 192.168.1.254" :disabled="!form.subnet_id" />
+            <InputText
+              v-model="form.end_ip"
+              class="w-full"
+              placeholder="e.g. 192.168.1.254"
+              :disabled="!form.subnet_id"
+            />
           </div>
         </div>
       </template>
@@ -41,7 +80,11 @@
       </div>
       <div class="field">
         <label>Description</label>
-        <InputText v-model="form.description" class="w-full" :disabled="showRangePicker && !form.subnet_id" />
+        <InputText
+          v-model="form.description"
+          class="w-full"
+          :disabled="showRangePicker && !form.subnet_id"
+        />
       </div>
       <div class="field" v-if="editing">
         <label>Enabled</label>
@@ -50,35 +93,71 @@
     </div>
 
     <!-- Inline Options Section -->
-    <div class="scope-options-section" :class="{ 'options-disabled': showRangePicker && !form.subnet_id }">
-      <div class="scope-options-header" @click="!(showRangePicker && !form.subnet_id) && (optionsExpanded = !optionsExpanded)">
-        <i class="pi" :class="optionsExpanded ? 'pi-chevron-down' : 'pi-chevron-right'" style="font-size: 0.7rem"></i>
+    <div
+      class="scope-options-section"
+      :class="{ 'options-disabled': showRangePicker && !form.subnet_id }"
+    >
+      <div
+        class="scope-options-header"
+        @click="!(showRangePicker && !form.subnet_id) && (optionsExpanded = !optionsExpanded)"
+      >
+        <i
+          class="pi"
+          :class="optionsExpanded ? 'pi-chevron-down' : 'pi-chevron-right'"
+          style="font-size: 0.7rem"
+        ></i>
         <span class="scope-options-title">DHCP Options</span>
-        <span class="scope-options-count" v-if="form.selectedOptions.length > 0">{{ form.selectedOptions.length }} selected</span>
+        <span class="scope-options-count" v-if="form.selectedOptions.length > 0"
+          >{{ form.selectedOptions.length }} selected</span
+        >
       </div>
       <div v-if="optionsExpanded" class="scope-options-list">
         <template v-for="group in optionGroups" :key="group.name">
           <div class="scope-option-group-header">{{ group.label }}</div>
           <div v-for="opt in group.options" :key="opt.code" class="scope-option-row">
             <div class="scope-option-check">
-              <input type="checkbox"
-                     :checked="form.selectedOptions.includes(opt.code)"
-                     @change="toggleOption(opt.code, $event.target.checked)" />
+              <input
+                type="checkbox"
+                :checked="form.selectedOptions.includes(opt.code)"
+                @change="toggleOption(opt.code, $event.target.checked)"
+              />
             </div>
             <div class="scope-option-info">
               <span class="scope-option-label">{{ opt.label }}</span>
               <span class="scope-option-code">({{ opt.code }})</span>
-              <i class="pi pi-question-circle scope-option-help" @click="showOptionHelp($event, opt)" />
+              <i
+                class="pi pi-question-circle scope-option-help"
+                @click="showOptionHelp($event, opt)"
+              />
             </div>
             <div class="scope-option-value">
               <template v-if="form.selectedOptions.includes(opt.code)">
-                <Select v-if="opt.type === 'select'" v-model="form.optionValues[opt.code]"
-                        :options="opt.choices" size="small" :placeholder="defaultValues[opt.code] || EMPTY_CELL" showClear />
-                <InputNumber v-else-if="opt.type === 'number'" v-model="form.optionValues[opt.code]"
-                             size="small" :useGrouping="false" :placeholder="defaultValues[opt.code] || '0'" />
-                <InputText v-else v-model="form.optionValues[opt.code]" size="small"
-                           :placeholder="defaultValues[opt.code] || placeholderForType(opt.type)"
-                           @blur="opt.type === 'ip-list' || opt.type === 'ip' ? resolveHostnameField(opt.code) : null" />
+                <Select
+                  v-if="opt.type === 'select'"
+                  v-model="form.optionValues[opt.code]"
+                  :options="opt.choices"
+                  size="small"
+                  :placeholder="defaultValues[opt.code] || EMPTY_CELL"
+                  showClear
+                />
+                <InputNumber
+                  v-else-if="opt.type === 'number'"
+                  v-model="form.optionValues[opt.code]"
+                  size="small"
+                  :useGrouping="false"
+                  :placeholder="defaultValues[opt.code] || '0'"
+                />
+                <InputText
+                  v-else
+                  v-model="form.optionValues[opt.code]"
+                  size="small"
+                  :placeholder="defaultValues[opt.code] || placeholderForType(opt.type)"
+                  @blur="
+                    opt.type === 'ip-list' || opt.type === 'ip'
+                      ? resolveHostnameField(opt.code)
+                      : null
+                  "
+                />
               </template>
               <span v-else-if="defaultValues[opt.code]" class="scope-option-default">
                 default: {{ defaultValues[opt.code] }}
@@ -90,8 +169,17 @@
     </div>
 
     <template #footer>
-      <Button :label="editing ? 'Cancel' : (showRangePicker ? 'Cancel' : 'Skip')" severity="secondary" @click="dialogVisible = false" />
-      <Button :label="editing ? 'Save' : 'Create Scope'" @click="save" :loading="saving" :disabled="showRangePicker && !form.subnet_id" />
+      <Button
+        :label="editing ? 'Cancel' : showRangePicker ? 'Cancel' : 'Skip'"
+        severity="secondary"
+        @click="dialogVisible = false"
+      />
+      <Button
+        :label="editing ? 'Save' : 'Create Scope'"
+        @click="save"
+        :loading="saving"
+        :disabled="showRangePicker && !form.subnet_id"
+      />
     </template>
   </Dialog>
 
@@ -100,13 +188,23 @@
     <div class="option-help-popover">
       <strong>{{ helpPopoverData.label }}</strong>
       <p>{{ helpPopoverData.description }}</p>
-      <a v-if="helpPopoverData.rfcUrl" :href="helpPopoverData.rfcUrl" target="_blank" rel="noopener" class="rfc-link">
+      <a
+        v-if="helpPopoverData.rfcUrl"
+        :href="helpPopoverData.rfcUrl"
+        target="_blank"
+        rel="noopener"
+        class="rfc-link"
+      >
         {{ helpPopoverData.rfc }}
       </a>
     </div>
   </Popover>
 
-  <NetworkDialogs ref="networkDialogsRef" :folders="subnetStore.folders" @network-created="onNetworkCreated" />
+  <NetworkDialogs
+    ref="networkDialogsRef"
+    :folders="subnetStore.folders"
+    @network-created="onNetworkCreated"
+  />
 </template>
 
 <script setup>
@@ -150,11 +248,11 @@ const optionGroupOrder = ref([]);
 
 const filteredRanges = computed(() => {
   if (!form.value.subnet_id) return availableRanges.value;
-  return availableRanges.value.filter(r => r.subnet_id === form.value.subnet_id);
+  return availableRanges.value.filter((r) => r.subnet_id === form.value.subnet_id);
 });
 
 const optionGroups = computed(() => {
-  const order = optionGroupOrder.value.map(g => g.name);
+  const order = optionGroupOrder.value.map((g) => g.name);
   const groups = {};
   for (const opt of optionCatalog.value) {
     const g = opt.group || 'Common';
@@ -164,7 +262,7 @@ const optionGroups = computed(() => {
   const result = [];
   for (const name of order) {
     if (groups[name]?.length) {
-      const meta = optionGroupOrder.value.find(g => g.name === name);
+      const meta = optionGroupOrder.value.find((g) => g.name === name);
       result.push({ name, label: meta?.label || name, options: groups[name] });
     }
   }
@@ -181,12 +279,27 @@ const helpPopoverRef = ref(null);
 const helpPopoverData = ref({ label: '', description: '', rfc: '', rfcUrl: '' });
 
 function showOptionHelp(event, opt) {
-  helpPopoverData.value = { label: opt.label, description: opt.description || '', rfc: opt.rfc || '', rfcUrl: opt.rfcUrl || '' };
+  helpPopoverData.value = {
+    label: opt.label,
+    description: opt.description || '',
+    rfc: opt.rfc || '',
+    rfcUrl: opt.rfcUrl || '',
+  };
   helpPopoverRef.value.toggle(event);
 }
 
 function emptyForm() {
-  return { range_id: null, subnet_id: null, start_ip: '', end_ip: '', lease_time: '24h', description: '', enabled: true, selectedOptions: [], optionValues: {} };
+  return {
+    range_id: null,
+    subnet_id: null,
+    start_ip: '',
+    end_ip: '',
+    lease_time: '24h',
+    description: '',
+    enabled: true,
+    selectedOptions: [],
+    optionValues: {},
+  };
 }
 
 async function loadOptions() {
@@ -195,11 +308,13 @@ async function loadOptions() {
     const res = await api.get('/dhcp/options');
     optionCatalog.value = res.data.catalog;
     if (res.data.groups) optionGroupOrder.value = res.data.groups;
-    Object.keys(defaultValues).forEach(k => delete defaultValues[k]);
+    Object.keys(defaultValues).forEach((k) => delete defaultValues[k]);
     for (const [code, value] of Object.entries(res.data.defaults || {})) {
       defaultValues[Number(code)] = value;
     }
-    enabledDefaultCodes.value = (res.data.enabledDefaults || []).map(Number).filter(Number.isInteger);
+    enabledDefaultCodes.value = (res.data.enabledDefaults || [])
+      .map(Number)
+      .filter(Number.isInteger);
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
   }
@@ -210,9 +325,6 @@ async function reloadOptions() {
   optionCatalog.value = [];
   await loadOptions();
 }
-
-
-
 
 function addOptionSelection(selected, code) {
   const numericCode = Number(code);
@@ -227,11 +339,19 @@ function addOptionSelection(selected, code) {
 // than an error. See REVIEW.md, duplicate-logic audit #50.
 function computeBroadcast(cidr) {
   if (!cidr) return null;
-  try { return parseCidr(cidr).broadcast; } catch { return null; }
+  try {
+    return parseCidr(cidr).broadcast;
+  } catch {
+    return null;
+  }
 }
 function computeMask(cidr) {
   if (!cidr) return null;
-  try { return netmaskFor(parseCidr(cidr).prefix); } catch { return null; }
+  try {
+    return netmaskFor(parseCidr(cidr).prefix);
+  } catch {
+    return null;
+  }
 }
 
 function setOptionValue(selected, values, code, value, { overwrite = true } = {}) {
@@ -251,8 +371,6 @@ async function resolveHostnameField(code) {
   if (resolved !== val) form.value.optionValues[code] = resolved;
 }
 
-
-
 function toggleOption(code, checked) {
   if (checked) {
     addOptionSelection(form.value.selectedOptions, code);
@@ -270,101 +388,128 @@ function toggleOption(code, checked) {
       }
     }
   } else {
-    form.value.selectedOptions = form.value.selectedOptions.filter(c => c !== code);
+    form.value.selectedOptions = form.value.selectedOptions.filter((c) => c !== code);
     delete form.value.optionValues[code];
   }
 }
 
-
-
 // Auto-populate network-dependent options when a subnet is selected
-watch(() => form.value.subnet_id, (subnetId, oldSubnetId) => {
-  if (!subnetId || editing.value) return;
-  // Clear range if it doesn't belong to the newly selected subnet
-  if (form.value.range_id && oldSubnetId !== subnetId) {
-    const range = availableRanges.value.find(r => r.id === form.value.range_id);
-    if (range && range.subnet_id !== subnetId) {
-      form.value.range_id = null;
+watch(
+  () => form.value.subnet_id,
+  (subnetId, oldSubnetId) => {
+    if (!subnetId || editing.value) return;
+    // Clear range if it doesn't belong to the newly selected subnet
+    if (form.value.range_id && oldSubnetId !== subnetId) {
+      const range = availableRanges.value.find((r) => r.id === form.value.range_id);
+      if (range && range.subnet_id !== subnetId) {
+        form.value.range_id = null;
+      }
     }
-  }
-  if (form.value.range_id) return;
-  const subnet = subnetsList.value.find(s => s.id === subnetId);
-  if (!subnet) return;
+    if (form.value.range_id) return;
+    const subnet = subnetsList.value.find((s) => s.id === subnetId);
+    if (!subnet) return;
 
-  // Enable all enabled-by-default options
-  for (const code of enabledDefaultCodes.value) {
-    addOptionSelection(form.value.selectedOptions, code);
-    if (defaultValues[code] != null && !form.value.optionValues[code]) {
-      form.value.optionValues[code] = defaultValues[code];
+    // Enable all enabled-by-default options
+    for (const code of enabledDefaultCodes.value) {
+      addOptionSelection(form.value.selectedOptions, code);
+      if (defaultValues[code] != null && !form.value.optionValues[code]) {
+        form.value.optionValues[code] = defaultValues[code];
+      }
     }
-  }
 
-  if (subnet.cidr) {
-    const mask = computeMask(subnet.cidr);
-    setOptionValue(form.value.selectedOptions, form.value.optionValues, 1, mask);
-  }
-  if (subnet.gateway_address) {
-    setOptionValue(form.value.selectedOptions, form.value.optionValues, 3, subnet.gateway_address);
-  }
-  if (subnet.domain_name) {
-    setOptionValue(form.value.selectedOptions, form.value.optionValues, 15, subnet.domain_name, { overwrite: false });
-    setOptionValue(form.value.selectedOptions, form.value.optionValues, 119, subnet.domain_name, { overwrite: false });
-  }
-  if (subnet.name && !form.value.description) {
-    form.value.description = `${subnet.name} DHCP Scope`;
-  }
-
-  // Pre-fill suggested start/end IPs from subnet CIDR, using the same
-  // size-based heuristic as openNewWithPicker() below. This used to suggest
-  // the whole usable range (network+1 .. broadcast-1), which starts ON the
-  // gateway for the usual .1 layout, so the dialog offered a pool the server
-  // refuses (a gateway inside a DHCP pool gets leased to a client).
-  if (subnet.cidr && !form.value.start_ip && !form.value.end_ip) {
-    try {
-      const parsed = parseCidr(subnet.cidr);
-      const pool = dhcpRangeDefaults(parsed, subnet.gateway_address || null);
-      form.value.start_ip = pool.start || '';
-      form.value.end_ip = pool.end || '';
-    } catch { /* ignore */ }
-  }
-});
-
-// Auto-populate options when a range is selected (new scope from DHCP page)
-watch(() => form.value.range_id, (rangeId) => {
-  if (!rangeId || editing.value) return;
-  // Clear manual IP fields when a range is selected
-  form.value.start_ip = '';
-  form.value.end_ip = '';
-  const range = availableRanges.value.find(r => r.id === rangeId);
-  if (range) form.value.subnet_id = range.subnet_id;
-  if (!range) return;
-
-  // Subnet mask + broadcast
-  if (range.subnet_cidr) {
-    const mask = computeMask(range.subnet_cidr);
-    if (mask) {
+    if (subnet.cidr) {
+      const mask = computeMask(subnet.cidr);
       setOptionValue(form.value.selectedOptions, form.value.optionValues, 1, mask);
     }
-    const bcast = computeBroadcast(range.subnet_cidr);
-    if (bcast) {
-      setOptionValue(form.value.selectedOptions, form.value.optionValues, 28, bcast);
+    if (subnet.gateway_address) {
+      setOptionValue(
+        form.value.selectedOptions,
+        form.value.optionValues,
+        3,
+        subnet.gateway_address,
+      );
     }
-  }
-  // Gateway
-  if (range.subnet_gateway) {
-    setOptionValue(form.value.selectedOptions, form.value.optionValues, 3, range.subnet_gateway);
-  }
-  // DNS servers
-  if (range.server_ip) {
-    setOptionValue(form.value.selectedOptions, form.value.optionValues, 6, `${range.server_ip}, 9.9.9.9`, { overwrite: false });
-  }
-  // Domain name + DNS search list
-  if (range.subnet_domain_name) {
-    for (const code of [15, 119]) {
-      setOptionValue(form.value.selectedOptions, form.value.optionValues, code, range.subnet_domain_name, { overwrite: false });
+    if (subnet.domain_name) {
+      setOptionValue(form.value.selectedOptions, form.value.optionValues, 15, subnet.domain_name, {
+        overwrite: false,
+      });
+      setOptionValue(form.value.selectedOptions, form.value.optionValues, 119, subnet.domain_name, {
+        overwrite: false,
+      });
     }
-  }
-});
+    if (subnet.name && !form.value.description) {
+      form.value.description = `${subnet.name} DHCP Scope`;
+    }
+
+    // Pre-fill suggested start/end IPs from subnet CIDR, using the same
+    // size-based heuristic as openNewWithPicker() below. This used to suggest
+    // the whole usable range (network+1 .. broadcast-1), which starts ON the
+    // gateway for the usual .1 layout, so the dialog offered a pool the server
+    // refuses (a gateway inside a DHCP pool gets leased to a client).
+    if (subnet.cidr && !form.value.start_ip && !form.value.end_ip) {
+      try {
+        const parsed = parseCidr(subnet.cidr);
+        const pool = dhcpRangeDefaults(parsed, subnet.gateway_address || null);
+        form.value.start_ip = pool.start || '';
+        form.value.end_ip = pool.end || '';
+      } catch {
+        /* ignore */
+      }
+    }
+  },
+);
+
+// Auto-populate options when a range is selected (new scope from DHCP page)
+watch(
+  () => form.value.range_id,
+  (rangeId) => {
+    if (!rangeId || editing.value) return;
+    // Clear manual IP fields when a range is selected
+    form.value.start_ip = '';
+    form.value.end_ip = '';
+    const range = availableRanges.value.find((r) => r.id === rangeId);
+    if (range) form.value.subnet_id = range.subnet_id;
+    if (!range) return;
+
+    // Subnet mask + broadcast
+    if (range.subnet_cidr) {
+      const mask = computeMask(range.subnet_cidr);
+      if (mask) {
+        setOptionValue(form.value.selectedOptions, form.value.optionValues, 1, mask);
+      }
+      const bcast = computeBroadcast(range.subnet_cidr);
+      if (bcast) {
+        setOptionValue(form.value.selectedOptions, form.value.optionValues, 28, bcast);
+      }
+    }
+    // Gateway
+    if (range.subnet_gateway) {
+      setOptionValue(form.value.selectedOptions, form.value.optionValues, 3, range.subnet_gateway);
+    }
+    // DNS servers
+    if (range.server_ip) {
+      setOptionValue(
+        form.value.selectedOptions,
+        form.value.optionValues,
+        6,
+        `${range.server_ip}, 9.9.9.9`,
+        { overwrite: false },
+      );
+    }
+    // Domain name + DNS search list
+    if (range.subnet_domain_name) {
+      for (const code of [15, 119]) {
+        setOptionValue(
+          form.value.selectedOptions,
+          form.value.optionValues,
+          code,
+          range.subnet_domain_name,
+          { overwrite: false },
+        );
+      }
+    }
+  },
+);
 
 async function loadSubnetsList() {
   try {
@@ -390,7 +535,9 @@ async function loadSubnetsList() {
       if (folder.subnets?.length) flattenNodes(folder.subnets);
     }
     subnetsList.value = result;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function openAddNetwork() {
@@ -398,9 +545,9 @@ function openAddNetwork() {
 }
 
 async function onNetworkCreated() {
-  const oldIds = new Set(subnetsList.value.map(s => s.id));
+  const oldIds = new Set(subnetsList.value.map((s) => s.id));
   await loadSubnetsList();
-  const newSubnet = subnetsList.value.find(s => !oldIds.has(s.id));
+  const newSubnet = subnetsList.value.find((s) => !oldIds.has(s.id));
   if (newSubnet) {
     form.value.subnet_id = newSubnet.id;
   }
@@ -420,7 +567,7 @@ const poolError = computed(() => {
   // Only meaningful when the operator is typing a pool by hand. Picking an
   // existing range means the bounds come from the server.
   if (!form.value.start_ip && !form.value.end_ip) return null;
-  const subnet = subnetsList.value?.find(sn => sn.id === form.value.subnet_id);
+  const subnet = subnetsList.value?.find((sn) => sn.id === form.value.subnet_id);
   return dhcpPoolError(form.value.start_ip, form.value.end_ip, subnet?.cidr || null);
 });
 
@@ -434,14 +581,16 @@ async function save() {
     // Send all selected options to the server. The server strips inherited
     // values using fresh subnet data from the DB (avoids stale client-side list).
     const options = form.value.selectedOptions
-      .filter(code => form.value.optionValues[code] != null && form.value.optionValues[code] !== '')
-      .map(code => ({ code, value: String(form.value.optionValues[code]) }));
+      .filter(
+        (code) => form.value.optionValues[code] != null && form.value.optionValues[code] !== '',
+      )
+      .map((code) => ({ code, value: String(form.value.optionValues[code]) }));
 
     const payload = {
       lease_time: form.value.lease_time || '24h',
       description: form.value.description || null,
       enabled: form.value.enabled,
-      options
+      options,
     };
 
     if (editing.value) {
@@ -468,7 +617,7 @@ async function save() {
 
         // Look up DHCP Scope range type
         const rangeTypes = await subnetStore.getRangeTypes();
-        const dhcpScopeType = rangeTypes.find(rt => rt.name === 'DHCP Scope' && rt.is_system);
+        const dhcpScopeType = rangeTypes.find((rt) => rt.name === 'DHCP Scope' && rt.is_system);
         if (!dhcpScopeType) {
           toast.add({ severity: 'error', summary: 'DHCP Scope range type not found', life: 5000 });
           saving.value = false;
@@ -480,18 +629,18 @@ async function save() {
           range_type_id: dhcpScopeType.id,
           start_ip: form.value.start_ip,
           end_ip: form.value.end_ip,
-          description: form.value.description || null
+          description: form.value.description || null,
         });
         rangeId = newRange.id;
       } else if (rangeId) {
-        const range = availableRanges.value.find(r => r.id === rangeId);
+        const range = availableRanges.value.find((r) => r.id === rangeId);
         if (range) subnetId = range.subnet_id;
       }
 
       await dhcpStore.createScope({
         range_id: rangeId,
         subnet_id: subnetId,
-        ...payload
+        ...payload,
       });
       toast.add({ severity: 'success', summary: 'DHCP scope created', life: 3000 });
     }
@@ -536,7 +685,9 @@ async function openEdit(scope) {
   }
   setOptionValue(selOpts, optVals, 15, scope.subnet_domain_name, { overwrite: false });
   setOptionValue(selOpts, optVals, 119, scope.subnet_domain_name, { overwrite: false });
-  setOptionValue(selOpts, optVals, 6, scope.server_ip ? `${scope.server_ip}, 9.9.9.9` : null, { overwrite: false });
+  setOptionValue(selOpts, optVals, 6, scope.server_ip ? `${scope.server_ip}, 9.9.9.9` : null, {
+    overwrite: false,
+  });
 
   form.value = {
     range_id: scope.range_id,
@@ -547,7 +698,7 @@ async function openEdit(scope) {
     description: scope.description || '',
     enabled: !!scope.enabled,
     selectedOptions: selOpts,
-    optionValues: optVals
+    optionValues: optVals,
   };
   optionsExpanded.value = selOpts.length > 0;
   dialogVisible.value = true;
@@ -590,7 +741,9 @@ async function openNewWithPicker(subnetCtx) {
         const pool = dhcpRangeDefaults(parsed, subnetCtx.gateway_address || null);
         autoStartIp = pool.start || '';
         autoEndIp = pool.end || '';
-      } catch { /* invalid cidr, leave blank */ }
+      } catch {
+        /* invalid cidr, leave blank */
+      }
     }
     if (subnetCtx.domain_name) {
       setOptionValue(autoSelected, autoValues, 15, subnetCtx.domain_name);
@@ -603,20 +756,18 @@ async function openNewWithPicker(subnetCtx) {
     subnet_id: subnetCtx?.id || null,
     start_ip: autoStartIp,
     end_ip: autoEndIp,
-    description: (subnetCtx?.name || subnetCtx?.cidr) ? `${subnetCtx.name || subnetCtx.cidr} DHCP Scope` : '',
+    description:
+      subnetCtx?.name || subnetCtx?.cidr ? `${subnetCtx.name || subnetCtx.cidr} DHCP Scope` : '',
     selectedOptions: autoSelected,
-    optionValues: autoValues
+    optionValues: autoValues,
   };
 
   loadingRanges.value = true;
   try {
-    const [ranges] = await Promise.all([
-      dhcpStore.fetchAvailableRanges(),
-      loadSubnetsList()
-    ]);
-    availableRanges.value = ranges.map(r => ({
+    const [ranges] = await Promise.all([dhcpStore.fetchAvailableRanges(), loadSubnetsList()]);
+    availableRanges.value = ranges.map((r) => ({
       ...r,
-      _label: `${r.subnet_name} (${r.start_ip} — ${r.end_ip})`
+      _label: `${r.subnet_name} (${r.start_ip} — ${r.end_ip})`,
     }));
   } finally {
     loadingRanges.value = false;
@@ -662,7 +813,7 @@ async function openNewForRange(opts) {
     range_id: opts.rangeId,
     subnet_id: opts.subnetId,
     selectedOptions: autoSelected,
-    optionValues: autoValues
+    optionValues: autoValues,
   };
   optionsExpanded.value = autoSelected.length > 0;
   dialogVisible.value = true;
@@ -829,5 +980,7 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   color: var(--p-primary-color);
   text-decoration: none;
 }
-.rfc-link:hover { text-decoration: underline; }
+.rfc-link:hover {
+  text-decoration: underline;
+}
 </style>

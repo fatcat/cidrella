@@ -13,6 +13,6 @@
 <script setup>
 defineProps({
   display: { type: Object, default: null },
-  tooltip: { type: String, default: null }
+  tooltip: { type: String, default: null },
 });
 </script>

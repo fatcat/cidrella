@@ -34,7 +34,7 @@ function walk(dir, acc = []) {
 const VENDOR_ALL = /from\s+['"](primevue\/[^'"]+|@primeuix\/[^'"]+)['"]/g;
 const VENDOR_ONE = /from\s+['"](primevue\/[^'"]+|@primeuix\/[^'"]+)['"]/;
 const ALL = walk(SRC);
-const APP = ALL.filter(f => !f.startsWith(UI + path.sep));
+const APP = ALL.filter((f) => !f.startsWith(UI + path.sep));
 
 describe('ui seam: only client/src/ui names the widget library', () => {
   it('scanned a meaningful number of files', () => {
@@ -45,31 +45,37 @@ describe('ui seam: only client/src/ui names the widget library', () => {
   it('no application file imports the vendor directly', () => {
     const offenders = [];
     for (const f of APP) {
-      const hits = [...fs.readFileSync(f, 'utf8').matchAll(VENDOR_ALL)].map(m => m[1]);
-      if (hits.length) offenders.push(`${path.relative(SRC, f)} -> ${[...new Set(hits)].join(', ')}`);
+      const hits = [...fs.readFileSync(f, 'utf8').matchAll(VENDOR_ALL)].map((m) => m[1]);
+      if (hits.length)
+        offenders.push(`${path.relative(SRC, f)} -> ${[...new Set(hits)].join(', ')}`);
     }
     expect(
       offenders,
-      `import from '../ui/<Name>.js' instead:\n  ${offenders.join('\n  ')}`
+      `import from '../ui/<Name>.js' instead:\n  ${offenders.join('\n  ')}`,
     ).toEqual([]);
   });
 
   it('ui/ does name the vendor, so the check above is not vacuous', () => {
-    const naming = fs.readdirSync(UI)
-      .filter(n => n.endsWith('.js'))
-      .filter(n => VENDOR_ONE.test(fs.readFileSync(path.join(UI, n), 'utf8')));
+    const naming = fs
+      .readdirSync(UI)
+      .filter((n) => n.endsWith('.js'))
+      .filter((n) => VENDOR_ONE.test(fs.readFileSync(path.join(UI, n), 'utf8')));
     expect(naming.length).toBeGreaterThan(25);
   });
 
   it('every ui/ module re-exports rather than reimplementing', () => {
     // A seam that starts growing logic stops being a seam. Shims are expected
     // eventually, but they should be a deliberate edit that fails here first.
-    for (const n of fs.readdirSync(UI).filter(f => f.endsWith('.js'))) {
-      const body = fs.readFileSync(path.join(UI, n), 'utf8')
-        .split('\n').filter(l => l.trim() && !l.trim().startsWith('//')).join('\n');
+    for (const n of fs.readdirSync(UI).filter((f) => f.endsWith('.js'))) {
+      const body = fs
+        .readFileSync(path.join(UI, n), 'utf8')
+        .split('\n')
+        .filter((l) => l.trim() && !l.trim().startsWith('//'))
+        .join('\n');
       expect(body, `${n} should be re-exports only`).toMatch(/^export\s/m);
-      expect(body, `${n} should not declare functions or components`)
-        .not.toMatch(/\b(function|class|defineComponent)\b/);
+      expect(body, `${n} should not declare functions or components`).not.toMatch(
+        /\b(function|class|defineComponent)\b/,
+      );
     }
   });
 

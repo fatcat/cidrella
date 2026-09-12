@@ -53,14 +53,19 @@ describe('#39: both enforcing routes go through the one module', () => {
 
   it.each(FILES)('%s hardcodes no complexity rule of its own', (rel) => {
     const src = fs.readFileSync(path.join(SRC, rel), 'utf8');
-    expect(src, `${rel} still tests for an uppercase letter itself`)
-      .not.toMatch(/\/\[A-Z\]\/\.test\(\s*(?:new_)?password/);
+    expect(src, `${rel} still tests for an uppercase letter itself`).not.toMatch(
+      /\/\[A-Z\]\/\.test\(\s*(?:new_)?password/,
+    );
   });
 
   it('the policy object is frozen, so a caller cannot loosen it at runtime', () => {
     expect(Object.isFrozen(PASSWORD_POLICY)).toBe(true);
     const before = PASSWORD_POLICY.requireDigit;
-    try { PASSWORD_POLICY.requireDigit = false; } catch { /* strict mode throws */ }
+    try {
+      PASSWORD_POLICY.requireDigit = false;
+    } catch {
+      /* strict mode throws */
+    }
     expect(PASSWORD_POLICY.requireDigit).toBe(before);
   });
 

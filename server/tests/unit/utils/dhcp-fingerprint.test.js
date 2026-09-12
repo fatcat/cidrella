@@ -53,12 +53,18 @@ describe('ingestLine (log-dhcp transaction parsing)', () => {
     ingestLine(`${prefix}DHCPREQUEST(eth0) 10.0.0.9 11:22:33:44:55:66`, pending, 1000);
     ingestLine(`${prefix}DHCPACK(eth0) 10.0.0.9 11:22:33:44:55:66`, pending, 1000);
     ingestLine(`${prefix}requested options: 1:netmask, 3:router, 6:dns-server, `, pending, 1000);
-    ingestLine(`${prefix}requested options: 15:domain-name, 119:domain-search, 252:ms-proxy-autoconfig`, pending, 1000);
+    ingestLine(
+      `${prefix}requested options: 15:domain-name, 119:domain-search, 252:ms-proxy-autoconfig`,
+      pending,
+      1000,
+    );
 
-    expect(drainFinalized(pending, { now: 2000 })).toEqual([expect.objectContaining({
-      mac: '11:22:33:44:55:66',
-      opt55: '1,3,6,15,119,252'
-    })]);
+    expect(drainFinalized(pending, { now: 2000 })).toEqual([
+      expect.objectContaining({
+        mac: '11:22:33:44:55:66',
+        opt55: '1,3,6,15,119,252',
+      }),
+    ]);
   });
 
   it('does not combine the same xid across dnsmasq processes', () => {

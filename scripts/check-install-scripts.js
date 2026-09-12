@@ -40,7 +40,9 @@ const stagedServerDir = process.argv[2];
 const warnOnly = process.argv.includes('--warn-only');
 
 if (!stagedServerDir) {
-  console.error('  ERROR: check-install-scripts.js requires the staged server dir as its first argument.');
+  console.error(
+    '  ERROR: check-install-scripts.js requires the staged server dir as its first argument.',
+  );
   process.exit(2);
 }
 
@@ -84,7 +86,9 @@ for (const pkgJsonPath of findPackageJsons(modulesDir)) {
     continue; // unparseable package.json is the import guard's problem, not ours
   }
   const scripts = pkg.scripts || {};
-  const hits = LIFECYCLE.filter((name) => typeof scripts[name] === 'string' && scripts[name].trim());
+  const hits = LIFECYCLE.filter(
+    (name) => typeof scripts[name] === 'string' && scripts[name].trim(),
+  );
   if (hits.length === 0) continue;
   if (ALLOWLIST.has(pkg.name)) continue;
   found.push({
@@ -101,7 +105,9 @@ if (found.length === 0) {
 }
 
 console.error('');
-console.error(`  ${warnOnly ? 'WARNING' : 'ERROR'}: ${found.length} staged dependency/dependencies declare install-time scripts:`);
+console.error(
+  `  ${warnOnly ? 'WARNING' : 'ERROR'}: ${found.length} staged dependency/dependencies declare install-time scripts:`,
+);
 for (const f of found) {
   console.error(`    ${f.name}@${f.version}  (${f.location})`);
   for (const s of f.scripts) console.error(`      ${s}`);

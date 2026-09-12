@@ -70,7 +70,9 @@ describe('safeInternalPath', () => {
   });
 
   it('keeps the query string, which is where table state lives', () => {
-    expect(safeInternalPath(router, '/analytics?tab=performance')).toBe('/analytics?tab=performance');
+    expect(safeInternalPath(router, '/analytics?tab=performance')).toBe(
+      '/analytics?tab=performance',
+    );
   });
 
   it('rejects a protocol-relative URL, which leaves the site despite the leading slash', () => {
@@ -129,12 +131,20 @@ describe('landingPath', () => {
   });
 
   it('falls back to the last view when there is no redirect', () => {
-    rememberView('admin', { name: 'NetworksWorkspacePreview', fullPath: '/networks-preview', matched: [{}] });
+    rememberView('admin', {
+      name: 'NetworksWorkspacePreview',
+      fullPath: '/networks-preview',
+      matched: [{}],
+    });
     expect(landingPath(router, 'admin', undefined)).toBe('/networks-preview');
   });
 
   it('ignores a last view belonging to a different user on this browser', () => {
-    rememberView('admin', { name: 'NetworksWorkspacePreview', fullPath: '/networks-preview', matched: [{}] });
+    rememberView('admin', {
+      name: 'NetworksWorkspacePreview',
+      fullPath: '/networks-preview',
+      matched: [{}],
+    });
     expect(landingPath(router, 'someone-else', undefined)).toBe('/');
   });
 
@@ -143,7 +153,10 @@ describe('landingPath', () => {
   });
 
   it('falls back to the default when the remembered route no longer exists', () => {
-    localStorage.setItem('cidrella_last_view', JSON.stringify({ username: 'admin', path: '/subnets-old' }));
+    localStorage.setItem(
+      'cidrella_last_view',
+      JSON.stringify({ username: 'admin', path: '/subnets-old' }),
+    );
     expect(landingPath(router, 'admin', undefined)).toBe('/');
   });
 

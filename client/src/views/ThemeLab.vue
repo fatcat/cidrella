@@ -26,17 +26,34 @@
       <article class="lab-panel">
         <h2>Status Text</h2>
         <div class="sample-row">
-          <StatusText v-for="state in statusStates" :key="state.label" :label="state.label" :className="state.className" />
+          <StatusText
+            v-for="state in statusStates"
+            :key="state.label"
+            :label="state.label"
+            :className="state.className"
+          />
         </div>
       </article>
 
       <article class="lab-panel">
         <h2>Header Chips</h2>
         <div class="chip-row">
-          <span class="status-chip chip-ok"><span class="card-dot dot-up"></span><span class="status-chip-label">dnsmasq</span></span>
-          <span class="status-chip chip-ok"><span class="card-dot dot-ok"></span><span class="status-chip-label">Scanner idle</span></span>
-          <span class="status-chip chip-warn"><span class="card-dot dot-warn"></span><span class="status-chip-label">RAM 72%</span></span>
-          <span class="status-chip chip-err"><span class="card-dot dot-down"></span><span class="status-chip-label">Disk 91%</span></span>
+          <span class="status-chip chip-ok"
+            ><span class="card-dot dot-up"></span
+            ><span class="status-chip-label">dnsmasq</span></span
+          >
+          <span class="status-chip chip-ok"
+            ><span class="card-dot dot-ok"></span
+            ><span class="status-chip-label">Scanner idle</span></span
+          >
+          <span class="status-chip chip-warn"
+            ><span class="card-dot dot-warn"></span
+            ><span class="status-chip-label">RAM 72%</span></span
+          >
+          <span class="status-chip chip-err"
+            ><span class="card-dot dot-down"></span
+            ><span class="status-chip-label">Disk 91%</span></span
+          >
         </div>
       </article>
 
@@ -58,14 +75,20 @@
         <DataTable :value="tableRows" size="small" stripedRows class="lab-table">
           <Column field="ip" header="IP Address" />
           <Column header="Status">
-            <template #body="{ data }"><StatusText :label="data.status.label" :className="data.status.className" /></template>
+            <template #body="{ data }"
+              ><StatusText :label="data.status.label" :className="data.status.className"
+            /></template>
           </Column>
           <Column header="Type">
             <template #body="{ data }"><AddressTypePill :display="data.type" /></template>
           </Column>
           <Column field="hostname" header="Hostname" />
           <Column header="MAC">
-            <template #body="{ data }"><span :class="{ 'cell-muted': !data.mac }">{{ data.mac || EMPTY_CELL }}</span></template>
+            <template #body="{ data }"
+              ><span :class="{ 'cell-muted': !data.mac }">{{
+                data.mac || EMPTY_CELL
+              }}</span></template
+            >
           </Column>
           <Column field="seen" header="Last Seen" />
         </DataTable>
@@ -127,7 +150,11 @@
           <Column header="Sample">
             <template #body="{ data }">
               <AddressTypePill v-if="data.addressType" :display="data.addressType" />
-              <StatusText v-else-if="data.status" :label="data.status.label" :className="data.status.className" />
+              <StatusText
+                v-else-if="data.status"
+                :label="data.status.label"
+                :className="data.status.className"
+              />
               <span v-else class="contrast-series-pill" :style="{ '--series-color': data.color }">
                 {{ data.label }}
               </span>
@@ -207,24 +234,39 @@ import {
 } from '../utils/ipLifecycleDisplay.js';
 import '../assets/analytics-layout.css';
 
-ChartJS.register(ArcElement, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend, Filler, ChartDataLabels);
+ChartJS.register(
+  ArcElement,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend,
+  Filler,
+  ChartDataLabels,
+);
 
 const themeStore = useThemeStore();
 const selectedTheme = ref(themeStore.currentThemeId);
 const doughnutOptions = computed(() => makeDoughnutOptions());
 
-const themeOptions = computed(() => themes.map(theme => ({
-  label: `${theme.name} (${theme.group})`,
-  value: theme.id,
-})));
+const themeOptions = computed(() =>
+  themes.map((theme) => ({
+    label: `${theme.name} (${theme.group})`,
+    value: theme.id,
+  })),
+);
 
 watch(selectedTheme, (value) => {
   if (value && value !== themeStore.currentThemeId) themeStore.applyTheme(value);
 });
 
-watch(() => themeStore.currentThemeId, (value) => {
-  selectedTheme.value = value;
-});
+watch(
+  () => themeStore.currentThemeId,
+  (value) => {
+    selectedTheme.value = value;
+  },
+);
 
 const addressTypes = [
   ADDRESS_TYPE_STATIC_DNS,
@@ -248,7 +290,11 @@ const statusStates = [
 const semanticTokens = [
   { label: 'static DNS', token: '--cid-static-dns', addressType: ADDRESS_TYPE_STATIC_DNS },
   { label: 'dynamic DHCP', token: '--cid-dynamic-dhcp', addressType: ADDRESS_TYPE_DYNAMIC_DHCP },
-  { label: 'DHCP Reservation', token: '--cid-reserved-dhcp', addressType: ADDRESS_TYPE_RESERVED_DHCP },
+  {
+    label: 'DHCP Reservation',
+    token: '--cid-reserved-dhcp',
+    addressType: ADDRESS_TYPE_RESERVED_DHCP,
+  },
   { label: 'system', token: '--cid-system', addressType: ADDRESS_TYPE_SYSTEM },
   { label: 'gateway', token: '--cid-gateway', addressType: ADDRESS_TYPE_GATEWAY },
   { label: 'IP Reservation', token: '--cid-reserved', addressType: ADDRESS_TYPE_RESERVED },
@@ -272,11 +318,46 @@ const semanticTokens = [
 ];
 
 const tableRows = [
-  { ip: '10.0.0.8', status: statusStates[0], type: ADDRESS_TYPE_STATIC_DNS, hostname: 'testerella', mac: 'BC:24:11:FD:8D:F5', seen: '11:21' },
-  { ip: '10.0.0.27', status: statusStates[1], type: ADDRESS_TYPE_DYNAMIC_DHCP, hostname: 'withings-device', mac: '00:24:E4:EE:96:16', seen: 'yesterday' },
-  { ip: '10.0.0.65', status: statusStates[2], type: ADDRESS_TYPE_RESERVED_DHCP, hostname: 'printer', mac: null, seen: EMPTY_CELL },
-  { ip: '10.0.0.242', status: statusStates[3], type: ADDRESS_TYPE_ROGUE, hostname: 'unknown', mac: 'A4:CF:99:08:3A:CD', seen: 'now' },
-  { ip: '10.0.0.255', status: statusStates[4], type: ADDRESS_TYPE_SYSTEM, hostname: 'broadcast', mac: null, seen: EMPTY_CELL },
+  {
+    ip: '10.0.0.8',
+    status: statusStates[0],
+    type: ADDRESS_TYPE_STATIC_DNS,
+    hostname: 'testerella',
+    mac: 'BC:24:11:FD:8D:F5',
+    seen: '11:21',
+  },
+  {
+    ip: '10.0.0.27',
+    status: statusStates[1],
+    type: ADDRESS_TYPE_DYNAMIC_DHCP,
+    hostname: 'withings-device',
+    mac: '00:24:E4:EE:96:16',
+    seen: 'yesterday',
+  },
+  {
+    ip: '10.0.0.65',
+    status: statusStates[2],
+    type: ADDRESS_TYPE_RESERVED_DHCP,
+    hostname: 'printer',
+    mac: null,
+    seen: EMPTY_CELL,
+  },
+  {
+    ip: '10.0.0.242',
+    status: statusStates[3],
+    type: ADDRESS_TYPE_ROGUE,
+    hostname: 'unknown',
+    mac: 'A4:CF:99:08:3A:CD',
+    seen: 'now',
+  },
+  {
+    ip: '10.0.0.255',
+    status: statusStates[4],
+    type: ADDRESS_TYPE_SYSTEM,
+    hostname: 'broadcast',
+    mac: null,
+    seen: EMPTY_CELL,
+  },
 ];
 
 const doughnutItems = [
@@ -287,7 +368,7 @@ const doughnutItems = [
   { label: 'Cache', count: 17 },
   { label: 'Other', count: 9 },
 ];
-const doughnutData = computed(() => makeDoughnutData(doughnutItems, row => row.label));
+const doughnutData = computed(() => makeDoughnutData(doughnutItems, (row) => row.label));
 
 const labels = ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'];
 const lineData = computed(() => ({
@@ -301,17 +382,37 @@ const lineData = computed(() => ({
 }));
 const lineOptions = computed(() => makeLineOptions({ yLabel: 'count' }));
 
-const cpuLabels = ['11:00', '11:05', '11:10', '11:15', '11:20', '11:25', '11:30', '11:35', '11:40', '11:45', '11:50', '11:55'];
+const cpuLabels = [
+  '11:00',
+  '11:05',
+  '11:10',
+  '11:15',
+  '11:20',
+  '11:25',
+  '11:30',
+  '11:35',
+  '11:40',
+  '11:45',
+  '11:50',
+  '11:55',
+];
 const cpuLineData = computed(() => ({
   labels: cpuLabels,
   datasets: [
-    lineDataset({ label: 'CPU %', data: [7, 11, 9, 15, 26, 18, 22, 31, 24, 19, 14, 12], color: 7, fill: true }),
+    lineDataset({
+      label: 'CPU %',
+      data: [7, 11, 9, 15, 26, 18, 22, 31, 24, 19, 14, 12],
+      color: 7,
+      fill: true,
+    }),
   ],
 }));
-const cpuLineOptions = computed(() => makeLineOptions({
-  yLabel: '%',
-  tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? '-'}%`,
-}));
+const cpuLineOptions = computed(() =>
+  makeLineOptions({
+    yLabel: '%',
+    tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? '-'}%`,
+  }),
+);
 
 const gauges = [
   { label: 'Healthy', value: 28 },
@@ -321,10 +422,17 @@ const gauges = [
 
 function gaugeData(value) {
   const clamped = Math.min(100, Math.max(0, value));
-  const color = clamped > 80 ? chartColor('err') : clamped > 50 ? chartColor('warn') : chartColor('ok');
+  const color =
+    clamped > 80 ? chartColor('err') : clamped > 50 ? chartColor('warn') : chartColor('ok');
   return {
     labels: ['Used', 'Free'],
-    datasets: [{ data: [clamped, 100 - clamped], backgroundColor: [color, chartColor('track')], borderWidth: 0 }],
+    datasets: [
+      {
+        data: [clamped, 100 - clamped],
+        backgroundColor: [color, chartColor('track')],
+        borderWidth: 0,
+      },
+    ],
   };
 }
 
@@ -334,12 +442,21 @@ const gaugeOptions = {
   rotation: -90,
   circumference: 180,
   cutout: '72%',
-  plugins: { legend: { display: false }, tooltip: { enabled: false }, datalabels: { display: false } },
+  plugins: {
+    legend: { display: false },
+    tooltip: { enabled: false },
+    datalabels: { display: false },
+  },
 };
 
 function swatchFor(theme) {
   const nameKey = theme.name.toLowerCase();
-  return colorSwatches[`${nameKey} ${theme.group}`] || colorSwatches[nameKey] || theme.customPrimary?.[300] || '#888';
+  return (
+    colorSwatches[`${nameKey} ${theme.group}`] ||
+    colorSwatches[nameKey] ||
+    theme.customPrimary?.[300] ||
+    '#888'
+  );
 }
 
 function renderedColor(selector, property, fallback) {
@@ -354,8 +471,16 @@ function formatRatio(value) {
 
 const contrastRows = computed(() => {
   const currentTheme = themeStore.currentThemeId;
-  const cardBg = renderedColor('.lab-panel', 'background-color', cssVar('--p-surface-card', '#1f2937'));
-  const groundBg = renderedColor('.theme-lab', 'background-color', cssVar('--p-surface-ground', '#111827'));
+  const cardBg = renderedColor(
+    '.lab-panel',
+    'background-color',
+    cssVar('--p-surface-card', '#1f2937'),
+  );
+  const groundBg = renderedColor(
+    '.theme-lab',
+    'background-color',
+    cssVar('--p-surface-ground', '#111827'),
+  );
   return semanticTokens.map((item) => {
     const { label, token } = item;
     const color = cssVar(token);

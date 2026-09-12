@@ -81,8 +81,11 @@ function parseV6(str, embeddedV4) {
   if (hasDoubleColon) {
     const fill = groupCount - parts.length;
     if (fill < 0) return null;
-    parts = [...parts.slice(0, headParts.length), ...Array(fill).fill('0'),
-      ...parts.slice(headParts.length)];
+    parts = [
+      ...parts.slice(0, headParts.length),
+      ...Array(fill).fill('0'),
+      ...parts.slice(headParts.length),
+    ];
   }
   if (parts.length !== groupCount) return null;
 
@@ -188,10 +191,16 @@ export function formatIp(value, bits) {
   let bestStart = -1;
   let bestLen = 0;
   for (let i = 0; i < 8;) {
-    if (groups[i] !== '0') { i++; continue; }
+    if (groups[i] !== '0') {
+      i++;
+      continue;
+    }
     let j = i;
     while (j < 8 && groups[j] === '0') j++;
-    if (j - i > bestLen) { bestStart = i; bestLen = j - i; }
+    if (j - i > bestLen) {
+      bestStart = i;
+      bestLen = j - i;
+    }
     i = j;
   }
 

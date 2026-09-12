@@ -96,9 +96,23 @@ export const useDhcpStore = defineStore('dhcp', () => {
   }
 
   return {
-    scopes, reservations, leases, scopeAddresses, loading,
-    fetchScopes, createScope, updateScope, deleteScope, fetchAvailableRanges,
-    fetchReservations, createReservation, updateReservation, deleteReservation,
-    fetchLeases, fetchScopeAddresses, syncLeases, applyConfig
+    scopes,
+    reservations,
+    leases,
+    scopeAddresses,
+    loading,
+    fetchScopes,
+    createScope,
+    updateScope,
+    deleteScope,
+    fetchAvailableRanges,
+    fetchReservations,
+    createReservation,
+    updateReservation,
+    deleteReservation,
+    fetchLeases,
+    fetchScopeAddresses,
+    syncLeases,
+    applyConfig,
   };
 });

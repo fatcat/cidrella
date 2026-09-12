@@ -36,23 +36,32 @@ beforeAll(async () => {
   app = createTestApp(metricsRouter, '/api/metrics');
 
   // Seed upstream servers for the services endpoint
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dns_upstream_servers', ?)")
-    .run(JSON.stringify(['8.8.8.8']));
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dns_upstream_servers', ?)").run(
+    JSON.stringify(['8.8.8.8']),
+  );
 
   // Seed some metrics data
   const ts = Math.floor(Date.now() / 1000);
-  db.prepare('INSERT INTO metrics (ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?)')
-    .run(ts, 100, 5, 3, 1);
-  db.prepare('INSERT INTO metrics_blocklist_hits (ts, category, count) VALUES (?, ?, ?)')
-    .run(ts, 'malware', 3);
-  db.prepare('INSERT INTO metrics_geoip_hits (ts, country, count) VALUES (?, ?, ?)')
-    .run(ts, 'CN', 1);
-  db.prepare(`INSERT INTO metrics_proxy_perf
+  db.prepare(
+    'INSERT INTO metrics (ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?)',
+  ).run(ts, 100, 5, 3, 1);
+  db.prepare('INSERT INTO metrics_blocklist_hits (ts, category, count) VALUES (?, ?, ?)').run(
+    ts,
+    'malware',
+    3,
+  );
+  db.prepare('INSERT INTO metrics_geoip_hits (ts, country, count) VALUES (?, ?, ?)').run(
+    ts,
+    'CN',
+    1,
+  );
+  db.prepare(
+    `INSERT INTO metrics_proxy_perf
     (ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
      cache_hits, cache_misses, timeouts, pending_queries,
      cpu_percent, rss_mb, heap_mb, startup_ms)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(ts, 50, 120, 450, 2200, 1800, 40, 10, 0, 2, 1.5, 45.2, 22.1, 85);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(ts, 50, 120, 450, 2200, 1800, 40, 10, 0, 2, 1.5, 45.2, 22.1, 85);
 });
 
 afterAll(() => {
@@ -148,12 +157,14 @@ describe('GET /api/metrics/proxy-perf', () => {
 
 describe('GET /api/metrics/ip-lifecycle', () => {
   it('returns allocation, conflict, rogue, retirement, and reconciliation metrics', async () => {
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO ip_addresses
         (subnet_id, ip_address, allocation_state, address_family, address_sort_key)
       SELECT id, '192.0.2.20', 'unassigned', 4, 'key'
       FROM subnets LIMIT 1
-    `).run();
+    `,
+    ).run();
 
     const res = await request(app).get('/api/metrics/ip-lifecycle');
     expect(res.status).toBe(200);
@@ -165,8 +176,8 @@ describe('GET /api/metrics/ip-lifecycle', () => {
       reconciliation: {
         outcome: expect.any(String),
         blocking_conflicts: expect.any(Number),
-        failures: expect.any(Number)
-      }
+        failures: expect.any(Number),
+      },
     });
   });
 });

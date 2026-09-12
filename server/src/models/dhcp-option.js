@@ -1,22 +1,20 @@
 import { DHCP_DEFAULT_NTP_SERVERS } from '../config/defaults.js';
 
 export function createCustomOption(db, fields) {
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO dhcp_custom_options (code, name, label, type, description)
     VALUES (?, ?, ?, ?, ?)
-  `).run(
-    fields.code,
-    fields.name,
-    fields.label,
-    fields.type,
-    fields.description || null
-  );
+  `,
+    )
+    .run(fields.code, fields.name, fields.label, fields.type, fields.description || null);
 
   return {
     id: result.lastInsertRowid,
     code: fields.code,
     label: fields.label,
-    type: fields.type
+    type: fields.type,
   };
 }
 
@@ -80,15 +78,21 @@ export function seedDefaultOptions(db) {
 }
 
 export function getDefaultOptions(db) {
-  const rows = db.prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults').all();
+  const rows = db
+    .prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults')
+    .all();
   return {
-    defaults: Object.fromEntries(rows.filter(r => r.value != null).map(r => [r.option_code, r.value])),
-    enabledDefaults: rows.filter(r => r.enabled_by_default).map(r => r.option_code)
+    defaults: Object.fromEntries(
+      rows.filter((r) => r.value != null).map((r) => [r.option_code, r.value]),
+    ),
+    enabledDefaults: rows.filter((r) => r.enabled_by_default).map((r) => r.option_code),
   };
 }
 
 export function cleanupRedundantGatewayOptions(db) {
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     DELETE FROM dhcp_scope_options
     WHERE option_code = 3
       AND scope_id IN (
@@ -102,7 +106,9 @@ export function cleanupRedundantGatewayOptions(db) {
         JOIN subnets sub ON s.subnet_id = sub.id
         WHERE s.id = dhcp_scope_options.scope_id
       )
-  `).run();
+  `,
+    )
+    .run();
   if (result.changes > 0) {
     console.log(`Cleaned up ${result.changes} redundant gateway option(s) from DHCP scopes`);
   }
@@ -114,7 +120,9 @@ export function migrateLegacyScopeOptions(db) {
   const hasAny = db.prepare('SELECT COUNT(*) as c FROM dhcp_scope_options').get();
   if (hasAny.c > 0) return 0;
 
-  const insert = db.prepare('INSERT OR IGNORE INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)');
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)',
+  );
   const migrate = db.transaction(() => {
     for (const scope of scopes) {
       if (scope.gateway) {
@@ -126,7 +134,9 @@ export function migrateLegacyScopeOptions(db) {
           if (Array.isArray(servers) && servers.length > 0) {
             insert.run(scope.id, 6, servers.join(','));
           }
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
       if (scope.domain_name) {
         insert.run(scope.id, 15, scope.domain_name);
@@ -137,7 +147,9 @@ export function migrateLegacyScopeOptions(db) {
           if (Array.isArray(servers) && servers.length > 0) {
             insert.run(scope.id, 42, servers.join(','));
           }
-        } catch { /* skip */ }
+        } catch {
+          /* skip */
+        }
       }
       if (scope.domain_search) {
         insert.run(scope.id, 119, scope.domain_search);
@@ -156,10 +168,12 @@ export function upsertServerDnsDefault(db, value) {
   const existing = db.prepare('SELECT value FROM dhcp_option_defaults WHERE option_code = 6').get();
   if (existing?.value === value) return false;
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO dhcp_option_defaults (option_code, value, updated_at)
     VALUES (6, ?, datetime('now'))
     ON CONFLICT(option_code) DO UPDATE SET value = ?, updated_at = datetime('now')
-  `).run(value, value);
+  `,
+  ).run(value, value);
   return true;
 }

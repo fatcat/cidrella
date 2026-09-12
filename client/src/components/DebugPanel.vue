@@ -1,6 +1,10 @@
 <template>
   <div class="debug-container">
-    <button class="debug-btn" :class="{ 'has-errors': debugStore.errorCount > 0 }" @click="open = !open">
+    <button
+      class="debug-btn"
+      :class="{ 'has-errors': debugStore.errorCount > 0 }"
+      @click="open = !open"
+    >
       <i class="pi pi-bug"></i>
       <span class="debug-label">Debug</span>
       <span v-if="debugStore.errorCount > 0" class="error-badge">{{ debugStore.errorCount }}</span>
@@ -34,15 +38,21 @@
 
       <div class="debug-entries">
         <div v-if="filteredEntries.length === 0" class="debug-empty">No entries</div>
-        <div v-for="entry in filteredEntries" :key="entry.id"
-             class="debug-entry" :class="'entry-' + entry.type"
-             @click="expandedId = expandedId === entry.id ? null : entry.id">
+        <div
+          v-for="entry in filteredEntries"
+          :key="entry.id"
+          class="debug-entry"
+          :class="'entry-' + entry.type"
+          @click="expandedId = expandedId === entry.id ? null : entry.id"
+        >
           <div class="entry-row">
             <span class="entry-type">{{ entry.type.toUpperCase() }}</span>
             <span class="entry-msg">{{ entry.message }}</span>
             <span class="entry-time">{{ formatTime(entry.timestamp) }}</span>
           </div>
-          <pre v-if="expandedId === entry.id && entry.detail" class="entry-detail">{{ formatDetail(entry.detail) }}</pre>
+          <pre v-if="expandedId === entry.id && entry.detail" class="entry-detail">{{
+            formatDetail(entry.detail)
+          }}</pre>
         </div>
       </div>
     </div>
@@ -65,7 +75,7 @@ let timer;
 
 const filteredEntries = computed(() => {
   if (filter.value === 'all') return debugStore.entries;
-  return debugStore.entries.filter(e => e.type === filter.value);
+  return debugStore.entries.filter((e) => e.type === filter.value);
 });
 
 const sessionDuration = computed(() => {
@@ -80,12 +90,18 @@ const formatTime = formatTimeWithSeconds;
 
 function formatDetail(detail) {
   if (typeof detail === 'string') return detail;
-  try { return JSON.stringify(detail, null, 2); } catch { return String(detail); }
+  try {
+    return JSON.stringify(detail, null, 2);
+  } catch {
+    return String(detail);
+  }
 }
 
 onMounted(() => {
   debugStore.logInfo('Debug panel initialized');
-  timer = setInterval(() => { now.value = Date.now(); }, 60000);
+  timer = setInterval(() => {
+    now.value = Date.now();
+  }, 60000);
 });
 
 onUnmounted(() => {
@@ -159,7 +175,7 @@ onUnmounted(() => {
   border-radius: 8px;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 4px 24px rgba(0,0,0,0.2);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
 }
 
 .debug-header {
@@ -195,7 +211,9 @@ onUnmounted(() => {
   padding: 0.2rem;
   font-size: 0.8rem;
 }
-.debug-action:hover { color: var(--p-text-color); }
+.debug-action:hover {
+  color: var(--p-text-color);
+}
 
 .debug-info-bar {
   display: flex;
@@ -225,7 +243,9 @@ onUnmounted(() => {
   cursor: pointer;
   font-size: 0.75rem;
 }
-.debug-entry:hover { background: var(--p-surface-hover); }
+.debug-entry:hover {
+  background: var(--p-surface-hover);
+}
 
 .entry-row {
   display: flex;
@@ -239,10 +259,22 @@ onUnmounted(() => {
   border-radius: 3px;
   flex-shrink: 0;
 }
-.entry-error .entry-type { background: color-mix(in srgb, var(--p-red-500) 20%, transparent); color: var(--p-red-500); }
-.entry-warn .entry-type { background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent); color: var(--p-yellow-500); }
-.entry-api .entry-type { background: color-mix(in srgb, var(--p-blue-500) 20%, transparent); color: var(--p-blue-500); }
-.entry-info .entry-type { background: color-mix(in srgb, var(--p-indigo-500) 20%, transparent); color: var(--p-indigo-500); }
+.entry-error .entry-type {
+  background: color-mix(in srgb, var(--p-red-500) 20%, transparent);
+  color: var(--p-red-500);
+}
+.entry-warn .entry-type {
+  background: color-mix(in srgb, var(--p-yellow-500) 20%, transparent);
+  color: var(--p-yellow-500);
+}
+.entry-api .entry-type {
+  background: color-mix(in srgb, var(--p-blue-500) 20%, transparent);
+  color: var(--p-blue-500);
+}
+.entry-info .entry-type {
+  background: color-mix(in srgb, var(--p-indigo-500) 20%, transparent);
+  color: var(--p-indigo-500);
+}
 
 .entry-msg {
   flex: 1;

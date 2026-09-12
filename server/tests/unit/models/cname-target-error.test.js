@@ -34,9 +34,13 @@ afterAll(() => cleanupTestDb(tmpDir));
 beforeEach(() => {
   db.prepare('DELETE FROM dns_records').run();
   db.prepare('DELETE FROM dns_zones').run();
-  const id = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('lab.lan', 'forward', 1)").run().lastInsertRowid;
+  const id = db
+    .prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('lab.lan', 'forward', 1)")
+    .run().lastInsertRowid;
   zone = { id, name: 'lab.lan', type: 'forward', enabled: 1 };
-  db.prepare("INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, 'nas', 'A', '10.0.0.5', 1)").run(id);
+  db.prepare(
+    "INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, 'nas', 'A', '10.0.0.5', 1)",
+  ).run(id);
 });
 
 describe('cnameTargetError', () => {
@@ -81,16 +85,21 @@ describe('cnameTargetError', () => {
       // The batch relaxes existence, NOT the zone boundary. If it relaxed both,
       // the fix would have reopened the hole it was written to close.
       const batch = new Set(['evil.example.com']);
-      expect(cnameTargetError(db, 'evil.example.com', zone, batch)).toMatch(/must be inside lab\.lan/);
+      expect(cnameTargetError(db, 'evil.example.com', zone, batch)).toMatch(
+        /must be inside lab\.lan/,
+      );
     });
 
     it('still refuses a target in neither the DB nor the batch', () => {
-      expect(cnameTargetError(db, 'ghost.lab.lan', zone, new Set(['other.lab.lan'])))
-        .toMatch(/must already exist/);
+      expect(cnameTargetError(db, 'ghost.lab.lan', zone, new Set(['other.lab.lan']))).toMatch(
+        /must already exist/,
+      );
     });
 
     it('matches the batch case-insensitively', () => {
-      expect(cnameTargetError(db, 'Printer.Lab.LAN', zone, new Set(['printer.lab.lan']))).toBeNull();
+      expect(
+        cnameTargetError(db, 'Printer.Lab.LAN', zone, new Set(['printer.lab.lan'])),
+      ).toBeNull();
     });
   });
 });

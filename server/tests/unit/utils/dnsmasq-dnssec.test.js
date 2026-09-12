@@ -30,7 +30,7 @@ const BASE_CONF = [
 ].join('\n');
 
 function dnssecLines(conf) {
-  return conf.split('\n').filter(l => l.trim() === 'dnssec');
+  return conf.split('\n').filter((l) => l.trim() === 'dnssec');
 }
 
 beforeAll(async () => {
@@ -40,7 +40,8 @@ beforeAll(async () => {
   DNSMASQ_CONF = path.join(tmpDir, 'dnsmasq', 'dnsmasq.conf');
   // dnsmasq reports DNSSEC support in this file's default mock.
   vi.mocked(execFileSync).mockReturnValue('Compile time options: IPv6 DHCP DNSSEC inotify');
-  ({ regenerateDnsmasqConf, dnsmasqSupportsDnssec } = await import('../../../src/utils/dnsmasq.js'));
+  ({ regenerateDnsmasqConf, dnsmasqSupportsDnssec } =
+    await import('../../../src/utils/dnsmasq.js'));
 });
 
 beforeEach(() => {
@@ -57,7 +58,7 @@ describe('regenerateDnsmasqConf: no-recursion (authoritative-only)', () => {
     settings.dns_no_recursion = 'true';
     regenerateDnsmasqConf({});
     const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
-    expect(conf.split('\n').some(l => /^server=/.test(l))).toBe(false);
+    expect(conf.split('\n').some((l) => /^server=/.test(l))).toBe(false);
     settings.dns_no_recursion = 'false';
   });
 

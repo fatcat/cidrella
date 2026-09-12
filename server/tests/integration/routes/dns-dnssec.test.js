@@ -23,7 +23,8 @@ vi.mock('../../../src/utils/timesync.js', () => ({
 
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
 const { dnsmasqSupportsDnssec } = await import('../../../src/utils/dnsmasq.js');
-const { ensureNtpEnabled, armDnssecTimecheckWhenSynced } = await import('../../../src/utils/timesync.js');
+const { ensureNtpEnabled, armDnssecTimecheckWhenSynced } =
+  await import('../../../src/utils/timesync.js');
 const { default: request } = await import('supertest');
 
 let tmpDir;

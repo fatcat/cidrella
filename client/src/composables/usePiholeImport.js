@@ -54,10 +54,16 @@ export function usePiholeImport({ toast, fallbackZoneName = null, onImported = n
 
   async function probe() {
     const cleaned = cleanUrl(url.value);
-    if (!cleaned) { probeStatus.value = null; return; }
+    if (!cleaned) {
+      probeStatus.value = null;
+      return;
+    }
     if (cleaned !== url.value.trim()) url.value = cleaned;
     try {
-      const res = await api.post('/pihole/probe', { url: cleaned, password: password.value || undefined });
+      const res = await api.post('/pihole/probe', {
+        url: cleaned,
+        password: password.value || undefined,
+      });
       if (res.data.reachable) {
         probeStatus.value = 'ok';
         needsPassword.value = res.data.needsPassword;
@@ -90,20 +96,27 @@ export function usePiholeImport({ toast, fallbackZoneName = null, onImported = n
     try {
       const res = await api.post('/pihole/fetch', {
         url: url.value.trim(),
-        password: password.value || undefined
+        password: password.value || undefined,
       });
       preview.value = res.data;
       importResults.value = null;
     } catch (err) {
       toast?.add({ severity: 'error', summary: 'Fetch failed', detail: apiError(err), life: 5000 });
-    } finally { fetching.value = false; }
+    } finally {
+      fetching.value = false;
+    }
   }
 
   function onFileSelect(event) {
     const file = event.target.files[0];
-    if (!file) { fileContent.value = null; return; }
+    if (!file) {
+      fileContent.value = null;
+      return;
+    }
     const reader = new FileReader();
-    reader.onload = (e) => { fileContent.value = e.target.result; };
+    reader.onload = (e) => {
+      fileContent.value = e.target.result;
+    };
     reader.readAsText(file);
   }
 
@@ -111,13 +124,15 @@ export function usePiholeImport({ toast, fallbackZoneName = null, onImported = n
     parsing.value = true;
     try {
       const res = await api.post('/pihole/parse', fileContent.value, {
-        headers: { 'Content-Type': 'text/plain' }
+        headers: { 'Content-Type': 'text/plain' },
       });
       preview.value = res.data;
       importResults.value = null;
     } catch (err) {
       toast?.add({ severity: 'error', summary: 'Parse failed', detail: apiError(err), life: 5000 });
-    } finally { parsing.value = false; }
+    } finally {
+      parsing.value = false;
+    }
   }
 
   /** The zone this import targets: what the file declares, else the caller's fallback. */
@@ -136,7 +151,7 @@ export function usePiholeImport({ toast, fallbackZoneName = null, onImported = n
       await dnsStore.fetchZones();
       const domainName = resolveZoneName();
 
-      let zone = dnsStore.zones.find(z => z.name === domainName && z.type === 'forward');
+      let zone = dnsStore.zones.find((z) => z.name === domainName && z.type === 'forward');
       if (!zone && domainName) {
         zone = await dnsStore.createZone({ name: domainName, type: 'forward' });
       }
@@ -145,7 +160,7 @@ export function usePiholeImport({ toast, fallbackZoneName = null, onImported = n
           severity: 'error',
           summary: 'No zone found',
           detail: 'Could not find or create a forward DNS zone for import',
-          life: 5000
+          life: 5000,
         });
         return;
       }
@@ -160,8 +175,15 @@ export function usePiholeImport({ toast, fallbackZoneName = null, onImported = n
       toast?.add({ severity: 'success', summary: 'Pi-hole import complete', life: 3000 });
       onImported?.();
     } catch (err) {
-      toast?.add({ severity: 'error', summary: 'Import failed', detail: apiError(err), life: 5000 });
-    } finally { importing.value = false; }
+      toast?.add({
+        severity: 'error',
+        summary: 'Import failed',
+        detail: apiError(err),
+        life: 5000,
+      });
+    } finally {
+      importing.value = false;
+    }
   }
 
   function resetState() {
@@ -179,9 +201,26 @@ export function usePiholeImport({ toast, fallbackZoneName = null, onImported = n
   }
 
   return {
-    tab, url, password, probeStatus, probeError, needsPassword,
-    fetching, parsing, importing, preview, importResults, fileContent, fileInput,
-    cleanUrl, probe, fetchConfig, onFileSelect, parseFile, executeImport,
-    resolveZoneName, resetState,
+    tab,
+    url,
+    password,
+    probeStatus,
+    probeError,
+    needsPassword,
+    fetching,
+    parsing,
+    importing,
+    preview,
+    importResults,
+    fileContent,
+    fileInput,
+    cleanUrl,
+    probe,
+    fetchConfig,
+    onFileSelect,
+    parseFile,
+    executeImport,
+    resolveZoneName,
+    resetState,
   };
 }

@@ -12,7 +12,13 @@
       <div class="stat">
         <span class="stat-value">
           <span :class="store.services.geoip_proxy ? 'indicator-on' : 'indicator-off'"></span>
-          {{ store.services.geoip_bypassed ? 'Bypassed' : store.services.geoip_proxy ? 'Running' : 'Stopped' }}
+          {{
+            store.services.geoip_bypassed
+              ? 'Bypassed'
+              : store.services.geoip_proxy
+                ? 'Running'
+                : 'Stopped'
+          }}
         </span>
         <span class="stat-label">DNS Proxy</span>
       </div>
@@ -33,37 +39,84 @@
     <div class="dashboard-content">
       <!-- Time Range -->
       <div class="range-bar">
-        <Select v-model="selectedRange" :options="rangeOptions" optionLabel="label" optionValue="value"
-                size="small" style="width: 10rem" @change="refreshAll" />
-        <Button icon="pi pi-refresh" size="small" text rounded @click="refreshAll" :loading="store.loading" title="Refresh" />
+        <Select
+          v-model="selectedRange"
+          :options="rangeOptions"
+          optionLabel="label"
+          optionValue="value"
+          size="small"
+          style="width: 10rem"
+          @change="refreshAll"
+        />
+        <Button
+          icon="pi pi-refresh"
+          size="small"
+          text
+          rounded
+          @click="refreshAll"
+          :loading="store.loading"
+          title="Refresh"
+        />
       </div>
 
-      <DoughnutTableCard title="Top 10 Domains Without DNSSEC" :items="store.dnssecUnsupportedDomains"
-                         :chartData="dnssecUnsupportedChartData" labelField="domain" labelHeader="Domain"
-                         :emptyText="dnssecEmptyText" />
+      <DoughnutTableCard
+        title="Top 10 Domains Without DNSSEC"
+        :items="store.dnssecUnsupportedDomains"
+        :chartData="dnssecUnsupportedChartData"
+        labelField="domain"
+        labelHeader="Domain"
+        :emptyText="dnssecEmptyText"
+      />
 
-      <DoughnutTableCard title="Top 10 Blocked Domains" :items="store.blocklistTopDomains"
-                         :chartData="blockedDomainsChartData" labelField="domain" labelHeader="Domain" />
+      <DoughnutTableCard
+        title="Top 10 Blocked Domains"
+        :items="store.blocklistTopDomains"
+        :chartData="blockedDomainsChartData"
+        labelField="domain"
+        labelHeader="Domain"
+      />
 
-      <DoughnutTableCard title="Top 10 Blocked Categories" :items="store.blocklistTopCategories"
-                         :chartData="blockedCategoriesChartData" labelField="block_reason" labelHeader="Category" />
+      <DoughnutTableCard
+        title="Top 10 Blocked Categories"
+        :items="store.blocklistTopCategories"
+        :chartData="blockedCategoriesChartData"
+        labelField="block_reason"
+        labelHeader="Category"
+      />
 
-      <DoughnutTableCard title="Top 10 GeoIP Blocked Hosts" :items="store.geoipTopClients"
-                         :chartData="geoipHostsChartData" labelHeader="Host">
+      <DoughnutTableCard
+        title="Top 10 GeoIP Blocked Hosts"
+        :items="store.geoipTopClients"
+        :chartData="geoipHostsChartData"
+        labelHeader="Host"
+      >
         <template #label="{ data }">{{ data.hostname || data.client_ip }}</template>
       </DoughnutTableCard>
 
-      <DoughnutTableCard title="Top 10 GeoIP Blocked Domains" :items="store.geoipTopDomains"
-                         :chartData="geoipDomainsChartData" labelField="domain" labelHeader="Domain" />
+      <DoughnutTableCard
+        title="Top 10 GeoIP Blocked Domains"
+        :items="store.geoipTopDomains"
+        :chartData="geoipDomainsChartData"
+        labelField="domain"
+        labelHeader="Domain"
+      />
 
-      <DoughnutTableCard title="Top 10 Blocked Hosts" :items="store.blocklistTopClients"
-                         :chartData="blockedHostsChartData" labelHeader="Host">
+      <DoughnutTableCard
+        title="Top 10 Blocked Hosts"
+        :items="store.blocklistTopClients"
+        :chartData="blockedHostsChartData"
+        labelHeader="Host"
+      >
         <template #label="{ data }">{{ data.hostname || data.client_ip }}</template>
       </DoughnutTableCard>
 
       <div class="chart-card">
         <h4>Top Blocked Host / Domain Pairs</h4>
-        <DataTable v-if="store.blocklistTopClientDomains.length" :value="store.blocklistTopClientDomains" size="small">
+        <DataTable
+          v-if="store.blocklistTopClientDomains.length"
+          :value="store.blocklistTopClientDomains"
+          size="small"
+        >
           <Column header="Host">
             <template #body="{ data }">{{ data.hostname || data.client_ip }}</template>
           </Column>
@@ -77,7 +130,6 @@
         </DataTable>
         <p v-else class="empty-chart">No blocked host/domain pairs in this range.</p>
       </div>
-
     </div>
   </div>
 </template>
@@ -88,9 +140,7 @@ import Select from '../ui/Select.js';
 import Button from '../ui/Button.js';
 import DataTable from '../ui/DataTable.js';
 import Column from '../ui/Column.js';
-import {
-  Chart as ChartJS, ArcElement, Tooltip, Legend,
-} from 'chart.js';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { useDashboardStore } from '../stores/dashboard.js';
 import { RANGE_OPTIONS, makeDoughnutData } from '../utils/chart-config.js';
@@ -113,21 +163,35 @@ const summary = computed(() => {
   };
 });
 
-const blockedHostsChartData = computed(() => makeDoughnutData(store.blocklistTopClients, r => r.hostname || r.client_ip || 'unknown'));
+const blockedHostsChartData = computed(() =>
+  makeDoughnutData(store.blocklistTopClients, (r) => r.hostname || r.client_ip || 'unknown'),
+);
 
-const dnssecUnsupportedChartData = computed(() => makeDoughnutData(store.dnssecUnsupportedDomains, r => r.domain || 'unknown'));
+const dnssecUnsupportedChartData = computed(() =>
+  makeDoughnutData(store.dnssecUnsupportedDomains, (r) => r.domain || 'unknown'),
+);
 
-const dnssecEmptyText = computed(() => store.systemHealth?.dnssec?.enabled
-  ? 'No domains without DNSSEC were observed in this range.'
-  : 'Enable DNSSEC validation to collect this data.');
+const dnssecEmptyText = computed(() =>
+  store.systemHealth?.dnssec?.enabled
+    ? 'No domains without DNSSEC were observed in this range.'
+    : 'Enable DNSSEC validation to collect this data.',
+);
 
-const blockedDomainsChartData = computed(() => makeDoughnutData(store.blocklistTopDomains, r => r.domain || 'unknown'));
+const blockedDomainsChartData = computed(() =>
+  makeDoughnutData(store.blocklistTopDomains, (r) => r.domain || 'unknown'),
+);
 
-const blockedCategoriesChartData = computed(() => makeDoughnutData(store.blocklistTopCategories, r => r.block_reason || 'unknown'));
+const blockedCategoriesChartData = computed(() =>
+  makeDoughnutData(store.blocklistTopCategories, (r) => r.block_reason || 'unknown'),
+);
 
-const geoipHostsChartData = computed(() => makeDoughnutData(store.geoipTopClients, r => r.hostname || r.client_ip || 'unknown'));
+const geoipHostsChartData = computed(() =>
+  makeDoughnutData(store.geoipTopClients, (r) => r.hostname || r.client_ip || 'unknown'),
+);
 
-const geoipDomainsChartData = computed(() => makeDoughnutData(store.geoipTopDomains, r => r.domain || 'unknown'));
+const geoipDomainsChartData = computed(() =>
+  makeDoughnutData(store.geoipTopDomains, (r) => r.domain || 'unknown'),
+);
 
 async function refreshAll() {
   await store.fetchAll(selectedRange.value);

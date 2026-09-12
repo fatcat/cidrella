@@ -1,12 +1,19 @@
-import { displayExpiry, displayMacAddress, displayOnlineStatus, EMPTY_CELL, formatNumber, isOnlineFlag } from '../utils/format.js';
+import {
+  displayExpiry,
+  displayMacAddress,
+  displayOnlineStatus,
+  EMPTY_CELL,
+  formatNumber,
+  isOnlineFlag,
+} from '../utils/format.js';
 import { ipToLong } from '../utils/ip.js';
 
 function humanize(value) {
   if (!value) return EMPTY_CELL;
   return String(value)
     .replaceAll('_', ' ')
-    .replace(/\b\w/g, letter => letter.toUpperCase())
-    .replace(/\b(Dhcp|Dns|Slaac|Arp)\b/g, match => match.toUpperCase());
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .replace(/\b(Dhcp|Dns|Slaac|Arp)\b/g, (match) => match.toUpperCase());
 }
 
 export function formatDuration(seconds) {
@@ -48,7 +55,7 @@ function collectAllocatedNetworks(nodes, folder, output) {
         domain: network.domain_name || null,
         gateway: network.gateway_address || null,
         used,
-        state: used >= 85 ? 'warning' : 'healthy'
+        state: used >= 85 ? 'warning' : 'healthy',
       });
     }
     collectAllocatedNetworks(network.children, folder, output);
@@ -56,15 +63,17 @@ function collectAllocatedNetworks(nodes, folder, output) {
 }
 
 export function buildExplorerFolders(folders) {
-  return (folders || []).map(folder => {
-    const networks = [];
-    collectAllocatedNetworks(folder.subnets, folder, networks);
-    return { id: folder.id, name: folder.name, networks };
-  }).filter(folder => folder.networks.length > 0);
+  return (folders || [])
+    .map((folder) => {
+      const networks = [];
+      collectAllocatedNetworks(folder.subnets, folder, networks);
+      return { id: folder.id, name: folder.name, networks };
+    })
+    .filter((folder) => folder.networks.length > 0);
 }
 
 export function mapNetworkRows(networks) {
-  return (networks || []).map(network => ({
+  return (networks || []).map((network) => ({
     id: `network:${network.id}`,
     name: network.name,
     cidr: network.cidr,
@@ -74,12 +83,12 @@ export function mapNetworkRows(networks) {
     gateway: network.gateway,
     utilization: `${network.used}%`,
     status: humanize(network.status),
-    raw: network
+    raw: network,
   }));
 }
 
 export function mapDnsZoneRows(zones, networkLabels = new Map()) {
-  return (zones || []).map(zone => ({
+  return (zones || []).map((zone) => ({
     id: `zone:${zone.id}`,
     name: zone.name,
     zoneType: humanize(zone.type),
@@ -87,12 +96,12 @@ export function mapDnsZoneRows(zones, networkLabels = new Map()) {
     networks: networkLabels.get(Number(zone.id)) || 'Unlinked',
     description: zone.description || null,
     enabled: zone.enabled === true || zone.enabled === 1 || zone.enabled === '1',
-    raw: zone
+    raw: zone,
   }));
 }
 
 export function mapDhcpScopeRows(scopes) {
-  return (scopes || []).map(scope => ({
+  return (scopes || []).map((scope) => ({
     id: `scope:${scope.id}`,
     range: scope.start_ip === scope.end_ip ? scope.start_ip : `${scope.start_ip} – ${scope.end_ip}`,
     network: scope.subnet_name || scope.subnet_cidr || null,
@@ -100,7 +109,7 @@ export function mapDhcpScopeRows(scopes) {
     leaseTime: formatDuration(scope.effective?.lease_time || scope.lease_time),
     description: scope.description || null,
     enabled: scope.enabled === true || scope.enabled === 1 || scope.enabled === '1',
-    raw: scope
+    raw: scope,
   }));
 }
 
@@ -112,7 +121,7 @@ function onlineValue(row, { unknownWhenUnaddressed = false } = {}) {
 }
 
 export function mapAddressRows(rows) {
-  return (rows || []).map(row => ({
+  return (rows || []).map((row) => ({
     id: `address:${row.ip_address}`,
     address: row.ip_address,
     hostname: row.hostname || null,
@@ -120,49 +129,68 @@ export function mapAddressRows(rows) {
     type: row.address_type || null,
     online: onlineValue(row),
     mac: displayMacAddress(row.mac_address || row.last_seen_mac),
-    source: row.allocation_source_type ? humanize(row.allocation_source_type) : (row.detection_source ? humanize(row.detection_source) : null),
+    source: row.allocation_source_type
+      ? humanize(row.allocation_source_type)
+      : row.detection_source
+        ? humanize(row.detection_source)
+        : null,
     lastSeen: formatTimestamp(row.last_seen_at),
-    scanning: row.scanning_enabled ? (row.scan_enabled == null ? 'On · inherited' : 'On') : (row.scan_enabled == null ? 'Off · inherited' : 'Off'),
-    raw: row
+    scanning: row.scanning_enabled
+      ? row.scan_enabled == null
+        ? 'On · inherited'
+        : 'On'
+      : row.scan_enabled == null
+        ? 'Off · inherited'
+        : 'Off',
+    raw: row,
   }));
 }
 
 export function mapDnsRows(zoneRecords) {
-  return (zoneRecords || []).flatMap(({ zone, records }) => (records || []).map(record => ({
-    id: `dns:${zone.id}:${record.id}`,
-    name: record.name || '@',
-    recordType: record.record_type,
-    value: record.value,
-    ttl: formatDuration(record.ttl),
-    source: humanize(record.dns_source),
-    enabled: record.enabled === true || record.enabled === 1 || record.enabled === '1',
-    online: onlineValue(record, { unknownWhenUnaddressed: true }),
-    zone: zone.name,
-    zoneType: zone.type,
-    raw: record
-  })));
+  return (zoneRecords || []).flatMap(({ zone, records }) =>
+    (records || []).map((record) => ({
+      id: `dns:${zone.id}:${record.id}`,
+      name: record.name || '@',
+      recordType: record.record_type,
+      value: record.value,
+      ttl: formatDuration(record.ttl),
+      source: humanize(record.dns_source),
+      enabled: record.enabled === true || record.enabled === 1 || record.enabled === '1',
+      online: onlineValue(record, { unknownWhenUnaddressed: true }),
+      zone: zone.name,
+      zoneType: zone.type,
+      raw: record,
+    })),
+  );
 }
 
 export function mapDhcpRows(rows) {
-  return (rows || []).map(row => ({
+  return (rows || []).map((row) => ({
     id: `dhcp:${row.dhcp_assignment_type || 'pool'}:${row.id}:${row.ip_address}`,
     address: row.ip_address,
     hostname: row.hostname || null,
     mac: displayMacAddress(row.mac_address),
     assignment: row.dhcp_assignment_type ? humanize(row.dhcp_assignment_type) : null,
     leaseStatus: row.lease_status,
-    expires: displayExpiry(row.expires_at, formatTimestamp, { reserved: row.dhcp_assignment_type === 'reserved' && !row.expires_at }),
+    expires: displayExpiry(row.expires_at, formatTimestamp, {
+      reserved: row.dhcp_assignment_type === 'reserved' && !row.expires_at,
+    }),
     online: onlineValue(row),
-    source: row.dhcp_assignment_type === 'reserved' ? 'DHCP Reservation' : row.dhcp_assignment_type === 'dynamic' ? 'DHCP Lease' : 'Dynamic pool',
+    source:
+      row.dhcp_assignment_type === 'reserved'
+        ? 'DHCP Reservation'
+        : row.dhcp_assignment_type === 'dynamic'
+          ? 'DHCP Lease'
+          : 'Dynamic pool',
     network: row.subnet_name || row.subnet_cidr || null,
     type: row.address_type || null,
-    raw: row
+    raw: row,
   }));
 }
 
 function rangeSize(startIp, endIp) {
   try {
-    const size = (ipToLong(endIp) - ipToLong(startIp)) + 1;
+    const size = ipToLong(endIp) - ipToLong(startIp) + 1;
     return `${formatNumber(size)} ${size === 1 ? 'address' : 'addresses'}`;
   } catch {
     return EMPTY_CELL;
@@ -170,8 +198,8 @@ function rangeSize(startIp, endIp) {
 }
 
 export function mapRangeRows(rows, scopes = []) {
-  const scopesByRange = new Map((scopes || []).map(scope => [Number(scope.range_id), scope]));
-  return (rows || []).map(row => {
+  const scopesByRange = new Map((scopes || []).map((scope) => [Number(scope.range_id), scope]));
+  return (rows || []).map((row) => {
     const scope = scopesByRange.get(Number(row.id));
     const start = row.start_ip;
     const end = row.end_ip;
@@ -181,22 +209,34 @@ export function mapRangeRows(rows, scopes = []) {
       rangeType: row.range_type_name,
       size: rangeSize(start, end),
       description: row.description || null,
-      policy: scope ? `${formatDuration(scope.effective?.lease_time || scope.lease_time)} lease` : (row.range_type_is_system ? 'Topology' : 'Organizational tag'),
+      policy: scope
+        ? `${formatDuration(scope.effective?.lease_time || scope.lease_time)} lease`
+        : row.range_type_is_system
+          ? 'Topology'
+          : 'Organizational tag',
       enabled: scope ? Boolean(scope.enabled) : true,
       color: row.range_type_color || null,
-      raw: row
+      raw: row,
     };
   });
 }
 
 export function sumScopeAddresses(scopes) {
-  return (scopes || []).reduce((total, scope) => total + (scope.pools || [{ start_ip: scope.start_ip, end_ip: scope.end_ip }]).reduce((poolTotal, pool) => {
-    try {
-      return poolTotal + (ipToLong(pool.end_ip) - ipToLong(pool.start_ip)) + 1;
-    } catch {
-      return poolTotal;
-    }
-  }, 0), 0);
+  return (scopes || []).reduce(
+    (total, scope) =>
+      total +
+      (scope.pools || [{ start_ip: scope.start_ip, end_ip: scope.end_ip }]).reduce(
+        (poolTotal, pool) => {
+          try {
+            return poolTotal + (ipToLong(pool.end_ip) - ipToLong(pool.start_ip)) + 1;
+          } catch {
+            return poolTotal;
+          }
+        },
+        0,
+      ),
+    0,
+  );
 }
 
 export function gridKind(row) {
@@ -220,5 +260,5 @@ export function isConfiguredRow(row) {
 }
 
 export function countOnline(rows) {
-  return (rows || []).filter(row => isOnlineFlag(row.raw?.is_online) === true).length;
+  return (rows || []).filter((row) => isOnlineFlag(row.raw?.is_online) === true).length;
 }

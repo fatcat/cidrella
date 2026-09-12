@@ -73,8 +73,8 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   async function whitelistClient(clientIp, reason) {
     await api.post('/anomalies/whitelist', { client_ip: clientIp, reason });
     // Remove all entries for this client from every locally-held list
-    events.value = events.value.filter(e => e.client_ip !== clientIp);
-    learning.value = learning.value.filter(l => l.client_ip !== clientIp);
+    events.value = events.value.filter((e) => e.client_ip !== clientIp);
+    learning.value = learning.value.filter((l) => l.client_ip !== clientIp);
     if (summary.value) {
       await fetchSummary();
     }
@@ -95,7 +95,8 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     const res = await api.post('/anomalies/acknowledge');
     if (summary.value) {
       summary.value.unacknowledged_active = 0;
-      summary.value.acknowledged_through_id = res.data.acknowledged_through_id || summary.value.acknowledged_through_id || 0;
+      summary.value.acknowledged_through_id =
+        res.data.acknowledged_through_id || summary.value.acknowledged_through_id || 0;
     }
     return res.data;
   }
@@ -103,20 +104,33 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   async function fetchAll() {
     loading.value = true;
     try {
-      await Promise.all([
-        fetchSummary(),
-        fetchEvents(),
-      ]);
+      await Promise.all([fetchSummary(), fetchEvents()]);
     } finally {
       loading.value = false;
     }
   }
 
   return {
-    summary, events, learning, clientHistory, clientModel, clientEvidence, fingerprintChanges, settings, loading,
-    fetchSummary, fetchEvents, fetchClientHistory, fetchClientModel, fetchClientEvidence,
-    fetchFingerprintChanges, clearClient,
+    summary,
+    events,
+    learning,
+    clientHistory,
+    clientModel,
+    clientEvidence,
+    fingerprintChanges,
+    settings,
+    loading,
+    fetchSummary,
+    fetchEvents,
+    fetchClientHistory,
+    fetchClientModel,
+    fetchClientEvidence,
+    fetchFingerprintChanges,
+    clearClient,
     whitelistClient,
-    fetchSettings, updateSettings, acknowledgeCounter, fetchAll,
+    fetchSettings,
+    updateSettings,
+    acknowledgeCounter,
+    fetchAll,
   };
 });

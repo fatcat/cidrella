@@ -7,10 +7,18 @@
       <div class="setting-group">
         <h3>Current Certificate</h3>
         <div v-if="certInfo" class="cert-info-card">
-          <div class="cert-row"><span class="cert-key">Subject:</span> {{ certInfo.subject || 'N/A' }}</div>
-          <div class="cert-row"><span class="cert-key">Issuer:</span> {{ certInfo.issuer || 'N/A' }}</div>
-          <div class="cert-row"><span class="cert-key">Valid From:</span> {{ certInfo.notbefore || 'N/A' }}</div>
-          <div class="cert-row"><span class="cert-key">Valid Until:</span> {{ certInfo.notafter || 'N/A' }}</div>
+          <div class="cert-row">
+            <span class="cert-key">Subject:</span> {{ certInfo.subject || 'N/A' }}
+          </div>
+          <div class="cert-row">
+            <span class="cert-key">Issuer:</span> {{ certInfo.issuer || 'N/A' }}
+          </div>
+          <div class="cert-row">
+            <span class="cert-key">Valid From:</span> {{ certInfo.notbefore || 'N/A' }}
+          </div>
+          <div class="cert-row">
+            <span class="cert-key">Valid Until:</span> {{ certInfo.notafter || 'N/A' }}
+          </div>
           <div class="cert-row">
             <span class="cert-key">Type:</span>
             <span :class="certInfo.self_signed ? 'badge badge-yellow' : 'badge badge-green'">
@@ -23,16 +31,29 @@
 
       <div class="setting-group">
         <h3>Generate Certificate Signing Request</h3>
-        <p class="field-help" style="margin-bottom: 0.75rem;">Generate a private key and CSR for a certificate authority. The private key stays on this host; upload the signed certificate below when it is issued.</p>
+        <p class="field-help" style="margin-bottom: 0.75rem">
+          Generate a private key and CSR for a certificate authority. The private key stays on this
+          host; upload the signed certificate below when it is issued.
+        </p>
         <div class="csr-form">
           <div class="field">
             <label>Common Name</label>
-            <InputText v-model="csrForm.common_name" class="w-full" placeholder="cidrella.example.com" />
+            <InputText
+              v-model="csrForm.common_name"
+              class="w-full"
+              placeholder="cidrella.example.com"
+            />
           </div>
           <div class="field">
             <label>Subject Alternative Names</label>
-            <InputText v-model="csrForm.sanText" class="w-full" placeholder="cidrella.example.com, cidrella, 10.0.0.8" />
-            <small class="field-help">Comma or newline separated. The Common Name is included automatically.</small>
+            <InputText
+              v-model="csrForm.sanText"
+              class="w-full"
+              placeholder="cidrella.example.com, cidrella, 10.0.0.8"
+            />
+            <small class="field-help"
+              >Comma or newline separated. The Common Name is included automatically.</small
+            >
           </div>
           <div class="cert-fields-row">
             <div class="field cert-field">
@@ -61,59 +82,130 @@
             </div>
             <div class="field cert-field">
               <label>Key Type</label>
-              <Select v-model="csrForm.key_profile" :options="csrKeyProfiles" optionLabel="label" optionValue="value" class="w-full" />
+              <Select
+                v-model="csrForm.key_profile"
+                :options="csrKeyProfiles"
+                optionLabel="label"
+                optionValue="value"
+                class="w-full"
+              />
             </div>
           </div>
           <div class="csr-actions">
-            <Button label="Generate CSR" icon="pi pi-file" data-track="sys-generate-csr"
-                    @click="doGenerateCsr" :loading="generatingCsr" :disabled="!csrForm.common_name.trim()" />
-            <Button v-if="generatedCsr" label="Copy CSR" icon="pi pi-copy" severity="secondary"
-                    @click="copyGeneratedCsr" />
+            <Button
+              label="Generate CSR"
+              icon="pi pi-file"
+              data-track="sys-generate-csr"
+              @click="doGenerateCsr"
+              :loading="generatingCsr"
+              :disabled="!csrForm.common_name.trim()"
+            />
+            <Button
+              v-if="generatedCsr"
+              label="Copy CSR"
+              icon="pi pi-copy"
+              severity="secondary"
+              @click="copyGeneratedCsr"
+            />
           </div>
-          <textarea v-if="generatedCsr" v-model="generatedCsr" readonly class="cert-textarea csr-output"></textarea>
+          <textarea
+            v-if="generatedCsr"
+            v-model="generatedCsr"
+            readonly
+            class="cert-textarea csr-output"
+          ></textarea>
         </div>
       </div>
 
       <div class="setting-group">
         <h3>Upload Certificate</h3>
-        <p class="field-help" style="margin-bottom: 0.75rem;">Upload PEM-encoded certificate and private key files. If you generated a CSR above, upload only the signed certificate and CIDRella will use the pending private key. Applied immediately to new connections.</p>
+        <p class="field-help" style="margin-bottom: 0.75rem">
+          Upload PEM-encoded certificate and private key files. If you generated a CSR above, upload
+          only the signed certificate and CIDRella will use the pending private key. Applied
+          immediately to new connections.
+        </p>
         <div class="cert-upload-form">
           <div class="cert-fields-row">
             <div class="field cert-field">
               <label>Certificate (.pem, .crt)</label>
-              <div class="cert-drop-zone" :class="{ 'drop-active': certDragOver === 'cert' }"
-                   @dragover.prevent="certDragOver = 'cert'" @dragleave="certDragOver = null"
-                   @drop.prevent="onCertDrop($event, 'cert')">
-                <textarea v-model="certUpload.cert" placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----&#10;&#10;Drop a .pem or .crt file here"
-                          class="cert-textarea" :class="{ 'cert-valid': certValidation.cert === true, 'cert-invalid': certValidation.cert === false }"></textarea>
+              <div
+                class="cert-drop-zone"
+                :class="{ 'drop-active': certDragOver === 'cert' }"
+                @dragover.prevent="certDragOver = 'cert'"
+                @dragleave="certDragOver = null"
+                @drop.prevent="onCertDrop($event, 'cert')"
+              >
+                <textarea
+                  v-model="certUpload.cert"
+                  placeholder="-----BEGIN CERTIFICATE-----&#10;...&#10;-----END CERTIFICATE-----&#10;&#10;Drop a .pem or .crt file here"
+                  class="cert-textarea"
+                  :class="{
+                    'cert-valid': certValidation.cert === true,
+                    'cert-invalid': certValidation.cert === false,
+                  }"
+                ></textarea>
                 <div v-if="certDragOver === 'cert'" class="drop-overlay">Drop certificate file</div>
               </div>
-              <small v-if="certValidation.cert === true" class="cert-status cert-status-ok"><i class="pi pi-check-circle"></i> Valid PEM certificate</small>
-              <small v-else-if="certValidation.cert === false" class="cert-status cert-status-err"><i class="pi pi-times-circle"></i> {{ certValidation.certError }}</small>
+              <small v-if="certValidation.cert === true" class="cert-status cert-status-ok"
+                ><i class="pi pi-check-circle"></i> Valid PEM certificate</small
+              >
+              <small v-else-if="certValidation.cert === false" class="cert-status cert-status-err"
+                ><i class="pi pi-times-circle"></i> {{ certValidation.certError }}</small
+              >
             </div>
             <div class="field cert-field">
               <label>Private Key (.pem, .key)</label>
-              <div class="cert-drop-zone" :class="{ 'drop-active': certDragOver === 'key' }"
-                   @dragover.prevent="certDragOver = 'key'" @dragleave="certDragOver = null"
-                   @drop.prevent="onCertDrop($event, 'key')">
-                <textarea v-model="certUpload.key" placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----&#10;&#10;Drop a .pem or .key file here"
-                          class="cert-textarea" :class="{ 'cert-valid': certValidation.key === true, 'cert-invalid': certValidation.key === false }"></textarea>
+              <div
+                class="cert-drop-zone"
+                :class="{ 'drop-active': certDragOver === 'key' }"
+                @dragover.prevent="certDragOver = 'key'"
+                @dragleave="certDragOver = null"
+                @drop.prevent="onCertDrop($event, 'key')"
+              >
+                <textarea
+                  v-model="certUpload.key"
+                  placeholder="-----BEGIN PRIVATE KEY-----&#10;...&#10;-----END PRIVATE KEY-----&#10;&#10;Drop a .pem or .key file here"
+                  class="cert-textarea"
+                  :class="{
+                    'cert-valid': certValidation.key === true,
+                    'cert-invalid': certValidation.key === false,
+                  }"
+                ></textarea>
                 <div v-if="certDragOver === 'key'" class="drop-overlay">Drop key file</div>
               </div>
-              <small v-if="certValidation.key === true" class="cert-status cert-status-ok"><i class="pi pi-check-circle"></i> Valid PEM private key</small>
-              <small v-else-if="certValidation.key === false" class="cert-status cert-status-err"><i class="pi pi-times-circle"></i> {{ certValidation.keyError }}</small>
+              <small v-if="certValidation.key === true" class="cert-status cert-status-ok"
+                ><i class="pi pi-check-circle"></i> Valid PEM private key</small
+              >
+              <small v-else-if="certValidation.key === false" class="cert-status cert-status-err"
+                ><i class="pi pi-times-circle"></i> {{ certValidation.keyError }}</small
+              >
             </div>
           </div>
-          <Button label="Upload Certificate" icon="pi pi-upload" data-track="sys-upload-cert"
-                  @click="doUploadCert" :loading="uploadingCert"
-                  :disabled="!certUpload.cert || certValidation.cert === false || certValidation.key === false" />
+          <Button
+            label="Upload Certificate"
+            icon="pi pi-upload"
+            data-track="sys-upload-cert"
+            @click="doUploadCert"
+            :loading="uploadingCert"
+            :disabled="
+              !certUpload.cert || certValidation.cert === false || certValidation.key === false
+            "
+          />
         </div>
       </div>
 
       <div class="setting-group">
         <h3>Reset to Self-Signed</h3>
-        <p class="field-help" style="margin-bottom: 0.75rem;">Generate a new self-signed certificate. Applied immediately to new connections.</p>
-        <Button label="Reset to Self-Signed" icon="pi pi-refresh" severity="secondary" @click="confirmResetCert" :loading="resettingCert" />
+        <p class="field-help" style="margin-bottom: 0.75rem">
+          Generate a new self-signed certificate. Applied immediately to new connections.
+        </p>
+        <Button
+          label="Reset to Self-Signed"
+          icon="pi pi-refresh"
+          severity="secondary"
+          @click="confirmResetCert"
+          :loading="resettingCert"
+        />
       </div>
     </div>
   </div>
@@ -168,7 +260,10 @@ const certValidation = computed(() => {
       result.cert = false;
       result.certError = 'Missing -----END CERTIFICATE-----';
     } else {
-      const body = certText.replace(/-----BEGIN CERTIFICATE-----/g, '').replace(/-----END CERTIFICATE-----/g, '').replace(/\s/g, '');
+      const body = certText
+        .replace(/-----BEGIN CERTIFICATE-----/g, '')
+        .replace(/-----END CERTIFICATE-----/g, '')
+        .replace(/\s/g, '');
       if (!/^[A-Za-z0-9+/=]+$/.test(body) || body.length < 100) {
         result.cert = false;
         result.certError = 'Invalid base64 content';
@@ -178,10 +273,18 @@ const certValidation = computed(() => {
     }
   }
   if (keyText) {
-    const keyHeaders = ['-----BEGIN PRIVATE KEY-----', '-----BEGIN RSA PRIVATE KEY-----', '-----BEGIN EC PRIVATE KEY-----'];
-    const keyFooters = ['-----END PRIVATE KEY-----', '-----END RSA PRIVATE KEY-----', '-----END EC PRIVATE KEY-----'];
-    const hasHeader = keyHeaders.some(h => keyText.startsWith(h));
-    const hasFooter = keyFooters.some(f => keyText.includes(f));
+    const keyHeaders = [
+      '-----BEGIN PRIVATE KEY-----',
+      '-----BEGIN RSA PRIVATE KEY-----',
+      '-----BEGIN EC PRIVATE KEY-----',
+    ];
+    const keyFooters = [
+      '-----END PRIVATE KEY-----',
+      '-----END RSA PRIVATE KEY-----',
+      '-----END EC PRIVATE KEY-----',
+    ];
+    const hasHeader = keyHeaders.some((h) => keyText.startsWith(h));
+    const hasFooter = keyFooters.some((f) => keyText.includes(f));
     if (!hasHeader) {
       result.key = false;
       result.keyError = 'Must start with -----BEGIN PRIVATE KEY----- (or RSA/EC variant)';
@@ -189,7 +292,10 @@ const certValidation = computed(() => {
       result.key = false;
       result.keyError = 'Missing -----END PRIVATE KEY-----';
     } else {
-      const body = keyText.replace(/-----BEGIN [A-Z ]+-----/g, '').replace(/-----END [A-Z ]+-----/g, '').replace(/\s/g, '');
+      const body = keyText
+        .replace(/-----BEGIN [A-Z ]+-----/g, '')
+        .replace(/-----END [A-Z ]+-----/g, '')
+        .replace(/\s/g, '');
       if (!/^[A-Za-z0-9+/=]+$/.test(body) || body.length < 50) {
         result.key = false;
         result.keyError = 'Invalid base64 content';
@@ -202,7 +308,12 @@ const certValidation = computed(() => {
 });
 
 function confirmResetCert() {
-  if (!confirm('Are you sure you want to reset to a self-signed certificate? The current certificate will be replaced and a server restart will be required.')) return;
+  if (
+    !confirm(
+      'Are you sure you want to reset to a self-signed certificate? The current certificate will be replaced and a server restart will be required.',
+    )
+  )
+    return;
   doResetCert();
 }
 
@@ -211,7 +322,9 @@ function onCertDrop(event, field) {
   const file = event.dataTransfer?.files?.[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => { certUpload.value[field] = reader.result; };
+  reader.onload = () => {
+    certUpload.value[field] = reader.result;
+  };
   reader.readAsText(file);
 }
 
@@ -223,8 +336,13 @@ async function doUploadCert() {
       ? await opsStore.uploadCert(keyText, certUpload.value.cert)
       : await opsStore.uploadSignedCert(certUpload.value.cert);
     certUpload.value = { cert: '', key: '' };
-    toast.add({ severity: 'warn', summary: 'Certificate installed', detail: result.message, life: 10000 });
-    await opsStore.fetchCertInfo().then(c => certInfo.value = c);
+    toast.add({
+      severity: 'warn',
+      summary: 'Certificate installed',
+      detail: result.message,
+      life: 10000,
+    });
+    await opsStore.fetchCertInfo().then((c) => (certInfo.value = c));
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Upload failed', detail: apiError(err), life: 5000 });
   } finally {
@@ -237,12 +355,16 @@ async function doGenerateCsr() {
   try {
     const san = csrForm.value.sanText
       .split(/[\n,]/)
-      .map(s => s.trim())
+      .map((s) => s.trim())
       .filter(Boolean);
     const keyProfile = csrForm.value.key_profile;
-    const keyFields = typeof keyProfile === 'number'
-      ? { key_algorithm: 'rsa', key_size: keyProfile }
-      : { key_algorithm: 'ecdsa', curve: keyProfile === 'ecdsa-p384' ? 'secp384r1' : 'prime256v1' };
+    const keyFields =
+      typeof keyProfile === 'number'
+        ? { key_algorithm: 'rsa', key_size: keyProfile }
+        : {
+            key_algorithm: 'ecdsa',
+            curve: keyProfile === 'ecdsa-p384' ? 'secp384r1' : 'prime256v1',
+          };
     const result = await opsStore.generateCsr({
       common_name: csrForm.value.common_name.trim(),
       san,
@@ -254,7 +376,12 @@ async function doGenerateCsr() {
       ...keyFields,
     });
     generatedCsr.value = result.csr;
-    toast.add({ severity: 'success', summary: 'CSR generated', detail: 'Send this CSR to your certificate authority, then upload the signed certificate.', life: 7000 });
+    toast.add({
+      severity: 'success',
+      summary: 'CSR generated',
+      detail: 'Send this CSR to your certificate authority, then upload the signed certificate.',
+      life: 7000,
+    });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'CSR failed', detail: apiError(err), life: 5000 });
   } finally {
@@ -267,7 +394,12 @@ async function copyGeneratedCsr() {
     await navigator.clipboard.writeText(generatedCsr.value);
     toast.add({ severity: 'success', summary: 'CSR copied', life: 2500 });
   } catch {
-    toast.add({ severity: 'warn', summary: 'Copy failed', detail: 'Select the CSR text and copy it manually.', life: 5000 });
+    toast.add({
+      severity: 'warn',
+      summary: 'Copy failed',
+      detail: 'Select the CSR text and copy it manually.',
+      life: 5000,
+    });
   }
 }
 
@@ -275,8 +407,13 @@ async function doResetCert() {
   resettingCert.value = true;
   try {
     const result = await opsStore.resetCert();
-    toast.add({ severity: 'warn', summary: 'Certificate reset', detail: result.message, life: 10000 });
-    await opsStore.fetchCertInfo().then(c => certInfo.value = c);
+    toast.add({
+      severity: 'warn',
+      summary: 'Certificate reset',
+      detail: result.message,
+      life: 10000,
+    });
+    await opsStore.fetchCertInfo().then((c) => (certInfo.value = c));
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Reset failed', detail: apiError(err), life: 5000 });
   } finally {
@@ -285,7 +422,10 @@ async function doResetCert() {
 }
 
 onMounted(() => {
-  opsStore.fetchCertInfo().then(c => certInfo.value = c).catch(() => {});
+  opsStore
+    .fetchCertInfo()
+    .then((c) => (certInfo.value = c))
+    .catch(() => {});
 });
 </script>
 
@@ -421,7 +561,13 @@ onMounted(() => {
   margin-top: 0.4rem;
   font-size: var(--app-fs-xs);
 }
-.cert-status-ok { color: var(--p-green-500); }
-.cert-status-err { color: var(--p-red-500); }
-.w-full { width: 100%; }
+.cert-status-ok {
+  color: var(--p-green-500);
+}
+.cert-status-err {
+  color: var(--p-red-500);
+}
+.w-full {
+  width: 100%;
+}
 </style>

@@ -3,7 +3,12 @@
 // guess with a confidence score. Never throws; unknown → nulls + low/zero
 // confidence (the caller still records the OUI manufacturer separately).
 
-import { OPT60_RULES, OPT55_SIGNATURES, HOSTNAME_RULES, OUI_RULES } from '../data/device-fingerprints.js';
+import {
+  OPT60_RULES,
+  OPT55_SIGNATURES,
+  HOSTNAME_RULES,
+  OUI_RULES,
+} from '../data/device-fingerprints.js';
 
 // Normalize an option-55 list ("1, 3, 6 , 15" or "1:netmask,3:router,...") to a
 // bare comma-joined code list "1,3,6,15".
@@ -11,8 +16,8 @@ export function normalizeOpt55(opt55) {
   if (!opt55) return '';
   const codes = String(opt55)
     .split(',')
-    .map(s => s.trim().split(':')[0].trim())   // tolerate "1:netmask"
-    .filter(s => /^\d+$/.test(s));
+    .map((s) => s.trim().split(':')[0].trim()) // tolerate "1:netmask"
+    .filter((s) => /^\d+$/.test(s));
   return codes.join(',');
 }
 
@@ -28,9 +33,7 @@ function orderedSimilarity(left, right) {
     let diagonal = 0;
     for (let j = 1; j <= b.length; j += 1) {
       const above = previous[j];
-      previous[j] = value === b[j - 1]
-        ? diagonal + 1
-        : Math.max(previous[j], previous[j - 1]);
+      previous[j] = value === b[j - 1] ? diagonal + 1 : Math.max(previous[j], previous[j - 1]);
       diagonal = above;
     }
   }
@@ -38,26 +41,29 @@ function orderedSimilarity(left, right) {
 }
 
 function opt55Candidate(opt55) {
-  const matches = OPT55_SIGNATURES
-    .map(rule => ({ rule, similarity: orderedSimilarity(opt55, rule.fp) }))
-    .sort((a, b) => b.similarity - a.similarity);
+  const matches = OPT55_SIGNATURES.map((rule) => ({
+    rule,
+    similarity: orderedSimilarity(opt55, rule.fp),
+  })).sort((a, b) => b.similarity - a.similarity);
   const best = matches[0];
   const second = matches[1];
   if (!best || best.similarity < 0.85) return null;
 
   // Do not guess when two different OS families are equally plausible. Exact
   // matches are always unambiguous because signatures are curated uniquely.
-  if (best.similarity < 1
-      && second
-      && second.rule.os_family !== best.rule.os_family
-      && best.similarity - second.similarity < 0.08) {
+  if (
+    best.similarity < 1 &&
+    second &&
+    second.rule.os_family !== best.rule.os_family &&
+    best.similarity - second.similarity < 0.08
+  ) {
     return null;
   }
 
   return {
     ...best.rule,
     confidence: Math.round(best.rule.confidence * best.similarity),
-    signal: 'opt55'
+    signal: 'opt55',
   };
 }
 
@@ -68,24 +74,37 @@ function opt55Candidate(opt55) {
 export function classify({ opt55, opt60, hostname, vendor } = {}) {
   const candidates = [];
 
-  if (opt60) for (const r of OPT60_RULES) if (r.test.test(opt60)) candidates.push({ ...r, signal: 'opt60' });
-  if (hostname) for (const r of HOSTNAME_RULES) if (r.test.test(hostname)) candidates.push({ ...r, signal: 'hostname' });
-  if (vendor) for (const r of OUI_RULES) if (r.test.test(vendor)) candidates.push({ ...r, signal: 'vendor' });
+  if (opt60)
+    for (const r of OPT60_RULES) if (r.test.test(opt60)) candidates.push({ ...r, signal: 'opt60' });
+  if (hostname)
+    for (const r of HOSTNAME_RULES)
+      if (r.test.test(hostname)) candidates.push({ ...r, signal: 'hostname' });
+  if (vendor)
+    for (const r of OUI_RULES) if (r.test.test(vendor)) candidates.push({ ...r, signal: 'vendor' });
   if (opt55) {
     const candidate = opt55Candidate(opt55);
     if (candidate) candidates.push(candidate);
   }
 
   // Pick the highest-confidence os_family and device_type independently.
-  let os = null, osConf = 0, dev = null, devConf = 0;
+  let os = null,
+    osConf = 0,
+    dev = null,
+    devConf = 0;
   for (const c of candidates) {
-    if (c.os_family && c.confidence > osConf) { os = c.os_family; osConf = c.confidence; }
-    if (c.device_type && c.confidence > devConf) { dev = c.device_type; devConf = c.confidence; }
+    if (c.os_family && c.confidence > osConf) {
+      os = c.os_family;
+      osConf = c.confidence;
+    }
+    if (c.device_type && c.confidence > devConf) {
+      dev = c.device_type;
+      devConf = c.confidence;
+    }
   }
 
   let confidence = Math.max(osConf, devConf);
   // Agreement boost: two+ independent signals naming the same OS family.
-  if (os && new Set(candidates.filter(c => c.os_family === os).map(c => c.signal)).size >= 2) {
+  if (os && new Set(candidates.filter((c) => c.os_family === os).map((c) => c.signal)).size >= 2) {
     confidence = Math.min(100, confidence + 10);
   }
 

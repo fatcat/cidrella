@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { gatewayIpFromPosition, ipToLong, longToIp, normalizeGatewayPositionDefault, parseCidr } from '../../../src/utils/ip.js';
+import {
+  gatewayIpFromPosition,
+  ipToLong,
+  longToIp,
+  normalizeGatewayPositionDefault,
+  parseCidr,
+} from '../../../src/utils/ip.js';
 
 // Client-side IP utils mirror server-side. These tests catch drift
 

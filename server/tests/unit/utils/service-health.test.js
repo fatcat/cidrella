@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { testExports } from '../../../src/utils/service-health.js';
 
-const {
-  parseSystemctlShow,
-  parseJournalLine,
-  classifyJournalLine,
-  findRecentCrash,
-} = testExports;
+const { parseSystemctlShow, parseJournalLine, classifyJournalLine, findRecentCrash } = testExports;
 
 describe('service health parsing', () => {
   it('parses systemctl show key-value output', () => {
@@ -18,14 +13,19 @@ describe('service health parsing', () => {
   });
 
   it('parses short-iso journal lines', () => {
-    expect(parseJournalLine('2026-05-29T12:30:00-0400 testerella node[123]: FATAL ERROR: Reached heap limit')).toEqual({
+    expect(
+      parseJournalLine(
+        '2026-05-29T12:30:00-0400 testerella node[123]: FATAL ERROR: Reached heap limit',
+      ),
+    ).toEqual({
       timestamp: '2026-05-29T12:30:00-0400',
       message: 'node[123]: FATAL ERROR: Reached heap limit',
     });
   });
 
   it('classifies Node heap OOM lines', () => {
-    const line = '2026-05-29T12:30:00-0400 testerella node[123]: FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory';
+    const line =
+      '2026-05-29T12:30:00-0400 testerella node[123]: FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory';
     expect(classifyJournalLine(line)).toMatchObject({
       type: 'oom',
       timestamp: '2026-05-29T12:30:00-0400',

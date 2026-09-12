@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [vue()],
   resolve: { alias: sharedAlias },
   define: {
-    'import.meta.env.VITE_TRACKING': JSON.stringify(process.env.VITE_TRACKING === '1')
+    'import.meta.env.VITE_TRACKING': JSON.stringify(process.env.VITE_TRACKING === '1'),
   },
   server: {
     // The @shared alias resolves outside client/, so the dev server has to be
@@ -16,8 +16,8 @@ export default defineConfig({
       '/api': {
         target: 'https://localhost:8443',
         secure: false,
-        changeOrigin: true
-      }
-    }
-  }
+        changeOrigin: true,
+      },
+    },
+  },
 });

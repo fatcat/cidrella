@@ -10,7 +10,9 @@
 // fields, but deliberately leave `acknowledged` untouched, a persistent rogue
 // stays silenced once acknowledged; clearing the event re-arms it.
 export function upsertRogueEvent(db, ev) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     INSERT INTO rogue_dhcp_events
       (server_ip, server_mac, server_identifier, offered_ip, offered_gateway,
        offered_dns, offered_subnet_mask, relay_ip, iface)
@@ -26,17 +28,19 @@ export function upsertRogueEvent(db, ev) {
       offered_subnet_mask = excluded.offered_subnet_mask,
       relay_ip            = excluded.relay_ip,
       iface               = excluded.iface
-  `).run({
-    server_ip: ev.server_ip,
-    server_mac: ev.server_mac || '',
-    server_identifier: ev.server_identifier ?? null,
-    offered_ip: ev.offered_ip ?? null,
-    offered_gateway: ev.offered_gateway ?? null,
-    offered_dns: ev.offered_dns ?? null,
-    offered_subnet_mask: ev.offered_subnet_mask ?? null,
-    relay_ip: ev.relay_ip ?? null,
-    iface: ev.iface ?? null,
-  });
+  `,
+    )
+    .run({
+      server_ip: ev.server_ip,
+      server_mac: ev.server_mac || '',
+      server_identifier: ev.server_identifier ?? null,
+      offered_ip: ev.offered_ip ?? null,
+      offered_gateway: ev.offered_gateway ?? null,
+      offered_dns: ev.offered_dns ?? null,
+      offered_subnet_mask: ev.offered_subnet_mask ?? null,
+      relay_ip: ev.relay_ip ?? null,
+      iface: ev.iface ?? null,
+    });
 }
 
 export function listEvents(db) {
@@ -44,15 +48,19 @@ export function listEvents(db) {
 }
 
 export function acknowledgeEvent(db, id) {
-  return db.prepare(
-    "UPDATE rogue_dhcp_events SET acknowledged = 1, acknowledged_at = datetime('now') WHERE id = ?"
-  ).run(id);
+  return db
+    .prepare(
+      "UPDATE rogue_dhcp_events SET acknowledged = 1, acknowledged_at = datetime('now') WHERE id = ?",
+    )
+    .run(id);
 }
 
 export function acknowledgeAll(db) {
-  return db.prepare(
-    "UPDATE rogue_dhcp_events SET acknowledged = 1, acknowledged_at = datetime('now') WHERE acknowledged = 0"
-  ).run();
+  return db
+    .prepare(
+      "UPDATE rogue_dhcp_events SET acknowledged = 1, acknowledged_at = datetime('now') WHERE acknowledged = 0",
+    )
+    .run();
 }
 
 export function clearEvent(db, id) {
@@ -70,9 +78,11 @@ export function listAuthorized(db) {
 }
 
 export function addAuthorized(db, { server_ip, server_mac, description }) {
-  return db.prepare(
-    'INSERT OR IGNORE INTO dhcp_authorized_servers (server_ip, server_mac, description) VALUES (?, ?, ?)'
-  ).run(server_ip, server_mac || null, description || null);
+  return db
+    .prepare(
+      'INSERT OR IGNORE INTO dhcp_authorized_servers (server_ip, server_mac, description) VALUES (?, ?, ?)',
+    )
+    .run(server_ip, server_mac || null, description || null);
 }
 
 export function deleteAuthorized(db, id) {
@@ -83,5 +93,5 @@ export function deleteAuthorized(db, id) {
 // IPs are added separately by the probe via getSelfIps()).
 export function authorizedIpSet(db) {
   const rows = db.prepare('SELECT server_ip FROM dhcp_authorized_servers').all();
-  return new Set(rows.map(r => r.server_ip.trim().toLowerCase()));
+  return new Set(rows.map((r) => r.server_ip.trim().toLowerCase()));
 }

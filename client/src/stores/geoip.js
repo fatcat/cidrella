@@ -90,9 +90,21 @@ export const useGeoipStore = defineStore('geoip', () => {
   }
 
   return {
-    rules, ipAllowlist, status, stats, loading,
-    fetchStatus, fetchRules, addRules, toggleRule, deleteRule,
-    updateSettings, refreshDb, fetchStats,
-    fetchIpAllowlist, addIpAllow, removeIpAllow
+    rules,
+    ipAllowlist,
+    status,
+    stats,
+    loading,
+    fetchStatus,
+    fetchRules,
+    addRules,
+    toggleRule,
+    deleteRule,
+    updateSettings,
+    refreshDb,
+    fetchStats,
+    fetchIpAllowlist,
+    addIpAllow,
+    removeIpAllow,
   };
 });

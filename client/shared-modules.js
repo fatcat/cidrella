@@ -20,5 +20,5 @@ import { fileURLToPath, URL } from 'node:url';
  * copies of the alias is exactly the drift pair this whole effort is about.
  */
 export const sharedAlias = {
-  '@shared': fileURLToPath(new URL('../server/src/utils', import.meta.url))
+  '@shared': fileURLToPath(new URL('../server/src/utils', import.meta.url)),
 };

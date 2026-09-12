@@ -10,19 +10,40 @@
           <div class="form-grid" style="margin-top: 0.5rem">
             <div class="field">
               <label>Pi-hole URL</label>
-              <InputText v-model="piholeUrl" placeholder="http://pihole.local" class="w-full"
-                         :class="{ 'pihole-reachable': probeStatus === 'ok', 'pihole-unreachable': probeStatus === 'fail' }" />
+              <InputText
+                v-model="piholeUrl"
+                placeholder="http://pihole.local"
+                class="w-full"
+                :class="{
+                  'pihole-reachable': probeStatus === 'ok',
+                  'pihole-unreachable': probeStatus === 'fail',
+                }"
+              />
               <small v-if="probeStatus === 'fail'" class="field-error">{{ probeError }}</small>
-              <small v-if="probeStatus === 'ok' && needsPassword && !piholePassword" class="field-warn">Password required</small>
+              <small
+                v-if="probeStatus === 'ok' && needsPassword && !piholePassword"
+                class="field-warn"
+                >Password required</small
+              >
             </div>
             <div class="field">
               <label>Password (optional)</label>
-              <InputText v-model="piholePassword" type="password" class="w-full" placeholder="Leave empty if none" />
+              <InputText
+                v-model="piholePassword"
+                type="password"
+                class="w-full"
+                placeholder="Leave empty if none"
+              />
             </div>
             <div class="field" style="text-align: right">
-              <Button label="Connect" icon="pi pi-download" size="small"
-                      @click="fetchConfig" :loading="fetching"
-                      :disabled="probeStatus !== 'ok' || (needsPassword && !piholePassword)" />
+              <Button
+                label="Connect"
+                icon="pi pi-download"
+                size="small"
+                @click="fetchConfig"
+                :loading="fetching"
+                :disabled="probeStatus !== 'ok' || (needsPassword && !piholePassword)"
+              />
             </div>
           </div>
         </TabPanel>
@@ -33,8 +54,13 @@
               <input type="file" accept=".toml" @change="onFileSelect" ref="fileInput" />
             </div>
             <div class="field" style="text-align: right" v-if="fileContent">
-              <Button label="Parse" icon="pi pi-cog" size="small"
-                      @click="parseFile" :loading="parsing" />
+              <Button
+                label="Parse"
+                icon="pi pi-cog"
+                size="small"
+                @click="parseFile"
+                :loading="parsing"
+              />
             </div>
           </div>
         </TabPanel>
@@ -63,9 +89,12 @@
     <div v-if="importResults" class="pihole-results">
       <Message severity="success" :closable="false">
         Import complete:
-        {{ importResults.a.created }} A created<template v-if="importResults.a.updated">, {{ importResults.a.updated }} updated</template>;
-        {{ importResults.cname.created }} CNAME created<template v-if="importResults.cname.updated">, {{ importResults.cname.updated }} updated</template>;
-        {{ importResults.dhcp.created }} DHCP created
+        {{ importResults.a.created }} A created<template v-if="importResults.a.updated"
+          >, {{ importResults.a.updated }} updated</template
+        >; {{ importResults.cname.created }} CNAME created<template
+          v-if="importResults.cname.updated"
+          >, {{ importResults.cname.updated }} updated</template
+        >; {{ importResults.dhcp.created }} DHCP created
         <template v-if="importResults.dhcp.noSubnet > 0">
           ({{ importResults.dhcp.noSubnet }} DHCP skipped: no matching subnet)
         </template>
@@ -74,11 +103,15 @@
 
     <div class="import-actions">
       <Button v-if="showCancel" label="Cancel" severity="secondary" @click="$emit('cancel')" />
-      <Button v-if="!importResults" label="Import" icon="pi pi-download"
-              @click="executeImport" :loading="importing"
-              :disabled="!preview" />
-      <Button v-else label="Reset" icon="pi pi-refresh" severity="secondary"
-              @click="resetState" />
+      <Button
+        v-if="!importResults"
+        label="Import"
+        icon="pi pi-download"
+        @click="executeImport"
+        :loading="importing"
+        :disabled="!preview"
+      />
+      <Button v-else label="Reset" icon="pi pi-refresh" severity="secondary" @click="resetState" />
     </div>
   </div>
 </template>
@@ -96,7 +129,7 @@ import TabPanel from '../ui/TabPanel.js';
 import { usePiholeImport } from '../composables/usePiholeImport.js';
 
 defineProps({
-  showCancel: { type: Boolean, default: false }
+  showCancel: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['imported', 'cancel']);
@@ -105,10 +138,24 @@ const toast = useToast();
 // All of this used to live here and again, inline, in NetworkDialogs.vue's
 // wizard step 3. See composables/usePiholeImport.js and audit #47.
 const {
-  tab: piholeTab, url: piholeUrl, password: piholePassword,
-  probeStatus, probeError, needsPassword,
-  fetching, parsing, importing, preview, importResults, fileContent, fileInput,
-  fetchConfig, onFileSelect, parseFile, executeImport, resetState,
+  tab: piholeTab,
+  url: piholeUrl,
+  password: piholePassword,
+  probeStatus,
+  probeError,
+  needsPassword,
+  fetching,
+  parsing,
+  importing,
+  preview,
+  importResults,
+  fileContent,
+  fileInput,
+  fetchConfig,
+  onFileSelect,
+  parseFile,
+  executeImport,
+  resetState,
 } = usePiholeImport({ toast, onImported: () => emit('imported') });
 
 defineExpose({ resetState });

@@ -21,11 +21,15 @@
         <span class="stat-label">Queries / min</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ proxyStats ? proxyStats.cacheHitRate + '%' : EMPTY_CELL }}</span>
+        <span class="stat-value">{{
+          proxyStats ? proxyStats.cacheHitRate + '%' : EMPTY_CELL
+        }}</span>
         <span class="stat-label">Cache Hit Rate</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ proxyStats ? (proxyStats.avgLatency / 1000).toFixed(2) + ' ms' : EMPTY_CELL }}</span>
+        <span class="stat-value">{{
+          proxyStats ? (proxyStats.avgLatency / 1000).toFixed(2) + ' ms' : EMPTY_CELL
+        }}</span>
         <span class="stat-label">Avg Latency</span>
       </div>
       <div class="stat">
@@ -43,18 +47,45 @@
     <div class="dashboard-content">
       <!-- Time Range -->
       <div class="range-bar">
-        <Select v-model="selectedRange" :options="rangeOptions" optionLabel="label" optionValue="value"
-                size="small" style="width: 10rem" @change="refreshAll" />
-        <Button icon="pi pi-refresh" size="small" text rounded @click="refreshAll" :loading="store.loading" title="Refresh" />
+        <Select
+          v-model="selectedRange"
+          :options="rangeOptions"
+          optionLabel="label"
+          optionValue="value"
+          size="small"
+          style="width: 10rem"
+          @change="refreshAll"
+        />
+        <Button
+          icon="pi pi-refresh"
+          size="small"
+          text
+          rounded
+          @click="refreshAll"
+          :loading="store.loading"
+          title="Refresh"
+        />
       </div>
 
-      <LineChartCard title="DNS Requests Over Time" :data="dnsRequestsData" :options="dnsRequestsOptions" />
+      <LineChartCard
+        title="DNS Requests Over Time"
+        :data="dnsRequestsData"
+        :options="dnsRequestsOptions"
+      />
 
-      <LineChartCard title="Proxy Query Latency" :data="latencyData" :options="latencyOptions"
-                     emptyText="No proxy latency data in this range." />
+      <LineChartCard
+        title="Proxy Query Latency"
+        :data="latencyData"
+        :options="latencyOptions"
+        emptyText="No proxy latency data in this range."
+      />
 
-      <LineChartCard title="Query Throughput" :data="throughputData" :options="throughputOptions"
-                     emptyText="No query throughput data in this range." />
+      <LineChartCard
+        title="Query Throughput"
+        :data="throughputData"
+        :options="throughputOptions"
+        emptyText="No query throughput data in this range."
+      />
 
       <!-- Process Resources -->
       <div class="chart-card">
@@ -64,14 +95,22 @@
             <div class="gauge-group">
               <div class="gauge-item">
                 <div class="gauge-wrap">
-                  <Doughnut :data="cpuGaugeData" :options="gaugeOptions" :plugins="[gaugeCenterText]" />
+                  <Doughnut
+                    :data="cpuGaugeData"
+                    :options="gaugeOptions"
+                    :plugins="[gaugeCenterText]"
+                  />
                   <span class="gauge-value">{{ processCpuPercent.toFixed(1) }}%</span>
                 </div>
                 <span class="gauge-label">CPU</span>
               </div>
               <div class="gauge-item">
                 <div class="gauge-wrap">
-                  <Doughnut :data="memGaugeData" :options="gaugeOptions" :plugins="[gaugeCenterText]" />
+                  <Doughnut
+                    :data="memGaugeData"
+                    :options="gaugeOptions"
+                    :plugins="[gaugeCenterText]"
+                  />
                   <span class="gauge-value">{{ latestPerf?.rss_mb?.toFixed(0) ?? '0' }} MB</span>
                 </div>
                 <span class="gauge-label">Memory</span>
@@ -87,15 +126,26 @@
         </div>
       </div>
 
-      <LineChartCard title="Cache Performance" :data="cacheData" :options="cacheOptions"
-                     emptyText="No cache data in this range." />
+      <LineChartCard
+        title="Cache Performance"
+        :data="cacheData"
+        :options="cacheOptions"
+        emptyText="No cache data in this range."
+      />
 
-      <LineChartCard title="CIDRella Process Memory" :data="memoryData" :options="memoryOptions"
-                     emptyText="No memory data in this range." />
+      <LineChartCard
+        title="CIDRella Process Memory"
+        :data="memoryData"
+        :options="memoryOptions"
+        emptyText="No memory data in this range."
+      />
 
-      <LineChartCard title="CIDRella Process CPU" :data="cpuData" :options="cpuOptions"
-                     emptyText="No CPU data in this range." />
-
+      <LineChartCard
+        title="CIDRella Process CPU"
+        :data="cpuData"
+        :options="cpuOptions"
+        emptyText="No CPU data in this range."
+      />
     </div>
   </div>
 </template>
@@ -108,8 +158,15 @@ import Select from '../ui/Select.js';
 import Button from '../ui/Button.js';
 import {
   Chart as ChartJS,
-  CategoryScale, LinearScale, PointElement, LineElement,
-  ArcElement, Title, Tooltip, Legend, Filler
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
 } from 'chart.js';
 import { Line, Doughnut } from 'vue-chartjs';
 import { useDashboardStore } from '../stores/dashboard.js';
@@ -119,8 +176,15 @@ import LineChartCard from '../components/LineChartCard.vue';
 import '../assets/analytics-layout.css';
 
 ChartJS.register(
-  CategoryScale, LinearScale, PointElement, LineElement,
-  ArcElement, Title, Tooltip, Legend, Filler
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend,
+  Filler,
 );
 ChartJS.defaults.elements.line.borderWidth = 1;
 
@@ -147,17 +211,18 @@ const proxyStats = computed(() => {
   const totalHits = pp.reduce((s, r) => s + (r.cache_hits || 0), 0);
   const totalMisses = pp.reduce((s, r) => s + (r.cache_misses || 0), 0);
   const totalLookups = totalHits + totalMisses;
-  const cacheHitRate = totalLookups > 0 ? Math.round(totalHits / totalLookups * 100) : 0;
+  const cacheHitRate = totalLookups > 0 ? Math.round((totalHits / totalLookups) * 100) : 0;
 
-  const withLatency = pp.filter(r => r.latency_avg != null);
-  const avgLatency = withLatency.length > 0
-    ? Math.round(withLatency.reduce((s, r) => s + r.latency_avg, 0) / withLatency.length)
-    : 0;
+  const withLatency = pp.filter((r) => r.latency_avg != null);
+  const avgLatency =
+    withLatency.length > 0
+      ? Math.round(withLatency.reduce((s, r) => s + r.latency_avg, 0) / withLatency.length)
+      : 0;
 
   const timeouts = pp.reduce((s, r) => s + (r.timeouts || 0), 0);
   const totalQueries = pp.reduce((s, r) => s + (r.query_count || 0), 0);
   const queriesPerMin = pp.length > 0 ? Math.round(totalQueries / pp.length) : 0;
-  const peakPending = Math.max(0, ...pp.map(r => r.pending_queries || 0));
+  const peakPending = Math.max(0, ...pp.map((r) => r.pending_queries || 0));
 
   return { cacheHitRate, avgLatency, timeouts, queriesPerMin, peakPending };
 });
@@ -167,13 +232,24 @@ const dnsRequestsData = computed(() => {
   const ts = store.timeseries;
   if (!ts.length) return null;
   return {
-    labels: ts.map(r => formatTs(r.ts)),
+    labels: ts.map((r) => formatTs(r.ts)),
     datasets: [
       {
-        ...lineDataset({ label: 'DNS Queries', data: ts.map(r => r.dns_queries), color: 1, fill: true }),
+        ...lineDataset({
+          label: 'DNS Queries',
+          data: ts.map((r) => r.dns_queries),
+          color: 1,
+          fill: true,
+        }),
       },
       {
-        ...lineDataset({ label: 'DHCP Requests', data: ts.map(r => r.dhcp_requests), color: 2, fill: true, alpha: 0.12 }),
+        ...lineDataset({
+          label: 'DHCP Requests',
+          data: ts.map((r) => r.dhcp_requests),
+          color: 2,
+          fill: true,
+          alpha: 0.12,
+        }),
       },
     ],
   };
@@ -186,35 +262,61 @@ const latencyData = computed(() => {
   const pp = store.proxyPerf;
   if (!pp.length) return null;
   return {
-    labels: pp.map(r => formatTs(r.ts)),
+    labels: pp.map((r) => formatTs(r.ts)),
     datasets: [
       {
-        ...lineDataset({ label: 'Avg', data: pp.map(r => (r.latency_avg || 0) / 1000), color: 1 }),
+        ...lineDataset({
+          label: 'Avg',
+          data: pp.map((r) => (r.latency_avg || 0) / 1000),
+          color: 1,
+        }),
       },
       {
-        ...lineDataset({ label: 'P95', data: pp.map(r => (r.latency_p95 || 0) / 1000), color: 'warn' }),
+        ...lineDataset({
+          label: 'P95',
+          data: pp.map((r) => (r.latency_p95 || 0) / 1000),
+          color: 'warn',
+        }),
       },
       {
-        ...lineDataset({ label: 'Max', data: pp.map(r => (r.latency_max || 0) / 1000), color: 'err' }),
+        ...lineDataset({
+          label: 'Max',
+          data: pp.map((r) => (r.latency_max || 0) / 1000),
+          color: 'err',
+        }),
       },
     ],
   };
 });
 
-const latencyOptions = makeLineOptions({ yLabel: 'ms', tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? EMPTY_CELL} ms` });
+const latencyOptions = makeLineOptions({
+  yLabel: 'ms',
+  tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? EMPTY_CELL} ms`,
+});
 
 // ── Query Throughput ───────────────────────────────────
 const throughputData = computed(() => {
   const pp = store.proxyPerf;
   if (!pp.length) return null;
   return {
-    labels: pp.map(r => formatTs(r.ts)),
+    labels: pp.map((r) => formatTs(r.ts)),
     datasets: [
       {
-        ...lineDataset({ label: 'Queries / min', data: pp.map(r => r.query_count || 0), color: 1, fill: true }),
+        ...lineDataset({
+          label: 'Queries / min',
+          data: pp.map((r) => r.query_count || 0),
+          color: 1,
+          fill: true,
+        }),
       },
       {
-        ...lineDataset({ label: 'Timeouts', data: pp.map(r => r.timeouts || 0), color: 'err', fill: true, alpha: 0.12 }),
+        ...lineDataset({
+          label: 'Timeouts',
+          data: pp.map((r) => r.timeouts || 0),
+          color: 'err',
+          fill: true,
+          alpha: 0.12,
+        }),
       },
     ],
   };
@@ -227,16 +329,31 @@ const resourceData = computed(() => {
   const pp = store.proxyPerf;
   if (!pp.length) return null;
   return {
-    labels: pp.map(r => formatTs(r.ts)),
+    labels: pp.map((r) => formatTs(r.ts)),
     datasets: [
       {
-        ...lineDataset({ label: 'RSS (MB)', data: pp.map(r => r.rss_mb), color: 1, yAxisID: 'y' }),
+        ...lineDataset({
+          label: 'RSS (MB)',
+          data: pp.map((r) => r.rss_mb),
+          color: 1,
+          yAxisID: 'y',
+        }),
       },
       {
-        ...lineDataset({ label: 'Heap (MB)', data: pp.map(r => r.heap_mb), color: 2, yAxisID: 'y' }),
+        ...lineDataset({
+          label: 'Heap (MB)',
+          data: pp.map((r) => r.heap_mb),
+          color: 2,
+          yAxisID: 'y',
+        }),
       },
       {
-        ...lineDataset({ label: 'CPU %', data: pp.map(r => normalizeProcessCpuPercent(r)), color: 7, yAxisID: 'y1' }),
+        ...lineDataset({
+          label: 'CPU %',
+          data: pp.map((r) => normalizeProcessCpuPercent(r)),
+          color: 7,
+          yAxisID: 'y1',
+        }),
       },
     ],
   };
@@ -264,7 +381,7 @@ const latestPerf = computed(() => {
 const systemMemoryTotalMb = computed(() => {
   const totalBytes = store.systemHealth?.memory?.total;
   if (totalBytes) return totalBytes / 1048576;
-  const observedPeak = Math.max(0, ...store.proxyPerf.map(r => r.rss_mb || 0));
+  const observedPeak = Math.max(0, ...store.proxyPerf.map((r) => r.rss_mb || 0));
   return Math.max(512, observedPeak * 1.25);
 });
 
@@ -277,11 +394,16 @@ const cpuGaugeData = computed(() => {
   const clamped = Math.min(100, Math.max(0, val));
   return {
     labels: ['CPU', ''],
-    datasets: [{
-      data: [clamped, 100 - clamped],
-      backgroundColor: [clamped > 80 ? chartColor('err') : clamped > 50 ? chartColor('warn') : chartColor('ok'), chartColor('track')],
-      borderWidth: 0,
-    }],
+    datasets: [
+      {
+        data: [clamped, 100 - clamped],
+        backgroundColor: [
+          clamped > 80 ? chartColor('err') : clamped > 50 ? chartColor('warn') : chartColor('ok'),
+          chartColor('track'),
+        ],
+        borderWidth: 0,
+      },
+    ],
   };
 });
 
@@ -291,11 +413,16 @@ const memGaugeData = computed(() => {
   const pct = Math.min(100, (rss / cap) * 100);
   return {
     labels: ['Memory', ''],
-    datasets: [{
-      data: [pct, 100 - pct],
-      backgroundColor: [pct > 80 ? chartColor('err') : pct > 50 ? chartColor('warn') : chartColor(1), chartColor('track')],
-      borderWidth: 0,
-    }],
+    datasets: [
+      {
+        data: [pct, 100 - pct],
+        backgroundColor: [
+          pct > 80 ? chartColor('err') : pct > 50 ? chartColor('warn') : chartColor(1),
+          chartColor('track'),
+        ],
+        borderWidth: 0,
+      },
+    ],
   };
 });
 
@@ -320,13 +447,23 @@ const cacheData = computed(() => {
   const pp = store.proxyPerf;
   if (!pp.length) return null;
   return {
-    labels: pp.map(r => formatTs(r.ts)),
+    labels: pp.map((r) => formatTs(r.ts)),
     datasets: [
       {
-        ...lineDataset({ label: 'Hits', data: pp.map(r => r.cache_hits || 0), color: 'ok', fill: true }),
+        ...lineDataset({
+          label: 'Hits',
+          data: pp.map((r) => r.cache_hits || 0),
+          color: 'ok',
+          fill: true,
+        }),
       },
       {
-        ...lineDataset({ label: 'Misses', data: pp.map(r => r.cache_misses || 0), color: 'warn', fill: true }),
+        ...lineDataset({
+          label: 'Misses',
+          data: pp.map((r) => r.cache_misses || 0),
+          color: 'warn',
+          fill: true,
+        }),
       },
     ],
   };
@@ -339,35 +476,46 @@ const memoryData = computed(() => {
   const pp = store.proxyPerf;
   if (!pp.length) return null;
   return {
-    labels: pp.map(r => formatTs(r.ts)),
+    labels: pp.map((r) => formatTs(r.ts)),
     datasets: [
       {
-        ...lineDataset({ label: 'RSS', data: pp.map(r => r.rss_mb), color: 1, fill: true }),
+        ...lineDataset({ label: 'RSS', data: pp.map((r) => r.rss_mb), color: 1, fill: true }),
       },
       {
-        ...lineDataset({ label: 'Heap', data: pp.map(r => r.heap_mb), color: 2, fill: true }),
+        ...lineDataset({ label: 'Heap', data: pp.map((r) => r.heap_mb), color: 2, fill: true }),
       },
     ],
   };
 });
 
-const memoryOptions = makeLineOptions({ yLabel: 'MB', tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? EMPTY_CELL} MB` });
+const memoryOptions = makeLineOptions({
+  yLabel: 'MB',
+  tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? EMPTY_CELL} MB`,
+});
 
 // ── CPU Usage ──────────────────────────────────────────
 const cpuData = computed(() => {
   const pp = store.proxyPerf;
   if (!pp.length) return null;
   return {
-    labels: pp.map(r => formatTs(r.ts)),
+    labels: pp.map((r) => formatTs(r.ts)),
     datasets: [
       {
-        ...lineDataset({ label: 'CPU %', data: pp.map(r => normalizeProcessCpuPercent(r)), color: 7, fill: true }),
+        ...lineDataset({
+          label: 'CPU %',
+          data: pp.map((r) => normalizeProcessCpuPercent(r)),
+          color: 7,
+          fill: true,
+        }),
       },
     ],
   };
 });
 
-const cpuOptions = makeLineOptions({ yLabel: '%', tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? EMPTY_CELL}%` });
+const cpuOptions = makeLineOptions({
+  yLabel: '%',
+  tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? EMPTY_CELL}%`,
+});
 
 // ── Data fetching ──────────────────────────────────────
 async function refreshAll() {

@@ -10,7 +10,9 @@ beforeAll(async () => {
   const setup = await setupTestDb();
   db = setup.db;
   tmpDir = setup.tmpDir;
-  db.prepare("INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length, total_addresses, status) VALUES ('10.0.1.0/24', 'Test', '10.0.1.0', '10.0.1.255', 24, 256, 'allocated')").run();
+  db.prepare(
+    "INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length, total_addresses, status) VALUES ('10.0.1.0/24', 'Test', '10.0.1.0', '10.0.1.255', 24, 256, 'allocated')",
+  ).run();
   subnetId = db.prepare("SELECT id FROM subnets WHERE cidr = '10.0.1.0/24'").get().id;
 });
 
@@ -41,7 +43,7 @@ describe('scan run ownership', () => {
       ip: '10.0.1.10',
       mac: 'aa:bb:cc:dd:ee:ff',
       responded: true,
-      isConflict: false
+      isConflict: false,
     });
     ScanRun.updateProgress(db, scanId, { scannedIps: 1, conflictsFound: 0 });
     ScanRun.markCompleted(db, scanId, { scannedIps: 1, conflictsFound: 0 });
@@ -58,9 +60,11 @@ describe('scan run ownership', () => {
   it('invalidates a scan when its operating-network topology changes', () => {
     const scanId = ScanRun.createPending(db, subnetId);
     expect(ScanRun.targetIsCurrent(db, scanId)).toBe(true);
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE subnets SET topology_revision = topology_revision + 1 WHERE id = ?
-    `).run(subnetId);
+    `,
+    ).run(subnetId);
     expect(ScanRun.targetIsCurrent(db, scanId)).toBe(false);
 
     const replacement = ScanRun.createPending(db, subnetId);

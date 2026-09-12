@@ -27,7 +27,10 @@ const isAddress = (v) => isValidIpv4(String(v ?? '').trim());
  */
 export async function resolveHostname(value, api, toast) {
   if (!value || isAddress(value)) return value;
-  const parts = value.split(',').map(s => s.trim()).filter(Boolean);
+  const parts = value
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const resolved = [];
   for (const part of parts) {
     if (isAddress(part)) {
@@ -53,11 +56,17 @@ export async function resolveHostname(value, api, toast) {
  */
 export function placeholderForType(type) {
   switch (type) {
-    case 'ip': return 'e.g. 192.168.1.1';
-    case 'ip-list': return 'e.g. 192.168.1.1, 192.168.1.2';
-    case 'text': return 'Value';
-    case 'text-list': return 'e.g. domain1.com, domain2.com';
-    case 'number': return '0';
-    default: return '';
+    case 'ip':
+      return 'e.g. 192.168.1.1';
+    case 'ip-list':
+      return 'e.g. 192.168.1.1, 192.168.1.2';
+    case 'text':
+      return 'Value';
+    case 'text-list':
+      return 'e.g. domain1.com, domain2.com';
+    case 'number':
+      return '0';
+    default:
+      return '';
   }
 }

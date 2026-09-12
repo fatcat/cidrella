@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parseIp, canonicalizeIp, sortKey, addressFamily,
-  isValidIp, isValidIpv6, IPV4_BITS, IPV6_BITS
+  parseIp,
+  canonicalizeIp,
+  sortKey,
+  addressFamily,
+  isValidIp,
+  isValidIpv6,
+  IPV4_BITS,
+  IPV6_BITS,
 } from '../../../src/utils/address.js';
 import { ipToLong, longToIp } from '../../../src/utils/ip.js';
 
@@ -38,7 +44,11 @@ describe('parseIp', () => {
   });
 
   it('strips a zone id and reports it separately', () => {
-    expect(parseIp('fe80::1%eth0')).toEqual({ value: parseIp('fe80::1').value, bits: 128, zoneId: 'eth0' });
+    expect(parseIp('fe80::1%eth0')).toEqual({
+      value: parseIp('fe80::1').value,
+      bits: 128,
+      zoneId: 'eth0',
+    });
     expect(parseIp('fe80::1%')).toBeNull();
     // A zone id on a v4 literal is meaningless, so it is refused rather than
     // quietly ignored.
@@ -102,8 +112,17 @@ describe('formatIp: RFC 5952', () => {
   });
 
   it('round-trips every canonical form back to itself', () => {
-    for (const s of ['::', '::1', '2001:db8::1', '1:2:3:4:5:6:7:8',
-      '1:2:3:4:5:0:7:8', '1::2:0:0:3:4', 'fe80::1', '10.0.0.1', '0.0.0.0']) {
+    for (const s of [
+      '::',
+      '::1',
+      '2001:db8::1',
+      '1:2:3:4:5:6:7:8',
+      '1:2:3:4:5:0:7:8',
+      '1::2:0:0:3:4',
+      'fe80::1',
+      '10.0.0.1',
+      '0.0.0.0',
+    ]) {
       expect(canonicalizeIp(canonicalizeIp(s)), s).toBe(canonicalizeIp(s));
     }
   });
@@ -131,26 +150,29 @@ describe('addressFamily / validators', () => {
 describe('sortKey', () => {
   it('is fixed width so byte order equals numeric order', () => {
     const keys = ['10.0.0.1', '2001:db8::1', '::1'].map(sortKey);
-    expect(new Set(keys.map(k => k.length)).size).toBe(1);
+    expect(new Set(keys.map((k) => k.length)).size).toBe(1);
     expect(keys[0]).toHaveLength(33);
   });
 
   it('orders v4 numerically, not lexically', () => {
     // The bug a plain string sort gives: '9.x' after '10.x'.
-    const sorted = ['10.0.0.2', '9.255.255.255', '10.0.0.1']
-      .sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : 1));
+    const sorted = ['10.0.0.2', '9.255.255.255', '10.0.0.1'].sort((a, b) =>
+      sortKey(a) < sortKey(b) ? -1 : 1,
+    );
     expect(sorted).toEqual(['9.255.255.255', '10.0.0.1', '10.0.0.2']);
   });
 
   it('orders v6 numerically', () => {
-    const sorted = ['2001:db8::10', '2001:db8::2', '::1']
-      .sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : 1));
+    const sorted = ['2001:db8::10', '2001:db8::2', '::1'].sort((a, b) =>
+      sortKey(a) < sortKey(b) ? -1 : 1,
+    );
     expect(sorted).toEqual(['::1', '2001:db8::2', '2001:db8::10']);
   });
 
   it('keeps the families apart rather than interleaving', () => {
-    const sorted = ['2001:db8::1', '10.0.0.1', '::1', '255.255.255.255']
-      .sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : 1));
+    const sorted = ['2001:db8::1', '10.0.0.1', '::1', '255.255.255.255'].sort((a, b) =>
+      sortKey(a) < sortKey(b) ? -1 : 1,
+    );
     expect(sorted).toEqual(['10.0.0.1', '255.255.255.255', '::1', '2001:db8::1']);
   });
 

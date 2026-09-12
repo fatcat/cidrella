@@ -53,10 +53,19 @@ onMounted(() => {
   if (legacy) router.replace({ query: { area: legacy.area, sec: legacy.sec } });
 });
 
-function goArea(id) { router.push({ query: { area: id } }); }
-function goSec(id) { router.push({ query: { area: activeAreaId.value, sec: id } }); }
+function goArea(id) {
+  router.push({ query: { area: id } });
+}
+function goSec(id) {
+  router.push({ query: { area: activeAreaId.value, sec: id } });
+}
 </script>
 
 <style scoped>
-.settings-page { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.settings-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
 </style>

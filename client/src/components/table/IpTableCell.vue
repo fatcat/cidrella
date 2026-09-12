@@ -30,12 +30,21 @@
     class="network-range-type-tag"
     :style="{ borderColor: row.network_range_type_color || undefined }"
   >
-    <span class="network-range-type-dot" :style="{ background: row.network_range_type_color || undefined }"></span>
+    <span
+      class="network-range-type-dot"
+      :style="{ background: row.network_range_type_color || undefined }"
+    ></span>
     {{ row.network_range_type }}
   </span>
-  <span v-else-if="column.key === 'record_type' && row.record_type" class="type-badge">{{ row.record_type }}</span>
-  <span v-else-if="column.key === 'source' && source !== EMPTY_CELL" class="type-badge">{{ source }}</span>
-  <code v-else-if="column.key === 'mac_address' && plainValue !== EMPTY_CELL">{{ plainValue }}</code>
+  <span v-else-if="column.key === 'record_type' && row.record_type" class="type-badge">{{
+    row.record_type
+  }}</span>
+  <span v-else-if="column.key === 'source' && source !== EMPTY_CELL" class="type-badge">{{
+    source
+  }}</span>
+  <code v-else-if="column.key === 'mac_address' && plainValue !== EMPTY_CELL">{{
+    plainValue
+  }}</code>
   <span v-else :class="[{ 'cell-muted': muted }, { 'ip-mono': mono }]">{{ plainValue }}</span>
 </template>
 
@@ -49,7 +58,7 @@ import {
   displayExpiry,
   displayHostnameCell,
   displayMacAddress,
-  EMPTY_CELL
+  EMPTY_CELL,
 } from '../../utils/format.js';
 import { formatDateTime } from '../../utils/dateFormat.js';
 import { ipLifecycleDisplay } from '../../utils/ipLifecycleDisplay.js';
@@ -62,20 +71,24 @@ const props = defineProps({
   view: { type: String, required: true },
   domainName: { type: String, default: null },
   zoneName: { type: String, default: null },
-  soaMinimumTtl: { type: [Number, String], default: null }
+  soaMinimumTtl: { type: [Number, String], default: null },
 });
 
 const lifecycle = computed(() => ipLifecycleDisplay(props.row));
 const leaseDisplay = computed(() => dhcpLeaseDisplay(props.row.lease_status));
 const source = computed(() => ipSourceLabel(props.row));
-const mono = computed(() =>
-  ['ip_address', 'record_name', 'dhcp_fingerprint', 'dhcp_vendor_class'].includes(props.column.key)
-  || (props.column.key === 'value' && ['A', 'AAAA'].includes(props.row.record_type))
+const mono = computed(
+  () =>
+    ['ip_address', 'record_name', 'dhcp_fingerprint', 'dhcp_vendor_class'].includes(
+      props.column.key,
+    ) ||
+    (props.column.key === 'value' && ['A', 'AAAA'].includes(props.row.record_type)),
 );
-const muted = computed(() =>
-  plainValue.value === EMPTY_CELL
-  || props.column.key === 'record_name'
-  || (props.column.key === 'ttl' && props.row.ttl == null)
+const muted = computed(
+  () =>
+    plainValue.value === EMPTY_CELL ||
+    props.column.key === 'record_name' ||
+    (props.column.key === 'ttl' && props.row.ttl == null),
 );
 
 function dnsHostname() {
@@ -87,37 +100,49 @@ function dnsHostname() {
 
 const plainValue = computed(() => {
   switch (props.column.key) {
-    case 'ip_address': return displayCell(props.row.ip_address);
-    case 'hostname': return displayHostnameCell(props.row.hostname, props.domainName);
-    case 'dns_hostname': return dnsHostname();
+    case 'ip_address':
+      return displayCell(props.row.ip_address);
+    case 'hostname':
+      return displayHostnameCell(props.row.hostname, props.domainName);
+    case 'dns_hostname':
+      return dnsHostname();
     case 'record_name': {
       if (!props.row.name) return EMPTY_CELL;
       return props.zoneName ? `${props.row.name}.${props.zoneName}` : props.row.name;
     }
-    case 'value': return displayCell(props.row.value);
-    case 'priority': return displayCell(props.row.priority);
-    case 'port': return displayCell(props.row.port);
-    case 'ttl': return displayCell(props.row.ttl ?? props.soaMinimumTtl);
-    case 'source': return source.value;
-    case 'mac_address': return displayMacAddress(props.row.mac_address || props.row.last_seen_mac);
-    case 'vendor': return displayCell(props.row.vendor);
-    case 'device': return displayCell(props.row.os_family || props.row.device_type);
-    case 'device_confidence': return props.row.device_confidence == null
-      ? EMPTY_CELL
-      : `${props.row.device_confidence}%`;
+    case 'value':
+      return displayCell(props.row.value);
+    case 'priority':
+      return displayCell(props.row.priority);
+    case 'port':
+      return displayCell(props.row.port);
+    case 'ttl':
+      return displayCell(props.row.ttl ?? props.soaMinimumTtl);
+    case 'source':
+      return source.value;
+    case 'mac_address':
+      return displayMacAddress(props.row.mac_address || props.row.last_seen_mac);
+    case 'vendor':
+      return displayCell(props.row.vendor);
+    case 'device':
+      return displayCell(props.row.os_family || props.row.device_type);
+    case 'device_confidence':
+      return props.row.device_confidence == null ? EMPTY_CELL : `${props.row.device_confidence}%`;
     case 'device_fingerprint_source': {
       if (props.row.device_fingerprint_source === 'dhcp') return 'DHCP';
       if (props.row.device_fingerprint_source === 'manual') return 'Manual';
       return displayCell(props.row.device_fingerprint_source);
     }
-    case 'last_seen_at': return props.row.last_seen_at ? formatDateTime(props.row.last_seen_at) : EMPTY_CELL;
-    case 'network': return displayCell(props.row.subnet_name || props.row.subnet_cidr);
-    case 'expires': return displayExpiry(
-      props.row.expires_at ?? props.row.dhcp_expires_at,
-      formatDateTime,
-      { reserved: props.row.dhcp_assignment_type === 'reserved' }
-    );
-    default: return displayCell(props.row[props.column.field]);
+    case 'last_seen_at':
+      return props.row.last_seen_at ? formatDateTime(props.row.last_seen_at) : EMPTY_CELL;
+    case 'network':
+      return displayCell(props.row.subnet_name || props.row.subnet_cidr);
+    case 'expires':
+      return displayExpiry(props.row.expires_at ?? props.row.dhcp_expires_at, formatDateTime, {
+        reserved: props.row.dhcp_assignment_type === 'reserved',
+      });
+    default:
+      return displayCell(props.row[props.column.field]);
   }
 });
 </script>

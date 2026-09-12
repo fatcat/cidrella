@@ -30,7 +30,7 @@ import {
   regenerateConfigs as regenDnsConfigs,
   regenerateDnsmasqConf,
   restartDnsmasq,
-  withValidatedDnsmasqUpdate
+  withValidatedDnsmasqUpdate,
 } from './dnsmasq.js';
 import { regenerateDhcpConfigs } from './dhcp.js';
 import {
@@ -38,7 +38,7 @@ import {
   listGenerations,
   markApplied,
   markApplying,
-  markFailed
+  markFailed,
 } from '../models/configuration-generation.js';
 
 // Hook name → function(db). All hooks must accept a db handle and return void.
@@ -51,7 +51,7 @@ import {
 // dnsmasq restart) MUST call the underlying function inline instead.
 // queueRegen is not a synchronous-completion primitive.
 const HOOK_REGISTRY = {
-  regenerate_dns:  (db) => regenDnsConfigs(db),
+  regenerate_dns: (db) => regenDnsConfigs(db),
   regenerate_dhcp: (db) => regenerateDhcpConfigs(db),
   regenerate_dnsmasq_conf: (db) => {
     const changed = withValidatedDnsmasqUpdate(() => regenerateDnsmasqConf(db));
@@ -70,12 +70,15 @@ const HOOK_ORDER = ['regenerate_dns', 'regenerate_dhcp', 'regenerate_dnsmasq_con
 // effect: the hook runs at least once AFTER every registration, never
 // concurrently, and coalesces bursts into at most one extra trailing pass.
 const hookState = Object.fromEntries(
-  HOOK_ORDER.map(name => [name, { running: false, pending: false }])
+  HOOK_ORDER.map((name) => [name, { running: false, pending: false }]),
 );
 
 function fireHook(name) {
   const st = hookState[name];
-  if (st.running) { st.pending = true; return; }
+  if (st.running) {
+    st.pending = true;
+    return;
+  }
   st.running = true;
   st.pending = false;
   // Do the work synchronously, hooks are synchronous SQLite + dnsmasq calls.

@@ -80,7 +80,9 @@ describe('GET /status', () => {
 
 describe('PUT /settings', () => {
   it('enables detection and sets the interval', async () => {
-    const res = await request(app).put('/api/dhcp/rogue/settings').send({ enabled: true, intervalMin: 30 });
+    const res = await request(app)
+      .put('/api/dhcp/rogue/settings')
+      .send({ enabled: true, intervalMin: 30 });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ enabled: true, intervalMin: 30 });
   });
@@ -98,7 +100,8 @@ describe('PUT /settings', () => {
 
 describe('authorized-server allowlist', () => {
   it('adds, lists, and deletes', async () => {
-    const add = await request(app).post('/api/dhcp/rogue/authorized')
+    const add = await request(app)
+      .post('/api/dhcp/rogue/authorized')
       .send({ server_ip: '10.0.0.1', server_mac: 'aa:bb:cc:dd:ee:ff', description: 'core router' });
     expect(add.status).toBe(201);
     const id = add.body.id;
@@ -113,18 +116,24 @@ describe('authorized-server allowlist', () => {
   });
 
   it('rejects an invalid IP', async () => {
-    const res = await request(app).post('/api/dhcp/rogue/authorized').send({ server_ip: 'not-an-ip' });
+    const res = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_ip: 'not-an-ip' });
     expect(res.status).toBe(400);
   });
 
   it('rejects an invalid MAC', async () => {
-    const res = await request(app).post('/api/dhcp/rogue/authorized').send({ server_ip: '10.0.0.5', server_mac: 'zz' });
+    const res = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_ip: '10.0.0.5', server_mac: 'zz' });
     expect(res.status).toBe(400);
   });
 
   it('409s on a duplicate IP', async () => {
     await request(app).post('/api/dhcp/rogue/authorized').send({ server_ip: '10.0.0.7' });
-    const dup = await request(app).post('/api/dhcp/rogue/authorized').send({ server_ip: '10.0.0.7' });
+    const dup = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_ip: '10.0.0.7' });
     expect(dup.status).toBe(409);
   });
 });
@@ -132,8 +141,11 @@ describe('authorized-server allowlist', () => {
 describe('events', () => {
   it('lists, acknowledges, and clears detected rogues', async () => {
     RogueDhcp.upsertRogueEvent(db, {
-      server_ip: '10.0.0.250', server_identifier: '10.0.0.250',
-      offered_gateway: '10.0.0.250', offered_dns: '10.0.0.250', iface: 'eth0',
+      server_ip: '10.0.0.250',
+      server_identifier: '10.0.0.250',
+      offered_gateway: '10.0.0.250',
+      offered_dns: '10.0.0.250',
+      iface: 'eth0',
     });
 
     const list = await request(app).get('/api/dhcp/rogue/events');
@@ -181,8 +193,12 @@ describe('POST /probe', () => {
   // successful scan is the whole reason a dead prober can go unnoticed.
   it('says the probe was skipped instead of reporting a clean scan', async () => {
     vi.mocked(runProbe).mockResolvedValueOnce({
-      supported: true, skipped: true, skipReason: 'in-progress',
-      interfaces: 0, offers: 0, rogues: [],
+      supported: true,
+      skipped: true,
+      skipReason: 'in-progress',
+      interfaces: 0,
+      offers: 0,
+      rogues: [],
     });
     const res = await request(app).post('/api/dhcp/rogue/probe');
     expect(res.status).toBe(200);

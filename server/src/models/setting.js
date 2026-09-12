@@ -14,10 +14,14 @@ export function upsertSettings(db, pairs) {
 }
 
 export function upsertSettingWithConflict(db, key, value) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     INSERT INTO settings (key, value) VALUES (?, ?)
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).run(key, String(value));
+  `,
+    )
+    .run(key, String(value));
 }
 
 export function deleteSetting(db, key) {

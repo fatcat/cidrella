@@ -24,11 +24,14 @@ export function netmaskFor(prefix) {
   // Explicit shape check rather than leaning on Number(): Number('') and
   // Number(null) are both 0, which is a legal prefix, so coercion alone would
   // turn "no prefix at all" into a valid /0.
-  const p = typeof prefix === 'number'
-    ? prefix
-    : (typeof prefix === 'string' && /^\d+$/.test(prefix.trim()) ? parseInt(prefix, 10) : NaN);
+  const p =
+    typeof prefix === 'number'
+      ? prefix
+      : typeof prefix === 'string' && /^\d+$/.test(prefix.trim())
+        ? parseInt(prefix, 10)
+        : NaN;
   if (!Number.isInteger(p) || p < 0 || p > 32) return null;
-  const m = p === 0 ? 0 : (0xFFFFFFFF << (32 - p)) >>> 0;
+  const m = p === 0 ? 0 : (0xffffffff << (32 - p)) >>> 0;
   return longToIp(m);
 }
 
@@ -40,7 +43,7 @@ export function parseCidr(cidr) {
   if (prefix < 0 || prefix > 32) throw new Error(`Invalid prefix: ${prefix}`);
 
   const ipLong = ipToLong(match[1]);
-  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
   const network = (ipLong & mask) >>> 0;
   const broadcast = (network | ~mask) >>> 0;
 
@@ -52,7 +55,7 @@ export function parseCidr(cidr) {
     prefix,
     networkLong: network,
     broadcastLong: broadcast,
-    totalAddresses: broadcast - network + 1
+    totalAddresses: broadcast - network + 1,
   };
 }
 
@@ -62,26 +65,35 @@ export function normalizeCidr(cidr) {
 }
 
 export function isValidCidr(cidr) {
-  try { parseCidr(cidr); return true; } catch { return false; }
+  try {
+    parseCidr(cidr);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 
 export function isValidIpv4(ip) {
-  return typeof ip === 'string'
-    && IPV4_RE.test(ip)
-    && ip.split('.').every(o => {
+  return (
+    typeof ip === 'string' &&
+    IPV4_RE.test(ip) &&
+    ip.split('.').every((o) => {
       const n = Number(o);
       return Number.isInteger(n) && n >= 0 && n <= 255;
-    });
+    })
+  );
 }
 
 export function isSubnetOf(childCidr, parentCidr) {
   const child = parseCidr(childCidr);
   const parent = parseCidr(parentCidr);
-  return child.networkLong >= parent.networkLong &&
-         child.broadcastLong <= parent.broadcastLong &&
-         child.prefix > parent.prefix;
+  return (
+    child.networkLong >= parent.networkLong &&
+    child.broadcastLong <= parent.broadcastLong &&
+    child.prefix > parent.prefix
+  );
 }
 
 export function isIpInSubnet(ip, cidr) {
@@ -98,14 +110,14 @@ function cidrsOverlap(cidrA, cidrB) {
 }
 
 export const RESERVED_RANGES = [
-  { cidr: '10.0.0.0/8',      name: 'RFC1918 Class A' },
-  { cidr: '172.16.0.0/12',   name: 'RFC1918 Class B' },
-  { cidr: '192.168.0.0/16',  name: 'RFC1918 Class C' },
-  { cidr: '100.64.0.0/10',   name: 'CGNAT (RFC6598)' },
-  { cidr: '169.254.0.0/16',  name: 'Link-Local (RFC3927)' },
-  { cidr: '127.0.0.0/8',     name: 'Loopback (RFC1122)' },
-  { cidr: '224.0.0.0/4',     name: 'Multicast (RFC5771)' },
-  { cidr: '240.0.0.0/4',     name: 'Reserved (RFC1112)' },
+  { cidr: '10.0.0.0/8', name: 'RFC1918 Class A' },
+  { cidr: '172.16.0.0/12', name: 'RFC1918 Class B' },
+  { cidr: '192.168.0.0/16', name: 'RFC1918 Class C' },
+  { cidr: '100.64.0.0/10', name: 'CGNAT (RFC6598)' },
+  { cidr: '169.254.0.0/16', name: 'Link-Local (RFC3927)' },
+  { cidr: '127.0.0.0/8', name: 'Loopback (RFC1122)' },
+  { cidr: '224.0.0.0/4', name: 'Multicast (RFC5771)' },
+  { cidr: '240.0.0.0/4', name: 'Reserved (RFC1112)' },
 ];
 
 export function validateSupernet(cidr) {
@@ -118,7 +130,7 @@ export function validateSupernet(cidr) {
       }
       return {
         valid: false,
-        error: `${cidr} extends beyond ${reserved.name} (${reserved.cidr})`
+        error: `${cidr} extends beyond ${reserved.name} (${reserved.cidr})`,
       };
     }
   }
@@ -153,7 +165,7 @@ export function calculateSubnets(cidr, newPrefix) {
 export function canMergeCidrs(cidrs) {
   if (cidrs.length < 2) return { valid: false, error: 'Need at least 2 networks to merge' };
 
-  const parsed = cidrs.map(c => parseCidr(c)).sort((a, b) => a.networkLong - b.networkLong);
+  const parsed = cidrs.map((c) => parseCidr(c)).sort((a, b) => a.networkLong - b.networkLong);
 
   for (let i = 1; i < parsed.length; i++) {
     if (parsed[i].networkLong !== parsed[i - 1].broadcastLong + 1) {
@@ -166,8 +178,10 @@ export function canMergeCidrs(cidrs) {
     return { valid: false, error: 'Network union size must be a power of 2' };
   }
   const newPrefix = 32 - exponent;
-  if (parsed[0].networkLong % total !== 0
-      || parsed.at(-1).broadcastLong !== parsed[0].networkLong + total - 1) {
+  if (
+    parsed[0].networkLong % total !== 0 ||
+    parsed.at(-1).broadcastLong !== parsed[0].networkLong + total - 1
+  ) {
     return { valid: false, error: 'Networks do not align to a valid CIDR boundary' };
   }
 
@@ -179,7 +193,7 @@ export function nearestPow2(n) {
   if (n <= 1) return 1;
   const lower = Math.pow(2, Math.floor(Math.log2(n)));
   const upper = lower * 2;
-  return (n - lower) <= (upper - n) ? lower : upper;
+  return n - lower <= upper - n ? lower : upper;
 }
 
 // Auto-fill bounds for DHCP Start/End IP. Subnets outside this range either

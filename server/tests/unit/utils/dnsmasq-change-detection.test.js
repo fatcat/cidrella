@@ -41,7 +41,7 @@ beforeAll(async () => {
     regenerateDnsmasqConf,
     applyInterfaceConfig,
     validateDnsmasqConfig,
-    withValidatedDnsmasqUpdate
+    withValidatedDnsmasqUpdate,
   } = await import('../../../src/utils/dnsmasq.js'));
 });
 
@@ -101,8 +101,9 @@ describe('regenerateDnsmasqConf: change detection', () => {
   it('keeps a hand-written comment in dnsmasq.conf and reports no change', () => {
     fs.writeFileSync(DNSMASQ_CONF, `# operator note: do not remove bind-dynamic\n${BASE_CONF}`);
     expect(regenerateDnsmasqConf({})).toBe(false);
-    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8'))
-      .toContain('# operator note: do not remove bind-dynamic');
+    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain(
+      '# operator note: do not remove bind-dynamic',
+    );
   });
 });
 
@@ -139,8 +140,8 @@ describe('validated dnsmasq updates', () => {
       ['--test', `--conf-file=${DNSMASQ_CONF}`],
       {
         encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe']
-      }
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
     );
   });
 
@@ -157,12 +158,14 @@ describe('validated dnsmasq updates', () => {
       throw error;
     });
 
-    expect(() => withValidatedDnsmasqUpdate(() => {
-      fs.writeFileSync(DNSMASQ_CONF, 'invalid-directive\n');
-      fs.writeFileSync(existingHost, '10.0.0.11 changed.example.test\n');
-      fs.writeFileSync(newHost, '10.0.0.12 new.example.test\n');
-      return true;
-    })).toThrow('dnsmasq configuration validation failed: bad option at line 4');
+    expect(() =>
+      withValidatedDnsmasqUpdate(() => {
+        fs.writeFileSync(DNSMASQ_CONF, 'invalid-directive\n');
+        fs.writeFileSync(existingHost, '10.0.0.11 changed.example.test\n');
+        fs.writeFileSync(newHost, '10.0.0.12 new.example.test\n');
+        return true;
+      }),
+    ).toThrow('dnsmasq configuration validation failed: bad option at line 4');
 
     expect(fs.readFileSync(DNSMASQ_CONF, 'utf8')).toBe(BASE_CONF);
     expect(fs.readFileSync(existingHost, 'utf8')).toBe('10.0.0.10 old.example.test\n');

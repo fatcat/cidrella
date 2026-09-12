@@ -19,7 +19,7 @@ import { MAX_SCAN_SIZE } from '../config/defaults.js';
 
 const INTERVAL_MS = {
   '': null,
-  'off': null,
+  off: null,
   '5m': 5 * 60 * 1000,
   '15m': 15 * 60 * 1000,
   '30m': 30 * 60 * 1000,
@@ -33,7 +33,7 @@ const INTERVAL_MS = {
 // below introduces no injection surface, but assert the shape anyway: this
 // module builds SQL strings and a future key with a quote in it should fail
 // loudly here rather than silently produce a broken predicate.
-const SCANNING_INTERVAL_KEYS = Object.keys(INTERVAL_MS).filter(k => INTERVAL_MS[k] !== null);
+const SCANNING_INTERVAL_KEYS = Object.keys(INTERVAL_MS).filter((k) => INTERVAL_MS[k] !== null);
 for (const k of SCANNING_INTERVAL_KEYS) {
   if (!/^[0-9a-z]+$/.test(k)) throw new Error(`unsafe scan-interval key: ${k}`);
 }
@@ -121,7 +121,7 @@ export function effectiveIntervalSql(alias = 's') {
  */
 export function scannerCoveredSql(subnetAlias = 's', ipAlias = 'ip') {
   const interval = effectiveIntervalSql(subnetAlias);
-  const named = SCANNING_INTERVAL_KEYS.map(k => `'${k}'`).join(', ');
+  const named = SCANNING_INTERVAL_KEYS.map((k) => `'${k}'`).join(', ');
   return `(
     ${subnetAlias}.status = 'allocated'
     AND ${subnetAlias}.total_addresses <= ${MAX_SCAN_SIZE}

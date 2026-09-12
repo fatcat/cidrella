@@ -1,19 +1,51 @@
 <template>
   <div class="field">
-    <label style="display:block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600">Liveness Scanning</label>
+    <label style="display: block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600"
+      >Liveness Scanning</label
+    >
     <div class="scan-toggle-group">
-      <button type="button" :class="['scan-toggle-btn', 'scan-inherit', { active: modelValue === null }]"
-              @click="$emit('update:modelValue', null)">Inherit</button>
-      <button type="button" :class="['scan-toggle-btn', 'scan-enabled', { active: modelValue === true, resolved: modelValue === null && resolvedEnabled }]"
-              @click="$emit('update:modelValue', true)">Enabled</button>
-      <button type="button" :class="['scan-toggle-btn', 'scan-disabled', { active: modelValue === false, resolved: modelValue === null && !resolvedEnabled }]"
-              @click="$emit('update:modelValue', false)">Disabled</button>
+      <button
+        type="button"
+        :class="['scan-toggle-btn', 'scan-inherit', { active: modelValue === null }]"
+        @click="$emit('update:modelValue', null)"
+      >
+        Inherit
+      </button>
+      <button
+        type="button"
+        :class="[
+          'scan-toggle-btn',
+          'scan-enabled',
+          { active: modelValue === true, resolved: modelValue === null && resolvedEnabled },
+        ]"
+        @click="$emit('update:modelValue', true)"
+      >
+        Enabled
+      </button>
+      <button
+        type="button"
+        :class="[
+          'scan-toggle-btn',
+          'scan-disabled',
+          { active: modelValue === false, resolved: modelValue === null && !resolvedEnabled },
+        ]"
+        @click="$emit('update:modelValue', false)"
+      >
+        Disabled
+      </button>
     </div>
     <small v-if="modelValue === null" style="font-size: 0.75rem; color: var(--p-text-muted-color)">
-      Inherits from subnet: scanning is {{ resolvedEnabled ? 'enabled' : 'disabled' }} for this network
+      Inherits from subnet: scanning is {{ resolvedEnabled ? 'enabled' : 'disabled' }} for this
+      network
     </small>
-    <small v-else-if="modelValue === true" style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is enabled for this network</small>
-    <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)">Scanning is disabled for this network</small>
+    <small
+      v-else-if="modelValue === true"
+      style="font-size: 0.75rem; color: var(--p-text-muted-color)"
+      >Scanning is enabled for this network</small
+    >
+    <small v-else style="font-size: 0.75rem; color: var(--p-text-muted-color)"
+      >Scanning is disabled for this network</small
+    >
   </div>
 </template>
 
@@ -39,7 +71,9 @@ defineEmits(['update:modelValue']);
   border: none;
   cursor: pointer;
   color: var(--p-text-color);
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 .scan-toggle-btn + .scan-toggle-btn {
   border-left: 1px solid var(--p-surface-border);

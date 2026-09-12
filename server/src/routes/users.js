@@ -14,24 +14,28 @@ const USERNAME_RE = /^[a-zA-Z0-9._-]+$/;
 
 // GET /api/users/roles: authoritative role catalog for the UI
 router.get('/roles', requireAdmin, (req, res) => {
-  res.json(VALID_ROLES.map(value => ({
-    value,
-    label: ROLES[value].label,
-    permissions: ROLES[value].permissions
-  })));
+  res.json(
+    VALID_ROLES.map((value) => ({
+      value,
+      label: ROLES[value].label,
+      permissions: ROLES[value].permissions,
+    })),
+  );
 });
 
 // GET /api/users: list all users (no password hashes)
 router.get('/', requireAdmin, (req, res) => {
   const db = getDb();
-  const users = db.prepare(
-    `SELECT u.id, u.username, u.role, u.kind, u.must_change_password, u.created_at, u.updated_at,
+  const users = db
+    .prepare(
+      `SELECT u.id, u.username, u.role, u.kind, u.must_change_password, u.created_at, u.updated_at,
             (SELECT COUNT(*) FROM api_tokens t
               WHERE t.user_id = u.id
                 AND t.revoked_at IS NULL
                 AND (t.expires_at IS NULL OR t.expires_at > datetime('now'))) AS active_tokens
-       FROM users u ORDER BY u.created_at`
-  ).all();
+       FROM users u ORDER BY u.created_at`,
+    )
+    .all();
   res.json(users);
 });
 
@@ -47,14 +51,20 @@ router.post('/', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Username must be 64 characters or fewer' });
   }
   if (!USERNAME_RE.test(username.trim())) {
-    return res.status(400).json({ error: 'Username may only contain letters, numbers, dots, hyphens, and underscores' });
+    return res
+      .status(400)
+      .json({
+        error: 'Username may only contain letters, numbers, dots, hyphens, and underscores',
+      });
   }
   if (!role || !VALID_ROLES.includes(role)) {
     return res.status(400).json({ error: `Role must be one of: ${VALID_ROLES.join(', ')}` });
   }
 
   const db = getDb();
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(username.trim().toLowerCase());
+  const existing = db
+    .prepare('SELECT id FROM users WHERE username = ?')
+    .get(username.trim().toLowerCase());
   if (existing) {
     return res.status(409).json({ error: 'Username already exists' });
   }
@@ -67,7 +77,7 @@ router.post('/', requireAdmin, async (req, res) => {
     const password = crypto.randomBytes(9).toString('base64');
     const hash = await bcrypt.hash(
       kind === 'service' ? crypto.randomBytes(32).toString('base64') : password,
-      10
+      10,
     );
 
     const user = User.createUser(db, {
@@ -77,7 +87,7 @@ router.post('/', requireAdmin, async (req, res) => {
       kind,
       // A machine has nobody to walk through a first-login password change, and
       // the flag would lock every route until one happened.
-      mustChangePassword: kind !== 'service'
+      mustChangePassword: kind !== 'service',
     });
 
     audit(req.user.id, 'user_created', 'user', user.id, { username: username.trim(), role, kind });
@@ -109,7 +119,11 @@ router.put('/:id', requireAdmin, (req, res) => {
   }
 
   const updated = User.updateRole(db, user.id, role);
-  audit(req.user.id, 'user_updated', 'user', user.id, { username: user.username, old_role: user.role, new_role: role });
+  audit(req.user.id, 'user_updated', 'user', user.id, {
+    username: user.username,
+    old_role: user.role,
+    new_role: role,
+  });
 
   res.json(updated);
 });
@@ -181,10 +195,14 @@ router.get('/:id/tokens', requireAdmin, (req, res) => {
   const user = serviceAccountOr404(db, req.params.id, res);
   if (!user) return;
 
-  const tokens = db.prepare(`
+  const tokens = db
+    .prepare(
+      `
     SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at
     FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC
-  `).all(user.id);
+  `,
+    )
+    .all(user.id);
   res.json(tokens);
 });
 
@@ -197,7 +215,8 @@ router.post('/:id/tokens', requireAdmin, (req, res) => {
   const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
   if (!TOKEN_NAME_RE.test(name)) {
     return res.status(400).json({
-      error: 'Token name is required, up to 64 characters of letters, numbers, spaces, dots, hyphens or underscores'
+      error:
+        'Token name is required, up to 64 characters of letters, numbers, spaces, dots, hyphens or underscores',
     });
   }
 
@@ -209,20 +228,30 @@ router.post('/:id/tokens', requireAdmin, (req, res) => {
   }
 
   const { token, hash, prefix } = generateToken();
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO api_tokens (user_id, name, token_hash, prefix, created_by, expires_at)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(user.id, name, hash, prefix, req.user.id, expiresAt);
+  `,
+    )
+    .run(user.id, name, hash, prefix, req.user.id, expiresAt);
 
   audit(req.user.id, 'api_token_created', 'user', user.id, {
-    username: user.username, token_id: result.lastInsertRowid, name,
-    expires_at: expiresAt || 'never'
+    username: user.username,
+    token_id: result.lastInsertRowid,
+    name,
+    expires_at: expiresAt || 'never',
   });
 
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT id, name, prefix, created_at, last_used_at, expires_at, revoked_at
     FROM api_tokens WHERE id = ?
-  `).get(result.lastInsertRowid);
+  `,
+    )
+    .get(result.lastInsertRowid);
 
   // The only time the secret leaves the server.
   res.status(201).json({ ...row, token });
@@ -234,7 +263,8 @@ router.delete('/:id/tokens/:tokenId', requireAdmin, (req, res) => {
   const user = serviceAccountOr404(db, req.params.id, res);
   if (!user) return;
 
-  const token = db.prepare('SELECT id, name, revoked_at FROM api_tokens WHERE id = ? AND user_id = ?')
+  const token = db
+    .prepare('SELECT id, name, revoked_at FROM api_tokens WHERE id = ? AND user_id = ?')
     .get(req.params.tokenId, user.id);
   if (!token) {
     return res.status(404).json({ error: 'Token not found' });
@@ -245,7 +275,9 @@ router.delete('/:id/tokens/:tokenId', requireAdmin, (req, res) => {
 
   db.prepare("UPDATE api_tokens SET revoked_at = datetime('now') WHERE id = ?").run(token.id);
   audit(req.user.id, 'api_token_revoked', 'user', user.id, {
-    username: user.username, token_id: token.id, name: token.name
+    username: user.username,
+    token_id: token.id,
+    name: token.name,
   });
   res.json({ message: 'Token revoked' });
 });

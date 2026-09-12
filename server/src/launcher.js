@@ -12,7 +12,8 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const backendPath = path.join(__dirname, 'index.js');
-const SAFE_MODE_THRESHOLD = Number.parseInt(process.env.CIDRELLA_SAFE_MODE_THRESHOLD || '3', 10) || 3;
+const SAFE_MODE_THRESHOLD =
+  Number.parseInt(process.env.CIDRELLA_SAFE_MODE_THRESHOLD || '3', 10) || 3;
 const OUTPUT_LINE_LIMIT = 40;
 const OUTPUT_CHAR_LIMIT = 8000;
 
@@ -46,7 +47,7 @@ function escapeHtml(value) {
 function pushOutput(buffer, chunk) {
   const lines = String(chunk)
     .split(/\r?\n/)
-    .map(line => line.trimEnd())
+    .map((line) => line.trimEnd())
     .filter(Boolean);
   buffer.push(...lines);
   while (buffer.length > OUTPUT_LINE_LIMIT) buffer.shift();
@@ -226,7 +227,9 @@ function startSafeModeServer(status) {
   const keyPath = path.join(dataDir(), 'certs', 'server.key');
   const hasTls = fs.existsSync(certPath) && fs.existsSync(keyPath);
   const protocol = hasTls ? 'https' : 'http';
-  const tlsOptions = hasTls ? { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) } : null;
+  const tlsOptions = hasTls
+    ? { key: fs.readFileSync(keyPath), cert: fs.readFileSync(certPath) }
+    : null;
 
   const handler = (port) => (req, res) => {
     const current = readStartupStatus() || status;
@@ -234,7 +237,11 @@ function startSafeModeServer(status) {
       sendJson(res, 200, current);
       return;
     }
-    if (req.url === '/api/health' || req.url === '/api/health/deep' || req.url === '/api/health/system') {
+    if (
+      req.url === '/api/health' ||
+      req.url === '/api/health/deep' ||
+      req.url === '/api/health/system'
+    ) {
       sendJson(res, 503, {
         status: 'safe_mode',
         message: 'CIDRella backend is in safe mode after repeated early startup failures.',
@@ -255,7 +262,9 @@ function startSafeModeServer(status) {
       ? https.createServer(tlsOptions, handler(port))
       : http.createServer(handler(port));
     server.once('error', (err) => {
-      console.error(`CIDRella safe mode could not listen on ${protocol} port ${port}: ${err.message}`);
+      console.error(
+        `CIDRella safe mode could not listen on ${protocol} port ${port}: ${err.message}`,
+      );
     });
     server.listen(port, () => {
       console.error(`CIDRella safe mode listening on ${protocol} port ${port}`);
@@ -303,4 +312,6 @@ child.on('exit', (code, signal) => {
   process.exit(code ?? 1);
 });
 
-console.log(`CIDRella launcher supervising backend pid ${child.pid}; startup status: ${startupStatusPath()}`);
+console.log(
+  `CIDRella launcher supervising backend pid ${child.pid}; startup status: ${startupStatusPath()}`,
+);

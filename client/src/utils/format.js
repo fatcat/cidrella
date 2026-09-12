@@ -47,7 +47,10 @@ export function formatBytes(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0;
   let size = Math.abs(n);
-  while (size >= 1024 && i < units.length - 1) { size /= 1024; i += 1; }
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i += 1;
+  }
   const sign = n < 0 ? '-' : '';
   return `${sign}${size.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 }
@@ -98,7 +101,7 @@ export function displayOnlineStatus(isOnline) {
   return {
     label: state ? 'Online' : 'Offline',
     className: state ? 'status-text state-ok' : 'status-text state-muted',
-    known: true
+    known: true,
   };
 }
 

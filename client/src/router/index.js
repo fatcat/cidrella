@@ -8,24 +8,26 @@ import NotFound from '../views/NotFound.vue';
 import AppLayout from '../components/AppLayout.vue';
 
 const routes = [
-  ...(import.meta.env.DEV ? [
-    {
-      path: '/dev/theme-lab',
-      name: 'ThemeLab',
-      component: () => import('../views/ThemeLab.vue'),
-      meta: { public: true }
-    }
-  ] : []),
+  ...(import.meta.env.DEV
+    ? [
+        {
+          path: '/dev/theme-lab',
+          name: 'ThemeLab',
+          component: () => import('../views/ThemeLab.vue'),
+          meta: { public: true },
+        },
+      ]
+    : []),
   {
     path: '/login',
     name: 'Login',
     component: Login,
-    meta: { public: true }
+    meta: { public: true },
   },
   {
     path: '/change-password',
     name: 'ChangePassword',
-    component: ChangePassword
+    component: ChangePassword,
   },
   {
     path: '/',
@@ -33,9 +35,21 @@ const routes = [
     children: [
       { path: '', redirect: '/analytics' },
       { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
-      { path: 'networks', name: 'Networks', component: () => import('../views/SubnetsLayoutB.vue') },
-      { path: 'networks-preview', name: 'NetworksWorkspacePreview', component: () => import('../views/NetworksWorkspacePreview.vue') },
-      { path: 'anomalies-preview', name: 'AnomaliesWorkspacePreview', component: () => import('../views/AnomaliesWorkspacePreview.vue') },
+      {
+        path: 'networks',
+        name: 'Networks',
+        component: () => import('../views/SubnetsLayoutB.vue'),
+      },
+      {
+        path: 'networks-preview',
+        name: 'NetworksWorkspacePreview',
+        component: () => import('../views/NetworksWorkspacePreview.vue'),
+      },
+      {
+        path: 'anomalies-preview',
+        name: 'AnomaliesWorkspacePreview',
+        component: () => import('../views/AnomaliesWorkspacePreview.vue'),
+      },
       { path: 'system', name: 'System', component: () => import('../views/Settings.vue') },
       // Redirects for old bookmarks
       { path: 'dashboard', redirect: '/analytics' },
@@ -46,19 +60,19 @@ const routes = [
       { path: 'blocklists', redirect: { path: '/system', query: { area: 'filtering' } } },
       { path: 'geoip', redirect: { path: '/system', query: { area: 'filtering', sec: 'geoip' } } },
       { path: 'range-types', redirect: { path: '/system', query: { area: 'general' } } },
-      { path: 'settings-preview', redirect: '/system' }
-    ]
+      { path: 'settings-preview', redirect: '/system' },
+    ],
   },
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
-    component: NotFound
-  }
+    component: NotFound,
+  },
 ];
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 });
 
 router.beforeEach(async (to) => {
@@ -80,9 +94,7 @@ router.beforeEach(async (to) => {
   // redirectedFrom.
   if (!auth.isAuthenticated) {
     const wantsDefault = to.fullPath === '/' || to.redirectedFrom?.fullPath === '/';
-    return wantsDefault
-      ? { name: 'Login' }
-      : { name: 'Login', query: { redirect: to.fullPath } };
+    return wantsDefault ? { name: 'Login' } : { name: 'Login', query: { redirect: to.fullPath } };
   }
 
   // Fetch user info if not loaded

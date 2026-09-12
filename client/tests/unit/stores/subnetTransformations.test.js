@@ -4,7 +4,7 @@ import { createPinia, setActivePinia } from 'pinia';
 const get = vi.fn();
 const post = vi.fn();
 vi.mock('../../../src/api/client.js', () => ({
-  default: { get: (...args) => get(...args), post: (...args) => post(...args) }
+  default: { get: (...args) => get(...args), post: (...args) => post(...args) },
 }));
 
 const { useSubnetStore } = await import('../../../src/stores/subnets.js');
@@ -19,25 +19,43 @@ beforeEach(() => {
 describe('subnet transformation client boundary', () => {
   it('does not present a fully subdivided container as unallocated space', () => {
     const store = useSubnetStore();
-    store.folders = [{
-      id: 1,
-      name: 'Lab',
-      subnets: [{
-        id: 10,
-        cidr: '1.1.1.0/24',
-        network_address: '1.1.1.0',
-        prefix_length: 24,
-        status: 'unallocated',
-        children: [
-          { id: 11, cidr: '1.1.1.0/25', network_address: '1.1.1.0', prefix_length: 25, status: 'allocated' },
-          { id: 12, cidr: '1.1.1.128/25', network_address: '1.1.1.128', prefix_length: 25, status: 'allocated' }
-        ]
-      }]
-    }];
+    store.folders = [
+      {
+        id: 1,
+        name: 'Lab',
+        subnets: [
+          {
+            id: 10,
+            cidr: '1.1.1.0/24',
+            network_address: '1.1.1.0',
+            prefix_length: 24,
+            status: 'unallocated',
+            children: [
+              {
+                id: 11,
+                cidr: '1.1.1.0/25',
+                network_address: '1.1.1.0',
+                prefix_length: 25,
+                status: 'allocated',
+              },
+              {
+                id: 12,
+                cidr: '1.1.1.128/25',
+                network_address: '1.1.1.128',
+                prefix_length: 25,
+                status: 'allocated',
+              },
+            ],
+          },
+        ],
+      },
+    ];
 
     expect(store.unallocatedTreeNodes).toEqual([]);
-    expect(store.allocatedTreeNodes[0].children.map(node => node.data.cidr))
-      .toEqual(['1.1.1.0/25', '1.1.1.128/25']);
+    expect(store.allocatedTreeNodes[0].children.map((node) => node.data.cidr)).toEqual([
+      '1.1.1.0/25',
+      '1.1.1.128/25',
+    ]);
   });
 
   it('executes the exact server preview and carries reviewed record identities', async () => {
@@ -52,12 +70,12 @@ describe('subnet transformation client boundary', () => {
       new_prefix: 26,
       force: true,
       conflict_resolutions: resolutions,
-      target_gateways: [{ cidr: '10.0.0.0/26', policy: 'last' }]
+      target_gateways: [{ cidr: '10.0.0.0/26', policy: 'last' }],
     });
 
     expect(post).toHaveBeenNthCalledWith(1, '/subnets/7/divide/preview', {
       new_prefix: 26,
-      target_gateways: [{ cidr: '10.0.0.0/26', policy: 'last' }]
+      target_gateways: [{ cidr: '10.0.0.0/26', policy: 'last' }],
     });
     expect(post).toHaveBeenNthCalledWith(2, '/subnets/7/divide', {
       force: true,
@@ -65,7 +83,7 @@ describe('subnet transformation client boundary', () => {
       target_gateways: [{ cidr: '10.0.0.0/26', policy: 'last' }],
       conflict_resolutions: resolutions,
       plan_token: 'dependency',
-      plan_id: 'plan'
+      plan_id: 'plan',
     });
   });
 
@@ -74,7 +92,9 @@ describe('subnet transformation client boundary', () => {
     const store = useSubnetStore();
     await store.mergeSubnets([3, 2], 'dependency', 'plan');
     expect(post).toHaveBeenCalledWith('/subnets/merge', {
-      subnet_ids: [3, 2], plan_token: 'dependency', plan_id: 'plan'
+      subnet_ids: [3, 2],
+      plan_token: 'dependency',
+      plan_id: 'plan',
     });
   });
 });

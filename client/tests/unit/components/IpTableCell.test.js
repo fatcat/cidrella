@@ -4,13 +4,13 @@ import IpTableCell from '../../../src/components/table/IpTableCell.vue';
 import { IP_TABLE_VIEW, ipTableColumns } from '../../../src/utils/ipTableColumns.js';
 
 function column(key) {
-  return ipTableColumns(IP_TABLE_VIEW.NETWORKS).find(candidate => candidate.key === key);
+  return ipTableColumns(IP_TABLE_VIEW.NETWORKS).find((candidate) => candidate.key === key);
 }
 
 function mountCell(key, row) {
   return mount(IpTableCell, {
     props: { column: column(key), row, view: IP_TABLE_VIEW.NETWORKS },
-    global: { directives: { tooltip: () => {} } }
+    global: { directives: { tooltip: () => {} } },
   });
 }
 
@@ -18,7 +18,7 @@ describe('IpTableCell', () => {
   it('renders in-use status with the same red dotted status treatment everywhere', () => {
     const wrapper = mountCell('status', {
       ip_display_status: 'in use',
-      ip_status_severity: 'danger'
+      ip_status_severity: 'danger',
     });
 
     expect(wrapper.text()).toBe('in use');
@@ -39,7 +39,7 @@ describe('IpTableCell', () => {
   it('renders a Network Range Type as an organizational tag', () => {
     const wrapper = mountCell('network_range_type', {
       network_range_type: 'Printers',
-      network_range_type_color: '#22c55e'
+      network_range_type_color: '#22c55e',
     });
 
     expect(wrapper.text()).toBe('Printers');
@@ -55,7 +55,7 @@ describe('IpTableCell', () => {
       dhcp_fingerprint: '1,3,6,15',
       dhcp_vendor_class: 'MSFT 5.0',
       dhcp_fingerprint_hostname: 'DESKTOP-TEST',
-      device_fingerprint_source: 'dhcp'
+      device_fingerprint_source: 'dhcp',
     };
     expect(mountCell('os_family', row).text()).toBe('Windows');
     expect(mountCell('device_type', row).text()).toBe('Computer');

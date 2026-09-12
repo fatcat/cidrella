@@ -51,9 +51,8 @@ export function leaseExpiryMs(expiresAt) {
   if (expiresAt === 'infinite') return Infinity;
   const raw = String(expiresAt || '').trim();
   if (!raw) return NaN;
-  const zoned = raw.includes('T') || /(?:Z|[+-]\d\d:\d\d)$/.test(raw)
-    ? raw
-    : `${raw.replace(' ', 'T')}Z`;
+  const zoned =
+    raw.includes('T') || /(?:Z|[+-]\d\d:\d\d)$/.test(raw) ? raw : `${raw.replace(' ', 'T')}Z`;
   return Date.parse(zoned);
 }
 

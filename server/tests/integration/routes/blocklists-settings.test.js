@@ -5,14 +5,18 @@ import { createTestApp } from '../../helpers/test-app.js';
 // blocklist.js pulls in dnsmasq + dns-proxy side effects and writes conf files.
 // Stub those effect modules, keep the real blocklist.js exports (the route
 // imports SCHEDULE_HOURS from it), and override only the side-effectful fns.
-vi.mock('../../../src/utils/dnsmasq.js', () => ({ atomicWrite: vi.fn(), restartDnsmasq: vi.fn(), applyInterfaceConfig: vi.fn() }));
+vi.mock('../../../src/utils/dnsmasq.js', () => ({
+  atomicWrite: vi.fn(),
+  restartDnsmasq: vi.fn(),
+  applyInterfaceConfig: vi.fn(),
+}));
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 vi.mock('../../../src/utils/blocklist.js', async (importOriginal) => ({
   ...(await importOriginal()),
   ensureCategoryRows: vi.fn(),
   refreshCategory: vi.fn(),
   refreshAllEnabled: vi.fn(),
-  generateBlocklistConfig: vi.fn()
+  generateBlocklistConfig: vi.fn(),
 }));
 
 const { default: blocklistsRouter } = await import('../../../src/routes/blocklists.js');
@@ -21,7 +25,11 @@ const { default: request } = await import('supertest');
 
 let tmpDir, app;
 
-beforeAll(async () => { const s = await setupTestDb(); tmpDir = s.tmpDir; app = createTestApp(blocklistsRouter, '/api/blocklists'); });
+beforeAll(async () => {
+  const s = await setupTestDb();
+  tmpDir = s.tmpDir;
+  app = createTestApp(blocklistsRouter, '/api/blocklists');
+});
 afterAll(() => cleanupTestDb(tmpDir));
 
 describe('PUT /api/blocklists/settings', () => {
@@ -30,7 +38,7 @@ describe('PUT /api/blocklists/settings', () => {
     const res = await request(app).put('/api/blocklists/settings').send({
       blocklist_enabled: 'false',
       blocklist_redirect_ip: '',
-      blocklist_update_schedule: 'daily'
+      blocklist_update_schedule: 'daily',
     });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ ok: true });
@@ -42,74 +50,108 @@ describe('PUT /api/blocklists/settings', () => {
   });
 
   it('accepts re-enabling', async () => {
-    const res = await request(app).put('/api/blocklists/settings').send({ blocklist_enabled: 'true' });
+    const res = await request(app)
+      .put('/api/blocklists/settings')
+      .send({ blocklist_enabled: 'true' });
     expect(res.status).toBe(200);
-    expect((await request(app).get('/api/blocklists/settings')).body.blocklist_enabled).toBe('true');
+    expect((await request(app).get('/api/blocklists/settings')).body.blocklist_enabled).toBe(
+      'true',
+    );
   });
 
   it('accepts every schedule option the UI offers', async () => {
     // Regression: the old validator ran parseInt, so 'off', 'daily', and 'weekly' all 400ed
     for (const schedule of ['off', '6h', '12h', 'daily', 'weekly']) {
-      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_update_schedule: schedule });
+      const res = await request(app)
+        .put('/api/blocklists/settings')
+        .send({ blocklist_update_schedule: schedule });
       expect(res.status, `schedule '${schedule}'`).toBe(200);
     }
   });
 
   it('rejects non-string and out-of-enum blocklist_enabled values', async () => {
     for (const bad of [true, false, 1, 'yes', ['true'], { v: 'true' }]) {
-      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_enabled: bad });
+      const res = await request(app)
+        .put('/api/blocklists/settings')
+        .send({ blocklist_enabled: bad });
       expect(res.status, `value ${JSON.stringify(bad)}`).toBe(400);
     }
   });
 
   it('rejects a non-IPv4 blocklist_redirect_ip', async () => {
     for (const bad of ['not-an-ip', { x: 1 }, ['1.2.3.4'], '999.1.1.1', '1.2.3']) {
-      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_redirect_ip: bad });
+      const res = await request(app)
+        .put('/api/blocklists/settings')
+        .send({ blocklist_redirect_ip: bad });
       expect(res.status, `value ${JSON.stringify(bad)}`).toBe(400);
     }
   });
 
   it('accepts a valid IPv4 or empty redirect IP', async () => {
-    expect((await request(app).put('/api/blocklists/settings').send({ blocklist_redirect_ip: '10.0.0.1' })).status).toBe(200);
-    expect((await request(app).put('/api/blocklists/settings').send({ blocklist_redirect_ip: '' })).status).toBe(200);
+    expect(
+      (
+        await request(app)
+          .put('/api/blocklists/settings')
+          .send({ blocklist_redirect_ip: '10.0.0.1' })
+      ).status,
+    ).toBe(200);
+    expect(
+      (await request(app).put('/api/blocklists/settings').send({ blocklist_redirect_ip: '' }))
+        .status,
+    ).toBe(200);
   });
 
   it('rejects unknown or non-string schedules', async () => {
     for (const bad of ['hourly', 6, ['daily'], 'monthly']) {
-      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_update_schedule: bad });
+      const res = await request(app)
+        .put('/api/blocklists/settings')
+        .send({ blocklist_update_schedule: bad });
       expect(res.status, `value ${JSON.stringify(bad)}`).toBe(400);
     }
   });
 
   it('ignores keys outside the allowlist', async () => {
-    const res = await request(app).put('/api/blocklists/settings').send({ blocklist_enabled: 'true', evil_key: 'x' });
+    const res = await request(app)
+      .put('/api/blocklists/settings')
+      .send({ blocklist_enabled: 'true', evil_key: 'x' });
     expect(res.status).toBe(200);
-    expect((await request(app).get('/api/blocklists/settings')).body).not.toHaveProperty('evil_key');
+    expect((await request(app).get('/api/blocklists/settings')).body).not.toHaveProperty(
+      'evil_key',
+    );
   });
 
   it('round-trips blocklist_max_feed_mb as the string the UI sends', async () => {
-    const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: '256' });
+    const res = await request(app)
+      .put('/api/blocklists/settings')
+      .send({ blocklist_max_feed_mb: '256' });
     expect(res.status).toBe(200);
-    expect((await request(app).get('/api/blocklists/settings')).body.blocklist_max_feed_mb).toBe('256');
+    expect((await request(app).get('/api/blocklists/settings')).body.blocklist_max_feed_mb).toBe(
+      '256',
+    );
   });
 
   it('accepts blocklist_max_feed_mb at both ends of the range, as string or number', async () => {
     for (const good of ['1', '128', '2048', 64]) {
-      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: good });
+      const res = await request(app)
+        .put('/api/blocklists/settings')
+        .send({ blocklist_max_feed_mb: good });
       expect(res.status, `value ${JSON.stringify(good)}`).toBe(200);
     }
   });
 
   it('rejects out-of-range and non-numeric blocklist_max_feed_mb', async () => {
     for (const bad of [0, 2049, -1, 'abc', '', '12.5', { a: 1 }, ['128'], true]) {
-      const res = await request(app).put('/api/blocklists/settings').send({ blocklist_max_feed_mb: bad });
+      const res = await request(app)
+        .put('/api/blocklists/settings')
+        .send({ blocklist_max_feed_mb: bad });
       expect(res.status, `value ${JSON.stringify(bad)}`).toBe(400);
     }
   });
 
   it('exposes blocklist_max_feed_mb on GET so the UI can populate the field', async () => {
-    expect((await request(app).get('/api/blocklists/settings')).body)
-      .toHaveProperty('blocklist_max_feed_mb');
+    expect((await request(app).get('/api/blocklists/settings')).body).toHaveProperty(
+      'blocklist_max_feed_mb',
+    );
   });
 });
 
@@ -141,7 +183,7 @@ describe('whitelist domain validation matches the shared validator', () => {
   it('rejects a name longer than 253 characters', async () => {
     const tooLong = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(62)].join('.');
     expect(tooLong.length).toBe(254);
-    expect(tooLong.split('.').every(l => l.length <= 63)).toBe(true);
+    expect(tooLong.split('.').every((l) => l.length <= 63)).toBe(true);
     const res = await request(app).post('/api/blocklists/whitelist').send({ domain: tooLong });
     expect(res.status).toBe(400);
   });
@@ -149,7 +191,7 @@ describe('whitelist domain validation matches the shared validator', () => {
   it('accepts a name at the limit, so the cap is not off by one', async () => {
     const ok = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(61)].join('.');
     expect(ok.length).toBe(253);
-    expect(ok.split('.').every(l => l.length <= 63)).toBe(true);
+    expect(ok.split('.').every((l) => l.length <= 63)).toBe(true);
     const res = await request(app).post('/api/blocklists/whitelist').send({ domain: ok });
     expect(res.status).toBe(201);
   });
@@ -167,7 +209,9 @@ describe('whitelist domain validation matches the shared validator', () => {
   });
 
   it('accepts an ordinary domain', async () => {
-    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: 'example.com' });
+    const res = await request(app)
+      .post('/api/blocklists/whitelist')
+      .send({ domain: 'example.com' });
     expect(res.status).toBe(201);
   });
 });

@@ -8,7 +8,7 @@ import {
   isImmutableNetworkAddress,
   managedDnsRecordMenuItem,
   probeNowMenuItem,
-  scanToggleMenuItem
+  scanToggleMenuItem,
 } from '../../../src/utils/rowContextMenu.js';
 
 describe('row context menu policy', () => {
@@ -16,12 +16,12 @@ describe('row context menu policy', () => {
     ['dns', 'Managed by forward DNS record'],
     ['dhcp', 'Managed by DHCP lease'],
     ['reservation', 'Managed by DHCP Reservation'],
-    ['placeholder', 'Generated reverse DNS placeholder']
+    ['placeholder', 'Generated reverse DNS placeholder'],
   ])('gives %s-managed DNS rows an explanatory menu item', (source, label) => {
     expect(managedDnsRecordMenuItem({ dns_source: source })).toEqual({
       label,
       icon: 'pi pi-lock',
-      disabled: true
+      disabled: true,
     });
   });
 
@@ -32,9 +32,12 @@ describe('row context menu policy', () => {
     expect(isEditableDnsRecord({ dns_source: null })).toBe(true);
   });
 
-  it.each(['dns', 'dhcp', 'reservation', 'placeholder'])('does not double-click edit %s-managed DNS rows', (source) => {
-    expect(isEditableDnsRecord({ dns_source: source })).toBe(false);
-  });
+  it.each(['dns', 'dhcp', 'reservation', 'placeholder'])(
+    'does not double-click edit %s-managed DNS rows',
+    (source) => {
+      expect(isEditableDnsRecord({ dns_source: source })).toBe(false);
+    },
+  );
 
   it('only double-click edits DHCP Reservation rows', () => {
     expect(isEditableDhcpReservation({ dhcp_assignment_type: 'reserved' })).toBe(true);
@@ -43,9 +46,15 @@ describe('row context menu policy', () => {
   });
 
   it('offers adding a DHCP Reservation for IP rows that are not already reservations', () => {
-    expect(canAddDhcpReservation({ ip_address: '10.0.0.10', dhcp_assignment_type: 'available' })).toBe(true);
-    expect(canAddDhcpReservation({ ip_address: '10.0.0.11', dhcp_assignment_type: 'dynamic' })).toBe(true);
-    expect(canAddDhcpReservation({ ip_address: '10.0.0.12', dhcp_assignment_type: 'reserved' })).toBe(false);
+    expect(
+      canAddDhcpReservation({ ip_address: '10.0.0.10', dhcp_assignment_type: 'available' }),
+    ).toBe(true);
+    expect(
+      canAddDhcpReservation({ ip_address: '10.0.0.11', dhcp_assignment_type: 'dynamic' }),
+    ).toBe(true);
+    expect(
+      canAddDhcpReservation({ ip_address: '10.0.0.12', dhcp_assignment_type: 'reserved' }),
+    ).toBe(false);
     expect(canAddDhcpReservation({ dhcp_assignment_type: 'available' })).toBe(false);
   });
 
@@ -61,7 +70,7 @@ describe('row context menu policy', () => {
     expect(probeNowMenuItem(command)).toEqual({
       label: 'Probe Now',
       icon: 'pi pi-wifi',
-      command
+      command,
     });
   });
 
@@ -69,17 +78,19 @@ describe('row context menu policy', () => {
     const command = () => {};
     expect(scanToggleMenuItem('10.0.0.25', true, command)).toMatchObject({
       label: 'Disable scanning of 10.0.0.25',
-      icon: 'pi pi-eye-slash'
+      icon: 'pi pi-eye-slash',
     });
     expect(scanToggleMenuItem('10.0.0.26', false, command)).toMatchObject({
       label: 'Enable scanning of 10.0.0.26',
-      icon: 'pi pi-eye'
+      icon: 'pi pi-eye',
     });
   });
 
   it('finds probeable IPv4 addresses on forward A and reverse PTR rows', () => {
     expect(dnsRecordProbeIp({ record_type: 'A', value: '10.0.0.10' })).toBe('10.0.0.10');
-    expect(dnsRecordProbeIp({ record_type: 'A', ip_address: '10.0.0.11', value: 'stale' })).toBe('10.0.0.11');
+    expect(dnsRecordProbeIp({ record_type: 'A', ip_address: '10.0.0.11', value: 'stale' })).toBe(
+      '10.0.0.11',
+    );
     expect(dnsRecordProbeIp({ record_type: 'PTR' }, '10.0.0.12')).toBe('10.0.0.12');
     expect(dnsRecordProbeIp({ record_type: 'CNAME', value: 'host.example.com' })).toBeNull();
     expect(dnsRecordProbeIp({ record_type: 'AAAA', value: '2001:db8::1' })).toBeNull();
@@ -91,7 +102,7 @@ describe('row context menu policy', () => {
     expect(addCnameMenuItem({ record_type: 'A' }, command)).toEqual({
       label: 'Add CNAME',
       icon: 'pi pi-plus',
-      command
+      command,
     });
     expect(addCnameMenuItem({ record_type: 'CNAME' }, command)).toBeNull();
     expect(addCnameMenuItem({ record_type: 'PTR' }, command)).toBeNull();

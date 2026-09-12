@@ -5,36 +5,36 @@ const { store, toast } = vi.hoisted(() => ({
   store: {
     folders: [],
     updateSubnet: vi.fn(),
-    getSettings: vi.fn()
+    getSettings: vi.fn(),
   },
-  toast: { add: vi.fn() }
+  toast: { add: vi.fn() },
 }));
 
 vi.mock('../../../src/stores/subnets.js', () => ({
-  useSubnetStore: () => store
+  useSubnetStore: () => store,
 }));
 vi.mock('../../../src/ui/useToast.js', () => ({
-  useToast: () => toast
+  useToast: () => toast,
 }));
 vi.mock('../../../src/api/client.js', () => ({
   default: {
     get: vi.fn().mockResolvedValue({ data: [] }),
     post: vi.fn(),
     put: vi.fn(),
-    delete: vi.fn()
-  }
+    delete: vi.fn(),
+  },
 }));
 
 const NetworkDialogs = (await import('../../../src/components/NetworkDialogs.vue')).default;
 
 const DialogStub = {
   props: ['visible'],
-  template: '<section v-if="visible"><slot /><slot name="footer" /></section>'
+  template: '<section v-if="visible"><slot /><slot name="footer" /></section>',
 };
 const ButtonStub = {
   props: ['label'],
   emits: ['click'],
-  template: '<button type="button" @click="$emit(\'click\')">{{ label }}</button>'
+  template: '<button type="button" @click="$emit(\'click\')">{{ label }}</button>',
 };
 
 function mountDialogs() {
@@ -56,9 +56,9 @@ function mountDialogs() {
         TabList: true,
         Tab: true,
         TabPanels: true,
-        TabPanel: true
-      }
-    }
+        TabPanel: true,
+      },
+    },
   });
 }
 
@@ -81,22 +81,28 @@ describe('NetworkDialogs active network target', () => {
         description: '',
         gateway_address: '10.42.0.1',
         gateway_policy: 'first',
-        scan_enabled: null
-      }
+        scan_enabled: null,
+      },
     });
     await flushPromises();
 
-    const save = wrapper.findAll('button').find(button => button.text() === 'Save');
+    const save = wrapper.findAll('button').find((button) => button.text() === 'Save');
     expect(save).toBeDefined();
     await save.trigger('click');
     await flushPromises();
 
-    expect(store.updateSubnet).toHaveBeenCalledWith(42, expect.objectContaining({
-      cidr: '10.42.0.0/24',
-      name: 'Folder network'
-    }));
-    expect(toast.add).toHaveBeenCalledWith(expect.objectContaining({
-      severity: 'success', summary: 'Network updated'
-    }));
+    expect(store.updateSubnet).toHaveBeenCalledWith(
+      42,
+      expect.objectContaining({
+        cidr: '10.42.0.0/24',
+        name: 'Folder network',
+      }),
+    );
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'success',
+        summary: 'Network updated',
+      }),
+    );
   });
 });

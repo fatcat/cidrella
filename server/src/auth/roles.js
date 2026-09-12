@@ -11,28 +11,28 @@
 export const ROLES = {
   admin: {
     label: 'Administrator',
-    permissions: ['*']
+    permissions: ['*'],
   },
   dns_admin: {
     label: 'DNS Administrator',
-    permissions: ['dns:read', 'dns:write', 'subnets:read', 'system:read', 'analytics:read']
+    permissions: ['dns:read', 'dns:write', 'subnets:read', 'system:read', 'analytics:read'],
   },
   dhcp_admin: {
     label: 'DHCP Administrator',
-    permissions: ['dhcp:read', 'dhcp:write', 'subnets:read', 'system:read', 'analytics:read']
+    permissions: ['dhcp:read', 'dhcp:write', 'subnets:read', 'system:read', 'analytics:read'],
   },
   readonly_dns: {
     label: 'DNS Read-Only',
-    permissions: ['dns:read', 'subnets:read', 'system:read', 'analytics:read']
+    permissions: ['dns:read', 'subnets:read', 'system:read', 'analytics:read'],
   },
   readonly_dhcp: {
     label: 'DHCP Read-Only',
-    permissions: ['dhcp:read', 'subnets:read', 'system:read', 'analytics:read']
+    permissions: ['dhcp:read', 'subnets:read', 'system:read', 'analytics:read'],
   },
   readonly: {
     label: 'Read-Only',
-    permissions: ['dns:read', 'dhcp:read', 'subnets:read', 'system:read', 'analytics:read']
-  }
+    permissions: ['dns:read', 'dhcp:read', 'subnets:read', 'system:read', 'analytics:read'],
+  },
 };
 
 /**

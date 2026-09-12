@@ -50,11 +50,18 @@ const toast = { add: vi.fn() };
 const mounted = [];
 function inSetup(fn) {
   let result;
-  mounted.push(mount({ setup() { result = fn(); return () => null; } }));
+  mounted.push(
+    mount({
+      setup() {
+        result = fn();
+        return () => null;
+      },
+    }),
+  );
   return result;
 }
 afterEach(() => {
-  mounted.splice(0).forEach(wrapper => wrapper.unmount());
+  mounted.splice(0).forEach((wrapper) => wrapper.unmount());
 });
 
 beforeEach(() => {
@@ -181,7 +188,7 @@ describe('teardown', () => {
       wrapper.unmount();
       expect(
         clearSpy.mock.calls.map(([id]) => id),
-        'unmount should clear the debounce timer specifically'
+        'unmount should clear the debounce timer specifically',
       ).toContain(debounceId);
 
       // And the probe must not fire after the component is gone.

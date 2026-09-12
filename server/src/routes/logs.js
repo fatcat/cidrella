@@ -21,7 +21,8 @@ setInterval(() => {
   }
 }, 60_000);
 
-const DHCP_RE = /\b(?:DHCPDISCOVER|DHCPOFFER|DHCPREQUEST|DHCPACK|DHCPNAK|DHCPRELEASE|DHCPINFORM|DHCPDECLINE)\b|available DHCP|dnsmasq-dhcp\[\d+\]:|\bsent size:\s+\d+\s+option:|\brequested options:|\bnext server:|\bclient provides name:|\bvendor class:|\btags:\s+scope/i;
+const DHCP_RE =
+  /\b(?:DHCPDISCOVER|DHCPOFFER|DHCPREQUEST|DHCPACK|DHCPNAK|DHCPRELEASE|DHCPINFORM|DHCPDECLINE)\b|available DHCP|dnsmasq-dhcp\[\d+\]:|\bsent size:\s+\d+\s+option:|\brequested options:|\bnext server:|\bclient provides name:|\bvendor class:|\btags:\s+scope/i;
 
 export function isDhcpLine(line) {
   return DHCP_RE.test(line);
@@ -67,7 +68,7 @@ function readNewLines(offset) {
   }
 
   const text = buf.toString('utf-8');
-  const lines = text.split('\n').filter(l => l.trim());
+  const lines = text.split('\n').filter((l) => l.trim());
   return { lines, newOffset: size };
 }
 
@@ -114,8 +115,8 @@ router.get('/stream', (req, res) => {
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive',
-    'X-Accel-Buffering': 'no'
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
   });
   res.flushHeaders();
 
@@ -151,10 +152,8 @@ router.get('/stream', (req, res) => {
     // partial line is unusable, drop it. Skip this trim only when we
     // happened to read the entire file (tailStart === 0).
     const firstNewline = text.indexOf('\n');
-    const usable = (tailStart > 0 && firstNewline >= 0)
-      ? text.slice(firstNewline + 1)
-      : text;
-    const lines = usable.split('\n').filter(l => l.trim());
+    const usable = tailStart > 0 && firstNewline >= 0 ? text.slice(firstNewline + 1) : text;
+    const lines = usable.split('\n').filter((l) => l.trim());
     const backlog = lines.slice(-200);
     for (const line of backlog) {
       if (matchesFilter(line, filter)) {

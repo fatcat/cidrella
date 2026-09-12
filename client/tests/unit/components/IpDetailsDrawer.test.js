@@ -15,7 +15,7 @@ import { IP_TABLE_VIEW, ipTableColumns } from '../../../src/utils/ipTableColumns
 
 const { apiGet } = vi.hoisted(() => ({ apiGet: vi.fn() }));
 vi.mock('../../../src/api/client.js', () => ({
-  default: { get: apiGet, delete: vi.fn() }
+  default: { get: apiGet, delete: vi.fn() },
 }));
 
 // PrimeVue's toast is injected by the app, not by a bare mount.
@@ -26,24 +26,26 @@ const IpDetailsDrawer = (await import('../../../src/components/IpDetailsDrawer.v
 // Render the drawer body inline so its content is in the DOM without PrimeVue's
 // overlay/teleport machinery. StatusDot is kept real: its label is part of what
 // the accessibility story depends on, so stubbing it would hide a regression.
-const mountDrawer = (host, props = {}) => mount(IpDetailsDrawer, {
-  props: { visible: true, host, ...props },
-  global: {
-    stubs: {
-      Drawer: {
-        props: ['dismissable', 'style'],
-        template: '<aside :data-dismissable="dismissable" :data-width="style && style.width" data-track="dialog-host-info"><slot /></aside>'
+const mountDrawer = (host, props = {}) =>
+  mount(IpDetailsDrawer, {
+    props: { visible: true, host, ...props },
+    global: {
+      stubs: {
+        Drawer: {
+          props: ['dismissable', 'style'],
+          template:
+            '<aside :data-dismissable="dismissable" :data-width="style && style.width" data-track="dialog-host-info"><slot /></aside>',
+        },
+        Button: true,
+        Tag: { props: ['value'], template: '<span class="event-tag">{{ value }}</span>' },
       },
-      Button: true,
-      Tag: { props: ['value'], template: '<span class="event-tag">{{ value }}</span>' },
     },
-  },
-});
+  });
 
 // Read the VALUE span, not the whole row: the row's label is itself the word
 // "Online", so asserting on row text cannot tell the label from the value.
 function livenessText(w) {
-  const row = w.findAll('.hi-row').find(r => r.find('.hi-label')?.text() === 'Online');
+  const row = w.findAll('.hi-row').find((r) => r.find('.hi-label')?.text() === 'Online');
   return row ? row.find('.hi-val').text() : null;
 }
 
@@ -55,30 +57,37 @@ describe('IpDetailsDrawer liveness row', () => {
 
   it('shows exactly the columns visible in the table, using the shared empty value', () => {
     const catalog = ipTableColumns(IP_TABLE_VIEW.NETWORKS);
-    const columns = ['status', 'source', 'scanning_enabled']
-      .map(key => catalog.find(column => column.key === key));
+    const columns = ['status', 'source', 'scanning_enabled'].map((key) =>
+      catalog.find((column) => column.key === key),
+    );
     const w = mount(IpDetailsDrawer, {
       props: {
         visible: true,
         host: { ip_address: '10.0.0.5', ip_display_status: 'in use', ip_status_severity: 'danger' },
         columns,
-        view: IP_TABLE_VIEW.NETWORKS
+        view: IP_TABLE_VIEW.NETWORKS,
       },
       global: {
         stubs: {
           Drawer: { template: '<aside><slot /></aside>' },
           Button: true,
-          Tag: true
-        }
-      }
+          Tag: true,
+        },
+      },
     });
 
     const fieldSection = w.find('.host-info section');
-    expect(fieldSection.findAll('.hi-label').map(label => label.text()))
-      .toEqual(['Status', 'Source', 'Scanning']);
+    expect(fieldSection.findAll('.hi-label').map((label) => label.text())).toEqual([
+      'Status',
+      'Source',
+      'Scanning',
+    ]);
     expect(fieldSection.find('.status-text').classes()).toContain('state-err');
-    expect(fieldSection.findAll('.hi-val').map(value => value.text()))
-      .toEqual(['in use', '—', '—']);
+    expect(fieldSection.findAll('.hi-val').map((value) => value.text())).toEqual([
+      'in use',
+      '—',
+      '—',
+    ]);
   });
 
   it('closes on an outside click but stays open when another IP row is clicked', async () => {
@@ -101,8 +110,10 @@ describe('IpDetailsDrawer liveness row', () => {
 
   it('renders Online for every online spelling, including the string', () => {
     for (const v of [true, 1, '1']) {
-      expect(livenessText(mountDrawer({ ip_address: '10.0.0.5', is_online: v })), `is_online=${JSON.stringify(v)}`)
-        .toContain('Online');
+      expect(
+        livenessText(mountDrawer({ ip_address: '10.0.0.5', is_online: v })),
+        `is_online=${JSON.stringify(v)}`,
+      ).toContain('Online');
     }
   });
 
@@ -116,8 +127,10 @@ describe('IpDetailsDrawer liveness row', () => {
 
   it('renders Offline for the other offline spellings', () => {
     for (const v of [false, 0]) {
-      expect(livenessText(mountDrawer({ ip_address: '10.0.0.5', is_online: v })), `is_online=${JSON.stringify(v)}`)
-        .toContain('Offline');
+      expect(
+        livenessText(mountDrawer({ ip_address: '10.0.0.5', is_online: v })),
+        `is_online=${JSON.stringify(v)}`,
+      ).toContain('Offline');
     }
   });
 
@@ -130,7 +143,9 @@ describe('IpDetailsDrawer liveness row', () => {
   it('does not fall over when host is null', () => {
     const w = mount(IpDetailsDrawer, {
       props: { visible: true, host: null },
-      global: { stubs: { Drawer: { template: '<aside><slot /></aside>' }, Button: true, Tag: true } },
+      global: {
+        stubs: { Drawer: { template: '<aside><slot /></aside>' }, Button: true, Tag: true },
+      },
     });
     expect(w.exists()).toBe(true);
   });
@@ -138,28 +153,30 @@ describe('IpDetailsDrawer liveness row', () => {
   it('loads lifecycle events and refreshes them when another IP is selected', async () => {
     apiGet.mockResolvedValueOnce({
       data: {
-        events: [{
-          id: 7,
-          event_type: 'online',
-          created_at: '2026-09-05T12:00:00Z',
-          source: 'scanner'
-        }]
-      }
+        events: [
+          {
+            id: 7,
+            event_type: 'online',
+            created_at: '2026-09-05T12:00:00Z',
+            source: 'scanner',
+          },
+        ],
+      },
     });
 
     const w = mount(IpDetailsDrawer, {
       props: {
         visible: true,
         host: { ip_address: '10.0.0.72', is_online: true },
-        subnetId: 2
+        subnetId: 2,
       },
       global: {
         stubs: {
           Drawer: { template: '<aside><slot /></aside>' },
           Button: true,
-          Tag: { props: ['value'], template: '<span class="event-tag">{{ value }}</span>' }
-        }
-      }
+          Tag: { props: ['value'], template: '<span class="event-tag">{{ value }}</span>' },
+        },
+      },
     });
     await flushPromises();
 
@@ -170,13 +187,15 @@ describe('IpDetailsDrawer liveness row', () => {
 
     apiGet.mockResolvedValueOnce({
       data: {
-        events: [{
-          id: 8,
-          event_type: 'offline',
-          created_at: '2026-09-05T13:00:00Z',
-          source: 'stale'
-        }]
-      }
+        events: [
+          {
+            id: 8,
+            event_type: 'offline',
+            created_at: '2026-09-05T13:00:00Z',
+            source: 'stale',
+          },
+        ],
+      },
     });
     await w.setProps({ host: { ip_address: '10.0.0.73', is_online: false } });
     await flushPromises();
@@ -189,20 +208,25 @@ describe('IpDetailsDrawer liveness row', () => {
   it('describes retirement as learned-data cleanup rather than retiring the address', async () => {
     apiGet.mockResolvedValueOnce({
       data: {
-        events: [{
-          id: 9,
-          event_type: 'retired',
-          old_value: 'unassigned',
-          new_value: 'unassigned',
-          created_at: '2026-09-05T14:00:00Z',
-          source: 'retirement'
-        }]
-      }
+        events: [
+          {
+            id: 9,
+            event_type: 'retired',
+            old_value: 'unassigned',
+            new_value: 'unassigned',
+            created_at: '2026-09-05T14:00:00Z',
+            source: 'retirement',
+          },
+        ],
+      },
     });
 
-    const w = mountDrawer({ ip_address: '10.0.0.74', is_online: false }, {
-      subnetId: 2
-    });
+    const w = mountDrawer(
+      { ip_address: '10.0.0.74', is_online: false },
+      {
+        subnetId: 2,
+      },
+    );
     await flushPromises();
 
     const history = w.find('.events-list').text();

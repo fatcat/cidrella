@@ -15,7 +15,7 @@ import {
   cnameTargetError,
   fqdnForRecordName,
   findAHostnameConflict,
-  syncPtrForARecord
+  syncPtrForARecord,
 } from '../models/dns-record.js';
 
 // How many offending records the human-readable `error` string names before it
@@ -34,10 +34,14 @@ const router = Router();
  * @param {{ method?: string, body?: object, timeout?: number }} [opts]
  */
 async function httpRequest(url, { method = 'GET', body = null, timeout = 5000 } = {}) {
-  const headers = body
-    ? { 'Content-Type': 'application/json' }
-    : {};
-  const response = await requestPinnedOutboundUrl(url, { method, body, timeout, headers, maxBytes: 2 * 1024 * 1024 });
+  const headers = body ? { 'Content-Type': 'application/json' } : {};
+  const response = await requestPinnedOutboundUrl(url, {
+    method,
+    body,
+    timeout,
+    headers,
+    maxBytes: 2 * 1024 * 1024,
+  });
   if (!response.ok) return response;
   try {
     return { ok: true, status: response.status, data: JSON.parse(response.text) };
@@ -47,54 +51,64 @@ async function httpRequest(url, { method = 'GET', body = null, timeout = 5000 } 
 }
 
 /** GET JSON from a URL: thin wrapper around httpRequest */
-function fetchJson(url) { return httpRequest(url); }
+function fetchJson(url) {
+  return httpRequest(url);
+}
 
 /** POST JSON to a URL: thin wrapper around httpRequest */
-function postJson(url, body) { return httpRequest(url, { method: 'POST', body }); }
+function postJson(url, body) {
+  return httpRequest(url, { method: 'POST', body });
+}
 
 /** Parse Pi-hole config object into normalized arrays */
 function parsePiholeConfig(cfg) {
   const dns = cfg.dns || {};
   const dhcp = cfg.dhcp || {};
 
-  const hosts = (dns.hosts || []).map(entry => {
-    if (typeof entry !== 'string') return null;
-    const parts = entry.split(/\s+/, 2);
-    return parts.length === 2 ? { ip: parts[0], hostname: parts[1] } : null;
-  }).filter(Boolean);
+  const hosts = (dns.hosts || [])
+    .map((entry) => {
+      if (typeof entry !== 'string') return null;
+      const parts = entry.split(/\s+/, 2);
+      return parts.length === 2 ? { ip: parts[0], hostname: parts[1] } : null;
+    })
+    .filter(Boolean);
 
-  const cnames = (dns.cnameRecords || []).map(entry => {
-    if (typeof entry !== 'string') return null;
-    const parts = entry.split(',');
-    return parts.length >= 2 ? { alias: parts[0].trim(), target: parts[1].trim() } : null;
-  }).filter(Boolean);
+  const cnames = (dns.cnameRecords || [])
+    .map((entry) => {
+      if (typeof entry !== 'string') return null;
+      const parts = entry.split(',');
+      return parts.length >= 2 ? { alias: parts[0].trim(), target: parts[1].trim() } : null;
+    })
+    .filter(Boolean);
 
-  const dhcpHosts = (dhcp.hosts || []).map(entry => {
-    if (typeof entry !== 'string') return null;
-    const parts = entry.split(',');
-    if (parts.length < 3) return null;
-    let mac = parts[0].trim();
-    // Normalize: strip leading 01: client-id prefix
-    const macParts = mac.split(':');
-    if (macParts.length === 7 && macParts[0].toLowerCase() === '01') {
-      mac = macParts.slice(1).join(':');
-    }
-    return { mac: mac.toLowerCase(), ip: parts[1].trim(), hostname: parts[2].trim() };
-  }).filter(Boolean);
+  const dhcpHosts = (dhcp.hosts || [])
+    .map((entry) => {
+      if (typeof entry !== 'string') return null;
+      const parts = entry.split(',');
+      if (parts.length < 3) return null;
+      let mac = parts[0].trim();
+      // Normalize: strip leading 01: client-id prefix
+      const macParts = mac.split(':');
+      if (macParts.length === 7 && macParts[0].toLowerCase() === '01') {
+        mac = macParts.slice(1).join(':');
+      }
+      return { mac: mac.toLowerCase(), ip: parts[1].trim(), hostname: parts[2].trim() };
+    })
+    .filter(Boolean);
 
   return { hosts, cnames, dhcpHosts };
 }
 
 /** Detect common zone name from hostnames */
 function detectZoneName(hosts, cnames) {
-  const allNames = [...hosts.map(h => h.hostname), ...cnames.map(c => c.alias)];
+  const allNames = [...hosts.map((h) => h.hostname), ...cnames.map((c) => c.alias)];
   if (allNames.length === 0) return null;
-  const partsList = allNames.map(n => n.split('.'));
-  const minLen = Math.min(...partsList.map(p => p.length));
+  const partsList = allNames.map((n) => n.split('.'));
+  const minLen = Math.min(...partsList.map((p) => p.length));
   const common = [];
   for (let i = 1; i <= minLen; i++) {
     const segment = partsList[0][partsList[0].length - i];
-    if (partsList.every(p => p[p.length - i] === segment)) {
+    if (partsList.every((p) => p[p.length - i] === segment)) {
       common.unshift(segment);
     } else break;
   }
@@ -102,7 +116,7 @@ function detectZoneName(hosts, cnames) {
   const zone = common.join('.');
   // If the detected zone equals a full hostname, drop the first label
   // (e.g. single host "hass.the-mcnultys.org" → "the-mcnultys.org", not the full FQDN)
-  if (allNames.some(n => n === zone) && common.length > 1) {
+  if (allNames.some((n) => n === zone) && common.length > 1) {
     return common.slice(1).join('.');
   }
   return zone;
@@ -142,7 +156,10 @@ function validateImportRecord(record, zoneName, db = null, zone = null, batchFqd
   if (record.type === 'CNAME') {
     if (!isValidDomain(record.value)) return 'Invalid CNAME target';
     if (record.name === '@') return 'CNAME cannot be created at zone apex';
-    if (`${record.name}.${zoneName}`.toLowerCase() === String(record.value).replace(/\.$/, '').toLowerCase()) {
+    if (
+      `${record.name}.${zoneName}`.toLowerCase() ===
+      String(record.value).replace(/\.$/, '').toLowerCase()
+    ) {
       return 'CNAME target cannot reference itself';
     }
     const valueErr = validateDnsmasqConfigValue(record.value, { allowComma: false });
@@ -180,7 +197,6 @@ function appendPath(norm, path) {
     url: `${norm.baseUrl}${path}`,
   };
 }
-
 
 // ── Routes ───────────────────────────────────────────────────────────────────
 
@@ -239,7 +255,10 @@ router.post('/fetch', requirePerm('dns:write'), async (req, res) => {
     }
   }
 
-  const configUrl = appendPath(norm, sid ? `/api/config?sid=${encodeURIComponent(sid)}` : '/api/config');
+  const configUrl = appendPath(
+    norm,
+    sid ? `/api/config?sid=${encodeURIComponent(sid)}` : '/api/config',
+  );
   const configResult = await fetchJson(configUrl);
 
   if (!configResult.ok) {
@@ -267,26 +286,31 @@ router.post('/fetch', requirePerm('dns:write'), async (req, res) => {
  * Parse an uploaded pihole.toml file.
  * Multipart form with file field "file".
  */
-router.post('/parse', requirePerm('dns:write'), textParser({ type: '*/*', limit: '512kb' }), async (req, res) => {
-  const content = typeof req.body === 'string' ? req.body : '';
-  if (!content) return res.status(400).json({ error: 'No file content provided' });
+router.post(
+  '/parse',
+  requirePerm('dns:write'),
+  textParser({ type: '*/*', limit: '512kb' }),
+  async (req, res) => {
+    const content = typeof req.body === 'string' ? req.body : '';
+    if (!content) return res.status(400).json({ error: 'No file content provided' });
 
-  try {
-    const cfg = parseToml(content);
+    try {
+      const cfg = parseToml(content);
 
-    const parsed = parsePiholeConfig(cfg);
-    const zoneName = detectZoneName(parsed.hosts, parsed.cnames);
+      const parsed = parsePiholeConfig(cfg);
+      const zoneName = detectZoneName(parsed.hosts, parsed.cnames);
 
-    res.json({
-      zoneName,
-      hosts: parsed.hosts,
-      cnames: parsed.cnames,
-      dhcpHosts: parsed.dhcpHosts,
-    });
-  } catch (err) {
-    res.status(400).json({ error: `Failed to parse TOML: ${err.message}` });
-  }
-});
+      res.json({
+        zoneName,
+        hosts: parsed.hosts,
+        cnames: parsed.cnames,
+        dhcpHosts: parsed.dhcpHosts,
+      });
+    } catch (err) {
+      res.status(400).json({ error: `Failed to parse TOML: ${err.message}` });
+    }
+  },
+);
 
 /**
  * POST /api/pihole/import
@@ -304,7 +328,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   const results = {
     a: { created: 0, updated: 0, skipped: 0, failed: 0 },
     cname: { created: 0, updated: 0, skipped: 0, failed: 0 },
-    dhcp: { created: 0, skipped: 0, failed: 0, noSubnet: 0 }
+    dhcp: { created: 0, skipped: 0, failed: 0, noSubnet: 0 },
   };
 
   const recordsToImport = [];
@@ -328,15 +352,20 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
 
   if (hostRows.length > 0) {
     for (const h of hostRows) {
-      if (!h || typeof h !== 'object') return res.status(400).json({ error: 'hosts entries must be objects' });
-      if (typeof h.hostname !== 'string') return res.status(400).json({ error: 'hosts hostname must be a string' });
+      if (!h || typeof h !== 'object')
+        return res.status(400).json({ error: 'hosts entries must be objects' });
+      if (typeof h.hostname !== 'string')
+        return res.status(400).json({ error: 'hosts hostname must be a string' });
       const record = {
         type: 'A',
         name: recordName(h.hostname.trim(), zone.name),
-        value: canonicalizeIp(h.ip) || h.ip
+        value: canonicalizeIp(h.ip) || h.ip,
       };
       const err = validateImportRecord(record, zone.name);
-      if (err) { problem('A', record.name, record.value, err); continue; }
+      if (err) {
+        problem('A', record.name, record.value, err);
+        continue;
+      }
       recordsToImport.push(record);
     }
   }
@@ -350,17 +379,30 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   // rejected for referencing a record that "does not exist".
   const batchFqdns = new Set(
     recordsToImport
-      .filter(r => r.type === 'A' || r.type === 'CNAME')
-      .map(r => String(fqdnForRecordName(r.name, zone.name)).trim().replace(/\.$/, '').toLowerCase())
+      .filter((r) => r.type === 'A' || r.type === 'CNAME')
+      .map((r) =>
+        String(fqdnForRecordName(r.name, zone.name)).trim().replace(/\.$/, '').toLowerCase(),
+      ),
   );
   if (cnameRows.length > 0) {
     for (const c of cnameRows) {
-      if (!c || typeof c !== 'object') return res.status(400).json({ error: 'cnames entries must be objects' });
-      if (typeof c.alias !== 'string' || typeof c.target !== 'string') return res.status(400).json({ error: 'cnames alias and target must be strings' });
-      const record = { type: 'CNAME', name: recordName(c.alias.trim(), zone.name), value: c.target.trim() };
+      if (!c || typeof c !== 'object')
+        return res.status(400).json({ error: 'cnames entries must be objects' });
+      if (typeof c.alias !== 'string' || typeof c.target !== 'string')
+        return res.status(400).json({ error: 'cnames alias and target must be strings' });
+      const record = {
+        type: 'CNAME',
+        name: recordName(c.alias.trim(), zone.name),
+        value: c.target.trim(),
+      };
       const err = validateImportRecord(record, zone.name, db, zone, batchFqdns);
-      if (err) { problem('CNAME', record.name, record.value, err); continue; }
-      batchFqdns.add(String(fqdnForRecordName(record.name, zone.name)).trim().replace(/\.$/, '').toLowerCase());
+      if (err) {
+        problem('CNAME', record.name, record.value, err);
+        continue;
+      }
+      batchFqdns.add(
+        String(fqdnForRecordName(record.name, zone.name)).trim().replace(/\.$/, '').toLowerCase(),
+      );
       recordsToImport.push(record);
     }
   }
@@ -372,19 +414,21 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   // ambiguity and every later re-import treats it as legitimate history.
   const duplicateBatchRecords = new Set();
   const aRecordsByIp = new Map();
-  for (const record of recordsToImport.filter(r => r.type === 'A')) {
+  for (const record of recordsToImport.filter((r) => r.type === 'A')) {
     if (!aRecordsByIp.has(record.value)) aRecordsByIp.set(record.value, []);
     aRecordsByIp.get(record.value).push(record);
   }
   for (const [ip, records] of aRecordsByIp) {
     if (records.length < 2) continue;
-    const hostnames = records.map(record => fqdnForRecordName(record.name, zone.name));
+    const hostnames = records.map((record) => fqdnForRecordName(record.name, zone.name));
     for (const record of records) {
       duplicateBatchRecords.add(record);
       problem(
-        'A', record.name, record.value,
-        `${ip} is assigned to multiple A records in this import: ${hostnames.join(', ')}. `
-          + 'Keep one canonical A record and convert each additional name to a CNAME.'
+        'A',
+        record.name,
+        record.value,
+        `${ip} is assigned to multiple A records in this import: ${hostnames.join(', ')}. ` +
+          'Keep one canonical A record and convert each additional name to a CNAME.',
       );
     }
   }
@@ -392,12 +436,23 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   // Check the remaining unambiguous A records against existing DNS and DHCP
   // names. Exact records from this batch are ignored so re-importing a valid
   // one-name-per-address file remains idempotent.
-  for (const record of recordsToImport.filter(r => r.type === 'A')) {
+  for (const record of recordsToImport.filter((r) => r.type === 'A')) {
     if (duplicateBatchRecords.has(record)) continue;
-    const conflict = findAHostnameConflict(db, record.value, record.name, zone.name, null, batchFqdns);
+    const conflict = findAHostnameConflict(
+      db,
+      record.value,
+      record.name,
+      zone.name,
+      null,
+      batchFqdns,
+    );
     if (conflict) {
-      problem('A', record.name, record.value,
-        `${record.value} is already named ${conflict.hostname} (${conflict.source}). One address gets one name; add a CNAME instead.`);
+      problem(
+        'A',
+        record.name,
+        record.value,
+        `${record.value} is already named ${conflict.hostname} (${conflict.source}). One address gets one name; add a CNAME instead.`,
+      );
     }
   }
 
@@ -405,11 +460,14 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   // operator guessing which half landed.
   if (problems.length > 0) {
     const shown = problems.slice(0, MAX_REPORTED_PROBLEMS);
-    const lines = shown.map(p => `${p.type} ${p.name}${p.value ? ` (${p.value})` : ''}: ${p.reason}`);
+    const lines = shown.map(
+      (p) => `${p.type} ${p.name}${p.value ? ` (${p.value})` : ''}: ${p.reason}`,
+    );
     const more = problems.length - shown.length;
     return res.status(400).json({
-      error: `Import rejected, nothing was imported. ${problems.length} record${problems.length === 1 ? '' : 's'} could not be validated:\n` +
-        lines.map(l => `  - ${l}`).join('\n') +
+      error:
+        `Import rejected, nothing was imported. ${problems.length} record${problems.length === 1 ? '' : 's'} could not be validated:\n` +
+        lines.map((l) => `  - ${l}`).join('\n') +
         (more > 0 ? `\n  ...and ${more} more (see problems).` : ''),
       problems,
     });
@@ -421,7 +479,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
       // Reconcile every A row in the submitted batch, including exact records
       // that importRecords skipped. Re-importing a valid file must repair a
       // missing/stale PTR just as creating the record does.
-      for (const record of recordsToImport.filter(item => item.type === 'A')) {
+      for (const record of recordsToImport.filter((item) => item.type === 'A')) {
         const ptrResult = syncPtrForARecord(db, record.name, record.value, zone.name);
         if (ptrResult?.conflict) {
           const err = new Error('PTR conflict');
@@ -445,8 +503,9 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   } catch (err) {
     if (err.code === 'PTR_CONFLICT') {
       return res.status(409).json({
-        error: 'Import rejected, nothing was imported. The PTR for this IP points at a different hostname.',
-        ptr_conflict: err.conflict
+        error:
+          'Import rejected, nothing was imported. The PTR for this IP points at a different hostname.',
+        ptr_conflict: err.conflict,
       });
     }
     throw err;
@@ -455,33 +514,48 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     created: importResult.results.A.created,
     updated: importResult.results.A.updated,
     skipped: importResult.results.A.skipped,
-    failed: importResult.results.A.failed
+    failed: importResult.results.A.failed,
   };
   results.cname = {
     created: importResult.results.CNAME.created,
     updated: importResult.results.CNAME.updated,
     skipped: importResult.results.CNAME.skipped,
-    failed: importResult.results.CNAME.failed
+    failed: importResult.results.CNAME.failed,
   };
   // Import DHCP reservations
   if (dhcpRows.length > 0) {
     // Find all leaf subnets to match IPs against
-    const subnets = db.prepare(`
+    const subnets = db
+      .prepare(
+        `
       SELECT s.* FROM subnets s
       WHERE (SELECT COUNT(*) FROM subnets c WHERE c.parent_id = s.id) = 0
-    `).all();
+    `,
+      )
+      .all();
 
-    const existingRes = db.prepare('SELECT subnet_id, mac_address, ip_address FROM dhcp_reservations').all();
-    const existingMacs = new Set(existingRes.map(r => `${r.subnet_id}|${r.mac_address}`));
-    const existingIps = new Set(existingRes.map(r => `${r.subnet_id}|${r.ip_address}`));
+    const existingRes = db
+      .prepare('SELECT subnet_id, mac_address, ip_address FROM dhcp_reservations')
+      .all();
+    const existingMacs = new Set(existingRes.map((r) => `${r.subnet_id}|${r.mac_address}`));
+    const existingIps = new Set(existingRes.map((r) => `${r.subnet_id}|${r.ip_address}`));
 
     for (const d of dhcpRows) {
       // Reuse the same validation gates as POST /api/dhcp/reservations so
       // imports can't inject data the normal API path would refuse.
       const mac = (d.mac || '').toLowerCase();
-      if (!isValidMac(mac) || !isClientMac(mac)) { results.dhcp.failed++; continue; }
-      if (!isValidIpv4(d.ip)) { results.dhcp.failed++; continue; }
-      if (d.hostname && !isValidDomain(d.hostname)) { results.dhcp.failed++; continue; }
+      if (!isValidMac(mac) || !isClientMac(mac)) {
+        results.dhcp.failed++;
+        continue;
+      }
+      if (!isValidIpv4(d.ip)) {
+        results.dhcp.failed++;
+        continue;
+      }
+      if (d.hostname && !isValidDomain(d.hostname)) {
+        results.dhcp.failed++;
+        continue;
+      }
 
       // Find best matching subnet
       const ipLong = ipToLong(d.ip);
@@ -494,25 +568,36 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
         }
       }
 
-      if (!best) { results.dhcp.noSubnet++; continue; }
+      if (!best) {
+        results.dhcp.noSubnet++;
+        continue;
+      }
 
-      if (reservationIpRejectionReason(db, best, d.ip)) { results.dhcp.failed++; continue; }
+      if (reservationIpRejectionReason(db, best, d.ip)) {
+        results.dhcp.failed++;
+        continue;
+      }
 
       const macKey = `${best.id}|${mac}`;
       const ipKey = `${best.id}|${d.ip}`;
-      if (existingMacs.has(macKey) || existingIps.has(ipKey)) { results.dhcp.skipped++; continue; }
+      if (existingMacs.has(macKey) || existingIps.has(ipKey)) {
+        results.dhcp.skipped++;
+        continue;
+      }
 
       try {
         createReservation(db, best, {
           mac_address: mac,
           ip_address: d.ip,
           hostname: d.hostname || null,
-          description: 'Imported from Pi-hole'
+          description: 'Imported from Pi-hole',
         });
         existingMacs.add(macKey);
         existingIps.add(ipKey);
         results.dhcp.created++;
-      } catch { results.dhcp.failed++; }
+      } catch {
+        results.dhcp.failed++;
+      }
     }
   }
 

@@ -4,19 +4,31 @@ import api from '../api/client.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 
 const METRIC_CONFIG = [
-  { key: 'timeseries',            url: '/metrics/timeseries' },
-  { key: 'blocklistHits',         url: '/metrics/blocklist-hits' },
-  { key: 'geoipHits',             url: '/metrics/geoip-hits' },
-  { key: 'proxyPerf',             url: '/metrics/proxy-perf' },
-  { key: 'topClients',            url: '/analytics/top-clients',          params: { limit: 10 } },
-  { key: 'topDomains',            url: '/analytics/top-domains',          params: { limit: 10 } },
-  { key: 'dnssecUnsupportedDomains', url: '/analytics/dnssec/top-unsupported-domains', params: { limit: 10 } },
-  { key: 'blocklistTopClients',   url: '/analytics/blocklist/top-clients', params: { limit: 10 } },
-  { key: 'blocklistTopDomains',   url: '/analytics/blocklist/top-domains', params: { limit: 10 } },
-  { key: 'blocklistTopCategories',url: '/analytics/blocklist/top-categories', params: { limit: 10 } },
-  { key: 'blocklistTopClientDomains', url: '/analytics/blocklist/top-client-domains', params: { limit: 20 } },
-  { key: 'geoipTopClients',       url: '/analytics/geoip/top-clients',    params: { limit: 10 } },
-  { key: 'geoipTopDomains',       url: '/analytics/geoip/top-domains',    params: { limit: 10 } },
+  { key: 'timeseries', url: '/metrics/timeseries' },
+  { key: 'blocklistHits', url: '/metrics/blocklist-hits' },
+  { key: 'geoipHits', url: '/metrics/geoip-hits' },
+  { key: 'proxyPerf', url: '/metrics/proxy-perf' },
+  { key: 'topClients', url: '/analytics/top-clients', params: { limit: 10 } },
+  { key: 'topDomains', url: '/analytics/top-domains', params: { limit: 10 } },
+  {
+    key: 'dnssecUnsupportedDomains',
+    url: '/analytics/dnssec/top-unsupported-domains',
+    params: { limit: 10 },
+  },
+  { key: 'blocklistTopClients', url: '/analytics/blocklist/top-clients', params: { limit: 10 } },
+  { key: 'blocklistTopDomains', url: '/analytics/blocklist/top-domains', params: { limit: 10 } },
+  {
+    key: 'blocklistTopCategories',
+    url: '/analytics/blocklist/top-categories',
+    params: { limit: 10 },
+  },
+  {
+    key: 'blocklistTopClientDomains',
+    url: '/analytics/blocklist/top-client-domains',
+    params: { limit: 20 },
+  },
+  { key: 'geoipTopClients', url: '/analytics/geoip/top-clients', params: { limit: 10 } },
+  { key: 'geoipTopDomains', url: '/analytics/geoip/top-domains', params: { limit: 10 } },
 ];
 
 export const useDashboardStore = defineStore('dashboard', () => {
@@ -49,7 +61,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   async function fetchMetric(key, range = '24h') {
-    const cfg = METRIC_CONFIG.find(c => c.key === key);
+    const cfg = METRIC_CONFIG.find((c) => c.key === key);
     if (!cfg) return;
     const res = await api.get(cfg.url, { params: { range, ...cfg.params } });
     metrics[key] = res.data;
@@ -69,25 +81,25 @@ export const useDashboardStore = defineStore('dashboard', () => {
   }
 
   // Thin wrappers kept for backward compatibility with existing callers
-  const fetchTimeseries            = (range) => fetchMetric('timeseries', range);
-  const fetchBlocklistHits         = (range) => fetchMetric('blocklistHits', range);
-  const fetchGeoipHits             = (range) => fetchMetric('geoipHits', range);
-  const fetchProxyPerf             = (range) => fetchMetric('proxyPerf', range);
-  const fetchTopClients            = (range) => fetchMetric('topClients', range);
-  const fetchTopDomains            = (range) => fetchMetric('topDomains', range);
+  const fetchTimeseries = (range) => fetchMetric('timeseries', range);
+  const fetchBlocklistHits = (range) => fetchMetric('blocklistHits', range);
+  const fetchGeoipHits = (range) => fetchMetric('geoipHits', range);
+  const fetchProxyPerf = (range) => fetchMetric('proxyPerf', range);
+  const fetchTopClients = (range) => fetchMetric('topClients', range);
+  const fetchTopDomains = (range) => fetchMetric('topDomains', range);
   const fetchDnssecUnsupportedDomains = (range) => fetchMetric('dnssecUnsupportedDomains', range);
-  const fetchBlocklistTopClients   = (range) => fetchMetric('blocklistTopClients', range);
-  const fetchBlocklistTopDomains   = (range) => fetchMetric('blocklistTopDomains', range);
-  const fetchBlocklistTopCategories= (range) => fetchMetric('blocklistTopCategories', range);
+  const fetchBlocklistTopClients = (range) => fetchMetric('blocklistTopClients', range);
+  const fetchBlocklistTopDomains = (range) => fetchMetric('blocklistTopDomains', range);
+  const fetchBlocklistTopCategories = (range) => fetchMetric('blocklistTopCategories', range);
   const fetchBlocklistTopClientDomains = (range) => fetchMetric('blocklistTopClientDomains', range);
-  const fetchGeoipTopClients       = (range) => fetchMetric('geoipTopClients', range);
-  const fetchGeoipTopDomains       = (range) => fetchMetric('geoipTopDomains', range);
+  const fetchGeoipTopClients = (range) => fetchMetric('geoipTopClients', range);
+  const fetchGeoipTopDomains = (range) => fetchMetric('geoipTopDomains', range);
 
   async function fetchAll(range = '24h') {
     loading.value = true;
     try {
       await Promise.all([
-        ...METRIC_CONFIG.map(c => fetchMetric(c.key, range)),
+        ...METRIC_CONFIG.map((c) => fetchMetric(c.key, range)),
         fetchServices(),
         fetchSystemHealth(),
       ]);
@@ -98,15 +110,28 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   return {
     metrics,
-    ...toRefs(metrics),  // live-linked refs so store.timeseries stays in sync with metrics.timeseries
-    services, systemHealth, loading,
-    selectedRange, setRange,
+    ...toRefs(metrics), // live-linked refs so store.timeseries stays in sync with metrics.timeseries
+    services,
+    systemHealth,
+    loading,
+    selectedRange,
+    setRange,
     fetchMetric,
-    fetchTimeseries, fetchBlocklistHits, fetchGeoipHits, fetchProxyPerf, fetchServices,
+    fetchTimeseries,
+    fetchBlocklistHits,
+    fetchGeoipHits,
+    fetchProxyPerf,
+    fetchServices,
     fetchSystemHealth,
-    fetchTopClients, fetchTopDomains, fetchDnssecUnsupportedDomains,
-    fetchBlocklistTopClients, fetchBlocklistTopDomains, fetchBlocklistTopCategories, fetchBlocklistTopClientDomains,
-    fetchGeoipTopClients, fetchGeoipTopDomains,
+    fetchTopClients,
+    fetchTopDomains,
+    fetchDnssecUnsupportedDomains,
+    fetchBlocklistTopClients,
+    fetchBlocklistTopDomains,
+    fetchBlocklistTopCategories,
+    fetchBlocklistTopClientDomains,
+    fetchGeoipTopClients,
+    fetchGeoipTopDomains,
     fetchAll,
   };
 });

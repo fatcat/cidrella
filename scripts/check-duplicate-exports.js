@@ -64,14 +64,16 @@ function walk(dir, acc = []) {
 
 function exportedNames(source) {
   const names = new Set();
-  for (const m of source.matchAll(/^\s*export\s+(?:async\s+)?function\s+([A-Za-z_][\w]*)/gm)) names.add(m[1]);
+  for (const m of source.matchAll(/^\s*export\s+(?:async\s+)?function\s+([A-Za-z_][\w]*)/gm))
+    names.add(m[1]);
   for (const m of source.matchAll(/^\s*export\s+const\s+([A-Za-z_][\w]*)/gm)) names.add(m[1]);
   return names;
 }
 
 function localFunctionNames(source) {
   const names = new Set();
-  for (const m of source.matchAll(/^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][\w]*)/gm)) names.add(m[1]);
+  for (const m of source.matchAll(/^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_][\w]*)/gm))
+    names.add(m[1]);
   return names;
 }
 
@@ -87,9 +89,10 @@ function namedImportSources(source) {
   return sources;
 }
 
-const files = SCAN_ROOTS.flatMap(r => walk(path.join(PROJECT_DIR, r)));
+const files = SCAN_ROOTS.flatMap((r) => walk(path.join(PROJECT_DIR, r)));
 const exportsByFile = new Map();
-for (const f of files) exportsByFile.set(path.resolve(f), exportedNames(fs.readFileSync(f, 'utf8')));
+for (const f of files)
+  exportsByFile.set(path.resolve(f), exportedNames(fs.readFileSync(f, 'utf8')));
 
 const violations = [];
 for (const file of files) {
@@ -104,13 +107,18 @@ for (const file of files) {
     for (const name of targetExports) {
       if (!locals.has(name)) continue;
       const rel = path.relative(PROJECT_DIR, file);
-      violations.push({ key: `${rel}::${name}`, file: rel, name, module: path.relative(PROJECT_DIR, target) });
+      violations.push({
+        key: `${rel}::${name}`,
+        file: rel,
+        name,
+        module: path.relative(PROJECT_DIR, target),
+      });
     }
   }
 }
 
-const fresh = violations.filter(v => !(v.key in BASELINE) && !(v.key in ALLOWLIST));
-const staleBaseline = Object.keys(BASELINE).filter(k => !violations.some(v => v.key === k));
+const fresh = violations.filter((v) => !(v.key in BASELINE) && !(v.key in ALLOWLIST));
+const staleBaseline = Object.keys(BASELINE).filter((k) => !violations.some((v) => v.key === k));
 
 if (fresh.length > 0) {
   console.error('');
@@ -140,4 +148,6 @@ if (staleBaseline.length > 0) {
 }
 
 const tolerated = violations.length - fresh.length;
-console.log(`  Duplicate-export check OK (${files.length} files, ${tolerated} known/allowed, 0 new)`);
+console.log(
+  `  Duplicate-export check OK (${files.length} files, ${tolerated} known/allowed, 0 new)`,
+);

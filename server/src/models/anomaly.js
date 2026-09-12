@@ -3,10 +3,14 @@ export function deleteScore(db, id) {
 }
 
 export function dismissScore(db, id) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE anomaly_scores SET resolved = 1, resolved_at = datetime('now')
     WHERE id = ? AND resolved = 0
-  `).run(id);
+  `,
+    )
+    .run(id);
 }
 
 // Resolve a client IP to the anomaly-detection identity it's scored under:
@@ -25,9 +29,9 @@ export function resolveIdentity(db, clientIp) {
 export function addWhitelistEntry(db, clientIp, reason) {
   return db.transaction(() => {
     const identity = resolveIdentity(db, clientIp);
-    const result = db.prepare(
-      'INSERT INTO anomaly_whitelist (identity, client_ip, reason) VALUES (?, ?, ?)'
-    ).run(identity, clientIp, reason || null);
+    const result = db
+      .prepare('INSERT INTO anomaly_whitelist (identity, client_ip, reason) VALUES (?, ?, ?)')
+      .run(identity, clientIp, reason || null);
 
     db.prepare('DELETE FROM anomaly_models WHERE identity = ?').run(identity);
     db.prepare('DELETE FROM anomaly_scores WHERE identity = ?').run(identity);

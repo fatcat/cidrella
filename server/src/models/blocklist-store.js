@@ -1,13 +1,19 @@
 export function setCategoryEnabled(db, slug, enabled) {
-  return db.prepare('UPDATE blocklist_categories SET enabled = ? WHERE slug = ?').run(enabled ? 1 : 0, slug);
+  return db
+    .prepare('UPDATE blocklist_categories SET enabled = ? WHERE slug = ?')
+    .run(enabled ? 1 : 0, slug);
 }
 
 export function setCategorySourceUrl(db, slug, sourceUrl) {
-  return db.prepare('UPDATE blocklist_categories SET source_url = ? WHERE slug = ?').run(sourceUrl, slug);
+  return db
+    .prepare('UPDATE blocklist_categories SET source_url = ? WHERE slug = ?')
+    .run(sourceUrl, slug);
 }
 
 export function addWhitelistEntry(db, domain, reason) {
-  const result = db.prepare('INSERT INTO blocklist_whitelist (domain, reason) VALUES (?, ?)').run(domain, reason || null);
+  const result = db
+    .prepare('INSERT INTO blocklist_whitelist (domain, reason) VALUES (?, ?)')
+    .run(domain, reason || null);
   return result.lastInsertRowid;
 }
 

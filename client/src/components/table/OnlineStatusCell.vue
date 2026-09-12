@@ -7,7 +7,7 @@ import { computed } from 'vue';
 import { displayOnlineStatus } from '../../utils/format.js';
 
 const props = defineProps({
-  value: { type: [Boolean, Number], default: null }
+  value: { type: [Boolean, Number], default: null },
 });
 
 const state = computed(() => displayOnlineStatus(props.value));

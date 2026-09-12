@@ -14,9 +14,17 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { getDb } from '../../../src/db/init.js';
 import {
-  lookupCountry, getProxyStatus, resetStats, isProxyBypassed,
-  getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics,
-  loadBlocklist, loadWhitelist, getAndResetBlocklistHits, evaluateInboundPolicy,
+  lookupCountry,
+  getProxyStatus,
+  resetStats,
+  isProxyBypassed,
+  getBlockedDelta,
+  getAndResetCountryHits,
+  getAndResetPerformanceMetrics,
+  loadBlocklist,
+  loadWhitelist,
+  getAndResetBlocklistHits,
+  evaluateInboundPolicy,
 } from '../../../src/utils/dns-proxy.js';
 
 let tmpDir;
@@ -32,11 +40,21 @@ beforeAll(async () => {
     INSERT OR IGNORE INTO geoip_rules (country_code, country_name, enabled) VALUES ('RU', 'Russia', 1);
     INSERT OR IGNORE INTO geoip_rules (country_code, country_name, enabled) VALUES ('US', 'United States', 0);
   `);
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_mode', 'blocklist')").run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_enabled', 'false')").run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_proxy_port', '5353')").run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')").run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', '')").run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_mode', 'blocklist')",
+  ).run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_enabled', 'false')",
+  ).run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_proxy_port', '5353')",
+  ).run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')",
+  ).run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', '')",
+  ).run();
 });
 
 afterAll(() => {
@@ -191,7 +209,9 @@ describe('loadBlocklist', () => {
 
     // Enable blocklist and seed a category + domains. domain_count is what the
     // status endpoint reports now (the refresh maintains it), so seed it too.
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')",
+    ).run();
     db.exec(`
       INSERT OR REPLACE INTO blocklist_categories (slug, enabled, domain_count) VALUES ('malware', 1, 2);
       INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('evil.example.com', 'malware');
@@ -212,7 +232,9 @@ describe('loadBlocklist', () => {
     expect(evaluateInboundPolicy('unlisted.example.com').action).toBe('forward');
 
     // Clean up
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')",
+    ).run();
     db.exec("DELETE FROM blocklist_domains WHERE category_slug = 'malware'");
     loadBlocklist();
   });
@@ -224,7 +246,9 @@ describe('loadBlocklist', () => {
     // NOT IN subquery at load time, so it was observable as a smaller domain
     // count. Domains are read from SQLite per query now and the allowlist is
     // applied at lookup time, so assert the verdict rather than the count.
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')",
+    ).run();
     db.exec(`
       INSERT OR REPLACE INTO blocklist_categories (slug, enabled, domain_count) VALUES ('malware', 1, 2);
       INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('evil.example.com', 'malware');
@@ -242,9 +266,11 @@ describe('loadBlocklist', () => {
     expect(evaluateInboundPolicy('evil.example.com').action).toBe('block');
 
     // Clean up
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')",
+    ).run();
     db.exec("DELETE FROM blocklist_domains WHERE category_slug = 'malware'");
-    db.exec("DELETE FROM blocklist_whitelist");
+    db.exec('DELETE FROM blocklist_whitelist');
     loadBlocklist();
     loadWhitelist();
   });
@@ -252,7 +278,9 @@ describe('loadBlocklist', () => {
   it('ignores domains whose category is disabled', () => {
     const db = getDb();
 
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')",
+    ).run();
     db.exec(`
       INSERT OR REPLACE INTO blocklist_categories (slug, enabled, domain_count) VALUES ('malware', 0, 1);
       INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('off.example.com', 'malware');
@@ -263,7 +291,9 @@ describe('loadBlocklist', () => {
 
     expect(evaluateInboundPolicy('off.example.com').action).toBe('forward');
 
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')",
+    ).run();
     db.exec("DELETE FROM blocklist_domains WHERE category_slug = 'malware'");
     loadBlocklist();
   });

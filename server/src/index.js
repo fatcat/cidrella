@@ -66,7 +66,7 @@ import {
   restartDnsmasq,
   isCidrellaDnsmasqRunning,
   dnsmasqRestartPending,
-  withValidatedDnsmasqUpdate
+  withValidatedDnsmasqUpdate,
 } from './utils/dnsmasq.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
@@ -94,7 +94,15 @@ async function main() {
   captureBootServiceHealth();
 
   // Ensure data directories exist
-  const dataDirs = ['certs', 'backups', 'dnsmasq/hosts.d', 'dnsmasq/dhcp-hosts.d', 'dnsmasq/conf.d', 'blocklists', 'geoip'];
+  const dataDirs = [
+    'certs',
+    'backups',
+    'dnsmasq/hosts.d',
+    'dnsmasq/dhcp-hosts.d',
+    'dnsmasq/conf.d',
+    'blocklists',
+    'geoip',
+  ];
   for (const dir of dataDirs) {
     fs.mkdirSync(path.join(DATA_DIR, dir), { recursive: true });
   }
@@ -117,14 +125,14 @@ async function main() {
     const ptrRepair = reconcileManagedReverseDns(getDb());
     if (ptrRepair.inserted > 0 || ptrRepair.updated > 0) {
       console.log(
-        `Reconciled reverse DNS: ${ptrRepair.inserted} PTR row(s) inserted, `
-        + `${ptrRepair.updated} updated`
+        `Reconciled reverse DNS: ${ptrRepair.inserted} PTR row(s) inserted, ` +
+          `${ptrRepair.updated} updated`,
       );
     }
     for (const skipped of ptrRepair.skipped_subnets) {
       console.warn(
-        `Reverse DNS placeholder reconciliation skipped ${skipped.cidr}: `
-        + `${skipped.addresses} usable addresses exceeds the 65536-address safety limit`
+        `Reverse DNS placeholder reconciliation skipped ${skipped.cidr}: ` +
+          `${skipped.addresses} usable addresses exceeds the 65536-address safety limit`,
       );
     }
   } catch (err) {
@@ -139,7 +147,10 @@ async function main() {
   try {
     canonicalizeGeoipAllowlist(getDb());
   } catch (err) {
-    console.error('GeoIP allowlist canonicalization failed (continuing with stored values):', err.message);
+    console.error(
+      'GeoIP allowlist canonicalization failed (continuing with stored values):',
+      err.message,
+    );
   }
 
   // Repair stale system "Gateway" range rows whose start_ip doesn't match
@@ -151,7 +162,8 @@ async function main() {
   // gateway; this heal fixes the ones that already landed.
   try {
     const repaired = Range.repairStaleGatewayRanges(getDb());
-    if (repaired.changes > 0) console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
+    if (repaired.changes > 0)
+      console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
   } catch (err) {
     console.warn('Gateway range repair skipped:', err?.message || err);
   }
@@ -173,7 +185,9 @@ async function main() {
   try {
     const warning = getCapabilityWarning();
     if (warning) {
-      console.warn(`[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`);
+      console.warn(
+        `[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`,
+      );
     }
   } catch (err) {
     console.warn(`[capabilities] Unable to inspect process capabilities: ${err?.message || err}`);
@@ -217,7 +231,9 @@ async function main() {
     } else {
       console.log('dnsmasq config unchanged and service running, skipping boot restart');
     }
-  } catch { console.warn('dnsmasq restart failed (may not be installed)'); }
+  } catch {
+    console.warn('dnsmasq restart failed (may not be installed)');
+  }
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,
@@ -294,23 +310,25 @@ async function main() {
   app.set('strict routing', true);
 
   // Middleware
-  app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],  // Vue/PrimeVue injects inline styles
-        imgSrc: ["'self'", "data:"],
-        connectSrc: ["'self'"],
-        fontSrc: ["'self'", "data:"],
-        objectSrc: ["'none'"],
-        frameAncestors: ["'none'"]
-      }
-    },
-    crossOriginEmbedderPolicy: false,
-    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-    strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true }
-  }));
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"], // Vue/PrimeVue injects inline styles
+          imgSrc: ["'self'", 'data:'],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'", 'data:'],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+      strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true },
+    }),
+  );
   app.use((req, res, next) => {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     next();
@@ -357,7 +375,7 @@ async function main() {
   // this mount below the auth middleware).
   const writeLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 300,  // 5/sec sustained per user, plenty for a human, too slow to brick the server
+    max: 300, // 5/sec sustained per user, plenty for a human, too slow to brick the server
     message: { error: 'Too many write requests. Slow down or retry later.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -374,7 +392,7 @@ async function main() {
       if (req.path.startsWith('/api/auth/login')) return true;
       if (req.path.startsWith('/api/auth/change-password')) return true;
       return false;
-    }
+    },
   });
   app.use(writeLimiter);
 
@@ -422,7 +440,12 @@ async function main() {
   // Block page for filtered domains
   app.get('/blocked', (req, res) => {
     const rawDomain = req.query.domain || req.hostname;
-    const domain = String(rawDomain).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const domain = String(rawDomain)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
     res.status(200).send(`<!DOCTYPE html>
 <html><head><title>Blocked</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}
@@ -452,7 +475,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
       const table = match ? match[1] : 'unknown';
       console.error(`Missing table "${table}". Database migrations may not have been applied`);
       return res.status(500).json({
-        error: `Missing database table "${table}". Please restart the server to apply pending migrations.`
+        error: `Missing database table "${table}". Please restart the server to apply pending migrations.`,
       });
     }
 
@@ -512,7 +535,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
   await applyHttpRedirectConfig();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Failed to start server:', err);
   process.exit(1);
 });

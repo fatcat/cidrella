@@ -23,7 +23,8 @@ export const PASSWORD_POLICY = Object.freeze({
   requireDigit: true,
   // Shown by the client. Kept next to the rule it describes so the two cannot
   // drift, which is the whole point of this module.
-  description: 'At least 8 characters, including an uppercase letter, a lowercase letter, and a number.',
+  description:
+    'At least 8 characters, including an uppercase letter, a lowercase letter, and a number.',
 });
 
 /**

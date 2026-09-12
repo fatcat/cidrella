@@ -26,8 +26,13 @@
       <template #sourceheader>
         <div class="available-header">
           <span>Available</span>
-          <InputText v-model="availableFilter" aria-label="Filter available columns"
-                     placeholder="Filter columns" size="small" class="available-filter" />
+          <InputText
+            v-model="availableFilter"
+            aria-label="Filter available columns"
+            placeholder="Filter columns"
+            size="small"
+            class="available-filter"
+          />
         </div>
       </template>
       <template #targetheader>Visible</template>
@@ -54,7 +59,7 @@ import PickList from '../../ui/PickList.js';
 const props = defineProps({
   tableName: { type: String, required: true },
   allColumns: { type: Array, required: true },
-  visibleColumns: { type: Array, required: true }
+  visibleColumns: { type: Array, required: true },
 });
 
 const emit = defineEmits(['update:visibleColumns', 'reset']);
@@ -64,32 +69,34 @@ const draft = ref([[], []]);
 const availableFilter = ref('');
 
 function sortedAvailable(columns) {
-  return [...columns].sort((a, b) => a.header.localeCompare(b.header, undefined, { sensitivity: 'base' }));
+  return [...columns].sort((a, b) =>
+    a.header.localeCompare(b.header, undefined, { sensitivity: 'base' }),
+  );
 }
 
 const filteredDraft = computed({
   get() {
     const query = availableFilter.value.trim().toLocaleLowerCase();
     const available = query
-      ? draft.value[0].filter(column => column.header.toLocaleLowerCase().includes(query))
+      ? draft.value[0].filter((column) => column.header.toLocaleLowerCase().includes(query))
       : draft.value[0];
     return [available, draft.value[1]];
   },
   set([, nextVisible]) {
-    const visibleKeys = new Set(nextVisible.map(column => column.key));
+    const visibleKeys = new Set(nextVisible.map((column) => column.key));
     draft.value = [
-      sortedAvailable(props.allColumns.filter(column => !visibleKeys.has(column.key))),
-      nextVisible
+      sortedAvailable(props.allColumns.filter((column) => !visibleKeys.has(column.key))),
+      nextVisible,
     ];
-  }
+  },
 });
 
 function open() {
   availableFilter.value = '';
-  const visibleKeys = new Set(props.visibleColumns.map(c => c.key));
+  const visibleKeys = new Set(props.visibleColumns.map((c) => c.key));
   draft.value = [
-    sortedAvailable(props.allColumns.filter(c => !visibleKeys.has(c.key))),
-    [...props.visibleColumns]
+    sortedAvailable(props.allColumns.filter((c) => !visibleKeys.has(c.key))),
+    [...props.visibleColumns],
   ];
   visible.value = true;
 }

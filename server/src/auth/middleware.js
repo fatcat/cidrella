@@ -22,7 +22,9 @@ let _cachedJwtSecret = null;
 
 function getJwtSecret(db) {
   if (!_cachedJwtSecret) {
-    _cachedJwtSecret = db.prepare("SELECT value FROM settings WHERE key = 'jwt_secret'").get()?.value;
+    _cachedJwtSecret = db
+      .prepare("SELECT value FROM settings WHERE key = 'jwt_secret'")
+      .get()?.value;
   }
   return _cachedJwtSecret;
 }
@@ -80,7 +82,9 @@ export function authMiddleware(req, res, next) {
     const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] });
 
     // Re-validate user from DB to catch deletions/role changes
-    const user = db.prepare('SELECT id, role, must_change_password, updated_at FROM users WHERE id = ?').get(decoded.id);
+    const user = db
+      .prepare('SELECT id, role, must_change_password, updated_at FROM users WHERE id = ?')
+      .get(decoded.id);
     if (!user) {
       return res.status(401).json({ error: 'User no longer exists' });
     }
@@ -99,7 +103,7 @@ export function authMiddleware(req, res, next) {
     if (req.user.must_change_password && !PASSWORD_CHANGE_PATHS.includes(normalizedPath)) {
       return res.status(403).json({
         error: 'Password change required',
-        code: 'MUST_CHANGE_PASSWORD'
+        code: 'MUST_CHANGE_PASSWORD',
       });
     }
 

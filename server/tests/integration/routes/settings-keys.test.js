@@ -7,7 +7,11 @@ const { default: request } = await import('supertest');
 
 let tmpDir, app;
 
-beforeAll(async () => { const s = await setupTestDb(); tmpDir = s.tmpDir; app = createTestApp(settingsRouter, '/api/settings'); });
+beforeAll(async () => {
+  const s = await setupTestDb();
+  tmpDir = s.tmpDir;
+  app = createTestApp(settingsRouter, '/api/settings');
+});
 afterAll(() => cleanupTestDb(tmpDir));
 
 // These keys have authoritative routes that persist AND apply; the generic
@@ -42,7 +46,9 @@ describe('PUT /api/settings/:key, apply-coupled keys are not editable', () => {
   }
 
   it('still accepts a schema key (control)', async () => {
-    const res = await request(app).put('/api/settings/update_check_enabled').send({ value: 'true' });
+    const res = await request(app)
+      .put('/api/settings/update_check_enabled')
+      .send({ value: 'true' });
     expect(res.status).toBe(200);
   });
 

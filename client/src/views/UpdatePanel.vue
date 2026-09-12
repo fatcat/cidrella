@@ -12,9 +12,15 @@
           <span v-if="versionInfo?.lastChecked" class="last-checked">
             Last checked {{ formatRelative(versionInfo.lastChecked) }}
           </span>
-          <Button label="Check Now" icon="pi pi-refresh" size="small" text
-                  data-track="update-check-now"
-                  :loading="checking" @click="checkForUpdate" />
+          <Button
+            label="Check Now"
+            icon="pi pi-refresh"
+            size="small"
+            text
+            data-track="update-check-now"
+            :loading="checking"
+            @click="checkForUpdate"
+          />
           <!-- Always-visible recovery affordance. Defense-in-depth for the
                class of bug where the update-status record gets stuck in a
                non-idle state and the normal Dismiss button (scoped to the
@@ -23,11 +29,15 @@
                rm'ing /var/lib/cidrella/update-status.json. Safe at any
                time; worst case it clears an active update's progress UI,
                not the underlying update process. -->
-          <Button icon="pi pi-ellipsis-v" size="small" text
-                  title="Reset update state"
-                  aria-label="Reset update state"
-                  data-track="update-reset-state"
-                  @click="showResetConfirm = true" />
+          <Button
+            icon="pi pi-ellipsis-v"
+            size="small"
+            text
+            title="Reset update state"
+            aria-label="Reset update state"
+            data-track="update-reset-state"
+            @click="showResetConfirm = true"
+          />
         </div>
       </div>
     </div>
@@ -37,17 +47,24 @@
       <i class="pi pi-info-circle"></i>
       <div>
         <strong>Docker deployment detected</strong>
-        <p>In-app updates are not available for Docker deployments. Pull the latest image to update.</p>
+        <p>
+          In-app updates are not available for Docker deployments. Pull the latest image to update.
+        </p>
       </div>
     </div>
 
     <!-- Available Update -->
-    <div v-else-if="versionInfo?.updateAvailable && !isUpdating && updateStatus?.state !== 'completed'" class="content-card update-available">
+    <div
+      v-else-if="versionInfo?.updateAvailable && !isUpdating && updateStatus?.state !== 'completed'"
+      class="content-card update-available"
+    >
       <div class="update-header">
         <div>
           <h3>Update Available</h3>
           <p class="update-version">
-            v{{ versionInfo.version }} <i class="pi pi-arrow-right"></i> v{{ versionInfo.updateAvailable }}
+            v{{ versionInfo.version }} <i class="pi pi-arrow-right"></i> v{{
+              versionInfo.updateAvailable
+            }}
           </p>
           <!-- Multi-hop skip-upgrade context: explain why this is step N of M
                and what the ultimate destination is. Read-only, no auto-chain
@@ -58,8 +75,8 @@
             <p class="chain-summary">
               <i class="pi pi-info-circle"></i>
               <span>
-                Step <strong>1 of {{ versionInfo.updateChain.length }}</strong>:
-                the latest version <strong>v{{ versionInfo.chainTarget }}</strong> requires going
+                Step <strong>1 of {{ versionInfo.updateChain.length }}</strong
+                >: the latest version <strong>v{{ versionInfo.chainTarget }}</strong> requires going
                 through intermediate versions first.
               </span>
             </p>
@@ -68,7 +85,12 @@
                 <span>v{{ versionInfo.version }}</span>
                 <template v-for="(hop, idx) in versionInfo.updateChain" :key="hop">
                   <i class="pi pi-arrow-right"></i>
-                  <span :class="{ 'chain-current-hop': idx === 0, 'chain-final-hop': idx === versionInfo.updateChain.length - 1 }">
+                  <span
+                    :class="{
+                      'chain-current-hop': idx === 0,
+                      'chain-final-hop': idx === versionInfo.updateChain.length - 1,
+                    }"
+                  >
                     v{{ hop }}
                   </span>
                 </template>
@@ -84,31 +106,48 @@
                story. Silent degradation was an explicit anti-goal for this phase. -->
           <p v-if="versionInfo.manifestAvailable === false" class="manifest-fallback-note">
             <i class="pi pi-exclamation-triangle"></i>
-            Skip-upgrade information unavailable (release manifest unreachable).
-            Additional updates may be required after this one.
+            Skip-upgrade information unavailable (release manifest unreachable). Additional updates
+            may be required after this one.
           </p>
         </div>
         <div class="update-actions">
-          <a v-if="versionInfo.updateUrl" :href="versionInfo.updateUrl" target="_blank"
-             class="release-link" data-track="update-release-notes">
+          <a
+            v-if="versionInfo.updateUrl"
+            :href="versionInfo.updateUrl"
+            target="_blank"
+            class="release-link"
+            data-track="update-release-notes"
+          >
             <i class="pi pi-external-link"></i> Release Notes
           </a>
-          <Button :label="isMultiHopChain ? 'Install Step 1' : 'Install Update'"
-                  icon="pi pi-download" severity="success"
-                  data-track="update-install"
-                  :loading="installing" @click="confirmInstall" />
+          <Button
+            :label="isMultiHopChain ? 'Install Step 1' : 'Install Update'"
+            icon="pi pi-download"
+            severity="success"
+            data-track="update-install"
+            :loading="installing"
+            @click="confirmInstall"
+          />
         </div>
       </div>
     </div>
 
     <!-- Up to Date -->
-    <div v-else-if="!versionInfo?.updateAvailable && !isUpdating && updateStatus?.state !== 'completed'" class="content-card up-to-date">
+    <div
+      v-else-if="
+        !versionInfo?.updateAvailable && !isUpdating && updateStatus?.state !== 'completed'
+      "
+      class="content-card up-to-date"
+    >
       <i class="pi pi-check-circle"></i>
       <span>CIDRella is up to date</span>
     </div>
 
     <!-- Update Progress -->
-    <div v-if="isUpdating || updateStatus?.state === 'completed' || updateStatus?.state === 'failed'" class="content-card update-progress">
+    <div
+      v-if="isUpdating || updateStatus?.state === 'completed' || updateStatus?.state === 'failed'"
+      class="content-card update-progress"
+    >
       <h3>{{ reconnecting ? 'Restarting...' : 'Update Progress' }}</h3>
 
       <!-- Reconnecting Overlay -->
@@ -120,8 +159,12 @@
 
       <!-- Step Indicator -->
       <div v-else class="update-steps">
-        <div v-for="step in updateSteps" :key="step.key"
-             class="update-step" :class="stepClass(step.key)">
+        <div
+          v-for="step in updateSteps"
+          :key="step.key"
+          class="update-step"
+          :class="stepClass(step.key)"
+        >
           <div class="step-icon">
             <i v-if="isStepDone(step.key)" class="pi pi-check"></i>
             <i v-else-if="isStepActive(step.key)" class="pi pi-spin pi-spinner"></i>
@@ -132,8 +175,12 @@
       </div>
 
       <!-- Progress Bar -->
-      <ProgressBar v-if="isUpdating" :value="updateStatus?.progress_pct || 0"
-                   :showValue="true" style="margin-top: 1rem;" />
+      <ProgressBar
+        v-if="isUpdating"
+        :value="updateStatus?.progress_pct || 0"
+        :showValue="true"
+        style="margin-top: 1rem"
+      />
 
       <!-- Status Message -->
       <p v-if="updateStatus?.message && !reconnecting" class="status-message">
@@ -147,8 +194,14 @@
           <strong>Update complete</strong>
           <p>Updated from v{{ updateStatus.from_version }} to v{{ updateStatus.to_version }}</p>
         </div>
-        <Button label="Dismiss" icon="pi pi-times" size="small" text
-                data-track="update-dismiss" @click="dismissStatus" />
+        <Button
+          label="Dismiss"
+          icon="pi pi-times"
+          size="small"
+          text
+          data-track="update-dismiss"
+          @click="dismissStatus"
+        />
       </div>
 
       <!-- Failed -->
@@ -160,38 +213,56 @@
           <p v-if="updateStatus.backup_path" class="rollback-hint">
             Rollback available at: <code>{{ updateStatus.backup_path }}</code>
           </p>
-          <p v-if="updateStatus.reason_code === 'ip_lifecycle_migration_blocked'"
-             class="rollback-hint">
-            CIDRella found IP allocation conflicts that require an administrator's
-            decision. Download the report, resolve every listed conflict, then run
-            the update again.
+          <p
+            v-if="updateStatus.reason_code === 'ip_lifecycle_migration_blocked'"
+            class="rollback-hint"
+          >
+            CIDRella found IP allocation conflicts that require an administrator's decision.
+            Download the report, resolve every listed conflict, then run the update again.
           </p>
         </div>
         <div class="result-actions">
-          <Button v-if="updateStatus.reason_code === 'ip_lifecycle_migration_blocked'
-                            && updateStatus.lifecycle_migration_report_available"
-                  label="Download reconciliation report" icon="pi pi-download"
-                  size="small" severity="secondary"
-                  data-track="update-download-lifecycle-report"
-                  @click="downloadLifecycleReport" />
-          <Button label="Dismiss" icon="pi pi-times" size="small" text
-                  data-track="update-dismiss-error" @click="dismissStatus" />
+          <Button
+            v-if="
+              updateStatus.reason_code === 'ip_lifecycle_migration_blocked' &&
+              updateStatus.lifecycle_migration_report_available
+            "
+            label="Download reconciliation report"
+            icon="pi pi-download"
+            size="small"
+            severity="secondary"
+            data-track="update-download-lifecycle-report"
+            @click="downloadLifecycleReport"
+          />
+          <Button
+            label="Dismiss"
+            icon="pi pi-times"
+            size="small"
+            text
+            data-track="update-dismiss-error"
+            @click="dismissStatus"
+          />
         </div>
       </div>
     </div>
 
-    <div v-if="updateStatus?.lifecycle_migration_report_available
-                   && updateStatus?.state !== 'failed'"
-         class="content-card report-available">
+    <div
+      v-if="updateStatus?.lifecycle_migration_report_available && updateStatus?.state !== 'failed'"
+      class="content-card report-available"
+    >
       <i class="pi pi-file"></i>
       <div>
         <strong>IP lifecycle migration report available</strong>
         <p>The report contains the migration outcome and any reconciliation details.</p>
       </div>
-      <Button label="Download reconciliation report" icon="pi pi-download"
-              size="small" severity="secondary"
-              data-track="update-download-lifecycle-report-available"
-              @click="downloadLifecycleReport" />
+      <Button
+        label="Download reconciliation report"
+        icon="pi pi-download"
+        size="small"
+        severity="secondary"
+        data-track="update-download-lifecycle-report-available"
+        @click="downloadLifecycleReport"
+      />
     </div>
 
     <!-- Settings -->
@@ -199,25 +270,35 @@
       <h3>Settings</h3>
       <div class="field field-inline">
         <label>Check for updates automatically</label>
-        <ToggleSwitch v-model="updateCheckEnabled" data-track="update-check-toggle"
-                      @update:modelValue="saveSettings" />
+        <ToggleSwitch
+          v-model="updateCheckEnabled"
+          data-track="update-check-toggle"
+          @update:modelValue="saveSettings"
+        />
       </div>
     </div>
 
     <!-- Confirmation Dialog -->
-    <Dialog v-model:visible="showConfirmDialog"
-            :header="isMultiHopChain ? 'Install Step 1 of ' + versionInfo.updateChain.length : 'Install Update'"
-            :modal="true" :closable="true" :style="{ width: '32rem' }">
+    <Dialog
+      v-model:visible="showConfirmDialog"
+      :header="
+        isMultiHopChain ? 'Install Step 1 of ' + versionInfo.updateChain.length : 'Install Update'
+      "
+      :modal="true"
+      :closable="true"
+      :style="{ width: '32rem' }"
+    >
       <p>
         This will update CIDRella from <strong>v{{ versionInfo?.version }}</strong> to
-        <strong>v{{ versionInfo?.updateAvailable }}</strong>.
+        <strong>v{{ versionInfo?.updateAvailable }}</strong
+        >.
       </p>
       <div v-if="isMultiHopChain" class="chain-confirm-note">
         <p>
           The latest version <strong>v{{ versionInfo.chainTarget }}</strong> requires upgrading
           through {{ versionInfo.updateChain.length }} intermediate versions due to version
-          compatibility rules. After this step completes, return to the Updates panel and
-          click <strong>Install</strong> again to continue toward v{{ versionInfo.chainTarget }}.
+          compatibility rules. After this step completes, return to the Updates panel and click
+          <strong>Install</strong> again to continue toward v{{ versionInfo.chainTarget }}.
         </p>
         <p class="chain-confirm-steps">
           Full path:
@@ -230,27 +311,41 @@
       <p>The server will restart during the update. You may briefly lose connectivity.</p>
       <template #footer>
         <Button label="Cancel" text @click="showConfirmDialog = false" />
-        <Button :label="isMultiHopChain ? 'Install Step 1' : 'Install'"
-                icon="pi pi-download" severity="success"
-                data-track="update-confirm-install" @click="startInstall" />
+        <Button
+          :label="isMultiHopChain ? 'Install Step 1' : 'Install'"
+          icon="pi pi-download"
+          severity="success"
+          data-track="update-confirm-install"
+          @click="startInstall"
+        />
       </template>
     </Dialog>
 
     <!-- Reset-update-state Confirmation -->
-    <Dialog v-model:visible="showResetConfirm" header="Reset update state" :modal="true"
-            :closable="true" :style="{ width: '28rem' }">
+    <Dialog
+      v-model:visible="showResetConfirm"
+      header="Reset update state"
+      :modal="true"
+      :closable="true"
+      :style="{ width: '28rem' }"
+    >
       <p>
-        This clears the in-progress update status record on the server. Use this only if the
-        update panel appears stuck and you can't otherwise dismiss it.
+        This clears the in-progress update status record on the server. Use this only if the update
+        panel appears stuck and you can't otherwise dismiss it.
       </p>
       <p>
-        It does <strong>not</strong> affect the actual cidrella service, the installed version,
-        or any update process that may still be running in the background.
+        It does <strong>not</strong> affect the actual cidrella service, the installed version, or
+        any update process that may still be running in the background.
       </p>
       <template #footer>
         <Button label="Cancel" text @click="showResetConfirm = false" />
-        <Button label="Reset state" icon="pi pi-refresh" severity="warn"
-                data-track="update-reset-state-confirm" @click="resetUpdateState" />
+        <Button
+          label="Reset state"
+          icon="pi pi-refresh"
+          severity="warn"
+          data-track="update-reset-state-confirm"
+          @click="resetUpdateState"
+        />
       </template>
     </Dialog>
   </div>
@@ -291,7 +386,7 @@ const updateSteps = [
   { key: 'restarting', label: 'Restarting server' },
 ];
 
-const stepOrder = updateSteps.map(s => s.key);
+const stepOrder = updateSteps.map((s) => s.key);
 
 const isUpdating = computed(() => {
   const s = updateStatus.value?.state;
@@ -331,13 +426,14 @@ function stepClass(key) {
   return 'pending';
 }
 
-
 async function fetchVersionInfo() {
   try {
     const res = await api.get('/version');
     versionInfo.value = res.data;
     updateCheckEnabled.value = res.data.updateCheckEnabled;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 async function fetchUpdateStatus() {
@@ -362,9 +458,19 @@ async function checkForUpdate() {
     const res = await api.post('/version/check');
     versionInfo.value = { ...versionInfo.value, ...res.data };
     if (res.data.updateAvailable) {
-      toast.add({ severity: 'info', summary: 'Update available', detail: `v${res.data.updateAvailable}`, life: 4000 });
+      toast.add({
+        severity: 'info',
+        summary: 'Update available',
+        detail: `v${res.data.updateAvailable}`,
+        life: 4000,
+      });
     } else {
-      toast.add({ severity: 'info', summary: 'Up to date', detail: 'No updates available', life: 3000 });
+      toast.add({
+        severity: 'info',
+        summary: 'Up to date',
+        detail: 'No updates available',
+        life: 3000,
+      });
     }
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Check failed', detail: apiError(err), life: 4000 });
@@ -382,7 +488,12 @@ async function startInstall() {
   installing.value = true;
   try {
     await api.post('/version/install');
-    toast.add({ severity: 'info', summary: 'Update started', detail: 'Installing update...', life: 3000 });
+    toast.add({
+      severity: 'info',
+      summary: 'Update started',
+      detail: 'Installing update...',
+      life: 3000,
+    });
     startPolling();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Update failed', detail: apiError(err), life: 5000 });
@@ -396,13 +507,16 @@ async function dismissStatus() {
     await api.post('/version/update-dismiss');
     updateStatus.value = { state: 'idle' };
     await fetchVersionInfo();
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 async function downloadLifecycleReport() {
   try {
-    const endpoint = updateStatus.value?.lifecycle_migration_report_download
-      || '/version/ip-lifecycle-migration-report';
+    const endpoint =
+      updateStatus.value?.lifecycle_migration_report_download ||
+      '/version/ip-lifecycle-migration-report';
     const res = await api.get(endpoint.replace(/^\/api/, ''), { responseType: 'blob' });
     const url = URL.createObjectURL(res.data);
     const link = document.createElement('a');
@@ -446,7 +560,9 @@ async function resetUpdateState() {
 
 async function saveSettings() {
   try {
-    await api.put('/settings', { update_check_enabled: updateCheckEnabled.value ? 'true' : 'false' });
+    await api.put('/settings', {
+      update_check_enabled: updateCheckEnabled.value ? 'true' : 'false',
+    });
     toast.add({ severity: 'success', summary: 'Saved', life: 2000 });
   } catch {
     toast.add({ severity: 'error', summary: 'Failed to save settings', life: 3000 });
@@ -459,7 +575,10 @@ function startPolling() {
 }
 
 function stopPolling() {
-  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
 }
 
 function startReconnecting() {
@@ -484,7 +603,12 @@ function startReconnecting() {
         clearInterval(reconnectTimer);
         reconnectTimer = null;
         reconnecting.value = false;
-        toast.add({ severity: 'error', summary: 'Timeout', detail: 'Server did not come back within 2 minutes. Check logs.', life: 10000 });
+        toast.add({
+          severity: 'error',
+          summary: 'Timeout',
+          detail: 'Server did not come back within 2 minutes. Check logs.',
+          life: 10000,
+        });
       }
     }
   }, 3000);
@@ -501,7 +625,10 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPolling();
-  if (reconnectTimer) { clearInterval(reconnectTimer); reconnectTimer = null; }
+  if (reconnectTimer) {
+    clearInterval(reconnectTimer);
+    reconnectTimer = null;
+  }
 });
 </script>
 
@@ -597,7 +724,9 @@ onUnmounted(() => {
   text-decoration: none;
   font-size: 0.9rem;
 }
-.release-link:hover { text-decoration: underline; }
+.release-link:hover {
+  text-decoration: underline;
+}
 
 /* Multi-hop skip-upgrade chain display */
 .chain-info {
@@ -693,7 +822,9 @@ onUnmounted(() => {
   color: var(--green-500);
   font-weight: 600;
 }
-.up-to-date .pi-check-circle { font-size: 1.25rem; }
+.up-to-date .pi-check-circle {
+  font-size: 1.25rem;
+}
 
 /* Update steps */
 .update-steps {
@@ -738,9 +869,15 @@ onUnmounted(() => {
 .step-label {
   font-size: 0.9rem;
 }
-.update-step.done .step-label { color: var(--green-500); }
-.update-step.active .step-label { font-weight: 600; }
-.update-step.pending .step-label { color: var(--text-color-secondary); }
+.update-step.done .step-label {
+  color: var(--green-500);
+}
+.update-step.active .step-label {
+  font-weight: 600;
+}
+.update-step.pending .step-label {
+  color: var(--text-color-secondary);
+}
 
 .status-message {
   margin-top: 0.5rem;
@@ -778,14 +915,25 @@ onUnmounted(() => {
   background: color-mix(in srgb, var(--green-500) 10%, transparent);
   border: 1px solid var(--green-500);
 }
-.update-result.success > i { color: var(--green-500); font-size: 1.25rem; }
+.update-result.success > i {
+  color: var(--green-500);
+  font-size: 1.25rem;
+}
 .update-result.error {
   background: color-mix(in srgb, var(--red-500) 10%, transparent);
   border: 1px solid var(--red-500);
 }
-.update-result.error > i { color: var(--red-500); font-size: 1.25rem; }
-.update-result div { flex: 1; }
-.update-result p { margin: 0.25rem 0 0; font-size: 0.9rem; }
+.update-result.error > i {
+  color: var(--red-500);
+  font-size: 1.25rem;
+}
+.update-result div {
+  flex: 1;
+}
+.update-result p {
+  margin: 0.25rem 0 0;
+  font-size: 0.9rem;
+}
 .error-detail {
   margin: 0.5rem 0 0;
   padding: 0.5rem 0.75rem;
@@ -799,7 +947,10 @@ onUnmounted(() => {
   max-height: 20rem;
   overflow-y: auto;
 }
-.rollback-hint { font-size: 0.85rem; color: var(--text-color-secondary); }
+.rollback-hint {
+  font-size: 0.85rem;
+  color: var(--text-color-secondary);
+}
 .rollback-hint code {
   background: var(--surface-ground);
   padding: 0.15rem 0.35rem;

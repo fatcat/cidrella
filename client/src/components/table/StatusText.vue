@@ -5,6 +5,6 @@
 <script setup>
 defineProps({
   label: { type: String, required: true },
-  className: { type: String, default: 'state-muted' }
+  className: { type: String, default: 'state-muted' },
 });
 </script>

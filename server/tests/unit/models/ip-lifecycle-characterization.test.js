@@ -14,22 +14,43 @@ afterAll(() => cleanupTestDb(tmpDir));
 
 describe('canonical lifecycle schema', () => {
   it('stores only the canonical allocation vocabulary', () => {
-    const columns = db.prepare('PRAGMA table_info(ip_addresses)').all().map(row => row.name);
+    const columns = db
+      .prepare('PRAGMA table_info(ip_addresses)')
+      .all()
+      .map((row) => row.name);
 
     expect(columns).toContain('allocation_state');
     expect(columns).not.toContain('status');
-    const tableSql = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ip_addresses'").get().sql;
-    for (const state of ['unassigned', 'reserved', 'static_dns', 'static_dhcp', 'dynamic_dhcp', 'slaac', 'system', 'gateway', 'quarantined']) {
+    const tableSql = db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'ip_addresses'")
+      .get().sql;
+    for (const state of [
+      'unassigned',
+      'reserved',
+      'static_dns',
+      'static_dhcp',
+      'dynamic_dhcp',
+      'slaac',
+      'system',
+      'gateway',
+      'quarantined',
+    ]) {
       expect(tableSql).toContain(`'${state}'`);
     }
   });
 
   it('rejects a legacy allocation value', () => {
-    expect(() => db.prepare(`
+    expect(() =>
+      db
+        .prepare(
+          `
       INSERT INTO ip_addresses
         (subnet_id, ip_address, allocation_state, address_family, address_sort_key)
       VALUES (1, '10.77.0.40', 'locked', 4, 'legacy')
-    `).run()).toThrow();
+    `,
+        )
+        .run(),
+    ).toThrow();
   });
 
   it('keeps family-neutral address fixtures valid', () => {

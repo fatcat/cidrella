@@ -38,13 +38,16 @@ describe('classify', () => {
   });
 
   it('matches an Android opt55 signature (with option names)', () => {
-    const r = classify({ opt55: '1:netmask,3:router,6:dns-server,15:domain,26:mtu,28:broadcast,51:lease,58:t1,59:t2,43:vendor' });
+    const r = classify({
+      opt55:
+        '1:netmask,3:router,6:dns-server,15:domain,26:mtu,28:broadcast,51:lease,58:t1,59:t2,43:vendor',
+    });
     expect(r.os_family).toBe('Android');
   });
 
   it('accepts a conservative near-match when an OS adds one requested option', () => {
     const r = classify({
-      opt55: '1,3,6,15,31,33,43,44,46,47,121,249,252,114'
+      opt55: '1,3,6,15,31,33,43,44,46,47,121,249,252,114',
     });
     expect(r.os_family).toBe('Windows');
     expect(r.device_type).toBe('Computer');

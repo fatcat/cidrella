@@ -5,8 +5,17 @@ import api from '../api/client.js';
 export const useBlocklistStore = defineStore('blocklists', () => {
   const categories = ref([]);
   const whitelist = ref([]);
-  const stats = ref({ enabled_categories: 0, total_domains: 0, whitelist_count: 0, last_update: null });
-  const settings = ref({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily' });
+  const stats = ref({
+    enabled_categories: 0,
+    total_domains: 0,
+    whitelist_count: 0,
+    last_update: null,
+  });
+  const settings = ref({
+    blocklist_enabled: 'true',
+    blocklist_redirect_ip: '',
+    blocklist_update_schedule: 'daily',
+  });
   const loading = ref(false);
 
   async function fetchCategories() {
@@ -85,10 +94,22 @@ export const useBlocklistStore = defineStore('blocklists', () => {
   }
 
   return {
-    categories, whitelist, stats, settings, loading,
-    fetchCategories, toggleCategory, updateCategoryUrl, refreshCategory, refreshAll,
-    fetchStats, fetchSettings, updateSettings,
-    fetchWhitelist, addWhitelist, removeWhitelist,
-    searchDomains
+    categories,
+    whitelist,
+    stats,
+    settings,
+    loading,
+    fetchCategories,
+    toggleCategory,
+    updateCategoryUrl,
+    refreshCategory,
+    refreshAll,
+    fetchStats,
+    fetchSettings,
+    updateSettings,
+    fetchWhitelist,
+    addWhitelist,
+    removeWhitelist,
+    searchDomains,
   };
 });

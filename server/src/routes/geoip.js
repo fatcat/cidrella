@@ -2,8 +2,12 @@ import { Router } from 'express';
 import { getDb, getSetting, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
-  getProxyStatus, loadMmdb, loadGeoipRules, loadGeoipAllowlist,
-  downloadMmdb, resetStats
+  getProxyStatus,
+  loadMmdb,
+  loadGeoipRules,
+  loadGeoipAllowlist,
+  downloadMmdb,
+  resetStats,
 } from '../utils/dns-proxy.js';
 import * as GeoipRule from '../models/geoip-rule.js';
 import * as GeoipAllowlist from '../models/geoip-ip-allowlist.js';
@@ -26,7 +30,7 @@ router.get('/status', requirePerm('dns:read'), (req, res) => {
     enabled: enabled === 'true',
     mode: mode || 'blocklist',
     updateSchedule: updateSchedule || 'monthly',
-    ruleCount
+    ruleCount,
   });
 });
 
@@ -51,18 +55,28 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
   // Validate all country codes before inserting. Guard the element type too:
   // a non-object entry (null, string, number) would throw on `.code` and turn
   // into a 500 instead of a clean 400.
-  const invalid = countries.filter(c => !c || typeof c !== 'object' || !c.code || !CC_RE.test(c.code));
+  const invalid = countries.filter(
+    (c) => !c || typeof c !== 'object' || !c.code || !CC_RE.test(c.code),
+  );
   if (invalid.length > 0) {
     // c may be null/non-object here, so read `code` defensively for the message too.
-    return res.status(400).json({ error: `Invalid country codes: ${invalid.map(c => (c && c.code) || '(empty)').join(', ')}` });
+    return res
+      .status(400)
+      .json({
+        error: `Invalid country codes: ${invalid.map((c) => (c && c.code) || '(empty)').join(', ')}`,
+      });
   }
 
   // Check for duplicates
-  const existing = countries.filter(c => {
+  const existing = countries.filter((c) => {
     return db.prepare('SELECT id FROM geoip_rules WHERE country_code = ?').get(c.code);
   });
   if (existing.length > 0 && existing.length === countries.length) {
-    return res.status(409).json({ error: `All specified country rules already exist: ${existing.map(c => c.code).join(', ')}` });
+    return res
+      .status(409)
+      .json({
+        error: `All specified country rules already exist: ${existing.map((c) => c.code).join(', ')}`,
+      });
   }
 
   const added = GeoipRule.addRules(db, countries);
@@ -156,8 +170,13 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     return res.status(400).json({ error: 'Mode must be blocklist or allowlist' });
   }
 
-  if (geoip_update_schedule !== undefined && !['off', 'weekly', 'biweekly', 'monthly'].includes(geoip_update_schedule)) {
-    return res.status(400).json({ error: 'Update schedule must be off, weekly, biweekly, or monthly' });
+  if (
+    geoip_update_schedule !== undefined &&
+    !['off', 'weekly', 'biweekly', 'monthly'].includes(geoip_update_schedule)
+  ) {
+    return res
+      .status(400)
+      .json({ error: 'Update schedule must be off, weekly, biweekly, or monthly' });
   }
 
   const wasEnabled = getSetting('geoip_enabled') === 'true';
@@ -187,7 +206,8 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
   }
 
   audit(req.user.id, 'update', 'geoip_settings', null, {
-    geoip_enabled: nowEnabled, geoip_mode
+    geoip_enabled: nowEnabled,
+    geoip_mode,
   });
 
   res.json({ ok: true });
@@ -211,7 +231,7 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
   res.json({
     total: status.statsTotal,
     blocked: status.statsBlocked,
-    allowed: status.statsAllowed
+    allowed: status.statsAllowed,
   });
 });
 

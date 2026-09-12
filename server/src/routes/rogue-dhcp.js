@@ -10,7 +10,8 @@ const router = Router();
 // GET /api/dhcp/rogue/status
 router.get('/status', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
-  const { lastProbeAt, probeSupported, probeInProgress, lastProbeOutcome, lastProbeError } = getProbeState();
+  const { lastProbeAt, probeSupported, probeInProgress, lastProbeOutcome, lastProbeError } =
+    getProbeState();
   const enabled = getSetting('rogue_dhcp_detection_enabled') === 'true';
   const intervalMin = parseInt(getSetting('rogue_dhcp_probe_interval_min'), 10) || 15;
 
@@ -18,16 +19,17 @@ router.get('/status', requirePerm('dhcp:read'), (req, res) => {
   // logs nothing, and the one routine log line it does emit only appears when a
   // rogue is found, so "healthy on a quiet network" and "has not run in weeks"
   // look identical from outside. Report the difference directly.
-  const graceMs = (intervalMin * 60 * 1000) * 2 + 60 * 1000;
+  const graceMs = intervalMin * 60 * 1000 * 2 + 60 * 1000;
   // lastProbeAt is per-process, so it is null for the first few seconds after
   // every restart. Give the scheduler's initial kick room to land rather than
   // showing "nothing is watching" on each start, which would train the operator
   // to ignore the one banner that matters.
   const NEVER_PROBED_GRACE_MS = 2 * 60 * 1000;
   const ageMs = lastProbeAt ? Date.now() - new Date(lastProbeAt).getTime() : null;
-  const stale = enabled && probeSupported && (
-    ageMs === null ? process.uptime() * 1000 > NEVER_PROBED_GRACE_MS : ageMs > graceMs
-  );
+  const stale =
+    enabled &&
+    probeSupported &&
+    (ageMs === null ? process.uptime() * 1000 > NEVER_PROBED_GRACE_MS : ageMs > graceMs);
 
   res.json({
     enabled,
@@ -61,7 +63,9 @@ router.post('/events/:id/acknowledge', requirePerm('dhcp:write'), (req, res) => 
 router.post('/acknowledge-all', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const result = RogueDhcp.acknowledgeAll(db);
-  audit(req.user.id, 'rogue_dhcp_acknowledged_all', 'rogue_dhcp_event', null, { count: result.changes });
+  audit(req.user.id, 'rogue_dhcp_acknowledged_all', 'rogue_dhcp_event', null, {
+    count: result.changes,
+  });
   res.json({ ok: true, acknowledged: result.changes });
 });
 
@@ -85,8 +89,10 @@ router.post('/probe', requirePerm('dhcp:write'), async (req, res) => {
     return res.status(500).json({ error: `DHCP probe could not start: ${err.message}` });
   }
   audit(req.user.id, 'rogue_dhcp_probe', 'rogue_dhcp', null, {
-    interfaces: summary.interfaces, offers: summary.offers,
-    rogues: summary.rogues.length, skipped: summary.skipped === true,
+    interfaces: summary.interfaces,
+    offers: summary.offers,
+    rogues: summary.rogues.length,
+    skipped: summary.skipped === true,
   });
   res.json({
     supported: summary.supported,
@@ -124,7 +130,13 @@ router.post('/authorized', requirePerm('dhcp:write'), (req, res) => {
   if (result.changes === 0) {
     return res.status(409).json({ error: 'That server IP is already authorized' });
   }
-  audit(req.user.id, 'rogue_dhcp_authorized_added', 'dhcp_authorized_server', result.lastInsertRowid, { server_ip });
+  audit(
+    req.user.id,
+    'rogue_dhcp_authorized_added',
+    'dhcp_authorized_server',
+    result.lastInsertRowid,
+    { server_ip },
+  );
   res.status(201).json({ id: result.lastInsertRowid });
 });
 
@@ -134,7 +146,9 @@ router.delete('/authorized/:id', requirePerm('dhcp:write'), (req, res) => {
   const entry = db.prepare('SELECT * FROM dhcp_authorized_servers WHERE id = ?').get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'Entry not found' });
   RogueDhcp.deleteAuthorized(db, req.params.id);
-  audit(req.user.id, 'rogue_dhcp_authorized_removed', 'dhcp_authorized_server', req.params.id, { server_ip: entry.server_ip });
+  audit(req.user.id, 'rogue_dhcp_authorized_removed', 'dhcp_authorized_server', req.params.id, {
+    server_ip: entry.server_ip,
+  });
   res.json({ ok: true });
 });
 

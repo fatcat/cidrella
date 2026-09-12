@@ -13,25 +13,35 @@ import * as ScanRun from '../models/scan-run.js';
  */
 function arpingIp(ip) {
   return new Promise((resolve) => {
-    execFile('/usr/sbin/arping', ['-c', '1', '-w', '1', ip], { timeout: ARPING_TIMEOUT_MS }, (error, stdout) => {
-      if (error) {
-        resolve({ responded: false, mac: null });
-        return;
-      }
-      resolve({
-        responded: true,
-        mac: parseArpingMac(stdout)
-      });
-    });
+    execFile(
+      '/usr/sbin/arping',
+      ['-c', '1', '-w', '1', ip],
+      { timeout: ARPING_TIMEOUT_MS },
+      (error, stdout) => {
+        if (error) {
+          resolve({ responded: false, mac: null });
+          return;
+        }
+        resolve({
+          responded: true,
+          mac: parseArpingMac(stdout),
+        });
+      },
+    );
   });
 }
 
 function pingIp(ip) {
   return new Promise((resolve) => {
     const timeoutSeconds = Math.max(1, Math.ceil(PING_TIMEOUT_MS / 1000));
-    execFile('ping', ['-c', '1', '-W', String(timeoutSeconds), ip], { timeout: PING_TIMEOUT_MS + 500 }, (error) => {
-      resolve({ responded: !error, mac: null });
-    });
+    execFile(
+      'ping',
+      ['-c', '1', '-W', String(timeoutSeconds), ip],
+      { timeout: PING_TIMEOUT_MS + 500 },
+      (error) => {
+        resolve({ responded: !error, mac: null });
+      },
+    );
   });
 }
 
@@ -64,12 +74,14 @@ function shouldScanIp(ipOverride, subnetDefault) {
  * Skips IPs that already have scan_results from a previous partial run.
  */
 export function resumeInterruptedScans(db) {
-  const interrupted = db.prepare(
-    "SELECT * FROM network_scans WHERE status IN ('running', 'pending')"
-  ).all();
+  const interrupted = db
+    .prepare("SELECT * FROM network_scans WHERE status IN ('running', 'pending')")
+    .all();
 
   for (const scan of interrupted) {
-    console.log(`[scanner] Resuming interrupted scan #${scan.id} for subnet ${scan.subnet_id} (${scan.scanned_ips}/${scan.total_ips} done)`);
+    console.log(
+      `[scanner] Resuming interrupted scan #${scan.id} for subnet ${scan.subnet_id} (${scan.scanned_ips}/${scan.total_ips} done)`,
+    );
     startScan(db, scan.id, scan.subnet_id);
   }
 }
@@ -107,14 +119,16 @@ export async function startScan(db, scanId, subnetId, options = {}) {
       subnetDefault = !!subnet.scan_enabled;
     } else {
       const val = getSetting('default_scan_enabled');
-      subnetDefault = val != null ? (val === '1' || val === 'true') : true;
+      subnetDefault = val != null ? val === '1' || val === 'true' : true;
     }
 
     // Pre-load per-IP scan_enabled overrides
-    const ipOverrides = db.prepare(
-      'SELECT ip_address, scan_enabled FROM ip_addresses WHERE subnet_id = ? AND scan_enabled IS NOT NULL'
-    ).all(subnetId);
-    overrideMap = new Map(ipOverrides.map(r => [r.ip_address, r.scan_enabled]));
+    const ipOverrides = db
+      .prepare(
+        'SELECT ip_address, scan_enabled FROM ip_addresses WHERE subnet_id = ? AND scan_enabled IS NOT NULL',
+      )
+      .all(subnetId);
+    overrideMap = new Map(ipOverrides.map((r) => [r.ip_address, r.scan_enabled]));
   }
 
   // Build IP list, either from targetIps or from subnet CIDR range
@@ -142,19 +156,25 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   let conflictsFound = ScanRun.countConflicts(db, scanId);
 
   if (alreadyScanned.size > 0) {
-    console.log(`[scanner] Resuming scan #${scanId}: ${alreadyScanned.size} IPs already scanned, continuing from where we left off`);
+    console.log(
+      `[scanner] Resuming scan #${scanId}: ${alreadyScanned.size} IPs already scanned, continuing from where we left off`,
+    );
   }
 
   // Update scan status to running
   ScanRun.markRunning(db, scanId, totalIps);
 
   // Canonical allocation is the only assignment authority used by scans.
-  const assignments = db.prepare(`
+  const assignments = db
+    .prepare(
+      `
     SELECT ip_address, mac_address, hostname, allocation_state
     FROM ip_addresses
     WHERE subnet_id = ? AND allocation_state != 'unassigned'
-  `).all(subnetId);
-  const assignmentMap = new Map(assignments.map(a => [a.ip_address, a]));
+  `,
+    )
+    .all(subnetId);
+  const assignmentMap = new Map(assignments.map((a) => [a.ip_address, a]));
 
   try {
     // Scan in batches for reasonable speed
@@ -174,7 +194,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           }
         }
 
-        promises.push(probeIp(ip).then(result => ({ ip, ...result })));
+        promises.push(probeIp(ip).then((result) => ({ ip, ...result })));
       }
 
       if (promises.length === 0) continue;
@@ -184,7 +204,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
       // Read the ARP cache to capture MACs the kernel learned from ping responses.
       // Forced, because the point is to see entries these probes just created.
       let arpCache = null;
-      if (results.some(r => r.responded && !r.mac)) {
+      if (results.some((r) => r.responded && !r.mac)) {
         arpCache = readArpCache({ force: true });
       }
 
@@ -203,8 +223,11 @@ export async function startScan(db, scanId, subnetId, options = {}) {
             // IP responded but not assigned, rogue device
             isConflict = 1;
             conflictReason = 'Rogue device (IP not assigned)';
-          } else if (assignment.mac_address && result.mac &&
-                     assignment.mac_address.toLowerCase() !== result.mac) {
+          } else if (
+            assignment.mac_address &&
+            result.mac &&
+            assignment.mac_address.toLowerCase() !== result.mac
+          ) {
             // MAC mismatch
             isConflict = 1;
             conflictReason = `MAC mismatch (expected ${assignment.mac_address}, got ${result.mac})`;
@@ -220,7 +243,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           mac: result.mac,
           responded: result.responded,
           isConflict,
-          conflictReason
+          conflictReason,
         });
       }
 
@@ -243,7 +266,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           responded: sr.responded,
           mac: sr.mac_address,
           isConflict: sr.is_conflict,
-          conflictReason: sr.conflict_reason
+          conflictReason: sr.conflict_reason,
         });
         if (sr.is_conflict) conflictIps.add(sr.ip_address);
       }

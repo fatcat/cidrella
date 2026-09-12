@@ -8,11 +8,14 @@
   fall through to the root element.
 -->
 <template>
-  <span class="cid-status-dot" :class="`sd-${kind}`"
-        :title="decorative ? undefined : (title || label)"
-        :role="decorative ? undefined : 'img'"
-        :aria-hidden="decorative ? 'true' : undefined"
-        :aria-label="decorative ? undefined : label">
+  <span
+    class="cid-status-dot"
+    :class="`sd-${kind}`"
+    :title="decorative ? undefined : title || label"
+    :role="decorative ? undefined : 'img'"
+    :aria-hidden="decorative ? 'true' : undefined"
+    :aria-label="decorative ? undefined : label"
+  >
     <span v-if="showLabel" class="sd-label">{{ label }}</span>
   </span>
 </template>
@@ -49,11 +52,21 @@ defineProps({
   flex-shrink: 0;
   background: currentColor;
 }
-.sd-ok    { color: var(--cid-status-ok); }
-.sd-warn  { color: var(--cid-status-warn); }
-.sd-err   { color: var(--cid-status-err); }
-.sd-info  { color: var(--cid-status-info); }
-.sd-muted { color: var(--cid-status-muted); }
+.sd-ok {
+  color: var(--cid-status-ok);
+}
+.sd-warn {
+  color: var(--cid-status-warn);
+}
+.sd-err {
+  color: var(--cid-status-err);
+}
+.sd-info {
+  color: var(--cid-status-info);
+}
+.sd-muted {
+  color: var(--cid-status-muted);
+}
 /* Off/idle keeps the hollow-ring shape convention from .status-text */
 .sd-muted::before {
   background: transparent;

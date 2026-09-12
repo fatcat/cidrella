@@ -2,9 +2,14 @@
   <div class="analytics-page">
     <aside class="ana-sidebar">
       <nav class="ana-nav">
-        <a v-for="item in menuItems" :key="item.tabIndex"
-           class="ana-nav-item" :class="{ active: activeTab === item.tabIndex }"
-          :data-track="item.dataTrack" @click="activeTab = item.tabIndex">
+        <a
+          v-for="item in menuItems"
+          :key="item.tabIndex"
+          class="ana-nav-item"
+          :class="{ active: activeTab === item.tabIndex }"
+          :data-track="item.dataTrack"
+          @click="activeTab = item.tabIndex"
+        >
           <i :class="item.icon"></i>
           <span>{{ item.label }}</span>
         </a>
@@ -44,8 +49,18 @@ const AnomaliesPanel = asyncTab(() => import('./Anomalies.vue'));
 const menuItems = [
   { tabIndex: 0, label: 'Dashboard', icon: 'pi pi-objects-column', dataTrack: 'ana-tab-dashboard' },
   { tabIndex: 1, label: 'Performance', icon: 'pi pi-chart-bar', dataTrack: 'ana-tab-performance' },
-  { tabIndex: 2, label: 'Intelligence', icon: 'pi pi-microchip-ai', dataTrack: 'ana-tab-intelligence' },
-  { tabIndex: 3, label: 'Anomalies', icon: 'pi pi-exclamation-triangle', dataTrack: 'ana-tab-anomalies' },
+  {
+    tabIndex: 2,
+    label: 'Intelligence',
+    icon: 'pi pi-microchip-ai',
+    dataTrack: 'ana-tab-intelligence',
+  },
+  {
+    tabIndex: 3,
+    label: 'Anomalies',
+    icon: 'pi pi-exclamation-triangle',
+    dataTrack: 'ana-tab-anomalies',
+  },
 ];
 
 const activeTab = ref(parseInt(localStorage.getItem('cidrella_analytics_tab') || '0', 10));
@@ -53,7 +68,6 @@ const activeTab = ref(parseInt(localStorage.getItem('cidrella_analytics_tab') ||
 watch(activeTab, (val) => {
   localStorage.setItem('cidrella_analytics_tab', String(val));
 });
-
 </script>
 
 <style scoped>
@@ -91,7 +105,9 @@ watch(activeTab, (val) => {
   text-decoration: none;
   cursor: pointer;
   border-left: 3px solid transparent;
-  transition: background 0.1s, border-color 0.1s;
+  transition:
+    background 0.1s,
+    border-color 0.1s;
 }
 
 .ana-nav-item:hover {

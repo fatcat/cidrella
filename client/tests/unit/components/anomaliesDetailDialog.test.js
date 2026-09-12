@@ -17,7 +17,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const api = { get: vi.fn(() => Promise.resolve({ data: {} })), post: vi.fn(), put: vi.fn() };
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 
-const { default: AnomaliesWorkspacePreview } = await import('../../../src/views/AnomaliesWorkspacePreview.vue');
+const { default: AnomaliesWorkspacePreview } =
+  await import('../../../src/views/AnomaliesWorkspacePreview.vue');
 
 function mountPreview() {
   return mount(AnomaliesWorkspacePreview, {
@@ -29,10 +30,10 @@ function mountPreview() {
   });
 }
 
-const isOpen = w => w.find('.board.as-modal').exists();
-const position = w => w.find('.detail-pos').text();
-const shownDevice = w => w.find('.entity-head h3').text();
-const navButton = (w, label) => w.findAll('.nav-button').find(b => b.text().includes(label));
+const isOpen = (w) => w.find('.board.as-modal').exists();
+const position = (w) => w.find('.detail-pos').text();
+const shownDevice = (w) => w.find('.entity-head h3').text();
+const navButton = (w, label) => w.findAll('.nav-button').find((b) => b.text().includes(label));
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -59,8 +60,9 @@ describe('anomaly detail dialog', () => {
     await wrapper.findAll('.queue-row')[2].trigger('click');
     expect(isOpen(wrapper)).toBe(false);
     expect(wrapper.find('.entity-panel').exists()).toBe(false);
-    expect(wrapper.find('.queue-item.current .row-who b').text())
-      .toBe(wrapper.findAll('.queue-item')[2].find('.row-who b').text());
+    expect(wrapper.find('.queue-item.current .row-who b').text()).toBe(
+      wrapper.findAll('.queue-item')[2].find('.row-who b').text(),
+    );
   });
 
   it('steps forward and back through the queue, keeping the queue selection in step', async () => {
@@ -98,7 +100,9 @@ describe('anomaly detail dialog', () => {
     await wrapper.findAll('.row-detail')[5].trigger('click');
     expect(position(wrapper)).toBe('6 of 6');
     for (let i = 0; i < 3; i++) {
-      globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'ArrowRight' }));
+      globalThis.window.dispatchEvent(
+        new globalThis.KeyboardEvent('keydown', { key: 'ArrowRight' }),
+      );
       await flushPromises();
     }
     expect(position(wrapper)).toBe('6 of 6');
@@ -108,7 +112,9 @@ describe('anomaly detail dialog', () => {
     const wrapper = mountPreview();
     await wrapper.findAll('.row-detail')[0].trigger('click');
     for (let i = 0; i < 3; i++) {
-      globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+      globalThis.window.dispatchEvent(
+        new globalThis.KeyboardEvent('keydown', { key: 'ArrowLeft' }),
+      );
       await flushPromises();
     }
     expect(position(wrapper)).toBe('1 of 6');
@@ -156,8 +162,8 @@ describe('anomaly detail dialog', () => {
 
   it('gives every Detail button a label naming its device', async () => {
     const wrapper = mountPreview();
-    const labels = wrapper.findAll('.row-detail').map(b => b.attributes('aria-label'));
-    const names = wrapper.findAll('.queue-item').map(i => i.find('.row-who b').text());
-    expect(labels).toEqual(names.map(n => `Show detail for ${n}`));
+    const labels = wrapper.findAll('.row-detail').map((b) => b.attributes('aria-label'));
+    const names = wrapper.findAll('.queue-item').map((i) => i.find('.row-who b').text());
+    expect(labels).toEqual(names.map((n) => `Show detail for ${n}`));
   });
 });

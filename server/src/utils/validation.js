@@ -19,7 +19,9 @@ export function sanitizeForLog(v) {
   // The explicit CR/LF pass is redundant with the control-char sweep below,
   // but it matches the newline-removal pattern CodeQL recognizes as a
   // log-injection barrier, the range form alone is not modeled.
-  return String(v).replace(/[\r\n]/g, ' ').replace(/[\x00-\x1f\x7f]/g, ' ');
+  return String(v)
+    .replace(/[\r\n]/g, ' ')
+    .replace(/[\x00-\x1f\x7f]/g, ' ');
 }
 
 /**
@@ -53,14 +55,24 @@ export function validPortOrError(v, field) {
  * validator is the correct place to reject the write.
  */
 const RESERVED_OBJECT_KEYS = new Set([
-  '__proto__', 'constructor', 'prototype',
-  'hasOwnProperty', 'isPrototypeOf', 'propertyIsEnumerable',
-  'toString', 'toLocaleString', 'valueOf',
+  '__proto__',
+  'constructor',
+  'prototype',
+  'hasOwnProperty',
+  'isPrototypeOf',
+  'propertyIsEnumerable',
+  'toString',
+  'toLocaleString',
+  'valueOf',
 ]);
 export function validateInterfaceConfig(v) {
   let obj = v;
   if (typeof v === 'string') {
-    try { obj = JSON.parse(v); } catch { return 'must be a JSON object'; }
+    try {
+      obj = JSON.parse(v);
+    } catch {
+      return 'must be a JSON object';
+    }
   }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return 'must be an object';
   for (const [ifName, cfg] of Object.entries(obj)) {
@@ -106,24 +118,20 @@ export function isIntInRange(v, lo, hi) {
  * other. See REVIEW.md, duplicate-logic audit #14.
  */
 export function isIntInRangeCoercing(v, lo, hi) {
-  const n = typeof v === 'number'
-    ? v
-    : (typeof v === 'string' && /^-?\d+$/.test(v) ? parseInt(v, 10) : NaN);
+  const n =
+    typeof v === 'number' ? v : typeof v === 'string' && /^-?\d+$/.test(v) ? parseInt(v, 10) : NaN;
   return Number.isInteger(n) && n >= lo && n <= hi;
 }
 
 export function validateSoaFields(fields = {}) {
-  const {
-    soa_primary_ns,
-    soa_admin_email,
-    soa_refresh,
-    soa_retry,
-    soa_expire,
-    soa_minimum_ttl
-  } = fields;
+  const { soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl } =
+    fields;
 
   const domainLike = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$/;
-  for (const [field, value] of [['soa_primary_ns', soa_primary_ns], ['soa_admin_email', soa_admin_email]]) {
+  for (const [field, value] of [
+    ['soa_primary_ns', soa_primary_ns],
+    ['soa_admin_email', soa_admin_email],
+  ]) {
     if (value === undefined || value === null || value === '') continue;
     if (typeof value !== 'string') return `${field} must be a string`;
     const text = value.trim();
@@ -136,7 +144,7 @@ export function validateSoaFields(fields = {}) {
     ['soa_refresh', soa_refresh],
     ['soa_retry', soa_retry],
     ['soa_expire', soa_expire],
-    ['soa_minimum_ttl', soa_minimum_ttl]
+    ['soa_minimum_ttl', soa_minimum_ttl],
   ]) {
     if (value === undefined || value === null || value === '') continue;
     if (!isIntInRange(value, 0, 2147483647)) return `${field} must be an integer 0-2147483647`;

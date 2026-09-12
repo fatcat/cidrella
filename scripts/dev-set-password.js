@@ -34,7 +34,11 @@ const DEFAULT_PASSWORD = 'r3yn0ld5';
 // above already scopes us to the repo, this catches "the repo IS the install".
 const FORBIDDEN_ROOTS = ['/opt/cidrella', '/var/lib/cidrella', '/data'];
 for (const forbidden of FORBIDDEN_ROOTS) {
-  if (ROOT === forbidden || ROOT.startsWith(`${forbidden}/`) || DB_PATH.startsWith(`${forbidden}/`)) {
+  if (
+    ROOT === forbidden ||
+    ROOT.startsWith(`${forbidden}/`) ||
+    DB_PATH.startsWith(`${forbidden}/`)
+  ) {
     console.error(`refusing to run: ${ROOT} looks like a real install, not a dev tree.`);
     console.error('Use cidrella-reset-password there instead.');
     process.exit(1);
@@ -74,16 +78,23 @@ try {
 
   // must_change_password = 0 is the whole point: a dev logging in with a
   // password they just set should land on the app, not a change-password wall.
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     UPDATE users
        SET password_hash = ?,
            must_change_password = 0,
            updated_at = datetime('now')
      WHERE username = ?
-  `).run(hash, username);
+  `,
+    )
+    .run(hash, username);
 
   if (result.changes === 0) {
-    const known = db.prepare('SELECT username FROM users ORDER BY id').all().map(r => r.username);
+    const known = db
+      .prepare('SELECT username FROM users ORDER BY id')
+      .all()
+      .map((r) => r.username);
     console.error(`user "${username}" not found in ${DB_PATH}`);
     console.error(known.length ? `Known users: ${known.join(', ')}` : 'The users table is empty.');
     process.exit(1);

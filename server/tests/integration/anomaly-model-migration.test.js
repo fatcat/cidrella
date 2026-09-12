@@ -22,7 +22,10 @@ function createDatabaseThrough(maxVersion) {
     db.exec(sql);
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
   });
-  for (const file of fs.readdirSync(migrationsDir).filter(name => name.endsWith('.sql')).sort()) {
+  for (const file of fs
+    .readdirSync(migrationsDir)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
     const version = Number.parseInt(file.split('_')[0], 10);
     if (version > maxVersion) continue;
     apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
@@ -65,19 +68,26 @@ describe('anomaly model identity migration compatibility', () => {
 
     const upgraded = await finishUpgrade(legacyDb, tmpDir);
 
-    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version)
-      .toBe(69);
-    expect(upgraded.prepare(`
+    expect(
+      upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
+    ).toBe(69);
+    expect(
+      upgraded
+        .prepare(
+          `
       SELECT identity, client_ip, trained_at, training_rows, model_version, status
       FROM anomaly_models ORDER BY client_ip
-    `).all()).toEqual([
+    `,
+        )
+        .all(),
+    ).toEqual([
       {
         identity: '10.0.0.80',
         client_ip: '10.0.0.80',
         trained_at: '2026-09-01T12:00:00Z',
         training_rows: 480,
         model_version: 336,
-        status: 'active'
+        status: 'active',
       },
       {
         identity: '10.0.0.81',
@@ -85,13 +95,19 @@ describe('anomaly model identity migration compatibility', () => {
         trained_at: '2026-09-02T12:00:00Z',
         training_rows: 24,
         model_version: 7,
-        status: 'learning'
-      }
+        status: 'learning',
+      },
     ]);
-    expect(upgraded.prepare(`
+    expect(
+      upgraded
+        .prepare(
+          `
       SELECT 1 FROM sqlite_master
       WHERE type = 'table' AND name = '_migration_060_anomaly_model_versions'
-    `).get()).toBeUndefined();
+    `,
+        )
+        .get(),
+    ).toBeUndefined();
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     upgraded.close();
@@ -99,21 +115,33 @@ describe('anomaly model identity migration compatibility', () => {
 
   it('repairs databases where the published migration 060 already completed', async () => {
     const { db: pre4Db, tmpDir } = createDatabaseThrough(61);
-    pre4Db.prepare(`
+    pre4Db
+      .prepare(
+        `
       INSERT INTO anomaly_models
         (identity, client_ip, status, training_rows, trained_at, model_path)
       VALUES (?, ?, 'active', 120, '2026-09-03T12:00:00Z', NULL)
-    `).run('10.0.0.90', '10.0.0.90');
+    `,
+      )
+      .run('10.0.0.90', '10.0.0.90');
 
     const upgraded = await finishUpgrade(pre4Db, tmpDir);
 
-    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version)
-      .toBe(69);
-    expect(upgraded.prepare(`
+    expect(
+      upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
+    ).toBe(69);
+    expect(
+      upgraded
+        .prepare(
+          `
       SELECT model_version FROM anomaly_models WHERE identity = '10.0.0.90'
-    `).get()).toEqual({ model_version: 1 });
-    expect(upgraded.pragma('table_info(anomaly_models)').map(column => column.name))
-      .toContain('model_version');
+    `,
+        )
+        .get(),
+    ).toEqual({ model_version: 1 });
+    expect(upgraded.pragma('table_info(anomaly_models)').map((column) => column.name)).toContain(
+      'model_version',
+    );
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     upgraded.close();
   });

@@ -22,7 +22,7 @@ let cachedAt = 0;
 /** The set of local IPv4 addresses, cached briefly. */
 export function localIpv4Set({ force = false } = {}) {
   const now = Date.now();
-  if (!force && cached && (now - cachedAt) < CACHE_TTL_MS) return cached;
+  if (!force && cached && now - cachedAt < CACHE_TTL_MS) return cached;
 
   const addresses = new Set();
   try {
@@ -33,7 +33,9 @@ export function localIpv4Set({ force = false } = {}) {
         if (isV4 && !addr.internal && addr.address) addresses.add(addr.address);
       }
     }
-  } catch { /* enumeration is best effort */ }
+  } catch {
+    /* enumeration is best effort */
+  }
 
   cached = addresses;
   cachedAt = now;

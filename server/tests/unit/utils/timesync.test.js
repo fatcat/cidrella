@@ -15,7 +15,10 @@ vi.mock('../../../src/utils/dnsmasq.js', () => ({
 
 import { execFileSync } from 'child_process';
 import {
-  getNtpStatus, ensureNtpEnabled, armDnssecTimecheckWhenSynced, stopTimesync,
+  getNtpStatus,
+  ensureNtpEnabled,
+  armDnssecTimecheckWhenSynced,
+  stopTimesync,
 } from '../../../src/utils/timesync.js';
 import { signalDnsmasq } from '../../../src/utils/dnsmasq.js';
 
@@ -42,29 +45,43 @@ describe('getNtpStatus', () => {
   });
 
   it('reports unavailable when timedatectl is missing/errors', () => {
-    vi.mocked(execFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
+    vi.mocked(execFileSync).mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
     expect(getNtpStatus()).toEqual({ available: false, ntpEnabled: false, synchronized: false });
   });
 });
 
 describe('ensureNtpEnabled', () => {
   it('is a no-op (returns false) when timedatectl is unavailable', () => {
-    vi.mocked(execFileSync).mockImplementation(() => { throw new Error('ENOENT'); });
+    vi.mocked(execFileSync).mockImplementation(() => {
+      throw new Error('ENOENT');
+    });
     expect(ensureNtpEnabled()).toBe(false);
     // never attempted set-ntp
-    expect(execFileSync).not.toHaveBeenCalledWith('timedatectl', ['set-ntp', 'true'], expect.anything());
+    expect(execFileSync).not.toHaveBeenCalledWith(
+      'timedatectl',
+      ['set-ntp', 'true'],
+      expect.anything(),
+    );
   });
 
   it('does not call set-ntp when NTP is already enabled', () => {
     vi.mocked(execFileSync).mockReturnValue('yes\nyes\n');
     expect(ensureNtpEnabled()).toBe(true);
-    expect(execFileSync).not.toHaveBeenCalledWith('timedatectl', ['set-ntp', 'true'], expect.anything());
+    expect(execFileSync).not.toHaveBeenCalledWith(
+      'timedatectl',
+      ['set-ntp', 'true'],
+      expect.anything(),
+    );
   });
 
   it('enables NTP when disabled', () => {
     vi.mocked(execFileSync).mockReturnValue('no\nno\n');
     expect(ensureNtpEnabled()).toBe(true);
-    expect(execFileSync).toHaveBeenCalledWith('timedatectl', ['set-ntp', 'true'], { stdio: 'pipe' });
+    expect(execFileSync).toHaveBeenCalledWith('timedatectl', ['set-ntp', 'true'], {
+      stdio: 'pipe',
+    });
   });
 });
 

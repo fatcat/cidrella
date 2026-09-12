@@ -5,7 +5,11 @@ import { getDb, getSetting } from '../db/init.js';
 import { atomicWrite, restartDnsmasq, withValidatedDnsmasqUpdate } from './dnsmasq.js';
 import { loadBlocklist, loadWhitelist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
-import { DATA_DIR, BLOCKLIST_DOWNLOAD_TIMEOUT_MS, BLOCKLIST_INSERT_BATCH } from '../config/defaults.js';
+import {
+  DATA_DIR,
+  BLOCKLIST_DOWNLOAD_TIMEOUT_MS,
+  BLOCKLIST_INSERT_BATCH,
+} from '../config/defaults.js';
 import { openPinnedOutboundStream, TOO_LARGE_CODE } from './url-guard.js';
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const BLOCKLIST_CONF = path.join(CONF_DIR, 'blocklist.conf');
@@ -26,9 +30,7 @@ export function ensureCategoryRows(db) {
   // blocklist_domains "in case the migration hasn't run yet", which meant two
   // sources of truth for the same DDL, and the copy here had already drifted:
   // it omitted source_url and both indexes. Migrations own the schema.
-  const insert = db.prepare(
-    'INSERT OR IGNORE INTO blocklist_categories (slug) VALUES (?)'
-  );
+  const insert = db.prepare('INSERT OR IGNORE INTO blocklist_categories (slug) VALUES (?)');
   for (const cat of BLOCKLIST_CATEGORIES) {
     insert.run(cat.slug);
   }
@@ -77,14 +79,15 @@ let refreshInProgress = null;
 
 /** Yield to the event loop so the DNS proxy can answer between write batches. */
 function yieldToLoop() {
-  return new Promise(resolve => setImmediate(resolve));
+  return new Promise((resolve) => setImmediate(resolve));
 }
 
 // Quote the field's real label, verbatim. An operator who searches the UI for
 // the phrase in this error has to find it: the label is "Max Feed Size (MB)"
 // in Blocklists.vue. Keep the two in sync if either changes.
-const RAISE_HINT = 'Raise "Max Feed Size (MB)" under Settings > Filtering > Categories, '
-  + 'or point this category at a smaller source.';
+const RAISE_HINT =
+  'Raise "Max Feed Size (MB)" under Settings > Filtering > Categories, ' +
+  'or point this category at a smaller source.';
 
 function tooLargeMessage(cause, maxBytes) {
   const limit = describeMb(maxBytes);
@@ -122,7 +125,9 @@ function tooLargeMessage(cause, maxBytes) {
  */
 export async function refreshCategory(db, slug) {
   if (refreshInProgress) {
-    throw new Error(`Blocklist refresh already in progress (${refreshInProgress}), try again shortly`);
+    throw new Error(
+      `Blocklist refresh already in progress (${refreshInProgress}), try again shortly`,
+    );
   }
   refreshInProgress = slug;
   try {
@@ -133,9 +138,11 @@ export async function refreshCategory(db, slug) {
 }
 
 async function runRefresh(db, slug) {
-  const row = db.prepare(
-    'SELECT source_url, etag, last_modified, domain_count FROM blocklist_categories WHERE slug = ?'
-  ).get(slug);
+  const row = db
+    .prepare(
+      'SELECT source_url, etag, last_modified, domain_count FROM blocklist_categories WHERE slug = ?',
+    )
+    .get(slug);
   const url = row?.source_url || getDefaultCategoryUrl(slug);
   const maxBytes = getMaxFeedBytes();
 
@@ -164,7 +171,7 @@ async function runRefresh(db, slug) {
 
   if (res.status === 304) {
     db.prepare(
-      "UPDATE blocklist_categories SET last_fetched_at = datetime('now'), last_error = NULL WHERE slug = ?"
+      "UPDATE blocklist_categories SET last_fetched_at = datetime('now'), last_error = NULL WHERE slug = ?",
     ).run(slug);
     return { count: row?.domain_count || 0, changed: false, notModified: true };
   }
@@ -186,7 +193,9 @@ async function runRefresh(db, slug) {
       if (!batch.length) return;
       const rows = batch;
       batch = [];
-      db.transaction(() => { for (const d of rows) stageInsert.run(d); })();
+      db.transaction(() => {
+        for (const d of rows) stageInsert.run(d);
+      })();
     };
 
     const rl = readline.createInterface({ input: res.stream, crlfDelay: Infinity });
@@ -215,8 +224,10 @@ async function runRefresh(db, slug) {
   // unblock everything. Refuse it rather than sweeping the category empty.
   if (staged === 0) {
     clearStage();
-    fail('Feed downloaded but contained no valid domains. Check the source URL format: '
-      + 'this parser expects one bare domain per line, not hosts-file lines like "0.0.0.0 example.com".');
+    fail(
+      'Feed downloaded but contained no valid domains. Check the source URL format: ' +
+        'this parser expects one bare domain per line, not hosts-file lines like "0.0.0.0 example.com".',
+    );
   }
 
   // Apply. Inserts first, in chunks, so there is never a window where a
@@ -233,9 +244,11 @@ async function runRefresh(db, slug) {
       INSERT OR IGNORE INTO blocklist_domains (domain, category_slug)
       SELECT domain, ? FROM blocklist_stage WHERE domain > ? ORDER BY domain LIMIT ?
     `);
-    const nextCursor = db.prepare(
-      'SELECT domain FROM blocklist_stage WHERE domain > ? ORDER BY domain LIMIT 1 OFFSET ?'
-    ).pluck();
+    const nextCursor = db
+      .prepare(
+        'SELECT domain FROM blocklist_stage WHERE domain > ? ORDER BY domain LIMIT 1 OFFSET ?',
+      )
+      .pluck();
 
     let cursor = '';
     for (;;) {
@@ -248,29 +261,28 @@ async function runRefresh(db, slug) {
 
     // Sweep. One statement, so it is atomic with respect to readers.
     db.prepare(
-      'DELETE FROM blocklist_domains WHERE category_slug = ? AND domain NOT IN (SELECT domain FROM blocklist_stage)'
+      'DELETE FROM blocklist_domains WHERE category_slug = ? AND domain NOT IN (SELECT domain FROM blocklist_stage)',
     ).run(slug);
   } catch (err) {
     // Leave staging alone rather than clearing it: the next refresh clears it
     // defensively anyway, and on a disk-full failure a DELETE is another write
     // that would just throw again and mask this message.
-    fail(`Storing the feed failed after it downloaded: ${err.message}. `
-      + 'The previously stored domains for this category are still in place.');
+    fail(
+      `Storing the feed failed after it downloaded: ${err.message}. ` +
+        'The previously stored domains for this category are still in place.',
+    );
   }
   clearStage();
 
-  db.prepare(`UPDATE blocklist_categories SET
+  db.prepare(
+    `UPDATE blocklist_categories SET
     domain_count = ?,
     last_fetched_at = datetime('now'),
     last_error = NULL,
     etag = ?,
     last_modified = ?
-    WHERE slug = ?`).run(
-    staged,
-    res.headers?.etag || null,
-    res.headers?.['last-modified'] || null,
-    slug
-  );
+    WHERE slug = ?`,
+  ).run(staged, res.headers?.etag || null, res.headers?.['last-modified'] || null, slug);
 
   // We got a 200 rather than a 304, so the feed changed. The old test compared
   // domain counts, which reported "unchanged" whenever a feed swapped one
@@ -318,7 +330,9 @@ export function generateBlocklistConfig(_db) {
       });
       restartDnsmasq();
     }
-  } catch { /* ignore cleanup errors */ }
+  } catch {
+    /* ignore cleanup errors */
+  }
 }
 
 /**
@@ -344,42 +358,49 @@ function scheduleToHours(schedule) {
  */
 export function startBlocklistScheduler() {
   // Check every 15 minutes for categories that need refreshing
-  const intervalId = setInterval(async () => {
-    try {
-      const db = getDb();
+  const intervalId = setInterval(
+    async () => {
+      try {
+        const db = getDb();
 
-      const schedule = getSetting('blocklist_update_schedule') || 'daily';
-      if (schedule === 'off') return;
+        const schedule = getSetting('blocklist_update_schedule') || 'daily';
+        if (schedule === 'off') return;
 
-      const intervalHours = scheduleToHours(schedule);
-      if (intervalHours === 0) return;
+        const intervalHours = scheduleToHours(schedule);
+        if (intervalHours === 0) return;
 
-      const due = db.prepare(`
+        const due = db
+          .prepare(
+            `
         SELECT slug FROM blocklist_categories
         WHERE enabled = 1
           AND (last_fetched_at IS NULL
                OR datetime(last_fetched_at, '+' || ? || ' hours') <= datetime('now'))
-      `).all(intervalHours);
+      `,
+          )
+          .all(intervalHours);
 
-      if (due.length === 0) return;
+        if (due.length === 0) return;
 
-      let anyChanged = false;
-      for (const row of due) {
-        try {
-          const result = await refreshCategory(db, row.slug);
-          if (result.changed) anyChanged = true;
-        } catch (err) {
-          console.error(`Scheduled blocklist refresh failed for ${row.slug}:`, err.message);
+        let anyChanged = false;
+        for (const row of due) {
+          try {
+            const result = await refreshCategory(db, row.slug);
+            if (result.changed) anyChanged = true;
+          } catch (err) {
+            console.error(`Scheduled blocklist refresh failed for ${row.slug}:`, err.message);
+          }
         }
-      }
 
-      if (anyChanged) {
-        generateBlocklistConfig(db);
+        if (anyChanged) {
+          generateBlocklistConfig(db);
+        }
+      } catch (err) {
+        console.error('Blocklist scheduler error:', err.message);
       }
-    } catch (err) {
-      console.error('Blocklist scheduler error:', err.message);
-    }
-  }, 15 * 60 * 1000);
+    },
+    15 * 60 * 1000,
+  );
 
   // Initial: ensure category rows + refresh enabled categories 10s after startup
   const timeoutId = setTimeout(async () => {

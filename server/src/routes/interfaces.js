@@ -8,12 +8,17 @@ import {
   restartDnsmasq,
   isCidrellaDnsmasqRunning,
   dnsmasqRestartPending,
-  withValidatedDnsmasqUpdate
+  withValidatedDnsmasqUpdate,
 } from '../utils/dnsmasq.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
 import {
-  applyHttpRedirectConfig, applyHttpsPortChange, applyHttpPortChange,
-  getWebPortInfo, checkPortAvailable, getHttpsPort, getHttpPort
+  applyHttpRedirectConfig,
+  applyHttpsPortChange,
+  applyHttpPortChange,
+  getWebPortInfo,
+  checkPortAvailable,
+  getHttpsPort,
+  getHttpPort,
 } from '../utils/http-server.js';
 import { validPortOrError, validateInterfaceConfig } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
@@ -74,8 +79,8 @@ router.get('/', requirePerm('system:read'), (req, res) => {
     if (!fs.existsSync(`/sys/class/net/${name}/address`)) continue;
 
     const ipv4Addrs = (sysIfaces[name] || [])
-      .filter(a => a.family === 'IPv4')
-      .map(a => ({ address: a.address, netmask: a.netmask }));
+      .filter((a) => a.family === 'IPv4')
+      .map((a) => ({ address: a.address, netmask: a.netmask }));
 
     result.push({
       name,
@@ -98,7 +103,11 @@ router.get('/config', requirePerm('system:read'), (req, res) => {
 
   const ifaceConfigRaw = getSetting('interface_config');
   if (ifaceConfigRaw) {
-    try { interfaces = JSON.parse(ifaceConfigRaw); } catch { /* default */ }
+    try {
+      interfaces = JSON.parse(ifaceConfigRaw);
+    } catch {
+      /* default */
+    }
   }
   if (getSetting('dns_enabled') === 'false') dnsEnabled = false;
   if (getSetting('dhcp_enabled') === 'false') dhcpEnabled = false;
@@ -107,7 +116,7 @@ router.get('/config', requirePerm('system:read'), (req, res) => {
     interfaces,
     dns_enabled: dnsEnabled,
     dhcp_enabled: dhcpEnabled,
-    web_ports: getWebPortInfo()
+    web_ports: getWebPortInfo(),
   });
 });
 
@@ -115,8 +124,13 @@ router.get('/config', requirePerm('system:read'), (req, res) => {
 router.put('/config', requirePerm('system:write'), async (req, res) => {
   const body = req.body || {};
   const {
-    interfaces, dns_enabled, dhcp_enabled, dns_listen_port, http_redirect_enabled,
-    https_port, http_port
+    interfaces,
+    dns_enabled,
+    dhcp_enabled,
+    dns_listen_port,
+    http_redirect_enabled,
+    https_port,
+    http_port,
   } = body;
 
   // Validators are the shared helpers in utils/validation.js, same
@@ -142,14 +156,17 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   // running listener stays up. Skip the test when the user is requesting
   // the port the server is already on (no-op save).
   let httpsPortNum = null;
-  let httpPortNum  = null;
+  let httpPortNum = null;
   if (https_port !== undefined) {
     const e = validPortOrError(https_port, 'https_port');
     if (e) return res.status(400).json({ error: e });
     httpsPortNum = https_port;
     if (https_port !== getHttpsPort()) {
       const probeErr = await checkPortAvailable(https_port);
-      if (probeErr) return res.status(409).json({ error: `https_port ${https_port} not bindable: ${probeErr}` });
+      if (probeErr)
+        return res
+          .status(409)
+          .json({ error: `https_port ${https_port} not bindable: ${probeErr}` });
     }
   }
   if (http_port !== undefined) {
@@ -158,7 +175,8 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     httpPortNum = http_port;
     if (http_port !== getHttpPort()) {
       const probeErr = await checkPortAvailable(http_port);
-      if (probeErr) return res.status(409).json({ error: `http_port ${http_port} not bindable: ${probeErr}` });
+      if (probeErr)
+        return res.status(409).json({ error: `http_port ${http_port} not bindable: ${probeErr}` });
     }
   }
   if (httpsPortNum !== null && httpPortNum !== null && httpsPortNum === httpPortNum) {
@@ -166,12 +184,9 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   }
 
   const db = getDb();
-  const dnsmasqSettingsChanged = [
-    interfaces,
-    dns_enabled,
-    dhcp_enabled,
-    dns_listen_port
-  ].some(value => value !== undefined);
+  const dnsmasqSettingsChanged = [interfaces, dns_enabled, dhcp_enabled, dns_listen_port].some(
+    (value) => value !== undefined,
+  );
 
   // Validate the dnsmasq output inside the same transaction as the settings
   // it reflects. A validation or filesystem failure restores both the old
@@ -192,7 +207,11 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
         Setting.upsertSettingWithConflict(db, 'dns_listen_port', String(Number(dns_listen_port)));
       }
       if (http_redirect_enabled !== undefined) {
-        Setting.upsertSettingWithConflict(db, 'http_redirect_enabled', http_redirect_enabled ? 'true' : 'false');
+        Setting.upsertSettingWithConflict(
+          db,
+          'http_redirect_enabled',
+          http_redirect_enabled ? 'true' : 'false',
+        );
       }
       return dnsmasqSettingsChanged
         ? withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db))
@@ -235,7 +254,9 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     }
   }
   if (http_redirect_enabled !== undefined) {
-    try { await applyHttpRedirectConfig(); } catch (err) {
+    try {
+      await applyHttpRedirectConfig();
+    } catch (err) {
       console.warn('Failed to apply HTTP redirect config:', err.message);
     }
   }
@@ -266,15 +287,20 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   }
 
   audit(req.user.id, 'interface_config_updated', 'setting', null, {
-    interfaces, dns_enabled, dhcp_enabled, dns_listen_port,
-    https_port: httpsPortNum, http_port: httpPortNum, http_redirect_enabled
+    interfaces,
+    dns_enabled,
+    dhcp_enabled,
+    dns_listen_port,
+    https_port: httpsPortNum,
+    http_port: httpPortNum,
+    http_redirect_enabled,
   });
 
   res.json({
     ok: true,
     dnsmasq: dnsmasqStatus,
     web_ports: getWebPortInfo(),
-    port_changes
+    port_changes,
   });
 });
 

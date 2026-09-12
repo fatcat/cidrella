@@ -8,7 +8,7 @@ import { initDb } from '../../src/db/init.js';
 import {
   inventoryLegacyIpLifecycle,
   LIFECYCLE_MIGRATION_REPORT,
-  writeLifecycleMigrationReport
+  writeLifecycleMigrationReport,
 } from '../../src/db/ip-lifecycle-upgrade.js';
 import { seedLegacyLifecycleContradictions } from '../fixtures/ip-lifecycle-0_4_17.js';
 
@@ -29,7 +29,10 @@ function legacyDatabase() {
     db.exec(sql);
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
   });
-  for (const file of fs.readdirSync(migrationsDir).filter(name => name.endsWith('.sql')).sort()) {
+  for (const file of fs
+    .readdirSync(migrationsDir)
+    .filter((name) => name.endsWith('.sql'))
+    .sort()) {
     const version = Number.parseInt(file.split('_')[0], 10);
     if (version > 54) continue;
     apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
@@ -45,23 +48,29 @@ describe('0.4.17 IP lifecycle upgrade', () => {
   it('keeps gateway DNS names non-owning while CIDRella DNS remains protocol ownership', () => {
     const { db } = legacyDatabase();
     const { subnetId, zoneId } = seedLegacyLifecycleContradictions(db);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO ip_addresses (subnet_id, ip_address, status)
       VALUES (?, '10.77.0.1', 'locked'), (?, '10.77.0.2', 'locked')
-    `).run(subnetId, subnetId);
-    db.prepare(`
+    `,
+    ).run(subnetId, subnetId);
+    db.prepare(
+      `
       INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
       VALUES (?, 'gateway', 'A', '10.77.0.1', 'manual', 1),
              (?, 'cidrella', 'A', '10.77.0.2', 'manual', 1)
-    `).run(zoneId, zoneId);
+    `,
+    ).run(zoneId, zoneId);
 
     const inventory = inventoryLegacyIpLifecycle(db, {
-      localAddresses: new Set(['10.77.0.2'])
+      localAddresses: new Set(['10.77.0.2']),
     });
 
-    expect(inventory.conflicts.filter(conflict => (
-      conflict.ip_address === '10.77.0.1' || conflict.ip_address === '10.77.0.2'
-    ))).toEqual([]);
+    expect(
+      inventory.conflicts.filter(
+        (conflict) => conflict.ip_address === '10.77.0.1' || conflict.ip_address === '10.77.0.2',
+      ),
+    ).toEqual([]);
     expect(inventory.summary.protocol_claims_on_protected_addresses).toBe(0);
     db.close();
   });
@@ -69,48 +78,59 @@ describe('0.4.17 IP lifecycle upgrade', () => {
   it('inventories ambiguous claims and blocks before schema mutation', async () => {
     const { db, dbPath, tmpDir } = legacyDatabase();
     const { zoneId } = seedLegacyLifecycleContradictions(db);
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
       VALUES (?, 'first-name', 'A', '10.77.0.10', 'manual', 1),
              (?, 'second-name', 'A', '10.77.0.10', 'manual', 1)
-    `).run(zoneId, zoneId);
+    `,
+    ).run(zoneId, zoneId);
     const inventory = inventoryLegacyIpLifecycle(db);
     expect(inventory.summary.blocking_conflicts).toBeGreaterThan(0);
-    expect(inventory.conflicts.map(conflict => conflict.category)).toEqual(expect.arrayContaining([
-      'locked_address_with_protocol_claim',
-      'competing_dns_and_dhcp_reservation',
-      'duplicate_canonical_identity',
-      'multiple_static_dns_names',
-      'unscoped_ipv6_link_local'
-    ]));
+    expect(inventory.conflicts.map((conflict) => conflict.category)).toEqual(
+      expect.arrayContaining([
+        'locked_address_with_protocol_claim',
+        'competing_dns_and_dhcp_reservation',
+        'duplicate_canonical_identity',
+        'multiple_static_dns_names',
+        'unscoped_ipv6_link_local',
+      ]),
+    );
     expect(inventory.summary.ips_with_multiple_static_dns_names).toBe(1);
-    expect(inventory.conflicts.find(conflict => conflict.category === 'multiple_static_dns_names'))
-      .toMatchObject({
-        ip_address: '10.77.0.10',
-        subnet: '10.77.0.0/24 (Lifecycle legacy fixture)',
-        affected_resources: expect.arrayContaining([
-          expect.stringContaining('first-name.legacy.test'),
-          expect.stringContaining('second-name.legacy.test')
-        ]),
-        reason: expect.stringMatching(
-          /Host first-name\.legacy\.test and Host second-name\.legacy\.test are enabled A records for the same IP 10\.77\.0\.10/
-        ),
-        remediation: expect.stringContaining('CNAME')
-      });
-    expect(inventory.conflicts.find(conflict => (
-      conflict.category === 'competing_dns_and_dhcp_reservation'
-    ))).toMatchObject({
+    expect(
+      inventory.conflicts.find((conflict) => conflict.category === 'multiple_static_dns_names'),
+    ).toMatchObject({
+      ip_address: '10.77.0.10',
+      subnet: '10.77.0.0/24 (Lifecycle legacy fixture)',
+      affected_resources: expect.arrayContaining([
+        expect.stringContaining('first-name.legacy.test'),
+        expect.stringContaining('second-name.legacy.test'),
+      ]),
+      reason: expect.stringMatching(
+        /Host first-name\.legacy\.test and Host second-name\.legacy\.test are enabled A records for the same IP 10\.77\.0\.10/,
+      ),
+      remediation: expect.stringContaining('CNAME'),
+    });
+    expect(
+      inventory.conflicts.find(
+        (conflict) => conflict.category === 'competing_dns_and_dhcp_reservation',
+      ),
+    ).toMatchObject({
       reason: expect.stringMatching(/dns-host\.legacy\.test.*reserved-host.*aa:bb:cc:dd:ee:50/),
-      remediation: expect.stringContaining('Choose which assignment owns 10.77.0.50')
+      remediation: expect.stringContaining('Choose which assignment owns 10.77.0.50'),
     });
     db.close();
 
     await expect(initDb(tmpDir)).rejects.toThrow(/migration blocked/);
     const unchanged = new Database(dbPath, { readonly: true });
-    expect(unchanged.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(54);
+    expect(
+      unchanged.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
+    ).toBe(54);
     unchanged.close();
 
-    const report = JSON.parse(fs.readFileSync(path.join(tmpDir, LIFECYCLE_MIGRATION_REPORT), 'utf8'));
+    const report = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, LIFECYCLE_MIGRATION_REPORT), 'utf8'),
+    );
     expect(report).toMatchObject({ schema_before: 54, outcome: 'blocked', policy: 'block' });
     expect(report.conflicts[0]).toMatchObject({ remediation: expect.any(String) });
   });
@@ -122,24 +142,36 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     // Resolve the deliberately ambiguous fixture claims without deleting the
     // protocol rows whose disabled state must survive the upgrade.
     db.prepare("DELETE FROM dhcp_leases WHERE ip_address = '10.77.0.40'").run();
-    db.prepare("UPDATE dns_records SET enabled = 0 WHERE zone_id = ? AND name = 'dns-host'").run(zoneId);
-    db.prepare("DELETE FROM ip_addresses WHERE ip_address IN ('2001:0db8:0:0:0:0:0:60', 'fe80::1')").run();
-    db.prepare(`
+    db.prepare("UPDATE dns_records SET enabled = 0 WHERE zone_id = ? AND name = 'dns-host'").run(
+      zoneId,
+    );
+    db.prepare(
+      "DELETE FROM ip_addresses WHERE ip_address IN ('2001:0db8:0:0:0:0:0:60', 'fe80::1')",
+    ).run();
+    db.prepare(
+      `
       INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
       VALUES (?, 'static-host', 'A', '10.77.0.10', 'manual', 1)
-    `).run(zoneId);
-    db.prepare(`
+    `,
+    ).run(zoneId);
+    db.prepare(
+      `
       INSERT INTO ip_addresses (subnet_id, ip_address, hostname, status, detection_source)
       VALUES (?, '10.77.0.1', 'gateway.legacy.test', 'locked', 'dns')
-    `).run(subnetId);
-    db.prepare(`
+    `,
+    ).run(subnetId);
+    db.prepare(
+      `
       INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
       VALUES (?, 'gateway', 'A', '10.77.0.1', 'manual', 1)
-    `).run(zoneId);
-    db.prepare(`
+    `,
+    ).run(zoneId);
+    db.prepare(
+      `
       INSERT INTO dhcp_leases (subnet_id, ip_address, mac_address, hostname, expires_at)
       VALUES (?, '10.77.0.30', 'aa:bb:cc:dd:ee:30', 'dynamic-host', 'infinite')
-    `).run(subnetId);
+    `,
+    ).run(subnetId);
     db.close();
 
     const log = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -150,40 +182,78 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       log.mockRestore();
     }
 
-    expect(upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(69);
+    expect(
+      upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
+    ).toBe(69);
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
-    expect(upgraded.prepare("SELECT allocation_state, is_rogue FROM ip_addresses WHERE ip_address = '10.77.0.40'").get())
-      .toEqual({ allocation_state: 'reserved', is_rogue: 0 });
-    expect(upgraded.prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.50'").get().allocation_state)
-      .toBe('static_dhcp');
-    expect(upgraded.prepare("SELECT allocation_state, detection_source FROM ip_addresses WHERE ip_address = '10.77.0.70'").get())
-      .toEqual({ allocation_state: 'unassigned', detection_source: null });
-    expect(upgraded.prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.71'").get())
-      .toMatchObject({ allocation_state: 'unassigned' });
-    expect(upgraded.prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.10'").get().allocation_state)
-      .toBe('static_dns');
-    expect(upgraded.prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.30'").get().allocation_state)
-      .toBe('dynamic_dhcp');
-    expect(upgraded.prepare(`
+    expect(
+      upgraded
+        .prepare(
+          "SELECT allocation_state, is_rogue FROM ip_addresses WHERE ip_address = '10.77.0.40'",
+        )
+        .get(),
+    ).toEqual({ allocation_state: 'reserved', is_rogue: 0 });
+    expect(
+      upgraded
+        .prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.50'")
+        .get().allocation_state,
+    ).toBe('static_dhcp');
+    expect(
+      upgraded
+        .prepare(
+          "SELECT allocation_state, detection_source FROM ip_addresses WHERE ip_address = '10.77.0.70'",
+        )
+        .get(),
+    ).toEqual({ allocation_state: 'unassigned', detection_source: null });
+    expect(
+      upgraded
+        .prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.71'")
+        .get(),
+    ).toMatchObject({ allocation_state: 'unassigned' });
+    expect(
+      upgraded
+        .prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.10'")
+        .get().allocation_state,
+    ).toBe('static_dns');
+    expect(
+      upgraded
+        .prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = '10.77.0.30'")
+        .get().allocation_state,
+    ).toBe('dynamic_dhcp');
+    expect(
+      upgraded
+        .prepare(
+          `
       SELECT allocation_state, allocation_source_type, hostname
       FROM ip_addresses WHERE ip_address = '10.77.0.1'
-    `).get()).toEqual({
+    `,
+        )
+        .get(),
+    ).toEqual({
       allocation_state: 'gateway',
       allocation_source_type: 'topology',
-      hostname: 'gateway.legacy.test'
+      hostname: 'gateway.legacy.test',
     });
-    expect(upgraded.prepare('PRAGMA table_info(ip_addresses)').all().map(row => row.name))
-      .not.toContain('status');
-    expect(upgraded.prepare("SELECT COUNT(*) AS count FROM dns_records WHERE zone_id = ?").get(zoneId).count)
-      .toBeGreaterThan(0);
+    expect(
+      upgraded
+        .prepare('PRAGMA table_info(ip_addresses)')
+        .all()
+        .map((row) => row.name),
+    ).not.toContain('status');
+    expect(
+      upgraded.prepare('SELECT COUNT(*) AS count FROM dns_records WHERE zone_id = ?').get(zoneId)
+        .count,
+    ).toBeGreaterThan(0);
 
-    const report = JSON.parse(fs.readFileSync(path.join(tmpDir, LIFECYCLE_MIGRATION_REPORT), 'utf8'));
+    const report = JSON.parse(
+      fs.readFileSync(path.join(tmpDir, LIFECYCLE_MIGRATION_REPORT), 'utf8'),
+    );
     expect(report).toMatchObject({
       schema_before: 54,
       schema_after: 69,
       outcome: 'complete',
-      reconciliation: { inserted: expect.any(Number), updated: expect.any(Number) }
+      reconciliation: { inserted: expect.any(Number), updated: expect.any(Number) },
     });
     upgraded.close();
   });
@@ -192,26 +262,35 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     const { db, tmpDir } = legacyDatabase();
     const { subnetId, zoneId } = seedLegacyLifecycleContradictions(db);
     db.prepare("DELETE FROM dhcp_leases WHERE ip_address = '10.77.0.40'").run();
-    db.prepare("UPDATE dns_records SET enabled = 0 WHERE zone_id = ? AND name = 'dns-host'").run(zoneId);
-    db.prepare("DELETE FROM ip_addresses WHERE ip_address IN ('2001:0db8:0:0:0:0:0:60', 'fe80::1')").run();
-    db.prepare(`
+    db.prepare("UPDATE dns_records SET enabled = 0 WHERE zone_id = ? AND name = 'dns-host'").run(
+      zoneId,
+    );
+    db.prepare(
+      "DELETE FROM ip_addresses WHERE ip_address IN ('2001:0db8:0:0:0:0:0:60', 'fe80::1')",
+    ).run();
+    db.prepare(
+      `
       INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
       VALUES (?, 'static-host', 'A', '10.77.0.10', 'manual', 1)
-    `).run(zoneId);
+    `,
+    ).run(zoneId);
 
     const report = inventoryLegacyIpLifecycle(db);
     expect(report.summary.blocking_conflicts).toBe(0);
     writeLifecycleMigrationReport(tmpDir, {
       ...report,
       schema_before: 54,
-      outcome: 'ready'
+      outcome: 'ready',
     });
 
     const apply = db.transaction((sql, version) => {
       db.exec(sql);
       db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
     });
-    for (const file of fs.readdirSync(migrationsDir).filter(name => name.endsWith('.sql')).sort()) {
+    for (const file of fs
+      .readdirSync(migrationsDir)
+      .filter((name) => name.endsWith('.sql'))
+      .sort()) {
       const version = Number.parseInt(file.split('_')[0], 10);
       if (version <= 54) continue;
       apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
@@ -228,18 +307,24 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       log.mockRestore();
     }
 
-    expect(recovered.prepare(`
+    expect(
+      recovered
+        .prepare(
+          `
       SELECT allocation_state FROM ip_addresses
       WHERE subnet_id = ? AND ip_address = '10.77.0.10'
-    `).get(subnetId).allocation_state).toBe('static_dns');
+    `,
+        )
+        .get(subnetId).allocation_state,
+    ).toBe('static_dns');
     const completed = JSON.parse(
-      fs.readFileSync(path.join(tmpDir, LIFECYCLE_MIGRATION_REPORT), 'utf8')
+      fs.readFileSync(path.join(tmpDir, LIFECYCLE_MIGRATION_REPORT), 'utf8'),
     );
     expect(completed).toMatchObject({
       schema_before: 54,
       schema_after: 69,
       outcome: 'complete',
-      reconciliation: { updated: expect.any(Number), inserted: expect.any(Number) }
+      reconciliation: { updated: expect.any(Number), inserted: expect.any(Number) },
     });
     recovered.close();
 

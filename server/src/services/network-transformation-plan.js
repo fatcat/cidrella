@@ -5,7 +5,7 @@ import {
   isValidIpv4,
   longToIp,
   parseCidr,
-  subtractCidr
+  subtractCidr,
 } from '../utils/ip.js';
 import { resolveGatewayAddress } from './subnet-topology.js';
 import { defaultDhcpPoolForSubnet } from './subnet-dhcp-topology.js';
@@ -21,31 +21,54 @@ export function transformationDependencyToken(db, sourceIds) {
     subnets: stableRows(db, 'SELECT * FROM subnets WHERE id IN (:ids) ORDER BY id', ids),
     ranges: stableRows(db, 'SELECT * FROM ranges WHERE subnet_id IN (:ids) ORDER BY id', ids),
     scopes: stableRows(db, 'SELECT * FROM dhcp_scopes WHERE subnet_id IN (:ids) ORDER BY id', ids),
-    reservations: stableRows(db, 'SELECT * FROM dhcp_reservations WHERE subnet_id IN (:ids) ORDER BY id', ids),
+    reservations: stableRows(
+      db,
+      'SELECT * FROM dhcp_reservations WHERE subnet_id IN (:ids) ORDER BY id',
+      ids,
+    ),
     leases: stableRows(db, 'SELECT * FROM dhcp_leases WHERE subnet_id IN (:ids) ORDER BY id', ids),
     ips: stableRows(db, 'SELECT * FROM ip_addresses WHERE subnet_id IN (:ids) ORDER BY id', ids),
-    defaults: db.prepare(`
+    defaults: db
+      .prepare(
+        `
       SELECT key, value FROM settings
       WHERE key IN ('default_gateway_position', 'default_lease_time') ORDER BY key
-    `).all(),
-    dhcp_defaults: db.prepare(`
+    `,
+      )
+      .all(),
+    dhcp_defaults: db
+      .prepare(
+        `
       SELECT * FROM dhcp_option_defaults ORDER BY option_code
-    `).all()
+    `,
+      )
+      .all(),
   };
-  const scopeIds = state.scopes.map(scope => scope.id);
+  const scopeIds = state.scopes.map((scope) => scope.id);
   state.scope_options = stableRows(
-    db, 'SELECT * FROM dhcp_scope_options WHERE scope_id IN (:ids) ORDER BY scope_id, option_code', scopeIds
+    db,
+    'SELECT * FROM dhcp_scope_options WHERE scope_id IN (:ids) ORDER BY scope_id, option_code',
+    scopeIds,
   );
   state.scope_pools = stableRows(
-    db, 'SELECT * FROM dhcp_scope_pools WHERE scope_id IN (:ids) ORDER BY scope_id, sort_order, id', scopeIds
+    db,
+    'SELECT * FROM dhcp_scope_pools WHERE scope_id IN (:ids) ORDER BY scope_id, sort_order, id',
+    scopeIds,
   );
-  const sourceCidrs = state.subnets.map(subnet => subnet.cidr);
-  state.dns_records = db.prepare(`
+  const sourceCidrs = state.subnets.map((subnet) => subnet.cidr);
+  state.dns_records = db
+    .prepare(
+      `
     SELECT record.*, zone.name AS zone_name, zone.type AS zone_type, zone.enabled AS zone_enabled
     FROM dns_records record JOIN dns_zones zone ON zone.id = record.zone_id
     WHERE record.type IN ('A', 'AAAA') ORDER BY record.id
-  `).all().filter(record => isValidIpv4(record.value)
-    && sourceCidrs.some(cidr => isIpInSubnet(record.value, cidr)));
+  `,
+    )
+    .all()
+    .filter(
+      (record) =>
+        isValidIpv4(record.value) && sourceCidrs.some((cidr) => isIpInSubnet(record.value, cidr)),
+    );
   return crypto.createHash('sha256').update(JSON.stringify(state)).digest('hex');
 }
 
@@ -56,15 +79,18 @@ function targetGateway(parent, cidr, override = null) {
       throw new Error(`Invalid gateway policy for ${cidr}`);
     }
     if (override.policy === 'custom') {
-      if (!override.address || !isValidIpv4(override.address)
-          || !isIpInSubnet(override.address, cidr)
-          || [parsed.network, parsed.broadcast].includes(override.address)) {
+      if (
+        !override.address ||
+        !isValidIpv4(override.address) ||
+        !isIpInSubnet(override.address, cidr) ||
+        [parsed.network, parsed.broadcast].includes(override.address)
+      ) {
         throw new Error(`Custom gateway for ${cidr} must be a usable address in that network`);
       }
     }
     return {
       policy: override.policy,
-      address: resolveGatewayAddress(parsed, override.policy, override.address || null)
+      address: resolveGatewayAddress(parsed, override.policy, override.address || null),
     };
   }
   const policy = parent.gateway_policy || 'none';
@@ -82,31 +108,35 @@ function defaultScopesForTarget(db, sourceIds, target) {
   const scopes = stableRows(
     db,
     'SELECT * FROM dhcp_scopes WHERE subnet_id IN (:ids) ORDER BY id',
-    sourceIds
+    sourceIds,
   );
   if (!scopes.length) return [];
   const source = scopes[0];
   const pool = defaultDhcpPoolForSubnet(parsed, target.gateway.address);
   if (!pool) return [];
-  return [{
-    source_scope_id: source.id,
-    origin: 'default',
-    reason: 'source_scope_present',
-    enabled: !!source.enabled,
-    lease_time: source.lease_time,
-    intervals: [{
-      source_pool_id: null,
-      start_ip: longToIp(pool.startLong),
-      end_ip: longToIp(pool.endLong)
-    }]
-  }];
+  return [
+    {
+      source_scope_id: source.id,
+      origin: 'default',
+      reason: 'source_scope_present',
+      enabled: !!source.enabled,
+      lease_time: source.lease_time,
+      intervals: [
+        {
+          source_pool_id: null,
+          start_ip: longToIp(pool.startLong),
+          end_ip: longToIp(pool.endLong),
+        },
+      ],
+    },
+  ];
 }
 
 function dhcpScopePolicyConflicts(db, sourceIds) {
   const scopes = stableRows(
     db,
     'SELECT * FROM dhcp_scopes WHERE subnet_id IN (:ids) ORDER BY id',
-    sourceIds
+    sourceIds,
   );
   if (scopes.length < 2) return [];
   const signatures = new Map();
@@ -116,7 +146,7 @@ function dhcpScopePolicyConflicts(db, sourceIds) {
       `SELECT option_code, value FROM dhcp_scope_options
        WHERE scope_id IN (:ids) AND option_code NOT IN (1, 3, 28)
        ORDER BY option_code`,
-      [scope.id]
+      [scope.id],
     );
     const signature = JSON.stringify({
       enabled: !!scope.enabled,
@@ -126,67 +156,86 @@ function dhcpScopePolicyConflicts(db, sourceIds) {
       ntp_servers: scope.ntp_servers,
       domain_search: scope.domain_search,
       description: scope.description,
-      options
+      options,
     });
     if (!signatures.has(signature)) signatures.set(signature, []);
     signatures.get(signature).push(scope.id);
   }
   if (signatures.size < 2) return [];
-  return [{
-    code: 'dhcp_scope_policy_conflict',
-    scope_ids: scopes.map(scope => scope.id),
-    policy_variants: signatures.size
-  }];
+  return [
+    {
+      code: 'dhcp_scope_policy_conflict',
+      scope_ids: scopes.map((scope) => scope.id),
+      policy_variants: signatures.size,
+    },
+  ];
 }
 
 function sealPlan(plan) {
   return {
     ...plan,
-    plan_id: crypto.createHash('sha256').update(JSON.stringify(plan)).digest('hex')
+    plan_id: crypto.createHash('sha256').update(JSON.stringify(plan)).digest('hex'),
   };
 }
 
 function gatewayClaimConflicts(db, targets, sourceIds) {
-  const gateways = new Map(targets
-    .filter(target => target.gateway.address)
-    .map(target => [target.gateway.address, target.cidr]));
+  const gateways = new Map(
+    targets
+      .filter((target) => target.gateway.address)
+      .map((target) => [target.gateway.address, target.cidr]),
+  );
   if (gateways.size === 0) return [];
   const ids = [...new Set(sourceIds.map(Number))];
   const conflicts = [];
-  const add = (code, row, ip, details = {}) => conflicts.push({
-    code,
-    target_cidr: gateways.get(ip),
-    ip_address: ip,
-    record_id: row.id,
-    ...details
-  });
-  for (const row of stableRows(db, `
+  const add = (code, row, ip, details = {}) =>
+    conflicts.push({
+      code,
+      target_cidr: gateways.get(ip),
+      ip_address: ip,
+      record_id: row.id,
+      ...details,
+    });
+  for (const row of stableRows(
+    db,
+    `
     SELECT id, ip_address, allocation_state FROM ip_addresses
     WHERE subnet_id IN (:ids)
       AND allocation_source_type != 'topology'
       AND allocation_state NOT IN ('unassigned', 'static_dns')
     ORDER BY id
-  `, ids)) {
+  `,
+    ids,
+  )) {
     if (gateways.has(row.ip_address)) {
       add('gateway_allocation_conflict', row, row.ip_address, {
-        allocation_state: row.allocation_state
+        allocation_state: row.allocation_state,
       });
     }
   }
-  for (const row of stableRows(db, `
+  for (const row of stableRows(
+    db,
+    `
     SELECT id, ip_address, mac_address FROM dhcp_reservations
     WHERE subnet_id IN (:ids) AND enabled = 1 ORDER BY id
-  `, ids)) {
+  `,
+    ids,
+  )) {
     if (gateways.has(row.ip_address)) {
-      add('gateway_dhcp_reservation_conflict', row, row.ip_address, { mac_address: row.mac_address });
+      add('gateway_dhcp_reservation_conflict', row, row.ip_address, {
+        mac_address: row.mac_address,
+      });
     }
   }
-  for (const row of stableRows(db, `
+  for (const row of stableRows(
+    db,
+    `
     SELECT id, ip_address, mac_address FROM dhcp_leases
     WHERE subnet_id IN (:ids)
       AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
     ORDER BY id
-  `, ids)) {
+  `,
+    ids,
+  )) {
     if (gateways.has(row.ip_address)) {
       add('gateway_active_lease_conflict', row, row.ip_address, { mac_address: row.mac_address });
     }
@@ -194,39 +243,51 @@ function gatewayClaimConflicts(db, targets, sourceIds) {
   return conflicts;
 }
 
-export function buildDividePlan(db, parent, { newPrefix, cidr, selectedCidrs, targetGateways } = {}) {
+export function buildDividePlan(
+  db,
+  parent,
+  { newPrefix, cidr, selectedCidrs, targetGateways } = {},
+) {
   let targets;
   let mode;
   if (newPrefix !== undefined) {
     mode = 'equal';
-    const calculated = calculateSubnets(parent.cidr, Number(newPrefix), 256)
-      .map(parsed => `${parsed.network}/${parsed.prefix}`);
+    const calculated = calculateSubnets(parent.cidr, Number(newPrefix), 256).map(
+      (parsed) => `${parsed.network}/${parsed.prefix}`,
+    );
     if (selectedCidrs?.length) {
       const selected = new Set(selectedCidrs);
-      const invalid = [...selected].filter(value => !calculated.includes(value));
+      const invalid = [...selected].filter((value) => !calculated.includes(value));
       if (invalid.length) throw new Error(`Invalid selected CIDRs: ${invalid.join(', ')}`);
       // Preserve every remainder as an explicit child. Selection controls
       // requested allocation, never ownership of the omitted address space.
-      targets = calculated.map(value => ({ cidr: value, selected: selected.has(value) }));
+      targets = calculated.map((value) => ({ cidr: value, selected: selected.has(value) }));
     } else {
-      targets = calculated.map(value => ({ cidr: value, selected: true }));
+      targets = calculated.map((value) => ({ cidr: value, selected: true }));
     }
   } else {
     mode = 'carve';
-    targets = [cidr, ...subtractCidr(parent.cidr, cidr)]
-      .map(value => ({ cidr: value, selected: value === cidr }));
+    targets = [cidr, ...subtractCidr(parent.cidr, cidr)].map((value) => ({
+      cidr: value,
+      selected: value === cidr,
+    }));
   }
-  const overrides = new Map((targetGateways || []).map(item => [item.cidr, item]));
-  const unknownOverrides = [...overrides.keys()].filter(value => !targets.some(target => target.cidr === value));
-  if (unknownOverrides.length) throw new Error(`Gateway resolution targets are not in the plan: ${unknownOverrides.join(', ')}`);
-  const plannedTargets = targets.map(target => ({
+  const overrides = new Map((targetGateways || []).map((item) => [item.cidr, item]));
+  const unknownOverrides = [...overrides.keys()].filter(
+    (value) => !targets.some((target) => target.cidr === value),
+  );
+  if (unknownOverrides.length)
+    throw new Error(
+      `Gateway resolution targets are not in the plan: ${unknownOverrides.join(', ')}`,
+    );
+  const plannedTargets = targets.map((target) => ({
     ...target,
-    gateway: targetGateway(parent, target.cidr, overrides.get(target.cidr))
+    gateway: targetGateway(parent, target.cidr, overrides.get(target.cidr)),
   }));
   for (const target of plannedTargets) {
     target.scopes = defaultScopesForTarget(db, [parent.id], target);
   }
-  const customMissing = plannedTargets.some(target => target.gateway.policy === null);
+  const customMissing = plannedTargets.some((target) => target.gateway.policy === null);
   const conflicts = customMissing ? [{ code: 'custom_gateway_policy_required' }] : [];
   conflicts.push(...dhcpScopePolicyConflicts(db, [parent.id]));
   conflicts.push(...gatewayClaimConflicts(db, plannedTargets, [parent.id]));
@@ -237,29 +298,41 @@ export function buildDividePlan(db, parent, { newPrefix, cidr, selectedCidrs, ta
     source_cidrs: [parent.cidr],
     targets: plannedTargets,
     conflicts,
-    dependency_token: transformationDependencyToken(db, [parent.id])
+    dependency_token: transformationDependencyToken(db, [parent.id]),
   });
 }
 
 export function buildMergePlan(db, subnets, mergedCidr) {
-  const allocated = subnets.filter(subnet => subnet.status === 'allocated');
-  const policies = [...new Set(allocated.map(subnet => subnet.gateway_policy))];
-  const customAddresses = [...new Set(allocated.filter(subnet => subnet.gateway_policy === 'custom')
-    .map(subnet => subnet.gateway_address))];
+  const allocated = subnets.filter((subnet) => subnet.status === 'allocated');
+  const policies = [...new Set(allocated.map((subnet) => subnet.gateway_policy))];
+  const customAddresses = [
+    ...new Set(
+      allocated
+        .filter((subnet) => subnet.gateway_policy === 'custom')
+        .map((subnet) => subnet.gateway_address),
+    ),
+  ];
   const gatewayConflict = policies.length > 1 || customAddresses.length > 1;
-  const policy = gatewayConflict ? null : (policies[0] || 'none');
+  const policy = gatewayConflict ? null : policies[0] || 'none';
   const parsed = parseCidr(mergedCidr);
   const gateway = policy ? resolveGatewayAddress(parsed, policy, customAddresses[0] || null) : null;
   const conflicts = gatewayConflict ? [{ code: 'gateway_policy_conflict' }] : [];
-  for (const field of ['vlan_id', 'folder_id', 'domain_name', 'scan_interval', 'scan_enabled', 'has_reverse_dns']) {
-    const values = [...new Set(allocated.map(subnet => subnet[field] ?? null))];
+  for (const field of [
+    'vlan_id',
+    'folder_id',
+    'domain_name',
+    'scan_interval',
+    'scan_enabled',
+    'has_reverse_dns',
+  ]) {
+    const values = [...new Set(allocated.map((subnet) => subnet[field] ?? null))];
     if (values.length > 1) conflicts.push({ code: 'network_policy_conflict', field, values });
   }
-  const ids = subnets.map(subnet => subnet.id);
+  const ids = subnets.map((subnet) => subnet.id);
   const reservations = stableRows(
     db,
     'SELECT id, subnet_id, mac_address, ip_address FROM dhcp_reservations WHERE subnet_id IN (:ids) ORDER BY id',
-    ids
+    ids,
   );
   for (const field of ['mac_address', 'ip_address']) {
     const groups = new Map();
@@ -274,26 +347,31 @@ export function buildMergePlan(db, subnets, mergedCidr) {
           code: 'dhcp_reservation_identity_conflict',
           field,
           value,
-          record_ids: rows.map(row => row.id)
+          record_ids: rows.map((row) => row.id),
         });
       }
     }
   }
-  conflicts.push(...gatewayClaimConflicts(
-    db,
-    [{ cidr: mergedCidr, gateway: { policy, address: gateway } }],
-    ids
-  ));
+  conflicts.push(
+    ...gatewayClaimConflicts(
+      db,
+      [{ cidr: mergedCidr, gateway: { policy, address: gateway } }],
+      ids,
+    ),
+  );
   conflicts.push(...dhcpScopePolicyConflicts(db, ids));
   const target = { cidr: mergedCidr, gateway: { policy, address: gateway } };
   target.scopes = defaultScopesForTarget(db, ids, target);
   return sealPlan({
     operation: 'merge',
-    source_ids: subnets.map(subnet => subnet.id),
-    source_cidrs: subnets.map(subnet => subnet.cidr),
+    source_ids: subnets.map((subnet) => subnet.id),
+    source_cidrs: subnets.map((subnet) => subnet.cidr),
     targets: [target],
     conflicts,
-    dependency_token: transformationDependencyToken(db, subnets.map(subnet => subnet.id))
+    dependency_token: transformationDependencyToken(
+      db,
+      subnets.map((subnet) => subnet.id),
+    ),
   });
 }
 

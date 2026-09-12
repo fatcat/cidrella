@@ -49,19 +49,42 @@
     <div class="dashboard-content">
       <!-- Time Range -->
       <div class="range-bar">
-        <Select v-model="selectedRange" :options="rangeOptions" optionLabel="label" optionValue="value" size="small"
-          style="width: 10rem" @change="refreshAll" />
-        <Button icon="pi pi-refresh" size="small" text rounded @click="refreshAll" :loading="store.loading"
-          title="Refresh" />
+        <Select
+          v-model="selectedRange"
+          :options="rangeOptions"
+          optionLabel="label"
+          optionValue="value"
+          size="small"
+          style="width: 10rem"
+          @change="refreshAll"
+        />
+        <Button
+          icon="pi pi-refresh"
+          size="small"
+          text
+          rounded
+          @click="refreshAll"
+          :loading="store.loading"
+          title="Refresh"
+        />
       </div>
 
-      <DoughnutTableCard title="DNS Queries by Host" :items="store.topClients" :chartData="hostChartData" labelHeader="Host">
+      <DoughnutTableCard
+        title="DNS Queries by Host"
+        :items="store.topClients"
+        :chartData="hostChartData"
+        labelHeader="Host"
+      >
         <template #label="{ data }">{{ data.hostname || data.client_ip }}</template>
       </DoughnutTableCard>
 
-      <DoughnutTableCard title="Top 10 Domains Queried" :items="store.topDomains" :chartData="domainChartData"
-                         labelField="domain" labelHeader="Domain" />
-
+      <DoughnutTableCard
+        title="Top 10 Domains Queried"
+        :items="store.topDomains"
+        :chartData="domainChartData"
+        labelField="domain"
+        labelHeader="Domain"
+      />
     </div>
   </div>
 </template>
@@ -72,9 +95,7 @@ import { saveJson } from '../utils/storage.js';
 import { useRouter } from 'vue-router';
 import Select from '../ui/Select.js';
 import Button from '../ui/Button.js';
-import {
-  Chart as ChartJS, ArcElement, Tooltip, Legend,
-} from 'chart.js';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import { useDashboardStore } from '../stores/dashboard.js';
 import { RANGE_OPTIONS, makeDoughnutData } from '../utils/chart-config.js';
@@ -91,7 +112,12 @@ const router = useRouter();
 const rangeOptions = RANGE_OPTIONS;
 const selectedRange = computed({ get: () => store.selectedRange, set: (v) => store.setRange(v) });
 
-const systemStats = ref({ subnets: EMPTY_CELL, dns_zones: EMPTY_CELL, dhcp_scopes: EMPTY_CELL, dhcp_leases: EMPTY_CELL });
+const systemStats = ref({
+  subnets: EMPTY_CELL,
+  dns_zones: EMPTY_CELL,
+  dhcp_scopes: EMPTY_CELL,
+  dhcp_leases: EMPTY_CELL,
+});
 
 async function fetchSystemStats() {
   try {
@@ -103,7 +129,9 @@ async function fetchSystemStats() {
       dhcp_scopes: s.dhcp_scopes ?? EMPTY_CELL,
       dhcp_leases: s.dhcp_leases ?? EMPTY_CELL,
     };
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 const services = computed(() => store.services);
@@ -123,15 +151,16 @@ function goToTab(tab) {
   router.push('/networks');
 }
 
-const hostChartData = computed(() => makeDoughnutData(store.topClients, r => r.hostname || r.client_ip || 'unknown'));
+const hostChartData = computed(() =>
+  makeDoughnutData(store.topClients, (r) => r.hostname || r.client_ip || 'unknown'),
+);
 
-const domainChartData = computed(() => makeDoughnutData(store.topDomains, r => r.domain || 'unknown'));
+const domainChartData = computed(() =>
+  makeDoughnutData(store.topDomains, (r) => r.domain || 'unknown'),
+);
 
 async function refreshAll() {
-  await Promise.all([
-    store.fetchAll(selectedRange.value),
-    fetchSystemStats(),
-  ]);
+  await Promise.all([store.fetchAll(selectedRange.value), fetchSystemStats()]);
 }
 
 onMounted(() => {
@@ -175,7 +204,9 @@ useAutoRefresh(refreshAll);
 
 .summary-card-link {
   cursor: pointer;
-  transition: border-color 0.2s, transform 0.15s;
+  transition:
+    border-color 0.2s,
+    transform 0.15s;
 }
 
 .summary-card-link:hover {

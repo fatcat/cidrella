@@ -31,9 +31,11 @@ function parseCutoff(range) {
 router.get('/timeseries', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const cutoff = parseCutoff(req.query.range);
-  const rows = db.prepare(
-    'SELECT ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks FROM metrics WHERE ts >= ? ORDER BY ts'
-  ).all(cutoff);
+  const rows = db
+    .prepare(
+      'SELECT ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks FROM metrics WHERE ts >= ? ORDER BY ts',
+    )
+    .all(cutoff);
   res.json(rows);
 });
 
@@ -41,9 +43,11 @@ router.get('/timeseries', requirePerm('analytics:read'), (req, res) => {
 router.get('/blocklist-hits', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const cutoff = parseCutoff(req.query.range);
-  const rows = db.prepare(
-    'SELECT category, SUM(count) as count FROM metrics_blocklist_hits WHERE ts >= ? GROUP BY category ORDER BY count DESC'
-  ).all(cutoff);
+  const rows = db
+    .prepare(
+      'SELECT category, SUM(count) as count FROM metrics_blocklist_hits WHERE ts >= ? GROUP BY category ORDER BY count DESC',
+    )
+    .all(cutoff);
   res.json(rows);
 });
 
@@ -51,9 +55,11 @@ router.get('/blocklist-hits', requirePerm('analytics:read'), (req, res) => {
 router.get('/geoip-hits', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const cutoff = parseCutoff(req.query.range);
-  const rows = db.prepare(
-    'SELECT country, SUM(count) as count FROM metrics_geoip_hits WHERE ts >= ? GROUP BY country ORDER BY count DESC'
-  ).all(cutoff);
+  const rows = db
+    .prepare(
+      'SELECT country, SUM(count) as count FROM metrics_geoip_hits WHERE ts >= ? GROUP BY country ORDER BY count DESC',
+    )
+    .all(cutoff);
   res.json(rows);
 });
 
@@ -61,12 +67,14 @@ router.get('/geoip-hits', requirePerm('analytics:read'), (req, res) => {
 router.get('/proxy-perf', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const cutoff = parseCutoff(req.query.range);
-  const rows = db.prepare(
-    `SELECT ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
+  const rows = db
+    .prepare(
+      `SELECT ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
             cache_hits, cache_misses, timeouts, pending_queries,
             cpu_percent, rss_mb, heap_mb, startup_ms
-     FROM metrics_proxy_perf WHERE ts >= ? ORDER BY ts`
-  ).all(cutoff);
+     FROM metrics_proxy_perf WHERE ts >= ? ORDER BY ts`,
+    )
+    .all(cutoff);
   res.json(rows);
 });
 
@@ -95,8 +103,10 @@ router.get('/services', requirePerm('analytics:read'), async (req, res) => {
   const upstreamRaw = getSetting('dns_upstream_servers');
   let upstreams;
   try {
-    upstreams = typeof upstreamRaw === 'string' ? JSON.parse(upstreamRaw) : (upstreamRaw || []);
-  } catch { upstreams = []; }
+    upstreams = typeof upstreamRaw === 'string' ? JSON.parse(upstreamRaw) : upstreamRaw || [];
+  } catch {
+    upstreams = [];
+  }
 
   const forwarders = [];
   for (const ip of upstreams) {

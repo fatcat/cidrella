@@ -1,13 +1,16 @@
 function ipv4Number(ip) {
   const octets = ip.split('.').map(Number);
-  if (octets.length !== 4 || octets.some(value => !Number.isInteger(value) || value < 0 || value > 255)) {
+  if (
+    octets.length !== 4 ||
+    octets.some((value) => !Number.isInteger(value) || value < 0 || value > 255)
+  ) {
     throw new Error(`Invalid oracle IPv4 address: ${ip}`);
   }
   return octets.reduce((value, octet) => value * 256 + octet, 0);
 }
 
 function ipv4Text(value) {
-  return [24, 16, 8, 0].map(shift => Math.floor(value / (2 ** shift)) % 256).join('.');
+  return [24, 16, 8, 0].map((shift) => Math.floor(value / 2 ** shift) % 256).join('.');
 }
 
 export function expectedIpv4Split(cidr, targetPrefix, gatewayPolicy) {
@@ -24,8 +27,12 @@ export function expectedIpv4Split(cidr, targetPrefix, gatewayPolicy) {
       cidr: `${ipv4Text(network)}/${targetPrefix}`,
       network: ipv4Text(network),
       broadcast: ipv4Text(broadcast),
-      gateway: gatewayPolicy === 'first' ? ipv4Text(network + 1)
-        : gatewayPolicy === 'last' ? ipv4Text(broadcast - 1) : null
+      gateway:
+        gatewayPolicy === 'first'
+          ? ipv4Text(network + 1)
+          : gatewayPolicy === 'last'
+            ? ipv4Text(broadcast - 1)
+            : null,
     });
   }
   return results;

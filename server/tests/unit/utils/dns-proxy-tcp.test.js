@@ -14,17 +14,28 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 import { frameTcpMessage, extractTcpMessages } from '../../../src/utils/dns-wire.js';
 import {
   relayQueryOverTcp,
-  createNxdomainResponse, createBlockedResponse, getQueryOpt, classifyDnssecSupport,
+  createNxdomainResponse,
+  createBlockedResponse,
+  getQueryOpt,
+  classifyDnssecSupport,
 } from '../../../src/utils/dns-proxy.js';
 
 const stubServers = [];
 afterAll(() => {
-  for (const s of stubServers) { try { s.close(); } catch { /* ignore */ } }
+  for (const s of stubServers) {
+    try {
+      s.close();
+    } catch {
+      /* ignore */
+    }
+  }
 });
 
 function listen(server) {
   stubServers.push(server);
-  return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+  return new Promise((resolve) =>
+    server.listen(0, '127.0.0.1', () => resolve(server.address().port)),
+  );
 }
 
 function encodeQuery(name, { withDo = false } = {}) {
@@ -35,7 +46,9 @@ function encodeQuery(name, { withDo = false } = {}) {
     questions: [{ type: 'A', name }],
   };
   if (withDo) {
-    msg.additionals = [{ type: 'OPT', name: '.', udpPayloadSize: 4096, flags: dnsPacket.DNSSEC_OK, options: [] }];
+    msg.additionals = [
+      { type: 'OPT', name: '.', udpPayloadSize: 4096, flags: dnsPacket.DNSSEC_OK, options: [] },
+    ];
   }
   return dnsPacket.encode(msg);
 }
@@ -96,7 +109,9 @@ describe('relayQueryOverTcp', () => {
   });
 
   it('resolves null on upstream timeout', async () => {
-    const server = net.createServer(() => { /* accept but never respond */ });
+    const server = net.createServer(() => {
+      /* accept but never respond */
+    });
     const port = await listen(server);
     const out = await relayQueryOverTcp(Buffer.from('0001', 'hex'), '127.0.0.1', port, 200);
     expect(out).toBeNull();
@@ -110,7 +125,7 @@ describe('EDNS echo on synthesized responses', () => {
 
     const resp = dnsPacket.decode(createNxdomainResponse(query));
     expect(resp.rcode).toBe('NXDOMAIN');
-    const opt = resp.additionals.find(a => a.type === 'OPT');
+    const opt = resp.additionals.find((a) => a.type === 'OPT');
     expect(opt).toBeTruthy();
     expect(opt.flag_do).toBe(true);
     // AD (authenticated-data) header flag must NOT be set for local policy.
@@ -120,13 +135,13 @@ describe('EDNS echo on synthesized responses', () => {
   it('omits OPT when the query carried no EDNS record', () => {
     const query = dnsPacket.decode(encodeQuery('blocked.example.com', { withDo: false }));
     const resp = dnsPacket.decode(createNxdomainResponse(query));
-    expect(resp.additionals.find(a => a.type === 'OPT')).toBeUndefined();
+    expect(resp.additionals.find((a) => a.type === 'OPT')).toBeUndefined();
   });
 
   it('createBlockedResponse (NXDOMAIN default) echoes EDNS too', () => {
     const query = dnsPacket.decode(encodeQuery('ads.example.com', { withDo: true }));
     const resp = dnsPacket.decode(createBlockedResponse(query));
-    const opt = resp.additionals.find(a => a.type === 'OPT');
+    const opt = resp.additionals.find((a) => a.type === 'OPT');
     expect(opt).toBeTruthy();
     expect(opt.flag_do).toBe(true);
   });
@@ -134,14 +149,13 @@ describe('EDNS echo on synthesized responses', () => {
 
 describe('DNSSEC support classification', () => {
   it('classifies validated and unsigned successful answers', () => {
-    expect(classifyDnssecSupport(
-      { rcode: 'NOERROR', flags: dnsPacket.AUTHENTIC_DATA },
-      { enabled: true },
-    )).toBe(true);
-    expect(classifyDnssecSupport(
-      { rcode: 'NOERROR', flags: 0 },
-      { enabled: true },
-    )).toBe(false);
+    expect(
+      classifyDnssecSupport(
+        { rcode: 'NOERROR', flags: dnsPacket.AUTHENTIC_DATA },
+        { enabled: true },
+      ),
+    ).toBe(true);
+    expect(classifyDnssecSupport({ rcode: 'NOERROR', flags: 0 }, { enabled: true })).toBe(false);
   });
 
   it('leaves disabled, checking-disabled, and failed responses unknown', () => {

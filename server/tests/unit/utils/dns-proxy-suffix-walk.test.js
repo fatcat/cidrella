@@ -7,7 +7,10 @@ vi.mock('../../../src/db/init.js', () => ({
   getSetting: () => null,
   audit: () => {},
 }));
-vi.mock('../../../src/utils/dnsmasq.js', () => ({ atomicWrite: () => {}, restartDnsmasq: () => {} }));
+vi.mock('../../../src/utils/dnsmasq.js', () => ({
+  atomicWrite: () => {},
+  restartDnsmasq: () => {},
+}));
 
 const { domainSuffixes } = await import('../../../src/utils/dns-proxy.js');
 
@@ -26,9 +29,7 @@ const walk = (name) => [...domainSuffixes(name)];
 
 describe('#12: the shared label walk', () => {
   it('yields most specific first, down to the registrable name', () => {
-    expect(walk('a.b.example.com')).toEqual([
-      'a.b.example.com', 'b.example.com', 'example.com',
-    ]);
+    expect(walk('a.b.example.com')).toEqual(['a.b.example.com', 'b.example.com', 'example.com']);
   });
 
   it('a parent name covers its children', () => {

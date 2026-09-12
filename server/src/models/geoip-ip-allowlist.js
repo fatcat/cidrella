@@ -54,9 +54,9 @@ export function getByValue(db, value) {
 }
 
 export function addEntry(db, value, reason) {
-  const info = db.prepare(
-    'INSERT INTO geoip_ip_allowlist (value, reason) VALUES (?, ?)'
-  ).run(value, reason || null);
+  const info = db
+    .prepare('INSERT INTO geoip_ip_allowlist (value, reason) VALUES (?, ?)')
+    .run(value, reason || null);
   return info.lastInsertRowid;
 }
 

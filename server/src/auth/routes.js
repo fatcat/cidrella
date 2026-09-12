@@ -38,10 +38,7 @@ const changePasswordLimiter = rateLimit({
 // Dummy bcrypt hash used when the username is unknown so the response-time
 // shape matches the valid-user path (defeats ~80ms-vs-~10ms user enumeration).
 // Cost 10 matches the live password hash cost.
-const DUMMY_HASH = bcrypt.hashSync(
-  '__cidrella_dummy__' + Math.random().toString(36),
-  10
-);
+const DUMMY_HASH = bcrypt.hashSync('__cidrella_dummy__' + Math.random().toString(36), 10);
 
 function getJwtSecret() {
   const db = getDb();
@@ -56,10 +53,10 @@ function generateToken(user) {
       id: user.id,
       username: user.username,
       role: user.role,
-      must_change_password: !!user.must_change_password
+      must_change_password: !!user.must_change_password,
     },
     secret,
-    { expiresIn: '24h' }
+    { expiresIn: '24h' },
   );
 }
 
@@ -99,7 +96,7 @@ router.post('/login', loginLimiter, async (req, res) => {
         // entries from adversarial input.
         audit(null, 'login_failed', 'user', null, {
           reason: 'unknown_user',
-          attempted_username: username.slice(0, 64)
+          attempted_username: username.slice(0, 64),
         });
       }
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -118,7 +115,11 @@ router.post('/login', loginLimiter, async (req, res) => {
     audit(user.id, 'login', 'user', user.id, null);
 
     let preferences = {};
-    try { preferences = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
+    try {
+      preferences = JSON.parse(user.preferences || '{}');
+    } catch {
+      /* ignore */
+    }
 
     const payload = {
       token,
@@ -127,8 +128,8 @@ router.post('/login', loginLimiter, async (req, res) => {
         username: user.username,
         role: user.role,
         must_change_password: !!user.must_change_password,
-        preferences
-      }
+        preferences,
+      },
     };
     if (user.password_reset_by) {
       payload.user.password_reset_by = user.password_reset_by;
@@ -188,8 +189,8 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
         id: updatedUser.id,
         username: updatedUser.username,
         role: updatedUser.role,
-        must_change_password: false
-      }
+        must_change_password: false,
+      },
     });
   } catch (err) {
     console.error('Change-password error:', err?.message || err);
@@ -220,16 +221,22 @@ router.post('/logout', (req, res) => {
 // GET /api/auth/me
 router.get('/me', (req, res) => {
   const db = getDb();
-  const user = db.prepare(
-    'SELECT id, username, role, must_change_password, preferences, password_reset_by, created_at FROM users WHERE id = ?'
-  ).get(req.user.id);
+  const user = db
+    .prepare(
+      'SELECT id, username, role, must_change_password, preferences, password_reset_by, created_at FROM users WHERE id = ?',
+    )
+    .get(req.user.id);
 
   if (!user) {
     return res.status(404).json({ error: 'User not found' });
   }
 
   let preferences = {};
-  try { preferences = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
+  try {
+    preferences = JSON.parse(user.preferences || '{}');
+  } catch {
+    /* ignore */
+  }
 
   const payload = {
     id: user.id,
@@ -237,7 +244,7 @@ router.get('/me', (req, res) => {
     role: user.role,
     must_change_password: !!user.must_change_password,
     preferences,
-    created_at: user.created_at
+    created_at: user.created_at,
   };
   if (user.password_reset_by) {
     payload.password_reset_by = user.password_reset_by;
@@ -262,7 +269,9 @@ router.put('/preferences', (req, res) => {
   }
 
   if (updates.time_format && !VALID_TIME_FORMATS.includes(updates.time_format)) {
-    return res.status(400).json({ error: `time_format must be one of: ${VALID_TIME_FORMATS.join(', ')}` });
+    return res
+      .status(400)
+      .json({ error: `time_format must be one of: ${VALID_TIME_FORMATS.join(', ')}` });
   }
 
   const db = getDb();
@@ -270,7 +279,11 @@ router.put('/preferences', (req, res) => {
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   let prefs = {};
-  try { prefs = JSON.parse(user.preferences || '{}'); } catch { /* ignore */ }
+  try {
+    prefs = JSON.parse(user.preferences || '{}');
+  } catch {
+    /* ignore */
+  }
 
   Object.assign(prefs, updates);
 

@@ -15,49 +15,43 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const SHOW_REPORT = process.argv.includes('--report');
 
-const SCAN_ROOTS = [
-  'server/src',
-  'server/anomaly',
-].map(p => path.join(ROOT, p));
+const SCAN_ROOTS = ['server/src', 'server/anomaly'].map((p) => path.join(ROOT, p));
 
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'dist',
-  'coverage',
-  '__pycache__',
-]);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', '__pycache__']);
 
 const STRICT_TABLE_RULES = [
   {
     table: 'ip_addresses',
     ownerLabel: 'server/src/models/ip-address.js or startup identity backfill',
-    writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?ip_addresses\b/gi,
+    writePattern:
+      /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?ip_addresses\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/ip-address.js'
-        || rel === 'server/src/db/ip-identity.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel === 'server/src/models/ip-address.js' ||
+        rel === 'server/src/db/ip-identity.js' ||
+        rel.startsWith('server/src/db/migrations/')
+      );
     },
   },
   {
     table: 'network_scans',
     ownerLabel: 'server/src/models/scan-run.js',
-    writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?network_scans\b/gi,
+    writePattern:
+      /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?network_scans\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/scan-run.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return rel === 'server/src/models/scan-run.js' || rel.startsWith('server/src/db/migrations/');
     },
   },
   {
     table: 'scan_results',
     ownerLabel: 'server/src/models/scan-run.js',
-    writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?scan_results\b/gi,
+    writePattern:
+      /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?scan_results\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/scan-run.js'
-      || rel.startsWith('server/src/db/migrations/');
+      return rel === 'server/src/models/scan-run.js' || rel.startsWith('server/src/db/migrations/');
     },
   },
   ...[
@@ -67,15 +61,20 @@ const STRICT_TABLE_RULES = [
     'dhcp_leases',
     'dhcp_option_defaults',
     'dhcp_custom_options',
-  ].map(table => ({
+  ].map((table) => ({
     table,
     ownerLabel: 'server/src/models/dhcp-*.js or server/src/services/subnet-dhcp-topology.js',
-    writePattern: new RegExp(`\\b(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|UPDATE|DELETE\\s+FROM)\\s+[\`'"]?${table}\\b`, 'gi'),
+    writePattern: new RegExp(
+      `\\b(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|UPDATE|DELETE\\s+FROM)\\s+[\`'"]?${table}\\b`,
+      'gi',
+    ),
     allow(file) {
       const rel = relPath(file);
-      return rel.startsWith('server/src/models/dhcp-')
-        || rel === 'server/src/services/subnet-dhcp-topology.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel.startsWith('server/src/models/dhcp-') ||
+        rel === 'server/src/services/subnet-dhcp-topology.js' ||
+        rel.startsWith('server/src/db/migrations/')
+      );
     },
   })),
   {
@@ -84,11 +83,13 @@ const STRICT_TABLE_RULES = [
     writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?ranges\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/range.js'
-        || rel === 'server/src/models/dhcp-scope.js'
-        || rel === 'server/src/services/subnet-topology.js'
-        || rel === 'server/src/services/subnet-dhcp-topology.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel === 'server/src/models/range.js' ||
+        rel === 'server/src/models/dhcp-scope.js' ||
+        rel === 'server/src/services/subnet-topology.js' ||
+        rel === 'server/src/services/subnet-dhcp-topology.js' ||
+        rel.startsWith('server/src/db/migrations/')
+      );
     },
   },
   {
@@ -97,19 +98,23 @@ const STRICT_TABLE_RULES = [
     writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?subnets\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/services/subnet-topology.js'
-        || rel === 'server/src/models/dns-zone.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel === 'server/src/services/subnet-topology.js' ||
+        rel === 'server/src/models/dns-zone.js' ||
+        rel.startsWith('server/src/db/migrations/')
+      );
     },
   },
   {
     table: 'range_types',
     ownerLabel: 'server/src/models/range-type.js',
-    writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?range_types\b/gi,
+    writePattern:
+      /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?range_types\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/range-type.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel === 'server/src/models/range-type.js' || rel.startsWith('server/src/db/migrations/')
+      );
     },
   },
   {
@@ -118,8 +123,7 @@ const STRICT_TABLE_RULES = [
     writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?folders\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/folder.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return rel === 'server/src/models/folder.js' || rel.startsWith('server/src/db/migrations/');
     },
   },
   {
@@ -128,8 +132,7 @@ const STRICT_TABLE_RULES = [
     writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?vlans\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/vlan.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return rel === 'server/src/models/vlan.js' || rel.startsWith('server/src/db/migrations/');
     },
   },
   {
@@ -138,9 +141,11 @@ const STRICT_TABLE_RULES = [
     writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?users\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/user.js'
-        || rel === 'server/src/reset-password.js'
-        || rel.startsWith('server/src/db/');
+      return (
+        rel === 'server/src/models/user.js' ||
+        rel === 'server/src/reset-password.js' ||
+        rel.startsWith('server/src/db/')
+      );
     },
   },
   {
@@ -149,49 +154,55 @@ const STRICT_TABLE_RULES = [
     writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?settings\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/setting.js'
-        || rel === 'server/anomaly/storage.py'
-        || rel.startsWith('server/src/db/');
+      return (
+        rel === 'server/src/models/setting.js' ||
+        rel === 'server/anomaly/storage.py' ||
+        rel.startsWith('server/src/db/')
+      );
     },
   },
   {
     table: 'geoip_rules',
     ownerLabel: 'server/src/models/geoip-rule.js',
-    writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?geoip_rules\b/gi,
+    writePattern:
+      /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?geoip_rules\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/geoip-rule.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel === 'server/src/models/geoip-rule.js' || rel.startsWith('server/src/db/migrations/')
+      );
     },
   },
-  ...[
-    'anomaly_scores',
-    'anomaly_models',
-    'anomaly_whitelist',
-  ].map(table => ({
+  ...['anomaly_scores', 'anomaly_models', 'anomaly_whitelist'].map((table) => ({
     table,
     ownerLabel: 'server/src/models/anomaly.js or anomaly service storage',
-    writePattern: new RegExp(`\\b(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|UPDATE|DELETE\\s+FROM)\\s+[\`'"]?${table}\\b`, 'gi'),
+    writePattern: new RegExp(
+      `\\b(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|UPDATE|DELETE\\s+FROM)\\s+[\`'"]?${table}\\b`,
+      'gi',
+    ),
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/anomaly.js'
-        || rel === 'server/anomaly/storage.py'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel === 'server/src/models/anomaly.js' ||
+        rel === 'server/anomaly/storage.py' ||
+        rel.startsWith('server/src/db/migrations/')
+      );
     },
   })),
-  ...[
-    'blocklist_categories',
-    'blocklist_domains',
-    'blocklist_whitelist',
-  ].map(table => ({
+  ...['blocklist_categories', 'blocklist_domains', 'blocklist_whitelist'].map((table) => ({
     table,
     ownerLabel: 'server/src/models/blocklist-store.js or server/src/utils/blocklist.js',
-    writePattern: new RegExp(`\\b(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|UPDATE|DELETE\\s+FROM)\\s+[\`'"]?${table}\\b`, 'gi'),
+    writePattern: new RegExp(
+      `\\b(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|UPDATE|DELETE\\s+FROM)\\s+[\`'"]?${table}\\b`,
+      'gi',
+    ),
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/blocklist-store.js'
-        || rel === 'server/src/utils/blocklist.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel === 'server/src/models/blocklist-store.js' ||
+        rel === 'server/src/utils/blocklist.js' ||
+        rel.startsWith('server/src/db/migrations/')
+      );
     },
   })),
   {
@@ -200,16 +211,19 @@ const STRICT_TABLE_RULES = [
     writePattern: /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?audit_log\b/gi,
     allow(file) {
       const rel = relPath(file);
-      return rel === 'server/src/models/audit-log.js'
-        || rel === 'server/src/models/user.js'
-        || rel === 'server/src/db/init.js'
-        || rel === 'server/src/reset-password.js'
-        || rel.startsWith('server/src/db/migrations/');
+      return (
+        rel === 'server/src/models/audit-log.js' ||
+        rel === 'server/src/models/user.js' ||
+        rel === 'server/src/db/init.js' ||
+        rel === 'server/src/reset-password.js' ||
+        rel.startsWith('server/src/db/migrations/')
+      );
     },
   },
 ];
 
-const BROAD_WRITE_PATTERN = /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/g;
+const BROAD_WRITE_PATTERN =
+  /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO|CREATE\s+TABLE|DROP\s+TABLE|ALTER\s+TABLE)\b/g;
 const BROAD_ALLOW_PREFIXES = [
   'server/src/db/',
   'server/src/models/',
@@ -254,10 +268,13 @@ function lineForIndex(text, index) {
 
 function maskComments(text, file) {
   if (file.endsWith('.py')) {
-    return text.split('\n').map(line => {
-      const idx = line.indexOf('#');
-      return idx === -1 ? line : `${line.slice(0, idx)}${' '.repeat(line.length - idx)}`;
-    }).join('\n');
+    return text
+      .split('\n')
+      .map((line) => {
+        const idx = line.indexOf('#');
+        return idx === -1 ? line : `${line.slice(0, idx)}${' '.repeat(line.length - idx)}`;
+      })
+      .join('\n');
   }
 
   let out = '';
@@ -358,17 +375,19 @@ function collectMatches(files, pattern, allow) {
 function broadAllow(file) {
   const rel = relPath(file);
   if (rel.startsWith('server/src/db/migrations/')) return true;
-  return BROAD_ALLOW_PREFIXES.some(prefix => rel === prefix || rel.startsWith(prefix));
+  return BROAD_ALLOW_PREFIXES.some((prefix) => rel === prefix || rel.startsWith(prefix));
 }
 
-const files = SCAN_ROOTS.flatMap(root => walk(root));
+const files = SCAN_ROOTS.flatMap((root) => walk(root));
 let failures = 0;
 
 for (const rule of STRICT_TABLE_RULES) {
   const findings = collectMatches(files, rule.writePattern, rule.allow);
   if (findings.length > 0) {
     failures += findings.length;
-    console.error(`DB ownership violation: ${rule.table} writes must go through ${rule.ownerLabel}`);
+    console.error(
+      `DB ownership violation: ${rule.table} writes must go through ${rule.ownerLabel}`,
+    );
     for (const f of findings) {
       console.error(`  ${f.file}:${f.line} ${f.match}`);
     }
@@ -378,15 +397,18 @@ for (const rule of STRICT_TABLE_RULES) {
 const directIpModelImports = collectMatches(
   files,
   /from\s+['"][^'"]*models\/ip-address\.js['"]/g,
-  file => {
+  (file) => {
     const rel = relPath(file);
-    return rel === 'server/src/services/ip-lifecycle-service.js'
-      || rel === 'server/src/utils/ip-sync.js';
-  }
+    return (
+      rel === 'server/src/services/ip-lifecycle-service.js' || rel === 'server/src/utils/ip-sync.js'
+    );
+  },
 );
 if (directIpModelImports.length > 0) {
   failures += directIpModelImports.length;
-  console.error('IP lifecycle ownership violation: application callers must use services/ip-lifecycle-service.js');
+  console.error(
+    'IP lifecycle ownership violation: application callers must use services/ip-lifecycle-service.js',
+  );
   for (const finding of directIpModelImports) {
     console.error(`  ${finding.file}:${finding.line} ${finding.match}`);
   }
@@ -394,7 +416,9 @@ if (directIpModelImports.length > 0) {
 
 const broadFindings = collectMatches(files, BROAD_WRITE_PATTERN, broadAllow);
 if (SHOW_REPORT && broadFindings.length > 0) {
-  console.log(`DB ownership report: ${broadFindings.length} direct write statement(s) remain outside model/service allowlist.`);
+  console.log(
+    `DB ownership report: ${broadFindings.length} direct write statement(s) remain outside model/service allowlist.`,
+  );
   for (const f of broadFindings) {
     console.log(`  ${f.file}:${f.line} ${f.match}`);
   }

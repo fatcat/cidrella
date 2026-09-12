@@ -4,58 +4,111 @@
       <router-link to="/" class="logo" data-track="header-logo">CIDRella</router-link>
       <span v-if="health?.version" class="version-tag">
         v{{ health.version }}
-        <router-link v-if="updateInfo?.updateAvailable && !updateInfo?.isDocker"
-           to="/system?area=maintenance&sec=updates"
-           class="update-badge" :title="`Update available: v${updateInfo.updateAvailable}`">
+        <router-link
+          v-if="updateInfo?.updateAvailable && !updateInfo?.isDocker"
+          to="/system?area=maintenance&sec=updates"
+          class="update-badge"
+          :title="`Update available: v${updateInfo.updateAvailable}`"
+        >
           <i class="pi pi-arrow-up"></i>
         </router-link>
       </span>
       <nav class="header-nav">
-        <router-link to="/analytics" class="nav-link" :class="{ active: route.path === '/analytics' }" data-track="nav-analytics">
+        <router-link
+          to="/analytics"
+          class="nav-link"
+          :class="{ active: route.path === '/analytics' }"
+          data-track="nav-analytics"
+        >
           Analytics
         </router-link>
-        <router-link to="/networks" class="nav-link" :class="{ active: route.path.startsWith('/networks') || route.path === '/' }" data-track="nav-networks">IP Management</router-link>
-        <router-link to="/system" class="nav-link" :class="{ active: route.path === '/system' }" data-track="nav-system">Settings</router-link>
+        <router-link
+          to="/networks"
+          class="nav-link"
+          :class="{ active: route.path.startsWith('/networks') || route.path === '/' }"
+          data-track="nav-networks"
+          >IP Management</router-link
+        >
+        <router-link
+          to="/system"
+          class="nav-link"
+          :class="{ active: route.path === '/system' }"
+          data-track="nav-system"
+          >Settings</router-link
+        >
       </nav>
     </div>
 
     <div class="header-status">
-      <button class="status-chip status-chip-scan" :class="scanChipClass" data-track="header-chip-scan"
-              @click="toggleOpsPopover" :title="`Scanner: ${scanDisplay}`">
+      <button
+        class="status-chip status-chip-scan"
+        :class="scanChipClass"
+        data-track="header-chip-scan"
+        @click="toggleOpsPopover"
+        :title="`Scanner: ${scanDisplay}`"
+      >
         <StatusDot :kind="scanState.dot" :label="scanState.dotLabel" />
         <span class="status-chip-label">{{ scanChipText }}</span>
       </button>
-      <button class="status-chip status-chip-wide" :class="dnsChipClass" data-track="header-chip-dnsmasq"
-              @click="toggleOpsPopover" :title="dnsTitle">
+      <button
+        class="status-chip status-chip-wide"
+        :class="dnsChipClass"
+        data-track="header-chip-dnsmasq"
+        @click="toggleOpsPopover"
+        :title="dnsTitle"
+      >
         <StatusDot :kind="dnsDotKind" :label="dotLabel(dnsDotKind)" />
         <span class="status-chip-label">dnsmasq</span>
         <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
       </button>
-      <button class="status-chip status-chip-wide" :class="cpuChipClass" data-track="header-chip-cpu"
-              @click="toggleOpsPopover" :title="`Host CPU load: ${cpuDisplay}`">
+      <button
+        class="status-chip status-chip-wide"
+        :class="cpuChipClass"
+        data-track="header-chip-cpu"
+        @click="toggleOpsPopover"
+        :title="`Host CPU load: ${cpuDisplay}`"
+      >
         <StatusDot :kind="cpuDotKind" :label="dotLabel(cpuDotKind)" />
         <span class="status-chip-label">CPU {{ cpuPercentText }}</span>
       </button>
-      <button class="status-chip status-chip-wide" :class="ramChipClass" data-track="header-chip-ram"
-              @click="toggleOpsPopover" :title="`Host RAM: ${ramDisplay}`">
+      <button
+        class="status-chip status-chip-wide"
+        :class="ramChipClass"
+        data-track="header-chip-ram"
+        @click="toggleOpsPopover"
+        :title="`Host RAM: ${ramDisplay}`"
+      >
         <StatusDot :kind="ramDotKind" :label="dotLabel(ramDotKind)" />
         <span class="status-chip-label">RAM {{ ramPercentText }}</span>
       </button>
-      <button class="status-chip status-chip-wide" :class="diskChipClass" data-track="header-chip-disk"
-              @click="toggleOpsPopover" :title="`Disk: ${diskDisplay}`">
+      <button
+        class="status-chip status-chip-wide"
+        :class="diskChipClass"
+        data-track="header-chip-disk"
+        @click="toggleOpsPopover"
+        :title="`Disk: ${diskDisplay}`"
+      >
         <StatusDot :kind="diskDotKind" :label="dotLabel(diskDotKind)" />
         <span class="status-chip-label">Disk {{ diskPercentText }}</span>
       </button>
-      <button class="status-chip status-chip-ops" :class="opsChipClass"
-              data-track="header-chip-ops" @click="toggleOpsPopover"
-              :title="opsTitle">
+      <button
+        class="status-chip status-chip-ops"
+        :class="opsChipClass"
+        data-track="header-chip-ops"
+        @click="toggleOpsPopover"
+        :title="opsTitle"
+      >
         <StatusDot :kind="opsDotKind" :label="dotLabel(opsDotKind)" />
         <span class="status-chip-label">Ops</span>
         <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
       </button>
-      <button class="status-chip status-chip-anomaly" :class="anomalyChipClass"
-              data-track="header-chip-anomaly" @click="toggleAnomalyPopover"
-              :title="`Anomaly sidecar: ${anomalyStatusLabel}`">
+      <button
+        class="status-chip status-chip-anomaly"
+        :class="anomalyChipClass"
+        data-track="header-chip-anomaly"
+        @click="toggleAnomalyPopover"
+        :title="`Anomaly sidecar: ${anomalyStatusLabel}`"
+      >
         <StatusDot :kind="anomalyDotKind" :label="dotLabel(anomalyDotKind)" />
         <span class="status-chip-label">Anomaly</span>
         <span v-if="anomalyCount > 0" class="status-chip-badge">{{ anomalyCount }}</span>
@@ -65,12 +118,22 @@
     <Popover ref="opsPopoverRef">
       <div class="status-popover-panel">
         <div class="status-popover-row">
-          <StatusDot :kind="health?.services?.dnsmasq ? 'ok' : 'err'" :label="dotLabel(health?.services?.dnsmasq ? 'ok' : 'err')" />
+          <StatusDot
+            :kind="health?.services?.dnsmasq ? 'ok' : 'err'"
+            :label="dotLabel(health?.services?.dnsmasq ? 'ok' : 'err')"
+          />
           <span class="status-popover-label">DNSmasq</span>
           <span class="status-popover-val">{{ dnsDisplay }}</span>
         </div>
-        <div class="status-popover-row status-popover-clickable" @click="goToRogueDhcp" title="Open Rogue DHCP">
-          <StatusDot :kind="rogueDhcpCount > 0 ? 'warn' : 'ok'" :label="dotLabel(rogueDhcpCount > 0 ? 'warn' : 'ok')" />
+        <div
+          class="status-popover-row status-popover-clickable"
+          @click="goToRogueDhcp"
+          title="Open Rogue DHCP"
+        >
+          <StatusDot
+            :kind="rogueDhcpCount > 0 ? 'warn' : 'ok'"
+            :label="dotLabel(rogueDhcpCount > 0 ? 'warn' : 'ok')"
+          />
           <span class="status-popover-label">Rogue DHCP</span>
           <span class="status-popover-val">{{ rogueDhcpDisplay }}</span>
         </div>
@@ -99,7 +162,9 @@
           <span class="status-popover-label">Backend Restart</span>
           <span class="status-popover-val">{{ serviceCrashLabel }}</span>
         </div>
-        <div class="status-popover-footer">{{ nextScanTime ? `next scan ${nextScanTimeOnly}` : 'scheduled scanning disabled' }}</div>
+        <div class="status-popover-footer">
+          {{ nextScanTime ? `next scan ${nextScanTimeOnly}` : 'scheduled scanning disabled' }}
+        </div>
       </div>
     </Popover>
 
@@ -110,26 +175,61 @@
           <span class="status-popover-label">Sidecar</span>
           <span class="status-popover-val">{{ anomalyStatusLabel }}</span>
         </div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">New anomalies</span><span class="status-popover-val">{{ anomalyCount }}</span></div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">Active anomalies</span><span class="status-popover-val">{{ anomalySummary?.total_active ?? 0 }}</span></div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">Clients monitored</span><span class="status-popover-val">{{ anomalySummary?.clients_monitored ?? EMPTY_CELL }}</span></div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">Clients learning</span><span class="status-popover-val">{{ anomalySummary?.clients_learning ?? EMPTY_CELL }}</span></div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">Last scored</span><span class="status-popover-val">{{ timeAgo(anomalySummary?.daemon?.last_score) }}</span></div>
-        <div class="status-popover-row"><span></span><span class="status-popover-label">Last trained</span><span class="status-popover-val">{{ timeAgo(anomalySummary?.daemon?.last_train) }}</span></div>
+        <div class="status-popover-row">
+          <span></span><span class="status-popover-label">New anomalies</span
+          ><span class="status-popover-val">{{ anomalyCount }}</span>
+        </div>
+        <div class="status-popover-row">
+          <span></span><span class="status-popover-label">Active anomalies</span
+          ><span class="status-popover-val">{{ anomalySummary?.total_active ?? 0 }}</span>
+        </div>
+        <div class="status-popover-row">
+          <span></span><span class="status-popover-label">Clients monitored</span
+          ><span class="status-popover-val">{{
+            anomalySummary?.clients_monitored ?? EMPTY_CELL
+          }}</span>
+        </div>
+        <div class="status-popover-row">
+          <span></span><span class="status-popover-label">Clients learning</span
+          ><span class="status-popover-val">{{
+            anomalySummary?.clients_learning ?? EMPTY_CELL
+          }}</span>
+        </div>
+        <div class="status-popover-row">
+          <span></span><span class="status-popover-label">Last scored</span
+          ><span class="status-popover-val">{{ timeAgo(anomalySummary?.daemon?.last_score) }}</span>
+        </div>
+        <div class="status-popover-row">
+          <span></span><span class="status-popover-label">Last trained</span
+          ><span class="status-popover-val">{{ timeAgo(anomalySummary?.daemon?.last_train) }}</span>
+        </div>
         <div v-if="anomalySummary?.daemon?.score_duration_sec != null" class="status-popover-row">
-          <span></span><span class="status-popover-label">Score cycle</span><span class="status-popover-val">{{ anomalySummary.daemon.score_duration_sec }}s</span>
+          <span></span><span class="status-popover-label">Score cycle</span
+          ><span class="status-popover-val">{{ anomalySummary.daemon.score_duration_sec }}s</span>
         </div>
         <div v-if="anomalySummary?.daemon?.train_duration_sec != null" class="status-popover-row">
-          <span></span><span class="status-popover-label">Train cycle</span><span class="status-popover-val">{{ anomalySummary.daemon.train_duration_sec }}s</span>
+          <span></span><span class="status-popover-label">Train cycle</span
+          ><span class="status-popover-val">{{ anomalySummary.daemon.train_duration_sec }}s</span>
         </div>
         <div v-if="anomalySummary?.daemon?.cpu_percent != null" class="status-popover-row">
-          <span></span><span class="status-popover-label">Sidecar CPU</span><span class="status-popover-val">{{ Number(anomalySummary.daemon.cpu_percent).toFixed(1) }}%</span>
+          <span></span><span class="status-popover-label">Sidecar CPU</span
+          ><span class="status-popover-val"
+            >{{ Number(anomalySummary.daemon.cpu_percent).toFixed(1) }}%</span
+          >
         </div>
         <div v-if="anomalySummary?.daemon?.rss_mb != null" class="status-popover-row">
-          <span></span><span class="status-popover-label">Sidecar RAM</span><span class="status-popover-val">{{ Number(anomalySummary.daemon.rss_mb).toFixed(0) }} MB</span>
+          <span></span><span class="status-popover-label">Sidecar RAM</span
+          ><span class="status-popover-val"
+            >{{ Number(anomalySummary.daemon.rss_mb).toFixed(0) }} MB</span
+          >
         </div>
         <div v-if="anomalyCount > 0" class="status-popover-actions">
-          <button class="status-popover-action" data-track="header-anomaly-clear" :disabled="clearingAnomalies" @click="clearAnomalyCounter">
+          <button
+            class="status-popover-action"
+            data-track="header-anomaly-clear"
+            :disabled="clearingAnomalies"
+            @click="clearAnomalyCounter"
+          >
             Clear counter
           </button>
         </div>
@@ -154,17 +254,30 @@
           <div class="user-menu-divider"></div>
           <div class="user-menu-section">
             <label class="user-menu-label">Time Format</label>
-            <Select v-model="selectedTimeFormat" :options="timeFormatOptions" optionLabel="label"
-                    optionValue="value" data-track="user-pref-time-format" class="w-full"
-                    @change="onTimeFormatChange" />
+            <Select
+              v-model="selectedTimeFormat"
+              :options="timeFormatOptions"
+              optionLabel="label"
+              optionValue="value"
+              data-track="user-pref-time-format"
+              class="w-full"
+              @change="onTimeFormatChange"
+            />
           </div>
           <div class="user-menu-divider"></div>
           <div class="user-menu-section">
             <label class="user-menu-label">Theme</label>
-            <Select v-model="selectedTheme" :options="themeOptions"
-                    optionLabel="label" optionValue="value"
-                    optionGroupLabel="label" optionGroupChildren="items"
-                    data-track="user-pref-theme" class="w-full" @change="onThemeChange" />
+            <Select
+              v-model="selectedTheme"
+              :options="themeOptions"
+              optionLabel="label"
+              optionValue="value"
+              optionGroupLabel="label"
+              optionGroupChildren="items"
+              data-track="user-pref-theme"
+              class="w-full"
+              @change="onThemeChange"
+            />
           </div>
           <div class="user-menu-divider"></div>
           <button class="user-menu-item" data-track="header-logout" @click="handleLogout">
@@ -174,7 +287,6 @@
         </div>
       </Popover>
     </div>
-
   </header>
 </template>
 
@@ -219,21 +331,39 @@ let scanPollInterval = null;
 const timeFormatOptions = [
   { label: 'Locale Default', value: 'locale' },
   { label: 'AM / PM', value: 'ampm' },
-  { label: '24 Hour', value: '24h' }
+  { label: '24 Hour', value: '24h' },
 ];
 
 const selectedTimeFormat = ref(auth.timeFormat);
-watch(() => auth.timeFormat, (v) => { selectedTimeFormat.value = v; });
+watch(
+  () => auth.timeFormat,
+  (v) => {
+    selectedTimeFormat.value = v;
+  },
+);
 
 // Theme picker, grouped by light/dark. applyTheme persists + live-applies via main.js.
 const themeStore = useThemeStore();
 const selectedTheme = ref(themeStore.currentThemeId);
-watch(() => themeStore.currentThemeId, (v) => { selectedTheme.value = v; });
+watch(
+  () => themeStore.currentThemeId,
+  (v) => {
+    selectedTheme.value = v;
+  },
+);
 const themeOptions = computed(() => [
-  { label: 'Dark', items: themes.filter(t => t.group === 'dark').map(t => ({ label: t.name, value: t.id })) },
-  { label: 'Light', items: themes.filter(t => t.group === 'light').map(t => ({ label: t.name, value: t.id })) },
+  {
+    label: 'Dark',
+    items: themes.filter((t) => t.group === 'dark').map((t) => ({ label: t.name, value: t.id })),
+  },
+  {
+    label: 'Light',
+    items: themes.filter((t) => t.group === 'light').map((t) => ({ label: t.name, value: t.id })),
+  },
 ]);
-function onThemeChange(event) { themeStore.applyTheme(event.value); }
+function onThemeChange(event) {
+  themeStore.applyTheme(event.value);
+}
 
 function toggleUserMenu(event) {
   userMenuRef.value.toggle(event);
@@ -252,12 +382,13 @@ const userInitials = computed(() => {
   return (n.slice(0, 2) || EMPTY_CELL).toUpperCase();
 });
 
-const opsIssue = computed(() =>
-  !health.value?.services?.dnsmasq
-  || !!serviceCrash.value
-  || cpuStatusClass.value === 'card-err'
-  || ramStatusClass.value === 'card-err'
-  || diskStatusClass.value === 'card-err'
+const opsIssue = computed(
+  () =>
+    !health.value?.services?.dnsmasq ||
+    !!serviceCrash.value ||
+    cpuStatusClass.value === 'card-err' ||
+    ramStatusClass.value === 'card-err' ||
+    diskStatusClass.value === 'card-err',
 );
 
 const serviceCrash = computed(() => health.value?.service?.recent_crash || null);
@@ -276,8 +407,10 @@ const serviceCrashLabel = computed(() => {
 // Ops chip yellow.
 const rogueDhcpCount = computed(() => health.value?.rogueDhcp?.unacknowledged || 0);
 const opsWarn = computed(() => !opsIssue.value && rogueDhcpCount.value > 0);
-const opsChipClass = computed(() => opsIssue.value ? 'chip-err' : (opsWarn.value ? 'chip-warn' : ''));
-const opsDotKind = computed(() => opsIssue.value ? 'err' : (opsWarn.value ? 'warn' : 'ok'));
+const opsChipClass = computed(() =>
+  opsIssue.value ? 'chip-err' : opsWarn.value ? 'chip-warn' : '',
+);
+const opsDotKind = computed(() => (opsIssue.value ? 'err' : opsWarn.value ? 'warn' : 'ok'));
 
 const rogueDhcpDisplay = computed(() => {
   const r = health.value?.rogueDhcp;
@@ -300,7 +433,9 @@ function goToRogueDhcp() {
 async function onTimeFormatChange(event) {
   try {
     await auth.updatePreferences({ time_format: event.value });
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function handleLogout() {
@@ -308,7 +443,6 @@ function handleLogout() {
   auth.logout();
   router.push('/login');
 }
-
 
 const cpuDisplay = computed(() => {
   return `${cpuPercent.value}%`;
@@ -347,7 +481,7 @@ const diskDisplay = computed(() => {
 
 const diskPercentText = computed(() => `${health.value?.disk?.percent ?? 0}%`);
 
-const dnsDisplay = computed(() => health.value?.services?.dnsmasq ? 'Running' : 'Down');
+const dnsDisplay = computed(() => (health.value?.services?.dnsmasq ? 'Running' : 'Down'));
 
 const cpuStatusClass = computed(() => {
   if (cpuPercent.value >= 100) return 'card-err';
@@ -400,7 +534,9 @@ const anomalyStatusLabel = computed(() => {
 
 // One label per StatusDot kind, used by every header dot.
 const KIND_LABEL = { ok: 'OK', err: 'Down', warn: 'Warning', muted: 'Idle' };
-function dotLabel(kind) { return KIND_LABEL[kind] || 'Idle'; }
+function dotLabel(kind) {
+  return KIND_LABEL[kind] || 'Idle';
+}
 
 const anomalyDotKind = computed(() => {
   if (anomalyStatus.value === 'running') return 'ok';
@@ -437,7 +573,7 @@ const dnsDotKind = computed(() => {
 const dnsTitle = computed(() =>
   rogueDhcpCount.value > 0
     ? `DNSmasq: ${dnsDisplay.value}, ${rogueDhcpCount.value} rogue DHCP server(s) detected`
-    : `DNSmasq: ${dnsDisplay.value}`
+    : `DNSmasq: ${dnsDisplay.value}`,
 );
 const cpuChipClass = computed(() => resourceChip(cpuStatusClass.value));
 const ramChipClass = computed(() => resourceChip(ramStatusClass.value));
@@ -452,11 +588,10 @@ const anomalyChipClass = computed(() => {
   return 'chip-warn';
 });
 
-
 async function fetchActiveScan() {
   try {
     const res = await api.get('/scans');
-    const active = res.data.filter(s => s.status === 'running' || s.status === 'pending');
+    const active = res.data.filter((s) => s.status === 'running' || s.status === 'pending');
     activeScans.value = active;
 
     // Start/stop fast polling based on scan state
@@ -467,14 +602,18 @@ async function fetchActiveScan() {
       scanPollInterval = null;
       fetchNextScan();
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 async function fetchNextScan() {
   try {
     const res = await api.get('/scans/next');
     nextScanTime.value = res.data.next_scan_at || null;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 function refreshScanHeader() {
@@ -486,13 +625,19 @@ async function fetchHealth() {
   try {
     const res = await api.get('/health/system');
     health.value = res.data;
-  } catch { /* health endpoint may not be available */ }
+  } catch {
+    /* health endpoint may not be available */
+  }
 }
 
 async function fetchAnomalySummary() {
   // Swallowed on purpose: this is a background poll for a header badge, and a
   // transient failure should not surface as an error toast.
-  try { await anomalyStore.fetchSummary(); } catch { /* ignore */ }
+  try {
+    await anomalyStore.fetchSummary();
+  } catch {
+    /* ignore */
+  }
 }
 
 async function clearAnomalyCounter() {
@@ -511,7 +656,9 @@ async function fetchUpdateInfo() {
   try {
     const res = await api.get('/version');
     updateInfo.value = res.data;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 onMounted(() => {
@@ -519,7 +666,11 @@ onMounted(() => {
   refreshScanHeader();
   fetchUpdateInfo();
   fetchAnomalySummary();
-  pollInterval = setInterval(() => { fetchHealth(); refreshScanHeader(); fetchAnomalySummary(); }, 60000);
+  pollInterval = setInterval(() => {
+    fetchHealth();
+    refreshScanHeader();
+    fetchAnomalySummary();
+  }, 60000);
   window.addEventListener('ipam:stats-changed', fetchHealth);
   window.addEventListener('ipam:scan-started', refreshScanHeader);
 });
@@ -573,7 +724,9 @@ onUnmounted(() => {
   color: var(--p-text-muted-color);
   padding: 0.3rem 0.6rem;
   border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
+  transition:
+    color 0.15s,
+    background 0.15s;
 }
 .nav-link:hover {
   color: var(--p-text-color);
@@ -622,7 +775,6 @@ onUnmounted(() => {
   font-size: var(--app-fs-xs);
   letter-spacing: 0.02em;
 }
-
 
 /* Status is conveyed by the dot only. Chip text stays the default color.
    chip-idle keeps its dimmed text since "idle" is an inactive state, not a
@@ -674,7 +826,9 @@ onUnmounted(() => {
   padding: 0.25rem 0.5rem;
   cursor: pointer;
   color: var(--p-text-color);
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 .user-menu-trigger:hover {
   background: var(--p-surface-ground);
@@ -688,7 +842,8 @@ onUnmounted(() => {
 .user-avatar {
   display: inline-grid;
   place-items: center;
-  width: 24px; height: 24px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
   color: var(--p-primary-color);
@@ -699,7 +854,8 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .user-avatar.lg {
-  width: 36px; height: 36px;
+  width: 36px;
+  height: 36px;
   font-size: var(--app-fs-sm);
 }
 
@@ -718,7 +874,9 @@ onUnmounted(() => {
   gap: 0.6rem;
   padding: 0.25rem 0.25rem 0.5rem;
 }
-.user-menu-id-text { min-width: 0; }
+.user-menu-id-text {
+  min-width: 0;
+}
 .user-menu-name {
   font-size: var(--app-fs-sm);
   font-weight: 600;
@@ -803,8 +961,13 @@ onUnmounted(() => {
 }
 
 @keyframes pulse-update {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
-  50% { box-shadow: 0 0 0 5px rgba(59, 130, 246, 0); }
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(59, 130, 246, 0);
+  }
 }
 
 /* ── Status popover panels ── */
@@ -824,9 +987,15 @@ onUnmounted(() => {
   font-family: monospace;
   font-size: var(--app-fs-sm);
 }
-.status-popover-row + .status-popover-row { border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 60%, transparent); }
-.status-popover-clickable { cursor: pointer; }
-.status-popover-clickable:hover { background: var(--p-surface-100); }
+.status-popover-row + .status-popover-row {
+  border-top: 1px solid color-mix(in srgb, var(--p-surface-border) 60%, transparent);
+}
+.status-popover-clickable {
+  cursor: pointer;
+}
+.status-popover-clickable:hover {
+  background: var(--p-surface-100);
+}
 .status-popover-row-alert {
   color: var(--p-red-500);
 }
@@ -892,8 +1061,13 @@ onUnmounted(() => {
 }
 
 @media (max-width: 1279px) {
-  .username { display: none; }
-  .user-menu-trigger { padding: 0.25rem 0.35rem; gap: 0.3rem; }
+  .username {
+    display: none;
+  }
+  .user-menu-trigger {
+    padding: 0.25rem 0.35rem;
+    gap: 0.3rem;
+  }
 }
 
 @media (max-width: 960px) {
@@ -908,5 +1082,4 @@ onUnmounted(() => {
     padding: 0 0.42rem;
   }
 }
-
 </style>

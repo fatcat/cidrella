@@ -2,7 +2,9 @@ import { getSetting, setSetting } from '../db/init.js';
 import { APP_VERSION } from './version.js';
 import { compareSemver } from './semver.js';
 import {
-  UPDATE_CHECK_INTERVAL_MS, UPDATE_CHECK_DELAY_MS, GITHUB_REPO,
+  UPDATE_CHECK_INTERVAL_MS,
+  UPDATE_CHECK_DELAY_MS,
+  GITHUB_REPO,
 } from '../config/defaults.js';
 import {
   fetchReleasesManifest,
@@ -52,7 +54,7 @@ export async function checkUpdateAvailability({ forceFresh = false } = {}) {
     const res = await fetch(url, {
       headers: {
         'User-Agent': `CIDRella/${APP_VERSION}`,
-        'Accept': 'application/vnd.github.v3+json',
+        Accept: 'application/vnd.github.v3+json',
       },
       signal: AbortSignal.timeout(10000),
     });
@@ -93,7 +95,9 @@ export function clearStaleUpdateFlag() {
       if (Array.isArray(chain) && chain.length > 0) {
         if (compareSemver(chain[0], APP_VERSION) <= 0) chainStale = true;
       }
-    } catch { chainStale = true; }
+    } catch {
+      chainStale = true;
+    }
   }
   const targetStale = stored && compareSemver(stored, APP_VERSION) <= 0;
   if (targetStale || chainStale) {
@@ -135,10 +139,16 @@ export async function checkForUpdates({ forceFresh = false } = {}) {
     setSetting('update_manifest_available', result.manifestAvailable ? 'true' : 'false');
     setSetting('update_intermediate_notes', JSON.stringify(result.intermediateNotes || []));
 
-    const chainLabel = result.chain.length > 1
-      ? ` (via ${result.chain.slice(0, -1).map(v => 'v' + v).join(' → ')})`
-      : '';
-    console.log(`Update available: v${APP_VERSION} → v${result.version}${chainLabel}${result.manifestAvailable ? '' : ' [fallback]'}`);
+    const chainLabel =
+      result.chain.length > 1
+        ? ` (via ${result.chain
+            .slice(0, -1)
+            .map((v) => 'v' + v)
+            .join(' → ')})`
+        : '';
+    console.log(
+      `Update available: v${APP_VERSION} → v${result.version}${chainLabel}${result.manifestAvailable ? '' : ' [fallback]'}`,
+    );
     return { version: result.version, url: releaseUrl };
   } catch (err) {
     // Network errors are expected (offline, rate-limited, etc.)

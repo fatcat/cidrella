@@ -22,7 +22,7 @@ export function deriveScanState(activeScans) {
     return { label: 'Scanner idle', dot: 'muted', dotLabel: 'Idle', chipClass: 'chip-idle' };
   }
 
-  const running = scans.filter(s => s && s.status === 'running');
+  const running = scans.filter((s) => s && s.status === 'running');
   if (!running.length) {
     // Queued but not started. Not idle, not yet active, and not a fault.
     return { label: 'Scanner pending', dot: 'info', dotLabel: 'Pending', chipClass: 'chip-active' };

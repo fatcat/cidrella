@@ -1,5 +1,5 @@
 <template>
-  <div class="subnet-calc" style="display: flex; flex-direction: column; height: 100%;">
+  <div class="subnet-calc" style="display: flex; flex-direction: column; height: 100%">
     <h2>Network Calculator</h2>
     <p class="subtitle">Split a network into smaller networks or calculate network details.</p>
 
@@ -24,17 +24,30 @@
         <div><span class="lbl">Broadcast:</span> {{ parent.broadcast }}</div>
         <div><span class="lbl">Total IPs:</span> {{ parent.totalAddresses.toLocaleString() }}</div>
         <div><span class="lbl">Usable:</span> {{ parent.usableCount.toLocaleString() }}</div>
-        <div><span class="lbl">Range:</span> {{ parent.firstUsable }} – {{ parent.lastUsable }}</div>
+        <div>
+          <span class="lbl">Range:</span> {{ parent.firstUsable }} – {{ parent.lastUsable }}
+        </div>
       </div>
     </div>
 
     <!-- Split results -->
     <div class="results" v-if="subnets.length">
-      <h3>{{ subnets.length }} Network{{ subnets.length > 1 ? 's' : '' }} (each /{{ newPrefix }})</h3>
-      <DataTable :value="subnets" stripedRows size="small"
-                 :paginator="subnets.length > 256" :rows="256"
-                 :rowsPerPageOptions="[64, 128, 256, 512]" scrollable scrollHeight="flex"
-                 @row-contextmenu="onRowContextMenu" :contextMenu="true" v-model:contextMenuSelection="contextRow">
+      <h3>
+        {{ subnets.length }} Network{{ subnets.length > 1 ? 's' : '' }} (each /{{ newPrefix }})
+      </h3>
+      <DataTable
+        :value="subnets"
+        stripedRows
+        size="small"
+        :paginator="subnets.length > 256"
+        :rows="256"
+        :rowsPerPageOptions="[64, 128, 256, 512]"
+        scrollable
+        scrollHeight="flex"
+        @row-contextmenu="onRowContextMenu"
+        :contextMenu="true"
+        v-model:contextMenuSelection="contextRow"
+      >
         <Column header="#" style="width: 3rem">
           <template #body="{ index }">{{ index + 1 }}</template>
         </Column>
@@ -95,8 +108,10 @@ async function calculate() {
     parent.value = result.parent;
     subnets.value = result.subnets;
     saveJson(STORAGE_KEY, {
-      cidr: cidr.value, newPrefix: newPrefix.value,
-      parent: result.parent, subnets: result.subnets
+      cidr: cidr.value,
+      newPrefix: newPrefix.value,
+      parent: result.parent,
+      subnets: result.subnets,
     });
   } catch (err) {
     error.value = apiError(err);
@@ -136,7 +151,9 @@ async function addNetwork(row) {
 </script>
 
 <style scoped>
-.subnet-calc h2 { margin: 0; }
+.subnet-calc h2 {
+  margin: 0;
+}
 .subtitle {
   color: var(--p-text-muted-color);
   margin: 0.25rem 0 1.5rem 0;
@@ -161,7 +178,9 @@ async function addNetwork(row) {
   padding: 1rem 1.25rem;
   margin-bottom: 1.5rem;
 }
-.parent-info h3 { margin: 0 0 0.5rem 0; }
+.parent-info h3 {
+  margin: 0 0 0.5rem 0;
+}
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -173,8 +192,17 @@ async function addNetwork(row) {
   color: var(--p-text-muted-color);
   font-family: inherit;
 }
-.results { margin-top: 1rem; flex: 1; min-height: 0; display: flex; flex-direction: column; margin-bottom: 1.1rem; }
-.results h3 { margin: 0 0 0.75rem 0; }
+.results {
+  margin-top: 1rem;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1.1rem;
+}
+.results h3 {
+  margin: 0 0 0.75rem 0;
+}
 .error-msg {
   margin-top: 1rem;
   color: var(--p-red-500);

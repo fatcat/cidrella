@@ -7,7 +7,7 @@ import {
   signalDnsmasq,
   restartDnsmasq,
   cleanStaleFiles,
-  withValidatedDnsmasqUpdate
+  withValidatedDnsmasqUpdate,
 } from './dnsmasq.js';
 import { parseCidr, isIpInSubnet, ipToLong, longToIp } from './ip.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
@@ -54,8 +54,9 @@ function dynamicRangeSegments(scope, excludedIps) {
   for (const pool of scope.pools || [{ start_ip: scope.start_ip, end_ip: scope.end_ip }]) {
     const start = ipToLong(pool.start_ip);
     const end = ipToLong(pool.end_ip);
-    const excluded = [...new Set(excludedIps.map(ipToLong)
-      .filter(value => value >= start && value <= end))].sort((a, b) => a - b);
+    const excluded = [
+      ...new Set(excludedIps.map(ipToLong).filter((value) => value >= start && value <= end)),
+    ].sort((a, b) => a - b);
     let cursor = start;
     for (const value of excluded) {
       if (cursor < value) segments.push([cursor, value - 1]);
@@ -66,12 +67,20 @@ function dynamicRangeSegments(scope, excludedIps) {
   return segments;
 }
 
-function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = [], suppressRouter = false) {
+function generateScopeConfig(
+  scope,
+  globalDefaults,
+  scopeOptions,
+  excludedIps = [],
+  suppressRouter = false,
+) {
   const tag = `scope${scope.id}`;
   const lines = [];
 
   const pools = scope.pools || [{ start_ip: scope.start_ip, end_ip: scope.end_ip }];
-  lines.push(`# DHCP scope for ${scope.subnet_cidr} (${pools.map(pool => `${pool.start_ip} - ${pool.end_ip}`).join(', ')})`);
+  lines.push(
+    `# DHCP scope for ${scope.subnet_cidr} (${pools.map((pool) => `${pool.start_ip} - ${pool.end_ip}`).join(', ')})`,
+  );
 
   // Build merged options map: global defaults, then scope overrides
   const mergedOptions = new Map();
@@ -94,7 +103,9 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = 
     mergedOptions.delete(51);
   }
   for (const [start, end] of dynamicRangeSegments(scope, excludedIps)) {
-    lines.push(`dhcp-range=set:${tag},${longToIp(start)},${longToIp(end)},${scope.netmask},${leaseTime}`);
+    lines.push(
+      `dhcp-range=set:${tag},${longToIp(start)},${longToIp(end)},${scope.netmask},${leaseTime}`,
+    );
   }
 
   // 3. Legacy column fallback: only if no scope_options exist for that code
@@ -105,14 +116,18 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = 
       try {
         const servers = JSON.parse(scope.dns_servers);
         if (Array.isArray(servers) && servers.length > 0) mergedOptions.set(6, servers.join(','));
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     if (scope.domain_name && !mergedOptions.has(15)) mergedOptions.set(15, scope.domain_name);
     if (scope.ntp_servers && !mergedOptions.has(42)) {
       try {
         const servers = JSON.parse(scope.ntp_servers);
         if (Array.isArray(servers) && servers.length > 0) mergedOptions.set(42, servers.join(','));
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
     if (scope.domain_search && !mergedOptions.has(119)) mergedOptions.set(119, scope.domain_search);
   }
@@ -152,9 +167,9 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = 
     if (!optDef || !value) continue;
     let emitValue = String(value);
     if (optDef.type === 'ip' || optDef.type === 'ip-list') {
-      const parts = emitValue.split(',').map(s => s.trim());
-      const resolved = parts.map(p => resolveToIp(p)).filter(Boolean);
-      if (resolved.length === 0) continue;  // all failed to resolve
+      const parts = emitValue.split(',').map((s) => s.trim());
+      const resolved = parts.map((p) => resolveToIp(p)).filter(Boolean);
+      if (resolved.length === 0) continue; // all failed to resolve
       emitValue = resolved.join(',');
       if (validateDnsmasqConfigValue(emitValue, { allowComma: true }) != null) continue;
     } else if (optDef.type === 'text-list') {
@@ -175,7 +190,9 @@ function generateScopeConfig(scope, globalDefaults, scopeOptions, excludedIps = 
  */
 export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
   dnsCache.clear();
-  const scopes = db.prepare(`
+  const scopes = db
+    .prepare(
+      `
     SELECT s.*, r.start_ip, r.end_ip,
       sub.cidr as subnet_cidr, sub.gateway_address as subnet_gateway,
       sub.network_address, sub.prefix_length, sub.domain_name as subnet_domain_name
@@ -183,14 +200,20 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id
     WHERE s.enabled = 1
-  `).all();
+  `,
+    )
+    .all();
 
   const reservedBySubnet = new Map();
-  const reservedRows = db.prepare(`
+  const reservedRows = db
+    .prepare(
+      `
     SELECT subnet_id, ip_address
     FROM ip_addresses
     WHERE allocation_state = 'reserved'
-  `).all();
+  `,
+    )
+    .all();
   for (const row of reservedRows) {
     if (!reservedBySubnet.has(row.subnet_id)) reservedBySubnet.set(row.subnet_id, []);
     reservedBySubnet.get(row.subnet_id).push(row.ip_address);
@@ -203,21 +226,32 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
     activeIds.add(scope.id);
     const parsed = parseCidr(scope.subnet_cidr);
     scope.netmask = parsed.mask;
-    scope.pools = db.prepare(`
+    scope.pools = db
+      .prepare(
+        `
       SELECT start_ip, end_ip FROM dhcp_scope_pools
       WHERE scope_id = ? ORDER BY sort_order, id
-    `).all(scope.id);
+    `,
+      )
+      .all(scope.id);
 
     const filePath = path.join(confDir, `dhcp-scope-${scope.id}.conf`);
     const effective = resolveEffectiveScopeOptions(db, scope);
     scope.lease_time = effective.lease_time;
     const newContent = generateScopeConfig(
-      scope, {}, effective.options, reservedBySubnet.get(scope.subnet_id) || [],
-      effective.router_suppressed
+      scope,
+      {},
+      effective.options,
+      reservedBySubnet.get(scope.subnet_id) || [],
+      effective.router_suppressed,
     );
 
     let oldContent = '';
-    try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* file doesn't exist */ }
+    try {
+      oldContent = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+      /* file doesn't exist */
+    }
     if (newContent !== oldContent) {
       atomicWrite(filePath, newContent);
       changed = true;
@@ -235,11 +269,15 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
  * Format: <mac>,<ip>[,<hostname>],infinite
  */
 export function regenerateReservations(db) {
-  const reservations = db.prepare(`
+  const reservations = db
+    .prepare(
+      `
     SELECT * FROM dhcp_reservations WHERE enabled = 1 ORDER BY ip_address
-  `).all();
+  `,
+    )
+    .all();
 
-  const lines = reservations.map(r => {
+  const lines = reservations.map((r) => {
     const parts = [r.mac_address, r.ip_address];
     const hostname = r.hostname || generateFallbackHostname(r.mac_address);
     if (hostname) parts.push(hostname);
@@ -251,7 +289,11 @@ export function regenerateReservations(db) {
   const content = lines.length > 0 ? lines.join('\n') + '\n' : '';
 
   let oldContent = '';
-  try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* doesn't exist */ }
+  try {
+    oldContent = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    /* doesn't exist */
+  }
   const changed = content !== oldContent;
   if (changed) {
     atomicWrite(filePath, content);
@@ -271,11 +313,16 @@ export function syncLeases(db) {
     return { synced: 0 };
   }
 
-  const lines = content.trim().split('\n').filter(l => l.trim());
+  const lines = content
+    .trim()
+    .split('\n')
+    .filter((l) => l.trim());
   const leases = [];
 
   // Load allocated subnets once before the loop to avoid N+1 queries
-  const allocatedSubnets = db.prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'").all();
+  const allocatedSubnets = db
+    .prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'")
+    .all();
 
   for (const line of lines) {
     const parts = line.split(/\s+/);
@@ -286,15 +333,15 @@ export function syncLeases(db) {
     const expiresAt = expiry === 0 ? 'infinite' : new Date(expiry * 1000).toISOString();
 
     // Find matching subnet (using pre-loaded list)
-    const subnet = allocatedSubnets.find(s => isIpInSubnet(ip, s.cidr));
+    const subnet = allocatedSubnets.find((s) => isIpInSubnet(ip, s.cidr));
 
     leases.push({
       ip,
       mac: mac.toLowerCase(),
       hostname: hostname === '*' ? null : hostname,
-      clientId: clientId === '*' ? null : (clientId || null),
+      clientId: clientId === '*' ? null : clientId || null,
       expiresAt,
-      subnetId: subnet?.id || null
+      subnetId: subnet?.id || null,
     });
   }
 
@@ -324,7 +371,11 @@ export function syncLeases(db) {
 
   // Remove legacy dhcp-leases.hosts (hostnames now managed via dns_records)
   const legacyHostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
-  try { if (fs.existsSync(legacyHostsPath)) fs.unlinkSync(legacyHostsPath); } catch { /* ignore */ }
+  try {
+    if (fs.existsSync(legacyHostsPath)) fs.unlinkSync(legacyHostsPath);
+  } catch {
+    /* ignore */
+  }
 
   // Sync DHCP hostnames (leases + reservations) into dns_records
   syncDhcpDnsRecords(db, acceptedLeases);
@@ -342,10 +393,14 @@ export function regenerateDhcpConfigs(db) {
     return { confChanged, resChanged, changed: confChanged || resChanged };
   });
   // Sync DHCP hostnames (leases + reservations) into dns_records
-  const leases = db.prepare('SELECT ip_address as ip, hostname, mac_address as mac, subnet_id as subnetId FROM dhcp_leases').all()
-    .map(l => ({
+  const leases = db
+    .prepare(
+      'SELECT ip_address as ip, hostname, mac_address as mac, subnet_id as subnetId FROM dhcp_leases',
+    )
+    .all()
+    .map((l) => ({
       ...l,
-      hostname: l.hostname || (l.mac ? generateFallbackHostname(l.mac) : null)
+      hostname: l.hostname || (l.mac ? generateFallbackHostname(l.mac) : null),
     }));
   syncDhcpDnsRecords(db, leases);
   if (confChanged) {
@@ -364,7 +419,9 @@ export function startLeaseWatcher(db) {
   leaseWatcherDb = db;
 
   // Initial sync
-  try { syncLeases(db); } catch (err) {
+  try {
+    syncLeases(db);
+  } catch (err) {
     console.warn('Initial lease sync failed:', err.message);
   }
 

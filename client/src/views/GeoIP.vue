@@ -1,5 +1,5 @@
 <template>
-  <div class="geoip-page" style="display: flex; flex-direction: column; height: 100%;">
+  <div class="geoip-page" style="display: flex; flex-direction: column; height: 100%">
     <!-- Stats Bar -->
     <div class="stats-bar" v-if="status">
       <div class="stat">
@@ -7,10 +7,12 @@
           <span :class="status.running ? 'indicator-on' : 'indicator-off'"></span>
           {{ status.running ? 'Running' : 'Stopped' }}
         </span>
-      <span class="stat-label">Proxy Status</span>
+        <span class="stat-label">Proxy Status</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ status.mode === 'allowlist' ? 'Allowlist' : 'Blocklist' }}</span>
+        <span class="stat-value">{{
+          status.mode === 'allowlist' ? 'Allowlist' : 'Blocklist'
+        }}</span>
         <span class="stat-label">Mode</span>
       </div>
       <div class="stat">
@@ -26,7 +28,9 @@
         <span class="stat-label">Blocked</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ status.dbLastUpdated ? formatDate(status.dbLastUpdated) : 'No DB' }}</span>
+        <span class="stat-value">{{
+          status.dbLastUpdated ? formatDate(status.dbLastUpdated) : 'No DB'
+        }}</span>
         <span class="stat-label">GeoIP Database</span>
       </div>
     </div>
@@ -35,31 +39,74 @@
     <div class="settings-row">
       <div class="schedule-group">
         <label class="schedule-label">Enabled:</label>
-        <span @click="onEnableClick"><ToggleSwitch v-model="geoipEnabledDisplay" :disabled="noRecursion" /></span>
+        <span @click="onEnableClick"
+          ><ToggleSwitch v-model="geoipEnabledDisplay" :disabled="noRecursion"
+        /></span>
       </div>
       <div class="schedule-group">
         <label class="schedule-label">Mode:</label>
-        <Select v-model="settingsForm.geoip_mode" :options="modeOptions" optionLabel="label"
-                optionValue="value" size="small" style="width: 16rem" />
+        <Select
+          v-model="settingsForm.geoip_mode"
+          :options="modeOptions"
+          optionLabel="label"
+          optionValue="value"
+          size="small"
+          style="width: 16rem"
+        />
       </div>
       <div class="schedule-group">
         <label class="schedule-label">DB Update:</label>
-        <Select v-model="settingsForm.geoip_update_schedule" :options="scheduleOptions"
-                optionLabel="label" optionValue="value" size="small" style="width: 10rem" />
+        <Select
+          v-model="settingsForm.geoip_update_schedule"
+          :options="scheduleOptions"
+          optionLabel="label"
+          optionValue="value"
+          size="small"
+          style="width: 10rem"
+        />
       </div>
-      <Button label="Save Settings" icon="pi pi-save" size="small" @click="doSaveSettings" :loading="savingSettings" :disabled="!settingsDirty" />
-      <Button label="Update DB" icon="pi pi-download" size="small" severity="secondary"
-              @click="doRefreshDb" :loading="refreshingDb" />
-      <Button label="Add Countries" icon="pi pi-plus" size="small" severity="secondary" @click="openAddCountries" />
+      <Button
+        label="Save Settings"
+        icon="pi pi-save"
+        size="small"
+        @click="doSaveSettings"
+        :loading="savingSettings"
+        :disabled="!settingsDirty"
+      />
+      <Button
+        label="Update DB"
+        icon="pi pi-download"
+        size="small"
+        severity="secondary"
+        @click="doRefreshDb"
+        :loading="refreshingDb"
+      />
+      <Button
+        label="Add Countries"
+        icon="pi pi-plus"
+        size="small"
+        severity="secondary"
+        @click="openAddCountries"
+      />
     </div>
 
-    <DataTable :value="store.rules" :loading="store.loading" stripedRows size="small"
-              
-               :paginator="store.rules.length > 256" :rows="256"
-               :rowsPerPageOptions="[64, 128, 256, 512]"
-               scrollable scrollHeight="flex">
+    <DataTable
+      :value="store.rules"
+      :loading="store.loading"
+      stripedRows
+      size="small"
+      :paginator="store.rules.length > 256"
+      :rows="256"
+      :rowsPerPageOptions="[64, 128, 256, 512]"
+      scrollable
+      scrollHeight="flex"
+    >
       <template #empty>
-        <EmptyState icon="pi-globe" title="No country rules" description="Add countries to block or allow resolved answers by origin." />
+        <EmptyState
+          icon="pi-globe"
+          title="No country rules"
+          description="Add countries to block or allow resolved answers by origin."
+        />
       </template>
       <Column header="" style="width: 3rem">
         <template #body="{ data }">
@@ -77,40 +124,76 @@
       <Column header="" style="width: 7rem">
         <template #body="{ data }">
           <div class="action-buttons">
-            <Button :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'" severity="secondary"
-                    text rounded size="small" @click="doToggleRule(data)"
-                    :title="data.enabled ? 'Disable' : 'Enable'" />
-            <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                    @click="confirmDeleteRule(data)" />
+            <Button
+              :icon="data.enabled ? 'pi pi-pause' : 'pi pi-play'"
+              severity="secondary"
+              text
+              rounded
+              size="small"
+              @click="doToggleRule(data)"
+              :title="data.enabled ? 'Disable' : 'Enable'"
+            />
+            <Button
+              icon="pi pi-trash"
+              severity="danger"
+              text
+              rounded
+              size="small"
+              @click="confirmDeleteRule(data)"
+            />
           </div>
         </template>
       </Column>
     </DataTable>
 
     <!-- Add Countries Dialog -->
-    <Dialog v-model:visible="showAddDialog" header="Add Countries" modal :style="{ width: '32rem' }">
+    <Dialog
+      v-model:visible="showAddDialog"
+      header="Add Countries"
+      modal
+      :style="{ width: '32rem' }"
+    >
       <div class="country-search">
         <InputText v-model="countrySearch" placeholder="Search countries..." class="w-full" />
       </div>
       <div class="country-list">
         <label v-for="c in filteredCountries" :key="c.code" class="country-item">
-          <input type="checkbox" v-model="selectedCountries" :value="c.code" :disabled="isRuleAdded(c.code)" />
+          <input
+            type="checkbox"
+            v-model="selectedCountries"
+            :value="c.code"
+            :disabled="isRuleAdded(c.code)"
+          />
           <span class="country-flag">{{ countryFlag(c.code) }}</span>
           <span>{{ c.name }}</span>
           <span class="country-code">{{ c.code }}</span>
-          <span v-if="isRuleAdded(c.code)" class="badge badge-green" style="margin-left: auto;">Added</span>
+          <span v-if="isRuleAdded(c.code)" class="badge badge-green" style="margin-left: auto"
+            >Added</span
+          >
         </label>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showAddDialog = false" />
-        <Button label="Add Selected" @click="doAddCountries" :loading="addingCountries"
-                :disabled="selectedCountries.filter(c => !isRuleAdded(c)).length === 0" />
+        <Button
+          label="Add Selected"
+          @click="doAddCountries"
+          :loading="addingCountries"
+          :disabled="selectedCountries.filter((c) => !isRuleAdded(c)).length === 0"
+        />
       </template>
     </Dialog>
 
     <!-- Delete Rule Dialog -->
-    <Dialog v-model:visible="showDeleteDialog" header="Delete Rule" modal :style="{ width: '24rem' }">
-      <p>Remove <strong>{{ deletingRule?.country_name }}</strong> ({{ deletingRule?.country_code }}) from GeoIP rules?</p>
+    <Dialog
+      v-model:visible="showDeleteDialog"
+      header="Delete Rule"
+      modal
+      :style="{ width: '24rem' }"
+    >
+      <p>
+        Remove <strong>{{ deletingRule?.country_name }}</strong> ({{ deletingRule?.country_code }})
+        from GeoIP rules?
+      </p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteDialog = false" />
         <Button label="Delete" severity="danger" @click="doDeleteRule" :loading="deleting" />
@@ -147,12 +230,19 @@ const status = ref(null);
 const noRecursion = ref(false);
 
 // Settings form
-const settingsForm = ref({ geoip_enabled: false, geoip_mode: 'blocklist', geoip_proxy_port: 5353, geoip_update_schedule: 'monthly' });
+const settingsForm = ref({
+  geoip_enabled: false,
+  geoip_mode: 'blocklist',
+  geoip_proxy_port: 5353,
+  geoip_update_schedule: 'monthly',
+});
 // Show the toggle OFF (and locked) while recursion is disabled. GeoIP is inert
 // then. Non-destructive: the saved preference returns when recursion is on.
 const geoipEnabledDisplay = computed({
-  get: () => noRecursion.value ? false : settingsForm.value.geoip_enabled,
-  set: (v) => { if (!noRecursion.value) settingsForm.value.geoip_enabled = v; },
+  get: () => (noRecursion.value ? false : settingsForm.value.geoip_enabled),
+  set: (v) => {
+    if (!noRecursion.value) settingsForm.value.geoip_enabled = v;
+  },
 });
 const savedSettings = ref(null);
 const savingSettings = ref(false);
@@ -161,21 +251,25 @@ const settingsDirty = computed(() => {
   if (!savedSettings.value) return false;
   const s = savedSettings.value;
   const f = settingsForm.value;
-  return f.geoip_enabled !== s.geoip_enabled || f.geoip_mode !== s.geoip_mode ||
-    f.geoip_proxy_port !== s.geoip_proxy_port || f.geoip_update_schedule !== s.geoip_update_schedule;
+  return (
+    f.geoip_enabled !== s.geoip_enabled ||
+    f.geoip_mode !== s.geoip_mode ||
+    f.geoip_proxy_port !== s.geoip_proxy_port ||
+    f.geoip_update_schedule !== s.geoip_update_schedule
+  );
 });
 const refreshingDb = ref(false);
 
 const modeOptions = [
   { label: 'Blocklist: block listed countries', value: 'blocklist' },
-  { label: 'Allowlist: allow only listed countries', value: 'allowlist' }
+  { label: 'Allowlist: allow only listed countries', value: 'allowlist' },
 ];
 
 const scheduleOptions = [
   { label: 'Off', value: 'off' },
   { label: 'Weekly', value: 'weekly' },
   { label: 'Biweekly', value: 'biweekly' },
-  { label: 'Monthly', value: 'monthly' }
+  { label: 'Monthly', value: 'monthly' },
 ];
 
 // Add countries dialog
@@ -192,15 +286,14 @@ const deleting = ref(false);
 const filteredCountries = computed(() => {
   const q = countrySearch.value.toLowerCase().trim();
   if (!q) return COUNTRIES;
-  return COUNTRIES.filter(c =>
-    c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q)
+  return COUNTRIES.filter(
+    (c) => c.name.toLowerCase().includes(q) || c.code.toLowerCase().includes(q),
   );
 });
 
 function isRuleAdded(code) {
-  return store.rules.some(r => r.country_code === code);
+  return store.rules.some((r) => r.country_code === code);
 }
-
 
 const formatDate = formatDateTime;
 
@@ -211,7 +304,7 @@ function openAddCountries() {
 }
 
 async function doAddCountries() {
-  const toAdd = selectedCountries.value.filter(c => !isRuleAdded(c));
+  const toAdd = selectedCountries.value.filter((c) => !isRuleAdded(c));
   if (toAdd.length === 0) return;
 
   addingCountries.value = true;
@@ -223,13 +316,17 @@ async function doAddCountries() {
       await refreshStatus();
     }
 
-    const countries = toAdd.map(code => {
-      const c = COUNTRIES.find(x => x.code === code);
+    const countries = toAdd.map((code) => {
+      const c = COUNTRIES.find((x) => x.code === code);
       return { code, name: c?.name || code };
     });
     await store.addRules(countries);
     showAddDialog.value = false;
-    toast.add({ severity: 'success', summary: `${toAdd.length} country rule(s) added`, life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: `${toAdd.length} country rule(s) added`,
+      life: 3000,
+    });
     await refreshStatus();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -241,7 +338,11 @@ async function doAddCountries() {
 async function doToggleRule(rule) {
   try {
     await store.toggleRule(rule.id, !rule.enabled);
-    toast.add({ severity: 'success', summary: `${rule.country_name} ${rule.enabled ? 'disabled' : 'enabled'}`, life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: `${rule.country_name} ${rule.enabled ? 'disabled' : 'enabled'}`,
+      life: 3000,
+    });
     await refreshStatus();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -304,7 +405,8 @@ function onEnableClick() {
     toast.add({
       severity: 'warn',
       summary: 'Recursion is disabled',
-      detail: 'GeoIP filtering only applies to recursive queries. Enable recursion in Settings → DNS → Upstream Forwarders first.',
+      detail:
+        'GeoIP filtering only applies to recursive queries. Enable recursion in Settings → DNS → Upstream Forwarders first.',
       life: 5000,
     });
   }
@@ -317,19 +419,19 @@ async function refreshStatus() {
     geoip_enabled: s.enabled,
     geoip_mode: s.mode,
     geoip_proxy_port: s.port,
-    geoip_update_schedule: s.updateSchedule || 'monthly'
+    geoip_update_schedule: s.updateSchedule || 'monthly',
   };
   settingsForm.value = { ...vals };
   savedSettings.value = { ...vals };
 }
 
 onMounted(async () => {
-  await Promise.all([
-    store.fetchRules(),
-    store.fetchStats(),
-    refreshStatus()
-  ]);
-  try { noRecursion.value = !!(await dnsStore.getForwarders()).no_recursion; } catch { /* ignore */ }
+  await Promise.all([store.fetchRules(), store.fetchStats(), refreshStatus()]);
+  try {
+    noRecursion.value = !!(await dnsStore.getForwarders()).no_recursion;
+  } catch {
+    /* ignore */
+  }
 });
 </script>
 
@@ -341,9 +443,16 @@ onMounted(async () => {
 .geoip-page h2 {
   margin: 0 0 1rem 0;
 }
-.country-flag { font-size: 1.1rem; }
-.action-buttons { display: flex; gap: 0.25rem; }
-.country-search { margin-bottom: 0.75rem; }
+.country-flag {
+  font-size: 1.1rem;
+}
+.action-buttons {
+  display: flex;
+  gap: 0.25rem;
+}
+.country-search {
+  margin-bottom: 0.75rem;
+}
 .country-list {
   max-height: 350px;
   overflow-y: auto;
@@ -360,6 +469,12 @@ onMounted(async () => {
   border-radius: 4px;
   font-size: 0.9rem;
 }
-.country-item:hover { background: var(--p-surface-hover); }
-.country-code { font-size: 0.75rem; color: var(--p-text-muted-color); font-family: monospace; }
+.country-item:hover {
+  background: var(--p-surface-hover);
+}
+.country-code {
+  font-size: 0.75rem;
+  color: var(--p-text-muted-color);
+  font-family: monospace;
+}
 </style>

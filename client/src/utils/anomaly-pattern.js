@@ -33,8 +33,8 @@ function mean(nums) {
 function trendDelta(sortedEvents) {
   if (sortedEvents.length < 2) return 0;
   const cut = Math.max(1, Math.floor(sortedEvents.length / 3));
-  const earliest = mean(sortedEvents.slice(0, cut).map(e => e.anomaly_score));
-  const latest = mean(sortedEvents.slice(-cut).map(e => e.anomaly_score));
+  const earliest = mean(sortedEvents.slice(0, cut).map((e) => e.anomaly_score));
+  const latest = mean(sortedEvents.slice(-cut).map((e) => e.anomaly_score));
   return latest - earliest;
 }
 
@@ -50,8 +50,8 @@ function hourClusterShare(events) {
 
 function classifyGroup(events) {
   const sorted = [...events].sort((a, b) => a.window_start.localeCompare(b.window_start));
-  const distinctDays = new Set(sorted.map(e => dayKey(e.window_start))).size;
-  const currentlyActive = sorted.some(e => !e.resolved);
+  const distinctDays = new Set(sorted.map((e) => dayKey(e.window_start))).size;
+  const currentlyActive = sorted.some((e) => !e.resolved);
   const delta = trendDelta(sorted);
   const clusterShare = hourClusterShare(sorted);
 
@@ -85,7 +85,7 @@ function classifyGroup(events) {
     distinctDays,
     firstAt: sorted[0].window_start,
     lastAt: latest.window_start,
-    sparkline: sorted.map(e => ({ t: e.window_start, score: e.anomaly_score })),
+    sparkline: sorted.map((e) => ({ t: e.window_start, score: e.anomaly_score })),
   };
 }
 

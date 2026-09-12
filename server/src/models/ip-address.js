@@ -28,9 +28,10 @@ function canonicalIdentity(ip, interfaceId) {
   if (effectiveInterface && !/^[a-zA-Z0-9._:-]{1,64}$/.test(effectiveInterface)) {
     throw new Error('Invalid interface context');
   }
-  const isV6LinkLocal = parsed.bits === 128
-    && parsed.value >= 0xfe800000000000000000000000000000n
-    && parsed.value <= 0xfebfffffffffffffffffffffffffffffn;
+  const isV6LinkLocal =
+    parsed.bits === 128 &&
+    parsed.value >= 0xfe800000000000000000000000000000n &&
+    parsed.value <= 0xfebfffffffffffffffffffffffffffffn;
   if (isV6LinkLocal && !effectiveInterface) {
     throw new Error('IPv6 link-local addresses require interface context');
   }
@@ -42,7 +43,7 @@ function canonicalIdentity(ip, interfaceId) {
     ip: canonical,
     addressFamily: parsed.bits === 32 ? 4 : 6,
     addressSortKey: sortKey(canonical),
-    interfaceId: effectiveInterface
+    interfaceId: effectiveInterface,
   };
 }
 
@@ -50,10 +51,12 @@ function canonicalIdentity(ip, interfaceId) {
  * Record an IP lifecycle event.
  */
 function emit(db, ipAddressId, subnetId, ip, eventType, { oldValue, newValue, source } = {}) {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO ip_events (ip_address_id, subnet_id, ip_address, event_type, old_value, new_value, source)
     VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(ipAddressId, subnetId, ip, eventType, oldValue ?? null, newValue ?? null, source ?? null);
+  `,
+  ).run(ipAddressId, subnetId, ip, eventType, oldValue ?? null, newValue ?? null, source ?? null);
 }
 
 /**
@@ -64,18 +67,26 @@ export function pruneEvents(db) {
   const val = getSetting('ip_history_retention_days');
   const retentionDays = parseInt(val, 10) || 7;
   const offset = `-${retentionDays} days`;
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     DELETE FROM ip_events WHERE created_at < datetime('now', ?)
-  `).run(offset);
+  `,
+    )
+    .run(offset);
 }
 
 /**
  * Get events for a specific IP, newest first.
  */
 export function getEvents(db, ipAddressId, { limit = 50 } = {}) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT * FROM ip_events WHERE ip_address_id = ? ORDER BY created_at DESC LIMIT ?
-  `).all(ipAddressId, limit);
+  `,
+    )
+    .all(ipAddressId, limit);
 }
 
 /**
@@ -83,9 +94,13 @@ export function getEvents(db, ipAddressId, { limit = 50 } = {}) {
  */
 export function getSubnetEvents(db, subnetId, { hours = 24, limit = 200 } = {}) {
   const offset = `-${hours} hours`;
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT * FROM ip_events WHERE subnet_id = ? AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT ?
-  `).all(subnetId, offset, limit);
+  `,
+    )
+    .all(subnetId, offset, limit);
 }
 
 /**
@@ -97,14 +112,29 @@ export function upsert(db, subnetId, ip, fields = {}) {
   const identity = canonicalIdentity(ip, fields.interface_id);
   ip = identity.ip;
   const {
-    hostname, mac_address, is_online, last_seen_mac,
-    is_rogue, rogue_reason, last_scanned_at, detection_source,
-    allocation_state, allocation_source_type, allocation_source_id,
-    preferred_until, valid_until, dhcp_version, dhcp_duid, dhcp_iaid,
-    reservation_note, scan_enabled
+    hostname,
+    mac_address,
+    is_online,
+    last_seen_mac,
+    is_rogue,
+    rogue_reason,
+    last_scanned_at,
+    detection_source,
+    allocation_state,
+    allocation_source_type,
+    allocation_source_id,
+    preferred_until,
+    valid_until,
+    dhcp_version,
+    dhcp_duid,
+    dhcp_iaid,
+    reservation_note,
+    scan_enabled,
   } = fields;
 
-  const existing = db.prepare(`
+  const existing = db
+    .prepare(
+      `
     SELECT id, hostname, mac_address, is_online, allocation_state,
            allocation_source_type, allocation_source_id, preferred_until,
            valid_until, dhcp_version, dhcp_duid, dhcp_iaid,
@@ -112,7 +142,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
     FROM ip_addresses
     WHERE subnet_id = ? AND ip_address = ?
       AND COALESCE(interface_id, '') = COALESCE(?, '')
-  `).get(subnetId, ip, identity.interfaceId);
+  `,
+    )
+    .get(subnetId, ip, identity.interfaceId);
 
   if (existing) {
     const updates = [];
@@ -176,7 +208,7 @@ export function upsert(db, subnetId, ip, fields = {}) {
       ['dhcp_duid', dhcp_duid],
       ['dhcp_iaid', dhcp_iaid],
       ['reservation_note', reservation_note],
-      ['scan_enabled', scan_enabled]
+      ['scan_enabled', scan_enabled],
     ]) {
       if (value !== undefined && value !== existing[column]) {
         updates.push(`${column} = ?`);
@@ -192,7 +224,11 @@ export function upsert(db, subnetId, ip, fields = {}) {
       params.push(existing.id);
       db.prepare(`UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`).run(...params);
       for (const e of events) {
-        emit(db, existing.id, subnetId, ip, e.type, { oldValue: e.old, newValue: e.new, source: detection_source });
+        emit(db, existing.id, subnetId, ip, e.type, {
+          oldValue: e.old,
+          newValue: e.new,
+          source: detection_source,
+        });
       }
     }
     return existing.id;
@@ -200,7 +236,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
 
   // INSERT, set first_seen_at for new rows that show activity
   const hasActivity = is_online || mac_address || last_seen_mac;
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO ip_addresses (
       subnet_id, ip_address, hostname, mac_address,
       is_online, last_seen_at, last_seen_mac,
@@ -216,19 +254,38 @@ export function upsert(db, subnetId, ip, fields = {}) {
       ${hasActivity ? "datetime('now')" : 'NULL'}, ?, ?,
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
     )
-  `).run(
-    subnetId, ip, hostname || null, mac_address || null,
-    is_online || 0, last_seen_mac || null,
-    is_rogue || 0, rogue_reason || null, last_scanned_at || null,
-    detection_source || null, allocation_state || 'unassigned',
-    allocation_source_type || null, allocation_source_id || null,
-    identity.addressFamily, identity.addressSortKey, identity.interfaceId,
-    preferred_until || null, valid_until || null, dhcp_version || null,
-    dhcp_duid || null, dhcp_iaid ?? null, reservation_note || null, scan_enabled ?? null
-  );
+  `,
+    )
+    .run(
+      subnetId,
+      ip,
+      hostname || null,
+      mac_address || null,
+      is_online || 0,
+      last_seen_mac || null,
+      is_rogue || 0,
+      rogue_reason || null,
+      last_scanned_at || null,
+      detection_source || null,
+      allocation_state || 'unassigned',
+      allocation_source_type || null,
+      allocation_source_id || null,
+      identity.addressFamily,
+      identity.addressSortKey,
+      identity.interfaceId,
+      preferred_until || null,
+      valid_until || null,
+      dhcp_version || null,
+      dhcp_duid || null,
+      dhcp_iaid ?? null,
+      reservation_note || null,
+      scan_enabled ?? null,
+    );
   if (allocation_state && allocation_state !== 'unassigned') {
     emit(db, result.lastInsertRowid, subnetId, ip, 'allocation_changed', {
-      oldValue: 'unassigned', newValue: allocation_state, source: allocation_source_type || detection_source
+      oldValue: 'unassigned',
+      newValue: allocation_state,
+      source: allocation_source_type || detection_source,
     });
   }
   return result.lastInsertRowid;
@@ -239,9 +296,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
  * UPDATE only, does not create rows for unknown IPs.
  */
 export function markOnline(db, subnetId, ip, { mac, source } = {}) {
-  const existing = db.prepare(
-    'SELECT id, is_online FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = db
+    .prepare('SELECT id, is_online FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+    .get(subnetId, ip);
   if (!existing) return { changes: 0 };
 
   const updates = [
@@ -249,7 +306,7 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
     "last_seen_at = datetime('now')",
     "first_seen_at = COALESCE(first_seen_at, datetime('now'))",
     'offline_since_at = NULL',
-    "updated_at = datetime('now')"
+    "updated_at = datetime('now')",
   ];
   const params = [];
 
@@ -263,9 +320,9 @@ export function markOnline(db, subnetId, ip, { mac, source } = {}) {
   }
 
   params.push(existing.id);
-  const result = db.prepare(
-    `UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`
-  ).run(...params);
+  const result = db
+    .prepare(`UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`)
+    .run(...params);
 
   if (!existing.is_online) {
     emit(db, existing.id, subnetId, ip, 'online', { source });
@@ -296,8 +353,9 @@ function addressClaim(row) {
 export function isAdminDeclared(db, row) {
   void db;
   if (!row) return false;
-  return ['reserved', 'static_dns', 'static_dhcp', 'system', 'gateway']
-    .includes(row.allocation_state);
+  return ['reserved', 'static_dns', 'static_dhcp', 'system', 'gateway'].includes(
+    row.allocation_state,
+  );
 }
 
 /**
@@ -306,15 +364,17 @@ export function isAdminDeclared(db, row) {
  * created as rogue because the host proved it is using an address CIDRella did
  * not assign, but only when nothing else already claims that address.
  */
-export function recordPassiveActivity(db, subnetId, ip, {
-  mac,
-  source = 'passive',
-  createRogue = false,
-  rogueReason = PASSIVE_ROGUE_REASON
-} = {}) {
-  const existing = db.prepare(
-    'SELECT id, is_rogue, rogue_reason, hostname, allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+export function recordPassiveActivity(
+  db,
+  subnetId,
+  ip,
+  { mac, source = 'passive', createRogue = false, rogueReason = PASSIVE_ROGUE_REASON } = {},
+) {
+  const existing = db
+    .prepare(
+      'SELECT id, is_rogue, rogue_reason, hostname, allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?',
+    )
+    .get(subnetId, ip);
 
   const claimed = addressClaim(existing);
 
@@ -333,7 +393,7 @@ export function recordPassiveActivity(db, subnetId, ip, {
     rogue_reason: isRogue ? rogueReason : null,
     detection_source: source,
     allocation_state: 'unassigned',
-    allocation_source_type: null
+    allocation_source_type: null,
   });
 
   emit(db, newId, subnetId, ip, 'online', { source });
@@ -348,9 +408,11 @@ export function recordPassiveActivity(db, subnetId, ip, {
  * Learned data and rogue evidence survive until the retirement boundary.
  */
 export function markOffline(db, subnetId, ip) {
-  const existing = db.prepare(
-    'SELECT id, is_online, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = db
+    .prepare(
+      'SELECT id, is_online, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?',
+    )
+    .get(subnetId, ip);
   if (!existing) return { changes: 0 };
 
   if (existing.is_online) {
@@ -359,13 +421,17 @@ export function markOffline(db, subnetId, ip) {
   if (existing.is_rogue) {
     emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'offline' });
   }
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE ip_addresses SET
       is_online = 0, is_rogue = 0,
       offline_since_at = COALESCE(offline_since_at, datetime('now')),
       updated_at = datetime('now')
     WHERE id = ?
-  `).run(existing.id);
+  `,
+    )
+    .run(existing.id);
 }
 
 /**
@@ -384,7 +450,9 @@ export function markOffline(db, subnetId, ip) {
 export function bulkMarkStale(db, staleMinutes) {
   const offset = `-${staleMinutes} minutes`;
 
-  const staleIps = db.prepare(`
+  const staleIps = db
+    .prepare(
+      `
     SELECT ip.id, ip.subnet_id, ip.ip_address, ip.is_rogue,
            ip.hostname, ip.mac_address, ip.last_seen_mac, ip.scan_enabled
     FROM ip_addresses ip
@@ -392,7 +460,9 @@ export function bulkMarkStale(db, staleMinutes) {
     WHERE ip.is_online = 1
       AND ip.last_seen_at < datetime('now', ?)
       AND NOT ${scannerCoveredSql('s', 'ip')}
-  `).all(offset);
+  `,
+    )
+    .all(offset);
 
   for (const row of staleIps) {
     emit(db, row.id, row.subnet_id, row.ip_address, 'offline', { source: 'stale' });
@@ -421,7 +491,9 @@ export function bulkMarkStale(db, staleMinutes) {
  * candidates.
  */
 export function findRetirementCandidates(db, cutoff, now, limit = 500) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT *
     FROM ip_addresses
     WHERE is_online = 0
@@ -453,11 +525,15 @@ export function findRetirementCandidates(db, cutoff, now, limit = 500) {
       )
     ORDER BY datetime(offline_since_at), id
     LIMIT ?
-  `).all(cutoff, now, limit);
+  `,
+    )
+    .all(cutoff, now, limit);
 }
 
 export function startMissingRetirementWindows(db, now) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE ip_addresses
     SET offline_since_at = datetime(?), updated_at = datetime('now')
     WHERE is_online = 0
@@ -467,7 +543,9 @@ export function startMissingRetirementWindows(db, now) {
         OR is_rogue = 1
         OR detection_source IN ('dhcp_lease', 'slaac', 'scanner', 'passive', 'neighbor_discovery')
       )
-  `).run(now);
+  `,
+    )
+    .run(now);
 }
 
 /**
@@ -478,7 +556,9 @@ export function retireLearnedMetadata(db, row) {
   if (row.is_rogue) {
     emit(db, row.id, row.subnet_id, row.ip_address, 'rogue_cleared', { source: 'retirement' });
   }
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     UPDATE ip_addresses SET
       hostname = NULL, mac_address = NULL, last_seen_mac = NULL,
       last_seen_at = NULL, first_seen_at = NULL, last_scanned_at = NULL,
@@ -489,11 +569,13 @@ export function retireLearnedMetadata(db, row) {
       dhcp_version = NULL, dhcp_duid = NULL, dhcp_iaid = NULL,
       updated_at = datetime('now')
     WHERE id = ?
-  `).run(row.id);
+  `,
+    )
+    .run(row.id);
   emit(db, row.id, row.subnet_id, row.ip_address, 'retired', {
     oldValue: row.allocation_state,
     newValue: 'unassigned',
-    source: 'retirement'
+    source: 'retirement',
   });
   return result;
 }
@@ -502,16 +584,20 @@ export function retireLearnedMetadata(db, row) {
  * Set rogue status on a single IP.
  */
 export function setRogue(db, subnetId, ip, reason) {
-  const existing = db.prepare(
-    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = db
+    .prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+    .get(subnetId, ip);
 
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     UPDATE ip_addresses SET
       is_rogue = 1, rogue_reason = ?,
       updated_at = datetime('now')
     WHERE subnet_id = ? AND ip_address = ?
-  `).run(reason, subnetId, ip);
+  `,
+    )
+    .run(reason, subnetId, ip);
 
   if (existing) {
     emit(db, existing.id, subnetId, ip, 'rogue_detected', { newValue: reason, source: 'scanner' });
@@ -523,18 +609,22 @@ export function setRogue(db, subnetId, ip, reason) {
  * Clear rogue status on a single IP.
  */
 export function clearRogue(db, subnetId, ip) {
-  const existing = db.prepare(
-    'SELECT id, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = db
+    .prepare('SELECT id, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+    .get(subnetId, ip);
 
   if (!existing || !existing.is_rogue) return { changes: 0 };
 
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     UPDATE ip_addresses SET
       is_rogue = 0, rogue_reason = NULL,
       updated_at = datetime('now')
     WHERE subnet_id = ? AND ip_address = ?
-  `).run(subnetId, ip);
+  `,
+    )
+    .run(subnetId, ip);
 
   emit(db, existing.id, subnetId, ip, 'rogue_cleared');
   return result;
@@ -548,7 +638,9 @@ export function clearRogue(db, subnetId, ip) {
 export function removeOtherRowsForMac(db, subnetId, ip, mac) {
   if (!mac) return { changes: 0 };
   const normalizedMac = String(mac).toLowerCase();
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     DELETE FROM ip_addresses AS stale
     WHERE (lower(stale.mac_address) = ? OR lower(stale.last_seen_mac) = ?)
       AND NOT (stale.subnet_id = ? AND stale.ip_address = ?)
@@ -565,14 +657,16 @@ export function removeOtherRowsForMac(db, subnetId, ip, mac) {
           AND lease.ip_address = stale.ip_address
           AND ${activeLeaseSql('lease')}
       )
-  `).run(normalizedMac, normalizedMac, subnetId, ip);
+  `,
+    )
+    .run(normalizedMac, normalizedMac, subnetId, ip);
 }
 
 /**
  * Delete selected IP rows.
  */
 export function deleteByIds(db, ids) {
-  const uniqueIds = [...new Set((ids || []).filter(id => id !== null && id !== undefined))];
+  const uniqueIds = [...new Set((ids || []).filter((id) => id !== null && id !== undefined))];
   if (uniqueIds.length === 0) return { changes: 0 };
 
   const remove = db.prepare('DELETE FROM ip_addresses WHERE id = ?');
@@ -602,27 +696,26 @@ export function deleteByIpAddress(db, ip) {
  * Lifecycle events are retargeted to the new subnet for subnet-scoped history.
  */
 export function moveToSubnet(db, id, ip, targetSubnetId) {
-  const dup = db.prepare(
-    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(targetSubnetId, ip);
+  const dup = db
+    .prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+    .get(targetSubnetId, ip);
 
   if (dup && dup.id !== id) deleteById(db, dup.id);
 
-  const moved = db.prepare(
-    "UPDATE ip_addresses SET subnet_id = ?, updated_at = datetime('now') WHERE id = ?"
-  ).run(targetSubnetId, id);
-
-  db.prepare('UPDATE ip_events SET subnet_id = ? WHERE ip_address_id = ?')
+  const moved = db
+    .prepare("UPDATE ip_addresses SET subnet_id = ?, updated_at = datetime('now') WHERE id = ?")
     .run(targetSubnetId, id);
+
+  db.prepare('UPDATE ip_events SET subnet_id = ? WHERE ip_address_id = ?').run(targetSubnetId, id);
 
   return moved;
 }
 
 export function ensureAddress(db, subnetId, ip, fields = {}) {
   const identity = canonicalIdentity(ip);
-  const existing = db.prepare(
-    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, identity.ip);
+  const existing = db
+    .prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+    .get(subnetId, identity.ip);
   if (existing) return { changes: 0, lastInsertRowid: existing.id };
   const id = upsert(db, subnetId, identity.ip, fields);
   return { changes: 1, lastInsertRowid: id };
@@ -646,23 +739,31 @@ export function ensureAddresses(db, subnetId, entries) {
  */
 export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
   if (exceptIps.size === 0) {
-    return db.prepare(`
+    return db
+      .prepare(
+        `
       UPDATE ip_addresses SET
         is_rogue = 0, rogue_reason = NULL,
         updated_at = datetime('now')
       WHERE subnet_id = ? AND is_rogue = 1
-    `).run(subnetId);
+    `,
+      )
+      .run(subnetId);
   }
 
   // Build placeholders for the exception list
   const placeholders = [...exceptIps].map(() => '?').join(', ');
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE ip_addresses SET
       is_rogue = 0, rogue_reason = NULL,
       updated_at = datetime('now')
     WHERE subnet_id = ? AND is_rogue = 1
       AND ip_address NOT IN (${placeholders})
-  `).run(subnetId, ...exceptIps);
+  `,
+    )
+    .run(subnetId, ...exceptIps);
 }
 
 /**
@@ -671,9 +772,11 @@ export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
  * Creates a new row if the IP responded but has no existing record (rogue device).
  */
 export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, conflictReason }) {
-  const existing = db.prepare(
-    'SELECT id, is_online, is_rogue, allocation_state, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = db
+    .prepare(
+      'SELECT id, is_online, is_rogue, allocation_state, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?',
+    )
+    .get(subnetId, ip);
 
   // Re-check the canonical row because its allocation may have changed after
   // the scanner built its assignment map.
@@ -689,7 +792,7 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       'is_online = ?',
       "last_scanned_at = datetime('now')",
       'detection_source = COALESCE(detection_source, ?)',
-      "updated_at = datetime('now')"
+      "updated_at = datetime('now')",
     ];
     const params = [responded ? 1 : 0, 'scanner'];
 
@@ -704,7 +807,9 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       updates.push('last_seen_mac = ?');
       params.push(mac);
       // Only set mac_address if currently empty
-      updates.push("mac_address = CASE WHEN mac_address IS NULL OR mac_address = '' THEN ? ELSE mac_address END");
+      updates.push(
+        "mac_address = CASE WHEN mac_address IS NULL OR mac_address = '' THEN ? ELSE mac_address END",
+      );
       params.push(mac);
     }
 
@@ -722,14 +827,20 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     db.prepare(`UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
     // Emit lifecycle events for state transitions
-    emit(db, existing.id, subnetId, ip, 'scanned', { newValue: responded ? 'responded' : 'no_response', source: 'scanner' });
+    emit(db, existing.id, subnetId, ip, 'scanned', {
+      newValue: responded ? 'responded' : 'no_response',
+      source: 'scanner',
+    });
     if (responded && !existing.is_online) {
       emit(db, existing.id, subnetId, ip, 'online', { source: 'scanner' });
     } else if (!responded && existing.is_online) {
       emit(db, existing.id, subnetId, ip, 'offline', { source: 'scanner' });
     }
     if (effectiveConflict && !existing.is_rogue) {
-      emit(db, existing.id, subnetId, ip, 'rogue_detected', { newValue: effectiveReason, source: 'scanner' });
+      emit(db, existing.id, subnetId, ip, 'rogue_detected', {
+        newValue: effectiveReason,
+        source: 'scanner',
+      });
     } else if (!effectiveConflict && existing.is_rogue) {
       emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'scanner' });
     }
@@ -742,12 +853,15 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       is_rogue: effectiveConflict ? 1 : 0,
       rogue_reason: effectiveConflict ? effectiveReason : null,
       last_scanned_at: new Date().toISOString(),
-      detection_source: 'scanner'
+      detection_source: 'scanner',
     });
     emit(db, newId, subnetId, ip, 'scanned', { newValue: 'responded', source: 'scanner' });
     emit(db, newId, subnetId, ip, 'online', { source: 'scanner' });
     if (effectiveConflict) {
-      emit(db, newId, subnetId, ip, 'rogue_detected', { newValue: effectiveReason, source: 'scanner' });
+      emit(db, newId, subnetId, ip, 'rogue_detected', {
+        newValue: effectiveReason,
+        source: 'scanner',
+      });
     }
   }
   // If no existing row and didn't respond, nothing to record
@@ -758,25 +872,42 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
  * Upserts, creates the row if it doesn't exist.
  */
 export function setScanEnabled(db, subnetId, ip, scanEnabled) {
-  const existing = db.prepare(
-    'SELECT id, scan_enabled as old_scan FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = db
+    .prepare(
+      'SELECT id, scan_enabled as old_scan FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?',
+    )
+    .get(subnetId, ip);
 
   if (existing) {
     db.prepare(
-      "UPDATE ip_addresses SET scan_enabled = ?, updated_at = datetime('now') WHERE id = ?"
+      "UPDATE ip_addresses SET scan_enabled = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(scanEnabled, existing.id);
-    const oldLabel = existing.old_scan === 1 ? 'enabled' : existing.old_scan === 0 ? 'disabled' : 'inherit';
-    const newLabel = scanEnabled === 1 || scanEnabled === true ? 'enabled' : scanEnabled === 0 || scanEnabled === false ? 'disabled' : 'inherit';
+    const oldLabel =
+      existing.old_scan === 1 ? 'enabled' : existing.old_scan === 0 ? 'disabled' : 'inherit';
+    const newLabel =
+      scanEnabled === 1 || scanEnabled === true
+        ? 'enabled'
+        : scanEnabled === 0 || scanEnabled === false
+          ? 'disabled'
+          : 'inherit';
     if (oldLabel !== newLabel) {
-      emit(db, existing.id, subnetId, ip, 'scan_enabled_changed', { oldValue: oldLabel, newValue: newLabel, source: 'manual' });
+      emit(db, existing.id, subnetId, ip, 'scan_enabled_changed', {
+        oldValue: oldLabel,
+        newValue: newLabel,
+        source: 'manual',
+      });
     }
   } else {
     const newId = upsert(db, subnetId, ip);
     db.prepare(
-      "UPDATE ip_addresses SET scan_enabled = ?, updated_at = datetime('now') WHERE id = ?"
+      "UPDATE ip_addresses SET scan_enabled = ?, updated_at = datetime('now') WHERE id = ?",
     ).run(scanEnabled, newId);
-    const newLabel = scanEnabled === 1 || scanEnabled === true ? 'enabled' : scanEnabled === 0 || scanEnabled === false ? 'disabled' : 'inherit';
+    const newLabel =
+      scanEnabled === 1 || scanEnabled === true
+        ? 'enabled'
+        : scanEnabled === 0 || scanEnabled === false
+          ? 'disabled'
+          : 'inherit';
     emit(db, newId, subnetId, ip, 'scan_enabled_changed', { newValue: newLabel, source: 'manual' });
   }
 }
@@ -786,9 +917,9 @@ export function setScanEnabled(db, subnetId, ip, scanEnabled) {
  * that need to record lifecycle events after calling model write methods.
  */
 export function emitEvent(db, subnetId, ip, eventType, { oldValue, newValue, source } = {}) {
-  const existing = db.prepare(
-    'SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnetId, ip);
+  const existing = db
+    .prepare('SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+    .get(subnetId, ip);
   if (existing) {
     emit(db, existing.id, subnetId, ip, eventType, { oldValue, newValue, source });
   }
@@ -799,9 +930,11 @@ export function emitEvent(db, subnetId, ip, eventType, { oldValue, newValue, sou
  */
 export function findBySubnetAndIp(db, subnetId, ip) {
   const identity = canonicalIdentity(ip);
-  return db.prepare(
-    `SELECT * FROM ip_addresses
+  return db
+    .prepare(
+      `SELECT * FROM ip_addresses
      WHERE subnet_id = ? AND ip_address = ?
-       AND COALESCE(interface_id, '') = COALESCE(?, '')`
-  ).get(subnetId, identity.ip, identity.interfaceId);
+       AND COALESCE(interface_id, '') = COALESCE(?, '')`,
+    )
+    .get(subnetId, identity.ip, identity.interfaceId);
 }

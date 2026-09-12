@@ -6,14 +6,18 @@
   /api/blocklists/whitelist.
 -->
 <template>
-  <div class="allowed-domains" style="display: flex; flex-direction: column; height: 100%;">
+  <div class="allowed-domains" style="display: flex; flex-direction: column; height: 100%">
     <p class="wl-hint">
-      Domains here are <strong>never</strong> blocked, by category blocking <em>or</em> GeoIP.
-      (To allow specific IPs/ranges regardless of country, use Filtering › Allowed IPs.)
+      Domains here are <strong>never</strong> blocked, by category blocking <em>or</em> GeoIP. (To
+      allow specific IPs/ranges regardless of country, use Filtering › Allowed IPs.)
     </p>
-    <DomainWhitelist :items="store.whitelist" :on-add="wlAdd" :on-remove="wlRemove"
-                     add-track="blocklist-add-allowed-domain"
-                     empty-message="No allowed domains." />
+    <DomainWhitelist
+      :items="store.whitelist"
+      :on-add="wlAdd"
+      :on-remove="wlRemove"
+      add-track="blocklist-add-allowed-domain"
+      empty-message="No allowed domains."
+    />
   </div>
 </template>
 
@@ -49,5 +53,10 @@ onMounted(() => store.fetchWhitelist());
 </script>
 
 <style scoped>
-.wl-hint { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0 0 0.75rem; line-height: 1.4; }
+.wl-hint {
+  font-size: var(--app-fs-xs);
+  color: var(--p-text-muted-color);
+  margin: 0 0 0.75rem;
+  line-height: 1.4;
+}
 </style>

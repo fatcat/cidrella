@@ -6,21 +6,43 @@
     <div class="backup-section">
       <div class="setting-group">
         <h3>Manual Backup</h3>
-        <p class="field-help" style="margin-bottom: 0.75rem;">Creates a backup of the database, certificates, and DNSmasq configuration.</p>
-        <Button label="Create Backup" icon="pi pi-download" size="small" data-track="sys-create-backup-inline" @click="doCreateBackup" :loading="creatingBackup" />
+        <p class="field-help" style="margin-bottom: 0.75rem">
+          Creates a backup of the database, certificates, and DNSmasq configuration.
+        </p>
+        <Button
+          label="Create Backup"
+          icon="pi pi-download"
+          size="small"
+          data-track="sys-create-backup-inline"
+          @click="doCreateBackup"
+          :loading="creatingBackup"
+        />
       </div>
 
       <div class="setting-group">
         <h3>Schedule</h3>
         <div class="field">
           <label>Automatic Backups</label>
-          <Select v-model="backupSchedule" :options="scheduleOptions" optionLabel="label" optionValue="value"
-                  class="w-full" style="max-width: 16rem;" @change="saveBackupSettings" />
+          <Select
+            v-model="backupSchedule"
+            :options="scheduleOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+            style="max-width: 16rem"
+            @change="saveBackupSettings"
+          />
         </div>
         <div class="field">
           <label>Retention (max backups to keep)</label>
-          <InputText v-model.number="backupRetention" type="number" min="1" max="100"
-                     style="width: 8rem;" @change="saveBackupSettings" />
+          <InputText
+            v-model.number="backupRetention"
+            type="number"
+            min="1"
+            max="100"
+            style="width: 8rem"
+            @change="saveBackupSettings"
+          />
         </div>
         <div class="field">
           <label>Next Backup</label>
@@ -30,11 +52,20 @@
 
       <div class="setting-group">
         <h3>Existing Backups</h3>
-        <DataTable :value="opsStore.backups" :loading="opsStore.loading" stripedRows size="small"
-                  
-                   @row-contextmenu="onBackupRightClick" contextMenu>
+        <DataTable
+          :value="opsStore.backups"
+          :loading="opsStore.loading"
+          stripedRows
+          size="small"
+          @row-contextmenu="onBackupRightClick"
+          contextMenu
+        >
           <template #empty>
-            <EmptyState icon="pi-database" title="No backups yet" description="Create a backup now or enable the schedule below." />
+            <EmptyState
+              icon="pi-database"
+              title="No backups yet"
+              description="Create a backup now or enable the schedule below."
+            />
           </template>
           <Column field="filename" header="Filename" />
           <Column header="Size" style="width: 8rem">
@@ -43,13 +74,27 @@
           <Column header="Created" style="width: 12rem">
             <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
           </Column>
-          <Column header="" style="width: 5rem; text-align: right;">
+          <Column header="" style="width: 5rem; text-align: right">
             <template #body="{ data }">
               <div class="action-buttons">
-                <Button icon="pi pi-download" severity="secondary" text rounded size="small"
-                        v-tooltip.top="'Download'" @click="opsStore.downloadBackup(data.id, data.filename)" />
-                <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                        v-tooltip.top="'Delete'" @click="confirmDeleteBackup(data)" />
+                <Button
+                  icon="pi pi-download"
+                  severity="secondary"
+                  text
+                  rounded
+                  size="small"
+                  v-tooltip.top="'Download'"
+                  @click="opsStore.downloadBackup(data.id, data.filename)"
+                />
+                <Button
+                  icon="pi pi-trash"
+                  severity="danger"
+                  text
+                  rounded
+                  size="small"
+                  v-tooltip.top="'Delete'"
+                  @click="confirmDeleteBackup(data)"
+                />
               </div>
             </template>
           </Column>
@@ -58,53 +103,110 @@
 
       <div class="setting-group">
         <h3>Restore from Backup</h3>
-        <p class="field-help restore-warning">Warning: Restoring will replace all current data. A server restart will be required.</p>
+        <p class="field-help restore-warning">
+          Warning: Restoring will replace all current data. A server restart will be required.
+        </p>
         <div class="restore-row">
-          <input type="file" ref="restoreFileInput" accept=".tar.gz,.tgz" @change="onRestoreFileSelected" />
-          <Button label="Restore" icon="pi pi-upload" severity="danger" @click="showRestoreDialog = true"
-                  :disabled="!restoreFile" />
+          <input
+            type="file"
+            ref="restoreFileInput"
+            accept=".tar.gz,.tgz"
+            @change="onRestoreFileSelected"
+          />
+          <Button
+            label="Restore"
+            icon="pi pi-upload"
+            severity="danger"
+            @click="showRestoreDialog = true"
+            :disabled="!restoreFile"
+          />
         </div>
       </div>
 
       <div class="setting-group" v-if="authStore.user?.role === 'admin'">
-        <h3 style="color: var(--p-red-500);">Database Reset</h3>
-        <p class="field-help" style="margin-bottom: 0.75rem;">
-          Reset the application to a fresh state. This will delete all networks, DNS zones, DHCP scopes,
-          users, audit logs, settings, and VLANs. TLS certificates, backup files, and blocklist files on disk are preserved.
+        <h3 style="color: var(--p-red-500)">Database Reset</h3>
+        <p class="field-help" style="margin-bottom: 0.75rem">
+          Reset the application to a fresh state. This will delete all networks, DNS zones, DHCP
+          scopes, users, audit logs, settings, and VLANs. TLS certificates, backup files, and
+          blocklist files on disk are preserved.
         </p>
-        <Button label="Reset Database" icon="pi pi-exclamation-triangle" severity="danger"
-                @click="showResetDbDialog = true" />
+        <Button
+          label="Reset Database"
+          icon="pi pi-exclamation-triangle"
+          severity="danger"
+          @click="showResetDbDialog = true"
+        />
       </div>
     </div>
 
     <ContextMenu ref="backupContextMenuRef" :model="backupContextMenuItems" />
 
     <!-- Delete Backup Dialog -->
-    <Dialog v-model:visible="showDeleteBackupDialog" header="Delete Backup" modal :style="{ width: '24rem' }">
-      <p>Delete backup <strong>{{ deletingBackup?.filename }}</strong>?</p>
+    <Dialog
+      v-model:visible="showDeleteBackupDialog"
+      header="Delete Backup"
+      modal
+      :style="{ width: '24rem' }"
+    >
+      <p>
+        Delete backup <strong>{{ deletingBackup?.filename }}</strong
+        >?
+      </p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteBackupDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteBackup" :loading="deletingBackupLoading" />
+        <Button
+          label="Delete"
+          severity="danger"
+          @click="doDeleteBackup"
+          :loading="deletingBackupLoading"
+        />
       </template>
     </Dialog>
 
     <!-- Database Reset Confirmation Dialog -->
-    <Dialog v-model:visible="showResetDbDialog" header="Reset Database" modal :style="{ width: '28rem' }">
-      <p style="color: var(--p-red-500); font-weight: 600;">This action cannot be undone.</p>
-      <p>All application data will be permanently deleted and the database will be reinitialized.
-         You will be logged out and a new admin account will be generated.</p>
+    <Dialog
+      v-model:visible="showResetDbDialog"
+      header="Reset Database"
+      modal
+      :style="{ width: '28rem' }"
+    >
+      <p style="color: var(--p-red-500); font-weight: 600">This action cannot be undone.</p>
+      <p>
+        All application data will be permanently deleted and the database will be reinitialized. You
+        will be logged out and a new admin account will be generated.
+      </p>
       <p>Type <strong>RESET</strong> to confirm:</p>
       <InputText v-model="resetConfirmText" class="w-full" placeholder="Type RESET" />
       <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showResetDbDialog = false; resetConfirmText = ''" />
-        <Button label="Reset Database" severity="danger" @click="doResetDatabase"
-                :loading="resettingDb" :disabled="resetConfirmText !== 'RESET'" />
+        <Button
+          label="Cancel"
+          severity="secondary"
+          @click="
+            showResetDbDialog = false;
+            resetConfirmText = '';
+          "
+        />
+        <Button
+          label="Reset Database"
+          severity="danger"
+          @click="doResetDatabase"
+          :loading="resettingDb"
+          :disabled="resetConfirmText !== 'RESET'"
+        />
       </template>
     </Dialog>
 
     <!-- Restore Confirmation Dialog -->
-    <Dialog v-model:visible="showRestoreDialog" header="Confirm Restore" modal :style="{ width: '28rem' }">
-      <p>This will <strong>replace all current data</strong> with the contents of the backup file. The server will need to be restarted after restore.</p>
+    <Dialog
+      v-model:visible="showRestoreDialog"
+      header="Confirm Restore"
+      modal
+      :style="{ width: '28rem' }"
+    >
+      <p>
+        This will <strong>replace all current data</strong> with the contents of the backup file.
+        The server will need to be restarted after restore.
+      </p>
       <p>Are you sure you want to proceed?</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showRestoreDialog = false" />
@@ -159,13 +261,13 @@ const scheduleOptions = [
   { label: 'Off', value: 'off' },
   { label: 'Daily', value: 'daily' },
   { label: 'Weekly', value: 'weekly' },
-  { label: 'Monthly', value: 'monthly' }
+  { label: 'Monthly', value: 'monthly' },
 ];
 
 const INTERVAL_MS = {
   daily: 24 * 60 * 60 * 1000,
   weekly: 7 * 24 * 60 * 60 * 1000,
-  monthly: 30 * 24 * 60 * 60 * 1000
+  monthly: 30 * 24 * 60 * 60 * 1000,
 };
 
 const nextBackupLabel = computed(() => {
@@ -194,7 +296,7 @@ async function saveBackupSettings() {
       settings: {
         backup_schedule: backupSchedule.value,
         backup_retention_count: String(backupRetention.value),
-      }
+      },
     });
     toast.add({ severity: 'success', summary: 'Backup settings saved', life: 3000 });
 
@@ -205,10 +307,19 @@ async function saveBackupSettings() {
         const backup = await opsStore.createBackup();
         // Record as the last scheduled run so next backup is scheduled correctly
         await store.updateSetting('backup_last_run', new Date().toISOString());
-        toast.add({ severity: 'success', summary: `Initial backup created: ${backup.filename}`, life: 5000 });
+        toast.add({
+          severity: 'success',
+          summary: `Initial backup created: ${backup.filename}`,
+          life: 5000,
+        });
         await loadBackupSettings();
       } catch (err) {
-        toast.add({ severity: 'error', summary: 'Initial backup failed', detail: apiError(err), life: 5000 });
+        toast.add({
+          severity: 'error',
+          summary: 'Initial backup failed',
+          detail: apiError(err),
+          life: 5000,
+        });
       } finally {
         creatingBackup.value = false;
       }
@@ -255,8 +366,12 @@ const backupContextMenuItems = computed(() => {
   const b = selectedBackup.value;
   if (!b) return [];
   return [
-    { label: 'Download', icon: 'pi pi-download', command: () => opsStore.downloadBackup(b.id, b.filename) },
-    { label: 'Delete', icon: 'pi pi-trash', command: () => confirmDeleteBackup(b) }
+    {
+      label: 'Download',
+      icon: 'pi pi-download',
+      command: () => opsStore.downloadBackup(b.id, b.filename),
+    },
+    { label: 'Delete', icon: 'pi pi-trash', command: () => confirmDeleteBackup(b) },
   ];
 });
 function onBackupRightClick(event) {
@@ -274,7 +389,12 @@ async function doRestore() {
   try {
     const result = await opsStore.restoreBackup(restoreFile.value);
     showRestoreDialog.value = false;
-    toast.add({ severity: 'warn', summary: 'Restore complete', detail: result.message, life: 10000 });
+    toast.add({
+      severity: 'warn',
+      summary: 'Restore complete',
+      detail: result.message,
+      life: 10000,
+    });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Restore failed', detail: apiError(err), life: 5000 });
   } finally {
@@ -297,12 +417,8 @@ async function doResetDatabase() {
   }
 }
 
-
 onMounted(async () => {
-  await Promise.all([
-    opsStore.fetchBackups(),
-    loadBackupSettings()
-  ]);
+  await Promise.all([opsStore.fetchBackups(), loadBackupSettings()]);
 });
 </script>
 

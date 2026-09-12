@@ -48,12 +48,16 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 
   // Limit scan size to prevent excessive load
   if (subnet.total_addresses > MAX_SCAN_SIZE) {
-    return res.status(400).json({ error: `Subnet too large for scanning (max ${MAX_SCAN_SIZE} IPs)` });
+    return res
+      .status(400)
+      .json({ error: `Subnet too large for scanning (max ${MAX_SCAN_SIZE} IPs)` });
   }
 
   const pending = ScanRun.createPendingIfIdle(db, subnet_id);
   if (!pending.created) {
-    return res.status(409).json({ error: 'A scan is already in progress for this subnet', scan_id: pending.scanId });
+    return res
+      .status(409)
+      .json({ error: 'A scan is already in progress for this subnet', scan_id: pending.scanId });
   }
   const scanId = pending.scanId;
 
@@ -78,7 +82,9 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
   // Find the subnet, either from explicit subnet_id or by searching
   let resolvedSubnetId = subnet_id;
   if (resolvedSubnetId) {
-    const subnet = db.prepare("SELECT id, cidr, status FROM subnets WHERE id = ?").get(resolvedSubnetId);
+    const subnet = db
+      .prepare('SELECT id, cidr, status FROM subnets WHERE id = ?')
+      .get(resolvedSubnetId);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
     if (subnet.status !== 'allocated') {
       return res.status(400).json({ error: 'Can only probe allocated subnets' });
@@ -89,7 +95,10 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
   } else {
     const subnets = db.prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'").all();
     for (const s of subnets) {
-      if (isIpInSubnet(ip, s.cidr)) { resolvedSubnetId = s.id; break; }
+      if (isIpInSubnet(ip, s.cidr)) {
+        resolvedSubnetId = s.id;
+        break;
+      }
     }
   }
   if (!resolvedSubnetId) {
@@ -119,7 +128,7 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
       mac: sr.mac_address,
       method: scanResult?.results?.[ip] || scanResult?.method || 'unknown',
       is_conflict: !!sr.is_conflict,
-      conflict_reason: sr.conflict_reason
+      conflict_reason: sr.conflict_reason,
     });
   } catch (err) {
     res.status(500).json({ error: `Probe failed: ${err.message}` });

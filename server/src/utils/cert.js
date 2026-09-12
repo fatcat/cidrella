@@ -19,8 +19,11 @@ const SAFE_NAME = /^[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/;
 function systemFqdn() {
   try {
     const out = execFileSync('hostname', ['-f'], {
-      stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000,
-    }).toString().trim();
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    })
+      .toString()
+      .trim();
     return out.includes('.') && SAFE_NAME.test(out) ? out : null;
   } catch {
     return null;
@@ -40,10 +43,7 @@ export function buildSanList({ hostname, fqdn, interfaces } = {}) {
       if (a.family === 'IPv4' && !a.internal) ips.add(a.address);
     }
   }
-  return [
-    ...[...dns].map(d => `DNS:${d}`),
-    ...[...ips].map(i => `IP:${i}`),
-  ].join(',');
+  return [...[...dns].map((d) => `DNS:${d}`), ...[...ips].map((i) => `IP:${i}`)].join(',');
 }
 
 // Certificates generated before v0.4.16 carry a CN and no subjectAltName.
@@ -64,7 +64,7 @@ export function isSelfGeneratedCert(certPath) {
   try {
     const cert = new X509Certificate(fs.readFileSync(certPath));
     if (cert.subject !== cert.issuer) return false;
-    const fields = new Set(cert.subject.split('\n').map(s => s.trim()));
+    const fields = new Set(cert.subject.split('\n').map((s) => s.trim()));
     return fields.has('CN=cidrella') && fields.has('O=CIDRella');
   } catch {
     return false;
@@ -73,10 +73,19 @@ export function isSelfGeneratedCert(certPath) {
 
 function generateCert(san) {
   const args = [
-    'req', '-x509', '-newkey', 'rsa:2048',
-    '-keyout', keyFilePath, '-out', certFilePath,
-    '-days', '365', '-nodes',
-    '-subj', '/CN=cidrella/O=CIDRella/C=US',
+    'req',
+    '-x509',
+    '-newkey',
+    'rsa:2048',
+    '-keyout',
+    keyFilePath,
+    '-out',
+    certFilePath,
+    '-days',
+    '365',
+    '-nodes',
+    '-subj',
+    '/CN=cidrella/O=CIDRella/C=US',
   ];
   try {
     execFileSync('openssl', [...args, '-addext', `subjectAltName=${san}`], { stdio: 'pipe' });
@@ -84,9 +93,11 @@ function generateCert(san) {
   } catch (err) {
     // -addext needs OpenSSL 1.1.1+. Falling back keeps the appliance bootable
     // on an older toolchain, at the cost of the browser warning this fixes.
-    console.warn(`Could not add subjectAltName to the certificate (${err.message.trim()}). ` +
-      'Falling back to a certificate without one. Browsers will reject it by name, ' +
-      'so reach the UI by IP or install a certificate of your own.');
+    console.warn(
+      `Could not add subjectAltName to the certificate (${err.message.trim()}). ` +
+        'Falling back to a certificate without one. Browsers will reject it by name, ' +
+        'so reach the UI by IP or install a certificate of your own.',
+    );
     execFileSync('openssl', args, { stdio: 'pipe' });
     console.log('Self-signed certificate generated (no subjectAltName)');
   }
@@ -103,11 +114,13 @@ export function ensureCerts(dataDir) {
       return { keyPath: keyFilePath, certPath: certFilePath };
     }
     if (!isSelfGeneratedCert(certFilePath)) {
-      console.warn('The installed TLS certificate has no subjectAltName, which browsers ' +
-        'reject by name. Leaving it alone because CIDRella did not generate it, and ' +
-        'replacing it would destroy your certificate and its private key. Reissue it with ' +
-        'a subjectAltName, or remove server.crt and server.key to fall back to a ' +
-        'generated certificate.');
+      console.warn(
+        'The installed TLS certificate has no subjectAltName, which browsers ' +
+          'reject by name. Leaving it alone because CIDRella did not generate it, and ' +
+          'replacing it would destroy your certificate and its private key. Reissue it with ' +
+          'a subjectAltName, or remove server.crt and server.key to fall back to a ' +
+          'generated certificate.',
+      );
       return { keyPath: keyFilePath, certPath: certFilePath };
     }
     // Browsers have required subjectAltName since Chrome 58 and reject a
@@ -119,11 +132,13 @@ export function ensureCerts(dataDir) {
     console.log('Generating self-signed TLS certificate...');
   }
 
-  generateCert(buildSanList({
-    hostname: os.hostname(),
-    fqdn: systemFqdn(),
-    interfaces: os.networkInterfaces(),
-  }));
+  generateCert(
+    buildSanList({
+      hostname: os.hostname(),
+      fqdn: systemFqdn(),
+      interfaces: os.networkInterfaces(),
+    }),
+  );
   return { keyPath: keyFilePath, certPath: certFilePath };
 }
 

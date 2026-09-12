@@ -15,12 +15,16 @@ function insertSubnet({
   scanEnabled = null,
   scanInterval = null,
 } = {}) {
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO subnets (
       cidr, name, network_address, broadcast_address, prefix_length,
       total_addresses, status, scan_enabled, scan_interval
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(cidr, cidr, network, broadcast, prefix, total, status, scanEnabled, scanInterval);
+  `,
+    )
+    .run(cidr, cidr, network, broadcast, prefix, total, status, scanEnabled, scanInterval);
   return result.lastInsertRowid;
 }
 
@@ -50,8 +54,12 @@ beforeEach(() => {
   db.prepare('DELETE FROM ip_addresses').run();
   db.prepare('DELETE FROM ranges').run();
   db.prepare('DELETE FROM subnets').run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_scan_interval', '')").run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_scan_enabled', '1')").run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('default_scan_interval', '')",
+  ).run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('default_scan_enabled', '1')",
+  ).run();
 });
 
 describe('getNextScanTime', () => {
@@ -80,10 +88,12 @@ describe('getNextScanTime', () => {
     db.prepare("UPDATE settings SET value = '5m' WHERE key = 'default_scan_interval'").run();
     const subnetId = insertSubnet();
     const completedAt = sqliteUtc(new Date(Date.now() - 10 * 60 * 1000));
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO network_scans (subnet_id, status, completed_at)
       VALUES (?, 'completed', ?)
-    `).run(subnetId, completedAt);
+    `,
+    ).run(subnetId, completedAt);
 
     expectNearFuture(getNextScanTime());
   });
@@ -92,10 +102,12 @@ describe('getNextScanTime', () => {
     db.prepare("UPDATE settings SET value = '15m' WHERE key = 'default_scan_interval'").run();
     const subnetId = insertSubnet();
     const startedAt = sqliteUtc(new Date(Date.now() - 2 * 60 * 1000));
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO network_scans (subnet_id, status, started_at)
       VALUES (?, 'running', ?)
-    `).run(subnetId, startedAt);
+    `,
+    ).run(subnetId, startedAt);
 
     const delta = new Date(getNextScanTime()).getTime() - Date.now();
     expect(delta).toBeGreaterThan(12 * 60 * 1000);
@@ -106,10 +118,12 @@ describe('getNextScanTime', () => {
     db.prepare("UPDATE settings SET value = '5m' WHERE key = 'default_scan_interval'").run();
     const subnetId = insertSubnet();
     const startedAt = sqliteUtc(new Date(Date.now() - 10 * 60 * 1000));
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO network_scans (subnet_id, status, started_at)
       VALUES (?, 'running', ?)
-    `).run(subnetId, startedAt);
+    `,
+    ).run(subnetId, startedAt);
 
     expectNearFuture(getNextScanTime());
   });
@@ -135,7 +149,7 @@ describe('getNextScanTime', () => {
     insertSubnet({
       cidr: '1.1.1.0/24',
       network: '1.1.1.0',
-      broadcast: '1.1.1.255'
+      broadcast: '1.1.1.255',
     });
 
     expect(getNextScanTime()).toBeNull();
@@ -147,7 +161,7 @@ describe('getNextScanTime', () => {
       cidr: '1.1.1.0/24',
       network: '1.1.1.0',
       broadcast: '1.1.1.255',
-      scanEnabled: 1
+      scanEnabled: 1,
     });
 
     expect(getNextScanTime()).toEqual(expect.any(String));

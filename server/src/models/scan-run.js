@@ -21,12 +21,16 @@ export function list(db, { subnetId, limit = 50 } = {}) {
 }
 
 export function findById(db, id) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT ns.*, sub.cidr as subnet_cidr, sub.name as subnet_name
     FROM network_scans ns
     JOIN subnets sub ON ns.subnet_id = sub.id
     WHERE ns.id = ?
-  `).get(id);
+  `,
+    )
+    .get(id);
 }
 
 export function getResults(db, scanId) {
@@ -34,36 +38,50 @@ export function getResults(db, scanId) {
 }
 
 export function getResultForIp(db, scanId, ip) {
-  return db.prepare('SELECT * FROM scan_results WHERE scan_id = ? AND ip_address = ?').get(scanId, ip);
+  return db
+    .prepare('SELECT * FROM scan_results WHERE scan_id = ? AND ip_address = ?')
+    .get(scanId, ip);
 }
 
 export function findActiveForSubnet(db, subnetId) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT id FROM network_scans
     WHERE subnet_id = ? AND status IN ('pending', 'running')
     ORDER BY created_at DESC LIMIT 1
-  `).get(subnetId);
+  `,
+    )
+    .get(subnetId);
 }
 
 export function createPending(db, subnetId) {
-  const subnet = db.prepare(
-    "SELECT topology_revision FROM subnets WHERE id = ? AND status = 'allocated'"
-  ).get(subnetId);
+  const subnet = db
+    .prepare("SELECT topology_revision FROM subnets WHERE id = ? AND status = 'allocated'")
+    .get(subnetId);
   if (!subnet) throw new Error('Scans require an allocated subnet');
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO network_scans (subnet_id, topology_revision, status)
     VALUES (?, ?, 'pending')
-  `).run(subnetId, subnet.topology_revision);
+  `,
+    )
+    .run(subnetId, subnet.topology_revision);
   return result.lastInsertRowid;
 }
 
 export function targetIsCurrent(db, scanId) {
-  return !!db.prepare(`
+  return !!db
+    .prepare(
+      `
     SELECT 1 FROM network_scans scan
     JOIN subnets subnet ON subnet.id = scan.subnet_id
     WHERE scan.id = ? AND subnet.status = 'allocated'
       AND subnet.topology_revision = scan.topology_revision
-  `).get(scanId);
+  `,
+    )
+    .get(scanId);
 }
 
 export function createPendingIfIdle(db, subnetId) {
@@ -75,57 +93,70 @@ export function createPendingIfIdle(db, subnetId) {
 }
 
 export function markRunning(db, scanId, totalIps) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE network_scans
        SET status = 'running',
            total_ips = ?,
            started_at = COALESCE(started_at, datetime('now'))
      WHERE id = ?
-  `).run(totalIps, scanId);
+  `,
+    )
+    .run(totalIps, scanId);
 }
 
 export function markFailed(db, scanId, error) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE network_scans
        SET status = 'failed',
            error = ?,
            completed_at = datetime('now')
      WHERE id = ?
-  `).run(error, scanId);
+  `,
+    )
+    .run(error, scanId);
 }
 
 export function insertResult(db, scanId, { ip, mac, responded, isConflict, conflictReason }) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     INSERT INTO scan_results (scan_id, ip_address, mac_address, responded, is_conflict, conflict_reason)
     VALUES (?, ?, ?, ?, ?, ?)
-  `).run(
-    scanId,
-    ip,
-    mac || null,
-    responded ? 1 : 0,
-    isConflict ? 1 : 0,
-    conflictReason || null
-  );
+  `,
+    )
+    .run(scanId, ip, mac || null, responded ? 1 : 0, isConflict ? 1 : 0, conflictReason || null);
 }
 
 export function updateProgress(db, scanId, { scannedIps, conflictsFound }) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE network_scans
        SET scanned_ips = ?,
            conflicts_found = ?
      WHERE id = ?
-  `).run(scannedIps, conflictsFound, scanId);
+  `,
+    )
+    .run(scannedIps, conflictsFound, scanId);
 }
 
 export function markCompleted(db, scanId, { scannedIps, conflictsFound }) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE network_scans
        SET status = 'completed',
            scanned_ips = ?,
            conflicts_found = ?,
            completed_at = datetime('now')
      WHERE id = ?
-  `).run(scannedIps, conflictsFound, scanId);
+  `,
+    )
+    .run(scannedIps, conflictsFound, scanId);
 }
 
 export function deleteById(db, scanId) {
@@ -141,27 +172,37 @@ export function deleteIfNotRunning(db, scanId) {
 }
 
 export function existingResultIps(db, scanId) {
-  return new Set(db.prepare('SELECT ip_address FROM scan_results WHERE scan_id = ?')
-    .all(scanId)
-    .map(r => r.ip_address));
+  return new Set(
+    db
+      .prepare('SELECT ip_address FROM scan_results WHERE scan_id = ?')
+      .all(scanId)
+      .map((r) => r.ip_address),
+  );
 }
 
 export function countConflicts(db, scanId) {
-  return db.prepare('SELECT COUNT(*) as cnt FROM scan_results WHERE scan_id = ? AND is_conflict = 1')
+  return db
+    .prepare('SELECT COUNT(*) as cnt FROM scan_results WHERE scan_id = ? AND is_conflict = 1')
     .get(scanId).cnt;
 }
 
 export function getMaterializedResults(db, scanId) {
-  return db.prepare(
-    'SELECT ip_address, responded, mac_address, is_conflict, conflict_reason FROM scan_results WHERE scan_id = ?'
-  ).all(scanId);
+  return db
+    .prepare(
+      'SELECT ip_address, responded, mac_address, is_conflict, conflict_reason FROM scan_results WHERE scan_id = ?',
+    )
+    .all(scanId);
 }
 
 export function pruneOldResults(db, subnetId, keepScanId) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     DELETE FROM scan_results WHERE scan_id IN (
       SELECT id FROM network_scans
       WHERE subnet_id = ? AND status = 'completed' AND id != ?
     )
-  `).run(subnetId, keepScanId);
+  `,
+    )
+    .run(subnetId, keepScanId);
 }

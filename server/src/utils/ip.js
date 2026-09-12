@@ -15,19 +15,14 @@ export function ipToLong(ip) {
     throw new Error(`Invalid IP address: expected string, got ${typeof ip}`);
   }
   const parts = ip.split('.').map(Number);
-  if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) {
+  if (parts.length !== 4 || parts.some((p) => isNaN(p) || p < 0 || p > 255)) {
     throw new Error(`Invalid IP address: ${ip}`);
   }
   return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
 }
 
 export function longToIp(long) {
-  return [
-    (long >>> 24) & 255,
-    (long >>> 16) & 255,
-    (long >>> 8) & 255,
-    long & 255
-  ].join('.');
+  return [(long >>> 24) & 255, (long >>> 16) & 255, (long >>> 8) & 255, long & 255].join('.');
 }
 
 export function parseCidr(cidr) {
@@ -39,7 +34,7 @@ export function parseCidr(cidr) {
   if (prefix < 0 || prefix > 32) throw new Error(`Invalid prefix length: ${prefix}`);
 
   const ipLong = ipToLong(ip);
-  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
   const network = (ipLong & mask) >>> 0;
   const broadcast = (network | ~mask) >>> 0;
   const totalAddresses = broadcast - network + 1;
@@ -54,7 +49,7 @@ export function parseCidr(cidr) {
     totalAddresses,
     firstUsable: prefix >= 31 ? longToIp(network) : longToIp(network + 1),
     lastUsable: prefix >= 31 ? longToIp(broadcast) : longToIp(broadcast - 1),
-    usableCount: prefix >= 31 ? totalAddresses : totalAddresses - 2
+    usableCount: prefix >= 31 ? totalAddresses : totalAddresses - 2,
   };
 }
 
@@ -80,7 +75,9 @@ export function getServerIpForSubnet(cidr) {
       if (addr.family === 'IPv4' && !addr.internal) {
         try {
           if (isIpInSubnet(addr.address, cidr)) return addr.address;
-        } catch { /* skip invalid */ }
+        } catch {
+          /* skip invalid */
+        }
       }
     }
   }
@@ -100,21 +97,23 @@ export function normalizeCidr(cidr) {
  * Check if two ranges overlap.
  */
 export function rangesOverlap(startA, endA, startB, endB) {
-  const a0 = ipToLong(startA), a1 = ipToLong(endA);
-  const b0 = ipToLong(startB), b1 = ipToLong(endB);
+  const a0 = ipToLong(startA),
+    a1 = ipToLong(endA);
+  const b0 = ipToLong(startB),
+    b1 = ipToLong(endB);
   return a0 <= b1 && b0 <= a1;
 }
 
 // Well-known reserved/private IP ranges
 export const RESERVED_RANGES = [
-  { cidr: '10.0.0.0/8',      name: 'RFC1918 Class A' },
-  { cidr: '172.16.0.0/12',   name: 'RFC1918 Class B' },
-  { cidr: '192.168.0.0/16',  name: 'RFC1918 Class C' },
-  { cidr: '100.64.0.0/10',   name: 'CGNAT (RFC6598)' },
-  { cidr: '169.254.0.0/16',  name: 'Link-Local (RFC3927)' },
-  { cidr: '127.0.0.0/8',     name: 'Loopback (RFC1122)' },
-  { cidr: '224.0.0.0/4',     name: 'Multicast (RFC5771)' },
-  { cidr: '240.0.0.0/4',     name: 'Reserved (RFC1112)' },
+  { cidr: '10.0.0.0/8', name: 'RFC1918 Class A' },
+  { cidr: '172.16.0.0/12', name: 'RFC1918 Class B' },
+  { cidr: '192.168.0.0/16', name: 'RFC1918 Class C' },
+  { cidr: '100.64.0.0/10', name: 'CGNAT (RFC6598)' },
+  { cidr: '169.254.0.0/16', name: 'Link-Local (RFC3927)' },
+  { cidr: '127.0.0.0/8', name: 'Loopback (RFC1122)' },
+  { cidr: '224.0.0.0/4', name: 'Multicast (RFC5771)' },
+  { cidr: '240.0.0.0/4', name: 'Reserved (RFC1112)' },
 ];
 
 // IPv4 blocks that are not globally routable. Automatic scans may inherit the
@@ -135,11 +134,11 @@ const NON_GLOBAL_IPV4_RANGES = [
   '198.51.100.0/24',
   '203.0.113.0/24',
   '224.0.0.0/4',
-  '240.0.0.0/4'
+  '240.0.0.0/4',
 ];
 
 export function isGloballyRoutableCidr(cidr) {
-  return !NON_GLOBAL_IPV4_RANGES.some(special => cidrsOverlap(cidr, special));
+  return !NON_GLOBAL_IPV4_RANGES.some((special) => cidrsOverlap(cidr, special));
 }
 
 /**
@@ -157,7 +156,7 @@ export function validateSupernet(cidr) {
       }
       return {
         valid: false,
-        error: `${cidr} extends beyond ${reserved.name} (${reserved.cidr}). Supernet must be within ${reserved.cidr}.`
+        error: `${cidr} extends beyond ${reserved.name} (${reserved.cidr}). Supernet must be within ${reserved.cidr}.`,
       };
     }
   }
@@ -186,7 +185,7 @@ export function applyNameTemplate(template, cidr) {
 export function canMergeCidrs(cidrs) {
   if (cidrs.length < 2) return { valid: false, error: 'Need at least 2 subnets to merge' };
 
-  const parsed = cidrs.map(c => parseCidr(c)).sort((a, b) => a.networkLong - b.networkLong);
+  const parsed = cidrs.map((c) => parseCidr(c)).sort((a, b) => a.networkLong - b.networkLong);
 
   let total = 0;
   for (let i = 1; i < parsed.length; i++) {
@@ -204,8 +203,10 @@ export function canMergeCidrs(cidrs) {
     return { valid: false, error: 'Subnet union size must be a power of 2' };
   }
   const newPrefix = 32 - exponent;
-  if (parsed[0].networkLong % total !== 0
-      || parsed.at(-1).broadcastLong !== parsed[0].networkLong + total - 1) {
+  if (
+    parsed[0].networkLong % total !== 0 ||
+    parsed.at(-1).broadcastLong !== parsed[0].networkLong + total - 1
+  ) {
     return { valid: false, error: 'Subnets do not align to a valid CIDR boundary' };
   }
 
@@ -256,7 +257,10 @@ const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
  */
 export function isValidIpv4(ip) {
   if (!IPV4_RE.test(ip)) return false;
-  return ip.split('.').every(o => { const n = parseInt(o, 10); return n >= 0 && n <= 255; });
+  return ip.split('.').every((o) => {
+    const n = parseInt(o, 10);
+    return n >= 0 && n <= 255;
+  });
 }
 
 /**
@@ -275,9 +279,12 @@ export function isValidMac(mac) {
  */
 export function isClientMac(mac) {
   if (!isValidMac(mac)) return false;
-  const octets = mac.toLowerCase().split(':').map(o => parseInt(o, 16));
-  if (octets.every(o => o === 0)) return false;
-  if (octets.every(o => o === 0xff)) return false;
+  const octets = mac
+    .toLowerCase()
+    .split(':')
+    .map((o) => parseInt(o, 16));
+  if (octets.every((o) => o === 0)) return false;
+  if (octets.every((o) => o === 0xff)) return false;
   if ((octets[0] & 0x01) !== 0) return false; // I/G bit set → multicast
   return true;
 }
@@ -300,9 +307,11 @@ export function isValidCidr(cidr) {
 export function isSubnetOf(childCidr, parentCidr) {
   const child = parseCidr(childCidr);
   const parent = parseCidr(parentCidr);
-  return child.networkLong >= parent.networkLong &&
-         child.broadcastLong <= parent.broadcastLong &&
-         child.prefix > parent.prefix;
+  return (
+    child.networkLong >= parent.networkLong &&
+    child.broadcastLong <= parent.broadcastLong &&
+    child.prefix > parent.prefix
+  );
 }
 
 /**
@@ -391,7 +400,7 @@ export function isValidDomain(name) {
   // A dotted-quad is an address, not a name, whatever field it arrived in.
   if (IPV4_LITERAL_RE.test(name)) return false;
   const labels = name.split('.');
-  return labels.every(l => l.length > 0 && l.length <= 63 && DOMAIN_LABEL_RE.test(l));
+  return labels.every((l) => l.length > 0 && l.length <= 63 && DOMAIN_LABEL_RE.test(l));
 }
 
 /**

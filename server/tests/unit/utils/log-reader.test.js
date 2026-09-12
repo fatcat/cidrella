@@ -27,7 +27,7 @@ describe('readLogTail', () => {
     fs.appendFileSync(file, '-line\n');
     expect(readLogTail(file, first.newOffset)).toEqual({
       lines: ['partial-line'],
-      newOffset: 22
+      newOffset: 22,
     });
   });
 

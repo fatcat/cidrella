@@ -9,53 +9,104 @@
         <Tab value="audit">Audit Log</Tab>
       </TabList>
       <TabPanels>
-      <TabPanel value="dnsmasq">
-        <LogViewer />
-      </TabPanel>
-      <TabPanel value="audit">
-        <div class="audit-section">
-          <div class="audit-filters">
-            <MultiSelect v-model="auditFilters.action" :options="auditActionOptions" optionLabel="label" optionValue="value"
-                    placeholder="All Actions" :maxSelectedLabels="2" class="audit-filter" display="chip" />
-            <MultiSelect v-model="auditFilters.entity_type" :options="auditEntityOptions" optionLabel="label" optionValue="value"
-                    placeholder="All Entities" :maxSelectedLabels="2" class="audit-filter" display="chip" />
-            <Button icon="pi pi-refresh" severity="secondary" text rounded @click="loadAuditLog" />
-          </div>
-          <DataTable :value="auditLog.items" :loading="loadingAudit" stripedRows size="small"
-                    
-                     scrollable scrollHeight="flex">
-            <template #empty>
-              <EmptyState icon="pi-list" title="No audit entries" description="Actions will appear here as configuration changes are made." />
-            </template>
-            <Column field="created_at" header="Time" style="width: 11rem">
-              <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
-            </Column>
-            <Column field="username" header="User" style="width: 8rem">
-              <template #body="{ data }">{{ data.username || 'system' }}</template>
-            </Column>
-            <Column field="action" header="Action" style="width: 8rem">
-              <template #body="{ data }">
-                <span class="badge" :class="'badge-' + actionColor(data.action)">{{ data.action }}</span>
+        <TabPanel value="dnsmasq">
+          <LogViewer />
+        </TabPanel>
+        <TabPanel value="audit">
+          <div class="audit-section">
+            <div class="audit-filters">
+              <MultiSelect
+                v-model="auditFilters.action"
+                :options="auditActionOptions"
+                optionLabel="label"
+                optionValue="value"
+                placeholder="All Actions"
+                :maxSelectedLabels="2"
+                class="audit-filter"
+                display="chip"
+              />
+              <MultiSelect
+                v-model="auditFilters.entity_type"
+                :options="auditEntityOptions"
+                optionLabel="label"
+                optionValue="value"
+                placeholder="All Entities"
+                :maxSelectedLabels="2"
+                class="audit-filter"
+                display="chip"
+              />
+              <Button
+                icon="pi pi-refresh"
+                severity="secondary"
+                text
+                rounded
+                @click="loadAuditLog"
+              />
+            </div>
+            <DataTable
+              :value="auditLog.items"
+              :loading="loadingAudit"
+              stripedRows
+              size="small"
+              scrollable
+              scrollHeight="flex"
+            >
+              <template #empty>
+                <EmptyState
+                  icon="pi-list"
+                  title="No audit entries"
+                  description="Actions will appear here as configuration changes are made."
+                />
               </template>
-            </Column>
-            <Column field="entity_type" header="Entity" style="width: 8rem" />
-            <Column field="entity_id" header="ID" style="width: 4rem" />
-            <Column header="Details">
-              <template #body="{ data }">
-                <span class="audit-details">{{ formatDetails(data.details) }}</span>
-              </template>
-            </Column>
-          </DataTable>
-          <div class="audit-pagination" v-if="auditLog.total > auditFilters.limit">
-            <Button label="Previous" severity="secondary" size="small" :disabled="auditFilters.page <= 1"
-                    @click="auditFilters.page--; loadAuditLog()" />
-            <span class="page-info">Page {{ auditFilters.page }} of {{ Math.ceil(auditLog.total / auditFilters.limit) }}</span>
-            <Button label="Next" severity="secondary" size="small"
-                    :disabled="auditFilters.page >= Math.ceil(auditLog.total / auditFilters.limit)"
-                    @click="auditFilters.page++; loadAuditLog()" />
+              <Column field="created_at" header="Time" style="width: 11rem">
+                <template #body="{ data }">{{ formatDate(data.created_at) }}</template>
+              </Column>
+              <Column field="username" header="User" style="width: 8rem">
+                <template #body="{ data }">{{ data.username || 'system' }}</template>
+              </Column>
+              <Column field="action" header="Action" style="width: 8rem">
+                <template #body="{ data }">
+                  <span class="badge" :class="'badge-' + actionColor(data.action)">{{
+                    data.action
+                  }}</span>
+                </template>
+              </Column>
+              <Column field="entity_type" header="Entity" style="width: 8rem" />
+              <Column field="entity_id" header="ID" style="width: 4rem" />
+              <Column header="Details">
+                <template #body="{ data }">
+                  <span class="audit-details">{{ formatDetails(data.details) }}</span>
+                </template>
+              </Column>
+            </DataTable>
+            <div class="audit-pagination" v-if="auditLog.total > auditFilters.limit">
+              <Button
+                label="Previous"
+                severity="secondary"
+                size="small"
+                :disabled="auditFilters.page <= 1"
+                @click="
+                  auditFilters.page--;
+                  loadAuditLog();
+                "
+              />
+              <span class="page-info"
+                >Page {{ auditFilters.page }} of
+                {{ Math.ceil(auditLog.total / auditFilters.limit) }}</span
+              >
+              <Button
+                label="Next"
+                severity="secondary"
+                size="small"
+                :disabled="auditFilters.page >= Math.ceil(auditLog.total / auditFilters.limit)"
+                @click="
+                  auditFilters.page++;
+                  loadAuditLog();
+                "
+              />
+            </div>
           </div>
-        </div>
-      </TabPanel>
+        </TabPanel>
       </TabPanels>
     </Tabs>
   </div>
@@ -94,23 +145,40 @@ async function loadAuditFilterOptions() {
   try {
     const [actionsRes, entitiesRes] = await Promise.all([
       api.get('/audit/actions'),
-      api.get('/audit/entities')
+      api.get('/audit/entities'),
     ]);
-    auditActionOptions.value = actionsRes.data.map(a => ({ label: a, value: a }));
-    auditEntityOptions.value = entitiesRes.data.map(e => ({ label: e, value: e }));
-  } catch { /* ignore, filters will just be empty */ }
+    auditActionOptions.value = actionsRes.data.map((a) => ({ label: a, value: a }));
+    auditEntityOptions.value = entitiesRes.data.map((e) => ({ label: e, value: e }));
+  } catch {
+    /* ignore, filters will just be empty */
+  }
 }
 
 // Auto-refresh when filters change
-watch(() => auditFilters.value.action, () => { auditFilters.value.page = 1; loadAuditLog(); }, { deep: true });
-watch(() => auditFilters.value.entity_type, () => { auditFilters.value.page = 1; loadAuditLog(); }, { deep: true });
+watch(
+  () => auditFilters.value.action,
+  () => {
+    auditFilters.value.page = 1;
+    loadAuditLog();
+  },
+  { deep: true },
+);
+watch(
+  () => auditFilters.value.entity_type,
+  () => {
+    auditFilters.value.page = 1;
+    loadAuditLog();
+  },
+  { deep: true },
+);
 
 async function loadAuditLog() {
   loadingAudit.value = true;
   try {
     const params = { page: auditFilters.value.page, limit: auditFilters.value.limit };
     if (auditFilters.value.action?.length > 0) params.action = auditFilters.value.action.join(',');
-    if (auditFilters.value.entity_type?.length > 0) params.entity_type = auditFilters.value.entity_type.join(',');
+    if (auditFilters.value.entity_type?.length > 0)
+      params.entity_type = auditFilters.value.entity_type.join(',');
     const res = await api.get('/audit', { params });
     auditLog.value = res.data;
   } catch (err) {
@@ -124,9 +192,18 @@ const formatDate = formatDateTime;
 
 function actionColor(action) {
   // Direct matches → global badge color class names
-  const direct = { create: 'green', update: 'blue', delete: 'red', restore: 'indigo',
-    login: 'indigo', login_failed: 'red', password_change: 'yellow',
-    configure: 'purple', divide: 'yellow', merge: 'orange' };
+  const direct = {
+    create: 'green',
+    update: 'blue',
+    delete: 'red',
+    restore: 'indigo',
+    login: 'indigo',
+    login_failed: 'red',
+    password_change: 'yellow',
+    configure: 'purple',
+    divide: 'yellow',
+    merge: 'orange',
+  };
   if (direct[action]) return direct[action];
   // Map compound actions by verb suffix
   if (action.endsWith('_created')) return 'green';
@@ -150,7 +227,9 @@ function formatDetails(details) {
       if (v !== null && v !== undefined) parts.push(`${k}: ${v}`);
     }
     return parts.join(', ') || EMPTY_CELL;
-  } catch { return String(details); }
+  } catch {
+    return String(details);
+  }
 }
 
 onMounted(() => {
@@ -206,7 +285,9 @@ onMounted(() => {
   font-size: var(--app-fs-sm);
   color: var(--p-text-muted-color);
 }
-.w-full { width: 100%; }
+.w-full {
+  width: 100%;
+}
 .logging-subtabs {
   display: flex;
   flex-direction: column;

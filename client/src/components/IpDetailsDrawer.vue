@@ -6,48 +6,91 @@
   and lifecycle history are fetched when the drawer opens or changes hosts.
 -->
 <template>
-  <Drawer :visible="visible" @update:visible="v => emit('update:visible', v)"
-          :header="`IP details — ${host?.ip_address || ''}`" position="right"
-          :modal="false" :dismissable="false" :style="{ width: 'min(27rem, 92vw)' }"
-          data-track="dialog-host-info">
+  <Drawer
+    :visible="visible"
+    @update:visible="(v) => emit('update:visible', v)"
+    :header="`IP details — ${host?.ip_address || ''}`"
+    position="right"
+    :modal="false"
+    :dismissable="false"
+    :style="{ width: 'min(27rem, 92vw)' }"
+    data-track="dialog-host-info"
+  >
     <div v-if="host" class="host-info">
       <section>
         <h5>{{ tableName }} fields</h5>
         <div v-for="column in displayColumns" :key="column.key" class="hi-row">
           <span class="hi-label">{{ column.header }}</span>
           <span class="hi-val">
-            <IpTableCell :column="column" :row="host" :view="view"
-                         :domain-name="domainName" :zone-name="zoneName"
-                         :soa-minimum-ttl="soaMinimumTtl" />
+            <IpTableCell
+              :column="column"
+              :row="host"
+              :view="view"
+              :domain-name="domainName"
+              :zone-name="zoneName"
+              :soa-minimum-ttl="soaMinimumTtl"
+            />
           </span>
         </div>
       </section>
 
       <section>
-        <h5>Device fingerprint <span v-if="confidence" class="hi-conf">· {{ confidence }}% confidence</span></h5>
-        <div class="hi-row"><span class="hi-label">DHCP fingerprint</span><span class="hi-val mono small" :class="{ 'cell-muted': !fp?.dhcp_fingerprint }">{{ fp?.dhcp_fingerprint || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">Vendor class</span><span class="hi-val mono small" :class="{ 'cell-muted': !fp?.vendor_class }">{{ fp?.vendor_class || dash }}</span></div>
-        <div class="hi-row"><span class="hi-label">Fingerprint source</span>
-          <span class="hi-val" :class="{ 'cell-muted': !fp?.source }">{{ fp?.source || dash }}
-            <Button v-if="fp?.source === 'manual'" label="Reset to detected" size="small" text
-                    icon="pi pi-undo" class="hi-reset" :loading="resetting"
-                    data-track="host-info-reset-fingerprint" @click="resetFingerprint"
-                    v-tooltip.top="'Remove the manual override; the device re-identifies on its next DHCP lease'" />
+        <h5>
+          Device fingerprint
+          <span v-if="confidence" class="hi-conf">· {{ confidence }}% confidence</span>
+        </h5>
+        <div class="hi-row">
+          <span class="hi-label">DHCP fingerprint</span
+          ><span class="hi-val mono small" :class="{ 'cell-muted': !fp?.dhcp_fingerprint }">{{
+            fp?.dhcp_fingerprint || dash
+          }}</span>
+        </div>
+        <div class="hi-row">
+          <span class="hi-label">Vendor class</span
+          ><span class="hi-val mono small" :class="{ 'cell-muted': !fp?.vendor_class }">{{
+            fp?.vendor_class || dash
+          }}</span>
+        </div>
+        <div class="hi-row">
+          <span class="hi-label">Fingerprint source</span>
+          <span class="hi-val" :class="{ 'cell-muted': !fp?.source }"
+            >{{ fp?.source || dash }}
+            <Button
+              v-if="fp?.source === 'manual'"
+              label="Reset to detected"
+              size="small"
+              text
+              icon="pi pi-undo"
+              class="hi-reset"
+              :loading="resetting"
+              data-track="host-info-reset-fingerprint"
+              @click="resetFingerprint"
+              v-tooltip.top="
+                'Remove the manual override; the device re-identifies on its next DHCP lease'
+              "
+            />
           </span>
         </div>
         <p v-if="!loading && !deviceType && !osFamily" class="hi-hint">
-          No DHCP fingerprint yet. The device will be identified the next time it requests/renews a DHCP lease (static hosts won't fingerprint via DHCP).
+          No DHCP fingerprint yet. The device will be identified the next time it requests/renews a
+          DHCP lease (static hosts won't fingerprint via DHCP).
         </p>
       </section>
 
       <section class="lifecycle-section">
         <h5>IP lifecycle</h5>
         <div v-if="eventsLoading" class="events-state">Loading events...</div>
-        <div v-else-if="eventsData.length === 0" class="events-state">No events recorded for this IP.</div>
+        <div v-else-if="eventsData.length === 0" class="events-state">
+          No events recorded for this IP.
+        </div>
         <div v-else class="events-list">
           <div v-for="evt in eventsData" :key="evt.id" class="event-row">
             <span class="event-time">{{ fmt(evt.created_at) }}</span>
-            <Tag :severity="eventSeverity(evt.event_type)" :value="eventLabel(evt.event_type)" class="event-tag" />
+            <Tag
+              :severity="eventSeverity(evt.event_type)"
+              :value="eventLabel(evt.event_type)"
+              class="event-tag"
+            />
             <span class="event-detail">{{ eventDetail(evt) }}</span>
           </div>
         </div>
@@ -82,7 +125,7 @@ const props = defineProps({
   view: { type: String, default: IP_TABLE_VIEW.NETWORKS },
   tableName: { type: String, default: 'Networks' },
   zoneName: { type: String, default: null },
-  soaMinimumTtl: { type: [Number, String], default: null }
+  soaMinimumTtl: { type: [Number, String], default: null },
 });
 const emit = defineEmits(['update:visible']);
 const toast = useToast();
@@ -91,8 +134,8 @@ const dash = EMPTY_CELL;
 const displayColumns = computed(() => {
   if (Array.isArray(props.columns)) return props.columns;
   const catalog = ipTableColumns(props.view);
-  const byKey = new Map(catalog.map(column => [column.key, column]));
-  return IP_TABLE_DEFAULT_KEYS[props.view].map(key => byKey.get(key)).filter(Boolean);
+  const byKey = new Map(catalog.map((column) => [column.key, column]));
+  return IP_TABLE_DEFAULT_KEYS[props.view].map((key) => byKey.get(key)).filter(Boolean);
 });
 
 function onDocumentClick(event) {
@@ -148,7 +191,9 @@ async function loadEvents() {
 
   eventsLoading.value = true;
   try {
-    const { data } = await api.get(`/subnets/${props.subnetId}/ips/${encodeURIComponent(ip)}/events`);
+    const { data } = await api.get(
+      `/subnets/${props.subnetId}/ips/${encodeURIComponent(ip)}/events`,
+    );
     if (request === eventsRequest) eventsData.value = data.events || [];
   } catch {
     if (request === eventsRequest) eventsData.value = [];
@@ -159,12 +204,20 @@ async function loadEvents() {
 
 function eventLabel(type) {
   const labels = {
-    online: 'Online', offline: 'Offline', scanned: 'Scanned',
-    rogue_detected: 'Rogue', rogue_cleared: 'Rogue Cleared',
-    dns_added: 'DNS Added', dns_removed: 'DNS Removed',
-    lease_obtained: 'Lease', hostname_changed: 'Hostname',
-    mac_changed: 'MAC Changed', allocation_changed: 'Allocation', status_changed: 'Legacy Status',
-    scan_enabled_changed: 'Scan Toggle', retired: 'Metadata Expired',
+    online: 'Online',
+    offline: 'Offline',
+    scanned: 'Scanned',
+    rogue_detected: 'Rogue',
+    rogue_cleared: 'Rogue Cleared',
+    dns_added: 'DNS Added',
+    dns_removed: 'DNS Removed',
+    lease_obtained: 'Lease',
+    hostname_changed: 'Hostname',
+    mac_changed: 'MAC Changed',
+    allocation_changed: 'Allocation',
+    status_changed: 'Legacy Status',
+    scan_enabled_changed: 'Scan Toggle',
+    retired: 'Metadata Expired',
   };
   return labels[type] || type;
 }
@@ -179,9 +232,15 @@ function eventSeverity(type) {
 
 function sourceLabel(source) {
   const labels = {
-    scanner: 'active scan', passive: 'passive (DNS log)', stale: 'staleness timeout',
-    dns: 'DNS', dhcp_reservation: 'DHCP Reservation', dhcp_lease: 'DHCP Lease',
-    manual: 'manual', offline: 'went offline', retirement: 'automatic cleanup',
+    scanner: 'active scan',
+    passive: 'passive (DNS log)',
+    stale: 'staleness timeout',
+    dns: 'DNS',
+    dhcp_reservation: 'DHCP Reservation',
+    dhcp_lease: 'DHCP Lease',
+    manual: 'manual',
+    offline: 'went offline',
+    retirement: 'automatic cleanup',
   };
   return labels[source] || source || '';
 }
@@ -209,38 +268,111 @@ async function resetFingerprint() {
   }
 }
 
-watch([
-  () => props.visible,
-  () => props.host?.ip_address,
-  () => props.subnetId,
-  mac
-], ([visible]) => {
-  if (!visible) {
-    fingerprintRequest += 1;
-    eventsRequest += 1;
-    return;
-  }
-  loadFingerprint();
-  loadEvents();
-}, { immediate: true });
+watch(
+  [() => props.visible, () => props.host?.ip_address, () => props.subnetId, mac],
+  ([visible]) => {
+    if (!visible) {
+      fingerprintRequest += 1;
+      eventsRequest += 1;
+      return;
+    }
+    loadFingerprint();
+    loadEvents();
+  },
+  { immediate: true },
+);
 </script>
 
 <style scoped>
-.host-info { display: flex; flex-direction: column; gap: 1rem; height: 100%; min-height: 0; }
-.host-info section h5 { margin: 0 0 0.4rem; font-size: var(--app-fs-sm); color: var(--p-text-color); }
-.hi-conf { color: var(--p-text-muted-color); font-weight: 400; font-size: var(--app-fs-xs); }
-.hi-row { display: grid; grid-template-columns: 9rem 1fr; gap: 0.5rem; padding: 0.15rem 0; font-size: var(--app-fs-sm); }
-.hi-label { color: var(--p-text-muted-color); }
-.hi-val { color: var(--p-text-color); word-break: break-word; }
-.hi-val.mono { font-family: var(--font-mono, monospace); }
-.hi-val.small { font-size: var(--app-fs-xs); }
-.hi-reset { margin-left: 0.5rem; padding: 0 0.4rem; font-size: var(--app-fs-xs); }
-.hi-hint { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); margin: 0.3rem 0 0; line-height: 1.4; }
-.lifecycle-section { display: flex; flex-direction: column; flex: 1; min-height: 12rem; }
-.events-state { padding: 1.5rem; text-align: center; color: var(--p-text-muted-color); font-size: var(--app-fs-sm); }
-.events-list { flex: 1; min-height: 0; max-height: 24rem; overflow-y: auto; padding-right: 0.25rem; }
-.event-row { display: flex; align-items: flex-start; gap: 0.5rem; padding: 0.45rem 0; border-bottom: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent); font-size: var(--app-fs-sm); }
-.event-time { width: 8.5rem; flex-shrink: 0; color: var(--p-text-muted-color); font-family: monospace; font-size: var(--app-fs-xs); }
-.event-tag { flex-shrink: 0; }
-.event-detail { flex: 1; min-width: 0; color: var(--p-text-color); overflow-wrap: anywhere; }
+.host-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  height: 100%;
+  min-height: 0;
+}
+.host-info section h5 {
+  margin: 0 0 0.4rem;
+  font-size: var(--app-fs-sm);
+  color: var(--p-text-color);
+}
+.hi-conf {
+  color: var(--p-text-muted-color);
+  font-weight: 400;
+  font-size: var(--app-fs-xs);
+}
+.hi-row {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+  font-size: var(--app-fs-sm);
+}
+.hi-label {
+  color: var(--p-text-muted-color);
+}
+.hi-val {
+  color: var(--p-text-color);
+  word-break: break-word;
+}
+.hi-val.mono {
+  font-family: var(--font-mono, monospace);
+}
+.hi-val.small {
+  font-size: var(--app-fs-xs);
+}
+.hi-reset {
+  margin-left: 0.5rem;
+  padding: 0 0.4rem;
+  font-size: var(--app-fs-xs);
+}
+.hi-hint {
+  font-size: var(--app-fs-xs);
+  color: var(--p-text-muted-color);
+  margin: 0.3rem 0 0;
+  line-height: 1.4;
+}
+.lifecycle-section {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 12rem;
+}
+.events-state {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--p-text-muted-color);
+  font-size: var(--app-fs-sm);
+}
+.events-list {
+  flex: 1;
+  min-height: 0;
+  max-height: 24rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+.event-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--p-surface-border) 50%, transparent);
+  font-size: var(--app-fs-sm);
+}
+.event-time {
+  width: 8.5rem;
+  flex-shrink: 0;
+  color: var(--p-text-muted-color);
+  font-family: monospace;
+  font-size: var(--app-fs-xs);
+}
+.event-tag {
+  flex-shrink: 0;
+}
+.event-detail {
+  flex: 1;
+  min-width: 0;
+  color: var(--p-text-color);
+  overflow-wrap: anywhere;
+}
 </style>

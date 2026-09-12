@@ -15,18 +15,18 @@ export const ALLOCATION_STATE = Object.freeze({
   SLAAC: 'slaac',
   SYSTEM: 'system',
   GATEWAY: 'gateway',
-  QUARANTINED: 'quarantined'
+  QUARANTINED: 'quarantined',
 });
 
 export const DISPLAY_STATUS = Object.freeze({
   AVAILABLE: 'available',
   DHCP_SCOPE: 'DHCP Scope',
-  IN_USE: 'in use'
+  IN_USE: 'in use',
 });
 
 export const ADDRESS_FAMILY = Object.freeze({
   IPV4: 4,
-  IPV6: 6
+  IPV6: 6,
 });
 
 export const LIFECYCLE_SOURCE = Object.freeze({
@@ -36,7 +36,7 @@ export const LIFECYCLE_SOURCE = Object.freeze({
   DHCP_LEASE: 'dhcp_lease',
   SLAAC: 'slaac',
   TOPOLOGY: 'topology',
-  RECONCILIATION: 'reconciliation'
+  RECONCILIATION: 'reconciliation',
 });
 
 const A = ALLOCATION_STATE;
@@ -50,34 +50,34 @@ const S = LIFECYCLE_SOURCE;
 export const ALLOCATION_TRANSITIONS = Object.freeze({
   [S.ADMIN_RESERVATION]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.RESERVED]),
-    [A.RESERVED]: Object.freeze([A.RESERVED, A.UNASSIGNED])
+    [A.RESERVED]: Object.freeze([A.RESERVED, A.UNASSIGNED]),
   }),
   [S.DNS]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.STATIC_DNS]),
     [A.RESERVED]: Object.freeze([A.STATIC_DNS]),
-    [A.STATIC_DNS]: Object.freeze([A.STATIC_DNS, A.UNASSIGNED])
+    [A.STATIC_DNS]: Object.freeze([A.STATIC_DNS, A.UNASSIGNED]),
   }),
   [S.DHCP_RESERVATION]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.STATIC_DHCP]),
     [A.RESERVED]: Object.freeze([A.STATIC_DHCP]),
-    [A.STATIC_DHCP]: Object.freeze([A.STATIC_DHCP, A.UNASSIGNED])
+    [A.STATIC_DHCP]: Object.freeze([A.STATIC_DHCP, A.UNASSIGNED]),
   }),
   [S.DHCP_LEASE]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.DYNAMIC_DHCP]),
-    [A.DYNAMIC_DHCP]: Object.freeze([A.DYNAMIC_DHCP, A.UNASSIGNED])
+    [A.DYNAMIC_DHCP]: Object.freeze([A.DYNAMIC_DHCP, A.UNASSIGNED]),
   }),
   [S.SLAAC]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.SLAAC]),
-    [A.SLAAC]: Object.freeze([A.SLAAC, A.UNASSIGNED])
+    [A.SLAAC]: Object.freeze([A.SLAAC, A.UNASSIGNED]),
   }),
   [S.TOPOLOGY]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.SYSTEM, A.GATEWAY]),
     [A.SYSTEM]: Object.freeze([A.SYSTEM, A.UNASSIGNED]),
-    [A.GATEWAY]: Object.freeze([A.GATEWAY, A.UNASSIGNED])
+    [A.GATEWAY]: Object.freeze([A.GATEWAY, A.UNASSIGNED]),
   }),
   [S.RECONCILIATION]: Object.freeze(
-    Object.fromEntries(Object.values(A).map(from => [from, Object.freeze(Object.values(A))]))
-  )
+    Object.fromEntries(Object.values(A).map((from) => [from, Object.freeze(Object.values(A))])),
+  ),
 });
 
 export function canTransitionAllocation(from, to, source) {
@@ -102,10 +102,12 @@ export function canonicalHostnameForAllocation({
   allocationState,
   dnsHostname = null,
   reservationHostname = null,
-  leaseHostname = null
+  leaseHostname = null,
 }) {
   if ([A.STATIC_DNS, A.GATEWAY].includes(allocationState)) {
-    return dnsHostname ? { hostname: dnsHostname, source: S.DNS } : { hostname: null, source: null };
+    return dnsHostname
+      ? { hostname: dnsHostname, source: S.DNS }
+      : { hostname: null, source: null };
   }
   if (allocationState === A.SYSTEM) {
     return { hostname: null, source: null };

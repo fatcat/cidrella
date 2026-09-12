@@ -27,7 +27,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function changePassword(currentPassword, newPassword) {
     const res = await api.post('/auth/change-password', {
       current_password: currentPassword,
-      new_password: newPassword
+      new_password: newPassword,
     });
     token.value = res.data.token;
     user.value = res.data.user;
@@ -58,5 +58,18 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('cidrella_token');
   }
 
-  return { token, user, isAuthenticated, mustChangePassword, passwordResetBy, preferences, timeFormat, login, changePassword, fetchUser, updatePreferences, logout };
+  return {
+    token,
+    user,
+    isAuthenticated,
+    mustChangePassword,
+    passwordResetBy,
+    preferences,
+    timeFormat,
+    login,
+    changePassword,
+    fetchUser,
+    updatePreferences,
+    logout,
+  };
 });

@@ -28,10 +28,7 @@ const RUNTIME_ARTIFACT_EXCLUDES = [
 // in case a future tar changes glob semantics. Appended to the base list in
 // archive-producing paths (create + restore); the snapshot path doesn't need
 // these because the globs above fully cover DATA_DIR/dnsmasq/.
-const DEFENSIVE_EXCLUDES = [
-  '--exclude=dnsmasq.log',
-  '--exclude=dnsmasq.pid',
-];
+const DEFENSIVE_EXCLUDES = ['--exclude=dnsmasq.log', '--exclude=dnsmasq.pid'];
 function isRuntimeArtifact(name) {
   return /\.log(\.|-|$)/i.test(name) || /\.pid$/i.test(name);
 }
@@ -112,23 +109,30 @@ export function createBackup(db) {
     // backup. The archive bytes captured are still self-consistent (tar
     // archives what it read), so exit 1 is treated as a soft warning.
     // Exit 2+ is still fatal (real tar failure).
-    const result = spawnSync('tar', [
-      // Strip runtime artifacts, see RUNTIME_ARTIFACT_EXCLUDES at the top
-      // of this file.
-      ...RUNTIME_ARTIFACT_EXCLUDES,
-      ...DEFENSIVE_EXCLUDES,
-      '--warning=no-file-changed',
-      // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
-      // POSIX keyletter form doesn't coexist with long --exclude options
-      // in GNU tar 1.35, it errors with "You must specify one of the
-      // '-Acdtrux'..." and produces no archive. This silently crippled
-      // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
-      // anyway because tar never got the action flag).
-      '-czf', archivePath, MANIFEST_NAME, ...includes,
-    ], {
-      cwd: DATA_DIR,
-      timeout: 60000,
-    });
+    const result = spawnSync(
+      'tar',
+      [
+        // Strip runtime artifacts, see RUNTIME_ARTIFACT_EXCLUDES at the top
+        // of this file.
+        ...RUNTIME_ARTIFACT_EXCLUDES,
+        ...DEFENSIVE_EXCLUDES,
+        '--warning=no-file-changed',
+        // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
+        // POSIX keyletter form doesn't coexist with long --exclude options
+        // in GNU tar 1.35, it errors with "You must specify one of the
+        // '-Acdtrux'..." and produces no archive. This silently crippled
+        // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
+        // anyway because tar never got the action flag).
+        '-czf',
+        archivePath,
+        MANIFEST_NAME,
+        ...includes,
+      ],
+      {
+        cwd: DATA_DIR,
+        timeout: 60000,
+      },
+    );
     if (result.error) throw result.error;
     if (result.status === null) {
       throw new Error('tar timed out while creating backup');
@@ -140,16 +144,22 @@ export function createBackup(db) {
     // status 0 = clean. status 1 = at least one file changed mid-read
     // (typically dnsmasq.leases); archive is still valid, log + continue.
     if (result.status === 1) {
-      console.warn('[backup] tar exited 1 (file changed during archive, expected for dnsmasq.leases); archive is valid');
+      console.warn(
+        '[backup] tar exited 1 (file changed during archive, expected for dnsmasq.leases); archive is valid',
+      );
     }
   } finally {
-    try { fs.unlinkSync(manifestPath); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(manifestPath);
+    } catch {
+      /* ignore */
+    }
   }
 
   const stat = fs.statSync(archivePath);
-  const result = db.prepare(
-    'INSERT INTO backups (filename, size_bytes) VALUES (?, ?)'
-  ).run(filename, stat.size);
+  const result = db
+    .prepare('INSERT INTO backups (filename, size_bytes) VALUES (?, ?)')
+    .run(filename, stat.size);
 
   // Enforce retention
   enforceRetention(db);
@@ -197,11 +207,14 @@ function readBackupManifest(archivePath) {
 // runs after the listing pass. Timeout scales with size so large legitimate
 // backups aren't rejected; entry-count buffer is sized for ~500 k entries
 // of typical verbose-listing length.
-const MAX_ARCHIVE_GZIP_BYTES = 2 * 1024 * 1024 * 1024;  // 2 GiB on-disk cap
-const MAX_LISTING_BUFFER_BYTES = 64 * 1024 * 1024;       // 64 MiB of tar output
+const MAX_ARCHIVE_GZIP_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB on-disk cap
+const MAX_LISTING_BUFFER_BYTES = 64 * 1024 * 1024; // 64 MiB of tar output
 function tarListingTimeoutMs(archiveBytes) {
   // 10 s floor, +10 s per 200 MiB gzipped. Caps at 10 min to bound worst case.
-  return Math.min(10 * 60 * 1000, Math.max(10_000, Math.ceil(archiveBytes / (200 * 1024 * 1024)) * 10_000));
+  return Math.min(
+    10 * 60 * 1000,
+    Math.max(10_000, Math.ceil(archiveBytes / (200 * 1024 * 1024)) * 10_000),
+  );
 }
 
 function parseTarVerboseLine(line) {
@@ -274,7 +287,9 @@ function validateStagedTree(root) {
     if (stat.isDirectory()) {
       validateStagedTree(fullPath);
     } else if (!stat.isFile()) {
-      throw new Error(`Invalid archive: staged entry is not a regular file: ${path.relative(root, fullPath)}`);
+      throw new Error(
+        `Invalid archive: staged entry is not a regular file: ${path.relative(root, fullPath)}`,
+      );
     }
   }
 }
@@ -296,8 +311,8 @@ export function analyzeArchive(archivePath) {
   if (archiveBytes > MAX_ARCHIVE_GZIP_BYTES) {
     const err = new Error(
       `Archive is ${(archiveBytes / (1024 * 1024 * 1024)).toFixed(1)} GiB on disk, ` +
-      `larger than the ${(MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024))} GiB cap. ` +
-      `Refusing to analyze. A legitimate CIDRella backup is never this large.`
+        `larger than the ${MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024)} GiB cap. ` +
+        `Refusing to analyze. A legitimate CIDRella backup is never this large.`,
     );
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
@@ -349,7 +364,7 @@ export function inspectBackup(archivePath) {
   if (archiveBytes > MAX_ARCHIVE_GZIP_BYTES) {
     const err = new Error(
       `Backup is ${(archiveBytes / (1024 * 1024 * 1024)).toFixed(1)} GiB on disk; ` +
-      `refusing to process (cap ${MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024)} GiB).`
+        `refusing to process (cap ${MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024)} GiB).`,
     );
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
@@ -358,7 +373,13 @@ export function inspectBackup(archivePath) {
   const entries = listTarEntries(archivePath, archiveBytes);
   assertSafeTarEntries(entries);
   const analysis = analyzeTarEntries(entries);
-  const hasDatabase = entries.some(e => e.name === 'cidrella.db' || e.name === './cidrella.db' || e.name === 'ipam.db' || e.name === './ipam.db');
+  const hasDatabase = entries.some(
+    (e) =>
+      e.name === 'cidrella.db' ||
+      e.name === './cidrella.db' ||
+      e.name === 'ipam.db' ||
+      e.name === './ipam.db',
+  );
   if (!hasDatabase) {
     throw new Error('Invalid backup: missing database file');
   }
@@ -374,7 +395,8 @@ export function inspectBackup(archivePath) {
       manifest: null,
       compatible: true,
       analysis,
-      warning: 'Legacy backup without manifest, so the version cannot be verified. Proceed with caution.',
+      warning:
+        'Legacy backup without manifest, so the version cannot be verified. Proceed with caution.',
     };
   }
 
@@ -420,19 +442,27 @@ function takePreRestoreSnapshot(db) {
       const parent = path.dirname(PRE_RESTORE_DIR);
       throw new Error(
         `Cannot create pre-restore snapshot at ${PRE_RESTORE_DIR}: ${err.code}. ` +
-        `The snapshots/ directory is not writable by the cidrella service user. ` +
-        `Fix on the host: sudo chown -R cidrella:cidrella ${parent} && sudo systemctl restart cidrella`
+          `The snapshots/ directory is not writable by the cidrella service user. ` +
+          `Fix on the host: sudo chown -R cidrella:cidrella ${parent} && sudo systemctl restart cidrella`,
       );
     }
     throw err;
   }
 
   // Checkpoint WAL so cidrella.db is fully current
-  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore */ }
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch {
+    /* ignore */
+  }
 
   // Clear anything from a previous pre-restore and start fresh
   for (const f of fs.readdirSync(PRE_RESTORE_DIR)) {
-    try { fs.rmSync(path.join(PRE_RESTORE_DIR, f), { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(path.join(PRE_RESTORE_DIR, f), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   }
 
   const dbFile = path.join(DATA_DIR, 'cidrella.db');
@@ -467,17 +497,24 @@ function takePreRestoreSnapshot(db) {
     // between the two tars, no shell, no shell-injection surface.
     const reader = spawnSync('tar', [
       ...RUNTIME_ARTIFACT_EXCLUDES,
-      '-cf', '-',
-      '-C', DATA_DIR, sub,
+      '-cf',
+      '-',
+      '-C',
+      DATA_DIR,
+      sub,
     ]);
     if (reader.status !== 0) {
-      throw new Error(`Pre-restore snapshot failed reading ${sub}: ${reader.stderr?.toString() || 'tar exit ' + reader.status}`);
+      throw new Error(
+        `Pre-restore snapshot failed reading ${sub}: ${reader.stderr?.toString() || 'tar exit ' + reader.status}`,
+      );
     }
     const writer = spawnSync('tar', ['-xf', '-', '-C', PRE_RESTORE_DIR], {
       input: reader.stdout,
     });
     if (writer.status !== 0) {
-      throw new Error(`Pre-restore snapshot failed writing ${sub}: ${writer.stderr?.toString() || 'tar exit ' + writer.status}`);
+      throw new Error(
+        `Pre-restore snapshot failed writing ${sub}: ${writer.stderr?.toString() || 'tar exit ' + writer.status}`,
+      );
     }
   }
 
@@ -503,7 +540,10 @@ function takePreRestoreSnapshot(db) {
  * running server's open file descriptors would point at orphaned inodes
  * and any writes it made before restart would be silently lost.
  */
-export function restoreBackup(archivePath, { allowIncompatible = false, inspection: preInspection = null } = {}) {
+export function restoreBackup(
+  archivePath,
+  { allowIncompatible = false, inspection: preInspection = null } = {},
+) {
   // 1. Compatibility check. Reuse the caller's inspection if they already
   //    ran one (e.g., the API route inspects to audit before the restore);
   //    otherwise inspect here. Avoids a second tar parse for large backups.
@@ -537,15 +577,17 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   try {
     const stat = fs.statfsSync(stagingRoot);
     stagingFree = stat.bavail * stat.bsize;
-  } catch { /* statfs unsupported, skip the check */ }
+  } catch {
+    /* statfs unsupported, skip the check */
+  }
   const SAFETY_MARGIN = 512 * 1024 * 1024; // 512 MB headroom
   if (analysis.effectiveBytes + SAFETY_MARGIN > stagingFree) {
     const needMiB = Math.ceil(analysis.effectiveBytes / (1024 * 1024));
     const freeMiB = Math.floor(stagingFree / (1024 * 1024));
     const err = new Error(
       `Restore refused: backup would need ${needMiB} MiB of staging space under ${stagingRoot} ` +
-      `but only ${freeMiB} MiB is free (512 MiB safety margin required). ` +
-      `Free disk space or resize the host before retrying.`
+        `but only ${freeMiB} MiB is free (512 MiB safety margin required). ` +
+        `Free disk space or resize the host before retrying.`,
     );
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
@@ -569,7 +611,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   const stagingDir = fs.mkdtempSync(path.join(DATA_DIR, '.restore-staging-'));
   const tarTimeout = Math.min(
     30 * 60 * 1000,
-    Math.max(60000, Math.ceil(analysis.effectiveBytes / (100 * 1024 * 1024)) * 30000)
+    Math.max(60000, Math.ceil(analysis.effectiveBytes / (100 * 1024 * 1024)) * 30000),
   );
 
   // Extract into staging. A failure here (corrupt archive, timeout, disk
@@ -577,23 +619,34 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   // still healthy. Clean up the staging dir and surface a 500 via the
   // normal error path; do NOT process.exit() for this class of failure.
   try {
-    execFileSync('tar', [
-      ...RUNTIME_ARTIFACT_EXCLUDES,
-      ...DEFENSIVE_EXCLUDES,
-      '--no-same-owner',
-      '--no-same-permissions',
-      // Use '-xzf' (with dash), not bare 'xzf'. See create-side comment
-      // for why, same GNU tar parsing quirk applies here.
-      '-xzf', archivePath, '-C', stagingDir,
-    ], {
-      stdio: 'pipe',
-      timeout: tarTimeout,
-    });
+    execFileSync(
+      'tar',
+      [
+        ...RUNTIME_ARTIFACT_EXCLUDES,
+        ...DEFENSIVE_EXCLUDES,
+        '--no-same-owner',
+        '--no-same-permissions',
+        // Use '-xzf' (with dash), not bare 'xzf'. See create-side comment
+        // for why, same GNU tar parsing quirk applies here.
+        '-xzf',
+        archivePath,
+        '-C',
+        stagingDir,
+      ],
+      {
+        stdio: 'pipe',
+        timeout: tarTimeout,
+      },
+    );
   } catch (extractErr) {
-    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
     const wrapped = new Error(
       `Restore extraction failed: ${extractErr.message}. ` +
-      `No changes were applied to ${DATA_DIR}. Service continues running.`
+        `No changes were applied to ${DATA_DIR}. Service continues running.`,
     );
     wrapped.cause = extractErr;
     throw wrapped;
@@ -602,7 +655,11 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   try {
     validateStagedTree(stagingDir);
   } catch (stagedErr) {
-    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
     throw stagedErr;
   }
 
@@ -630,12 +687,24 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     const magic = Buffer.alloc(16);
     const fd = fs.openSync(stagedDb, 'r');
     let readLen;
-    try { readLen = fs.readSync(fd, magic, 0, 16, 0); } finally { try { fs.closeSync(fd); } catch { /* ignore */ } }
+    try {
+      readLen = fs.readSync(fd, magic, 0, 16, 0);
+    } finally {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
     if (readLen !== 16 || magic.toString('utf-8') !== 'SQLite format 3\x00') {
-      try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
       const err = new Error(
         `Invalid backup: staged cidrella.db is not a SQLite 3 database (magic bytes mismatch). ` +
-        `${DATA_DIR} was NOT modified. Service continues running.`
+          `${DATA_DIR} was NOT modified. Service continues running.`,
       );
       err.code = 'INVALID_DATABASE_FILE';
       throw err;
@@ -658,7 +727,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   //    narrow: only failures during the actual file swap trigger the exit,
   //    not the extract-side failures handled above.
   try {
-    const stagedItems = fs.readdirSync(stagingDir).filter(name => name !== MANIFEST_NAME);
+    const stagedItems = fs.readdirSync(stagingDir).filter((name) => name !== MANIFEST_NAME);
 
     // If we just restored a cidrella.db from a legacy backup, remove any
     // pre-existing ipam.db on disk so there's no confusing leftover state.
@@ -697,20 +766,38 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     // Something went wrong mid-swap. DATA_DIR is partially restored. Force
     // an exit so systemd restarts us cleanly. The admin can recover from
     // /var/lib/cidrella/snapshots/pre-restore/.
-    try { db.close(); } catch { /* ignore */ }
-    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      db.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
     setTimeout(() => {
       console.error('Restore failed mid-swap, exiting for restart', copyErr?.message);
       process.exit(1);
     }, 500);
-    const wrapped = new Error(`Restore failed during file swap: ${copyErr.message}. Service will restart. Recover from /var/lib/cidrella/snapshots/pre-restore/ if needed.`);
+    const wrapped = new Error(
+      `Restore failed during file swap: ${copyErr.message}. Service will restart. Recover from /var/lib/cidrella/snapshots/pre-restore/ if needed.`,
+    );
     wrapped.cause = copyErr;
     throw wrapped;
   }
 
   // Happy path: clean up staging, close the DB handle, schedule exit.
-  try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
-  try { db.close(); } catch { /* ignore */ }
+  try {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+  try {
+    db.close();
+  } catch {
+    /* ignore */
+  }
 
   // 5. Schedule process exit. systemd Restart=always will bring us back.
   //    We exit with code 0 after a short delay so the HTTP response can
@@ -816,7 +903,9 @@ export function sweepStaleRestoreArtifacts() {
         if (now - stat.mtimeMs < MAX_AGE_MS) continue;
         fs.rmSync(fullPath, { recursive: true, force: true });
         swept++;
-      } catch { /* ignore, next boot will retry */ }
+      } catch {
+        /* ignore, next boot will retry */
+      }
     }
   }
   return swept;
@@ -840,33 +929,36 @@ export function startBackupScheduler() {
   const INTERVAL_MAP = {
     daily: 24 * 60 * 60 * 1000,
     weekly: 7 * 24 * 60 * 60 * 1000,
-    monthly: 30 * 24 * 60 * 60 * 1000
+    monthly: 30 * 24 * 60 * 60 * 1000,
   };
 
   // Check every 15 minutes if a backup is due
-  return setInterval(() => {
-    try {
-      const db = getDb();
-      const scheduleValue = getSetting('backup_schedule');
-      if (!scheduleValue || scheduleValue === 'off') return;
+  return setInterval(
+    () => {
+      try {
+        const db = getDb();
+        const scheduleValue = getSetting('backup_schedule');
+        if (!scheduleValue || scheduleValue === 'off') return;
 
-      const interval = INTERVAL_MAP[scheduleValue];
-      if (!interval) return;
+        const interval = INTERVAL_MAP[scheduleValue];
+        if (!interval) return;
 
-      const lastRunValue = getSetting('backup_last_run');
-      const lastRunTime = lastRunValue ? new Date(lastRunValue).getTime() : 0;
-      const now = Date.now();
+        const lastRunValue = getSetting('backup_last_run');
+        const lastRunTime = lastRunValue ? new Date(lastRunValue).getTime() : 0;
+        const now = Date.now();
 
-      if (now - lastRunTime >= interval) {
-        console.log(`Scheduled backup (${scheduleValue})...`);
-        createBackup(db);
+        if (now - lastRunTime >= interval) {
+          console.log(`Scheduled backup (${scheduleValue})...`);
+          createBackup(db);
 
-        // Update last run time
-        setSetting('backup_last_run', new Date().toISOString());
-        console.log('Scheduled backup completed');
+          // Update last run time
+          setSetting('backup_last_run', new Date().toISOString());
+          console.log('Scheduled backup completed');
+        }
+      } catch (err) {
+        console.error('Scheduled backup failed:', err.message);
       }
-    } catch (err) {
-      console.error('Scheduled backup failed:', err.message);
-    }
-  }, 15 * 60 * 1000);
+    },
+    15 * 60 * 1000,
+  );
 }

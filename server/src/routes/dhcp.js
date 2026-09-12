@@ -1,7 +1,18 @@
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { isIpInSubnet, ipToLong, longToIp, parseCidr, getServerIpForSubnet, isValidIpv4, isValidMac, isClientMac, isValidDomain, validateDisplayString } from '../utils/ip.js';
+import {
+  isIpInSubnet,
+  ipToLong,
+  longToIp,
+  parseCidr,
+  getServerIpForSubnet,
+  isValidIpv4,
+  isValidMac,
+  isClientMac,
+  isValidDomain,
+  validateDisplayString,
+} from '../utils/ip.js';
 import { sortKey } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
 import { syncLeases } from '../utils/dhcp.js';
@@ -16,17 +27,17 @@ import {
   gatewayInPoolError,
   dynamicPoolConflict,
   getScopePools,
-  resolveEffectiveScopeOptions
+  resolveEffectiveScopeOptions,
 } from '../models/dhcp-scope.js';
 import {
   createReservation,
   updateReservation,
-  deleteReservation
+  deleteReservation,
 } from '../models/dhcp-reservation.js';
 import {
   createCustomOption,
   deleteCustomOption,
-  replaceDefaultOptions
+  replaceDefaultOptions,
 } from '../models/dhcp-option.js';
 
 const router = Router();
@@ -45,19 +56,19 @@ function validateScopeOption(opt) {
   if (typeof value !== 'string') return 'value must be a string';
   const optDef = DHCP_OPTIONS_BY_CODE[code];
   const type = optDef?.type || 'text';
-  if (code === 51 && !LEASE_TIME_RE.test(value)) return 'lease time must look like 3600, 1h, 30m, or 1d';
+  if (code === 51 && !LEASE_TIME_RE.test(value))
+    return 'lease time must look like 3600, 1h, 30m, or 1d';
   const allowComma = type === 'ip-list' || type === 'text-list';
   return validateDnsmasqConfigValue(value, { allowComma });
 }
 
 function validateDefaultOption(opt) {
   if (!opt || typeof opt !== 'object') return 'option must be an object';
-  if (!Number.isInteger(opt.code) || opt.code < 1 || opt.code > 254) return 'code must be an integer 1-254';
+  if (!Number.isInteger(opt.code) || opt.code < 1 || opt.code > 254)
+    return 'code must be an integer 1-254';
   if (opt.value == null || opt.value === '') return null;
   return validateScopeOption(opt);
 }
-
-
 
 // Helper: parse and validate a JSON IP array field
 // Returns { servers } on success or { error } on failure
@@ -78,7 +89,9 @@ function parseIpList(jsonStr, fieldName) {
 // GET /api/dhcp/scopes
 router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
-  const scopes = db.prepare(`
+  const scopes = db
+    .prepare(
+      `
     SELECT s.*, r.start_ip, r.end_ip,
       sub.cidr as subnet_cidr, sub.name as subnet_name, sub.gateway_address as subnet_gateway,
       sub.domain_name as subnet_domain_name, sub.folder_id
@@ -86,10 +99,14 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id
     ORDER BY sub.network_address
-  `).all();
+  `,
+    )
+    .all();
 
   // Attach options and server IP to each scope
-  const optStmt = db.prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?');
+  const optStmt = db.prepare(
+    'SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?',
+  );
   for (const scope of scopes) {
     scope.pools = getScopePools(db, scope.id);
     if (scope.pools.length) {
@@ -109,7 +126,17 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
 // POST /api/dhcp/scopes
 router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   const body = req.body || {};
-  const { range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, description } = body;
+  const {
+    range_id,
+    subnet_id,
+    lease_time,
+    dns_servers,
+    domain_name,
+    gateway,
+    ntp_servers,
+    domain_search,
+    description,
+  } = body;
   const db = getDb();
 
   if (!range_id || !subnet_id) {
@@ -126,7 +153,8 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     }
   }
   if (domain_search !== undefined && domain_search !== null && domain_search !== '') {
-    if (typeof domain_search !== 'string') return res.status(400).json({ error: 'domain_search must be a string' });
+    if (typeof domain_search !== 'string')
+      return res.status(400).json({ error: 'domain_search must be a string' });
     if (validateDnsmasqConfigValue(domain_search, { allowComma: true }) != null) {
       return res.status(400).json({ error: 'domain_search contains disallowed characters' });
     }
@@ -140,11 +168,15 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   }
 
   // Validate range exists and is a DHCP Scope type
-  const range = db.prepare(`
+  const range = db
+    .prepare(
+      `
     SELECT r.*, rt.name as range_type_name FROM ranges r
     JOIN range_types rt ON r.range_type_id = rt.id
     WHERE r.id = ?
-  `).get(range_id);
+  `,
+    )
+    .get(range_id);
   if (!range) return res.status(404).json({ error: 'Range not found' });
   if (range.range_type_name !== 'DHCP Scope') {
     return res.status(400).json({ error: 'Range must be of type DHCP Scope' });
@@ -162,7 +194,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     return res.status(409).json({
       error: poolConflict.error,
       conflict_type: poolConflict.type,
-      ip_address: poolConflict.ip_address
+      ip_address: poolConflict.ip_address,
     });
   }
 
@@ -206,20 +238,27 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'options must be an array' });
   }
 
-  const scope = createScope(db, {
-    range_id,
-    subnet_id,
-    lease_time,
-    dns_servers,
-    domain_name,
-    gateway,
-    ntp_servers,
-    domain_search,
-    description,
-    options
-  }, { subnet, defaultLeaseTime: getSetting('default_lease_time') });
+  const scope = createScope(
+    db,
+    {
+      range_id,
+      subnet_id,
+      lease_time,
+      dns_servers,
+      domain_name,
+      gateway,
+      ntp_servers,
+      domain_search,
+      description,
+      options,
+    },
+    { subnet, defaultLeaseTime: getSetting('default_lease_time') },
+  );
 
-  audit(req.user.id, 'dhcp_scope_created', 'dhcp_scope', scope.id, { subnet: subnet.cidr, range_id });
+  audit(req.user.id, 'dhcp_scope_created', 'dhcp_scope', scope.id, {
+    subnet: subnet.cidr,
+    range_id,
+  });
   req.afterCommit('regenerate_dhcp');
   res.status(201).json(scope);
 });
@@ -227,7 +266,18 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 // PUT /api/dhcp/scopes/:id
 router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   const body = req.body || {};
-  const { lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, enabled, description, start_ip, end_ip } = body;
+  const {
+    lease_time,
+    dns_servers,
+    domain_name,
+    gateway,
+    ntp_servers,
+    domain_search,
+    enabled,
+    description,
+    start_ip,
+    end_ip,
+  } = body;
   const db = getDb();
 
   const scope = db.prepare('SELECT * FROM dhcp_scopes WHERE id = ?').get(req.params.id);
@@ -241,7 +291,8 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     }
   }
   if (domain_search !== undefined && domain_search !== null && domain_search !== '') {
-    if (typeof domain_search !== 'string') return res.status(400).json({ error: 'domain_search must be a string' });
+    if (typeof domain_search !== 'string')
+      return res.status(400).json({ error: 'domain_search must be a string' });
     if (validateDnsmasqConfigValue(domain_search, { allowComma: true }) != null) {
       return res.status(400).json({ error: 'domain_search contains disallowed characters' });
     }
@@ -296,7 +347,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     if (conflict) {
       return res.status(409).json({
         error: gatewayInPoolError(conflict),
-        gateway_address: conflict.gateway_address
+        gateway_address: conflict.gateway_address,
       });
     }
   }
@@ -307,7 +358,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       return res.status(409).json({
         error: poolConflict.error,
         conflict_type: poolConflict.type,
-        ip_address: poolConflict.ip_address
+        ip_address: poolConflict.ip_address,
       });
     }
   }
@@ -324,20 +375,27 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'options must be an array' });
   }
 
-  const optionSubnet = db.prepare('SELECT gateway_address, cidr, domain_name FROM subnets WHERE id = ?').get(scope.subnet_id);
-  const updated = updateScope(db, scope, {
-    lease_time,
-    dns_servers,
-    domain_name,
-    gateway,
-    ntp_servers,
-    domain_search,
-    enabled,
-    description,
-    start_ip,
-    end_ip,
-    options
-  }, { subnet: optionSubnet });
+  const optionSubnet = db
+    .prepare('SELECT gateway_address, cidr, domain_name FROM subnets WHERE id = ?')
+    .get(scope.subnet_id);
+  const updated = updateScope(
+    db,
+    scope,
+    {
+      lease_time,
+      dns_servers,
+      domain_name,
+      gateway,
+      ntp_servers,
+      domain_search,
+      enabled,
+      description,
+      start_ip,
+      end_ip,
+      options,
+    },
+    { subnet: optionSubnet },
+  );
 
   audit(req.user.id, 'dhcp_scope_updated', 'dhcp_scope', scope.id, { changes: req.body });
   req.afterCommit('regenerate_dhcp');
@@ -385,18 +443,21 @@ router.get('/reservations', requirePerm('dhcp:read'), (req, res) => {
 export function reservationIpRejectionReason(db, subnet, ipAddress) {
   const parsed = parseCidr(subnet.cidr);
   const ipLong = ipToLong(ipAddress);
-  if (ipLong === parsed.networkLong)   return 'A DHCP Reservation cannot use the network address';
+  if (ipLong === parsed.networkLong) return 'A DHCP Reservation cannot use the network address';
   if (ipLong === parsed.broadcastLong) return 'A DHCP Reservation cannot use the broadcast address';
   if (subnet.gateway_address && ipAddress === subnet.gateway_address) {
     return 'A DHCP Reservation cannot use the gateway address';
   }
-  const row = db.prepare(
-    'SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?'
-  ).get(subnet.id, ipAddress);
+  const row = db
+    .prepare('SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
+    .get(subnet.id, ipAddress);
   if (row && ['system', 'gateway'].includes(row.allocation_state)) {
     return `A DHCP Reservation cannot use a protected ${row.allocation_state} IP`;
   }
-  if (row && ['static_dns', 'dynamic_dhcp', 'slaac', 'quarantined'].includes(row.allocation_state)) {
+  if (
+    row &&
+    ['static_dns', 'dynamic_dhcp', 'slaac', 'quarantined'].includes(row.allocation_state)
+  ) {
     return `A DHCP Reservation cannot use an IP allocated as ${row.allocation_state}`;
   }
   return null;
@@ -427,10 +488,14 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
 
   const mac = mac_address.toLowerCase();
   if (!isValidMac(mac)) {
-    return res.status(400).json({ error: 'Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)' });
+    return res
+      .status(400)
+      .json({ error: 'Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)' });
   }
   if (!isClientMac(mac)) {
-    return res.status(400).json({ error: 'MAC address cannot be all-zero, broadcast, or multicast' });
+    return res
+      .status(400)
+      .json({ error: 'MAC address cannot be all-zero, broadcast, or multicast' });
   }
 
   if (!isValidIpv4(ip_address)) {
@@ -438,7 +503,9 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   }
 
   if (hostname && !isValidDomain(hostname)) {
-    return res.status(400).json({ error: 'Invalid hostname (letters, digits, dots, hyphens; 1–253 chars)' });
+    return res
+      .status(400)
+      .json({ error: 'Invalid hostname (letters, digits, dots, hyphens; 1–253 chars)' });
   }
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet_id);
@@ -450,12 +517,18 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   // which would leave the row invisible from any leaf's DHCP surface.
   // Check "has children" first so a post-divide parent (which becomes
   // unallocated AND non-leaf) gets the clearer "not a leaf" message.
-  const hasChildren = db.prepare('SELECT 1 FROM subnets WHERE parent_id = ? LIMIT 1').get(subnet.id);
+  const hasChildren = db
+    .prepare('SELECT 1 FROM subnets WHERE parent_id = ? LIMIT 1')
+    .get(subnet.id);
   if (hasChildren) {
-    return res.status(400).json({ error: 'Subnet has child subnets. DHCP Reservations must be placed on a leaf.' });
+    return res
+      .status(400)
+      .json({ error: 'Subnet has child subnets. DHCP Reservations must be placed on a leaf.' });
   }
   if (subnet.status !== 'allocated') {
-    return res.status(400).json({ error: 'Subnet is not allocated. DHCP Reservations require an allocated subnet.' });
+    return res
+      .status(400)
+      .json({ error: 'Subnet is not allocated. DHCP Reservations require an allocated subnet.' });
   }
 
   if (!isIpInSubnet(ip_address, subnet.cidr)) {
@@ -466,20 +539,34 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   if (rejection) return res.status(400).json({ error: rejection });
 
   // Check duplicate MAC in this subnet
-  const dupMac = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ?').get(subnet_id, mac);
-  if (dupMac) return res.status(409).json({ error: 'MAC address already has a DHCP Reservation in this subnet' });
+  const dupMac = db
+    .prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ?')
+    .get(subnet_id, mac);
+  if (dupMac)
+    return res
+      .status(409)
+      .json({ error: 'MAC address already has a DHCP Reservation in this subnet' });
 
   // Check duplicate IP in this subnet
-  const dupIp = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ?').get(subnet_id, ip_address);
-  if (dupIp) return res.status(409).json({ error: 'IP address already has a DHCP Reservation in this subnet' });
+  const dupIp = db
+    .prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ?')
+    .get(subnet_id, ip_address);
+  if (dupIp)
+    return res
+      .status(409)
+      .json({ error: 'IP address already has a DHCP Reservation in this subnet' });
 
   const reservation = createReservation(db, subnet, {
     mac_address: mac,
     ip_address,
     hostname,
-    description
+    description,
   });
-  audit(req.user.id, 'dhcp_reservation_created', 'dhcp_reservation', reservation.id, { mac, ip: ip_address, subnet: subnet.cidr });
+  audit(req.user.id, 'dhcp_reservation_created', 'dhcp_reservation', reservation.id, {
+    mac,
+    ip: ip_address,
+    subnet: subnet.cidr,
+  });
   req.afterCommit('regenerate_dhcp');
   res.status(201).json(reservation);
 });
@@ -516,7 +603,9 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid MAC address format' });
   }
   if (mac_address && !isClientMac(newMac)) {
-    return res.status(400).json({ error: 'MAC address cannot be all-zero, broadcast, or multicast' });
+    return res
+      .status(400)
+      .json({ error: 'MAC address cannot be all-zero, broadcast, or multicast' });
   }
 
   if (ip_address && !isValidIpv4(ip_address)) {
@@ -524,7 +613,9 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   }
 
   if (hostname !== undefined && hostname && !isValidDomain(hostname)) {
-    return res.status(400).json({ error: 'Invalid hostname (letters, digits, dots, hyphens; 1–253 chars)' });
+    return res
+      .status(400)
+      .json({ error: 'Invalid hostname (letters, digits, dots, hyphens; 1–253 chars)' });
   }
 
   if (ip_address && !isIpInSubnet(ip_address, subnet.cidr)) {
@@ -538,14 +629,28 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
 
   // Check duplicate MAC (excluding self)
   if (newMac !== reservation.mac_address) {
-    const dupMac = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ? AND id != ?').get(reservation.subnet_id, newMac, reservation.id);
-    if (dupMac) return res.status(409).json({ error: 'MAC address already has a DHCP Reservation in this subnet' });
+    const dupMac = db
+      .prepare(
+        'SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ? AND id != ?',
+      )
+      .get(reservation.subnet_id, newMac, reservation.id);
+    if (dupMac)
+      return res
+        .status(409)
+        .json({ error: 'MAC address already has a DHCP Reservation in this subnet' });
   }
 
   // Check duplicate IP (excluding self)
   if (newIp !== reservation.ip_address) {
-    const dupIp = db.prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? AND id != ?').get(reservation.subnet_id, newIp, reservation.id);
-    if (dupIp) return res.status(409).json({ error: 'IP address already has a DHCP Reservation in this subnet' });
+    const dupIp = db
+      .prepare(
+        'SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND ip_address = ? AND id != ?',
+      )
+      .get(reservation.subnet_id, newIp, reservation.id);
+    if (dupIp)
+      return res
+        .status(409)
+        .json({ error: 'IP address already has a DHCP Reservation in this subnet' });
   }
 
   const updated = updateReservation(db, reservation, subnet, {
@@ -553,9 +658,11 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     ip_address: newIp,
     hostname,
     description,
-    enabled
+    enabled,
   });
-  audit(req.user.id, 'dhcp_reservation_updated', 'dhcp_reservation', reservation.id, { changes: req.body });
+  audit(req.user.id, 'dhcp_reservation_updated', 'dhcp_reservation', reservation.id, {
+    changes: req.body,
+  });
   req.afterCommit('regenerate_dhcp');
   res.json(updated);
 });
@@ -568,7 +675,8 @@ router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
 
   deleteReservation(db, reservation);
   audit(req.user.id, 'dhcp_reservation_deleted', 'dhcp_reservation', reservation.id, {
-    mac: reservation.mac_address, ip: reservation.ip_address
+    mac: reservation.mac_address,
+    ip: reservation.ip_address,
   });
   req.afterCommit('regenerate_dhcp');
   res.json({ message: 'DHCP Reservation deleted' });
@@ -597,25 +705,33 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
   const reservationArgs = subnetId ? [subnetId] : [];
 
   // Fetch all dynamic leases
-  const leases = db.prepare(`
+  const leases = db
+    .prepare(
+      `
     SELECT dl.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.domain_name as subnet_domain_name, sub.folder_id
     FROM dhcp_leases dl
     LEFT JOIN subnets sub ON dl.subnet_id = sub.id
     ${leaseWhere}
     ORDER BY dl.ip_address
-  `).all(...leaseArgs);
+  `,
+    )
+    .all(...leaseArgs);
 
   // Fetch all reservations
-  const reservations = db.prepare(`
+  const reservations = db
+    .prepare(
+      `
     SELECT dr.*, sub.cidr as subnet_cidr, sub.name as subnet_name, sub.domain_name as subnet_domain_name, sub.folder_id
     FROM dhcp_reservations dr
     JOIN subnets sub ON dr.subnet_id = sub.id
     ${reservationWhere}
     ORDER BY dr.ip_address
-  `).all(...reservationArgs);
+  `,
+    )
+    .all(...reservationArgs);
 
   const now = Date.now();
-  const leaseIsActive = lease => isLeaseActive(lease.expires_at, now);
+  const leaseIsActive = (lease) => isLeaseActive(lease.expires_at, now);
 
   // Build a map of active leases by MAC+IP for matching. Expired rows remain
   // visible as short-lived history but cannot make a reservation look online.
@@ -648,7 +764,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
       expires_at: matchedLease ? matchedLease.expires_at : null,
       reservation_id: r.id,
       created_at: r.created_at,
-      updated_at: r.updated_at
+      updated_at: r.updated_at,
     };
     unified.push(entry);
     if (matchedLease) matchedLeaseKeys.add(key);
@@ -675,7 +791,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
         expires_at: l.expires_at,
         reservation_id: null,
         created_at: l.created_at,
-        updated_at: l.updated_at
+        updated_at: l.updated_at,
       });
     }
   }
@@ -689,50 +805,56 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
 // GET /api/dhcp/scopes/:id/addresses: every IP in a DHCP scope with lease/reservation overlays
 router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
-  const scope = db.prepare(`
+  const scope = db
+    .prepare(
+      `
     SELECT s.*, r.start_ip, r.end_ip,
       sub.cidr as subnet_cidr, sub.name as subnet_name, sub.domain_name as subnet_domain_name, sub.folder_id
     FROM dhcp_scopes s
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id
     WHERE s.id = ?
-  `).get(req.params.id);
+  `,
+    )
+    .get(req.params.id);
   if (!scope) return res.status(404).json({ error: 'DHCP scope not found' });
 
-  const assignedByIp = new Map(getUnifiedDhcpRows(db, { subnetId: scope.subnet_id })
-    .filter(row => row.dhcp_assignment_type === 'reserved' || row.lease_status === 'active')
-    .map(row => [row.ip_address, row]));
+  const assignedByIp = new Map(
+    getUnifiedDhcpRows(db, { subnetId: scope.subnet_id })
+      .filter((row) => row.dhcp_assignment_type === 'reserved' || row.lease_status === 'active')
+      .map((row) => [row.ip_address, row]),
+  );
   const rows = [];
   scope.pools = getScopePools(db, scope.id);
   for (const pool of scope.pools) {
     const start = ipToLong(pool.start_ip);
     const end = ipToLong(pool.end_ip);
     for (let ipLong = start; ipLong <= end; ipLong++) {
-    const ip = longToIp(ipLong);
-    const assigned = assignedByIp.get(ip);
-    if (assigned) {
-      rows.push(assigned);
-    } else {
-      rows.push({
-        id: `available:${ip}`,
-        dhcp_assignment_type: null,
-        ip_address: ip,
-        mac_address: null,
-        hostname: null,
-        description: null,
-        subnet_id: scope.subnet_id,
-        subnet_cidr: scope.subnet_cidr,
-        subnet_name: scope.subnet_name,
-        subnet_domain_name: scope.subnet_domain_name,
-        folder_id: scope.folder_id,
-        enabled: true,
-        lease_status: 'available',
-        expires_at: null,
-        reservation_id: null,
-        created_at: null,
-        updated_at: null
-      });
-    }
+      const ip = longToIp(ipLong);
+      const assigned = assignedByIp.get(ip);
+      if (assigned) {
+        rows.push(assigned);
+      } else {
+        rows.push({
+          id: `available:${ip}`,
+          dhcp_assignment_type: null,
+          ip_address: ip,
+          mac_address: null,
+          hostname: null,
+          description: null,
+          subnet_id: scope.subnet_id,
+          subnet_cidr: scope.subnet_cidr,
+          subnet_name: scope.subnet_name,
+          subnet_domain_name: scope.subnet_domain_name,
+          folder_id: scope.folder_id,
+          enabled: true,
+          lease_status: 'available',
+          expires_at: null,
+          reservation_id: null,
+          created_at: null,
+          updated_at: null,
+        });
+      }
     }
   }
 
@@ -760,16 +882,27 @@ router.post('/apply', requirePerm('dhcp:write'), (req, res) => {
   req.afterCommit('regenerate_dhcp');
 
   const scopeCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_scopes WHERE enabled = 1').get().c;
-  const reservationCount = db.prepare('SELECT COUNT(*) as c FROM dhcp_reservations WHERE enabled = 1').get().c;
+  const reservationCount = db
+    .prepare('SELECT COUNT(*) as c FROM dhcp_reservations WHERE enabled = 1')
+    .get().c;
 
-  audit(req.user.id, 'dhcp_config_applied', 'dhcp', null, { scopes: scopeCount, reservations: reservationCount });
-  res.json({ message: 'DHCP configuration applied', scopes: scopeCount, reservations: reservationCount });
+  audit(req.user.id, 'dhcp_config_applied', 'dhcp', null, {
+    scopes: scopeCount,
+    reservations: reservationCount,
+  });
+  res.json({
+    message: 'DHCP configuration applied',
+    scopes: scopeCount,
+    reservations: reservationCount,
+  });
 });
 
 // GET /api/dhcp/available-ranges: ranges eligible for scope creation
 router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
-  const ranges = db.prepare(`
+  const ranges = db
+    .prepare(
+      `
     SELECT r.*, rt.name as range_type_name, sub.cidr as subnet_cidr, sub.name as subnet_name,
       sub.gateway_address as subnet_gateway, sub.domain_name as subnet_domain_name
     FROM ranges r
@@ -778,7 +911,9 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
     WHERE rt.name = 'DHCP Scope'
       AND r.id NOT IN (SELECT range_id FROM dhcp_scopes)
     ORDER BY sub.network_address, r.start_ip
-  `).all();
+  `,
+    )
+    .all();
   for (const range of ranges) {
     if (range.subnet_cidr) {
       range.server_ip = getServerIpForSubnet(range.subnet_cidr);
@@ -792,18 +927,27 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
 // GET /api/dhcp/options: catalog + global defaults + custom options
 router.get('/options', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
-  const rows = db.prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults').all();
-  const defaults = Object.fromEntries(rows.filter(r => r.value != null).map(r => [r.option_code, r.value]));
-  const enabledDefaults = rows.filter(r => r.enabled_by_default).map(r => r.option_code);
+  const rows = db
+    .prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults')
+    .all();
+  const defaults = Object.fromEntries(
+    rows.filter((r) => r.value != null).map((r) => [r.option_code, r.value]),
+  );
+  const enabledDefaults = rows.filter((r) => r.enabled_by_default).map((r) => r.option_code);
 
   // Merge built-in catalog with custom options
   const customRows = db.prepare('SELECT * FROM dhcp_custom_options ORDER BY code').all();
-  const customOptions = customRows.map(r => ({
-    code: r.code, name: r.name, label: r.label, type: r.type,
+  const customOptions = customRows.map((r) => ({
+    code: r.code,
+    name: r.name,
+    label: r.label,
+    type: r.type,
     dnsmasqName: String(r.code),
-    group: 'Custom', rfc: null, rfcUrl: null,
+    group: 'Custom',
+    rfc: null,
+    rfcUrl: null,
     description: r.description || 'User-defined option.',
-    custom: true
+    custom: true,
   }));
 
   const catalog = [...DHCP_OPTIONS, ...customOptions];
@@ -825,12 +969,16 @@ router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
   const optType = allowedTypes.includes(type) ? type : 'text';
 
   // Check conflict with built-in catalog
-  const builtIn = DHCP_OPTIONS.find(o => o.code === codeNum);
-  if (builtIn) return res.status(409).json({ error: `Code ${codeNum} is already a built-in option (${builtIn.label})` });
+  const builtIn = DHCP_OPTIONS.find((o) => o.code === codeNum);
+  if (builtIn)
+    return res
+      .status(409)
+      .json({ error: `Code ${codeNum} is already a built-in option (${builtIn.label})` });
 
   // Check conflict with existing custom option
   const existing = db.prepare('SELECT id FROM dhcp_custom_options WHERE code = ?').get(codeNum);
-  if (existing) return res.status(409).json({ error: `Code ${codeNum} already exists as a custom option` });
+  if (existing)
+    return res.status(409).json({ error: `Code ${codeNum} already exists as a custom option` });
 
   const optName = name || `custom-${codeNum}`;
   const created = createCustomOption(db, {
@@ -838,7 +986,7 @@ router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
     name: optName,
     label,
     type: optType,
-    description
+    description,
   });
 
   audit(req.user.id, 'create', 'dhcp_custom_option', created.id, { code: codeNum, label });
@@ -855,7 +1003,10 @@ router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => 
 
   deleteCustomOption(db, entry);
 
-  audit(req.user.id, 'delete', 'dhcp_custom_option', entry.id, { code: codeNum, label: entry.label });
+  audit(req.user.id, 'delete', 'dhcp_custom_option', entry.id, {
+    code: codeNum,
+    label: entry.label,
+  });
   res.json({ ok: true });
 });
 
@@ -865,16 +1016,20 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   if (!Array.isArray(options)) {
     return res.status(400).json({ error: 'options must be an array of { code, value }' });
   }
-  if (options.length > 254) return res.status(400).json({ error: 'options may contain at most 254 entries' });
+  if (options.length > 254)
+    return res.status(400).json({ error: 'options may contain at most 254 entries' });
   for (const opt of options) {
     const err = validateDefaultOption(opt);
     if (err) return res.status(400).json({ error: `Default option ${opt?.code ?? '?'}: ${err}` });
   }
   if (enabledDefaults !== undefined) {
-    if (!Array.isArray(enabledDefaults)) return res.status(400).json({ error: 'enabledDefaults must be an array' });
+    if (!Array.isArray(enabledDefaults))
+      return res.status(400).json({ error: 'enabledDefaults must be an array' });
     for (const code of enabledDefaults) {
       if (!Number.isInteger(code) || code < 1 || code > 254) {
-        return res.status(400).json({ error: 'enabledDefaults must contain integer option codes 1-254' });
+        return res
+          .status(400)
+          .json({ error: 'enabledDefaults must contain integer option codes 1-254' });
       }
     }
   }

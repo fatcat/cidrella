@@ -22,7 +22,9 @@ function writeFile(p, bytes) {
 
 function tarList(archivePath) {
   return execFileSync('tar', ['tzf', archivePath], { encoding: 'utf-8' })
-    .split('\n').map(s => s.trim()).filter(Boolean);
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 describe('analyzeArchive', () => {
@@ -61,7 +63,7 @@ describe('analyzeArchive', () => {
 
   it('lists every file entry', () => {
     const r = analyzeArchive(archive);
-    const names = r.entries.map(e => e.name);
+    const names = r.entries.map((e) => e.name);
     expect(names).toContain('cidrella.db');
     expect(names).toContain('dnsmasq/dnsmasq.log');
     expect(names).toContain('dnsmasq/dnsmasq.log-20260421');
@@ -97,16 +99,23 @@ describe('tar --exclude on create (createBackup contract)', () => {
 
     const archive = path.join(work, 'out.tar.gz');
     // Mirror the flags used in createBackup
-    execFileSync('tar', [
-      '--exclude=*.log',
-      '--exclude=*.log.*',
-      '--exclude=*.log-*',
-      '--exclude=*.pid',
-      '--exclude=dnsmasq.log',
-      '--exclude=dnsmasq.pid',
-      '--warning=no-file-changed',
-      '-czf', archive, 'cidrella.db', 'dnsmasq',
-    ], { cwd: work });
+    execFileSync(
+      'tar',
+      [
+        '--exclude=*.log',
+        '--exclude=*.log.*',
+        '--exclude=*.log-*',
+        '--exclude=*.pid',
+        '--exclude=dnsmasq.log',
+        '--exclude=dnsmasq.pid',
+        '--warning=no-file-changed',
+        '-czf',
+        archive,
+        'cidrella.db',
+        'dnsmasq',
+      ],
+      { cwd: work },
+    );
 
     const entries = tarList(archive);
     expect(entries).not.toContain('dnsmasq/dnsmasq.log');
@@ -125,10 +134,10 @@ describe('tar --exclude on create (createBackup contract)', () => {
   it('refuses bare "czf" keyletter when --exclude is present (regression guard)', () => {
     const archive = path.join(work, 'bare.tar.gz');
     expect(() => {
-      execFileSync('tar', [
-        '--exclude=*.log',
-        'czf', archive, 'cidrella.db', 'dnsmasq',
-      ], { cwd: work, stdio: 'pipe' });
+      execFileSync('tar', ['--exclude=*.log', 'czf', archive, 'cidrella.db', 'dnsmasq'], {
+        cwd: work,
+        stdio: 'pipe',
+      });
     }).toThrow();
   });
 });
@@ -161,8 +170,11 @@ describe('pre-restore snapshot (takePreRestoreSnapshot contract)', () => {
       '--exclude=*.log.*',
       '--exclude=*.log-*',
       '--exclude=*.pid',
-      '-cf', '-',
-      '-C', dataDir, 'dnsmasq',
+      '-cf',
+      '-',
+      '-C',
+      dataDir,
+      'dnsmasq',
     ]);
     execFileSync('tar', ['-xf', '-', '-C', snapDir], { input: reader });
 
@@ -212,7 +224,10 @@ describe('tar --exclude on restore (restoreBackup defense-in-depth)', () => {
       '--exclude=*.pid',
       '--exclude=dnsmasq.log',
       '--exclude=dnsmasq.pid',
-      '-xzf', legacyArchive, '-C', extractDir,
+      '-xzf',
+      legacyArchive,
+      '-C',
+      extractDir,
     ]);
 
     expect(fs.existsSync(path.join(extractDir, 'dnsmasq', 'dnsmasq.log'))).toBe(false);

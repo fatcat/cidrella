@@ -4,16 +4,41 @@
   <div class="content-card range-types-section">
     <div class="card-header">
       <h3>VLANs</h3>
-      <Button label="Add VLAN" icon="pi pi-plus" size="small" data-track="sys-add-vlan" @click="openVlanDialog()" />
+      <Button
+        label="Add VLAN"
+        icon="pi pi-plus"
+        size="small"
+        data-track="sys-add-vlan"
+        @click="openVlanDialog()"
+      />
     </div>
-    <DataTable :value="vlans" :loading="loadingVlans" stripedRows size="small"
-               :paginator="vlans.length > 256" :rows="256"
-               :rowsPerPageOptions="[64, 128, 256, 512]"
-               @row-contextmenu="onVlanRightClick" contextMenu
-               scrollable scrollHeight="flex">
+    <DataTable
+      :value="vlans"
+      :loading="loadingVlans"
+      stripedRows
+      size="small"
+      :paginator="vlans.length > 256"
+      :rows="256"
+      :rowsPerPageOptions="[64, 128, 256, 512]"
+      @row-contextmenu="onVlanRightClick"
+      contextMenu
+      scrollable
+      scrollHeight="flex"
+    >
       <template #empty>
-        <EmptyState icon="pi-tags" title="No VLANs" description="Define VLANs to tag subnets with their layer-2 segment."
-                   :actions="[{ label: 'Add VLAN', icon: 'pi-plus', dataTrack: 'sys-add-vlan-empty', onClick: () => openVlanDialog() }]" />
+        <EmptyState
+          icon="pi-tags"
+          title="No VLANs"
+          description="Define VLANs to tag subnets with their layer-2 segment."
+          :actions="[
+            {
+              label: 'Add VLAN',
+              icon: 'pi-plus',
+              dataTrack: 'sys-add-vlan-empty',
+              onClick: () => openVlanDialog(),
+            },
+          ]"
+        />
       </template>
       <Column field="vlan_id" header="VLAN ID" sortable style="width: 6rem" />
       <Column field="name" header="Name" sortable />
@@ -25,18 +50,35 @@
     <ContextMenu ref="vlanContextMenuRef" :model="vlanContextMenuItems" />
 
     <!-- VLAN Dialog -->
-    <Dialog v-model:visible="showVlanDialog" :header="editingVlan ? 'Edit VLAN' : 'Add VLAN'"
-            modal :style="{ width: '28rem' }">
+    <Dialog
+      v-model:visible="showVlanDialog"
+      :header="editingVlan ? 'Edit VLAN' : 'Add VLAN'"
+      modal
+      :style="{ width: '28rem' }"
+    >
       <div class="form-grid">
         <div class="field" v-if="!editingVlan">
           <label>Network *</label>
-          <Select v-model="vlanForm.subnet_id" :options="availableNetworks" optionLabel="label" optionValue="value"
-                  placeholder="Select a network" class="w-full" filter />
+          <Select
+            v-model="vlanForm.subnet_id"
+            :options="availableNetworks"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="Select a network"
+            class="w-full"
+            filter
+          />
         </div>
         <div class="field">
           <label>VLAN ID *</label>
-          <InputNumber v-model="vlanForm.vlan_id" :min="1" :max="4094" :useGrouping="false" class="w-full"
-                       @input="onVlanIdInput" />
+          <InputNumber
+            v-model="vlanForm.vlan_id"
+            :min="1"
+            :max="4094"
+            :useGrouping="false"
+            class="w-full"
+            @input="onVlanIdInput"
+          />
         </div>
         <div class="field">
           <label>Name *</label>
@@ -45,14 +87,26 @@
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="closeVlanDialog" />
-        <Button :label="editingVlan ? 'Save' : 'Create'" @click="saveVlan" :loading="savingVlan"
-                :disabled="(!editingVlan && !vlanForm.subnet_id) || !vlanForm.vlan_id || !vlanForm.name" />
+        <Button
+          :label="editingVlan ? 'Save' : 'Create'"
+          @click="saveVlan"
+          :loading="savingVlan"
+          :disabled="(!editingVlan && !vlanForm.subnet_id) || !vlanForm.vlan_id || !vlanForm.name"
+        />
       </template>
     </Dialog>
 
     <!-- Delete VLAN Dialog -->
-    <Dialog v-model:visible="showDeleteVlanDialog" header="Delete VLAN" modal :style="{ width: '24rem' }">
-      <p>Delete VLAN <strong>{{ deletingVlan?.vlan_id }} — {{ deletingVlan?.name }}</strong>?</p>
+    <Dialog
+      v-model:visible="showDeleteVlanDialog"
+      header="Delete VLAN"
+      modal
+      :style="{ width: '24rem' }"
+    >
+      <p>
+        Delete VLAN <strong>{{ deletingVlan?.vlan_id }} — {{ deletingVlan?.name }}</strong
+        >?
+      </p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showDeleteVlanDialog = false" />
         <Button label="Delete" severity="danger" @click="doDeleteVlan" :loading="savingVlan" />
@@ -91,7 +145,7 @@ const vlanForm = ref({ vlan_id: null, name: '', subnet_id: null });
 const vlanNameManual = ref(false);
 
 const availableNetworks = computed(() => {
-  const usedVlanIds = new Set(vlans.value.map(v => v.vlan_id));
+  const usedVlanIds = new Set(vlans.value.map((v) => v.vlan_id));
   const result = [];
   function collect(subnets) {
     for (const s of subnets) {
@@ -119,7 +173,9 @@ async function loadVlans() {
   try {
     const res = await api.get('/vlans');
     vlans.value = res.data;
-  } finally { loadingVlans.value = false; }
+  } finally {
+    loadingVlans.value = false;
+  }
 }
 
 function openVlanDialog() {
@@ -147,7 +203,10 @@ async function saveVlan() {
   const isEditing = !!editingVlan.value;
   try {
     if (isEditing) {
-      await api.put(`/vlans/${editingVlan.value.id}`, { vlan_id: vlanForm.value.vlan_id, name: vlanForm.value.name });
+      await api.put(`/vlans/${editingVlan.value.id}`, {
+        vlan_id: vlanForm.value.vlan_id,
+        name: vlanForm.value.name,
+      });
       toast.add({ severity: 'success', summary: 'VLAN updated', life: 3000 });
     } else {
       await api.post('/vlans', vlanForm.value);
@@ -158,7 +217,9 @@ async function saveVlan() {
     if (!isEditing) await store.fetchTree();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { savingVlan.value = false; }
+  } finally {
+    savingVlan.value = false;
+  }
 }
 
 function confirmDeleteVlan(vlan) {
@@ -175,7 +236,9 @@ async function doDeleteVlan() {
     await loadVlans();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { savingVlan.value = false; }
+  } finally {
+    savingVlan.value = false;
+  }
 }
 
 const vlanContextMenuRef = ref();
@@ -185,7 +248,7 @@ const vlanContextMenuItems = computed(() => {
   if (!v) return [];
   return [
     { label: 'Edit VLAN', icon: 'pi pi-pencil', command: () => editVlan(v) },
-    { label: 'Delete VLAN', icon: 'pi pi-trash', command: () => confirmDeleteVlan(v) }
+    { label: 'Delete VLAN', icon: 'pi pi-trash', command: () => confirmDeleteVlan(v) },
   ];
 });
 function onVlanRightClick(event) {
@@ -197,12 +260,44 @@ onMounted(loadVlans);
 </script>
 
 <style scoped>
-.content-card { padding: 1.25rem; background: var(--p-surface-card); border: 1px solid var(--p-surface-border); border-radius: 8px; }
-.card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
-.card-header h3 { margin: 0; font-size: var(--app-fs-lg); color: var(--p-text-color); }
-.range-types-section { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-.form-grid { display: flex; flex-direction: column; gap: 1rem; }
-.field { margin-bottom: 1rem; }
-.field label { display: block; margin-bottom: 0.4rem; font-size: var(--app-fs-sm); font-weight: 500; }
-.w-full { width: 100%; }
+.content-card {
+  padding: 1.25rem;
+  background: var(--p-surface-card);
+  border: 1px solid var(--p-surface-border);
+  border-radius: 8px;
+}
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.card-header h3 {
+  margin: 0;
+  font-size: var(--app-fs-lg);
+  color: var(--p-text-color);
+}
+.range-types-section {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.field {
+  margin-bottom: 1rem;
+}
+.field label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: var(--app-fs-sm);
+  font-weight: 500;
+}
+.w-full {
+  width: 100%;
+}
 </style>

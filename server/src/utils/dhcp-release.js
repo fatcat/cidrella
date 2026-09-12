@@ -9,7 +9,7 @@ export function routeInterfaceForIp(ip) {
   try {
     const output = execFileSync('ip', ['route', 'get', ip], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     const match = String(output).match(/\bdev\s+(\S+)/);
     return match && INTERFACE_RE.test(match[1]) ? match[1] : null;
@@ -32,12 +32,11 @@ export function releaseDnsmasqLease(lease) {
   if (!interfaceName) return { released: false, skipped: 'no-route-interface' };
 
   try {
-    execFileSync('dhcp_release', [
-      interfaceName,
-      lease.ip_address,
-      lease.mac_address,
-      lease.client_id || '*'
-    ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    execFileSync(
+      'dhcp_release',
+      [interfaceName, lease.ip_address, lease.mac_address, lease.client_id || '*'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    );
     return { released: true, interface: interfaceName };
   } catch (err) {
     if (err?.code === 'ENOENT') {
@@ -45,7 +44,7 @@ export function releaseDnsmasqLease(lease) {
     }
     return {
       released: false,
-      error: err?.stderr?.toString?.().trim() || err?.message || 'dhcp_release failed'
+      error: err?.stderr?.toString?.().trim() || err?.message || 'dhcp_release failed',
     };
   }
 }

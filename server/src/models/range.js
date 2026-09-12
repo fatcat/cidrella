@@ -1,15 +1,21 @@
 import { ipToLong, longToIp } from '../utils/ip.js';
 
 export function findWithType(db, rangeId) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT r.*, rt.name as range_type_name, rt.color as range_type_color
     FROM ranges r JOIN range_types rt ON r.range_type_id = rt.id
     WHERE r.id = ?
-  `).get(rangeId);
+  `,
+    )
+    .get(rangeId);
 }
 
 export function listSubnetDetailRanges(db, subnetId) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT r.*, rt.name as range_type_name, rt.color as range_type_color,
       rt.is_system as range_type_is_system, ds.id as dhcp_scope_id
     FROM ranges r
@@ -18,25 +24,31 @@ export function listSubnetDetailRanges(db, subnetId) {
     WHERE r.subnet_id = ?
       AND (rt.name != 'DHCP Scope' OR ds.id IS NOT NULL)
     ORDER BY r.start_ip
-  `).all(subnetId);
+  `,
+    )
+    .all(subnetId);
 }
 
 export function createRange(db, { subnetId, rangeTypeId, startIp, endIp, description }) {
-  const result = db.prepare(
-    'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)'
-  ).run(subnetId, rangeTypeId, startIp, endIp, description || null);
+  const result = db
+    .prepare(
+      'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)',
+    )
+    .run(subnetId, rangeTypeId, startIp, endIp, description || null);
   return findWithType(db, result.lastInsertRowid);
 }
 
 export function updateRange(db, range, fields) {
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE ranges SET range_type_id = ?, start_ip = ?, end_ip = ?, description = ?, updated_at = datetime('now') WHERE id = ?
-  `).run(
+  `,
+  ).run(
     fields.rangeTypeId ?? range.range_type_id,
     fields.startIp,
     fields.endIp,
     fields.description !== undefined ? fields.description : range.description,
-    range.id
+    range.id,
   );
   return findWithType(db, range.id);
 }
@@ -46,7 +58,9 @@ export function deleteRange(db, rangeId) {
 }
 
 export function listCustomRangeOverlaps(db, subnetId, selections, { excludeRangeId = null } = {}) {
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT r.*, rt.name as range_type_name, rt.color as range_type_color
     FROM ranges r
     JOIN range_types rt ON rt.id = r.range_type_id
@@ -54,12 +68,14 @@ export function listCustomRangeOverlaps(db, subnetId, selections, { excludeRange
       AND rt.is_system = 0
       AND (? IS NULL OR r.id != ?)
     ORDER BY r.start_ip
-  `).all(subnetId, excludeRangeId, excludeRangeId);
+  `,
+    )
+    .all(subnetId, excludeRangeId, excludeRangeId);
 
-  return rows.filter(row => {
+  return rows.filter((row) => {
     const start = ipToLong(row.start_ip);
     const end = ipToLong(row.end_ip);
-    return selections.some(selection => selection.start <= end && start <= selection.end);
+    return selections.some((selection) => selection.start <= end && start <= selection.end);
   });
 }
 
@@ -69,13 +85,10 @@ export function listCustomRangeOverlaps(db, subnetId, selections, { excludeRange
  * ranges never overlap. Functional system ranges are a separate layer and are
  * intentionally left alone.
  */
-export function assignCustomRangeType(db, {
-  subnetId,
-  rangeTypeId,
-  selections,
-  description = null,
-  excludeRangeId = null
-}) {
+export function assignCustomRangeType(
+  db,
+  { subnetId, rangeTypeId, selections, description = null, excludeRangeId = null },
+) {
   const apply = db.transaction(() => {
     const overlaps = listCustomRangeOverlaps(db, subnetId, selections, { excludeRangeId });
 
@@ -115,7 +128,7 @@ export function assignCustomRangeType(db, {
           range.range_type_id,
           longToIp(fragment.start),
           longToIp(fragment.end),
-          range.description
+          range.description,
         );
       }
     }
@@ -127,19 +140,19 @@ export function assignCustomRangeType(db, {
         rangeTypeId,
         longToIp(selection.start),
         longToIp(selection.end),
-        description || null
+        description || null,
       );
       createdIds.push(Number(result.lastInsertRowid));
     }
 
     return {
-      created: createdIds.map(id => findWithType(db, id)),
-      replaced: overlaps.map(range => ({
+      created: createdIds.map((id) => findWithType(db, id)),
+      replaced: overlaps.map((range) => ({
         id: range.id,
         type: range.range_type_name,
         start_ip: range.start_ip,
-        end_ip: range.end_ip
-      }))
+        end_ip: range.end_ip,
+      })),
     };
   });
 
@@ -147,7 +160,9 @@ export function assignCustomRangeType(db, {
 }
 
 export function repairStaleGatewayRanges(db) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE ranges
        SET start_ip = (SELECT gateway_address FROM subnets WHERE id = ranges.subnet_id),
            end_ip   = (SELECT gateway_address FROM subnets WHERE id = ranges.subnet_id),
@@ -158,5 +173,7 @@ export function repairStaleGatewayRanges(db) {
                                 AND gateway_address IS NOT NULL
                                 AND gateway_address != ranges.start_ip
        )
-  `).run();
+  `,
+    )
+    .run();
 }

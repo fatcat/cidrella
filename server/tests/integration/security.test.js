@@ -40,19 +40,19 @@ vi.mock('../../src/utils/dhcp.js', async (importOriginal) => {
   };
 });
 
-const { default: authRouter }    = await import('../../src/auth/routes.js');
-const { default: setupRouter }   = await import('../../src/routes/setup.js');
-const { default: subnetRouter }  = await import('../../src/routes/subnets.js');
-const { default: dnsRouter }     = await import('../../src/routes/dns.js');
-const { default: dhcpRouter }    = await import('../../src/routes/dhcp.js');
+const { default: authRouter } = await import('../../src/auth/routes.js');
+const { default: setupRouter } = await import('../../src/routes/setup.js');
+const { default: subnetRouter } = await import('../../src/routes/subnets.js');
+const { default: dnsRouter } = await import('../../src/routes/dns.js');
+const { default: dhcpRouter } = await import('../../src/routes/dhcp.js');
 const { default: settingsRouter } = await import('../../src/routes/settings.js');
-const { default: piholeRouter }  = await import('../../src/routes/pihole.js');
+const { default: piholeRouter } = await import('../../src/routes/pihole.js');
 const { default: blocklistRouter } = await import('../../src/routes/blocklists.js');
 const { default: request } = await import('supertest');
 
 let tmpDir;
-let app;              // multi-router app with fake admin (matches prod routers that need req.user)
-let noAuthApp;        // no fake-user middleware, for pre-auth surface (setup) and the auth router
+let app; // multi-router app with fake admin (matches prod routers that need req.user)
+let noAuthApp; // no fake-user middleware, for pre-auth surface (setup) and the auth router
 
 beforeAll(async () => {
   const setup = await setupTestDb();
@@ -63,15 +63,15 @@ beforeAll(async () => {
   const db = getDb();
   const hash = bcrypt.hashSync('TestUserPw123', 10);
   db.prepare(
-    "INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, 'admin', 0)"
+    "INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, 'admin', 0)",
   ).run('sectest', hash);
 
   app = createMultiRouterApp([
-    { prefix: '/api/subnets',    router: subnetRouter },
-    { prefix: '/api/dns',        router: dnsRouter },
-    { prefix: '/api/dhcp',       router: dhcpRouter },
-    { prefix: '/api/settings',   router: settingsRouter },
-    { prefix: '/api/pihole',     router: piholeRouter },
+    { prefix: '/api/subnets', router: subnetRouter },
+    { prefix: '/api/dns', router: dnsRouter },
+    { prefix: '/api/dhcp', router: dhcpRouter },
+    { prefix: '/api/settings', router: settingsRouter },
+    { prefix: '/api/pihole', router: piholeRouter },
     { prefix: '/api/blocklists', router: blocklistRouter },
   ]);
 
@@ -107,19 +107,21 @@ afterAll(() => {
 describe('C1: bcrypt crash DoS, non-string password/username rejected with 400', () => {
   it.each([
     ['password as object', { username: 'sectest', password: {} }],
-    ['password as array',  { username: 'sectest', password: [] }],
+    ['password as array', { username: 'sectest', password: [] }],
     ['password as number', { username: 'sectest', password: 1234 }],
-    ['password as null',   { username: 'sectest', password: null }],
-    ['password with $ne',  { username: 'sectest', password: { $ne: null } }],
+    ['password as null', { username: 'sectest', password: null }],
+    ['password with $ne', { username: 'sectest', password: { $ne: null } }],
     ['username as object', { username: {}, password: 'x' }],
-    ['username as array',  { username: ['sectest'], password: 'x' }],
+    ['username as array', { username: ['sectest'], password: 'x' }],
     ['username as number', { username: 123, password: 'x' }],
   ])('rejects %s with 400', async (_label, body) => {
     const res = await request(noAuthApp).post('/api/auth/login').send(body);
     expect(res.status).toBeGreaterThanOrEqual(400);
     expect(res.status).toBeLessThan(500);
     // Must not leak a bcrypt/sqlite stack trace text
-    expect(JSON.stringify(res.body)).not.toMatch(/Illegal arguments|bind parameter|toLowerCase|bcrypt/i);
+    expect(JSON.stringify(res.body)).not.toMatch(
+      /Illegal arguments|bind parameter|toLowerCase|bcrypt/i,
+    );
   });
 });
 
@@ -135,7 +137,9 @@ describe('H1: setup is closed once any user exists', () => {
   });
 
   it('POST /api/setup returns 409 when users exist', async () => {
-    const res = await request(noAuthApp).post('/api/setup').send({ username: 'pwn', password: 'Pwnd123!' });
+    const res = await request(noAuthApp)
+      .post('/api/setup')
+      .send({ username: 'pwn', password: 'Pwnd123!' });
     expect(res.status).toBe(409);
   });
 
@@ -152,12 +156,14 @@ describe('H1: setup is closed once any user exists', () => {
 describe('L6: unknown-user login attempts audited', () => {
   it('logs reason:unknown_user on non-existent username', async () => {
     const marker = 'nosuchuser_' + Date.now();
-    const res = await request(noAuthApp).post('/api/auth/login').send({ username: marker, password: 'whatever' });
+    const res = await request(noAuthApp)
+      .post('/api/auth/login')
+      .send({ username: marker, password: 'whatever' });
     expect(res.status).toBe(401);
 
-    const row = getDb().prepare(
-      "SELECT details FROM audit_log WHERE action='login_failed' ORDER BY id DESC LIMIT 1"
-    ).get();
+    const row = getDb()
+      .prepare("SELECT details FROM audit_log WHERE action='login_failed' ORDER BY id DESC LIMIT 1")
+      .get();
     expect(row).toBeDefined();
     const parsed = JSON.parse(row.details);
     expect(parsed.reason).toBe('unknown_user');
@@ -169,7 +175,7 @@ describe('L6: unknown-user login attempts audited', () => {
 // L2, logout invalidates the caller's token (via updated_at bump)
 // -----------------------------------------------------------------------------
 
-describe('L2: logout invalidates the caller\'s token', () => {
+describe("L2: logout invalidates the caller's token", () => {
   it('POST /api/auth/logout returns 200 and records an audit entry', async () => {
     const db = getDb();
     // createTestApp injects req.user={id:1} so this exercises the logout path.
@@ -180,9 +186,11 @@ describe('L2: logout invalidates the caller\'s token', () => {
 
     // Audit row confirms the mechanism fired, the actual updated_at bump
     // happens via SQL we can't easily diff at sub-second resolution.
-    const row = db.prepare(
-      "SELECT * FROM audit_log WHERE user_id = 1 AND action = 'logout' ORDER BY id DESC LIMIT 1"
-    ).get();
+    const row = db
+      .prepare(
+        "SELECT * FROM audit_log WHERE user_id = 1 AND action = 'logout' ORDER BY id DESC LIMIT 1",
+      )
+      .get();
     expect(row).toBeDefined();
   });
 });
@@ -196,9 +204,13 @@ describe('C2/H2: DNS record config injection', () => {
   let revZone;
 
   beforeAll(async () => {
-    const f = await request(app).post('/api/dns/zones').send({ name: 'injtest.example', type: 'forward' });
+    const f = await request(app)
+      .post('/api/dns/zones')
+      .send({ name: 'injtest.example', type: 'forward' });
     fwdZone = f.body;
-    const r = await request(app).post('/api/dns/zones').send({ name: '99.88.10.in-addr.arpa', type: 'reverse' });
+    const r = await request(app)
+      .post('/api/dns/zones')
+      .send({ name: '99.88.10.in-addr.arpa', type: 'reverse' });
     revZone = r.body;
   });
 
@@ -206,56 +218,68 @@ describe('C2/H2: DNS record config injection', () => {
     const res = await request(app).post(`/api/dns/zones/${revZone.id}/records`).send({
       name: '5\naddress=/evilpwn.com/6.6.6.6\n#',
       type: 'PTR',
-      value: 'host.injtest.example'
+      value: 'host.injtest.example',
     });
     expect(res.status).toBe(400);
   });
 
   it('rejects PTR with comma in name', async () => {
     const res = await request(app).post(`/api/dns/zones/${revZone.id}/records`).send({
-      name: '5,x', type: 'PTR', value: 'host.injtest.example'
+      name: '5,x',
+      type: 'PTR',
+      value: 'host.injtest.example',
     });
     expect(res.status).toBe(400);
   });
 
   it('rejects PTR with non-numeric name', async () => {
     const res = await request(app).post(`/api/dns/zones/${revZone.id}/records`).send({
-      name: 'hello', type: 'PTR', value: 'host.injtest.example'
+      name: 'hello',
+      type: 'PTR',
+      value: 'host.injtest.example',
     });
     expect(res.status).toBe(400);
   });
 
   it('rejects TXT value with LF newline (H2)', async () => {
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
-      name: 'txt1', type: 'TXT', value: 'a\naddress=/evil.example/6.6.6.6\n'
+      name: 'txt1',
+      type: 'TXT',
+      value: 'a\naddress=/evil.example/6.6.6.6\n',
     });
     expect(res.status).toBe(400);
   });
 
   it('rejects TXT value with CR', async () => {
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
-      name: 'txt2', type: 'TXT', value: 'a\rb'
+      name: 'txt2',
+      type: 'TXT',
+      value: 'a\rb',
     });
     expect(res.status).toBe(400);
   });
 
   it('rejects CNAME self-loop (L5)', async () => {
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
-      name: 'loop', type: 'CNAME', value: 'loop.injtest.example'
+      name: 'loop',
+      type: 'CNAME',
+      value: 'loop.injtest.example',
     });
     expect(res.status).toBe(400);
   });
 
   it('accepts a CNAME alias entered as an FQDN inside the zone', async () => {
     const a = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
-      name: 'target-host', type: 'A', value: '10.99.88.11'
+      name: 'target-host',
+      type: 'A',
+      value: '10.99.88.11',
     });
     expect(a.status).toBe(201);
 
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
       name: 'alias-fqdn.injtest.example',
       type: 'CNAME',
-      value: 'target-host.injtest.example'
+      value: 'target-host.injtest.example',
     });
     expect(res.status).toBe(201);
     expect(res.body.name).toBe('alias-fqdn');
@@ -268,7 +292,7 @@ describe('C2/H2: DNS record config injection', () => {
   it('rejects a reverse zone name with an injected directive (config injection)', async () => {
     const res = await request(app).post('/api/dns/zones').send({
       name: '1.2.10.foo,ok\naddress=/hijack.pentest.test/6.6.6.6\n#z.in-addr.arpa',
-      type: 'reverse'
+      type: 'reverse',
     });
     expect(res.status).toBe(400);
   });
@@ -278,7 +302,12 @@ describe('C2/H2: DNS record config injection', () => {
   // like 'evil.in-addr.arpa' is accepted (isValidDomain passes) and is
   // harmless, matching pre-existing behavior, so it's not in this list.
   it('rejects reverse zone names carrying delimiter/control characters', async () => {
-    for (const name of ['5,x.in-addr.arpa', '1 2.in-addr.arpa', '1.2.arpa,evil', '10.in-addr.arpa\naddress=/x/1.1.1.1']) {
+    for (const name of [
+      '5,x.in-addr.arpa',
+      '1 2.in-addr.arpa',
+      '1.2.arpa,evil',
+      '10.in-addr.arpa\naddress=/x/1.1.1.1',
+    ]) {
       const res = await request(app).post('/api/dns/zones').send({ name, type: 'reverse' });
       expect(res.status, `name ${JSON.stringify(name)}`).toBe(400);
     }
@@ -295,7 +324,7 @@ describe('C2/H2: DNS record config injection', () => {
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
       name: 'wrong.example.net',
       type: 'CNAME',
-      value: 'target-host.injtest.example'
+      value: 'target-host.injtest.example',
     });
     expect(res.status).toBe(400);
   });
@@ -304,7 +333,7 @@ describe('C2/H2: DNS record config injection', () => {
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
       name: 'missing-target',
       type: 'CNAME',
-      value: 'does-not-exist.injtest.example'
+      value: 'does-not-exist.injtest.example',
     });
     expect(res.status).toBe(400);
   });
@@ -313,49 +342,57 @@ describe('C2/H2: DNS record config injection', () => {
     const first = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
       name: 'dupe-cname',
       type: 'CNAME',
-      value: 'target-host.injtest.example'
+      value: 'target-host.injtest.example',
     });
     expect(first.status).toBe(201);
 
     const second = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
       name: 'dupe-cname',
       type: 'CNAME',
-      value: 'target-host.injtest.example'
+      value: 'target-host.injtest.example',
     });
     expect(second.status).toBe(409);
   });
 
   it('accepts a normal PTR record (regression guard, sanitizer is not over-strict)', async () => {
     const res = await request(app).post(`/api/dns/zones/${revZone.id}/records`).send({
-      name: '7', type: 'PTR', value: 'clean.injtest.example'
+      name: '7',
+      type: 'PTR',
+      value: 'clean.injtest.example',
     });
     expect(res.status).toBe(201);
   });
 
   it('refuses manual edits and deletion of generated PTR placeholders', async () => {
     const db = getDb();
-    const recordId = db.prepare(`
+    const recordId = db
+      .prepare(
+        `
       INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
       VALUES (?, '8', 'PTR', '10.88.99.8', 'placeholder', 1)
-    `).run(revZone.id).lastInsertRowid;
+    `,
+      )
+      .run(revZone.id).lastInsertRowid;
 
     const edit = await request(app)
       .put(`/api/dns/zones/${revZone.id}/records/${recordId}`)
       .send({ value: 'replacement.injtest.example' });
-    const del = await request(app)
-      .delete(`/api/dns/zones/${revZone.id}/records/${recordId}`);
+    const del = await request(app).delete(`/api/dns/zones/${revZone.id}/records/${recordId}`);
 
     expect(edit.status).toBe(403);
     expect(edit.body.error).toMatch(/assign the hostname through DNS or DHCP/i);
     expect(del.status).toBe(403);
     expect(del.body.error).toMatch(/disable managed reverse DNS/i);
-    expect(db.prepare('SELECT value FROM dns_records WHERE id = ?').get(recordId))
-      .toEqual({ value: '10.88.99.8' });
+    expect(db.prepare('SELECT value FROM dns_records WHERE id = ?').get(recordId)).toEqual({
+      value: '10.88.99.8',
+    });
   });
 
   it('accepts a normal TXT record', async () => {
     const res = await request(app).post(`/api/dns/zones/${fwdZone.id}/records`).send({
-      name: 'spf', type: 'TXT', value: 'v=spf1 include:_spf.example.com ~all'
+      name: 'spf',
+      type: 'TXT',
+      value: 'v=spf1 include:_spf.example.com ~all',
     });
     expect(res.status).toBe(201);
   });
@@ -371,24 +408,32 @@ describe('M9: PTR cross-zone conflict refuses silent overwrite', () => {
 
   beforeAll(async () => {
     // A fresh reverse zone for this test's IP range so prior tests don't interfere.
-    const reverse = await request(app).post('/api/dns/zones').send({ name: '77.66.10.in-addr.arpa', type: 'reverse' });
+    const reverse = await request(app)
+      .post('/api/dns/zones')
+      .send({ name: '77.66.10.in-addr.arpa', type: 'reverse' });
     reverseZone = reverse.body;
     await request(app).post('/api/dns/zones').send({ name: 'alpha.example', type: 'forward' });
-    const b = await request(app).post('/api/dns/zones').send({ name: 'beta.example', type: 'forward' });
+    const b = await request(app)
+      .post('/api/dns/zones')
+      .send({ name: 'beta.example', type: 'forward' });
     zoneB = b.body;
 
     // Seed a pre-existing PTR pointing at another forward zone. Duplicate A
     // hostnames for one IP are now rejected before PTR sync, so this keeps
     // the PTR hijack guard covered without relying on a second A record.
     const ptr = await request(app).post(`/api/dns/zones/${reverseZone.id}/records`).send({
-      name: '50', type: 'PTR', value: 'host1.alpha.example'
+      name: '50',
+      type: 'PTR',
+      value: 'host1.alpha.example',
     });
     expect(ptr.status).toBe(201);
   });
 
   it('409 when a second forward zone tries to rewrite the PTR', async () => {
     const res = await request(app).post(`/api/dns/zones/${zoneB.id}/records`).send({
-      name: 'host2', type: 'A', value: '10.66.77.50'
+      name: 'host2',
+      type: 'A',
+      value: '10.66.77.50',
     });
     expect(res.status).toBe(409);
     expect(res.body.ptr_conflict).toBeDefined();
@@ -396,7 +441,10 @@ describe('M9: PTR cross-zone conflict refuses silent overwrite', () => {
 
   it('force_ptr:true overrides the conflict', async () => {
     const res = await request(app).post(`/api/dns/zones/${zoneB.id}/records`).send({
-      name: 'host2', type: 'A', value: '10.66.77.50', force_ptr: true
+      name: 'host2',
+      type: 'A',
+      value: '10.66.77.50',
+      force_ptr: true,
     });
     expect(res.status).toBe(201);
   });
@@ -405,36 +453,47 @@ describe('M9: PTR cross-zone conflict refuses silent overwrite', () => {
 describe('managed PTR projection follows forward-zone state', () => {
   it('demotes to a placeholder on disable and restores the DNS name on re-enable', async () => {
     const db = getDb();
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO subnets
         (cidr, name, prefix_length, network_address, broadcast_address,
          total_addresses, status, depth, domain_name, has_reverse_dns)
       VALUES ('10.65.44.0/30', 'zone toggle', 30, '10.65.44.0',
               '10.65.44.3', 4, 'allocated', 0, 'toggle.example', 1)
-    `).run();
+    `,
+    ).run();
     const reverse = await request(app).post('/api/dns/zones').send({
-      name: '44.65.10.in-addr.arpa', type: 'reverse'
+      name: '44.65.10.in-addr.arpa',
+      type: 'reverse',
     });
     const forward = await request(app).post('/api/dns/zones').send({
-      name: 'toggle.example', type: 'forward'
+      name: 'toggle.example',
+      type: 'forward',
     });
     const created = await request(app)
       .post(`/api/dns/zones/${forward.body.id}/records`)
       .send({ name: 'host', type: 'A', value: '10.65.44.1' });
     expect(created.status).toBe(201);
 
-    const ptr = () => db.prepare(`
+    const ptr = () =>
+      db
+        .prepare(
+          `
       SELECT value, source FROM dns_records
       WHERE zone_id = ? AND type = 'PTR' AND name = '1'
-    `).get(reverse.body.id);
+    `,
+        )
+        .get(reverse.body.id);
     expect(ptr()).toEqual({ value: 'host.toggle.example', source: 'dns' });
 
-    expect((await request(app).put(`/api/dns/zones/${forward.body.id}`).send({ enabled: false })).status)
-      .toBe(200);
+    expect(
+      (await request(app).put(`/api/dns/zones/${forward.body.id}`).send({ enabled: false })).status,
+    ).toBe(200);
     expect(ptr()).toEqual({ value: '10.65.44.1', source: 'placeholder' });
 
-    expect((await request(app).put(`/api/dns/zones/${forward.body.id}`).send({ enabled: true })).status)
-      .toBe(200);
+    expect(
+      (await request(app).put(`/api/dns/zones/${forward.body.id}`).send({ enabled: true })).status,
+    ).toBe(200);
     expect(ptr()).toEqual({ value: 'host.toggle.example', source: 'dns' });
   });
 });
@@ -450,53 +509,67 @@ describe('C3: DHCP scope config injection', () => {
     // Create via the API so all NOT NULL columns get populated by the
     // handler (broadcast_address, etc.), then insert a range + scope.
     const sRes = await request(app).post('/api/subnets').send({
-      cidr: '10.44.0.0/24', name: 'dhcp-inj'
+      cidr: '10.44.0.0/24',
+      name: 'dhcp-inj',
     });
     expect(sRes.status).toBe(201);
     const subnetId = sRes.body.id;
 
     const db = getDb();
-    db.prepare("UPDATE subnets SET status = 'allocated', gateway_address = '10.44.0.1' WHERE id = ?")
-      .run(subnetId);
+    db.prepare(
+      "UPDATE subnets SET status = 'allocated', gateway_address = '10.44.0.1' WHERE id = ?",
+    ).run(subnetId);
     const rtId = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get().id;
-    const rres = db.prepare(`
+    const rres = db
+      .prepare(
+        `
       INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
       VALUES (?, ?, '10.44.0.10', '10.44.0.100')
-    `).run(subnetId, rtId);
+    `,
+      )
+      .run(subnetId, rtId);
     const rangeId = rres.lastInsertRowid;
 
     const res = await request(app).post('/api/dhcp/scopes').send({
-      range_id: rangeId, subnet_id: subnetId, lease_time: '24h'
+      range_id: rangeId,
+      subnet_id: subnetId,
+      lease_time: '24h',
     });
     expect(res.status).toBe(201);
     scopeId = res.body.id;
   });
 
   it('rejects scope option value containing LF', async () => {
-    const res = await request(app).put(`/api/dhcp/scopes/${scopeId}`).send({
-      options: [{ code: 15, value: 'evil.com\ndhcp-option=tag:scope1,6,6.6.6.6\n#' }]
-    });
+    const res = await request(app)
+      .put(`/api/dhcp/scopes/${scopeId}`)
+      .send({
+        options: [{ code: 15, value: 'evil.com\ndhcp-option=tag:scope1,6,6.6.6.6\n#' }],
+      });
     expect(res.status).toBe(400);
   });
 
   it('rejects scope domain_name containing LF', async () => {
     const res = await request(app).put(`/api/dhcp/scopes/${scopeId}`).send({
-      domain_name: 'ok.example\nshenanigans=1'
+      domain_name: 'ok.example\nshenanigans=1',
     });
     expect(res.status).toBe(400);
   });
 
   it('rejects scope option value containing =', async () => {
-    const res = await request(app).put(`/api/dhcp/scopes/${scopeId}`).send({
-      options: [{ code: 15, value: 'k=v' }]
-    });
+    const res = await request(app)
+      .put(`/api/dhcp/scopes/${scopeId}`)
+      .send({
+        options: [{ code: 15, value: 'k=v' }],
+      });
     expect(res.status).toBe(400);
   });
 
   it('accepts a clean option value', async () => {
-    const res = await request(app).put(`/api/dhcp/scopes/${scopeId}`).send({
-      options: [{ code: 15, value: 'clean.example' }]
-    });
+    const res = await request(app)
+      .put(`/api/dhcp/scopes/${scopeId}`)
+      .send({
+        options: [{ code: 15, value: 'clean.example' }],
+      });
     expect(res.status).toBe(200);
   });
 });
@@ -507,24 +580,32 @@ describe('C3: DHCP scope config injection', () => {
 
 describe('H5: /api/subnets/calculate child-count cap', () => {
   it('rejects /10 → /30 as over-limit', async () => {
-    const res = await request(app).post('/api/subnets/calculate').send({ cidr: '10.0.0.0/10', new_prefix: 30 });
+    const res = await request(app)
+      .post('/api/subnets/calculate')
+      .send({ cidr: '10.0.0.0/10', new_prefix: 30 });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/maximum|65536/i);
   });
 
   it('rejects /8 → /30 as over-limit', async () => {
-    const res = await request(app).post('/api/subnets/calculate').send({ cidr: '10.0.0.0/8', new_prefix: 30 });
+    const res = await request(app)
+      .post('/api/subnets/calculate')
+      .send({ cidr: '10.0.0.0/8', new_prefix: 30 });
     expect(res.status).toBe(400);
   });
 
   it('accepts /24 → /25 (2 children, inside the cap)', async () => {
-    const res = await request(app).post('/api/subnets/calculate').send({ cidr: '192.168.200.0/24', new_prefix: 25 });
+    const res = await request(app)
+      .post('/api/subnets/calculate')
+      .send({ cidr: '192.168.200.0/24', new_prefix: 25 });
     expect(res.status).toBe(200);
     expect(res.body.subnets).toHaveLength(2);
   });
 
   it('rejects non-integer new_prefix', async () => {
-    const res = await request(app).post('/api/subnets/calculate').send({ cidr: '10.0.0.0/24', new_prefix: 'abc' });
+    const res = await request(app)
+      .post('/api/subnets/calculate')
+      .send({ cidr: '10.0.0.0/24', new_prefix: 'abc' });
     expect(res.status).toBe(400);
   });
 });
@@ -550,7 +631,9 @@ describe('H6: malformed JSON body yields "Invalid JSON body" 400', () => {
 
 describe('H7: settings per-key schema rejects shape abuse', () => {
   it('rejects object value for dns_listen_port', async () => {
-    const res = await request(app).put('/api/settings/dns_listen_port').send({ value: { a: 1 } });
+    const res = await request(app)
+      .put('/api/settings/dns_listen_port')
+      .send({ value: { a: 1 } });
     expect(res.status).toBe(400);
   });
 
@@ -580,29 +663,39 @@ describe('H7: settings per-key schema rejects shape abuse', () => {
   });
 
   it('accepts UI scan interval values', async () => {
-    const res = await request(app).put('/api/settings/default_scan_interval').send({ value: '15m' });
+    const res = await request(app)
+      .put('/api/settings/default_scan_interval')
+      .send({ value: '15m' });
     expect(res.status).toBe(200);
     expect(res.body.value).toBe('15m');
   });
 
   it('normalizes off scan interval to empty string', async () => {
-    const res = await request(app).put('/api/settings/default_scan_interval').send({ value: 'off' });
+    const res = await request(app)
+      .put('/api/settings/default_scan_interval')
+      .send({ value: 'off' });
     expect(res.status).toBe(200);
     expect(res.body.value).toBe('');
   });
 
   it('accepts UI scan enabled values and stores 1/0 for scanner code', async () => {
-    const enabled = await request(app).put('/api/settings/default_scan_enabled').send({ value: '1' });
+    const enabled = await request(app)
+      .put('/api/settings/default_scan_enabled')
+      .send({ value: '1' });
     expect(enabled.status).toBe(200);
     expect(enabled.body.value).toBe('1');
 
-    const disabled = await request(app).put('/api/settings/default_scan_enabled').send({ value: false });
+    const disabled = await request(app)
+      .put('/api/settings/default_scan_enabled')
+      .send({ value: false });
     expect(disabled.status).toBe(200);
     expect(disabled.body.value).toBe('0');
   });
 
   it('rejects the obsolete configurable offline metadata retention period', async () => {
-    const res = await request(app).put('/api/settings/offline_metadata_retention_days').send({ value: '14' });
+    const res = await request(app)
+      .put('/api/settings/offline_metadata_retention_days')
+      .send({ value: '14' });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/cannot be modified/);
   });
@@ -620,7 +713,9 @@ describe('H3/H4: outbound URL guard rejects private IPs', () => {
   });
 
   it('rejects Pi-hole fetch with 169.254.169.254 (AWS/GCP metadata)', async () => {
-    const res = await request(app).post('/api/pihole/fetch').send({ url: 'http://169.254.169.254/latest/meta-data/' });
+    const res = await request(app)
+      .post('/api/pihole/fetch')
+      .send({ url: 'http://169.254.169.254/latest/meta-data/' });
     expect(res.status).toBe(400);
   });
 
@@ -664,21 +759,25 @@ describe('M6: JSON 404 fallback on unknown /api path', () => {
 describe('M8: display-string validator on subnet name/description', () => {
   it('rejects subnet name containing <', async () => {
     const res = await request(app).post('/api/subnets').send({
-      cidr: '10.55.0.0/24', name: '<script>alert(1)</script>'
+      cidr: '10.55.0.0/24',
+      name: '<script>alert(1)</script>',
     });
     expect(res.status).toBe(400);
   });
 
   it('rejects subnet description containing >', async () => {
     const res = await request(app).post('/api/subnets').send({
-      cidr: '10.55.1.0/24', name: 'ok', description: 'bad > text'
+      cidr: '10.55.1.0/24',
+      name: 'ok',
+      description: 'bad > text',
     });
     expect(res.status).toBe(400);
   });
 
   it('accepts a clean name', async () => {
     const res = await request(app).post('/api/subnets').send({
-      cidr: '10.55.2.0/24', name: 'Perfectly normal name 123 -_. '
+      cidr: '10.55.2.0/24',
+      name: 'Perfectly normal name 123 -_. ',
     });
     expect(res.status).toBe(201);
   });
@@ -692,25 +791,29 @@ describe('V1: validation gaps from route-specific write paths', () => {
   it('rejects Pi-hole import records with invalid DNS data before persistence', async () => {
     const zoneRes = await request(app).post('/api/dns/zones').send({
       name: 'pihole-validation.test',
-      type: 'forward'
+      type: 'forward',
     });
     expect(zoneRes.status).toBe(201);
 
-    const bad = await request(app).post('/api/pihole/import').send({
-      zoneId: zoneRes.body.id,
-      hosts: [{ hostname: 'bad\nhost.pihole-validation.test', ip: '10.0.0.10' }],
-      cnames: [],
-      dhcpHosts: []
-    });
+    const bad = await request(app)
+      .post('/api/pihole/import')
+      .send({
+        zoneId: zoneRes.body.id,
+        hosts: [{ hostname: 'bad\nhost.pihole-validation.test', ip: '10.0.0.10' }],
+        cnames: [],
+        dhcpHosts: [],
+      });
 
     expect(bad.status).toBe(400);
-    const rows = getDb().prepare('SELECT * FROM dns_records WHERE zone_id = ?').all(zoneRes.body.id);
+    const rows = getDb()
+      .prepare('SELECT * FROM dns_records WHERE zone_id = ?')
+      .all(zoneRes.body.id);
     expect(rows).toHaveLength(0);
   });
 
   it('rejects SOA values that could escape generated dnsmasq comments', async () => {
     const res = await request(app).put('/api/dns/soa-defaults').send({
-      soa_primary_ns: 'ns1.safe.test\nserver=/bad/1.2.3.4'
+      soa_primary_ns: 'ns1.safe.test\nserver=/bad/1.2.3.4',
     });
     expect(res.status).toBe(400);
   });
@@ -718,7 +821,7 @@ describe('V1: validation gaps from route-specific write paths', () => {
   it('rejects per-IP writes outside the owning subnet', async () => {
     const subnet = await request(app).post('/api/subnets').send({
       cidr: '10.56.0.0/24',
-      name: 'ip-write-validation'
+      name: 'ip-write-validation',
     });
     expect(subnet.status).toBe(201);
 
@@ -730,10 +833,12 @@ describe('V1: validation gaps from route-specific write paths', () => {
   });
 
   it('rejects malformed global DHCP option defaults', async () => {
-    const res = await request(app).put('/api/dhcp/options/defaults').send({
-      options: [{ code: 51, value: 'not-a-lease-time' }],
-      enabledDefaults: [51]
-    });
+    const res = await request(app)
+      .put('/api/dhcp/options/defaults')
+      .send({
+        options: [{ code: 51, value: 'not-a-lease-time' }],
+        enabledDefaults: [51],
+      });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/lease time/i);
   });

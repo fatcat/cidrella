@@ -34,7 +34,9 @@ function parseJwtExp(token) {
     const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
     const { exp } = JSON.parse(json);
     return exp ? exp * 1000 : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 const sessionExpiresAt = computed(() => parseJwtExp(auth.token));
@@ -52,7 +54,7 @@ const sessionText = computed(() => {
 
 const sessionExpiringSoon = computed(() => {
   if (!sessionExpiresAt.value) return false;
-  return (sessionExpiresAt.value - now.value) < 120_000; // < 2 min
+  return sessionExpiresAt.value - now.value < 120_000; // < 2 min
 });
 
 const lastSyncText = computed(() => {
@@ -76,13 +78,17 @@ async function fetchVersion() {
     const res = await api.get('/health/system');
     version.value = res.data?.version || null;
     lastSync.value = Date.now();
-  } catch { /* keep previous value */ }
+  } catch {
+    /* keep previous value */
+  }
 }
 
 let tick, poll;
 onMounted(() => {
   fetchVersion();
-  tick = setInterval(() => { now.value = Date.now(); }, 1000);
+  tick = setInterval(() => {
+    now.value = Date.now();
+  }, 1000);
   poll = setInterval(fetchVersion, 60_000);
 });
 onUnmounted(() => {
@@ -116,18 +122,25 @@ onUnmounted(() => {
   letter-spacing: 0.08em;
 }
 .foot-dot {
-  width: 6px; height: 6px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
 }
-.env-prod { color: var(--p-primary-color); }
-.env-dev  { color: var(--p-orange-500); }
+.env-prod {
+  color: var(--p-primary-color);
+}
+.env-dev {
+  color: var(--p-orange-500);
+}
 .foot-item {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   white-space: nowrap;
 }
-.foot-push { flex: 1; }
+.foot-push {
+  flex: 1;
+}
 .session-amber {
   color: var(--p-orange-500);
   font-weight: 600;

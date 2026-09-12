@@ -23,30 +23,30 @@ function ipInCidr(ip, cidr) {
   const prefix = parseInt(prefixStr, 10);
   const ipLong = ipToLong(ip);
   const baseLong = ipToLong(base);
-  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
+  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
   return (ipLong & mask) === (baseLong & mask);
 }
 
 function ipToLong(ip) {
   const p = ip.split('.').map(Number);
-  return (((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0);
+  return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
 }
 
 const BLOCKED_IPV4_RANGES = [
-  '0.0.0.0/8',        // "this network"
-  '10.0.0.0/8',       // RFC1918
-  '100.64.0.0/10',    // CGNAT (RFC6598)
-  '127.0.0.0/8',      // loopback
-  '169.254.0.0/16',   // link-local + AWS/GCP metadata (169.254.169.254)
-  '172.16.0.0/12',    // RFC1918
-  '192.0.0.0/24',     // IETF protocol assignments
-  '192.0.2.0/24',     // TEST-NET-1
-  '192.168.0.0/16',   // RFC1918
-  '198.18.0.0/15',    // benchmarking
-  '198.51.100.0/24',  // TEST-NET-2
-  '203.0.113.0/24',   // TEST-NET-3
-  '224.0.0.0/4',      // multicast
-  '240.0.0.0/4',      // reserved (includes 255.255.255.255 broadcast)
+  '0.0.0.0/8', // "this network"
+  '10.0.0.0/8', // RFC1918
+  '100.64.0.0/10', // CGNAT (RFC6598)
+  '127.0.0.0/8', // loopback
+  '169.254.0.0/16', // link-local + AWS/GCP metadata (169.254.169.254)
+  '172.16.0.0/12', // RFC1918
+  '192.0.0.0/24', // IETF protocol assignments
+  '192.0.2.0/24', // TEST-NET-1
+  '192.168.0.0/16', // RFC1918
+  '198.18.0.0/15', // benchmarking
+  '198.51.100.0/24', // TEST-NET-2
+  '203.0.113.0/24', // TEST-NET-3
+  '224.0.0.0/4', // multicast
+  '240.0.0.0/4', // reserved (includes 255.255.255.255 broadcast)
 ];
 
 /**
@@ -56,7 +56,7 @@ const BLOCKED_IPV4_RANGES = [
  */
 export function isBlockedIpv4(ip) {
   if (net.isIP(ip) !== 4) return false; // not a v4 literal, caller validates format separately
-  return BLOCKED_IPV4_RANGES.some(range => ipInCidr(ip, range));
+  return BLOCKED_IPV4_RANGES.some((range) => ipInCidr(ip, range));
 }
 
 /**
@@ -113,26 +113,29 @@ export async function validateOutboundUrl(rawUrl) {
  * validated once, then the socket connects to that exact IP. Redirects are not
  * followed; callers can validate a new Location explicitly if needed later.
  */
-export async function requestPinnedOutboundUrl(rawUrl, {
-  method = 'GET',
-  body = null,
-  headers = {},
-  timeout = 5000,
-  maxBytes = 10 * 1024 * 1024,
-} = {}) {
-  const check = rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
-    ? rawUrl
-    : await validateOutboundUrl(rawUrl);
+export async function requestPinnedOutboundUrl(
+  rawUrl,
+  { method = 'GET', body = null, headers = {}, timeout = 5000, maxBytes = 10 * 1024 * 1024 } = {},
+) {
+  const check =
+    rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
+      ? rawUrl
+      : await validateOutboundUrl(rawUrl);
   if (!check.ok) return { ok: false, error: check.reason };
 
   const parsed = new URL(check.url);
-  const data = body == null
-    ? null
-    : Buffer.isBuffer(body) || typeof body === 'string'
-      ? body
-      : JSON.stringify(body);
+  const data =
+    body == null
+      ? null
+      : Buffer.isBuffer(body) || typeof body === 'string'
+        ? body
+        : JSON.stringify(body);
   const requestHeaders = { ...headers, Host: parsed.host };
-  if (data != null && requestHeaders['Content-Length'] == null && requestHeaders['content-length'] == null) {
+  if (
+    data != null &&
+    requestHeaders['Content-Length'] == null &&
+    requestHeaders['content-length'] == null
+  ) {
     requestHeaders['Content-Length'] = Buffer.byteLength(data);
   }
 
@@ -178,7 +181,10 @@ export async function requestPinnedOutboundUrl(rawUrl, {
         });
       });
       req.on('error', (err) => resolve({ ok: false, error: err.message }));
-      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Connection timed out' }); });
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ ok: false, error: 'Connection timed out' });
+      });
       if (data != null) req.write(data);
       req.end();
     } catch (err) {
@@ -231,26 +237,31 @@ function byteCap(limit, stage) {
  *     operator-editable, which makes a zip bomb a real input
  * A Content-Length over the cap is rejected before any body is read.
  */
-export async function openPinnedOutboundStream(rawUrl, {
-  headers = {},
-  timeout = 5000,
-  maxBytes = 10 * 1024 * 1024,
-  acceptGzip = true,
-} = {}) {
-  const check = rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
-    ? rawUrl
-    : await validateOutboundUrl(rawUrl);
+export async function openPinnedOutboundStream(
+  rawUrl,
+  { headers = {}, timeout = 5000, maxBytes = 10 * 1024 * 1024, acceptGzip = true } = {},
+) {
+  const check =
+    rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
+      ? rawUrl
+      : await validateOutboundUrl(rawUrl);
   if (!check.ok) return { ok: false, error: check.reason };
 
   const parsed = new URL(check.url);
   const requestHeaders = { ...headers, Host: parsed.host };
-  const hasAcceptEncoding = Object.keys(requestHeaders)
-    .some(h => h.toLowerCase() === 'accept-encoding');
+  const hasAcceptEncoding = Object.keys(requestHeaders).some(
+    (h) => h.toLowerCase() === 'accept-encoding',
+  );
   if (acceptGzip && !hasAcceptEncoding) requestHeaders['Accept-Encoding'] = 'gzip';
 
   return new Promise((resolve) => {
     let settled = false;
-    const settle = (value) => { if (!settled) { settled = true; resolve(value); } };
+    const settle = (value) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
 
     const mod = parsed.protocol === 'https:' ? https : http;
     const reqOpts = {
@@ -307,7 +318,10 @@ export async function openPinnedOutboundStream(rawUrl, {
       });
 
       req.on('error', (err) => settle({ ok: false, error: err.message }));
-      req.on('timeout', () => { req.destroy(); settle({ ok: false, error: 'Connection timed out' }); });
+      req.on('timeout', () => {
+        req.destroy();
+        settle({ ok: false, error: 'Connection timed out' });
+      });
       req.end();
     } catch (err) {
       settle({ ok: false, error: err.message });

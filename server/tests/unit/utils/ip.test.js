@@ -1,10 +1,23 @@
 import { describe, it, expect } from 'vitest';
 import {
-  ipToLong, longToIp, parseCidr, isIpInSubnet, isIpInRange,
-  normalizeCidr, rangesOverlap, cidrsOverlap, isSubnetOf,
-  isValidIpv4, isValidCidr, canMergeCidrs, calculateSubnets,
-  subtractCidr, applyNameTemplate, validateSupernet, ipRange,
-  isGloballyRoutableCidr
+  ipToLong,
+  longToIp,
+  parseCidr,
+  isIpInSubnet,
+  isIpInRange,
+  normalizeCidr,
+  rangesOverlap,
+  cidrsOverlap,
+  isSubnetOf,
+  isValidIpv4,
+  isValidCidr,
+  canMergeCidrs,
+  calculateSubnets,
+  subtractCidr,
+  applyNameTemplate,
+  validateSupernet,
+  ipRange,
+  isGloballyRoutableCidr,
 } from '../../../src/utils/ip.js';
 
 // ── ipToLong / longToIp ──────────────────────────────────
@@ -176,19 +189,27 @@ describe('normalizeCidr', () => {
 
 describe('rangesOverlap', () => {
   it('detects overlapping ranges', () => {
-    expect(rangesOverlap('192.168.1.10', '192.168.1.50', '192.168.1.30', '192.168.1.80')).toBe(true);
+    expect(rangesOverlap('192.168.1.10', '192.168.1.50', '192.168.1.30', '192.168.1.80')).toBe(
+      true,
+    );
   });
 
   it('detects contained range', () => {
-    expect(rangesOverlap('192.168.1.10', '192.168.1.100', '192.168.1.30', '192.168.1.50')).toBe(true);
+    expect(rangesOverlap('192.168.1.10', '192.168.1.100', '192.168.1.30', '192.168.1.50')).toBe(
+      true,
+    );
   });
 
   it('detects exact boundary overlap', () => {
-    expect(rangesOverlap('192.168.1.10', '192.168.1.50', '192.168.1.50', '192.168.1.80')).toBe(true);
+    expect(rangesOverlap('192.168.1.10', '192.168.1.50', '192.168.1.50', '192.168.1.80')).toBe(
+      true,
+    );
   });
 
   it('detects non-overlapping ranges', () => {
-    expect(rangesOverlap('192.168.1.10', '192.168.1.50', '192.168.1.51', '192.168.1.80')).toBe(false);
+    expect(rangesOverlap('192.168.1.10', '192.168.1.50', '192.168.1.51', '192.168.1.80')).toBe(
+      false,
+    );
   });
 });
 
@@ -258,12 +279,12 @@ describe('isValidIpv4', () => {
   });
 
   it('rejects the malformed forms the deleted isValidIp accepted', () => {
-    expect(isValidIpv4('1.2.3.')).toBe(false);        // was read as 1.2.3.0
-    expect(isValidIpv4('1.2.3.0x0a')).toBe(false);    // hex octet
-    expect(isValidIpv4('1.2.3.4e0')).toBe(false);     // exponent octet
-    expect(isValidIpv4('  10.0.0.1')).toBe(false);    // leading whitespace
-    expect(isValidIpv4('10.0.0.1\n')).toBe(false);    // trailing newline
-    expect(isValidIpv4('1.2.3.4.5')).toBe(false);     // five octets
+    expect(isValidIpv4('1.2.3.')).toBe(false); // was read as 1.2.3.0
+    expect(isValidIpv4('1.2.3.0x0a')).toBe(false); // hex octet
+    expect(isValidIpv4('1.2.3.4e0')).toBe(false); // exponent octet
+    expect(isValidIpv4('  10.0.0.1')).toBe(false); // leading whitespace
+    expect(isValidIpv4('10.0.0.1\n')).toBe(false); // trailing newline
+    expect(isValidIpv4('1.2.3.4.5')).toBe(false); // five octets
   });
 
   it('rejects non-string input without throwing', () => {
@@ -318,15 +339,16 @@ describe('calculateSubnets', () => {
   });
 
   it('rejects excessive division before enumerating addresses', () => {
-    expect(() => calculateSubnets('0.0.0.0/0', 32, 256))
-      .toThrow('Cannot divide into more than 256 subnets');
+    expect(() => calculateSubnets('0.0.0.0/0', 32, 256)).toThrow(
+      'Cannot divide into more than 256 subnets',
+    );
   });
 
   it('splits safely at the upper IPv4 boundary', () => {
     const results = calculateSubnets('255.255.255.0/24', 25);
-    expect(results.map(result => `${result.network}/${result.prefix}`)).toEqual([
+    expect(results.map((result) => `${result.network}/${result.prefix}`)).toEqual([
       '255.255.255.0/25',
-      '255.255.255.128/25'
+      '255.255.255.128/25',
     ]);
     expect(results.at(-1).broadcast).toBe('255.255.255.255');
   });
@@ -343,28 +365,32 @@ describe('canMergeCidrs', () => {
 
   it('merges four contiguous /26s into /24', () => {
     const result = canMergeCidrs([
-      '192.168.1.0/26', '192.168.1.64/26',
-      '192.168.1.128/26', '192.168.1.192/26'
+      '192.168.1.0/26',
+      '192.168.1.64/26',
+      '192.168.1.128/26',
+      '192.168.1.192/26',
     ]);
     expect(result.valid).toBe(true);
     expect(result.merged_cidr).toBe('192.168.1.0/24');
   });
 
   it('merges an unequal exact cover produced by carving', () => {
-    const result = canMergeCidrs([
-      '192.168.1.0/26', '192.168.1.64/26', '192.168.1.128/25'
-    ]);
+    const result = canMergeCidrs(['192.168.1.0/26', '192.168.1.64/26', '192.168.1.128/25']);
     expect(result).toMatchObject({ valid: true, merged_cidr: '192.168.1.0/24' });
   });
 
   it('merges the two halves of the full IPv4 address space', () => {
-    expect(canMergeCidrs(['0.0.0.0/1', '128.0.0.0/1']))
-      .toMatchObject({ valid: true, merged_cidr: '0.0.0.0/0' });
+    expect(canMergeCidrs(['0.0.0.0/1', '128.0.0.0/1'])).toMatchObject({
+      valid: true,
+      merged_cidr: '0.0.0.0/0',
+    });
   });
 
   it('merges at the upper IPv4 boundary', () => {
-    expect(canMergeCidrs(['255.255.255.0/25', '255.255.255.128/25']))
-      .toMatchObject({ valid: true, merged_cidr: '255.255.255.0/24' });
+    expect(canMergeCidrs(['255.255.255.0/25', '255.255.255.128/25'])).toMatchObject({
+      valid: true,
+      merged_cidr: '255.255.255.0/24',
+    });
   });
 
   it('rejects single subnet', () => {
@@ -376,10 +402,12 @@ describe('canMergeCidrs', () => {
   });
 
   it('rejects duplicate and overlapping inputs explicitly', () => {
-    expect(canMergeCidrs(['192.168.1.0/25', '192.168.1.0/25']).error)
-      .toBe('Subnets must not overlap');
-    expect(canMergeCidrs(['192.168.1.0/24', '192.168.1.128/25']).error)
-      .toBe('Subnets must not overlap');
+    expect(canMergeCidrs(['192.168.1.0/25', '192.168.1.0/25']).error).toBe(
+      'Subnets must not overlap',
+    );
+    expect(canMergeCidrs(['192.168.1.0/24', '192.168.1.128/25']).error).toBe(
+      'Subnets must not overlap',
+    );
   });
 
   it('rejects different prefix lengths', () => {
@@ -387,9 +415,9 @@ describe('canMergeCidrs', () => {
   });
 
   it('rejects non-power-of-2 count', () => {
-    expect(canMergeCidrs([
-      '192.168.1.0/26', '192.168.1.64/26', '192.168.1.128/26'
-    ]).valid).toBe(false);
+    expect(canMergeCidrs(['192.168.1.0/26', '192.168.1.64/26', '192.168.1.128/26']).valid).toBe(
+      false,
+    );
   });
 
   it('rejects misaligned subnets', () => {
@@ -463,8 +491,7 @@ describe('applyNameTemplate', () => {
   });
 
   it('replaces bitmask variable', () => {
-    expect(applyNameTemplate('Net-%1.%2.%3.%4/%bitmask', '10.1.2.0/24'))
-      .toBe('Net-10.1.2.0/24');
+    expect(applyNameTemplate('Net-%1.%2.%3.%4/%bitmask', '10.1.2.0/24')).toBe('Net-10.1.2.0/24');
   });
 });
 

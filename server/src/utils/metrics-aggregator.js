@@ -9,7 +9,12 @@
 import fs from 'fs';
 import path from 'path';
 import { readLogTail } from './log-reader.js';
-import { getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics, getAndResetBlocklistHits } from './dns-proxy.js';
+import {
+  getBlockedDelta,
+  getAndResetCountryHits,
+  getAndResetPerformanceMetrics,
+  getAndResetBlocklistHits,
+} from './dns-proxy.js';
 import { DATA_DIR } from '../config/defaults.js';
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
@@ -89,19 +94,20 @@ function aggregate() {
     const now = Date.now();
     const cpu = process.cpuUsage(lastCpuUsage);
     const wallMs = now - lastCpuTs;
-    const cpuPercent = (wallMs > 0 && cpu)
-      ? Math.round(((cpu.user + cpu.system) / 1000) / wallMs * 100 * 100) / 100
-      : 0;
+    const cpuPercent =
+      wallMs > 0 && cpu
+        ? Math.round(((cpu.user + cpu.system) / 1000 / wallMs) * 100 * 100) / 100
+        : 0;
     lastCpuUsage = process.cpuUsage();
     lastCpuTs = now;
 
     // Process-level memory
     const mem = process.memoryUsage();
-    const rssMb = Math.round(mem.rss / 1048576 * 10) / 10;
-    const heapMb = Math.round(mem.heapUsed / 1048576 * 10) / 10;
+    const rssMb = Math.round((mem.rss / 1048576) * 10) / 10;
+    const heapMb = Math.round((mem.heapUsed / 1048576) * 10) / 10;
 
     // Record startup_ms only once
-    const startupMs = (!startupRecorded && perf.startupMs != null) ? perf.startupMs : null;
+    const startupMs = !startupRecorded && perf.startupMs != null ? perf.startupMs : null;
     if (perf.startupMs != null) startupRecorded = true;
 
     // Insert all metrics in a single transaction
@@ -114,11 +120,20 @@ function aggregate() {
         insertGeoipHit.run(ts, country, count);
       }
       insertProxyPerf.run(
-        ts, perf.queryCount,
-        perf.latencyMin, perf.latencyAvg, perf.latencyMax, perf.latencyP95,
-        perf.cacheHits, perf.cacheMisses,
-        perf.timeouts, perf.pendingQueries,
-        cpuPercent, rssMb, heapMb, startupMs
+        ts,
+        perf.queryCount,
+        perf.latencyMin,
+        perf.latencyAvg,
+        perf.latencyMax,
+        perf.latencyP95,
+        perf.cacheHits,
+        perf.cacheMisses,
+        perf.timeouts,
+        perf.pendingQueries,
+        cpuPercent,
+        rssMb,
+        heapMb,
+        startupMs,
       );
     });
     insertAll();
@@ -145,20 +160,20 @@ export function startMetricsAggregator(database) {
 
   // Prepare statements
   insertMetrics = db.prepare(
-    'INSERT INTO metrics (ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO metrics (ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?)',
   );
   insertBlocklistHit = db.prepare(
-    'INSERT INTO metrics_blocklist_hits (ts, category, count) VALUES (?, ?, ?)'
+    'INSERT INTO metrics_blocklist_hits (ts, category, count) VALUES (?, ?, ?)',
   );
   insertGeoipHit = db.prepare(
-    'INSERT INTO metrics_geoip_hits (ts, country, count) VALUES (?, ?, ?)'
+    'INSERT INTO metrics_geoip_hits (ts, country, count) VALUES (?, ?, ?)',
   );
   insertProxyPerf = db.prepare(
     `INSERT INTO metrics_proxy_perf
      (ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
       cache_hits, cache_misses, timeouts, pending_queries,
       cpu_percent, rss_mb, heap_mb, startup_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   deleteOldMetrics = db.prepare('DELETE FROM metrics WHERE ts < ?');
   deleteOldBlocklistHits = db.prepare('DELETE FROM metrics_blocklist_hits WHERE ts < ?');
@@ -168,7 +183,9 @@ export function startMetricsAggregator(database) {
   // Start from end of log file (don't process historical lines)
   try {
     logOffset = fs.statSync(LOG_FILE).size;
-  } catch { /* file may not exist yet */ }
+  } catch {
+    /* file may not exist yet */
+  }
 
   timer = setInterval(aggregate, AGGREGATE_INTERVAL_MS);
   console.log('[metrics-aggregator] Started (interval: 60s, retention: 30d)');

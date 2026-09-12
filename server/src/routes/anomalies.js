@@ -30,37 +30,48 @@ router.get('/active', requirePerm('analytics:read'), (req, res) => {
   sql += ` ORDER BY scored_at DESC LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
-  const rows = db.prepare(sql).all(...params).map(parseScoreRow);
+  const rows = db
+    .prepare(sql)
+    .all(...params)
+    .map(parseScoreRow);
   res.json(enrichWithHostnames(rows));
 });
 
 // GET /api/anomalies/summary: dashboard summary
 router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
-  const acknowledgedThroughId = Math.max(0, parseInt(getSetting('anomaly_acknowledged_score_id'), 10) || 0);
+  const acknowledgedThroughId = Math.max(
+    0,
+    parseInt(getSetting('anomaly_acknowledged_score_id'), 10) || 0,
+  );
 
-  const active = db.prepare(
-    `SELECT severity, COUNT(*) as count FROM anomaly_scores
+  const active = db
+    .prepare(
+      `SELECT severity, COUNT(*) as count FROM anomaly_scores
      WHERE is_anomaly = 1 AND resolved = 0
-     GROUP BY severity`
-  ).all();
+     GROUP BY severity`,
+    )
+    .all();
 
   const totalActive = active.reduce((sum, r) => sum + r.count, 0);
-  const unacknowledgedActive = db.prepare(
-    `SELECT COUNT(*) as count FROM anomaly_scores
-     WHERE is_anomaly = 1 AND resolved = 0 AND id > ?`
-  ).get(acknowledgedThroughId)?.count || 0;
+  const unacknowledgedActive =
+    db
+      .prepare(
+        `SELECT COUNT(*) as count FROM anomaly_scores
+     WHERE is_anomaly = 1 AND resolved = 0 AND id > ?`,
+      )
+      .get(acknowledgedThroughId)?.count || 0;
   const bySeverity = {};
   for (const r of active) {
     bySeverity[r.severity || 'unknown'] = r.count;
   }
 
-  const clientsMonitored = db.prepare(
-    `SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'active'`
-  ).get()?.count || 0;
-  const clientsLearning = db.prepare(
-    `SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'learning'`
-  ).get()?.count || 0;
+  const clientsMonitored =
+    db.prepare(`SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'active'`).get()
+      ?.count || 0;
+  const clientsLearning =
+    db.prepare(`SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'learning'`).get()
+      ?.count || 0;
 
   const enabled = getSetting('anomaly_detection_enabled') === 'true';
 
@@ -78,7 +89,9 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   try {
     const raw = getSetting('anomaly_daemon_status');
     if (raw) daemon = JSON.parse(raw);
-  } catch { /* ignore parse errors */ }
+  } catch {
+    /* ignore parse errors */
+  }
 
   if (daemon) {
     if (!enabled) {
@@ -89,8 +102,8 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
       // or pre-fix status snapshots.
       const heartbeats = [daemon.last_seen, daemon.last_score, daemon.last_train]
         .filter(Boolean)
-        .map(s => Date.parse(s))
-        .filter(n => Number.isFinite(n));
+        .map((s) => Date.parse(s))
+        .filter((n) => Number.isFinite(n));
 
       if (heartbeats.length === 0) {
         daemon.stale = true;
@@ -103,9 +116,8 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
         // for the "ok" window so a misconfigured interval=1min doesn't flap).
         const scoringMin = parseInt(getSetting('anomaly_scoring_interval_min'), 10);
         const defaultScoringMin = parseInt(DEFAULTS.anomaly_scoring_interval_min, 10) || 15;
-        const scoringSec = Number.isFinite(scoringMin) && scoringMin > 0
-          ? scoringMin * 60
-          : defaultScoringMin * 60;
+        const scoringSec =
+          Number.isFinite(scoringMin) && scoringMin > 0 ? scoringMin * 60 : defaultScoringMin * 60;
         const thresholdSec = Math.max(300, scoringSec * 2);
 
         daemon.heartbeat_age_sec = ageSec;
@@ -133,9 +145,9 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
 // seen so older rows never contribute to the notification count again.
 router.post('/acknowledge', requirePerm('analytics:write'), (req, res) => {
   const db = getDb();
-  const maxId = db.prepare(
-    `SELECT COALESCE(MAX(id), 0) as id FROM anomaly_scores WHERE is_anomaly = 1`
-  ).get()?.id || 0;
+  const maxId =
+    db.prepare(`SELECT COALESCE(MAX(id), 0) as id FROM anomaly_scores WHERE is_anomaly = 1`).get()
+      ?.id || 0;
 
   Setting.upsertSetting(db, 'anomaly_acknowledged_score_id', String(maxId));
   audit(req.user.id, 'anomaly_counter_acknowledged', 'anomaly_scores', null, { through_id: maxId });
@@ -157,15 +169,20 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 30);
 
-  const events = db.prepare(
-    `SELECT * FROM anomaly_scores
+  const events = db
+    .prepare(
+      `SELECT * FROM anomaly_scores
      WHERE is_anomaly = 1 AND window_start >= datetime('now', '-' || ? || ' days')
-     ORDER BY client_ip, window_start`
-  ).all(days).map(parseScoreRow);
+     ORDER BY client_ip, window_start`,
+    )
+    .all(days)
+    .map(parseScoreRow);
 
-  const learning = db.prepare(
-    `SELECT identity, client_ip, status, training_rows, trained_at FROM anomaly_models WHERE status = 'learning'`
-  ).all();
+  const learning = db
+    .prepare(
+      `SELECT identity, client_ip, status, training_rows, trained_at FROM anomaly_models WHERE status = 'learning'`,
+    )
+    .all();
 
   res.json({
     events: enrichWithHostnames(events),
@@ -213,12 +230,14 @@ router.get('/client/:identity', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
 
-  const rows = db.prepare(
-    `SELECT * FROM anomaly_scores
+  const rows = db
+    .prepare(
+      `SELECT * FROM anomaly_scores
      WHERE identity = ?
      ORDER BY window_start DESC
-     LIMIT ?`
-  ).all(identity, limit);
+     LIMIT ?`,
+    )
+    .all(identity, limit);
   res.json(rows.map(parseScoreRow));
 });
 
@@ -230,9 +249,7 @@ router.get('/client/:identity/model', requirePerm('analytics:read'), (req, res) 
   }
 
   const db = getDb();
-  const row = db.prepare(
-    `SELECT * FROM anomaly_models WHERE identity = ?`
-  ).get(identity);
+  const row = db.prepare(`SELECT * FROM anomaly_models WHERE identity = ?`).get(identity);
   res.json(row || null);
 });
 
@@ -257,19 +274,25 @@ router.get('/client/:identity/evidence', requirePerm('analytics:read'), async (r
   const { window_start: windowStart } = req.query;
 
   const scored = windowStart
-    ? db.prepare(
-      `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
-         FROM anomaly_scores WHERE identity = ? AND window_start = ?`
-    ).get(identity, windowStart)
-    : db.prepare(
-      `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
+    ? db
+        .prepare(
+          `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
+         FROM anomaly_scores WHERE identity = ? AND window_start = ?`,
+        )
+        .get(identity, windowStart)
+    : db
+        .prepare(
+          `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
          FROM anomaly_scores WHERE identity = ? AND is_anomaly = 1
-        ORDER BY window_start DESC LIMIT 1`
-    ).get(identity);
+        ORDER BY window_start DESC LIMIT 1`,
+        )
+        .get(identity);
 
   if (!scored) {
     return res.status(404).json({
-      error: windowStart ? 'No scored window found for that identity and window_start' : 'No flagged window found for that identity'
+      error: windowStart
+        ? 'No scored window found for that identity and window_start'
+        : 'No flagged window found for that identity',
     });
   }
 
@@ -278,10 +301,13 @@ router.get('/client/:identity/evidence', requirePerm('analytics:read'), async (r
   // retention still has a score and no traffic left to show. Report that as a
   // distinct state: a pruned window and a client that was simply quiet both
   // return zero rows, and they mean opposite things to whoever is triaging.
-  const retentionDays = Math.max(1, Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7));
+  const retentionDays = Math.max(
+    1,
+    Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7),
+  );
   const windowEndMs = windowToUtcMs(scored.window_end);
   const withinRetention = Number.isFinite(windowEndMs)
-    ? (Date.now() - windowEndMs) < retentionDays * 86400000
+    ? Date.now() - windowEndMs < retentionDays * 86400000
     : true;
 
   const startTs = windowToDuckTimestamp(scored.window_start);
@@ -305,7 +331,12 @@ router.get('/client/:identity/evidence', requirePerm('analytics:read'), async (r
       window_within_retention: withinRetention,
       evidence_available: rows.length > 0,
       truncated: rows.length === limit,
-      summary: summary || { total_queries: 0, distinct_domains: 0, nxdomain_count: 0, blocked_count: 0 },
+      summary: summary || {
+        total_queries: 0,
+        distinct_domains: 0,
+        nxdomain_count: 0,
+        blocked_count: 0,
+      },
       rows,
     });
   } catch (err) {
@@ -382,7 +413,9 @@ router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
   Anomaly.deleteWhitelistEntry(db, id);
-  audit(req.user.id, 'anomaly_whitelist_remove', 'anomaly_whitelist', id, { client_ip: entry.client_ip });
+  audit(req.user.id, 'anomaly_whitelist_remove', 'anomaly_whitelist', id, {
+    client_ip: entry.client_ip,
+  });
   res.json({ ok: true });
 });
 
@@ -418,14 +451,24 @@ router.put('/settings', requireRole('admin'), (req, res) => {
       const val = String(req.body[key]);
 
       if (key === 'anomaly_detection_enabled' && !['true', 'false'].includes(val)) {
-        return res.status(400).json({ error: 'anomaly_detection_enabled must be a boolean (true or false)' });
+        return res
+          .status(400)
+          .json({ error: 'anomaly_detection_enabled must be a boolean (true or false)' });
       }
       if (key === 'anomaly_sensitivity' && !validSensitivities.includes(val)) {
-        return res.status(400).json({ error: `anomaly_sensitivity must be one of: ${validSensitivities.join(', ')}` });
+        return res
+          .status(400)
+          .json({ error: `anomaly_sensitivity must be one of: ${validSensitivities.join(', ')}` });
       }
 
-      if (['anomaly_scoring_interval_min', 'anomaly_training_interval_hours',
-           'anomaly_min_training_hours', 'anomaly_retention_days'].includes(key)) {
+      if (
+        [
+          'anomaly_scoring_interval_min',
+          'anomaly_training_interval_hours',
+          'anomaly_min_training_hours',
+          'anomaly_retention_days',
+        ].includes(key)
+      ) {
         const n = parseInt(val, 10);
         if (isNaN(n) || n < 1) {
           return res.status(400).json({ error: `${key} must be a positive integer` });

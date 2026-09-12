@@ -50,7 +50,7 @@ export function recordDnsQueryLiveness(db, ip, { createRogue = false, source = '
   const result = observePassiveActivity(db, subnet.id, ip, {
     mac: lookupArpMac(ip),
     source,
-    createRogue
+    createRogue,
   });
   lastPassiveWrite.set(ip, now);
   return result;

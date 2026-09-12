@@ -68,8 +68,19 @@ export const useRogueDhcpStore = defineStore('rogueDhcp', () => {
   }
 
   return {
-    status, events, authorized, loading,
-    fetchStatus, fetchEvents, probeNow, acknowledge, acknowledgeAll, clearEvent,
-    updateSettings, fetchAuthorized, addAuthorized, deleteAuthorized,
+    status,
+    events,
+    authorized,
+    loading,
+    fetchStatus,
+    fetchEvents,
+    probeNow,
+    acknowledge,
+    acknowledgeAll,
+    clearEvent,
+    updateSettings,
+    fetchAuthorized,
+    addAuthorized,
+    deleteAuthorized,
   };
 });

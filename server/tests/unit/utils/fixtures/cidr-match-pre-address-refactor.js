@@ -83,12 +83,19 @@ export function formatCidrEntry(entry) {
   for (let shift = 112n; shift >= 0n; shift -= 16n) {
     groups.push(((entry.network >> shift) & 0xffffn).toString(16));
   }
-  let bestStart = -1, bestLen = 0;
+  let bestStart = -1,
+    bestLen = 0;
   for (let i = 0; i < 8;) {
-    if (groups[i] !== '0') { i++; continue; }
+    if (groups[i] !== '0') {
+      i++;
+      continue;
+    }
     let j = i;
     while (j < 8 && groups[j] === '0') j++;
-    if (j - i > bestLen) { bestStart = i; bestLen = j - i; }
+    if (j - i > bestLen) {
+      bestStart = i;
+      bestLen = j - i;
+    }
     i = j;
   }
   let addr;

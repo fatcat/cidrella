@@ -5,7 +5,7 @@
       <i class="pi pi-folder" style="font-size: 0.9rem"></i>
       <span class="folder-name">{{ folder.name }}</span>
       <span v-if="folder.description" class="folder-desc">{{ folder.description }}</span>
-      <span style="flex:1"></span>
+      <span style="flex: 1"></span>
       <span class="folder-count">{{ totalCount }} networks</span>
     </div>
 
@@ -20,23 +20,28 @@
         <span class="col col-status">Status</span>
         <span class="col col-actions"></span>
       </div>
-      <div v-for="item in flatRows" :key="item.node.key"
-           class="table-row"
-           :class="{
-             'row-allocated': item.node.data.status === 'allocated',
-             'row-unallocated': item.node.data.status !== 'allocated',
-             'row-merge-selected': props.mergeSelectedIds.includes(item.node.data.id),
-           }"
-           :draggable="isDraggable(item.node)"
-           @dragstart="onDragStart($event, item.node)"
-           @click="onRowClick($event, item.node)"
-           @contextmenu.prevent="$emit('context-menu', $event, item.node)">
+      <div
+        v-for="item in flatRows"
+        :key="item.node.key"
+        class="table-row"
+        :class="{
+          'row-allocated': item.node.data.status === 'allocated',
+          'row-unallocated': item.node.data.status !== 'allocated',
+          'row-merge-selected': props.mergeSelectedIds.includes(item.node.data.id),
+        }"
+        :draggable="isDraggable(item.node)"
+        @dragstart="onDragStart($event, item.node)"
+        @click="onRowClick($event, item.node)"
+        @contextmenu.prevent="$emit('context-menu', $event, item.node)"
+      >
         <span class="col col-cidr">
-          <span :style="{ paddingLeft: (item.depth * 1.2) + 'rem' }" class="cidr-cell">
-            <i v-if="item.hasChildren"
-               class="pi expand-icon"
-               :class="expanded[item.node.key] ? 'pi-chevron-down' : 'pi-chevron-right'"
-               @click.stop="toggleExpand(item.node.key)"></i>
+          <span :style="{ paddingLeft: item.depth * 1.2 + 'rem' }" class="cidr-cell">
+            <i
+              v-if="item.hasChildren"
+              class="pi expand-icon"
+              :class="expanded[item.node.key] ? 'pi-chevron-down' : 'pi-chevron-right'"
+              @click.stop="toggleExpand(item.node.key)"
+            ></i>
             <span v-else class="expand-spacer"></span>
             <span class="cidr-text">{{ item.node.data.cidr }}</span>
           </span>
@@ -45,23 +50,42 @@
         <span class="col col-vlan">{{ item.node.data.vlan_id || EMPTY_CELL }}</span>
         <span class="col col-desc">{{ item.node.data.description || EMPTY_CELL }}</span>
         <span class="col col-scan">
-          <span v-if="item.node.data.status === 'allocated'" class="scan-badge" :class="scanClass(item.node)">{{ scanLabel(item.node) }}</span>
+          <span
+            v-if="item.node.data.status === 'allocated'"
+            class="scan-badge"
+            :class="scanClass(item.node)"
+            >{{ scanLabel(item.node) }}</span
+          >
           <span v-else>—</span>
         </span>
         <span class="col col-status">
-          <span class="status-badge" :class="statusClass(item.node)">{{ statusLabel(item.node) }}</span>
+          <span class="status-badge" :class="statusClass(item.node)">{{
+            statusLabel(item.node)
+          }}</span>
         </span>
         <span class="col col-actions" v-if="item.node.data.status === 'allocated'">
-          <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                  @click.stop="$emit('edit-subnet', item.node)" data-track="folder-net-edit" />
-          <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                  @click.stop="$emit('delete-subnet', item.node)" data-track="folder-net-delete" />
+          <Button
+            icon="pi pi-pencil"
+            severity="secondary"
+            text
+            rounded
+            size="small"
+            @click.stop="$emit('edit-subnet', item.node)"
+            data-track="folder-net-edit"
+          />
+          <Button
+            icon="pi pi-trash"
+            severity="danger"
+            text
+            rounded
+            size="small"
+            @click.stop="$emit('delete-subnet', item.node)"
+            data-track="folder-net-delete"
+          />
         </span>
         <span class="col col-actions" v-else></span>
       </div>
-      <div v-if="flatRows.length === 0" class="empty-state">
-        No networks in this folder.
-      </div>
+      <div v-if="flatRows.length === 0" class="empty-state">No networks in this folder.</div>
     </div>
   </div>
 </template>
@@ -77,22 +101,32 @@ const props = defineProps({
   mergeSelectedIds: { type: Array, default: () => [] },
 });
 
-const emit = defineEmits(['select-subnet', 'context-menu', 'merge-toggle', 'edit-subnet', 'delete-subnet']);
+const emit = defineEmits([
+  'select-subnet',
+  'context-menu',
+  'merge-toggle',
+  'edit-subnet',
+  'delete-subnet',
+]);
 const store = useSubnetStore();
 
 const expanded = ref({});
 
 // Auto-expand all root nodes on folder change
-watch(() => props.folder.id, () => {
-  const nodes = getNodes();
-  const autoExpand = {};
-  for (const n of nodes) {
-    if (n.children && n.children.length > 0) {
-      autoExpand[n.key] = true;
+watch(
+  () => props.folder.id,
+  () => {
+    const nodes = getNodes();
+    const autoExpand = {};
+    for (const n of nodes) {
+      if (n.children && n.children.length > 0) {
+        autoExpand[n.key] = true;
+      }
     }
-  }
-  expanded.value = autoExpand;
-}, { immediate: true });
+    expanded.value = autoExpand;
+  },
+  { immediate: true },
+);
 
 function getNodes() {
   if (!props.folder.subnets || props.folder.subnets.length === 0) return [];
@@ -252,7 +286,7 @@ function statusLabel(node) {
 .table-row.row-unallocated {
   opacity: 0.7;
 }
-.table-row.row-unallocated[draggable="true"] {
+.table-row.row-unallocated[draggable='true'] {
   cursor: grab;
 }
 .table-row.row-merge-selected {
@@ -265,13 +299,33 @@ function statusLabel(node) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.col-cidr { width: 14rem; }
-.col-name { flex: 1; }
-.col-vlan { width: 5rem; }
-.col-desc { flex: 1; }
-.col-scan { width: 5rem; }
-.col-status { width: 6rem; }
-.col-actions { width: 4.5rem; display: flex; gap: 0.15rem; flex-shrink: 0; justify-content: flex-end; overflow: visible; white-space: normal; }
+.col-cidr {
+  width: 14rem;
+}
+.col-name {
+  flex: 1;
+}
+.col-vlan {
+  width: 5rem;
+}
+.col-desc {
+  flex: 1;
+}
+.col-scan {
+  width: 5rem;
+}
+.col-status {
+  width: 6rem;
+}
+.col-actions {
+  width: 4.5rem;
+  display: flex;
+  gap: 0.15rem;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  overflow: visible;
+  white-space: normal;
+}
 
 .cidr-cell {
   display: inline-flex;

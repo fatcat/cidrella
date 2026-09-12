@@ -2,11 +2,13 @@ import { Router } from 'express';
 import { getDb, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
-import {
-  pruneLifecycleEvents
-} from '../services/ip-lifecycle-service.js';
+import { pruneLifecycleEvents } from '../services/ip-lifecycle-service.js';
 import * as Setting from '../models/setting.js';
-import { validateInterfaceConfig, validPortOrError, isIntInRangeCoercing } from '../utils/validation.js';
+import {
+  validateInterfaceConfig,
+  validPortOrError,
+  isIntInRangeCoercing,
+} from '../utils/validation.js';
 
 const router = Router();
 
@@ -36,10 +38,18 @@ function toBoolStr(v) {
   return v === 'true' ? 'true' : 'false';
 }
 function isBoolish01(v) {
-  return typeof v === 'boolean' || v === 1 || v === 0 || v === '1' || v === '0' || v === 'true' || v === 'false';
+  return (
+    typeof v === 'boolean' ||
+    v === 1 ||
+    v === 0 ||
+    v === '1' ||
+    v === '0' ||
+    v === 'true' ||
+    v === 'false'
+  );
 }
 function toBool01(v) {
-  return (v === true || v === 1 || v === '1' || v === 'true') ? '1' : '0';
+  return v === true || v === 1 || v === '1' || v === 'true' ? '1' : '0';
 }
 function intOrNull(v) {
   if (v === null || v === undefined || v === '') return null;
@@ -51,12 +61,14 @@ function intOrNull(v) {
 // and boolean shapes are normalized to strings before save.
 const SETTING_SCHEMA = {
   default_gateway_position: {
-    validate: v => (typeof v === 'string' && (v === 'first' || v === 'last')) ? null : 'must be "first" or "last"',
-    normalize: v => v
+    validate: (v) =>
+      typeof v === 'string' && (v === 'first' || v === 'last') ? null : 'must be "first" or "last"',
+    normalize: (v) => v,
   },
   subnet_name_template: {
-    validate: v => typeof v === 'string' && v.length <= 128 ? null : 'must be a string up to 128 chars',
-    normalize: v => v
+    validate: (v) =>
+      typeof v === 'string' && v.length <= 128 ? null : 'must be a string up to 128 chars',
+    normalize: (v) => v,
   },
   // dns_upstream_servers is deliberately NOT editable here either, same
   // persist-without-apply class as the DNS/rogue keys noted below. Its
@@ -64,17 +76,21 @@ const SETTING_SCHEMA = {
   // dnsmasq.conf). Milder failure mode than the keys below (next regen
   // self-heals), but one write path is one write path.
   backup_schedule: {
-    validate: v => typeof v === 'string' && BACKUP_SCHEDULES.has(v) ? null : `must be one of: ${[...BACKUP_SCHEDULES].join(', ')}`,
-    normalize: v => v
+    validate: (v) =>
+      typeof v === 'string' && BACKUP_SCHEDULES.has(v)
+        ? null
+        : `must be one of: ${[...BACKUP_SCHEDULES].join(', ')}`,
+    normalize: (v) => v,
   },
   backup_retention_count: {
-    validate: v => isIntInRangeCoercing(v, 1, 365) ? null : 'must be an integer 1-365',
-    normalize: v => String(intOrNull(v))
+    validate: (v) => (isIntInRangeCoercing(v, 1, 365) ? null : 'must be an integer 1-365'),
+    normalize: (v) => String(intOrNull(v)),
   },
   // ISO-8601 timestamp. Server writes this itself; refuse arbitrary values.
   backup_last_run: {
-    validate: v => typeof v === 'string' && v.length <= 64 ? null : 'must be an ISO-8601-ish string',
-    normalize: v => v
+    validate: (v) =>
+      typeof v === 'string' && v.length <= 64 ? null : 'must be an ISO-8601-ish string',
+    normalize: (v) => v,
   },
   // geoip_enabled and geoip_mode are deliberately NOT editable here, for the
   // same reason as the dnssec/forwarder/rogue-dhcp keys below. PUT
@@ -91,40 +107,43 @@ const SETTING_SCHEMA = {
   // restricted to approved countries while everything not explicitly listed is
   // still being permitted. See REVIEW.md, duplicate-logic audit #17.
   geoip_proxy_port: {
-    validate: v => validPortOrError(v, 'geoip_proxy_port'),
-    normalize: v => String(v)
+    validate: (v) => validPortOrError(v, 'geoip_proxy_port'),
+    normalize: (v) => String(v),
   },
   default_scan_interval: {
-    validate: v => typeof v === 'string' && SCAN_INTERVALS.has(v) ? null : `must be one of: ${[...SCAN_INTERVALS].map(v => v || 'off').join(', ')}`,
-    normalize: v => v === 'off' ? '' : v
+    validate: (v) =>
+      typeof v === 'string' && SCAN_INTERVALS.has(v)
+        ? null
+        : `must be one of: ${[...SCAN_INTERVALS].map((v) => v || 'off').join(', ')}`,
+    normalize: (v) => (v === 'off' ? '' : v),
   },
   default_scan_enabled: {
-    validate: v => isBoolish01(v) ? null : 'must be true or false',
-    normalize: v => toBool01(v)
+    validate: (v) => (isBoolish01(v) ? null : 'must be true or false'),
+    normalize: (v) => toBool01(v),
   },
   setup_wizard_completed: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
+    validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
+    normalize: (v) => toBoolStr(v),
   },
   interface_config: {
     validate: validateInterfaceConfig,
-    normalize: v => typeof v === 'string' ? v : JSON.stringify(v)
+    normalize: (v) => (typeof v === 'string' ? v : JSON.stringify(v)),
   },
   dns_enabled: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
+    validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
+    normalize: (v) => toBoolStr(v),
   },
   dns_listen_port: {
-    validate: v => validPortOrError(v, 'dns_listen_port'),
-    normalize: v => String(v)
+    validate: (v) => validPortOrError(v, 'dns_listen_port'),
+    normalize: (v) => String(v),
   },
   dhcp_enabled: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
+    validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
+    normalize: (v) => toBoolStr(v),
   },
   update_check_enabled: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
+    validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
+    normalize: (v) => toBoolStr(v),
   },
   // dnssec_enabled, dns_no_recursion, forwarder_encryption,
   // forwarder_encrypted_upstreams, rogue_dhcp_detection_enabled, and
@@ -138,8 +157,8 @@ const SETTING_SCHEMA = {
   // an encrypted-forwarder stub that was never started). Don't re-add them
   // "for parity", that's how they got here the first time.
   http_redirect_enabled: {
-    validate: v => isBoolStr(v) ? null : 'must be true or false',
-    normalize: v => toBoolStr(v)
+    validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
+    normalize: (v) => toBoolStr(v),
   },
   // https_port / http_port can be empty ("" clears the override). Non-empty
   // values go through the shared validPortOrError so the settings endpoint
@@ -150,16 +169,16 @@ const SETTING_SCHEMA = {
   // The /api/settings route is admin-only so the blast radius was "authed
   // admin can wedge the appliance", but the two endpoints must agree.
   https_port: {
-    validate: v => (v === '' || v === null) ? null : validPortOrError(v, 'https_port'),
-    normalize: v => (v === '' || v === null) ? '' : String(v)
+    validate: (v) => (v === '' || v === null ? null : validPortOrError(v, 'https_port')),
+    normalize: (v) => (v === '' || v === null ? '' : String(v)),
   },
   http_port: {
-    validate: v => (v === '' || v === null) ? null : validPortOrError(v, 'http_port'),
-    normalize: v => (v === '' || v === null) ? '' : String(v)
+    validate: (v) => (v === '' || v === null ? null : validPortOrError(v, 'http_port')),
+    normalize: (v) => (v === '' || v === null ? '' : String(v)),
   },
   ip_history_retention_days: {
-    validate: v => isIntInRangeCoercing(v, 1, 3650) ? null : 'must be an integer 1-3650',
-    normalize: v => String(intOrNull(v))
+    validate: (v) => (isIntInRangeCoercing(v, 1, 3650) ? null : 'must be an integer 1-3650'),
+    normalize: (v) => String(intOrNull(v)),
   },
 };
 

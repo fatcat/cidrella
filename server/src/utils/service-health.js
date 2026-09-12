@@ -6,7 +6,11 @@ const JOURNAL_LINE_LIMIT = 160;
 const COMMAND_TIMEOUT_MS = 2000;
 
 const crashPatterns = [
-  { type: 'oom', pattern: /JavaScript heap out of memory|Allocation failed - JavaScript heap out of memory|Reached heap limit/i },
+  {
+    type: 'oom',
+    pattern:
+      /JavaScript heap out of memory|Allocation failed - JavaScript heap out of memory|Reached heap limit/i,
+  },
   { type: 'oom', pattern: /\bout of memory\b|oom-kill|Killed process/i },
   { type: 'fatal', pattern: /FATAL ERROR|uncaught exception|segmentation fault|core dumped/i },
   { type: 'exit', pattern: /Main process exited|Failed with result|service hold-off time over/i },
@@ -67,7 +71,7 @@ function findRecentCrash(journalOutput) {
     const classified = classifyJournalLine(line);
     if (classified) matches.push(classified);
   }
-  return matches.filter(m => m.type !== 'exit').at(-1) || matches.at(-1) || null;
+  return matches.filter((m) => m.type !== 'exit').at(-1) || matches.at(-1) || null;
 }
 
 export function captureBootServiceHealth() {

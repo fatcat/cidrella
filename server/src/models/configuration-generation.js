@@ -1,5 +1,6 @@
 export function enqueueGeneration(db, hookName) {
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO configuration_generations
       (hook_name, desired_generation, status, requested_at, updated_at)
     VALUES (?, 1, 'pending', datetime('now'), datetime('now'))
@@ -7,7 +8,8 @@ export function enqueueGeneration(db, hookName) {
       desired_generation = desired_generation + 1,
       status = 'pending', last_error = NULL,
       requested_at = datetime('now'), updated_at = datetime('now')
-  `).run(hookName);
+  `,
+  ).run(hookName);
   return findGeneration(db, hookName);
 }
 
@@ -20,28 +22,34 @@ export function listGenerations(db) {
 }
 
 export function markApplying(db, hookName) {
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE configuration_generations
     SET status = 'applying', last_error = NULL, updated_at = datetime('now')
     WHERE hook_name = ?
-  `).run(hookName);
+  `,
+  ).run(hookName);
   return findGeneration(db, hookName);
 }
 
 export function markApplied(db, hookName, generation) {
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE configuration_generations
     SET applied_generation = MAX(applied_generation, ?),
       status = CASE WHEN desired_generation > ? THEN 'pending' ELSE 'applied' END,
       last_error = NULL, applied_at = datetime('now'), updated_at = datetime('now')
     WHERE hook_name = ?
-  `).run(generation, generation, hookName);
+  `,
+  ).run(generation, generation, hookName);
 }
 
 export function markFailed(db, hookName, error) {
-  db.prepare(`
+  db.prepare(
+    `
     UPDATE configuration_generations
     SET status = 'failed', last_error = ?, updated_at = datetime('now')
     WHERE hook_name = ?
-  `).run(String(error || 'Unknown apply failure').slice(0, 2048), hookName);
+  `,
+  ).run(String(error || 'Unknown apply failure').slice(0, 2048), hookName);
 }

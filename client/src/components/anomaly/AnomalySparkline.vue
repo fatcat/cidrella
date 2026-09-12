@@ -1,7 +1,19 @@
 <template>
-  <svg :width="width" :height="height" :viewBox="`0 0 ${width} ${height}`" class="anomaly-sparkline">
-    <path v-if="path" :d="path" fill="none" :stroke="color" stroke-width="1.6"
-          stroke-linecap="round" stroke-linejoin="round" />
+  <svg
+    :width="width"
+    :height="height"
+    :viewBox="`0 0 ${width} ${height}`"
+    class="anomaly-sparkline"
+  >
+    <path
+      v-if="path"
+      :d="path"
+      fill="none"
+      :stroke="color"
+      stroke-width="1.6"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
     <circle v-if="lastPoint" :cx="lastPoint[0]" :cy="lastPoint[1]" r="2" :fill="color" />
   </svg>
 </template>
@@ -25,9 +37,15 @@ const points = computed(() => {
   ]);
 });
 
-const path = computed(() => points.value.length
-  ? points.value.map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ')
-  : '');
+const path = computed(() =>
+  points.value.length
+    ? points.value
+        .map((p, i) => `${i === 0 ? 'M' : 'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`)
+        .join(' ')
+    : '',
+);
 
-const lastPoint = computed(() => points.value.length ? points.value[points.value.length - 1] : null);
+const lastPoint = computed(() =>
+  points.value.length ? points.value[points.value.length - 1] : null,
+);
 </script>

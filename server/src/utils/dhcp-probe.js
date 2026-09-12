@@ -34,10 +34,10 @@ const PROBE_STUCK_MS = 5 * 60 * 1000;
 
 // Module state
 let probeInProgress = false;
-let probeStartedAt = null;       // so a stranded in-progress flag is detectable
-let probeSupported = true;       // flips false if :68 can't bind
+let probeStartedAt = null; // so a stranded in-progress flag is detectable
+let probeSupported = true; // flips false if :68 can't bind
 let lastProbeAt = null;
-let lastProbeOutcome = null;     // ok | timeout | error | unsupported | no-interfaces
+let lastProbeOutcome = null; // ok | timeout | error | unsupported | no-interfaces
 let lastProbeError = null;
 let xidSeq = 1;
 let schedulerTimer = null;
@@ -56,7 +56,7 @@ function probeLog(level, msg, extra) {
 
 function parseMacBytes(mac) {
   if (!mac) return [0, 0, 0, 0, 0, 0];
-  return mac.split(':').map(h => parseInt(h, 16) & 0xff);
+  return mac.split(':').map((h) => parseInt(h, 16) & 0xff);
 }
 
 function ipToStr(buf, off) {
@@ -68,24 +68,27 @@ function ipToStr(buf, off) {
 // trailing zeros after the end option are valid pad bytes).
 export function buildDiscover({ xid, mac }) {
   const buf = Buffer.alloc(300);
-  buf.writeUInt8(1, 0);                 // op = BOOTREQUEST
-  buf.writeUInt8(1, 1);                 // htype = Ethernet
-  buf.writeUInt8(6, 2);                 // hlen = 6
-  buf.writeUInt8(0, 3);                 // hops
-  buf.writeUInt32BE(xid >>> 0, 4);      // xid
-  buf.writeUInt16BE(0, 8);              // secs
-  buf.writeUInt16BE(0x8000, 10);        // flags = broadcast
+  buf.writeUInt8(1, 0); // op = BOOTREQUEST
+  buf.writeUInt8(1, 1); // htype = Ethernet
+  buf.writeUInt8(6, 2); // hlen = 6
+  buf.writeUInt8(0, 3); // hops
+  buf.writeUInt32BE(xid >>> 0, 4); // xid
+  buf.writeUInt16BE(0, 8); // secs
+  buf.writeUInt16BE(0x8000, 10); // flags = broadcast
   // ciaddr/yiaddr/siaddr/giaddr (12..27) = 0
   const macBytes = parseMacBytes(mac);
   for (let i = 0; i < 6; i++) buf.writeUInt8(macBytes[i] || 0, 28 + i); // chaddr
   // sname (44..107), file (108..235) = 0
   buf.writeUInt32BE(MAGIC_COOKIE, 236);
   let off = 240;
-  buf.writeUInt8(53, off++); buf.writeUInt8(1, off++); buf.writeUInt8(1, off++); // msg type = DISCOVER
+  buf.writeUInt8(53, off++);
+  buf.writeUInt8(1, off++);
+  buf.writeUInt8(1, off++); // msg type = DISCOVER
   const params = [1, 3, 6, 15, 51, 54]; // mask, router, dns, domain, lease, server-id
-  buf.writeUInt8(55, off++); buf.writeUInt8(params.length, off++);
+  buf.writeUInt8(55, off++);
+  buf.writeUInt8(params.length, off++);
   for (const p of params) buf.writeUInt8(p, off++);
-  buf.writeUInt8(255, off);             // end
+  buf.writeUInt8(255, off); // end
   return buf;
 }
 
@@ -106,24 +109,39 @@ export function parseOffer(buf) {
   // Worth capturing: it is the only field that tells those two apart.
   const giaddrRaw = ipToStr(buf, 24);
   const giaddr = giaddrRaw === '0.0.0.0' ? null : giaddrRaw;
-  const chaddr = Array.from(buf.subarray(28, 34)).map(b => b.toString(16).padStart(2, '0')).join(':');
+  const chaddr = Array.from(buf.subarray(28, 34))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join(':');
 
   let off = 240;
-  let msgType = null, serverId = null, gateway = null, subnetMask = null;
+  let msgType = null,
+    serverId = null,
+    gateway = null,
+    subnetMask = null;
   const dns = [];
   while (off < buf.length) {
     const code = buf.readUInt8(off++);
-    if (code === 255) break;   // end
-    if (code === 0) continue;  // pad
+    if (code === 255) break; // end
+    if (code === 0) continue; // pad
     if (off >= buf.length) break;
     const len = buf.readUInt8(off++);
     if (off + len > buf.length) break;
     switch (code) {
-      case 53: msgType = buf.readUInt8(off); break;
-      case 54: if (len >= 4) serverId = ipToStr(buf, off); break;
-      case 3:  if (len >= 4) gateway = ipToStr(buf, off); break;
-      case 1:  if (len >= 4) subnetMask = ipToStr(buf, off); break;
-      case 6:  for (let i = 0; i + 4 <= len; i += 4) dns.push(ipToStr(buf, off + i)); break;
+      case 53:
+        msgType = buf.readUInt8(off);
+        break;
+      case 54:
+        if (len >= 4) serverId = ipToStr(buf, off);
+        break;
+      case 3:
+        if (len >= 4) gateway = ipToStr(buf, off);
+        break;
+      case 1:
+        if (len >= 4) subnetMask = ipToStr(buf, off);
+        break;
+      case 6:
+        for (let i = 0; i + 4 <= len; i += 4) dns.push(ipToStr(buf, off + i));
+        break;
     }
     off += len;
   }
@@ -138,7 +156,7 @@ export function parseOffer(buf) {
 export function classifyOffer(offer, { selfIps, authorized }) {
   const candidates = [offer.serverId, offer.siaddr, offer.sourceIp]
     .filter(Boolean)
-    .map(s => String(s).trim().toLowerCase());
+    .map((s) => String(s).trim().toLowerCase());
   for (const c of candidates) if (selfIps.has(c)) return { rogue: false, reason: 'self' };
   for (const c of candidates) if (authorized.has(c)) return { rogue: false, reason: 'authorized' };
   return { rogue: true, reason: 'unauthorized' };
@@ -169,7 +187,7 @@ function directedBroadcast(address, netmask) {
     const a = address.split('.').map(Number);
     const m = netmask.split('.').map(Number);
     if (a.length !== 4 || m.length !== 4) return null;
-    return a.map((o, i) => (o | (~m[i] & 0xff))).join('.');
+    return a.map((o, i) => o | (~m[i] & 0xff)).join('.');
   } catch {
     return null;
   }
@@ -189,7 +207,9 @@ export function getLanInterfaces() {
   try {
     const raw = getSetting('interface_config');
     if (raw) ifaceConfig = JSON.parse(raw);
-  } catch { /* default */ }
+  } catch {
+    /* default */
+  }
 
   const sysIfaces = os.networkInterfaces();
   const result = [];
@@ -223,15 +243,21 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
     if (heldMs < PROBE_STUCK_MS) {
       probeLog('info', 'Probe already running, skipping this run', { heldMs });
       return Promise.resolve({
-        supported: probeSupported, skipped: true, skipReason: 'in-progress',
-        interfaces: 0, offers: 0, rogues: []
+        supported: probeSupported,
+        skipped: true,
+        skipReason: 'in-progress',
+        interfaces: 0,
+        offers: 0,
+        rogues: [],
       });
     }
     // A previous run never finished. This used to disable rogue detection
     // permanently and in total silence: every later call returned "skipped"
     // with no log, so the only symptom was a rogue event that stopped
     // updating. Take the flag back and say so.
-    probeLog('error', 'Previous probe never completed, reclaiming the in-progress flag', { heldMs });
+    probeLog('error', 'Previous probe never completed, reclaiming the in-progress flag', {
+      heldMs,
+    });
     lastProbeError = `previous probe stalled for ${Math.round(heldMs / 1000)}s`;
     probeInProgress = false;
   }
@@ -266,8 +292,8 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
     return Promise.resolve({ supported: true, interfaces: 0, offers: 0, rogues: [] });
   }
 
-  const xidMap = new Map();        // xid → ifName
-  const rogues = new Map();        // serverIp → event
+  const xidMap = new Map(); // xid → ifName
+  const rogues = new Map(); // serverIp → event
   let offerCount = 0;
 
   return new Promise((resolve) => {
@@ -279,7 +305,11 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
       if (settled) return;
       settled = true;
       if (watchdog) clearTimeout(watchdog);
-      try { sock?.close(); } catch { /* ignore */ }
+      try {
+        sock?.close();
+      } catch {
+        /* ignore */
+      }
       probeSupported = supported;
       probeInProgress = false;
       probeStartedAt = null;
@@ -292,9 +322,17 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
         probeLog('error', 'Failed to persist rogue events', { error: err.message });
       }
       if (rogues.size > 0) {
-        probeLog('warn', 'Rogue DHCP server(s) detected', { count: rogues.size, servers: [...rogues.keys()] });
+        probeLog('warn', 'Rogue DHCP server(s) detected', {
+          count: rogues.size,
+          servers: [...rogues.keys()],
+        });
       }
-      resolve({ supported, interfaces: ifaces.length, offers: offerCount, rogues: [...rogues.values()] });
+      resolve({
+        supported,
+        interfaces: ifaces.length,
+        offers: offerCount,
+        rogues: [...rogues.values()],
+      });
     };
 
     // Last line of defence. Every path below is supposed to reach finish(), but
@@ -317,7 +355,10 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
 
     sock.on('error', (err) => {
       if (err.code === 'EACCES' || err.code === 'EADDRINUSE') {
-        probeLog('warn', `Cannot bind UDP :68 (${err.code}). Rogue DHCP detection is unavailable on this host`);
+        probeLog(
+          'warn',
+          `Cannot bind UDP :68 (${err.code}). Rogue DHCP detection is unavailable on this host`,
+        );
         finish(false, { error: `cannot bind UDP :68 (${err.code})` });
       } else {
         probeLog('error', 'Probe socket error', { error: err.message, code: err.code });
@@ -338,7 +379,7 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
         if (!rogues.has(serverIp)) {
           rogues.set(serverIp, {
             server_ip: serverIp,
-            server_mac: '',  // not observable over a UDP socket (Ethernet-frame only)
+            server_mac: '', // not observable over a UDP socket (Ethernet-frame only)
             server_identifier: offer.serverId || null,
             offered_ip: offer.yiaddr || null,
             offered_gateway: offer.gateway || null,
@@ -354,7 +395,11 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
     });
 
     sock.bind(DHCP_CLIENT_PORT, '0.0.0.0', () => {
-      try { sock.setBroadcast(true); } catch { /* ignore */ }
+      try {
+        sock.setBroadcast(true);
+      } catch {
+        /* ignore */
+      }
       const base = (xidSeq++ & 0xffff) << 16;
       ifaces.forEach((iface, i) => {
         const xid = (base | (i & 0xffff)) >>> 0;
@@ -362,7 +407,12 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
         const pkt = buildDiscover({ xid, mac: iface.mac });
         const dest = iface.broadcast || '255.255.255.255';
         sock.send(pkt, DHCP_SERVER_PORT, dest, (err) => {
-          if (err) probeLog('warn', 'DISCOVER send failed', { iface: iface.ifName, dest, error: err.message });
+          if (err)
+            probeLog('warn', 'DISCOVER send failed', {
+              iface: iface.ifName,
+              dest,
+              error: err.message,
+            });
         });
       });
       setTimeout(() => finish(true), windowMs);
@@ -376,7 +426,7 @@ export function getProbeState() {
     probeSupported,
     probeInProgress,
     lastProbeOutcome,
-    lastProbeError
+    lastProbeError,
   };
 }
 
@@ -405,6 +455,12 @@ export function startRogueDhcpScheduler() {
 }
 
 export function stopRogueDhcpScheduler() {
-  if (schedulerTimer) { clearInterval(schedulerTimer); schedulerTimer = null; }
-  if (initialKickTimer) { clearTimeout(initialKickTimer); initialKickTimer = null; }
+  if (schedulerTimer) {
+    clearInterval(schedulerTimer);
+    schedulerTimer = null;
+  }
+  if (initialKickTimer) {
+    clearTimeout(initialKickTimer);
+    initialKickTimer = null;
+  }
 }

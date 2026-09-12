@@ -12,7 +12,9 @@ beforeAll(async () => {
   tmpDir = setup.tmpDir;
 
   // Create a leaf subnet to attach IPs to
-  db.prepare("INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length, total_addresses, status) VALUES ('10.0.1.0/24', 'Test', '10.0.1.0', '10.0.1.255', 24, 256, 'allocated')").run();
+  db.prepare(
+    "INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length, total_addresses, status) VALUES ('10.0.1.0/24', 'Test', '10.0.1.0', '10.0.1.255', 24, 256, 'allocated')",
+  ).run();
   subnetId = db.prepare("SELECT id FROM subnets WHERE cidr = '10.0.1.0/24'").get().id;
 });
 
@@ -34,16 +36,22 @@ beforeEach(() => {
 
 describe('upsert', () => {
   it('uses interface context only for IPv6 link-local identities', () => {
-    expect(() => IpAddress.upsert(db, subnetId, '2001:db8::10', {
-      interface_id: 'eth0'
-    })).toThrow(/only valid for IPv6 link-local/);
-    expect(() => IpAddress.upsert(db, subnetId, 'fe80::10', {
-      interface_id: '   '
-    })).toThrow(/require interface context/);
+    expect(() =>
+      IpAddress.upsert(db, subnetId, '2001:db8::10', {
+        interface_id: 'eth0',
+      }),
+    ).toThrow(/only valid for IPv6 link-local/);
+    expect(() =>
+      IpAddress.upsert(db, subnetId, 'fe80::10', {
+        interface_id: '   ',
+      }),
+    ).toThrow(/require interface context/);
 
     IpAddress.upsert(db, subnetId, 'fe80::10', { interface_id: 'eth0' });
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, 'fe80::10%eth0'))
-      .toMatchObject({ ip_address: 'fe80::10', interface_id: 'eth0' });
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, 'fe80::10%eth0')).toMatchObject({
+      ip_address: 'fe80::10',
+      interface_id: 'eth0',
+    });
   });
 
   it('enforces interface scope for direct database writes', () => {
@@ -52,14 +60,12 @@ describe('upsert', () => {
         (subnet_id, ip_address, address_family, address_sort_key, interface_id)
       VALUES (?, ?, ?, ?, ?)
     `);
-    expect(() => insert.run(subnetId, '2001:db8::11', 6, 'key', 'eth0'))
-      .toThrow(/interface context/);
-    expect(() => insert.run(subnetId, '2001:db8::11', 6, 'key', ''))
-      .toThrow(/interface context/);
-    expect(() => insert.run(subnetId, 'fe80::11', 6, 'key', null))
-      .toThrow(/interface context/);
-    expect(() => insert.run(subnetId, 'fe80::11', 6, 'key', '   '))
-      .toThrow(/interface context/);
+    expect(() => insert.run(subnetId, '2001:db8::11', 6, 'key', 'eth0')).toThrow(
+      /interface context/,
+    );
+    expect(() => insert.run(subnetId, '2001:db8::11', 6, 'key', '')).toThrow(/interface context/);
+    expect(() => insert.run(subnetId, 'fe80::11', 6, 'key', null)).toThrow(/interface context/);
+    expect(() => insert.run(subnetId, 'fe80::11', 6, 'key', '   ')).toThrow(/interface context/);
   });
 
   it('inserts a new IP with defaults', () => {
@@ -101,11 +107,17 @@ describe('upsert', () => {
   });
 
   it('skips no-op updates', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.14', { hostname: 'same', allocation_state: 'static_dns' });
+    IpAddress.upsert(db, subnetId, '10.0.1.14', {
+      hostname: 'same',
+      allocation_state: 'static_dns',
+    });
     const first = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.14');
 
     // Same values, updated_at should not change
-    IpAddress.upsert(db, subnetId, '10.0.1.14', { hostname: 'same', allocation_state: 'static_dns' });
+    IpAddress.upsert(db, subnetId, '10.0.1.14', {
+      hostname: 'same',
+      allocation_state: 'static_dns',
+    });
     const second = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.14');
 
     expect(second.updated_at).toBe(first.updated_at);
@@ -191,7 +203,7 @@ describe('recordPassiveActivity: canonical allocation owns claims', () => {
   it('keeps an allocated address non-rogue and marks it online', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.30', {
       allocation_state: 'static_dns',
-      hostname: 'pve-01.example.test'
+      hostname: 'pve-01.example.test',
     });
 
     IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.30', { createRogue: true });
@@ -201,10 +213,12 @@ describe('recordPassiveActivity: canonical allocation owns claims', () => {
   });
 
   it('does not infer allocation from a raw DNS record', () => {
-    const zoneId = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)")
+    const zoneId = db
+      .prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)")
       .run().lastInsertRowid;
-    db.prepare("INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, 'nas', 'A', '10.0.1.31', 'manual', 1)")
-      .run(zoneId);
+    db.prepare(
+      "INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, 'nas', 'A', '10.0.1.31', 'manual', 1)",
+    ).run(zoneId);
 
     IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.31', { createRogue: true });
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.31');
@@ -216,7 +230,7 @@ describe('recordPassiveActivity: canonical allocation owns claims', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.32', {
       allocation_state: 'static_dns',
       is_rogue: 1,
-      rogue_reason: 'MAC mismatch'
+      rogue_reason: 'MAC mismatch',
     });
 
     IpAddress.recordPassiveActivity(db, subnetId, '10.0.1.32', { createRogue: true });
@@ -229,7 +243,11 @@ describe('recordPassiveActivity: canonical allocation owns claims', () => {
 
 describe('markOffline', () => {
   it('retains learned data and starts the continuous-offline interval', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.22', { is_online: 1, is_rogue: 1, rogue_reason: 'test' });
+    IpAddress.upsert(db, subnetId, '10.0.1.22', {
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'test',
+    });
     IpAddress.markOffline(db, subnetId, '10.0.1.22');
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.22');
 
@@ -239,7 +257,12 @@ describe('markOffline', () => {
   });
 
   it('keeps persistent IPs (with hostname) and clears rogue', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.23', { is_online: 1, is_rogue: 1, rogue_reason: 'test', hostname: 'server1' });
+    IpAddress.upsert(db, subnetId, '10.0.1.23', {
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'test',
+      hostname: 'server1',
+    });
     IpAddress.markOffline(db, subnetId, '10.0.1.23');
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.23');
 
@@ -254,7 +277,7 @@ describe('markOffline', () => {
       allocation_state: 'dynamic_dhcp',
       mac_address: 'aa:bb:cc:dd:ee:24',
       is_online: 1,
-      detection_source: 'dhcp_lease'
+      detection_source: 'dhcp_lease',
     });
 
     IpAddress.markOffline(db, subnetId, '10.0.1.24');
@@ -274,10 +297,11 @@ describe('bulkMarkStale', () => {
       is_online: 1,
       is_rogue: 1,
       rogue_reason: 'rogue',
-      detection_source: 'passive'
+      detection_source: 'passive',
     });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.30'")
-      .run(subnetId);
+    db.prepare(
+      "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.30'",
+    ).run(subnetId);
 
     // Fresh IP, should remain online
     IpAddress.upsert(db, subnetId, '10.0.1.31', { is_online: 1, detection_source: 'passive' });
@@ -299,10 +323,11 @@ describe('bulkMarkStale', () => {
       is_rogue: 1,
       rogue_reason: 'rogue',
       hostname: 'db-server',
-      detection_source: 'passive'
+      detection_source: 'passive',
     });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.32'")
-      .run(subnetId);
+    db.prepare(
+      "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.32'",
+    ).run(subnetId);
 
     IpAddress.bulkMarkStale(db, 60);
 
@@ -321,10 +346,11 @@ describe('bulkMarkStale', () => {
       allocation_state: 'dynamic_dhcp',
       mac_address: 'aa:bb:cc:dd:ee:33',
       is_online: 1,
-      detection_source: 'dhcp_lease'
+      detection_source: 'dhcp_lease',
     });
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.33'")
-      .run(subnetId);
+    db.prepare(
+      "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.33'",
+    ).run(subnetId);
 
     IpAddress.bulkMarkStale(db, 60);
 
@@ -344,10 +370,11 @@ describe('bulkMarkStale', () => {
         allocation_state: 'dynamic_dhcp',
         mac_address: 'aa:bb:cc:dd:ee:34',
         is_online: 1,
-        detection_source: 'dhcp_lease'
+        detection_source: 'dhcp_lease',
       });
-      db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.34'")
-        .run(subnetId);
+      db.prepare(
+        "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.34'",
+      ).run(subnetId);
 
       IpAddress.bulkMarkStale(db, 60);
 
@@ -362,8 +389,9 @@ describe('bulkMarkStale', () => {
     db.prepare('UPDATE subnets SET scan_interval = ? WHERE id = ?').run('30m', subnetId);
     try {
       IpAddress.upsert(db, subnetId, '10.0.1.35', { is_online: 1 });
-      db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours'), scan_enabled = 1 WHERE subnet_id = ? AND ip_address = '10.0.1.35'")
-        .run(subnetId);
+      db.prepare(
+        "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours'), scan_enabled = 1 WHERE subnet_id = ? AND ip_address = '10.0.1.35'",
+      ).run(subnetId);
 
       IpAddress.bulkMarkStale(db, 60);
 
@@ -377,10 +405,12 @@ describe('bulkMarkStale', () => {
     db.prepare('UPDATE subnets SET scan_interval = ? WHERE id = ?').run('30m', subnetId);
     try {
       IpAddress.upsert(db, subnetId, '10.0.1.36', {
-        is_online: 1, mac_address: 'aa:bb:cc:dd:ee:36'
+        is_online: 1,
+        mac_address: 'aa:bb:cc:dd:ee:36',
       });
-      db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours'), scan_enabled = 0 WHERE subnet_id = ? AND ip_address = '10.0.1.36'")
-        .run(subnetId);
+      db.prepare(
+        "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours'), scan_enabled = 0 WHERE subnet_id = ? AND ip_address = '10.0.1.36'",
+      ).run(subnetId);
 
       IpAddress.bulkMarkStale(db, 60);
 
@@ -394,8 +424,10 @@ describe('bulkMarkStale', () => {
 describe('upsert liveness events', () => {
   function typesFor(ip) {
     const row = IpAddress.findBySubnetAndIp(db, subnetId, ip);
-    return db.prepare('SELECT event_type FROM ip_events WHERE ip_address_id = ? ORDER BY id')
-      .all(row.id).map(e => e.event_type);
+    return db
+      .prepare('SELECT event_type FROM ip_events WHERE ip_address_id = ? ORDER BY id')
+      .all(row.id)
+      .map((e) => e.event_type);
   }
 
   it('emits online and offline on the edges only', () => {
@@ -405,8 +437,10 @@ describe('upsert liveness events', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.60', { is_online: 0 });
     IpAddress.upsert(db, subnetId, '10.0.1.60', { is_online: 0 });
 
-    expect(typesFor('10.0.1.60').filter(t => t === 'online' || t === 'offline'))
-      .toEqual(['online', 'offline']);
+    expect(typesFor('10.0.1.60').filter((t) => t === 'online' || t === 'offline')).toEqual([
+      'online',
+      'offline',
+    ]);
   });
 
   it('emits nothing when is_online is not part of the write', () => {
@@ -414,8 +448,9 @@ describe('upsert liveness events', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.61', { is_online: 1 });
     IpAddress.upsert(db, subnetId, '10.0.1.61', { hostname: 'renamed' });
 
-    expect(typesFor('10.0.1.61').filter(t => t === 'online' || t === 'offline'))
-      .toEqual(['online']);
+    expect(typesFor('10.0.1.61').filter((t) => t === 'online' || t === 'offline')).toEqual([
+      'online',
+    ]);
   });
 });
 
@@ -484,10 +519,16 @@ describe('rogue management', () => {
 
 describe('updateFromScan', () => {
   it('updates existing IP with scan results', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.50', { allocation_state: 'static_dns', mac_address: 'aa:bb:cc:dd:ee:01' });
+    IpAddress.upsert(db, subnetId, '10.0.1.50', {
+      allocation_state: 'static_dns',
+      mac_address: 'aa:bb:cc:dd:ee:01',
+    });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.50', {
-      responded: 1, mac: 'aa:bb:cc:dd:ee:01', isConflict: 0, conflictReason: null
+      responded: 1,
+      mac: 'aa:bb:cc:dd:ee:01',
+      isConflict: 0,
+      conflictReason: null,
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.50');
@@ -503,11 +544,14 @@ describe('updateFromScan', () => {
   it('preserves existing detection_source ownership on scan updates', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.56', {
       hostname: 'dns-host.example.test',
-      detection_source: 'dns'
+      detection_source: 'dns',
     });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.56', {
-      responded: 0, mac: null, isConflict: 0, conflictReason: null
+      responded: 0,
+      mac: null,
+      isConflict: 0,
+      conflictReason: null,
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.56');
@@ -520,7 +564,10 @@ describe('updateFromScan', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.51', {});
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.51', {
-      responded: 1, mac: 'ff:ff:ff:ff:ff:ff', isConflict: 1, conflictReason: 'Rogue device'
+      responded: 1,
+      mac: 'ff:ff:ff:ff:ff:ff',
+      isConflict: 1,
+      conflictReason: 'Rogue device',
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.51');
@@ -533,14 +580,14 @@ describe('updateFromScan', () => {
       allocation_state: 'unassigned',
       hostname: 'old-lease',
       mac_address: 'aa:bb:cc:dd:ee:57',
-      detection_source: 'dhcp_lease'
+      detection_source: 'dhcp_lease',
     });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.57', {
       responded: 1,
       mac: 'aa:bb:cc:dd:ee:57',
       isConflict: 1,
-      conflictReason: 'Rogue device (IP not assigned)'
+      conflictReason: 'Rogue device (IP not assigned)',
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.57');
@@ -553,18 +600,20 @@ describe('updateFromScan', () => {
       allocation_state: 'dynamic_dhcp',
       hostname: 'active-lease',
       mac_address: 'aa:bb:cc:dd:ee:58',
-      detection_source: 'dhcp_lease'
+      detection_source: 'dhcp_lease',
     });
-    db.prepare(`
+    db.prepare(
+      `
       INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id)
       VALUES ('10.0.1.58', 'aa:bb:cc:dd:ee:58', 'active-lease', NULL, datetime('now', '+1 hour'), ?)
-    `).run(subnetId);
+    `,
+    ).run(subnetId);
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.58', {
       responded: 1,
       mac: 'aa:bb:cc:dd:ee:58',
       isConflict: 1,
-      conflictReason: 'Rogue device (IP not assigned)'
+      conflictReason: 'Rogue device (IP not assigned)',
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.58');
@@ -573,22 +622,28 @@ describe('updateFromScan', () => {
   });
 
   it('does not mark canonical static DNS allocations rogue when detection_source is stale', () => {
-    const zone = db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('stale-source.test', 'forward', 1)").run();
-    db.prepare(`
+    const zone = db
+      .prepare(
+        "INSERT INTO dns_zones (name, type, enabled) VALUES ('stale-source.test', 'forward', 1)",
+      )
+      .run();
+    db.prepare(
+      `
       INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
       VALUES (?, 'testerella', 'A', '10.0.1.59', 'manual', 1)
-    `).run(zone.lastInsertRowid);
+    `,
+    ).run(zone.lastInsertRowid);
     IpAddress.upsert(db, subnetId, '10.0.1.59', {
       allocation_state: 'static_dns',
       hostname: 'testerella.stale-source.test',
-      detection_source: 'scanner'
+      detection_source: 'scanner',
     });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.59', {
       responded: 1,
       mac: 'aa:bb:cc:dd:ee:59',
       isConflict: 1,
-      conflictReason: 'Rogue device (IP not assigned)'
+      conflictReason: 'Rogue device (IP not assigned)',
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.59');
@@ -600,11 +655,14 @@ describe('updateFromScan', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.52', {
       is_online: 1,
       is_rogue: 1,
-      rogue_reason: 'Rogue device (IP not assigned)'
+      rogue_reason: 'Rogue device (IP not assigned)',
     });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.52', {
-      responded: 0, mac: null, isConflict: 0, conflictReason: null
+      responded: 0,
+      mac: null,
+      isConflict: 0,
+      conflictReason: null,
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.52');
@@ -614,7 +672,10 @@ describe('updateFromScan', () => {
 
   it('creates new row for responding rogue with no existing record', () => {
     IpAddress.updateFromScan(db, subnetId, '10.0.1.53', {
-      responded: 1, mac: 'de:ad:be:ef:00:01', isConflict: 1, conflictReason: 'Rogue device (IP not assigned)'
+      responded: 1,
+      mac: 'de:ad:be:ef:00:01',
+      isConflict: 1,
+      conflictReason: 'Rogue device (IP not assigned)',
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.53');
@@ -630,7 +691,10 @@ describe('updateFromScan', () => {
 
   it('does nothing for non-responding IP with no existing record', () => {
     IpAddress.updateFromScan(db, subnetId, '10.0.1.54', {
-      responded: 0, mac: null, isConflict: 0, conflictReason: null
+      responded: 0,
+      mac: null,
+      isConflict: 0,
+      conflictReason: null,
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.54');
@@ -641,7 +705,10 @@ describe('updateFromScan', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.55', { mac_address: 'aa:aa:aa:aa:aa:aa' });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.55', {
-      responded: 1, mac: 'bb:bb:bb:bb:bb:bb', isConflict: 0, conflictReason: null
+      responded: 1,
+      mac: 'bb:bb:bb:bb:bb:bb',
+      isConflict: 0,
+      conflictReason: null,
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.55');
@@ -679,12 +746,15 @@ describe('rogue device goes offline', () => {
     db.prepare('UPDATE subnets SET scan_interval = ? WHERE id = ?').run('30m', subnetId);
     try {
       IpAddress.upsert(db, subnetId, '10.0.1.80', {
-        is_online: 1, is_rogue: 1, rogue_reason: 'Rogue device (IP not assigned)',
-        detection_source: 'scanner'
+        is_online: 1,
+        is_rogue: 1,
+        rogue_reason: 'Rogue device (IP not assigned)',
+        detection_source: 'scanner',
       });
 
-      db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.80'")
-        .run(subnetId);
+      db.prepare(
+        "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.80'",
+      ).run(subnetId);
 
       IpAddress.bulkMarkStale(db, 60);
 
@@ -699,11 +769,12 @@ describe('rogue device goes offline', () => {
   it('bulkMarkStale retains stale passive metadata for retirement', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.84', {
       is_online: 1,
-      detection_source: 'passive'
+      detection_source: 'passive',
     });
 
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.84'")
-      .run(subnetId);
+    db.prepare(
+      "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.84'",
+    ).run(subnetId);
 
     IpAddress.bulkMarkStale(db, 60);
 
@@ -714,12 +785,16 @@ describe('rogue device goes offline', () => {
 
   it('bulkMarkStale keeps stale passive persistent rows and clears rogue status', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.82', {
-      is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch',
-      hostname: 'known-host', detection_source: 'passive'
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'MAC mismatch',
+      hostname: 'known-host',
+      detection_source: 'passive',
     });
 
-    db.prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.82'")
-      .run(subnetId);
+    db.prepare(
+      "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours') WHERE subnet_id = ? AND ip_address = '10.0.1.82'",
+    ).run(subnetId);
 
     IpAddress.bulkMarkStale(db, 60);
 
@@ -731,7 +806,9 @@ describe('rogue device goes offline', () => {
 
   it('markOffline retains ephemeral rogue metadata until retirement', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.81', {
-      is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch'
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'MAC mismatch',
     });
 
     IpAddress.markOffline(db, subnetId, '10.0.1.81');
@@ -743,7 +820,10 @@ describe('rogue device goes offline', () => {
 
   it('markOffline keeps persistent reserved rows and clears rogue', () => {
     IpAddress.upsert(db, subnetId, '10.0.1.83', {
-      is_online: 1, is_rogue: 1, rogue_reason: 'MAC mismatch', allocation_state: 'reserved'
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'MAC mismatch',
+      allocation_state: 'reserved',
     });
 
     IpAddress.markOffline(db, subnetId, '10.0.1.83');

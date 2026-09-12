@@ -7,29 +7,58 @@
       <form @submit.prevent="handleSetup" v-if="!completed">
         <div class="field">
           <label for="username">Username</label>
-          <InputText id="username" v-model="username" autocomplete="username" :disabled="loading" class="w-full" />
+          <InputText
+            id="username"
+            v-model="username"
+            autocomplete="username"
+            :disabled="loading"
+            class="w-full"
+          />
         </div>
         <div class="field">
           <label for="password">Password</label>
-          <Password id="password" v-model="password" :feedback="false" toggleMask autocomplete="new-password"
-                    :disabled="loading" class="w-full" inputClass="w-full" />
+          <Password
+            id="password"
+            v-model="password"
+            :feedback="false"
+            toggleMask
+            autocomplete="new-password"
+            :disabled="loading"
+            class="w-full"
+            inputClass="w-full"
+          />
           <small v-if="passwordPolicy" class="skip-hint">{{ passwordPolicy.description }}</small>
         </div>
         <div class="field">
           <label for="confirmPassword">Confirm Password</label>
-          <Password id="confirmPassword" v-model="confirmPassword" :feedback="false" toggleMask
-                    autocomplete="new-password" :disabled="loading" class="w-full" inputClass="w-full" />
+          <Password
+            id="confirmPassword"
+            v-model="confirmPassword"
+            :feedback="false"
+            toggleMask
+            autocomplete="new-password"
+            :disabled="loading"
+            class="w-full"
+            inputClass="w-full"
+          />
         </div>
         <Message v-if="error" severity="error" :closable="false" class="mb-3">{{ error }}</Message>
         <Button type="submit" label="Complete Setup" :loading="loading" class="w-full" />
         <div class="skip-row">
-          <Button label="Skip Setup" severity="secondary" text size="small" @click="handleSkip" :loading="skipping" />
+          <Button
+            label="Skip Setup"
+            severity="secondary"
+            text
+            size="small"
+            @click="handleSkip"
+            :loading="skipping"
+          />
           <span class="skip-hint">Uses auto-generated admin credentials from server log</span>
         </div>
       </form>
 
       <div v-else class="setup-complete">
-        <i class="pi pi-check-circle" style="font-size: 3rem; color: var(--p-green-500);"></i>
+        <i class="pi pi-check-circle" style="font-size: 3rem; color: var(--p-green-500)"></i>
         <p>Setup complete! Redirecting to login...</p>
       </div>
     </div>
@@ -74,7 +103,9 @@ onMounted(async () => {
   try {
     const res = await api.get('/setup/status');
     passwordPolicy.value = res.data?.password_policy ?? null;
-  } catch { /* server decides on submit */ }
+  } catch {
+    /* server decides on submit */
+  }
 });
 
 function passwordPolicyError(value) {

@@ -76,7 +76,7 @@ router.post('/', async (req, res) => {
         username,
         passwordHash: hash,
         role: 'admin',
-        mustChangePassword: false
+        mustChangePassword: false,
       });
       Setting.upsertSetting(db, 'installation_complete', 'true');
     })();

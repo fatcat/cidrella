@@ -11,13 +11,17 @@ const router = Router();
 // GET /api/vlans: list all VLANs
 router.get('/', requirePerm('subnets:read'), (req, res) => {
   const db = getDb();
-  const vlans = db.prepare(`
+  const vlans = db
+    .prepare(
+      `
     SELECT v.*,
       (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id) as subnet_count,
       (SELECT GROUP_CONCAT(COALESCE(name, cidr), ', ') FROM subnets WHERE vlan_id = v.vlan_id AND status = 'allocated') as subnet_names
     FROM vlans v
     ORDER BY v.vlan_id
-  `).all();
+  `,
+    )
+    .all();
   res.json(vlans);
 });
 
@@ -28,14 +32,18 @@ router.get('/search', requirePerm('subnets:read'), (req, res) => {
 
   const escaped = (typeof q === 'string' ? q : '').trim().replace(/[\\%_]/g, '\\$&');
   const term = `%${escaped}%`;
-  const vlans = db.prepare(`
+  const vlans = db
+    .prepare(
+      `
     SELECT v.*,
       (SELECT COUNT(*) FROM subnets WHERE vlan_id = v.vlan_id) as subnet_count
     FROM vlans v
     WHERE v.name LIKE ? ESCAPE '\\' OR CAST(v.vlan_id AS TEXT) LIKE ? ESCAPE '\\'
     ORDER BY v.vlan_id
     LIMIT 20
-  `).all(term, term);
+  `,
+    )
+    .all(term, term);
 
   res.json(vlans);
 });
@@ -44,8 +52,12 @@ router.get('/search', requirePerm('subnets:read'), (req, res) => {
 router.post('/', requirePerm('subnets:write'), (req, res) => {
   const body = req.body || {};
   const { vlan_id, name, subnet_id } = body;
-  { const err = vlanIdError(vlan_id); if (err) return res.status(400).json({ error: err }); }
-  if (typeof name !== 'string' || !name.trim()) return res.status(400).json({ error: 'Name is required' });
+  {
+    const err = vlanIdError(vlan_id);
+    if (err) return res.status(400).json({ error: err });
+  }
+  if (typeof name !== 'string' || !name.trim())
+    return res.status(400).json({ error: 'Name is required' });
   const nameErr = validateDisplayString(name.trim(), { maxLength: 255, allowEmpty: false });
   if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
 
@@ -55,9 +67,12 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   if (existing) return res.status(409).json({ error: `VLAN ${vlan_id} already exists` });
 
   if (subnet_id) {
-    const subnet = db.prepare('SELECT id, vlan_id FROM subnets WHERE id = ? AND status = ?').get(subnet_id, 'allocated');
+    const subnet = db
+      .prepare('SELECT id, vlan_id FROM subnets WHERE id = ? AND status = ?')
+      .get(subnet_id, 'allocated');
     if (!subnet) return res.status(404).json({ error: 'Network not found' });
-    if (subnet.vlan_id) return res.status(409).json({ error: 'Network already has a VLAN assigned' });
+    if (subnet.vlan_id)
+      return res.status(409).json({ error: 'Network already has a VLAN assigned' });
   }
 
   try {
@@ -110,7 +125,9 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const newName = name !== undefined ? name.trim() : vlan.name;
 
   if (newVlanId !== vlan.vlan_id) {
-    const dup = db.prepare('SELECT id FROM vlans WHERE vlan_id = ? AND id != ?').get(newVlanId, vlan.id);
+    const dup = db
+      .prepare('SELECT id FROM vlans WHERE vlan_id = ? AND id != ?')
+      .get(newVlanId, vlan.id);
     if (dup) return res.status(409).json({ error: `VLAN ${newVlanId} already exists` });
   }
 
