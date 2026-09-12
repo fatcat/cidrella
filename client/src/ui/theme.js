@@ -1,4 +1,4 @@
-// The theming API behind the 13-theme system.
+// The theming API behind the 6-theme system.
 //
 // `updatePreset` and `updateSurfacePalette` are called from main.js's
 // `ipam:theme-change` listener; `BasePreset` is handed to the plugin at

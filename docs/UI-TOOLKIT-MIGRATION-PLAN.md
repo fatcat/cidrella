@@ -460,6 +460,44 @@ at `rc.1`. Version 1.0 was a version number, not a maturity event.
 - Promote Element Plus when the 0.5.0 redesign reaches these views.
 - BumbleVue stays rejected.
 
+### Re-audit findings at install time (2026-09-12)
+
+The audit was re-run before installing, which is the standing rule. It
+confirmed the earlier pass and added three things that pass did not record.
+
+**The dependency tree is 9 packages, not 7.** `openvue` pulls
+`@openvue/core`, `@openvue/icons`, `@openvue/themes` and then
+`@openuxkit/utils`, `@openuxkit/styled`, `@openuxkit/styles`,
+`@openuxkit/themes`. The `@openuxkit/*` scope is where the real code lives,
+and it is a different npm scope from `@openvue/*`, though the same GitHub org
+(`openvi-foundation/openux`) with the same two maintainers. Zero install
+lifecycle hooks anywhere in the tree.
+
+**Version pinning is uneven, and this is the one thing to watch.** `openvue`
+pins `@openvue/core` and `@openvue/icons` exactly, but takes `@openuxkit/*` on
+caret ranges. A new `@openuxkit/styled` minor therefore reaches a fresh
+install without a version bump on our side. The committed lockfile plus
+`npm ci` in the release path closes this, but it is the reason `npm update`
+must not be run casually on the client.
+
+**Two compatibility facts now verified rather than assumed**, since the whole
+plan rests on them. Comparing every `p-*` class literal in both trees: **no
+class is removed**, and 21 are added, all `p-treetable-filter-*` for a feature
+we do not use. And the CSS variable prefix is still `p` (`prefix: 'p'` in
+`@openuxkit/styled`, no `o*` variant anywhere), so Phase 0b's `tokens.css`
+keeps resolving. Had either been false, Phase 0b and the 46 deep selectors
+would both have needed rework.
+
+On the diff itself: 1380 shared files, 990 byte-identical after branding
+canonicalization. The remainder is 271 source maps, 49 type declarations, 48
+compiled modules, 18 SFCs and 4 metadata files. The 48 compiled modules are
+the number that matters and roughly 40 differ by 3 to 9 lines of compiler
+output drift. The substantive ones are treetable, chart, datatable,
+virtualscroller and password. `password` was read in full and is accessibility
+work (aria-labels, a real `<button>` in place of a bare `<i>`, focus
+restoration). `datatable` introduces `columnWidthsByKey` and `groupRowsBy`,
+matching the merged upstream PRs.
+
 ### Phase 1b: timing (deliberate)
 
 Do not rush this into 0.5.0. `gh api /advisories?ecosystem=npm&affects=primevue`
@@ -469,7 +507,7 @@ contrast, Vuetify has 3 historical advisories and Element Plus 2, all patched.
 4.5.5 is a safe holding position. Schedule the swap on its own, the way the
 Vite 8 plan was kept off the release path.
 
-### Phase 2: swap the component shim
+### Phase 2: swap the component shim (DONE 2026-09-12)
 
 0. Delete the unused `ConfirmationService` registration and `useConfirm`
    wrapper first. Zero call sites, so this is free.
@@ -660,7 +698,7 @@ Phases 0a and 0b, for comparison, are measured rather than estimated:
 |---|---|---|---|
 | 0a Prettier sweep | 352 | +31681 / -12585 | **done**, `600aad4`..`b767e31` |
 | 0b token rename | 57 | 819 lines | **done**, `b2fc290`..`9d1e8d8` |
-| 2 OpenVue swap | 33 | import lines in `client/src/ui/` only | ready |
+| 2 OpenVue swap | 36 | 32 shim files + deps + 2 tests | **done**, `8774b2f` |
 
 The OpenVue swap is 33 files because **zero files outside `client/src/ui/`
 import from `primevue` or `@primeuix`**. The shim boundary is fully intact, so
@@ -714,6 +752,16 @@ Toolkit selection and token naming are both resolved. What remains:
   that do land there are genuinely new. The token rename is the case where
   blame-ignoring actually earns its keep, since a one-token edit inside 819
   existing lines does move authorship.
+
+- **2026-09-12, Phase 2**: swap executed, `8774b2f`. The seam held exactly as
+  designed: 32 shim files, and nothing in the app or its CSS changed. Theming
+  verified identical across all 6 themes with zero drift from the pre-swap
+  values. One gap surfaced that the seam test could not see: a test file
+  (`IpDetailsDrawer.test.js`) mocked the vendor specifier directly while the
+  component it tested went through the seam, so the mock silently stopped
+  applying. `ui-seam.test.js` now scans `tests/` and matches `vi.mock`
+  specifiers too. **The lesson generalizes: a seam enforced only over `src/`
+  is a half-truth, because test doubles name modules as well.**
 
 ## References
 
