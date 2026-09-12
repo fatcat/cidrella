@@ -5,5 +5,5 @@
 // registration. stores/theme.js deliberately imports NONE of this: it emits a
 // CustomEvent carrying plain hex ramps and knows nothing about the widget
 // library, which is why the theme system costs almost nothing to move.
-export { updatePreset, updateSurfacePalette } from '@primeuix/themes';
-export { default as BasePreset } from '@primeuix/themes/aura';
+export { updatePreset, updateSurfacePalette } from '@openvue/themes';
+export { default as BasePreset } from '@openvue/themes/aura';

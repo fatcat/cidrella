@@ -9,14 +9,23 @@ const UI = path.join(SRC, 'ui');
 /**
  * The widget-library seam (client/src/ui/).
  *
- * PrimeVue was archived and relicensed, so CIDRella is moving to an
- * API-compatible community fork. Every vendor specifier now lives in ui/ and
- * nowhere else, which turns that migration into a small reviewable diff and,
- * more usefully, gives one place to absorb API drift from a pre-1.0 fork.
+ * PrimeVue was archived and relicensed, so CIDRella moved to OpenVue, an
+ * API-compatible community fork. Every vendor specifier lives in ui/ and
+ * nowhere else, which made that swap 32 files and gives one place to absorb
+ * API drift from a 1.0 fork.
  *
  * That property is only worth anything if it holds, and nothing about writing
- * `import Button from 'primevue/button'` in a new component would fail a build.
+ * `import Button from 'openvue/button'` in a new component would fail a build.
  * Hence this test.
+ *
+ * The pattern below matches the OLD vendor names too. primevue is no longer a
+ * dependency, so naming it is a broken import rather than a style problem, and
+ * this is the cheapest place to catch it.
+ *
+ * tests/ is scanned as well, which it was not originally. The OpenVue swap
+ * broke IpDetailsDrawer.test.js because it mocked 'primevue/usetoast'
+ * directly while the component itself correctly imported ../ui/useToast.js.
+ * A test that reaches past the seam makes the seam a half-truth.
  */
 function walk(dir, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -31,10 +40,17 @@ function walk(dir, acc = []) {
 // for both matchAll and test makes repeated test() calls alternate true/false.
 // The first version of this file did exactly that and the vacuity check below
 // caught it, which is the check earning its place.
-const VENDOR_ALL = /from\s+['"](primevue\/[^'"]+|@primeuix\/[^'"]+)['"]/g;
-const VENDOR_ONE = /from\s+['"](primevue\/[^'"]+|@primeuix\/[^'"]+)['"]/;
+const VENDOR = String.raw`(openvue\/[^'"]+|@openvue\/[^'"]+|primevue\/[^'"]+|@primeuix\/[^'"]+)`;
+const VENDOR_ALL = new RegExp(String.raw`from\s+['"]${VENDOR}['"]`, 'g');
+const VENDOR_ONE = new RegExp(String.raw`from\s+['"]${VENDOR}['"]`);
+// vi.mock() takes a specifier too, and reaches past the seam just as well.
+const VENDOR_MOCK = new RegExp(String.raw`vi\.mock\(\s*['"]${VENDOR}['"]`, 'g');
 const ALL = walk(SRC);
 const APP = ALL.filter((f) => !f.startsWith(UI + path.sep));
+// This file necessarily contains vendor specifiers as fixtures, so it is
+// excluded from its own scan.
+const SELF = fileURLToPath(import.meta.url);
+const TESTS = walk(path.resolve(path.dirname(SELF), '..')).filter((f) => f !== SELF);
 
 describe('ui seam: only client/src/ui names the widget library', () => {
   it('scanned a meaningful number of files', () => {
@@ -79,8 +95,25 @@ describe('ui seam: only client/src/ui names the widget library', () => {
     }
   });
 
-  it('the guard actually catches a direct import', () => {
-    const sample = "import Button from 'primevue/button';";
-    expect([...sample.matchAll(/from\s+['"](primevue\/[^'"]+)['"]/g)]).toHaveLength(1);
+  it('no test file names the vendor either, by import or by vi.mock', () => {
+    const offenders = [];
+    for (const f of TESTS) {
+      const body = fs.readFileSync(f, 'utf8');
+      const hits = [
+        ...[...body.matchAll(VENDOR_ALL)].map((m) => m[1]),
+        ...[...body.matchAll(VENDOR_MOCK)].map((m) => m[1]),
+      ];
+      if (hits.length) offenders.push(`${path.basename(f)} -> ${[...new Set(hits)].join(', ')}`);
+    }
+    expect(
+      offenders,
+      `mock the seam (../src/ui/<Name>.js) instead:\n  ${offenders.join('\n  ')}`,
+    ).toEqual([]);
+  });
+
+  it('the guard actually catches a direct import and a direct mock', () => {
+    expect([...`import Button from 'openvue/button';`.matchAll(VENDOR_ALL)]).toHaveLength(1);
+    expect([...`import B from 'primevue/button';`.matchAll(VENDOR_ALL)]).toHaveLength(1);
+    expect([...`vi.mock('openvue/usetoast', () => ({}));`.matchAll(VENDOR_MOCK)]).toHaveLength(1);
   });
 });

@@ -19,7 +19,7 @@ vi.mock('../../../src/api/client.js', () => ({
 }));
 
 // PrimeVue's toast is injected by the app, not by a bare mount.
-vi.mock('primevue/usetoast', () => ({ useToast: () => ({ add: vi.fn() }) }));
+vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => ({ add: vi.fn() }) }));
 
 const IpDetailsDrawer = (await import('../../../src/components/IpDetailsDrawer.vue')).default;
 

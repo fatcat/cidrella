@@ -9,13 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@primeuix/themes": "2.0.3",
+    "@openvue/themes": "1.0.0",
     "axios": "^1.7.0",
     "chart.js": "^4.5.1",
     "chartjs-plugin-datalabels": "^2.2.0",
+    "openvue": "1.0.0",
     "pinia": "^4.0.2",
     "primeicons": "7.0.0",
-    "primevue": "4.5.5",
     "vue": "^3.5.0",
     "vue-chartjs": "^5.3.3",
     "vue-router": "^5.1.0"
@@ -32,10 +32,10 @@
   },
   "releaseHealth": {
     "holdMajor": [
-      "primevue",
-      "@primeuix/themes",
+      "openvue",
+      "@openvue/themes",
       "primeicons"
     ],
-    "holdMajorReason": "PrimeVue 5 adds a paid-license watermark; stay on 4.x until we migrate off PrimeVue. Do not let the release build re-upgrade these."
+    "holdMajorReason": "OpenVue is a single-maintainer fork of PrimeVue 4.5.5 published under one npm credential. Every major must be re-audited with the fork-diff method in docs/UI-TOOLKIT-MIGRATION-PLAN.md before it ships. primeicons stays on 7.x: it is the icon font only, kept from the PrimeVue era, and 8.x is untested here."
   }
 }

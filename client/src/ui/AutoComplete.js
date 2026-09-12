@@ -1,4 +1,4 @@
 // AutoComplete: re-export of the vendor component.
 //
 // One module per component, on purpose. See ./README.md.
-export { default } from 'primevue/autocomplete';
+export { default } from 'openvue/autocomplete';
