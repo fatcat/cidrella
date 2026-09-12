@@ -28,8 +28,16 @@ let tmpDir;
 // the drift tripwire: it pins the verdict semantics both transports rely on.
 
 // Fake country lookup so the geoip matrix runs without an MMDB on disk.
+// 198.51.100.7 is RU but sits inside the allowlisted /24 below, so it is
+// exempted before the country lookup ever runs and cannot stand in for a
+// blocked country. 203.0.113.50 is the RU address that actually reaches here.
 const lookup = (ip) =>
-  ({ '203.0.113.9': 'CN', '198.51.100.7': 'RU', '192.0.2.10': 'DE' })[ip] || null;
+  ({
+    '203.0.113.9': 'CN',
+    '203.0.113.50': 'RU',
+    '198.51.100.7': 'RU',
+    '192.0.2.10': 'DE',
+  })[ip] || null;
 
 beforeAll(async () => {
   const result = await setupTestDb();
@@ -131,17 +139,28 @@ describe('evaluateResolvedPolicy (GeoIP verdict, shared by UDP + TCP)', () => {
     expect(v.countryCodes).not.toContain('DE');
   });
 
-  it('reports every blocked country when more than one matches', () => {
-    // RU is blocked too. Both belong in the counters, and the order follows
-    // the answer set.
+  it('reports two DISTINCT blocked countries, not just the first', () => {
+    // CN and RU are both blocked, DE is clean. All three are looked up, so
+    // this pins the property the name claims: a regression that kept only the
+    // first distinct match would still return ['CN'] and pass a weaker test.
+    const v = evaluateResolvedPolicy(
+      'some.example.com',
+      ['203.0.113.9', '192.0.2.10', '203.0.113.50'],
+      lookup,
+    );
+    expect(v.action).toBe('block');
+    expect(v.countryCodes).toEqual(['CN', 'RU']);
+    expect(v.blockReason).toBe('CN');
+  });
+
+  it('keeps duplicates, because each answer is a separate hit', () => {
+    // countryCodes feeds per-country counters, so two CN answers are two hits.
     const v = evaluateResolvedPolicy(
       'some.example.com',
       ['203.0.113.9', '192.0.2.10', '203.0.113.9'],
       lookup,
     );
-    expect(v.action).toBe('block');
     expect(v.countryCodes).toEqual(['CN', 'CN']);
-    expect(v.blockReason).toBe('CN');
   });
 
   it('forwards empty and lookup-less answer sets', () => {
