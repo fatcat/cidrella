@@ -311,7 +311,12 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.findAll('.view-tabs button')).toHaveLength(3);
     expect(wrapper.find('table').text()).toContain('Public test network');
 
-    await wrapper.find('button[data-track="workspace-stat-dns"]').trigger('click');
+    // Was a click on the DNS stat tile. That tile was navigation duplicating
+    // the DNS tab, so the tile is a readout now and the tab is the only way in.
+    await wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DNS'))
+      .trigger('click');
     expect(wrapper.find('.context-header').text()).toContain('All Networks');
     expect(wrapper.find('.view-tabs button.active').text()).toContain('DNS');
     expect(wrapper.find('table').text()).toContain('1.1.1.in-addr.arpa');

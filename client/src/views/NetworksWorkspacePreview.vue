@@ -6,11 +6,7 @@
   >
     <header class="preview-banner">
       <div>
-        <div class="preview-kicker">0.5.0 workspace preview</div>
         <h1>Network operations, in context</h1>
-        <p>
-          One resource explorer, one work surface, and no lost context between IPAM, DNS, and DHCP.
-        </p>
       </div>
       <div class="preview-banner-actions">
         <div class="font-sizer" aria-label="Small text size">
@@ -34,7 +30,7 @@
           </button>
         </div>
         <span class="sample-pill live"
-          ><i class="pi pi-circle-fill" /> Live appliance data · preview actions</span
+          ><i class="pi pi-circle-fill" /> 0.5.0 preview · live data</span
         >
         <router-link to="/networks" class="quiet-link" data-track="preview-back-to-networks">
           <i class="pi pi-arrow-left" /> Current interface
@@ -81,8 +77,9 @@
           <span
             ><strong>All Networks</strong
             ><small
-              >{{ allNetworks.length }} networks · {{ dnsZones.length }} zones ·
-              {{ dhcpScopes.length }} scopes</small
+              >{{ countOf(allNetworks.length, 'network') }} ·
+              {{ countOf(dnsZones.length, 'zone') }} ·
+              {{ countOf(dhcpScopes.length, 'scope') }}</small
             ></span
           >
           <i class="pi pi-chevron-right" />
@@ -253,7 +250,7 @@
         <section class="view-summary">
           <div>
             <span class="eyebrow">{{ viewMeta.eyebrow }}</span>
-            <h3>{{ viewMeta.title }}</h3>
+            <h3 v-if="viewMeta.title">{{ viewMeta.title }}</h3>
             <p>{{ viewMeta.description }}</p>
           </div>
           <div v-if="activeView === 'dns'" class="linked-resources">
@@ -308,10 +305,6 @@
                 >Available</small
               ><strong>{{ addressOverview.available }}</strong>
             </div>
-          </div>
-          <div v-else class="scope-summary">
-            <i class="pi pi-sitemap" /> Select a network to work with its addresses, ranges, DNS,
-            and DHCP configuration.
           </div>
         </section>
 
@@ -1010,8 +1003,8 @@ const contextSubtitle = computed(() => {
       .filter(Boolean)
       .join(' · ');
   if (contextKind.value === 'folder')
-    return `${scopedNetworks.value.length} managed networks in this folder`;
-  return `${allNetworks.value.length} managed networks across all folders`;
+    return `${countOf(scopedNetworks.value.length, 'managed network')} in this folder`;
+  return `${countOf(allNetworks.value.length, 'managed network')} across all folders`;
 });
 const contextIcon = computed(() =>
   contextKind.value === 'estate'
@@ -1066,6 +1059,12 @@ const availableViews = computed(() =>
         ),
       })),
 );
+// "1 managed networks" reads as a bug even when the number is right. Every
+// count in this view is a plain English noun, so the "s" rule is enough.
+function countOf(n, noun) {
+  return `${formatNumber(n)} ${noun}${n === 1 ? '' : 's'}`;
+}
+
 const viewMeta = computed(() => {
   const base = viewDefinitions[activeView.value];
   if (contextKind.value !== 'network') {
@@ -1076,21 +1075,23 @@ const viewMeta = computed(() => {
     if (activeView.value === 'networks')
       return {
         ...base,
-        title: `${scopedNetworks.value.length} managed networks`,
+        // No title: the eyebrow already reads MANAGED NETWORKS and the tab
+        // badge already carries the count.
+        title: '',
         description: `Allocated networks${scopeDescription}. Select one in the explorer to enter its working context.`,
       };
     if (activeView.value === 'dns')
       return {
         ...base,
         eyebrow: 'DNS ZONE INVENTORY',
-        title: `${scopedZones.value.length} authoritative zones`,
+        title: countOf(scopedZones.value.length, 'authoritative zone'),
         description: `Forward and reverse zones${scopeDescription}.`,
       };
     if (activeView.value === 'dhcp')
       return {
         ...base,
         eyebrow: 'DHCP SCOPE INVENTORY',
-        title: `${scopedScopes.value.length} configured scopes`,
+        title: countOf(scopedScopes.value.length, 'configured scope'),
         description: `Dynamic address pools and lease policy${scopeDescription}.`,
       };
   }
@@ -1112,7 +1113,7 @@ const viewMeta = computed(() => {
           ? `${selectedNetwork.value.name} scope`
           : `${networkScopes.value.length} scopes for ${selectedNetwork.value.name}`,
     };
-  return { ...base, title: `${rangeRows.value.length} managed ranges` };
+  return { ...base, title: countOf(rangeRows.value.length, 'managed range') };
 });
 const columns = computed(() => {
   if (contextKind.value !== 'network' && activeView.value === 'dns')
@@ -1209,32 +1210,15 @@ const contextStats = computed(() =>
       ]
     : [
         {
-          label: 'NETWORKS',
-          value: formatNumber(scopedNetworks.value.length),
-          note: contextKind.value === 'folder' ? 'in this folder' : 'across all folders',
+          label: 'POOL ADDRESSES',
+          value: formatNumber(sumScopeAddresses(scopedScopes.value)),
+          note: `across ${countOf(scopedScopes.value.length, 'DHCP scope')}`,
           tone: 'good',
           dot: true,
-          view: 'networks',
-        },
-        {
-          label: 'DNS ZONES',
-          value: formatNumber(scopedZones.value.length),
-          note: 'forward and reverse',
-          tone: 'neutral',
-          view: 'dns',
-        },
-        {
-          label: 'DHCP SCOPES',
-          value: formatNumber(scopedScopes.value.length),
-          note: `${formatNumber(sumScopeAddresses(scopedScopes.value))} pool addresses`,
-          tone: 'good',
-          dot: true,
-          view: 'dhcp',
         },
         {
           label: 'ACTIVE LEASES',
           value: formatNumber(scopedActiveLeaseCount.value),
-          note: 'live assignments',
           tone: 'neutral',
         },
         {
@@ -1788,16 +1772,10 @@ button {
   margin: 0 0 1rem;
 }
 .preview-banner h1 {
-  margin: 0.12rem 0 0.25rem;
+  margin: 0;
   font-size: clamp(1.35rem, 2vw, 2rem);
   letter-spacing: -0.035em;
 }
-.preview-banner p {
-  margin: 0;
-  color: var(--preview-muted);
-  font-size: var(--app-fs-base);
-}
-.preview-kicker,
 .eyebrow {
   color: var(--preview-accent);
   font-size: 0.65rem;
@@ -2582,17 +2560,6 @@ button {
 }
 .address-overview strong {
   font-size: 0.8rem;
-}
-.scope-summary {
-  display: inline-flex;
-  max-width: 440px;
-  align-items: center;
-  gap: 0.45rem;
-  color: var(--preview-muted);
-  font-size: var(--workspace-font-body);
-}
-.scope-summary i {
-  color: var(--preview-accent);
 }
 .range-legend,
 .grid-key {
@@ -3387,7 +3354,6 @@ tbody tr.selected {
   opacity: 0;
   transform: translateY(10px);
 }
-.preview-kicker,
 .eyebrow,
 .estate-row small,
 .explorer-section-head,
