@@ -281,12 +281,9 @@ router.get('/ip-lifecycle-migration-report', requireRole('admin'), (req, res) =>
 // POST /api/version/install: trigger update installation (admin only)
 router.post('/install', requireRole('admin'), (req, res) => {
   if (isDockerEnvironment()) {
-    return res
-      .status(400)
-      .json({
-        error:
-          'Auto-update is not available in Docker deployments. Pull the latest image to update.',
-      });
+    return res.status(400).json({
+      error: 'Auto-update is not available in Docker deployments. Pull the latest image to update.',
+    });
   }
 
   const pending = resolvePendingUpdate();

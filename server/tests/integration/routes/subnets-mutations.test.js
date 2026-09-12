@@ -1007,14 +1007,12 @@ describe('folder_id is validated identically on every route that accepts it', ()
     const put = await request(app).put(`/api/subnets/${s.id}`).send({ folder_id: '3' });
     expect(put.status).toBe(400);
 
-    const cfg = await request(app)
-      .post(`/api/subnets/${s.id}/configure`)
-      .send({
-        name: 'fid-str',
-        create_reverse_dns: false,
-        create_dhcp_scope: false,
-        folder_id: '3',
-      });
+    const cfg = await request(app).post(`/api/subnets/${s.id}/configure`).send({
+      name: 'fid-str',
+      create_reverse_dns: false,
+      create_dhcp_scope: false,
+      folder_id: '3',
+    });
     expect(cfg.status).toBe(400);
   });
 
@@ -1025,27 +1023,23 @@ describe('folder_id is validated identically on every route that accepts it', ()
       status: 'allocated',
       gateway_address: '10.123.0.1',
     });
-    const create = await request(app)
-      .post('/api/subnets')
-      .send({
-        cidr: '10.124.0.0/24',
-        name: 'fid-missing2',
-        status: 'allocated',
-        folder_id: 999999,
-      });
+    const create = await request(app).post('/api/subnets').send({
+      cidr: '10.124.0.0/24',
+      name: 'fid-missing2',
+      status: 'allocated',
+      folder_id: 999999,
+    });
     expect(create.status).toBe(400);
 
     const put = await request(app).put(`/api/subnets/${s.id}`).send({ folder_id: 999999 });
     expect(put.status).toBe(400);
 
-    const cfg = await request(app)
-      .post(`/api/subnets/${s.id}/configure`)
-      .send({
-        name: 'fid-missing',
-        create_reverse_dns: false,
-        create_dhcp_scope: false,
-        folder_id: 999999,
-      });
+    const cfg = await request(app).post(`/api/subnets/${s.id}/configure`).send({
+      name: 'fid-missing',
+      create_reverse_dns: false,
+      create_dhcp_scope: false,
+      folder_id: 999999,
+    });
     expect(cfg.status).toBe(400);
   });
 

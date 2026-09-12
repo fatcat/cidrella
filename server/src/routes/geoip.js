@@ -60,11 +60,9 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
   );
   if (invalid.length > 0) {
     // c may be null/non-object here, so read `code` defensively for the message too.
-    return res
-      .status(400)
-      .json({
-        error: `Invalid country codes: ${invalid.map((c) => (c && c.code) || '(empty)').join(', ')}`,
-      });
+    return res.status(400).json({
+      error: `Invalid country codes: ${invalid.map((c) => (c && c.code) || '(empty)').join(', ')}`,
+    });
   }
 
   // Check for duplicates
@@ -72,11 +70,9 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
     return db.prepare('SELECT id FROM geoip_rules WHERE country_code = ?').get(c.code);
   });
   if (existing.length > 0 && existing.length === countries.length) {
-    return res
-      .status(409)
-      .json({
-        error: `All specified country rules already exist: ${existing.map((c) => c.code).join(', ')}`,
-      });
+    return res.status(409).json({
+      error: `All specified country rules already exist: ${existing.map((c) => c.code).join(', ')}`,
+    });
   }
 
   const added = GeoipRule.addRules(db, countries);

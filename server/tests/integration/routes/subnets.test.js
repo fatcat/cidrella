@@ -460,14 +460,12 @@ describe('GET /api/subnets/:id/ips', () => {
   });
 
   it('classifies a persisted gateway allocation when available rows are suppressed', async () => {
-    const createRes = await request(app)
-      .post('/api/subnets')
-      .send({
-        cidr: '10.72.0.0/29',
-        name: 'Gateway Type',
-        status: 'allocated',
-        gateway_address: '10.72.0.1',
-      });
+    const createRes = await request(app).post('/api/subnets').send({
+      cidr: '10.72.0.0/29',
+      name: 'Gateway Type',
+      status: 'allocated',
+      gateway_address: '10.72.0.1',
+    });
     expect(createRes.status).toBe(201);
 
     const gatewayType = db

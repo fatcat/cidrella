@@ -537,11 +537,9 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
       .prepare('SELECT id, type FROM dns_records WHERE zone_id = ? AND name = ? AND type != ?')
       .get(zone.id, normalizedName, 'CNAME');
     if (conflict) {
-      return res
-        .status(409)
-        .json({
-          error: `CNAME at "${normalizedName}" conflicts with existing ${conflict.type} record`,
-        });
+      return res.status(409).json({
+        error: `CNAME at "${normalizedName}" conflicts with existing ${conflict.type} record`,
+      });
     }
   }
 

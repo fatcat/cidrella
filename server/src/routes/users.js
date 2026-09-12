@@ -51,11 +51,9 @@ router.post('/', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Username must be 64 characters or fewer' });
   }
   if (!USERNAME_RE.test(username.trim())) {
-    return res
-      .status(400)
-      .json({
-        error: 'Username may only contain letters, numbers, dots, hyphens, and underscores',
-      });
+    return res.status(400).json({
+      error: 'Username may only contain letters, numbers, dots, hyphens, and underscores',
+    });
   }
   if (!role || !VALID_ROLES.includes(role)) {
     return res.status(400).json({ error: `Role must be one of: ${VALID_ROLES.join(', ')}` });
