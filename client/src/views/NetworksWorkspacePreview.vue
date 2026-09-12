@@ -247,11 +247,9 @@
           </button>
         </nav>
 
-        <section class="view-summary">
+        <section v-if="showViewSummary" class="view-summary">
           <div>
-            <span class="eyebrow">{{ viewMeta.eyebrow }}</span>
             <h3 v-if="viewMeta.title">{{ viewMeta.title }}</h3>
-            <p>{{ viewMeta.description }}</p>
           </div>
           <div v-if="activeView === 'dns'" class="linked-resources">
             <button
@@ -735,36 +733,26 @@ let contextRequest = 0;
 
 const viewDefinitions = {
   networks: {
-    eyebrow: 'MANAGED NETWORKS',
-    description: 'Allocated address spaces in the current organizational scope.',
     search: 'Search network, CIDR, folder, VLAN, or domain…',
     addLabel: 'Allocate network',
     addAction: 'Allocate network',
   },
   addresses: {
-    eyebrow: 'ADDRESS SPACE',
-    description: 'Allocation, liveness, naming, and policy from the canonical IP read model.',
     search: 'Search IP, hostname, MAC, type…',
     addLabel: 'Reserve address',
     addAction: 'Create IP Reservation',
   },
   dns: {
-    eyebrow: 'DNS FOR THIS NETWORK',
-    description: 'Forward and reverse records linked to the selected address space.',
     search: 'Search name, zone, record type, or value…',
     addLabel: 'Add record',
     addAction: 'Add DNS record',
   },
   dhcp: {
-    eyebrow: 'DHCP FOR THIS NETWORK',
-    description: 'Leases, reservations, and pool availability without leaving the network.',
     search: 'Search IP, MAC, hostname, network, or lease…',
     addLabel: 'Add reservation',
     addAction: 'Add DHCP Reservation',
   },
   ranges: {
-    eyebrow: 'ADDRESS POLICY',
-    description: 'Functional scopes and organizational tags across the selected network.',
     search: 'Search range, type, or description…',
     addLabel: 'Add range',
     addAction: 'Add Network Range Type range',
@@ -1068,32 +1056,14 @@ function countOf(n, noun) {
 const viewMeta = computed(() => {
   const base = viewDefinitions[activeView.value];
   if (contextKind.value !== 'network') {
-    const scopeDescription =
-      contextKind.value === 'folder'
-        ? ` within ${selectedFolder.value?.name}`
-        : ' across all managed networks';
     if (activeView.value === 'networks')
-      return {
-        ...base,
-        // No title: the eyebrow already reads MANAGED NETWORKS and the tab
-        // badge already carries the count.
-        title: '',
-        description: `Allocated networks${scopeDescription}. Select one in the explorer to enter its working context.`,
-      };
+      // Nothing to say here that the tab badge does not already say, so the
+      // whole band is hidden for this one.
+      return { ...base, title: '' };
     if (activeView.value === 'dns')
-      return {
-        ...base,
-        eyebrow: 'DNS ZONE INVENTORY',
-        title: countOf(scopedZones.value.length, 'authoritative zone'),
-        description: `Forward and reverse zones${scopeDescription}.`,
-      };
+      return { ...base, title: countOf(scopedZones.value.length, 'authoritative zone') };
     if (activeView.value === 'dhcp')
-      return {
-        ...base,
-        eyebrow: 'DHCP SCOPE INVENTORY',
-        title: countOf(scopedScopes.value.length, 'configured scope'),
-        description: `Dynamic address pools and lease policy${scopeDescription}.`,
-      };
+      return { ...base, title: countOf(scopedScopes.value.length, 'configured scope') };
   }
   if (activeView.value === 'addresses')
     return { ...base, title: `${formatNumber(addressTotal.value)} managed addresses` };
@@ -1229,6 +1199,16 @@ const contextStats = computed(() =>
           dot: true,
         },
       ],
+);
+
+// The right half of the band carries real content on these views (the address
+// breakdown, the zone and scope filter cards, the range legend). On the
+// all-networks view it carries nothing, and with the eyebrow and description
+// gone there is no left half either, so the band hides rather than sitting
+// there as an empty strip.
+const viewsWithAside = ['addresses', 'dns', 'dhcp', 'ranges'];
+const showViewSummary = computed(
+  () => Boolean(viewMeta.value.title) || viewsWithAside.includes(activeView.value),
 );
 
 const addressOverview = computed(() => {
@@ -2457,7 +2437,6 @@ button {
 }
 .view-summary {
   display: flex;
-  min-height: 78px;
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
@@ -2468,11 +2447,6 @@ button {
 .view-summary h3 {
   margin: 0.1rem 0;
   font-size: 0.96rem;
-}
-.view-summary p {
-  margin: 0;
-  color: var(--preview-muted);
-  font-size: 0.68rem;
 }
 .linked-resources {
   display: flex;
