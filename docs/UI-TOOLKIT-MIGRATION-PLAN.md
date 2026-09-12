@@ -240,7 +240,7 @@ authorship. Commit pending work first, sweep second, then append the sweep's
 SHA to the ignore file in a third small commit (a commit cannot contain its own
 hash).
 
-### Phase 0b: CSS token shim (after 0a, independent of the toolkit)
+### Phase 0b: CSS token shim (DONE 2026-09-12)
 
 Does not depend on which kit we choose, and earns its keep even if the toolkit
 never changes, because it converts scattered vendor references into one
@@ -264,8 +264,35 @@ split **32 raw palette / 20 semantic**.
 6. Verify: build, full client suite, and a Playwright pass across all 13 themes
    confirming no visual change.
 
-Exit criterion: no file outside the shim reads a `--p-*` token, and the app
-renders identically in all 13 themes.
+**Done.** `client/src/ui/tokens.css` holds 44 aliases, `App.vue` keeps the 4
+semantic surface tokens it invented (now `--cid-*`, built on the aliases), and
+2 names were dropped as dead. Exit criterion verified mechanically: zero
+`var(--p-` reads and zero `--p-*:` declarations outside the shim, 44 reads
+inside it.
+
+Landed as 5 commits, `b2fc290` through `9d1e8d8`, with the 819-line
+substitution isolated in `5244c85` so it could go into
+`.git-blame-ignore-revs` honestly. That commit was proved mechanical rather
+than asserted: mapping `--cid-*` back and stripping whitespace reproduces its
+parent byte for byte across all 57 files.
+
+Equivalence was verified in a browser, not reasoned about. 50 tokens times 6
+themes is 300 comparisons: 264 resolve identically to the `--p-*` they
+replaced, 24 are the App.vue-owned four where `--p-*` is now correctly
+undefined and `--cid-*` carries a value matching the pre-rename capture with
+zero drift, and 12 are the two dead names, empty before and after. A light and
+a dark theme were also checked visually.
+
+Note for the record: the theme count in this document was wrong. `dev/0.5.0`
+ships **6** themes, not 13. The 13 predate the 0.5.0 cleanup.
+
+**Two dead tokens surfaced, one of them a real defect.**
+`--p-surface-hover` was never defined by the library and computes to empty in
+every theme, and 4 call sites read it bare with no fallback, so those hover
+backgrounds have never painted. `--p-surface-content-muted` is the same shape
+but harmless, since both its call sites supply a fallback. Neither was fixed
+in Phase 0b, because the rename commit is blame-ignored and had to stay
+mechanical. Logged in `BACKLOG.md` under Open defects.
 
 **What this phase does not cover.** 46 deep `.p-*` class selectors reach into
 vendor internals, and tokens cannot abstract those. They survive OpenVue
@@ -631,8 +658,8 @@ Phases 0a and 0b, for comparison, are measured rather than estimated:
 
 | Phase | Files | Scale | Status |
 |---|---|---|---|
-| 0a Prettier sweep | 352 | +33304 / -12580 | validated, awaiting a clean tree |
-| 0b token rename | 58 | 755 lines | ready, blocked only on 0a |
+| 0a Prettier sweep | 352 | +31681 / -12585 | **done**, `600aad4`..`b767e31` |
+| 0b token rename | 57 | 819 lines | **done**, `b2fc290`..`9d1e8d8` |
 | 2 OpenVue swap | 33 | import lines in `client/src/ui/` only | ready |
 
 The OpenVue swap is 33 files because **zero files outside `client/src/ui/`
@@ -676,6 +703,17 @@ Toolkit selection and token naming are both resolved. What remains:
   finding rather than a preference: Option A would have redefined the `--p-*`
   tokens that OpenVue emits and that `updatePreset` rewrites at runtime, which
   `App.vue` already documents as the thing not to do.
+
+- **2026-09-12, later**: Phase 0a and 0b both landed, 14 commits total. Two
+  findings worth carrying forward. Prettier is **not idempotent** on this
+  codebase (a method chain with an object-literal argument needs a second
+  pass), so always run `npm run format` twice when bumping it. And the
+  `git blame` damage that justified the old no-Prettier rule is far smaller
+  than assumed: across 25 swept files only 15 lines end up attributed to the
+  sweep, and `.git-blame-ignore-revs` redirects none of them, because the lines
+  that do land there are genuinely new. The token rename is the case where
+  blame-ignoring actually earns its keep, since a one-token edit inside 819
+  existing lines does move authorship.
 
 ## References
 
