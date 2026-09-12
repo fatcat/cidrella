@@ -90,6 +90,33 @@ describe('parseIp: IPv4-mapped addresses', () => {
   it('parses an embedded v4 tail in a non-mapped prefix', () => {
     expect(canonicalizeIp('2001:db8::192.168.1.1')).toBe('2001:db8::c0a8:101');
   });
+
+  // RFC 4291 s2.2(3) puts the dotted-quad in the TRAILING two hextets. A '::'
+  // after the quad means it is not trailing, so the address is malformed.
+  it('rejects a dotted-quad that sits before the "::"', () => {
+    expect(parseIp('1.2.3.4::')).toBeNull();
+    expect(parseIp('1.2.3.4::1')).toBeNull();
+    expect(parseIp('a:b:1.2.3.4::')).toBeNull();
+    expect(canonicalizeIp('1.2.3.4::')).toBeNull();
+  });
+
+  // The reason the above matters. '1.2.3.4::' used to take its quad from the
+  // head and then fill six zero groups in FRONT of it, landing on exactly the
+  // value of the legitimate '::1.2.3.4'. An invalid string and a valid one
+  // canonicalizing to one address is the kind of thing that turns into two
+  // rows for one host.
+  it('does not canonicalize the malformed form onto the valid one', () => {
+    expect(canonicalizeIp('::1.2.3.4')).toBe('::102:304');
+    expect(canonicalizeIp('1.2.3.4::')).not.toBe(canonicalizeIp('::1.2.3.4'));
+  });
+
+  it('still accepts every legitimate trailing-quad spelling', () => {
+    expect(canonicalizeIp('::1.2.3.4')).toBe('::102:304');
+    expect(canonicalizeIp('a:b::1.2.3.4')).toBe('a:b::102:304');
+    expect(canonicalizeIp('64:ff9b::1.2.3.4')).toBe('64:ff9b::102:304');
+    expect(canonicalizeIp('::ffff:0:1.2.3.4')).toBe('::ffff:0:102:304');
+    expect(canonicalizeIp('0:0:0:0:0:0:1.2.3.4')).toBe('::102:304');
+  });
 });
 
 describe('formatIp: RFC 5952', () => {
