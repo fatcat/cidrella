@@ -1,7 +1,7 @@
-// ESLint flat config: correctness-focused, not stylistic. Formatting churn is
-// deliberately avoided on this established codebase; stylistic enforcement is
-// the format-on-edit hook's job in projects that opt into Prettier (this one
-// doesn't, see CLAUDE.md "Conventions").
+// ESLint flat config: correctness-focused, not stylistic. Formatting is
+// Prettier's job (.prettierrc.json, adopted 2026-09-12) and lint deliberately
+// does not duplicate it, so the two can never disagree. See CLAUDE.md
+// "Conventions" for the scope and the blame-ignore setup.
 import js from '@eslint/js';
 import pluginVue from 'eslint-plugin-vue';
 import globals from 'globals';

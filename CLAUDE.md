@@ -89,6 +89,20 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   commit messages but never commits.
 - **UI instrumentation**: key UI elements carry `data-track` attributes consumed by the dev
   tracking endpoint. Preserve them when refactoring components.
-- **Linting**: ESLint only (`eslint.config.mjs`), correctness-focused. This codebase
-  deliberately has NO Prettier config: it predates the linter, and a mass-reformat would
-  destroy git blame. Don't add one; stylistic Vue rules are intentionally off.
+- **Linting**: ESLint only (`eslint.config.mjs`), correctness-focused. Stylistic Vue rules
+  are intentionally off, formatting is Prettier's job and lint does not duplicate it.
+- **Formatting**: Prettier (`.prettierrc.json`, pinned exact). Adopted 2026-09-12, reversing
+  the earlier no-Prettier rule. The settings were measured off the existing code rather than
+  taken as defaults: single quotes (the repo had 708 to zero), `printWidth: 100` (p95 of real
+  line length was 94), Vue `<script>` left flush with the tag. Scope is CODE ONLY, `.js`
+  `.vue` `.css`. Markdown, JSON, YAML and HTML are in `.prettierignore` so hand-formatted
+  prose and machine-parsed files keep the shape their consumers expect, notably the
+  `## vX.Y.Z — YYYY-MM-DD` headings that `build-releases-manifest.js` parses.
+  - Run `npm run format` to sweep, `npm run format:check` to verify.
+  - The reason for the original rule was blame, and that is handled by
+    `.git-blame-ignore-revs` instead. Git uses it via
+    `git config blame.ignoreRevsFile .git-blame-ignore-revs`, GitHub honors it with no
+    config. Only add purely mechanical commits to that file.
+  - Adopting it is all-or-nothing on purpose. The global format-on-edit hook activates the
+    moment a Prettier config exists, so a partly swept tree would drip formatting noise into
+    every unrelated commit afterward.

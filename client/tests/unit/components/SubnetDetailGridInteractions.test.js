@@ -23,7 +23,7 @@ describe('SubnetDetail grid interactions', () => {
 
   it('gives the grid menu a static selection header and concise reservation action', () => {
     expect(source).toContain('showSelectionHeader: true');
-    expect(source).toContain("conciseReservationLabel ? 'Create IP Reservation'");
+    expect(source).toMatch(/conciseReservationLabel\s*\?\s*'Create IP Reservation'/);
     expect(source).toMatch(/showSelectionHeader[\s\S]*disabled: true/);
   });
 
