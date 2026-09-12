@@ -70,7 +70,27 @@ Deferred by dependency, not stuck. Needs the shared-module seam that is IPv6 Pha
 
 ## Open defects
 
-Both LOW. Neither blocks a release.
+All LOW. None blocks a release.
+
+### Four hover backgrounds never render, `--cid-surface-hover` is undefined
+
+Found while building the token shim in Phase 0b. The widget library never defined
+`--p-surface-hover`, so the alias does not exist and it computes to empty in all 6 themes.
+Confirmed in the browser, not inferred.
+
+Four call sites read it bare, with no fallback, so each declaration is invalid at
+computed-value time and the background simply does not paint:
+`LogViewer.vue:242`, `GeoIP.vue:473`, `DebugPanel.vue:137` and `DebugPanel.vue:247`.
+Those hover states have been doing nothing for as long as the token has been referenced.
+
+Fix is one line in `client/src/ui/tokens.css`, aliasing `--cid-surface-hover` to
+`--p-content-hover-background`, which is the v4 name for the same thing and is defined in every
+theme. Held back deliberately: Phase 0b's rename commit is in `.git-blame-ignore-revs` and had to
+stay purely mechanical, and this changes rendering.
+
+`--cid-surface-content-muted` is the same shape of problem but harmless. Its two call sites in
+`NetworkDialogs.vue` both supply `var(--cid-text-muted-color)` as a fallback, so they render
+correctly today. Drop the dead first choice whenever that file is next touched.
 
 ### `dns-proxy.js` `evaluateResolvedPolicy` can name a non-blocked country
 
