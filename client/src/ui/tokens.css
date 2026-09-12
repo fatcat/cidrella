@@ -1,0 +1,70 @@
+/*
+ * tokens.css: the CSS half of the widget-library shim.
+ *
+ * client/src/ui/*.js keeps vendor component imports in one place. This file
+ * does the same job for vendor design tokens: it is the ONLY file in the app
+ * allowed to read a --p-* custom property. Everything else reads --cid-*.
+ *
+ * Why bother, when the current kit and OpenVue both emit --p-*: so that
+ * swapping to a kit that does not (Element Plus uses --el-*) is an edit to
+ * this file instead of 755 edits spread over 58 files. See
+ * docs/UI-TOOLKIT-MIGRATION-PLAN.md, Phase 0b.
+ *
+ * These are pure aliases on purpose. The 6-theme system works by having
+ * updatePreset()/updateSurfacePalette() rewrite the --p-* values at runtime,
+ * so var() indirection means --cid-* follows a theme change automatically
+ * with no JS involvement. Do not copy hex values in here.
+ *
+ * Two names are deliberately absent because the kit never defined them and
+ * they compute to empty in every theme: --p-surface-hover and
+ * --p-surface-content-muted. Their call sites are tracked in BACKLOG.md.
+ */
+:root {
+  /* Raw palette. Kit-specific ramps, the least portable of the set. */
+  --cid-surface-0: var(--p-surface-0);
+  --cid-surface-50: var(--p-surface-50);
+  --cid-surface-100: var(--p-surface-100);
+  --cid-surface-200: var(--p-surface-200);
+  --cid-surface-300: var(--p-surface-300);
+  --cid-surface-400: var(--p-surface-400);
+  --cid-surface-500: var(--p-surface-500);
+  --cid-surface-600: var(--p-surface-600);
+  --cid-surface-700: var(--p-surface-700);
+  --cid-surface-800: var(--p-surface-800);
+  --cid-surface-900: var(--p-surface-900);
+  --cid-surface-950: var(--p-surface-950);
+  --cid-red-400: var(--p-red-400);
+  --cid-red-500: var(--p-red-500);
+  --cid-red-600: var(--p-red-600);
+  --cid-red-700: var(--p-red-700);
+  --cid-green-300: var(--p-green-300);
+  --cid-green-400: var(--p-green-400);
+  --cid-green-500: var(--p-green-500);
+  --cid-green-600: var(--p-green-600);
+  --cid-green-700: var(--p-green-700);
+  --cid-orange-400: var(--p-orange-400);
+  --cid-orange-500: var(--p-orange-500);
+  --cid-orange-600: var(--p-orange-600);
+  --cid-orange-700: var(--p-orange-700);
+  --cid-blue-500: var(--p-blue-500);
+  --cid-blue-600: var(--p-blue-600);
+  --cid-blue-700: var(--p-blue-700);
+  --cid-yellow-500: var(--p-yellow-500);
+  --cid-violet-500: var(--p-violet-500);
+  --cid-purple-400: var(--p-purple-400);
+  --cid-indigo-500: var(--p-indigo-500);
+
+  /* Semantic tokens the kit derives from the active preset. */
+  --cid-text-color: var(--p-text-color);
+  --cid-text-muted-color: var(--p-text-muted-color);
+  --cid-primary-color: var(--p-primary-color);
+  --cid-primary-contrast-color: var(--p-primary-contrast-color);
+  --cid-highlight-background: var(--p-highlight-background);
+  --cid-content-background: var(--p-content-background);
+  --cid-content-border-color: var(--p-content-border-color);
+  --cid-content-hover-background: var(--p-content-hover-background);
+  --cid-form-field-background: var(--p-form-field-background);
+  --cid-form-field-border-color: var(--p-form-field-border-color);
+  --cid-form-field-border-radius: var(--p-form-field-border-radius);
+  --cid-form-field-color: var(--p-form-field-color);
+}
