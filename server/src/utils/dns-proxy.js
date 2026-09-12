@@ -236,18 +236,20 @@ function isWhitelisted(queryName) {
 }
 
 // Check if query should be blocked based on resolved country codes (uses cached rules)
-function shouldBlock(countryCodes) {
-  if (!geoipRuleSet) return false;
-
-  if (geoipRuleSet.size === 0) {
-    return geoipMode === 'allowlist';
-  }
-
+// Which of these codes actually violate the policy. Returns the subset, not a
+// boolean, because the caller needs to know WHICH country tripped the block:
+// reporting every code in a mixed answer set charges innocent countries in the
+// hit counters and can log one of them as the reason.
+//
+// The empty-ruleset case falls out rather than being special-cased. An empty
+// allowlist permits nothing, so every code violates it; an empty blocklist
+// blocks nothing, so none do. Callers pass a non-empty list.
+function blockingCountryCodes(countryCodes) {
+  if (!geoipRuleSet) return [];
   if (geoipMode === 'blocklist') {
-    return countryCodes.some((cc) => geoipRuleSet.has(cc));
-  } else {
-    return countryCodes.some((cc) => !geoipRuleSet.has(cc));
+    return countryCodes.filter((cc) => geoipRuleSet.has(cc));
   }
+  return countryCodes.filter((cc) => !geoipRuleSet.has(cc));
 }
 
 // Get LAN IPv4 addresses to bind proxy sockets on port 53
@@ -483,8 +485,11 @@ export function evaluateResolvedPolicy(queryName, ips, lookup = lookupCountry) {
     .filter((ip) => !isGeoipAllowed(ip))
     .map((ip) => lookup(ip))
     .filter((cc) => cc !== null);
-  if (countryCodes.length > 0 && shouldBlock(countryCodes) && !isWhitelisted(queryName)) {
-    return { action: 'block', blockReason: countryCodes[0], countryCodes };
+  const blocking = blockingCountryCodes(countryCodes);
+  if (blocking.length > 0 && !isWhitelisted(queryName)) {
+    // Report only the codes that actually matched. countryCodes feeds
+    // recordResolvedBlock, which increments per-country hit counters.
+    return { action: 'block', blockReason: blocking[0], countryCodes: blocking };
   }
   return { action: 'forward' };
 }

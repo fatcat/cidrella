@@ -26,7 +26,7 @@ const APPLY_COUPLED_KEYS = [
   'rogue_dhcp_detection_enabled',
   'rogue_dhcp_probe_interval_min',
   // geoip_mode is the one with teeth. dns-proxy.js caches it in a module-level
-  // `geoipMode` refreshed only by loadGeoipRules(), and shouldBlock() branches
+  // `geoipMode` refreshed only by loadGeoipRules(), and blockingCountryCodes()
   // on that cached copy alone, so a bare settings write stored "allowlist"
   // while the resolver kept running the blocklist arm until restart. That
   // direction fails OPEN: everything not explicitly listed stays permitted

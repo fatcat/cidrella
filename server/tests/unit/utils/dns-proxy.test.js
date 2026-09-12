@@ -34,7 +34,7 @@ beforeAll(async () => {
   tmpDir = result.tmpDir;
   const db = result.db;
 
-  // Seed GeoIP rules for shouldBlock tests
+  // Seed GeoIP rules for the country-policy tests
   db.exec(`
     INSERT OR IGNORE INTO geoip_rules (country_code, country_name, enabled) VALUES ('CN', 'China', 1);
     INSERT OR IGNORE INTO geoip_rules (country_code, country_name, enabled) VALUES ('RU', 'Russia', 1);

@@ -113,15 +113,35 @@ describe('evaluateResolvedPolicy (GeoIP verdict, shared by UDP + TCP)', () => {
     );
   });
 
-  it('one blocked-country IP among clean ones still blocks, and all codes are counted', () => {
+  it('one blocked-country IP among clean ones blocks, naming only the blocked country', () => {
+    // DE is clean, CN is blocked, and DE is looked up first. The verdict must
+    // name CN. This used to report ['DE', 'CN'] with blockReason 'DE', which
+    // charged DE in the per-country hit counters and logged it as the reason
+    // for a block it had nothing to do with.
     const v = evaluateResolvedPolicy('some.example.com', ['192.0.2.10', '203.0.113.9'], lookup);
     expect(v.action).toBe('block');
-    // Faithful to the pre-refactor behavior on both transports: countryCodes
-    // carries every looked-up code (clean DE included), so hit counting and
-    // the logged blockReason (first code) can name a non-blocked country
-    // when a mixed answer set trips the block. Flagged in REVIEW.md.
-    expect(v.countryCodes).toEqual(['DE', 'CN']);
-    expect(v.blockReason).toBe('DE');
+    expect(v.countryCodes).toEqual(['CN']);
+    expect(v.blockReason).toBe('CN');
+  });
+
+  it('does not charge a clean country in the hit counters', () => {
+    // countryCodes is what recordResolvedBlock increments, so a clean code
+    // appearing here is a silently wrong analytics number, not just a log line.
+    const v = evaluateResolvedPolicy('some.example.com', ['192.0.2.10', '203.0.113.9'], lookup);
+    expect(v.countryCodes).not.toContain('DE');
+  });
+
+  it('reports every blocked country when more than one matches', () => {
+    // RU is blocked too. Both belong in the counters, and the order follows
+    // the answer set.
+    const v = evaluateResolvedPolicy(
+      'some.example.com',
+      ['203.0.113.9', '192.0.2.10', '203.0.113.9'],
+      lookup,
+    );
+    expect(v.action).toBe('block');
+    expect(v.countryCodes).toEqual(['CN', 'CN']);
+    expect(v.blockReason).toBe('CN');
   });
 
   it('forwards empty and lookup-less answer sets', () => {

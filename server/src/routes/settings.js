@@ -100,7 +100,7 @@ const SETTING_SCHEMA = {
   //
   // geoip_mode was the dangerous one, because it is not re-read per query.
   // dns-proxy.js caches it in the module-level `geoipMode` (line 63), refreshed
-  // only by loadGeoipRules(), and shouldBlock() branches on that cached copy
+  // only by loadGeoipRules(), and blockingCountryCodes() branches on that copy
   // alone. Switching to "allowlist" through /api/settings stored allowlist, the
   // UI read allowlist back, and the resolver kept running the blocklist arm
   // until the next restart. That fails OPEN: the operator believes DNS is
