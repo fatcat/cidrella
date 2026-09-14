@@ -57,7 +57,9 @@ function allocatedLeaves(db) {
 }
 
 function containingSubnet(subnets, ip) {
-  if (!ip) return null;
+  // Managed subnets are currently IPv4. Keep address-family validation at
+  // this boundary so AAAA records never reach the IPv4-only CIDR helpers.
+  if (!ip || !isValidIpv4(ip)) return null;
   return (
     subnets
       .filter((subnet) => isIpInSubnet(ip, subnet.cidr))
@@ -98,7 +100,7 @@ function networkMatches(db, subnet, query, ipRows) {
     return true;
   }
   const exactIp = canonicalizeIp(query);
-  if (exactIp && isIpInSubnet(exactIp, subnet.cidr)) return true;
+  if (exactIp && isValidIpv4(exactIp) && isIpInSubnet(exactIp, subnet.cidr)) return true;
   return ipRows.some(
     (row) =>
       row.subnet_id === subnet.id &&
@@ -709,6 +711,7 @@ export function scopeMatches(scope, query, addressRows) {
   const exactIp = canonicalizeIp(query);
   if (
     exactIp &&
+    isValidIpv4(exactIp) &&
     scope.pools.some(
       (pool) =>
         ipToLong(exactIp) >= ipToLong(pool.start_ip) && ipToLong(exactIp) <= ipToLong(pool.end_ip),

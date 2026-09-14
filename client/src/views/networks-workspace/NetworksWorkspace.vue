@@ -51,11 +51,14 @@
         :scope-count="dhcpScopes.length"
         :loading="loading"
         :can-create="canAnyCreate"
+        :can-manage-folders="can('subnets:write')"
+        :can-manage-defaults="can('subnets:write')"
         @create="toggleMenu('create')"
         @select-estate="selectEstate"
         @select-unallocated="selectUnallocated"
         @select-folder="selectFolder"
         @select-network="selectNetwork"
+        @select-unallocated-network="selectUnallocatedNetwork"
         @toggle-folder="toggleFolder"
         @notify="notify"
       />
@@ -89,6 +92,7 @@
           @switch-view="switchView"
           @open-menu="toggleMenu"
           @filter-zone="filterToZone"
+          @filter-scope="filterToScope"
           @notify="notify"
         />
         <section class="table-card">
@@ -114,6 +118,8 @@
             :column-catalog="columnCatalog"
             :columns="columns"
             :can-create="canCreateCurrent"
+            :can-set-range="activeView === 'addresses' && can('subnets:write')"
+            :can-reserve="activeView === 'addresses' && can('subnets:write')"
             :filter-chips="activeFilterChips"
             @update:visible-columns="setVisibleColumns"
             @reset-columns="resetVisibleColumns"
@@ -192,7 +198,7 @@
         @close="selectedRow = null"
         @navigate="openRelatedResource"
         @changed="handleAddressChanged"
-        @notify="notify"
+        @notify="handleDetailsAction"
       />
     </section>
 
@@ -234,6 +240,7 @@
     <Transition name="notice">
       <div v-if="notice" class="prototype-notice">
         <i class="pi pi-sparkles" /><span><strong>Workspace preview</strong>{{ notice }}</span>
+        <button v-if="noticeRetry" type="button" @click="retryNoticeRefresh">Retry</button>
       </div>
     </Transition>
   </div>
@@ -321,8 +328,10 @@ const selectedRows = ref([]);
 const selectedRowView = ref('addresses');
 const selectedRowContext = ref('network');
 const selectedZoneFilter = ref(null);
+const selectedScopeFilter = ref(null);
 const openMenuName = ref(null);
 const notice = ref('');
+const noticeRetry = ref(null);
 const loading = ref(true);
 const loadingContext = ref(false);
 const loadError = ref('');
@@ -357,6 +366,8 @@ const workspaceResources = useWorkspaceResources({ can, onForbidden: handleForbi
 const { state: routeState, navigate: navigateWorkspace } = useWorkspaceContext({
   storageKey: `cidrella_workspace_v1_${user.value?.username || 'anonymous'}`,
 });
+resourceQuery.value = routeState.value.q;
+tableQuery.value = routeState.value.tableQ;
 
 const viewDefinitions = {
   networks: {
@@ -388,8 +399,10 @@ const viewDefinitions = {
 
 const visibleColumnKeys = ref({});
 const columnKind = computed(() => {
-  if (contextKind.value !== 'network' && activeView.value === 'dns') return 'dnsZones';
-  if (contextKind.value !== 'network' && activeView.value === 'dhcp') return 'dhcpScopes';
+  if (contextKind.value !== 'network' && activeView.value === 'dns' && !selectedZoneFilter.value)
+    return 'dnsZones';
+  if (contextKind.value !== 'network' && activeView.value === 'dhcp' && !selectedScopeFilter.value)
+    return 'dhcpScopes';
   return activeView.value;
 });
 const columnStorageKey = computed(
@@ -524,16 +537,20 @@ const filteredFolders = computed(() => {
   const query = resourceQuery.value.trim().toLowerCase();
   const source = contextKind.value === 'unallocated' ? unallocatedFolders.value : folders.value;
   if (!query) return source;
+  const filterNodes = (nodes) =>
+    nodes.flatMap((network) => {
+      const children = filterNodes(network.children || []);
+      const matches =
+        matchedNetworkIds.value?.has(Number(network.id)) ||
+        `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query);
+      return matches || children.length ? [{ ...network, children }] : [];
+    });
   return source
     .map((folder) => ({
       ...folder,
       networks: folder.name.toLowerCase().includes(query)
         ? folder.networks
-        : folder.networks.filter(
-            (network) =>
-              matchedNetworkIds.value?.has(Number(network.id)) ||
-              `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query),
-          ),
+        : filterNodes(folder.networks),
     }))
     .filter((folder) => folder.name.toLowerCase().includes(query) || folder.networks.length);
 });
@@ -544,7 +561,7 @@ const scopedNetworks = computed(() => {
     return selectedNetwork.value.id ? [selectedNetwork.value] : [];
   if (contextKind.value === 'folder') return selectedFolder.value?.networks || [];
   if (contextKind.value === 'unallocated')
-    return unallocatedFolders.value.flatMap((folder) => folder.networks);
+    return unallocatedFolders.value.flatMap((folder) => flattenAllocatable(folder.networks));
   return allNetworks.value;
 });
 const scopedNetworkIds = computed(
@@ -700,7 +717,7 @@ function workspaceQueryState() {
     network: contextKind.value === 'network' ? selectedNetwork.value.id : null,
     view: activeView.value,
     zone: selectedZoneFilter.value?.id || null,
-    scope: null,
+    scope: selectedScopeFilter.value?.id || null,
     ip:
       selectedRowView.value === 'addresses' && selectedRowContext.value === 'network'
         ? selectedRow.value?.address || null
@@ -742,6 +759,7 @@ async function restorePinnedAddress(ip) {
 function restoreContextFromRoute(availableNetworks) {
   restoringRoute = true;
   const state = routeState.value;
+  let repairedRoute = false;
   resourceQuery.value = state.q;
   tableQuery.value = state.tableQ;
   pageSize.value = PAGE_SIZES.includes(state.pageSize) ? state.pageSize : 256;
@@ -770,6 +788,7 @@ function restoreContextFromRoute(availableNetworks) {
       contextKind.value = 'estate';
       activeView.value = 'networks';
       loadError.value = 'The requested network no longer exists.';
+      repairedRoute = true;
     }
   } else if (state.context === 'folder') {
     const folder = folders.value.find((item) => Number(item.id) === Number(state.folder));
@@ -783,6 +802,7 @@ function restoreContextFromRoute(availableNetworks) {
       contextKind.value = 'estate';
       activeView.value = 'networks';
       loadError.value = 'The requested folder no longer exists.';
+      repairedRoute = true;
     }
   } else if (state.context === 'unallocated') {
     contextKind.value = 'unallocated';
@@ -796,7 +816,19 @@ function restoreContextFromRoute(availableNetworks) {
   selectedZoneFilter.value = state.zone
     ? dnsZones.value.find((zone) => Number(zone.id) === Number(state.zone)) || null
     : null;
+  selectedScopeFilter.value = state.scope
+    ? dhcpScopes.value.find((scope) => Number(scope.id) === Number(state.scope)) || null
+    : null;
+  if (state.zone && !selectedZoneFilter.value) {
+    loadError.value = 'The requested DNS zone no longer exists.';
+    repairedRoute = true;
+  }
+  if (state.scope && !selectedScopeFilter.value) {
+    loadError.value = 'The requested DHCP scope no longer exists.';
+    repairedRoute = true;
+  }
   restoringRoute = false;
+  if (repairedRoute) void updateWorkspaceRoute({ replace: true });
   if (contextKind.value === 'network') restorePinnedAddress(state.ip);
 }
 
@@ -825,8 +857,9 @@ const viewMeta = computed(() => {
   if (activeView.value === 'dhcp')
     return {
       ...base,
-      title:
-        networkScopes.value.length === 1
+      title: selectedScopeFilter.value
+        ? `${selectedScopeFilter.value.start_ip} – ${selectedScopeFilter.value.end_ip}`
+        : networkScopes.value.length === 1
           ? `${selectedNetwork.value.name} scope`
           : `${networkScopes.value.length} scopes for ${selectedNetwork.value.name}`,
     };
@@ -842,8 +875,10 @@ const columns = computed(() => {
 const serverPagedView = computed(
   () =>
     activeView.value === 'addresses' ||
-    (activeView.value === 'dns' && contextKind.value === 'network') ||
-    (activeView.value === 'dhcp' && contextKind.value === 'network'),
+    (activeView.value === 'dns' &&
+      (contextKind.value === 'network' || Boolean(selectedZoneFilter.value))) ||
+    (activeView.value === 'dhcp' &&
+      (contextKind.value === 'network' || Boolean(selectedScopeFilter.value))),
 );
 const visibleResourceError = computed(() => {
   if (activeView.value === 'addresses') return workspaceResources.resources.addresses.error;
@@ -857,15 +892,26 @@ const currentRows = computed(() => {
   if (activeView.value === 'networks') rows = networkInventoryRows.value;
   else if (activeView.value === 'addresses') rows = addressRows.value;
   else if (activeView.value === 'dns')
-    rows = contextKind.value === 'network' ? networkDnsRows.value : dnsZoneRows.value;
+    rows =
+      contextKind.value === 'network' || selectedZoneFilter.value
+        ? contextKind.value === 'network'
+          ? networkDnsRows.value
+          : allDnsRows.value
+        : dnsZoneRows.value;
   else if (activeView.value === 'dhcp')
-    rows = contextKind.value === 'network' ? networkDhcpRows.value : dhcpScopeRows.value;
+    rows =
+      contextKind.value === 'network' || selectedScopeFilter.value
+        ? contextKind.value === 'network'
+          ? networkDhcpRows.value
+          : allDhcpRows.value
+        : dhcpScopeRows.value;
   else rows = rangeRows.value;
   if (activeView.value === 'dns' && selectedZoneFilter.value)
+    rows = rows.filter((row) => Number(row.raw.zone_id) === Number(selectedZoneFilter.value.id));
+  if (activeView.value === 'dhcp' && selectedScopeFilter.value)
     rows = rows.filter(
       (row) =>
-        Number(contextKind.value === 'network' ? row.raw.zone_id : row.raw.id) ===
-        Number(selectedZoneFilter.value.id),
+        Number(row.raw.scope_id || row.raw.dhcp_scope_id) === Number(selectedScopeFilter.value.id),
     );
   if (!sortKey.value || activeView.value === 'addresses') return rows;
   return [...rows].sort(
@@ -887,24 +933,26 @@ const filterOptions = computed(() => ({
   type: distinct(
     currentRows.value.map((row) =>
       activeView.value === 'dns'
-        ? row.recordType || row.zoneType
+        ? row.raw?.record_type || row.zoneType
         : activeView.value === 'dhcp'
-          ? row.assignment
+          ? row.raw?.dhcp_assignment_type
           : row.type,
     ),
   ),
   range:
     activeView.value === 'addresses'
-      ? (workspaceResources.resources.addresses.data.ranges || []).map((range) => ({
-          value: String(range.range_type_id || range.id),
-          label: range.range_type_name || range.name,
-        }))
+      ? (workspaceResources.resources.addresses.data.ranges || [])
+          .filter((range) => !range.range_type_is_system)
+          .map((range) => ({
+            value: String(range.range_type_id || range.id),
+            label: range.range_type_name || range.name,
+          }))
       : [],
   protocol:
     activeView.value === 'dns'
-      ? distinct(currentRows.value.map((row) => row.source || row.raw?.dns_source))
+      ? distinct(currentRows.value.map((row) => row.raw?.dns_source))
       : activeView.value === 'dhcp'
-        ? distinct(currentRows.value.map((row) => row.assignment || row.raw?.dhcp_assignment_type))
+        ? distinct(currentRows.value.map((row) => row.raw?.dhcp_assignment_type))
         : distinct(currentRows.value.map((row) => row.raw?.allocation_source_type)),
 }));
 const activeFilterChips = computed(() =>
@@ -931,28 +979,39 @@ const permittedActionMenuItems = computed(() =>
 );
 
 function buildUnallocatedFolders(sourceFolders) {
-  const collect = (nodes, folder, output) => {
-    for (const network of nodes || []) {
-      if (network.status === 'unallocated' && !(network.children || []).length) {
-        output.push({
-          ...network,
-          folder: folder.name,
-          folderId: folder.id,
-          vlan: network.vlan_id,
-          domain: network.domain_name || null,
-          gateway: network.gateway_address || null,
-          used: 0,
-          state: 'unallocated',
-        });
-      }
-      collect(network.children, folder, output);
-    }
+  const mapNode = (network, folder) => {
+    const sourceChildren = network.children || [];
+    const children = sourceChildren.map((child) => mapNode(child, folder)).filter(Boolean);
+    const allocatable = network.status === 'unallocated' && sourceChildren.length === 0;
+    if (!allocatable && !children.length) return null;
+    return {
+      ...network,
+      name: network.name || network.cidr,
+      folder: folder.name,
+      folderId: folder.id,
+      vlan: network.vlan_id,
+      domain: network.domain_name || null,
+      gateway: network.gateway_address || null,
+      used: 0,
+      state: allocatable ? 'unallocated' : 'container',
+      allocatable,
+      children,
+    };
   };
-  return (sourceFolders || []).map((folder) => {
-    const networks = [];
-    collect(folder.subnets, folder, networks);
-    return { id: folder.id, name: folder.name, networks };
-  });
+  return (sourceFolders || [])
+    .map((folder) => ({
+      id: folder.id,
+      name: folder.name,
+      networks: (folder.subnets || []).map((network) => mapNode(network, folder)).filter(Boolean),
+    }))
+    .filter((folder) => folder.networks.length);
+}
+
+function flattenAllocatable(nodes) {
+  return (nodes || []).flatMap((node) => [
+    ...(node.allocatable ? [node] : []),
+    ...flattenAllocatable(node.children),
+  ]);
 }
 
 function preserveEmptyFolders(allocated, sourceFolders) {
@@ -1079,15 +1138,15 @@ const filteredRows = computed(() => {
     const status = activeView.value === 'dhcp' ? row.leaseStatus : row.status;
     const type =
       activeView.value === 'dns'
-        ? row.recordType || row.zoneType
+        ? row.raw?.record_type || row.zoneType
         : activeView.value === 'dhcp'
-          ? row.assignment
+          ? row.raw?.dhcp_assignment_type
           : row.type;
     const protocol =
       activeView.value === 'dns'
-        ? row.source || row.raw?.dns_source
+        ? row.raw?.dns_source
         : activeView.value === 'dhcp'
-          ? row.assignment || row.raw?.dhcp_assignment_type
+          ? row.raw?.dhcp_assignment_type
           : row.raw?.allocation_source_type;
     if (filters.value.status && String(status) !== filters.value.status) return false;
     if (filters.value.type && String(type) !== filters.value.type) return false;
@@ -1100,7 +1159,7 @@ const filteredRows = computed(() => {
       return false;
     if (filters.value.protocol && String(protocol) !== filters.value.protocol) return false;
     if (
-      globalQuery &&
+      (globalQuery || tableQuery.value.trim()) &&
       activeView.value === 'networks' &&
       !matchedNetworkIds.value?.has(Number(row.raw.id))
     )
@@ -1211,28 +1270,45 @@ const rowActions = computed(() => {
   if (selectedRowContext.value !== 'network' && selectedRowView.value === 'dhcp')
     return can('dhcp:write')
       ? [
+          'Open scope',
           'Open network DHCP',
           'Edit DHCP scope',
           'Add DHCP Reservation',
           'Sync leases now',
           'Delete DHCP scope',
         ]
-      : ['Open network DHCP'];
+      : ['Open scope', 'Open network DHCP'];
   if (selectedRowView.value === 'dns')
     return can('dns:write')
-      ? ['Open IP details', 'Edit record', 'Add CNAME', 'Delete record']
-      : ['Open IP details'];
+      ? ['Open IP details', 'Open whole zone', 'Edit record', 'Add CNAME', 'Delete record']
+      : ['Open IP details', 'Open whole zone'];
   if (selectedRowView.value === 'dhcp') {
-    if (!can('dhcp:write')) return ['Open IP details'];
+    if (!can('dhcp:write')) return ['Open IP details', 'Open scope'];
     if (row?.assignment === 'Reserved')
-      return ['Open IP details', 'Edit DHCP Reservation', 'Probe now', 'Delete DHCP Reservation'];
-    return ['Open IP details', 'Add DHCP Reservation', 'Probe now'];
+      return [
+        'Open IP details',
+        'Open scope',
+        'Edit DHCP Reservation',
+        ...(can('subnets:write') ? ['Probe now'] : []),
+        'Delete DHCP Reservation',
+      ];
+    return [
+      'Open IP details',
+      'Open scope',
+      'Add DHCP Reservation',
+      ...(can('subnets:write') ? ['Probe now'] : []),
+    ];
   }
   if (selectedRowView.value === 'ranges') {
-    if (!can('subnets:write') && !can('dhcp:write')) return [];
-    return row?.rangeType === 'DHCP Scope'
-      ? ['Edit DHCP scope', 'Remove addresses from scope', 'Delete DHCP scope']
-      : ['Edit range', 'Create DHCP scope', 'Delete range'];
+    if (row?.rangeType === 'DHCP Scope')
+      return can('dhcp:write')
+        ? ['Edit DHCP scope', 'Remove addresses from scope', 'Delete DHCP scope']
+        : [];
+    return [
+      ...(can('subnets:write') ? ['Edit range'] : []),
+      ...(can('dhcp:write') ? ['Create DHCP scope'] : []),
+      ...(can('subnets:write') ? ['Delete range'] : []),
+    ];
   }
 
   if (!can('subnets:write')) return ['Open full details'];
@@ -1260,8 +1336,10 @@ const gridCells = computed(() =>
 
 const rowTotal = computed(() => {
   if (activeView.value === 'addresses') return addressFilteredTotal.value;
-  if (contextKind.value === 'network' && activeView.value === 'dns') return dnsTotal.value;
-  if (contextKind.value === 'network' && activeView.value === 'dhcp') return dhcpTotal.value;
+  if (activeView.value === 'dns' && (contextKind.value === 'network' || selectedZoneFilter.value))
+    return dnsTotal.value;
+  if (activeView.value === 'dhcp' && (contextKind.value === 'network' || selectedScopeFilter.value))
+    return dhcpTotal.value;
   return currentRows.value.length;
 });
 
@@ -1281,16 +1359,23 @@ async function selectNetwork(network) {
   sortKey.value = null;
   clearFilters();
   selectedZoneFilter.value = null;
+  selectedScopeFilter.value = null;
   selectedRow.value = null;
   tableQuery.value = '';
   await updateWorkspaceRoute();
   await loadNetworkContext();
+}
+function selectUnallocatedNetwork(network) {
+  selectedRow.value = mapNetworkRows([network])[0];
+  selectedRowView.value = 'networks';
+  selectedRowContext.value = 'unallocated';
 }
 function resetContextNavigation() {
   currentPage.value = 1;
   sortKey.value = null;
   clearFilters();
   selectedZoneFilter.value = null;
+  selectedScopeFilter.value = null;
   selectedRow.value = null;
   selectedRows.value = [];
   tableQuery.value = '';
@@ -1327,6 +1412,7 @@ async function switchView(view) {
   sortKey.value = null;
   clearFilters();
   selectedZoneFilter.value = null;
+  selectedScopeFilter.value = null;
   selectedRow.value = null;
   selectedRows.value = [];
   tableQuery.value = '';
@@ -1340,6 +1426,7 @@ async function openRelatedResource(view) {
   sortKey.value = null;
   clearFilters();
   selectedZoneFilter.value = null;
+  selectedScopeFilter.value = null;
   selectedRows.value = [];
   tableQuery.value = '';
   await updateWorkspaceRoute();
@@ -1369,12 +1456,83 @@ function notify(message) {
     notice.value = '';
   }, 2600);
 }
+async function handleDetailsAction(action) {
+  if (action === 'Open whole zone' && selectedRow.value?.raw?.zone_id) {
+    const zone = dnsZones.value.find(
+      (item) => Number(item.id) === Number(selectedRow.value.raw.zone_id),
+    );
+    if (zone) {
+      selectedZoneFilter.value = zone;
+      selectedScopeFilter.value = null;
+      selectedRow.value = null;
+      currentPage.value = 1;
+      await updateWorkspaceRoute();
+      await loadNetworkContext();
+      return;
+    }
+  }
+  if (
+    action === 'Open scope' &&
+    selectedRowContext.value === 'network' &&
+    selectedRow.value?.raw?.scope_id
+  ) {
+    const scope = dhcpScopes.value.find(
+      (item) => Number(item.id) === Number(selectedRow.value.raw.scope_id),
+    );
+    if (scope) {
+      selectedScopeFilter.value = scope;
+      selectedZoneFilter.value = null;
+      selectedRow.value = null;
+      currentPage.value = 1;
+      await updateWorkspaceRoute();
+      await loadNetworkContext();
+      return;
+    }
+  }
+  if (action === 'Open zone' && selectedRow.value?.raw) {
+    const zone = selectedRow.value.raw;
+    selectedZoneFilter.value = zone;
+    selectedScopeFilter.value = null;
+    selectedRow.value = null;
+    currentPage.value = 1;
+    await updateWorkspaceRoute();
+    await refreshAggregateTable();
+    return;
+  }
+  if (action === 'Open scope' && selectedRow.value?.raw) {
+    selectedScopeFilter.value = selectedRow.value.raw;
+    selectedZoneFilter.value = null;
+    selectedRow.value = null;
+    currentPage.value = 1;
+    await updateWorkspaceRoute();
+    await refreshAggregateTable();
+    return;
+  }
+  if (action === 'Open network DHCP' && selectedRow.value?.raw?.subnet_id) {
+    const network = allNetworks.value.find(
+      (item) => Number(item.id) === Number(selectedRow.value.raw.subnet_id),
+    );
+    if (network) {
+      activeView.value = 'dhcp';
+      await selectNetwork(network);
+      return;
+    }
+  }
+  notify(action);
+}
 function showLiveNotice(message) {
   notice.value = message;
+  noticeRetry.value = null;
   clearTimeout(noticeTimer);
   noticeTimer = setTimeout(() => {
     notice.value = '';
   }, 3200);
+}
+async function retryNoticeRefresh() {
+  const retry = noticeRetry.value;
+  if (!retry) return;
+  noticeRetry.value = null;
+  await retry();
 }
 function clearFilter(key) {
   filters.value = { ...filters.value, [key]: '' };
@@ -1410,10 +1568,21 @@ function resetVisibleColumns() {
   visibleColumnKeys.value = { ...visibleColumnKeys.value, [columnStorageKey.value]: keys };
   saveJson(columnStorageKey.value, keys);
 }
-function filterToZone(zone) {
+async function filterToZone(zone) {
   selectedZoneFilter.value = selectedZoneFilter.value?.id === zone.id ? null : zone;
+  selectedScopeFilter.value = null;
   tableQuery.value = '';
-  updateWorkspaceRoute();
+  await updateWorkspaceRoute();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
+}
+async function filterToScope(scope) {
+  selectedScopeFilter.value = selectedScopeFilter.value?.id === scope.id ? null : scope;
+  selectedZoneFilter.value = null;
+  tableQuery.value = '';
+  await updateWorkspaceRoute();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
 }
 
 async function loadNetworkContext() {
@@ -1434,7 +1603,8 @@ async function loadNetworkContext() {
       params.address_type = filters.value.type || undefined;
       params.online = filters.value.online || undefined;
       params.scanning_enabled = filters.value.scan || undefined;
-      params.range_type_id = filters.value.range || undefined;
+      params.network_range_type_id = filters.value.range || undefined;
+      params.allocation_source_type = filters.value.protocol || undefined;
     }
     const addressSortColumn = workspaceColumnCatalog('addresses').find(
       (column) => column.key === sortKey.value,
@@ -1452,11 +1622,13 @@ async function loadNetworkContext() {
       sort_order: sortOrder.value === 1 ? 'asc' : 'desc',
     };
     if (activeView.value === 'dns') {
+      protocolParams.zone_id = selectedZoneFilter.value?.id || undefined;
       protocolParams.record_type = filters.value.type || undefined;
       protocolParams.dns_source = filters.value.protocol || undefined;
       if (filters.value.status) protocolParams.enabled = filters.value.status === 'enabled';
     }
     if (activeView.value === 'dhcp') {
+      protocolParams.scope_id = selectedScopeFilter.value?.id || undefined;
       protocolParams.lease_status = filters.value.status || undefined;
       protocolParams.dhcp_assignment_type =
         filters.value.type || filters.value.protocol || undefined;
@@ -1474,9 +1646,9 @@ async function loadNetworkContext() {
       workspaceResources.loadDhcpTotal({ subnet_id: selectedNetwork.value.id }),
     ]);
     if (request !== contextRequest) return;
-    if (!detail)
+    if (!detail && ['addresses', 'ranges'].includes(activeView.value))
       throw new Error(workspaceResources.resources.addresses.error || 'Address data unavailable');
-    addressRows.value = mapAddressRows(detail.items);
+    if (detail) addressRows.value = mapAddressRows(detail.items);
     if (
       selectedRow.value &&
       selectedRowView.value === 'addresses' &&
@@ -1497,14 +1669,14 @@ async function loadNetworkContext() {
         }
       }
     }
-    rangeRows.value = mapRangeRows(detail.ranges, networkScopes.value);
-    addressFilteredTotal.value = detail.filteredTotal;
+    if (detail) rangeRows.value = mapRangeRows(detail.ranges, networkScopes.value);
+    addressFilteredTotal.value = detail?.filteredTotal || 0;
     addressTotal.value = Number(
-      workspaceResources.resources.summary.data?.total_addresses ?? detail.total,
+      workspaceResources.resources.summary.data?.total_addresses ?? detail?.total ?? 0,
     );
     if (activeView.value === 'addresses') {
-      totalPages.value = detail.totalPages || 1;
-      currentPage.value = detail.page || 1;
+      totalPages.value = detail?.totalPages || 1;
+      currentPage.value = detail?.page || 1;
     }
     if (dns) {
       networkDnsRowsData.value = mapWorkspaceDnsRows(dns.items);
@@ -1541,13 +1713,92 @@ async function refreshSelectedNetwork() {
     selectedFolder.value =
       folders.value.find((folder) => Number(folder.id) === Number(refreshed.folderId)) ||
       selectedFolder.value;
+  } else {
+    const priorFolder = folders.value.find(
+      (folder) => Number(folder.id) === Number(selectedFolder.value?.id),
+    );
+    contextKind.value = priorFolder ? 'folder' : 'estate';
+    selectedFolder.value = priorFolder || null;
+    activeView.value = 'networks';
+    selectedRow.value = null;
+    showLiveNotice(
+      `The selected network no longer exists. Showing ${priorFolder?.name || 'All Networks'}.`,
+    );
+    await updateWorkspaceRoute({ replace: true });
+    return;
   }
   await loadNetworkContext();
 }
 
+async function revalidateWorkspaceContext() {
+  let message = '';
+  if (contextKind.value === 'folder') {
+    const folder = folders.value.find(
+      (item) => Number(item.id) === Number(selectedFolder.value?.id),
+    );
+    if (!folder) {
+      contextKind.value = 'estate';
+      selectedFolder.value = null;
+      activeView.value = 'networks';
+      message = 'The selected folder no longer exists. Showing All Networks.';
+    } else selectedFolder.value = folder;
+  }
+  if (contextKind.value === 'network') {
+    const network = allNetworks.value.find(
+      (item) => Number(item.id) === Number(selectedNetwork.value?.id),
+    );
+    if (!network) {
+      const folder = folders.value.find(
+        (item) => Number(item.id) === Number(selectedFolder.value?.id),
+      );
+      contextKind.value = folder ? 'folder' : 'estate';
+      selectedFolder.value = folder || null;
+      activeView.value = 'networks';
+      selectedRow.value = null;
+      message = `The selected network no longer exists. Showing ${folder?.name || 'All Networks'}.`;
+    } else selectedNetwork.value = network;
+  }
+  if (
+    selectedZoneFilter.value &&
+    !dnsZones.value.some((zone) => Number(zone.id) === Number(selectedZoneFilter.value.id))
+  ) {
+    selectedZoneFilter.value = null;
+    selectedRow.value = null;
+    message = 'The selected DNS zone no longer exists. Showing the zone inventory.';
+  }
+  if (
+    selectedScopeFilter.value &&
+    !dhcpScopes.value.some((scope) => Number(scope.id) === Number(selectedScopeFilter.value.id))
+  ) {
+    selectedScopeFilter.value = null;
+    selectedRow.value = null;
+    message = 'The selected DHCP scope no longer exists. Showing the scope inventory.';
+  }
+  if (message) {
+    showLiveNotice(message);
+    await updateWorkspaceRoute({ replace: true });
+  }
+}
+
 async function handleAddressChanged(message) {
-  showLiveNotice(message);
-  await refreshSelectedNetwork();
+  showLiveNotice(`${message}. Saved.`);
+  try {
+    await refreshSelectedNetwork();
+  } catch (error) {
+    clearTimeout(noticeTimer);
+    notice.value = `${message}. Saved. Live data could not be refreshed: ${apiError(error)}`;
+    const retry = async () => {
+      try {
+        await refreshSelectedNetwork();
+        showLiveNotice('Live data refreshed.');
+      } catch (retryError) {
+        clearTimeout(noticeTimer);
+        notice.value = `Saved. Live data still could not be refreshed: ${apiError(retryError)}`;
+        noticeRetry.value = retry;
+      }
+    };
+    noticeRetry.value = retry;
+  }
 }
 
 async function loadWorkspace() {
@@ -1585,10 +1836,13 @@ async function loadWorkspace() {
           (folder) => Number(folder.id) === Number(selectedNetwork.value.folderId),
         ) || null;
     }
-    matchedNetworkIds.value = resourceQuery.value.trim()
-      ? new Set((networks?.items || []).map((network) => Number(network.id)))
-      : null;
+    matchedNetworkIds.value =
+      resourceQuery.value.trim() || tableQuery.value.trim()
+        ? new Set((networks?.items || []).map((network) => Number(network.id)))
+        : null;
     restoreContextFromRoute(availableNetworks);
+    if (contextKind.value !== 'network' && (selectedZoneFilter.value || selectedScopeFilter.value))
+      await refreshAggregateTable();
     loadingContext.value = false;
   } catch (error) {
     loadError.value = apiError(error);
@@ -1602,9 +1856,9 @@ async function changePage(page) {
   if (!serverPagedView.value || page < 1 || page > totalPages.value) return;
   currentPage.value = page;
   selectedRows.value = [];
-  selectedRow.value = null;
   await updateWorkspaceRoute();
-  await loadNetworkContext();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
 }
 
 async function sortBy(key) {
@@ -1612,7 +1866,8 @@ async function sortBy(key) {
   sortKey.value = key;
   if (serverPagedView.value) {
     currentPage.value = 1;
-    await loadNetworkContext();
+    if (contextKind.value === 'network') await loadNetworkContext();
+    else await refreshAggregateTable();
   }
 }
 
@@ -1625,31 +1880,75 @@ async function refreshAggregateTable() {
     page_size: pageSize.value,
   };
   if (activeView.value === 'dns') {
-    params.type = filters.value.type || undefined;
-    params.enabled = filters.value.status ? filters.value.status === 'enabled' : undefined;
-    params.record_type = filters.value.type || undefined;
-    params.dns_source = filters.value.protocol || undefined;
+    const zoneParams = {
+      folder_id: params.folder_id,
+      q: params.q,
+      type: selectedZoneFilter.value ? undefined : filters.value.type || undefined,
+      enabled: selectedZoneFilter.value
+        ? undefined
+        : filters.value.status
+          ? filters.value.status === 'enabled'
+          : undefined,
+    };
+    const recordParams = {
+      ...params,
+      zone_id: selectedZoneFilter.value?.id || undefined,
+      record_type: filters.value.type || undefined,
+      dns_source: filters.value.protocol || undefined,
+      enabled: filters.value.status ? filters.value.status === 'enabled' : undefined,
+    };
+    const activeColumn = columnCatalog.value.find((column) => column.key === sortKey.value);
+    if (activeColumn?.sortField || activeColumn?.field)
+      recordParams.sort_field = activeColumn.sortField || activeColumn.field;
+    recordParams.sort_order = sortOrder.value === 1 ? 'asc' : 'desc';
     const [zones, dns] = await Promise.all([
-      workspaceResources.loadZones(params),
-      workspaceResources.loadDns(params),
+      workspaceResources.loadZones(zoneParams),
+      workspaceResources.loadDns(recordParams),
     ]);
     if (zones) dnsZones.value = zones;
-    if (dns) allDnsRows.value = mapWorkspaceDnsRows(dns.items);
+    if (dns) {
+      allDnsRows.value = mapWorkspaceDnsRows(dns.items);
+      dnsTotal.value = dns.total;
+      if (selectedZoneFilter.value)
+        totalPages.value = Math.max(1, Math.ceil(dns.total / pageSize.value));
+    }
   } else if (activeView.value === 'dhcp') {
-    params.enabled = filters.value.status ? filters.value.status === 'enabled' : undefined;
-    params.lease_status = filters.value.status || undefined;
-    params.dhcp_assignment_type = filters.value.type || filters.value.protocol || undefined;
+    const scopeParams = {
+      folder_id: params.folder_id,
+      q: params.q,
+      enabled: selectedScopeFilter.value
+        ? undefined
+        : filters.value.status
+          ? filters.value.status === 'enabled'
+          : undefined,
+    };
+    const addressParams = {
+      ...params,
+      scope_id: selectedScopeFilter.value?.id || undefined,
+      lease_status: filters.value.status || undefined,
+      dhcp_assignment_type: filters.value.type || filters.value.protocol || undefined,
+    };
+    const activeColumn = columnCatalog.value.find((column) => column.key === sortKey.value);
+    if (activeColumn?.sortField || activeColumn?.field)
+      addressParams.sort_field = activeColumn.sortField || activeColumn.field;
+    addressParams.sort_order = sortOrder.value === 1 ? 'asc' : 'desc';
     const [scopes, dhcp] = await Promise.all([
-      workspaceResources.loadScopes(params),
-      workspaceResources.loadDhcp(params),
+      workspaceResources.loadScopes(scopeParams),
+      workspaceResources.loadDhcp(addressParams),
     ]);
     if (scopes) dhcpScopes.value = scopes;
-    if (dhcp) allDhcpRows.value = mapDhcpRows(dhcp.items);
+    if (dhcp) {
+      allDhcpRows.value = mapDhcpRows(dhcp.items);
+      dhcpTotal.value = dhcp.total;
+      if (selectedScopeFilter.value)
+        totalPages.value = Math.max(1, Math.ceil(dhcp.total / pageSize.value));
+    }
   } else {
     const networks = await workspaceResources.loadNetworks(params);
-    matchedNetworkIds.value = resourceQuery.value.trim()
-      ? new Set((networks?.items || []).map((network) => Number(network.id)))
-      : null;
+    matchedNetworkIds.value =
+      resourceQuery.value.trim() || tableQuery.value.trim()
+        ? new Set((networks?.items || []).map((network) => Number(network.id)))
+        : null;
   }
 }
 
@@ -1676,6 +1975,7 @@ async function refreshCurrentContext() {
     }
     if (zones) dnsZones.value = zones;
     if (scopes) dhcpScopes.value = scopes;
+    await revalidateWorkspaceContext();
     if (contextKind.value === 'network') await loadNetworkContext();
     else await refreshAggregateTable();
   } finally {
@@ -1704,6 +2004,12 @@ watch(resourceQuery, () => {
   searchTimer = setTimeout(() => {
     currentPage.value = 1;
     updateWorkspaceRoute({ replace: true });
+    const query = resourceQuery.value.trim();
+    workspaceResources.loadNetworks({ q: query || undefined }).then((networks) => {
+      matchedNetworkIds.value = query
+        ? new Set((networks?.items || []).map((network) => Number(network.id)))
+        : null;
+    });
     if (contextKind.value === 'network') loadNetworkContext();
     else refreshAggregateTable();
   }, 300);

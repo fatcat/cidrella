@@ -1,11 +1,12 @@
 <template>
   <AddressDetailsPanel
-    v-if="row && rowView === 'addresses' && rowContext === 'network' && canWrite"
+    v-if="row && rowView === 'addresses' && rowContext === 'network'"
     :row="row"
     :subnet-id="network.id"
     :network-name="network.name"
     :dns-count="dnsCount"
     :dhcp-count="dhcpCount"
+    :can-write="canWrite"
     @close="emit('close')"
     @navigate="emit('navigate', $event)"
     @changed="emit('changed', $event)"
@@ -46,7 +47,7 @@
         ><i class="pi pi-chevron-right" />
       </button>
     </div>
-    <div class="details-section">
+    <div v-if="actions.length" class="details-section">
       <span class="eyebrow">QUICK ACTIONS</span>
       <div class="quick-actions">
         <button v-for="action in actions" :key="action" @click="emit('notify', action)">

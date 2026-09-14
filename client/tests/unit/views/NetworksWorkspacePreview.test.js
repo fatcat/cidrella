@@ -183,7 +183,11 @@ function installApiFixtures() {
         folders: [{ id: 1, name: 'Testerella', subnets: [subnet, unallocatedSubnet] }],
       });
     if (url === '/dns/zones') return response(zones);
-    if (url === '/workspace/networks') return response({ items: [subnet], total: 1 });
+    if (url === '/workspace/networks')
+      return response({
+        items: config.params?.table_q === 'not returned' ? [] : [subnet],
+        total: config.params?.table_q === 'not returned' ? 0 : 1,
+      });
     if (url === '/workspace/dns-records')
       return response({
         items: [
@@ -390,6 +394,22 @@ describe('Networks workspace live preview', () => {
     installApiFixtures();
   });
 
+  it('applies a saved explorer query to the first workspace reads', async () => {
+    localStorage.setItem(
+      'cidrella_workspace_v1_admin',
+      JSON.stringify({ q: 'printer', context: 'all', view: 'networks' }),
+    );
+
+    await mountPreview();
+
+    const firstNetworkRead = api.get.mock.calls.find(([url]) => url === '/workspace/networks');
+    const firstDnsRead = api.get.mock.calls.find(([url]) => url === '/workspace/dns-records');
+    const firstDhcpRead = api.get.mock.calls.find(([url]) => url === '/workspace/dhcp-addresses');
+    expect(firstNetworkRead[1].params.q).toBe('printer');
+    expect(firstDnsRead[1].params.q).toBe('printer');
+    expect(firstDhcpRead[1].params.q).toBe('printer');
+  });
+
   it('composes the section 5 presentation boundaries around one orchestrator', async () => {
     // W-01: the explorer, context header, toolbar, table, grid and details
     // host are separate components. The orchestrator owns state; each child
@@ -575,6 +595,16 @@ describe('Networks workspace live preview', () => {
     );
     expect(wrapper.find('.filter-chips').text()).toContain('online: false');
 
+    await wrapper.find('select[aria-label="Protocol filter"]').setValue('dhcp_lease');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/subnets/11/ips',
+      expect.objectContaining({
+        params: expect.objectContaining({ allocation_source_type: 'dhcp_lease' }),
+      }),
+    );
+
     await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
     await wrapper.find('input[aria-label="Search current table"]').setValue('Public');
     await new Promise((resolve) => setTimeout(resolve, 320));
@@ -583,6 +613,55 @@ describe('Networks workspace live preview', () => {
       '/workspace/networks',
       expect.objectContaining({ params: expect.objectContaining({ table_q: 'Public' }) }),
     );
+
+    await wrapper.find('input[aria-label="Search current table"]').setValue('not returned');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+    expect(wrapper.findAll('tbody tr')).toHaveLength(0);
+  });
+
+  it('opens zone and scope inventories as URL-backed drill-ins', async () => {
+    const wrapper = await mountPreview();
+    await wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DNS'))
+      .trigger('click');
+    await wrapper.find('tbody tr').trigger('click');
+    await wrapper
+      .findAll('.quick-actions button')
+      .find((button) => button.text() === 'Open zone')
+      .trigger('click');
+    await flushPromises();
+
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dns-records',
+      expect.objectContaining({ params: expect.objectContaining({ zone_id: 21 }) }),
+    );
+    expect(JSON.parse(localStorage.getItem('cidrella_workspace_v1_admin'))).toMatchObject({
+      view: 'dns',
+      zone: '21',
+    });
+    expect(wrapper.find('tbody').text()).toContain('client.test.example');
+
+    await wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DHCP'))
+      .trigger('click');
+    await wrapper.find('tbody tr').trigger('click');
+    await wrapper
+      .findAll('.quick-actions button')
+      .find((button) => button.text() === 'Open scope')
+      .trigger('click');
+    await flushPromises();
+
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dhcp-addresses',
+      expect.objectContaining({ params: expect.objectContaining({ scope_id: 31 }) }),
+    );
+    expect(JSON.parse(localStorage.getItem('cidrella_workspace_v1_admin'))).toMatchObject({
+      view: 'dhcp',
+      scope: '31',
+    });
   });
 
   it('keeps the details drawer pinned while opening a related resource', async () => {

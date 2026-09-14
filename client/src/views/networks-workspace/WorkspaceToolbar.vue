@@ -113,10 +113,16 @@
 
   <div v-if="selectedRows.length" class="selection-bar">
     <strong>{{ selectedRows.length }} selected</strong>
-    <button @click="emit('notify', `Set range type for ${selectedRows.length} addresses`)">
+    <button
+      v-if="canSetRange"
+      @click="emit('notify', `Set range type for ${selectedRows.length} addresses`)"
+    >
       Set range type
     </button>
-    <button @click="emit('notify', `Create reservations for ${selectedRows.length} addresses`)">
+    <button
+      v-if="canReserve"
+      @click="emit('notify', `Create reservations for ${selectedRows.length} addresses`)"
+    >
       Reserve
     </button>
     <button @click="selectedRows = []">Clear</button>
@@ -137,6 +143,8 @@ defineProps({
   columnCatalog: { type: Array, required: true },
   columns: { type: Array, required: true },
   canCreate: { type: Boolean, default: false },
+  canSetRange: { type: Boolean, default: false },
+  canReserve: { type: Boolean, default: false },
   filterChips: { type: Array, default: () => [] },
 });
 const emit = defineEmits([

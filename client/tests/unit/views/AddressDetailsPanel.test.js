@@ -32,7 +32,14 @@ function response(data) {
 
 function mountPanel(row = availableRow) {
   return mount(AddressDetailsPanel, {
-    props: { row, subnetId: 7, networkName: 'Lab', dnsCount: 1, dhcpCount: 2 },
+    props: {
+      row,
+      subnetId: 7,
+      networkName: 'Lab',
+      dnsCount: 1,
+      dhcpCount: 2,
+      canWrite: true,
+    },
   });
 }
 

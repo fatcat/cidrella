@@ -560,39 +560,61 @@ describe('GET /api/subnets/:id/ips', () => {
 
     const invalidRange = await request(app)
       .get(`/api/subnets/${created.body.id}/ips`)
-      .query({ range_type_id: 'not-an-id' });
+      .query({ network_range_type_id: 'not-an-id' });
     expect(invalidRange.status).toBe(400);
   });
 
-  it('filters unused DHCP pool members by their functional range projection', async () => {
+  it('filters addresses by their canonical user-owned network range type', async () => {
     const created = await request(app)
       .post('/api/subnets')
       .send({ cidr: '10.66.0.0/24', name: 'Range filtering', status: 'allocated' });
     expect(created.status).toBe(201);
-    const scopeType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get();
-    const range = db
+    const customType = db
       .prepare(
-        `INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description)
-         VALUES (?, ?, '10.66.0.32', '10.66.0.63', 'Workspace filter')`,
+        `INSERT INTO range_types (name, color, is_system, description)
+         VALUES ('Workstations filter', '#334455', 0, 'Workspace regression')`,
       )
-      .run(created.body.id, scopeType.id);
-    db.prepare('INSERT INTO dhcp_scopes (range_id, subnet_id, enabled) VALUES (?, ?, 1)').run(
-      range.lastInsertRowid,
-      created.body.id,
-    );
+      .run();
+    db.prepare(
+      `INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description)
+         VALUES (?, ?, '10.66.0.32', '10.66.0.63', 'Workspace filter')`,
+    ).run(created.body.id, customType.lastInsertRowid);
 
     const filtered = await request(app)
       .get(`/api/subnets/${created.body.id}/ips`)
-      .query({ range_type_id: scopeType.id, display_status: 'DHCP Scope', pageSize: 8 });
+      .query({ network_range_type_id: customType.lastInsertRowid, pageSize: 8 });
     expect(filtered.status).toBe(200);
     expect(filtered.body.filteredTotal).toBe(32);
     expect(filtered.body.ips).toHaveLength(8);
     expect(filtered.body.ips[0]).toMatchObject({
       ip_address: '10.66.0.32',
-      range_type_id: scopeType.id,
-      range_type_name: 'DHCP Scope',
+      network_range_type_id: Number(customType.lastInsertRowid),
+      network_range_type: 'Workstations filter',
       allocation_state: 'unassigned',
-      ip_display_status: 'DHCP Scope',
+      ip_display_status: 'available',
+    });
+  });
+
+  it('filters protocol ownership from the canonical allocation source', async () => {
+    const created = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.65.0.0/29', name: 'Protocol filtering', status: 'allocated' });
+    expect(created.status).toBe(201);
+    db.prepare(
+      `INSERT INTO ip_addresses
+         (subnet_id, ip_address, allocation_state, allocation_source_type, allocation_source_id)
+       VALUES (?, '10.65.0.3', 'static_dns', 'dns_record', '41'),
+              (?, '10.65.0.4', 'reserved', 'manual', '42')`,
+    ).run(created.body.id, created.body.id);
+
+    const filtered = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ allocation_source_type: 'dns_record' });
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.filteredTotal).toBe(1);
+    expect(filtered.body.ips[0]).toMatchObject({
+      ip_address: '10.65.0.3',
+      allocation_source_type: 'dns_record',
     });
   });
 

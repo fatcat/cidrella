@@ -60,18 +60,18 @@
       </button>
     </section>
 
-    <section class="panel-section">
+    <section v-if="canWrite" class="panel-section">
       <span class="eyebrow">ADDRESS ACTIONS</span>
       <div class="quick-actions">
         <button
-          v-if="canReserve"
+          v-if="canWrite && canReserve"
           data-track="workspace-create-ip-reservation"
           @click="reservationMode = 'create'"
         >
           Create IP Reservation
         </button>
         <button
-          v-if="isReserved"
+          v-if="canWrite && isReserved"
           class="danger"
           data-track="workspace-release-ip-reservation"
           @click="reservationMode = 'release'"
@@ -125,7 +125,7 @@
       </div>
     </section>
 
-    <section class="panel-section">
+    <section v-if="canWrite" class="panel-section">
       <span class="eyebrow">SCANNING POLICY</span>
       <div class="segmented" aria-label="Address scanning policy">
         <button
@@ -195,6 +195,7 @@ const props = defineProps({
   networkName: { type: String, default: '' },
   dnsCount: { type: Number, default: 0 },
   dhcpCount: { type: Number, default: 0 },
+  canWrite: { type: Boolean, default: false },
 });
 const emit = defineEmits(['close', 'navigate', 'changed']);
 

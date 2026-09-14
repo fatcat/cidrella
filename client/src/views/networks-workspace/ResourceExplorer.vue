@@ -84,8 +84,18 @@
           </button>
         </div>
         <div v-if="expandedFolders.has(folder.id)" class="folder-networks">
+          <template v-if="contextKind === 'unallocated'">
+            <ResourceExplorerNode
+              v-for="network in folder.networks"
+              :key="network.id"
+              :node="network"
+              :query="query"
+              :selected-network-id="selectedNetworkId"
+              @select="emit('select-unallocated-network', $event)"
+            />
+          </template>
           <button
-            v-for="network in folder.networks"
+            v-for="network in contextKind === 'unallocated' ? [] : folder.networks"
             :key="network.id"
             class="network-row"
             :class="{ active: contextKind === 'network' && selectedNetworkId === network.id }"
@@ -117,11 +127,11 @@
       </div>
     </div>
 
-    <div class="explorer-footer">
-      <button @click="emit('notify', 'Open folder management')">
+    <div v-if="canManageFolders || canManageDefaults" class="explorer-footer">
+      <button v-if="canManageFolders" @click="emit('notify', 'Open folder management')">
         <i class="pi pi-folder-plus" /> Manage folders
       </button>
-      <button @click="emit('notify', 'Open network defaults')">
+      <button v-if="canManageDefaults" @click="emit('notify', 'Open network defaults')">
         <i class="pi pi-sliders-h" /> Defaults
       </button>
     </div>
@@ -130,6 +140,7 @@
 
 <script setup>
 import { countOf } from '../../utils/format.js';
+import ResourceExplorerNode from './ResourceExplorerNode.vue';
 
 // Presentation only. Folder/network selection, expansion and the create menu
 // are owned by NetworksWorkspace.vue, which passes the derived tree in and
@@ -145,6 +156,8 @@ defineProps({
   scopeCount: { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
   canCreate: { type: Boolean, default: false },
+  canManageFolders: { type: Boolean, default: false },
+  canManageDefaults: { type: Boolean, default: false },
 });
 const emit = defineEmits([
   'create',
@@ -152,6 +165,7 @@ const emit = defineEmits([
   'select-unallocated',
   'select-folder',
   'select-network',
+  'select-unallocated-network',
   'toggle-folder',
   'notify',
 ]);

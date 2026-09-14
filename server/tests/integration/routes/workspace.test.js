@@ -191,6 +191,46 @@ describe('workspace read routes', () => {
     });
   });
 
+  it('keeps IPv6 and unlinked DNS records out of IPv4 subnet association', async () => {
+    // AAAA is already recognized by the read projection although the current
+    // record schema does not yet expose it for CRUD. Bypass that legacy check
+    // here to lock down the family boundary before IPv6 record CRUD arrives.
+    db.pragma('ignore_check_constraints = ON');
+    try {
+      db.prepare(
+        `INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+         VALUES (?, 'v6-host', 'AAAA', '2001:db8::20', 'manual', 1),
+                (?, 'external-v4', 'A', '192.0.2.10', 'manual', 1)`,
+      ).run(zoneId, zoneId);
+
+      const wholeZone = await request(app)
+        .get('/api/workspace/dns-records')
+        .query({ zone_id: zoneId, table_q: 'v6-host' });
+      expect(wholeZone.status).toBe(200);
+      expect(wholeZone.body.items[0]).toMatchObject({
+        record_type: 'AAAA',
+        ip_address: '2001:db8::20',
+        related_subnet_ids: [],
+        subnet_id: null,
+      });
+
+      const network = await request(app)
+        .get('/api/workspace/dns-records')
+        .query({ subnet_id: subnetA, table_q: 'v6-host' });
+      expect(network.status).toBe(200);
+      expect(network.body.total).toBe(0);
+
+      const external = await request(app)
+        .get('/api/workspace/dns-records')
+        .query({ subnet_id: subnetA, table_q: 'external-v4' });
+      expect(external.status).toBe(200);
+      expect(external.body.total).toBe(0);
+    } finally {
+      db.prepare("DELETE FROM dns_records WHERE name IN ('v6-host', 'external-v4')").run();
+      db.pragma('ignore_check_constraints = OFF');
+    }
+  });
+
   it('uses zone and related-network membership for folder DNS filters', async () => {
     const response = await request(app)
       .get('/api/workspace/dns-records')
@@ -316,5 +356,22 @@ describe('extended inventory routes', () => {
     const byHostname = await request(app).get('/api/dhcp/scopes').query({ table_q: 'leased-host' });
     expect(byHostname.status).toBe(200);
     expect(byHostname.body.map((scope) => scope.id)).toEqual([scopeId]);
+  });
+
+  it('handles IPv6 DHCP scope searches without passing them to IPv4 range math', async () => {
+    db.prepare("UPDATE dhcp_scopes SET description = 'IPv6 relay 2001:db8::20' WHERE id = ?").run(
+      scopeId,
+    );
+    try {
+      const textualMatch = await request(app).get('/api/dhcp/scopes').query({ q: '2001:db8::20' });
+      expect(textualMatch.status).toBe(200);
+      expect(textualMatch.body.map((scope) => scope.id)).toEqual([scopeId]);
+
+      const noMatch = await request(app).get('/api/dhcp/scopes').query({ table_q: '2001:db8::21' });
+      expect(noMatch.status).toBe(200);
+      expect(noMatch.body).toEqual([]);
+    } finally {
+      db.prepare('UPDATE dhcp_scopes SET description = NULL WHERE id = ?').run(scopeId);
+    }
   });
 });

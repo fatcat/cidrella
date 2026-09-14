@@ -104,7 +104,7 @@
         v-for="scope in summaryScopes.slice(0, 2)"
         :key="scope.id"
         class="linked-card selected"
-        @click="emit('notify', `Scope ${scope.start_ip} to ${scope.end_ip}`)"
+        @click="emit('filter-scope', scope)"
       >
         <i class="pi pi-server" /><span
           ><small>{{ scope.enabled ? 'ACTIVE SCOPE' : 'DISABLED SCOPE' }}</small
@@ -171,6 +171,7 @@ const emit = defineEmits([
   'switch-view',
   'open-menu',
   'filter-zone',
+  'filter-scope',
   'notify',
 ]);
 </script>

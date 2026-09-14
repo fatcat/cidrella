@@ -1937,7 +1937,8 @@ router.get(
       'display_status',
       'address_type',
       'online',
-      'range_type_id',
+      'network_range_type_id',
+      'allocation_source_type',
       'scanning_enabled',
     ].some((name) => req.query[name] !== undefined);
 
@@ -1956,11 +1957,19 @@ router.get(
     }
 
     let rangeTypeFilter = null;
-    if (req.query.range_type_id !== undefined) {
-      rangeTypeFilter = Number(req.query.range_type_id);
+    if (req.query.network_range_type_id !== undefined) {
+      rangeTypeFilter = Number(req.query.network_range_type_id);
       if (!Number.isInteger(rangeTypeFilter) || rangeTypeFilter < 1) {
-        return res.status(400).json({ error: 'range_type_id must be a positive integer' });
+        return res.status(400).json({ error: 'network_range_type_id must be a positive integer' });
       }
+    }
+    const allocationSourceTypeFilter = String(req.query.allocation_source_type || '')
+      .trim()
+      .toLowerCase();
+    if (allocationSourceTypeFilter.length > 64) {
+      return res
+        .status(400)
+        .json({ error: 'allocation_source_type must be at most 64 characters' });
     }
 
     function matchesSearch(row, query) {
@@ -2024,7 +2033,18 @@ router.get(
         if (onlineFilter !== null && Boolean(row.is_online) !== onlineFilter) return false;
         if (scanningFilter !== null && Boolean(row.scanning_enabled) !== scanningFilter)
           return false;
-        if (rangeTypeFilter !== null && row.range_type_id !== rangeTypeFilter) return false;
+        // Range filters select the user-owned network classification. The
+        // functional range projection (DHCP pool, gateway, and so on) remains
+        // an independent fact and must not stand in for an organizational tag.
+        if (rangeTypeFilter !== null && row.network_range_type_id !== rangeTypeFilter) return false;
+        // Protocol ownership is a server-projected canonical fact. Filtering
+        // it here avoids reconstructing ownership from record shape in clients.
+        if (
+          allocationSourceTypeFilter &&
+          String(row.allocation_source_type || '').toLowerCase() !== allocationSourceTypeFilter
+        ) {
+          return false;
+        }
         return true;
       };
 
