@@ -1124,7 +1124,7 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
     expect(row.dhcp_expires_at).toBeNull();
   });
 
-  it('shows retained lease history as expired without occupying a scope address', async () => {
+  it('shows retained lease history as offline without occupying a scope address', async () => {
     const s = await mkSubnet({
       cidr: '10.45.0.0/24',
       name: 'scope-expired',
@@ -1157,7 +1157,7 @@ describe('GET /api/dhcp/scopes/:id/addresses, lifecycle state', () => {
     );
     expect(history).toMatchObject({
       dhcp_assignment_type: 'dynamic',
-      lease_status: 'expired',
+      lease_status: 'offline',
       hostname: 'expired-host',
     });
 

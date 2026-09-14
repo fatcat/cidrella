@@ -28,6 +28,7 @@ import {
 } from '../models/dns-record.js';
 import { createZone, updateZone, deleteZone } from '../models/dns-zone.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
+import { getWorkspaceDnsZones } from '../models/workspace-view.js';
 import { findSubnetForIp } from '../utils/ip-sync.js';
 
 const router = Router();
@@ -194,17 +195,54 @@ function validateRecord(
 // GET /api/dns/zones
 router.get('/zones', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
-  const zones = db
-    .prepare(
-      `
-    SELECT z.*,
-      (SELECT COUNT(*) FROM dns_records WHERE zone_id = z.id) as record_count
-    FROM dns_zones z
-    ORDER BY z.type, z.name
-  `,
-    )
-    .all();
-  res.json(zones);
+  const parseId = (value) => {
+    if (value === undefined) return undefined;
+    return /^\d+$/.test(String(value)) && Number(value) > 0 ? Number(value) : null;
+  };
+  const folderId = parseId(req.query.folder_id);
+  const subnetId = parseId(req.query.subnet_id);
+  if (folderId === null || subnetId === null) {
+    return res.status(400).json({ error: 'folder_id and subnet_id must be positive integers' });
+  }
+  if (req.query.type !== undefined && !['forward', 'reverse'].includes(req.query.type)) {
+    return res.status(400).json({ error: 'type must be forward or reverse' });
+  }
+  const parseBoolean = (value, defaultValue) => {
+    if (value === undefined) return defaultValue;
+    if (value === 'true' || value === '1') return true;
+    if (value === 'false' || value === '0') return false;
+    return null;
+  };
+  const enabled = parseBoolean(req.query.enabled, undefined);
+  const includeNetworks = parseBoolean(req.query.include_networks, true);
+  if (enabled === null || includeNetworks === null) {
+    return res.status(400).json({ error: 'enabled and include_networks must be true or false' });
+  }
+  for (const [name, value] of [
+    ['q', req.query.q],
+    ['table_q', req.query.table_q],
+  ]) {
+    if (value !== undefined && (typeof value !== 'string' || value.length > 256)) {
+      return res.status(400).json({ error: `${name} must be at most 256 characters` });
+    }
+  }
+  if (folderId !== undefined && !db.prepare('SELECT id FROM folders WHERE id = ?').get(folderId)) {
+    return res.status(404).json({ error: 'Folder not found' });
+  }
+  if (subnetId !== undefined && !db.prepare('SELECT id FROM subnets WHERE id = ?').get(subnetId)) {
+    return res.status(404).json({ error: 'Subnet not found' });
+  }
+  return res.json(
+    getWorkspaceDnsZones(db, {
+      folderId,
+      subnetId,
+      q: req.query.q?.trim() || undefined,
+      tableQ: req.query.table_q?.trim() || undefined,
+      type: req.query.type,
+      enabled,
+      includeNetworks,
+    }),
+  );
 });
 
 // GET /api/dns/zones/:id

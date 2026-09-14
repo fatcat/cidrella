@@ -495,6 +495,232 @@ describe('GET /api/subnets/:id/ips', () => {
     expect(row.address_type).toBe('gateway');
     expect(row.computed_type).toBe('gateway');
   });
+
+  it('applies workspace searches and filters before pagination', async () => {
+    const created = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.71.0.0/29', name: 'Filtered addresses', status: 'allocated' });
+    expect(created.status).toBe(201);
+
+    db.prepare(
+      `
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, hostname, allocation_state, is_online, detection_source)
+      VALUES
+        (?, '10.71.0.3', 'alpha-printer', 'reserved', 1, 'manual'),
+        (?, '10.71.0.4', 'beta-printer', 'reserved', 0, 'manual')
+    `,
+    ).run(created.body.id, created.body.id);
+
+    const res = await request(app).get(`/api/subnets/${created.body.id}/ips`).query({
+      search: 'printer',
+      table_search: 'beta',
+      display_status: 'in use',
+      address_type: 'IP Reservation',
+      online: 'false',
+      page: 1,
+      pageSize: 1,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.totalIps).toBe(8);
+    expect(res.body.filteredTotal).toBe(1);
+    expect(res.body.ips.map((row) => row.ip_address)).toEqual(['10.71.0.4']);
+  });
+
+  it('returns an exact unused explorer IP without persisting it and rejects malformed filters', async () => {
+    const created = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.70.0.0/29', name: 'Virtual filtering', status: 'allocated' });
+    expect(created.status).toBe(201);
+
+    const available = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ search: '10.70.0.5', display_status: 'available' });
+    expect(available.status).toBe(200);
+    expect(available.body.totalIps).toBe(8);
+    expect(available.body.filteredTotal).toBe(1);
+    expect(available.body.ips[0]).toMatchObject({
+      ip_address: '10.70.0.5',
+      allocation_state: 'unassigned',
+      ip_display_status: 'available',
+    });
+    const tableOnly = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ table_search: '10.70.0.6', display_status: 'available' });
+    expect(tableOnly.status).toBe(200);
+    expect(tableOnly.body.totalIps).toBe(8);
+    expect(tableOnly.body.filteredTotal).toBe(0);
+    expect(tableOnly.body.ips).toEqual([]);
+
+    const invalidBoolean = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ online: 'sometimes' });
+    expect(invalidBoolean.status).toBe(400);
+
+    const invalidRange = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ range_type_id: 'not-an-id' });
+    expect(invalidRange.status).toBe(400);
+  });
+
+  it('filters unused DHCP pool members by their functional range projection', async () => {
+    const created = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.66.0.0/24', name: 'Range filtering', status: 'allocated' });
+    expect(created.status).toBe(201);
+    const scopeType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get();
+    const range = db
+      .prepare(
+        `INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description)
+         VALUES (?, ?, '10.66.0.32', '10.66.0.63', 'Workspace filter')`,
+      )
+      .run(created.body.id, scopeType.id);
+    db.prepare('INSERT INTO dhcp_scopes (range_id, subnet_id, enabled) VALUES (?, ?, 1)').run(
+      range.lastInsertRowid,
+      created.body.id,
+    );
+
+    const filtered = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ range_type_id: scopeType.id, display_status: 'DHCP Scope', pageSize: 8 });
+    expect(filtered.status).toBe(200);
+    expect(filtered.body.filteredTotal).toBe(32);
+    expect(filtered.body.ips).toHaveLength(8);
+    expect(filtered.body.ips[0]).toMatchObject({
+      ip_address: '10.66.0.32',
+      range_type_id: scopeType.id,
+      range_type_name: 'DHCP Scope',
+      allocation_state: 'unassigned',
+      ip_display_status: 'DHCP Scope',
+    });
+  });
+
+  it('filters a large prefix without persisting or materializing its virtual addresses', async () => {
+    const created = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '11.0.0.0/8', name: 'Large virtual filtering', status: 'allocated' });
+    expect(created.status).toBe(201);
+
+    const beforeRows = db
+      .prepare('SELECT COUNT(*) AS count FROM ip_addresses WHERE subnet_id = ?')
+      .get(created.body.id).count;
+    const exact = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ search: '11.200.100.50', display_status: 'available' });
+    expect(exact.status).toBe(200);
+    expect(exact.body.totalIps).toBe(16777216);
+    expect(exact.body.filteredTotal).toBe(1);
+    expect(exact.body.ips).toHaveLength(1);
+    expect(exact.body.ips[0]).toMatchObject({
+      ip_address: '11.200.100.50',
+      allocation_state: 'unassigned',
+      ip_display_status: 'available',
+    });
+
+    const offline = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ online: 'false', page: 32768, pageSize: 512 });
+    expect(offline.status).toBe(200);
+    expect(offline.body.filteredTotal).toBe(16777216);
+    expect(offline.body.ips).toHaveLength(512);
+    expect(offline.body.ips[0].ip_address).toBe('11.255.254.0');
+    expect(offline.body.ips[511].ip_address).toBe('11.255.255.255');
+
+    const sorted = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ sortField: 'hostname', sortOrder: 'asc', page: 32768, pageSize: 512 });
+    expect(sorted.status).toBe(200);
+    expect(sorted.body.totalIps).toBe(16777216);
+    expect(sorted.body.filteredTotal).toBe(16777216);
+    expect(sorted.body.ips).toHaveLength(512);
+
+    expect(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM ip_addresses WHERE subnet_id = ?')
+        .get(created.body.id).count,
+    ).toBe(beforeRows);
+  });
+});
+
+describe('canonical subnet IP detail and summary reads', () => {
+  it('returns an available virtual detail without persisting it', async () => {
+    const created = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.69.0.0/29', name: 'Detail read', status: 'allocated' });
+    expect(created.status).toBe(201);
+    const beforeRows = db
+      .prepare('SELECT COUNT(*) AS count FROM ip_addresses WHERE subnet_id = ?')
+      .get(created.body.id).count;
+    const beforeEvents = db
+      .prepare('SELECT COUNT(*) AS count FROM ip_events WHERE subnet_id = ?')
+      .get(created.body.id).count;
+
+    const detail = await request(app).get(`/api/subnets/${created.body.id}/ips/10.69.0.5`);
+    expect(detail.status).toBe(200);
+    expect(detail.body.ip).toMatchObject({
+      ip_address: '10.69.0.5',
+      subnet_id: created.body.id,
+      allocation_state: 'unassigned',
+      ip_display_status: 'available',
+      address_type: null,
+    });
+    expect(
+      db
+        .prepare('SELECT COUNT(*) AS count FROM ip_addresses WHERE subnet_id = ?')
+        .get(created.body.id).count,
+    ).toBe(beforeRows);
+    expect(
+      db.prepare('SELECT COUNT(*) AS count FROM ip_events WHERE subnet_id = ?').get(created.body.id)
+        .count,
+    ).toBe(beforeEvents);
+  });
+
+  it('validates detail identity and containment', async () => {
+    const created = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.68.0.0/29', name: 'Detail validation', status: 'allocated' });
+    expect(created.status).toBe(201);
+
+    expect((await request(app).get(`/api/subnets/${created.body.id}/ips/not-an-ip`)).status).toBe(
+      400,
+    );
+    expect((await request(app).get(`/api/subnets/${created.body.id}/ips/10.68.1.1`)).status).toBe(
+      400,
+    );
+    expect((await request(app).get('/api/subnets/999999/ips/10.68.0.1')).status).toBe(404);
+  });
+
+  it('summarizes canonical allocation, liveness and rogue classifications', async () => {
+    const created = await request(app).post('/api/subnets').send({
+      cidr: '10.67.0.0/29',
+      name: 'Summary read',
+      status: 'allocated',
+      gateway_address: '10.67.0.1',
+    });
+    expect(created.status).toBe(201);
+    db.prepare(
+      `
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, allocation_state, is_online, is_rogue, detection_source)
+      VALUES
+        (?, '10.67.0.3', 'reserved', 1, 1, 'manual'),
+        (?, '10.67.0.4', 'unassigned', 1, 1, 'scanner'),
+        (?, '10.67.0.5', 'unassigned', 0, 0, 'scanner')
+    `,
+    ).run(created.body.id, created.body.id, created.body.id);
+
+    const summary = await request(app).get(`/api/subnets/${created.body.id}/summary`);
+    expect(summary.status).toBe(200);
+    expect(summary.body).toEqual({
+      subnet_id: created.body.id,
+      total_addresses: 8,
+      assigned_count: 3,
+      unassigned_count: 5,
+      online_count: 2,
+      rogue_count: 1,
+    });
+  });
 });
 
 describe('gateway policy edits', () => {

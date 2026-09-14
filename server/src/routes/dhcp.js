@@ -39,6 +39,7 @@ import {
   deleteCustomOption,
   replaceDefaultOptions,
 } from '../models/dhcp-option.js';
+import { scopeMatches } from '../models/workspace-view.js';
 
 const router = Router();
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
@@ -89,7 +90,7 @@ function parseIpList(jsonStr, fieldName) {
 // GET /api/dhcp/scopes
 router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
   const db = getDb();
-  const scopes = db
+  let scopes = db
     .prepare(
       `
     SELECT s.*, r.start_ip, r.end_ip,
@@ -118,6 +119,63 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
     if (scope.subnet_cidr) {
       scope.server_ip = getServerIpForSubnet(scope.subnet_cidr);
     }
+  }
+
+  const parseId = (value) => {
+    if (value === undefined) return undefined;
+    return /^\d+$/.test(String(value)) && Number(value) > 0 ? Number(value) : null;
+  };
+  const folderId = parseId(req.query.folder_id);
+  const subnetId = parseId(req.query.subnet_id);
+  if (folderId === null || subnetId === null) {
+    return res.status(400).json({ error: 'folder_id and subnet_id must be positive integers' });
+  }
+  let enabled;
+  if (req.query.enabled !== undefined) {
+    if (req.query.enabled === 'true' || req.query.enabled === '1') enabled = true;
+    else if (req.query.enabled === 'false' || req.query.enabled === '0') enabled = false;
+    else return res.status(400).json({ error: 'enabled must be true or false' });
+  }
+  for (const [name, value] of [
+    ['q', req.query.q],
+    ['table_q', req.query.table_q],
+  ]) {
+    if (value !== undefined && (typeof value !== 'string' || value.length > 256)) {
+      return res.status(400).json({ error: `${name} must be at most 256 characters` });
+    }
+  }
+  if (folderId !== undefined && !db.prepare('SELECT id FROM folders WHERE id = ?').get(folderId)) {
+    return res.status(404).json({ error: 'Folder not found' });
+  }
+  if (subnetId !== undefined && !db.prepare('SELECT id FROM subnets WHERE id = ?').get(subnetId)) {
+    return res.status(404).json({ error: 'Subnet not found' });
+  }
+  if (folderId !== undefined) scopes = scopes.filter((scope) => scope.folder_id === folderId);
+  if (subnetId !== undefined) scopes = scopes.filter((scope) => scope.subnet_id === subnetId);
+  if (enabled !== undefined) scopes = scopes.filter((scope) => Boolean(scope.enabled) === enabled);
+
+  const memberRows = [
+    ...db
+      .prepare('SELECT subnet_id, ip_address, hostname, mac_address FROM dhcp_reservations')
+      .all(),
+    ...db.prepare('SELECT subnet_id, ip_address, hostname, mac_address FROM dhcp_leases').all(),
+  ];
+  for (const row of memberRows) {
+    const value = isValidIpv4(row.ip_address) ? ipToLong(row.ip_address) : null;
+    row.scope_id =
+      value === null
+        ? null
+        : (scopes.find(
+            (scope) =>
+              scope.subnet_id === row.subnet_id &&
+              scope.pools.some(
+                (pool) => value >= ipToLong(pool.start_ip) && value <= ipToLong(pool.end_ip),
+              ),
+          )?.id ?? null);
+  }
+  if (req.query.q) scopes = scopes.filter((scope) => scopeMatches(scope, req.query.q, memberRows));
+  if (req.query.table_q) {
+    scopes = scopes.filter((scope) => scopeMatches(scope, req.query.table_q, memberRows));
   }
 
   res.json(scopes);
@@ -787,7 +845,7 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
         subnet_domain_name: l.subnet_domain_name,
         folder_id: l.folder_id,
         enabled: true,
-        lease_status: leaseIsActive(l) ? 'active' : 'expired',
+        lease_status: leaseIsActive(l) ? 'active' : 'offline',
         expires_at: l.expires_at,
         reservation_id: null,
         created_at: l.created_at,

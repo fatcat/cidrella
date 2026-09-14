@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { activeLeaseSql } from '../utils/lease-sql.js';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
@@ -24,8 +23,14 @@ import {
   lifecycleRepository as IpAddress,
   setManualReservation,
 } from '../services/ip-lifecycle-service.js';
+import {
+  getCanonicalSubnetIpRow,
+  getSubnetIpReadContext,
+  projectPersistedSubnetIpRows,
+  projectVirtualSubnetIpRow,
+  summarizeCanonicalSubnetIps,
+} from '../models/subnet-ip-read.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
-import * as Range from '../models/range.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
 import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
@@ -41,7 +46,6 @@ import {
   gatewayInPoolError,
   dynamicPoolConflict,
 } from '../models/dhcp-scope.js';
-import { staticDnsClaimSql } from '../models/dns-record.js';
 
 const router = Router();
 
@@ -1839,6 +1843,8 @@ router.get(
     const totalIps = parsed.broadcastLong - parsed.networkLong + 1;
     const search = (req.query.search || '').trim().toLowerCase();
     const showAvailable = req.query.showAvailable !== 'false';
+    const readContext = getSubnetIpReadContext(db, subnet);
+    const ranges = readContext.ranges;
 
     // Sort params
     const SORTABLE_FIELDS = new Set([
@@ -1898,30 +1904,8 @@ router.get(
       });
     }
 
-    function makeVirtualIpRow(ipLong, range, gwLong) {
-      const addr = longToIp(ipLong);
-      const isGw = gwLong !== null && ipLong === gwLong;
-      const isNetwork = ipLong === parsed.networkLong;
-      const isBroadcast = ipLong === parsed.broadcastLong;
-      return {
-        ip_address: addr,
-        subnet_id: subnet.id,
-        allocation_state: isGw ? 'gateway' : isNetwork || isBroadcast ? 'system' : 'unassigned',
-        hostname: null,
-        mac_address: null,
-        is_online: 0,
-        last_seen_at: null,
-        last_seen_mac: null,
-        is_rogue: 0,
-        rogue_reason: null,
-        has_dhcp_reservation: 0,
-        // Protocol fact fields stay absent for synthesized rows. Allocation and
-        // display come only from the canonical state above.
-        dhcp_expires_at: null,
-        range_type_id: range?.range_type_id || null,
-        range_type_name: range?.range_type_name || null,
-        range_type_color: range?.range_type_color || null,
-      };
+    function makeVirtualIpRow(ipLong) {
+      return projectVirtualSubnetIpRow(db, subnet, ipLong, readContext);
     }
 
     function buildRangeLookup(ranges) {
@@ -1946,45 +1930,262 @@ router.get(
       return (row.ip_display_status || 'available') === 'available';
     }
 
-    function enrichPersistedRows(rows, rangeLookup) {
-      for (const ip of rows) {
-        const ipLong = ipToLong(ip.ip_address);
-        const range = rangeForIpLong(rangeLookup, ipLong);
-        ip.range_type_id = range?.range_type_id || null;
-        ip.range_type_name = range?.range_type_name || null;
-        ip.range_type_color = range?.range_type_color || null;
+    function loadPersistedRows() {
+      return projectPersistedSubnetIpRows(db, subnet, { context: readContext });
+    }
+
+    const tableSearch = (req.query.table_search || '').trim().toLowerCase();
+    const exactExplorerSearch =
+      Boolean(search) && isValidIpv4(search) && isIpInSubnet(search, subnet.cidr);
+    const hasExplicitFilters = [
+      'display_status',
+      'address_type',
+      'online',
+      'range_type_id',
+      'scanning_enabled',
+    ].some((name) => req.query[name] !== undefined);
+
+    function parseBooleanFilter(name) {
+      const value = req.query[name];
+      if (value === undefined) return null;
+      if (value === 'true' || value === '1') return true;
+      if (value === 'false' || value === '0') return false;
+      return undefined;
+    }
+
+    const onlineFilter = parseBooleanFilter('online');
+    const scanningFilter = parseBooleanFilter('scanning_enabled');
+    if (onlineFilter === undefined || scanningFilter === undefined) {
+      return res.status(400).json({ error: 'Boolean filters must be true, false, 1, or 0' });
+    }
+
+    let rangeTypeFilter = null;
+    if (req.query.range_type_id !== undefined) {
+      rangeTypeFilter = Number(req.query.range_type_id);
+      if (!Number.isInteger(rangeTypeFilter) || rangeTypeFilter < 1) {
+        return res.status(400).json({ error: 'range_type_id must be a positive integer' });
       }
-      enrichIpViewRows(db, rows);
+    }
+
+    function matchesSearch(row, query) {
+      if (!query) return true;
+      return [
+        row.ip_address,
+        row.hostname,
+        row.mac_address,
+        row.last_seen_mac,
+        row.vendor,
+        row.ip_display_status,
+        row.address_type,
+        row.allocation_state,
+        row.allocation_source_type,
+        row.network_range_type,
+        row.os_family,
+        row.device_type,
+        row.device_confidence,
+        row.dhcp_fingerprint,
+        row.dhcp_vendor_class,
+        row.dhcp_fingerprint_hostname,
+        row.device_fingerprint_source,
+        row.scanning_enabled,
+      ].some((value) =>
+        String(value ?? '')
+          .toLowerCase()
+          .includes(query),
+      );
+    }
+
+    // Workspace filters operate on the canonical projection before pagination.
+    // Persisted rows are finite, while virtual rows can cover almost all of an
+    // IPv4 prefix. Represent matching virtual rows as intervals so a /8 does not
+    // turn into millions of objects merely to answer a filter.
+    if (
+      tableSearch ||
+      hasExplicitFilters ||
+      exactExplorerSearch ||
+      (reqSortField && reqSortField !== 'ip_address')
+    ) {
+      const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+      const allPersisted = loadPersistedRows();
+      const rangeLookup = buildRangeLookup(ranges);
+      const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
+      const displayStatusFilter = String(req.query.display_status || '').toLowerCase();
+      const addressTypeFilter = String(req.query.address_type || '').toLowerCase();
+      const rowMatches = (row) => {
+        if (!showAvailable && isAvailableIpRow(row)) return false;
+        if (!matchesSearch(row, search) || !matchesSearch(row, tableSearch)) return false;
+        if (
+          displayStatusFilter &&
+          String(row.ip_display_status || '').toLowerCase() !== displayStatusFilter
+        ) {
+          return false;
+        }
+        if (
+          addressTypeFilter &&
+          String(row.address_type || '').toLowerCase() !== addressTypeFilter
+        ) {
+          return false;
+        }
+        if (onlineFilter !== null && Boolean(row.is_online) !== onlineFilter) return false;
+        if (scanningFilter !== null && Boolean(row.scanning_enabled) !== scanningFilter)
+          return false;
+        if (rangeTypeFilter !== null && row.range_type_id !== rangeTypeFilter) return false;
+        return true;
+      };
+
+      const matchedPersisted = allPersisted.filter(rowMatches);
+      const persistedLongs = new Set(allPersisted.map((row) => ipToLong(row.ip_address)));
+
+      // Text searches historically search persisted metadata. A synthetically
+      // available row is included only when the query is itself one exact IP.
+      const searchTerms = [search, tableSearch].filter(Boolean);
+      const exactSearchIps = searchTerms.map((term) =>
+        isValidIpv4(term) && isIpInSubnet(term, subnet.cidr) ? ipToLong(term) : null,
+      );
+      const mayMatchVirtual =
+        exactExplorerSearch &&
+        !tableSearch &&
+        searchTerms.every((term, index) =>
+          exactSearchIps[index] === null ? false : exactSearchIps[index] === exactSearchIps[0],
+        );
+
+      const virtualIntervals = [];
+      if (!searchTerms.length || mayMatchVirtual) {
+        const boundaries = new Set([parsed.networkLong, parsed.broadcastLong + 1]);
+        for (const range of ranges) {
+          const start = Math.max(parsed.networkLong, ipToLong(range.start_ip));
+          const end = Math.min(parsed.broadcastLong, ipToLong(range.end_ip));
+          if (start <= end) {
+            boundaries.add(start);
+            boundaries.add(end + 1);
+          }
+        }
+        if (gwLong !== null) {
+          boundaries.add(gwLong);
+          boundaries.add(gwLong + 1);
+        }
+        boundaries.add(parsed.networkLong + 1);
+        boundaries.add(parsed.broadcastLong);
+
+        const ordered = [...boundaries]
+          .filter((value) => value >= parsed.networkLong && value <= parsed.broadcastLong + 1)
+          .sort((a, b) => a - b);
+        for (let index = 0; index < ordered.length - 1; index += 1) {
+          const segmentStart = ordered[index];
+          const segmentEnd = ordered[index + 1] - 1;
+          const startLong = searchTerms.length ? exactSearchIps[0] : segmentStart;
+          const endLong = searchTerms.length ? exactSearchIps[0] : segmentEnd;
+          if (startLong < segmentStart || startLong > segmentEnd) continue;
+          const sample = makeVirtualIpRow(startLong, rangeForIpLong(rangeLookup, startLong));
+          enrichIpViewRows(db, [sample]);
+          if (rowMatches(sample)) virtualIntervals.push({ startLong, endLong, sortRow: sample });
+          if (searchTerms.length) break;
+        }
+      }
+
+      const persistedInIntervals = (intervals) => {
+        let count = 0;
+        for (const ipLong of persistedLongs) {
+          if (
+            intervals.some(({ startLong, endLong }) => ipLong >= startLong && ipLong <= endLong)
+          ) {
+            count += 1;
+          }
+        }
+        return count;
+      };
+      const virtualTotal =
+        virtualIntervals.reduce(
+          (sum, interval) => sum + interval.endLong - interval.startLong + 1,
+          0,
+        ) - persistedInIntervals(virtualIntervals);
+      const filteredTotal = matchedPersisted.length + virtualTotal;
+      const totalPages = Math.ceil(filteredTotal / pageSize) || 1;
+      const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), totalPages);
+      const start = (page - 1) * pageSize;
+
+      // IP ordering lets us seek over virtual intervals arithmetically. Other
+      // columns have identical null/default values for virtual rows, so use IP
+      // as their deterministic tie-breaker and merge only the requested page.
+      const entries = matchedPersisted.map((row) => ({
+        startLong: ipToLong(row.ip_address),
+        endLong: ipToLong(row.ip_address),
+        row,
+      }));
+      for (const interval of virtualIntervals) {
+        let cursor = interval.startLong;
+        const occupied = [...persistedLongs]
+          .filter((value) => value >= interval.startLong && value <= interval.endLong)
+          .sort((a, b) => a - b);
+        for (const value of occupied) {
+          if (cursor < value) {
+            entries.push({ startLong: cursor, endLong: value - 1, sortRow: interval.sortRow });
+          }
+          cursor = value + 1;
+        }
+        if (cursor <= interval.endLong) {
+          entries.push({
+            startLong: cursor,
+            endLong: interval.endLong,
+            sortRow: interval.sortRow,
+          });
+        }
+      }
+      const sortField = reqSortField || 'ip_address';
+      entries.sort((a, b) => {
+        if (sortField === 'ip_address') return (a.startLong - b.startLong) * reqSortOrder;
+        let left = (a.row || a.sortRow)?.[sortField];
+        let right = (b.row || b.sortRow)?.[sortField];
+        if (typeof left === 'string') left = left.trim() ? left.toLowerCase() : null;
+        if (typeof right === 'string') right = right.trim() ? right.toLowerCase() : null;
+        if (left == null && right != null) return 1;
+        if (left != null && right == null) return -1;
+        if (left != null && right != null && left !== right) {
+          return (left < right ? -1 : 1) * reqSortOrder;
+        }
+        return a.startLong - b.startLong;
+      });
+
+      const ips = [];
+      let skipped = 0;
+      for (const entry of entries) {
+        const length = entry.endLong - entry.startLong + 1;
+        if (skipped + length <= start) {
+          skipped += length;
+          continue;
+        }
+        const offset = Math.max(0, start - skipped);
+        for (let index = offset; index < length && ips.length < pageSize; index += 1) {
+          const descendingIp = sortField === 'ip_address' && reqSortOrder === -1;
+          const ipLong = descendingIp ? entry.endLong - index : entry.startLong + index;
+          const row = entry.row || makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong));
+          if (!entry.row) enrichIpViewRows(db, [row]);
+          ips.push(row);
+        }
+        skipped += length;
+        if (ips.length === pageSize) break;
+      }
+      return res.json({
+        subnet,
+        ips,
+        ranges,
+        totalIps,
+        filteredTotal,
+        page,
+        pageSize,
+        totalPages,
+        search,
+        table_search: tableSearch,
+        sorted: Boolean(reqSortField),
+      });
     }
 
     // ── Search mode: return only matching persisted IPs (no virtual fill) ──
     if (search) {
       const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
 
-      const allPersisted = db
-        .prepare(
-          `
-      SELECT ip.*,
-        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-        dl.expires_at as dhcp_expires_at,
-        CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
-      FROM ip_addresses ip
-      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_leases dl
-        ON dl.subnet_id = ip.subnet_id
-       AND dl.ip_address = ip.ip_address
-       AND ${activeLeaseSql('dl')}
-      WHERE ip.subnet_id = ?
-    `,
-        )
-        .all(req.params.id);
+      const allPersisted = loadPersistedRows();
 
-      // Load ranges
-      const ranges = Range.listSubnetDetailRanges(db, req.params.id);
-
-      // Filter and enrich
-      const rangeLookup = buildRangeLookup(ranges);
-      enrichPersistedRows(allPersisted, rangeLookup);
       const matched = [];
       for (const ip of allPersisted) {
         if (!showAvailable && isAvailableIpRow(ip)) continue;
@@ -2028,6 +2229,7 @@ router.get(
         ips,
         ranges,
         totalIps: searchTotal,
+        filteredTotal: searchTotal,
         page,
         pageSize,
         totalPages: searchTotalPages,
@@ -2039,30 +2241,11 @@ router.get(
     if (!showAvailable) {
       const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
 
-      const allPersisted = db
-        .prepare(
-          `
-      SELECT ip.*,
-        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-        dl.expires_at as dhcp_expires_at,
-        CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
-      FROM ip_addresses ip
-      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_leases dl
-        ON dl.subnet_id = ip.subnet_id
-       AND dl.ip_address = ip.ip_address
-       AND ${activeLeaseSql('dl')}
-      WHERE ip.subnet_id = ?
-    `,
-        )
-        .all(req.params.id);
+      const allPersisted = loadPersistedRows();
 
       // Ranges
-      const ranges = Range.listSubnetDetailRanges(db, req.params.id);
-
       const rangeLookup = buildRangeLookup(ranges);
 
-      enrichPersistedRows(allPersisted, rangeLookup);
       const persistedByLong = new Map(allPersisted.map((ip) => [ipToLong(ip.ip_address), ip]));
       const displayRows = allPersisted.filter((row) => !isAvailableIpRow(row));
 
@@ -2074,7 +2257,7 @@ router.get(
 
       for (const ipLong of protectedLongs) {
         if (!persistedByLong.has(ipLong)) {
-          const row = makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong), gwLong);
+          const row = makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong));
           enrichIpViewRows(db, [row]);
           if (!isAvailableIpRow(row)) displayRows.push(row);
         }
@@ -2093,66 +2276,7 @@ router.get(
         ips,
         ranges,
         totalIps: sortedTotal,
-        page,
-        pageSize,
-        totalPages: sortedTotalPages,
-        sorted: true,
-      });
-    }
-
-    // ── Full-row mode: needed for non-IP sorting when available rows are visible ──
-    if (reqSortField && reqSortField !== 'ip_address') {
-      const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
-
-      const allPersisted = db
-        .prepare(
-          `
-      SELECT ip.*,
-        CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-        dl.expires_at as dhcp_expires_at,
-        CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
-      FROM ip_addresses ip
-      LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_leases dl
-        ON dl.subnet_id = ip.subnet_id
-       AND dl.ip_address = ip.ip_address
-       AND ${activeLeaseSql('dl')}
-      WHERE ip.subnet_id = ?
-    `,
-        )
-        .all(req.params.id);
-
-      const ranges = Range.listSubnetDetailRanges(db, req.params.id);
-      const rangeLookup = buildRangeLookup(ranges);
-      const persistedMap = new Map();
-      enrichPersistedRows(allPersisted, rangeLookup);
-      for (const ip of allPersisted) {
-        persistedMap.set(ipToLong(ip.ip_address), ip);
-      }
-
-      const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
-      const sortedRows = [];
-      for (let ipLong = parsed.networkLong; ipLong <= parsed.broadcastLong; ipLong++) {
-        const persisted = persistedMap.get(ipLong);
-        sortedRows.push(
-          persisted || makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong), gwLong),
-        );
-      }
-
-      enrichIpViewRows(db, sortedRows);
-      sortIps(sortedRows, reqSortField, reqSortOrder);
-
-      const sortedTotal = sortedRows.length;
-      const sortedTotalPages = Math.ceil(sortedTotal / pageSize) || 1;
-      const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), sortedTotalPages);
-      const start = (page - 1) * pageSize;
-      const ips = sortedRows.slice(start, start + pageSize);
-
-      return res.json({
-        subnet,
-        ips,
-        ranges,
-        totalIps: sortedTotal,
+        filteredTotal: sortedTotal,
         page,
         pageSize,
         totalPages: sortedTotalPages,
@@ -2170,25 +2294,7 @@ router.get(
     const pageStartLong = parsed.networkLong + (page - 1) * pageSize;
     const pageEndLong = Math.min(pageStartLong + pageSize - 1, parsed.broadcastLong);
 
-    // Load persisted ip_addresses for this subnet and filter to page range in JS
-    // (ip_address is text so SQL string comparison on dotted-decimal is unreliable)
-    const allPersisted = db
-      .prepare(
-        `
-    SELECT ip.*,
-      CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-      dl.expires_at as dhcp_expires_at,
-      CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
-    FROM ip_addresses ip
-    LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-    LEFT JOIN dhcp_leases dl
-      ON dl.subnet_id = ip.subnet_id
-     AND dl.ip_address = ip.ip_address
-     AND ${activeLeaseSql('dl')}
-    WHERE ip.subnet_id = ?
-  `,
-      )
-      .all(req.params.id);
+    const allPersisted = loadPersistedRows();
 
     // Build lookup of persisted IPs by long value, filtering to page range
     const persistedMap = new Map();
@@ -2200,8 +2306,6 @@ router.get(
     }
 
     // Load ranges for this subnet
-    const ranges = Range.listSubnetDetailRanges(db, req.params.id);
-
     // Pre-compute range lookup: sorted by startLong for binary search
     const rangeLookup = buildRangeLookup(ranges);
 
@@ -2217,7 +2321,6 @@ router.get(
     }
 
     // Generate virtual IPs for this page, merging with persisted data
-    const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
     const ips = [];
 
     for (let ipLong = pageStartLong; ipLong <= pageEndLong; ipLong++) {
@@ -2231,14 +2334,55 @@ router.get(
         ips.push(persisted);
       } else {
         // Virtual IP entry, no persisted record
-        ips.push(makeVirtualIpRow(ipLong, match, gwLong));
+        ips.push(makeVirtualIpRow(ipLong, match));
       }
     }
 
     // Shared IP view for all rows on this page
     enrichIpViewRows(db, ips);
 
-    res.json({ subnet, ips, ranges, totalIps, page, pageSize, totalPages });
+    res.json({
+      subnet,
+      ips,
+      ranges,
+      totalIps,
+      filteredTotal: totalIps,
+      page,
+      pageSize,
+      totalPages,
+    });
+  }),
+);
+
+// GET /api/subnets/:id/ips/:ip: one canonical IP projection without creating a row
+router.get(
+  '/:id/ips/:ip',
+  requirePerm('subnets:read'),
+  asyncHandler((req, res) => {
+    const db = getDb();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (!isValidIpv4(req.params.ip)) return res.status(400).json({ error: 'Invalid IPv4 address' });
+
+    const ipAddress = longToIp(ipToLong(req.params.ip));
+    if (!isIpInSubnet(ipAddress, subnet.cidr)) {
+      return res.status(400).json({ error: 'IP address is outside this subnet' });
+    }
+
+    res.json({ ip: getCanonicalSubnetIpRow(db, subnet, ipAddress) });
+  }),
+);
+
+// GET /api/subnets/:id/summary: whole-subnet canonical allocation and liveness counts
+router.get(
+  '/:id/summary',
+  requirePerm('subnets:read'),
+  asyncHandler((req, res) => {
+    const db = getDb();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+
+    res.json(summarizeCanonicalSubnetIps(db, subnet));
   }),
 );
 

@@ -3,6 +3,7 @@ import { lookupFingerprintBatch } from './device-fingerprint.js';
 import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
 import { addressFamily, canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import { resolveScanningEnabled } from '../utils/scan-coverage.js';
+import { ipToLong, longToIp, parseCidr } from '../utils/ip.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -84,6 +85,47 @@ export function buildIpAggregate(row) {
     address_family: row.address_family ?? addressFamily(row.ip_address),
     address_sort_key: row.address_sort_key ?? sortKey(row.ip_address),
     ...computeIpView(row),
+  };
+}
+
+/**
+ * Build the canonical read-only row for an address with no persisted IP
+ * identity. Topology remains authoritative for protected addresses, while
+ * range membership is projected as an independent fact.
+ */
+export function buildVirtualSubnetIpRow(subnet, ip, functionalRange = null) {
+  const parsedSubnet = parseCidr(subnet.cidr);
+  const ipLong = typeof ip === 'number' ? ip : ipToLong(ip);
+  const ipAddress = longToIp(ipLong);
+  const gatewayLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
+
+  let allocationState = ALLOCATION_STATE.UNASSIGNED;
+  if (gatewayLong === ipLong) {
+    allocationState = ALLOCATION_STATE.GATEWAY;
+  } else if (ipLong === parsedSubnet.networkLong || ipLong === parsedSubnet.broadcastLong) {
+    allocationState = ALLOCATION_STATE.SYSTEM;
+  }
+
+  return {
+    ip_address: ipAddress,
+    subnet_id: subnet.id,
+    allocation_state: allocationState,
+    allocation_source_type: allocationState === ALLOCATION_STATE.UNASSIGNED ? null : 'topology',
+    allocation_source_id:
+      allocationState === ALLOCATION_STATE.UNASSIGNED ? null : String(subnet.id),
+    hostname: null,
+    mac_address: null,
+    is_online: 0,
+    last_seen_at: null,
+    last_seen_mac: null,
+    is_rogue: 0,
+    rogue_reason: null,
+    has_dhcp_reservation: 0,
+    has_static_dns: 0,
+    dhcp_expires_at: null,
+    range_type_id: functionalRange?.range_type_id || null,
+    range_type_name: functionalRange?.range_type_name || null,
+    range_type_color: functionalRange?.range_type_color || null,
   };
 }
 

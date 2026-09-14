@@ -38,6 +38,7 @@ import rangeRoutes from './routes/ranges.js';
 import settingsRoutes from './routes/settings.js';
 import dnsRoutes from './routes/dns.js';
 import dhcpRoutes from './routes/dhcp.js';
+import workspaceRoutes from './routes/workspace.js';
 import scanRoutes from './routes/scans.js';
 import auditRoutes from './routes/audit.js';
 import blocklistRoutes from './routes/blocklists.js';
@@ -413,6 +414,7 @@ async function main() {
   app.use('/api/dhcp/rogue', rogueDhcpRoutes);
   app.use('/api/devices', deviceRoutes);
   app.use('/api/dhcp', dhcpRoutes);
+  app.use('/api/workspace', workspaceRoutes);
   app.use('/api/scans', scanRoutes);
   app.use('/api/audit', auditRoutes);
   app.use('/api/blocklists', blocklistRoutes);
