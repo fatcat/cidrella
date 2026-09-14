@@ -187,6 +187,7 @@
 import { computed, ref, watch } from 'vue';
 import api from '../../api/client.js';
 import { apiError, EMPTY_CELL } from '../../utils/format.js';
+import { eventDetail, eventLabel, eventTone } from '../../utils/ipLifecycleEvents.js';
 
 const props = defineProps({
   row: { type: Object, required: true },
@@ -335,43 +336,6 @@ async function probeNow() {
   } finally {
     busyAction.value = '';
   }
-}
-
-function eventLabel(type) {
-  const labels = {
-    online: 'Online',
-    offline: 'Offline',
-    scanned: 'Scanned',
-    rogue_detected: 'Rogue detected',
-    rogue_cleared: 'Rogue cleared',
-    dns_added: 'DNS added',
-    dns_removed: 'DNS removed',
-    lease_obtained: 'Lease obtained',
-    hostname_changed: 'Hostname changed',
-    mac_changed: 'MAC changed',
-    allocation_changed: 'Allocation changed',
-    status_changed: 'Legacy status changed',
-    scan_enabled_changed: 'Scan setting changed',
-    retired: 'Metadata Expired',
-  };
-  return labels[type] || String(type || 'Event').replaceAll('_', ' ');
-}
-
-function eventTone(type) {
-  if (['online', 'dns_added', 'lease_obtained'].includes(type)) return 'good';
-  if (type === 'rogue_detected') return 'danger';
-  if (['offline', 'dns_removed', 'retired'].includes(type)) return 'muted';
-  return 'info';
-}
-
-function eventDetail(event) {
-  const values =
-    event.old_value && event.new_value
-      ? `${event.old_value} → ${event.new_value}`
-      : event.new_value || event.old_value || '';
-  return [values, event.source ? `via ${String(event.source).replaceAll('_', ' ')}` : '']
-    .filter(Boolean)
-    .join(' · ');
 }
 
 function formatEventTime(value) {
@@ -750,6 +714,9 @@ dd {
 }
 .event-marker.muted i {
   background: var(--cid-surface-400);
+}
+.event-marker.warn i {
+  background: var(--cid-orange-500);
 }
 .event-row > div {
   display: flex;

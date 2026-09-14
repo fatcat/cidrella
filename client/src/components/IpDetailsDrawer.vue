@@ -87,7 +87,7 @@
           <div v-for="evt in eventsData" :key="evt.id" class="event-row">
             <span class="event-time">{{ fmt(evt.created_at) }}</span>
             <Tag
-              :severity="eventSeverity(evt.event_type)"
+              :severity="EVENT_TONE_SEVERITY[eventTone(evt.event_type)]"
               :value="eventLabel(evt.event_type)"
               class="event-tag"
             />
@@ -106,6 +106,12 @@ import Button from '../ui/Button.js';
 import Tag from '../ui/Tag.js';
 import IpTableCell from './table/IpTableCell.vue';
 import { EMPTY_CELL } from '../utils/format.js';
+import {
+  EVENT_TONE_SEVERITY,
+  eventDetail,
+  eventLabel,
+  eventTone,
+} from '../utils/ipLifecycleEvents.js';
 import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
@@ -200,58 +206,6 @@ async function loadEvents() {
   } finally {
     if (request === eventsRequest) eventsLoading.value = false;
   }
-}
-
-function eventLabel(type) {
-  const labels = {
-    online: 'Online',
-    offline: 'Offline',
-    scanned: 'Scanned',
-    rogue_detected: 'Rogue',
-    rogue_cleared: 'Rogue Cleared',
-    dns_added: 'DNS Added',
-    dns_removed: 'DNS Removed',
-    lease_obtained: 'Lease',
-    hostname_changed: 'Hostname',
-    mac_changed: 'MAC Changed',
-    allocation_changed: 'Allocation',
-    status_changed: 'Legacy Status',
-    scan_enabled_changed: 'Scan Toggle',
-    retired: 'Metadata Expired',
-  };
-  return labels[type] || type;
-}
-
-function eventSeverity(type) {
-  if (type === 'online' || type === 'dns_added' || type === 'lease_obtained') return 'success';
-  if (type === 'offline' || type === 'dns_removed') return 'secondary';
-  if (type === 'rogue_detected') return 'danger';
-  if (type === 'rogue_cleared') return 'warn';
-  return 'info';
-}
-
-function sourceLabel(source) {
-  const labels = {
-    scanner: 'active scan',
-    passive: 'passive (DNS log)',
-    stale: 'staleness timeout',
-    dns: 'DNS',
-    dhcp_reservation: 'DHCP Reservation',
-    dhcp_lease: 'DHCP Lease',
-    manual: 'manual',
-    offline: 'went offline',
-    retirement: 'automatic cleanup',
-  };
-  return labels[source] || source || '';
-}
-
-function eventDetail(evt) {
-  const parts = [];
-  if (evt.old_value && evt.new_value) parts.push(`${evt.old_value} → ${evt.new_value}`);
-  else if (evt.new_value) parts.push(evt.new_value);
-  else if (evt.old_value) parts.push(evt.old_value);
-  if (evt.source) parts.push(`(${sourceLabel(evt.source)})`);
-  return parts.join(' ');
 }
 
 const resetting = ref(false);

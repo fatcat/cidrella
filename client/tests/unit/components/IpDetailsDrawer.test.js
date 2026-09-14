@@ -183,7 +183,7 @@ describe('IpDetailsDrawer liveness row', () => {
     expect(apiGet).toHaveBeenCalledWith('/subnets/2/ips/10.0.0.72/events');
     expect(w.find('.lifecycle-section').text()).toContain('IP lifecycle');
     expect(w.find('.events-list').text()).toContain('Online');
-    expect(w.find('.events-list').text()).toContain('(active scan)');
+    expect(w.find('.events-list').text()).toContain('via active scan');
 
     apiGet.mockResolvedValueOnce({
       data: {
@@ -202,7 +202,7 @@ describe('IpDetailsDrawer liveness row', () => {
 
     expect(apiGet).toHaveBeenCalledWith('/subnets/2/ips/10.0.0.73/events');
     expect(w.find('.events-list').text()).toContain('Offline');
-    expect(w.find('.events-list').text()).toContain('(staleness timeout)');
+    expect(w.find('.events-list').text()).toContain('via staleness timeout');
   });
 
   it('describes retirement as learned-data cleanup rather than retiring the address', async () => {
@@ -231,7 +231,7 @@ describe('IpDetailsDrawer liveness row', () => {
 
     const history = w.find('.events-list').text();
     expect(history).toContain('Metadata Expired');
-    expect(history).toContain('(automatic cleanup)');
+    expect(history).toContain('via automatic cleanup');
     expect(history).not.toContain('>retired<');
   });
 });
