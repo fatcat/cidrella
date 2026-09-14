@@ -3,6 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 import NetworksWorkspacePreview from '../../../src/views/NetworksWorkspacePreview.vue';
 import NetworksWorkspace from '../../../src/views/networks-workspace/NetworksWorkspace.vue';
+import AddressGrid from '../../../src/views/networks-workspace/AddressGrid.vue';
+import ResourceExplorer from '../../../src/views/networks-workspace/ResourceExplorer.vue';
+import WorkspaceContextHeader from '../../../src/views/networks-workspace/WorkspaceContextHeader.vue';
+import WorkspaceDetailsHost from '../../../src/views/networks-workspace/WorkspaceDetailsHost.vue';
+import WorkspaceTable from '../../../src/views/networks-workspace/WorkspaceTable.vue';
+import WorkspaceToolbar from '../../../src/views/networks-workspace/WorkspaceToolbar.vue';
 import api from '../../../src/api/client.js';
 
 vi.mock('../../../src/api/client.js', () => ({
@@ -382,6 +388,35 @@ describe('Networks workspace live preview', () => {
     api.put.mockReset();
     api.post.mockReset();
     installApiFixtures();
+  });
+
+  it('composes the section 5 presentation boundaries around one orchestrator', async () => {
+    // W-01: the explorer, context header, toolbar, table, grid and details
+    // host are separate components. The orchestrator owns state; each child
+    // only renders what it is handed and emits what the operator did.
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    for (const component of [
+      ResourceExplorer,
+      WorkspaceContextHeader,
+      WorkspaceToolbar,
+      WorkspaceTable,
+    ]) {
+      expect(wrapper.findComponent(component).exists()).toBe(true);
+    }
+    expect(wrapper.findComponent(AddressGrid).exists()).toBe(false);
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    expect(wrapper.findComponent(AddressGrid).props('density')).toBe('spacious');
+    expect(wrapper.findComponent(WorkspaceTable).exists()).toBe(false);
+    await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
+    expect(wrapper.findComponent(AddressGrid).props('density')).toBe('compact');
+    // The pager belongs to the surface, not the table, so it survives the grid.
+    expect(wrapper.find('.table-footer .pagination').exists()).toBe(true);
+
+    await wrapper.find('button[aria-label="Table view"]').trigger('click');
+    await wrapper.find('tbody tr').trigger('click');
+    await flushPromises();
+    expect(wrapper.findComponent(WorkspaceDetailsHost).props('row')).not.toBeNull();
   });
 
   it('loads real API data and keeps network context across address, DNS, and DHCP views', async () => {

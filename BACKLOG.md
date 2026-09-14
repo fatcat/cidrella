@@ -145,6 +145,46 @@ change this entry proposed. Nothing to do.
 
 ## Deferred design work
 
+### Workspace UI implementation (0.5.0), in flight
+
+Spec: [docs/WORKSPACE-UI-IMPLEMENTATION-PLAN.md](docs/WORKSPACE-UI-IMPLEMENTATION-PLAN.md).
+Progress is tracked here by work ID, as the plan asks. The plan is the contract, not a status
+board.
+
+**Landed** (branch `dev/0.5.0`):
+- B-01 permission projection: `9decf97`.
+- B-02 workspace reads, plus the `/dns/zones` and `/dhcp/scopes` filter extensions: `391ef9d`.
+- B-03 address filters, `/subnets/:id/ips/:ip`, `/subnets/:id/summary`: `391ef9d`, tidy-up
+  `32ee098`. One shipped value changed on the way: `/dhcp/scopes/:id/addresses` reports an
+  inactive retained lease as `lease_status: 'offline'`, not `'expired'`.
+- Client wiring to the new reads, `useWorkspaceContext` codec, `useWorkspaceResources`,
+  column catalog: `cec372b`. The pre-commit diff review timed out on that one (156 KB diff),
+  so it landed on tests and lint alone.
+- W-01 extraction into the section 5 boundaries: `ResourceExplorer`, `WorkspaceContextHeader`,
+  `WorkspaceToolbar`, `WorkspaceTable`, `AddressGrid`, `WorkspaceDetailsHost`, `workspace.css`.
+  Proven DOM-identical to the pre-extraction render across nine states (all networks, aggregate
+  DNS, network addresses/DNS/DHCP, both grids, open details, row menu) and CSS round-tripped
+  declaration for declaration. Eight dead selectors dropped (`.filter-button*`, `.wide-cell`,
+  `.primary-cell`, `.context-icon.dns/.dhcp`, `.network-state.muted`, `.icon-button.bordered`).
+  Nine primitives (`.button*`, `.eyebrow`, `.icon-button*`, `.sr-only`, `button/input` inherit)
+  are duplicated into each scoped consumer, the same pattern `AddressDetailsPanel.vue` already
+  used. If a third consumer appears they move to `client/src/components/workspace/` per section 5.
+
+**Partial:**
+- W-03: column chooser is catalog-backed and per-view persistent. The explicit state, type,
+  online, scan, range and protocol filters and clear-filter chips are live. Still missing: the
+  filtered-count-vs-subnet-size wording check under every view.
+- W-05/W-06: every read is keyed with a request generation and has independent error state.
+  Mutations, invalidation per section 7, and the action registry are not started. Ten UI sites
+  still dispatch through `notify()` with a "still available in the Current interface" notice:
+  Manage folders, Defaults, Scan now, scope chips, the view Add button, bulk Set range type and
+  Reserve, every row action, the activity link, and all Create/Actions menu items.
+- Details identity: `WorkspaceDetailsHost` switches panels but the row identity still lives in
+  the orchestrator and is a page-row reference. Owning it independently is W-06.
+
+**Not started:** B-04, B-05, N-*, A-03, R-*, D-*, H-*, O-01, W-04 (grid selection/keyboard),
+W-07, everything in section 10, and the `ipLifecycleEvents.js` extraction from section 5.
+
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
 
 Implemented in the current working tree on 2026-09-09. Disposable-database

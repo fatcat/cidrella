@@ -7,6 +7,14 @@ export function formatNumber(n) {
 }
 
 /**
+ * "3 networks", "1 zone": a formatted count with a plain-English plural.
+ * Regular nouns only; pass the singular.
+ */
+export function countOf(n, noun) {
+  return `${formatNumber(n)} ${noun}${n === 1 ? '' : 's'}`;
+}
+
+/**
  * Extract a user-friendly error message from an API error.
  */
 export function apiError(err) {
