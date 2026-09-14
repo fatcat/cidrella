@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { getDb, audit } from '../db/init.js';
 import * as User from '../models/user.js';
+import { permissionProjection } from './roles.js';
 
 const router = Router();
 
@@ -127,6 +128,7 @@ router.post('/login', loginLimiter, async (req, res) => {
         id: user.id,
         username: user.username,
         role: user.role,
+        ...permissionProjection(user.role),
         must_change_password: !!user.must_change_password,
         preferences,
       },
@@ -189,6 +191,7 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
         id: updatedUser.id,
         username: updatedUser.username,
         role: updatedUser.role,
+        ...permissionProjection(updatedUser.role),
         must_change_password: false,
       },
     });
@@ -242,6 +245,7 @@ router.get('/me', (req, res) => {
     id: user.id,
     username: user.username,
     role: user.role,
+    ...permissionProjection(user.role),
     must_change_password: !!user.must_change_password,
     preferences,
     created_at: user.created_at,

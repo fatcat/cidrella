@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ROLES, hasPermission, requireRole } from '../../../src/auth/roles.js';
+import {
+  ROLES,
+  hasPermission,
+  permissionProjection,
+  permissionsForRole,
+  requireRole,
+} from '../../../src/auth/roles.js';
 
 describe('ROLES', () => {
   it('defines admin with wildcard permission', () => {
@@ -16,6 +22,23 @@ describe('ROLES', () => {
       'readonly',
     ];
     expect(Object.keys(ROLES).sort()).toEqual(expected.sort());
+  });
+});
+
+describe('client permission projection', () => {
+  it('projects the server-owned role grants and superuser flag', () => {
+    expect(permissionProjection('admin')).toEqual({ permissions: ['*'], is_admin: true });
+    expect(permissionProjection('dns_admin')).toEqual({
+      permissions: ROLES.dns_admin.permissions,
+      is_admin: false,
+    });
+    expect(permissionProjection('unknown')).toEqual({ permissions: [], is_admin: false });
+  });
+
+  it('does not expose the mutable authority array', () => {
+    const projected = permissionsForRole('readonly');
+    projected.push('subnets:write');
+    expect(ROLES.readonly.permissions).not.toContain('subnets:write');
   });
 });
 

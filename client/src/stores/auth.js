@@ -8,6 +8,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isAuthenticated = computed(() => !!token.value);
   const mustChangePassword = computed(() => user.value?.must_change_password ?? false);
+  const permissions = computed(() => user.value?.permissions || []);
+  const isAdmin = computed(() => user.value?.is_admin === true);
   // Set if the current password was installed via a CLI reset rather than a
   // normal first-time login. The string is the actor label recorded by
   // reset-password.js, e.g. "cli:root@cidrella-prod". Cleared after a
@@ -39,8 +41,10 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await api.get('/auth/me');
       user.value = res.data;
+      return res.data;
     } catch {
       logout();
+      return null;
     }
   }
 
@@ -63,6 +67,8 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     isAuthenticated,
     mustChangePassword,
+    permissions,
+    isAdmin,
     passwordResetBy,
     preferences,
     timeFormat,

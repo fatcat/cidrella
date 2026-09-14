@@ -58,6 +58,24 @@ export function hasPermission(role, permission) {
 }
 
 /**
+ * Return the capabilities exposed to clients for a role.
+ *
+ * Keep this projection beside the authorization table so API responses and
+ * route guards cannot drift into separate role definitions. Return a copy so
+ * callers cannot mutate the server's authority table.
+ */
+export function permissionsForRole(role) {
+  return [...(ROLES[role]?.permissions || [])];
+}
+
+export function permissionProjection(role) {
+  return {
+    permissions: permissionsForRole(role),
+    is_admin: isSuperuser(role),
+  };
+}
+
+/**
  * Role-based gate, kept alongside the permission-based `requirePerm`.
  *
  * NOT deleted, despite the audit suggesting it. All 11 remaining call sites are
