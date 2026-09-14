@@ -1922,10 +1922,6 @@ router.get(
         .sort((a, b) => a.startLong - b.startLong);
     }
 
-    function rangeForIpLong(rangeLookup, ipLong) {
-      return rangeLookup.find((r) => ipLong >= r.startLong && ipLong <= r.endLong) || null;
-    }
-
     function isAvailableIpRow(row) {
       return (row.ip_display_status || 'available') === 'available';
     }
@@ -2007,7 +2003,6 @@ router.get(
     ) {
       const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
       const allPersisted = loadPersistedRows();
-      const rangeLookup = buildRangeLookup(ranges);
       const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
       const displayStatusFilter = String(req.query.display_status || '').toLowerCase();
       const addressTypeFilter = String(req.query.address_type || '').toLowerCase();
@@ -2076,7 +2071,7 @@ router.get(
           const startLong = searchTerms.length ? exactSearchIps[0] : segmentStart;
           const endLong = searchTerms.length ? exactSearchIps[0] : segmentEnd;
           if (startLong < segmentStart || startLong > segmentEnd) continue;
-          const sample = makeVirtualIpRow(startLong, rangeForIpLong(rangeLookup, startLong));
+          const sample = makeVirtualIpRow(startLong);
           enrichIpViewRows(db, [sample]);
           if (rowMatches(sample)) virtualIntervals.push({ startLong, endLong, sortRow: sample });
           if (searchTerms.length) break;
@@ -2158,7 +2153,7 @@ router.get(
         for (let index = offset; index < length && ips.length < pageSize; index += 1) {
           const descendingIp = sortField === 'ip_address' && reqSortOrder === -1;
           const ipLong = descendingIp ? entry.endLong - index : entry.startLong + index;
-          const row = entry.row || makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong));
+          const row = entry.row || makeVirtualIpRow(ipLong);
           if (!entry.row) enrichIpViewRows(db, [row]);
           ips.push(row);
         }
@@ -2243,9 +2238,6 @@ router.get(
 
       const allPersisted = loadPersistedRows();
 
-      // Ranges
-      const rangeLookup = buildRangeLookup(ranges);
-
       const persistedByLong = new Map(allPersisted.map((ip) => [ipToLong(ip.ip_address), ip]));
       const displayRows = allPersisted.filter((row) => !isAvailableIpRow(row));
 
@@ -2257,7 +2249,7 @@ router.get(
 
       for (const ipLong of protectedLongs) {
         if (!persistedByLong.has(ipLong)) {
-          const row = makeVirtualIpRow(ipLong, rangeForIpLong(rangeLookup, ipLong));
+          const row = makeVirtualIpRow(ipLong);
           enrichIpViewRows(db, [row]);
           if (!isAvailableIpRow(row)) displayRows.push(row);
         }
@@ -2334,7 +2326,7 @@ router.get(
         ips.push(persisted);
       } else {
         // Virtual IP entry, no persisted record
-        ips.push(makeVirtualIpRow(ipLong, match));
+        ips.push(makeVirtualIpRow(ipLong));
       }
     }
 
