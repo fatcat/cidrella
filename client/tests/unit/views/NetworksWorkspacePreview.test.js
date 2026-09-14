@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import { createPinia, setActivePinia } from 'pinia';
 import NetworksWorkspacePreview from '../../../src/views/NetworksWorkspacePreview.vue';
 import NetworksWorkspace from '../../../src/views/networks-workspace/NetworksWorkspace.vue';
 import api from '../../../src/api/client.js';
@@ -9,6 +10,7 @@ vi.mock('../../../src/api/client.js', () => ({
 }));
 
 let reservedIp33 = false;
+let summaryStats;
 
 const subnet = {
   id: 11,
@@ -20,6 +22,15 @@ const subnet = {
   gateway_address: '1.1.1.1',
   domain_name: 'test.example',
   vlan_id: 101,
+  children: [],
+};
+const unallocatedSubnet = {
+  id: 12,
+  cidr: '1.1.2.0/24',
+  name: null,
+  status: 'unallocated',
+  total_addresses: 256,
+  used_count: 0,
   children: [],
 };
 
@@ -108,7 +119,14 @@ function makeIps() {
 }
 
 const zones = [
-  { id: 21, name: 'test.example', type: 'forward', enabled: 1, record_count: 1, subnet_id: null },
+  {
+    id: 21,
+    name: 'test.example',
+    type: 'forward',
+    enabled: 1,
+    record_count: 1,
+    related_subnet_ids: [subnet.id],
+  },
   {
     id: 22,
     name: '1.1.1.in-addr.arpa',
@@ -116,6 +134,7 @@ const zones = [
     enabled: 1,
     record_count: 1,
     subnet_id: subnet.id,
+    related_subnet_ids: [subnet.id],
   },
 ];
 
@@ -154,8 +173,50 @@ function response(data) {
 function installApiFixtures() {
   api.get.mockImplementation((url, config = {}) => {
     if (url === '/subnets')
-      return response({ folders: [{ id: 1, name: 'Testerella', subnets: [subnet] }] });
+      return response({
+        folders: [{ id: 1, name: 'Testerella', subnets: [subnet, unallocatedSubnet] }],
+      });
     if (url === '/dns/zones') return response(zones);
+    if (url === '/workspace/networks') return response({ items: [subnet], total: 1 });
+    if (url === '/workspace/dns-records')
+      return response({
+        items: [
+          {
+            id: 51,
+            zone_id: 21,
+            zone_name: 'test.example',
+            zone_type: 'forward',
+            name: 'client',
+            record_fqdn: 'client.test.example',
+            record_type: 'A',
+            value: '1.1.1.40',
+            ttl: 3600,
+            dns_source: 'manual',
+            enabled: 1,
+            ip_address: '1.1.1.40',
+            is_online: 1,
+            related_subnet_ids: [subnet.id],
+          },
+          {
+            id: 52,
+            zone_id: 22,
+            zone_name: '1.1.1.in-addr.arpa',
+            zone_type: 'reverse',
+            name: '40',
+            record_type: 'PTR',
+            value: 'client.test.example',
+            ttl: 3600,
+            dns_source: 'dns',
+            enabled: 1,
+            ip_address: '1.1.1.40',
+            is_online: 1,
+            related_subnet_ids: [subnet.id],
+          },
+        ],
+        total: 2,
+        page: 1,
+        page_size: 256,
+      });
     if (url === '/dns/zones/21/records')
       return response([
         {
@@ -188,6 +249,8 @@ function installApiFixtures() {
       ]);
     if (url === '/dhcp/scopes') return response([scope]);
     if (url === '/dhcp/leases') return response([lease]);
+    if (url === '/workspace/dhcp-addresses')
+      return response({ items: [lease], total: 1, page: 1, page_size: 256 });
     if (url === '/dhcp/scopes/31/addresses')
       return response([
         lease,
@@ -204,16 +267,26 @@ function installApiFixtures() {
       let ips = makeIps();
       if (config.params?.showAvailable === 'false')
         ips = ips.filter((row) => row.ip_display_status !== 'available');
+      for (const term of [config.params?.search, config.params?.table_search].filter(Boolean)) {
+        const query = term.toLowerCase();
+        ips = ips.filter((row) =>
+          `${row.ip_address} ${row.hostname || ''} ${row.mac_address || ''}`
+            .toLowerCase()
+            .includes(query),
+        );
+      }
       return response({
         subnet,
         ips,
         ranges,
         totalIps: ips.length,
+        filteredTotal: ips.length,
         page: 1,
         pageSize: 256,
         totalPages: 1,
       });
     }
+    if (url === '/subnets/11/summary') return response(summaryStats);
     if (url === '/subnets/11/ips/1.1.1.1/events' || url === '/subnets/11/ips/1.1.1.33/events') {
       return response({
         events: [
@@ -283,8 +356,27 @@ describe('Networks workspace live preview', () => {
   });
 
   beforeEach(() => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = pinia.state.value;
+    auth.auth = {
+      user: {
+        username: 'admin',
+        role: 'admin',
+        is_admin: true,
+        permissions: ['*'],
+      },
+    };
     localStorage.clear();
     reservedIp33 = false;
+    summaryStats = {
+      subnet_id: subnet.id,
+      total_addresses: 256,
+      assigned_count: subnet.used_count,
+      unassigned_count: 256 - subnet.used_count,
+      online_count: 1,
+      rogue_count: 0,
+    };
     subnet.used_count = 5;
     api.get.mockReset();
     api.put.mockReset();
@@ -357,6 +449,15 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('table').text()).toContain('test.example');
   });
 
+  it('opens unallocated address space as a functional inventory context', async () => {
+    const wrapper = await mountPreview();
+    await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
+
+    expect(wrapper.find('.context-header').text()).toContain('Unallocated Networks');
+    expect(wrapper.find('table').text()).toContain('1.1.2.0/24');
+    expect(wrapper.find('.network-tree').text()).toContain('1.1.2.0/24');
+  });
+
   it('filters available canonical rows and opens details from a live row', async () => {
     const wrapper = await mountPreview();
     await enterTestNetwork(wrapper);
@@ -425,6 +526,28 @@ describe('Networks workspace live preview', () => {
     await flushPromises();
     expect(wrapper.findAll('tbody tr')).toHaveLength(1);
     expect(wrapper.find('tbody').text()).toContain('client.test.example');
+  });
+
+  it('sends explicit address filters and preserves table search for network inventory', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('select[aria-label="Online filter"]').setValue('false');
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/subnets/11/ips',
+      expect.objectContaining({ params: expect.objectContaining({ online: 'false' }) }),
+    );
+    expect(wrapper.find('.filter-chips').text()).toContain('online: false');
+
+    await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
+    await wrapper.find('input[aria-label="Search current table"]').setValue('Public');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/networks',
+      expect.objectContaining({ params: expect.objectContaining({ table_q: 'Public' }) }),
+    );
   });
 
   it('keeps the details drawer pinned while opening a related resource', async () => {
@@ -502,5 +625,39 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.context-actions').text()).toContain('Scan now');
     expect(wrapper.find('.context-actions').text()).toContain('Actions');
     expect(wrapper.find('.context-actions').text()).toContain('Create');
+  });
+
+  it('uses whole-network summary counts when the address page is filtered', async () => {
+    summaryStats.online_count = 17;
+    summaryStats.rogue_count = 4;
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.40');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+
+    const stats = wrapper.find('.health-strip').text();
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1);
+    expect(stats).toContain('17');
+    expect(stats).toContain('4 rogue');
+    expect(stats).not.toContain('on this page');
+  });
+
+  it('requests only permitted domains and hides denied write actions', async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    pinia.state.value.auth = {
+      user: {
+        username: 'dns-reader',
+        role: 'readonly_dns',
+        is_admin: false,
+        permissions: ['subnets:read', 'dns:read'],
+      },
+    };
+    const wrapper = await mountPreview();
+
+    expect(api.get.mock.calls.some(([url]) => url.startsWith('/dhcp'))).toBe(false);
+    expect(api.get.mock.calls.some(([url]) => url === '/workspace/dhcp-addresses')).toBe(false);
+    expect(wrapper.find('button.primary').exists()).toBe(false);
   });
 });
