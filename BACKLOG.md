@@ -169,6 +169,8 @@ board.
   Nine primitives (`.button*`, `.eyebrow`, `.icon-button*`, `.sr-only`, `button/input` inherit)
   are duplicated into each scoped consumer, the same pattern `AddressDetailsPanel.vue` already
   used. If a third consumer appears they move to `client/src/components/workspace/` per section 5.
+- Section 5 `ipLifecycleEvents.js` shared helper: `ba194c4`. Both interfaces now format
+  history rows identically.
 
 **Partial:**
 - W-03: column chooser is catalog-backed and per-view persistent. The explicit state, type,
@@ -183,7 +185,7 @@ board.
   the orchestrator and is a page-row reference. Owning it independently is W-06.
 
 **Not started:** B-04, B-05, N-*, A-03, R-*, D-*, H-*, O-01, W-04 (grid selection/keyboard),
-W-07, everything in section 10, and the `ipLifecycleEvents.js` extraction from section 5.
+W-07, everything in section 10.
 
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
 
