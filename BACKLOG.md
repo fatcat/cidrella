@@ -149,43 +149,72 @@ change this entry proposed. Nothing to do.
 
 Spec: [docs/WORKSPACE-UI-IMPLEMENTATION-PLAN.md](docs/WORKSPACE-UI-IMPLEMENTATION-PLAN.md).
 Progress is tracked here by work ID, as the plan asks. The plan is the contract, not a status
-board.
+board. Phases are the plan's section 13 rows.
 
-**Landed** (branch `dev/0.5.0`):
+**P0, P1: landed** (branch `dev/0.5.0`):
 - B-01 permission projection: `9decf97`.
 - B-02 workspace reads, plus the `/dns/zones` and `/dhcp/scopes` filter extensions: `391ef9d`.
 - B-03 address filters, `/subnets/:id/ips/:ip`, `/subnets/:id/summary`: `391ef9d`, tidy-up
-  `32ee098`. One shipped value changed on the way: `/dhcp/scopes/:id/addresses` reports an
-  inactive retained lease as `lease_status: 'offline'`, not `'expired'`.
+  `32ee098`. Two shipped values changed on the way: `/dhcp/scopes/:id/addresses` reports an
+  inactive retained lease as `lease_status: 'offline'`, not `'expired'`; and the
+  `/subnets/:id/ips` range filter is `network_range_type_id` (the user-owned tag), no longer
+  `range_type_id`, with a new `allocation_source_type` filter beside it (`f426db5`).
 - Client wiring to the new reads, `useWorkspaceContext` codec, `useWorkspaceResources`,
   column catalog: `cec372b`. The pre-commit diff review timed out on that one (156 KB diff),
   so it landed on tests and lint alone.
-- W-01 extraction into the section 5 boundaries: `ResourceExplorer`, `WorkspaceContextHeader`,
-  `WorkspaceToolbar`, `WorkspaceTable`, `AddressGrid`, `WorkspaceDetailsHost`, `workspace.css`.
-  Proven DOM-identical to the pre-extraction render across nine states (all networks, aggregate
-  DNS, network addresses/DNS/DHCP, both grids, open details, row menu) and CSS round-tripped
-  declaration for declaration. Eight dead selectors dropped (`.filter-button*`, `.wide-cell`,
-  `.primary-cell`, `.context-icon.dns/.dhcp`, `.network-state.muted`, `.icon-button.bordered`).
-  Nine primitives (`.button*`, `.eyebrow`, `.icon-button*`, `.sr-only`, `button/input` inherit)
-  are duplicated into each scoped consumer, the same pattern `AddressDetailsPanel.vue` already
-  used. If a third consumer appears they move to `client/src/components/workspace/` per section 5.
-- Section 5 `ipLifecycleEvents.js` shared helper: `ba194c4`. Both interfaces now format
-  history rows identically.
+- W-01 extraction into the section 5 boundaries: `fc25654`. `ResourceExplorer`,
+  `WorkspaceContextHeader`, `WorkspaceToolbar`, `WorkspaceTable`, `AddressGrid`,
+  `WorkspaceDetailsHost`, `workspace.css`. Proven DOM-identical to the pre-extraction render
+  across nine states and CSS round-tripped declaration for declaration. Eight dead selectors
+  dropped. Nine primitives (`.button*`, `.eyebrow`, `.icon-button*`, `.sr-only`) are duplicated
+  into each scoped consumer; if a third consumer appears they move to
+  `client/src/components/workspace/` per section 5.
+- Section 5 `ipLifecycleEvents.js` shared helper: `ba194c4`, scope-membership labels and actor
+  suffix `0487f77`.
+- W-02, W-03, W-06 read side, P1 exit scenarios: `f426db5`. URL-backed zone and scope drill-ins
+  (T-01..T-03), explorer/table search agreement (T-04), stale-response guard (T-06), details
+  survive paging (T-07), save-ok/refresh-failed with read-only retry (T-08), subdivided
+  unallocated parents as disabled containers (T-11, `ResourceExplorerNode`), write-control matrix
+  (T-32), deleted-context recovery (T-34), Back/Forward (T-42). IPv6 strings never reach the
+  IPv4 CIDR helpers in `workspace-view.js`.
+- P0 exit evidence still open: baseline screenshots in `screenshots/` need working dev
+  credentials and a free browser.
+
+**P2..P5 first pass, landed** (`9545bb8` server, `0487f77` client). No control raises the
+"still available in the Current interface" notice any more.
+- B-04 `POST /subnets/configuration-preview`, B-05 `entity_id` on `GET /audit`: `9545bb8`.
+  `NetworkDialogs` consumes the preview while the operator types.
+- W-04, A-02, R-02: one selection model (`useWorkspaceSelection`) across table and both grids,
+  exact contiguous runs, gaps never filled. Grid keyboard: roving tabindex, Arrow/Home/End,
+  Enter, Space, pointer drag, row context menu.
+- A-01, A-04, A-05, A-08, R-01: `IpReservationEditor`, `AddressScanDialog`, `RangeEditor`,
+  `RangeTypeDialog`, `BulkActionDialog`, `BulkRangeTypeDialog`. Bulk allocation is sequential,
+  stops on first failure, retries only failed runs. Details panel has Overview/Lifecycle/Device
+  tabs, 100/500 lifecycle reads, fingerprint override/reset/history.
+- N-* first pass: `NetworkDialogs` reused for folder create, allocate/configure/edit/divide/
+  deallocate/delete, move to folder, apply defaults. `FolderManagerDialog`. Scan now is live.
+- A-03, D-01..D-03, H-02..H-06, R-03: `DnsPanel`/`DhcpPanel` `dialogs-only` mode exposes the
+  production editors; middle-of-pool removal explains it is unsupported.
+- O-01: `ApplyStatusBanner`, permission-gated DNS/DHCP apply, separate derived-state repair.
 
 **Partial:**
-- W-03: column chooser is catalog-backed and per-view persistent. The explicit state, type,
-  online, scan, range and protocol filters and clear-filter chips are live. Still missing: the
-  filtered-count-vs-subnet-size wording check under every view.
-- W-05/W-06: every read is keyed with a request generation and has independent error state.
-  Mutations, invalidation per section 7, and the action registry are not started. Ten UI sites
-  still dispatch through `notify()` with a "still available in the Current interface" notice:
-  Manage folders, Defaults, Scan now, scope chips, the view Add button, bulk Set range type and
-  Reserve, every row action, the activity link, and all Create/Actions menu items.
-- Details identity: `WorkspaceDetailsHost` switches panels but the row identity still lives in
-  the orchestrator and is a page-row reference. Owning it independently is W-06.
+- W-05 action registry: `workspace-actions.js` has eight entries and `createWorkspaceActionRegistry`
+  but only `BulkActionDialog` imports it. Dispatch is still label matching in
+  `handleWorkspaceAction` and `handleDetailsAction`. Moving every action onto the registry (id,
+  capability, target kind, availability, disabled reason, handler) is the next step and is what
+  pulls `NetworksWorkspace.vue` back down from 2,622 lines.
+- W-06 details identity: `WorkspaceDetailsHost` switches panels, but the row identity is still a
+  page-row reference held by the orchestrator. Section 7 cross-store invalidation after mutations
+  is partial.
+- W-03: filtered-count-vs-subnet-size wording under every view not verified.
+- N-*: merge selection, dedicated folder-row menus, rendered coverage of every dialog branch.
+- D-*/H-*: rendered edge-case coverage (T-20..T-27), global settings links.
+- T-38 keyboard/focus-return across modal transitions not verified.
 
-**Not started:** B-04, B-05, N-*, A-03, R-*, D-*, H-*, O-01, W-04 (grid selection/keyboard),
-W-07, everything in section 10.
+**Not started:** W-07 responsive/accessibility verification, P6 parity gate evidence, P7..P9
+(section 10), P10 cutover. An agent wired `/networks` to the workspace and moved the old view
+to `/networks-classic` on 2026-09-15; that is P10 and needs the maintainer's call, so it was
+backed out of `0487f77`. The patch is 41 lines and trivial to redo.
 
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
 
