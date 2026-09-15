@@ -7,9 +7,11 @@ import api from '../../api/client.js';
 //
 // A target is `{ kind, ...facts }`. Kinds:
 //   workspace         no resource selected; the create menu, explorer footer
+//   folder            an explorer folder row or the folder context
 //   network           a network row or the selected network
+//   network-selection checked network rows; the selection bar
 //   address           an address row inside a network
-//   address-selection the bulk selection bar
+//   address-selection checked address rows; the selection bar
 //   dns-zone          a zone row in an aggregate DNS inventory
 //   dns-record        a record row
 //   dhcp-scope        a scope row in an aggregate DHCP inventory
@@ -73,8 +75,9 @@ const ACTION_DEFINITIONS = [
     note: 'Add address space to IPAM',
     icon: 'pi pi-sitemap',
     capability: 'subnets:write',
-    targetKind: 'workspace',
-    menus: ['create'],
+    targetKind: ['workspace', 'folder'],
+    menus: ['create', 'actions', 'row'],
+    views: ['networks'],
   },
   {
     id: 'folder.create',
@@ -91,6 +94,33 @@ const ACTION_DEFINITIONS = [
     capability: 'subnets:write',
     targetKind: 'workspace',
     menus: [],
+  },
+  // Ungrouped is the server's bucket for networks without a folder (id null),
+  // not a folder that can be renamed or deleted.
+  {
+    id: 'folder.edit',
+    label: 'Rename folder',
+    note: 'Name and description',
+    icon: 'pi pi-pencil',
+    capability: 'subnets:write',
+    targetKind: 'folder',
+    available: (target) => target.id != null,
+    disabledReason: 'Ungrouped is not a folder.',
+    menus: ['actions', 'row'],
+    views: ['networks'],
+  },
+  {
+    id: 'folder.delete',
+    label: 'Delete folder',
+    note: 'Networks stay, as Ungrouped',
+    icon: 'pi pi-trash',
+    capability: 'subnets:write',
+    targetKind: 'folder',
+    available: (target) => target.id != null,
+    disabledReason: 'Ungrouped is not a folder.',
+    danger: true,
+    menus: ['actions', 'row'],
+    views: ['networks'],
   },
   {
     id: 'workspace.defaults',
@@ -130,13 +160,14 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'network.merge',
-    label: 'Merge networks',
-    note: 'Select an adjacent sibling',
+    label: 'Merge',
+    note: 'Merge the selected sibling networks',
     icon: 'pi pi-sitemap',
     capability: 'subnets:write',
-    targetKind: 'network',
-    menus: ['actions'],
-    views: ['networks', 'addresses', 'ranges'],
+    targetKind: 'network-selection',
+    available: (target) => target.count >= 2,
+    disabledReason: 'Select at least two sibling networks to merge.',
+    menus: ['selection'],
   },
   {
     id: 'network.move',
@@ -154,8 +185,10 @@ const ACTION_DEFINITIONS = [
     note: 'Review template-managed settings',
     icon: 'pi pi-sync',
     capability: 'subnets:write',
-    targetKind: 'network',
-    menus: ['actions'],
+    targetKind: ['network', 'network-selection'],
+    available: (target) => target.kind === 'network' || target.count > 0,
+    disabledReason: 'Select at least one network.',
+    menus: ['actions', 'selection'],
     views: ['networks', 'addresses', 'ranges'],
   },
   {
@@ -394,9 +427,11 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'ip.bulk-reserve',
-    label: 'Create IP Reservations',
+    label: 'Reserve',
+    note: 'Create IP Reservations',
     capability: 'subnets:write',
     targetKind: 'address-selection',
+    menus: ['selection'],
     available: (target) =>
       target.count > 0 &&
       target.allocationStates?.length === target.count &&
@@ -405,9 +440,11 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'ip.bulk-release',
-    label: 'Release IP Reservations',
+    label: 'Release',
+    note: 'Release IP Reservations',
     capability: 'subnets:write',
     targetKind: 'address-selection',
+    menus: ['selection'],
     available: (target) =>
       target.count > 0 &&
       target.allocationStates?.length === target.count &&
@@ -419,6 +456,7 @@ const ACTION_DEFINITIONS = [
     label: 'Set range type',
     capability: 'subnets:write',
     targetKind: 'address-selection',
+    menus: ['selection'],
     available: (target) => target.count > 0,
     disabledReason: 'Select at least one address.',
   },
@@ -519,6 +557,13 @@ const ROW_MENU_ORDER = {
   ],
 };
 
+// The selection bar keeps its own order: the range tag first, then the
+// allocation pair; merge before the template re-apply.
+const SELECTION_MENU_ORDER = {
+  'address-selection': ['ip.bulk-range-type', 'ip.bulk-reserve', 'ip.bulk-release'],
+  'network-selection': ['network.merge', 'network.apply-defaults'],
+};
+
 const asList = (value) => (Array.isArray(value) ? value : value == null ? [] : [value]);
 
 export const WORKSPACE_ACTIONS = Object.freeze(
@@ -612,7 +657,17 @@ export function targetForRow(row) {
 // caller's capabilities, and the entry's own predicate. Unavailable entries
 // are left out rather than shown disabled; the reason is still reachable
 // through actionAvailability for panels that want to explain it.
-export function menuActions({ menu, target, view = null, can = () => false }) {
+// Menus hide what the target cannot do. The selection bar is the exception
+// (`includeUnavailable`): a mixed selection keeps the button visible, disabled,
+// with the reason as its title, so the operator learns what to deselect.
+export function menuActions({
+  menu,
+  target,
+  view = null,
+  can = () => false,
+  includeUnavailable = false,
+}) {
+  const states = new Map();
   const ids = Object.keys(WORKSPACE_ACTIONS).filter((id) => {
     const action = WORKSPACE_ACTIONS[id];
     if (!action.menus.includes(menu)) return false;
@@ -620,14 +675,20 @@ export function menuActions({ menu, target, view = null, can = () => false }) {
     // row's kind instead, so a scope entry still shows on an address or range
     // row, and the create menu offers every resource from every view.
     if (menu === 'actions' && action.views && view && !action.views.includes(view)) return false;
-    return actionAvailability(id, target, can).available;
+    if (!target || !action.targetKinds.includes(target.kind)) return false;
+    if (action.capability && !can(action.capability)) return false;
+    const state = actionAvailability(id, target, can);
+    states.set(id, state);
+    return state.available || includeUnavailable;
   });
   const order =
     menu === 'row'
       ? ROW_MENU_ORDER[target?.kind]
       : menu === 'actions'
         ? ACTIONS_MENU_ORDER[view]
-        : null;
+        : menu === 'selection'
+          ? SELECTION_MENU_ORDER[target?.kind]
+          : null;
   if (order) ids.sort((a, b) => orderIndex(order, a) - orderIndex(order, b));
   return ids.map((id) => {
     const action = WORKSPACE_ACTIONS[id];
@@ -637,6 +698,8 @@ export function menuActions({ menu, target, view = null, can = () => false }) {
       note: action.note,
       icon: action.icon,
       danger: action.danger,
+      available: states.get(id).available,
+      reason: states.get(id).reason,
     };
   });
 }

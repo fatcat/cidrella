@@ -217,13 +217,29 @@ board. Phases are the plan's section 13 rows.
   their first item, take arrow keys, return focus to the recorded invoker. Table rows and grid
   cells reach the row menu from Shift+F10/ContextMenu; rows take Enter/Space/arrows.
 
+- Section 7 mutation and refresh contract: `2429cde`. One `refreshAfterMutation(kind, message)`
+  with a table of shared reads per mutated resource (tree, network inventory, zones, scopes,
+  apply status); the visible context and pinned details are always re-read; the old subnet
+  store's detail cache is dropped and `ipam:stats-changed` is dispatched. Fixed on the way:
+  zones and scopes were never re-read after DNS/DHCP changes from network context, scope counts
+  stayed stale after IP Reservations, network mutations reloaded the whole workspace and
+  re-expanded every folder. Auto-refresh shares the path. Saved-but-refresh-failed keeps the
+  page and offers Retry for the read only.
+- N-07 merge selection, N-08 bulk apply defaults, N-01/N-05 folder entry points: `selection`
+  menu in the registry (`network-selection` and `address-selection` targets, unavailable entries
+  kept with their reason so the bar can say what to deselect); `network.merge` left the header
+  Actions menu, where it could never see a selection. `folder` target kind: explorer folder rows
+  get a menu button, right-click and Shift+F10, the folder context header targets the folder,
+  and `Allocate network` from either creates the root in that folder. Explorer folders now keep
+  `description`, so Rename no longer blanks it (FolderManagerDialog had the same bug).
+
 **Partial:**
-- Section 7 cross-store invalidation after mutations is partial.
 - The reused NetworkDialogs, DnsPanel and DhcpPanel editors inherit the vendor focus trap and
   return, but their own stacks (divide preview, delete confirms) still close together on one
   Escape and have no unsaved-form guard. Belongs to the N/D/H edge-case packages.
 - W-03: filtered-count-vs-subnet-size wording under every view not verified.
-- N-*: merge selection, dedicated folder-row menus, rendered coverage of every dialog branch.
+- N-*: rendered coverage of every dialog branch; drag/drop move to folder (N-08) is not offered,
+  the row menu is the only path.
 - D-*/H-*: rendered edge-case coverage (T-20..T-27), global settings links.
 
 **Not started:** W-07 responsive/accessibility verification, P6 parity gate evidence, P7..P9

@@ -109,14 +109,14 @@
 
   <div v-if="selectedRows.length" class="selection-bar">
     <strong>{{ selectedRows.length }} selected</strong>
-    <button v-if="canSetRange" @click="emit('set-range-type')">Set range type</button>
     <button
-      v-if="canBulkAllocate || canReserve || canRelease"
-      :disabled="!canReserve && !canRelease"
-      :title="bulkDisabledReason"
-      @click="emit(canRelease ? 'release' : 'reserve')"
+      v-for="action in selectionActions"
+      :key="action.id"
+      :disabled="!action.available"
+      :title="action.available ? action.note : action.reason"
+      @click="emit('selection-action', action.id)"
     >
-      {{ canRelease ? 'Release' : 'Reserve' }}
+      {{ action.label }}
     </button>
     <button @click="selectedRows = []">Clear</button>
   </div>
@@ -136,11 +136,9 @@ defineProps({
   columnCatalog: { type: Array, required: true },
   columns: { type: Array, required: true },
   canCreate: { type: Boolean, default: false },
-  canSetRange: { type: Boolean, default: false },
-  canReserve: { type: Boolean, default: false },
-  canRelease: { type: Boolean, default: false },
-  canBulkAllocate: { type: Boolean, default: false },
-  bulkDisabledReason: { type: String, default: '' },
+  // Registry items for the selection bar (`menuActions({ menu: 'selection' })`
+  // with unavailable entries kept so their reason can be shown).
+  selectionActions: { type: Array, default: () => [] },
   filterChips: { type: Array, default: () => [] },
 });
 const emit = defineEmits([
@@ -149,9 +147,7 @@ const emit = defineEmits([
   'clear-filter',
   'clear-filters',
   'add',
-  'reserve',
-  'release',
-  'set-range-type',
+  'selection-action',
 ]);
 const tableQuery = defineModel('tableQuery', { type: String, default: '' });
 const filters = defineModel('filters', { type: Object, required: true });
@@ -348,6 +344,11 @@ button {
   color: inherit;
   text-decoration: underline;
   cursor: pointer;
+}
+.selection-bar button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  text-decoration: none;
 }
 .selection-bar button:last-child {
   margin-left: auto;

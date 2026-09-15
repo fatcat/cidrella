@@ -5,6 +5,7 @@ import api from '../../../../src/api/client.js';
 import AddressDetailsPanel from '../../../../src/views/networks-workspace/AddressDetailsPanel.vue';
 import ResourceExplorer from '../../../../src/views/networks-workspace/ResourceExplorer.vue';
 import WorkspaceToolbar from '../../../../src/views/networks-workspace/WorkspaceToolbar.vue';
+import { menuActions } from '../../../../src/views/networks-workspace/workspace-actions.js';
 import {
   decodeWorkspaceQuery,
   useWorkspaceContext,
@@ -93,8 +94,12 @@ describe('workspace P1 regression contracts', () => {
         columns: [],
         filters: { status: '', type: '', online: '', scan: '', range: '', protocol: '' },
         selectedRows: ['address:10.0.0.9'],
-        canSetRange: range,
-        canReserve: reserve,
+        selectionActions: menuActions({
+          menu: 'selection',
+          target: { kind: 'address-selection', count: 1, allocationStates: ['unassigned'] },
+          can: () => range && reserve,
+          includeUnavailable: true,
+        }),
       },
       global: { stubs: { ColumnChooserButton: true } },
     });

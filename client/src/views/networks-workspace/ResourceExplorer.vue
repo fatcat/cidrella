@@ -57,6 +57,7 @@
         <div
           class="folder-row"
           :class="{ active: contextKind === 'folder' && selectedFolderId === folder.id }"
+          @contextmenu.prevent="emit('folder-menu', folder, $event.currentTarget)"
         >
           <button
             class="folder-toggle"
@@ -72,6 +73,7 @@
             class="folder-select"
             data-track="workspace-folder-select"
             @click="emit('select-folder', folder)"
+            @keydown="handleMenuKey($event, 'folder-menu', folder)"
           >
             <i class="pi pi-folder" />
             <span
@@ -81,6 +83,14 @@
               ></span
             >
             <small>{{ folder.networks.length }}</small>
+          </button>
+          <button
+            v-if="canManageFolders"
+            class="row-menu-button"
+            :aria-label="`${folder.name} folder actions`"
+            @click="emit('folder-menu', folder, $event.currentTarget)"
+          >
+            <i class="pi pi-ellipsis-h" />
           </button>
         </div>
         <div v-if="expandedFolders.has(folder.id)" class="folder-networks">
@@ -101,6 +111,8 @@
             :class="{ active: contextKind === 'network' && selectedNetworkId === network.id }"
             data-track="workspace-network-select"
             @click="emit('select-network', network)"
+            @contextmenu.prevent="emit('network-menu', network, $event.currentTarget)"
+            @keydown="handleMenuKey($event, 'network-menu', network)"
           >
             <span class="network-state" :class="network.state" />
             <span class="network-copy">
@@ -167,9 +179,20 @@ const emit = defineEmits([
   'select-network',
   'select-unallocated-network',
   'toggle-folder',
+  'folder-menu',
+  'network-menu',
   'action',
 ]);
 const query = defineModel('query', { type: String, default: '' });
+
+// Folder and network rows open their action menu from the keyboard the same
+// way table rows do (T-38): Shift+F10 or the ContextMenu key.
+function handleMenuKey(event, name, resource) {
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault();
+    emit(name, resource, event.currentTarget);
+  }
+}
 
 function highlightParts(value) {
   const text = String(value || '');
@@ -355,7 +378,7 @@ button {
 }
 .folder-row {
   display: grid;
-  grid-template-columns: 1.25rem 1fr;
+  grid-template-columns: 1.25rem 1fr auto;
   width: 100%;
   align-items: center;
   padding: 0.12rem;
@@ -407,6 +430,25 @@ button {
 }
 .folder-select small {
   font-size: 0.65rem;
+}
+.row-menu-button {
+  width: 1.5rem;
+  height: 1.5rem;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--preview-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+.folder-row:hover .row-menu-button,
+.folder-row.active .row-menu-button,
+.row-menu-button:focus-visible {
+  opacity: 1;
+}
+.row-menu-button:hover {
+  color: var(--preview-accent);
+  background: var(--cid-surface-card);
 }
 .folder-networks {
   display: grid;

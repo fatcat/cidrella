@@ -58,6 +58,8 @@
         @select-network="selectNetwork"
         @select-unallocated-network="selectUnallocatedNetwork"
         @toggle-folder="toggleFolder"
+        @folder-menu="openFolderMenu"
+        @network-menu="openNetworkMenu"
         @action="runContextAction"
       />
 
@@ -116,20 +118,14 @@
             :column-catalog="columnCatalog"
             :columns="columns"
             :can-create="canCreateCurrent"
-            :can-set-range="selectionAvailability('ip.bulk-range-type').available"
-            :can-reserve="selectionAvailability('ip.bulk-reserve').available"
-            :can-release="selectionAvailability('ip.bulk-release').available"
-            :can-bulk-allocate="activeView === 'addresses' && can('subnets:write')"
-            :bulk-disabled-reason="bulkActionDisabledReason"
+            :selection-actions="selectionActions"
             :filter-chips="activeFilterChips"
             @update:visible-columns="setVisibleColumns"
             @reset-columns="resetVisibleColumns"
             @clear-filter="clearFilter"
             @clear-filters="clearFilters"
             @add="runViewAdd"
-            @reserve="runSelectionAction('ip.bulk-reserve')"
-            @release="runSelectionAction('ip.bulk-release')"
-            @set-range-type="runSelectionAction('ip.bulk-range-type')"
+            @selection-action="runSelectionAction"
           />
 
           <AddressGrid
@@ -337,7 +333,7 @@
       role="menu"
       @keydown="handleMenuKeydown"
     >
-      <span>{{ activeView.toUpperCase() }} ACTIONS</span>
+      <span>{{ rowMenuTitle }}</span>
       <button
         v-for="item in rowMenuItems"
         :key="item.id"
@@ -1007,7 +1003,16 @@ const actionMenuTitle = computed(() =>
     ? 'DNS ACTIONS'
     : activeView.value === 'dhcp'
       ? 'DHCP ACTIONS'
-      : 'NETWORK ACTIONS',
+      : contextKind.value === 'folder'
+        ? 'FOLDER ACTIONS'
+        : 'NETWORK ACTIONS',
+);
+const rowMenuTitle = computed(() =>
+  menuTarget.value?.kind === 'folder'
+    ? 'FOLDER ACTIONS'
+    : menuTarget.value?.kind === 'network'
+      ? 'NETWORK ACTIONS'
+      : `${activeView.value.toUpperCase()} ACTIONS`,
 );
 
 function buildUnallocatedFolders(sourceFolders) {
@@ -1049,7 +1054,13 @@ function flattenAllocatable(nodes) {
 function preserveEmptyFolders(allocated, sourceFolders) {
   const byId = new Map(allocated.map((folder) => [Number(folder.id), folder]));
   return (sourceFolders || []).map(
-    (folder) => byId.get(Number(folder.id)) || { id: folder.id, name: folder.name, networks: [] },
+    (folder) =>
+      byId.get(Number(folder.id)) || {
+        id: folder.id,
+        name: folder.name,
+        description: folder.description || '',
+        networks: [],
+      },
   );
 }
 
@@ -1310,14 +1321,6 @@ const selectionRuns = computed(() => contiguousIpv4Runs(selectedRows.value));
 const selectedAllocationStates = computed(() =>
   selectedAddressRows.value.map((row) => row.raw?.allocation_state),
 );
-const bulkActionDisabledReason = computed(() => {
-  if (
-    selectionAvailability('ip.bulk-reserve').available ||
-    selectionAvailability('ip.bulk-release').available
-  )
-    return '';
-  return 'Select only unassigned addresses to reserve, or only IP Reservations to release.';
-});
 
 const detailTitle = computed(() => {
   if (selectedRowView.value === 'networks') return 'Network';
@@ -1432,11 +1435,60 @@ const workspaceTarget = computed(() => {
         : selectedScopeFilter.value;
   return { kind: 'workspace', zone, scope };
 });
-const selectionTarget = computed(() => ({
-  kind: 'address-selection',
-  count: selectedAddressRows.value.length,
-  allocationStates: selectedAllocationStates.value,
-}));
+const selectionTarget = computed(() => {
+  if (activeView.value === 'networks') {
+    const ids = selectedRows.value
+      .filter((id) => String(id).startsWith('network:'))
+      .map((id) => Number(String(id).slice('network:'.length)));
+    return { kind: 'network-selection', ids, count: ids.length };
+  }
+  return {
+    kind: 'address-selection',
+    count: selectedAddressRows.value.length,
+    allocationStates: selectedAllocationStates.value,
+  };
+});
+// The selection bar. Reserve and Release share one slot: a selection is all
+// unassigned, all reserved, or mixed, and the mixed case keeps one disabled
+// button whose title says what to deselect.
+const selectionActions = computed(() => {
+  if (!selectedRows.value.length) return [];
+  const items = menuActions({
+    menu: 'selection',
+    target: selectionTarget.value,
+    view: activeView.value,
+    can,
+    includeUnavailable: true,
+  });
+  const reserve = items.find((item) => item.id === 'ip.bulk-reserve');
+  const release = items.find((item) => item.id === 'ip.bulk-release');
+  if (!reserve || !release) return items;
+  const rest = items.filter((item) => item !== reserve && item !== release);
+  if (release.available) return [...rest, release];
+  if (reserve.available) return [...rest, reserve];
+  return [
+    ...rest,
+    {
+      ...reserve,
+      reason: 'Select only unassigned addresses to reserve, or only IP Reservations to release.',
+    },
+  ];
+});
+// The folder context and explorer folder rows are action targets of their
+// own; Ungrouped (id null) is the server's bucket, not a folder.
+const folderTarget = computed(() =>
+  contextKind.value === 'folder' && selectedFolder.value
+    ? {
+        kind: 'folder',
+        id: selectedFolder.value.id,
+        name: selectedFolder.value.name,
+        raw: selectedFolder.value,
+      }
+    : null,
+);
+// A row menu opened from the explorer (a folder or a network row) targets
+// that resource rather than the pinned details row.
+const menuTarget = ref(null);
 const withTarget = (items, target) => items.map((item) => ({ ...item, target }));
 const createMenuItems = computed(() =>
   withTarget(
@@ -1447,12 +1499,12 @@ const createMenuItems = computed(() =>
 const actionMenuItems = computed(() => {
   const target = ['dns', 'dhcp'].includes(activeView.value)
     ? workspaceTarget.value
-    : networkTarget.value;
+    : networkTarget.value || folderTarget.value;
   if (!target) return [];
   return withTarget(menuActions({ menu: 'actions', target, view: activeView.value, can }), target);
 });
 const rowMenuItems = computed(() => {
-  const target = selectedRowTarget.value;
+  const target = menuTarget.value || selectedRowTarget.value;
   if (!target) return [];
   return withTarget(menuActions({ menu: 'row', target, view: activeView.value, can }), target);
 });
@@ -1472,16 +1524,13 @@ const viewAddAction = computed(() => {
     ...workspaceActions.registry.availability(id, targetRef.value),
   };
 });
-function selectionAvailability(actionId) {
-  return workspaceActions.registry.availability(actionId, selectionTarget.value);
-}
 function runMenuAction(item) {
   closeMenu();
   return workspaceActions.invoke(item.id, item.target);
 }
 function runRowAction(item) {
   closeMenu();
-  return workspaceActions.invoke(item.id, selectedRowTarget.value);
+  return workspaceActions.invoke(item.id, item.target || selectedRowTarget.value);
 }
 function runContextAction(actionId) {
   const target = actionId === 'network.scan' ? networkTarget.value : workspaceTarget.value;
@@ -1608,7 +1657,19 @@ function toggleMenu(name, invoker = null) {
 }
 function closeMenu() {
   openMenuName.value = null;
+  menuTarget.value = null;
   menuInvoker?.focus();
+}
+function openTargetMenu(target, invoker = null) {
+  menuTarget.value = target;
+  if (invoker) menuInvoker = invoker;
+  openMenuName.value = 'row';
+}
+function openFolderMenu(folder, invoker = null) {
+  openTargetMenu({ kind: 'folder', id: folder.id, name: folder.name, raw: folder }, invoker);
+}
+function openNetworkMenu(network, invoker = null) {
+  openTargetMenu(targetForRow(mapNetworkRows([network])[0]), invoker);
 }
 function handleWorkspaceKeydown(event) {
   if (event.key !== 'Escape' || !openMenuName.value) return;
@@ -2183,6 +2244,11 @@ async function reloadSharedReads(kind) {
   if (tree) {
     folders.value = preserveEmptyFolders(buildExplorerFolders(tree.folders), tree.folders);
     unallocatedFolders.value = buildUnallocatedFolders(tree.folders);
+    // Merged or deleted networks leave the selection; the rest stays checked.
+    const known = new Set(allNetworks.value.map((network) => `network:${network.id}`));
+    selectedRows.value = selectedRows.value.filter(
+      (id) => !String(id).startsWith('network:') || known.has(id),
+    );
   }
   if (zones) dnsZones.value = zones;
   if (scopes) dhcpScopes.value = scopes;

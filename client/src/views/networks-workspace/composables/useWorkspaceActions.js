@@ -141,16 +141,20 @@ export function useWorkspaceActions(ctx) {
     },
 
     // Networks and folders
-    'network.allocate': async () => {
+    'network.allocate': async (target) => {
       const dialogsRef = await ensureNetworkDialogs();
       // Browsing unallocated space with a leaf selected configures that leaf;
-      // anywhere else this creates a new root in the current folder.
+      // a folder target (its Actions menu or explorer row) creates a root in
+      // that folder; anywhere else the current folder.
       const rowTarget = targetForRow(state.selectedRow.value);
       const node = rowTarget?.kind === 'network' ? networkNode(rowTarget) : null;
       if (node?.data?.status === 'unallocated') dialogsRef.openConfigure(node, node.data.folder_id);
+      else if (target.kind === 'folder') await dialogsRef.openCreateNetwork(target.id ?? null);
       else await dialogsRef.openCreateNetwork(state.selectedFolder.value?.id || null);
     },
     'folder.create': async () => (await ensureNetworkDialogs()).openCreateFolder(),
+    'folder.edit': async (target) => (await ensureNetworkDialogs()).openEditFolder(target.raw),
+    'folder.delete': async (target) => (await ensureNetworkDialogs()).openDeleteFolder(target.raw),
     'folder.manage': () => {
       dialogs.folderManagerVisible.value = true;
     },
@@ -167,15 +171,11 @@ export function useWorkspaceActions(ctx) {
     'network.scan': (target) => startNetworkScan(target.id),
     'network.divide': async (target) =>
       (await ensureNetworkDialogs()).openDivide(networkNode(target)),
-    'network.merge': async () => {
-      const ids = state.selectedRows.value
-        .filter((id) => id.startsWith('network:'))
-        .map((id) => Number(id.slice('network:'.length)));
-      if (ids.length < 2) return showLiveNotice('Select at least two sibling networks to merge.');
-      await (await ensureNetworkDialogs()).openMergeConfirm(ids);
-    },
+    'network.merge': async (target) => (await ensureNetworkDialogs()).openMergeConfirm(target.ids),
     'network.apply-defaults': async (target) =>
-      (await ensureNetworkDialogs()).executeApplyTemplate([target.id]),
+      (await ensureNetworkDialogs()).executeApplyTemplate(
+        target.kind === 'network-selection' ? target.ids : [target.id],
+      ),
     'network.deallocate': async (target) =>
       (await ensureNetworkDialogs()).openDeallocate(networkNode(target)),
     'network.delete': async (target) =>

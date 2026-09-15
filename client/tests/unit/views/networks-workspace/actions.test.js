@@ -253,7 +253,6 @@ describe('workspace action registry', () => {
     ).toEqual([
       'Edit network',
       'Divide network',
-      'Merge networks',
       'Move to folder',
       'Apply defaults',
       'Deallocate network',
@@ -263,6 +262,61 @@ describe('workspace action registry', () => {
     expect(actionAvailability('dns.record.create', workspace(), () => true).reason).toContain(
       'zone',
     );
+  });
+
+  it('targets folders and checked rows through their own kinds', () => {
+    const all = () => true;
+    const labels = (options) => menuActions(options).map((item) => item.label);
+    const folder = { kind: 'folder', id: 4, name: 'Lab', raw: { id: 4, name: 'Lab' } };
+    const ungrouped = { kind: 'folder', id: null, name: 'Ungrouped', raw: { id: null } };
+
+    // Folder context header and explorer folder row: allocate here, rename, delete.
+    expect(labels({ menu: 'actions', target: folder, view: 'networks', can: all })).toEqual([
+      'Allocate network',
+      'Rename folder',
+      'Delete folder',
+    ]);
+    expect(labels({ menu: 'row', target: folder, can: all })).toEqual([
+      'Allocate network',
+      'Rename folder',
+      'Delete folder',
+    ]);
+    expect(labels({ menu: 'row', target: ungrouped, can: all })).toEqual(['Allocate network']);
+    expect(actionAvailability('folder.delete', ungrouped, all).reason).toContain('Ungrouped');
+    // A network context never offers folder entries, and Merge left the header.
+    expect(
+      labels({ menu: 'actions', target: { kind: 'network', id: 1 }, view: 'networks', can: all }),
+    ).not.toContain('Rename folder');
+    expect(WORKSPACE_ACTIONS['network.merge'].menus).toEqual(['selection']);
+
+    // The selection bar keeps unavailable entries so it can say why.
+    const one = { kind: 'network-selection', ids: [1], count: 1 };
+    const two = { kind: 'network-selection', ids: [1, 2], count: 2 };
+    expect(
+      menuActions({ menu: 'selection', target: one, can: all, includeUnavailable: true }),
+    ).toMatchObject([
+      { id: 'network.merge', available: false, reason: expect.stringContaining('two') },
+      { id: 'network.apply-defaults', available: true },
+    ]);
+    expect(menuActions({ menu: 'selection', target: two, can: all }).map((i) => i.id)).toEqual([
+      'network.merge',
+      'network.apply-defaults',
+    ]);
+    expect(menuActions({ menu: 'selection', target: two, can: () => false })).toEqual([]);
+    const addresses = {
+      kind: 'address-selection',
+      count: 2,
+      allocationStates: ['reserved', 'unassigned'],
+    };
+    expect(
+      menuActions({ menu: 'selection', target: addresses, can: all, includeUnavailable: true }).map(
+        (item) => [item.id, item.available],
+      ),
+    ).toEqual([
+      ['ip.bulk-range-type', true],
+      ['ip.bulk-reserve', false],
+      ['ip.bulk-release', false],
+    ]);
   });
 
   it('builds distinct reserve and release payloads', () => {

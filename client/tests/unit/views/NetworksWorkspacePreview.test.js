@@ -16,6 +16,8 @@ import api from '../../../src/api/client.js';
 vi.mock('../../../src/api/client.js', () => ({
   default: { get: vi.fn(), put: vi.fn(), post: vi.fn() },
 }));
+// The reused NetworkDialogs editors toast on save; the workspace has no toast host.
+vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => ({ add: vi.fn() }) }));
 
 let reservedIp33 = false;
 let deletedIps = new Set();
@@ -360,6 +362,14 @@ async function mountPreview(options = {}) {
         Dialog: {
           props: ['visible'],
           template: '<section v-if="visible"><slot /><slot name="footer" /></section>',
+        },
+        // The reused NetworkDialogs editors use the vendor input, which needs
+        // the PrimeVue plugin; the workspace's own forms use plain inputs.
+        InputText: {
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          template:
+            '<input class="w-full" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
         },
       },
     },
@@ -856,7 +866,12 @@ describe('Networks workspace live preview', () => {
     // IP Reservation: tree (utilization), scope counts, the address page,
     // summary and the pinned address. Zones are untouched by an allocation.
     expect(calls()).toEqual(
-      expect.arrayContaining(['/subnets', '/dhcp/scopes', '/subnets/11/ips', '/subnets/11/summary']),
+      expect.arrayContaining([
+        '/subnets',
+        '/dhcp/scopes',
+        '/subnets/11/ips',
+        '/subnets/11/summary',
+      ]),
     );
     expect(calls()).not.toContain('/dns/zones');
     expect(invalidate).toHaveBeenCalledWith(11);
@@ -887,6 +902,120 @@ describe('Networks workspace live preview', () => {
     expect(calls()).toContain('/subnets');
     expect(wrapper.find('.prototype-notice').text()).toBe('WorkspaceLive data refreshed.');
     globalThis.window.removeEventListener('ipam:stats-changed', statsChanged);
+  });
+
+  it('merges and re-templates checked networks from the selection bar', async () => {
+    const sibling = {
+      id: 13,
+      cidr: '1.1.0.0/24',
+      name: 'Sibling test network',
+      status: 'allocated',
+      total_addresses: 256,
+      used_count: 1,
+      children: [],
+    };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets'
+        ? response({
+            folders: [{ id: 1, name: 'Testerella', subnets: [subnet, sibling, unallocatedSubnet] }],
+          })
+        : base(url, config),
+    );
+    api.post.mockImplementation((url, body) => {
+      if (url === '/subnets/merge/preview')
+        return response({
+          source_cidrs: ['1.1.0.0/24', '1.1.1.0/24'],
+          merged_cidr: '1.1.0.0/23',
+          plan: {},
+        });
+      if (url === '/subnets/apply-template') return response({ updated: body.subnet_ids });
+      throw new Error(`Unexpected POST ${url}`);
+    });
+    const wrapper = await mountPreview();
+    const checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
+    expect(checkboxes).toHaveLength(2);
+
+    // One network: Merge stays visible but disabled with its reason.
+    await checkboxes[0].setValue(true);
+    let bar = wrapper.find('.selection-bar');
+    const merge = () => bar.findAll('button').find((button) => button.text() === 'Merge');
+    expect(bar.text()).toContain('1 selected');
+    expect(merge().attributes('disabled')).toBeDefined();
+    expect(merge().attributes('title')).toContain('two');
+    expect(bar.text()).not.toContain('Reserve');
+
+    await checkboxes[1].setValue(true);
+    bar = wrapper.find('.selection-bar');
+    expect(merge().attributes('disabled')).toBeUndefined();
+    await merge().trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/subnets/merge/preview', { subnet_ids: [11, 13] });
+    expect(wrapper.text()).toContain('1.1.0.0/23');
+
+    await bar
+      .findAll('button')
+      .find((button) => button.text() === 'Apply defaults')
+      .trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/subnets/apply-template', { subnet_ids: [11, 13] });
+  });
+
+  it('opens folder actions from the explorer row and carries the description into rename', async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets'
+        ? response({
+            folders: [
+              { id: 1, name: 'Testerella', description: 'Lab racks', subnets: [subnet] },
+              { id: null, name: 'Ungrouped', description: null, subnets: [unallocatedSubnet] },
+            ],
+          })
+        : base(url, config),
+    );
+    const wrapper = await mountPreview();
+    const menuButtons = wrapper.findAll('.row-menu-button');
+    expect(menuButtons.map((button) => button.attributes('aria-label'))).toEqual([
+      'Testerella folder actions',
+      'Ungrouped folder actions',
+    ]);
+
+    await menuButtons[1].trigger('click');
+    expect(wrapper.find('.row-menu span').text()).toBe('FOLDER ACTIONS');
+    expect(wrapper.findAll('.row-menu button strong').map((label) => label.text())).toEqual([
+      'Allocate network',
+    ]);
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    await menuButtons[0].trigger('click');
+    expect(wrapper.findAll('.row-menu button strong').map((label) => label.text())).toEqual([
+      'Allocate network',
+      'Rename folder',
+      'Delete folder',
+    ]);
+    await wrapper
+      .findAll('.row-menu button')
+      .find((button) => button.text() === 'Rename folder')
+      .trigger('click');
+    await flushPromises();
+    await flushPromises();
+    const inputs = wrapper.findAll('input.w-full');
+    expect(inputs.map((input) => input.element.value)).toEqual(['Testerella', 'Lab racks']);
+
+    // The folder context header targets the folder too.
+    await wrapper.find('.folder-select').trigger('click');
+    await flushPromises();
+    await wrapper
+      .findAll('.context-actions button')
+      .find((button) => button.text().startsWith('Actions'))
+      .trigger('click');
+    expect(wrapper.find('.actions-menu span').text()).toBe('FOLDER ACTIONS');
+    expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
+      'Allocate network',
+      'Rename folder',
+      'Delete folder',
+    ]);
   });
 
   it('drives every menu through the action registry with a row-derived target', async () => {
@@ -927,7 +1056,6 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
       'Edit network',
       'Divide network',
-      'Merge networks',
       'Move to folder',
       'Apply defaults',
       'Deallocate network',

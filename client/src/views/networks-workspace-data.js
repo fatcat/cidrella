@@ -67,7 +67,7 @@ export function buildExplorerFolders(folders) {
     .map((folder) => {
       const networks = [];
       collectAllocatedNetworks(folder.subnets, folder, networks);
-      return { id: folder.id, name: folder.name, networks };
+      return { id: folder.id, name: folder.name, description: folder.description || '', networks };
     })
     .filter((folder) => folder.networks.length > 0);
 }
