@@ -197,12 +197,18 @@ board. Phases are the plan's section 13 rows.
   production editors; middle-of-pool removal explains it is unsupported.
 - O-01: `ApplyStatusBanner`, permission-gated DNS/DHCP apply, separate derived-state repair.
 
+- W-05 action registry: `166ce00`. 49 entries in `workspace-actions.js`, handlers in
+  `composables/useWorkspaceActions.js`, `targetForRow` keyed on the row-id prefix, menus derived
+  by `menuActions`. No label dispatch remains. Three deliberate changes: per-entry capability
+  gating (a DHCP-only operator sees DHCP entries on address rows), the header Actions menu only
+  targets a network in network context (All Networks used to offer Delete network against the
+  default `selectedNetwork`), and DNS record creation needs a resolvable zone (saving without one
+  crashed in `DnsPanel`). `NetworksWorkspace.vue` 2,622 to 2,237 lines.
+
 **Partial:**
-- W-05 action registry: `workspace-actions.js` has eight entries and `createWorkspaceActionRegistry`
-  but only `BulkActionDialog` imports it. Dispatch is still label matching in
-  `handleWorkspaceAction` and `handleDetailsAction`. Moving every action onto the registry (id,
-  capability, target kind, availability, disabled reason, handler) is the next step and is what
-  pulls `NetworksWorkspace.vue` back down from 2,622 lines.
+- W-05 focus and overlay rules (focus returns to invoker, Escape dismisses the topmost overlay,
+  unsaved form not silently discarded) are not verified across the reused NetworkDialogs,
+  DnsPanel and DhcpPanel editors.
 - W-06 details identity: `WorkspaceDetailsHost` switches panels, but the row identity is still a
   page-row reference held by the orchestrator. Section 7 cross-store invalidation after mutations
   is partial.
