@@ -57,10 +57,18 @@
         >
           <i class="pi pi-search" /> Scan now
         </button>
-        <button v-if="hasActions" class="button secondary" @click="emit('open-menu', 'actions')">
+        <button
+          v-if="hasActions"
+          class="button secondary"
+          @click="emit('open-menu', 'actions', $event.currentTarget)"
+        >
           Actions <i class="pi pi-chevron-down" />
         </button>
-        <button v-if="canCreate" class="button primary" @click="emit('open-menu', 'create')">
+        <button
+          v-if="canCreate"
+          class="button primary"
+          @click="emit('open-menu', 'create', $event.currentTarget)"
+        >
           <i class="pi pi-plus" /> Create
         </button>
       </div>

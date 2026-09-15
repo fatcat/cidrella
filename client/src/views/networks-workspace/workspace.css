@@ -389,3 +389,9 @@ button {
 .pagination span {
   padding: 0 0.22rem;
 }
+.protocol-dialog-providers {
+  position: fixed;
+  width: 0;
+  height: 0;
+  overflow: visible;
+}

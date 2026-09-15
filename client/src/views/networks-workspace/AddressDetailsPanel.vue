@@ -22,7 +22,20 @@
       <span>{{ feedback.message }}</span>
     </div>
 
-    <dl>
+    <div class="panel-tabs" role="tablist" aria-label="Address details">
+      <button
+        v-for="tab in availableTabs"
+        :key="tab.id"
+        role="tab"
+        :aria-selected="activeTab === tab.id"
+        :class="{ active: activeTab === tab.id }"
+        @click="activeTab = tab.id"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <dl v-if="activeTab === 'overview'">
       <dt>Status</dt>
       <dd>{{ row.status || dash }}</dd>
       <dt>Allocation</dt>
@@ -45,22 +58,36 @@
       </template>
     </dl>
 
-    <section class="panel-section">
+    <section v-if="activeTab === 'overview'" class="panel-section">
       <span class="eyebrow">RELATED RESOURCES</span>
-      <button class="related-button" @click="emit('navigate', 'dns')">
+      <button class="related-button" @click="navigateRelated('dns')">
         <i class="pi pi-globe" /><span
           ><strong>DNS records</strong
           ><small>{{ dnsCount }} records reference this address</small></span
         ><i class="pi pi-chevron-right" />
       </button>
-      <button class="related-button" @click="emit('navigate', 'dhcp')">
+      <button class="related-button" @click="navigateRelated('dhcp')">
         <i class="pi pi-server" /><span
           ><strong>DHCP identity</strong><small>{{ dhcpCount }} related rows</small></span
         ><i class="pi pi-chevron-right" />
       </button>
     </section>
 
-    <section v-if="canWrite" class="panel-section">
+    <section v-if="activeTab === 'overview'" class="panel-section">
+      <span class="eyebrow">COPY</span>
+      <div class="quick-actions">
+        <button data-track="workspace-copy-address" @click="copyValue('address', row.address)">
+          Copy address
+        </button>
+        <button v-if="row.hostname" @click="copyValue('hostname', row.hostname)">
+          Copy hostname
+        </button>
+        <button v-if="macAddress" @click="copyValue('MAC address', macAddress)">Copy MAC</button>
+        <button @click="openNetwork">Open network</button>
+      </div>
+    </section>
+
+    <section v-if="activeTab === 'overview' && canWrite" class="panel-section">
       <span class="eyebrow">ADDRESS ACTIONS</span>
       <div class="quick-actions">
         <button
@@ -79,7 +106,10 @@
           Release IP Reservation
         </button>
         <button
-          :disabled="busyAction === 'probe'"
+          :disabled="busyAction === 'probe' || !supportsProbe"
+          :title="
+            supportsProbe ? '' : 'Manual probing is currently available for IPv4 addresses only.'
+          "
           data-track="workspace-probe-address"
           @click="probeNow"
         >
@@ -125,13 +155,13 @@
       </div>
     </section>
 
-    <section v-if="canWrite" class="panel-section">
+    <section v-if="activeTab === 'overview' && canWrite" class="panel-section">
       <span class="eyebrow">SCANNING POLICY</span>
       <div class="segmented" aria-label="Address scanning policy">
         <button
           v-for="choice in scanChoices"
           :key="choice.label"
-          :class="{ active: raw.scan_enabled === choice.value }"
+          :class="{ active: scanOverride === choice.value }"
           :disabled="busyAction === 'scan'"
           :data-track="`workspace-scan-${choice.track}`"
           @click="setScanEnabled(choice.value)"
@@ -140,18 +170,18 @@
         </button>
       </div>
       <small class="section-help"
-        >Effective setting: {{ raw.scanning_enabled ? 'On' : 'Off' }}. Inherit follows the network
-        and global defaults.</small
+        >Effective setting: {{ effectiveScanningLabel }}. Inherit follows the network and global
+        defaults.</small
       >
     </section>
 
-    <section class="panel-section lifecycle-section">
+    <section v-if="activeTab === 'lifecycle'" class="panel-section lifecycle-section">
       <div class="section-title">
         <span class="eyebrow">IP LIFECYCLE</span>
         <button
           :disabled="eventsLoading"
           aria-label="Refresh lifecycle history"
-          @click="loadEvents"
+          @click="loadEvents(eventsLimit)"
         >
           <i class="pi pi-refresh" />
         </button>
@@ -159,11 +189,17 @@
       <div v-if="eventsLoading" class="events-state">
         <i class="pi pi-spin pi-spinner" /> Loading history…
       </div>
+      <div v-else-if="eventsError" class="events-state error-state">{{ eventsError }}</div>
       <div v-else-if="!events.length" class="events-state">
         No lifecycle events recorded for this address.
       </div>
       <div v-else class="events-list">
-        <div v-for="event in visibleEvents" :key="event.id" class="event-row">
+        <div class="history-scope">Latest {{ eventsLimit }}</div>
+        <div
+          v-for="(event, index) in events"
+          :key="event.id || `${event.event_type}:${event.created_at}:${index}`"
+          class="event-row"
+        >
           <span class="event-marker" :class="eventTone(event.event_type)"><i /></span>
           <div>
             <strong>{{ eventLabel(event.event_type) }}</strong
@@ -171,14 +207,80 @@
           </div>
           <time>{{ formatEventTime(event.created_at) }}</time>
         </div>
-        <button
-          v-if="events.length > 6"
-          class="show-events"
-          @click="showAllEvents = !showAllEvents"
-        >
-          {{ showAllEvents ? 'Show recent only' : `Show all ${events.length} events` }}
+        <button v-if="eventsLimit === 100" class="show-events" @click="loadEvents(500)">
+          Load Latest 500
         </button>
       </div>
+    </section>
+
+    <section v-if="activeTab === 'device'" class="panel-section device-section">
+      <div class="section-title">
+        <span class="eyebrow">DEVICE FACTS</span>
+        <button :disabled="deviceLoading" aria-label="Refresh device facts" @click="loadDevice">
+          <i class="pi pi-refresh" />
+        </button>
+      </div>
+      <div v-if="deviceLoading" class="events-state">
+        <i class="pi pi-spin pi-spinner" /> Loading device facts…
+      </div>
+      <div v-else-if="deviceError" class="events-state error-state">{{ deviceError }}</div>
+      <template v-else>
+        <dl class="device-facts">
+          <dt>MAC address</dt>
+          <dd>{{ macAddress }}</dd>
+          <dt>Vendor</dt>
+          <dd>{{ device.vendor || raw.vendor || dash }}</dd>
+          <dt>Device type</dt>
+          <dd>{{ device.device_type || dash }}</dd>
+          <dt>OS family</dt>
+          <dd>{{ device.os_family || dash }}</dd>
+          <dt>Confidence</dt>
+          <dd>{{ deviceConfidence }}</dd>
+          <dt>Source</dt>
+          <dd>{{ device.source || raw.device_fingerprint_source || dash }}</dd>
+          <dt>Fingerprint</dt>
+          <dd>{{ device.dhcp_fingerprint || raw.dhcp_fingerprint || dash }}</dd>
+          <dt>Vendor class</dt>
+          <dd>
+            {{ device.vendor_class || device.dhcp_vendor_class || raw.dhcp_vendor_class || dash }}
+          </dd>
+          <dt>Fingerprint hostname</dt>
+          <dd>
+            {{
+              device.hostname ||
+              device.dhcp_fingerprint_hostname ||
+              raw.dhcp_fingerprint_hostname ||
+              dash
+            }}
+          </dd>
+        </dl>
+        <form v-if="canWriteDevice" class="inline-action" @submit.prevent="saveDeviceOverride">
+          <label for="workspace-device-type">Device type</label>
+          <input id="workspace-device-type" v-model="deviceForm.device_type" maxlength="64" />
+          <label for="workspace-os-family">OS family</label>
+          <input id="workspace-os-family" v-model="deviceForm.os_family" maxlength="64" />
+          <div>
+            <button type="button" :disabled="deviceSaving" @click="resetDeviceOverride">
+              Reset to detected
+            </button>
+            <button class="primary" :disabled="deviceSaving">Save override</button>
+          </div>
+        </form>
+        <div class="device-history">
+          <strong>Changes in the last 90 days</strong>
+          <div v-if="!deviceHistory.length" class="events-state">
+            No device classification changes.
+          </div>
+          <div
+            v-for="(change, index) in deviceHistory"
+            :key="change.id || index"
+            class="device-change"
+          >
+            {{ formatEventTime(change.created_at || change.changed_at) }} ·
+            {{ deviceChangeDetail(change) }}
+          </div>
+        </div>
+      </template>
     </section>
   </aside>
 </template>
@@ -196,13 +298,23 @@ const props = defineProps({
   dnsCount: { type: Number, default: 0 },
   dhcpCount: { type: Number, default: 0 },
   canWrite: { type: Boolean, default: false },
+  canReadDevice: { type: Boolean, default: false },
+  canWriteDevice: { type: Boolean, default: false },
 });
-const emit = defineEmits(['close', 'navigate', 'changed']);
+const emit = defineEmits(['close', 'navigate', 'changed', 'open-network']);
 
 const dash = EMPTY_CELL;
 const events = ref([]);
 const eventsLoading = ref(false);
-const showAllEvents = ref(false);
+const eventsLimit = ref(100);
+const eventsError = ref('');
+const activeTab = ref('overview');
+const device = ref({});
+const deviceHistory = ref([]);
+const deviceLoading = ref(false);
+const deviceSaving = ref(false);
+const deviceError = ref('');
+const deviceForm = ref({ device_type: '', os_family: '' });
 const reservationMode = ref(null);
 const reservationNote = ref('');
 const busyAction = ref('');
@@ -210,6 +322,15 @@ const feedback = ref(null);
 let eventsRequest = 0;
 
 const raw = computed(() => props.row.raw || {});
+const macAddress = computed(() => {
+  const value = raw.value.mac_address || props.row.mac;
+  return value && value !== dash ? String(value) : '';
+});
+const availableTabs = computed(() => [
+  { id: 'overview', label: 'Overview' },
+  { id: 'lifecycle', label: 'Lifecycle' },
+  ...(props.canReadDevice && macAddress.value ? [{ id: 'device', label: 'Device' }] : []),
+]);
 const isReserved = computed(() => raw.value.allocation_state === 'reserved');
 const canReserve = computed(() => raw.value.allocation_state === 'unassigned');
 const allocationLabel = computed(
@@ -222,9 +343,24 @@ const identityIcon = computed(() =>
       ? 'pi pi-shield'
       : 'pi pi-desktop',
 );
-const visibleEvents = computed(() =>
-  showAllEvents.value ? events.value : events.value.slice(0, 6),
+const scanOverride = computed(() => {
+  if (raw.value.scan_enabled == null) return null;
+  return raw.value.scan_enabled === true || raw.value.scan_enabled === 1 ? 1 : 0;
+});
+const effectiveScanningLabel = computed(() =>
+  raw.value.scanning_enabled == null
+    ? 'Unknown'
+    : raw.value.scanning_enabled === true || raw.value.scanning_enabled === 1
+      ? 'On'
+      : 'Off',
 );
+const supportsProbe = computed(
+  () => !raw.value.address_family || Number(raw.value.address_family) === 4,
+);
+const deviceConfidence = computed(() => {
+  const value = device.value.confidence ?? raw.value.device_confidence;
+  return value == null ? dash : `${value}%`;
+});
 const scanChoices = [
   { label: 'Inherit', value: null, track: 'inherit' },
   { label: 'On', value: 1, track: 'on' },
@@ -235,19 +371,105 @@ function setFeedback(message, tone = 'success') {
   feedback.value = { message, tone };
 }
 
-async function loadEvents() {
+async function loadEvents(limit = 100) {
   const request = ++eventsRequest;
   eventsLoading.value = true;
+  eventsError.value = '';
   try {
     const { data } = await api.get(
-      `/subnets/${props.subnetId}/ips/${encodeURIComponent(props.row.address)}/events`,
+      `/subnets/${props.subnetId}/ips/${encodeURIComponent(props.row.address)}/events?limit=${limit}`,
     );
-    if (request === eventsRequest) events.value = data.events || [];
+    if (request === eventsRequest) {
+      events.value = data.events || [];
+      eventsLimit.value = limit;
+    }
   } catch (error) {
     if (request === eventsRequest)
-      setFeedback(`Could not load lifecycle history: ${apiError(error)}`, 'error');
+      eventsError.value = `Could not load lifecycle history: ${apiError(error)}`;
   } finally {
     if (request === eventsRequest) eventsLoading.value = false;
+  }
+}
+
+function stableIdentity() {
+  return {
+    kind: 'ip',
+    subnet_id: props.subnetId,
+    ip_address: raw.value.ip_address || props.row.address,
+    address_family: raw.value.address_family || null,
+  };
+}
+
+function navigateRelated(view) {
+  emit('navigate', view, stableIdentity());
+}
+
+function openNetwork() {
+  emit('open-network', { kind: 'network', subnet_id: props.subnetId });
+}
+
+async function copyValue(label, value) {
+  try {
+    await navigator.clipboard.writeText(String(value));
+    setFeedback(`${label[0].toUpperCase()}${label.slice(1)} copied.`);
+  } catch {
+    setFeedback(`Could not copy ${label}.`, 'error');
+  }
+}
+
+async function loadDevice() {
+  if (!props.canReadDevice || !macAddress.value) return;
+  deviceLoading.value = true;
+  deviceError.value = '';
+  try {
+    const encodedMac = encodeURIComponent(macAddress.value);
+    const [{ data: facts }, { data: history }] = await Promise.all([
+      api.get(`/devices/${encodedMac}/fingerprint`),
+      api.get(`/devices/${encodedMac}/fingerprint/history?days=90`),
+    ]);
+    device.value = facts || {};
+    deviceHistory.value = Array.isArray(history) ? history : history?.history || [];
+    deviceForm.value = {
+      device_type: facts?.device_type || '',
+      os_family: facts?.os_family || '',
+    };
+  } catch (error) {
+    deviceError.value = `Could not load device facts: ${apiError(error)}`;
+  } finally {
+    deviceLoading.value = false;
+  }
+}
+
+async function saveDeviceOverride() {
+  if (!props.canWriteDevice || deviceSaving.value) return;
+  deviceSaving.value = true;
+  try {
+    await api.put(`/devices/${encodeURIComponent(macAddress.value)}/fingerprint`, {
+      device_type: deviceForm.value.device_type.trim() || null,
+      os_family: deviceForm.value.os_family.trim() || null,
+    });
+    setFeedback('Device classification override saved.');
+    await loadDevice();
+    emit('changed', 'Device classification override saved');
+  } catch (error) {
+    setFeedback(apiError(error), 'error');
+  } finally {
+    deviceSaving.value = false;
+  }
+}
+
+async function resetDeviceOverride() {
+  if (!props.canWriteDevice || deviceSaving.value) return;
+  deviceSaving.value = true;
+  try {
+    await api.delete(`/devices/${encodeURIComponent(macAddress.value)}/fingerprint`);
+    setFeedback('Device classification reset to detected values.');
+    await loadDevice();
+    emit('changed', 'Device classification reset');
+  } catch (error) {
+    setFeedback(apiError(error), 'error');
+  } finally {
+    deviceSaving.value = false;
   }
 }
 
@@ -294,7 +516,7 @@ async function releaseReservation() {
 }
 
 async function setScanEnabled(value) {
-  if (busyAction.value || raw.value.scan_enabled === value) return;
+  if (busyAction.value || scanOverride.value === value) return;
   busyAction.value = 'scan';
   feedback.value = null;
   try {
@@ -317,7 +539,7 @@ async function setScanEnabled(value) {
 }
 
 async function probeNow() {
-  if (busyAction.value) return;
+  if (busyAction.value || !supportsProbe.value) return;
   busyAction.value = 'probe';
   feedback.value = null;
   try {
@@ -345,6 +567,17 @@ function formatEventTime(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
+function deviceChangeDetail(change) {
+  if (change.field) {
+    const field = String(change.field).replaceAll('_', ' ');
+    const values = [change.previous_value, change.new_value]
+      .map((value) => value || dash)
+      .join(' → ');
+    return `${field}: ${values}`;
+  }
+  return change.device_type || change.os_family || change.vendor_class || 'Classification changed';
+}
+
 watch(
   () => [props.subnetId, props.row.address],
   () => {
@@ -352,11 +585,17 @@ watch(
     feedback.value = null;
     reservationMode.value = null;
     reservationNote.value = raw.value.reservation_note || '';
-    showAllEvents.value = false;
-    loadEvents();
+    activeTab.value = 'overview';
+    device.value = {};
+    deviceHistory.value = [];
+    loadEvents(100);
   },
   { immediate: true },
 );
+
+watch(activeTab, (tab) => {
+  if (tab === 'device' && !deviceLoading.value) loadDevice();
+});
 </script>
 
 <style scoped>
@@ -473,6 +712,26 @@ watch(
   color: var(--cid-red-700);
   background: color-mix(in srgb, var(--cid-red-500) 9%, transparent);
 }
+.panel-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 0.35rem 0.9rem 0;
+  border-bottom: 1px solid var(--preview-line);
+}
+.panel-tabs button {
+  padding: 0.5rem 0.25rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--preview-muted);
+  background: transparent;
+  font-size: var(--workspace-font-body);
+  cursor: pointer;
+}
+.panel-tabs button.active {
+  border-bottom-color: var(--preview-accent);
+  color: var(--preview-accent);
+  font-weight: 700;
+}
 dl {
   display: grid;
   grid-template-columns: 42% 58%;
@@ -587,7 +846,8 @@ dd {
 .inline-action strong {
   font-size: var(--workspace-font-body);
 }
-.inline-action textarea {
+.inline-action textarea,
+.inline-action input {
   width: 100%;
   resize: vertical;
   box-sizing: border-box;
@@ -599,7 +859,8 @@ dd {
   background: var(--cid-surface-card);
   font: inherit;
 }
-.inline-action textarea:focus {
+.inline-action textarea:focus,
+.inline-action input:focus {
   border-color: var(--preview-accent);
 }
 .inline-action > div {
@@ -680,6 +941,15 @@ dd {
   font-size: var(--workspace-font-body);
   text-align: center;
 }
+.events-state.error-state {
+  color: var(--cid-red-700);
+}
+.history-scope {
+  padding: 0.2rem 0 0.35rem;
+  color: var(--preview-muted);
+  font-size: var(--workspace-font-small);
+  font-weight: 700;
+}
 .events-list {
   display: grid;
 }
@@ -746,6 +1016,25 @@ dd {
   font-size: var(--workspace-font-body);
   font-weight: 700;
   cursor: pointer;
+}
+.device-section {
+  align-content: start;
+}
+.device-facts {
+  margin: 0 -0.9rem;
+  border-top: 1px solid var(--preview-line);
+}
+.device-history {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+  font-size: var(--workspace-font-body);
+}
+.device-change {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--preview-line) 55%, transparent);
+  color: var(--preview-muted);
+  font-size: var(--workspace-font-small);
 }
 @media (max-width: 820px) {
   .workspace-address-panel {

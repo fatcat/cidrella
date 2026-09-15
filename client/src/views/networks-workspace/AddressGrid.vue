@@ -6,11 +6,20 @@
     </div>
     <div class="address-grid">
       <button
-        v-for="cell in cells"
+        v-for="(cell, index) in cells"
         :key="cell.ip"
-        :class="cell.kind"
+        :ref="(element) => setCellRef(element, index)"
+        :class="[cell.kind, { selected: selectedRows.includes(cell.row.id) }]"
         :title="`${cell.ip} · ${cell.label}`"
-        @click="emit('open', cell)"
+        :aria-label="`${cell.ip}, ${cell.label}`"
+        :aria-pressed="selectedRows.includes(cell.row.id)"
+        :tabindex="index === focusedIndex ? 0 : -1"
+        @focus="focusedIndex = index"
+        @pointerdown="beginDrag($event, index)"
+        @pointerenter="extendDrag($event, index)"
+        @click="activateCell($event, cell)"
+        @keydown="handleKeydown($event, cell, index)"
+        @contextmenu.prevent="emit('row-menu', cell.row)"
       >
         <span>{{ cell.last }}</span>
       </button>
@@ -27,10 +36,21 @@
       <button
         v-for="(cell, index) in cells"
         :key="cell.ip"
-        :class="[cell.kind, { section: (index + 1) % 16 === 0 }]"
+        :ref="(element) => setCellRef(element, index)"
+        :class="[
+          cell.kind,
+          { section: (index + 1) % 16 === 0, selected: selectedRows.includes(cell.row.id) },
+        ]"
         :title="`${cell.ip} · ${cell.label}`"
         :aria-label="`${cell.ip}, ${cell.label}`"
-        @click="emit('open', cell)"
+        :aria-pressed="selectedRows.includes(cell.row.id)"
+        :tabindex="index === focusedIndex ? 0 : -1"
+        @focus="focusedIndex = index"
+        @pointerdown="beginDrag($event, index)"
+        @pointerenter="extendDrag($event, index)"
+        @click="activateCell($event, cell)"
+        @keydown="handleKeydown($event, cell, index)"
+        @contextmenu.prevent="emit('row-menu', cell.row)"
       />
     </div>
     <div class="grid-key">
@@ -43,17 +63,102 @@
 </template>
 
 <script setup>
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+
 // One grid, two densities. Cells arrive already classified by the parent
 // (gridKind over canonical rows); this component never derives status itself.
-defineProps({
+const props = defineProps({
   cells: { type: Array, required: true },
   density: {
     type: String,
     default: 'spacious',
     validator: (value) => ['spacious', 'compact'].includes(value),
   },
+  selectedRows: { type: Array, default: () => [] },
 });
-const emit = defineEmits(['open']);
+const emit = defineEmits(['open', 'toggle', 'range-toggle', 'drag-select', 'row-menu']);
+const focusedIndex = ref(0);
+const cellRefs = [];
+let dragStart = null;
+let dragEnd = null;
+let dragAdditive = false;
+let dragged = false;
+
+function setCellRef(element, index) {
+  if (element) cellRefs[index] = element;
+}
+
+function activateCell(event, cell) {
+  if (dragged) {
+    dragged = false;
+    return;
+  }
+  if (event.shiftKey) emit('range-toggle', cell.row);
+  else if (event.ctrlKey || event.metaKey) emit('toggle', cell.row.id);
+  else emit('open', cell);
+}
+
+function beginDrag(event, index) {
+  if (event.button !== 0) return;
+  dragStart = index;
+  dragEnd = index;
+  dragAdditive = event.ctrlKey || event.metaKey;
+  dragged = false;
+}
+
+function extendDrag(event, index) {
+  if (dragStart == null || event.buttons !== 1) return;
+  dragEnd = index;
+  dragged ||= dragEnd !== dragStart;
+}
+
+function finishDrag() {
+  if (dragStart == null) return;
+  if (dragged) {
+    const start = Math.min(dragStart, dragEnd);
+    const end = Math.max(dragStart, dragEnd);
+    emit('drag-select', {
+      ids: props.cells.slice(start, end + 1).map((cell) => cell.row.id),
+      additive: dragAdditive,
+    });
+  }
+  dragStart = null;
+  dragEnd = null;
+  dragAdditive = false;
+}
+
+function handleKeydown(event, cell, index) {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    emit('open', cell);
+    return;
+  }
+  if (event.key === ' ') {
+    event.preventDefault();
+    emit(event.shiftKey ? 'range-toggle' : 'toggle', event.shiftKey ? cell.row : cell.row.id);
+    return;
+  }
+  const columns = props.density === 'compact' ? 64 : 16;
+  const offsets = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -columns, ArrowDown: columns };
+  let next = offsets[event.key] == null ? null : index + offsets[event.key];
+  if (event.key === 'Home') next = 0;
+  if (event.key === 'End') next = props.cells.length - 1;
+  if (next == null) return;
+  event.preventDefault();
+  focusedIndex.value = Math.max(0, Math.min(props.cells.length - 1, next));
+  cellRefs[focusedIndex.value]?.focus();
+}
+
+watch(
+  () => props.cells.length,
+  (length) => {
+    focusedIndex.value = Math.max(0, Math.min(focusedIndex.value, length - 1));
+    cellRefs.length = length;
+  },
+);
+
+onMounted(() => globalThis.window?.addEventListener('pointerup', finishDrag));
+onBeforeUnmount(() => globalThis.window?.removeEventListener('pointerup', finishDrag));
 </script>
 
 <style scoped>
@@ -125,6 +230,11 @@ button {
 .address-grid button:hover {
   border-color: var(--cid-text-color);
   transform: translateY(-1px);
+}
+.address-grid button.selected,
+.compact-address-grid button.selected {
+  outline: 2px solid var(--cid-text-color);
+  outline-offset: -2px;
 }
 .address-grid button.system {
   background: var(--cid-surface-400);

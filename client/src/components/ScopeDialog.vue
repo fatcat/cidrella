@@ -220,7 +220,7 @@ import Popover from '../ui/Popover.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
-import { parseCidr, dhcpRangeDefaults, netmaskFor, dhcpPoolError } from '../utils/ip.js';
+import { parseCidr, netmaskFor, dhcpPoolError } from '../utils/ip.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError, EMPTY_CELL } from '../utils/format.js';
@@ -238,6 +238,15 @@ const availableRanges = ref([]);
 const loadingRanges = ref(false);
 const subnetsList = ref([]);
 const networkDialogsRef = ref(null);
+
+async function loadSuggestedPool(subnet) {
+  if (!subnet?.cidr) return null;
+  const { data } = await api.post('/subnets/configuration-preview', {
+    cidr: subnet.cidr,
+    ...(subnet.gateway_address ? { gateway_address: subnet.gateway_address } : {}),
+  });
+  return data.default_dhcp_pool;
+}
 
 // Options state
 const optionCatalog = ref([]);
@@ -396,7 +405,7 @@ function toggleOption(code, checked) {
 // Auto-populate network-dependent options when a subnet is selected
 watch(
   () => form.value.subnet_id,
-  (subnetId, oldSubnetId) => {
+  async (subnetId, oldSubnetId) => {
     if (!subnetId || editing.value) return;
     // Clear range if it doesn't belong to the newly selected subnet
     if (form.value.range_id && oldSubnetId !== subnetId) {
@@ -441,17 +450,13 @@ watch(
       form.value.description = `${subnet.name} DHCP Scope`;
     }
 
-    // Pre-fill suggested start/end IPs from subnet CIDR, using the same
-    // size-based heuristic as openNewWithPicker() below. This used to suggest
-    // the whole usable range (network+1 .. broadcast-1), which starts ON the
-    // gateway for the usual .1 layout, so the dialog offered a pool the server
-    // refuses (a gateway inside a DHCP pool gets leased to a client).
+    // Server-owned creation preview is the only DHCP sizing authority.
     if (subnet.cidr && !form.value.start_ip && !form.value.end_ip) {
       try {
-        const parsed = parseCidr(subnet.cidr);
-        const pool = dhcpRangeDefaults(parsed, subnet.gateway_address || null);
-        form.value.start_ip = pool.start || '';
-        form.value.end_ip = pool.end || '';
+        const pool = await loadSuggestedPool(subnet);
+        if (form.value.subnet_id !== subnetId || form.value.range_id) return;
+        form.value.start_ip = pool?.start_ip || '';
+        form.value.end_ip = pool?.end_ip || '';
       } catch {
         /* ignore */
       }
@@ -733,16 +738,13 @@ async function openNewWithPicker(subnetCtx) {
     if (subnetCtx.cidr) {
       const mask = computeMask(subnetCtx.cidr);
       setOptionValue(autoSelected, autoValues, 1, mask);
-      // Pre-fill Start/End IP using the same size-based heuristic used by
-      // the network-create/configure flows. Empty strings for subnets
-      // outside /16–/29 (the user will enter their own).
+      // Fetch the same server-owned suggestion used by network creation.
       try {
-        const parsed = parseCidr(subnetCtx.cidr);
-        const pool = dhcpRangeDefaults(parsed, subnetCtx.gateway_address || null);
-        autoStartIp = pool.start || '';
-        autoEndIp = pool.end || '';
+        const pool = await loadSuggestedPool(subnetCtx);
+        autoStartIp = pool?.start_ip || '';
+        autoEndIp = pool?.end_ip || '';
       } catch {
-        /* invalid cidr, leave blank */
+        /* defaults unavailable, leave explicit fields blank */
       }
     }
     if (subnetCtx.domain_name) {

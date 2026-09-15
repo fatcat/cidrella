@@ -778,6 +778,9 @@
           <label>CIDR *</label>
           <InputText v-model="networkForm.cidr" placeholder="10.0.0.0/8" class="w-full" />
           <small v-if="createCidrError" class="field-error">{{ createCidrError }}</small>
+          <small v-else-if="configurationPreviewError" class="field-error">
+            {{ configurationPreviewError }}
+          </small>
         </div>
       </template>
 
@@ -2138,6 +2141,57 @@ const dialogNetworkData = computed(
 const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialog opens
 const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
+const configurationPreview = ref(null);
+const configurationPreviewError = ref('');
+let configurationPreviewRequest = 0;
+let configurationPreviewTimer = null;
+
+function scheduleConfigurationPreview() {
+  clearTimeout(configurationPreviewTimer);
+  configurationPreviewTimer = setTimeout(loadConfigurationPreview, 180);
+}
+
+async function loadConfigurationPreview() {
+  if (!showNetworkDialog.value) return;
+  const cidr =
+    networkDialogMode.value === 'create'
+      ? networkForm.value.cidr?.trim()
+      : dialogNetworkData.value?.cidr;
+  if (!cidr || !isValidCidr(cidr)) {
+    configurationPreview.value = null;
+    configurationPreviewError.value = '';
+    return;
+  }
+  const request = ++configurationPreviewRequest;
+  configurationPreviewError.value = '';
+  try {
+    const { data } = await api.post('/subnets/configuration-preview', {
+      cidr,
+      gateway_policy: gatewayPosition.value,
+      ...(gatewayPosition.value === 'custom' && networkForm.value.gateway_address
+        ? { gateway_address: networkForm.value.gateway_address }
+        : {}),
+    });
+    if (request !== configurationPreviewRequest) return;
+    configurationPreview.value = data;
+    if (gatewayPosition.value !== 'custom') {
+      networkForm.value.gateway_address = data.gateway_address || '';
+    }
+    if (
+      networkForm.value.create_dhcp_scope &&
+      !networkForm.value.dhcp_start_ip &&
+      !networkForm.value.dhcp_end_ip &&
+      data.default_dhcp_pool
+    ) {
+      networkForm.value.dhcp_start_ip = data.default_dhcp_pool.start_ip;
+      networkForm.value.dhcp_end_ip = data.default_dhcp_pool.end_ip;
+    }
+  } catch (error) {
+    if (request !== configurationPreviewRequest) return;
+    configurationPreview.value = null;
+    configurationPreviewError.value = `Could not load server defaults: ${apiError(error)}`;
+  }
+}
 
 // Gateway-position watchers + placeholder (live here because they reference
 // networkForm, declaring them earlier would hit a TDZ on the `networkForm`
@@ -2149,15 +2203,10 @@ const gatewayPlaceholder = computed(() => {
 });
 // Position → address (when user picks first/last/none, compute and set).
 watch(gatewayPosition, (pos) => {
-  if (pos === 'custom') return;
-  const cidr = (networkForm.value.cidr || '').trim();
   if (pos === 'none') {
     if (networkForm.value.gateway_address !== '') networkForm.value.gateway_address = '';
-    return;
   }
-  if (!cidr || !isValidCidr(cidr)) return;
-  const target = gatewayIpFromPosition(cidr, pos) || '';
-  if (networkForm.value.gateway_address !== target) networkForm.value.gateway_address = target;
+  scheduleConfigurationPreview();
 });
 // Address → position (user types a custom IP → toggle reflects state).
 watch(
@@ -2165,21 +2214,13 @@ watch(
   (addr) => {
     const inferred = inferGatewayPosition(networkForm.value.cidr, addr);
     if (gatewayPosition.value !== inferred) gatewayPosition.value = inferred;
+    else if (gatewayPosition.value === 'custom') scheduleConfigurationPreview();
   },
 );
 // CIDR changes in create mode: re-apply first/last position if set.
 watch(
   () => networkForm.value.cidr,
-  (cidr) => {
-    const pos = gatewayPosition.value;
-    if (pos === 'first' || pos === 'last') {
-      if (cidr && isValidCidr(cidr)) {
-        const target = gatewayIpFromPosition(cidr, pos) || '';
-        if (networkForm.value.gateway_address !== target)
-          networkForm.value.gateway_address = target;
-      }
-    }
-  },
+  () => scheduleConfigurationPreview(),
 );
 
 const networkDialogHeader = computed(() => {
@@ -2198,13 +2239,7 @@ const createCidrError = computed(() => {
 
 const createAutoName = computed(() => {
   if (networkDialogMode.value !== 'create') return '';
-  const cidr = (networkForm.value.cidr || '').trim();
-  if (!cidr || !isValidCidr(cidr)) return '';
-  try {
-    return applyNameTemplate(props.nameTemplate, normalizeCidr(cidr));
-  } catch {
-    return '';
-  }
+  return configurationPreview.value?.suggested_name || '';
 });
 
 const effectivePrefixLength = computed(() => {
@@ -2225,14 +2260,8 @@ const editDhcpRiskySize = computed(() => {
 });
 
 const dhcpDefaults = computed(() => {
-  if (networkDialogMode.value === 'create') {
-    const cidr = (networkForm.value.cidr || '').trim();
-    if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
-    return dhcpRangeDefaults(parseCidr(cidr), networkForm.value.gateway_address || null);
-  }
-  const d = activeNetworkData.value || props.selectedNode?.data;
-  if (!d) return { start: '', end: '' };
-  return dhcpRangeDefaults(parseCidr(d.cidr), networkForm.value.gateway_address || null);
+  const pool = configurationPreview.value?.default_dhcp_pool;
+  return pool ? { start: pool.start_ip, end: pool.end_ip } : { start: '', end: '' };
 });
 
 watch(showNetworkDialog, async (val) => {
@@ -2245,6 +2274,9 @@ watch(showNetworkDialog, async (val) => {
     } catch {
       /* best effort, keep default true */
     }
+    scheduleConfigurationPreview();
+  } else {
+    scheduleConfigurationPreview();
   }
 });
 watch(
@@ -2428,7 +2460,7 @@ function applyTemplateToEdit() {
       ? networkForm.value.cidr
       : activeNetworkData.value?.cidr || props.selectedNode?.data?.cidr;
   if (cidr && isValidCidr(cidr)) {
-    networkForm.value.name = applyNameTemplate(props.nameTemplate, cidr);
+    networkForm.value.name = configurationPreview.value?.suggested_name || '';
   }
 }
 

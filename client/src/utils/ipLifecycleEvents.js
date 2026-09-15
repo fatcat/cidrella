@@ -26,6 +26,9 @@ const EVENT_LABELS = {
   allocation_changed: 'Allocation changed',
   status_changed: 'Legacy status changed',
   scan_enabled_changed: 'Scan setting changed',
+  scope_added: 'Added to DHCP Scope',
+  scope_removed: 'Removed from DHCP Scope',
+  scope_membership_changed: 'DHCP Scope membership changed',
   // Scope-only addresses lose learned metadata through retirement while their
   // current status stays DHCP Scope. History says the metadata expired, not
   // that the address was released.
@@ -66,6 +69,11 @@ export function eventTone(type) {
   return 'info';
 }
 
+export function eventActorLabel(event) {
+  const actor = event?.actor_name || event?.username || event?.actor;
+  return actor ? String(actor) : '';
+}
+
 export function eventSourceLabel(source) {
   if (!source) return '';
   return SOURCE_LABELS[source] || String(source).replaceAll('_', ' ');
@@ -78,5 +86,8 @@ export function eventDetail(event) {
       ? `${event.old_value} → ${event.new_value}`
       : event.new_value || event.old_value || '';
   const source = eventSourceLabel(event.source);
-  return [values, source ? `via ${source}` : ''].filter(Boolean).join(' · ');
+  const actor = eventActorLabel(event);
+  return [values, source ? `via ${source}` : '', actor ? `by ${actor}` : '']
+    .filter(Boolean)
+    .join(' · ');
 }

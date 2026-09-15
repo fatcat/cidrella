@@ -55,9 +55,6 @@
         </button>
       </div>
     </div>
-    <button class="activity-link" @click="emit('notify', 'Open full lifecycle and audit history')">
-      <i class="pi pi-history" /> View lifecycle & audit history
-    </button>
   </aside>
 </template>
 

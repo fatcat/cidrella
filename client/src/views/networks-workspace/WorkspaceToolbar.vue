@@ -113,17 +113,14 @@
 
   <div v-if="selectedRows.length" class="selection-bar">
     <strong>{{ selectedRows.length }} selected</strong>
+    <button v-if="canSetRange" @click="emit('set-range-type')">Set range type</button>
     <button
-      v-if="canSetRange"
-      @click="emit('notify', `Set range type for ${selectedRows.length} addresses`)"
+      v-if="canBulkAllocate || canReserve || canRelease"
+      :disabled="!canReserve && !canRelease"
+      :title="bulkDisabledReason"
+      @click="emit(canRelease ? 'release' : 'reserve')"
     >
-      Set range type
-    </button>
-    <button
-      v-if="canReserve"
-      @click="emit('notify', `Create reservations for ${selectedRows.length} addresses`)"
-    >
-      Reserve
+      {{ canRelease ? 'Release' : 'Reserve' }}
     </button>
     <button @click="selectedRows = []">Clear</button>
   </div>
@@ -145,6 +142,9 @@ defineProps({
   canCreate: { type: Boolean, default: false },
   canSetRange: { type: Boolean, default: false },
   canReserve: { type: Boolean, default: false },
+  canRelease: { type: Boolean, default: false },
+  canBulkAllocate: { type: Boolean, default: false },
+  bulkDisabledReason: { type: String, default: '' },
   filterChips: { type: Array, default: () => [] },
 });
 const emit = defineEmits([
@@ -153,6 +153,9 @@ const emit = defineEmits([
   'clear-filter',
   'clear-filters',
   'notify',
+  'reserve',
+  'release',
+  'set-range-type',
 ]);
 const tableQuery = defineModel('tableQuery', { type: String, default: '' });
 const filters = defineModel('filters', { type: Object, required: true });

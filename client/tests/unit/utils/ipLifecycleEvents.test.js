@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EVENT_TONE_SEVERITY,
   eventDetail,
+  eventActorLabel,
   eventLabel,
   eventSourceLabel,
   eventTone,
@@ -45,8 +46,11 @@ describe('eventLabel', () => {
     expect(eventLabel('retired').toLowerCase()).not.toMatch(/releas|unassign|free/);
   });
 
-  it('falls back to a readable form of an unknown type', () => {
-    expect(eventLabel('scope_membership_changed')).toBe('scope membership changed');
+  it('labels scope events without implying allocation', () => {
+    expect(eventLabel('scope_added')).toBe('Added to DHCP Scope');
+    expect(eventLabel('scope_removed')).toBe('Removed from DHCP Scope');
+    expect(eventLabel('scope_membership_changed')).toBe('DHCP Scope membership changed');
+    expect(eventLabel('unknown_event')).toBe('unknown event');
     expect(eventLabel(undefined)).toBe('Event');
     expect(eventLabel('')).toBe('Event');
   });
@@ -94,5 +98,14 @@ describe('eventDetail', () => {
   it('spaces an unknown source instead of showing raw underscores', () => {
     expect(eventSourceLabel('lease_sync')).toBe('lease sync');
     expect(eventSourceLabel(null)).toBe('');
+  });
+
+  it('shows a recorded actor but does not invent one', () => {
+    expect(eventActorLabel({ actor_name: 'Administrator' })).toBe('Administrator');
+    expect(eventDetail({ new_value: 'reserved', actor_name: 'Administrator' })).toBe(
+      'reserved · by Administrator',
+    );
+    expect(eventActorLabel({})).toBe('');
+    expect(eventDetail({ new_value: 'reserved' })).toBe('reserved');
   });
 });

@@ -1,6 +1,6 @@
 <template>
   <div class="dns-panel" style="display: flex; flex-direction: column; height: 100%">
-    <div class="dns-layout">
+    <div v-if="!dialogsOnly" class="dns-layout">
       <!-- Zone List -->
       <div class="zone-panel">
         <Tabs v-model:value="zoneTab">
@@ -642,7 +642,8 @@ import {
   ipTableColumns,
 } from '../utils/ipTableColumns.js';
 
-// No props needed, shows all zones globally
+defineProps({ dialogsOnly: { type: Boolean, default: false } });
+const emit = defineEmits(['changed']);
 
 const store = useDnsStore();
 const dhcpStore = useDhcpStore();
@@ -1102,6 +1103,7 @@ async function saveZone() {
       toast.add({ severity: 'success', summary: 'Zone created', life: 3000 });
       selectZone(store.zones.find((z) => z.id === zone.id) || zone);
     }
+    emit('changed', editingZone.value ? 'DNS zone updated' : 'DNS zone created');
     showZoneDialog.value = false;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1124,6 +1126,7 @@ async function doDeleteZone() {
       records.value = [];
     }
     showDeleteZoneDialog.value = false;
+    emit('changed', 'DNS zone deleted');
     toast.add({ severity: 'success', summary: 'Zone deleted', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1192,6 +1195,7 @@ async function saveRecord() {
     }
 
     showRecordDialog.value = false;
+    emit('changed', editingRecord.value ? 'DNS record updated' : 'DNS record created');
     records.value = await store.getRecords(selectedZone.value.id);
     await store.fetchZones(); // refresh record counts
   } catch (err) {
@@ -1211,6 +1215,7 @@ async function doDeleteRecord() {
   try {
     await store.deleteRecord(selectedZone.value.id, deletingRecord.value.id);
     showDeleteRecordDialog.value = false;
+    emit('changed', 'DNS record deleted');
     toast.add({ severity: 'success', summary: 'Record deleted', life: 3000 });
     records.value = await store.getRecords(selectedZone.value.id);
     await store.fetchZones();
@@ -1248,7 +1253,17 @@ onMounted(async () => {
   }
 });
 
-defineExpose({ openZoneDialog });
+function openRecordEditor(record = null, defaults = {}, zone = null) {
+  if (zone) selectedZone.value = zone;
+  openRecordDialog(record, defaults);
+}
+
+function confirmDeleteRecordForZone(record, zone = null) {
+  if (zone) selectedZone.value = zone;
+  confirmDeleteRecord(record);
+}
+
+defineExpose({ openZoneDialog, openRecordEditor, confirmDeleteZone, confirmDeleteRecordForZone });
 </script>
 
 <style scoped>

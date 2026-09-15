@@ -1,6 +1,6 @@
 <template>
   <div class="dhcp-panel" style="display: flex; flex-direction: column; height: 100%">
-    <div class="dhcp-layout">
+    <div v-if="!dialogsOnly" class="dhcp-layout">
       <!-- Scopes Sidebar -->
       <div class="scope-panel">
         <Tabs v-model:value="scopeTab">
@@ -471,7 +471,8 @@ import ScopeDialog from './ScopeDialog.vue';
 import IpDetailsDrawer from './IpDetailsDrawer.vue';
 import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 
-// No props needed, shows all scopes globally
+defineProps({ dialogsOnly: { type: Boolean, default: false } });
+const emit = defineEmits(['changed']);
 
 const store = useDhcpStore();
 const toast = useToast();
@@ -897,6 +898,7 @@ async function onScopeSaved() {
     const fresh = store.scopes.find((s) => s.id === selectedScope.value.id);
     if (fresh) selectedScope.value = fresh;
   }
+  emit('changed', 'DHCP scope saved');
 }
 
 function confirmDeleteScope(scope) {
@@ -909,6 +911,7 @@ async function doDeleteScope() {
   try {
     await store.deleteScope(deletingScope.value.id);
     showDeleteScopeDialog.value = false;
+    emit('changed', 'DHCP scope deleted');
     if (selectedScope.value?.id === deletingScope.value.id) {
       selectedScope.value = null;
     }
@@ -1009,6 +1012,10 @@ async function saveReservation() {
       toast.add({ severity: 'success', summary: 'DHCP Reservation created', life: 3000 });
     }
     showReservationDialog.value = false;
+    emit(
+      'changed',
+      editingReservation.value ? 'DHCP Reservation updated' : 'DHCP Reservation created',
+    );
     await reloadSelectedScopeAddresses();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -1028,6 +1035,7 @@ async function doDeleteReservation() {
     const resId = deletingReservation.value.reservation_id || deletingReservation.value.id;
     await store.deleteReservation(resId);
     showDeleteReservationDialog.value = false;
+    emit('changed', 'DHCP Reservation deleted');
     toast.add({ severity: 'success', summary: 'DHCP Reservation deleted', life: 3000 });
     await reloadSelectedScopeAddresses();
   } catch (err) {
@@ -1072,7 +1080,13 @@ onMounted(async () => {
   }
 });
 
-defineExpose({ openScopeDialog });
+defineExpose({
+  openScopeDialog,
+  openReservationDialog,
+  confirmDeleteScope,
+  confirmDeleteReservation,
+  doSyncLeases,
+});
 </script>
 
 <style scoped>

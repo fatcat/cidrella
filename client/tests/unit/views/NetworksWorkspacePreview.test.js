@@ -258,6 +258,8 @@ function installApiFixtures() {
         },
       ]);
     if (url === '/dhcp/scopes') return response([scope]);
+    if (url === '/range-types')
+      return response([{ id: 8, name: 'Lab equipment', is_system: 0, color: '#14b8a6' }]);
     if (url === '/dhcp/leases') return response([lease]);
     if (url === '/workspace/dhcp-addresses')
       return response({ items: [lease], total: 1, page: 1, page_size: 256 });
@@ -314,6 +316,9 @@ function installApiFixtures() {
     throw new Error(`Unexpected GET ${url}`);
   });
   api.put.mockImplementation((url, body) => {
+    if (url === '/subnets/11/ips/bulk-allocation') {
+      return response({ updated: 2, skipped: 0, ...body });
+    }
     if (url === '/subnets/11/ips/1.1.1.33/allocation') {
       reservedIp33 = body.allocation_state === 'reserved';
       subnet.used_count = reservedIp33 ? 6 : 5;
@@ -337,6 +342,10 @@ async function mountPreview() {
         RouterLink: {
           props: ['to'],
           template: '<a :href="to"><slot /></a>',
+        },
+        Dialog: {
+          props: ['visible'],
+          template: '<section v-if="visible"><slot /><slot name="footer" /></section>',
         },
       },
     },
@@ -557,6 +566,36 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('button[aria-label="1.1.1.1, gateway"]').exists()).toBe(true);
     expect(wrapper.find('button[aria-label="1.1.1.40, dynamic DHCP"]').exists()).toBe(true);
     expect(wrapper.findAll('.compact-address-grid button.section')).toHaveLength(16);
+  });
+
+  it('shares address selection across table and grids and opens the real bulk reservation flow', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    const rowCheckboxes = wrapper.findAll('tbody input[type="checkbox"]');
+    await rowCheckboxes[2].setValue(true);
+    await rowCheckboxes[3].setValue(true);
+
+    expect(wrapper.find('.selection-bar').text()).toContain('2 selected');
+    await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
+    expect(wrapper.findAll('.compact-address-grid button.selected')).toHaveLength(2);
+
+    const reserve = wrapper
+      .findAll('.selection-bar button')
+      .find((button) => button.text() === 'Reserve');
+    await reserve.trigger('click');
+    const form = wrapper.find('.bulk-action-form');
+    expect(form.text()).toContain('1.1.1.2 through 1.1.1.3');
+    await form.find('textarea').setValue('Lab hosts');
+    await form.trigger('submit');
+    await flushPromises();
+
+    expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/bulk-allocation', {
+      start_ip: '1.1.1.2',
+      end_ip: '1.1.1.3',
+      allocation_state: 'reserved',
+      note: 'Lab hosts',
+    });
+    expect(wrapper.find('.selection-bar').exists()).toBe(false);
   });
 
   it('uses the explorer search as a hostname and IP table filter', async () => {
