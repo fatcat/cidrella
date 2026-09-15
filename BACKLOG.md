@@ -205,17 +205,26 @@ board. Phases are the plan's section 13 rows.
   default `selectedNetwork`), and DNS record creation needs a resolvable zone (saving without one
   crashed in `DnsPanel`). `NetworksWorkspace.vue` 2,622 to 2,237 lines.
 
+- W-06 details identity: `9ac4359`. `detailIdentity` plus `detailFallback`, `selectedRow` is a
+  computed preferring the live page row, `resolveDetail()` re-reads the pinned resource after
+  every load (addresses via `/subnets/:id/ips/:ip`, DNS records and DHCP addresses via the
+  workspace lists filtered by zone/subnet and `table_q`, matched by id). Only a server "gone"
+  closes the panel.
+- W-05 overlay rules and T-38 keyboard: `50deafa`, `144b147`. Measured against the real OpenVue
+  Dialog: one Escape closes every stacked dialog and drops focus to body. The workspace's own
+  stacked dialogs now disable close-on-escape while something sits on top; `useDiscardGuard` +
+  `DiscardPrompt` keep dirty forms from closing silently (second dismissal closes). Menus focus
+  their first item, take arrow keys, return focus to the recorded invoker. Table rows and grid
+  cells reach the row menu from Shift+F10/ContextMenu; rows take Enter/Space/arrows.
+
 **Partial:**
-- W-05 focus and overlay rules (focus returns to invoker, Escape dismisses the topmost overlay,
-  unsaved form not silently discarded) are not verified across the reused NetworkDialogs,
-  DnsPanel and DhcpPanel editors.
-- W-06 details identity: `WorkspaceDetailsHost` switches panels, but the row identity is still a
-  page-row reference held by the orchestrator. Section 7 cross-store invalidation after mutations
-  is partial.
+- Section 7 cross-store invalidation after mutations is partial.
+- The reused NetworkDialogs, DnsPanel and DhcpPanel editors inherit the vendor focus trap and
+  return, but their own stacks (divide preview, delete confirms) still close together on one
+  Escape and have no unsaved-form guard. Belongs to the N/D/H edge-case packages.
 - W-03: filtered-count-vs-subnet-size wording under every view not verified.
 - N-*: merge selection, dedicated folder-row menus, rendered coverage of every dialog branch.
 - D-*/H-*: rendered edge-case coverage (T-20..T-27), global settings links.
-- T-38 keyboard/focus-return across modal transitions not verified.
 
 **Not started:** W-07 responsive/accessibility verification, P6 parity gate evidence, P7..P9
 (section 10), P10 cutover. An agent wired `/networks` to the workspace and moved the old view
