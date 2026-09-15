@@ -9,6 +9,7 @@ import WorkspaceContextHeader from '../../../src/views/networks-workspace/Worksp
 import WorkspaceDetailsHost from '../../../src/views/networks-workspace/WorkspaceDetailsHost.vue';
 import WorkspaceTable from '../../../src/views/networks-workspace/WorkspaceTable.vue';
 import WorkspaceToolbar from '../../../src/views/networks-workspace/WorkspaceToolbar.vue';
+import IpReservationEditor from '../../../src/views/networks-workspace/dialogs/IpReservationEditor.vue';
 import api from '../../../src/api/client.js';
 
 vi.mock('../../../src/api/client.js', () => ({
@@ -750,6 +751,52 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('button[data-track="workspace-create-ip-reservation"]').exists()).toBe(
       true,
     );
+  });
+
+  it('drives every menu through the action registry with a row-derived target', async () => {
+    const wrapper = await mountPreview();
+    // No network is selected, so there is no target for the network actions.
+    expect(wrapper.find('.context-actions').text()).not.toContain('Actions');
+
+    await enterTestNetwork(wrapper);
+    const scopeMember = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
+    await scopeMember.find('button[aria-label="Row actions"]').trigger('click');
+    const menu = wrapper.find('.row-menu');
+    expect(menu.findAll('button').map((button) => button.text())).toEqual([
+      'Edit DHCP scope',
+      'Remove this IP from scope',
+      'Delete DHCP scope',
+      'Create IP Reservation',
+      'Add DHCP Reservation',
+      'Set range type',
+      'Change scan setting',
+      'Probe now',
+    ]);
+
+    await menu
+      .findAll('button')
+      .find((button) => button.text() === 'Create IP Reservation')
+      .trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.row-menu').exists()).toBe(false);
+    const editor = wrapper.findComponent(IpReservationEditor);
+    expect(editor.exists()).toBe(true);
+    expect(editor.props()).toMatchObject({ address: '1.1.1.50', mode: 'reserve', visible: true });
+
+    // The header Actions menu targets the selected network.
+    await wrapper
+      .findAll('.context-actions button')
+      .find((button) => button.text().startsWith('Actions'))
+      .trigger('click');
+    expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
+      'Edit network',
+      'Divide network',
+      'Merge networks',
+      'Move to folder',
+      'Apply defaults',
+      'Deallocate network',
+      'Delete network',
+    ]);
   });
 
   it('persists a capped small-text size without resizing larger headings', async () => {

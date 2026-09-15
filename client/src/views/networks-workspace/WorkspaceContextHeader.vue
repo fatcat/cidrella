@@ -50,11 +50,7 @@
       </div>
 
       <div class="context-actions">
-        <button
-          v-if="canScan"
-          class="button secondary"
-          @click="emit('notify', 'Start network scan')"
-        >
+        <button v-if="canScan" class="button secondary" @click="emit('action', 'network.scan')">
           <i class="pi pi-search" /> Scan now
         </button>
         <button
@@ -180,7 +176,7 @@ const emit = defineEmits([
   'open-menu',
   'filter-zone',
   'filter-scope',
-  'notify',
+  'action',
 ]);
 </script>
 

@@ -50,8 +50,13 @@
     <div v-if="actions.length" class="details-section">
       <span class="eyebrow">QUICK ACTIONS</span>
       <div class="quick-actions">
-        <button v-for="action in actions" :key="action" @click="emit('notify', action)">
-          {{ action }}
+        <button
+          v-for="action in actions"
+          :key="action.id"
+          :class="{ danger: action.danger }"
+          @click="emit('action', action)"
+        >
+          {{ action.label }}
         </button>
       </div>
     </div>
@@ -81,7 +86,7 @@ defineProps({
   related: { type: Array, default: () => [] },
   actions: { type: Array, default: () => [] },
 });
-const emit = defineEmits(['close', 'navigate', 'changed', 'notify']);
+const emit = defineEmits(['close', 'navigate', 'changed', 'action']);
 </script>
 
 <style scoped>

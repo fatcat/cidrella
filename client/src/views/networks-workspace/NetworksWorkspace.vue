@@ -58,7 +58,7 @@
         @select-network="selectNetwork"
         @select-unallocated-network="selectUnallocatedNetwork"
         @toggle-folder="toggleFolder"
-        @notify="handleWorkspaceAction"
+        @action="runContextAction"
       />
 
       <main class="work-surface" :aria-busy="loadingContext">
@@ -76,7 +76,7 @@
           :selected-network="selectedNetwork"
           :stats="contextStats"
           :can-scan="contextKind === 'network' && can('subnets:write')"
-          :has-actions="permittedActionMenuItems.length > 0"
+          :has-actions="actionMenuItems.length > 0"
           :can-create="canAnyCreate"
           :views="availableViews"
           :active-view="activeView"
@@ -91,7 +91,7 @@
           @open-menu="toggleMenu"
           @filter-zone="filterToZone"
           @filter-scope="filterToScope"
-          @notify="handleWorkspaceAction"
+          @action="runContextAction"
         />
         <section class="table-card">
           <div v-if="loadingContext" class="loading-bar" data-track="workspace-loading">
@@ -116,9 +116,9 @@
             :column-catalog="columnCatalog"
             :columns="columns"
             :can-create="canCreateCurrent"
-            :can-set-range="activeView === 'addresses' && can('subnets:write')"
-            :can-reserve="bulkReserveAvailable"
-            :can-release="bulkReleaseAvailable"
+            :can-set-range="selectionAvailability('ip.bulk-range-type').available"
+            :can-reserve="selectionAvailability('ip.bulk-reserve').available"
+            :can-release="selectionAvailability('ip.bulk-release').available"
             :can-bulk-allocate="activeView === 'addresses' && can('subnets:write')"
             :bulk-disabled-reason="bulkActionDisabledReason"
             :filter-chips="activeFilterChips"
@@ -126,10 +126,10 @@
             @reset-columns="resetVisibleColumns"
             @clear-filter="clearFilter"
             @clear-filters="clearFilters"
-            @notify="handleWorkspaceAction"
-            @reserve="openBulkAction('reserve')"
-            @release="openBulkAction('release')"
-            @set-range-type="openBulkRangeType"
+            @add="runViewAdd"
+            @reserve="runSelectionAction('ip.bulk-reserve')"
+            @release="runSelectionAction('ip.bulk-release')"
+            @set-range-type="runSelectionAction('ip.bulk-range-type')"
           />
 
           <AddressGrid
@@ -203,11 +203,11 @@
         :icon="detailIcon"
         :items="detailItems"
         :related="relatedResources"
-        :actions="rowActions"
+        :actions="rowMenuItems"
         @close="selectedRow = null"
         @navigate="openRelatedResource"
         @changed="handleAddressChanged"
-        @notify="handleDetailsAction"
+        @action="runRowAction"
       />
       <ApplyStatusBanner
         ref="applyStatus"
@@ -295,10 +295,10 @@
     <div v-if="openMenuName === 'create'" class="floating-menu create-menu" role="menu">
       <span>CREATE RESOURCE</span>
       <button
-        v-for="item in permittedCreateActions"
-        :key="item.label"
+        v-for="item in createMenuItems"
+        :key="item.id"
         role="menuitem"
-        @click="chooseMenuAction(item.label)"
+        @click="runMenuAction(item)"
       >
         <i :class="item.icon" /><span
           ><strong>{{ item.label }}</strong
@@ -309,11 +309,11 @@
     <div v-if="openMenuName === 'actions'" class="floating-menu actions-menu" role="menu">
       <span>{{ actionMenuTitle }}</span>
       <button
-        v-for="item in permittedActionMenuItems"
-        :key="item.label"
+        v-for="item in actionMenuItems"
+        :key="item.id"
         role="menuitem"
         :class="{ danger: item.danger }"
-        @click="chooseMenuAction(item.label)"
+        @click="runMenuAction(item)"
       >
         <i :class="item.icon" /><span
           ><strong>{{ item.label }}</strong
@@ -324,12 +324,13 @@
     <div v-if="openMenuName === 'row'" class="floating-menu row-menu" role="menu">
       <span>{{ activeView.toUpperCase() }} ACTIONS</span>
       <button
-        v-for="action in rowActions"
-        :key="action"
+        v-for="item in rowMenuItems"
+        :key="item.id"
         role="menuitem"
-        @click="chooseMenuAction(action)"
+        :class="{ danger: item.danger }"
+        @click="runRowAction(item)"
       >
-        <i class="pi pi-angle-right" /><strong>{{ action }}</strong>
+        <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
       </button>
     </div>
 
@@ -370,6 +371,8 @@ import { useWorkspaceContext } from './composables/useWorkspaceContext.js';
 import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
 import { contiguousIpv4Runs } from './composables/useWorkspaceSelection.js';
 import { useRangeActions } from './composables/useRangeActions.js';
+import { useWorkspaceActions } from './composables/useWorkspaceActions.js';
+import { menuActions, targetForRow } from './workspace-actions.js';
 import {
   defaultWorkspaceColumnKeys,
   restoreWorkspaceColumnKeys,
@@ -504,27 +507,22 @@ const viewDefinitions = {
   networks: {
     search: 'Search network, CIDR, folder, VLAN, or domain…',
     addLabel: 'Allocate network',
-    addAction: 'Allocate network',
   },
   addresses: {
     search: 'Search IP, hostname, MAC, type…',
     addLabel: 'Reserve address',
-    addAction: 'Create IP Reservation',
   },
   dns: {
     search: 'Search name, zone, record type, or value…',
     addLabel: 'Add record',
-    addAction: 'Add DNS record',
   },
   dhcp: {
     search: 'Search IP, MAC, hostname, network, or lease…',
     addLabel: 'Add reservation',
-    addAction: 'Add DHCP Reservation',
   },
   ranges: {
     search: 'Search range, type, or description…',
     addLabel: 'Add range',
-    addAction: 'Add Network Range Type range',
   },
 };
 
@@ -554,115 +552,8 @@ const columnTableName = computed(
     `${contextKind.value === 'estate' ? 'All Networks' : contextTitle.value} ${activeView.value}`,
 );
 
-const createActions = [
-  {
-    label: 'Allocate network',
-    note: 'Add address space to IPAM',
-    icon: 'pi pi-sitemap',
-    permission: 'subnets:write',
-  },
-  {
-    label: 'Create folder',
-    note: 'Organize related networks',
-    icon: 'pi pi-folder-plus',
-    permission: 'subnets:write',
-  },
-  {
-    label: 'Add DNS zone',
-    note: 'Forward or reverse authority',
-    icon: 'pi pi-globe',
-    permission: 'dns:write',
-  },
-  {
-    label: 'Add DHCP scope',
-    note: 'Create a dynamic address pool',
-    icon: 'pi pi-server',
-    permission: 'dhcp:write',
-  },
-  {
-    label: 'Add DHCP Reservation',
-    note: 'Bind a client to an address',
-    icon: 'pi pi-bookmark',
-    permission: 'dhcp:write',
-  },
-];
-
-const networkActions = [
-  {
-    label: 'Edit network',
-    note: 'Name, gateway, VLAN, domain, and scanning',
-    icon: 'pi pi-pencil',
-  },
-  {
-    label: 'Divide network',
-    note: 'Preview child networks and dependencies',
-    icon: 'pi pi-share-alt',
-  },
-  { label: 'Merge networks', note: 'Select an adjacent sibling', icon: 'pi pi-sitemap' },
-  {
-    label: 'Move to folder',
-    note: 'Change organization without changing CIDR',
-    icon: 'pi pi-folder',
-  },
-  { label: 'Apply defaults', note: 'Review template-managed settings', icon: 'pi pi-sync' },
-  {
-    label: 'Deallocate network',
-    note: 'Return this block to its parent',
-    icon: 'pi pi-undo',
-    danger: true,
-  },
-  {
-    label: 'Delete network',
-    note: 'Remove this network and its dependencies',
-    icon: 'pi pi-trash',
-    danger: true,
-  },
-];
-const dnsActions = [
-  {
-    label: 'Edit selected zone',
-    note: 'Authority, SOA, description, and state',
-    icon: 'pi pi-pencil',
-  },
-  { label: 'Switch forward / reverse', note: 'Browse the other side of DNS', icon: 'pi pi-replay' },
-  { label: 'Add DNS zone', note: 'Create forward or reverse authority', icon: 'pi pi-plus' },
-  {
-    label: 'Delete selected zone',
-    note: 'Review dependent records first',
-    icon: 'pi pi-trash',
-    danger: true,
-  },
-];
-const dhcpActions = [
-  {
-    label: 'Edit selected scope',
-    note: 'Pool, lease policy, options, and state',
-    icon: 'pi pi-pencil',
-  },
-  { label: 'Sync leases now', note: 'Refresh dnsmasq lease state', icon: 'pi pi-sync' },
-  { label: 'Add DHCP scope', note: 'Create a dynamic address pool', icon: 'pi pi-plus' },
-  {
-    label: 'Delete selected scope',
-    note: 'Keep the underlying range',
-    icon: 'pi pi-trash',
-    danger: true,
-  },
-];
-
-for (const item of networkActions) item.permission = 'subnets:write';
-for (const item of dnsActions) item.permission = 'dns:write';
-for (const item of dhcpActions) item.permission = 'dhcp:write';
-const permittedCreateActions = computed(() => createActions.filter((item) => can(item.permission)));
-const canAnyCreate = computed(() => permittedCreateActions.value.length > 0);
-const canCreateCurrent = computed(() =>
-  can(
-    activeView.value === 'dns'
-      ? 'dns:write'
-      : activeView.value === 'dhcp'
-        ? 'dhcp:write'
-        : 'subnets:write',
-  ),
-);
+const canAnyCreate = computed(() => createMenuItems.value.length > 0);
+const canCreateCurrent = computed(() => viewAddAction.value?.available === true);
 
 const filteredFolders = computed(() => {
   const query = resourceQuery.value.trim().toLowerCase();
@@ -1098,16 +989,6 @@ const actionMenuTitle = computed(() =>
       ? 'DHCP ACTIONS'
       : 'NETWORK ACTIONS',
 );
-const actionMenuItems = computed(() =>
-  activeView.value === 'dns'
-    ? dnsActions
-    : activeView.value === 'dhcp'
-      ? dhcpActions
-      : networkActions,
-);
-const permittedActionMenuItems = computed(() =>
-  actionMenuItems.value.filter((item) => can(item.permission)),
-);
 
 function buildUnallocatedFolders(sourceFolders) {
   const mapNode = (network, folder) => {
@@ -1314,20 +1195,12 @@ const selectionRuns = computed(() => contiguousIpv4Runs(selectedRows.value));
 const selectedAllocationStates = computed(() =>
   selectedAddressRows.value.map((row) => row.raw?.allocation_state),
 );
-const bulkReserveAvailable = computed(
-  () =>
-    selectedRows.value.length > 0 &&
-    selectedAddressRows.value.length === selectedRows.value.length &&
-    selectedAllocationStates.value.every((state) => state === 'unassigned'),
-);
-const bulkReleaseAvailable = computed(
-  () =>
-    selectedRows.value.length > 0 &&
-    selectedAddressRows.value.length === selectedRows.value.length &&
-    selectedAllocationStates.value.every((state) => state === 'reserved'),
-);
 const bulkActionDisabledReason = computed(() => {
-  if (bulkReserveAvailable.value || bulkReleaseAvailable.value) return '';
+  if (
+    selectionAvailability('ip.bulk-reserve').available ||
+    selectionAvailability('ip.bulk-release').available
+  )
+    return '';
   return 'Select only unassigned addresses to reserve, or only IP Reservations to release.';
 });
 
@@ -1417,72 +1290,96 @@ const networkDialogNode = computed(() => {
     selectedRowView.value === 'networks' ? selectedRow.value?.raw : selectedNetwork.value;
   return network?.id ? { key: `subnet-${network.id}`, data: network } : null;
 });
-const rowActions = computed(() => {
-  const row = selectedRow.value;
-  if (selectedRowView.value === 'networks')
-    return can('subnets:write')
-      ? ['Open network context', 'Edit network', 'Scan network']
-      : ['Open network context'];
-  if (selectedRowContext.value !== 'network' && selectedRowView.value === 'dns')
-    return can('dns:write')
-      ? ['Open zone', 'Edit zone', 'Add DNS record', 'Delete zone']
-      : ['Open zone'];
-  if (selectedRowContext.value !== 'network' && selectedRowView.value === 'dhcp')
-    return can('dhcp:write')
-      ? [
-          'Open scope',
-          'Open network DHCP',
-          'Edit DHCP scope',
-          'Add DHCP Reservation',
-          'Sync leases now',
-          'Delete DHCP scope',
-        ]
-      : ['Open scope', 'Open network DHCP'];
-  if (selectedRowView.value === 'dns')
-    return can('dns:write')
-      ? ['Open IP details', 'Open whole zone', 'Edit record', 'Add CNAME', 'Delete record']
-      : ['Open IP details', 'Open whole zone'];
-  if (selectedRowView.value === 'dhcp') {
-    if (!can('dhcp:write')) return ['Open IP details', 'Open scope'];
-    if (row?.assignment === 'Reserved')
-      return [
-        'Open IP details',
-        'Open scope',
-        'Edit DHCP Reservation',
-        ...(can('subnets:write') ? ['Probe now'] : []),
-        'Delete DHCP Reservation',
-      ];
-    return [
-      'Open IP details',
-      'Open scope',
-      'Add DHCP Reservation',
-      ...(can('subnets:write') ? ['Probe now'] : []),
-    ];
-  }
-  if (selectedRowView.value === 'ranges') {
-    if (row?.rangeType === 'DHCP Scope')
-      return can('dhcp:write')
-        ? ['Edit DHCP scope', 'Remove addresses from scope', 'Delete DHCP scope']
-        : [];
-    return [
-      ...(can('subnets:write') ? ['Edit range'] : []),
-      ...(can('dhcp:write') ? ['Create DHCP scope'] : []),
-      ...(can('subnets:write') ? ['Delete range'] : []),
-    ];
-  }
 
-  if (!can('subnets:write')) return [];
-  const actions = [];
-  if (row?.type === 'gateway') actions.push('Edit gateway', 'Delete gateway', 'Create DHCP scope');
-  else if (row?.status === 'DHCP Scope')
-    actions.push('Edit DHCP scope', 'Remove this IP from scope', 'Delete DHCP scope');
-  if (row?.raw?.allocation_state === 'reserved') actions.push('Release IP Reservation');
-  else if (row?.raw?.allocation_state === 'unassigned') actions.push('Create IP Reservation');
-  if (row?.type === 'dynamic DHCP' || row?.status === 'DHCP Scope')
-    actions.push('Create DHCP Reservation');
-  actions.push('Set range type', 'Change scan setting', 'Probe now');
-  return actions;
+// Action registry targets (W-05). Every menu, quick action and toolbar button
+// resolves to a registry entry plus one of these targets, and the invocation
+// goes through useWorkspaceActions with that same target. Nothing dispatches
+// on a label.
+const selectedRowTarget = computed(() => targetForRow(selectedRow.value));
+const networkTarget = computed(() =>
+  selectedRowTarget.value?.kind === 'network'
+    ? selectedRowTarget.value
+    : workspaceActions.currentNetworkTarget(),
+);
+const workspaceTarget = computed(() => {
+  const rowTarget = selectedRowTarget.value;
+  const zone =
+    rowTarget?.kind === 'dns-zone'
+      ? rowTarget.raw
+      : rowTarget?.kind === 'dns-record'
+        ? dnsZones.value.find((item) => Number(item.id) === Number(rowTarget.zone_id)) || null
+        : selectedZoneFilter.value;
+  const scope =
+    rowTarget?.kind === 'dhcp-scope'
+      ? rowTarget.raw
+      : rowTarget?.kind === 'dhcp-address'
+        ? dhcpScopes.value.find((item) => Number(item.id) === Number(rowTarget.scope_id)) || null
+        : selectedScopeFilter.value;
+  return { kind: 'workspace', zone, scope };
 });
+const selectionTarget = computed(() => ({
+  kind: 'address-selection',
+  count: selectedAddressRows.value.length,
+  allocationStates: selectedAllocationStates.value,
+}));
+const withTarget = (items, target) => items.map((item) => ({ ...item, target }));
+const createMenuItems = computed(() =>
+  withTarget(
+    menuActions({ menu: 'create', target: workspaceTarget.value, can }),
+    workspaceTarget.value,
+  ),
+);
+const actionMenuItems = computed(() => {
+  const target = ['dns', 'dhcp'].includes(activeView.value)
+    ? workspaceTarget.value
+    : networkTarget.value;
+  if (!target) return [];
+  return withTarget(menuActions({ menu: 'actions', target, view: activeView.value, can }), target);
+});
+const rowMenuItems = computed(() => {
+  const target = selectedRowTarget.value;
+  if (!target) return [];
+  return withTarget(menuActions({ menu: 'row', target, view: activeView.value, can }), target);
+});
+const VIEW_ADD_ACTIONS = {
+  networks: ['network.allocate', workspaceTarget],
+  addresses: ['ip.reserve-new', networkTarget],
+  dns: ['dns.record.create', workspaceTarget],
+  dhcp: ['dhcp.reservation.create', workspaceTarget],
+  ranges: ['range.create', networkTarget],
+};
+const viewAddAction = computed(() => {
+  const [id, targetRef] = VIEW_ADD_ACTIONS[activeView.value] || [];
+  if (!id || !targetRef.value) return null;
+  return {
+    id,
+    target: targetRef.value,
+    ...workspaceActions.registry.availability(id, targetRef.value),
+  };
+});
+function selectionAvailability(actionId) {
+  return workspaceActions.registry.availability(actionId, selectionTarget.value);
+}
+function runMenuAction(item) {
+  closeMenu();
+  return workspaceActions.invoke(item.id, item.target);
+}
+function runRowAction(item) {
+  closeMenu();
+  return workspaceActions.invoke(item.id, selectedRowTarget.value);
+}
+function runContextAction(actionId) {
+  const target = actionId === 'network.scan' ? networkTarget.value : workspaceTarget.value;
+  return workspaceActions.invoke(actionId, target);
+}
+function runSelectionAction(actionId) {
+  return workspaceActions.invoke(actionId, selectionTarget.value);
+}
+function runViewAdd() {
+  const action = viewAddAction.value;
+  if (!action) return;
+  return workspaceActions.invoke(action.id, action.target);
+}
 
 const gridCells = computed(() =>
   addressRows.value.map((row) => ({
@@ -1605,119 +1502,6 @@ function handleWorkspaceKeydown(event) {
   event.preventDefault();
   closeMenu();
 }
-async function chooseMenuAction(label) {
-  openMenuName.value = null;
-  if (label === 'Switch forward / reverse') {
-    filters.value = {
-      ...filters.value,
-      type: filters.value.type === 'forward' ? 'reverse' : 'forward',
-    };
-    return;
-  }
-  if (label === 'Open network context' && selectedRow.value?.raw) {
-    await selectNetwork(selectedRow.value.raw);
-    return;
-  }
-  if (label === 'Scan network' && selectedRow.value?.raw?.id) {
-    await startNetworkScan(selectedRow.value.raw.id);
-    return;
-  }
-  if (await invokeNetworkDialogAction(label)) return;
-  if (await invokeProtocolDialogAction(label)) return;
-  if (['Edit gateway', 'Delete gateway'].includes(label)) {
-    await invokeNetworkDialogAction('Edit network');
-    return;
-  }
-  if (['Remove this IP from scope', 'Remove addresses from scope'].includes(label)) {
-    showLiveNotice(
-      'Middle removal is not supported by the current pool API. Edit the DHCP scope to trim a start or end boundary.',
-    );
-    return;
-  }
-  if (label === 'Open IP details') {
-    await openCanonicalAddressFromSelectedRow();
-    return;
-  }
-  if (
-    selectedRowView.value === 'addresses' &&
-    selectedRowContext.value === 'network' &&
-    ['Create IP Reservation', 'Release IP Reservation'].includes(label)
-  ) {
-    reservationTarget.value = {
-      id: selectedRow.value.id,
-      address: selectedRow.value.address,
-    };
-    reservationEditorMode.value = label.startsWith('Create') ? 'reserve' : 'release';
-    reservationEditorVisible.value = true;
-    return;
-  }
-  if (
-    ['Change scan setting', 'Probe now'].includes(label) &&
-    selectedRowContext.value === 'network' &&
-    selectedRow.value?.address
-  ) {
-    scanTarget.value = {
-      address: selectedRow.value.address,
-      raw: { ...selectedRow.value.raw },
-    };
-    scanDialogMode.value = label === 'Probe now' ? 'probe' : 'policy';
-    scanDialogVisible.value = true;
-    return;
-  }
-  if (
-    label === 'Set range type' &&
-    selectedRowView.value === 'addresses' &&
-    selectedRowContext.value === 'network'
-  ) {
-    selectedRows.value = [selectedRow.value.id];
-    await openBulkRangeType();
-    return;
-  }
-  if (
-    ['Edit range', 'Delete range'].includes(label) &&
-    selectedRowView.value === 'ranges' &&
-    selectedRowContext.value === 'network'
-  ) {
-    await openRangeEditor(selectedRow.value.raw);
-    return;
-  }
-  showLiveNotice(`${label} is not available in this context.`);
-}
-
-async function handleWorkspaceAction(label) {
-  if (label === 'Start network scan') {
-    await startNetworkScan(selectedNetwork.value.id);
-    return;
-  }
-  if (label === 'Open network defaults') {
-    await router.push({ path: '/system', query: { area: 'general', sec: 'network-defaults' } });
-    return;
-  }
-  if (label === 'Open folder management') {
-    folderManagerVisible.value = true;
-    return;
-  }
-  if (label === 'Switch forward / reverse') {
-    filters.value = {
-      ...filters.value,
-      type: filters.value.type === 'forward' ? 'reverse' : 'forward',
-    };
-    return;
-  }
-  if (label === 'Create IP Reservation' && selectedNetwork.value.id) {
-    reservationTarget.value = { address: '' };
-    reservationEditorMode.value = 'reserve';
-    reservationEditorVisible.value = true;
-    return;
-  }
-  if (await invokeNetworkDialogAction(label)) return;
-  if (await invokeProtocolDialogAction(label)) return;
-  if (label === 'Add Network Range Type range') {
-    await openRangeEditor(null);
-    return;
-  }
-  showLiveNotice(`${label} is not available in this context.`);
-}
 
 async function openFolderDialog(mode, folder = null) {
   folderManagerVisible.value = false;
@@ -1728,139 +1512,6 @@ async function openFolderDialog(mode, folder = null) {
   if (mode === 'edit') networkDialogs.value.openEditFolder(folder);
   else if (mode === 'delete') networkDialogs.value.openDeleteFolder(folder);
   else networkDialogs.value.openCreateFolder();
-}
-
-async function invokeProtocolDialogAction(label) {
-  const dnsLabels = [
-    'Add DNS zone',
-    'Edit zone',
-    'Edit selected zone',
-    'Delete zone',
-    'Delete selected zone',
-    'Add DNS record',
-    'Edit record',
-    'Delete record',
-    'Add CNAME',
-  ];
-  const dhcpLabels = [
-    'Add DHCP scope',
-    'Edit DHCP scope',
-    'Edit selected scope',
-    'Delete DHCP scope',
-    'Delete selected scope',
-    'Add DHCP Reservation',
-    'Edit DHCP Reservation',
-    'Delete DHCP Reservation',
-    'Sync leases now',
-  ];
-  if (![...dnsLabels, ...dhcpLabels].includes(label)) return false;
-  if (!protocolDialogsMounted.value) {
-    protocolDialogsMounted.value = true;
-    await nextTick();
-  }
-  if (dnsLabels.includes(label)) {
-    const zone =
-      selectedRowView.value === 'dns' && selectedRowContext.value !== 'network'
-        ? selectedRow.value?.raw
-        : dnsZones.value.find(
-            (item) => Number(item.id) === Number(selectedRow.value?.raw?.zone_id),
-          ) || selectedZoneFilter.value;
-    const record =
-      selectedRowView.value === 'dns' && selectedRowContext.value === 'network'
-        ? selectedRow.value?.raw
-        : null;
-    if (label === 'Add DNS zone') await dnsDialogs.value.openZoneDialog();
-    else if (['Edit zone', 'Edit selected zone'].includes(label))
-      await dnsDialogs.value.openZoneDialog(zone);
-    else if (['Delete zone', 'Delete selected zone'].includes(label))
-      dnsDialogs.value.confirmDeleteZone(zone);
-    else if (label === 'Edit record') dnsDialogs.value.openRecordEditor(record, {}, zone);
-    else if (label === 'Delete record') dnsDialogs.value.confirmDeleteRecordForZone(record, zone);
-    else {
-      const defaults = {
-        ...(label === 'Add CNAME' ? { type: 'CNAME' } : {}),
-        ...(selectedRowView.value === 'addresses' ? { value: selectedRow.value.address } : {}),
-      };
-      dnsDialogs.value.openRecordEditor(null, defaults, zone);
-    }
-    return true;
-  }
-
-  const scope =
-    selectedRowView.value === 'dhcp' && selectedRowContext.value !== 'network'
-      ? selectedRow.value?.raw
-      : dhcpScopes.value.find(
-          (item) => Number(item.id) === Number(selectedRow.value?.raw?.scope_id),
-        ) || selectedScopeFilter.value;
-  const reservation = selectedRow.value?.raw;
-  if (label === 'Add DHCP scope') await dhcpDialogs.value.openScopeDialog();
-  else if (['Edit DHCP scope', 'Edit selected scope'].includes(label))
-    await dhcpDialogs.value.openScopeDialog(scope);
-  else if (['Delete DHCP scope', 'Delete selected scope'].includes(label))
-    dhcpDialogs.value.confirmDeleteScope(scope);
-  else if (label === 'Edit DHCP Reservation')
-    await dhcpDialogs.value.openReservationDialog(reservation);
-  else if (label === 'Delete DHCP Reservation')
-    dhcpDialogs.value.confirmDeleteReservation(reservation);
-  else if (label === 'Sync leases now') await dhcpDialogs.value.doSyncLeases();
-  else {
-    await dhcpDialogs.value.openReservationDialog(null, {
-      subnet_id: selectedNetwork.value.id || reservation?.subnet_id || null,
-      ip_address: selectedRow.value?.address || reservation?.ip_address || '',
-      mac_address: reservation?.mac_address || '',
-      hostname: selectedRow.value?.hostname || reservation?.hostname || '',
-    });
-  }
-  return true;
-}
-
-async function invokeNetworkDialogAction(label) {
-  const supported = [
-    'Create folder',
-    'Allocate network',
-    'Edit network',
-    'Move to folder',
-    'Divide network',
-    'Merge networks',
-    'Deallocate network',
-    'Delete network',
-    'Apply defaults',
-  ];
-  if (!supported.includes(label)) return false;
-  if (!networkDialogsMounted.value) {
-    networkDialogsMounted.value = true;
-    await nextTick();
-  }
-  const dialogs = networkDialogs.value;
-  if (!dialogs) return false;
-  const node = networkDialogNode.value;
-  if (label === 'Create folder') dialogs.openCreateFolder();
-  else if (label === 'Allocate network') {
-    if (node?.data?.status === 'unallocated') dialogs.openConfigure(node, node.data.folder_id);
-    else await dialogs.openCreateNetwork(selectedFolder.value?.id || null);
-  } else if (['Edit network', 'Move to folder'].includes(label))
-    dialogs.openEdit(node, node?.data?.folder_id);
-  else if (label === 'Divide network') dialogs.openDivide(node);
-  else if (label === 'Merge networks') {
-    const ids = selectedRows.value
-      .filter((id) => id.startsWith('network:'))
-      .map((id) => Number(id.slice('network:'.length)));
-    if (ids.length < 2) showLiveNotice('Select at least two sibling networks to merge.');
-    else await dialogs.openMergeConfirm(ids);
-  } else if (label === 'Deallocate network') dialogs.openDeallocate(node);
-  else if (label === 'Delete network') dialogs.openDelete(node);
-  else if (label === 'Apply defaults') await dialogs.executeApplyTemplate([node?.data?.id]);
-  return true;
-}
-
-async function startNetworkScan(subnetId) {
-  try {
-    const { data } = await api.post('/scans', { subnet_id: subnetId });
-    const id = data.id || data.scan_id;
-    showLiveNotice(id ? `Network scan ${id} started.` : 'Network scan started.');
-  } catch (error) {
-    showLiveNotice(`Could not start network scan: ${apiError(error)}`);
-  }
 }
 
 async function handleNetworkMutation() {
@@ -1903,78 +1554,8 @@ function selectRow(row) {
   selectedRowContext.value = contextKind.value;
   updateWorkspaceRoute();
 }
-async function handleDetailsAction(action) {
-  if (action === 'Open IP details') {
-    await openCanonicalAddressFromSelectedRow();
-    return;
-  }
-  if (action === 'Open whole zone' && selectedRow.value?.raw?.zone_id) {
-    const zone = dnsZones.value.find(
-      (item) => Number(item.id) === Number(selectedRow.value.raw.zone_id),
-    );
-    if (zone) {
-      selectedZoneFilter.value = zone;
-      selectedScopeFilter.value = null;
-      selectedRow.value = null;
-      currentPage.value = 1;
-      await updateWorkspaceRoute();
-      await loadNetworkContext();
-      return;
-    }
-  }
-  if (
-    action === 'Open scope' &&
-    selectedRowContext.value === 'network' &&
-    selectedRow.value?.raw?.scope_id
-  ) {
-    const scope = dhcpScopes.value.find(
-      (item) => Number(item.id) === Number(selectedRow.value.raw.scope_id),
-    );
-    if (scope) {
-      selectedScopeFilter.value = scope;
-      selectedZoneFilter.value = null;
-      selectedRow.value = null;
-      currentPage.value = 1;
-      await updateWorkspaceRoute();
-      await loadNetworkContext();
-      return;
-    }
-  }
-  if (action === 'Open zone' && selectedRow.value?.raw) {
-    const zone = selectedRow.value.raw;
-    selectedZoneFilter.value = zone;
-    selectedScopeFilter.value = null;
-    selectedRow.value = null;
-    currentPage.value = 1;
-    await updateWorkspaceRoute();
-    await refreshAggregateTable();
-    return;
-  }
-  if (action === 'Open scope' && selectedRow.value?.raw) {
-    selectedScopeFilter.value = selectedRow.value.raw;
-    selectedZoneFilter.value = null;
-    selectedRow.value = null;
-    currentPage.value = 1;
-    await updateWorkspaceRoute();
-    await refreshAggregateTable();
-    return;
-  }
-  if (action === 'Open network DHCP' && selectedRow.value?.raw?.subnet_id) {
-    const network = allNetworks.value.find(
-      (item) => Number(item.id) === Number(selectedRow.value.raw.subnet_id),
-    );
-    if (network) {
-      activeView.value = 'dhcp';
-      await selectNetwork(network);
-      return;
-    }
-  }
-  await chooseMenuAction(action);
-}
 
-async function openCanonicalAddressFromSelectedRow() {
-  const source = selectedRow.value;
-  const address = source?.raw?.ip_address || source?.address;
+async function openCanonicalAddress(address = selectedRow.value?.address) {
   if (!address || !selectedNetwork.value.id) {
     showLiveNotice('This protocol row is not linked to a canonical IP address.');
     return;
@@ -2041,11 +1622,6 @@ function selectGridRange(row) {
 function selectGridDrag({ ids, additive }) {
   selectedRows.value = additive ? [...new Set([...selectedRows.value, ...ids])] : ids;
 }
-function openBulkAction(mode) {
-  if (mode === 'reserve' ? !bulkReserveAvailable.value : !bulkReleaseAvailable.value) return;
-  bulkActionMode.value = mode;
-  bulkActionVisible.value = true;
-}
 async function openBulkRangeType() {
   if (!selectedRows.value.length || !can('subnets:write')) return;
   try {
@@ -2056,6 +1632,49 @@ async function openBulkRangeType() {
     showLiveNotice(`Could not load Network Range Types: ${apiError(error)}`);
   }
 }
+const workspaceActions = useWorkspaceActions({
+  can,
+  router,
+  state: {
+    selectedRow,
+    selectedNetwork,
+    selectedFolder,
+    selectedRows,
+    selectedZoneFilter,
+    selectedScopeFilter,
+    dnsZones,
+    dhcpScopes,
+    allNetworks,
+    filters,
+    currentPage,
+    activeView,
+    contextKind,
+  },
+  dialogs: {
+    networkDialogs,
+    networkDialogsMounted,
+    dnsDialogs,
+    dhcpDialogs,
+    protocolDialogsMounted,
+    folderManagerVisible,
+    reservationTarget,
+    reservationEditorMode,
+    reservationEditorVisible,
+    scanTarget,
+    scanDialogMode,
+    scanDialogVisible,
+    bulkActionMode,
+    bulkActionVisible,
+  },
+  selectNetwork,
+  updateWorkspaceRoute,
+  loadNetworkContext,
+  refreshAggregateTable,
+  showLiveNotice,
+  openCanonicalAddress,
+  openRangeEditor,
+  openBulkRangeType,
+});
 async function handleBulkComplete(ledger) {
   bulkActionVisible.value = false;
   selectedRows.value = [];

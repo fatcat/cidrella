@@ -128,10 +128,10 @@
     </div>
 
     <div v-if="canManageFolders || canManageDefaults" class="explorer-footer">
-      <button v-if="canManageFolders" @click="emit('notify', 'Open folder management')">
+      <button v-if="canManageFolders" @click="emit('action', 'folder.manage')">
         <i class="pi pi-folder-plus" /> Manage folders
       </button>
-      <button v-if="canManageDefaults" @click="emit('notify', 'Open network defaults')">
+      <button v-if="canManageDefaults" @click="emit('action', 'workspace.defaults')">
         <i class="pi pi-sliders-h" /> Defaults
       </button>
     </div>
@@ -167,7 +167,7 @@ const emit = defineEmits([
   'select-network',
   'select-unallocated-network',
   'toggle-folder',
-  'notify',
+  'action',
 ]);
 const query = defineModel('query', { type: String, default: '' });
 

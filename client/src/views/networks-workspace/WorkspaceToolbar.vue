@@ -96,11 +96,7 @@
       @update:visible-columns="emit('update:visible-columns', $event)"
       @reset="emit('reset-columns')"
     />
-    <button
-      v-if="canCreate"
-      class="button primary compact"
-      @click="emit('notify', viewMeta.addAction)"
-    >
+    <button v-if="canCreate" class="button primary compact" @click="emit('add')">
       <i class="pi pi-plus" /> {{ viewMeta.addLabel }}
     </button>
   </div>
@@ -152,7 +148,7 @@ const emit = defineEmits([
   'reset-columns',
   'clear-filter',
   'clear-filters',
-  'notify',
+  'add',
   'reserve',
   'release',
   'set-range-type',
