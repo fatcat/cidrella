@@ -331,6 +331,60 @@ router.get(
   }),
 );
 
+// POST /api/subnets/configuration-preview: resolve server-owned creation defaults
+// without creating a subnet, range, scope, or scan.
+router.post(
+  '/configuration-preview',
+  requirePerm('subnets:read'),
+  asyncHandler((req, res) => {
+    const { cidr, gateway_policy, gateway_address } = req.body || {};
+    if (typeof cidr !== 'string' || !cidr.trim()) {
+      return res.status(400).json({ error: 'CIDR is required' });
+    }
+    if (!isValidCidr(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
+    if (
+      gateway_policy !== undefined &&
+      !['first', 'last', 'custom', 'none'].includes(gateway_policy)
+    ) {
+      return res.status(400).json({ error: 'gateway_policy must be first, last, custom, or none' });
+    }
+
+    const normalized = normalizeCidr(cidr);
+    const parsed = parseCidr(normalized);
+    const gatewayError = validateGatewayForSubnet(parsed, gateway_address);
+    if (gatewayError) return res.status(400).json({ error: gatewayError });
+    const resolvedPolicy =
+      gateway_policy ||
+      (gateway_address
+        ? SubnetTopology.gatewayPolicyForAddress(parsed, gateway_address)
+        : getSetting('default_gateway_position'));
+    if (resolvedPolicy === 'custom' && !gateway_address) {
+      return res
+        .status(400)
+        .json({ error: 'gateway_address is required for custom gateway policy' });
+    }
+    const resolvedGateway = SubnetTopology.resolveGatewayAddress(
+      parsed,
+      resolvedPolicy,
+      gateway_address,
+    );
+    const pool = DhcpTopology.defaultDhcpPoolForSubnet(parsed, resolvedGateway);
+
+    res.json({
+      cidr: normalized,
+      gateway_policy: resolvedPolicy,
+      gateway_address: resolvedGateway,
+      suggested_name: applyNameTemplate(getSetting('subnet_name_template'), normalized),
+      default_dhcp_pool: pool
+        ? { start_ip: longToIp(pool.startLong), end_ip: longToIp(pool.endLong) }
+        : null,
+      default_dhcp_pool_explanation: pool
+        ? null
+        : 'No automatic DHCP pool fits this prefix. Configure a supported pool explicitly if needed.',
+    });
+  }),
+);
+
 // GET /api/subnets/:id: single subnet with children
 router.get(
   '/:id',

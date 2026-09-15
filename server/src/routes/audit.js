@@ -43,6 +43,21 @@ router.get('/', (req, res) => {
       params.push(...entities);
     }
   }
+  if (req.query.entity_id !== undefined) {
+    const entityTypes = String(req.query.entity_type || '')
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (entityTypes.length !== 1) {
+      return res.status(400).json({ error: 'entity_id requires exactly one entity_type' });
+    }
+    const entityId = Number(req.query.entity_id);
+    if (!Number.isSafeInteger(entityId) || entityId < 1) {
+      return res.status(400).json({ error: 'Invalid entity_id' });
+    }
+    where.push('a.entity_id = ?');
+    params.push(entityId);
+  }
   if (req.query.user_id) {
     const userId = parseInt(req.query.user_id, 10);
     if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user_id' });
