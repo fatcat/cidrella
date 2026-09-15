@@ -17,6 +17,8 @@ vi.mock('../../../src/api/client.js', () => ({
 }));
 
 let reservedIp33 = false;
+let deletedIps = new Set();
+let dnsRecordsHidden = false;
 let summaryStats;
 
 const subnet = {
@@ -191,39 +193,42 @@ function installApiFixtures() {
       });
     if (url === '/workspace/dns-records')
       return response({
-        items: [
-          {
-            id: 51,
-            zone_id: 21,
-            zone_name: 'test.example',
-            zone_type: 'forward',
-            name: 'client',
-            record_fqdn: 'client.test.example',
-            record_type: 'A',
-            value: '1.1.1.40',
-            ttl: 3600,
-            dns_source: 'manual',
-            enabled: 1,
-            ip_address: '1.1.1.40',
-            is_online: 1,
-            related_subnet_ids: [subnet.id],
-          },
-          {
-            id: 52,
-            zone_id: 22,
-            zone_name: '1.1.1.in-addr.arpa',
-            zone_type: 'reverse',
-            name: '40',
-            record_type: 'PTR',
-            value: 'client.test.example',
-            ttl: 3600,
-            dns_source: 'dns',
-            enabled: 1,
-            ip_address: '1.1.1.40',
-            is_online: 1,
-            related_subnet_ids: [subnet.id],
-          },
-        ],
+        items:
+          dnsRecordsHidden && config.params?.table_q !== 'client'
+            ? []
+            : [
+                {
+                  id: 51,
+                  zone_id: 21,
+                  zone_name: 'test.example',
+                  zone_type: 'forward',
+                  name: 'client',
+                  record_fqdn: 'client.test.example',
+                  record_type: 'A',
+                  value: '1.1.1.40',
+                  ttl: 3600,
+                  dns_source: 'manual',
+                  enabled: 1,
+                  ip_address: '1.1.1.40',
+                  is_online: 1,
+                  related_subnet_ids: [subnet.id],
+                },
+                {
+                  id: 52,
+                  zone_id: 22,
+                  zone_name: '1.1.1.in-addr.arpa',
+                  zone_type: 'reverse',
+                  name: '40',
+                  record_type: 'PTR',
+                  value: 'client.test.example',
+                  ttl: 3600,
+                  dns_source: 'dns',
+                  enabled: 1,
+                  ip_address: '1.1.1.40',
+                  is_online: 1,
+                  related_subnet_ids: [subnet.id],
+                },
+              ],
         total: 2,
         page: 1,
         page_size: 256,
@@ -300,6 +305,12 @@ function installApiFixtures() {
       });
     }
     if (url === '/subnets/11/summary') return response(summaryStats);
+    const single = url.match(/^\/subnets\/11\/ips\/([0-9.]+)$/);
+    if (single) {
+      if (deletedIps.has(single[1]))
+        return Promise.reject({ response: { status: 404, data: { error: 'IP not found' } } });
+      return response({ ip: makeIps().find((row) => row.ip_address === single[1]) });
+    }
     if (url === '/subnets/11/ips/1.1.1.1/events' || url === '/subnets/11/ips/1.1.1.33/events') {
       return response({
         events: [
@@ -389,6 +400,8 @@ describe('Networks workspace live preview', () => {
     };
     localStorage.clear();
     reservedIp33 = false;
+    deletedIps = new Set();
+    dnsRecordsHidden = false;
     summaryStats = {
       subnet_id: subnet.id,
       total_addresses: 256,
@@ -716,6 +729,71 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.workspace-address-panel').exists()).toBe(true);
     expect(wrapper.find('.workspace-address-panel').text()).toContain('IP ADDRESS');
     expect(wrapper.find('.view-tabs button.active').text()).toContain('DNS');
+  });
+
+  it('keeps the pinned address open by identity when the page no longer holds it', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.33'))
+      .trigger('click');
+    expect(wrapper.find('.workspace-address-panel').text()).toContain('1.1.1.33');
+
+    await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.40');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1);
+    expect(api.get).toHaveBeenCalledWith('/subnets/11/ips/1.1.1.33');
+    expect(wrapper.find('.workspace-address-panel').text()).toContain('1.1.1.33');
+  });
+
+  it('closes the details panel with a notice when the pinned resource is gone', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.33'))
+      .trigger('click');
+    deletedIps.add('1.1.1.33');
+
+    await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.40');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+
+    expect(wrapper.find('.workspace-address-panel').exists()).toBe(false);
+    expect(wrapper.find('.prototype-notice').text()).toContain('no longer available');
+  });
+
+  it('re-reads a pinned DNS record by zone and id when it leaves the page', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    await wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DNS'))
+      .trigger('click');
+    await flushPromises();
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('client'))
+      .trigger('click');
+    expect(wrapper.find('.details-panel').text()).toContain('DNS record');
+
+    dnsRecordsHidden = true;
+    api.get.mockClear();
+    await wrapper.find('input[aria-label="Search current table"]').setValue('nothing');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+
+    expect(wrapper.findAll('tbody tr')).toHaveLength(0);
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dns-records',
+      expect.objectContaining({
+        params: expect.objectContaining({ zone_id: 21, subnet_id: 11, table_q: 'client' }),
+      }),
+    );
+    expect(wrapper.find('.details-panel').text()).toContain('client');
   });
 
   it('creates and releases an IP Reservation while preserving address context', async () => {

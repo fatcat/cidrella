@@ -152,6 +152,48 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
       (response) => response.data.ip,
     );
   }
+  // The details panel pins a resource by identity, not by page row (W-06).
+  // There is no single-record read for DNS records or DHCP addresses, so a
+  // pinned row that fell off the current page is re-read through the
+  // workspace list with the narrowest filter available and matched by ID.
+  // All three detail reads share the `detail` generation so a late response
+  // for a previous pin is dropped.
+  function loadDnsRecordDetail({ zoneId, subnetId, name, recordId }) {
+    return read(
+      'detail',
+      'dns:read',
+      () =>
+        api.get('/workspace/dns-records', {
+          params: compactParams({
+            zone_id: zoneId,
+            subnet_id: subnetId,
+            table_q: name,
+            page: 1,
+            page_size: 256,
+          }),
+        }),
+      (response) =>
+        (envelope(response).items || []).find((item) => Number(item.id) === Number(recordId)) ||
+        null,
+    );
+  }
+  function loadDhcpAddressDetail({ subnetId, scopeId, ip }) {
+    return read(
+      'detail',
+      'dhcp:read',
+      () =>
+        api.get('/workspace/dhcp-addresses', {
+          params: compactParams({
+            subnet_id: subnetId,
+            scope_id: scopeId,
+            table_q: ip,
+            page: 1,
+            page_size: 256,
+          }),
+        }),
+      (response) => (envelope(response).items || []).find((item) => item.ip_address === ip) || null,
+    );
+  }
   function invalidate(...keys) {
     for (const key of keys) if (resources[key]) resources[key].request += 1;
   }
@@ -169,6 +211,8 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
     loadAddresses,
     loadSummary,
     loadAddressDetail,
+    loadDnsRecordDetail,
+    loadDhcpAddressDetail,
     invalidate,
   };
 }

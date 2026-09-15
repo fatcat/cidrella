@@ -204,7 +204,7 @@
         :items="detailItems"
         :related="relatedResources"
         :actions="rowMenuItems"
-        @close="selectedRow = null"
+        @close="clearDetail"
         @navigate="openRelatedResource"
         @changed="handleAddressChanged"
         @action="runRowAction"
@@ -435,7 +435,14 @@ const expandedFolders = ref(new Set());
 const addressPresentation = ref('table');
 const showAvailable = ref(true);
 const filters = ref({ status: '', type: '', online: '', scan: '', range: '', protocol: '' });
-const selectedRow = ref(null);
+// Details identity (W-06). The panel is pinned to a resource, not to a page
+// row: `detailIdentity` says what is open, `detailFallback` is the last row
+// read for it, and `selectedRow` prefers the live page row when the same
+// resource is on the current page. Paging, filtering or a refresh that drops
+// the row from the page keeps the panel open; resolveDetail() re-reads the
+// resource and only closes the panel when the server says it is gone.
+const detailIdentity = ref(null);
+const detailFallback = ref(null);
 const selectedRows = ref([]);
 const bulkActionVisible = ref(false);
 const bulkActionMode = ref('reserve');
@@ -456,8 +463,6 @@ const dnsDialogs = ref(null);
 const dhcpDialogs = ref(null);
 const applyStatus = ref(null);
 const folderManagerVisible = ref(false);
-const selectedRowView = ref('addresses');
-const selectedRowContext = ref('network');
 const selectedZoneFilter = ref(null);
 const selectedScopeFilter = ref(null);
 const openMenuName = ref(null);
@@ -482,6 +487,7 @@ const fontBump = ref(
 let noticeTimer = null;
 let searchTimer = null;
 let contextRequest = 0;
+let aggregateRequest = 0;
 let restoringRoute = false;
 let pendingRouteWrites = 0;
 let backgroundRefreshRunning = false;
@@ -773,9 +779,7 @@ async function restorePinnedAddress(ip) {
     loadError.value = 'The requested address no longer exists.';
     return;
   }
-  selectedRow.value = mapAddressRows([detail])[0];
-  selectedRowView.value = 'addresses';
-  selectedRowContext.value = 'network';
+  pinDetail(mapAddressRows([detail])[0], { view: 'addresses', context: 'network' });
 }
 
 function restoreContextFromRoute(availableNetworks) {
@@ -1138,6 +1142,101 @@ const addressOverview = computed(() => {
   };
 });
 
+const selectedRow = computed(() => {
+  const identity = detailIdentity.value;
+  if (!identity) return null;
+  const onPage =
+    identity.view === activeView.value
+      ? currentRows.value.find((row) => row.id === identity.id)
+      : null;
+  return onPage || detailFallback.value;
+});
+const selectedRowView = computed(() => detailIdentity.value?.view ?? 'addresses');
+const selectedRowContext = computed(() => detailIdentity.value?.context ?? 'network');
+
+function identityForRow(row, view, context) {
+  const kind = String(row.id).split(':')[0];
+  return {
+    id: row.id,
+    kind,
+    view,
+    context,
+    subnetId: context === 'network' ? selectedNetwork.value.id : (row.raw?.subnet_id ?? null),
+    address: row.address || null,
+    zoneId: row.raw?.zone_id ?? (kind === 'zone' ? row.raw?.id : null) ?? null,
+    scopeId: row.raw?.scope_id ?? row.raw?.dhcp_scope_id ?? null,
+    name: row.name || null,
+    recordId: kind === 'dns' ? row.raw?.id : null,
+  };
+}
+function pinDetail(row, { view = activeView.value, context = contextKind.value } = {}) {
+  detailIdentity.value = identityForRow(row, view, context);
+  detailFallback.value = row;
+}
+function clearDetail() {
+  detailIdentity.value = null;
+  detailFallback.value = null;
+  workspaceResources.invalidate('detail');
+}
+// Re-reads the pinned resource after the page it came from was replaced.
+// `request` is the caller's context generation; a resolve that finishes after
+// a newer load started is dropped along with the load it belonged to.
+async function resolveDetail(request, isCurrent) {
+  const identity = detailIdentity.value;
+  if (!identity) return;
+  if (identity.view === activeView.value) {
+    const onPage = currentRows.value.find((row) => row.id === identity.id);
+    if (onPage) {
+      detailFallback.value = onPage;
+      return;
+    }
+  }
+  let fresh = null;
+  let known = true;
+  if (identity.kind === 'address' && identity.subnetId) {
+    const detail = await workspaceResources.loadAddressDetail(identity.subnetId, identity.address);
+    if (!isCurrent(request)) return;
+    fresh = detail ? mapAddressRows([detail])[0] : null;
+  } else if (identity.kind === 'dns') {
+    const detail = await workspaceResources.loadDnsRecordDetail({
+      zoneId: identity.zoneId,
+      subnetId: identity.context === 'network' ? identity.subnetId : undefined,
+      name: identity.name === '@' ? undefined : identity.name,
+      recordId: identity.recordId,
+    });
+    if (!isCurrent(request)) return;
+    fresh = detail ? mapWorkspaceDnsRows([detail])[0] : null;
+  } else if (identity.kind === 'dhcp') {
+    const detail = await workspaceResources.loadDhcpAddressDetail({
+      subnetId: identity.context === 'network' ? identity.subnetId : undefined,
+      scopeId: identity.context === 'network' ? undefined : identity.scopeId,
+      ip: identity.address,
+    });
+    if (!isCurrent(request)) return;
+    fresh = detail ? mapDhcpRows([detail])[0] : null;
+  } else if (identity.kind === 'zone') {
+    const zone = dnsZones.value.find((item) => `zone:${item.id}` === identity.id);
+    fresh = zone ? mapDnsZoneRows([zone])[0] : null;
+  } else if (identity.kind === 'scope') {
+    const scope = dhcpScopes.value.find((item) => `scope:${item.id}` === identity.id);
+    fresh = scope ? mapDhcpScopeRows([scope])[0] : null;
+  } else if (identity.kind === 'network') {
+    const network = allNetworks.value.find((item) => `network:${item.id}` === identity.id);
+    fresh = network ? mapNetworkRows([network])[0] : null;
+    // Unallocated leaves are not in allNetworks; keep the pinned copy.
+    if (!network && identity.context === 'unallocated') known = false;
+  } else if (identity.kind === 'range') {
+    fresh = rangeRows.value.find((row) => row.id === identity.id) || null;
+  } else {
+    known = false;
+  }
+  if (!known) return;
+  if (fresh) detailFallback.value = fresh;
+  else {
+    clearDetail();
+    showLiveNotice('The selected resource is no longer available.');
+  }
+}
 const filteredRows = computed(() => {
   const globalQuery = resourceQuery.value.trim().toLowerCase();
   const localQueries =
@@ -1417,15 +1516,13 @@ async function selectNetwork(network) {
   clearFilters();
   selectedZoneFilter.value = null;
   selectedScopeFilter.value = null;
-  selectedRow.value = null;
+  clearDetail();
   tableQuery.value = '';
   await updateWorkspaceRoute();
   await loadNetworkContext();
 }
 function selectUnallocatedNetwork(network) {
-  selectedRow.value = mapNetworkRows([network])[0];
-  selectedRowView.value = 'networks';
-  selectedRowContext.value = 'unallocated';
+  pinDetail(mapNetworkRows([network])[0], { view: 'networks', context: 'unallocated' });
 }
 function resetContextNavigation() {
   currentPage.value = 1;
@@ -1433,7 +1530,7 @@ function resetContextNavigation() {
   clearFilters();
   selectedZoneFilter.value = null;
   selectedScopeFilter.value = null;
-  selectedRow.value = null;
+  clearDetail();
   selectedRows.value = [];
   tableQuery.value = '';
 }
@@ -1470,7 +1567,7 @@ async function switchView(view) {
   clearFilters();
   selectedZoneFilter.value = null;
   selectedScopeFilter.value = null;
-  selectedRow.value = null;
+  clearDetail();
   selectedRows.value = [];
   tableQuery.value = '';
   await updateWorkspaceRoute();
@@ -1549,9 +1646,7 @@ function openRowMenu(row) {
   openMenuName.value = 'row';
 }
 function selectRow(row) {
-  selectedRow.value = row;
-  selectedRowView.value = activeView.value;
-  selectedRowContext.value = contextKind.value;
+  pinDetail(row);
   updateWorkspaceRoute();
 }
 
@@ -1567,9 +1662,7 @@ async function openCanonicalAddress(address = selectedRow.value?.address) {
     );
     return;
   }
-  selectedRow.value = mapAddressRows([detail])[0];
-  selectedRowView.value = 'addresses';
-  selectedRowContext.value = 'network';
+  pinDetail(mapAddressRows([detail])[0], { view: 'addresses', context: 'network' });
   await updateWorkspaceRoute();
 }
 function showLiveNotice(message) {
@@ -1687,7 +1780,7 @@ async function handleReservationSaved(result) {
 }
 async function handleRangeChanged(message) {
   rangeEditorVisible.value = false;
-  selectedRow.value = null;
+  clearDetail();
   await loadNetworkContext();
   showLiveNotice(message);
 }
@@ -1799,26 +1892,6 @@ async function loadNetworkContext() {
     if (!detail && ['addresses', 'ranges'].includes(activeView.value))
       throw new Error(workspaceResources.resources.addresses.error || 'Address data unavailable');
     if (detail) addressRows.value = mapAddressRows(detail.items);
-    if (
-      selectedRow.value &&
-      selectedRowView.value === 'addresses' &&
-      selectedRowContext.value === 'network'
-    ) {
-      const visible = addressRows.value.find((row) => row.address === selectedRow.value.address);
-      if (visible) selectedRow.value = visible;
-      else {
-        const pinned = await workspaceResources.loadAddressDetail(
-          selectedNetwork.value.id,
-          selectedRow.value.address,
-        );
-        if (request !== contextRequest) return;
-        if (pinned) selectedRow.value = mapAddressRows([pinned])[0];
-        else {
-          selectedRow.value = null;
-          showLiveNotice('The selected address is no longer available.');
-        }
-      }
-    }
     if (detail) rangeRows.value = mapRangeRows(detail.ranges, networkScopes.value);
     addressFilteredTotal.value = detail?.filteredTotal || 0;
     addressTotal.value = Number(
@@ -1840,6 +1913,7 @@ async function loadNetworkContext() {
       if (activeView.value === 'dhcp')
         totalPages.value = Math.max(1, Math.ceil(dhcp.total / pageSize.value));
     }
+    await resolveDetail(request, (generation) => generation === contextRequest);
   } catch (error) {
     if (request === contextRequest) loadError.value = apiError(error);
   } finally {
@@ -1870,7 +1944,7 @@ async function refreshSelectedNetwork() {
     contextKind.value = priorFolder ? 'folder' : 'estate';
     selectedFolder.value = priorFolder || null;
     activeView.value = 'networks';
-    selectedRow.value = null;
+    clearDetail();
     showLiveNotice(
       `The selected network no longer exists. Showing ${priorFolder?.name || 'All Networks'}.`,
     );
@@ -1904,7 +1978,7 @@ async function revalidateWorkspaceContext() {
       contextKind.value = folder ? 'folder' : 'estate';
       selectedFolder.value = folder || null;
       activeView.value = 'networks';
-      selectedRow.value = null;
+      clearDetail();
       message = `The selected network no longer exists. Showing ${folder?.name || 'All Networks'}.`;
     } else selectedNetwork.value = network;
   }
@@ -1913,7 +1987,7 @@ async function revalidateWorkspaceContext() {
     !dnsZones.value.some((zone) => Number(zone.id) === Number(selectedZoneFilter.value.id))
   ) {
     selectedZoneFilter.value = null;
-    selectedRow.value = null;
+    clearDetail();
     message = 'The selected DNS zone no longer exists. Showing the zone inventory.';
   }
   if (
@@ -1921,7 +1995,7 @@ async function revalidateWorkspaceContext() {
     !dhcpScopes.value.some((scope) => Number(scope.id) === Number(selectedScopeFilter.value.id))
   ) {
     selectedScopeFilter.value = null;
-    selectedRow.value = null;
+    clearDetail();
     message = 'The selected DHCP scope no longer exists. Showing the scope inventory.';
   }
   if (message) {
@@ -2022,6 +2096,7 @@ async function sortBy(key) {
 }
 
 async function refreshAggregateTable() {
+  const request = ++aggregateRequest;
   const params = {
     folder_id: contextKind.value === 'folder' ? selectedFolder.value?.id : undefined,
     q: resourceQuery.value.trim() || undefined,
@@ -2100,6 +2175,8 @@ async function refreshAggregateTable() {
         ? new Set((networks?.items || []).map((network) => Number(network.id)))
         : null;
   }
+  if (request === aggregateRequest)
+    await resolveDetail(request, (generation) => generation === aggregateRequest);
 }
 
 function retryVisibleResource() {
