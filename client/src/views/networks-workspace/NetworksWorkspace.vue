@@ -206,7 +206,7 @@
         :actions="rowMenuItems"
         @close="clearDetail"
         @navigate="openRelatedResource"
-        @changed="handleAddressChanged"
+        @changed="refreshAfterMutation('address', $event)"
         @action="runRowAction"
       />
       <ApplyStatusBanner
@@ -215,7 +215,7 @@
         :can-dns-write="can('dns:write')"
         :can-dhcp-write="can('dhcp:write')"
         :is-admin="user?.role === 'admin'"
-        @changed="handleApplyStatusChanged"
+        @changed="refreshAfterMutation('apply', $event)"
       />
     </section>
 
@@ -251,7 +251,7 @@
       :range="rangeEditorTarget"
       :range-types="rangeTypes"
       @saved="handleRangeChanged('Network range saved')"
-      @deleted="handleRangeChanged('Network range deleted')"
+      @deleted="handleRangeChanged('Network range deleted', { deleted: true })"
     />
     <AddressScanDialog
       v-if="selectedNetwork.id && scanTarget"
@@ -261,7 +261,7 @@
       :address-family="Number(scanTarget.raw?.address_family || 4)"
       :current-override="scanTarget.raw?.scan_enabled"
       :mode="scanDialogMode"
-      @changed="handleAddressChanged"
+      @changed="refreshAfterMutation('address', $event)"
     />
     <FolderManagerDialog
       v-model:visible="folderManagerVisible"
@@ -275,20 +275,20 @@
       ref="networkDialogs"
       :selected-node="networkDialogNode"
       :folders="folders"
-      @folder-created="handleNetworkMutation"
-      @folder-updated="handleNetworkMutation"
-      @folder-deleted="handleNetworkMutation"
-      @network-created="handleNetworkMutation"
-      @network-configured="handleNetworkMutation"
-      @network-updated="handleNetworkMutation"
-      @network-divided="handleNetworkMutation"
-      @network-deleted="handleNetworkMutation"
-      @networks-merged="handleNetworkMutation"
-      @group-configured="handleNetworkMutation"
+      @folder-created="refreshAfterMutation('network')"
+      @folder-updated="refreshAfterMutation('network')"
+      @folder-deleted="refreshAfterMutation('network')"
+      @network-created="refreshAfterMutation('network')"
+      @network-configured="refreshAfterMutation('network')"
+      @network-updated="refreshAfterMutation('network')"
+      @network-divided="refreshAfterMutation('network')"
+      @network-deleted="refreshAfterMutation('network')"
+      @networks-merged="refreshAfterMutation('network')"
+      @group-configured="refreshAfterMutation('network')"
     />
     <div v-if="protocolDialogsMounted" class="protocol-dialog-providers">
-      <DnsPanel ref="dnsDialogs" dialogs-only @changed="handleProtocolMutation" />
-      <DhcpPanel ref="dhcpDialogs" dialogs-only @changed="handleProtocolMutation" />
+      <DnsPanel ref="dnsDialogs" dialogs-only @changed="refreshAfterMutation('dns', $event)" />
+      <DhcpPanel ref="dhcpDialogs" dialogs-only @changed="refreshAfterMutation('dhcp', $event)" />
     </div>
 
     <div v-if="openMenuName" class="menu-scrim" @click="closeMenu" />
@@ -361,9 +361,9 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
-import api from '../../api/client.js';
 import { useAutoRefresh } from '../../composables/useAutoRefresh.js';
 import { usePermissions } from '../../composables/usePermissions.js';
+import { useSubnetStore } from '../../stores/subnets.js';
 import NetworkDialogs from '../../components/NetworkDialogs.vue';
 import DnsPanel from '../../components/DnsPanel.vue';
 import DhcpPanel from '../../components/DhcpPanel.vue';
@@ -511,6 +511,7 @@ let menuInvoker = null;
 const { can, user, refreshCapabilities } = usePermissions();
 const router = useRouter();
 const { listRangeTypes } = useRangeActions();
+const subnetStore = useSubnetStore();
 async function handleForbidden() {
   await refreshCapabilities();
   showLiveNotice(
@@ -1646,25 +1647,6 @@ async function openFolderDialog(mode, folder = null) {
   else networkDialogs.value.openCreateFolder();
 }
 
-async function handleNetworkMutation() {
-  await loadWorkspace();
-  await revalidateWorkspaceContext();
-  if (contextKind.value === 'network') await loadNetworkContext();
-  else await refreshAggregateTable();
-}
-
-async function handleProtocolMutation(message) {
-  if (contextKind.value === 'network') await loadNetworkContext();
-  else await refreshAggregateTable();
-  showLiveNotice(message);
-  await applyStatus.value?.refresh();
-}
-
-async function handleApplyStatusChanged(message) {
-  showLiveNotice(message);
-  await refreshCurrentContext();
-}
-
 async function openRangeEditor(range) {
   if (!selectedNetwork.value.id || !can('subnets:write')) return;
   try {
@@ -1807,18 +1789,20 @@ const workspaceActions = useWorkspaceActions({
 async function handleBulkComplete(ledger) {
   bulkActionVisible.value = false;
   selectedRows.value = [];
-  await handleAddressChanged(
+  await refreshAfterMutation(
+    'address',
     `${ledger.updated} address${ledger.updated === 1 ? '' : 'es'} updated; ${ledger.skipped} skipped`,
   );
 }
 async function handleReservationSaved(result) {
-  await handleAddressChanged(result.message);
+  await refreshAfterMutation('address', result.message);
 }
-async function handleRangeChanged(message) {
+async function handleRangeChanged(message, { deleted = false } = {}) {
   rangeEditorVisible.value = false;
-  clearDetail();
-  await loadNetworkContext();
-  showLiveNotice(message);
+  // A deleted range would otherwise close the panel with its own "no longer
+  // available" notice on top of the save message.
+  if (deleted) clearDetail();
+  await refreshAfterMutation('range', message);
 }
 function handleBulkPartial(ledger) {
   showLiveNotice(
@@ -1828,7 +1812,7 @@ function handleBulkPartial(ledger) {
 async function handleRangeTypeSaved() {
   bulkRangeVisible.value = false;
   selectedRows.value = [];
-  await handleAddressChanged('Network Range Type updated');
+  await refreshAfterMutation('address', 'Network Range Type updated');
 }
 function resizeSmallText(delta) {
   fontBump.value = Math.min(2, Math.max(0, fontBump.value + delta));
@@ -1957,39 +1941,6 @@ async function loadNetworkContext() {
   }
 }
 
-async function refreshSelectedNetwork() {
-  const selectedId = Number(selectedNetwork.value.id);
-  const treeResponse = await api.get('/subnets');
-  folders.value = preserveEmptyFolders(
-    buildExplorerFolders(treeResponse.data.folders),
-    treeResponse.data.folders,
-  );
-  unallocatedFolders.value = buildUnallocatedFolders(treeResponse.data.folders);
-  const refreshed = folders.value
-    .flatMap((folder) => folder.networks)
-    .find((network) => Number(network.id) === selectedId);
-  if (refreshed) {
-    selectedNetwork.value = refreshed;
-    selectedFolder.value =
-      folders.value.find((folder) => Number(folder.id) === Number(refreshed.folderId)) ||
-      selectedFolder.value;
-  } else {
-    const priorFolder = folders.value.find(
-      (folder) => Number(folder.id) === Number(selectedFolder.value?.id),
-    );
-    contextKind.value = priorFolder ? 'folder' : 'estate';
-    selectedFolder.value = priorFolder || null;
-    activeView.value = 'networks';
-    clearDetail();
-    showLiveNotice(
-      `The selected network no longer exists. Showing ${priorFolder?.name || 'All Networks'}.`,
-    );
-    await updateWorkspaceRoute({ replace: true });
-    return;
-  }
-  await loadNetworkContext();
-}
-
 async function revalidateWorkspaceContext() {
   let message = '';
   if (contextKind.value === 'folder') {
@@ -2037,27 +1988,6 @@ async function revalidateWorkspaceContext() {
   if (message) {
     showLiveNotice(message);
     await updateWorkspaceRoute({ replace: true });
-  }
-}
-
-async function handleAddressChanged(message) {
-  showLiveNotice(`${message}. Saved.`);
-  try {
-    await refreshSelectedNetwork();
-  } catch (error) {
-    clearTimeout(noticeTimer);
-    notice.value = `${message}. Saved. Live data could not be refreshed: ${apiError(error)}`;
-    const retry = async () => {
-      try {
-        await refreshSelectedNetwork();
-        showLiveNotice('Live data refreshed.');
-      } catch (retryError) {
-        clearTimeout(noticeTimer);
-        notice.value = `Saved. Live data still could not be refreshed: ${apiError(retryError)}`;
-        noticeRetry.value = retry;
-      }
-    };
-    noticeRetry.value = retry;
   }
 }
 
@@ -2220,27 +2150,84 @@ function retryVisibleResource() {
   return refreshAggregateTable();
 }
 
+// Section 7 mutation and refresh contract. Every write lands in
+// refreshAfterMutation with the kind of resource it touched; the table says
+// which shared reads that kind makes stale. The visible context (address
+// page, DNS/DHCP rows, summary, pinned details) is always re-read afterwards,
+// the old interface's subnet cache is dropped so the two UIs cannot disagree
+// after a save, and the header stats listener is told. `refresh` is the
+// auto-refresh plan: everything shared, no cache or status side effects.
+const MUTATION_REFRESH = {
+  network: { tree: true, networks: true, zones: true, scopes: true, applyStatus: true },
+  address: { tree: true, scopes: true },
+  range: { scopes: true },
+  dns: { tree: true, zones: true, applyStatus: true },
+  dhcp: { tree: true, scopes: true, applyStatus: true },
+  apply: { tree: true, zones: true, scopes: true },
+  refresh: { tree: true, zones: true, scopes: true },
+};
+
+async function reloadSharedReads(kind) {
+  const plan = MUTATION_REFRESH[kind];
+  const query = resourceQuery.value.trim() || tableQuery.value.trim();
+  const [tree, zones, scopes] = await Promise.all([
+    plan.tree ? workspaceResources.loadTree() : null,
+    plan.zones ? workspaceResources.loadZones() : null,
+    plan.scopes ? workspaceResources.loadScopes() : null,
+    plan.networks && query
+      ? workspaceResources.loadNetworks({ q: resourceQuery.value.trim() || undefined })
+      : null,
+  ]);
+  if (plan.tree && !tree)
+    throw new Error(workspaceResources.resources.tree.error || 'Network tree unavailable');
+  if (tree) {
+    folders.value = preserveEmptyFolders(buildExplorerFolders(tree.folders), tree.folders);
+    unallocatedFolders.value = buildUnallocatedFolders(tree.folders);
+  }
+  if (zones) dnsZones.value = zones;
+  if (scopes) dhcpScopes.value = scopes;
+  await revalidateWorkspaceContext();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
+  if (plan.applyStatus) await applyStatus.value?.refresh();
+}
+
+async function refreshAfterMutation(kind, message = '') {
+  if (kind !== 'apply') {
+    subnetStore.invalidateDetailCache(
+      ['address', 'range'].includes(kind) ? selectedNetwork.value.id : undefined,
+    );
+    globalThis.window?.dispatchEvent(new Event('ipam:stats-changed'));
+  }
+  if (message) showLiveNotice(message);
+  const saved = message ? `${message}. ` : '';
+  try {
+    await reloadSharedReads(kind);
+  } catch (error) {
+    clearTimeout(noticeTimer);
+    notice.value = `${saved}Saved; refresh failed: ${apiError(error)}`;
+    const retry = async () => {
+      try {
+        await reloadSharedReads(kind);
+        showLiveNotice('Live data refreshed.');
+      } catch (retryError) {
+        clearTimeout(noticeTimer);
+        notice.value = `Saved; refresh still failed: ${apiError(retryError)}`;
+        noticeRetry.value = retry;
+      }
+    };
+    noticeRetry.value = retry;
+  }
+}
+
 async function refreshCurrentContext() {
   if (backgroundRefreshRunning || loading.value || loadingContext.value) return;
   backgroundRefreshRunning = true;
   try {
-    const [tree, zones, scopes] = await Promise.all([
-      workspaceResources.loadTree(),
-      workspaceResources.loadZones(),
-      workspaceResources.loadScopes(),
-    ]);
-    if (tree) {
-      const selectedId = Number(selectedNetwork.value.id);
-      folders.value = preserveEmptyFolders(buildExplorerFolders(tree.folders), tree.folders);
-      unallocatedFolders.value = buildUnallocatedFolders(tree.folders);
-      const refreshed = allNetworks.value.find((network) => Number(network.id) === selectedId);
-      if (refreshed) selectedNetwork.value = refreshed;
-    }
-    if (zones) dnsZones.value = zones;
-    if (scopes) dhcpScopes.value = scopes;
-    await revalidateWorkspaceContext();
-    if (contextKind.value === 'network') await loadNetworkContext();
-    else await refreshAggregateTable();
+    await reloadSharedReads('refresh');
+  } catch {
+    // Auto-refresh is silent; the next tick tries again and the visible
+    // resource keeps its own error and retry control.
   } finally {
     backgroundRefreshRunning = false;
   }

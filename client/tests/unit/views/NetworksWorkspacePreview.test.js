@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
+import { useSubnetStore } from '../../../src/stores/subnets.js';
 import NetworksWorkspacePreview from '../../../src/views/NetworksWorkspacePreview.vue';
 import NetworksWorkspace from '../../../src/views/networks-workspace/NetworksWorkspace.vue';
 import AddressGrid from '../../../src/views/networks-workspace/AddressGrid.vue';
@@ -830,6 +831,62 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('button[data-track="workspace-create-ip-reservation"]').exists()).toBe(
       true,
     );
+  });
+
+  it('re-reads shared inventories, drops the old cache and reports refresh failures after a save', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    const store = useSubnetStore();
+    const invalidate = vi.spyOn(store, 'invalidateDetailCache');
+    const statsChanged = vi.fn();
+    globalThis.window.addEventListener('ipam:stats-changed', statsChanged);
+    const calls = () => api.get.mock.calls.map(([url]) => url);
+
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.33'))
+      .trigger('click');
+    await wrapper.find('button[data-track="workspace-create-ip-reservation"]').trigger('click');
+    await wrapper.find('#workspace-reservation-note').setValue('Hold for printer');
+    api.get.mockClear();
+    await wrapper.find('.inline-action').trigger('submit');
+    await flushPromises();
+    await flushPromises();
+
+    // IP Reservation: tree (utilization), scope counts, the address page,
+    // summary and the pinned address. Zones are untouched by an allocation.
+    expect(calls()).toEqual(
+      expect.arrayContaining(['/subnets', '/dhcp/scopes', '/subnets/11/ips', '/subnets/11/summary']),
+    );
+    expect(calls()).not.toContain('/dns/zones');
+    expect(invalidate).toHaveBeenCalledWith(11);
+    expect(statsChanged).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('.prototype-notice').text()).toBe('WorkspaceIP Reservation created');
+
+    // A DNS change re-reads zones as well and clears the whole old cache.
+    api.get.mockClear();
+    wrapper.findComponent(NetworksWorkspace).vm.refreshAfterMutation('dns', 'DNS record saved');
+    await flushPromises();
+    await flushPromises();
+    expect(calls()).toEqual(expect.arrayContaining(['/subnets', '/dns/zones', '/subnets/11/ips']));
+    expect(invalidate).toHaveBeenLastCalledWith(undefined);
+    expect(statsChanged).toHaveBeenCalledTimes(2);
+
+    // Saved but the follow-up read failed: say so, keep the page, offer Retry.
+    api.get.mockImplementationOnce(() => Promise.reject(new Error('tree offline')));
+    wrapper.findComponent(NetworksWorkspace).vm.refreshAfterMutation('address', 'Released');
+    await flushPromises();
+    await flushPromises();
+    expect(wrapper.find('.prototype-notice').text()).toContain('Released. Saved; refresh failed');
+    expect(wrapper.find('.prototype-notice').text()).toContain('tree offline');
+    expect(wrapper.findAll('tbody tr').length).toBeGreaterThan(0);
+    api.get.mockClear();
+    await wrapper.find('.prototype-notice button').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(calls()).toContain('/subnets');
+    expect(wrapper.find('.prototype-notice').text()).toBe('WorkspaceLive data refreshed.');
+    globalThis.window.removeEventListener('ipam:stats-changed', statsChanged);
   });
 
   it('drives every menu through the action registry with a row-derived target', async () => {
