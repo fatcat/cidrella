@@ -27,7 +27,10 @@
           v-for="row in rows"
           :key="row.id"
           :class="{ selected: selectedRowId === row.id }"
+          tabindex="0"
+          :aria-selected="selectedRowId === row.id"
           @click="emit('select', row)"
+          @keydown="handleRowKeydown($event, row)"
         >
           <td v-if="showCheckboxes" class="check-cell" @click.stop>
             <input
@@ -81,7 +84,7 @@ import { EMPTY_CELL } from '../../utils/format.js';
 // NetworksWorkspace.vue because it drives the grid presentations too. Rows are
 // the parent's display adapters (mapAddressRows and friends); this component
 // reads their fields and never classifies an address itself.
-defineProps({
+const props = defineProps({
   columns: { type: Array, required: true },
   rows: { type: Array, required: true },
   showCheckboxes: { type: Boolean, default: false },
@@ -91,6 +94,33 @@ defineProps({
   sortOrder: { type: Number, default: 1 },
 });
 const emit = defineEmits(['sort', 'select', 'toggle-row', 'toggle-all', 'row-menu']);
+
+// Rows are focusable so the table works without a pointer (T-38): Enter
+// opens details, Space toggles selection where the view has checkboxes,
+// ArrowUp/ArrowDown move between rows, Shift+F10 or the ContextMenu key
+// opens the row menu on the row itself.
+function handleRowKeydown(event, row) {
+  if (event.target !== event.currentTarget) return;
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    emit('select', row);
+  } else if (event.key === ' ' && props.showCheckboxes) {
+    event.preventDefault();
+    emit('toggle-row', row.id);
+  } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault();
+    emit('row-menu', row, event.currentTarget);
+  } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const sibling =
+      event.key === 'ArrowDown'
+        ? event.currentTarget.nextElementSibling
+        : event.currentTarget.previousElementSibling;
+    if (sibling) {
+      event.preventDefault();
+      sibling.focus();
+    }
+  }
+}
 
 function cellValue(row, column) {
   const aliases = {
@@ -178,6 +208,10 @@ tbody tr {
 tbody tr:hover,
 tbody tr.selected {
   background: var(--preview-accent-soft);
+}
+tbody tr:focus-visible {
+  outline: 2px solid var(--cid-primary-color);
+  outline-offset: -2px;
 }
 .check-cell {
   width: 1.5rem;

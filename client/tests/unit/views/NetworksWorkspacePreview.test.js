@@ -916,6 +916,31 @@ describe('Networks workspace live preview', () => {
     wrapper.unmount();
   });
 
+  it('operates table rows from the keyboard', async () => {
+    const wrapper = await mountPreview({ attachTo: document.body });
+    await enterTestNetwork(wrapper);
+    const rows = wrapper.findAll('tbody tr');
+    rows[0].element.focus();
+    await rows[0].trigger('keydown', { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(rows[1].element);
+
+    await rows[1].trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect(wrapper.find('.workspace-address-panel').text()).toContain(rows[1].text().slice(0, 7));
+    expect(rows[1].attributes('aria-selected')).toBe('true');
+
+    await rows[1].trigger('keydown', { key: ' ' });
+    expect(rows[1].find('input[type="checkbox"]').element.checked).toBe(true);
+
+    await rows[1].trigger('keydown', { key: 'F10', shiftKey: true });
+    await flushPromises();
+    expect(wrapper.find('.row-menu').exists()).toBe(true);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect(document.activeElement).toBe(rows[1].element);
+    wrapper.unmount();
+  });
+
   it('persists a capped small-text size without resizing larger headings', async () => {
     const wrapper = await mountPreview();
     expect(wrapper.find('.font-sizer output').text()).toBe('+1 pt');
