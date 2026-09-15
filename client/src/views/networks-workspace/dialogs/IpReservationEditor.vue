@@ -4,7 +4,7 @@
     modal
     :header="isReserve ? 'Create IP Reservation' : 'Release IP Reservation'"
     :style="{ width: '32rem', maxWidth: 'calc(100vw - 2rem)' }"
-    @update:visible="emit('update:visible', $event)"
+    @update:visible="requestClose"
   >
     <form class="reservation-form" @submit.prevent="submit">
       <label v-if="!address">
@@ -23,8 +23,9 @@
         leases and DNS records are not removed.
       </p>
       <p v-if="error" class="error" role="alert">{{ error }}</p>
+      <DiscardPrompt v-if="confirmingDiscard" @keep="keepEditing" @discard="discard" />
       <div class="dialog-actions">
-        <Button label="Cancel" severity="secondary" :disabled="busy" @click="close" />
+        <Button label="Cancel" severity="secondary" :disabled="busy" @click="requestClose()" />
         <Button
           type="submit"
           :label="isReserve ? 'Reserve address' : 'Release reservation'"
@@ -43,6 +44,8 @@ import api from '../../../api/client.js';
 import Button from '../../../ui/Button.js';
 import Dialog from '../../../ui/Dialog.js';
 import { apiError } from '../../../utils/format.js';
+import { useDiscardGuard } from '../composables/useDiscardGuard.js';
+import DiscardPrompt from './DiscardPrompt.vue';
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -61,6 +64,20 @@ const busy = ref(false);
 const error = ref('');
 const isReserve = computed(() => props.mode === 'reserve');
 
+// Release has nothing to type, so only the reserve form can be dirty.
+const {
+  confirmingDiscard,
+  requestClose,
+  keepEditing,
+  discard,
+  reset: resetGuard,
+} = useDiscardGuard({
+  busy,
+  isDirty: () =>
+    isReserve.value && (note.value.trim() !== '' || targetAddress.value.trim() !== props.address),
+  close: () => emit('update:visible', false),
+});
+
 watch(
   () => props.visible,
   (visible) => {
@@ -68,14 +85,11 @@ watch(
       note.value = '';
       targetAddress.value = props.address;
       error.value = '';
+      resetGuard();
     }
   },
   { immediate: true },
 );
-
-function close() {
-  if (!busy.value) emit('update:visible', false);
-}
 
 async function submit() {
   const cleanNote = note.value.trim();

@@ -12,9 +12,14 @@ function mountEditor(mode) {
     props: { visible: true, subnetId: 7, address: '10.0.0.33', mode },
     global: {
       stubs: {
-        Dialog: { template: '<section><slot /></section>' },
+        Dialog: {
+          emits: ['update:visible'],
+          template:
+            '<section><button class="vendor-close" @click="$emit(\'update:visible\', false)">x</button><slot /></section>',
+        },
         Button: {
           props: ['label'],
+          emits: ['click'],
           template: '<button :type="$attrs.type" @click="$emit(\'click\')">{{ label }}</button>',
         },
       },
@@ -50,5 +55,44 @@ describe('workspace IP Reservation editor', () => {
       allocation_state: 'unassigned',
       note: null,
     });
+  });
+
+  it('does not silently discard a typed note on dismiss', async () => {
+    const wrapper = mountEditor('reserve');
+    // Clean form: dismissal closes straight away.
+    await wrapper.find('.vendor-close').trigger('click');
+    expect(wrapper.emitted('update:visible')).toEqual([[false]]);
+
+    await wrapper.find('textarea').setValue('Printer replacement');
+    await wrapper.find('.vendor-close').trigger('click');
+    expect(wrapper.emitted('update:visible')).toHaveLength(1);
+    expect(wrapper.find('[role="alertdialog"]').text()).toContain('Discard your changes?');
+
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Keep editing')
+      .trigger('click');
+    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false);
+    expect(wrapper.find('textarea').element.value).toBe('Printer replacement');
+
+    // Cancel goes through the same guard as the vendor close.
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Cancel')
+      .trigger('click');
+    expect(wrapper.emitted('update:visible')).toHaveLength(1);
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Discard')
+      .trigger('click');
+    expect(wrapper.emitted('update:visible')).toHaveLength(2);
+  });
+
+  it('closes a dirty form on the second dismissal so Escape twice still works', async () => {
+    const wrapper = mountEditor('reserve');
+    await wrapper.find('textarea').setValue('Printer replacement');
+    await wrapper.find('.vendor-close').trigger('click');
+    await wrapper.find('.vendor-close').trigger('click');
+    expect(wrapper.emitted('update:visible')).toEqual([[false]]);
   });
 });

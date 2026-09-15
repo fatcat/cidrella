@@ -5,6 +5,7 @@
     modal
     :style="{ width: '32rem' }"
     data-track="workspace-bulk-range-type"
+    :close-on-escape="!overlap"
     @update:visible="emit('update:visible', $event)"
   >
     <p>{{ selectedRuns.length }} exact selected run{{ selectedRuns.length === 1 ? '' : 's' }}</p>

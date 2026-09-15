@@ -292,7 +292,12 @@
     </div>
 
     <div v-if="openMenuName" class="menu-scrim" @click="closeMenu" />
-    <div v-if="openMenuName === 'create'" class="floating-menu create-menu" role="menu">
+    <div
+      v-if="openMenuName === 'create'"
+      class="floating-menu create-menu"
+      role="menu"
+      @keydown="handleMenuKeydown"
+    >
       <span>CREATE RESOURCE</span>
       <button
         v-for="item in createMenuItems"
@@ -306,7 +311,12 @@
         >
       </button>
     </div>
-    <div v-if="openMenuName === 'actions'" class="floating-menu actions-menu" role="menu">
+    <div
+      v-if="openMenuName === 'actions'"
+      class="floating-menu actions-menu"
+      role="menu"
+      @keydown="handleMenuKeydown"
+    >
       <span>{{ actionMenuTitle }}</span>
       <button
         v-for="item in actionMenuItems"
@@ -321,7 +331,12 @@
         >
       </button>
     </div>
-    <div v-if="openMenuName === 'row'" class="floating-menu row-menu" role="menu">
+    <div
+      v-if="openMenuName === 'row'"
+      class="floating-menu row-menu"
+      role="menu"
+      @keydown="handleMenuKeydown"
+    >
       <span>{{ activeView.toUpperCase() }} ACTIONS</span>
       <button
         v-for="item in rowMenuItems"
@@ -1599,6 +1614,26 @@ function handleWorkspaceKeydown(event) {
   event.preventDefault();
   closeMenu();
 }
+// Arrow keys walk the open menu; focus lands on the first item when a menu
+// opens (see the openMenuName watcher) and goes back to the invoker on close.
+function handleMenuKeydown(event) {
+  const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]')];
+  if (!items.length) return;
+  const current = items.indexOf(document.activeElement);
+  let next = null;
+  if (event.key === 'ArrowDown') next = (current + 1) % items.length;
+  else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  if (next == null) return;
+  event.preventDefault();
+  items[next].focus();
+}
+watch(openMenuName, async (name) => {
+  if (!name) return;
+  await nextTick();
+  document.querySelector(`.floating-menu.${name}-menu [role="menuitem"]`)?.focus();
+});
 
 async function openFolderDialog(mode, folder = null) {
   folderManagerVisible.value = false;
@@ -1641,8 +1676,9 @@ async function openRangeEditor(range) {
     showLiveNotice(`Could not load Network Range Types: ${apiError(error)}`);
   }
 }
-function openRowMenu(row) {
+function openRowMenu(row, invoker = null) {
   selectRow(row);
+  if (invoker) menuInvoker = invoker;
   openMenuName.value = 'row';
 }
 function selectRow(row) {

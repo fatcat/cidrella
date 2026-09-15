@@ -4,7 +4,7 @@
     modal
     :header="isReserve ? 'Create IP Reservations' : 'Release IP Reservations'"
     :style="{ width: '34rem', maxWidth: 'calc(100vw - 2rem)' }"
-    @update:visible="emit('update:visible', $event)"
+    @update:visible="requestClose"
   >
     <form class="bulk-action-form" @submit.prevent="submit">
       <p>
@@ -31,8 +31,9 @@
       <p v-if="ledger" class="result" :class="{ error: ledger.error }" role="status">
         {{ resultMessage }}
       </p>
+      <DiscardPrompt v-if="confirmingDiscard" @keep="keepEditing" @discard="discard" />
       <div class="dialog-actions">
-        <Button label="Cancel" severity="secondary" :disabled="busy" @click="close" />
+        <Button label="Cancel" severity="secondary" :disabled="busy" @click="requestClose()" />
         <Button
           type="submit"
           :label="submitLabel"
@@ -48,6 +49,8 @@
 import { computed, ref, watch } from 'vue';
 import Button from '../../../ui/Button.js';
 import Dialog from '../../../ui/Dialog.js';
+import { useDiscardGuard } from '../composables/useDiscardGuard.js';
+import DiscardPrompt from './DiscardPrompt.vue';
 import { executeBulkAllocation } from '../workspace-actions.js';
 
 const props = defineProps({
@@ -79,20 +82,33 @@ const submitLabel = computed(() => {
   return isReserve.value ? 'Create reservations' : 'Release reservations';
 });
 
+// A typed note is the only thing to lose. After a partial failure the
+// remaining runs are also worth a pause before closing.
+const {
+  confirmingDiscard,
+  requestClose,
+  keepEditing,
+  discard,
+  reset: resetGuard,
+} = useDiscardGuard({
+  busy,
+  isDirty: () =>
+    (isReserve.value && note.value.trim() !== '') ||
+    Boolean(ledger.value?.error && pendingRuns.value.length),
+  close: () => emit('update:visible', false),
+});
+
 watch(
   () => props.visible,
   (visible) => {
     if (visible) {
       ledger.value = null;
       pendingRuns.value = props.runs.map((run) => ({ ...run }));
+      resetGuard();
     }
   },
   { immediate: true },
 );
-
-function close() {
-  if (!busy.value) emit('update:visible', false);
-}
 
 async function submit() {
   if (busy.value || !pendingRuns.value.length || (isReserve.value && !note.value.trim())) return;

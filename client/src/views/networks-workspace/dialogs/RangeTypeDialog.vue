@@ -5,7 +5,8 @@
     modal
     :style="{ width: '26rem' }"
     data-track="workspace-range-type-editor"
-    @update:visible="emit('update:visible', $event)"
+    :close-on-escape="!confirmingDelete"
+    @update:visible="requestClose"
   >
     <form class="workspace-range-form" @submit.prevent="save">
       <label>Name <InputText v-model="form.name" class="w-full" maxlength="64" required /></label>
@@ -23,6 +24,7 @@
         change DHCP, DNS, scanning, or liveness.
       </p>
       <p v-if="error" class="workspace-range-error" role="alert">{{ error }}</p>
+      <DiscardPrompt v-if="confirmingDiscard" @keep="keepEditing" @discard="discard" />
       <button type="submit" hidden>Save</button>
     </form>
     <template #footer>
@@ -34,7 +36,7 @@
         data-track="workspace-range-type-delete"
         @click="confirmingDelete = true"
       />
-      <Button label="Cancel" severity="secondary" @click="close" />
+      <Button label="Cancel" severity="secondary" @click="requestClose()" />
       <Button
         :label="rangeType ? 'Save' : 'Create'"
         :loading="busy"
@@ -78,6 +80,8 @@ import Dialog from '../../../ui/Dialog.js';
 import InputText from '../../../ui/InputText.js';
 import { apiError } from '../../../utils/format.js';
 import { useRangeActions } from '../composables/useRangeActions.js';
+import { useDiscardGuard } from '../composables/useDiscardGuard.js';
+import DiscardPrompt from './DiscardPrompt.vue';
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -86,8 +90,17 @@ const props = defineProps({
 const emit = defineEmits(['update:visible', 'saved', 'deleted']);
 const { busy, createRangeType, updateRangeType, deleteRangeType } = useRangeActions();
 const form = reactive({ name: '', color: '#14b8a6', description: '' });
+let baseline = JSON.stringify(form);
 const error = ref('');
 const confirmingDelete = ref(false);
+
+const {
+  confirmingDiscard,
+  requestClose,
+  keepEditing,
+  discard,
+  reset: resetGuard,
+} = useDiscardGuard({ busy, isDirty: () => JSON.stringify(form) !== baseline, close });
 
 watch(
   () => [props.visible, props.rangeType],
@@ -99,6 +112,8 @@ watch(
       ? 'Functional system range types cannot be modified.'
       : '';
     confirmingDelete.value = false;
+    baseline = JSON.stringify(form);
+    resetGuard();
   },
   { immediate: true, deep: true },
 );

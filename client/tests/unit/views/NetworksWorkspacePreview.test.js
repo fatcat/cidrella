@@ -347,8 +347,9 @@ function installApiFixtures() {
   });
 }
 
-async function mountPreview() {
+async function mountPreview(options = {}) {
   const wrapper = mount(NetworksWorkspacePreview, {
+    ...options,
     global: {
       stubs: {
         RouterLink: {
@@ -875,6 +876,44 @@ describe('Networks workspace live preview', () => {
       'Deallocate network',
       'Delete network',
     ]);
+  });
+
+  it('opens menus to the keyboard and returns focus to the invoker', async () => {
+    const wrapper = await mountPreview({ attachTo: document.body });
+    await enterTestNetwork(wrapper);
+    const rowButton = wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.50'))
+      .find('button[aria-label="Row actions"]');
+    rowButton.element.focus();
+    await rowButton.trigger('click');
+    await flushPromises();
+
+    const items = wrapper.findAll('.row-menu [role="menuitem"]');
+    expect(document.activeElement).toBe(items[0].element);
+    await wrapper.find('.row-menu').trigger('keydown', { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(items[1].element);
+    await wrapper.find('.row-menu').trigger('keydown', { key: 'End' });
+    expect(document.activeElement).toBe(items.at(-1).element);
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect(wrapper.find('.row-menu').exists()).toBe(false);
+    expect(document.activeElement).toBe(rowButton.element);
+
+    // The grid reaches the same menu from the keyboard.
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    await flushPromises();
+    const cell = wrapper.find('.address-grid button[tabindex="0"]');
+    cell.element.focus();
+    await cell.trigger('keydown', { key: 'F10', shiftKey: true });
+    await flushPromises();
+    expect(wrapper.find('.row-menu').exists()).toBe(true);
+    expect(document.activeElement).toBe(wrapper.find('.row-menu [role="menuitem"]').element);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect(document.activeElement).toBe(cell.element);
+    wrapper.unmount();
   });
 
   it('persists a capped small-text size without resizing larger headings', async () => {

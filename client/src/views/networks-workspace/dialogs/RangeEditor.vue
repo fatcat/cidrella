@@ -5,7 +5,8 @@
     modal
     :style="{ width: '30rem' }"
     data-track="workspace-range-editor"
-    @update:visible="emit('update:visible', $event)"
+    :close-on-escape="!confirmingDelete && !overlap"
+    @update:visible="requestClose"
   >
     <form class="workspace-range-form" @submit.prevent="save(false)">
       <label>
@@ -36,6 +37,7 @@
         whether an address is online.
       </p>
       <p v-if="error" class="workspace-range-error" role="alert">{{ error }}</p>
+      <DiscardPrompt v-if="confirmingDiscard" @keep="keepEditing" @discard="discard" />
       <button type="submit" class="workspace-range-native-submit" hidden>Save</button>
     </form>
 
@@ -48,7 +50,7 @@
         data-track="workspace-range-delete"
         @click="confirmingDelete = true"
       />
-      <Button label="Cancel" severity="secondary" @click="close" />
+      <Button label="Cancel" severity="secondary" @click="requestClose()" />
       <Button
         :label="range ? 'Save' : 'Create'"
         :loading="busy"
@@ -120,6 +122,8 @@ import InputText from '../../../ui/InputText.js';
 import Select from '../../../ui/Select.js';
 import { apiError } from '../../../utils/format.js';
 import { isProtectedRange, useRangeActions } from '../composables/useRangeActions.js';
+import { useDiscardGuard } from '../composables/useDiscardGuard.js';
+import DiscardPrompt from './DiscardPrompt.vue';
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -133,6 +137,7 @@ const overlap = ref(null);
 const confirmingDelete = ref(false);
 const error = ref('');
 const form = reactive({ range_type_id: null, start_ip: '', end_ip: '', description: '' });
+let baseline = JSON.stringify(form);
 const customTypes = computed(() => props.rangeTypes.filter((type) => !type.is_system));
 const isValid = computed(
   () => Number.isInteger(form.range_type_id) && form.start_ip.trim() && form.end_ip.trim(),
@@ -150,7 +155,17 @@ function reset() {
   form.start_ip = props.range?.start_ip ?? '';
   form.end_ip = props.range?.end_ip ?? '';
   form.description = props.range?.description ?? '';
+  baseline = JSON.stringify(form);
+  resetGuard();
 }
+
+const {
+  confirmingDiscard,
+  requestClose,
+  keepEditing,
+  discard,
+  reset: resetGuard,
+} = useDiscardGuard({ busy, isDirty: () => JSON.stringify(form) !== baseline, close });
 
 watch(() => [props.visible, props.range, props.rangeTypes], reset, { immediate: true, deep: true });
 

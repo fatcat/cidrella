@@ -19,7 +19,7 @@
         @pointerenter="extendDrag($event, index)"
         @click="activateCell($event, cell)"
         @keydown="handleKeydown($event, cell, index)"
-        @contextmenu.prevent="emit('row-menu', cell.row)"
+        @contextmenu.prevent="emit('row-menu', cell.row, $event.currentTarget)"
       >
         <span>{{ cell.last }}</span>
       </button>
@@ -50,7 +50,7 @@
         @pointerenter="extendDrag($event, index)"
         @click="activateCell($event, cell)"
         @keydown="handleKeydown($event, cell, index)"
-        @contextmenu.prevent="emit('row-menu', cell.row)"
+        @contextmenu.prevent="emit('row-menu', cell.row, $event.currentTarget)"
       />
     </div>
     <div class="grid-key">
@@ -136,6 +136,13 @@ function handleKeydown(event, cell, index) {
   if (event.key === ' ') {
     event.preventDefault();
     emit(event.shiftKey ? 'range-toggle' : 'toggle', event.shiftKey ? cell.row : cell.row.id);
+    return;
+  }
+  // Keyboard equivalent of right-click, so the row menu is reachable without
+  // a pointer (T-38).
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault();
+    emit('row-menu', cell.row, event.currentTarget);
     return;
   }
   const columns = props.density === 'compact' ? 64 : 16;

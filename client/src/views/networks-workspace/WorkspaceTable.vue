@@ -60,7 +60,7 @@
             <template v-else>{{ cellValue(row, column) || EMPTY_CELL }}</template>
           </td>
           <td class="action-cell" @click.stop>
-            <button aria-label="Row actions" @click="emit('row-menu', row)">
+            <button aria-label="Row actions" @click="emit('row-menu', row, $event.currentTarget)">
               <i class="pi pi-ellipsis-h" />
             </button>
           </td>
