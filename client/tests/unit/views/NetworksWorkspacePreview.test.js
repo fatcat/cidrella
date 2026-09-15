@@ -879,7 +879,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('opens menus to the keyboard and returns focus to the invoker', async () => {
-    const wrapper = await mountPreview({ attachTo: document.body });
+    const wrapper = await mountPreview({ attachTo: globalThis.document.body });
     await enterTestNetwork(wrapper);
     const rowButton = wrapper
       .findAll('tbody tr')
@@ -890,16 +890,16 @@ describe('Networks workspace live preview', () => {
     await flushPromises();
 
     const items = wrapper.findAll('.row-menu [role="menuitem"]');
-    expect(document.activeElement).toBe(items[0].element);
+    expect(globalThis.document.activeElement).toBe(items[0].element);
     await wrapper.find('.row-menu').trigger('keydown', { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(items[1].element);
+    expect(globalThis.document.activeElement).toBe(items[1].element);
     await wrapper.find('.row-menu').trigger('keydown', { key: 'End' });
-    expect(document.activeElement).toBe(items.at(-1).element);
+    expect(globalThis.document.activeElement).toBe(items.at(-1).element);
 
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }));
     await flushPromises();
     expect(wrapper.find('.row-menu').exists()).toBe(false);
-    expect(document.activeElement).toBe(rowButton.element);
+    expect(globalThis.document.activeElement).toBe(rowButton.element);
 
     // The grid reaches the same menu from the keyboard.
     await wrapper.find('button[aria-label="Grid view"]').trigger('click');
@@ -909,20 +909,22 @@ describe('Networks workspace live preview', () => {
     await cell.trigger('keydown', { key: 'F10', shiftKey: true });
     await flushPromises();
     expect(wrapper.find('.row-menu').exists()).toBe(true);
-    expect(document.activeElement).toBe(wrapper.find('.row-menu [role="menuitem"]').element);
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(globalThis.document.activeElement).toBe(
+      wrapper.find('.row-menu [role="menuitem"]').element,
+    );
+    globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }));
     await flushPromises();
-    expect(document.activeElement).toBe(cell.element);
+    expect(globalThis.document.activeElement).toBe(cell.element);
     wrapper.unmount();
   });
 
   it('operates table rows from the keyboard', async () => {
-    const wrapper = await mountPreview({ attachTo: document.body });
+    const wrapper = await mountPreview({ attachTo: globalThis.document.body });
     await enterTestNetwork(wrapper);
     const rows = wrapper.findAll('tbody tr');
     rows[0].element.focus();
     await rows[0].trigger('keydown', { key: 'ArrowDown' });
-    expect(document.activeElement).toBe(rows[1].element);
+    expect(globalThis.document.activeElement).toBe(rows[1].element);
 
     await rows[1].trigger('keydown', { key: 'Enter' });
     await flushPromises();
@@ -935,9 +937,9 @@ describe('Networks workspace live preview', () => {
     await rows[1].trigger('keydown', { key: 'F10', shiftKey: true });
     await flushPromises();
     expect(wrapper.find('.row-menu').exists()).toBe(true);
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }));
     await flushPromises();
-    expect(document.activeElement).toBe(rows[1].element);
+    expect(globalThis.document.activeElement).toBe(rows[1].element);
     wrapper.unmount();
   });
 
