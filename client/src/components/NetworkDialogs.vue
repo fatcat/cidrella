@@ -1,13 +1,19 @@
 <template>
   <!-- Create/Edit Folder Dialog -->
   <Dialog
-    v-model:visible="showFolderDialog"
+    :visible="showFolderDialog"
     :header="editingFolder ? 'Edit Folder' : 'Create Folder'"
     modal
     :style="{ width: '26rem' }"
     data-track="dialog-folder-edit"
+    @update:visible="folderDiscard.requestClose"
     @hide="folderCreateFromEdit = false"
   >
+    <DiscardPrompt
+      v-if="folderDiscard.confirmingDiscard.value"
+      @keep="folderDiscard.keepEditing"
+      @discard="folderDiscard.discard"
+    />
     <div class="form-grid">
       <div class="field">
         <label>Name *</label>
@@ -19,7 +25,7 @@
       </div>
     </div>
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showFolderDialog = false" />
+      <Button label="Cancel" severity="secondary" @click="folderDiscard.requestClose(false)" />
       <Button label="Save" @click="saveFolder" :loading="saving" />
     </template>
   </Dialog>
@@ -32,6 +38,7 @@
     :style="{ width: '32rem' }"
     data-track="dialog-setup-wizard"
     :closable="true"
+    :close-on-escape="!showWizardCreateVlan"
     @hide="onWizardClose"
   >
     <!-- Step indicators -->
@@ -479,12 +486,18 @@
 
   <!-- Create Network Dialog -->
   <Dialog
-    v-model:visible="showSubnetDialog"
+    :visible="showSubnetDialog"
     :header="quickAddMode ? 'Add Network' : 'Create Network'"
     modal
     :style="{ width: '28rem' }"
     data-track="dialog-network-create"
+    @update:visible="supernetDiscard.requestClose"
   >
+    <DiscardPrompt
+      v-if="supernetDiscard.confirmingDiscard.value"
+      @keep="supernetDiscard.keepEditing"
+      @discard="supernetDiscard.discard"
+    />
     <div class="form-grid">
       <div class="field">
         <label>CIDR *</label>
@@ -517,7 +530,7 @@
       </template>
     </div>
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showSubnetDialog = false" />
+      <Button label="Cancel" severity="secondary" @click="supernetDiscard.requestClose(false)" />
       <Button
         label="Create"
         @click="createSupernet"
@@ -529,12 +542,19 @@
 
   <!-- Divide Network Dialog -->
   <Dialog
-    v-model:visible="showDivide"
+    :visible="showDivide"
     header="Divide Network"
     modal
     :style="{ width: '36rem' }"
     data-track="dialog-network-divide"
+    :close-on-escape="!showLossyConfirm"
+    @update:visible="divideDiscard.requestClose"
   >
+    <DiscardPrompt
+      v-if="divideDiscard.confirmingDiscard.value"
+      @keep="divideDiscard.keepEditing"
+      @discard="divideDiscard.discard"
+    />
     <p>
       Network: <strong>{{ props.selectedNode?.data.cidr }}</strong>
     </p>
@@ -690,7 +710,7 @@
     </div>
 
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showDivide = false" />
+      <Button label="Cancel" severity="secondary" @click="divideDiscard.requestClose(false)" />
       <Button
         v-if="divideMode === 'equal'"
         label="Divide"
@@ -766,12 +786,21 @@
 
   <!-- Edit Network Dialog -->
   <Dialog
-    v-model:visible="showNetworkDialog"
+    :visible="showNetworkDialog"
     :header="networkDialogHeader"
     modal
     :style="{ width: '30rem' }"
     data-track="dialog-network-edit"
+    :close-on-escape="
+      !showCreateVlanFromEdit && !showCreateDomainFromEdit && !showVlanWarning && !showFolderDialog
+    "
+    @update:visible="networkDiscard.requestClose"
   >
+    <DiscardPrompt
+      v-if="networkDiscard.confirmingDiscard.value"
+      @keep="networkDiscard.keepEditing"
+      @discard="networkDiscard.discard"
+    />
     <div class="form-grid">
       <template v-if="networkDialogMode === 'create'">
         <div class="field">
@@ -988,7 +1017,7 @@
       </template>
     </div>
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showNetworkDialog = false" />
+      <Button label="Cancel" severity="secondary" @click="networkDiscard.requestClose(false)" />
       <Button
         :label="networkDialogMode === 'create' ? 'Create' : 'Save'"
         @click="executeNetworkSave"
@@ -1193,7 +1222,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, nextTick, watch } from 'vue';
 import { useToast } from '../ui/useToast.js';
 import { usePiholeImport } from '../composables/usePiholeImport.js';
 import Button from '../ui/Button.js';
@@ -1213,6 +1242,8 @@ import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
+import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
+import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
 import { apiError } from '../utils/format.js';
 import {
   isValidCidr,
@@ -1263,6 +1294,21 @@ const showDeleteFolderDialog = ref(false);
 const editingFolder = ref(null);
 const deletingFolder = ref(null);
 const folderForm = ref({ name: '', description: '' });
+// Unsaved-form guards (W-05). Each form dialog snapshots its fields when it
+// opens and compares on dismissal; a dirty form asks before closing.
+let folderFormBaseline = '';
+const folderDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(folderForm.value) !== folderFormBaseline,
+  close: () => {
+    showFolderDialog.value = false;
+  },
+  busy: saving,
+});
+function showFolderEditor() {
+  folderFormBaseline = JSON.stringify(folderForm.value);
+  folderDiscard.reset();
+  showFolderDialog.value = true;
+}
 
 // ── Guided Setup Wizard ──
 const showWizard = ref(false);
@@ -1754,6 +1800,19 @@ async function executeDeleteFolder() {
 const showSubnetDialog = ref(false);
 const quickAddMode = ref(false);
 const supernetForm = ref({ cidr: '', name: '', folder_id: null });
+let supernetFormBaseline = '';
+const supernetDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(supernetForm.value) !== supernetFormBaseline,
+  close: () => {
+    showSubnetDialog.value = false;
+  },
+  busy: saving,
+});
+function showSupernetEditor() {
+  supernetFormBaseline = JSON.stringify(supernetForm.value);
+  supernetDiscard.reset();
+  showSubnetDialog.value = true;
+}
 const folderOptions = computed(() => store.folders);
 // Exclude the virtual "Ungrouped" folder (id === null) from the Select so users
 // pick "None (ungrouped)" via the showClear button rather than a duplicate row.
@@ -1771,7 +1830,7 @@ function openCreateFolderFromEdit() {
   folderCreateFromEdit.value = true;
   editingFolder.value = null;
   folderForm.value = { name: '', description: '' };
-  showFolderDialog.value = true;
+  showFolderEditor();
 }
 
 const supernetValidationError = computed(() => {
@@ -1871,6 +1930,23 @@ const gatewayPolicyOptions = [
   { label: 'No gateway', value: 'none' },
 ];
 const divideGatewayPolicies = ref({});
+const divideState = () =>
+  JSON.stringify({
+    mode: divideMode.value,
+    steps: divideSteps.value,
+    count: divideCount.value,
+    carveNetwork: carveNetwork.value,
+    carvePrefix: carvePrefix.value,
+    gateways: divideGatewayPolicies.value,
+  });
+let divideBaseline = '';
+const divideDiscard = useDiscardGuard({
+  isDirty: () => divideState() !== divideBaseline,
+  close: () => {
+    showDivide.value = false;
+  },
+  busy: saving,
+});
 const serverDividePreview = ref(null);
 const dividePreviewLoading = ref(false);
 const dividePreviewError = ref(null);
@@ -2141,6 +2217,21 @@ const dialogNetworkData = computed(
 const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialog opens
 const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
+const networkState = () =>
+  JSON.stringify({ form: networkForm.value, gateway: gatewayPosition.value });
+let networkFormBaseline = '';
+const networkDiscard = useDiscardGuard({
+  isDirty: () => networkState() !== networkFormBaseline,
+  close: () => {
+    showNetworkDialog.value = false;
+  },
+  busy: saving,
+});
+function showNetworkEditor() {
+  networkFormBaseline = networkState();
+  networkDiscard.reset();
+  showNetworkDialog.value = true;
+}
 const configurationPreview = ref(null);
 const configurationPreviewError = ref('');
 let configurationPreviewRequest = 0;
@@ -2174,6 +2265,10 @@ async function loadConfigurationPreview() {
     });
     if (request !== configurationPreviewRequest) return;
     configurationPreview.value = data;
+    // Server defaults landing in an untouched form are not the operator's
+    // edits; move the baseline with them (after the watchers that react to
+    // the new gateway have run) so Cancel stays silent.
+    const untouched = networkState() === networkFormBaseline;
     if (gatewayPosition.value !== 'custom') {
       networkForm.value.gateway_address = data.gateway_address || '';
     }
@@ -2185,6 +2280,10 @@ async function loadConfigurationPreview() {
     ) {
       networkForm.value.dhcp_start_ip = data.default_dhcp_pool.start_ip;
       networkForm.value.dhcp_end_ip = data.default_dhcp_pool.end_ip;
+    }
+    if (untouched) {
+      await nextTick();
+      networkFormBaseline = networkState();
     }
   } catch (error) {
     if (request !== configurationPreviewRequest) return;
@@ -2685,13 +2784,13 @@ async function executeApplyTemplate(ids) {
 function openCreateFolder() {
   editingFolder.value = null;
   folderForm.value = { name: '', description: '' };
-  showFolderDialog.value = true;
+  showFolderEditor();
 }
 
 function openEditFolder(folder) {
   editingFolder.value = folder;
   folderForm.value = { name: folder.name, description: folder.description || '' };
-  showFolderDialog.value = true;
+  showFolderEditor();
 }
 
 function openDeleteFolder(folder) {
@@ -2702,13 +2801,13 @@ function openDeleteFolder(folder) {
 function openSubnetDialog(folderId) {
   quickAddMode.value = false;
   supernetForm.value = { cidr: '', name: '', folder_id: folderId || store.folders[0]?.id || null };
-  showSubnetDialog.value = true;
+  showSupernetEditor();
 }
 
 function openQuickAddNetwork() {
   quickAddMode.value = true;
   supernetForm.value = { cidr: '', name: '', folder_id: null };
-  showSubnetDialog.value = true;
+  showSupernetEditor();
 }
 
 async function openCreateNetwork(folderId) {
@@ -2740,7 +2839,7 @@ async function openCreateNetwork(folderId) {
   } catch {
     /* best effort, keep the server defaults */
   }
-  showNetworkDialog.value = true;
+  showNetworkEditor();
 }
 
 function openDivide(node) {
@@ -2757,6 +2856,8 @@ function openDivide(node) {
   }
   serverDividePreview.value = null;
   dividePreviewError.value = null;
+  divideBaseline = divideState();
+  divideDiscard.reset();
   showDivide.value = true;
 }
 
@@ -2812,7 +2913,7 @@ function openEdit(node, folderId) {
   } else {
     editVlanSelection.value = null;
   }
-  showNetworkDialog.value = true;
+  showNetworkEditor();
 }
 
 function openDelete(node) {

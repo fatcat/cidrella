@@ -340,12 +340,18 @@
 
     <!-- Zone Dialog -->
     <Dialog
-      v-model:visible="showZoneDialog"
+      :visible="showZoneDialog"
+      @update:visible="zoneDiscard.requestClose"
       :header="editingZone ? 'Edit Zone' : 'Add Zone'"
       modal
       :style="{ width: '32rem' }"
       data-track="dialog-dns-zone"
     >
+      <DiscardPrompt
+        v-if="zoneDiscard.confirmingDiscard.value"
+        @keep="zoneDiscard.keepEditing"
+        @discard="zoneDiscard.discard"
+      />
       <div class="form-grid">
         <div class="field">
           <label>Zone Name *</label>
@@ -448,19 +454,25 @@
         </div>
       </div>
       <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showZoneDialog = false" />
+        <Button label="Cancel" severity="secondary" @click="zoneDiscard.requestClose(false)" />
         <Button :label="editingZone ? 'Save' : 'Create'" @click="saveZone" :loading="savingZone" />
       </template>
     </Dialog>
 
     <!-- Record Dialog -->
     <Dialog
-      v-model:visible="showRecordDialog"
+      :visible="showRecordDialog"
+      @update:visible="recordDiscard.requestClose"
       :header="editingRecord ? 'Edit Record' : 'Add Record'"
       modal
       :style="{ width: '28rem' }"
       data-track="dialog-dns-record"
     >
+      <DiscardPrompt
+        v-if="recordDiscard.confirmingDiscard.value"
+        @keep="recordDiscard.keepEditing"
+        @discard="recordDiscard.discard"
+      />
       <div class="form-grid">
         <div v-if="recordForm.type === 'PTR' && selectedZone" class="field ptr-preview">
           <label>Record Name</label>
@@ -518,7 +530,7 @@
         </div>
       </div>
       <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showRecordDialog = false" />
+        <Button label="Cancel" severity="secondary" @click="recordDiscard.requestClose(false)" />
         <Button
           :label="editingRecord ? 'Save' : 'Create'"
           @click="saveRecord"
@@ -635,6 +647,8 @@ import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import { useRowsPreference } from '../composables/useRowsPreference.js';
 import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 import IpDetailsDrawer from './IpDetailsDrawer.vue';
+import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
+import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
 import {
   IP_TABLE_COLUMN_ALIASES,
   IP_TABLE_DEFAULT_KEYS,
@@ -845,6 +859,14 @@ const zoneTypes = [
   { label: 'Forward', value: 'forward' },
   { label: 'Reverse', value: 'reverse' },
 ];
+let zoneFormBaseline = '';
+const zoneDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(zoneForm.value) !== zoneFormBaseline,
+  close: () => {
+    showZoneDialog.value = false;
+  },
+  busy: savingZone,
+});
 
 // Record dialog
 const showRecordDialog = ref(false);
@@ -861,6 +883,14 @@ const recordForm = ref({
   enabled: true,
 });
 const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
+let recordFormBaseline = '';
+const recordDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(recordForm.value) !== recordFormBaseline,
+  close: () => {
+    showRecordDialog.value = false;
+  },
+  busy: savingRecord,
+});
 
 const dnsSearch = ref(loadJson('cidrella_dns_search', ''));
 watch(dnsSearch, (val) => {
@@ -1086,6 +1116,8 @@ async function openZoneDialog(zone = null) {
       ...soaDefaults,
     };
   }
+  zoneFormBaseline = JSON.stringify(zoneForm.value);
+  zoneDiscard.reset();
   showZoneDialog.value = true;
 }
 
@@ -1163,6 +1195,8 @@ function openRecordDialog(record = null, defaults = {}) {
       ...defaults,
     };
   }
+  recordFormBaseline = JSON.stringify(recordForm.value);
+  recordDiscard.reset();
   showRecordDialog.value = true;
 }
 

@@ -1,12 +1,18 @@
 <template>
   <!-- Scope Create/Edit Dialog -->
   <Dialog
-    v-model:visible="dialogVisible"
+    :visible="dialogVisible"
+    @update:visible="scopeDiscard.requestClose"
     :header="editing ? 'Edit Scope' : showRangePicker ? 'Add Scope' : 'Configure DHCP Scope'"
     modal
     :style="{ width: '36rem' }"
     data-track="dialog-dhcp-scope"
   >
+    <DiscardPrompt
+      v-if="scopeDiscard.confirmingDiscard.value"
+      @keep="scopeDiscard.keepEditing"
+      @discard="scopeDiscard.discard"
+    />
     <div class="form-grid">
       <div class="field" v-if="showRangePicker">
         <label>Network *</label>
@@ -172,7 +178,7 @@
       <Button
         :label="editing ? 'Cancel' : showRangePicker ? 'Cancel' : 'Skip'"
         severity="secondary"
-        @click="dialogVisible = false"
+        @click="scopeDiscard.requestClose(false)"
       />
       <Button
         :label="editing ? 'Save' : 'Create Scope'"
@@ -224,6 +230,8 @@ import { parseCidr, netmaskFor, dhcpPoolError } from '../utils/ip.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError, EMPTY_CELL } from '../utils/format.js';
+import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
+import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
 
 const toast = useToast();
 const dhcpStore = useDhcpStore();
@@ -238,6 +246,20 @@ const availableRanges = ref([]);
 const loadingRanges = ref(false);
 const subnetsList = ref([]);
 const networkDialogsRef = ref(null);
+let formBaseline = '';
+const scopeDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(form.value) !== formBaseline,
+  close: () => {
+    dialogVisible.value = false;
+  },
+  busy: saving,
+});
+
+function showScopeDialog() {
+  formBaseline = JSON.stringify(form.value);
+  scopeDiscard.reset();
+  dialogVisible.value = true;
+}
 
 async function loadSuggestedPool(subnet) {
   if (!subnet?.cidr) return null;
@@ -706,7 +728,7 @@ async function openEdit(scope) {
     optionValues: optVals,
   };
   optionsExpanded.value = selOpts.length > 0;
-  dialogVisible.value = true;
+  showScopeDialog();
 }
 
 /**
@@ -775,7 +797,7 @@ async function openNewWithPicker(subnetCtx) {
     loadingRanges.value = false;
   }
   optionsExpanded.value = autoSelected.length > 0;
-  dialogVisible.value = true;
+  showScopeDialog();
 }
 
 /**
@@ -818,7 +840,7 @@ async function openNewForRange(opts) {
     optionValues: autoValues,
   };
   optionsExpanded.value = autoSelected.length > 0;
-  dialogVisible.value = true;
+  showScopeDialog();
 }
 
 defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });

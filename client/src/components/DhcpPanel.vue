@@ -305,12 +305,18 @@
 
     <!-- DHCP Reservation Dialog -->
     <Dialog
-      v-model:visible="showReservationDialog"
+      :visible="showReservationDialog"
+      @update:visible="reservationDiscard.requestClose"
       :header="editingReservation ? 'Edit DHCP Reservation' : 'Add DHCP Reservation'"
       data-track="dialog-dhcp-reservation"
       modal
       :style="{ width: '28rem' }"
     >
+      <DiscardPrompt
+        v-if="reservationDiscard.confirmingDiscard.value"
+        @keep="reservationDiscard.keepEditing"
+        @discard="reservationDiscard.discard"
+      />
       <div class="form-grid">
         <div class="field" v-if="!editingReservation">
           <label>Network *</label>
@@ -358,7 +364,11 @@
         </div>
       </div>
       <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showReservationDialog = false" />
+        <Button
+          label="Cancel"
+          severity="secondary"
+          @click="reservationDiscard.requestClose(false)"
+        />
         <Button
           :label="editingReservation ? 'Save' : 'Create'"
           @click="saveReservation"
@@ -470,6 +480,8 @@ import { loadJson, saveJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
 import IpDetailsDrawer from './IpDetailsDrawer.vue';
 import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
+import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
+import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
 
 defineProps({ dialogsOnly: { type: Boolean, default: false } });
 const emit = defineEmits(['changed']);
@@ -521,6 +533,14 @@ const reservationForm = ref({
   enabled: true,
 });
 const allocatedSubnets = ref([]);
+let reservationFormBaseline = '';
+const reservationDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(reservationForm.value) !== reservationFormBaseline,
+  close: () => {
+    showReservationDialog.value = false;
+  },
+  busy: savingReservation,
+});
 
 // ── MAC Address input sanitization ──
 // Hex-only characters, colons auto-inserted every 2 hex chars, max 17 chars
@@ -986,6 +1006,8 @@ async function openReservationDialog(reservation = null, prefill = {}) {
       /* ignore */
     }
   }
+  reservationFormBaseline = JSON.stringify(reservationForm.value);
+  reservationDiscard.reset();
   showReservationDialog.value = true;
 }
 
