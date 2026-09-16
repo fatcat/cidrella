@@ -910,6 +910,103 @@ describe('Networks workspace live preview', () => {
     globalThis.window.removeEventListener('ipam:stats-changed', statsChanged);
   });
 
+  it('carries the last zone choice to the next network on the DNS view', async () => {
+    const sibling = {
+      id: 13,
+      cidr: '1.1.0.0/24',
+      name: 'Sibling test network',
+      status: 'allocated',
+      total_addresses: 256,
+      used_count: 1,
+      children: [],
+    };
+    const siblingReverse = {
+      id: 23,
+      name: '0.1.1.in-addr.arpa',
+      type: 'reverse',
+      enabled: 1,
+      record_count: 1,
+      subnet_id: 13,
+      related_subnet_ids: [13],
+    };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) => {
+      if (url === '/subnets')
+        return response({
+          folders: [{ id: 1, name: 'Testerella', subnets: [subnet, sibling, unallocatedSubnet] }],
+        });
+      if (url === '/dns/zones')
+        return response([
+          { ...zones[0], related_subnet_ids: [subnet.id, 13] },
+          zones[1],
+          siblingReverse,
+        ]);
+      return base(url, config);
+    });
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    // The table read, not the one-row count read that follows it.
+    const lastDnsParams = () =>
+      api.get.mock.calls
+        .filter(([url, config]) => url === '/workspace/dns-records' && config.params.sort_order)
+        .at(-1)[1].params;
+    const selectSibling = async () => {
+      await wrapper
+        .findAll('.network-row')
+        .find((row) => row.text().includes('Sibling'))
+        .trigger('click');
+      await flushPromises();
+      await flushPromises();
+    };
+    const clickCard = async (side) => {
+      await wrapper
+        .findAll('.linked-card')
+        .find((card) => card.text().includes(side))
+        .trigger('click');
+      await flushPromises();
+      await flushPromises();
+    };
+    const selectFirst = async () => {
+      await wrapper.find('.network-row').trigger('click');
+      await flushPromises();
+      await flushPromises();
+    };
+
+    // Mixed record list by default, no zone in the request.
+    expect(lastDnsParams().zone_id).toBeUndefined();
+
+    // Open the forward zone, then move to the sibling: its forward zone opens.
+    await clickCard('forward');
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 21 });
+    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('"forward"');
+    await selectSibling();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 21 });
+    expect(wrapper.find('.view-summary h3').text()).toBe('test.example');
+
+    // The reverse side follows the network: each has its own reverse zone.
+    await clickCard('reverse');
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 23 });
+    await selectFirst();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 22 });
+    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('"reverse"');
+
+    // Clearing the zone is remembered too: the next network shows everything.
+    await clickCard('reverse');
+    expect(lastDnsParams().zone_id).toBeUndefined();
+    await selectSibling();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13 });
+    expect(lastDnsParams().zone_id).toBeUndefined();
+    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('""');
+
+    // Leaving the DNS view still resets the choice for that view's filters.
+    await wrapper.find('[data-track="workspace-tab-addresses"]').trigger('click');
+    await flushPromises();
+    await selectFirst();
+    expect(wrapper.find('.workspace-frame').exists()).toBe(true);
+  });
+
   it('merges and re-templates checked networks from the selection bar', async () => {
     const sibling = {
       id: 13,

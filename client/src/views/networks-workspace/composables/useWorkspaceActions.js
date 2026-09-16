@@ -23,6 +23,7 @@ export function useWorkspaceActions(ctx) {
     openRangeEditor,
     openBulkRangeType,
     refreshAfterMutation,
+    rememberDnsZoneSide,
   } = ctx;
 
   async function ensureNetworkDialogs() {
@@ -72,6 +73,7 @@ export function useWorkspaceActions(ctx) {
 
   async function drillIntoZone(zone, reload) {
     state.selectedZoneFilter.value = zone;
+    rememberDnsZoneSide?.(zone);
     state.selectedScopeFilter.value = null;
     state.selectedRow.value = null;
     state.currentPage.value = 1;

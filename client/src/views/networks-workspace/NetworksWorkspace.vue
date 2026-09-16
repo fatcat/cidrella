@@ -659,6 +659,29 @@ const linkedZones = computed(() =>
     dnsZoneNetworkIds.value.get(Number(zone.id))?.has(Number(selectedNetwork.value.id)),
   ),
 );
+// Which linked zone the DNS view opens when the operator moves to another
+// network: the side (forward or reverse) of the zone they last chose, or every
+// record of the network when they last cleared the zone. Remembered per
+// browser, so it also holds across reloads.
+const DNS_ZONE_SIDE_KEY = 'cidrella_workspace_dns_zone_side';
+const dnsZoneSide = ref(
+  ['forward', 'reverse'].includes(loadJson(DNS_ZONE_SIDE_KEY, ''))
+    ? loadJson(DNS_ZONE_SIDE_KEY)
+    : '',
+);
+function rememberDnsZoneSide(zone) {
+  dnsZoneSide.value = !zone ? '' : zone.type === 'reverse' ? 'reverse' : 'forward';
+  saveJson(DNS_ZONE_SIDE_KEY, dnsZoneSide.value);
+}
+function linkedZoneOfSide(networkId, side) {
+  if (!side) return null;
+  return (
+    dnsZones.value.find(
+      (zone) =>
+        zone.type === side && dnsZoneNetworkIds.value.get(Number(zone.id))?.has(Number(networkId)),
+    ) || null
+  );
+}
 const networkDnsRows = computed(() => networkDnsRowsData.value);
 const networkScopes = computed(() =>
   dhcpScopes.value.filter((scope) => Number(scope.subnet_id) === Number(selectedNetwork.value.id)),
@@ -1592,8 +1615,11 @@ async function selectNetwork(network) {
   if (!networkViews.some((view) => view.key === activeView.value)) activeView.value = 'addresses';
   currentPage.value = 1;
   sortKey.value = null;
-  clearFilters();
-  selectedZoneFilter.value = null;
+  // On the DNS view the operator's last zone choice and record filters carry
+  // over to the next network instead of resetting to the mixed record list.
+  const keepDnsChoice = activeView.value === 'dns';
+  if (!keepDnsChoice) clearFilters();
+  selectedZoneFilter.value = keepDnsChoice ? linkedZoneOfSide(network.id, dnsZoneSide.value) : null;
   selectedScopeFilter.value = null;
   clearDetail();
   tableQuery.value = '';
@@ -1884,6 +1910,7 @@ const workspaceActions = useWorkspaceActions({
   openRangeEditor,
   openBulkRangeType,
   refreshAfterMutation,
+  rememberDnsZoneSide,
 });
 async function handleBulkComplete(ledger) {
   bulkActionVisible.value = false;
@@ -1928,6 +1955,7 @@ function resetVisibleColumns() {
 }
 async function filterToZone(zone) {
   selectedZoneFilter.value = selectedZoneFilter.value?.id === zone.id ? null : zone;
+  rememberDnsZoneSide(selectedZoneFilter.value);
   selectedScopeFilter.value = null;
   tableQuery.value = '';
   await updateWorkspaceRoute();
