@@ -683,6 +683,9 @@
       Because the source has a DHCP scope, each resulting network will receive the default-sized
       pool shown above. Existing pool bounds will not be retained.
     </Message>
+    <Message v-if="divideStaleNotice" severity="warn" class="mt-3" data-track="divide-stale-plan">{{
+      divideStaleNotice
+    }}</Message>
     <Message v-if="dividePreviewError" severity="error" class="mt-3">{{
       dividePreviewError
     }}</Message>
@@ -997,6 +1000,14 @@
             Create DHCP scope
           </label>
         </div>
+        <Message
+          v-if="networkSaveError"
+          severity="error"
+          :closable="false"
+          class="mt-1"
+          data-track="network-save-error"
+          >{{ networkSaveError }}</Message
+        >
         <template v-if="networkForm.create_dhcp_scope">
           <Message v-if="editDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
             A /{{ effectivePrefixLength }} is larger than CIDRella will auto-size a DHCP pool for.
@@ -1950,6 +1961,13 @@ const divideDiscard = useDiscardGuard({
 const serverDividePreview = ref(null);
 const dividePreviewLoading = ref(false);
 const dividePreviewError = ref(null);
+const divideStaleNotice = ref('');
+// The reviewed plan's identity travels with every execute so the server runs
+// exactly what was shown (section 8.2 step 5).
+const reviewedDividePlan = () => ({
+  plan_token: serverDividePreview.value?.plan?.dependency_token || undefined,
+  plan_id: serverDividePreview.value?.plan?.plan_id || undefined,
+});
 let dividePreviewRequest = 0;
 const divideResultCidrs = computed(() =>
   divideMode.value === 'equal'
@@ -1998,6 +2016,7 @@ async function refreshDividePreview() {
   const requestId = ++dividePreviewRequest;
   dividePreviewLoading.value = true;
   dividePreviewError.value = null;
+  divideStaleNotice.value = '';
   try {
     const preview = await store.previewDivide(props.selectedNode.data.id, {
       ...(divideMode.value === 'equal'
@@ -2059,6 +2078,7 @@ async function executeDivide() {
     new_prefix: divideTargetPrefix.value,
     force: isAllocated,
     target_gateways: divideTargetGateways(),
+    ...reviewedDividePlan(),
   };
   await runDivide(nodeId, 'equal', params);
 }
@@ -2070,6 +2090,7 @@ async function executeCarve() {
     cidr: normalizeCidr(carveCidr.value),
     force: isAllocated,
     target_gateways: divideTargetGateways(),
+    ...reviewedDividePlan(),
   };
   await runDivide(nodeId, 'carve', params);
 }
@@ -2119,10 +2140,25 @@ function surfaceLossyCleanup(resp) {
   });
 }
 
+// A 409 stale_plan means the topology moved since the preview. The server's
+// current plan replaces the displayed one, earlier confirmations are dropped
+// and the operator reviews again; the new token is never submitted for them.
+function acceptStalePlan(body) {
+  if (!(body?.stale_plan && body.plan)) return false;
+  serverDividePreview.value = { ...serverDividePreview.value, plan: body.plan };
+  pendingLossyDivide.value = null;
+  lossyIps.value = [];
+  showLossyConfirm.value = false;
+  divideStaleNotice.value =
+    'The transformation plan changed on the server. Review the updated preview, then confirm again.';
+  return true;
+}
+
 // Shared handler for both divide modes, intercepts the lossy-IP 409 and
 // opens the confirm dialog instead of showing an opaque toast.
 async function runDivide(nodeId, mode, params) {
   saving.value = true;
+  divideStaleNotice.value = '';
   try {
     const resp = await store.divideSubnet(nodeId, params);
     showDivide.value = false;
@@ -2136,7 +2172,9 @@ async function runDivide(nodeId, mode, params) {
     emit('network-divided', nodeId);
   } catch (err) {
     const body = err?.response?.data;
-    if (
+    if (err?.response?.status === 409 && acceptStalePlan(body)) {
+      /* reviewed above */
+    } else if (
       err?.response?.status === 409 &&
       body?.requires_conflict_resolutions &&
       Array.isArray(body.lossy)
@@ -2180,7 +2218,11 @@ async function confirmLossyDivide() {
     surfaceLossyCleanup(resp);
     emit('network-divided', p.nodeId);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+    if (err?.response?.status === 409 && acceptStalePlan(err.response.data)) {
+      /* reviewed above */
+    } else {
+      toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+    }
   } finally {
     saving.value = false;
   }
@@ -2217,6 +2259,10 @@ const dialogNetworkData = computed(
 const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialog opens
 const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
+// Set when a two-step create made the root but configuration failed; Save
+// then configures that ID instead of creating a second root (N-04, T-10).
+const resumingConfiguration = ref(false);
+const networkSaveError = ref('');
 const networkState = () =>
   JSON.stringify({ form: networkForm.value, gateway: gatewayPosition.value });
 let networkFormBaseline = '';
@@ -2230,6 +2276,8 @@ const networkDiscard = useDiscardGuard({
 function showNetworkEditor() {
   networkFormBaseline = networkState();
   networkDiscard.reset();
+  resumingConfiguration.value = false;
+  networkSaveError.value = '';
   showNetworkDialog.value = true;
 }
 const configurationPreview = ref(null);
@@ -2324,7 +2372,8 @@ watch(
 
 const networkDialogHeader = computed(() => {
   if (networkDialogMode.value === 'create') return 'Add Network';
-  if (networkDialogMode.value === 'configure') return 'Configure Network';
+  if (networkDialogMode.value === 'configure')
+    return resumingConfiguration.value ? 'Resume Configuration' : 'Configure Network';
   return 'Edit Network';
 });
 
@@ -2585,6 +2634,7 @@ function surfaceVlanWarning(resp) {
 
 async function executeNetworkSave() {
   saving.value = true;
+  networkSaveError.value = '';
   try {
     if (networkDialogMode.value === 'create') {
       // Create the supernet first, then configure it
@@ -2605,7 +2655,26 @@ async function executeNetworkSave() {
         payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
         payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
       }
-      const configured = await store.configureSubnet(created.id, payload);
+      let configured;
+      try {
+        configured = await store.configureSubnet(created.id, payload);
+      } catch (err) {
+        // The root exists now. Retarget the editor at its ID so Save resumes
+        // configuration; a second Save must never create a second root.
+        activeNetworkData.value = {
+          id: created.id,
+          cidr: created.cidr || cidr,
+          status: 'unallocated',
+          name: payload.name,
+          folder_id: networkForm.value.folder_id ?? null,
+        };
+        networkDialogMode.value = 'configure';
+        resumingConfiguration.value = true;
+        networkForm.value.name = payload.name;
+        networkSaveError.value = `Address space ${cidr} was created but not configured: ${apiError(err)}. Save again to resume configuration.`;
+        emit('network-created');
+        return;
+      }
       surfaceVlanWarning(configured);
       showNetworkDialog.value = false;
       toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
@@ -2627,6 +2696,7 @@ async function executeNetworkSave() {
       showNetworkDialog.value = false;
       toast.add({ severity: 'success', summary: 'Network configured', life: 3000 });
       emit('network-configured', id);
+      resumingConfiguration.value = false;
     } else {
       const id = activeNetworkData.value?.id ?? props.selectedNode?.data?.id;
       if (!id) throw new Error('No network selected for editing');
@@ -2640,10 +2710,23 @@ async function executeNetworkSave() {
       emit('network-updated', id);
     }
   } catch (err) {
+    networkSaveError.value = apiError(err);
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
+}
+
+// The server decides what a delete did (N-10): an allocated node is
+// deallocated, an unallocated root is deleted with its subtree, a nonroot
+// parent loses its descendants. Report the response, not the menu label.
+const DELETE_OUTCOMES = {
+  deallocated: 'Network deallocated',
+  deleted: 'Address space deleted',
+  children_deleted: 'Descendant networks deleted',
+};
+function deleteOutcome(result, fallback) {
+  return DELETE_OUTCOMES[result?.action] || fallback;
 }
 
 // ── Delete dialog ──
@@ -2654,9 +2737,13 @@ async function executeDelete() {
   try {
     const id = dialogNetworkData.value?.id;
     if (!id) throw new Error('No network selected for deletion');
-    await store.deleteSubnet(id);
+    const result = await store.deleteSubnet(id);
     showDelete.value = false;
-    toast.add({ severity: 'success', summary: 'Network deleted', life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: deleteOutcome(result, 'Network deleted'),
+      life: 3000,
+    });
     emit('network-deleted', id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -2673,9 +2760,13 @@ async function executeDeallocate() {
   try {
     const id = dialogNetworkData.value?.id;
     if (!id) throw new Error('No network selected for deallocation');
-    await store.deleteSubnet(id);
+    const result = await store.deleteSubnet(id);
     showDeallocate.value = false;
-    toast.add({ severity: 'success', summary: 'Network deallocated', life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: deleteOutcome(result, 'Network deallocated'),
+      life: 3000,
+    });
     emit('network-deleted', id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -2856,6 +2947,7 @@ function openDivide(node) {
   }
   serverDividePreview.value = null;
   dividePreviewError.value = null;
+  divideStaleNotice.value = '';
   divideBaseline = divideState();
   divideDiscard.reset();
   showDivide.value = true;

@@ -184,9 +184,22 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
+  // Callers that showed the operator a preview pass its `plan_token` and
+  // `plan_id` so the server executes exactly what was reviewed (T-15). Without
+  // one, a preview is fetched here for the token; that path exists for callers
+  // with no review step, never as a retry after a stale-plan rejection.
   async function divideSubnet(
     id,
-    { new_prefix, cidr, force, conflict_resolutions, selected_cidrs, target_gateways },
+    {
+      new_prefix,
+      cidr,
+      force,
+      conflict_resolutions,
+      selected_cidrs,
+      target_gateways,
+      plan_token,
+      plan_id,
+    },
   ) {
     const payload = { force };
     if (conflict_resolutions?.length) payload.conflict_resolutions = conflict_resolutions;
@@ -194,9 +207,19 @@ export const useSubnetStore = defineStore('subnets', () => {
     if (cidr) payload.cidr = cidr;
     if (selected_cidrs?.length) payload.selected_cidrs = selected_cidrs;
     if (target_gateways?.length) payload.target_gateways = target_gateways;
-    const preview = await previewDivide(id, { new_prefix, cidr, selected_cidrs, target_gateways });
-    payload.plan_token = preview.plan?.dependency_token;
-    payload.plan_id = preview.plan?.plan_id;
+    if (plan_token) {
+      payload.plan_token = plan_token;
+      payload.plan_id = plan_id;
+    } else {
+      const preview = await previewDivide(id, {
+        new_prefix,
+        cidr,
+        selected_cidrs,
+        target_gateways,
+      });
+      payload.plan_token = preview.plan?.dependency_token;
+      payload.plan_id = preview.plan?.plan_id;
+    }
     const res = await api.post(`/subnets/${id}/divide`, payload);
     await fetchTree();
     // Response body carries `pool_adjustments` when the server had to shrink
