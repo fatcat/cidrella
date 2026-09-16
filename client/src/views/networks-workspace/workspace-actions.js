@@ -667,6 +667,10 @@ export function actionAvailability(actionId, target, can = () => false) {
 // prefix (`network:`, `address:`, `zone:`, `dns:`, `scope:`, `dhcp:`, `range:`),
 // which is more reliable than the view name once zone and scope drill-ins put
 // record rows into aggregate contexts.
+// Drag payload type for a network moved onto a folder (N-08). Shared with the
+// current interface so both surfaces read each other's drags.
+export const NETWORK_DRAG_TYPE = 'application/x-subnet-id';
+
 export function targetForRow(row) {
   if (!row?.id) return null;
   const kind = String(row.id).split(':')[0];

@@ -262,8 +262,14 @@ board. Phases are the plan's section 13 rows.
   lint, format check, DB ownership check, production client build, all green. The old interface
   stays at `/networks`; the workspace is `/networks-preview` until the P10 cutover.
 
+- N-08 drag/drop move to folder: explorer network rows and networks-table rows are drag
+  sources (`application/x-subnet-id`, the payload the current interface uses), explorer folder
+  rows are drop targets, the drop runs the same `PUT /subnets/:id {folder_id}` the row menu's
+  editor uses and then the network refresh contract. Same-folder drops are no-ops, drags without
+  the payload never highlight a folder, and nothing is draggable without `subnets:write`. Both
+  paths verified in Chromium against a throwaway `DATA_DIR` (`screenshots/n08-drop-target.png`).
+
 **Partial:**
-- N-08 drag/drop move to folder is not offered, the row menu is the only path.
 - T-20 has no rendered end-to-end test across DNS/DHCP orders; coverage is server-side.
 - W-07: the long network title wraps word by word beside the action group at 1280 and below;
   readable, not pretty. Not a clipping or reachability defect.

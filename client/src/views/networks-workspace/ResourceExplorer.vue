@@ -56,8 +56,14 @@
       <section v-for="folder in folders" :key="folder.id" class="network-group">
         <div
           class="folder-row"
-          :class="{ active: contextKind === 'folder' && selectedFolderId === folder.id }"
+          :class="{
+            active: contextKind === 'folder' && selectedFolderId === folder.id,
+            'drop-target': dropFolderKey === folderKey(folder),
+          }"
           @contextmenu.prevent="emit('folder-menu', folder, $event.currentTarget)"
+          @dragover="onFolderDragOver($event, folder)"
+          @dragleave="onFolderDragLeave($event, folder)"
+          @drop="onFolderDrop($event, folder)"
         >
           <button
             class="folder-toggle"
@@ -110,9 +116,11 @@
             class="network-row"
             :class="{ active: contextKind === 'network' && selectedNetworkId === network.id }"
             data-track="workspace-network-select"
+            :draggable="canMoveNetworks ? 'true' : undefined"
             @click="emit('select-network', network)"
             @contextmenu.prevent="emit('network-menu', network, $event.currentTarget)"
             @keydown="handleMenuKey($event, 'network-menu', network)"
+            @dragstart="onNetworkDragStart($event, network)"
           >
             <span class="network-state" :class="network.state" />
             <span class="network-copy">
@@ -151,13 +159,15 @@
 </template>
 
 <script setup>
+import { ref } from 'vue';
 import { countOf } from '../../utils/format.js';
 import ResourceExplorerNode from './ResourceExplorerNode.vue';
+import { NETWORK_DRAG_TYPE } from './workspace-actions.js';
 
 // Presentation only. Folder/network selection, expansion and the create menu
 // are owned by NetworksWorkspace.vue, which passes the derived tree in and
 // receives every interaction back as an event.
-defineProps({
+const props = defineProps({
   contextKind: { type: String, required: true },
   folders: { type: Array, required: true },
   expandedFolders: { type: Set, required: true },
@@ -170,6 +180,7 @@ defineProps({
   canCreate: { type: Boolean, default: false },
   canManageFolders: { type: Boolean, default: false },
   canManageDefaults: { type: Boolean, default: false },
+  canMoveNetworks: { type: Boolean, default: false },
 });
 const emit = defineEmits([
   'create',
@@ -181,6 +192,7 @@ const emit = defineEmits([
   'toggle-folder',
   'folder-menu',
   'network-menu',
+  'move-network',
   'action',
 ]);
 const query = defineModel('query', { type: String, default: '' });
@@ -192,6 +204,42 @@ function handleMenuKey(event, name, resource) {
     event.preventDefault();
     emit(name, resource, event.currentTarget);
   }
+}
+
+// N-08: dragging a network row onto a folder row is the same move as the
+// row menu's "Move to folder". The payload type is shared with the current
+// interface so a network dragged from the table lands here too. Ungrouped
+// has a null id, so the hover state is keyed by name.
+const dropFolderKey = ref(null);
+function folderKey(folder) {
+  return folder.id ?? `ungrouped:${folder.name}`;
+}
+function carriesNetwork(event) {
+  return Array.from(event.dataTransfer?.types || []).includes(NETWORK_DRAG_TYPE);
+}
+function onNetworkDragStart(event, network) {
+  if (!props.canMoveNetworks || !event.dataTransfer) return;
+  event.dataTransfer.setData(NETWORK_DRAG_TYPE, String(network.id));
+  event.dataTransfer.setData('text/plain', network.cidr);
+  event.dataTransfer.effectAllowed = 'move';
+}
+function onFolderDragOver(event, folder) {
+  if (!props.canMoveNetworks || !carriesNetwork(event)) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = 'move';
+  dropFolderKey.value = folderKey(folder);
+}
+function onFolderDragLeave(event, folder) {
+  if (event.currentTarget.contains(event.relatedTarget)) return;
+  if (dropFolderKey.value === folderKey(folder)) dropFolderKey.value = null;
+}
+function onFolderDrop(event, folder) {
+  dropFolderKey.value = null;
+  if (!props.canMoveNetworks || !carriesNetwork(event)) return;
+  event.preventDefault();
+  const networkId = Number(event.dataTransfer.getData(NETWORK_DRAG_TYPE));
+  if (!Number.isInteger(networkId)) return;
+  emit('move-network', { networkId, folder });
 }
 
 function highlightParts(value) {
@@ -391,6 +439,13 @@ button {
 }
 .folder-row.active {
   box-shadow: inset 3px 0 var(--preview-accent);
+}
+.folder-row.drop-target {
+  background: var(--preview-accent-soft);
+  box-shadow: inset 0 0 0 2px var(--preview-accent);
+}
+.network-row[draggable='true'] {
+  cursor: grab;
 }
 .folder-toggle,
 .folder-select {

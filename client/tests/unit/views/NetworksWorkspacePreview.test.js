@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
+import { nextTick } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { useSubnetStore } from '../../../src/stores/subnets.js';
 import NetworksWorkspacePreview from '../../../src/views/NetworksWorkspacePreview.vue';
@@ -1019,6 +1020,112 @@ describe('Networks workspace live preview', () => {
       'Rename folder',
       'Delete folder',
     ]);
+  });
+
+  it('moves a network dropped on an explorer folder through the same PUT as the row menu', async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets'
+        ? response({
+            folders: [
+              { id: 1, name: 'Testerella', description: 'Lab racks', subnets: [subnet] },
+              { id: null, name: 'Ungrouped', description: null, subnets: [unallocatedSubnet] },
+            ],
+          })
+        : base(url, config),
+    );
+    const basePut = api.put.getMockImplementation();
+    api.put.mockImplementation((url, body) =>
+      url === '/subnets/11' ? response({ id: 11, ...body }) : basePut(url, body),
+    );
+    const wrapper = await mountPreview();
+    // The old store's PUT re-reads the tree itself; the zone read only comes
+    // from the workspace's network refresh contract.
+    const zoneReads = () =>
+      api.get.mock.calls.filter(([url]) => url.startsWith('/dns/zones')).length;
+    const readsBefore = zoneReads();
+
+    // A fake DataTransfer: jsdom has no DragEvent, so the events are plain
+    // Events carrying the same fields the browser would.
+    const dataTransfer = {
+      data: {},
+      types: [],
+      effectAllowed: null,
+      dropEffect: null,
+      setData(type, value) {
+        this.data[type] = value;
+        this.types.push(type);
+      },
+      getData(type) {
+        return this.data[type] ?? '';
+      },
+    };
+    const dispatch = (element, type) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      event.dataTransfer = dataTransfer;
+      element.dispatchEvent(event);
+      return event;
+    };
+
+    const networkRow = wrapper.find('.network-row');
+    expect(networkRow.attributes('draggable')).toBe('true');
+    dispatch(networkRow.element, 'dragstart');
+    expect(dataTransfer.getData('application/x-subnet-id')).toBe('11');
+    expect(dataTransfer.effectAllowed).toBe('move');
+
+    const [homeFolder, ungrouped] = wrapper.findAll('.folder-row');
+    const over = dispatch(ungrouped.element, 'dragover');
+    await nextTick();
+    expect(over.defaultPrevented).toBe(true);
+    expect(dataTransfer.dropEffect).toBe('move');
+    expect(ungrouped.classes()).toContain('drop-target');
+
+    const drop = dispatch(ungrouped.element, 'drop');
+    await flushPromises();
+    await flushPromises();
+    expect(drop.defaultPrevented).toBe(true);
+    expect(ungrouped.classes()).not.toContain('drop-target');
+    expect(api.put).toHaveBeenCalledWith('/subnets/11', { folder_id: null });
+    expect(wrapper.find('.prototype-notice').text()).toContain('1.1.1.0/24 moved to Ungrouped');
+    expect(zoneReads()).toBeGreaterThan(readsBefore);
+
+    // Dropping on the folder it already lives in is a no-op.
+    const putCalls = api.put.mock.calls.length;
+    dispatch(homeFolder.element, 'dragover');
+    dispatch(homeFolder.element, 'drop');
+    await flushPromises();
+    expect(api.put.mock.calls.length).toBe(putCalls);
+
+    // The networks table row carries the same payload.
+    dataTransfer.data = {};
+    dataTransfer.types = [];
+    const tableRow = wrapper.find('tbody tr');
+    expect(tableRow.attributes('draggable')).toBe('true');
+    dispatch(tableRow.element, 'dragstart');
+    expect(dataTransfer.getData('application/x-subnet-id')).toBe('11');
+
+    // A drag that carries no network never marks a folder as a drop target.
+    dataTransfer.types = [];
+    const plain = dispatch(ungrouped.element, 'dragover');
+    await nextTick();
+    expect(plain.defaultPrevented).toBe(false);
+    expect(ungrouped.classes()).not.toContain('drop-target');
+  });
+
+  it('offers no network drag without subnets:write', async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    pinia.state.value.auth = {
+      user: {
+        username: 'viewer',
+        role: 'readonly',
+        is_admin: false,
+        permissions: ['subnets:read'],
+      },
+    };
+    const wrapper = await mountPreview();
+    expect(wrapper.find('.network-row').attributes('draggable')).toBeUndefined();
+    expect(wrapper.find('tbody tr').attributes('draggable')).toBeUndefined();
   });
 
   it('drives every menu through the action registry with a row-derived target', async () => {

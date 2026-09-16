@@ -29,8 +29,10 @@
           :class="{ selected: selectedRowId === row.id }"
           tabindex="0"
           :aria-selected="selectedRowId === row.id"
+          :draggable="draggableRows ? 'true' : undefined"
           @click="emit('select', row)"
           @keydown="handleRowKeydown($event, row)"
+          @dragstart="emit('row-dragstart', row, $event)"
         >
           <td v-if="showCheckboxes" class="check-cell" @click.stop>
             <input
@@ -92,8 +94,18 @@ const props = defineProps({
   selectedRows: { type: Array, default: () => [] },
   sortKey: { type: String, default: null },
   sortOrder: { type: Number, default: 1 },
+  // The parent decides what a drag carries (N-08 network moves); the table
+  // only marks rows draggable and forwards the event.
+  draggableRows: { type: Boolean, default: false },
 });
-const emit = defineEmits(['sort', 'select', 'toggle-row', 'toggle-all', 'row-menu']);
+const emit = defineEmits([
+  'sort',
+  'select',
+  'toggle-row',
+  'toggle-all',
+  'row-menu',
+  'row-dragstart',
+]);
 
 // Rows are focusable so the table works without a pointer (T-38): Enter
 // opens details, Space toggles selection where the view has checkboxes,

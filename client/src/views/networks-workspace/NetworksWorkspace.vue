@@ -51,6 +51,7 @@
         :can-create="canAnyCreate"
         :can-manage-folders="can('subnets:write')"
         :can-manage-defaults="can('subnets:write')"
+        :can-move-networks="can('subnets:write')"
         @create="toggleMenu('create')"
         @select-estate="selectEstate"
         @select-unallocated="selectUnallocated"
@@ -60,6 +61,7 @@
         @toggle-folder="toggleFolder"
         @folder-menu="openFolderMenu"
         @network-menu="openNetworkMenu"
+        @move-network="moveNetworkToFolder"
         @action="runContextAction"
       />
 
@@ -148,11 +150,13 @@
             :selected-rows="selectedRows"
             :sort-key="sortKey"
             :sort-order="sortOrder"
+            :draggable-rows="activeView === 'networks' && can('subnets:write')"
             @sort="sortBy"
             @select="selectRow"
             @toggle-row="toggleRow"
             @toggle-all="toggleAllRows"
             @row-menu="openRowMenu"
+            @row-dragstart="startNetworkDrag"
           />
           <footer class="table-footer">
             <span>{{ resultCountLabel }}</span>
@@ -383,7 +387,7 @@ import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
 import { contiguousIpv4Runs } from './composables/useWorkspaceSelection.js';
 import { useRangeActions } from './composables/useRangeActions.js';
 import { useWorkspaceActions } from './composables/useWorkspaceActions.js';
-import { menuActions, targetForRow } from './workspace-actions.js';
+import { NETWORK_DRAG_TYPE, menuActions, targetForRow } from './workspace-actions.js';
 import {
   defaultWorkspaceColumnKeys,
   restoreWorkspaceColumnKeys,
@@ -1680,6 +1684,29 @@ function openTargetMenu(target, invoker = null) {
   menuTarget.value = target;
   if (invoker) menuInvoker = invoker;
   openMenuName.value = 'row';
+}
+// N-08: a network dragged from the table or the explorer and dropped on an
+// explorer folder moves there through the same PUT the row menu's editor
+// uses, then the network refresh contract runs. Ungrouped is folder_id null.
+function startNetworkDrag(row, event) {
+  const target = targetForRow(row);
+  if (target?.kind !== 'network' || !event.dataTransfer) return;
+  event.dataTransfer.setData(NETWORK_DRAG_TYPE, String(target.id));
+  event.dataTransfer.setData('text/plain', row.cidr || '');
+  event.dataTransfer.effectAllowed = 'move';
+}
+async function moveNetworkToFolder({ networkId, folder }) {
+  const network = allNetworks.value.find((entry) => Number(entry.id) === Number(networkId));
+  if (!network) return;
+  const folderId = folder.id ?? null;
+  if ((network.folderId ?? null) === folderId) return;
+  try {
+    await subnetStore.updateSubnet(network.id, { folder_id: folderId });
+  } catch (error) {
+    showLiveNotice(`Could not move ${network.cidr} to ${folder.name}: ${apiError(error)}`);
+    return;
+  }
+  await refreshAfterMutation('network', `${network.cidr} moved to ${folder.name}`);
 }
 function openFolderMenu(folder, invoker = null) {
   openTargetMenu({ kind: 'folder', id: folder.id, name: folder.name, raw: folder }, invoker);
