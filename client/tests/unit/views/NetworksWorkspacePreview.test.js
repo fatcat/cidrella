@@ -443,6 +443,7 @@ async function mountPreview(options = {}) {
   const wrapper = mount(NetworksWorkspacePreview, {
     ...options,
     global: {
+      directives: { tooltip: () => {} },
       stubs: {
         RouterLink: {
           props: ['to'],
@@ -1638,6 +1639,28 @@ describe('Networks workspace live preview', () => {
 
     // The loading state is a popover over the table, not a bar above it.
     expect(wrapper.find('.loading-bar').exists()).toBe(false);
+  });
+
+  it('renders type and status with the current interface tags, in use neutral', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
+    const lease = rowFor('1.1.1.40');
+    expect(lease.find('.address-type-pill.type-dynamic-dhcp').text()).toBe('dynamic DHCP');
+    expect(lease.find('.status-pill').classes()).toContain('status-in-use');
+    expect(lease.find('.status-pill').classes()).not.toContain('type-rogue');
+    const rogue = rowFor('1.1.1.0');
+    expect(rogue.find('.address-type-pill.type-system').text()).toBe('system');
+    expect(rowFor('1.1.1.50').find('.status-pill').classes()).toContain('status-dhcp-scope');
+    expect(rowFor('1.1.1.200').find('.status-pill').classes()).toContain('status-available');
+    expect(wrapper.find('.table-pill').exists()).toBe(false);
+    expect(wrapper.find('.type-value').exists()).toBe(false);
+
+    await wrapper.find('[data-track="workspace-tab-dhcp"]').trigger('click');
+    await flushPromises();
+    const dhcpRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.40'));
+    expect(dhcpRow.find('.address-type-pill.type-dynamic-dhcp').text()).toBe('Dynamic');
+    expect(dhcpRow.find('.status-pill.status-active').exists()).toBe(true);
   });
 
   it('keeps header actions anchored after the responsive health metrics', async () => {

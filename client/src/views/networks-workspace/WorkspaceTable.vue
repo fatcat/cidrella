@@ -47,13 +47,26 @@
               <span class="online-value" :class="row.online"><i />{{ row.online }}</span>
             </template>
             <template v-else-if="column.key === 'status' || column.key === 'lease'">
-              <span class="table-pill" :class="pillClass(cellValue(row, column))">{{
-                cellValue(row, column)
-              }}</span>
+              <span
+                v-if="cellValue(row, column)"
+                class="address-type-pill status-pill"
+                :class="statusClass(cellValue(row, column))"
+                >{{ cellValue(row, column) }}</span
+              >
+              <span v-else class="muted">{{ EMPTY_CELL }}</span>
             </template>
             <template v-else-if="column.key === 'type'">
-              <span v-if="row.type" class="type-value"
-                ><i :class="typeIcon(row.type)" />{{ row.type }}</span
+              <AddressTypePill
+                :display="typeDisplay(row)"
+                :tooltip="row.raw?.address_type_tooltip || null"
+              />
+            </template>
+            <template v-else-if="column.key === 'assignment'">
+              <span
+                v-if="row.assignment"
+                class="address-type-pill"
+                :class="row.assignment === 'Reserved' ? 'type-reserved-dhcp' : 'type-dynamic-dhcp'"
+                >{{ row.assignment }}</span
               >
               <span v-else class="muted">{{ EMPTY_CELL }}</span>
             </template>
@@ -80,7 +93,9 @@
 </template>
 
 <script setup>
+import AddressTypePill from '../../components/table/AddressTypePill.vue';
 import { EMPTY_CELL } from '../../utils/format.js';
+import { ipLifecycleDisplay } from '../../utils/ipLifecycleDisplay.js';
 
 // Row rendering, sort headers and selection checkboxes. The pager stays in
 // NetworksWorkspace.vue because it drives the grid presentations too. Rows are
@@ -151,17 +166,16 @@ function cellValue(row, column) {
   const field = column.field || column.key;
   return row.raw?.[field];
 }
-function pillClass(value) {
-  return String(value || '')
+// Tags are the current interface's: AddressTypePill for the Type column
+// (same classes and semantic colors as the current tables) and a status pill
+// where "in use" is neutral, since it is neither good nor bad.
+function statusClass(value) {
+  return `status-${String(value || '')
     .toLowerCase()
-    .replaceAll(' ', '-');
+    .replaceAll(' ', '-')}`;
 }
-function typeIcon(type) {
-  if (type === 'gateway') return 'pi pi-directions';
-  if (type?.includes('DHCP')) return 'pi pi-server';
-  if (type === 'static DNS') return 'pi pi-globe';
-  if (type === 'rogue') return 'pi pi-exclamation-triangle';
-  return 'pi pi-shield';
+function typeDisplay(row) {
+  return ipLifecycleDisplay({ address_type: row.type || null }).addressType;
 }
 </script>
 
@@ -255,31 +269,31 @@ tbody tr:focus-visible {
 .muted {
   color: var(--preview-muted);
 }
-.table-pill {
-  display: inline-flex;
-  padding: 0.17rem 0.38rem;
-  border-radius: 999px;
-  font-size: 0.6rem;
-  font-weight: 750;
+/* Status pills share the current interface's capsule shape (.address-type-pill,
+   App.vue). "in use" is neutral: text on a gray capsule. */
+.status-pill.status-in-use {
+  background: color-mix(in srgb, var(--cid-status-muted) 28%, transparent);
+  color: var(--cid-text-color);
 }
-.table-pill.in-use,
-.table-pill.active {
-  color: var(--cid-red-600);
-  background: color-mix(in srgb, var(--cid-red-500) 10%, transparent);
+.status-pill.status-available,
+.status-pill.status-inactive,
+.status-pill.status-offline,
+.status-pill.status-expired {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--cid-status-muted) 45%, transparent);
+  color: var(--cid-status-muted);
 }
-.table-pill.dhcp-scope,
-.table-pill.available {
-  color: var(--preview-accent);
-  background: color-mix(in srgb, var(--preview-accent) 10%, transparent);
+.status-pill.status-dhcp-scope {
+  background: color-mix(in srgb, var(--cid-status-info) 16%, transparent);
+  color: var(--cid-status-info);
 }
-.table-pill.offline,
-.table-pill.expired {
-  color: var(--preview-muted);
-  background: var(--cid-surface-ground);
+.status-pill.status-active {
+  background: color-mix(in srgb, var(--cid-status-ok) 16%, transparent);
+  color: var(--cid-status-ok);
 }
-.table-pill.unavailable {
-  color: var(--preview-dns);
-  background: color-mix(in srgb, var(--preview-dns) 12%, transparent);
+.status-pill.status-unavailable {
+  background: color-mix(in srgb, var(--cid-status-warn) 16%, transparent);
+  color: var(--cid-status-warn);
 }
 .online-value,
 .enabled-value {
@@ -306,15 +320,6 @@ tbody tr:focus-visible {
   border: 1px solid var(--cid-surface-400);
   background: transparent;
 }
-.type-value {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-}
-.type-value i {
-  color: var(--preview-accent);
-  font-size: 0.7rem;
-}
 .no-results {
   display: flex;
   min-height: 180px;
@@ -330,7 +335,7 @@ tbody tr:focus-visible {
 .no-results strong {
   color: var(--cid-text-color);
 }
-.table-pill {
+.address-type-pill {
   font-size: var(--workspace-font-small);
 }
 table,
