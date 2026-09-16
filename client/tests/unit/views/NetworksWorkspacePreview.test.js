@@ -6,6 +6,7 @@ import { useSubnetStore } from '../../../src/stores/subnets.js';
 import NetworksWorkspacePreview from '../../../src/views/NetworksWorkspacePreview.vue';
 import NetworksWorkspace from '../../../src/views/networks-workspace/NetworksWorkspace.vue';
 import AddressGrid from '../../../src/views/networks-workspace/AddressGrid.vue';
+import AddressDetailsPanel from '../../../src/views/networks-workspace/AddressDetailsPanel.vue';
 import ResourceExplorer from '../../../src/views/networks-workspace/ResourceExplorer.vue';
 import WorkspaceContextHeader from '../../../src/views/networks-workspace/WorkspaceContextHeader.vue';
 import WorkspaceDetailsHost from '../../../src/views/networks-workspace/WorkspaceDetailsHost.vue';
@@ -1273,6 +1274,54 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
     await wrapper.find('button[aria-label="Close details"]').trigger('click');
     expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
+  });
+
+  it('closes the details on an outside press and swaps rows in place', async () => {
+    const wrapper = await mountPreview({ attachTo: globalThis.document.body });
+    await enterTestNetwork(wrapper);
+    const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
+    const press = (element) =>
+      element.dispatchEvent(new globalThis.Event('pointerdown', { bubbles: true }));
+
+    await rowFor('1.1.1.33').trigger('click');
+    const panel = wrapper.findComponent(AddressDetailsPanel);
+    expect(panel.exists()).toBe(true);
+    expect(panel.text()).toContain('1.1.1.33');
+    // A remount would produce a fresh element without this marker.
+    panel.element.dataset.mounted = 'first';
+
+    // A press on another row is not "outside": the same panel shows the new
+    // address without unmounting, so nothing slides.
+    press(rowFor('1.1.1.34').element);
+    await nextTick(); // the browser renders between pointerdown and click
+    await rowFor('1.1.1.34').trigger('click');
+    await flushPromises();
+    const swapped = wrapper.findComponent(AddressDetailsPanel);
+    expect(swapped.element.dataset.mounted).toBe('first');
+    expect(swapped.text()).toContain('1.1.1.34');
+    expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
+
+    // Presses inside the panel and on layered UI keep it open.
+    press(wrapper.find('.workspace-address-panel').element);
+    await flushPromises();
+    expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
+    const dialog = globalThis.document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    globalThis.document.body.append(dialog);
+    press(dialog);
+    await flushPromises();
+    expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
+
+    // Anywhere else closes it and drops the address from the route.
+    press(wrapper.find('.context-header h2').element);
+    await flushPromises();
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
+    expect(wrapper.findComponent(AddressDetailsPanel).exists()).toBe(false);
+
+    wrapper.unmount();
+    dialog.remove();
+    // Unmounted workspaces stop listening.
+    press(globalThis.document.body);
   });
 
   it('keeps header actions anchored after the responsive health metrics', async () => {

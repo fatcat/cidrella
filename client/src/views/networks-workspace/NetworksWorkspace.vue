@@ -1186,6 +1186,32 @@ function clearDetail() {
   detailFallback.value = null;
   workspaceResources.invalidate('detail');
 }
+// A press anywhere outside the open details panel closes it. Presses on
+// things that open details themselves (table rows, grid cells) fall through
+// to their own handlers so the panel swaps content without closing and
+// reopening, and layered UI (dialogs, menus, popovers, toasts) is not
+// "outside" the page.
+const DETAIL_KEEP_SELECTORS = [
+  '.workspace-address-panel',
+  '.details-panel',
+  'tbody tr',
+  '.address-grid-view button',
+  '.compact-grid-view button',
+  '[role="dialog"]',
+  '.floating-menu',
+  '.menu-scrim',
+  '.p-popover',
+  '.p-overlay',
+  '[data-pc-section="overlay"]',
+  '.p-toast',
+].join(', ');
+function handleDetailOutsidePress(event) {
+  if (!detailIdentity.value) return;
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(DETAIL_KEEP_SELECTORS)) return;
+  clearDetail();
+  void updateWorkspaceRoute();
+}
 // Re-reads the pinned resource after the page it came from was replaced.
 // `request` is the caller's context generation; a resolve that finishes after
 // a newer load started is dropped along with the load it belonged to.
@@ -2387,9 +2413,11 @@ useAutoRefresh(refreshCurrentContext);
 onMounted(() => {
   loadWorkspace();
   globalThis.window?.addEventListener('keydown', handleWorkspaceKeydown);
+  globalThis.document?.addEventListener('pointerdown', handleDetailOutsidePress);
 });
 onUnmounted(() => {
   globalThis.window?.removeEventListener('keydown', handleWorkspaceKeydown);
+  globalThis.document?.removeEventListener('pointerdown', handleDetailOutsidePress);
   clearTimeout(searchTimer);
   clearTimeout(noticeTimer);
   workspaceResources.invalidate(

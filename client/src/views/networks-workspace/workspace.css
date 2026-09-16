@@ -63,6 +63,11 @@ button {
   .workspace-frame.details-open .work-surface {
     margin-right: var(--workspace-details-width, 350px);
   }
+  @media (prefers-reduced-motion: no-preference) {
+    .work-surface {
+      transition: margin-right 0.18s ease;
+    }
+  }
 }
 .workspace-error {
   display: flex;

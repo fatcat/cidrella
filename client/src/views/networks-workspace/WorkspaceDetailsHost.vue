@@ -1,66 +1,72 @@
 <template>
-  <AddressDetailsPanel
-    v-if="row && rowView === 'addresses' && rowContext === 'network'"
-    :row="row"
-    :subnet-id="network.id"
-    :network-name="network.name"
-    :dns-count="dnsCount"
-    :dhcp-count="dhcpCount"
-    :can-write="canWrite"
-    @close="emit('close')"
-    @navigate="emit('navigate', $event)"
-    @changed="emit('changed', $event)"
-  />
+  <!-- The transition runs when a panel mounts or unmounts. Pinning another
+       address updates the same AddressDetailsPanel in place, so switching
+       rows never slides. -->
+  <Transition name="details">
+    <AddressDetailsPanel
+      v-if="row && rowView === 'addresses' && rowContext === 'network'"
+      key="address"
+      :row="row"
+      :subnet-id="network.id"
+      :network-name="network.name"
+      :dns-count="dnsCount"
+      :dhcp-count="dhcpCount"
+      :can-write="canWrite"
+      @close="emit('close')"
+      @navigate="emit('navigate', $event)"
+      @changed="emit('changed', $event)"
+    />
 
-  <aside v-else-if="row" class="details-panel">
-    <div class="details-head">
-      <div>
-        <span class="eyebrow">DETAILS</span><strong>{{ title }}</strong>
-      </div>
-      <button class="icon-button" aria-label="Close details" @click="emit('close')">
-        <i class="pi pi-times" />
-      </button>
-    </div>
-    <div class="details-status">
-      <span class="detail-orb" :class="row.online || 'unknown'"><i :class="icon" /></span>
-      <div>
-        <strong>{{ heading }}</strong
-        ><small>{{ subheading }}</small>
-      </div>
-    </div>
-    <dl>
-      <template v-for="item in items" :key="item.label">
-        <dt>{{ item.label }}</dt>
-        <dd>{{ item.value || EMPTY_CELL }}</dd>
-      </template>
-    </dl>
-    <div v-if="related.length" class="details-section">
-      <span class="eyebrow">RELATED RESOURCES</span>
-      <button
-        v-for="resource in related"
-        :key="resource.label"
-        @click="emit('navigate', resource.view)"
-      >
-        <i :class="resource.icon" /><span
-          ><strong>{{ resource.label }}</strong
-          ><small>{{ resource.note }}</small></span
-        ><i class="pi pi-chevron-right" />
-      </button>
-    </div>
-    <div v-if="actions.length" class="details-section">
-      <span class="eyebrow">QUICK ACTIONS</span>
-      <div class="quick-actions">
-        <button
-          v-for="action in actions"
-          :key="action.id"
-          :class="{ danger: action.danger }"
-          @click="emit('action', action)"
-        >
-          {{ action.label }}
+    <aside v-else-if="row" key="generic" class="details-panel">
+      <div class="details-head">
+        <div>
+          <span class="eyebrow">DETAILS</span><strong>{{ title }}</strong>
+        </div>
+        <button class="icon-button" aria-label="Close details" @click="emit('close')">
+          <i class="pi pi-times" />
         </button>
       </div>
-    </div>
-  </aside>
+      <div class="details-status">
+        <span class="detail-orb" :class="row.online || 'unknown'"><i :class="icon" /></span>
+        <div>
+          <strong>{{ heading }}</strong
+          ><small>{{ subheading }}</small>
+        </div>
+      </div>
+      <dl>
+        <template v-for="item in items" :key="item.label">
+          <dt>{{ item.label }}</dt>
+          <dd>{{ item.value || EMPTY_CELL }}</dd>
+        </template>
+      </dl>
+      <div v-if="related.length" class="details-section">
+        <span class="eyebrow">RELATED RESOURCES</span>
+        <button
+          v-for="resource in related"
+          :key="resource.label"
+          @click="emit('navigate', resource.view)"
+        >
+          <i :class="resource.icon" /><span
+            ><strong>{{ resource.label }}</strong
+            ><small>{{ resource.note }}</small></span
+          ><i class="pi pi-chevron-right" />
+        </button>
+      </div>
+      <div v-if="actions.length" class="details-section">
+        <span class="eyebrow">QUICK ACTIONS</span>
+        <div class="quick-actions">
+          <button
+            v-for="action in actions"
+            :key="action.id"
+            :class="{ danger: action.danger }"
+            @click="emit('action', action)"
+          >
+            {{ action.label }}
+          </button>
+        </div>
+      </div>
+    </aside>
+  </Transition>
 </template>
 
 <script setup>
@@ -90,6 +96,21 @@ const emit = defineEmits(['close', 'navigate', 'changed', 'action']);
 </script>
 
 <style scoped>
+/* Slide in from the right edge on open, out on close, only where the panel
+   is the absolute column (1024px and up). Below that it flows in the page. */
+@media (min-width: 1024px) and (prefers-reduced-motion: no-preference) {
+  .details-enter-active,
+  .details-leave-active {
+    transition:
+      transform 0.18s ease,
+      opacity 0.18s ease;
+  }
+  .details-enter-from,
+  .details-leave-to {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
 button,
 input {
   font: inherit;
