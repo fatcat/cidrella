@@ -106,6 +106,18 @@ export function useWorkspaceActions(ctx) {
     dialogs.reservationEditorVisible.value = true;
   }
 
+  // The per-address scan override, written the way AddressScanDialog writes it.
+  async function setAddressScan(target, value, message) {
+    const subnetId = state.selectedNetwork.value?.id;
+    try {
+      await api.put(`/subnets/${subnetId}/ips/${encodeURIComponent(target.address)}/scan-enabled`, {
+        scan_enabled: value,
+      });
+      await refreshAfterMutation('address', `${target.address}: ${message}`);
+    } catch (error) {
+      showLiveNotice(`Could not change the scan setting for ${target.address}: ${apiError(error)}`);
+    }
+  }
   function openScanDialog(target, mode) {
     dialogs.scanTarget.value = { address: target.address, raw: { ...target.raw } };
     dialogs.scanDialogMode.value = mode;
@@ -283,7 +295,16 @@ export function useWorkspaceActions(ctx) {
       state.selectedRows.value = [target.id];
       await openBulkRangeType();
     },
-    'ip.scan-policy': (target) => openScanDialog(target, 'policy'),
+    'ip.scan-toggle': (target) => {
+      const raw = target.raw || {};
+      const enabled = raw.scanning_enabled === true || raw.scanning_enabled === 1;
+      return setAddressScan(
+        target,
+        !enabled,
+        enabled ? 'liveness scan disabled' : 'liveness scan enabled',
+      );
+    },
+    'ip.scan-inherit': (target) => setAddressScan(target, null, 'scan setting reset to inherit'),
     'ip.probe': (target) => openScanDialog(target, 'probe'),
 
     // Ranges

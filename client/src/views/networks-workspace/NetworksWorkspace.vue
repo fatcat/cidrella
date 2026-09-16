@@ -305,15 +305,12 @@
       @keydown="handleMenuKeydown"
     >
       <span>{{ rowMenuTitle }}</span>
-      <button
-        v-for="item in rowMenuItems"
-        :key="item.id"
-        role="menuitem"
-        :class="{ danger: item.danger }"
-        @click="runRowAction(item)"
-      >
-        <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
-      </button>
+      <template v-for="item in rowMenuItems" :key="item.id">
+        <hr v-if="item.separatorBefore" class="menu-separator" role="separator" />
+        <button role="menuitem" :class="{ danger: item.danger }" @click="runRowAction(item)">
+          <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
+        </button>
+      </template>
     </div>
 
     <Transition name="notice">
@@ -500,7 +497,6 @@ const viewDefinitions = {
   },
   addresses: {
     search: 'Search IP, hostname, MAC, type…',
-    addLabel: 'Reserve address',
   },
   dns: {
     search: 'Search name, zone, record type, or value…',
@@ -1606,9 +1602,9 @@ const rowMenuItems = computed(() => {
   if (!target) return [];
   return withTarget(menuActions({ menu: 'row', target, view: activeView.value, can }), target);
 });
+// Addresses have no toolbar button: reservations come from the row menu.
 const VIEW_ADD_ACTIONS = {
   networks: ['network.allocate', workspaceTarget],
-  addresses: ['ip.reserve-new', networkTarget],
   dns: ['dns.record.create', workspaceTarget],
   dhcp: ['dhcp.reservation.create', workspaceTarget],
   ranges: ['range.create', networkTarget],

@@ -33,6 +33,7 @@
           @click="emit('select', row)"
           @keydown="handleRowKeydown($event, row)"
           @dragstart="emit('row-dragstart', row, $event)"
+          @contextmenu.prevent="emit('row-menu', row, $event.currentTarget, $event)"
         >
           <td v-if="showCheckboxes" class="check-cell" @click.stop>
             <input

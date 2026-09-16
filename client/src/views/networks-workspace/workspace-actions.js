@@ -142,6 +142,8 @@ const ACTION_DEFINITIONS = [
   {
     id: 'network.scan',
     label: 'Scan network',
+    placement: 'last',
+    separatorBefore: true,
     capability: 'subnets:write',
     targetKind: 'network',
     menus: ['row'],
@@ -215,7 +217,7 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'network.gateway.edit',
-    label: 'Edit gateway',
+    label: 'Edit Gateway',
     capability: 'subnets:write',
     targetKind: 'address',
     available: (target) => target.type === 'gateway',
@@ -223,7 +225,7 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'network.gateway.delete',
-    label: 'Delete gateway',
+    label: 'Delete Gateway',
     capability: 'subnets:write',
     targetKind: 'address',
     available: (target) => target.type === 'gateway',
@@ -329,7 +331,7 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'dhcp.scope.create-here',
-    label: 'Create DHCP scope',
+    label: 'Create DHCP Scope',
     capability: 'dhcp:write',
     targetKind: ['address', 'range'],
     available: (target) => (target.kind === 'range' ? !target.isScope : target.type === 'gateway'),
@@ -337,7 +339,7 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'dhcp.scope.edit',
-    label: (target) => (target.kind === 'workspace' ? 'Edit selected scope' : 'Edit DHCP scope'),
+    label: (target) => (target.kind === 'workspace' ? 'Edit selected scope' : 'Edit Scope'),
     note: 'Pool, lease policy, options, and state',
     icon: 'pi pi-pencil',
     capability: 'dhcp:write',
@@ -354,7 +356,7 @@ const ACTION_DEFINITIONS = [
   {
     id: 'dhcp.scope.remove-members',
     label: (target) =>
-      target.kind === 'address' ? 'Remove this IP from scope' : 'Remove addresses from scope',
+      target.kind === 'address' ? 'Remove this IP from Scope' : 'Remove addresses from Scope',
     capability: 'dhcp:write',
     targetKind: ['address', 'range'],
     available: (target) =>
@@ -373,7 +375,10 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'dhcp.reservation.create',
-    label: 'Add DHCP Reservation',
+    label: (target) =>
+      ['address', 'dhcp-address'].includes(target.kind)
+        ? 'Create DHCP Reservation'
+        : 'Add DHCP Reservation',
     note: 'Bind a client to an address',
     icon: 'pi pi-bookmark',
     capability: 'dhcp:write',
@@ -406,8 +411,7 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'dhcp.scope.delete',
-    label: (target) =>
-      target.kind === 'workspace' ? 'Delete selected scope' : 'Delete DHCP scope',
+    label: (target) => (target.kind === 'workspace' ? 'Delete selected scope' : 'Delete Scope'),
     note: 'Keep the underlying range',
     icon: 'pi pi-trash',
     danger: true,
@@ -504,16 +508,30 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'ip.range-type',
-    label: 'Set range type',
+    label: 'Set Range Type',
+    capability: 'subnets:write',
+    targetKind: 'address',
+  },
+  // Liveness scan, as the current interface's context menu has it: one toggle
+  // for the effective state, plus Reset to Inherit while an override is set.
+  {
+    id: 'ip.scan-toggle',
+    label: (target) =>
+      target.raw?.scanning_enabled === true || target.raw?.scanning_enabled === 1
+        ? 'Disable liveness scan'
+        : 'Enable liveness scan',
     capability: 'subnets:write',
     targetKind: 'address',
   },
   {
-    id: 'ip.scan-policy',
-    label: 'Change scan setting',
+    id: 'ip.scan-inherit',
+    label: 'Reset to Inherit',
     capability: 'subnets:write',
     targetKind: 'address',
+    available: (target) => target.raw?.scan_enabled != null,
+    disabledReason: 'This address inherits the network scan setting.',
   },
+  // Probe sits last in the menu, under the one separator (operator's rule).
   {
     id: 'ip.probe',
     label: 'Probe now',
@@ -521,6 +539,8 @@ const ACTION_DEFINITIONS = [
     targetKind: ['address', 'dhcp-address'],
     available: (target) => target.kind === 'address' || target.address != null,
     disabledReason: 'This row has no address to probe.',
+    placement: 'last',
+    separatorBefore: true,
   },
 
   // Ranges
@@ -584,7 +604,8 @@ const ROW_MENU_ORDER = {
     'ip.reserve',
     'dhcp.reservation.create',
     'ip.range-type',
-    'ip.scan-policy',
+    'ip.scan-toggle',
+    'ip.scan-inherit',
     'ip.probe',
   ],
   'dhcp-address': [
@@ -635,6 +656,8 @@ export const WORKSPACE_ACTIONS = Object.freeze(
         danger: false,
         menus: ['row'],
         views: null,
+        placement: null,
+        separatorBefore: false,
         ...definition,
         targetKinds: asList(definition.targetKind),
       }),
@@ -750,7 +773,10 @@ export function menuActions({
           ? SELECTION_MENU_ORDER[target?.kind]
           : null;
   if (order) ids.sort((a, b) => orderIndex(order, a) - orderIndex(order, b));
-  return ids.map((id) => {
+  // `placement: 'last'` entries (scan, probe) close the menu whatever the order says.
+  const lastIds = ids.filter((id) => WORKSPACE_ACTIONS[id].placement === 'last');
+  const ordered = [...ids.filter((id) => !lastIds.includes(id)), ...lastIds];
+  return ordered.map((id) => {
     const action = WORKSPACE_ACTIONS[id];
     return {
       id,
@@ -758,6 +784,7 @@ export function menuActions({
       note: action.note,
       icon: action.icon,
       danger: action.danger,
+      separatorBefore: action.separatorBefore,
       available: states.get(id).available,
       reason: states.get(id).reason,
     };

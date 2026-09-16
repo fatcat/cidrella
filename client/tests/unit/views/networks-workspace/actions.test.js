@@ -132,13 +132,13 @@ describe('workspace action registry', () => {
         can: all,
       }),
     ).toEqual([
-      'Edit DHCP scope',
-      'Remove this IP from scope',
-      'Delete DHCP scope',
+      'Edit Scope',
+      'Remove this IP from Scope',
+      'Delete Scope',
       'Create IP Reservation',
-      'Add DHCP Reservation',
-      'Set range type',
-      'Change scan setting',
+      'Create DHCP Reservation',
+      'Set Range Type',
+      'Enable liveness scan',
       'Probe now',
     ]);
     expect(
@@ -152,11 +152,11 @@ describe('workspace action registry', () => {
         can: all,
       }),
     ).toEqual([
-      'Edit gateway',
-      'Delete gateway',
-      'Create DHCP scope',
-      'Set range type',
-      'Change scan setting',
+      'Edit Gateway',
+      'Delete Gateway',
+      'Create DHCP Scope',
+      'Set Range Type',
+      'Enable liveness scan',
       'Probe now',
     ]);
     expect(
@@ -172,15 +172,33 @@ describe('workspace action registry', () => {
       'Open IP details',
       'Open scope',
       'Edit DHCP Reservation',
-      'Probe now',
       'Delete DHCP Reservation',
+      'Probe now',
     ]);
+    // Probe closes every row menu under the one separator; scan does the same
+    // for network rows.
+    const probe = menuActions({
+      menu: 'row',
+      target: row('dhcp:reserved:7:10.0.0.7', {
+        address: '10.0.0.7',
+        raw: { id: 7, dhcp_assignment_type: 'reserved', scope_id: 3 },
+      }),
+      can: all,
+    }).at(-1);
+    expect(probe).toMatchObject({ id: 'ip.probe', separatorBefore: true });
+    const networkItems = menuActions({
+      menu: 'row',
+      target: row('network:2', { raw: { id: 2, status: 'allocated' } }),
+      can: all,
+    });
+    expect(networkItems.at(-1)).toMatchObject({ id: 'network.scan', separatorBefore: true });
+    expect(networkItems.filter((item) => item.separatorBefore)).toHaveLength(1);
     expect(
       labels({ menu: 'row', target: row('range:5', { rangeType: 'Servers' }), can: all }),
-    ).toEqual(['Edit range', 'Create DHCP scope', 'Delete range']);
+    ).toEqual(['Edit range', 'Create DHCP Scope', 'Delete range']);
     expect(
       labels({ menu: 'row', target: row('range:4', { rangeType: 'DHCP Scope' }), can: all }),
-    ).toEqual(['Edit DHCP scope', 'Remove addresses from scope', 'Delete DHCP scope']);
+    ).toEqual(['Edit Scope', 'Remove addresses from Scope', 'Delete Scope']);
   });
 
   it('gates each entry on its own capability rather than the view', () => {
@@ -194,7 +212,7 @@ describe('workspace action registry', () => {
     expect(labels({ menu: 'row', target: lease, can: (c) => c === 'dhcp:write' })).toEqual([
       'Open IP details',
       'Open scope',
-      'Add DHCP Reservation',
+      'Create DHCP Reservation',
     ]);
     // A subnet-only operator gets the probe and nothing that writes DHCP.
     expect(labels({ menu: 'row', target: lease, can: (c) => c === 'subnets:write' })).toEqual([

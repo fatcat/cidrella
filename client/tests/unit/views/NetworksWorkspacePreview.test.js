@@ -1397,8 +1397,16 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 240px');
     await wrapper.find('.menu-scrim').trigger('click');
 
-    // A row's menu button anchors the menu under the button.
+    // Right-click on a table row opens that row's menu at the pointer too.
     await enterTestNetwork(wrapper);
+    const scopeRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
+    await scopeRow.trigger('contextmenu', { clientX: 400, clientY: 500 });
+    await nextTick();
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('top: 500px');
+    expect(wrapper.find('.row-menu').text()).toContain('Edit Scope');
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    // A row's menu button anchors the menu under the button.
     const button = wrapper.find('button[aria-label="Row actions"]');
     button.element.getBoundingClientRect = () => ({ left: 600, bottom: 420, top: 400, right: 630 });
     await button.trigger('click');
@@ -1429,15 +1437,20 @@ describe('Networks workspace live preview', () => {
     await scopeMember.find('button[aria-label="Row actions"]').trigger('click');
     const menu = wrapper.find('.row-menu');
     expect(menu.findAll('button').map((button) => button.text())).toEqual([
-      'Edit DHCP scope',
-      'Remove this IP from scope',
-      'Delete DHCP scope',
+      'Edit Scope',
+      'Remove this IP from Scope',
+      'Delete Scope',
       'Create IP Reservation',
-      'Add DHCP Reservation',
-      'Set range type',
-      'Change scan setting',
+      'Create DHCP Reservation',
+      'Set Range Type',
+      'Disable liveness scan',
       'Probe now',
     ]);
+    // One separator, above Probe now, which closes the menu.
+    const separators = menu.findAll('[role="separator"]');
+    expect(separators).toHaveLength(1);
+    expect(separators[0].element.nextElementSibling.textContent).toContain('Probe now');
+    expect(wrapper.find('.table-toolbar').text()).not.toContain('Reserve address');
 
     await menu
       .findAll('button')
@@ -1661,6 +1674,54 @@ describe('Networks workspace live preview', () => {
     const dhcpRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.40'));
     expect(dhcpRow.find('.address-type-pill.type-dynamic-dhcp').text()).toBe('Dynamic');
     expect(dhcpRow.find('.status-pill.status-active').exists()).toBe(true);
+  });
+
+  it('toggles the liveness scan from the row menu and offers Reset to Inherit', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    const row = wrapper.findAll('tbody tr').find((entry) => entry.text().includes('1.1.1.33'));
+    await row.find('button[aria-label="Row actions"]').trigger('click');
+    let labels = wrapper.findAll('.row-menu button').map((button) => button.text());
+    expect(labels).toContain('Disable liveness scan');
+    expect(labels).not.toContain('Reset to Inherit');
+    await wrapper
+      .findAll('.row-menu button')
+      .find((button) => button.text() === 'Disable liveness scan')
+      .trigger('click');
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/1.1.1.33/scan-enabled', {
+      scan_enabled: false,
+    });
+    expect(wrapper.find('.prototype-notice').text()).toContain('liveness scan disabled');
+
+    // With an override in place the menu also offers Reset to Inherit.
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) => {
+      if (url === '/subnets/11/ips') {
+        return base(url, config).then((response) => {
+          response.data.ips = response.data.ips.map((ip) =>
+            ip.ip_address === '1.1.1.33' ? { ...ip, scan_enabled: 0, scanning_enabled: false } : ip,
+          );
+          return response;
+        });
+      }
+      return base(url, config);
+    });
+    await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.33');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+    await wrapper.find('tbody tr button[aria-label="Row actions"]').trigger('click');
+    labels = wrapper.findAll('.row-menu button').map((button) => button.text());
+    expect(labels).toContain('Enable liveness scan');
+    expect(labels).toContain('Reset to Inherit');
+    await wrapper
+      .findAll('.row-menu button')
+      .find((button) => button.text() === 'Reset to Inherit')
+      .trigger('click');
+    await flushPromises();
+    expect(api.put).toHaveBeenLastCalledWith('/subnets/11/ips/1.1.1.33/scan-enabled', {
+      scan_enabled: null,
+    });
   });
 
   it('keeps header actions anchored after the responsive health metrics', async () => {

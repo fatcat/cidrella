@@ -175,6 +175,11 @@ button {
   color: var(--preview-muted);
   font-size: 0.59rem;
 }
+.menu-separator {
+  margin: 0.25rem 0.35rem;
+  border: 0;
+  border-top: 1px solid var(--preview-line);
+}
 .floating-menu button.danger {
   color: var(--cid-red-600);
 }
