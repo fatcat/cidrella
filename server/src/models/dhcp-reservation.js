@@ -73,7 +73,13 @@ export function updateReservation(db, reservation, subnet, fields) {
       reservation.id,
     );
 
-    if (fields.ip_address !== reservation.ip_address) {
+    // A disabled reservation holds no allocation (governance: disabled
+    // configuration is non-authoritative), so it has nothing to release. Its
+    // IP may since have been claimed by DNS or an administrator; releasing
+    // "through dhcp_reservation" would be refused by the lifecycle service and
+    // would reset a PTR the reservation never owned.
+    const heldLiveAllocation = Boolean(reservation.enabled);
+    if (heldLiveAllocation && fields.ip_address !== reservation.ip_address) {
       deallocateStaticDhcp(
         db,
         reservation.subnet_id,
@@ -108,7 +114,7 @@ export function updateReservation(db, reservation, subnet, fields) {
           source: newHostname ? 'reservation' : 'placeholder',
         },
       );
-    } else {
+    } else if (heldLiveAllocation && fields.ip_address === reservation.ip_address) {
       deallocateStaticDhcp(db, reservation.subnet_id, fields.ip_address, fields.mac_address);
       syncPtrForIp(db, reservation.subnet_id, fields.ip_address, '', { source: 'placeholder' });
     }
@@ -121,6 +127,9 @@ export function updateReservation(db, reservation, subnet, fields) {
 export function deleteReservation(db, reservation) {
   const del = db.transaction(() => {
     db.prepare('DELETE FROM dhcp_reservations WHERE id = ?').run(reservation.id);
+    // Same rule as updateReservation: only a live (enabled) reservation
+    // releases its address and PTR.
+    if (!reservation.enabled) return;
     deallocateStaticDhcp(
       db,
       reservation.subnet_id,

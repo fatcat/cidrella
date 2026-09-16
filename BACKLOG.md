@@ -269,8 +269,15 @@ board. Phases are the plan's section 13 rows.
   the payload never highlight a folder, and nothing is draggable without `subnets:write`. Both
   paths verified in Chromium against a throwaway `DATA_DIR` (`screenshots/n08-drop-target.png`).
 
+- T-20 rendered across both orders (DNS first on one address, DHCP Reservation first on
+  another) through the workspace editors against a throwaway `DATA_DIR`, evidence in
+  `screenshots/T20-EVIDENCE.md`: one canonical owner per address, the second protocol excluded
+  with the server's reason inline, rename/disable/delete reflected in details and generated
+  files. Found and fixed on the way: a disabled DHCP Reservation released an address it did not
+  hold on edit and delete, so once DNS had claimed the address the lifecycle service refused
+  with a 409 and the disabled row could not be deleted (`dhcp-reservation.js`, four model tests).
+
 **Partial:**
-- T-20 has no rendered end-to-end test across DNS/DHCP orders; coverage is server-side.
 - W-07: the long network title wraps word by word beside the action group at 1280 and below;
   readable, not pretty. Not a clipping or reachability defect.
 

@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import * as DhcpReservation from '../../../src/models/dhcp-reservation.js';
+import { allocateStaticDns } from '../../../src/services/ip-lifecycle-service.js';
+import { invalidateSubnetCache, syncPtrForIp } from '../../../src/utils/ip-sync.js';
 
 let db;
 let tmpDir;
@@ -25,6 +27,36 @@ function createReverseZone() {
       "INSERT INTO dns_zones (name, type, enabled) VALUES ('0.60.10.in-addr.arpa', 'reverse', 1)",
     )
     .run().lastInsertRowid;
+}
+
+function createForwardZone() {
+  return db
+    .prepare(
+      "INSERT INTO dns_zones (name, type, enabled) VALUES ('reservation.test', 'forward', 1)",
+    )
+    .run().lastInsertRowid;
+}
+
+function disabledReservation(subnet, mac, ip, hostname) {
+  const created = DhcpReservation.createReservation(db, subnet, {
+    mac_address: mac,
+    ip_address: ip,
+    hostname,
+  });
+  return DhcpReservation.updateReservation(db, created, subnet, {
+    mac_address: created.mac_address,
+    ip_address: created.ip_address,
+    enabled: false,
+  });
+}
+
+// What the DNS record route does for an enabled A record: allocate through
+// DNS, then write the managed PTR. The leaf-subnet cache is per process, so
+// it is dropped after this file's beforeEach recreated the subnet.
+function claimThroughDns(subnetId, name, ip) {
+  invalidateSubnetCache();
+  allocateStaticDns(db, name, ip, 'reservation.test');
+  syncPtrForIp(db, subnetId, ip, `${name}.reservation.test`, { source: 'dns' });
 }
 
 function ptrValue(zoneId, name) {
@@ -153,5 +185,96 @@ describe('DHCP Reservation ownership', () => {
       allocation_source_id: reservation.id,
     });
     expect(ptrValue(ptrZoneId, '27')).toBe('toggle-host.reservation.test');
+  });
+});
+
+// T-20 orders: a reservation disabled and then superseded by a DNS owner on
+// the same address. Disabled configuration is non-authoritative, so its later
+// edits and deletion must leave the DNS allocation and PTR alone instead of
+// being refused by the lifecycle service.
+describe('DHCP Reservation without a live allocation', () => {
+  it('deletes a disabled reservation whose address DNS has since claimed', () => {
+    const subnetId = createSubnet();
+    const ptrZoneId = createReverseZone();
+    createForwardZone();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+    const disabled = disabledReservation(subnet, 'aa:bb:cc:dd:ee:10', '10.60.0.40', 'old-host');
+    claimThroughDns(subnetId, 'dns-host', '10.60.0.40');
+    expect(ptrValue(ptrZoneId, '40')).toBe('dns-host.reservation.test');
+
+    DhcpReservation.deleteReservation(db, disabled);
+
+    expect(db.prepare('SELECT * FROM dhcp_reservations WHERE id = ?').get(disabled.id)).toBe(
+      undefined,
+    );
+    expect(
+      db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.40'),
+    ).toMatchObject({ allocation_state: 'static_dns', hostname: 'dns-host.reservation.test' });
+    expect(ptrValue(ptrZoneId, '40')).toBe('dns-host.reservation.test');
+  });
+
+  it('edits a disabled reservation without touching the address it no longer holds', () => {
+    const subnetId = createSubnet();
+    const ptrZoneId = createReverseZone();
+    createForwardZone();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+    const disabled = disabledReservation(subnet, 'aa:bb:cc:dd:ee:11', '10.60.0.41', 'old-host');
+    claimThroughDns(subnetId, 'dns-host', '10.60.0.41');
+
+    const renamed = DhcpReservation.updateReservation(db, disabled, subnet, {
+      mac_address: disabled.mac_address,
+      ip_address: disabled.ip_address,
+      hostname: 'renamed-host',
+      enabled: false,
+    });
+    expect(renamed.hostname).toBe('renamed-host');
+    expect(
+      db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.41'),
+    ).toMatchObject({ allocation_state: 'static_dns', hostname: 'dns-host.reservation.test' });
+    expect(ptrValue(ptrZoneId, '41')).toBe('dns-host.reservation.test');
+  });
+
+  it('moves a disabled reservation to another address without releasing either', () => {
+    const subnetId = createSubnet();
+    const ptrZoneId = createReverseZone();
+    createForwardZone();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+    const disabled = disabledReservation(subnet, 'aa:bb:cc:dd:ee:12', '10.60.0.42', 'old-host');
+    claimThroughDns(subnetId, 'dns-a', '10.60.0.42');
+    claimThroughDns(subnetId, 'dns-b', '10.60.0.43');
+
+    const moved = DhcpReservation.updateReservation(db, disabled, subnet, {
+      mac_address: disabled.mac_address,
+      ip_address: '10.60.0.43',
+      enabled: false,
+    });
+    expect(moved.ip_address).toBe('10.60.0.43');
+    expect(
+      db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.42'),
+    ).toMatchObject({ allocation_state: 'static_dns' });
+    expect(
+      db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.43'),
+    ).toMatchObject({ allocation_state: 'static_dns' });
+    expect(ptrValue(ptrZoneId, '42')).toBe('dns-a.reservation.test');
+    expect(ptrValue(ptrZoneId, '43')).toBe('dns-b.reservation.test');
+  });
+
+  it('still releases the address when an enabled reservation is deleted', () => {
+    const subnetId = createSubnet();
+    const ptrZoneId = createReverseZone();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+    const reservation = DhcpReservation.createReservation(db, subnet, {
+      mac_address: 'aa:bb:cc:dd:ee:13',
+      ip_address: '10.60.0.44',
+      hostname: 'live-host',
+    });
+    // The route hands the model the stored row, enabled as 1.
+    DhcpReservation.deleteReservation(db, {
+      ...db.prepare('SELECT * FROM dhcp_reservations WHERE id = ?').get(reservation.id),
+    });
+    expect(
+      db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get('10.60.0.44'),
+    ).toBeUndefined();
+    expect(ptrValue(ptrZoneId, '44')).toBe('10.60.0.44');
   });
 });
