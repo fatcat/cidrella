@@ -517,14 +517,29 @@ input {
   overflow: hidden;
 }
 
+/* Stacked below 1024px: the explorer sits above the work surface, so the
+   frame scrolls the page instead of clipping the editor under it, and a fill
+   editor keeps enough height to show its table or empty state. */
 @media (max-width: 1023px) {
+  .workspace-preview {
+    height: auto;
+  }
   .workspace-frame {
     grid-template-columns: minmax(0, 1fr);
+    overflow: visible;
   }
   .explorer {
-    max-height: 22rem;
+    max-height: 16rem;
     border-right: 0;
     border-bottom: 1px solid var(--preview-line);
+  }
+  .work-surface {
+    overflow: visible;
+  }
+  .settings-panel,
+  .settings-panel.fill {
+    min-height: 32rem;
+    overflow: visible;
   }
 }
 @media (max-width: 720px) {
