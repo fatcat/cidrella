@@ -76,11 +76,24 @@
           </div>
         </div>
       </template>
-      <div class="field" v-if="editing">
+      <div class="field" v-if="editing && multiPool" data-track="dhcp-scope-pools">
+        <label>Pools</label>
+        <ul class="scope-pools">
+          <li v-for="pool in editing.pools" :key="`${pool.start_ip}-${pool.end_ip}`">
+            {{ pool.start_ip }} {{ EMPTY_CELL }} {{ pool.end_ip }}
+          </li>
+        </ul>
+        <small class="field-help">
+          This scope has {{ editing.pools.length }} pool intervals. The editor writes a single
+          interval, so the bounds are locked here to keep every pool; lease time, options,
+          description and enabled still save.
+        </small>
+      </div>
+      <div class="field" v-if="editing && !multiPool">
         <label>Start IP</label>
         <InputText v-model="form.start_ip" class="w-full" placeholder="e.g. 192.168.1.10" />
       </div>
-      <div class="field" v-if="editing">
+      <div class="field" v-if="editing && !multiPool">
         <label>End IP</label>
         <InputText v-model="form.end_ip" class="w-full" placeholder="e.g. 192.168.1.254" />
       </div>
@@ -175,6 +188,9 @@
     </div>
 
     <template #footer>
+      <p v-if="scopeError" class="form-error" role="alert" data-track="dhcp-scope-error">
+        {{ scopeError }}
+      </p>
       <Button
         :label="editing ? 'Cancel' : showRangePicker ? 'Cancel' : 'Skip'"
         severity="secondary"
@@ -239,6 +255,11 @@ const subnetStore = useSubnetStore();
 
 const dialogVisible = ref(false);
 const editing = ref(null); // the scope object being edited, or null for create
+const scopeError = ref('');
+// The write API takes one interval. A scope that reads back with several
+// pools is shown whole and its bounds are locked, so a save can never keep
+// the first pool and drop the rest (H-03, T-24).
+const multiPool = computed(() => (editing.value?.pools?.length || 0) > 1);
 const saving = ref(false);
 const showRangePicker = ref(false); // true when creating from DHCP page (no pre-set range)
 const form = ref(emptyForm());
@@ -258,6 +279,7 @@ const scopeDiscard = useDiscardGuard({
 function showScopeDialog() {
   formBaseline = JSON.stringify(form.value);
   scopeDiscard.reset();
+  scopeError.value = '';
   dialogVisible.value = true;
 }
 
@@ -286,6 +308,9 @@ const optionGroups = computed(() => {
   const order = optionGroupOrder.value.map((g) => g.name);
   const groups = {};
   for (const opt of optionCatalog.value) {
+    // Lease time is the one duration control; option 51 would be a second
+    // one that the server also derives from lease_time (H-07).
+    if (Number(opt.code) === 51) continue;
     const g = opt.group || 'Common';
     if (!groups[g]) groups[g] = [];
     groups[g].push(opt);
@@ -604,6 +629,8 @@ async function save() {
     return;
   }
   saving.value = true;
+  scopeError.value = '';
+  let createdRange = null;
   try {
     // Send all selected options to the server. The server strips inherited
     // values using fresh subnet data from the DB (avoids stale client-side list).
@@ -621,8 +648,10 @@ async function save() {
     };
 
     if (editing.value) {
-      if (form.value.start_ip) payload.start_ip = form.value.start_ip;
-      if (form.value.end_ip) payload.end_ip = form.value.end_ip;
+      if (!multiPool.value) {
+        if (form.value.start_ip) payload.start_ip = form.value.start_ip;
+        if (form.value.end_ip) payload.end_ip = form.value.end_ip;
+      }
       await dhcpStore.updateScope(editing.value.id, payload);
       toast.add({ severity: 'success', summary: 'Scope updated', life: 3000 });
     } else {
@@ -659,6 +688,19 @@ async function save() {
           description: form.value.description || null,
         });
         rangeId = newRange.id;
+        // The range exists from here on. Select it in the form so a retry
+        // after a scope failure creates only the scope (H-02, T-23).
+        createdRange = { ...newRange, id: rangeId, subnet_id: subnetId };
+        const subnet = subnetsList.value?.find((sn) => sn.id === subnetId);
+        availableRanges.value = [
+          ...availableRanges.value,
+          {
+            ...createdRange,
+            subnet_name: subnet?.name || '',
+            _label: `${subnet?.name || 'Network'} (${newRange.start_ip} — ${newRange.end_ip})`,
+          },
+        ];
+        form.value.range_id = rangeId;
       } else if (rangeId) {
         const range = availableRanges.value.find((r) => r.id === rangeId);
         if (range) subnetId = range.subnet_id;
@@ -675,6 +717,9 @@ async function save() {
     window.dispatchEvent(new Event('ipam:stats-changed'));
     emit('saved');
   } catch (err) {
+    scopeError.value = createdRange
+      ? `Range ${createdRange.start_ip} to ${createdRange.end_ip} was created but the scope was not: ${apiError(err)}. Save again to create only the scope.`
+      : apiError(err);
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
@@ -847,6 +892,19 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
 </script>
 
 <style scoped>
+.form-error {
+  flex: 1 1 100%;
+  margin: 0 0 0.4rem;
+  color: var(--cid-red-500);
+  font-size: var(--app-fs-sm);
+  font-weight: 500;
+}
+.scope-pools {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--app-fs-sm);
+}
 .form-grid {
   display: flex;
   flex-direction: column;

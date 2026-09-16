@@ -363,6 +363,14 @@
           <ToggleSwitch v-model="reservationForm.enabled" />
         </div>
       </div>
+      <p
+        v-if="reservationError"
+        class="form-error"
+        role="alert"
+        data-track="dhcp-reservation-error"
+      >
+        {{ reservationError }}
+      </p>
       <template #footer>
         <Button
           label="Cancel"
@@ -533,6 +541,7 @@ const reservationForm = ref({
   enabled: true,
 });
 const allocatedSubnets = ref([]);
+const reservationError = ref('');
 let reservationFormBaseline = '';
 const reservationDiscard = useDiscardGuard({
   isDirty: () => JSON.stringify(reservationForm.value) !== reservationFormBaseline,
@@ -1008,11 +1017,13 @@ async function openReservationDialog(reservation = null, prefill = {}) {
   }
   reservationFormBaseline = JSON.stringify(reservationForm.value);
   reservationDiscard.reset();
+  reservationError.value = '';
   showReservationDialog.value = true;
 }
 
 async function saveReservation() {
   savingReservation.value = true;
+  reservationError.value = '';
   try {
     const payload = {
       mac_address: reservationForm.value.mac_address,
@@ -1040,6 +1051,9 @@ async function saveReservation() {
     );
     await reloadSelectedScopeAddresses();
   } catch (err) {
+    // Conflicts (duplicate client or IP, static DNS, topology) keep the form
+    // and its values so the operator can correct them (H-04).
+    reservationError.value = apiError(err);
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingReservation.value = false;
@@ -1370,6 +1384,12 @@ code {
   color: var(--cid-surface-400);
 }
 
+.form-error {
+  margin: 0.5rem 0 0;
+  color: var(--cid-red-500);
+  font-size: var(--app-fs-sm);
+  font-weight: 500;
+}
 .form-grid {
   display: flex;
   flex-direction: column;

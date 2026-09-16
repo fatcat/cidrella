@@ -1853,6 +1853,7 @@ const workspaceActions = useWorkspaceActions({
   openCanonicalAddress,
   openRangeEditor,
   openBulkRangeType,
+  refreshAfterMutation,
 });
 async function handleBulkComplete(ledger) {
   bulkActionVisible.value = false;

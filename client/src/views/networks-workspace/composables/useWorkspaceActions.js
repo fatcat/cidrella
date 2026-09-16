@@ -22,6 +22,7 @@ export function useWorkspaceActions(ctx) {
     openCanonicalAddress,
     openRangeEditor,
     openBulkRangeType,
+    refreshAfterMutation,
   } = ctx;
 
   async function ensureNetworkDialogs() {
@@ -202,6 +203,14 @@ export function useWorkspaceActions(ctx) {
       (await ensureProtocolDialogs()).dns.openRecordEditor(target.raw, {}, zoneFor(target)),
     'dns.record.delete': async (target) =>
       (await ensureProtocolDialogs()).dns.confirmDeleteRecordForZone(target.raw, zoneFor(target)),
+    'dns.apply': async () => {
+      try {
+        await api.post('/dns/apply');
+        await refreshAfterMutation('apply', 'DNS configuration applied for the whole appliance');
+      } catch (error) {
+        showLiveNotice(`Could not apply DNS configuration: ${apiError(error)}`);
+      }
+    },
     'dns.settings': () =>
       router.push({
         path: '/system',
@@ -241,6 +250,14 @@ export function useWorkspaceActions(ctx) {
       (await ensureProtocolDialogs()).dhcp.openReservationDialog(target.raw),
     'dhcp.reservation.delete': async (target) =>
       (await ensureProtocolDialogs()).dhcp.confirmDeleteReservation(target.raw),
+    'dhcp.apply': async () => {
+      try {
+        await api.post('/dhcp/apply');
+        await refreshAfterMutation('apply', 'DHCP configuration applied for the whole appliance');
+      } catch (error) {
+        showLiveNotice(`Could not apply DHCP configuration: ${apiError(error)}`);
+      }
+    },
     'dhcp.settings': () =>
       router.push({
         path: '/system',

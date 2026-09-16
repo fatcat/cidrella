@@ -233,14 +233,28 @@ board. Phases are the plan's section 13 rows.
   and `Allocate network` from either creates the root in that folder. Explorer folders now keep
   `description`, so Rename no longer blanks it (FolderManagerDialog had the same bug).
 
+- Reused editor overlay rules: `e76d557`. NetworkDialogs (folder, address space, network,
+  divide), DnsPanel (zone, record), DhcpPanel (reservation) and ScopeDialog snapshot their form
+  on open and ask before a dirty close from Cancel, X or Escape; the network editor keeps Escape
+  off under its inline folder editor. Preview-written server defaults move the baseline after
+  the gateway watchers run, so an untouched form still closes silently.
+- D-06/H-06 settings links and apply entries, W-03 explicit counts, small-screen explorer:
+  `68626bb` and the D/H commit below.
+- N-04/N-06/N-10 dialog branches: T-10 resume configuration on the created root ID (no second
+  root), T-15 execute with the reviewed plan token, 409 `stale_plan` replaces the plan and
+  requires a new review with no automatic resubmit (the store used to re-preview behind the
+  operator's back), N-10 delete/deallocate report the server's `action`. Save errors show inline.
+- D/H edge cases: T-21 `dnsRecordPayload` sends only the fields a type owns (zero kept, empty to
+  null), T-23 a created range stays selected so the retry creates only the scope, T-24 multi-pool
+  scopes list every interval and lock the bounds so a save cannot drop pools, T-26 reservation
+  conflicts stay in the form with the server's reason, T-27 option 51 is never offered beside
+  lease time. T-20 convergence is the server's `network-dhcp-*` and `ip-lifecycle` suites plus
+  the section 7 refresh; T-22 zone deletion already discloses the record count and needs the
+  typed DELETE; T-25 middle-of-pool removal explains it is unsupported (first pass).
+
 **Partial:**
-- The reused NetworkDialogs, DnsPanel and DhcpPanel editors inherit the vendor focus trap and
-  return, but their own stacks (divide preview, delete confirms) still close together on one
-  Escape and have no unsaved-form guard. Belongs to the N/D/H edge-case packages.
-- W-03: filtered-count-vs-subnet-size wording under every view not verified.
-- N-*: rendered coverage of every dialog branch; drag/drop move to folder (N-08) is not offered,
-  the row menu is the only path.
-- D-*/H-*: rendered edge-case coverage (T-20..T-27), global settings links.
+- N-08 drag/drop move to folder is not offered, the row menu is the only path.
+- T-20 has no rendered end-to-end test across DNS/DHCP orders; coverage is server-side.
 
 **Not started:** W-07 responsive/accessibility verification, P6 parity gate evidence, P7..P9
 (section 10), P10 cutover. An agent wired `/networks` to the workspace and moved the old view

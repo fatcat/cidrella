@@ -529,6 +529,9 @@
           <ToggleSwitch v-model="recordForm.enabled" />
         </div>
       </div>
+      <p v-if="recordError" class="warn-text" role="alert" data-track="dns-record-error">
+        {{ recordError }}
+      </p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="recordDiscard.requestClose(false)" />
         <Button
@@ -649,6 +652,7 @@ import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 import IpDetailsDrawer from './IpDetailsDrawer.vue';
 import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
 import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
+import { dnsRecordPayload } from '../utils/dnsRecordPayload.js';
 import {
   IP_TABLE_COLUMN_ALIASES,
   IP_TABLE_DEFAULT_KEYS,
@@ -883,6 +887,7 @@ const recordForm = ref({
   enabled: true,
 });
 const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
+const recordError = ref('');
 let recordFormBaseline = '';
 const recordDiscard = useDiscardGuard({
   isDirty: () => JSON.stringify(recordForm.value) !== recordFormBaseline,
@@ -1197,17 +1202,20 @@ function openRecordDialog(record = null, defaults = {}) {
   }
   recordFormBaseline = JSON.stringify(recordForm.value);
   recordDiscard.reset();
+  recordError.value = '';
   showRecordDialog.value = true;
 }
 
 async function saveRecord() {
   savingRecord.value = true;
+  recordError.value = '';
   try {
+    const payload = dnsRecordPayload(recordForm.value);
     if (editingRecord.value) {
-      await store.updateRecord(selectedZone.value.id, editingRecord.value.id, recordForm.value);
+      await store.updateRecord(selectedZone.value.id, editingRecord.value.id, payload);
       toast.add({ severity: 'success', summary: 'Record updated', life: 3000 });
     } else {
-      await store.createRecord(selectedZone.value.id, recordForm.value);
+      await store.createRecord(selectedZone.value.id, payload);
       toast.add({ severity: 'success', summary: 'Record created', life: 3000 });
     }
 
@@ -1233,6 +1241,7 @@ async function saveRecord() {
     records.value = await store.getRecords(selectedZone.value.id);
     await store.fetchZones(); // refresh record counts
   } catch (err) {
+    recordError.value = apiError(err);
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingRecord.value = false;

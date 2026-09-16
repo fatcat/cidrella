@@ -293,6 +293,18 @@ const ACTION_DEFINITIONS = [
     available: (target) => target.kind === 'dns-zone' || target.zone != null,
     disabledReason: 'Open a zone first.',
   },
+  // Apply and sync act on the whole appliance, not the open context (D-06,
+  // H-06). The banner shows durable apply status separately (O-01).
+  {
+    id: 'dns.apply',
+    label: 'Apply DNS configuration',
+    note: 'Publishes DNS for the whole appliance',
+    icon: 'pi pi-sync',
+    capability: 'dns:write',
+    targetKind: 'workspace',
+    menus: ['actions'],
+    views: ['dns'],
+  },
   {
     id: 'dns.settings',
     label: 'Appliance-wide DNS settings',
@@ -409,6 +421,16 @@ const ACTION_DEFINITIONS = [
       (target.kind === 'range' && target.isScope) ||
       (target.kind === 'workspace' && target.scope != null),
     disabledReason: 'This resource is not part of a DHCP scope.',
+  },
+  {
+    id: 'dhcp.apply',
+    label: 'Apply DHCP configuration',
+    note: 'Publishes DHCP for the whole appliance',
+    icon: 'pi pi-sync',
+    capability: 'dhcp:write',
+    targetKind: 'workspace',
+    menus: ['actions'],
+    views: ['dhcp'],
   },
   {
     id: 'dhcp.settings',
@@ -537,6 +559,7 @@ const ACTIONS_MENU_ORDER = {
     'dns.zone.edit',
     'dns.zones.switch-side',
     'dns.zone.create',
+    'dns.apply',
     'dns.settings',
     'dns.zone.delete',
   ],
@@ -544,6 +567,7 @@ const ACTIONS_MENU_ORDER = {
     'dhcp.scope.edit',
     'dhcp.leases.sync',
     'dhcp.scope.create',
+    'dhcp.apply',
     'dhcp.settings',
     'dhcp.scope.delete',
   ],
