@@ -155,7 +155,7 @@
             @row-menu="openRowMenu"
           />
           <footer class="table-footer">
-            <span>Showing {{ filteredRows.length }} of {{ rowTotal }}</span>
+            <span>{{ resultCountLabel }}</span>
             <div class="pagination">
               <button
                 :disabled="currentPage <= 1 || !serverPagedView"
@@ -1562,6 +1562,13 @@ const rowTotal = computed(() => {
   if (activeView.value === 'dhcp' && (contextKind.value === 'network' || selectedScopeFilter.value))
     return dhcpTotal.value;
   return currentRows.value.length;
+});
+
+const resultCountLabel = computed(() => {
+  if (activeView.value === 'addresses' && contextKind.value === 'network') {
+    return `Showing ${filteredRows.value.length} on this page · ${addressFilteredTotal.value} matching · ${addressTotal.value} addresses in network`;
+  }
+  return `Showing ${filteredRows.value.length} of ${rowTotal.value}`;
 });
 
 function toggleFolder(id) {

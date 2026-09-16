@@ -13,6 +13,9 @@
 -->
 <template>
   <div class="settings-page">
+    <div v-if="returnPath" class="settings-return">
+      <router-link :to="returnPath"><i class="pi pi-arrow-left" /> Return to workspace</router-link>
+    </div>
     <SettingsArea :area-id="activeAreaId" :sec="activeSec" @area="goArea" @sec="goSec" />
   </div>
 </template>
@@ -22,6 +25,7 @@ import { computed, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import SettingsArea from '../components/settings/SettingsArea.vue';
 import { SETTINGS_AREAS, findArea } from '../config/settingsAreas.js';
+import { safeInternalPath } from '../utils/landing.js';
 
 const route = useRoute();
 const router = useRouter();
@@ -36,6 +40,11 @@ const activeAreaId = computed(() => {
   return a && findArea(a) ? a : DEFAULT_AREA_ID;
 });
 const activeSec = computed(() => (typeof route.query.sec === 'string' ? route.query.sec : ''));
+const returnPath = computed(() => safeInternalPath(router, route.query.return));
+
+function queryWithReturn(query) {
+  return returnPath.value ? { ...query, return: returnPath.value } : query;
+}
 
 // Back-compat for the old System.vue deep-links: translate the 5 named ?tab=
 // values to the new ?area=&sec= scheme. The old numeric localStorage key is
@@ -54,10 +63,10 @@ onMounted(() => {
 });
 
 function goArea(id) {
-  router.push({ query: { area: id } });
+  router.push({ query: queryWithReturn({ area: id }) });
 }
 function goSec(id) {
-  router.push({ query: { area: activeAreaId.value, sec: id } });
+  router.push({ query: queryWithReturn({ area: activeAreaId.value, sec: id }) });
 }
 </script>
 
@@ -67,5 +76,19 @@ function goSec(id) {
   display: flex;
   flex-direction: column;
   min-height: 0;
+}
+.settings-return {
+  padding: 0.45rem 0.8rem;
+  border-bottom: 1px solid var(--cid-surface-border);
+  background: var(--cid-surface-card);
+}
+.settings-return a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--cid-primary-color);
+  font-size: var(--app-fs-sm);
+  font-weight: 700;
+  text-decoration: none;
 }
 </style>

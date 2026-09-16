@@ -348,6 +348,19 @@ button {
   .table-card {
     min-height: 430px;
   }
+  .table-footer {
+    grid-template-columns: 1fr auto;
+    gap: 0.45rem;
+  }
+  .table-footer > span:first-child {
+    grid-column: 1 / -1;
+  }
+  .pagination {
+    justify-self: start;
+  }
+  .page-size-control {
+    justify-self: end;
+  }
   .sample-pill {
     display: none;
   }

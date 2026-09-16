@@ -226,6 +226,7 @@ describe('workspace action registry', () => {
     expect(labels({ menu: 'actions', target: workspace(), view: 'dns', can: all })).toEqual([
       'Switch forward / reverse',
       'Add DNS zone',
+      'Appliance-wide DNS settings',
     ]);
     expect(
       labels({ menu: 'actions', target: workspace({ id: 2 }), view: 'dns', can: all }),
@@ -233,6 +234,7 @@ describe('workspace action registry', () => {
       'Edit selected zone',
       'Switch forward / reverse',
       'Add DNS zone',
+      'Appliance-wide DNS settings',
       'Delete selected zone',
     ]);
     expect(
@@ -241,6 +243,7 @@ describe('workspace action registry', () => {
       'Edit selected scope',
       'Sync leases now',
       'Add DHCP scope',
+      'Appliance-wide DHCP settings',
       'Delete selected scope',
     ]);
     expect(

@@ -202,6 +202,11 @@ export function useWorkspaceActions(ctx) {
       (await ensureProtocolDialogs()).dns.openRecordEditor(target.raw, {}, zoneFor(target)),
     'dns.record.delete': async (target) =>
       (await ensureProtocolDialogs()).dns.confirmDeleteRecordForZone(target.raw, zoneFor(target)),
+    'dns.settings': () =>
+      router.push({
+        path: '/system',
+        query: { area: 'dns', sec: 'dns', return: router.currentRoute.value.fullPath },
+      }),
 
     // DHCP
     'dhcp.scope.create': async () => (await ensureProtocolDialogs()).dhcp.openScopeDialog(),
@@ -236,6 +241,11 @@ export function useWorkspaceActions(ctx) {
       (await ensureProtocolDialogs()).dhcp.openReservationDialog(target.raw),
     'dhcp.reservation.delete': async (target) =>
       (await ensureProtocolDialogs()).dhcp.confirmDeleteReservation(target.raw),
+    'dhcp.settings': () =>
+      router.push({
+        path: '/system',
+        query: { area: 'dhcp', sec: 'scopes', return: router.currentRoute.value.fullPath },
+      }),
 
     // Addresses
     'ip.reserve': (target) => openReservationEditor(target, 'reserve'),

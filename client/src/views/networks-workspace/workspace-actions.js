@@ -293,6 +293,16 @@ const ACTION_DEFINITIONS = [
     available: (target) => target.kind === 'dns-zone' || target.zone != null,
     disabledReason: 'Open a zone first.',
   },
+  {
+    id: 'dns.settings',
+    label: 'Appliance-wide DNS settings',
+    note: 'Forwarders, encryption, DNSSEC, and SOA defaults',
+    icon: 'pi pi-cog',
+    capability: 'dns:read',
+    targetKind: 'workspace',
+    menus: ['actions'],
+    views: ['dns'],
+  },
 
   // DHCP scopes
   {
@@ -399,6 +409,16 @@ const ACTION_DEFINITIONS = [
       (target.kind === 'range' && target.isScope) ||
       (target.kind === 'workspace' && target.scope != null),
     disabledReason: 'This resource is not part of a DHCP scope.',
+  },
+  {
+    id: 'dhcp.settings',
+    label: 'Appliance-wide DHCP settings',
+    note: 'Defaults, options, and rogue detection',
+    icon: 'pi pi-cog',
+    capability: 'dhcp:read',
+    targetKind: 'workspace',
+    menus: ['actions'],
+    views: ['dhcp'],
   },
 
   // Addresses
@@ -513,8 +533,20 @@ const ACTION_DEFINITIONS = [
 // leads with the edit action. Overrides by row kind and by view fix the few
 // places where registry order is wrong. Unlisted actions sort last.
 const ACTIONS_MENU_ORDER = {
-  dns: ['dns.zone.edit', 'dns.zones.switch-side', 'dns.zone.create', 'dns.zone.delete'],
-  dhcp: ['dhcp.scope.edit', 'dhcp.leases.sync', 'dhcp.scope.create', 'dhcp.scope.delete'],
+  dns: [
+    'dns.zone.edit',
+    'dns.zones.switch-side',
+    'dns.zone.create',
+    'dns.settings',
+    'dns.zone.delete',
+  ],
+  dhcp: [
+    'dhcp.scope.edit',
+    'dhcp.leases.sync',
+    'dhcp.scope.create',
+    'dhcp.settings',
+    'dhcp.scope.delete',
+  ],
 };
 const ROW_MENU_ORDER = {
   address: [

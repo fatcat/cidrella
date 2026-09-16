@@ -480,6 +480,9 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.context-header').text()).toContain('Public test network');
     expect(wrapper.find('table').text()).toContain('1.1.1.40');
     expect(wrapper.find('table').text()).toContain('dynamic DHCP');
+    expect(wrapper.find('.table-footer').text()).toContain(
+      '256 on this page · 256 matching · 256 addresses in network',
+    );
 
     const dnsTab = wrapper
       .findAll('.view-tabs button')

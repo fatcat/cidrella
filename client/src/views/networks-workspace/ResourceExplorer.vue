@@ -571,7 +571,9 @@ mark {
 }
 @media (max-width: 820px) {
   .resource-explorer {
-    display: none;
+    max-height: 22rem;
+    border-right: 0;
+    border-bottom: 1px solid var(--preview-line);
   }
 }
 </style>
