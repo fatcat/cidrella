@@ -93,6 +93,7 @@ button {
   cursor: pointer;
 }
 .table-card {
+  position: relative;
   display: flex;
   min-height: 0;
   flex: 1;
@@ -103,17 +104,32 @@ button {
   border-radius: 10px;
   background: var(--cid-surface-card);
 }
-.loading-bar {
+/* Loading: a popover over the table, the table dimmed and blurred under it. */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 0.45rem;
-  padding: 0.38rem;
+  background: color-mix(in srgb, var(--cid-surface-card) 45%, transparent);
+  backdrop-filter: blur(2px);
+}
+.loading-popover {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.1rem;
+  border: 1px solid color-mix(in srgb, var(--preview-accent) 28%, var(--preview-line));
+  border-radius: 10px;
   color: var(--preview-accent);
-  background: var(--preview-accent-soft);
-  border-bottom: 1px solid color-mix(in srgb, var(--preview-accent) 28%, var(--preview-line));
-  font-size: 0.66rem;
+  background: var(--cid-surface-card);
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.18);
   font-weight: 750;
+}
+.table-card.is-loading > :not(.loading-overlay) {
+  opacity: 0.6;
+  pointer-events: none;
 }
 .menu-scrim {
   position: fixed;
@@ -230,7 +246,7 @@ button {
   opacity: 0;
   transform: translateY(10px);
 }
-.loading-bar,
+.loading-popover,
 .table-footer,
 .floating-menu > span,
 .floating-menu button small,
@@ -262,55 +278,23 @@ button {
     min-height: 430px;
   }
   .table-footer {
-    grid-template-columns: 1fr auto;
-    gap: 0.45rem;
-  }
-  .table-footer > span:first-child {
-    grid-column: 1 / -1;
-  }
-  .pagination {
-    justify-self: start;
-  }
-  .page-size-control {
-    justify-self: end;
+    justify-content: center;
   }
 }
 .table-footer {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  padding: 0.38rem 0.55rem;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding: 0.2rem 0.55rem;
   border-top: 1px solid var(--preview-line);
   color: var(--preview-muted);
   font-size: 0.61rem;
 }
-.table-footer > span:last-child {
-  justify-self: end;
-}
-.pagination {
-  display: flex;
-  align-items: center;
-  gap: 0.12rem;
-}
-.pagination button {
-  width: 1.5rem;
-  height: 1.5rem;
-  border: 0;
-  border-radius: 5px;
+.table-footer :deep(.p-paginator) {
+  padding: 0.15rem 0;
   background: transparent;
-  color: var(--preview-muted);
-  cursor: pointer;
-}
-.pagination button:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-.pagination button.active {
-  color: white;
-  background: var(--preview-accent);
-}
-.pagination span {
-  padding: 0 0.22rem;
 }
 .protocol-dialog-providers {
   position: fixed;

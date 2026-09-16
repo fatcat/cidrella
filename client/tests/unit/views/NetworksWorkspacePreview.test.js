@@ -383,15 +383,17 @@ function installApiFixtures() {
             .includes(query),
         );
       }
+      const pageSize = Number(config.params?.pageSize) || 256;
+      const page = Number(config.params?.page) || 1;
       return response({
         subnet,
-        ips,
+        ips: ips.slice((page - 1) * pageSize, page * pageSize),
         ranges,
         totalIps: ips.length,
         filteredTotal: ips.length,
-        page: 1,
-        pageSize: 256,
-        totalPages: 1,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(ips.length / pageSize)),
       });
     }
     if (url === '/subnets/11/summary') return response(summaryStats);
@@ -457,6 +459,18 @@ async function mountPreview(options = {}) {
           emits: ['update:modelValue'],
           template:
             '<input class="w-full" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+        },
+        // The vendor paginator needs the PrimeVue plugin; the stub keeps its
+        // contract (first/rows/totalRecords in, a page event out).
+        Paginator: {
+          props: ['first', 'rows', 'totalRecords', 'rowsPerPageOptions'],
+          emits: ['page'],
+          template:
+            '<nav class="p-paginator" :data-first="first" :data-rows="rows" :data-total="totalRecords">' +
+            '<button aria-label="Previous Page" :disabled="first === 0" @click="$emit(\'page\', { page: Math.floor(first / rows) - 1, first: first - rows, rows })" />' +
+            '<button aria-label="Next Page" :disabled="first + rows >= totalRecords" @click="$emit(\'page\', { page: Math.floor(first / rows) + 1, first: first + rows, rows })" />' +
+            '<select aria-label="Rows per page" :value="rows" @change="$emit(\'page\', { page: 0, first: 0, rows: Number($event.target.value) })"><option v-for="size in rowsPerPageOptions" :key="size" :value="size">{{ size }}</option></select>' +
+            '</nav>',
         },
       },
     },
@@ -553,7 +567,7 @@ describe('Networks workspace live preview', () => {
     await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
     expect(wrapper.findComponent(AddressGrid).props('density')).toBe('compact');
     // The pager belongs to the surface, not the table, so it survives the grid.
-    expect(wrapper.find('.table-footer .pagination').exists()).toBe(true);
+    expect(wrapper.find('.table-footer .p-paginator').exists()).toBe(true);
 
     await wrapper.find('button[aria-label="Table view"]').trigger('click');
     await wrapper.find('tbody tr').trigger('click');
@@ -1565,6 +1579,34 @@ describe('Networks workspace live preview', () => {
     dialog.remove();
     // Unmounted workspaces stop listening.
     press(globalThis.document.body);
+  });
+
+  it('pages every table through the shared paginator', async () => {
+    const wrapper = await mountPreview();
+    // Aggregate lists page in the browser: the paginator knows their length.
+    expect(wrapper.find('.p-paginator').attributes('data-total')).toBe('1');
+    expect(wrapper.find('.p-paginator').attributes('data-rows')).toBe('256');
+
+    await enterTestNetwork(wrapper);
+    const ipsCalls = () => api.get.mock.calls.filter(([url]) => url === '/subnets/11/ips');
+    expect(wrapper.find('.p-paginator').attributes('data-total')).toBe('256');
+
+    // Rows per page reloads from page 1 with the new size.
+    await wrapper.find('.p-paginator select').setValue('100');
+    await flushPromises();
+    await flushPromises();
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 100 });
+    expect(wrapper.find('.p-paginator').attributes('data-rows')).toBe('100');
+
+    // Next page asks the API for page 2 and the paginator follows.
+    await wrapper.find('.p-paginator button[aria-label="Next Page"]').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 2, pageSize: 100 });
+    expect(wrapper.find('.p-paginator').attributes('data-first')).toBe('100');
+
+    // The loading state is a popover over the table, not a bar above it.
+    expect(wrapper.find('.loading-bar').exists()).toBe(false);
   });
 
   it('keeps header actions anchored after the responsive health metrics', async () => {

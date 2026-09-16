@@ -65,11 +65,21 @@
           @filter-scope="filterToScope"
           @action="runContextAction"
         />
-        <section class="table-card">
-          <div v-if="loadingContext" class="loading-bar" data-track="workspace-loading">
-            <i class="pi pi-spin pi-spinner" /> Loading live data…
+        <section class="table-card" :class="{ 'is-loading': loadingContext }">
+          <!-- Loading sits over the table as a popover and dims what is under
+               it, instead of pushing the toolbar down with a bar. -->
+          <div
+            v-if="loadingContext"
+            class="loading-overlay"
+            role="status"
+            aria-live="polite"
+            data-track="workspace-loading"
+          >
+            <div class="loading-popover">
+              <i class="pi pi-spin pi-spinner" /> Loading live data…
+            </div>
           </div>
-          <div v-else-if="visibleResourceError" class="workspace-error" role="alert">
+          <div v-if="visibleResourceError && !loadingContext" class="workspace-error" role="alert">
             <i class="pi pi-exclamation-circle" />
             <span><strong>Could not load this inventory</strong>{{ visibleResourceError }}</span>
             <button @click="retryVisibleResource">Retry</button>
@@ -112,7 +122,7 @@
           <WorkspaceTable
             v-else
             :columns="columns"
-            :rows="filteredRows"
+            :rows="pagedRows"
             :show-checkboxes="['addresses', 'networks'].includes(activeView)"
             :selected-row-id="selectedRow?.id ?? null"
             :selected-rows="selectedRows"
@@ -128,31 +138,18 @@
           />
           <footer class="table-footer">
             <span>{{ resultCountLabel }}</span>
-            <div class="pagination">
-              <button
-                :disabled="currentPage <= 1 || !serverPagedView"
-                aria-label="Previous page"
-                @click="changePage(currentPage - 1)"
-              >
-                <i class="pi pi-chevron-left" />
-              </button>
-              <button class="active" aria-current="page">{{ currentPage }}</button>
-              <span v-if="serverPagedView">of {{ totalPages }}</span>
-              <button
-                :disabled="currentPage >= totalPages || !serverPagedView"
-                aria-label="Next page"
-                @click="changePage(currentPage + 1)"
-              >
-                <i class="pi pi-chevron-right" />
-              </button>
-            </div>
-            <label v-if="serverPagedView" class="page-size-control">
-              <span>Per page</span>
-              <select v-model.number="pageSize" aria-label="Rows per page">
-                <option v-for="size in PAGE_SIZES" :key="size" :value="size">{{ size }}</option>
-              </select>
-            </label>
-            <span v-else>Live results</span>
+            <!-- The same paginator the current interface's tables use. Server
+                 paged views page through the API; the aggregate lists page the
+                 loaded rows in the browser. -->
+            <Paginator
+              :first="(activePage - 1) * pageSize"
+              :rows="pageSize"
+              :total-records="paginatorTotal"
+              :rows-per-page-options="PAGE_SIZES"
+              :always-show="false"
+              data-track="workspace-paginator"
+              @page="onPaginatorPage"
+            />
           </footer>
         </section>
       </section>
@@ -336,6 +333,7 @@ import { useSubnetStore } from '../../stores/subnets.js';
 import NetworkDialogs from '../../components/NetworkDialogs.vue';
 import DnsPanel from '../../components/DnsPanel.vue';
 import DhcpPanel from '../../components/DhcpPanel.vue';
+import Paginator from '../../ui/Paginator.js';
 import { apiError, countOf, formatNumber } from '../../utils/format.js';
 import { loadJson, saveJson } from '../../utils/storage.js';
 import AddressGrid from './AddressGrid.vue';
@@ -1653,6 +1651,31 @@ const gridCells = computed(() =>
   })),
 );
 
+// Aggregate lists (networks, zones, scopes) are paged in the browser with
+// the same paginator the API-paged views use.
+const clientPage = ref(1);
+const activePage = computed(() => (serverPagedView.value ? currentPage.value : clientPage.value));
+const paginatorTotal = computed(() =>
+  serverPagedView.value ? rowTotal.value : filteredRows.value.length,
+);
+const pagedRows = computed(() => {
+  if (serverPagedView.value) return filteredRows.value;
+  const start = (clientPage.value - 1) * pageSize.value;
+  return filteredRows.value.slice(start, start + pageSize.value);
+});
+watch([filteredRows, pageSize], () => {
+  const pages = Math.max(1, Math.ceil(filteredRows.value.length / pageSize.value));
+  if (clientPage.value > pages) clientPage.value = pages;
+});
+async function onPaginatorPage({ page, rows }) {
+  if (rows !== pageSize.value) {
+    clientPage.value = 1;
+    pageSize.value = rows;
+    return;
+  }
+  if (serverPagedView.value) await changePage(page + 1);
+  else clientPage.value = page + 1;
+}
 const rowTotal = computed(() => {
   if (activeView.value === 'addresses') return addressFilteredTotal.value;
   if (activeView.value === 'dns' && (contextKind.value === 'network' || selectedZoneFilter.value))
@@ -1699,6 +1722,7 @@ function selectUnallocatedNetwork(network) {
 }
 function resetContextNavigation() {
   currentPage.value = 1;
+  clientPage.value = 1;
   sortKey.value = null;
   clearFilters();
   selectedZoneFilter.value = null;
