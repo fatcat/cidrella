@@ -126,7 +126,7 @@ button {
   bottom: 0;
   z-index: 4;
   display: flex;
-  width: min(330px, 90%);
+  width: var(--workspace-details-width, 350px);
   flex-direction: column;
   overflow-y: auto;
   border-left: 1px solid var(--preview-line);
@@ -292,9 +292,15 @@ button {
 .activity-link {
   font-size: var(--workspace-font-body);
 }
-@media (max-width: 820px) {
+@media (max-width: 1023px) {
   .details-panel {
-    position: fixed;
+    position: static;
+    grid-column: 1 / -1;
+    width: auto;
+    max-height: 70vh;
+    border-left: 0;
+    border-top: 1px solid var(--preview-line);
+    box-shadow: none;
   }
 }
 </style>

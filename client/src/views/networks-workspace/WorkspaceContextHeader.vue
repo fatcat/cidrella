@@ -71,10 +71,12 @@
     </div>
   </header>
 
-  <nav class="view-tabs" aria-label="Network workspace views">
+  <div class="view-tabs" role="tablist" aria-label="Network workspace views">
     <button
       v-for="view in views"
       :key="view.key"
+      role="tab"
+      :aria-selected="activeView === view.key"
       :class="{ active: activeView === view.key }"
       :data-track="`workspace-tab-${view.key}`"
       @click="emit('switch-view', view.key)"
@@ -83,7 +85,7 @@
       {{ view.label }}
       <span>{{ view.count }}</span>
     </button>
-  </nav>
+  </div>
 
   <section v-if="showSummary" class="view-summary">
     <div>
@@ -308,9 +310,9 @@ button {
   display: flex;
   min-width: 0;
   flex: 1 1 540px;
+  flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0;
-  overflow-x: auto;
 }
 .health-stat {
   display: grid;

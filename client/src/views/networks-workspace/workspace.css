@@ -145,6 +145,15 @@ button {
   flex-direction: column;
   overflow: hidden;
 }
+/* Open details take their column from the work surface rather than covering
+   it, so the context actions, toolbar and pager stay reachable (W-07). Under
+   1024px the panels flow after the work surface instead; see each panel's
+   style, and pinDetail() scrolls them into view. */
+@media (min-width: 1024px) {
+  .workspace-frame.details-open .work-surface {
+    margin-right: var(--workspace-details-width, 350px);
+  }
+}
 .workspace-error {
   display: flex;
   align-items: center;

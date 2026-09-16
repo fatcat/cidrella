@@ -1146,6 +1146,24 @@ describe('Networks workspace live preview', () => {
     ).toHaveProperty('disabled');
   });
 
+  it('uses tab semantics, one main landmark, and reflows for open details (W-07)', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    expect(wrapper.find('main').exists()).toBe(false);
+    expect(wrapper.find('.work-surface').attributes('aria-label')).toBe('Work surface');
+    const tabs = wrapper.findAll('[role="tablist"] [role="tab"]');
+    expect(tabs.length).toBeGreaterThan(2);
+    expect(tabs.filter((tab) => tab.attributes('aria-selected') === 'true')).toHaveLength(1);
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.33'))
+      .trigger('click');
+    expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
+    await wrapper.find('button[aria-label="Close details"]').trigger('click');
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
+  });
+
   it('keeps header actions anchored after the responsive health metrics', async () => {
     const wrapper = await mountPreview();
     await enterTestNetwork(wrapper);

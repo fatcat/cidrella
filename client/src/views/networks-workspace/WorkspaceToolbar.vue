@@ -226,6 +226,7 @@ button {
 }
 .table-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 0.4rem;
   padding: 0.48rem;

@@ -36,7 +36,7 @@
       </div>
     </header>
 
-    <section class="workspace-frame">
+    <section class="workspace-frame" :class="{ 'details-open': selectedRow }">
       <ResourceExplorer
         v-model:query="resourceQuery"
         :context-kind="contextKind"
@@ -63,7 +63,7 @@
         @action="runContextAction"
       />
 
-      <main class="work-surface" :aria-busy="loadingContext">
+      <section class="work-surface" aria-label="Work surface" :aria-busy="loadingContext">
         <div v-if="loadError" class="workspace-error" role="alert">
           <i class="pi pi-exclamation-circle" />
           <span><strong>Could not load workspace data</strong>{{ loadError }}</span>
@@ -183,7 +183,7 @@
             <span v-else>Live results</span>
           </footer>
         </section>
-      </main>
+      </section>
 
       <WorkspaceDetailsHost
         :row="selectedRow"
@@ -1199,6 +1199,15 @@ function identityForRow(row, view, context) {
 function pinDetail(row, { view = activeView.value, context = contextKind.value } = {}) {
   detailIdentity.value = identityForRow(row, view, context);
   detailFallback.value = row;
+  // Under 1024px the panel renders after the work surface (W-07); bring it
+  // into view so a row tap does not appear to do nothing.
+  if (globalThis.matchMedia?.('(max-width: 1023px)').matches) {
+    nextTick(() => {
+      document
+        .querySelector('.workspace-address-panel, .details-panel')
+        ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  }
 }
 function clearDetail() {
   detailIdentity.value = null;

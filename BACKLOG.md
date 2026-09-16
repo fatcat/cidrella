@@ -252,12 +252,25 @@ board. Phases are the plan's section 13 rows.
   the section 7 refresh; T-22 zone deletion already discloses the record count and needs the
   typed DELETE; T-25 middle-of-pool removal explains it is unsupported (first pass).
 
+- W-07 responsive and accessibility pass, verified in a rendered browser (Playwright, throwaway
+  `DATA_DIR`), evidence in `screenshots/W07-EVIDENCE.md`: open details now take a column from the
+  work surface at 1024px and up and flow after it below (scrolled into view on pin) instead of
+  covering the context actions, toolbar and pager; the toolbar and health gauges wrap; the view
+  tabs are a real tablist; the workspace no longer nests a `main` in the app's `main`. Measured
+  clean at 1440/1280/1024/768 and 200% zoom, light theme, maximum font bump, modal Save in view.
+- P6 gate on 2026-09-16 at this commit: server 100 files / 1127 tests, client 54 files / 362,
+  lint, format check, DB ownership check, production client build, all green. The old interface
+  stays at `/networks`; the workspace is `/networks-preview` until the P10 cutover.
+
 **Partial:**
 - N-08 drag/drop move to folder is not offered, the row menu is the only path.
 - T-20 has no rendered end-to-end test across DNS/DHCP orders; coverage is server-side.
+- W-07: the long network title wraps word by word beside the action group at 1280 and below;
+  readable, not pretty. Not a clipping or reachability defect.
 
-**Not started:** W-07 responsive/accessibility verification, P6 parity gate evidence, P7..P9
-(section 10), P10 cutover. An agent wired `/networks` to the workspace and moved the old view
+**Not started:** P7..P9 (section 10), P10 cutover. An agent's P9 Analytics rework and P10
+cutover patches from 2026-09-15 are saved in the session scratchpad (`p9-analytics.patch`,
+`p10-cutover.patch`), unapplied. An agent wired `/networks` to the workspace and moved the old view
 to `/networks-classic` on 2026-09-15; that is P10 and needs the maintainer's call, so it was
 backed out of `0487f77`. The patch is 41 lines and trivial to redo.
 
