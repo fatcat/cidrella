@@ -2,40 +2,8 @@
   <div
     class="workspace-preview"
     data-track="networks-workspace-preview"
-    :style="{ '--workspace-font-bump': `${fontBump * 1.333}px` }"
+    :style="{ '--workspace-font-bump': fontBumpStyle }"
   >
-    <header class="preview-banner">
-      <div>
-        <h1>Network operations, in context</h1>
-      </div>
-      <div class="preview-banner-actions">
-        <div class="font-sizer" aria-label="Small text size">
-          <span><i class="pi pi-font" /> Small text</span>
-          <button
-            :disabled="fontBump === 0"
-            aria-label="Decrease small text size"
-            data-track="workspace-font-decrease"
-            @click="resizeSmallText(-1)"
-          >
-            −
-          </button>
-          <output>{{ fontBump ? `+${fontBump} pt` : 'Default' }}</output>
-          <button
-            :disabled="fontBump === 2"
-            aria-label="Increase small text size"
-            data-track="workspace-font-increase"
-            @click="resizeSmallText(1)"
-          >
-            +
-          </button>
-        </div>
-        <span class="sample-pill live"><i class="pi pi-circle-fill" /> 0.5.0 · live data</span>
-        <router-link to="/networks" class="quiet-link" data-track="preview-back-to-networks">
-          <i class="pi pi-arrow-left" /> Current interface
-        </router-link>
-      </div>
-    </header>
-
     <section class="workspace-frame" :class="{ 'details-open': selectedRow }">
       <ResourceExplorer
         v-model:query="resourceQuery"
@@ -363,6 +331,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAutoRefresh } from '../../composables/useAutoRefresh.js';
 import { usePermissions } from '../../composables/usePermissions.js';
+import { useWorkspaceFontBump } from '../../composables/useWorkspaceUi.js';
 import { useSubnetStore } from '../../stores/subnets.js';
 import NetworkDialogs from '../../components/NetworkDialogs.vue';
 import DnsPanel from '../../components/DnsPanel.vue';
@@ -496,9 +465,8 @@ const dnsTotal = ref(0);
 const dhcpTotal = ref(0);
 const sortKey = ref(null);
 const sortOrder = ref(1);
-const fontBump = ref(
-  Math.min(2, Math.max(0, Number(loadJson('cidrella_workspace_font_bump', 1)) || 0)),
-);
+// Small-text size is set from the header's user menu (useWorkspaceUi).
+const { styleValue: fontBumpStyle } = useWorkspaceFontBump();
 let noticeTimer = null;
 let searchTimer = null;
 let contextRequest = 0;
@@ -1918,10 +1886,6 @@ async function handleRangeTypeSaved() {
   bulkRangeVisible.value = false;
   selectedRows.value = [];
   await refreshAfterMutation('address', 'Network Range Type updated');
-}
-function resizeSmallText(delta) {
-  fontBump.value = Math.min(2, Math.max(0, fontBump.value + delta));
-  saveJson('cidrella_workspace_font_bump', fontBump.value);
 }
 function setVisibleColumns(nextColumns) {
   const keys = restoreWorkspaceColumnKeys(

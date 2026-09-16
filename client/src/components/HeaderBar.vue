@@ -23,16 +23,16 @@
           Analytics
         </router-link>
         <router-link
-          to="/networks"
+          :to="preferredPath('/networks')"
           class="nav-link"
           :class="{ active: route.path.startsWith('/networks') || route.path === '/' }"
           data-track="nav-networks"
           >IP Management</router-link
         >
         <router-link
-          to="/system"
+          :to="preferredPath('/system')"
           class="nav-link"
-          :class="{ active: route.path === '/system' }"
+          :class="{ active: route.path.startsWith('/system') }"
           data-track="nav-system"
           >Settings</router-link
         >
@@ -280,6 +280,43 @@
             />
           </div>
           <div class="user-menu-divider"></div>
+          <div class="user-menu-section">
+            <label class="user-menu-label">Interface</label>
+            <Select
+              v-model="selectedInterface"
+              :options="interfaceOptions"
+              optionLabel="label"
+              optionValue="value"
+              data-track="user-pref-interface"
+              class="w-full"
+              @change="onInterfaceChange"
+            />
+          </div>
+          <div class="user-menu-section">
+            <label class="user-menu-label">Small text size</label>
+            <div class="text-sizer" aria-label="Small text size">
+              <button
+                type="button"
+                :disabled="fontBump === 0"
+                aria-label="Decrease small text size"
+                data-track="workspace-font-decrease"
+                @click="resizeSmallText(-1)"
+              >
+                −
+              </button>
+              <output>{{ fontBumpLabel }}</output>
+              <button
+                type="button"
+                :disabled="fontBump === fontBumpMax"
+                aria-label="Increase small text size"
+                data-track="workspace-font-increase"
+                @click="resizeSmallText(1)"
+              >
+                +
+              </button>
+            </div>
+          </div>
+          <div class="user-menu-divider"></div>
           <button class="user-menu-item" data-track="header-logout" @click="handleLogout">
             <i class="pi pi-sign-out"></i>
             <span>Sign out</span>
@@ -300,6 +337,7 @@ import StatusDot from './StatusDot.vue';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
 import { useAnomalyStore } from '../stores/anomalies.js';
+import { useInterfacePreference, useWorkspaceFontBump } from '../composables/useWorkspaceUi.js';
 import { formatTimeOnly } from '../utils/dateFormat.js';
 import api from '../api/client.js';
 import { formatRelativeTime as timeAgo } from '../utils/dateFormat.js';
@@ -364,6 +402,28 @@ const themeOptions = computed(() => [
 function onThemeChange(event) {
   themeStore.applyTheme(event.value);
 }
+
+// Workspace preferences (0.5.0): which interface the navigation opens, and
+// the small-text size the workspace pages use. Both live in useWorkspaceUi so
+// the pages read the same values.
+const { interfacePreference, setPreference, preferredPath, counterpart } = useInterfacePreference();
+const selectedInterface = ref(interfacePreference.value);
+const interfaceOptions = [
+  { label: 'Current interface', value: 'current' },
+  { label: 'Workspace (0.5.0)', value: 'workspace' },
+];
+function onInterfaceChange(event) {
+  setPreference(event.value);
+  // Switch the page you are on when it exists in both interfaces.
+  const next = counterpart(route.path, interfacePreference.value);
+  if (next) router.push({ path: next, query: route.query });
+}
+const {
+  fontBump,
+  label: fontBumpLabel,
+  resize: resizeSmallText,
+  max: fontBumpMax,
+} = useWorkspaceFontBump();
 
 function toggleUserMenu(event) {
   userMenuRef.value.toggle(event);
@@ -907,6 +967,36 @@ onUnmounted(() => {
   color: var(--cid-text-muted-color);
   margin-bottom: 0.4rem;
   letter-spacing: 0.08em;
+}
+
+.text-sizer {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.15rem;
+  border: 1px solid var(--cid-surface-border);
+  border-radius: 6px;
+}
+.text-sizer button {
+  width: 1.6rem;
+  height: 1.6rem;
+  border: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--cid-primary-color) 16%, transparent);
+  color: var(--cid-primary-color);
+  font-weight: 800;
+  cursor: pointer;
+}
+.text-sizer button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.text-sizer output {
+  min-width: 4rem;
+  text-align: center;
+  font-size: var(--app-fs-sm);
+  font-weight: 600;
+  color: var(--cid-text-color);
 }
 
 .user-menu-divider {

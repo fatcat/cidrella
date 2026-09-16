@@ -1,29 +1,5 @@
 <template>
   <div class="workspace-preview settings-workspace" data-track="settings-workspace-preview">
-    <header class="preview-banner">
-      <div>
-        <h1>Appliance settings</h1>
-      </div>
-      <div class="preview-banner-actions">
-        <span class="sample-pill live"><i class="pi pi-circle-fill" /> 0.5.0 · live data</span>
-        <router-link
-          v-if="returnPath"
-          :to="returnPath"
-          class="quiet-link"
-          data-track="settings-workspace-return"
-        >
-          <i class="pi pi-arrow-left" /> Return to workspace
-        </router-link>
-        <router-link
-          :to="{ path: '/system', query: route.query }"
-          class="quiet-link"
-          data-track="preview-back-to-system"
-        >
-          <i class="pi pi-arrow-left" /> Current interface
-        </router-link>
-      </div>
-    </header>
-
     <section class="workspace-frame">
       <nav class="explorer" aria-label="Settings areas">
         <div class="explorer-search">
@@ -66,6 +42,14 @@
             <span>{{ area.group }}</span>
             <i class="pi pi-chevron-right" />
             <span>{{ area.label }}</span>
+            <router-link
+              v-if="returnPath"
+              :to="returnPath"
+              class="return-link"
+              data-track="settings-workspace-return"
+            >
+              <i class="pi pi-arrow-left" /> Return to workspace
+            </router-link>
           </div>
           <div class="context-title-row">
             <span class="context-icon"><i :class="area.icon" /></span>
@@ -255,52 +239,6 @@ input {
   font: inherit;
   color: inherit;
 }
-.preview-banner {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 2rem;
-  margin: 0 0 1rem;
-}
-.preview-banner h1 {
-  margin: 0;
-  font-size: clamp(1.35rem, 2vw, 2rem);
-  letter-spacing: -0.035em;
-}
-.preview-banner-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-.sample-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  background: var(--preview-accent-soft);
-  color: var(--preview-accent);
-  font-size: var(--app-fs-xs);
-  font-weight: 700;
-}
-.sample-pill i {
-  font-size: 0.45rem;
-}
-.quiet-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  color: var(--preview-muted);
-  font-size: var(--app-fs-sm);
-  font-weight: 700;
-  text-decoration: none;
-}
-.quiet-link:hover {
-  color: var(--cid-text-color);
-}
-
 .workspace-frame {
   display: grid;
   grid-template-columns: 275px minmax(0, 1fr);
@@ -433,6 +371,15 @@ input {
 }
 .context-breadcrumb i {
   font-size: 0.55rem;
+}
+.return-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+  color: var(--preview-accent);
+  font-weight: 700;
+  text-decoration: none;
 }
 .context-title-row {
   display: flex;

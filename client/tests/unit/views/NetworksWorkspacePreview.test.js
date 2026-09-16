@@ -13,6 +13,7 @@ import WorkspaceTable from '../../../src/views/networks-workspace/WorkspaceTable
 import WorkspaceToolbar from '../../../src/views/networks-workspace/WorkspaceToolbar.vue';
 import IpReservationEditor from '../../../src/views/networks-workspace/dialogs/IpReservationEditor.vue';
 import api from '../../../src/api/client.js';
+import { useWorkspaceFontBump } from '../../../src/composables/useWorkspaceUi.js';
 
 vi.mock('../../../src/api/client.js', () => ({
   default: { get: vi.fn(), put: vi.fn(), post: vi.fn() },
@@ -1238,19 +1239,22 @@ describe('Networks workspace live preview', () => {
     wrapper.unmount();
   });
 
-  it('persists a capped small-text size without resizing larger headings', async () => {
+  it('applies the shared small-text size set from the header user menu', async () => {
     const wrapper = await mountPreview();
-    expect(wrapper.find('.font-sizer output').text()).toBe('+1 pt');
-
-    await wrapper.find('button[aria-label="Increase small text size"]').trigger('click');
-    expect(wrapper.find('.font-sizer output').text()).toBe('+2 pt');
+    expect(wrapper.find('.preview-banner').exists()).toBe(false);
+    expect(wrapper.find('.workspace-preview').attributes('style')).toContain(
+      '--workspace-font-bump: 1.333px',
+    );
+    const { resize, fontBump } = useWorkspaceFontBump();
+    resize(1);
+    await nextTick();
     expect(wrapper.find('.workspace-preview').attributes('style')).toContain(
       '--workspace-font-bump: 2.666px',
     );
     expect(localStorage.getItem('cidrella_workspace_font_bump')).toBe('2');
-    expect(
-      wrapper.find('button[aria-label="Increase small text size"]').attributes(),
-    ).toHaveProperty('disabled');
+    resize(1);
+    expect(fontBump.value).toBe(2);
+    resize(-1);
   });
 
   it('uses tab semantics, one main landmark, and reflows for open details (W-07)', async () => {
