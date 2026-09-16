@@ -281,7 +281,19 @@ board. Phases are the plan's section 13 rows.
 - W-07: the long network title wraps word by word beside the action group at 1280 and below;
   readable, not pretty. Not a clipping or reachability defect.
 
-**Not started:** P7..P9 (section 10), P10 cutover. An agent's P9 Analytics rework and P10
+**P7 in flight:**
+- Settings workspace shell, `views/settings-workspace/SettingsWorkspace.vue` at
+  `/system-preview` (thin `SettingsWorkspacePreview.vue` wrapper, per the preview convention).
+  The `settingsAreas.js` catalog drives an explorer of grouped areas with search, a context header
+  with an "Appliance-wide" chip when opened from a network (`?return=`), a real section tablist
+  (arrow keys, Home/End, `aria-controls`/`aria-labelledby`), and the existing leaf editors mounted
+  unchanged in the work surface, so every current function and `?area=&sec=&return=` deep link is
+  retained by construction; legacy `?tab=` bookmarks translate as on `/system`. Rendered at
+  1440/1024/768 (`screenshots/p7-shell-*.png`): no page overflow, one `main`, fill editors
+  (DHCP scopes) scroll inside the panel. Not done: the S-01..S-10, S-16/S-17 leaf restyles, which
+  need a design decision on how far each editor moves toward the workspace language.
+
+**Not started:** P8, P9 (section 10), P10 cutover. An agent's P9 Analytics rework and P10
 cutover patches from 2026-09-15 are saved in the session scratchpad (`p9-analytics.patch`,
 `p10-cutover.patch`), unapplied. An agent wired `/networks` to the workspace and moved the old view
 to `/networks-classic` on 2026-09-15; that is P10 and needs the maintainer's call, so it was

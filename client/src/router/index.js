@@ -51,6 +51,11 @@ const routes = [
         component: () => import('../views/AnomaliesWorkspacePreview.vue'),
       },
       { path: 'system', name: 'System', component: () => import('../views/Settings.vue') },
+      {
+        path: 'system-preview',
+        name: 'SettingsWorkspacePreview',
+        component: () => import('../views/SettingsWorkspacePreview.vue'),
+      },
       // Redirects for old bookmarks
       { path: 'dashboard', redirect: '/analytics' },
       { path: 'anomalies', redirect: '/analytics' },
