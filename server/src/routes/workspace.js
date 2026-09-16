@@ -87,7 +87,7 @@ function parseCommon(req, { paged = false } = {}) {
   result.sortOrder = req.query.sort_order || 'asc';
   if (paged) {
     const page = optionalInteger(req.query.page ?? '1', 'page');
-    const pageSize = optionalInteger(req.query.page_size ?? '50', 'page_size', { max: 256 });
+    const pageSize = optionalInteger(req.query.page_size ?? '50', 'page_size', { max: 512 });
     if (page.error) return page;
     if (pageSize.error) return pageSize;
     result.page = page.value;

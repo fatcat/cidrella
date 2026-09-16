@@ -297,6 +297,11 @@ board. Phases are the plan's section 13 rows.
   networks and settings workspaces; the Interface select (Current / Workspace 0.5.0) and the
   small-text sizer live in the header user menu via `composables/useWorkspaceUi.js`, and the IP
   Management and Settings nav links follow the interface preference. G-01 keeps this.
+- User decisions 2026-09-16 (evening): the details panel is a popover over the work surface
+  again, nothing under it resizes (reverses the W-07 reflow; the clipped Add button and pager
+  under an open panel are accepted); the workspace accent follows the theme's primary color
+  instead of a fixed teal; table page sizes are 32/64/128/256/512 (server caps raised to 512);
+  the paginator is always visible; loading is a popover over a blurred, dimmed table.
 
 **Not started:** P8, P9 (section 10), P10 cutover. An agent's P9 Analytics rework and P10
 cutover patches from 2026-09-15 are saved in the session scratchpad (`p9-analytics.patch`,

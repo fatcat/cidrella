@@ -146,7 +146,6 @@
               :rows="pageSize"
               :total-records="paginatorTotal"
               :rows-per-page-options="PAGE_SIZES"
-              :always-show="false"
               data-track="workspace-paginator"
               @page="onPaginatorPage"
             />
@@ -454,7 +453,7 @@ const loading = ref(true);
 const loadingContext = ref(false);
 const loadError = ref('');
 const currentPage = ref(1);
-const PAGE_SIZES = [25, 50, 100, 256];
+const PAGE_SIZES = [32, 64, 128, 256, 512];
 const pageSize = ref(256);
 const totalPages = ref(1);
 const addressTotal = ref(0);

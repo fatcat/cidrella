@@ -1592,18 +1592,18 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.p-paginator').attributes('data-total')).toBe('256');
 
     // Rows per page reloads from page 1 with the new size.
-    await wrapper.find('.p-paginator select').setValue('100');
+    await wrapper.find('.p-paginator select').setValue('128');
     await flushPromises();
     await flushPromises();
-    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 100 });
-    expect(wrapper.find('.p-paginator').attributes('data-rows')).toBe('100');
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 128 });
+    expect(wrapper.find('.p-paginator').attributes('data-rows')).toBe('128');
 
     // Next page asks the API for page 2 and the paginator follows.
     await wrapper.find('.p-paginator button[aria-label="Next Page"]').trigger('click');
     await flushPromises();
     await flushPromises();
-    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 2, pageSize: 100 });
-    expect(wrapper.find('.p-paginator').attributes('data-first')).toBe('100');
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 2, pageSize: 128 });
+    expect(wrapper.find('.p-paginator').attributes('data-first')).toBe('128');
 
     // The loading state is a popover over the table, not a bar above it.
     expect(wrapper.find('.loading-bar').exists()).toBe(false);

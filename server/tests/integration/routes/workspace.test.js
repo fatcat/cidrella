@@ -148,7 +148,7 @@ describe('workspace read routes', () => {
   it('returns 404 for nonexistent contexts and bounds page size', async () => {
     expect((await request(app).get('/api/workspace/networks?folder_id=99999')).status).toBe(404);
     expect((await request(app).get('/api/workspace/dns-records?subnet_id=99999')).status).toBe(404);
-    expect((await request(app).get('/api/workspace/dhcp-addresses?page_size=257')).status).toBe(
+    expect((await request(app).get('/api/workspace/dhcp-addresses?page_size=513')).status).toBe(
       400,
     );
     const legacyStatus = await request(app).get(

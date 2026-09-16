@@ -215,7 +215,7 @@ const visibleGroups = computed(() =>
 /* Tokens duplicated from networks-workspace/workspace.css (section 5: a third
    consumer moves them to components/workspace/). */
 .workspace-preview {
-  --preview-accent: color-mix(in srgb, #14b8a6 78%, var(--cid-text-color));
+  --preview-accent: var(--cid-primary-color);
   --preview-accent-soft: color-mix(in srgb, var(--preview-accent) 12%, transparent);
   --preview-line: color-mix(in srgb, var(--cid-surface-border) 82%, transparent);
   --preview-muted: var(--cid-text-muted-color);
