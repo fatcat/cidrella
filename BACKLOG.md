@@ -293,6 +293,11 @@ board. Phases are the plan's section 13 rows.
   (DHCP scopes) scroll inside the panel. Not done: the S-01..S-10, S-16/S-17 leaf restyles, which
   need a design decision on how far each editor moves toward the workspace language.
 
+- Workspace chrome (user request 2026-09-16, `aef2319`): the preview banner is gone from the
+  networks and settings workspaces; the Interface select (Current / Workspace 0.5.0) and the
+  small-text sizer live in the header user menu via `composables/useWorkspaceUi.js`, and the IP
+  Management and Settings nav links follow the interface preference. G-01 keeps this.
+
 **Not started:** P8, P9 (section 10), P10 cutover. An agent's P9 Analytics rework and P10
 cutover patches from 2026-09-15 are saved in the session scratchpad (`p9-analytics.patch`,
 `p10-cutover.patch`), unapplied. An agent wired `/networks` to the workspace and moved the old view
