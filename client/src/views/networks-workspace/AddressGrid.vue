@@ -19,7 +19,7 @@
         @pointerenter="extendDrag($event, index)"
         @click="activateCell($event, cell)"
         @keydown="handleKeydown($event, cell, index)"
-        @contextmenu.prevent="emit('row-menu', cell.row, $event.currentTarget)"
+        @contextmenu.prevent="emit('row-menu', cell.row, $event.currentTarget, $event)"
       >
         <span>{{ cell.last }}</span>
       </button>
@@ -50,7 +50,7 @@
         @pointerenter="extendDrag($event, index)"
         @click="activateCell($event, cell)"
         @keydown="handleKeydown($event, cell, index)"
-        @contextmenu.prevent="emit('row-menu', cell.row, $event.currentTarget)"
+        @contextmenu.prevent="emit('row-menu', cell.row, $event.currentTarget, $event)"
       />
     </div>
     <div class="grid-key">

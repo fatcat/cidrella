@@ -60,7 +60,7 @@
             active: contextKind === 'folder' && selectedFolderId === folder.id,
             'drop-target': dropFolderKey === folderKey(folder),
           }"
-          @contextmenu.prevent="emit('folder-menu', folder, $event.currentTarget)"
+          @contextmenu.prevent="emit('folder-menu', folder, $event.currentTarget, $event)"
           @dragover="onFolderDragOver($event, folder)"
           @dragleave="onFolderDragLeave($event, folder)"
           @drop="onFolderDrop($event, folder)"
@@ -118,7 +118,7 @@
             data-track="workspace-network-select"
             :draggable="canMoveNetworks ? 'true' : undefined"
             @click="emit('select-network', network)"
-            @contextmenu.prevent="emit('network-menu', network, $event.currentTarget)"
+            @contextmenu.prevent="emit('network-menu', network, $event.currentTarget, $event)"
             @keydown="handleMenuKey($event, 'network-menu', network)"
             @dragstart="onNetworkDragStart($event, network)"
           >

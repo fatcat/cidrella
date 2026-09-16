@@ -1387,6 +1387,37 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('tbody tr').attributes('draggable')).toBeUndefined();
   });
 
+  it('opens context menus where they were asked for', async () => {
+    const wrapper = await mountPreview({ attachTo: globalThis.document.body });
+    // Right-click on an explorer network: the menu sits at the pointer.
+    await wrapper.find('.network-row').trigger('contextmenu', { clientX: 240, clientY: 310 });
+    await nextTick();
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('top: 310px');
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 240px');
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    // A row's menu button anchors the menu under the button.
+    await enterTestNetwork(wrapper);
+    const button = wrapper.find('button[aria-label="Row actions"]');
+    button.element.getBoundingClientRect = () => ({ left: 600, bottom: 420, top: 400, right: 630 });
+    await button.trigger('click');
+    await nextTick();
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('top: 424px');
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 600px');
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    // A pointer near the edge is pulled back inside the viewport.
+    await wrapper.find('.network-row').trigger('contextmenu', { clientX: 5000, clientY: 5000 });
+    await nextTick();
+    await nextTick();
+    const style = wrapper.find('.row-menu').attributes('style');
+    const top = Number(style.match(/top: (\d+)px/)[1]);
+    const left = Number(style.match(/left: (\d+)px/)[1]);
+    expect(top).toBeLessThanOrEqual(globalThis.innerHeight);
+    expect(left).toBeLessThanOrEqual(globalThis.innerWidth);
+    wrapper.unmount();
+  });
+
   it('drives every menu through the action registry with a row-derived target', async () => {
     const wrapper = await mountPreview();
     // No network is selected, so there is no target for the network actions.

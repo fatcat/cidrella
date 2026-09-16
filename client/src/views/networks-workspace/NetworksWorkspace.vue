@@ -259,6 +259,7 @@
     <div
       v-if="openMenuName === 'create'"
       class="floating-menu create-menu"
+      :style="menuStyle"
       role="menu"
       @keydown="handleMenuKeydown"
     >
@@ -278,6 +279,7 @@
     <div
       v-if="openMenuName === 'actions'"
       class="floating-menu actions-menu"
+      :style="menuStyle"
       role="menu"
       @keydown="handleMenuKeydown"
     >
@@ -298,6 +300,7 @@
     <div
       v-if="openMenuName === 'row'"
       class="floating-menu row-menu"
+      :style="menuStyle"
       role="menu"
       @keydown="handleMenuKeydown"
     >
@@ -1795,19 +1798,54 @@ async function openRelatedResource(resource, identity = null) {
   pinDetail(rows[0], { view: target.view, context: 'network' });
   await updateWorkspaceRoute();
 }
-function toggleMenu(name, invoker = null) {
+// Floating menus open where they were asked for: at the pointer for a
+// right-click, under the button or row otherwise, and never off screen.
+const menuAnchor = ref(null);
+const menuStyle = computed(() =>
+  menuAnchor.value
+    ? { top: `${menuAnchor.value.top}px`, left: `${menuAnchor.value.left}px`, right: 'auto' }
+    : null,
+);
+function placeMenu(invoker, event = null) {
+  if (event && Number.isFinite(event.clientX) && (event.clientX || event.clientY)) {
+    menuAnchor.value = { top: event.clientY, left: event.clientX };
+  } else if (invoker?.getBoundingClientRect) {
+    const rect = invoker.getBoundingClientRect();
+    menuAnchor.value = { top: rect.bottom + 4, left: rect.left };
+  } else {
+    menuAnchor.value = null;
+  }
+  nextTick(clampMenu);
+}
+function clampMenu() {
+  const menu = document.querySelector('.floating-menu');
+  if (!menu || !menuAnchor.value) return;
+  const { width, height } = menu.getBoundingClientRect();
+  const margin = 8;
+  const maxLeft = Math.max(margin, globalThis.innerWidth - margin - width);
+  const maxTop = Math.max(margin, globalThis.innerHeight - margin - height);
+  menuAnchor.value = {
+    top: Math.min(menuAnchor.value.top, maxTop),
+    left: Math.min(menuAnchor.value.left, maxLeft),
+  };
+}
+function toggleMenu(name, invoker = null, event = null) {
   if (invoker) menuInvoker = invoker;
-  openMenuName.value = openMenuName.value === name ? null : name;
+  const opening = openMenuName.value !== name;
+  openMenuName.value = opening ? name : null;
+  if (opening) placeMenu(invoker, event);
 }
 function closeMenu() {
   openMenuName.value = null;
   menuTarget.value = null;
+  menuAnchor.value = null;
   menuInvoker?.focus();
 }
-function openTargetMenu(target, invoker = null) {
+function openTargetMenu(target, invoker = null, event = null) {
   menuTarget.value = target;
   if (invoker) menuInvoker = invoker;
   openMenuName.value = 'row';
+  placeMenu(invoker, event);
 }
 // N-08: a network dragged from the table or the explorer and dropped on an
 // explorer folder moves there through the same PUT the row menu's editor
@@ -1832,11 +1870,11 @@ async function moveNetworkToFolder({ networkId, folder }) {
   }
   await refreshAfterMutation('network', `${network.cidr} moved to ${folder.name}`);
 }
-function openFolderMenu(folder, invoker = null) {
-  openTargetMenu({ kind: 'folder', id: folder.id, name: folder.name, raw: folder }, invoker);
+function openFolderMenu(folder, invoker = null, event = null) {
+  openTargetMenu({ kind: 'folder', id: folder.id, name: folder.name, raw: folder }, invoker, event);
 }
-function openNetworkMenu(network, invoker = null) {
-  openTargetMenu(targetForRow(mapNetworkRows([network])[0]), invoker);
+function openNetworkMenu(network, invoker = null, event = null) {
+  openTargetMenu(targetForRow(mapNetworkRows([network])[0]), invoker, event);
 }
 function handleWorkspaceKeydown(event) {
   if (event.key !== 'Escape' || !openMenuName.value) return;
@@ -1886,10 +1924,11 @@ async function openRangeEditor(range) {
     showLiveNotice(`Could not load Network Range Types: ${apiError(error)}`);
   }
 }
-function openRowMenu(row, invoker = null) {
+function openRowMenu(row, invoker = null, event = null) {
   selectRow(row);
   if (invoker) menuInvoker = invoker;
   openMenuName.value = 'row';
+  placeMenu(invoker, event);
 }
 function selectRow(row) {
   pinDetail(row);

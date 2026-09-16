@@ -181,6 +181,8 @@ button {
 .floating-menu button.danger > i {
   color: var(--cid-red-500);
 }
+/* Fallback corners for a menu opened without an anchor; menuStyle overrides
+   them with the pointer or invoker position. */
 .create-menu {
   top: 7.8rem;
   right: 2rem;
