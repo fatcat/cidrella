@@ -13,7 +13,7 @@
       :dhcp-count="dhcpCount"
       :can-write="canWrite"
       @close="emit('close')"
-      @navigate="emit('navigate', $event)"
+      @navigate="(view, identity) => emit('navigate', view, identity)"
       @changed="emit('changed', $event)"
     />
 
@@ -43,8 +43,8 @@
         <span class="eyebrow">RELATED RESOURCES</span>
         <button
           v-for="resource in related"
-          :key="resource.label"
-          @click="emit('navigate', resource.view)"
+          :key="resource.key || resource.label"
+          @click="emit('navigate', resource)"
         >
           <i :class="resource.icon" /><span
             ><strong>{{ resource.label }}</strong

@@ -58,15 +58,16 @@
       </template>
     </dl>
 
-    <section v-if="activeTab === 'overview'" class="panel-section">
+    <!-- Only offered when there is something to open (the operator's rule). -->
+    <section v-if="activeTab === 'overview' && (dnsCount || dhcpCount)" class="panel-section">
       <span class="eyebrow">RELATED RESOURCES</span>
-      <button class="related-button" @click="navigateRelated('dns')">
+      <button v-if="dnsCount" class="related-button" @click="navigateRelated('dns')">
         <i class="pi pi-globe" /><span
           ><strong>DNS records</strong
           ><small>{{ dnsCount }} records reference this address</small></span
         ><i class="pi pi-chevron-right" />
       </button>
-      <button class="related-button" @click="navigateRelated('dhcp')">
+      <button v-if="dhcpCount" class="related-button" @click="navigateRelated('dhcp')">
         <i class="pi pi-server" /><span
           ><strong>DHCP identity</strong><small>{{ dhcpCount }} related rows</small></span
         ><i class="pi pi-chevron-right" />

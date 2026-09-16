@@ -191,6 +191,44 @@ describe('workspace read routes', () => {
     });
   });
 
+  it('matches one address exactly with ip_address, unlike the substring table_q', async () => {
+    const substring = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ subnet_id: subnetA, table_q: '10.20.0.1' });
+    expect(substring.body.items.map((row) => row.ip_address)).toEqual(
+      expect.arrayContaining(['10.20.0.10', '10.20.0.15']),
+    );
+
+    const exact = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ subnet_id: subnetA, ip_address: '10.20.0.10' });
+    expect(exact.status).toBe(200);
+    expect(exact.body.items.map((row) => [row.record_type, row.ip_address])).toEqual([
+      ['A', '10.20.0.10'],
+    ]);
+    const none = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ subnet_id: subnetA, ip_address: '10.20.0.1' });
+    expect(none.body.total).toBe(0);
+
+    const dhcp = await request(app)
+      .get('/api/workspace/dhcp-addresses')
+      .query({ subnet_id: subnetA, ip_address: '10.20.0.25' });
+    expect(dhcp.body.items.map((row) => [row.dhcp_assignment_type, row.ip_address])).toEqual([
+      ['reserved', '10.20.0.25'],
+    ]);
+    const dhcpNone = await request(app)
+      .get('/api/workspace/dhcp-addresses')
+      .query({ subnet_id: subnetA, ip_address: '10.20.0.2' });
+    expect(dhcpNone.body.total).toBe(0);
+
+    const invalid = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ ip_address: 'not-an-ip' });
+    expect(invalid.status).toBe(400);
+    expect(invalid.body.error).toContain('ip_address');
+  });
+
   it('keeps IPv6 and unlinked DNS records out of IPv4 subnet association', async () => {
     // AAAA is already recognized by the read projection although the current
     // record schema does not yet expose it for CRUD. Bypass that legacy check

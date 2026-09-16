@@ -231,6 +231,7 @@ export function getWorkspaceDnsRecords(
     zoneId,
     q,
     tableQ,
+    ipAddress,
     recordType,
     dnsSource,
     enabled,
@@ -256,6 +257,7 @@ export function getWorkspaceDnsRecords(
     );
   }
   if (zoneId !== undefined) records = records.filter((row) => row.zone_id === zoneId);
+  if (ipAddress) records = records.filter((row) => row.ip_address === ipAddress);
   if (recordType) records = records.filter((row) => row.record_type === recordType);
   if (dnsSource) records = records.filter((row) => row.dns_source === dnsSource);
   if (enabled !== undefined)
@@ -617,6 +619,7 @@ export function getWorkspaceDhcpAddresses(
     scopeId,
     q,
     tableQ,
+    ipAddress,
     leaseStatus,
     assignmentType,
     page = 1,
@@ -677,11 +680,17 @@ export function getWorkspaceDhcpAddresses(
   ];
   if (q) rows = rows.filter((row) => anyFieldMatches(row, searchFields, q));
   if (tableQ) rows = rows.filter((row) => anyFieldMatches(row, searchFields, tableQ));
+  if (ipAddress) rows = rows.filter((row) => row.ip_address === ipAddress);
   if (leaseStatus) rows = rows.filter((row) => row.lease_status === leaseStatus);
   if (assignmentType) rows = rows.filter((row) => row.dhcp_assignment_type === assignmentType);
   const virtualRows =
     (!leaseStatus || leaseStatus === 'available') && !assignmentType
-      ? virtualPoolProjection(scopes, materializedKeys, [q, tableQ], sortOrder === 'desc')
+      ? virtualPoolProjection(
+          scopes,
+          materializedKeys,
+          [q, tableQ, ipAddress],
+          sortOrder === 'desc',
+        )
       : { total: 0, at: () => null };
   const compare = compareRows(
     DHCP_SORT_FIELDS.has(sortField) ? sortField : 'ip_address',

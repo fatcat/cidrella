@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { getDb } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
+import { canonicalizeIp } from '../utils/address.js';
 import {
   getWorkspaceNetworks,
   getWorkspaceDnsRecords,
@@ -73,6 +74,13 @@ function parseCommon(req, { paged = false } = {}) {
   const enabled = optionalBoolean(req.query.enabled, 'enabled');
   if (enabled.error) return enabled;
   result.enabled = enabled.value;
+  // Exact address match, unlike table_q's substring search. The details panel
+  // uses it to list what references one pinned address.
+  if (req.query.ip_address !== undefined) {
+    const ipAddress = canonicalizeIp(String(req.query.ip_address));
+    if (!ipAddress) return { error: 'ip_address must be a valid IP address' };
+    result.ipAddress = ipAddress;
+  }
   if (req.query.sort_order !== undefined && !['asc', 'desc'].includes(req.query.sort_order)) {
     return { error: 'sort_order must be asc or desc' };
   }

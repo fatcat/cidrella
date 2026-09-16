@@ -1389,49 +1389,117 @@ const detailItems = computed(() =>
       value,
     })),
 );
-const relatedResources = computed(() =>
-  selectedRowContext.value !== 'network'
-    ? []
-    : selectedRowView.value === 'addresses'
-      ? [
-          {
-            view: 'dns',
-            label: 'DNS records',
-            note: `${networkDnsRows.value.filter((row) => row.value === selectedRow.value?.address).length} records reference this address`,
-            icon: 'pi pi-globe',
-          },
-          {
-            view: 'dhcp',
-            label: 'DHCP identity',
-            note: `${networkDhcpRows.value.filter((row) => row.address === selectedRow.value?.address).length} related rows`,
-            icon: 'pi pi-server',
-          },
-        ]
-      : [
-          {
-            view: 'addresses',
-            label: 'Canonical IP record',
-            note: 'Allocation and liveness details',
-            icon: 'pi pi-list',
-          },
-          {
-            view: selectedRowView.value === 'dns' ? 'dhcp' : 'dns',
-            label: selectedRowView.value === 'dns' ? 'DHCP identity' : 'DNS records',
-            note: 'Related service facts',
-            icon: selectedRowView.value === 'dns' ? 'pi pi-server' : 'pi pi-globe',
-          },
-        ],
-);
-const selectedAddressDnsCount = computed(
+// The address a pinned row is about, whichever protocol view it came from.
+const pinnedAddress = computed(
   () =>
-    networkDnsRows.value.filter(
-      (row) =>
-        row.value === selectedRow.value?.address ||
-        row.raw.ip_address === selectedRow.value?.address,
-    ).length,
+    selectedRow.value?.raw?.ip_address ||
+    selectedRow.value?.address ||
+    (selectedRowView.value === 'dns' ? selectedRow.value?.value : null) ||
+    null,
+);
+// Rows that reference an address. For the pinned address they come from an
+// exact-address read of both protocol inventories (the loaded page is only
+// one page of them); other addresses fall back to the loaded page. Generated
+// PTR placeholders and bare pool addresses are not "something to show".
+const pinnedRelated = ref({ address: null, dns: [], dhcp: [] });
+function meaningfulDnsRow(row) {
+  return row.raw?.dns_source !== 'placeholder';
+}
+function meaningfulDhcpRow(row) {
+  return Boolean(row.raw?.dhcp_assignment_type);
+}
+function relatedRowsFor(view, address) {
+  if (!address) return [];
+  const fetched = pinnedRelated.value.address === address ? pinnedRelated.value : null;
+  if (view === 'dns')
+    return (
+      fetched?.dns ||
+      networkDnsRows.value.filter((row) => row.value === address || row.raw?.ip_address === address)
+    ).filter(meaningfulDnsRow);
+  if (view === 'dhcp')
+    return (fetched?.dhcp || networkDhcpRows.value.filter((row) => row.address === address)).filter(
+      meaningfulDhcpRow,
+    );
+  return [];
+}
+async function loadPinnedRelated() {
+  const address = pinnedAddress.value;
+  const networkId = selectedNetwork.value?.id;
+  if (!address || !networkId || selectedRowContext.value !== 'network') {
+    pinnedRelated.value = { address: null, dns: [], dhcp: [] };
+    return;
+  }
+  const [dns, dhcp] = await Promise.all([
+    workspaceResources.loadRelatedDns(networkId, address),
+    workspaceResources.loadRelatedDhcp(networkId, address),
+  ]);
+  // A newer pin replaced this one while the reads were in flight.
+  if (pinnedAddress.value !== address) return;
+  pinnedRelated.value = {
+    address,
+    dns: mapWorkspaceDnsRows(dns || []),
+    dhcp: mapDhcpRows(dhcp || []),
+  };
+}
+watch([pinnedAddress, () => selectedNetwork.value?.id], () => {
+  void loadPinnedRelated();
+});
+// Related resources open inside the details panel, never by switching the
+// main view. Entries without a row are resolved against the pinned address
+// when clicked; sibling protocol rows for the same address carry their row.
+const relatedResources = computed(() => {
+  if (selectedRowContext.value !== 'network') return [];
+  const address = pinnedAddress.value;
+  const dnsRows = relatedRowsFor('dns', address);
+  const dhcpRows = relatedRowsFor('dhcp', address);
+  const dnsEntry = dnsRows.length
+    ? {
+        view: 'dns',
+        label: 'DNS records',
+        note: `${countOf(dnsRows.length, 'record')} reference this address`,
+        icon: 'pi pi-globe',
+      }
+    : null;
+  const dhcpEntry = dhcpRows.length
+    ? {
+        view: 'dhcp',
+        label: 'DHCP identity',
+        note: `${countOf(dhcpRows.length, 'related row')}`,
+        icon: 'pi pi-server',
+      }
+    : null;
+  if (selectedRowView.value === 'addresses') return [dnsEntry, dhcpEntry].filter(Boolean);
+  const siblings = (selectedRowView.value === 'dns' ? dnsRows : dhcpRows)
+    .filter((row) => row.id !== selectedRow.value?.id)
+    .map((row) => ({
+      key: row.id,
+      view: selectedRowView.value,
+      row,
+      label: row.name || row.hostname || row.address,
+      note:
+        selectedRowView.value === 'dns'
+          ? `${row.type || row.recordType || 'DNS'} record for the same address`
+          : `${row.assignment || 'DHCP'} row for the same address`,
+      icon: selectedRowView.value === 'dns' ? 'pi pi-globe' : 'pi pi-server',
+    }));
+  return [
+    address
+      ? {
+          view: 'addresses',
+          label: 'Canonical IP record',
+          note: 'Allocation and liveness details',
+          icon: 'pi pi-list',
+        }
+      : null,
+    ...siblings,
+    selectedRowView.value === 'dns' ? dhcpEntry : dnsEntry,
+  ].filter(Boolean);
+});
+const selectedAddressDnsCount = computed(
+  () => relatedRowsFor('dns', selectedRow.value?.address).length,
 );
 const selectedAddressDhcpCount = computed(
-  () => networkDhcpRows.value.filter((row) => row.address === selectedRow.value?.address).length,
+  () => relatedRowsFor('dhcp', selectedRow.value?.address).length,
 );
 const networkDialogNode = computed(() => {
   const network =
@@ -1679,17 +1747,30 @@ async function switchView(view) {
   if (contextKind.value === 'network') await loadNetworkContext();
   else await refreshAggregateTable();
 }
-async function openRelatedResource(view) {
-  activeView.value = view;
-  currentPage.value = 1;
-  sortKey.value = null;
-  clearFilters();
-  selectedZoneFilter.value = null;
-  selectedScopeFilter.value = null;
-  selectedRows.value = [];
-  tableQuery.value = '';
+// A related resource replaces what the details panel shows; the main view,
+// its tab and its filters stay put. `resource` is a related entry (or a bare
+// view name from the address panel, with the address's stable identity).
+async function openRelatedResource(resource, identity = null) {
+  const target = typeof resource === 'string' ? { view: resource } : resource;
+  if (target.row) {
+    pinDetail(target.row, { view: target.view, context: 'network' });
+    await updateWorkspaceRoute();
+    return;
+  }
+  const address = identity?.ip_address || pinnedAddress.value;
+  if (target.view === 'addresses') {
+    await openCanonicalAddress(address);
+    return;
+  }
+  const rows = relatedRowsFor(target.view, address);
+  if (!rows.length) {
+    showLiveNotice(
+      `No ${target.view === 'dns' ? 'DNS records' : 'DHCP rows'} reference ${address || 'this address'}.`,
+    );
+    return;
+  }
+  pinDetail(rows[0], { view: target.view, context: 'network' });
   await updateWorkspaceRoute();
-  if (contextKind.value === 'network') await loadNetworkContext();
 }
 function toggleMenu(name, invoker = null) {
   if (invoker) menuInvoker = invoker;
@@ -2331,6 +2412,7 @@ async function refreshAfterMutation(kind, message = '') {
   const saved = message ? `${message}. ` : '';
   try {
     await reloadSharedReads(kind);
+    await loadPinnedRelated();
   } catch (error) {
     clearTimeout(noticeTimer);
     notice.value = `${saved}Saved; refresh failed: ${apiError(error)}`;

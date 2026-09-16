@@ -153,6 +153,74 @@ const zones = [
   },
 ];
 
+const dnsRecordA = {
+  id: 51,
+  zone_id: 21,
+  zone_name: 'test.example',
+  zone_type: 'forward',
+  name: 'client',
+  record_fqdn: 'client.test.example',
+  record_type: 'A',
+  value: '1.1.1.40',
+  ttl: 3600,
+  dns_source: 'manual',
+  enabled: 1,
+  ip_address: '1.1.1.40',
+  is_online: 1,
+  related_subnet_ids: [subnet.id],
+};
+const dnsRecordPtr = {
+  id: 52,
+  zone_id: 22,
+  zone_name: '1.1.1.in-addr.arpa',
+  zone_type: 'reverse',
+  name: '40',
+  record_type: 'PTR',
+  value: 'client.test.example',
+  ttl: 3600,
+  dns_source: 'dns',
+  enabled: 1,
+  ip_address: '1.1.1.40',
+  is_online: 1,
+  related_subnet_ids: [subnet.id],
+};
+
+// Only the exact-address read returns this one: the loaded DNS page holds a
+// single page of the network's records, so counts cannot come from it.
+const dnsRecordAlias = {
+  id: 54,
+  zone_id: 21,
+  zone_name: 'test.example',
+  zone_type: 'forward',
+  name: 'client-alias',
+  record_fqdn: 'client-alias.test.example',
+  record_type: 'CNAME',
+  value: 'client.test.example',
+  ttl: 3600,
+  dns_source: 'manual',
+  enabled: 1,
+  ip_address: '1.1.1.40',
+  is_online: 1,
+  related_subnet_ids: [subnet.id],
+};
+// Every address in the reverse zone has a generated placeholder; it is not a
+// record worth offering.
+const dnsPlaceholder33 = {
+  id: 53,
+  zone_id: 22,
+  zone_name: '1.1.1.in-addr.arpa',
+  zone_type: 'reverse',
+  name: '33',
+  record_type: 'PTR',
+  value: '1.1.1.33',
+  ttl: null,
+  dns_source: 'placeholder',
+  enabled: 1,
+  ip_address: '1.1.1.33',
+  is_online: 0,
+  related_subnet_ids: [subnet.id],
+};
+
 const scope = {
   id: 31,
   subnet_id: subnet.id,
@@ -196,6 +264,15 @@ function installApiFixtures() {
       return response({
         items: config.params?.table_q === 'not returned' ? [] : [subnet],
         total: config.params?.table_q === 'not returned' ? 0 : 1,
+      });
+    if (url === '/workspace/dns-records' && config.params?.ip_address)
+      return response({
+        items: [dnsRecordA, dnsRecordPtr, dnsRecordAlias, dnsPlaceholder33].filter(
+          (record) => record.ip_address === config.params.ip_address,
+        ),
+        total: 0,
+        page: 1,
+        page_size: 50,
       });
     if (url === '/workspace/dns-records')
       return response({
@@ -274,7 +351,14 @@ function installApiFixtures() {
       return response([{ id: 8, name: 'Lab equipment', is_system: 0, color: '#14b8a6' }]);
     if (url === '/dhcp/leases') return response([lease]);
     if (url === '/workspace/dhcp-addresses')
-      return response({ items: [lease], total: 1, page: 1, page_size: 256 });
+      return response({
+        items: config.params?.ip_address
+          ? [lease].filter((row) => row.ip_address === config.params.ip_address)
+          : [lease],
+        total: 1,
+        page: 1,
+        page_size: 256,
+      });
     if (url === '/dhcp/scopes/31/addresses')
       return response([
         lease,
@@ -572,8 +656,8 @@ describe('Networks workspace live preview', () => {
     const gatewayRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.1'));
     await gatewayRow.trigger('click');
     expect(wrapper.find('.workspace-address-panel').text()).toContain('1.1.1.1');
-    expect(wrapper.find('.workspace-address-panel').text()).toContain('DNS records');
-    expect(wrapper.find('.workspace-address-panel').text()).toContain('DHCP identity');
+    // Nothing references the gateway, so no related resources are offered.
+    expect(wrapper.find('.workspace-address-panel').text()).not.toContain('RELATED RESOURCES');
   });
 
   it('builds the address grid from API rows instead of sample cells', async () => {
@@ -735,18 +819,80 @@ describe('Networks workspace live preview', () => {
     });
   });
 
-  it('keeps the details drawer pinned while opening a related resource', async () => {
+  it('opens related resources inside the details panel, never by switching the view', async () => {
     const wrapper = await mountPreview();
     await enterTestNetwork(wrapper);
-    const gatewayRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.1'));
-    await gatewayRow.trigger('click');
+    const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
 
-    expect(wrapper.find('.workspace-address-panel').text()).toContain('IP ADDRESS');
-    await wrapper.find('.related-button').trigger('click');
+    // No DNS record or DHCP row references 1.1.1.33: nothing to offer.
+    await rowFor('1.1.1.33').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.workspace-address-panel').text()).not.toContain('RELATED RESOURCES');
+    expect(wrapper.findAll('.related-button')).toHaveLength(0);
 
-    expect(wrapper.find('.workspace-address-panel').exists()).toBe(true);
-    expect(wrapper.find('.workspace-address-panel').text()).toContain('IP ADDRESS');
-    expect(wrapper.find('.view-tabs button.active').text()).toContain('DNS');
+    // 1.1.1.40 has two DNS records and one DHCP row.
+    await rowFor('1.1.1.40').trigger('click');
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dns-records',
+      expect.objectContaining({ params: expect.objectContaining({ ip_address: '1.1.1.40' }) }),
+    );
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dhcp-addresses',
+      expect.objectContaining({ params: expect.objectContaining({ ip_address: '1.1.1.40' }) }),
+    );
+    const related = wrapper.findAll('.related-button');
+    expect(related.map((button) => button.find('strong').text())).toEqual([
+      'DNS records',
+      'DHCP identity',
+    ]);
+    expect(related[0].text()).toContain('3 records reference this address');
+
+    await related[0].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.view-tabs button.active').text()).toContain('Addresses');
+    expect(wrapper.find('.workspace-address-panel').exists()).toBe(false);
+    const panel = wrapper.find('.details-panel');
+    expect(panel.text()).toContain('DNS record');
+    expect(panel.text()).toContain('client');
+    expect(panel.text()).toContain('1.1.1.40');
+    const links = () => panel.findAll('.details-section button').map((button) => button.text());
+    // Back to the IP, the two sibling records, and the DHCP side.
+    expect(links().slice(0, 4)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Canonical IP record'),
+        expect.stringContaining('PTR record for the same address'),
+        expect.stringContaining('CNAME record for the same address'),
+        expect.stringContaining('DHCP identity'),
+      ]),
+    );
+
+    await panel
+      .findAll('.details-section button')
+      .find((button) => button.text().includes('PTR record'))
+      .trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.details-panel').text()).toContain('40');
+    expect(wrapper.find('.view-tabs button.active').text()).toContain('Addresses');
+
+    await wrapper
+      .find('.details-panel')
+      .findAll('.details-section button')
+      .find((button) => button.text().includes('DHCP identity'))
+      .trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.details-panel').text()).toContain('DHCP address');
+
+    await wrapper
+      .find('.details-panel')
+      .findAll('.details-section button')
+      .find((button) => button.text().includes('Canonical IP record'))
+      .trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith('/subnets/11/ips/1.1.1.40');
+    expect(wrapper.find('.workspace-address-panel').text()).toContain('1.1.1.40');
+    expect(wrapper.find('.view-tabs button.active').text()).toContain('Addresses');
   });
 
   it('keeps the pinned address open by identity when the page no longer holds it', async () => {

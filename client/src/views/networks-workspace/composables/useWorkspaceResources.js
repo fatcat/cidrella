@@ -36,6 +36,9 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
     }),
     summary: resourceState(null),
     detail: resourceState(null),
+    // What references the pinned address (details panel related resources).
+    relatedDns: resourceState([]),
+    relatedDhcp: resourceState([]),
   };
 
   async function read(key, permission, request, map = (response) => response.data) {
@@ -144,6 +147,28 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
   function loadSummary(subnetId) {
     return read('summary', 'subnets:read', () => api.get(`/subnets/${subnetId}/summary`));
   }
+  function loadRelatedDns(subnetId, ip) {
+    return read(
+      'relatedDns',
+      'dns:read',
+      () =>
+        api.get('/workspace/dns-records', {
+          params: { subnet_id: subnetId, ip_address: ip, page_size: 50 },
+        }),
+      (response) => response.data.items || [],
+    );
+  }
+  function loadRelatedDhcp(subnetId, ip) {
+    return read(
+      'relatedDhcp',
+      'dhcp:read',
+      () =>
+        api.get('/workspace/dhcp-addresses', {
+          params: { subnet_id: subnetId, ip_address: ip, page_size: 50 },
+        }),
+      (response) => response.data.items || [],
+    );
+  }
   function loadAddressDetail(subnetId, ip) {
     return read(
       'detail',
@@ -211,6 +236,8 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
     loadAddresses,
     loadSummary,
     loadAddressDetail,
+    loadRelatedDns,
+    loadRelatedDhcp,
     loadDnsRecordDetail,
     loadDhcpAddressDetail,
     invalidate,

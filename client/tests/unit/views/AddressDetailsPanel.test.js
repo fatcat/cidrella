@@ -207,6 +207,16 @@ describe('workspace address details panel', () => {
     expect(api.get.mock.calls.some(([url]) => url.startsWith('/devices/'))).toBe(false);
   });
 
+  it('offers only the related resources that exist', () => {
+    expect(mountPanel(availableRow, { dnsCount: 0, dhcpCount: 0 }).text()).not.toContain(
+      'RELATED RESOURCES',
+    );
+    const dhcpOnly = mountPanel(availableRow, { dnsCount: 0, dhcpCount: 2 });
+    expect(
+      dhcpOnly.findAll('.related-button').map((button) => button.find('strong').text()),
+    ).toEqual(['DHCP identity']);
+  });
+
   it('emits stable identities for related resources and the network', async () => {
     const wrapper = mountPanel();
     await wrapper.findAll('.related-button')[0].trigger('click');
