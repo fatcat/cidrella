@@ -57,9 +57,16 @@ button {
   overflow: hidden;
 }
 /* Open details are a popover over the work surface at 1024px and up: nothing
-   under them resizes (the operator's rule, 2026-09-16). Under 1024px the
-   panels flow after the work surface instead; see each panel's style, and
-   pinDetail() scrolls them into view. */
+   under them resizes (the operator's rule, 2026-09-16). The one exception is
+   the address grid, where a popover would hide cells that can still be
+   selected, so the grid presentations give the panel its own column. Under
+   1024px the panels flow after the work surface instead; see each panel's
+   style, and pinDetail() scrolls them into view. */
+@media (min-width: 1024px) {
+  .workspace-frame.details-open.grid-open .work-surface {
+    margin-right: var(--workspace-details-width, 350px);
+  }
+}
 .workspace-error {
   display: flex;
   align-items: center;

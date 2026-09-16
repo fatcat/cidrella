@@ -4,7 +4,13 @@
     data-track="networks-workspace-preview"
     :style="{ '--workspace-font-bump': fontBumpStyle }"
   >
-    <section class="workspace-frame" :class="{ 'details-open': selectedRow }">
+    <section
+      class="workspace-frame"
+      :class="{
+        'details-open': selectedRow,
+        'grid-open': activeView === 'addresses' && addressPresentation !== 'table',
+      }"
+    >
       <ResourceExplorer
         v-model:query="resourceQuery"
         :context-kind="contextKind"
@@ -504,7 +510,6 @@ const viewDefinitions = {
   },
   dhcp: {
     search: 'Search IP, MAC, hostname, network, or lease…',
-    addLabel: 'Add reservation',
   },
   ranges: {
     search: 'Search range, type, or description…',
@@ -1602,11 +1607,11 @@ const rowMenuItems = computed(() => {
   if (!target) return [];
   return withTarget(menuActions({ menu: 'row', target, view: activeView.value, can }), target);
 });
-// Addresses have no toolbar button: reservations come from the row menu.
+// Addresses and DHCP have no toolbar button: reservations come from the row
+// menu and the Create menu.
 const VIEW_ADD_ACTIONS = {
   networks: ['network.allocate', workspaceTarget],
   dns: ['dns.record.create', workspaceTarget],
-  dhcp: ['dhcp.reservation.create', workspaceTarget],
   ranges: ['range.create', networkTarget],
 };
 const viewAddAction = computed(() => {
@@ -1920,11 +1925,10 @@ async function openRangeEditor(range) {
     showLiveNotice(`Could not load Network Range Types: ${apiError(error)}`);
   }
 }
+// A row menu targets the row without pinning it: right-click and the row
+// button must not open the details panel (operator's rule).
 function openRowMenu(row, invoker = null, event = null) {
-  selectRow(row);
-  if (invoker) menuInvoker = invoker;
-  openMenuName.value = 'row';
-  placeMenu(invoker, event);
+  openTargetMenu(targetForRow(row), invoker, event);
 }
 function selectRow(row) {
   pinDetail(row);

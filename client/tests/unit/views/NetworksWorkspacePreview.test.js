@@ -1397,13 +1397,16 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 240px');
     await wrapper.find('.menu-scrim').trigger('click');
 
-    // Right-click on a table row opens that row's menu at the pointer too.
+    // Right-click on a table row opens that row's menu at the pointer too,
+    // without pinning the row's details.
     await enterTestNetwork(wrapper);
     const scopeRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
     await scopeRow.trigger('contextmenu', { clientX: 400, clientY: 500 });
     await nextTick();
     expect(wrapper.find('.row-menu').attributes('style')).toContain('top: 500px');
     expect(wrapper.find('.row-menu').text()).toContain('Edit Scope');
+    expect(wrapper.find('.workspace-address-panel').exists()).toBe(false);
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
     await wrapper.find('.menu-scrim').trigger('click');
 
     // A row's menu button anchors the menu under the button.
@@ -1722,6 +1725,21 @@ describe('Networks workspace live preview', () => {
     expect(api.put).toHaveBeenLastCalledWith('/subnets/11/ips/1.1.1.33/scan-enabled', {
       scan_enabled: null,
     });
+  });
+
+  it('gives the details panel a column only on the grid presentations', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('grid-open');
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    expect(wrapper.find('.workspace-frame').classes()).toContain('grid-open');
+    await wrapper.find('button[aria-label="Table view"]').trigger('click');
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('grid-open');
+    expect(wrapper.find('.table-toolbar').text()).not.toContain('Reserve address');
+    await wrapper.find('[data-track="workspace-tab-dhcp"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.table-toolbar').text()).not.toContain('Add reservation');
+    expect(wrapper.find('.table-toolbar button.primary').exists()).toBe(false);
   });
 
   it('keeps header actions anchored after the responsive health metrics', async () => {
