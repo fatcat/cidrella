@@ -168,21 +168,15 @@ describe('workspace action registry', () => {
         }),
         can: all,
       }),
-    ).toEqual([
-      'Open IP details',
-      'Open scope',
-      'Edit DHCP Reservation',
-      'Delete DHCP Reservation',
-      'Probe now',
-    ]);
-    // A DNS record row is about the record: no IP-details or whole-zone hops.
+    ).toEqual(['Edit Scope', 'Edit DHCP Reservation', 'Delete DHCP Reservation', 'Probe now']);
+    // A DNS record row is about the record, then its zone: no IP-details or whole-zone hops.
     expect(
       labels({
         menu: 'row',
         target: row('dns:2:5', { value: '10.0.0.5', raw: { id: 5, zone_id: 2, record_type: 'A' } }),
         can: all,
       }),
-    ).toEqual(['Edit record', 'Add CNAME', 'Delete record']);
+    ).toEqual(['Edit record', 'Add CNAME', 'Delete record', 'Edit zone']);
     // Probe closes every row menu under the one separator; scan does the same
     // for network rows.
     const probe = menuActions({
@@ -218,29 +212,24 @@ describe('workspace action registry', () => {
     });
     // A DHCP-only operator gets the DHCP entries and no probe (subnets:write).
     expect(labels({ menu: 'row', target: lease, can: (c) => c === 'dhcp:write' })).toEqual([
-      'Open IP details',
-      'Open scope',
+      'Edit Scope',
       'Create DHCP Reservation',
     ]);
     // A subnet-only operator gets the probe and nothing that writes DHCP.
     expect(labels({ menu: 'row', target: lease, can: (c) => c === 'subnets:write' })).toEqual([
-      'Open IP details',
-      'Open scope',
       'Probe now',
     ]);
-    expect(labels({ menu: 'row', target: lease, can: () => false })).toEqual([
-      'Open IP details',
-      'Open scope',
-    ]);
+    expect(labels({ menu: 'row', target: lease, can: () => false })).toEqual([]);
   });
 
   it('scopes the header menus to the view and the open zone or scope', () => {
     const all = () => true;
     const labels = (options) => menuActions(options).map((item) => item.label);
     const workspace = (zone = null, scope = null) => ({ kind: 'workspace', zone, scope });
+    const row = (id, extra) => targetForRow({ id, raw: {}, ...extra });
 
     expect(labels({ menu: 'create', target: workspace(), can: all })).toEqual([
-      'Allocate network',
+      'Create network',
       'Create folder',
       'Add DNS zone',
       'Add DHCP scope',
@@ -275,6 +264,7 @@ describe('workspace action registry', () => {
       'Appliance-wide DHCP settings',
       'Delete selected scope',
     ]);
+    // Allocated: no divide (deallocate first). Unallocated: allocate, divide, no deallocate.
     expect(
       labels({
         menu: 'actions',
@@ -284,12 +274,54 @@ describe('workspace action registry', () => {
       }),
     ).toEqual([
       'Edit network',
-      'Divide network',
       'Move to folder',
       'Apply defaults',
       'Deallocate network',
       'Delete network',
     ]);
+    const unallocated = row('network:9', { raw: { id: 9, status: 'unallocated', parent_id: 1 } });
+    expect(labels({ menu: 'actions', target: unallocated, view: 'networks', can: all })).toEqual([
+      'Allocate network',
+      'Divide network',
+      'Move to folder',
+      'Apply defaults',
+      'Delete network',
+    ]);
+    // Row menus carry the same entries, so the explorer and the table reach them by right-click.
+    expect(labels({ menu: 'row', target: unallocated, can: all })).toEqual([
+      'Open network context',
+      'Allocate network',
+      'Divide network',
+      'Move to folder',
+      'Apply defaults',
+      'Delete network',
+    ]);
+    expect(
+      actionAvailability('network.divide', row('network:1', { raw: { status: 'allocated' } }), all)
+        .reason,
+    ).toContain('Deallocate');
+    expect(
+      actionAvailability(
+        'network.divide',
+        row('network:1', { raw: { status: 'unallocated', children: [{ id: 2 }] } }),
+        all,
+      ).reason,
+    ).toContain('already divided');
+    // A DHCP address row inside a scope edits that scope; a DNS record row edits its zone.
+    expect(
+      labels({
+        menu: 'row',
+        target: row('dhcp:reserved:7:10.0.0.7', { raw: { id: 7, scope_id: 3 } }),
+        can: (c) => c === 'dhcp:write',
+      }),
+    ).toContain('Edit Scope');
+    expect(
+      labels({
+        menu: 'row',
+        target: row('dns:2:5', { value: '10.0.0.5', raw: { id: 5, zone_id: 2, record_type: 'A' } }),
+        can: all,
+      }),
+    ).toEqual(['Edit record', 'Add CNAME', 'Delete record', 'Edit zone']);
     expect(actionLabel('dns.zone.edit', { kind: 'dns-zone' })).toBe('Edit zone');
     expect(actionAvailability('dns.record.create', workspace(), () => true).reason).toContain(
       'zone',
@@ -304,16 +336,16 @@ describe('workspace action registry', () => {
 
     // Folder context header and explorer folder row: allocate here, rename, delete.
     expect(labels({ menu: 'actions', target: folder, view: 'networks', can: all })).toEqual([
-      'Allocate network',
+      'Create network',
       'Rename folder',
       'Delete folder',
     ]);
     expect(labels({ menu: 'row', target: folder, can: all })).toEqual([
-      'Allocate network',
+      'Create network',
       'Rename folder',
       'Delete folder',
     ]);
-    expect(labels({ menu: 'row', target: ungrouped, can: all })).toEqual(['Allocate network']);
+    expect(labels({ menu: 'row', target: ungrouped, can: all })).toEqual(['Create network']);
     expect(actionAvailability('folder.delete', ungrouped, all).reason).toContain('Ungrouped');
     // A network context never offers folder entries, and Merge left the header.
     expect(
@@ -322,8 +354,22 @@ describe('workspace action registry', () => {
     expect(WORKSPACE_ACTIONS['network.merge'].menus).toEqual(['selection']);
 
     // The selection bar keeps unavailable entries so it can say why.
-    const one = { kind: 'network-selection', ids: [1], count: 1 };
-    const two = { kind: 'network-selection', ids: [1, 2], count: 2 };
+    const selection = (networks) => ({
+      kind: 'network-selection',
+      ids: networks.map((network) => network.id),
+      count: networks.length,
+      networks,
+    });
+    const leaf = (id, cidr, extra = {}) => ({
+      id,
+      cidr,
+      status: 'unallocated',
+      parent_id: 1,
+      hasChildren: false,
+      ...extra,
+    });
+    const one = selection([leaf(1, '10.0.0.0/25')]);
+    const two = selection([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25')]);
     expect(
       menuActions({ menu: 'selection', target: one, can: all, includeUnavailable: true }),
     ).toMatchObject([
@@ -335,6 +381,27 @@ describe('workspace action registry', () => {
       'network.apply-defaults',
     ]);
     expect(menuActions({ menu: 'selection', target: two, can: () => false })).toEqual([]);
+    // Merge follows the server's rules and the allocation rule: unallocated
+    // siblings under one parent, no children, and a CIDR union that is one block.
+    const mergeReason = (networks) =>
+      actionAvailability('network.merge', selection(networks), all).reason;
+    expect(
+      mergeReason([leaf(1, '10.0.0.0/25', { status: 'allocated' }), leaf(2, '10.0.0.128/25')]),
+    ).toContain('Deallocate');
+    expect(
+      mergeReason([
+        leaf(1, '10.0.0.0/25', { parent_id: null }),
+        leaf(2, '10.0.0.128/25', { parent_id: null }),
+      ]),
+    ).toContain('Root');
+    expect(
+      mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25', { parent_id: 7 })]),
+    ).toContain('same parent');
+    expect(
+      mergeReason([leaf(1, '10.0.0.0/25', { hasChildren: true }), leaf(2, '10.0.0.128/25')]),
+    ).toContain('divided');
+    expect(mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.1.0/25')])).toContain('contiguous');
+    expect(mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25')])).toBe('');
     const addresses = {
       kind: 'address-selection',
       count: 2,

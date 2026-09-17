@@ -1,4 +1,5 @@
 import api from '../../api/client.js';
+import { canMergeCidrs } from '../../utils/ip.js';
 
 // The workspace action registry (plan section 5, W-05). Every menu, quick
 // action and keyboard invocation resolves to one of these entries by ID and
@@ -28,11 +29,6 @@ const ACTION_DEFINITIONS = [
     targetKind: 'network',
   },
   {
-    id: 'ip.open',
-    label: 'Open IP details',
-    targetKind: 'dhcp-address',
-  },
-  {
     id: 'dns.zone.open',
     label: 'Open zone',
     targetKind: 'dns-zone',
@@ -40,9 +36,7 @@ const ACTION_DEFINITIONS = [
   {
     id: 'dhcp.scope.open',
     label: 'Open scope',
-    targetKind: ['dhcp-scope', 'dhcp-address'],
-    available: (target) => target.kind === 'dhcp-scope' || target.scope_id != null,
-    disabledReason: 'This address is not inside a DHCP scope.',
+    targetKind: 'dhcp-scope',
   },
   {
     id: 'network.open-dhcp',
@@ -64,8 +58,8 @@ const ACTION_DEFINITIONS = [
   // Networks and folders
   {
     id: 'network.allocate',
-    label: 'Allocate network',
-    note: 'Add address space to IPAM',
+    label: 'Create network',
+    note: 'Add address space to IPAM; allocate it once it is configured',
     icon: 'pi pi-sitemap',
     capability: 'subnets:write',
     targetKind: ['workspace', 'folder'],
@@ -124,7 +118,8 @@ const ACTION_DEFINITIONS = [
   },
   {
     id: 'network.edit',
-    label: 'Edit network',
+    // An unallocated network is allocated through the same form.
+    label: (target) => (target.status === 'unallocated' ? 'Allocate network' : 'Edit network'),
     note: 'Name, gateway, VLAN, domain, and scanning',
     icon: 'pi pi-pencil',
     capability: 'subnets:write',
@@ -140,7 +135,12 @@ const ACTION_DEFINITIONS = [
     capability: 'subnets:write',
     targetKind: 'network',
     menus: ['row'],
+    available: (target) => target.status === 'allocated',
+    disabledReason: 'Only allocated networks are scanned.',
   },
+  // Divide and merge reshape address space, so they only apply to networks
+  // that are not allocated. An allocated network is deallocated first, which
+  // drops its hosts from DNS and removes its DHCP scopes.
   {
     id: 'network.divide',
     label: 'Divide network',
@@ -148,10 +148,13 @@ const ACTION_DEFINITIONS = [
     icon: 'pi pi-share-alt',
     capability: 'subnets:write',
     targetKind: 'network',
-    menus: ['actions'],
+    menus: ['actions', 'row'],
     views: ['networks', 'addresses', 'ranges'],
-    available: (target) => target.status === 'allocated',
-    disabledReason: 'Only allocated networks can be divided.',
+    available: (target) => target.status === 'unallocated' && !hasChildren(target),
+    disabledReason: (target) =>
+      hasChildren(target)
+        ? 'This network is already divided.'
+        : 'Deallocate the network first. Only unallocated networks can be divided.',
   },
   {
     id: 'network.merge',
@@ -160,8 +163,8 @@ const ACTION_DEFINITIONS = [
     icon: 'pi pi-sitemap',
     capability: 'subnets:write',
     targetKind: 'network-selection',
-    available: (target) => target.count >= 2,
-    disabledReason: 'Select at least two sibling networks to merge.',
+    available: (target) => mergeBlocker(target) === '',
+    disabledReason: (target) => mergeBlocker(target),
     menus: ['selection'],
   },
   {
@@ -171,7 +174,7 @@ const ACTION_DEFINITIONS = [
     icon: 'pi pi-folder',
     capability: 'subnets:write',
     targetKind: 'network',
-    menus: ['actions'],
+    menus: ['actions', 'row'],
     views: ['networks', 'addresses', 'ranges'],
   },
   {
@@ -183,7 +186,7 @@ const ACTION_DEFINITIONS = [
     targetKind: ['network', 'network-selection'],
     available: (target) => target.kind === 'network' || target.count > 0,
     disabledReason: 'Select at least one network.',
-    menus: ['actions', 'selection'],
+    menus: ['actions', 'row', 'selection'],
     views: ['networks', 'addresses', 'ranges'],
   },
   {
@@ -194,8 +197,10 @@ const ACTION_DEFINITIONS = [
     danger: true,
     capability: 'subnets:write',
     targetKind: 'network',
-    menus: ['actions'],
+    menus: ['actions', 'row'],
     views: ['networks', 'addresses', 'ranges'],
+    available: (target) => target.status === 'allocated',
+    disabledReason: 'This network is not allocated.',
   },
   {
     id: 'network.delete',
@@ -205,7 +210,7 @@ const ACTION_DEFINITIONS = [
     danger: true,
     capability: 'subnets:write',
     targetKind: 'network',
-    menus: ['actions'],
+    menus: ['actions', 'row'],
     views: ['networks', 'addresses', 'ranges'],
   },
   {
@@ -242,10 +247,13 @@ const ACTION_DEFINITIONS = [
     note: 'Authority, SOA, description, and state',
     icon: 'pi pi-pencil',
     capability: 'dns:write',
-    targetKind: ['dns-zone', 'workspace'],
+    targetKind: ['dns-zone', 'dns-record', 'workspace'],
     menus: ['actions', 'row'],
     views: ['dns'],
-    available: (target) => target.kind === 'dns-zone' || target.zone != null,
+    available: (target) =>
+      target.kind === 'dns-zone' ||
+      (target.kind === 'dns-record' && target.zone_id != null) ||
+      target.zone != null,
     disabledReason: 'Open a zone first.',
   },
   {
@@ -336,11 +344,12 @@ const ACTION_DEFINITIONS = [
     note: 'Pool, lease policy, options, and state',
     icon: 'pi pi-pencil',
     capability: 'dhcp:write',
-    targetKind: ['dhcp-scope', 'address', 'range', 'workspace'],
+    targetKind: ['dhcp-scope', 'dhcp-address', 'address', 'range', 'workspace'],
     menus: ['actions', 'row'],
     views: ['dhcp'],
     available: (target) =>
       target.kind === 'dhcp-scope' ||
+      (target.kind === 'dhcp-address' && target.scope_id != null) ||
       (target.kind === 'address' && target.status === 'DHCP Scope') ||
       (target.kind === 'range' && target.isScope) ||
       (target.kind === 'workspace' && target.scope != null),
@@ -586,6 +595,22 @@ const ACTIONS_MENU_ORDER = {
   ],
 };
 const ROW_MENU_ORDER = {
+  network: [
+    'network.open',
+    'network.edit',
+    'network.divide',
+    'network.move',
+    'network.apply-defaults',
+    'network.deallocate',
+    'network.delete',
+    'network.scan',
+  ],
+  'dns-record': [
+    'dns.record.edit',
+    'dns.record.create-cname',
+    'dns.record.delete',
+    'dns.zone.edit',
+  ],
   address: [
     'network.gateway.edit',
     'network.gateway.delete',
@@ -602,8 +627,7 @@ const ROW_MENU_ORDER = {
     'ip.probe',
   ],
   'dhcp-address': [
-    'ip.open',
-    'dhcp.scope.open',
+    'dhcp.scope.edit',
     'dhcp.reservation.edit',
     'dhcp.reservation.create',
     'ip.probe',
@@ -635,6 +659,28 @@ const SELECTION_MENU_ORDER = {
 };
 
 const asList = (value) => (Array.isArray(value) ? value : value == null ? [] : [value]);
+
+function hasChildren(target) {
+  return Boolean(target.raw?.children?.length || target.raw?.child_count);
+}
+
+// Why a checked set of networks cannot be merged, or '' when it can. The
+// server applies the same rules; saying them here keeps the Merge button
+// honest instead of letting the preview fail.
+function mergeBlocker(target) {
+  const networks = target.networks || [];
+  if (target.count < 2 || networks.length < 2)
+    return 'Select at least two sibling networks to merge.';
+  if (networks.some((network) => network.status === 'allocated'))
+    return 'Deallocate the allocated networks first. Only unallocated networks can be merged.';
+  if (networks.some((network) => network.hasChildren))
+    return 'A divided network cannot be merged. Merge its children first.';
+  const parents = new Set(networks.map((network) => network.parent_id ?? null));
+  if (parents.has(null)) return 'Root networks cannot be merged.';
+  if (parents.size > 1) return 'Only networks under the same parent can be merged.';
+  const check = canMergeCidrs(networks.map((network) => network.cidr));
+  return check.valid ? '' : `${check.error}.`;
+}
 
 export const WORKSPACE_ACTIONS = Object.freeze(
   Object.fromEntries(
@@ -674,7 +720,13 @@ export function actionAvailability(actionId, target, can = () => false) {
     return { available: false, reason: `Requires ${action.capability}.` };
   }
   if (!action.available(target)) {
-    return { available: false, reason: action.disabledReason };
+    return {
+      available: false,
+      reason:
+        typeof action.disabledReason === 'function'
+          ? action.disabledReason(target)
+          : action.disabledReason,
+    };
   }
   return { available: true, reason: '' };
 }

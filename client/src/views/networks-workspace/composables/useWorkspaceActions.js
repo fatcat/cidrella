@@ -19,7 +19,6 @@ export function useWorkspaceActions(ctx) {
     loadNetworkContext,
     refreshAggregateTable,
     showLiveNotice,
-    openCanonicalAddress,
     openRangeEditor,
     openBulkRangeType,
     refreshAfterMutation,
@@ -127,7 +126,6 @@ export function useWorkspaceActions(ctx) {
   const handlers = {
     // Read and navigation
     'network.open': (target) => selectNetwork(target.raw),
-    'ip.open': (target) => openCanonicalAddress(target.address),
     'dns.zone.open': (target) => drillIntoZone(target.raw, refreshAggregateTable),
     'dhcp.scope.open': async (target) => {
       if (target.kind === 'dhcp-scope') return drillIntoScope(target.raw, refreshAggregateTable);

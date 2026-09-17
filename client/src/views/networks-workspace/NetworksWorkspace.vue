@@ -71,6 +71,8 @@
           @open-menu="toggleMenu"
           @filter-zone="filterToZone"
           @filter-scope="filterToScope"
+          @zone-menu="(zone, invoker, event) => openLinkedMenu('zone', zone, invoker, event)"
+          @scope-menu="(scope, invoker, event) => openLinkedMenu('scope', scope, invoker, event)"
           @action="runContextAction"
         />
         <section class="table-card" :class="{ 'is-loading': loadingContext }">
@@ -1543,7 +1545,18 @@ const selectionTarget = computed(() => {
     const ids = selectedRows.value
       .filter((id) => String(id).startsWith('network:'))
       .map((id) => Number(String(id).slice('network:'.length)));
-    return { kind: 'network-selection', ids, count: ids.length };
+    // What the merge rules need to know about each checked network.
+    const networks = ids
+      .map((id) => scopedNetworks.value.find((network) => Number(network.id) === id))
+      .filter(Boolean)
+      .map((network) => ({
+        id: Number(network.id),
+        cidr: network.cidr,
+        status: network.status,
+        parent_id: network.parent_id ?? null,
+        hasChildren: Boolean(network.children?.length),
+      }));
+    return { kind: 'network-selection', ids, count: ids.length, networks };
   }
   return {
     kind: 'address-selection',
@@ -1856,6 +1869,11 @@ function openTargetMenu(target, invoker = null, event = null) {
   if (invoker) menuInvoker = invoker;
   openMenuName.value = 'row';
   placeMenu(invoker, event);
+}
+// A linked zone or scope card in the context header opens the same menu its
+// inventory row would: edit, delete, and the rest.
+function openLinkedMenu(kind, item, invoker = null, event = null) {
+  openTargetMenu(targetForRow({ id: `${kind}:${item.id}`, raw: item }), invoker, event);
 }
 // N-08: a network dragged from the table or the explorer and dropped on an
 // explorer folder moves there through the same PUT the row menu's editor

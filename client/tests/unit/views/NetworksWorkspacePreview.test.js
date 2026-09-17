@@ -1182,6 +1182,32 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.workspace-frame').exists()).toBe(true);
   });
 
+  it('opens the zone or scope menu from a right-click on its linked card', async () => {
+    const wrapper = await mountPreview();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    const zoneCard = wrapper
+      .findAll('.linked-card')
+      .find((card) => card.text().includes('forward'));
+    await zoneCard.trigger('contextmenu', { clientX: 120, clientY: 220 });
+    await nextTick();
+    let labels = wrapper.findAll('.row-menu button strong').map((label) => label.text());
+    expect(labels).toContain('Edit zone');
+    expect(labels).toContain('Delete zone');
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 120px');
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    await wrapper.find('[data-track="workspace-tab-dhcp"]').trigger('click');
+    await flushPromises();
+    await wrapper.find('.linked-card').trigger('contextmenu', { clientX: 130, clientY: 230 });
+    await nextTick();
+    labels = wrapper.findAll('.row-menu button strong').map((label) => label.text());
+    expect(labels).toContain('Edit Scope');
+    expect(labels).toContain('Delete Scope');
+    await wrapper.find('.menu-scrim').trigger('click');
+  });
+
   it('merges and re-templates checked networks from the selection bar', async () => {
     const sibling = {
       id: 13,
@@ -1192,26 +1218,47 @@ describe('Networks workspace live preview', () => {
       used_count: 1,
       children: [],
     };
+    // A divided, unallocated parent with two unallocated halves: the only
+    // shape the merge rules accept.
+    const halves = [
+      { id: 31, cidr: '1.1.4.0/25', status: 'unallocated', parent_id: 30, children: [] },
+      { id: 32, cidr: '1.1.4.128/25', status: 'unallocated', parent_id: 30, children: [] },
+    ];
+    const dividedParent = {
+      id: 30,
+      cidr: '1.1.4.0/24',
+      name: null,
+      status: 'unallocated',
+      total_addresses: 256,
+      used_count: 0,
+      children: halves,
+    };
     const base = api.get.getMockImplementation();
     api.get.mockImplementation((url, config) =>
       url === '/subnets'
         ? response({
-            folders: [{ id: 1, name: 'Testerella', subnets: [subnet, sibling, unallocatedSubnet] }],
+            folders: [
+              {
+                id: 1,
+                name: 'Testerella',
+                subnets: [subnet, sibling, unallocatedSubnet, dividedParent],
+              },
+            ],
           })
         : base(url, config),
     );
     api.post.mockImplementation((url, body) => {
       if (url === '/subnets/merge/preview')
         return response({
-          source_cidrs: ['1.1.0.0/24', '1.1.1.0/24'],
-          merged_cidr: '1.1.0.0/23',
+          source_cidrs: ['1.1.4.0/25', '1.1.4.128/25'],
+          merged_cidr: '1.1.4.0/24',
           plan: {},
         });
       if (url === '/subnets/apply-template') return response({ updated: body.subnet_ids });
       throw new Error(`Unexpected POST ${url}`);
     });
     const wrapper = await mountPreview();
-    const checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
+    let checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
     expect(checkboxes).toHaveLength(2);
 
     // One network: Merge stays visible but disabled with its reason.
@@ -1223,14 +1270,12 @@ describe('Networks workspace live preview', () => {
     expect(merge().attributes('title')).toContain('two');
     expect(bar.text()).not.toContain('Reserve');
 
+    // Two allocated roots: still disabled, and the reason says to deallocate.
     await checkboxes[1].setValue(true);
     bar = wrapper.find('.selection-bar');
-    expect(merge().attributes('disabled')).toBeUndefined();
-    await merge().trigger('click');
-    await flushPromises();
-    await flushPromises();
-    expect(api.post).toHaveBeenCalledWith('/subnets/merge/preview', { subnet_ids: [11, 13] });
-    expect(wrapper.text()).toContain('1.1.0.0/23');
+    expect(merge().attributes('disabled')).toBeDefined();
+    expect(merge().attributes('title')).toContain('Deallocate');
+    expect(api.post).not.toHaveBeenCalledWith('/subnets/merge/preview', expect.anything());
 
     await bar
       .findAll('button')
@@ -1238,6 +1283,21 @@ describe('Networks workspace live preview', () => {
       .trigger('click');
     await flushPromises();
     expect(api.post).toHaveBeenCalledWith('/subnets/apply-template', { subnet_ids: [11, 13] });
+
+    // The unallocated halves merge.
+    await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
+    await flushPromises();
+    checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
+    expect(checkboxes).toHaveLength(3);
+    await checkboxes[1].setValue(true);
+    await checkboxes[2].setValue(true);
+    bar = wrapper.find('.selection-bar');
+    expect(merge().attributes('disabled')).toBeUndefined();
+    await merge().trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/subnets/merge/preview', { subnet_ids: [31, 32] });
+    expect(wrapper.text()).toContain('1.1.4.0/24');
   });
 
   it('opens folder actions from the explorer row and carries the description into rename', async () => {
@@ -1262,13 +1322,13 @@ describe('Networks workspace live preview', () => {
     await menuButtons[1].trigger('click');
     expect(wrapper.find('.row-menu span').text()).toBe('FOLDER ACTIONS');
     expect(wrapper.findAll('.row-menu button strong').map((label) => label.text())).toEqual([
-      'Allocate network',
+      'Create network',
     ]);
     await wrapper.find('.menu-scrim').trigger('click');
 
     await menuButtons[0].trigger('click');
     expect(wrapper.findAll('.row-menu button strong').map((label) => label.text())).toEqual([
-      'Allocate network',
+      'Create network',
       'Rename folder',
       'Delete folder',
     ]);
@@ -1290,7 +1350,7 @@ describe('Networks workspace live preview', () => {
       .trigger('click');
     expect(wrapper.find('.actions-menu span').text()).toBe('FOLDER ACTIONS');
     expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
-      'Allocate network',
+      'Create network',
       'Rename folder',
       'Delete folder',
     ]);
@@ -1493,7 +1553,6 @@ describe('Networks workspace live preview', () => {
       .trigger('click');
     expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
       'Edit network',
-      'Divide network',
       'Move to folder',
       'Apply defaults',
       'Deallocate network',

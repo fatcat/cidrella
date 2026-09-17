@@ -99,6 +99,7 @@
         :class="{ selected: isSelected(selectedZone, zone) }"
         :aria-pressed="isSelected(selectedZone, zone)"
         @click="emit('filter-zone', zone)"
+        @contextmenu.prevent="emit('zone-menu', zone, $event.currentTarget, $event)"
       >
         <i :class="zone.type === 'reverse' ? 'pi pi-replay' : 'pi pi-globe'" /><span
           ><small>{{ zone.type }}</small
@@ -115,6 +116,7 @@
         :class="{ selected: isSelected(selectedScope, scope) }"
         :aria-pressed="isSelected(selectedScope, scope)"
         @click="emit('filter-scope', scope)"
+        @contextmenu.prevent="emit('scope-menu', scope, $event.currentTarget, $event)"
       >
         <i class="pi pi-server" /><span
           ><small>{{ scope.enabled ? 'ACTIVE SCOPE' : 'DISABLED SCOPE' }}</small
@@ -184,6 +186,8 @@ const emit = defineEmits([
   'open-menu',
   'filter-zone',
   'filter-scope',
+  'zone-menu',
+  'scope-menu',
   'action',
 ]);
 // A linked card lights up only for the zone or scope the table is filtered to.

@@ -307,6 +307,17 @@ board. Phases are the plan's section 13 rows.
   PTR records and read as the reverse zone); only the active zone or scope chip is drawn as
   selected; DNS record rows lose "Open IP details" and "Open whole zone"; the per-row three-dot
   button is gone from every table, right-click and the ContextMenu key are the two ways in.
+- User decisions 2026-09-17 (later): DHCP address rows lose "Open IP details" and "Open scope"
+  (`ip.open` is gone from the registry) and gain "Edit Scope" when inside a scope; DNS record rows
+  gain "Edit zone"; right-clicking a linked zone or scope card in the context header opens that
+  zone's or scope's menu (edit, delete, add record/reservation). The allocation rule the user
+  stated now gates the registry: divide and merge apply only to unallocated leaf networks, an
+  allocated network is deallocated first; Merge on the selection bar says why it is disabled
+  (allocated, root, different parents, divided, or not one CIDR block) instead of letting the
+  server preview fail with "All subnets must be siblings". Network rows and explorer rows carry
+  the full network menu (allocate/edit, divide, move, apply defaults, deallocate, delete, scan).
+  The create menu says "Create network"; an unallocated row says "Allocate network". Server
+  note: deallocation deletes a network's DHCP scopes and IP rows rather than disabling them.
 
 **Not started:** P8, P9 (section 10), P10 cutover. An agent's P9 Analytics rework and P10
 cutover patches from 2026-09-15 are saved in the session scratchpad (`p9-analytics.patch`,
