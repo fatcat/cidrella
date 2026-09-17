@@ -171,24 +171,30 @@ every caller uses are thin wrappers over it and still refuse IPv6 on purpose, so
 behavior is unchanged until the layers above are ready. `server/tests/unit/utils/cidr.test.js`
 covers it (mutation-checked seven ways); the client sees it through `@shared/cidr.js`.
 
-**Backend pass (started 2026-09-17, plan `~/.claude/plans/tender-moseying-pascal.md`):**
-0. Contract docs first (AGENTS.md gate): IPv6 network shape, anycast at the network address,
-   no broadcast, sparse reads, DHCPv6 modes, discovery rule.
-1. Migrations 070 (`subnets` rebuild: `address_family`, nullable broadcast and total,
-   `last_address`), 071 (`dns_records` CHECK gains AAAA), 072 (DHCPv6 columns, DUID-keyed
-   reservations and leases, family-scoped option tables). `runMigrations` turns foreign keys
-   off around these rebuilds: dropping `subnets` with them on cascades into every child
-   table, and the in-memory probe showed migration 045 already did that to `dns_records`.
-2. Topology service and subnet routes on the generic layer; v6 `GET /:id/ips` pages
-   persisted rows only.
-3. DNS: AAAA on the write route, static DNS lifecycle for AAAA, ip6.arpa PTRs for allocated
-   addresses, v6 forwarders.
-4. dnsmasq: v6 listen addresses, `enable-ra`.
-5. DHCPv6 per network: `slaac` / `stateless` / `stateful` (the user's call, 2026-09-17),
-   `dhcp-range` modes, `option6:` lines, `dhcp-host=id:<duid>`, lease parser for the `duid`
-   header and IAID/DUID columns, `dhcp_release6`.
-6. Discovery: `ip -6 neigh` reader, `ff02::1` probe, `ping -6`, passive v6 sources.
-7. Proxy and resolver dual-stack, anomalies accept v6 identities.
+**Backend pass: landed 2026-09-17** (plan `~/.claude/plans/tender-moseying-pascal.md`,
+commits `52b8a1b`, `ac9fb48`, `fc28719`, `cf8b776`). Contract docs first, then migrations
+070 (`subnets` rebuild: `address_family`, `last_address`, nullable broadcast and total), 071
+(`dns_records` accepts AAAA), 072 (DHCPv6 columns, DUID reservations and leases,
+family-scoped option tables). `runMigrations` turns foreign keys off around these rebuilds:
+dropping `subnets` with enforcement on cascades into every child table, and the in-memory
+probe showed migration 045 already did that to `dns_records`. Then: topology, subnet routes
+and read models on the generic layer with a sparse `GET /:id/ips` for IPv6; AAAA records
+through the static DNS lifecycle with ip6.arpa PTRs for allocated addresses only; DHCPv6 per
+network (`slaac` / `stateless` / `stateful`, the user's call), `enable-ra` and the matching
+`dhcp-range` forms, `option6:` lines, `dhcp-host=id:<duid>`, the lease parser's `duid` header
+and IAID/DUID columns, `dhcp_release6`; discovery by all-nodes multicast plus `ip -6 neigh`
+(`utils/nd-cache.js`), never a sweep; udp6/tcp6 proxy listeners, canonical client addresses,
+`blocklist_redirect_ip6`; IPv6 anomaly identities. Tests: `subnets-ipv6`, `dns-ipv6`,
+`dhcp-ipv6`, `ipv6-schema-migration`, `nd-cache`, `scanner-ipv6`, `ip-liveness`,
+`dns-proxy-ipv6`.
+
+**Known limits of the backend pass:**
+- A DHCPv6 lease line without a client DUID (dnsmasq writes `*`) is skipped: no identity.
+- `ra-names` (dnsmasq naming SLAAC hosts from their DHCPv4 lease) is emitted for the
+  `stateless` mode only; SLAAC addresses under `slaac` mode reach CIDRella through discovery.
+- Only the `stateful` mode issues leases and accepts reservations; no DHCPv6 option catalog
+  (v6 scopes use the scope columns: DNS servers, domain search, NTP).
+- `dhcp_release6` needs the appliance's own non-link-local IPv6 address on the lease's link.
 
 **Deferred from this pass:** rogue DHCPv6 and Router Advertisement detection (a different
 protocol from the DHCPv4 probe: UDP 546/547, `ff02::1:2`, DUID server identity; nothing in
