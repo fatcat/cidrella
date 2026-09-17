@@ -35,9 +35,10 @@ const routes = [
     children: [
       { path: '', redirect: '/analytics' },
       { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
-      // P10 IP-only cutover (2026-09-17): the workspace is IP Management. The
-      // classic view stays reachable at its own route until it is removed, and
-      // the preview route keeps working as an alias with its query and hash.
+      // P10 cutover (2026-09-17): the workspaces are IP Management and
+      // Settings. Each classic view stays reachable at its own route until it
+      // is removed, and each preview route keeps working as an alias with its
+      // query and hash.
       {
         path: 'networks',
         name: 'Networks',
@@ -58,11 +59,20 @@ const routes = [
         name: 'AnomaliesWorkspacePreview',
         component: () => import('../views/AnomaliesWorkspacePreview.vue'),
       },
-      { path: 'system', name: 'System', component: () => import('../views/Settings.vue') },
+      {
+        path: 'system',
+        name: 'System',
+        component: () => import('../views/SettingsWorkspacePreview.vue'),
+      },
       {
         path: 'system-preview',
         name: 'SettingsWorkspacePreview',
-        component: () => import('../views/SettingsWorkspacePreview.vue'),
+        redirect: (to) => ({ path: '/system', query: to.query, hash: to.hash }),
+      },
+      {
+        path: 'system-classic',
+        name: 'SystemClassic',
+        component: () => import('../views/Settings.vue'),
       },
       // Redirects for old bookmarks
       { path: 'dashboard', redirect: '/analytics' },

@@ -290,8 +290,9 @@ board. Phases are the plan's section 13 rows.
   unchanged in the work surface, so every current function and `?area=&sec=&return=` deep link is
   retained by construction; legacy `?tab=` bookmarks translate as on `/system`. Rendered at
   1440/1024/768 (`screenshots/p7-shell-*.png`): no page overflow, one `main`, fill editors
-  (DHCP scopes) scroll inside the panel. Not done: the S-01..S-10, S-16/S-17 leaf restyles, which
-  need a design decision on how far each editor moves toward the workspace language.
+  (DHCP scopes) scroll inside the panel. **User decision 2026-09-17: the settings workspace is
+  good as it stands.** The S-01..S-10, S-16/S-17 leaf editors stay mounted unchanged; no restyle
+  is planned. P7 is closed on that basis.
 
 - Workspace chrome (user request 2026-09-16, `aef2319`): the preview banner is gone from the
   networks and settings workspaces; the Interface select (Current / Workspace 0.5.0) and the
@@ -319,17 +320,19 @@ board. Phases are the plan's section 13 rows.
   The create menu says "Create network"; an unallocated row says "Allocate network". Server
   note: deallocation deletes a network's DHCP scopes and IP rows rather than disabling them.
 
-**P10, IP-only cutover: landed 2026-09-17** on the maintainer's call. `/networks` is the
-workspace, `/networks-preview` redirects there keeping query and hash, the classic view is at
-`/networks-classic` with its toolbar link pointing back at the workspace, and the header user menu
-carries a "Classic IP Management" link. The Interface preference now only pairs `/system` with
-`/system-preview`; IP Management is no longer a preference. `client/tests/unit/router-networks-cutover.test.js`
-covers the routes. Removing `SubnetsLayoutB.vue` and the rest of the classic IP view is the
-separate follow-up the plan names, after practical validation. Settings cutover waits on P7.
+**P10 cutover: landed 2026-09-17** on the maintainer's call, IP Management first (`4cecb70`),
+Settings the same day. `/networks` and `/system` are the workspaces; `/networks-preview` and
+`/system-preview` redirect there keeping query and hash; the classic views are at
+`/networks-classic` and `/system-classic`, reached from a "Classic interface" pair of links in
+the header user menu. The Interface preference is gone (`useInterfacePreference` removed,
+`CLASSIC_PATHS` in `useWorkspaceUi.js`). `client/tests/unit/router-cutover.test.js` covers the
+routes. The legacy bookmark redirects (`/dns`, `/dhcp`, `/blocklists`, `/geoip`, `/range-types`)
+already pointed at `/system?area=...`, which the shell reads. Removing `SubnetsLayoutB.vue`,
+`Settings.vue` and the rest of the classic views is the separate follow-up the plan names, after
+practical validation; the `*WorkspacePreview.vue` file names keep their suffix until then.
 
-**Not started:** P8, P9 (section 10), Settings cutover. An agent's P9 Analytics rework patch from
-2026-09-15 is saved in the session scratchpad (`p9-analytics.patch`, `p9-Analytics.test.js`),
-unapplied.
+**Not started:** P8, P9 (section 10). An agent's P9 Analytics rework patch from 2026-09-15 is
+saved in the session scratchpad (`p9-analytics.patch`, `p9-Analytics.test.js`), unapplied.
 
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
 

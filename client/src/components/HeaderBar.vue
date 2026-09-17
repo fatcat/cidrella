@@ -30,7 +30,7 @@
           >IP Management</router-link
         >
         <router-link
-          :to="preferredPath('/system')"
+          to="/system"
           class="nav-link"
           :class="{ active: route.path.startsWith('/system') }"
           data-track="nav-system"
@@ -281,23 +281,23 @@
           </div>
           <div class="user-menu-divider"></div>
           <div class="user-menu-section">
-            <label class="user-menu-label">Interface</label>
-            <Select
-              v-model="selectedInterface"
-              :options="interfaceOptions"
-              optionLabel="label"
-              optionValue="value"
-              data-track="user-pref-interface"
-              class="w-full"
-              @change="onInterfaceChange"
-            />
-            <router-link
-              :to="CLASSIC_NETWORKS_PATH"
-              class="user-menu-link"
-              data-track="user-classic-networks"
-              @click="userMenuRef.hide()"
-              >Classic IP Management</router-link
-            >
+            <label class="user-menu-label">Classic interface</label>
+            <div class="user-menu-links">
+              <router-link
+                :to="CLASSIC_PATHS.networks"
+                class="user-menu-link"
+                data-track="user-classic-networks"
+                @click="userMenuRef.hide()"
+                >IP Management</router-link
+              >
+              <router-link
+                :to="CLASSIC_PATHS.settings"
+                class="user-menu-link"
+                data-track="user-classic-settings"
+                @click="userMenuRef.hide()"
+                >Settings</router-link
+              >
+            </div>
           </div>
           <div class="user-menu-section">
             <label class="user-menu-label">Small text size</label>
@@ -344,11 +344,7 @@ import StatusDot from './StatusDot.vue';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
 import { useAnomalyStore } from '../stores/anomalies.js';
-import {
-  CLASSIC_NETWORKS_PATH,
-  useInterfacePreference,
-  useWorkspaceFontBump,
-} from '../composables/useWorkspaceUi.js';
+import { CLASSIC_PATHS, useWorkspaceFontBump } from '../composables/useWorkspaceUi.js';
 import { formatTimeOnly } from '../utils/dateFormat.js';
 import api from '../api/client.js';
 import { formatRelativeTime as timeAgo } from '../utils/dateFormat.js';
@@ -414,21 +410,8 @@ function onThemeChange(event) {
   themeStore.applyTheme(event.value);
 }
 
-// Workspace preferences (0.5.0): which interface the navigation opens, and
-// the small-text size the workspace pages use. Both live in useWorkspaceUi so
-// the pages read the same values.
-const { interfacePreference, setPreference, preferredPath, counterpart } = useInterfacePreference();
-const selectedInterface = ref(interfacePreference.value);
-const interfaceOptions = [
-  { label: 'Current interface', value: 'current' },
-  { label: 'Workspace (0.5.0)', value: 'workspace' },
-];
-function onInterfaceChange(event) {
-  setPreference(event.value);
-  // Switch the page you are on when it exists in both interfaces.
-  const next = counterpart(route.path, interfacePreference.value);
-  if (next) router.push({ path: next, query: route.query });
-}
+// The small-text size the workspace pages use lives in useWorkspaceUi so the
+// pages read the same value.
 const {
   fontBump,
   label: fontBumpLabel,
@@ -980,9 +963,12 @@ onUnmounted(() => {
   letter-spacing: 0.08em;
 }
 
+.user-menu-links {
+  display: flex;
+  gap: 0.9rem;
+}
 .user-menu-link {
   display: inline-block;
-  margin-top: 0.45rem;
   font-size: var(--app-fs-sm);
   color: var(--cid-primary-color);
   text-decoration: none;
