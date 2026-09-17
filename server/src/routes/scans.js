@@ -3,7 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { startScan } from '../utils/scanner.js';
 import { getNextScanTime } from '../utils/scan-scheduler.js';
-import { isIpInSubnet, isValidIpv4 } from '../utils/ip.js';
+import { networkContains, isValidAddress } from '../utils/ip.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
 import * as ScanRun from '../models/scan-run.js';
 
@@ -46,8 +46,9 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     return res.status(400).json({ error: 'Can only scan allocated subnets' });
   }
 
-  // Limit scan size to prevent excessive load
-  if (subnet.total_addresses > MAX_SCAN_SIZE) {
+  // Limit scan size to prevent excessive load. IPv6 networks are never
+  // swept, so the cap does not apply to them.
+  if (subnet.address_family !== 6 && subnet.total_addresses > MAX_SCAN_SIZE) {
     return res
       .status(400)
       .json({ error: `Subnet too large for scanning (max ${MAX_SCAN_SIZE} IPs)` });
@@ -73,7 +74,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 // POST /api/scans/probe: probe a single IP (or list) for liveness using startScan
 router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
   const { ip, subnet_id } = req.body;
-  if (!ip || !isValidIpv4(ip)) {
+  if (!ip || !isValidAddress(ip)) {
     return res.status(400).json({ error: 'Valid IP address is required' });
   }
 
@@ -89,13 +90,13 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
     if (subnet.status !== 'allocated') {
       return res.status(400).json({ error: 'Can only probe allocated subnets' });
     }
-    if (!isIpInSubnet(ip, subnet.cidr)) {
+    if (!networkContains(subnet.cidr, ip)) {
       return res.status(400).json({ error: 'IP address is not in the selected subnet' });
     }
   } else {
     const subnets = db.prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'").all();
     for (const s of subnets) {
-      if (isIpInSubnet(ip, s.cidr)) {
+      if (networkContains(s.cidr, ip)) {
         resolvedSubnetId = s.id;
         break;
       }

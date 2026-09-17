@@ -10,7 +10,8 @@ import {
   SCHEDULE_HOURS,
 } from '../utils/blocklist.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
-import { isValidIpv4, isValidDomain } from '../utils/ip.js';
+import { isValidIpv4, isValidDomain, isValidAddress } from '../utils/ip.js';
+import { addressFamily, canonicalizeIp } from '../utils/address.js';
 import { isIntInRangeCoercing } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
@@ -182,6 +183,7 @@ router.get('/settings', requirePerm('dns:read'), (req, res) => {
   const keys = [
     'blocklist_enabled',
     'blocklist_redirect_ip',
+    'blocklist_redirect_ip6',
     'blocklist_update_schedule',
     'blocklist_max_feed_mb',
   ];
@@ -198,6 +200,7 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
   const allowed = [
     'blocklist_enabled',
     'blocklist_redirect_ip',
+    'blocklist_redirect_ip6',
     'blocklist_update_schedule',
     'blocklist_max_feed_mb',
   ];
@@ -233,6 +236,21 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
     return res
       .status(400)
       .json({ error: 'blocklist_redirect_ip must be a valid IPv4 address or empty' });
+  }
+  // The AAAA counterpart for blocked names asked over IPv6.
+  if (
+    req.body.blocklist_redirect_ip6 !== undefined &&
+    req.body.blocklist_redirect_ip6 !== '' &&
+    (typeof req.body.blocklist_redirect_ip6 !== 'string' ||
+      !isValidAddress(req.body.blocklist_redirect_ip6) ||
+      addressFamily(req.body.blocklist_redirect_ip6) !== 6)
+  ) {
+    return res
+      .status(400)
+      .json({ error: 'blocklist_redirect_ip6 must be a valid IPv6 address or empty' });
+  }
+  if (typeof req.body.blocklist_redirect_ip6 === 'string' && req.body.blocklist_redirect_ip6) {
+    req.body.blocklist_redirect_ip6 = canonicalizeIp(req.body.blocklist_redirect_ip6);
   }
 
   // Per-feed download ceiling. Coercing variant because this surface is

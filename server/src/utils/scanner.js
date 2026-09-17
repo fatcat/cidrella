@@ -1,6 +1,10 @@
+import os from 'os';
 import { execFile } from 'child_process';
-import { parseCidr, longToIp } from './ip.js';
+import { parseNetwork, longToIp, parsedNetworkContains } from './ip.js';
+import { addressFamily } from './address.js';
 import { parseArpingMac, readArpCache } from './arp-cache.js';
+import { readNdCache } from './nd-cache.js';
+import { observeNeighbor } from '../services/ip-lifecycle-service.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
 import { observeScanResult, reconcileScanRogues } from '../services/ip-lifecycle-service.js';
@@ -31,13 +35,14 @@ function arpingIp(ip) {
   });
 }
 
-function pingIp(ip) {
+function pingIp(ip, { count = 1 } = {}) {
   return new Promise((resolve) => {
     const timeoutSeconds = Math.max(1, Math.ceil(PING_TIMEOUT_MS / 1000));
+    const family = addressFamily(ip) === 6 ? ['-6'] : [];
     execFile(
       'ping',
-      ['-c', '1', '-W', String(timeoutSeconds), ip],
-      { timeout: PING_TIMEOUT_MS + 500 },
+      [...family, '-c', String(count), '-W', String(timeoutSeconds), ip],
+      { timeout: PING_TIMEOUT_MS * count + 500 },
       (error) => {
         resolve({ responded: !error, mac: null });
       },
@@ -51,13 +56,53 @@ function pingIp(ip) {
  * callers insert one scan_results row and emit one "scanned" event per IP.
  * ARP is cheap and captures MAC addresses on directly-connected networks;
  * ICMP is the fallback for hosts that do not answer ARP or are off-link.
+ * IPv6 has no ARP: an ICMPv6 echo populates the kernel's neighbor table,
+ * which the batch loop reads back for the MAC.
  */
 async function probeIp(ip) {
+  if (addressFamily(ip) === 6) {
+    const icmp = await pingIp(ip);
+    return { ...icmp, method: 'icmpv6' };
+  }
   const arp = await arpingIp(ip);
   if (arp.responded) return { ...arp, method: 'arp' };
 
   const icmp = await pingIp(ip);
   return { ...icmp, method: 'icmp' };
+}
+
+/**
+ * The interfaces that hold an address inside `parsed`, for the all-nodes
+ * multicast probe. An IPv6 network CIDRella is not attached to cannot be
+ * discovered this way; its addresses still arrive through leases and DNS.
+ */
+function interfacesOnNetwork(parsed) {
+  const names = [];
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+    if ((addrs || []).some((a) => a.family === 'IPv6' && parsedNetworkContains(parsed, a.address))) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+/**
+ * Discover the hosts of an IPv6 network without walking it: ping the
+ * all-nodes multicast group on each attached interface, then read the
+ * kernel's neighbor table for entries inside the prefix. Returns the
+ * discovered addresses with their MACs.
+ */
+export async function discoverIpv6Hosts(parsed, { neighbors = readNdCache } = {}) {
+  const interfaces = interfacesOnNetwork(parsed);
+  for (const name of interfaces) {
+    await pingIp(`ff02::1%${name}`, { count: 2 });
+  }
+  const found = [];
+  for (const [ip, entry] of neighbors({ force: true })) {
+    if (!parsedNetworkContains(parsed, ip)) continue;
+    found.push({ ip, mac: entry.mac, interface: entry.interface });
+  }
+  return { interfaces, hosts: found };
 }
 
 /**
@@ -108,8 +153,13 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   }
 
   const probeMethods = new Map();
+  const parsed = parseNetwork(subnet.cidr);
 
-  console.log(`[scanner] Subnet ${subnet.cidr}: using ARP probes with ICMP fallback`);
+  console.log(
+    parsed.family === 6
+      ? `[scanner] Subnet ${subnet.cidr}: all-nodes multicast then the neighbor table`
+      : `[scanner] Subnet ${subnet.cidr}: using ARP probes with ICMP fallback`,
+  );
 
   // Resolve subnet-level scan default from inheritance chain (subnet → global setting)
   let subnetDefault = true;
@@ -131,14 +181,19 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     overrideMap = new Map(ipOverrides.map((r) => [r.ip_address, r.scan_enabled]));
   }
 
-  // Build IP list, either from targetIps or from subnet CIDR range
+  // Build IP list, either from targetIps or from subnet CIDR range. An IPv6
+  // prefix is never enumerated: its list is whatever the link answered.
   let ipsToScan;
   let totalIps;
+  let discovered = null;
   if (isTargeted) {
     ipsToScan = targetIps;
     totalIps = targetIps.length;
+  } else if (parsed.family === 6) {
+    discovered = await discoverIpv6Hosts(parsed);
+    ipsToScan = discovered.hosts.map((host) => host.ip);
+    totalIps = ipsToScan.length;
   } else {
-    const parsed = parseCidr(subnet.cidr);
     const startIpLong = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
     const endIpLong = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
     totalIps = endIpLong - startIpLong + 1;
@@ -201,17 +256,23 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
       const results = await Promise.all(promises);
 
-      // Read the ARP cache to capture MACs the kernel learned from ping responses.
-      // Forced, because the point is to see entries these probes just created.
+      // Read the neighbor tables to capture MACs the kernel learned from ping
+      // responses. Forced, because the point is to see entries these probes
+      // just created. IPv6 answers come from the ND table, IPv4 from ARP.
       let arpCache = null;
+      let ndCache = null;
       if (results.some((r) => r.responded && !r.mac)) {
-        arpCache = readArpCache({ force: true });
+        if (parsed.family === 6) ndCache = readNdCache({ force: true });
+        else arpCache = readArpCache({ force: true });
       }
 
       for (const result of results) {
-        // Enrich results with ARP cache MAC when probe didn't return one
+        // Enrich results with the neighbor-table MAC when the probe didn't return one
         if (result.responded && !result.mac && arpCache) {
           result.mac = arpCache.get(result.ip) || null;
+        }
+        if (result.responded && !result.mac && ndCache) {
+          result.mac = ndCache.get(result.ip)?.mac || null;
         }
 
         let isConflict = 0;
@@ -269,6 +330,16 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           conflictReason: sr.conflict_reason,
         });
         if (sr.is_conflict) conflictIps.add(sr.ip_address);
+      }
+      // Neighbor Discovery is IPv6 liveness evidence in its own right: a host
+      // the link answered for is online whether or not it answered the
+      // follow-up echo. Link-local entries carry their interface as identity.
+      for (const host of discovered?.hosts || []) {
+        const linkLocal = /^fe[89ab]/i.test(host.ip);
+        observeNeighbor(db, subnetId, host.ip, {
+          interfaceId: linkLocal ? host.interface : null,
+          mac: host.mac,
+        });
       }
 
       // Clear rogue on IPs in this subnet that weren't flagged in this scan

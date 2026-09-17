@@ -2,14 +2,25 @@ import net from 'net';
 import { PASSIVE_LIVENESS_DEBOUNCE_MS } from '../config/defaults.js';
 import { findSubnetForIp } from './ip-sync.js';
 import { lookupArpMac } from './arp-cache.js';
+import { lookupNdEntry } from './nd-cache.js';
 import { observePassiveActivity } from '../services/ip-lifecycle-service.js';
 
 const lastPassiveWrite = new Map();
 let lastDebouncePrune = Date.now();
 
+// Sources that are never a host on a managed network: loopback, unspecified,
+// broadcast, multicast, and IPv6 link-local (a link-local query source has no
+// interface context on this path, so it cannot be a lifecycle identity).
 function shouldIgnoreIp(ip) {
-  if (!ip || net.isIP(ip) !== 4) return true;
-  return ip.startsWith('127.') || ip === '0.0.0.0' || ip === '255.255.255.255';
+  const family = ip ? net.isIP(ip) : 0;
+  if (family === 4) {
+    return ip.startsWith('127.') || ip === '0.0.0.0' || ip === '255.255.255.255';
+  }
+  if (family === 6) {
+    const lower = ip.toLowerCase();
+    return lower === '::1' || lower === '::' || /^fe[89ab]/.test(lower) || /^ff/.test(lower);
+  }
+  return true;
 }
 
 function pruneDebounce(now) {
@@ -48,7 +59,7 @@ export function recordDnsQueryLiveness(db, ip, { createRogue = false, source = '
   // clients simply miss here, which is correct, the only MAC ARP could offer
   // for those is the gateway's.
   const result = observePassiveActivity(db, subnet.id, ip, {
-    mac: lookupArpMac(ip),
+    mac: net.isIP(ip) === 6 ? lookupNdEntry(ip)?.mac || null : lookupArpMac(ip),
     source,
     createRogue,
   });

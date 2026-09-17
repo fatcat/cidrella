@@ -225,6 +225,22 @@ describe('POST /api/anomalies/whitelist', () => {
     expect(row).toMatchObject({ identity: 'aa:bb:cc:dd:ee:50', client_ip: '10.0.0.50' });
   });
 
+  it('whitelists an IPv6 client by its canonical address when no lease knows it', async () => {
+    const res = await request(app)
+      .post('/api/anomalies/whitelist')
+      .send({ client_ip: 'FD00:000A::0016' });
+    expect(res.status).toBe(201);
+    const row = db
+      .prepare('SELECT identity, client_ip FROM anomaly_whitelist WHERE id = ?')
+      .get(res.body.id);
+    expect(row).toMatchObject({ identity: 'fd00:a::16', client_ip: 'fd00:a::16' });
+    // The client history route takes the same identity in any spelling.
+    const history = await request(app).get('/api/anomalies/client/fd00:a:0:0::16');
+    expect(history.status).toBe(200);
+    const scoped = await request(app).get('/api/anomalies/client/fe80::1%25eth0');
+    expect(scoped.status).toBe(400);
+  });
+
   it('stays whitelisted under a renewed IP for the same MAC', async () => {
     setLease('10.0.0.51', 'aa:bb:cc:dd:ee:51');
     const first = await request(app)

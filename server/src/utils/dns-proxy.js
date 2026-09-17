@@ -13,7 +13,13 @@ import { getDb, getSetting, setSetting } from '../db/init.js';
 import { selectInterfaceNames } from './interface-config.js';
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
-import { applyInterfaceConfig, restartDnsmasq, withValidatedDnsmasqUpdate } from './dnsmasq.js';
+import {
+  applyInterfaceConfig,
+  listenableAddresses,
+  restartDnsmasq,
+  withValidatedDnsmasqUpdate,
+} from './dnsmasq.js';
+import { canonicalizeIp } from './address.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import { parseCidrEntry, ipInAny } from './cidr-match.js';
 import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
@@ -90,6 +96,7 @@ let blocklistLookupStmt = null; // cached prepared statement, see getLookupStmt
 let blocklistCategories = null; // Set<string>, enabled category slugs
 let blocklistEnabled = false;
 let blocklistRedirectIp = '';
+let blocklistRedirectIp6 = '';
 let blocklistBlockedDelta = 0;
 let blocklistCategoryHits = new Map();
 
@@ -252,7 +259,7 @@ function blockingCountryCodes(countryCodes) {
   return countryCodes.filter((cc) => !geoipRuleSet.has(cc));
 }
 
-// Get LAN IPv4 addresses to bind proxy sockets on port 53
+// Get the LAN addresses of both families to bind proxy sockets on port 53
 function getListenAddresses() {
   let ifaceConfig = {};
   try {
@@ -266,13 +273,12 @@ function getListenAddresses() {
   const addresses = [];
 
   // Interface selection is shared with dnsmasq.js and dhcp-probe.js so the
-  // three cannot drift about which interfaces are in play (audit #9). What we
-  // do with them, collecting IPv4 bind addresses, stays here.
+  // three cannot drift about which interfaces are in play (audit #9). The
+  // bindable-address rule (IPv4 plus non-link-local IPv6) is dnsmasq.js's
+  // too, so the proxy and dnsmasq bypass mode listen on the same set.
   const { names } = selectInterfaceNames('dns', { config: ifaceConfig, sysIfaces });
   for (const ifName of names) {
-    for (const a of sysIfaces[ifName] || []) {
-      if (a.family === 'IPv4') addresses.push(a.address);
-    }
+    addresses.push(...listenableAddresses(sysIfaces[ifName]));
   }
 
   return addresses;
@@ -337,17 +343,27 @@ export function createNxdomainResponse(query) {
   });
 }
 
-// Create a blocked response, redirect IP (A record, NOERROR) or NXDOMAIN
+// Create a blocked response: the redirect address for the question's family
+// (A or AAAA, NOERROR) or NXDOMAIN when no redirect is configured. With a
+// redirect set for one family only, the other family gets an empty NOERROR
+// answer, so a blocked name never resolves over the family that has no
+// sinkhole either.
 export function createBlockedResponse(query) {
-  if (blocklistRedirectIp) {
+  if (blocklistRedirectIp || blocklistRedirectIp6) {
+    const answers = [];
+    for (const q of query.questions) {
+      if (q.type === 'A' && blocklistRedirectIp) {
+        answers.push({ type: 'A', name: q.name, ttl: 300, data: blocklistRedirectIp });
+      } else if (q.type === 'AAAA' && blocklistRedirectIp6) {
+        answers.push({ type: 'AAAA', name: q.name, ttl: 300, data: blocklistRedirectIp6 });
+      }
+    }
     return dnsPacket.encode({
       id: query.id,
       type: 'response',
       flags: responseFlags('NOERROR'),
       questions: query.questions,
-      answers: query.questions
-        .filter((q) => q.type === 'A')
-        .map((q) => ({ type: 'A', name: q.name, ttl: 300, data: blocklistRedirectIp })),
+      answers,
       authorities: [],
       additionals: buildOptEcho(getQueryOpt(query)),
     });
@@ -375,6 +391,7 @@ export function loadBlocklist() {
   const enabled = getSetting('blocklist_enabled');
   blocklistEnabled = enabled === 'true';
   blocklistRedirectIp = getSetting('blocklist_redirect_ip') || '';
+  blocklistRedirectIp6 = getSetting('blocklist_redirect_ip6') || '';
 
   if (!blocklistEnabled) {
     blocklistCategories = null;
@@ -508,16 +525,19 @@ function handleQuery(msg, rinfo, sock) {
   try {
     const startNs = process.hrtime.bigint();
     const query = dnsPacket.decode(msg);
+    // One spelling per client, whichever socket family delivered the query,
+    // so analytics and liveness never see the same host twice.
+    const clientIp = canonicalizeIp(rinfo.address) || rinfo.address;
 
     // Extract query metadata for analytics
     const queryName = query.questions?.[0]?.name;
     const queryType = query.questions?.[0]?.type || 'A';
 
     try {
-      recordDnsQueryLiveness(getDb(), rinfo.address, { createRogue: true, source: 'passive' });
+      recordDnsQueryLiveness(getDb(), clientIp, { createRogue: true, source: 'passive' });
     } catch (err) {
       proxyLog('warn', 'Failed to record DNS-query liveness', {
-        clientIp: rinfo.address,
+        clientIp,
         error: err.message,
       });
     }
@@ -531,7 +551,7 @@ function handleQuery(msg, rinfo, sock) {
       const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
       recordLatency(latencyUs);
       logDnsQuery({
-        clientIp: rinfo.address,
+        clientIp,
         domain: queryName,
         queryType,
         responseCode: inbound.responseCode,
@@ -570,7 +590,7 @@ function handleQuery(msg, rinfo, sock) {
         const latencyUs = Number(process.hrtime.bigint() - p.startNs) / 1000;
         recordLatency(latencyUs);
         logDnsQuery({
-          clientIp: p.address,
+          clientIp: p.clientIp,
           domain: p.queryName,
           queryType: p.queryType,
           responseCode: 'SERVFAIL',
@@ -594,6 +614,7 @@ function handleQuery(msg, rinfo, sock) {
 
     pendingQueries.set(internalId, {
       address: rinfo.address,
+      clientIp,
       port: rinfo.port,
       originalId: query.id,
       socket: sock,
@@ -645,7 +666,7 @@ function handleDnsmasqResponse(msg) {
       const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
       recordLatency(latencyUs);
       logDnsQuery({
-        clientIp: pending.address,
+        clientIp: pending.clientIp,
         domain: pending.queryName,
         queryType: pending.queryType,
         responseCode: 'NXDOMAIN',
@@ -675,7 +696,7 @@ function handleDnsmasqResponse(msg) {
       checkingDisabled: pending.checkingDisabled,
     });
     logDnsQuery({
-      clientIp: pending.address,
+      clientIp: pending.clientIp,
       domain: pending.queryName,
       queryType: pending.queryType,
       responseCode: rcode,
@@ -751,7 +772,7 @@ async function handleTcpQuery(msg, clientSock) {
   } catch {
     return; // malformed, ignore this message, keep the connection open
   }
-  const clientIp = clientSock.remoteAddress || '';
+  const clientIp = canonicalizeIp(clientSock.remoteAddress || '') || clientSock.remoteAddress || '';
   const queryName = query.questions?.[0]?.name;
   const queryType = query.questions?.[0]?.type || 'A';
 
@@ -926,7 +947,10 @@ export function startProxy() {
 
   let bindCount = 0;
   for (const addr of addresses) {
-    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    const sock = dgram.createSocket({
+      type: net.isIP(addr) === 6 ? 'udp6' : 'udp4',
+      reuseAddr: true,
+    });
 
     sock.on('message', (msg, rinfo) => handleQuery(msg, rinfo, sock));
 

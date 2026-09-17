@@ -1,7 +1,6 @@
 import { getDb } from '../db/init.js';
 import { startScan } from './scanner.js';
-import { MAX_SCAN_SIZE } from '../config/defaults.js';
-import { intervalToMs, scanEnabledSql } from './scan-coverage.js';
+import { intervalToMs, scanEnabledSql, scanSizeSql } from './scan-coverage.js';
 import * as ScanRun from '../models/scan-run.js';
 import { isGloballyRoutableCidr } from './ip.js';
 
@@ -22,7 +21,7 @@ function checkScheduledScans() {
     SELECT s.*,
       COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
     FROM subnets s
-    WHERE s.status = 'allocated' AND s.total_addresses <= ${MAX_SCAN_SIZE}
+    WHERE s.status = 'allocated' AND ${scanSizeSql('s')}
       AND ${scanEnabledSql()}
   `,
     )
@@ -85,7 +84,7 @@ export function getNextScanTime() {
     SELECT s.id, s.cidr, s.scan_enabled,
       COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
     FROM subnets s
-    WHERE s.status = 'allocated' AND s.total_addresses <= ${MAX_SCAN_SIZE}
+    WHERE s.status = 'allocated' AND ${scanSizeSql('s')}
       AND ${scanEnabledSql()}
   `,
     )

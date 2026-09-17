@@ -101,6 +101,28 @@ describe('PUT /api/blocklists/settings', () => {
     ).toBe(200);
   });
 
+  it('takes an IPv6 sinkhole in canonical spelling, or empty, and refuses junk', async () => {
+    for (const bad of ['not-an-ip', '10.0.0.1', 'fe80::1%eth0', ['::']]) {
+      const res = await request(app)
+        .put('/api/blocklists/settings')
+        .send({ blocklist_redirect_ip6: bad });
+      expect(res.status, `value ${JSON.stringify(bad)}`).toBe(400);
+    }
+    expect(
+      (
+        await request(app)
+          .put('/api/blocklists/settings')
+          .send({ blocklist_redirect_ip6: 'FD00:0000::DEAD' })
+      ).status,
+    ).toBe(200);
+    const settings = (await request(app).get('/api/blocklists/settings')).body;
+    expect(settings.blocklist_redirect_ip6).toBe('fd00::dead');
+    expect(
+      (await request(app).put('/api/blocklists/settings').send({ blocklist_redirect_ip6: '' }))
+        .status,
+    ).toBe(200);
+  });
+
   it('rejects unknown or non-string schedules', async () => {
     for (const bad of ['hourly', 6, ['daily'], 'monthly']) {
       const res = await request(app)

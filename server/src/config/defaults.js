@@ -30,6 +30,7 @@ export const DEFAULTS = {
   default_scan_enabled: '1',
   blocklist_enabled: 'true',
   blocklist_redirect_ip: '',
+  blocklist_redirect_ip6: '',
   dnssec_enabled: 'false',
   // When 'true', dnsmasq is authoritative-only: it answers for local zones but
   // does not forward/recurse for external domains (no server= lines emitted).

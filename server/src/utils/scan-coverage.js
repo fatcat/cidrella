@@ -119,12 +119,22 @@ export function effectiveIntervalSql(alias = 's') {
  *
  * `subnetAlias` is the `subnets` alias, `ipAlias` the `ip_addresses` alias.
  */
+/**
+ * Whether a network is small enough to scan. IPv4 networks are swept, so
+ * their address count is capped. IPv6 networks are never swept (one
+ * multicast probe and a neighbor-table read), so size does not apply and
+ * their total_addresses is null anyway.
+ */
+export function scanSizeSql(subnetAlias = 's') {
+  return `(${subnetAlias}.address_family = 6 OR ${subnetAlias}.total_addresses <= ${MAX_SCAN_SIZE})`;
+}
+
 export function scannerCoveredSql(subnetAlias = 's', ipAlias = 'ip') {
   const interval = effectiveIntervalSql(subnetAlias);
   const named = SCANNING_INTERVAL_KEYS.map((k) => `'${k}'`).join(', ');
   return `(
     ${subnetAlias}.status = 'allocated'
-    AND ${subnetAlias}.total_addresses <= ${MAX_SCAN_SIZE}
+    AND ${scanSizeSql(subnetAlias)}
     AND ${scanEnabledSql(subnetAlias)}
     AND ${interval} IS NOT NULL
     AND (

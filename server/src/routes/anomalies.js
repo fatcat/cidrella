@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
-import { isValidIpv4 } from '../utils/ip.js';
+import { isValidAddress } from '../utils/ip.js';
+import { canonicalizeIp } from '../utils/address.js';
 import { MAC_RE } from '../utils/mac.js';
 import { enrichWithHostnames } from '../utils/hostnames.js';
 import { queryClientWindowEvidence, queryClientWindowSummary } from '../db/duckdb.js';
@@ -217,13 +218,18 @@ function windowToDuckTimestamp(value) {
 // An anomaly identity is either a MAC (survives an IP renewal) or, when
 // CIDRella has no DHCP lease for the client, the client's IP itself.
 function isValidIdentity(identity) {
-  return FULL_MAC_RE.test(identity) || isValidIpv4(identity);
+  return FULL_MAC_RE.test(identity) || isValidAddress(identity);
+}
+
+// The stored form of an identity: MACs as given, addresses canonical.
+function canonicalIdentity(identity) {
+  return FULL_MAC_RE.test(identity) ? identity : canonicalizeIp(identity) || identity;
 }
 
 // GET /api/anomalies/client/:identity: anomaly history for a client
 router.get('/client/:identity', requirePerm('analytics:read'), (req, res) => {
-  const { identity } = req.params;
-  if (!isValidIdentity(identity)) {
+  const identity = canonicalIdentity(req.params.identity);
+  if (!isValidIdentity(req.params.identity)) {
     return res.status(400).json({ error: 'Invalid identity' });
   }
 
@@ -243,8 +249,8 @@ router.get('/client/:identity', requirePerm('analytics:read'), (req, res) => {
 
 // GET /api/anomalies/client/:identity/model: model metadata
 router.get('/client/:identity/model', requirePerm('analytics:read'), (req, res) => {
-  const { identity } = req.params;
-  if (!isValidIdentity(identity)) {
+  const identity = canonicalIdentity(req.params.identity);
+  if (!isValidIdentity(req.params.identity)) {
     return res.status(400).json({ error: 'Invalid identity' });
   }
 
@@ -264,8 +270,8 @@ router.get('/client/:identity/model', requirePerm('analytics:read'), (req, res) 
 // MAC-to-IP mapping for that window. Resolving the MAC's lease today would
 // pull the traffic of whatever holds that address now.
 router.get('/client/:identity/evidence', requirePerm('analytics:read'), async (req, res) => {
-  const { identity } = req.params;
-  if (!isValidIdentity(identity)) {
+  const identity = canonicalIdentity(req.params.identity);
+  if (!isValidIdentity(req.params.identity)) {
     return res.status(400).json({ error: 'Invalid identity' });
   }
 
@@ -391,13 +397,14 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   const { client_ip, reason } = req.body;
 
   if (!client_ip) return res.status(400).json({ error: 'client_ip is required' });
-  if (!isValidIpv4(client_ip)) return res.status(400).json({ error: 'Invalid IP address' });
+  if (!isValidAddress(client_ip)) return res.status(400).json({ error: 'Invalid IP address' });
+  const clientIp = canonicalizeIp(client_ip);
 
-  const identity = Anomaly.resolveIdentity(db, client_ip);
+  const identity = Anomaly.resolveIdentity(db, clientIp);
   const existing = db.prepare('SELECT id FROM anomaly_whitelist WHERE identity = ?').get(identity);
   if (existing) return res.status(409).json({ error: 'Already whitelisted' });
 
-  const id = Anomaly.addWhitelistEntry(db, client_ip, reason);
+  const id = Anomaly.addWhitelistEntry(db, clientIp, reason);
 
   audit(req.user.id, 'anomaly_whitelist_add', 'anomaly_whitelist', id, { client_ip, reason });
   res.status(201).json({ id, ok: true });

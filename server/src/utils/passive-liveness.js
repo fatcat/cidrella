@@ -25,7 +25,8 @@ import {
 } from '../config/defaults.js';
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 // Matches: "query[A] example.com from 192.168.1.100"
-const QUERY_FROM_RE = /\bquery\[.+?\]\s+\S+\s+from\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/;
+//      and: "query[AAAA] example.com from fd00:a::1600"
+const QUERY_FROM_RE = /\bquery\[.+?\]\s+\S+\s+from\s+([0-9a-fA-F.:]+)/;
 
 /**
  * Start the passive liveness watcher.
@@ -54,7 +55,7 @@ export function startPassiveLivenessWatcher(db) {
       const m = line.match(QUERY_FROM_RE);
       if (!m) continue;
       const ip = m[1];
-      if (ip === '127.0.0.1') continue;
+      if (ip === '127.0.0.1' || ip === '::1') continue;
       ipsThisCycle.add(ip);
     }
 
