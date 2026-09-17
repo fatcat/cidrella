@@ -191,7 +191,9 @@ and IAID/DUID columns, `dhcp_release6`; discovery by all-nodes multicast plus `i
 **Known limits of the backend pass:**
 - A DHCPv6 lease line without a client DUID (dnsmasq writes `*`) is skipped: no identity.
 - `ra-names` (dnsmasq naming SLAAC hosts from their DHCPv4 lease) is emitted for the
-  `stateless` mode only; SLAAC addresses under `slaac` mode reach CIDRella through discovery.
+  `stateless` mode only. Under both SLAAC modes an observed global address becomes a `slaac`
+  claim (valid lifetime = scope lease time), rogue exists only on `stateful` networks, and an
+  IPv6 scan also echoes every persisted allocated address so quiet static hosts go offline.
 - Only the `stateful` mode issues leases and accepts reservations; no DHCPv6 option catalog
   (v6 scopes use the scope columns: DNS servers, domain search, NTP).
 - `dhcp_release6` needs the appliance's own non-link-local IPv6 address on the lease's link.

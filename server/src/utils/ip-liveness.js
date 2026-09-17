@@ -3,7 +3,8 @@ import { PASSIVE_LIVENESS_DEBOUNCE_MS } from '../config/defaults.js';
 import { findSubnetForIp } from './ip-sync.js';
 import { lookupArpMac } from './arp-cache.js';
 import { lookupNdEntry } from './nd-cache.js';
-import { observePassiveActivity } from '../services/ip-lifecycle-service.js';
+import { observePassiveActivity, observeIpv6Presence } from '../services/ip-lifecycle-service.js';
+import { ipv6DiscoveryPolicy } from '../models/dhcp-scope.js';
 
 const lastPassiveWrite = new Map();
 let lastDebouncePrune = Date.now();
@@ -58,11 +59,20 @@ export function recordDnsQueryLiveness(db, ip, { createRogue = false, source = '
   // find on the network, and the MAC is what makes that possible. Off-link
   // clients simply miss here, which is correct, the only MAC ARP could offer
   // for those is the gateway's.
-  const result = observePassiveActivity(db, subnet.id, ip, {
-    mac: net.isIP(ip) === 6 ? lookupNdEntry(ip)?.mac || null : lookupArpMac(ip),
-    source,
-    createRogue,
-  });
+  // An IPv6 source that may create rows goes through the mode-aware presence
+  // rule: a SLAAC claim on a SLAAC network, a rogue only on a stateful one.
+  const result =
+    net.isIP(ip) === 6 && createRogue
+      ? observeIpv6Presence(db, subnet.id, ip, {
+          mac: lookupNdEntry(ip)?.mac || null,
+          policy: ipv6DiscoveryPolicy(db, subnet.id),
+          source,
+        })
+      : observePassiveActivity(db, subnet.id, ip, {
+          mac: net.isIP(ip) === 6 ? lookupNdEntry(ip)?.mac || null : lookupArpMac(ip),
+          source,
+          createRogue,
+        });
   lastPassiveWrite.set(ip, now);
   return result;
 }

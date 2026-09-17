@@ -38,7 +38,11 @@ describe('discoverIpv6Hosts', () => {
       expect(execFile.mock.calls[0][0]).toBe('ping');
       expect(execFile.mock.calls[0][1]).toEqual(['-6', '-c', '2', '-W', expect.any(String), 'ff02::1%eth0']);
       expect(neighbors).toHaveBeenCalledWith({ force: true });
-      expect(result.hosts).toEqual([{ ip: 'fd00:a::1600', mac: 'aa:bb:cc:dd:ee:ff', interface: 'eth0' }]);
+      // The link-local neighbor on eth0 rides along; the one on eth1 does not.
+      expect(result.hosts).toEqual([
+        { ip: 'fd00:a::1600', mac: 'aa:bb:cc:dd:ee:ff', interface: 'eth0' },
+        { ip: 'fe80::9', mac: 'aa:bb:cc:dd:ee:09', interface: 'eth0' },
+      ]);
     } finally {
       spy.mockRestore();
     }

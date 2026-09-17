@@ -53,6 +53,22 @@ export function findEnabledScopeForIp(db, subnetId, ipAddress) {
   );
 }
 
+/**
+ * How addresses come to exist on an IPv6 network, from its enabled DHCPv6
+ * scope: `slaac` or `stateless` (hosts pick their own addresses), `stateful`
+ * (addresses come from the pool), or null when the network has no scope. The
+ * lease time doubles as the valid lifetime dnsmasq advertises in the RA.
+ */
+export function ipv6DiscoveryPolicy(db, subnetId) {
+  const scope = db
+    .prepare(
+      `SELECT v6_mode, lease_time FROM dhcp_scopes
+       WHERE subnet_id = ? AND enabled = 1 AND address_family = 6 ORDER BY id LIMIT 1`,
+    )
+    .get(subnetId);
+  return { mode: scope?.v6_mode || null, leaseTime: scope?.lease_time || null };
+}
+
 export function getScopePools(db, scopeId) {
   return db
     .prepare(

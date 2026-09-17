@@ -4,7 +4,8 @@ import { parseNetwork, longToIp, parsedNetworkContains } from './ip.js';
 import { addressFamily } from './address.js';
 import { parseArpingMac, readArpCache } from './arp-cache.js';
 import { readNdCache } from './nd-cache.js';
-import { observeNeighbor } from '../services/ip-lifecycle-service.js';
+import { observeIpv6Presence } from '../services/ip-lifecycle-service.js';
+import { ipv6DiscoveryPolicy } from '../models/dhcp-scope.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
 import { observeScanResult, reconcileScanRogues } from '../services/ip-lifecycle-service.js';
@@ -89,7 +90,9 @@ function interfacesOnNetwork(parsed) {
 /**
  * Discover the hosts of an IPv6 network without walking it: ping the
  * all-nodes multicast group on each attached interface, then read the
- * kernel's neighbor table for entries inside the prefix. Returns the
+ * kernel's neighbor table for entries inside the prefix, plus link-local
+ * entries on those same interfaces (a link-local address belongs to no
+ * prefix, so the interface is what ties it to the network). Returns the
  * discovered addresses with their MACs.
  */
 export async function discoverIpv6Hosts(parsed, { neighbors = readNdCache } = {}) {
@@ -99,7 +102,8 @@ export async function discoverIpv6Hosts(parsed, { neighbors = readNdCache } = {}
   }
   const found = [];
   for (const [ip, entry] of neighbors({ force: true })) {
-    if (!parsedNetworkContains(parsed, ip)) continue;
+    const onLink = /^fe[89ab]/i.test(ip) && interfaces.includes(entry.interface);
+    if (!onLink && !parsedNetworkContains(parsed, ip)) continue;
     found.push({ ip, mac: entry.mac, interface: entry.interface });
   }
   return { interfaces, hosts: found };
@@ -182,16 +186,41 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   }
 
   // Build IP list, either from targetIps or from subnet CIDR range. An IPv6
-  // prefix is never enumerated: its list is whatever the link answered.
+  // prefix is never enumerated: its list is whatever the link answered plus
+  // every address CIDRella already holds an allocation for, so a quiet static
+  // host still gets an echo and can go offline.
   let ipsToScan;
   let totalIps;
-  let discovered = null;
+  const policy = parsed.family === 6 ? ipv6DiscoveryPolicy(db, subnetId) : null;
   if (isTargeted) {
     ipsToScan = targetIps;
     totalIps = targetIps.length;
   } else if (parsed.family === 6) {
-    discovered = await discoverIpv6Hosts(parsed);
-    ipsToScan = discovered.hosts.map((host) => host.ip);
+    const discovered = await discoverIpv6Hosts(parsed);
+    // Neighbor Discovery is liveness evidence in its own right and, on a
+    // SLAAC network, the allocation claim itself. Record it before the
+    // assignment snapshot below so a self-assigned address counts as
+    // assigned and is not mistaken for a rogue.
+    if (updateModel) {
+      for (const host of discovered.hosts) {
+        const linkLocal = /^fe[89ab]/i.test(host.ip);
+        observeIpv6Presence(db, subnetId, host.ip, {
+          interfaceId: linkLocal ? host.interface : null,
+          mac: host.mac,
+          policy,
+        });
+      }
+    }
+    const allocated = db
+      .prepare(
+        `SELECT ip_address FROM ip_addresses
+         WHERE subnet_id = ? AND allocation_state NOT IN ('unassigned', 'system')
+           AND interface_id IS NULL`,
+      )
+      .all(subnetId)
+      .map((row) => row.ip_address);
+    const globals = discovered.hosts.map((host) => host.ip).filter((ip) => !/^fe[89ab]/i.test(ip));
+    ipsToScan = [...new Set([...globals, ...allocated])];
     totalIps = ipsToScan.length;
   } else {
     const startIpLong = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
@@ -280,8 +309,11 @@ export async function startScan(db, scanId, subnetId, options = {}) {
         const assignment = assignmentMap.get(result.ip);
 
         if (result.responded) {
-          if (!assignment) {
-            // IP responded but not assigned, rogue device
+          // An unassigned address answering is a rogue on IPv4 and on a
+          // stateful DHCPv6 network. Where hosts assign themselves (SLAAC
+          // modes) or nothing hands out addresses, it is simply a host.
+          const rogueMeaningful = parsed.family === 4 || policy?.mode === 'stateful';
+          if (!assignment && rogueMeaningful) {
             isConflict = 1;
             conflictReason = 'Rogue device (IP not assigned)';
           } else if (
@@ -330,16 +362,6 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           conflictReason: sr.conflict_reason,
         });
         if (sr.is_conflict) conflictIps.add(sr.ip_address);
-      }
-      // Neighbor Discovery is IPv6 liveness evidence in its own right: a host
-      // the link answered for is online whether or not it answered the
-      // follow-up echo. Link-local entries carry their interface as identity.
-      for (const host of discovered?.hosts || []) {
-        const linkLocal = /^fe[89ab]/i.test(host.ip);
-        observeNeighbor(db, subnetId, host.ip, {
-          interfaceId: linkLocal ? host.interface : null,
-          mac: host.mac,
-        });
       }
 
       // Clear rogue on IPs in this subnet that weren't flagged in this scan

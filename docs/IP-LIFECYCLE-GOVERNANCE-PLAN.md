@@ -143,9 +143,16 @@ desired model use the same words differently.
     SLAAC observations under any mode become `slaac` claims with their
     lifetimes. Rogue DHCPv6 and Router Advertisement detection is deferred.
 12. **IPv6 discovery.** Active discovery for IPv6 is observation-driven: an
-    all-nodes multicast probe followed by the Neighbor Discovery table, never
-    a sweep of the prefix. Passive liveness accepts IPv6 query sources except
-    link-local, loopback, and unspecified addresses.
+    all-nodes multicast probe followed by the Neighbor Discovery table, plus a
+    unicast echo to every address CIDRella already holds an allocation for,
+    never a sweep of the prefix. Passive liveness accepts IPv6 query sources
+    except link-local, loopback, and unspecified addresses. What an observed
+    IPv6 address means depends on how its network hands out addresses: on a
+    `slaac` or `stateless` network an unclaimed global address becomes a
+    `slaac` allocation with the scope's lease time as its valid lifetime and
+    is never rogue; on a `stateful` network an unclaimed address is rogue,
+    the IPv4 meaning; a network with no scope records liveness only; a
+    link-local address is liveness with interface context and never a claim.
 
 ## Address-family Contract
 

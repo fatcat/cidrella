@@ -16,7 +16,7 @@ import { isValidAddress, parseNetwork, addressToBig, topologyAddresses } from '.
 import { deleteDynamicDhcpRecordsByIps } from '../models/dns-record.js';
 import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease-queries.js';
 import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
-import { leaseExpiryMs } from '../utils/lease-sql.js';
+import { leaseExpiryMs, leaseDurationMs } from '../utils/lease-sql.js';
 import { parseIp } from '../utils/address.js';
 
 export const OFFLINE_RETIREMENT_MS = 60 * 60 * 1000;
@@ -756,17 +756,63 @@ export function observeDhcpv6Lease(
   );
 }
 
-export function observeNeighbor(db, subnetId, ip, { interfaceId, mac } = {}) {
+export function observeNeighbor(
+  db,
+  subnetId,
+  ip,
+  { interfaceId, mac, rogueAllowed = true, source = 'neighbor_discovery' } = {},
+) {
   const identityIp = lifecycleIdentityIp(ip, interfaceId);
   const existing = IpAddress.findBySubnetAndIp(db, subnetId, identityIp);
-  const isRogue = !existing || existing.allocation_state === ALLOCATION_STATE.UNASSIGNED;
+  const unclaimed = !existing || existing.allocation_state === ALLOCATION_STATE.UNASSIGNED;
+  const isRogue = rogueAllowed && unclaimed;
   return IpAddress.upsert(db, subnetId, identityIp, {
     is_online: 1,
     last_seen_mac: mac || undefined,
     is_rogue: isRogue ? 1 : 0,
     rogue_reason: isRogue ? 'Neighbor Discovery from unassigned address' : null,
-    detection_source: 'neighbor_discovery',
+    detection_source: source,
   });
+}
+
+const DEFAULT_SLAAC_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const FAR_FUTURE = '9999-12-31T23:59:59.000Z';
+
+/**
+ * An IPv6 address seen on a managed network (neighbor table, echo reply, DNS
+ * query source), judged by how that network hands out addresses:
+ *
+ * - link-local: liveness with interface context, never a claim, never rogue;
+ * - slaac or stateless network: hosts choose their own addresses, so an
+ *   unclaimed address becomes a `slaac` allocation whose valid lifetime is the
+ *   scope's lease time (what the RA advertises), never rogue;
+ * - stateful network: addresses come from DHCPv6, so an unclaimed address is
+ *   rogue, the IPv4 meaning;
+ * - no scope: nothing to judge against, liveness only.
+ *
+ * `policy` is ipv6DiscoveryPolicy() for the network.
+ */
+export function observeIpv6Presence(
+  db,
+  subnetId,
+  ip,
+  { interfaceId = null, mac = null, policy = null, source = 'neighbor_discovery', now = Date.now() } = {},
+) {
+  if (/^fe[89ab]/i.test(ip)) {
+    return observeNeighbor(db, subnetId, ip, { interfaceId, mac, rogueAllowed: false, source });
+  }
+  const mode = policy?.mode || null;
+  if (mode === 'slaac' || mode === 'stateless') {
+    const existing = IpAddress.findBySubnetAndIp(db, subnetId, ip);
+    if (!existing || existing.allocation_state === ALLOCATION_STATE.UNASSIGNED) {
+      const duration = leaseDurationMs(policy.leaseTime);
+      const lifetime = Number.isFinite(duration) ? duration : DEFAULT_SLAAC_LIFETIME_MS;
+      const validUntil =
+        duration === Infinity ? FAR_FUTURE : new Date(now + lifetime).toISOString();
+      observeSlaac(db, subnetId, ip, { validUntil, preferredUntil: null });
+    }
+  }
+  return observeNeighbor(db, subnetId, ip, { mac, rogueAllowed: mode === 'stateful', source });
 }
 
 export function observeRouterAdvertisement(
