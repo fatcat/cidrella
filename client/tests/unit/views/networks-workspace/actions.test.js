@@ -175,6 +175,14 @@ describe('workspace action registry', () => {
       'Delete DHCP Reservation',
       'Probe now',
     ]);
+    // A DNS record row is about the record: no IP-details or whole-zone hops.
+    expect(
+      labels({
+        menu: 'row',
+        target: row('dns:2:5', { value: '10.0.0.5', raw: { id: 5, zone_id: 2, record_type: 'A' } }),
+        can: all,
+      }),
+    ).toEqual(['Edit record', 'Add CNAME', 'Delete record']);
     // Probe closes every row menu under the one separator; scan does the same
     // for network rows.
     const probe = menuActions({

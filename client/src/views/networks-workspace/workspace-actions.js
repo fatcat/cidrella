@@ -30,19 +30,12 @@ const ACTION_DEFINITIONS = [
   {
     id: 'ip.open',
     label: 'Open IP details',
-    targetKind: ['dns-record', 'dhcp-address'],
+    targetKind: 'dhcp-address',
   },
   {
     id: 'dns.zone.open',
     label: 'Open zone',
     targetKind: 'dns-zone',
-  },
-  {
-    id: 'dns.zone.open-whole',
-    label: 'Open whole zone',
-    targetKind: 'dns-record',
-    available: (target) => target.zone_id != null,
-    disabledReason: 'This record is not attached to a zone.',
   },
   {
     id: 'dhcp.scope.open',

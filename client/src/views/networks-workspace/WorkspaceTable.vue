@@ -19,7 +19,6 @@
               />
             </button>
           </th>
-          <th class="action-cell"><span class="sr-only">Actions</span></th>
         </tr>
       </thead>
       <tbody>
@@ -77,11 +76,6 @@
               >
             </template>
             <template v-else>{{ cellValue(row, column) || EMPTY_CELL }}</template>
-          </td>
-          <td class="action-cell" @click.stop>
-            <button aria-label="Row actions" @click="emit('row-menu', row, $event.currentTarget)">
-              <i class="pi pi-ellipsis-h" />
-            </button>
           </td>
         </tr>
       </tbody>
@@ -246,23 +240,6 @@ tbody tr:focus-visible {
 }
 .check-cell input {
   accent-color: var(--preview-accent);
-}
-.action-cell {
-  width: 2rem;
-  padding-left: 0;
-  text-align: right;
-}
-.action-cell button {
-  width: 1.65rem;
-  height: 1.65rem;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  cursor: pointer;
-}
-.action-cell button:hover {
-  color: var(--preview-accent);
-  background: var(--cid-surface-card);
 }
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

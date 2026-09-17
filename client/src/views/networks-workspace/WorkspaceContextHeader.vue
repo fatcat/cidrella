@@ -95,7 +95,9 @@
       <button
         v-for="zone in summaryZones.slice(0, 2)"
         :key="zone.id"
-        class="linked-card selected"
+        class="linked-card"
+        :class="{ selected: isSelected(selectedZone, zone) }"
+        :aria-pressed="isSelected(selectedZone, zone)"
         @click="emit('filter-zone', zone)"
       >
         <i :class="zone.type === 'reverse' ? 'pi pi-replay' : 'pi pi-globe'" /><span
@@ -109,7 +111,9 @@
       <button
         v-for="scope in summaryScopes.slice(0, 2)"
         :key="scope.id"
-        class="linked-card selected"
+        class="linked-card"
+        :class="{ selected: isSelected(selectedScope, scope) }"
+        :aria-pressed="isSelected(selectedScope, scope)"
         @click="emit('filter-scope', scope)"
       >
         <i class="pi pi-server" /><span
@@ -168,6 +172,8 @@ defineProps({
   showSummary: { type: Boolean, default: false },
   viewMeta: { type: Object, required: true },
   summaryZones: { type: Array, default: () => [] },
+  selectedZone: { type: Object, default: null },
+  selectedScope: { type: Object, default: null },
   summaryScopes: { type: Array, default: () => [] },
   addressOverview: { type: Object, required: true },
 });
@@ -180,6 +186,10 @@ const emit = defineEmits([
   'filter-scope',
   'action',
 ]);
+// A linked card lights up only for the zone or scope the table is filtered to.
+function isSelected(selected, item) {
+  return Boolean(selected) && Number(selected.id) === Number(item.id);
+}
 </script>
 
 <style scoped>

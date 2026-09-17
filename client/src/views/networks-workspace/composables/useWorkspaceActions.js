@@ -129,11 +129,6 @@ export function useWorkspaceActions(ctx) {
     'network.open': (target) => selectNetwork(target.raw),
     'ip.open': (target) => openCanonicalAddress(target.address),
     'dns.zone.open': (target) => drillIntoZone(target.raw, refreshAggregateTable),
-    'dns.zone.open-whole': async (target) => {
-      const zone = zoneFor(target);
-      if (!zone) return showLiveNotice('That zone is no longer in the inventory.');
-      await drillIntoZone(zone, loadNetworkContext);
-    },
     'dhcp.scope.open': async (target) => {
       if (target.kind === 'dhcp-scope') return drillIntoScope(target.raw, refreshAggregateTable);
       const scope = scopeFor(target);

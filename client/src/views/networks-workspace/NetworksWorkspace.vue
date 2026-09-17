@@ -62,6 +62,8 @@
           :view-meta="viewMeta"
           :summary-zones="summaryZones"
           :summary-scopes="summaryScopes"
+          :selected-zone="selectedZoneFilter"
+          :selected-scope="selectedScopeFilter"
           :address-overview="addressOverview"
           @select-estate="selectEstate"
           @select-folder="selectFolderById"
@@ -660,15 +662,17 @@ const linkedZones = computed(() =>
     dnsZoneNetworkIds.value.get(Number(zone.id))?.has(Number(selectedNetwork.value.id)),
   ),
 );
-// Which linked zone the DNS view opens when the operator moves to another
-// network: the side (forward or reverse) of the zone they last chose, or every
-// record of the network when they last cleared the zone. Remembered per
-// browser, so it also holds across reloads.
+// Which linked zone the DNS view opens, both when the DNS tab is chosen and
+// when the operator moves to another network: the side (forward or reverse)
+// of the zone they last chose, or every record of the network when they last
+// cleared the zone. Forward until they choose otherwise, since that is the
+// zone an admin nearly always wants. Remembered per browser, so it also holds
+// across reloads.
 const DNS_ZONE_SIDE_KEY = 'cidrella_workspace_dns_zone_side';
 const dnsZoneSide = ref(
-  ['forward', 'reverse'].includes(loadJson(DNS_ZONE_SIDE_KEY, ''))
-    ? loadJson(DNS_ZONE_SIDE_KEY)
-    : '',
+  ['forward', 'reverse', ''].includes(loadJson(DNS_ZONE_SIDE_KEY, 'forward'))
+    ? loadJson(DNS_ZONE_SIDE_KEY, 'forward')
+    : 'forward',
 );
 function rememberDnsZoneSide(zone) {
   dnsZoneSide.value = !zone ? '' : zone.type === 'reverse' ? 'reverse' : 'forward';
@@ -1765,7 +1769,12 @@ async function switchView(view) {
   currentPage.value = 1;
   sortKey.value = null;
   clearFilters();
-  selectedZoneFilter.value = null;
+  // The DNS tab opens on the zone side the operator last chose, not on the
+  // mixed record list, which sorts every PTR record ahead of the forward ones.
+  selectedZoneFilter.value =
+    view === 'dns' && contextKind.value === 'network'
+      ? linkedZoneOfSide(selectedNetwork.value?.id, dnsZoneSide.value)
+      : null;
   selectedScopeFilter.value = null;
   clearDetail();
   selectedRows.value = [];

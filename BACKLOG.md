@@ -302,6 +302,11 @@ board. Phases are the plan's section 13 rows.
   under an open panel are accepted); the workspace accent follows the theme's primary color
   instead of a fixed teal; table page sizes are 32/64/128/256/512 (server caps raised to 512);
   the paginator is always visible; loading is a popover over a blurred, dimmed table.
+- User decisions 2026-09-17: the DNS tab opens on the forward zone by default and on the
+  remembered side after that (the mixed record list sorts by FQDN, so its first pages were all
+  PTR records and read as the reverse zone); only the active zone or scope chip is drawn as
+  selected; DNS record rows lose "Open IP details" and "Open whole zone"; the per-row three-dot
+  button is gone from every table, right-click and the ContextMenu key are the two ways in.
 
 **Not started:** P8, P9 (section 10), P10 cutover. An agent's P9 Analytics rework and P10
 cutover patches from 2026-09-15 are saved in the session scratchpad (`p9-analytics.patch`,

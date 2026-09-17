@@ -1135,13 +1135,16 @@ describe('Networks workspace live preview', () => {
       await flushPromises();
     };
 
-    // Mixed record list by default, no zone in the request.
-    expect(lastDnsParams().zone_id).toBeUndefined();
+    const selectedCards = () =>
+      wrapper.findAll('.linked-card.selected').map((card) => card.find('small').text());
 
-    // Open the forward zone, then move to the sibling: its forward zone opens.
-    await clickCard('forward');
+    // The DNS tab opens on the forward zone before any choice is made, and only
+    // that card reads as selected.
     expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 21 });
-    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('"forward"');
+    expect(selectedCards()).toEqual(['forward']);
+    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBeNull();
+
+    // Move to the sibling: its forward zone opens.
     await selectSibling();
     expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 21 });
     expect(wrapper.find('.view-summary h3').text()).toBe('test.example');
@@ -1149,15 +1152,26 @@ describe('Networks workspace live preview', () => {
     // The reverse side follows the network: each has its own reverse zone.
     await clickCard('reverse');
     expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 23 });
+    expect(selectedCards()).toEqual(['reverse']);
     await selectFirst();
     expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 22 });
     expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('"reverse"');
 
+    // Leaving the DNS tab and coming back reopens the remembered side.
+    await wrapper.find('[data-track="workspace-tab-addresses"]').trigger('click');
+    await flushPromises();
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 22 });
+    expect(selectedCards()).toEqual(['reverse']);
+    await selectSibling();
+
     // Clearing the zone is remembered too: the next network shows everything.
     await clickCard('reverse');
     expect(lastDnsParams().zone_id).toBeUndefined();
-    await selectSibling();
-    expect(lastDnsParams()).toMatchObject({ subnet_id: 13 });
+    expect(selectedCards()).toEqual([]);
+    await selectFirst();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11 });
     expect(lastDnsParams().zone_id).toBeUndefined();
     expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('""');
 
@@ -1409,10 +1423,17 @@ describe('Networks workspace live preview', () => {
     expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
     await wrapper.find('.menu-scrim').trigger('click');
 
-    // A row's menu button anchors the menu under the button.
-    const button = wrapper.find('button[aria-label="Row actions"]');
-    button.element.getBoundingClientRect = () => ({ left: 600, bottom: 420, top: 400, right: 630 });
-    await button.trigger('click');
+    // The keyboard opens a row's menu under the row itself: there is no
+    // per-row button, the pointer and the ContextMenu key are the two ways in.
+    expect(wrapper.find('button[aria-label="Row actions"]').exists()).toBe(false);
+    const firstRow = wrapper.find('tbody tr');
+    firstRow.element.getBoundingClientRect = () => ({
+      left: 600,
+      bottom: 420,
+      top: 400,
+      right: 630,
+    });
+    await firstRow.trigger('keydown', { key: 'ContextMenu' });
     await nextTick();
     expect(wrapper.find('.row-menu').attributes('style')).toContain('top: 424px');
     expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 600px');
@@ -1437,7 +1458,7 @@ describe('Networks workspace live preview', () => {
 
     await enterTestNetwork(wrapper);
     const scopeMember = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
-    await scopeMember.find('button[aria-label="Row actions"]').trigger('click');
+    await scopeMember.trigger('contextmenu');
     const menu = wrapper.find('.row-menu');
     expect(menu.findAll('button').map((button) => button.text())).toEqual([
       'Edit Scope',
@@ -1483,12 +1504,9 @@ describe('Networks workspace live preview', () => {
   it('opens menus to the keyboard and returns focus to the invoker', async () => {
     const wrapper = await mountPreview({ attachTo: globalThis.document.body });
     await enterTestNetwork(wrapper);
-    const rowButton = wrapper
-      .findAll('tbody tr')
-      .find((row) => row.text().includes('1.1.1.50'))
-      .find('button[aria-label="Row actions"]');
-    rowButton.element.focus();
-    await rowButton.trigger('click');
+    const scopeRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
+    scopeRow.element.focus();
+    await scopeRow.trigger('keydown', { key: 'ContextMenu' });
     await flushPromises();
 
     const items = wrapper.findAll('.row-menu [role="menuitem"]');
@@ -1501,7 +1519,7 @@ describe('Networks workspace live preview', () => {
     globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }));
     await flushPromises();
     expect(wrapper.find('.row-menu').exists()).toBe(false);
-    expect(globalThis.document.activeElement).toBe(rowButton.element);
+    expect(globalThis.document.activeElement).toBe(scopeRow.element);
 
     // The grid reaches the same menu from the keyboard.
     await wrapper.find('button[aria-label="Grid view"]').trigger('click');
@@ -1683,7 +1701,7 @@ describe('Networks workspace live preview', () => {
     const wrapper = await mountPreview();
     await enterTestNetwork(wrapper);
     const row = wrapper.findAll('tbody tr').find((entry) => entry.text().includes('1.1.1.33'));
-    await row.find('button[aria-label="Row actions"]').trigger('click');
+    await row.trigger('contextmenu');
     let labels = wrapper.findAll('.row-menu button').map((button) => button.text());
     expect(labels).toContain('Disable liveness scan');
     expect(labels).not.toContain('Reset to Inherit');
@@ -1713,7 +1731,7 @@ describe('Networks workspace live preview', () => {
     await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.33');
     await new Promise((resolve) => setTimeout(resolve, 320));
     await flushPromises();
-    await wrapper.find('tbody tr button[aria-label="Row actions"]').trigger('click');
+    await wrapper.find('tbody tr').trigger('contextmenu');
     labels = wrapper.findAll('.row-menu button').map((button) => button.text());
     expect(labels).toContain('Enable liveness scan');
     expect(labels).toContain('Reset to Inherit');
