@@ -57,7 +57,7 @@
         @click="toggleOpsPopover"
         :title="dnsTitle"
       >
-        <StatusDot :kind="dnsDotKind" :label="dotLabel(dnsDotKind)" />
+        <StatusDot :kind="dnsDotKind" :label="hostDotLabel(dnsDotKind)" />
         <span class="status-chip-label">dnsmasq</span>
         <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
       </button>
@@ -68,7 +68,7 @@
         @click="toggleOpsPopover"
         :title="`Host CPU load: ${cpuDisplay}`"
       >
-        <StatusDot :kind="cpuDotKind" :label="dotLabel(cpuDotKind)" />
+        <StatusDot :kind="cpuDotKind" :label="hostDotLabel(cpuDotKind)" />
         <span class="status-chip-label">CPU {{ cpuPercentText }}</span>
       </button>
       <button
@@ -78,7 +78,7 @@
         @click="toggleOpsPopover"
         :title="`Host RAM: ${ramDisplay}`"
       >
-        <StatusDot :kind="ramDotKind" :label="dotLabel(ramDotKind)" />
+        <StatusDot :kind="ramDotKind" :label="hostDotLabel(ramDotKind)" />
         <span class="status-chip-label">RAM {{ ramPercentText }}</span>
       </button>
       <button
@@ -88,7 +88,7 @@
         @click="toggleOpsPopover"
         :title="`Disk: ${diskDisplay}`"
       >
-        <StatusDot :kind="diskDotKind" :label="dotLabel(diskDotKind)" />
+        <StatusDot :kind="diskDotKind" :label="hostDotLabel(diskDotKind)" />
         <span class="status-chip-label">Disk {{ diskPercentText }}</span>
       </button>
       <button
@@ -119,8 +119,8 @@
       <div class="status-popover-panel">
         <div class="status-popover-row">
           <StatusDot
-            :kind="health?.services?.dnsmasq ? 'ok' : 'err'"
-            :label="dotLabel(health?.services?.dnsmasq ? 'ok' : 'err')"
+            :kind="healthKnown ? dnsKnownKind : 'muted'"
+            :label="hostDotLabel(dnsKnownKind)"
           />
           <span class="status-popover-label">DNSmasq</span>
           <span class="status-popover-val">{{ dnsDisplay }}</span>
@@ -138,17 +138,17 @@
           <span class="status-popover-val">{{ rogueDhcpDisplay }}</span>
         </div>
         <div class="status-popover-row">
-          <StatusDot :kind="cpuDotKind" :label="dotLabel(cpuDotKind)" />
+          <StatusDot :kind="cpuDotKind" :label="hostDotLabel(cpuDotKind)" />
           <span class="status-popover-label">Host CPU Load</span>
           <span class="status-popover-val">{{ cpuDisplay }}</span>
         </div>
         <div class="status-popover-row">
-          <StatusDot :kind="ramDotKind" :label="dotLabel(ramDotKind)" />
+          <StatusDot :kind="ramDotKind" :label="hostDotLabel(ramDotKind)" />
           <span class="status-popover-label">Host RAM</span>
           <span class="status-popover-val">{{ ramDisplay }}</span>
         </div>
         <div class="status-popover-row">
-          <StatusDot :kind="diskDotKind" :label="dotLabel(diskDotKind)" />
+          <StatusDot :kind="diskDotKind" :label="hostDotLabel(diskDotKind)" />
           <span class="status-popover-label">Disk</span>
           <span class="status-popover-val">{{ diskDisplay }}</span>
         </div>
@@ -358,6 +358,13 @@ const userMenuRef = ref(null);
 const opsPopoverRef = ref(null);
 const anomalyPopoverRef = ref(null);
 const health = ref(null);
+// A failed status read is shown as unavailable, never as 0% or healthy.
+const UNAVAILABLE = 'Unavailable';
+const healthFailed = ref(false);
+const healthKnown = computed(() => Boolean(health.value) && !healthFailed.value);
+function hostDotLabel(kind) {
+  return healthKnown.value ? dotLabel(kind) : 'Unknown';
+}
 // Read through the store rather than keeping a second copy. The header used to
 // hold its own anomalySummary ref and its own acknowledge call, so clearing the
 // counter here left the Anomalies page stale, and clearing it there left this
@@ -498,9 +505,7 @@ function handleLogout() {
   router.push('/login');
 }
 
-const cpuDisplay = computed(() => {
-  return `${cpuPercent.value}%`;
-});
+const cpuDisplay = computed(() => (healthKnown.value ? `${cpuPercent.value}%` : UNAVAILABLE));
 
 const cpuPercent = computed(() => {
   if (!health.value?.cpu) return 0;
@@ -509,9 +514,10 @@ const cpuPercent = computed(() => {
   return Math.round((load1 / cores) * 100);
 });
 
-const cpuPercentText = computed(() => `${cpuPercent.value}%`);
+const cpuPercentText = computed(() => (healthKnown.value ? `${cpuPercent.value}%` : EMPTY_CELL));
 
 const ramDisplay = computed(() => {
+  if (!healthKnown.value) return UNAVAILABLE;
   if (!health.value?.memory) return EMPTY_CELL;
   const used = formatBytes(health.value.memory.used);
   const total = formatBytes(health.value.memory.total);
@@ -524,18 +530,24 @@ const ramPercent = computed(() => {
   return Math.round((mem.used / mem.total) * 100);
 });
 
-const ramPercentText = computed(() => `${ramPercent.value}%`);
+const ramPercentText = computed(() => (healthKnown.value ? `${ramPercent.value}%` : EMPTY_CELL));
 
 const diskDisplay = computed(() => {
+  if (!healthKnown.value) return UNAVAILABLE;
   if (!health.value?.disk) return EMPTY_CELL;
   const pct = health.value.disk.percent;
   const used = formatBytes(health.value.disk.used);
   return `${used} (${pct}%)`;
 });
 
-const diskPercentText = computed(() => `${health.value?.disk?.percent ?? 0}%`);
+const diskPercentText = computed(() =>
+  healthKnown.value ? `${health.value?.disk?.percent ?? 0}%` : EMPTY_CELL,
+);
 
-const dnsDisplay = computed(() => (health.value?.services?.dnsmasq ? 'Running' : 'Down'));
+const dnsDisplay = computed(() =>
+  !healthKnown.value ? 'Unknown' : health.value?.services?.dnsmasq ? 'Running' : 'Down',
+);
+const dnsKnownKind = computed(() => (health.value?.services?.dnsmasq ? 'ok' : 'err'));
 
 const cpuStatusClass = computed(() => {
   if (cpuPercent.value >= 100) return 'card-err';
@@ -599,12 +611,14 @@ const anomalyDotKind = computed(() => {
 });
 
 function resourceDotKind(statusClass) {
+  if (!healthKnown.value) return 'muted';
   if (statusClass === 'card-err') return 'err';
   if (statusClass === 'card-warn') return 'warn';
   return 'ok';
 }
 
 function resourceChip(statusClass) {
+  if (!healthKnown.value) return 'chip-idle';
   if (statusClass === 'card-err') return 'chip-err';
   if (statusClass === 'card-warn') return 'chip-warn';
   return 'chip-ok';
@@ -615,11 +629,13 @@ function resourceChip(statusClass) {
 // where the rogue-DHCP warning surfaces on desktop: red if dnsmasq is down
 // (wins), else yellow if an unacknowledged rogue is present, else green.
 const dnsChipClass = computed(() => {
+  if (!healthKnown.value) return 'chip-idle';
   if (!health.value?.services?.dnsmasq) return 'chip-err';
   if (rogueDhcpCount.value > 0) return 'chip-warn';
   return 'chip-ok';
 });
 const dnsDotKind = computed(() => {
+  if (!healthKnown.value) return 'muted';
   if (!health.value?.services?.dnsmasq) return 'err';
   if (rogueDhcpCount.value > 0) return 'warn';
   return 'ok';
@@ -679,8 +695,9 @@ async function fetchHealth() {
   try {
     const res = await api.get('/health/system');
     health.value = res.data;
+    healthFailed.value = false;
   } catch {
-    /* health endpoint may not be available */
+    healthFailed.value = true;
   }
 }
 

@@ -331,8 +331,38 @@ already pointed at `/system?area=...`, which the shell reads. Removing `SubnetsL
 `Settings.vue` and the rest of the classic views is the separate follow-up the plan names, after
 practical validation; the `*WorkspacePreview.vue` file names keep their suffix until then.
 
-**Not started:** P8, P9 (section 10). An agent's P9 Analytics rework patch from 2026-09-15 is
-saved in the session scratchpad (`p9-analytics.patch`, `p9-Analytics.test.js`), unapplied.
+**P8, appliance and account workflows: landed 2026-09-17.** The S-11..S-15 editors (backup,
+updates, logs, import, users, certificate) were already mounted unchanged in the settings shell,
+so P8 was a verification pass on safe fixtures plus two fixes:
+- Verified on the dev box: all six sections render at `/system?area=...&sec=...` with their
+  controls and no console errors.
+- Verified on a throwaway backend (scratch `DATA_DIR`, ports 8444/8081, killed afterwards):
+  first login with the seeded admin, forced password change, landing, the workspace's empty
+  estate, first network created through Create network (one `POST /subnets` plus one configure
+  call, the explorer row within 300 ms, a reload issues only reads: T-39); backup created and
+  deleted through the UI (file gone on disk); Reset Database needs the typed RESET (confirm
+  disabled until then); Check Now sends only `POST /version/check`, never install; Pi-hole import
+  probe of a blocked address shows the error, Connect stays disabled, nothing written, the
+  password is not kept across navigation or in storage; CSR generated without any private key
+  reaching the page or storage; an invalid certificate pair is rejected client-side with the
+  fields kept and the certificate unchanged; a created user's one-time password is gone from the
+  DOM and storage after Done. Dev tracking is compiled out of production builds
+  (`VITE_TRACKING`), so nothing tracks those pages there.
+- Fix: `Users.vue` clears the revealed password and token when their dialogs close
+  (`client/tests/unit/views/UsersSecrets.test.js`, mutation-checked).
+- Fix (G-01): `HeaderBar.vue` shows a failed `/health/system` read as unavailable (chips read
+  the empty cell with an Unknown dot, the popover says Unavailable/Unknown) instead of CPU 0%
+  and a healthy dot; a stale good reading is dropped on the next failed poll
+  (`client/tests/unit/components/HeaderBarHealth.test.js`, mutation-checked).
+- S-18 finding: `SetupWizard.vue` has had no route since v0.4.0 (`ac734e2`); a fresh database
+  seeds the admin, so `/api/setup/status` always answers `setup_required: false` and the
+  wizard can never show. First run is login, forced password change, then the workspace. The
+  file is dead code and is left for the classic-file removal follow-up.
+- G-02 unchanged: login redirect sanitizing and last-view landing are covered by
+  `client/tests/unit/utils/landing.test.js`; the workspace URLs pass through it.
+
+**Not started:** P9 (section 10). An agent's P9 Analytics rework patch from 2026-09-15 is saved
+in the session scratchpad (`p9-analytics.patch`, `p9-Analytics.test.js`), unapplied.
 
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
 

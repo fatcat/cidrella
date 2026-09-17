@@ -205,7 +205,7 @@
         </p>
       </div>
       <template #footer>
-        <Button label="Done" @click="showPasswordDialog = false" />
+        <Button label="Done" @click="closePasswordReveal" />
       </template>
     </Dialog>
 
@@ -318,7 +318,7 @@
         </p>
       </div>
       <template #footer>
-        <Button label="Done" @click="showTokenRevealDialog = false" />
+        <Button label="Done" @click="closeTokenReveal" />
       </template>
     </Dialog>
 
@@ -645,6 +645,17 @@ async function revokeToken(token) {
 function copyToken() {
   navigator.clipboard.writeText(revealedToken.value);
   toast.add({ severity: 'info', summary: 'Copied to clipboard', life: 2000 });
+}
+
+// One-time secrets leave memory with the dialog. Nothing restores them: the
+// server never returns a password or token a second time.
+function closePasswordReveal() {
+  showPasswordDialog.value = false;
+  revealedPassword.value = '';
+}
+function closeTokenReveal() {
+  showTokenRevealDialog.value = false;
+  revealedToken.value = '';
 }
 
 function copyPassword() {
