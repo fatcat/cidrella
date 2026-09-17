@@ -11,6 +11,9 @@ TODO list for CIDRella
 - [ ] to DNS table add popup menu to edit and delete (clear) static DNS records, with confirmation
 
 ## 0.5.x
+- [ ] revive the setup wizard (`client/src/views/SetupWizard.vue` has had no route since v0.4.0
+      and a fresh database seeds the admin, so `/api/setup/status` never asks for it; decide
+      what first-run setup should cover before wiring it back)
 - [ ] implement IPv6 for management, DNS, DHCP and blocklists
 - [ ] rework the Analytics page, current implementation is really just a placeholder
 

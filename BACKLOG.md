@@ -361,8 +361,18 @@ so P8 was a verification pass on safe fixtures plus two fixes:
 - G-02 unchanged: login redirect sanitizing and last-view landing are covered by
   `client/tests/unit/utils/landing.test.js`; the workspace URLs pass through it.
 
-**Not started:** P9 (section 10). An agent's P9 Analytics rework patch from 2026-09-15 is saved
-in the session scratchpad (`p9-analytics.patch`, `p9-Analytics.test.js`), unapplied.
+**P9 in flight (2026-09-17):**
+- Analytics shell (Q-01..Q-03 shell level, the saved 2026-09-15 patch applied): the section
+  nav is keyboard-operable buttons with `aria-current`, the open section lives in the URL as
+  `?view=dashboard|performance|intelligence|anomalies` so bookmarks and Back work, unrelated
+  query parameters survive, and the old `cidrella_analytics_tab` index is still read and written
+  (`client/tests/unit/views/Analytics.test.js`). The Dashboard, Performance and Intelligence
+  panels are mounted unchanged, the same call as P7's leaves.
+- Q-04 anomaly triage: `/anomalies-preview` still exists (sample and live modes) but nothing
+  links to it since the banners went. The user wants a merge of elements from the preview and
+  from the current Anomalies panel; waiting on which elements. Screenshots of both are in
+  `screenshots/p9-anomalies-*.png`.
+- Setup wizard revival is a user want for later, recorded in TODO.md, not part of P9.
 
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
 
