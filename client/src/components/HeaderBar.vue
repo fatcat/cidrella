@@ -23,7 +23,7 @@
           Analytics
         </router-link>
         <router-link
-          :to="preferredPath('/networks')"
+          to="/networks"
           class="nav-link"
           :class="{ active: route.path.startsWith('/networks') || route.path === '/' }"
           data-track="nav-networks"
@@ -291,6 +291,13 @@
               class="w-full"
               @change="onInterfaceChange"
             />
+            <router-link
+              :to="CLASSIC_NETWORKS_PATH"
+              class="user-menu-link"
+              data-track="user-classic-networks"
+              @click="userMenuRef.hide()"
+              >Classic IP Management</router-link
+            >
           </div>
           <div class="user-menu-section">
             <label class="user-menu-label">Small text size</label>
@@ -337,7 +344,11 @@ import StatusDot from './StatusDot.vue';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
 import { useAnomalyStore } from '../stores/anomalies.js';
-import { useInterfacePreference, useWorkspaceFontBump } from '../composables/useWorkspaceUi.js';
+import {
+  CLASSIC_NETWORKS_PATH,
+  useInterfacePreference,
+  useWorkspaceFontBump,
+} from '../composables/useWorkspaceUi.js';
 import { formatTimeOnly } from '../utils/dateFormat.js';
 import api from '../api/client.js';
 import { formatRelativeTime as timeAgo } from '../utils/dateFormat.js';
@@ -967,6 +978,17 @@ onUnmounted(() => {
   color: var(--cid-text-muted-color);
   margin-bottom: 0.4rem;
   letter-spacing: 0.08em;
+}
+
+.user-menu-link {
+  display: inline-block;
+  margin-top: 0.45rem;
+  font-size: var(--app-fs-sm);
+  color: var(--cid-primary-color);
+  text-decoration: none;
+}
+.user-menu-link:hover {
+  text-decoration: underline;
 }
 
 .text-sizer {

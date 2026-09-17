@@ -35,15 +35,23 @@ const routes = [
     children: [
       { path: '', redirect: '/analytics' },
       { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
+      // P10 IP-only cutover (2026-09-17): the workspace is IP Management. The
+      // classic view stays reachable at its own route until it is removed, and
+      // the preview route keeps working as an alias with its query and hash.
       {
         path: 'networks',
         name: 'Networks',
-        component: () => import('../views/SubnetsLayoutB.vue'),
+        component: () => import('../views/NetworksWorkspacePreview.vue'),
       },
       {
         path: 'networks-preview',
         name: 'NetworksWorkspacePreview',
-        component: () => import('../views/NetworksWorkspacePreview.vue'),
+        redirect: (to) => ({ path: '/networks', query: to.query, hash: to.hash }),
+      },
+      {
+        path: 'networks-classic',
+        name: 'NetworksClassic',
+        component: () => import('../views/SubnetsLayoutB.vue'),
       },
       {
         path: 'anomalies-preview',

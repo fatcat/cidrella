@@ -260,7 +260,7 @@ board. Phases are the plan's section 13 rows.
   clean at 1440/1280/1024/768 and 200% zoom, light theme, maximum font bump, modal Save in view.
 - P6 gate on 2026-09-16 at this commit: server 100 files / 1127 tests, client 54 files / 362,
   lint, format check, DB ownership check, production client build, all green. The old interface
-  stays at `/networks`; the workspace is `/networks-preview` until the P10 cutover.
+  stayed at `/networks` and the workspace at `/networks-preview` until the P10 cutover below.
 
 - N-08 drag/drop move to folder: explorer network rows and networks-table rows are drag
   sources (`application/x-subnet-id`, the payload the current interface uses), explorer folder
@@ -319,11 +319,17 @@ board. Phases are the plan's section 13 rows.
   The create menu says "Create network"; an unallocated row says "Allocate network". Server
   note: deallocation deletes a network's DHCP scopes and IP rows rather than disabling them.
 
-**Not started:** P8, P9 (section 10), P10 cutover. An agent's P9 Analytics rework and P10
-cutover patches from 2026-09-15 are saved in the session scratchpad (`p9-analytics.patch`,
-`p10-cutover.patch`), unapplied. An agent wired `/networks` to the workspace and moved the old view
-to `/networks-classic` on 2026-09-15; that is P10 and needs the maintainer's call, so it was
-backed out of `0487f77`. The patch is 41 lines and trivial to redo.
+**P10, IP-only cutover: landed 2026-09-17** on the maintainer's call. `/networks` is the
+workspace, `/networks-preview` redirects there keeping query and hash, the classic view is at
+`/networks-classic` with its toolbar link pointing back at the workspace, and the header user menu
+carries a "Classic IP Management" link. The Interface preference now only pairs `/system` with
+`/system-preview`; IP Management is no longer a preference. `client/tests/unit/router-networks-cutover.test.js`
+covers the routes. Removing `SubnetsLayoutB.vue` and the rest of the classic IP view is the
+separate follow-up the plan names, after practical validation. Settings cutover waits on P7.
+
+**Not started:** P8, P9 (section 10), Settings cutover. An agent's P9 Analytics rework patch from
+2026-09-15 is saved in the session scratchpad (`p9-analytics.patch`, `p9-Analytics.test.js`),
+unapplied.
 
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
 

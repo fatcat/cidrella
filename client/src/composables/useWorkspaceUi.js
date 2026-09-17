@@ -27,11 +27,11 @@ export function useWorkspaceFontBump() {
   return { fontBump, label, styleValue, resize, max: FONT_MAX };
 }
 
-// Pages that exist in both interfaces, current path first.
-export const INTERFACE_PAIRS = [
-  ['/networks', '/networks-preview'],
-  ['/system', '/system-preview'],
-];
+// Pages that exist in both interfaces, current path first. IP Management is
+// not a pair any more: since the P10 cutover `/networks` is the workspace and
+// the classic view is a fallback at CLASSIC_NETWORKS_PATH, not an interface.
+export const INTERFACE_PAIRS = [['/system', '/system-preview']];
+export const CLASSIC_NETWORKS_PATH = '/networks-classic';
 
 const interfacePreference = ref(
   loadJson(INTERFACE_KEY, 'current') === 'workspace' ? 'workspace' : 'current',

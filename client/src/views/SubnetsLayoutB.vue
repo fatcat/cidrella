@@ -288,11 +288,11 @@
               />
             </template>
             <router-link
-              to="/networks-preview"
+              to="/networks"
               class="workspace-preview-link"
-              data-track="toolbar-workspace-preview"
+              data-track="toolbar-open-workspace"
             >
-              <i class="pi pi-sparkles" /> Workspace concept
+              <i class="pi pi-sparkles" /> Workspace interface
             </router-link>
           </div>
           <SubnetDetail v-if="selectedSubnetId" :subnet-id="selectedSubnetId" :compact="true" />
