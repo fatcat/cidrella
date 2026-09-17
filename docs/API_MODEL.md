@@ -89,6 +89,14 @@ Do not expose or consume bare `type` or `status` for DHCP table rows. Use
 for dynamic lease use, such as a rogue online host, static DNS assignment, IP
 Reservation, or system-owned address inside a DHCP scope.
 
+DHCPv6 is configured per network through `dhcp_scopes.v6_mode`: `slaac`
+(Router Advertisement only), `stateless` (SLAAC plus stateless DHCPv6 for
+options), or `stateful` (managed addresses from a pool). The SLAAC modes require
+a /64. Only `stateful` scopes issue leases and accept reservations. IPv6
+reservations and leases are keyed by `duid` (with optional `iaid`) instead of a
+MAC; the MAC, when present, is learned metadata. Rogue DHCPv6 and Router
+Advertisement detection is not implemented.
+
 ## Network Read Model
 
 Network responses expose `gateway_policy` as `first`, `last`, `custom`, or
@@ -127,6 +135,16 @@ by request order. With no source scope, transformations create no scope.
 An unallocated network row with child networks is a hierarchy container, not
 available address space. Clients must not list a fully subdivided container in
 an unallocated-space browser; its allocated leaves are the operating networks.
+
+Network rows carry `address_family` (`4` or `6`) and `last_address`.
+`broadcast_address` is null for IPv6 and `total_addresses` is null when the
+prefix holds more addresses than a JavaScript number represents exactly. The
+per-network IP listing for an IPv6 network returns persisted rows only, sorted
+by the canonical sort key, with no synthesized available rows; its summary
+reports `assigned_count` and leaves `unassigned_count` null when
+`total_addresses` is null. Split and calculate previews report child counts as
+decimal strings when they exceed that limit. Divide and merge use the same
+rules for both families with the prefix bound at the family's width.
 
 ## IP Allocation Writes
 
@@ -169,6 +187,9 @@ that table:
 | --- | --- |
 | `ip_addresses.allocation_state` | Canonical mutually exclusive allocation state. |
 | `subnets.status` | Network allocation state. |
+| `subnets.address_family` | Network address family, `4` or `6`. |
+| `dhcp_scopes.v6_mode` | DHCPv6 mode for an IPv6 scope, null for IPv4. |
+| `dhcp_reservations.duid`, `dhcp_leases.duid` | DHCPv6 client identity. |
 | `dns_records.type` | DNS RR type. |
 | `dns_records.source` | DNS record provenance. |
 | `network_scans.status` | Scan execution state. |

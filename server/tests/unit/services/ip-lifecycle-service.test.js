@@ -626,3 +626,26 @@ describe('future IPv6 lifecycle adapters', () => {
     });
   });
 });
+
+describe('IPv6 topology protection', () => {
+  it('protects the subnet-router anycast address and gateway, and never a broadcast', () => {
+    const v6 = db
+      .prepare(
+        `INSERT INTO subnets (cidr, name, network_address, last_address, prefix_length,
+          address_family, gateway_address, gateway_policy, status)
+         VALUES ('fd00:9::/64', 'v6', 'fd00:9::', 'fd00:9::ffff:ffff:ffff:ffff', 64, 6,
+          'fd00:9::1', 'first', 'allocated')`,
+      )
+      .run().lastInsertRowid;
+    expect(() => setManualReservation(db, v6, 'fd00:9::', true)).toThrow(/anycast/);
+    expect(() => setManualReservation(db, v6, 'fd00:9::1', true)).toThrow(/Gateway/);
+    // The last address of an IPv6 prefix is an ordinary host address.
+    setManualReservation(db, v6, 'fd00:9::ffff:ffff:ffff:ffff', true);
+    expect(
+      db
+        .prepare("SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = 'fd00:9::ffff:ffff:ffff:ffff'")
+        .get(v6).allocation_state,
+    ).toBe('reserved');
+    db.prepare('DELETE FROM subnets WHERE id = ?').run(v6);
+  });
+});

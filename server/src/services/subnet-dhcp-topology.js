@@ -1,6 +1,12 @@
 import { getSetting } from '../db/init.js';
 import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
-import { parseCidr, ipToLong, longToIp, getServerIpForSubnet } from '../utils/ip.js';
+import {
+  parseNetwork,
+  ipToLong,
+  longToIp,
+  addressToBig,
+  getServerIpForSubnet,
+} from '../utils/ip.js';
 import { dynamicPoolConflict } from '../models/dhcp-scope.js';
 
 function nearestPow2(n) {
@@ -11,6 +17,9 @@ function nearestPow2(n) {
 }
 
 export function defaultDhcpPoolForSubnet(parsed, gateway = null) {
+  // IPv4 only: the automatic pool is sized from the address count. IPv6
+  // scopes are created by mode (slaac, stateless, stateful) instead.
+  if (parsed.family !== 4) return null;
   if (parsed.prefix < 16 || parsed.prefix > 29) return null;
   const size = parsed.totalAddresses;
   let poolEnd;
@@ -39,8 +48,10 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
     optionValues.set(row.option_code, row.value != null ? row.value : null);
   }
   if (gateway) optionValues.set(3, gateway);
-  optionValues.set(1, parsed.mask);
-  optionValues.set(28, parsed.broadcast);
+  if (parsed.family === 4) {
+    optionValues.set(1, parsed.mask);
+    optionValues.set(28, parsed.broadcast);
+  }
   if (domain) {
     if (!optionValues.has(15) || !optionValues.get(15)) optionValues.set(15, domain);
     if (!optionValues.has(119) || !optionValues.get(119)) optionValues.set(119, domain);
@@ -240,36 +251,43 @@ export function deleteDhcpStateForSubnet(db, subnetId) {
 export function moveReservationsToChildren(db, parentId) {
   const children = db.prepare('SELECT id, cidr FROM subnets WHERE parent_id = ?').all(parentId);
   if (children.length === 0) return;
-  const childRanges = children.map((c) => {
-    const p = parseCidr(c.cidr);
-    return { id: c.id, netLong: p.networkLong, bcastLong: p.broadcastLong };
-  });
-  const findChildForIp = (ipLong) =>
-    childRanges.find((c) => ipLong >= c.netLong && ipLong <= c.bcastLong);
-
+  const childRanges = children.map((c) => ({ id: c.id, parsed: parseNetwork(c.cidr) }));
   const reservations = db
     .prepare('SELECT id, ip_address FROM dhcp_reservations WHERE subnet_id = ?')
     .all(parentId);
   const updRes = db.prepare('UPDATE dhcp_reservations SET subnet_id = ? WHERE id = ?');
   for (const r of reservations) {
-    const c = findChildForIp(ipToLong(r.ip_address));
+    const c = childContaining(childRanges, r.ip_address);
     if (c) updRes.run(c.id, r.id);
   }
 }
 
+// The child whose prefix holds the address, or undefined. Unparseable rows
+// (bad data from an old install) simply stay where they are.
+function childContaining(childRanges, ip) {
+  let address;
+  try {
+    address = addressToBig(ip);
+  } catch {
+    return undefined;
+  }
+  return childRanges.find(
+    (c) =>
+      c.parsed.family === address.family &&
+      address.value >= c.parsed.networkBig &&
+      address.value <= c.parsed.lastBig,
+  );
+}
+
 export function moveLeasesToChildren(db, parentId) {
   const children = db.prepare('SELECT id, cidr FROM subnets WHERE parent_id = ?').all(parentId);
-  const childRanges = children.map((child) => {
-    const parsed = parseCidr(child.cidr);
-    return { id: child.id, start: parsed.networkLong, end: parsed.broadcastLong };
-  });
+  const childRanges = children.map((child) => ({ id: child.id, parsed: parseNetwork(child.cidr) }));
   const leases = db
     .prepare('SELECT id, ip_address FROM dhcp_leases WHERE subnet_id = ?')
     .all(parentId);
   const update = db.prepare('UPDATE dhcp_leases SET subnet_id = ? WHERE id = ?');
   for (const lease of leases) {
-    const value = ipToLong(lease.ip_address);
-    const child = childRanges.find((range) => value >= range.start && value <= range.end);
+    const child = childContaining(childRanges, lease.ip_address);
     if (child) update.run(child.id, lease.id);
   }
 }
@@ -331,6 +349,9 @@ export function moveLeasesToSubnet(db, childIds, mergedId) {
 }
 
 export function rebaseScopeTopologyOptions(db, scopeId, parsed, gateway) {
+  // Subnet mask, router and broadcast are DHCPv4 options. A DHCPv6 scope
+  // carries no network-derived options: routers come from RAs.
+  if (parsed.family !== 4) return;
   db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ? AND option_code IN (1, 3, 28)').run(
     scopeId,
   );

@@ -1,4 +1,4 @@
-import { ipToLong, longToIp } from '../utils/ip.js';
+import { addressToBig, bigToAddress } from '../utils/ip.js';
 
 export function findWithType(db, rangeId) {
   return db
@@ -72,10 +72,15 @@ export function listCustomRangeOverlaps(db, subnetId, selections, { excludeRange
     )
     .all(subnetId, excludeRangeId, excludeRangeId);
 
+  // Selections and rows are BigInt intervals. A row of another family can
+  // never overlap; its numeric value is simply unrelated.
   return rows.filter((row) => {
-    const start = ipToLong(row.start_ip);
-    const end = ipToLong(row.end_ip);
-    return selections.some((selection) => selection.start <= end && start <= selection.end);
+    const start = addressToBig(row.start_ip);
+    const end = addressToBig(row.end_ip).value;
+    return selections.some(
+      (selection) =>
+        selection.family === start.family && selection.start <= end && start.value <= selection.end,
+    );
   });
 }
 
@@ -103,7 +108,10 @@ export function assignCustomRangeType(
 
     for (const range of overlaps) {
       db.prepare('DELETE FROM ranges WHERE id = ?').run(range.id);
-      let fragments = [{ start: ipToLong(range.start_ip), end: ipToLong(range.end_ip) }];
+      const family = addressToBig(range.start_ip).family;
+      let fragments = [
+        { start: addressToBig(range.start_ip).value, end: addressToBig(range.end_ip).value },
+      ];
 
       for (const selection of selections) {
         const next = [];
@@ -113,10 +121,10 @@ export function assignCustomRangeType(
             continue;
           }
           if (fragment.start < selection.start) {
-            next.push({ start: fragment.start, end: selection.start - 1 });
+            next.push({ start: fragment.start, end: selection.start - 1n });
           }
           if (fragment.end > selection.end) {
-            next.push({ start: selection.end + 1, end: fragment.end });
+            next.push({ start: selection.end + 1n, end: fragment.end });
           }
         }
         fragments = next;
@@ -126,8 +134,8 @@ export function assignCustomRangeType(
         insert.run(
           subnetId,
           range.range_type_id,
-          longToIp(fragment.start),
-          longToIp(fragment.end),
+          bigToAddress(fragment.start, family),
+          bigToAddress(fragment.end, family),
           range.description,
         );
       }
@@ -138,8 +146,8 @@ export function assignCustomRangeType(
       const result = insert.run(
         subnetId,
         rangeTypeId,
-        longToIp(selection.start),
-        longToIp(selection.end),
+        bigToAddress(selection.start, selection.family),
+        bigToAddress(selection.end, selection.family),
         description || null,
       );
       createdIds.push(Number(result.lastInsertRowid));

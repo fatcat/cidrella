@@ -61,7 +61,7 @@ export function seedDefaultOptions(db) {
     const insert = db.prepare(`
       INSERT INTO dhcp_option_defaults (option_code, value, enabled_by_default, updated_at)
       VALUES (?, ?, ?, datetime('now'))
-      ON CONFLICT(option_code) DO UPDATE SET
+      ON CONFLICT(address_family, option_code) DO UPDATE SET
         enabled_by_default = CASE
           WHEN excluded.enabled_by_default = 1 THEN 1
           ELSE dhcp_option_defaults.enabled_by_default
@@ -172,7 +172,7 @@ export function upsertServerDnsDefault(db, value) {
     `
     INSERT INTO dhcp_option_defaults (option_code, value, updated_at)
     VALUES (6, ?, datetime('now'))
-    ON CONFLICT(option_code) DO UPDATE SET value = ?, updated_at = datetime('now')
+    ON CONFLICT(address_family, option_code) DO UPDATE SET value = ?, updated_at = datetime('now')
   `,
   ).run(value, value);
   return true;

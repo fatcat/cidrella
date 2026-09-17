@@ -141,6 +141,11 @@ export async function initDb(dataDir) {
   return db;
 }
 
+// Migrations that DROP and recreate a table other tables reference. See the
+// comment on applyRebuildMigration below. Add every future parent-table
+// rebuild here.
+const REBUILD_MIGRATIONS = new Set([70, 71, 72]);
+
 function runMigrations() {
   // Create schema_version table if it doesn't exist
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (
@@ -192,7 +197,15 @@ function runMigrations() {
       .map((r) => r.version),
   );
 
-  // Run each migration in a transaction so partial applies can't corrupt the schema
+  // Run each migration in a transaction so partial applies can't corrupt the schema.
+  //
+  // Rebuild migrations (CREATE new, copy, DROP old, RENAME) run with foreign
+  // keys off. With enforcement on, DROP TABLE on a parent fires ON DELETE
+  // CASCADE into every child: dropping subnets would empty ranges,
+  // ip_addresses, dhcp_scopes, dhcp_reservations and network_scans (migration
+  // 045 did exactly that to dns_records when it rebuilt dns_zones). SQLite
+  // ignores the pragma inside a transaction, so it is toggled around the
+  // transaction and foreign_key_check runs before the version is recorded.
   const applyMigration = db.transaction((sql, version) => {
     // Migration 060 shipped in v0.4.18-pre.4 and assumed anomaly_models was
     // created by migration 042. Older installations can instead have the
@@ -205,13 +218,37 @@ function runMigrations() {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
   });
 
+  const applyRebuildMigration = db.transaction((sql, version) => {
+    db.exec(sql);
+    const violations = db.pragma('foreign_key_check');
+    if (violations.length > 0) {
+      const sample = violations
+        .slice(0, 5)
+        .map((row) => `${row.table} row ${row.rowid} -> ${row.parent}`)
+        .join(', ');
+      throw new Error(
+        `Migration ${version} left ${violations.length} foreign key violation(s): ${sample}`,
+      );
+    }
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
+  });
+
   let newCount = 0;
   for (const file of migrationFiles) {
     const version = parseInt(file.split('_')[0], 10);
     if (applied.has(version)) continue;
 
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf-8');
-    applyMigration(sql, version);
+    if (REBUILD_MIGRATIONS.has(version)) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        applyRebuildMigration(sql, version);
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    } else {
+      applyMigration(sql, version);
+    }
     console.log(`Applied migration: ${file}`);
     newCount++;
   }

@@ -1,15 +1,25 @@
-import { ipToLong, isIpInSubnet, parseCidr } from './ip.js';
+import {
+  addressToBig,
+  addressInRange,
+  addressRangesOverlap,
+  networkContains,
+  parseNetwork,
+  parsedNetworkContains,
+  topologyAddresses,
+} from './ip.js';
 
 export function getNetworkDhcpDiagnostics(db) {
   const issues = [];
   const subnets = db.prepare("SELECT * FROM subnets WHERE status = 'allocated'").all();
   for (const subnet of subnets) {
-    const parsed = parseCidr(subnet.cidr);
+    const parsed = parseNetwork(subnet.cidr);
+    const expectedBroadcast = parsed.family === 4 ? parsed.broadcast : null;
     if (
       subnet.network_address !== parsed.network ||
-      subnet.broadcast_address !== parsed.broadcast ||
+      subnet.broadcast_address !== expectedBroadcast ||
       subnet.prefix_length !== parsed.prefix ||
-      subnet.total_addresses !== parsed.totalAddresses
+      subnet.total_addresses !== parsed.size ||
+      subnet.address_family !== parsed.family
     ) {
       issues.push({
         code: 'network_derivative_mismatch',
@@ -17,9 +27,10 @@ export function getNetworkDhcpDiagnostics(db) {
         cidr: subnet.cidr,
         expected: {
           network_address: parsed.network,
-          broadcast_address: parsed.broadcast,
+          broadcast_address: expectedBroadcast,
           prefix_length: parsed.prefix,
-          total_addresses: parsed.totalAddresses,
+          total_addresses: parsed.size,
+          address_family: parsed.family,
         },
         safe_repair: true,
       });
@@ -35,8 +46,8 @@ export function getNetworkDhcpDiagnostics(db) {
     const customInvalid =
       subnet.gateway_policy === 'custom' &&
       (!subnet.gateway_address ||
-        !isIpInSubnet(subnet.gateway_address, subnet.cidr) ||
-        [parsed.network, parsed.broadcast].includes(subnet.gateway_address));
+        !parsedNetworkContains(parsed, subnet.gateway_address) ||
+        topologyAddresses(parsed).includes(subnet.gateway_address));
     if (customInvalid || subnet.gateway_address !== expectedGateway) {
       issues.push({
         code: 'gateway_policy_mismatch',
@@ -49,10 +60,7 @@ export function getNetworkDhcpDiagnostics(db) {
       });
     }
     const expected = new Map();
-    if (parsed.prefix < 31) {
-      expected.set(parsed.network, 'system');
-      expected.set(parsed.broadcast, 'system');
-    }
+    for (const ip of topologyAddresses(parsed)) expected.set(ip, 'system');
     if (subnet.gateway_address) expected.set(subnet.gateway_address, 'gateway');
     for (const [ip, state] of expected) {
       const row = db
@@ -120,7 +128,7 @@ export function getNetworkDhcpDiagnostics(db) {
       });
       continue;
     }
-    const parsed = parseCidr(scope.cidr);
+    const parsed = parseNetwork(scope.cidr);
     const pools = db
       .prepare(
         `SELECT pool.id, pool.range_id, pool.start_ip, pool.end_ip,
@@ -138,9 +146,15 @@ export function getNetworkDhcpDiagnostics(db) {
       });
     }
     for (const pool of pools) {
-      const start = ipToLong(pool.start_ip);
-      const end = ipToLong(pool.end_ip);
-      if (start <= parsed.networkLong || end >= parsed.broadcastLong || start > end) {
+      const start = addressToBig(pool.start_ip);
+      const end = addressToBig(pool.end_ip);
+      const lastHost = parsed.family === 4 ? parsed.lastBig - 1n : parsed.lastBig;
+      if (
+        start.family !== parsed.family ||
+        start.value <= parsed.networkBig ||
+        end.value > lastHost ||
+        start.value > end.value
+      ) {
         issues.push({
           code: 'scope_outside_usable_range',
           scope_id: scope.id,
@@ -152,8 +166,7 @@ export function getNetworkDhcpDiagnostics(db) {
         });
       }
       if (scope.gateway_address) {
-        const gateway = ipToLong(scope.gateway_address);
-        if (gateway >= start && gateway <= end) {
+        if (addressInRange(scope.gateway_address, pool.start_ip, pool.end_ip)) {
           issues.push({
             code: 'gateway_inside_pool',
             scope_id: scope.id,
@@ -203,10 +216,7 @@ export function getNetworkDhcpDiagnostics(db) {
     for (let rightIndex = leftIndex + 1; rightIndex < enabledPools.length; rightIndex++) {
       const right = enabledPools[rightIndex];
       if (right.subnet_id !== left.subnet_id) break;
-      if (
-        ipToLong(left.start_ip) <= ipToLong(right.end_ip) &&
-        ipToLong(right.start_ip) <= ipToLong(left.end_ip)
-      ) {
+      if (addressRangesOverlap(left.start_ip, left.end_ip, right.start_ip, right.end_ip)) {
         issues.push({
           code: 'overlapping_enabled_pools',
           subnet_id: left.subnet_id,
@@ -237,7 +247,7 @@ export function getNetworkDhcpDiagnostics(db) {
   `,
     )
     .all()) {
-    if (lease.status !== 'allocated' || !isIpInSubnet(lease.ip_address, lease.cidr)) {
+    if (lease.status !== 'allocated' || !networkContains(lease.cidr, lease.ip_address)) {
       issues.push({
         code: 'lease_owner_mismatch',
         lease_id: lease.id,

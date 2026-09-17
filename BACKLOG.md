@@ -171,17 +171,29 @@ every caller uses are thin wrappers over it and still refuse IPv6 on purpose, so
 behavior is unchanged until the layers above are ready. `server/tests/unit/utils/cidr.test.js`
 covers it (mutation-checked seven ways); the client sees it through `@shared/cidr.js`.
 
-**Next steps, in order:**
-1. Schema: `subnets` stores `broadcast_address` and an integer `total_addresses`, neither of
-   which fits a /64; needs `address_family`, `last_address`, and a size that survives 2^64
-   (text or BigInt-safe), plus the prefix rules for v6 carve/merge.
-2. Routes: `POST /subnets`, divide, merge, carve and the workspace reads switch from the
-   IPv4 wrappers to the generic layer, family-aware validation and errors.
-3. DNS: AAAA on the write route and in the lifecycle service (PTR under ip6.arpa).
-4. dnsmasq: v6 listen addresses, `dhcp-range` with `ra-names`/`slaac`, `enable-ra`.
-5. DHCPv6 and SLAAC: scope and lease tables with DUID/IAID, the lease parser, retirement.
-6. Discovery: neighbor tables and ICMPv6 probes.
-7. UI: the workspace address grid and table on v6 sizes (no per-address rows for a /64).
+**Backend pass (started 2026-09-17, plan `~/.claude/plans/tender-moseying-pascal.md`):**
+0. Contract docs first (AGENTS.md gate): IPv6 network shape, anycast at the network address,
+   no broadcast, sparse reads, DHCPv6 modes, discovery rule.
+1. Migrations 070 (`subnets` rebuild: `address_family`, nullable broadcast and total,
+   `last_address`), 071 (`dns_records` CHECK gains AAAA), 072 (DHCPv6 columns, DUID-keyed
+   reservations and leases, family-scoped option tables). `runMigrations` turns foreign keys
+   off around these rebuilds: dropping `subnets` with them on cascades into every child
+   table, and the in-memory probe showed migration 045 already did that to `dns_records`.
+2. Topology service and subnet routes on the generic layer; v6 `GET /:id/ips` pages
+   persisted rows only.
+3. DNS: AAAA on the write route, static DNS lifecycle for AAAA, ip6.arpa PTRs for allocated
+   addresses, v6 forwarders.
+4. dnsmasq: v6 listen addresses, `enable-ra`.
+5. DHCPv6 per network: `slaac` / `stateless` / `stateful` (the user's call, 2026-09-17),
+   `dhcp-range` modes, `option6:` lines, `dhcp-host=id:<duid>`, lease parser for the `duid`
+   header and IAID/DUID columns, `dhcp_release6`.
+6. Discovery: `ip -6 neigh` reader, `ff02::1` probe, `ping -6`, passive v6 sources.
+7. Proxy and resolver dual-stack, anomalies accept v6 identities.
+
+**Deferred from this pass:** rogue DHCPv6 and Router Advertisement detection (a different
+protocol from the DHCPv4 probe: UDP 546/547, `ff02::1:2`, DUID server identity; nothing in
+`dhcp-probe.js` is reusable), a DHCPv6 option catalog (v6 scopes use the scope columns), and
+the UI: workspace grid and table on v6 sizes, no per-address rows for a /64.
 
 ## Deferred design work
 

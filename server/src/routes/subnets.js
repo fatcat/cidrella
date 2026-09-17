@@ -2,23 +2,31 @@ import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
-  parseCidr,
-  normalizeCidr,
-  isValidCidr,
-  calculateSubnets,
+  parseNetwork,
+  normalizeNetwork,
+  isValidNetwork,
+  splitNetwork,
+  mergeNetworks,
+  subtractNetwork,
+  isNetworkWithin,
+  networksOverlap,
+  networkContains,
+  parsedNetworkContains,
+  validateNetworkBounds,
+  networkNameFromTemplate,
+  addressToBig,
+  bigToAddress,
+  addressInRange,
+  isValidAddress,
+  topologyAddresses,
   ipToLong,
   longToIp,
   isIpInSubnet,
-  subtractCidr,
-  isSubnetOf,
-  cidrsOverlap,
-  validateSupernet,
-  applyNameTemplate,
-  canMergeCidrs,
   isValidDomain,
   validateDisplayString,
   isValidIpv4,
 } from '../utils/ip.js';
+import { canonicalizeIp, sortKey } from '../utils/address.js';
 import {
   lifecycleRepository as IpAddress,
   setManualReservation,
@@ -162,25 +170,32 @@ function folderIdError(db, folderId) {
   return null;
 }
 
+// An address of the network's own family, as a BigInt value, or null.
+function familyAddress(parsed, ip) {
+  if (typeof ip !== 'string' || !isValidAddress(ip)) return null;
+  const address = addressToBig(ip);
+  return address.family === parsed.family ? address.value : null;
+}
+
 function validateDhcpScopeBounds(parsed, startIp, endIp) {
   if (!startIp || !endIp) return 'DHCP Scope Start IP and DHCP Scope End IP are required';
-  if (!isValidIpv4(startIp)) return 'DHCP Scope Start IP must be a valid IPv4 address';
-  if (!isValidIpv4(endIp)) return 'DHCP Scope End IP must be a valid IPv4 address';
+  const start = familyAddress(parsed, startIp);
+  const end = familyAddress(parsed, endIp);
+  if (start === null) return `DHCP Scope Start IP must be a valid IPv${parsed.family} address`;
+  if (end === null) return `DHCP Scope End IP must be a valid IPv${parsed.family} address`;
 
-  const firstUsableLong = ipToLong(parsed.firstUsable);
-  const lastUsableLong = ipToLong(parsed.lastUsable);
-  const startLong = ipToLong(startIp);
-  const endLong = ipToLong(endIp);
+  const firstUsable = addressToBig(parsed.firstUsable).value;
+  const lastUsable = addressToBig(parsed.lastUsable).value;
 
-  if (startLong > endLong) {
+  if (start > end) {
     return 'DHCP Scope Start IP must be less than or equal to DHCP Scope End IP';
   }
 
-  if (startLong < firstUsableLong || startLong > lastUsableLong) {
+  if (start < firstUsable || start > lastUsable) {
     return `DHCP Scope Start IP must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
   }
 
-  if (endLong < firstUsableLong || endLong > lastUsableLong) {
+  if (end < firstUsable || end > lastUsable) {
     return `DHCP Scope End IP must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
   }
 
@@ -189,12 +204,11 @@ function validateDhcpScopeBounds(parsed, startIp, endIp) {
 
 function validateGatewayForSubnet(parsed, gateway) {
   if (gateway === undefined || gateway === null || gateway === '') return null;
-  if (typeof gateway !== 'string' || !isValidIpv4(gateway))
-    return 'gateway_address must be a valid IPv4 address';
-  const gwLong = ipToLong(gateway);
-  const firstUsableLong = ipToLong(parsed.firstUsable);
-  const lastUsableLong = ipToLong(parsed.lastUsable);
-  if (gwLong < firstUsableLong || gwLong > lastUsableLong) {
+  const value = familyAddress(parsed, gateway);
+  if (value === null) return `gateway_address must be a valid IPv${parsed.family} address`;
+  const firstUsable = addressToBig(parsed.firstUsable).value;
+  const lastUsable = addressToBig(parsed.lastUsable).value;
+  if (value < firstUsable || value > lastUsable) {
     return `gateway_address must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
   }
   return null;
@@ -257,10 +271,13 @@ function consolidateIntermediate(db, parentId) {
   return SubnetTopology.consolidateIntermediate(db, parentId);
 }
 
+// Mixed-family ordering: the shared sort key puts every IPv4 network before
+// every IPv6 network and orders numerically within a family.
 function sortSubnetsNumerically(rows) {
+  const keys = new Map(rows.map((row) => [row, sortKey(row.network_address) || '']));
   return rows.sort(
     (left, right) =>
-      ipToLong(left.network_address) - ipToLong(right.network_address) ||
+      (keys.get(left) < keys.get(right) ? -1 : keys.get(left) > keys.get(right) ? 1 : 0) ||
       left.prefix_length - right.prefix_length ||
       left.id - right.id,
   );
@@ -341,7 +358,7 @@ router.post(
     if (typeof cidr !== 'string' || !cidr.trim()) {
       return res.status(400).json({ error: 'CIDR is required' });
     }
-    if (!isValidCidr(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
+    if (!isValidNetwork(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
     if (
       gateway_policy !== undefined &&
       !['first', 'last', 'custom', 'none'].includes(gateway_policy)
@@ -349,8 +366,8 @@ router.post(
       return res.status(400).json({ error: 'gateway_policy must be first, last, custom, or none' });
     }
 
-    const normalized = normalizeCidr(cidr);
-    const parsed = parseCidr(normalized);
+    const normalized = normalizeNetwork(cidr);
+    const parsed = parseNetwork(normalized);
     const gatewayError = validateGatewayForSubnet(parsed, gateway_address);
     if (gatewayError) return res.status(400).json({ error: gatewayError });
     const resolvedPolicy =
@@ -374,7 +391,7 @@ router.post(
       cidr: normalized,
       gateway_policy: resolvedPolicy,
       gateway_address: resolvedGateway,
-      suggested_name: applyNameTemplate(getSetting('subnet_name_template'), normalized),
+      suggested_name: networkNameFromTemplate(getSetting('subnet_name_template'), normalized),
       default_dhcp_pool: pool
         ? { start_ip: longToIp(pool.startLong), end_ip: longToIp(pool.endLong) }
         : null,
@@ -433,7 +450,7 @@ router.post(
     // up front with clean 400s.
     if (typeof cidr !== 'string' || !cidr)
       return res.status(400).json({ error: 'CIDR is required' });
-    if (!isValidCidr(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
+    if (!isValidNetwork(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
     if (name !== undefined) {
       const err = validateDisplayString(name, { maxLength: 255 });
       if (err) return res.status(400).json({ error: `name ${err}` });
@@ -449,15 +466,15 @@ router.post(
       }
     }
 
-    const normalized = normalizeCidr(cidr);
+    const normalized = normalizeNetwork(cidr);
     const db = getDb();
 
     // Check duplicate
     const existing = db.prepare('SELECT id FROM subnets WHERE cidr = ?').get(normalized);
     if (existing) return res.status(409).json({ error: 'Subnet already exists' });
 
-    // Validate against reserved range boundaries (RFC1918, etc.)
-    const validation = validateSupernet(normalized);
+    // Validate against reserved range boundaries (RFC1918, ULA, etc.)
+    const validation = validateNetworkBounds(normalized);
     if (!validation.valid) {
       return res.status(400).json({ error: validation.error });
     }
@@ -465,7 +482,7 @@ router.post(
     // Check overlap with existing root subnets
     const roots = db.prepare('SELECT cidr FROM subnets WHERE parent_id IS NULL').all();
     for (const root of roots) {
-      if (cidrsOverlap(normalized, root.cidr)) {
+      if (networksOverlap(normalized, root.cidr)) {
         return res.status(409).json({ error: `Overlaps with existing supernet ${root.cidr}` });
       }
     }
@@ -474,7 +491,7 @@ router.post(
     let subnetName = name;
     if (!subnetName) {
       const template = getSetting('subnet_name_template');
-      subnetName = applyNameTemplate(template, normalized);
+      subnetName = networkNameFromTemplate(template, normalized);
     }
 
     // Validate folder exists if provided
@@ -531,7 +548,7 @@ router.post(
           .json({ error: `Subnet ${s.cidr} has children and cannot be merged` });
     }
 
-    const mergeResult = canMergeCidrs(subnets.map((s) => s.cidr));
+    const mergeResult = mergeNetworks(subnets.map((s) => s.cidr));
     if (!mergeResult.valid) {
       return res.status(400).json({ error: mergeResult.error });
     }
@@ -598,7 +615,7 @@ router.post(
           .json({ error: `Subnet ${s.cidr} has children and cannot be merged` });
     }
 
-    const mergeResult = canMergeCidrs(subnets.map((s) => s.cidr));
+    const mergeResult = mergeNetworks(subnets.map((s) => s.cidr));
     if (!mergeResult.valid) {
       return res.status(400).json({ error: mergeResult.error });
     }
@@ -766,7 +783,7 @@ router.put(
 
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
-    const parsedSubnet = parseCidr(subnet.cidr);
+    const parsedSubnet = parseNetwork(subnet.cidr);
     const requestedPolicy =
       gateway_policy ||
       (gateway_address !== undefined
@@ -862,9 +879,8 @@ router.put(
     `,
         )
         .all(subnet.id);
-      const gwLong = requestedGateway ? ipToLong(requestedGateway) : null;
       for (const p of pools) {
-        if (gwLong != null && gwLong >= ipToLong(p.start_ip) && gwLong <= ipToLong(p.end_ip)) {
+        if (requestedGateway && addressInRange(requestedGateway, p.start_ip, p.end_ip)) {
           return res.status(409).json({
             error: `Gateway ${requestedGateway} falls inside an existing DHCP pool (${p.start_ip}–${p.end_ip}). Shrink the pool or choose a gateway outside it.`,
             dhcp_pool: { start_ip: p.start_ip, end_ip: p.end_ip },
@@ -926,21 +942,20 @@ router.post(
       // Equal division mode (new_prefix)
       if (new_prefix !== undefined) {
         const targetPrefix = parseInt(new_prefix, 10);
-        if (targetPrefix <= parseCidr(parent.cidr).prefix || targetPrefix > 32) {
+        const parentParsed = parseNetwork(parent.cidr);
+        if (targetPrefix <= parentParsed.prefix || targetPrefix > parentParsed.bits) {
           return res.status(400).json({ error: 'Invalid target prefix' });
         }
-        const subnets = calculateSubnets(parent.cidr, targetPrefix, 256);
+        const subnets = splitNetwork(parent.cidr, targetPrefix, 256);
         const count = subnets.length;
         if (count > 256) {
           return res.status(400).json({ error: 'Cannot divide into more than 256 subnets' });
         }
         let gatewaySubnet = null;
         if (parent.gateway_address) {
-          gatewaySubnet = subnets.find((s) =>
-            isIpInSubnet(parent.gateway_address, `${s.network}/${s.prefix}`),
-          );
+          gatewaySubnet = subnets.find((s) => parsedNetworkContains(s, parent.gateway_address));
         }
-        const childCidrs = subnets.map((s) => `${s.network}/${s.prefix}`);
+        const childCidrs = subnets.map((s) => s.cidr);
         const plan = buildDividePlan(db, parent, {
           newPrefix: targetPrefix,
           selectedCidrs: selected_cidrs,
@@ -962,12 +977,12 @@ router.post(
 
       // Legacy carve mode (single child CIDR)
       if (!cidr) return res.status(400).json({ error: 'CIDR or new_prefix is required' });
-      if (!isValidCidr(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
-      const normalized = normalizeCidr(cidr);
-      if (!isSubnetOf(normalized, parent.cidr)) {
+      if (!isValidNetwork(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
+      const normalized = normalizeNetwork(cidr);
+      if (!isNetworkWithin(normalized, parent.cidr)) {
         return res.status(400).json({ error: 'Child CIDR must be within parent subnet' });
       }
-      const remainder = subtractCidr(parent.cidr, normalized);
+      const remainder = subtractNetwork(parent.cidr, normalized);
       const childCidrs = [normalized, ...remainder];
       const plan = buildDividePlan(db, parent, {
         cidr: normalized,
@@ -980,7 +995,7 @@ router.post(
         remainder,
         is_allocated: parent.status === 'allocated',
         gateway_preserved: parent.gateway_address
-          ? isIpInSubnet(parent.gateway_address, normalized)
+          ? networkContains(normalized, parent.gateway_address)
           : null,
         lossy: detectLossyIpsForDivision(db, parent.id, childCidrs),
         plan,
@@ -1005,29 +1020,28 @@ router.post(
 // no matching child, so without this check users lose reservations when
 // doing partial divides.
 function detectLossyIpsForDivision(db, parentId, childCidrs) {
-  const boundaries = new Map(); // ipStr -> 'network' | 'broadcast'
-  const childRanges = childCidrs.map((c) => {
-    const p = parseCidr(c);
-    return { cidr: c, networkLong: p.networkLong, broadcastLong: p.broadcastLong };
-  });
-  for (const cr of childRanges) {
-    const p = parseCidr(cr.cidr);
-    // Skip /31 and /32, no network/broadcast concept (point-to-point / host).
-    if (p.prefix >= 31) continue;
-    boundaries.set(longToIp(cr.networkLong), { reason: 'network', child_cidr: cr.cidr });
-    boundaries.set(longToIp(cr.broadcastLong), { reason: 'broadcast', child_cidr: cr.cidr });
+  const boundaries = new Map(); // canonical ip -> { reason, child_cidr }
+  const childRanges = childCidrs.map((c) => parseNetwork(c));
+  for (const child of childRanges) {
+    // Point-to-point and host prefixes reserve nothing. IPv6 reserves only
+    // the network (subnet-router anycast) address, IPv4 network and broadcast.
+    const [network, broadcast] = topologyAddresses(child);
+    if (network) boundaries.set(network, { reason: 'network', child_cidr: child.cidr });
+    if (broadcast) boundaries.set(broadcast, { reason: 'broadcast', child_cidr: child.cidr });
   }
-  const isCovered = (ipLong) =>
-    childRanges.some((c) => ipLong >= c.networkLong && ipLong <= c.broadcastLong);
+  const isCovered = (ip) => childRanges.some((child) => parsedNetworkContains(child, ip));
 
   const lossy = [];
 
-  // classify(ipLong) returns a reason/child_cidr for the loss, or null if
-  // the IP is safely covered by a non-boundary position in some child.
-  const classify = (ipAddr, ipLong) => {
-    const b = boundaries.get(ipAddr);
+  // classify(ip) returns a reason/child_cidr for the loss, or null if the IP
+  // is safely covered by a non-boundary position in some child. Rows holding
+  // an unparseable address are left alone: nothing can be said about them.
+  const classify = (ipAddr) => {
+    const canonical = canonicalizeIp(ipAddr);
+    if (!canonical) return null;
+    const b = boundaries.get(canonical);
     if (b) return { reason: b.reason, child_cidr: b.child_cidr };
-    if (!isCovered(ipLong)) return { reason: 'outside_selection', child_cidr: null };
+    if (!isCovered(canonical)) return { reason: 'outside_selection', child_cidr: null };
     return null;
   };
 
@@ -1037,7 +1051,7 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     )
     .all(parentId);
   for (const r of reservations) {
-    const cls = classify(r.ip_address, ipToLong(r.ip_address));
+    const cls = classify(r.ip_address);
     if (!cls) continue;
     lossy.push({
       record_id: r.id,
@@ -1059,7 +1073,7 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     )
     .all(parentId);
   for (const ip of ips) {
-    const cls = classify(ip.ip_address, ipToLong(ip.ip_address));
+    const cls = classify(ip.ip_address);
     if (!cls) continue;
     // Existing network/broadcast/gateway rows are topology projections, not
     // host facts. The post-transfer topology reconciler will retain, change,
@@ -1088,16 +1102,17 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     FROM dns_records r
     JOIN dns_zones z ON r.zone_id = z.id
     WHERE z.type = 'forward' AND z.enabled = 1
-      AND r.type = 'A' AND r.enabled = 1
+      AND r.type IN ('A', 'AAAA') AND r.enabled = 1
       AND COALESCE(r.source, 'manual') = 'manual'
   `,
     )
     .all()
     .filter(
-      (record) => isValidIpv4(record.value) && parent && isIpInSubnet(record.value, parent.cidr),
+      (record) =>
+        isValidAddress(record.value) && parent && networkContains(parent.cidr, record.value),
     );
   for (const rec of aRecords) {
-    const cls = classify(rec.value, ipToLong(rec.value));
+    const cls = classify(rec.value);
     if (!cls) continue;
     lossy.push({
       record_id: rec.id,
@@ -1120,7 +1135,7 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     )
     .all(parentId);
   for (const lease of leases) {
-    const cls = classify(lease.ip_address, ipToLong(lease.ip_address));
+    const cls = classify(lease.ip_address);
     if (!cls) continue;
     lossy.push({
       record_id: lease.id,
@@ -1189,12 +1204,9 @@ function transferPerIpArtifactsToChildren(db, parentId) {
   DhcpTopology.moveLeasesToChildren(db, parentId);
   const children = db.prepare('SELECT id, cidr FROM subnets WHERE parent_id = ?').all(parentId);
   if (children.length === 0) return;
-  const childRanges = children.map((c) => {
-    const p = parseCidr(c.cidr);
-    return { id: c.id, netLong: p.networkLong, bcastLong: p.broadcastLong };
-  });
-  const findChildForIp = (ipLong) =>
-    childRanges.find((c) => ipLong >= c.netLong && ipLong <= c.bcastLong);
+  const childRanges = children.map((c) => ({ id: c.id, parsed: parseNetwork(c.cidr) }));
+  const findChildForIp = (ip) =>
+    childRanges.find((c) => parsedNetworkContains(c.parsed, ip));
 
   // ip_addresses: parent's row has the live state and observed metadata.
   // If a row already exists under the child for the same IP (auto-populated
@@ -1205,7 +1217,7 @@ function transferPerIpArtifactsToChildren(db, parentId) {
     .prepare('SELECT id, ip_address FROM ip_addresses WHERE subnet_id = ?')
     .all(parentId);
   for (const ip of ips) {
-    const c = findChildForIp(ipToLong(ip.ip_address));
+    const c = findChildForIp(ip.ip_address);
     if (!c) continue;
     IpAddress.moveToSubnet(db, ip.id, ip.ip_address, c.id);
   }
@@ -1356,12 +1368,12 @@ router.post(
     }
 
     const childDepth = parent.depth + 1;
-    const parentParsed = parseCidr(parent.cidr);
+    const parentParsed = parseNetwork(parent.cidr);
     let currentPlan;
     try {
       currentPlan = buildDividePlan(db, parent, {
         newPrefix: new_prefix,
-        cidr: cidr ? normalizeCidr(cidr) : undefined,
+        cidr: cidr ? normalizeNetwork(cidr) : undefined,
         selectedCidrs: selected_cidrs,
         targetGateways: target_gateways,
       });
@@ -1396,10 +1408,10 @@ router.post(
       // Equal division mode
       if (new_prefix !== undefined) {
         const targetPrefix = parseInt(new_prefix, 10);
-        if (targetPrefix <= parentParsed.prefix || targetPrefix > 32) {
+        if (targetPrefix <= parentParsed.prefix || targetPrefix > parentParsed.bits) {
           return res.status(400).json({ error: 'Invalid target prefix' });
         }
-        let subnets = calculateSubnets(parent.cidr, targetPrefix, 256);
+        let subnets = splitNetwork(parent.cidr, targetPrefix, 256);
         if (subnets.length > 256) {
           return res.status(400).json({ error: 'Cannot divide into more than 256 subnets' });
         }
@@ -1407,7 +1419,7 @@ router.post(
         // Validate selected CIDRs, but retain every result as explicit ownership
         // so a partial selection cannot strand or delete the remainder.
         if (Array.isArray(selected_cidrs) && selected_cidrs.length > 0) {
-          const allCidrs = new Set(subnets.map((s) => `${s.network}/${s.prefix}`));
+          const allCidrs = new Set(subnets.map((s) => s.cidr));
           const invalid = selected_cidrs.filter((c) => !allCidrs.has(c));
           if (invalid.length > 0) {
             return res.status(400).json({ error: `Invalid selected CIDRs: ${invalid.join(', ')}` });
@@ -1415,7 +1427,7 @@ router.post(
         }
 
         // Any host fact that becomes unusable needs its own reviewed action.
-        const childCidrList = subnets.map((s) => `${s.network}/${s.prefix}`);
+        const childCidrList = subnets.map((s) => s.cidr);
         const lossy = detectLossyIpsForDivision(db, parent.id, childCidrList);
         const acceptedLossy = validateConflictResolutions(lossy, conflict_resolutions);
         if (lossy.length > 0 && !acceptedLossy) {
@@ -1439,13 +1451,13 @@ router.post(
           const poolAdjustmentsAll = [];
           const targetsByCidr = new Map(currentPlan.targets.map((target) => [target.cidr, target]));
           for (const s of subnets) {
-            const sCidr = `${s.network}/${s.prefix}`;
+            const sCidr = s.cidr;
             const target = targetsByCidr.get(sCidr);
             const childGw = target.gateway.address;
 
             const result = insertSubnet(db, {
               cidr: sCidr,
-              name: applyNameTemplate(template, sCidr),
+              name: networkNameFromTemplate(template, sCidr),
               description: parent.description,
               vlan_id: parent.vlan_id,
               gateway_address: childGw,
@@ -1522,14 +1534,14 @@ router.post(
 
       // Legacy carve mode (single child CIDR)
       if (!cidr) return res.status(400).json({ error: 'CIDR or new_prefix is required' });
-      if (!isValidCidr(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
+      if (!isValidNetwork(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
 
-      const normalized = normalizeCidr(cidr);
-      if (!isSubnetOf(normalized, parent.cidr)) {
+      const normalized = normalizeNetwork(cidr);
+      if (!isNetworkWithin(normalized, parent.cidr)) {
         return res.status(400).json({ error: 'Child CIDR must be within parent subnet' });
       }
 
-      const remainder = subtractCidr(parent.cidr, normalized);
+      const remainder = subtractNetwork(parent.cidr, normalized);
       // Same exact-resolution gate as equal division.
       const carveLossy = detectLossyIpsForDivision(db, parent.id, [normalized, ...remainder]);
       const acceptedCarveLossy = validateConflictResolutions(carveLossy, conflict_resolutions);
@@ -1550,12 +1562,12 @@ router.post(
       const txn = db.transaction(() => {
         for (const target of currentPlan.targets) {
           const aCidr = target.cidr;
-          const aParsed = parseCidr(aCidr);
+          const aParsed = parseNetwork(aCidr);
           const childGw = target.gateway.address;
 
           const result = insertSubnet(db, {
             cidr: aCidr,
-            name: applyNameTemplate(template, aCidr),
+            name: networkNameFromTemplate(template, aCidr),
             description: parent.description,
             vlan_id: parent.vlan_id,
             gateway_address: childGw,
@@ -1697,7 +1709,7 @@ router.post(
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-    const parsed = parseCidr(subnet.cidr);
+    const parsed = parseNetwork(subnet.cidr);
     {
       const err = validateGatewayForSubnet(parsed, gateway_address);
       if (err) return res.status(400).json({ error: err });
@@ -1726,8 +1738,10 @@ router.post(
     // domain_name is just a pointer; any number of subnets may share a zone.
     // We auto-create the zone inside the txn if it doesn't exist yet.
 
+    // DHCPv4 pools are sized from the address count below. IPv6 scopes are
+    // created by mode instead (slaac, stateless, stateful).
     let dhcpPool = null;
-    if (create_dhcp_scope && parsed.prefix <= 29) {
+    if (create_dhcp_scope && parsed.family === 4 && parsed.prefix <= 29) {
       const gwLong = gw && isValidIpv4(gw) ? ipToLong(gw) : null;
       let poolStart, poolEnd;
       const explicitPool = dhcp_start_ip || dhcp_end_ip;
@@ -1849,34 +1863,34 @@ router.post(
     if (typeof cidr !== 'string' || !cidr) {
       return res.status(400).json({ error: 'cidr must be a non-empty string' });
     }
-    if (!Number.isInteger(new_prefix) || new_prefix < 0 || new_prefix > 32) {
-      return res.status(400).json({ error: 'new_prefix must be an integer 0-32' });
+    if (!Number.isInteger(new_prefix) || new_prefix < 0 || new_prefix > 128) {
+      return res.status(400).json({ error: 'new_prefix must be an integer 0-128' });
     }
-    if (!isValidCidr(cidr)) {
+    if (!isValidNetwork(cidr)) {
       return res.status(400).json({ error: 'Invalid CIDR notation' });
     }
 
     const MAX_CALCULATE_CHILDREN = 65536;
-    let parent;
-    try {
-      parent = parseCidr(cidr);
-    } catch (err) {
-      return res.status(400).json({ error: err.message });
+    const parent = parseNetwork(cidr);
+    if (new_prefix > parent.bits) {
+      return res
+        .status(400)
+        .json({ error: `new_prefix must be an integer 0-${parent.bits} for this address family` });
     }
     if (new_prefix <= parent.prefix) {
       return res
         .status(400)
         .json({ error: `new_prefix /${new_prefix} must be larger than /${parent.prefix}` });
     }
-    const childCount = 1 << (new_prefix - parent.prefix);
-    if (childCount > MAX_CALCULATE_CHILDREN) {
+    const childCount = 1n << BigInt(new_prefix - parent.prefix);
+    if (childCount > BigInt(MAX_CALCULATE_CHILDREN)) {
       return res.status(400).json({
         error: `Would produce ${childCount} subnets; maximum is ${MAX_CALCULATE_CHILDREN}. Pick a narrower new_prefix or a smaller cidr.`,
       });
     }
 
     try {
-      const results = calculateSubnets(cidr, new_prefix);
+      const results = splitNetwork(cidr, new_prefix, MAX_CALCULATE_CHILDREN);
       res.json({ parent, subnets: results });
     } catch (err) {
       res.status(400).json({ error: err.message });
@@ -1893,8 +1907,9 @@ router.get(
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-    const parsed = parseCidr(subnet.cidr);
-    const totalIps = parsed.broadcastLong - parsed.networkLong + 1;
+    const parsed = parseNetwork(subnet.cidr);
+    // Null for an IPv6 prefix larger than a Number represents.
+    const totalIps = parsed.size;
     const search = (req.query.search || '').trim().toLowerCase();
     const showAvailable = req.query.showAvailable !== 'false';
     const readContext = getSubnetIpReadContext(db, subnet);
@@ -1941,8 +1956,8 @@ router.get(
       arr.sort((a, b) => {
         let va, vb;
         if (field === 'ip_address') {
-          va = ipToLong(a.ip_address);
-          vb = ipToLong(b.ip_address);
+          va = addressToBig(a.ip_address).value;
+          vb = addressToBig(b.ip_address).value;
         } else {
           va = a[field];
           vb = b[field];
@@ -1958,8 +1973,10 @@ router.get(
       });
     }
 
-    function makeVirtualIpRow(ipLong) {
-      return projectVirtualSubnetIpRow(db, subnet, ipLong, readContext);
+    // `ip` is an address string, or a numeric value when the IPv4 engine
+    // below walks the prefix by offset.
+    function makeVirtualIpRow(ip) {
+      return projectVirtualSubnetIpRow(db, subnet, ip, readContext);
     }
 
     function buildRangeLookup(ranges) {
@@ -1986,7 +2003,7 @@ router.get(
 
     const tableSearch = (req.query.table_search || '').trim().toLowerCase();
     const exactExplorerSearch =
-      Boolean(search) && isValidIpv4(search) && isIpInSubnet(search, subnet.cidr);
+      Boolean(search) && isValidAddress(search) && parsedNetworkContains(parsed, search);
     const hasExplicitFilters = [
       'display_status',
       'address_type',
@@ -2054,6 +2071,76 @@ router.get(
       );
     }
 
+    const displayStatusFilter = String(req.query.display_status || '').toLowerCase();
+    const addressTypeFilter = String(req.query.address_type || '').toLowerCase();
+    const rowMatches = (row) => {
+      if (!showAvailable && isAvailableIpRow(row)) return false;
+      if (!matchesSearch(row, search) || !matchesSearch(row, tableSearch)) return false;
+      if (
+        displayStatusFilter &&
+        String(row.ip_display_status || '').toLowerCase() !== displayStatusFilter
+      ) {
+        return false;
+      }
+      if (
+        addressTypeFilter &&
+        String(row.address_type || '').toLowerCase() !== addressTypeFilter
+      ) {
+        return false;
+      }
+      if (onlineFilter !== null && Boolean(row.is_online) !== onlineFilter) return false;
+      if (scanningFilter !== null && Boolean(row.scanning_enabled) !== scanningFilter)
+        return false;
+      // Range filters select the user-owned network classification. The
+      // functional range projection (DHCP pool, gateway, and so on) remains
+      // an independent fact and must not stand in for an organizational tag.
+      if (rangeTypeFilter !== null && row.network_range_type_id !== rangeTypeFilter) return false;
+      // Protocol ownership is a server-projected canonical fact. Filtering
+      // it here avoids reconstructing ownership from record shape in clients.
+      if (
+        allocationSourceTypeFilter &&
+        String(row.allocation_source_type || '').toLowerCase() !== allocationSourceTypeFilter
+      ) {
+        return false;
+      }
+      return true;
+    };
+
+    // IPv6 networks never materialize rows and are never walked. The listing
+    // is the persisted rows plus the protected topology addresses, filtered,
+    // sorted and paged in memory.
+    if (parsed.family === 6) {
+      const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+      const rowsByAddress = new Map(loadPersistedRows().map((row) => [row.ip_address, row]));
+      const protectedAddresses = [parsed.network];
+      if (subnet.gateway_address && parsedNetworkContains(parsed, subnet.gateway_address)) {
+        protectedAddresses.push(subnet.gateway_address);
+      }
+      for (const ip of protectedAddresses) {
+        if (!rowsByAddress.has(ip)) rowsByAddress.set(ip, makeVirtualIpRow(ip));
+      }
+      const rows = [...rowsByAddress.values()].filter(rowMatches);
+      sortIps(rows, reqSortField || 'ip_address', reqSortField ? reqSortOrder : 1);
+      const filteredTotal = rows.length;
+      const totalPages = Math.ceil(filteredTotal / pageSize) || 1;
+      const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), totalPages);
+      const start = (page - 1) * pageSize;
+      return res.json({
+        subnet,
+        ips: rows.slice(start, start + pageSize),
+        ranges,
+        totalIps,
+        filteredTotal,
+        page,
+        pageSize,
+        totalPages,
+        search,
+        table_search: tableSearch,
+        sorted: Boolean(reqSortField),
+        sparse: true,
+      });
+    }
+
     // Workspace filters operate on the canonical projection before pagination.
     // Persisted rows are finite, while virtual rows can cover almost all of an
     // IPv4 prefix. Represent matching virtual rows as intervals so a /8 does not
@@ -2067,41 +2154,6 @@ router.get(
       const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
       const allPersisted = loadPersistedRows();
       const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
-      const displayStatusFilter = String(req.query.display_status || '').toLowerCase();
-      const addressTypeFilter = String(req.query.address_type || '').toLowerCase();
-      const rowMatches = (row) => {
-        if (!showAvailable && isAvailableIpRow(row)) return false;
-        if (!matchesSearch(row, search) || !matchesSearch(row, tableSearch)) return false;
-        if (
-          displayStatusFilter &&
-          String(row.ip_display_status || '').toLowerCase() !== displayStatusFilter
-        ) {
-          return false;
-        }
-        if (
-          addressTypeFilter &&
-          String(row.address_type || '').toLowerCase() !== addressTypeFilter
-        ) {
-          return false;
-        }
-        if (onlineFilter !== null && Boolean(row.is_online) !== onlineFilter) return false;
-        if (scanningFilter !== null && Boolean(row.scanning_enabled) !== scanningFilter)
-          return false;
-        // Range filters select the user-owned network classification. The
-        // functional range projection (DHCP pool, gateway, and so on) remains
-        // an independent fact and must not stand in for an organizational tag.
-        if (rangeTypeFilter !== null && row.network_range_type_id !== rangeTypeFilter) return false;
-        // Protocol ownership is a server-projected canonical fact. Filtering
-        // it here avoids reconstructing ownership from record shape in clients.
-        if (
-          allocationSourceTypeFilter &&
-          String(row.allocation_source_type || '').toLowerCase() !== allocationSourceTypeFilter
-        ) {
-          return false;
-        }
-        return true;
-      };
-
       const matchedPersisted = allPersisted.filter(rowMatches);
       const persistedLongs = new Set(allPersisted.map((row) => ipToLong(row.ip_address)));
 
@@ -2428,10 +2480,12 @@ router.get(
     const db = getDb();
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
-    if (!isValidIpv4(req.params.ip)) return res.status(400).json({ error: 'Invalid IPv4 address' });
+    if (!isValidAddress(req.params.ip)) {
+      return res.status(400).json({ error: 'Invalid IP address' });
+    }
 
-    const ipAddress = longToIp(ipToLong(req.params.ip));
-    if (!isIpInSubnet(ipAddress, subnet.cidr)) {
+    const ipAddress = subnetAddress(subnet, req.params.ip);
+    if (!ipAddress) {
       return res.status(400).json({ error: 'IP address is outside this subnet' });
     }
 
@@ -2455,15 +2509,23 @@ router.get(
 // Protected topology addresses cannot become operator reservations or be
 // released through the administrative reservation endpoint.
 function ipAllocationRejectionReason(subnet, ip) {
-  const parsed = parseCidr(subnet.cidr);
-  const ipLong = ipToLong(ip);
-  if (ipLong === parsed.networkLong || ipLong === parsed.broadcastLong) {
-    return 'Network and broadcast allocations are managed by subnet topology';
+  const parsed = parseNetwork(subnet.cidr);
+  const value = addressToBig(ip).value;
+  if (value === parsed.networkBig || (parsed.family === 4 && value === parsed.lastBig)) {
+    return parsed.family === 4
+      ? 'Network and broadcast allocations are managed by subnet topology'
+      : 'The network address is managed by subnet topology';
   }
-  if (subnet.gateway_address && ip === subnet.gateway_address) {
+  if (subnet.gateway_address && addressToBig(subnet.gateway_address).value === value) {
     return 'Gateway allocation is managed by subnet topology';
   }
   return null;
+}
+
+// The canonical spelling of an address inside the subnet, or null.
+function subnetAddress(subnet, ip) {
+  const canonical = typeof ip === 'string' ? canonicalizeIp(ip) : null;
+  return canonical && networkContains(subnet.cidr, canonical) ? canonical : null;
 }
 
 // PUT /api/subnets/:id/ips/bulk-allocation: reserve or release a range of IPs
@@ -2478,14 +2540,17 @@ router.put(
     const { start_ip, end_ip, allocation_state, note } = req.body;
     if (!start_ip || !end_ip)
       return res.status(400).json({ error: 'start_ip and end_ip are required' });
-    if (typeof start_ip !== 'string' || !isValidIpv4(start_ip))
-      return res.status(400).json({ error: 'start_ip must be a valid IPv4 address' });
-    if (typeof end_ip !== 'string' || !isValidIpv4(end_ip))
-      return res.status(400).json({ error: 'end_ip must be a valid IPv4 address' });
+    const parsed = parseNetwork(subnet.cidr);
+    const startAddress = typeof start_ip === 'string' ? familyAddress(parsed, start_ip) : null;
+    const endAddress = typeof end_ip === 'string' ? familyAddress(parsed, end_ip) : null;
+    if (startAddress === null)
+      return res.status(400).json({ error: `start_ip must be a valid IPv${parsed.family} address` });
+    if (endAddress === null)
+      return res.status(400).json({ error: `end_ip must be a valid IPv${parsed.family} address` });
     if (!['unassigned', 'reserved'].includes(allocation_state)) {
       return res.status(400).json({ error: 'allocation_state must be reserved or unassigned' });
     }
-    if (!isIpInSubnet(start_ip, subnet.cidr) || !isIpInSubnet(end_ip, subnet.cidr)) {
+    if (!parsedNetworkContains(parsed, start_ip) || !parsedNetworkContains(parsed, end_ip)) {
       return res.status(400).json({ error: 'IP range must be within the subnet' });
     }
     if (note !== undefined) {
@@ -2493,10 +2558,9 @@ router.put(
       if (err) return res.status(400).json({ error: `note ${err}` });
     }
 
-    const startLong = ipToLong(start_ip);
-    const endLong = ipToLong(end_ip);
-    if (startLong > endLong) return res.status(400).json({ error: 'start_ip must be <= end_ip' });
-    if (endLong - startLong > 1024)
+    if (startAddress > endAddress)
+      return res.status(400).json({ error: 'start_ip must be <= end_ip' });
+    if (endAddress - startAddress > 1024n)
       return res.status(400).json({ error: 'Range too large (max 1024 IPs)' });
 
     const reservationNote = allocation_state === 'reserved' ? note || null : null;
@@ -2504,8 +2568,8 @@ router.put(
     const skipped = [];
 
     const bulkUpdate = db.transaction(() => {
-      for (let long = startLong; long <= endLong; long++) {
-        const ip = longToIp(long);
+      for (let value = startAddress; value <= endAddress; value++) {
+        const ip = bigToAddress(value, parsed.family);
         // Silently skip protected IPs (network/broadcast/gateway) so a bulk
         // "reserve this /24" doesn't fail wholesale on three topology IPs.
         if (ipAllocationRejectionReason(subnet, ip)) {
@@ -2545,11 +2609,10 @@ router.put(
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-    const ipAddress = req.params.ip;
     const { allocation_state, note } = req.body;
-    if (!isValidIpv4(ipAddress)) return res.status(400).json({ error: 'Invalid IP address' });
-    if (!isIpInSubnet(ipAddress, subnet.cidr))
-      return res.status(400).json({ error: 'IP address must be within the subnet' });
+    if (!isValidAddress(req.params.ip)) return res.status(400).json({ error: 'Invalid IP address' });
+    const ipAddress = subnetAddress(subnet, req.params.ip);
+    if (!ipAddress) return res.status(400).json({ error: 'IP address must be within the subnet' });
     if (!['unassigned', 'reserved'].includes(allocation_state)) {
       return res.status(400).json({ error: 'allocation_state must be reserved or unassigned' });
     }
@@ -2590,11 +2653,10 @@ router.put(
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-    const ipAddress = req.params.ip;
     const { scan_enabled } = req.body;
-    if (!isValidIpv4(ipAddress)) return res.status(400).json({ error: 'Invalid IP address' });
-    if (!isIpInSubnet(ipAddress, subnet.cidr))
-      return res.status(400).json({ error: 'IP address must be within the subnet' });
+    if (!isValidAddress(req.params.ip)) return res.status(400).json({ error: 'Invalid IP address' });
+    const ipAddress = subnetAddress(subnet, req.params.ip);
+    if (!ipAddress) return res.status(400).json({ error: 'IP address must be within the subnet' });
     if (scan_enabled !== null && typeof scan_enabled !== 'boolean') {
       return res.status(400).json({ error: 'scan_enabled must be boolean or null' });
     }

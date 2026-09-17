@@ -12,7 +12,7 @@ import {
   canTransitionAllocation,
 } from '../models/ip-lifecycle.js';
 import { findEnabledScopeForIp } from '../models/dhcp-scope.js';
-import { isValidIpv4, parseCidr, ipToLong } from '../utils/ip.js';
+import { isValidAddress, parseNetwork, addressToBig, topologyAddresses } from '../utils/ip.js';
 import { deleteDynamicDhcpRecordsByIps } from '../models/dns-record.js';
 import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease-queries.js';
 import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
@@ -38,7 +38,7 @@ export class IpLifecycleConflictError extends Error {
 }
 
 function protectedAddress(db, subnetId, ip) {
-  if (!isValidIpv4(ip)) return null;
+  if (!isValidAddress(ip)) return null;
   const subnet = db.prepare('SELECT cidr, gateway_address FROM subnets WHERE id = ?').get(subnetId);
   if (!subnet) {
     return {
@@ -47,23 +47,29 @@ function protectedAddress(db, subnetId, ip) {
       reason: 'Address does not belong to a managed subnet',
     };
   }
-  const parsed = parseCidr(subnet.cidr);
-  const value = ipToLong(ip);
-  if (value === parsed.networkLong) {
+  const parsed = parseNetwork(subnet.cidr);
+  const address = addressToBig(ip);
+  if (address.family !== parsed.family) return null;
+  const value = address.value;
+  if (value === parsed.networkBig) {
     return {
       state: ALLOCATION_STATE.SYSTEM,
       dnsNameAllowed: false,
-      reason: 'Network address is protected',
+      reason:
+        parsed.family === 6
+          ? 'Subnet-router anycast address is protected'
+          : 'Network address is protected',
     };
   }
-  if (value === parsed.broadcastLong) {
+  if (parsed.family === 4 && value === parsed.lastBig) {
     return {
       state: ALLOCATION_STATE.SYSTEM,
       dnsNameAllowed: false,
       reason: 'Broadcast address is protected',
     };
   }
-  if (subnet.gateway_address === ip) {
+  const gateway = subnet.gateway_address ? addressToBig(subnet.gateway_address) : null;
+  if (gateway && gateway.family === parsed.family && gateway.value === value) {
     return {
       state: ALLOCATION_STATE.GATEWAY,
       dnsNameAllowed: true,
@@ -313,18 +319,23 @@ export function observeDhcpLeases(db, leases, { prevalidated = false } = {}) {
 
 export function dhcpLeaseRejectionReason(db, lease) {
   if (!lease?.subnetId) return `DHCP lease ${lease?.ip || ''} has no managed subnet`;
-  if (!isValidIpv4(lease.ip)) return `DHCP lease address ${lease.ip || ''} is invalid`;
+  if (!isValidAddress(lease.ip)) return `DHCP lease address ${lease.ip || ''} is invalid`;
   const reservation = db
     .prepare(
       `
-    SELECT id, mac_address FROM dhcp_reservations
+    SELECT id, mac_address, duid FROM dhcp_reservations
     WHERE subnet_id = ? AND ip_address = ? AND enabled = 1
   `,
     )
     .get(lease.subnetId, lease.ip);
+  // DHCPv4 identifies the client by MAC, DHCPv6 by DUID.
+  const clientMatches = (expected, observed) =>
+    String(expected || '').toLowerCase() === String(observed || '').toLowerCase();
   if (
     reservation &&
-    String(reservation.mac_address).toLowerCase() !== String(lease.mac || '').toLowerCase()
+    !(lease.dhcpVersion === 6
+      ? clientMatches(reservation.duid, lease.duid)
+      : clientMatches(reservation.mac_address, lease.mac))
   ) {
     return `DHCP Lease ${lease.ip} does not match its DHCP Reservation client`;
   }
@@ -546,17 +557,15 @@ export function releaseTopologyAddress(db, subnetId, ip) {
 }
 
 /**
- * Reconcile the topology-owned rows for one IPv4 subnet after its CIDR or
- * gateway changes. This is the only topology-to-allocation bridge used by
- * network transformations. A named former gateway falls back to its manual
- * DNS claim instead of being incorrectly made available.
+ * Reconcile the topology-owned rows for one subnet after its CIDR or gateway
+ * changes. This is the only topology-to-allocation bridge used by network
+ * transformations. A named former gateway falls back to its manual DNS claim
+ * instead of being incorrectly made available. IPv4 protects the network and
+ * broadcast addresses, IPv6 the subnet-router anycast (network) address.
  */
 export function reconcileTopologyAddresses(db, subnetId, parsed, gatewayAddress = null) {
   const desired = new Map();
-  if (parsed.prefix < 31) {
-    desired.set(parsed.network, ALLOCATION_STATE.SYSTEM);
-    desired.set(parsed.broadcast, ALLOCATION_STATE.SYSTEM);
-  }
+  for (const ip of topologyAddresses(parsed)) desired.set(ip, ALLOCATION_STATE.SYSTEM);
   if (gatewayAddress) desired.set(gatewayAddress, ALLOCATION_STATE.GATEWAY);
 
   const existing = db

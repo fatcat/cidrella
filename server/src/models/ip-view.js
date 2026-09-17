@@ -3,7 +3,7 @@ import { lookupFingerprintBatch } from './device-fingerprint.js';
 import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
 import { addressFamily, canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import { resolveScanningEnabled } from '../utils/scan-coverage.js';
-import { ipToLong, longToIp, parseCidr } from '../utils/ip.js';
+import { addressToBig, bigToAddress, parseNetwork } from '../utils/ip.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -94,15 +94,21 @@ export function buildIpAggregate(row) {
  * range membership is projected as an independent fact.
  */
 export function buildVirtualSubnetIpRow(subnet, ip, functionalRange = null) {
-  const parsedSubnet = parseCidr(subnet.cidr);
-  const ipLong = typeof ip === 'number' ? ip : ipToLong(ip);
-  const ipAddress = longToIp(ipLong);
-  const gatewayLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
+  const parsedSubnet = parseNetwork(subnet.cidr);
+  // `ip` is an address string, or a numeric offset value for callers walking
+  // an IPv4 prefix. Either way the row is spelled in the subnet's family.
+  const value =
+    typeof ip === 'bigint' ? ip : typeof ip === 'number' ? BigInt(ip) : addressToBig(ip).value;
+  const ipAddress = bigToAddress(value, parsedSubnet.family);
+  const gatewayValue = subnet.gateway_address ? addressToBig(subnet.gateway_address).value : null;
 
   let allocationState = ALLOCATION_STATE.UNASSIGNED;
-  if (gatewayLong === ipLong) {
+  if (gatewayValue === value) {
     allocationState = ALLOCATION_STATE.GATEWAY;
-  } else if (ipLong === parsedSubnet.networkLong || ipLong === parsedSubnet.broadcastLong) {
+  } else if (
+    value === parsedSubnet.networkBig ||
+    (parsedSubnet.family === 4 && value === parsedSubnet.lastBig)
+  ) {
     allocationState = ALLOCATION_STATE.SYSTEM;
   }
 
@@ -207,9 +213,9 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
     for (const range of networkRangeRows) {
       const start = parseIp(range.start_ip);
       const end = parseIp(range.end_ip);
-      if (!start || !end || start.bits !== 32 || end.bits !== 32) continue;
+      if (!start || !end || start.bits !== end.bits) continue;
       const subnetRanges = networkRangeTypesBySubnet.get(range.subnet_id) || [];
-      subnetRanges.push({ ...range, start: start.value, end: end.value });
+      subnetRanges.push({ ...range, start: start.value, end: end.value, bits: start.bits });
       networkRangeTypesBySubnet.set(range.subnet_id, subnetRanges);
     }
   }
@@ -248,9 +254,12 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
     row.network_range_type = null;
     row.network_range_type_color = null;
     const parsedAddress = parseIp(row.ip_address);
-    if (parsedAddress?.bits === 32) {
+    if (parsedAddress) {
       const matchingRange = (networkRangeTypesBySubnet.get(row.subnet_id) || []).find(
-        (range) => parsedAddress.value >= range.start && parsedAddress.value <= range.end,
+        (range) =>
+          range.bits === parsedAddress.bits &&
+          parsedAddress.value >= range.start &&
+          parsedAddress.value <= range.end,
       );
       if (matchingRange) {
         row.network_range_type_id = matchingRange.range_type_id;

@@ -35,11 +35,12 @@ describe('parseNetwork', () => {
       mask: 'ffff:ffff:ffff:ffff::',
       first: '2001:db8:0:1::',
       last: '2001:db8:0:1:ffff:ffff:ffff:ffff',
-      firstUsable: '2001:db8:0:1::',
+      firstUsable: '2001:db8:0:1::1',
       lastUsable: '2001:db8:0:1:ffff:ffff:ffff:ffff',
     });
     expect(net.sizeBig).toBe(1n << 64n);
-    expect(net.usableBig).toBe(1n << 64n);
+    // Only the subnet-router anycast address (the network address) is reserved.
+    expect(net.usableBig).toBe((1n << 64n) - 1n);
     // A /64 does not fit a safe integer, so the Number views say so.
     expect(net.size).toBeNull();
     expect(net.usable).toBeNull();
@@ -50,10 +51,11 @@ describe('parseNetwork', () => {
     expect(JSON.parse(JSON.stringify(net)).networkBig).toBeUndefined();
   });
 
-  it('gives Number sizes when they fit, and the whole range is usable on IPv6', () => {
+  it('gives Number sizes when they fit, and reserves only the anycast address on IPv6', () => {
     const small = parseNetwork('fd00::/120');
     expect(small.size).toBe(256);
-    expect(small.usable).toBe(256);
+    expect(small.usable).toBe(255);
+    expect([small.firstUsable, small.lastUsable]).toEqual(['fd00::1', 'fd00::ff']);
     expect(parseNetwork('fd00::1/128').usable).toBe(1);
     const pair = parseNetwork('fd00::/127');
     expect([pair.firstUsable, pair.lastUsable]).toEqual(['fd00::', 'fd00::1']);

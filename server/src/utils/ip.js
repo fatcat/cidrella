@@ -5,7 +5,15 @@
  */
 import os from 'os';
 
-import { ipToLong, longToIp, isIpInSubnet, cidrsOverlap } from './cidr.js';
+import {
+  ipToLong,
+  longToIp,
+  parseNetwork,
+  parsedNetworkContains,
+  networksOverlap,
+  addressRangesOverlap,
+  addressInRange,
+} from './cidr.js';
 
 // The pure CIDR arithmetic lives in cidr.js so the client can share it; every
 // server caller keeps importing it from here.
@@ -38,11 +46,16 @@ export {
   mergeNetworks,
   networkNameFromTemplate,
   validateNetworkBounds,
+  isValidAddress,
+  parsedNetworkContains,
+  topologyAddresses,
+  addressAtOffset,
+  addressRangesOverlap,
+  addressInRange,
 } from './cidr.js';
 
 export function isIpInRange(ip, startIp, endIp) {
-  const ipLong = ipToLong(ip);
-  return ipLong >= ipToLong(startIp) && ipLong <= ipToLong(endIp);
+  return addressInRange(ip, startIp, endIp);
 }
 
 /**
@@ -50,15 +63,18 @@ export function isIpInRange(ip, startIp, endIp) {
  * Uses os.networkInterfaces() to scan all interfaces. Returns the first match or null.
  */
 export function getServerIpForSubnet(cidr) {
+  let parsed;
+  try {
+    parsed = parseNetwork(cidr);
+  } catch {
+    return null;
+  }
+  const wanted = parsed.family === 6 ? 'IPv6' : 'IPv4';
   const ifaces = os.networkInterfaces();
   for (const addrs of Object.values(ifaces)) {
     for (const addr of addrs) {
-      if (addr.family === 'IPv4' && !addr.internal) {
-        try {
-          if (isIpInSubnet(addr.address, cidr)) return addr.address;
-        } catch {
-          /* skip invalid */
-        }
+      if (addr.family === wanted && !addr.internal) {
+        if (parsedNetworkContains(parsed, addr.address)) return addr.address;
       }
     }
   }
@@ -69,11 +85,7 @@ export function getServerIpForSubnet(cidr) {
  * Check if two ranges overlap.
  */
 export function rangesOverlap(startA, endA, startB, endB) {
-  const a0 = ipToLong(startA),
-    a1 = ipToLong(endA);
-  const b0 = ipToLong(startB),
-    b1 = ipToLong(endB);
-  return a0 <= b1 && b0 <= a1;
+  return addressRangesOverlap(startA, endA, startB, endB);
 }
 
 // IPv4 blocks that are not globally routable. Automatic scans may inherit the
@@ -97,8 +109,22 @@ const NON_GLOBAL_IPV4_RANGES = [
   '240.0.0.0/4',
 ];
 
+// The IPv6 counterpart: unspecified, loopback, unique local, link-local,
+// multicast, documentation, and the IPv4-mapped block.
+const NON_GLOBAL_IPV6_RANGES = [
+  '::/128',
+  '::1/128',
+  '::ffff:0:0/96',
+  'fc00::/7',
+  'fe80::/10',
+  'ff00::/8',
+  '2001:db8::/32',
+];
+
 export function isGloballyRoutableCidr(cidr) {
-  return !NON_GLOBAL_IPV4_RANGES.some((special) => cidrsOverlap(cidr, special));
+  const family = parseNetwork(cidr).family;
+  const special = family === 6 ? NON_GLOBAL_IPV6_RANGES : NON_GLOBAL_IPV4_RANGES;
+  return !special.some((range) => networksOverlap(cidr, range));
 }
 
 /**

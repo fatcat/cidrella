@@ -91,6 +91,19 @@ safely converge when their source changes. Every path that creates, changes,
 removes, imports, migrates, or reconciles one of those facts must converge on
 the same PTR result through the shared DNS/IP lifecycle boundary.
 
+IPv6 topology follows the same model with three differences. The subnet-router
+anycast address is the network address of the prefix and is the only IPv6
+`system` row; there is no broadcast address, no Broadcast range, and no
+broadcast exclusion anywhere. Gateway policy `first` means network plus one
+and `last` means the last address of the prefix, because IPv6 reserves no
+endpoints. An IPv6 network never materializes per-address rows: only topology
+rows and observed or allocated facts persist, reads are sparse, and
+utilization reports counts rather than a total when the prefix exceeds what a
+JavaScript number holds. Reverse projection for IPv6 writes PTR rows only for
+allocated addresses, into one `ip6.arpa` zone at the nibble boundary of the
+prefix (the prefix length rounded down to a multiple of four), and never walks
+the address space for placeholders.
+
 Hostname selection is centralized in `models/ip-lifecycle.js`. A `static_dns`
 or `gateway` address takes its name from static DNS. A `static_dhcp`
 address takes its DHCP Reservation name, and a `dynamic_dhcp` address takes its

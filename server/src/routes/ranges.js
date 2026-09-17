@@ -2,12 +2,18 @@ import { Router } from 'express';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
-  ipToLong,
-  isIpInSubnet,
-  isValidIpv4,
+  addressToBig,
+  isValidAddress,
+  networkContains,
   rangesOverlap,
   validateDisplayString,
 } from '../utils/ip.js';
+
+// Custom range selections are BigInt intervals tagged with their family.
+function selectionFor(startIp, endIp) {
+  const start = addressToBig(startIp);
+  return { family: start.family, start: start.value, end: addressToBig(endIp).value };
+}
 import * as Range from '../models/range.js';
 import { dynamicPoolConflict } from '../models/dhcp-scope.js';
 
@@ -46,8 +52,8 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   if (typeof start_ip !== 'string' || typeof end_ip !== 'string') {
     return res.status(400).json({ error: 'start_ip and end_ip must be strings' });
   }
-  if (!isValidIpv4(start_ip) || !isValidIpv4(end_ip)) {
-    return res.status(400).json({ error: 'start_ip and end_ip must be valid IPv4 addresses' });
+  if (!isValidAddress(start_ip) || !isValidAddress(end_ip)) {
+    return res.status(400).json({ error: 'start_ip and end_ip must be valid IP addresses' });
   }
   if (!Number.isInteger(range_type_id)) {
     return res.status(400).json({ error: 'range_type_id must be an integer' });
@@ -62,12 +68,12 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
   // Validate IPs are within subnet
-  if (!isIpInSubnet(start_ip, subnet.cidr) || !isIpInSubnet(end_ip, subnet.cidr)) {
+  if (!networkContains(subnet.cidr, start_ip) || !networkContains(subnet.cidr, end_ip)) {
     return res.status(400).json({ error: 'IP range must be within the subnet' });
   }
 
   // Validate start <= end
-  if (ipToLong(start_ip) > ipToLong(end_ip)) {
+  if (addressToBig(start_ip).value > addressToBig(end_ip).value) {
     return res.status(400).json({ error: 'Start IP must be less than or equal to end IP' });
   }
 
@@ -89,7 +95,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   // Custom Network Range Types are an organizational layer. They cannot
   // overlap each other, but they may coexist with functional system ranges
   // such as DHCP scopes and gateway markers.
-  const selection = [{ start: ipToLong(start_ip), end: ipToLong(end_ip) }];
+  const selection = [selectionFor(start_ip, end_ip)];
   const existingRanges = rangeType.is_system
     ? db
         .prepare(
@@ -183,34 +189,34 @@ router.put('/set-type', requirePerm('subnets:write'), (req, res) => {
     if (
       typeof startIp !== 'string' ||
       typeof endIp !== 'string' ||
-      !isValidIpv4(startIp) ||
-      !isValidIpv4(endIp)
+      !isValidAddress(startIp) ||
+      !isValidAddress(endIp)
     ) {
       return res
         .status(400)
-        .json({ error: 'Every range needs valid IPv4 start_ip and end_ip values' });
+        .json({ error: 'Every range needs valid start_ip and end_ip addresses' });
     }
-    if (!isIpInSubnet(startIp, subnet.cidr) || !isIpInSubnet(endIp, subnet.cidr)) {
+    if (!networkContains(subnet.cidr, startIp) || !networkContains(subnet.cidr, endIp)) {
       return res.status(400).json({ error: 'Every IP range must be within the subnet' });
     }
-    const start = ipToLong(startIp);
-    const end = ipToLong(endIp);
-    if (start > end) {
+    const selection = selectionFor(startIp, endIp);
+    if (selection.start > selection.end) {
       return res
         .status(400)
         .json({ error: 'Every Start IP must be less than or equal to its End IP' });
     }
-    selections.push({ start, end });
+    selections.push(selection);
   }
 
   // Merge touching selections from Ctrl/Command multi-select into the smallest
   // possible set of stored rows.
-  selections.sort((a, b) => a.start - b.start || a.end - b.end);
+  const bigCompare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  selections.sort((a, b) => bigCompare(a.start, b.start) || bigCompare(a.end, b.end));
   const mergedSelections = [];
   for (const selection of selections) {
     const previous = mergedSelections.at(-1);
-    if (previous && selection.start <= previous.end + 1) {
-      previous.end = Math.max(previous.end, selection.end);
+    if (previous && selection.start <= previous.end + 1n) {
+      previous.end = previous.end > selection.end ? previous.end : selection.end;
     } else {
       mergedSelections.push({ ...selection });
     }
@@ -277,8 +283,8 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 
   const newStart = start_ip ?? range.start_ip;
   const newEnd = end_ip ?? range.end_ip;
-  if (!isValidIpv4(newStart) || !isValidIpv4(newEnd)) {
-    return res.status(400).json({ error: 'start_ip and end_ip must be valid IPv4 addresses' });
+  if (!isValidAddress(newStart) || !isValidAddress(newEnd)) {
+    return res.status(400).json({ error: 'start_ip and end_ip must be valid IP addresses' });
   }
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.subnetId);
@@ -301,11 +307,11 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const effectiveRangeType = newRangeType || rangeType;
 
   // Validate IPs within subnet
-  if (!isIpInSubnet(newStart, subnet.cidr) || !isIpInSubnet(newEnd, subnet.cidr)) {
+  if (!networkContains(subnet.cidr, newStart) || !networkContains(subnet.cidr, newEnd)) {
     return res.status(400).json({ error: 'IP range must be within the subnet' });
   }
 
-  if (ipToLong(newStart) > ipToLong(newEnd)) {
+  if (addressToBig(newStart).value > addressToBig(newEnd).value) {
     return res.status(400).json({ error: 'Start IP must be less than or equal to end IP' });
   }
 
@@ -337,7 +343,7 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
 
   // Custom classifications only conflict with other custom classifications.
   // Functional system ranges are a separate layer and do not affect the tag.
-  const selection = [{ start: ipToLong(newStart), end: ipToLong(newEnd) }];
+  const selection = [selectionFor(newStart, newEnd)];
   const existingRanges = effectiveRangeType.is_system
     ? db
         .prepare(

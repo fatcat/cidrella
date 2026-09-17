@@ -1,4 +1,11 @@
-import { parseCidr, ipToLong, longToIp, applyNameTemplate } from '../utils/ip.js';
+import {
+  parseNetwork,
+  addressToBig,
+  bigToAddress,
+  mergeNetworks,
+  networkNameFromTemplate,
+  topologyAddresses,
+} from '../utils/ip.js';
 import {
   lifecycleRepository as IpAddress,
   reconcileTopologyAddresses,
@@ -8,7 +15,9 @@ import * as DnsTopology from './subnet-dns-topology.js';
 import * as DhcpTopology from './subnet-dhcp-topology.js';
 
 export function createSystemRanges(db, subnetId, parsed, gatewayAddress) {
-  if (parsed.prefix >= 31) return;
+  // Point-to-point and host prefixes reserve nothing. IPv6 reserves only the
+  // network address (the subnet-router anycast address); there is no broadcast.
+  if (topologyAddresses(parsed).length === 0) return;
 
   const types = db
     .prepare(
@@ -25,15 +34,17 @@ export function createSystemRanges(db, subnetId, parsed, gatewayAddress) {
       'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)',
     ).run(subnetId, typeMap['Gateway'], gatewayAddress, gatewayAddress, 'Default gateway');
   }
-  db.prepare(
-    'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)',
-  ).run(subnetId, typeMap['Broadcast'], parsed.broadcast, parsed.broadcast, 'Broadcast address');
+  if (parsed.family === 4) {
+    db.prepare(
+      'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)',
+    ).run(subnetId, typeMap['Broadcast'], parsed.broadcast, parsed.broadcast, 'Broadcast address');
+  }
 }
 
 export function reconcileSubnetTopology(db, subnetId) {
   const subnet = db.prepare('SELECT cidr, gateway_address FROM subnets WHERE id = ?').get(subnetId);
   if (!subnet) return;
-  reconcileTopologyAddresses(db, subnetId, parseCidr(subnet.cidr), subnet.gateway_address);
+  reconcileTopologyAddresses(db, subnetId, parseNetwork(subnet.cidr), subnet.gateway_address);
 }
 
 export function repairDerivedNetworkDhcpState(db) {
@@ -43,7 +54,7 @@ export function repairDerivedNetworkDhcpState(db) {
       .all();
     let scopesRebased = 0;
     for (const subnet of subnets) {
-      const parsed = parseCidr(subnet.cidr);
+      const parsed = parseNetwork(subnet.cidr);
       const gateway =
         subnet.gateway_policy === 'first'
           ? parsed.firstUsable
@@ -54,14 +65,17 @@ export function repairDerivedNetworkDhcpState(db) {
               : subnet.gateway_address;
       db.prepare(
         `
-        UPDATE subnets SET network_address = ?, broadcast_address = ?, prefix_length = ?,
-          total_addresses = ?, gateway_address = ?, updated_at = datetime('now') WHERE id = ?
+        UPDATE subnets SET network_address = ?, broadcast_address = ?, last_address = ?,
+          prefix_length = ?, total_addresses = ?, address_family = ?, gateway_address = ?,
+          updated_at = datetime('now') WHERE id = ?
       `,
       ).run(
         parsed.network,
-        parsed.broadcast,
+        parsed.family === 4 ? parsed.broadcast : null,
+        parsed.last,
         parsed.prefix,
-        parsed.totalAddresses,
+        parsed.size,
+        parsed.family,
         gateway,
         subnet.id,
       );
@@ -131,7 +145,7 @@ export function backfillGatewayPolicies(db) {
   const rows = db.prepare('SELECT id, cidr, gateway_address, gateway_policy FROM subnets').all();
   const apply = db.transaction(() => {
     for (const row of rows) {
-      const policy = gatewayPolicyForAddress(parseCidr(row.cidr), row.gateway_address);
+      const policy = gatewayPolicyForAddress(parseNetwork(row.cidr), row.gateway_address);
       if (row.gateway_policy !== policy) update.run(policy, row.id);
     }
   });
@@ -156,15 +170,15 @@ export function insertSubnet(
     scan_enabled,
   },
 ) {
-  const parsed = parseCidr(cidr);
+  const parsed = parseNetwork(cidr);
   const resolvedPolicy = gateway_policy || gatewayPolicyForAddress(parsed, gateway_address);
   return db
     .prepare(
       `
     INSERT INTO subnets (cidr, name, description, vlan_id, network_address, broadcast_address,
-      prefix_length, total_addresses, gateway_address, gateway_policy, parent_id, folder_id, status, depth,
-      domain_name, scan_interval, scan_enabled)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      last_address, address_family, prefix_length, total_addresses, gateway_address, gateway_policy,
+      parent_id, folder_id, status, depth, domain_name, scan_interval, scan_enabled)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     )
     .run(
@@ -173,9 +187,11 @@ export function insertSubnet(
       description || null,
       vlan_id || null,
       parsed.network,
-      parsed.broadcast,
+      parsed.family === 4 ? parsed.broadcast : null,
+      parsed.last,
+      parsed.family,
       parsed.prefix,
-      parsed.totalAddresses,
+      parsed.size,
       gateway_address || null,
       resolvedPolicy,
       parent_id || null,
@@ -199,19 +215,22 @@ export function copyUserRangesToChild(db, parentId, childId, childParsed) {
     )
     .all(parentId);
 
+  const bigMax = (a, b) => (a > b ? a : b);
+  const bigMin = (a, b) => (a < b ? a : b);
   for (const ur of userRanges) {
-    const urStart = ipToLong(ur.start_ip);
-    const urEnd = ipToLong(ur.end_ip);
-    const clippedStart = Math.max(urStart, childParsed.networkLong);
-    const clippedEnd = Math.min(urEnd, childParsed.broadcastLong);
+    const urStart = addressToBig(ur.start_ip);
+    const urEnd = addressToBig(ur.end_ip);
+    if (urStart.family !== childParsed.family) continue;
+    const clippedStart = bigMax(urStart.value, childParsed.networkBig);
+    const clippedEnd = bigMin(urEnd.value, childParsed.lastBig);
     if (clippedStart <= clippedEnd) {
       db.prepare(
         'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)',
       ).run(
         childId,
         ur.range_type_id,
-        longToIp(clippedStart),
-        longToIp(clippedEnd),
+        bigToAddress(clippedStart, childParsed.family),
+        bigToAddress(clippedEnd, childParsed.family),
         ur.description,
       );
     }
@@ -238,10 +257,15 @@ function moveCustomRangesToSubnet(db, sourceSubnetIds, targetSubnetId) {
   `,
     )
     .all(targetSubnetId)
+    .map((range) => ({
+      ...range,
+      start: addressToBig(range.start_ip),
+      end: addressToBig(range.end_ip).value,
+    }))
     .sort(
       (left, right) =>
         left.range_type_id - right.range_type_id ||
-        ipToLong(left.start_ip) - ipToLong(right.start_ip),
+        (left.start.value < right.start.value ? -1 : left.start.value > right.start.value ? 1 : 0),
     );
   for (let index = 1; index < ranges.length; index++) {
     const previous = ranges[index - 1];
@@ -249,16 +273,19 @@ function moveCustomRangesToSubnet(db, sourceSubnetIds, targetSubnetId) {
     if (
       previous.range_type_id !== current.range_type_id ||
       previous.description !== current.description ||
-      ipToLong(current.start_ip) > ipToLong(previous.end_ip) + 1
+      previous.start.family !== current.start.family ||
+      current.start.value > previous.end + 1n
     )
       continue;
-    const end = Math.max(ipToLong(previous.end_ip), ipToLong(current.end_ip));
+    const end = previous.end > current.end ? previous.end : current.end;
+    const endIp = bigToAddress(end, previous.start.family);
     db.prepare("UPDATE ranges SET end_ip = ?, updated_at = datetime('now') WHERE id = ?").run(
-      longToIp(end),
+      endIp,
       previous.id,
     );
     db.prepare('DELETE FROM ranges WHERE id = ?').run(current.id);
-    previous.end_ip = longToIp(end);
+    previous.end_ip = endIp;
+    previous.end = end;
     ranges.splice(index, 1);
     index--;
   }
@@ -308,7 +335,7 @@ export function updateSubnetDetails(db, subnet, fields) {
       fields.gateway_address !== undefined ? fields.gateway_address : subnet.gateway_address,
       fields.gateway_policy ||
         gatewayPolicyForAddress(
-          parseCidr(subnet.cidr),
+          parseNetwork(subnet.cidr),
           fields.gateway_address !== undefined ? fields.gateway_address : subnet.gateway_address,
         ),
       fields.scan_interval !== undefined ? fields.scan_interval : subnet.scan_interval,
@@ -348,7 +375,7 @@ export function updateSubnetDetails(db, subnet, fields) {
         }
       }
 
-      reconcileTopologyAddresses(db, subnet.id, parseCidr(subnet.cidr), fields.gateway_address);
+      reconcileTopologyAddresses(db, subnet.id, parseNetwork(subnet.cidr), fields.gateway_address);
     }
 
     DnsTopology.ensureForwardZoneForDomainChange(db, fields.domainChange);
@@ -410,16 +437,19 @@ export function configureSubnet(db, subnet, parsed, fields) {
       DnsTopology.createReverseZonesForSubnet(db, subnet);
     }
 
-    if (parsed.prefix >= 20) {
+    // IPv4 networks of /20 and longer materialize a row per usable address.
+    // IPv6 never does: only topology rows and observed or allocated facts
+    // persist, and reads synthesize the rest.
+    if (parsed.family === 4 && parsed.prefix >= 20) {
       const ipStart = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
       const ipEnd = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
-      const gwLong = fields.gateway ? ipToLong(fields.gateway) : null;
+      const gwLong = fields.gateway ? Number(addressToBig(fields.gateway).value) : null;
       const entries = [];
 
       for (let ipLong = ipStart; ipLong <= ipEnd; ipLong++) {
         const isGateway = gwLong !== null && ipLong === gwLong;
         entries.push({
-          ip: longToIp(ipLong),
+          ip: bigToAddress(BigInt(ipLong), 4),
           allocation_state: isGateway ? ALLOCATION_STATE.GATEWAY : ALLOCATION_STATE.UNASSIGNED,
           reservation_note: isGateway ? 'Default gateway' : undefined,
         });
@@ -429,7 +459,7 @@ export function configureSubnet(db, subnet, parsed, fields) {
 
     DnsTopology.ensureForwardZone(db, fields.domain_name);
 
-    if (fields.create_dhcp_scope && parsed.prefix <= 29 && fields.dhcpPool) {
+    if (fields.create_dhcp_scope && parsed.family === 4 && parsed.prefix <= 29 && fields.dhcpPool) {
       DhcpTopology.createAutoScope(
         db,
         subnet.id,
@@ -554,14 +584,11 @@ export function buddyMerge(db, parentId) {
         const b = unallocLeaves[j];
         if (a.prefix_length !== b.prefix_length) continue;
 
-        const combinedPrefix = a.prefix_length - 1;
-        const combinedMask = (0xffffffff << (32 - combinedPrefix)) >>> 0;
-        const aNet = ipToLong(a.network_address);
-        const bNet = ipToLong(b.network_address);
-        if ((aNet & combinedMask) !== (bNet & combinedMask)) continue;
-
-        const combinedNet = Math.min(aNet, bNet);
-        const combinedCidr = `${longToIp(combinedNet)}/${combinedPrefix}`;
+        // Two equal-prefix siblings are buddies exactly when their union is
+        // one aligned network of the next shorter prefix.
+        const union = mergeNetworks([a.cidr, b.cidr]);
+        if (!union.valid) continue;
+        const combinedCidr = union.merged_cidr;
         const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
 
         let destId;
@@ -600,7 +627,7 @@ export function buddyMerge(db, parentId) {
     ) {
       if (
         onlyChild.network_address === parent.network_address &&
-        onlyChild.broadcast_address === parent.broadcast_address
+        onlyChild.prefix_length === parent.prefix_length
       ) {
         deleteSubnetRow(db, onlyChild.id);
       }
@@ -651,7 +678,7 @@ export function mergeSubnets(db, subnets, mergeResult, options = {}) {
   const merge = db.transaction(() => {
     const parentId = subnets[0].parent_id;
     const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-    const mergedParsed = parseCidr(mergeResult.merged_cidr);
+    const mergedParsed = parseNetwork(mergeResult.merged_cidr);
     const allocated = subnets.filter((s) => s.status === 'allocated');
     const mergedPolicy =
       allocated[0]?.gateway_policy ||
@@ -693,7 +720,7 @@ export function mergeSubnets(db, subnets, mergeResult, options = {}) {
       cidr: mergeResult.merged_cidr,
       name: configSource
         ? configSource.name
-        : applyNameTemplate(options.nameTemplate, mergeResult.merged_cidr),
+        : networkNameFromTemplate(options.nameTemplate, mergeResult.merged_cidr),
       description: configSource?.description || null,
       vlan_id: configSource?.vlan_id || null,
       gateway_address: mergedGateway,
@@ -773,7 +800,7 @@ export function applyNameTemplateToSubnets(db, subnetIds, template) {
     for (const id of subnetIds) {
       const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(id);
       if (!subnet) continue;
-      const newName = applyNameTemplate(template, subnet.cidr);
+      const newName = networkNameFromTemplate(template, subnet.cidr);
       if (newName !== subnet.name) {
         db.prepare("UPDATE subnets SET name = ?, updated_at = datetime('now') WHERE id = ?").run(
           newName,

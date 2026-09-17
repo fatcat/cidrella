@@ -1,4 +1,4 @@
-import { ipToLong, isValidIpv4, parseCidr } from '../utils/ip.js';
+import { addressToBig, addressInRange, isValidAddress, parseNetwork } from '../utils/ip.js';
 
 // The one definition of "this DHCP pool would swallow the subnet's gateway".
 //
@@ -13,8 +13,7 @@ import { ipToLong, isValidIpv4, parseCidr } from '../utils/ip.js';
 // Returns null when the pool is safe, otherwise the details of the clash.
 export function gatewayInPoolConflict(subnet, startIp, endIp) {
   if (!subnet?.gateway_address || !startIp || !endIp) return null;
-  const gwLong = ipToLong(subnet.gateway_address);
-  if (gwLong >= ipToLong(startIp) && gwLong <= ipToLong(endIp)) {
+  if (addressInRange(subnet.gateway_address, startIp, endIp)) {
     return { gateway_address: subnet.gateway_address, start_ip: startIp, end_ip: endIp };
   }
   return null;
@@ -30,7 +29,7 @@ export function gatewayInPoolError(conflict) {
 }
 
 export function findEnabledScopeForIp(db, subnetId, ipAddress) {
-  const ipLong = ipToLong(ipAddress);
+  const address = addressToBig(ipAddress);
   const scopes = db
     .prepare(
       `
@@ -43,7 +42,13 @@ export function findEnabledScopeForIp(db, subnetId, ipAddress) {
     .all(subnetId);
   return (
     scopes.find((scope) => {
-      return ipLong >= ipToLong(scope.start_ip) && ipLong <= ipToLong(scope.end_ip);
+      const start = addressToBig(scope.start_ip);
+      const end = addressToBig(scope.end_ip);
+      return (
+        start.family === address.family &&
+        address.value >= start.value &&
+        address.value <= end.value
+      );
     }) || null
   );
 }
@@ -94,15 +99,13 @@ export function addScopePool(
 }
 
 export function staticDnsConflictsInPool(db, startIp, endIp) {
-  const startLong = ipToLong(startIp);
-  const endLong = ipToLong(endIp);
   return db
     .prepare(
       `
     SELECT r.id, r.name, r.value AS ip_address, z.name AS zone_name
     FROM dns_records r
     JOIN dns_zones z ON z.id = r.zone_id
-    WHERE r.type = 'A'
+    WHERE r.type IN ('A', 'AAAA')
       AND r.enabled = 1
       AND z.enabled = 1
       AND z.type = 'forward'
@@ -110,21 +113,27 @@ export function staticDnsConflictsInPool(db, startIp, endIp) {
   `,
     )
     .all()
-    .filter((record) => {
-      if (!isValidIpv4(record.ip_address)) return false;
-      const value = ipToLong(record.ip_address);
-      return value >= startLong && value <= endLong;
-    });
+    .filter(
+      (record) =>
+        isValidAddress(record.ip_address) && addressInRange(record.ip_address, startIp, endIp),
+    );
 }
 
 export function dynamicPoolConflict(db, subnet, startIp, endIp) {
-  const parsed = parseCidr(subnet.cidr);
-  const startLong = ipToLong(startIp);
-  const endLong = ipToLong(endIp);
-  if (startLong <= parsed.networkLong || endLong >= parsed.broadcastLong) {
+  const parsed = parseNetwork(subnet.cidr);
+  const start = addressToBig(startIp);
+  const end = addressToBig(endIp);
+  // IPv4 excludes the network and broadcast addresses; IPv6 excludes the
+  // subnet-router anycast (network) address and has no broadcast.
+  const belowHosts = start.family !== parsed.family || start.value <= parsed.networkBig;
+  const aboveHosts =
+    end.family !== parsed.family ||
+    end.value > parsed.lastBig ||
+    (parsed.family === 4 && end.value >= parsed.lastBig);
+  if (belowHosts || aboveHosts) {
     return {
       type: 'system',
-      ip_address: startLong <= parsed.networkLong ? parsed.network : parsed.broadcast,
+      ip_address: belowHosts ? parsed.network : parsed.family === 4 ? parsed.broadcast : parsed.last,
       error: 'DHCP pools may contain host addresses only',
     };
   }
@@ -157,11 +166,7 @@ export function dynamicPoolConflict(db, subnet, startIp, endIp) {
   `,
     )
     .all(subnet.id)
-    .find((row) => {
-      if (!isValidIpv4(row.ip_address)) return false;
-      const value = ipToLong(row.ip_address);
-      return value >= startLong && value <= endLong;
-    });
+    .find((row) => isValidAddress(row.ip_address) && addressInRange(row.ip_address, startIp, endIp));
   if (protectedRow) {
     return {
       type: protectedRow.allocation_state,
@@ -176,7 +181,7 @@ export function dynamicPoolConflict(db, subnet, startIp, endIp) {
 function computeInheritedOptions(subnet) {
   const inherited = {};
   if (subnet?.gateway_address) inherited[3] = subnet.gateway_address;
-  if (subnet?.cidr) {
+  if (subnet?.cidr && !subnet.cidr.includes(':')) {
     const pfx = parseInt(subnet.cidr.split('/')[1], 10);
     if (pfx >= 0 && pfx <= 32) {
       const mask = pfx === 0 ? 0 : (0xffffffff << (32 - pfx)) >>> 0;
@@ -228,9 +233,11 @@ export function resolveEffectiveScopeOptions(db, scope) {
   const cidr = scope.subnet_cidr || scope.cidr;
   const gateway = scope.subnet_gateway ?? scope.gateway_address;
   if (cidr) {
-    const parsed = parseCidr(cidr);
-    set(1, parsed.mask, 'network');
-    set(28, parsed.broadcast, 'network');
+    const parsed = parseNetwork(cidr);
+    if (parsed.family === 4) {
+      set(1, parsed.mask, 'network');
+      set(28, parsed.broadcast, 'network');
+    }
   }
   if (gateway) set(3, gateway, 'network');
   else {

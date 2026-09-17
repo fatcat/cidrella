@@ -5,7 +5,8 @@
  * All writes go through the IpAddress model.
  */
 
-import { ipToLong } from './ip.js';
+import { parseNetwork } from './ip.js';
+import { parseIp } from './address.js';
 import { activeLeaseSql, infiniteLeaseFirstSql } from './lease-sql.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
@@ -29,27 +30,31 @@ export function invalidateSubnetCache() {
  * Uses a cached leaf subnet list to avoid per-call DB queries.
  */
 export function findSubnetForIp(db, ip) {
-  const ipLong = ipToLong(ip);
+  // A scoped link-local identity (fe80::1%eth0) still belongs to whichever
+  // network holds fe80::/10; the zone is identity, not location.
+  const address = parseIp(String(ip ?? ''), { zoneId: true });
+  if (!address) throw new Error(`Invalid IP address: ${ip}`);
+  const family = address.bits === 32 ? 4 : 6;
 
   if (!leafSubnetCache) {
     leafSubnetCache = db
       .prepare(
         `
-      SELECT id, network_address, prefix_length FROM subnets
+      SELECT id, cidr, network_address, prefix_length FROM subnets
       WHERE (SELECT COUNT(*) FROM subnets c WHERE c.parent_id = subnets.id) = 0
     `,
       )
       .all()
-      .map((s) => ({
-        ...s,
-        netLong: ipToLong(s.network_address),
-        size: Math.pow(2, 32 - s.prefix_length),
-      }));
+      .map((s) => {
+        const parsed = parseNetwork(s.cidr);
+        return { ...s, family: parsed.family, first: parsed.networkBig, last: parsed.lastBig };
+      });
   }
 
   let best = null;
   for (const s of leafSubnetCache) {
-    if (ipLong >= s.netLong && ipLong < s.netLong + s.size) {
+    if (s.family !== family) continue;
+    if (address.value >= s.first && address.value <= s.last) {
       if (!best || s.prefix_length > best.prefix_length) best = s;
     }
   }

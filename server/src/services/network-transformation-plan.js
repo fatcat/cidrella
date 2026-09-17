@@ -1,12 +1,15 @@
 import crypto from 'crypto';
 import {
-  calculateSubnets,
-  isIpInSubnet,
-  isValidIpv4,
+  splitNetwork,
+  subtractNetwork,
+  parseNetwork,
+  parsedNetworkContains,
+  networkContains,
+  isValidAddress,
+  topologyAddresses,
   longToIp,
-  parseCidr,
-  subtractCidr,
 } from '../utils/ip.js';
+import { canonicalizeIp } from '../utils/address.js';
 import { resolveGatewayAddress } from './subnet-topology.js';
 import { defaultDhcpPoolForSubnet } from './subnet-dhcp-topology.js';
 
@@ -67,13 +70,14 @@ export function transformationDependencyToken(db, sourceIds) {
     .all()
     .filter(
       (record) =>
-        isValidIpv4(record.value) && sourceCidrs.some((cidr) => isIpInSubnet(record.value, cidr)),
+        isValidAddress(record.value) &&
+        sourceCidrs.some((cidr) => networkContains(cidr, record.value)),
     );
   return crypto.createHash('sha256').update(JSON.stringify(state)).digest('hex');
 }
 
 function targetGateway(parent, cidr, override = null) {
-  const parsed = parseCidr(cidr);
+  const parsed = parseNetwork(cidr);
   if (override) {
     if (!['first', 'last', 'custom', 'none'].includes(override.policy)) {
       throw new Error(`Invalid gateway policy for ${cidr}`);
@@ -81,9 +85,9 @@ function targetGateway(parent, cidr, override = null) {
     if (override.policy === 'custom') {
       if (
         !override.address ||
-        !isValidIpv4(override.address) ||
-        !isIpInSubnet(override.address, cidr) ||
-        [parsed.network, parsed.broadcast].includes(override.address)
+        !isValidAddress(override.address) ||
+        !parsedNetworkContains(parsed, override.address) ||
+        topologyAddresses(parsed).includes(canonicalizeIp(override.address))
       ) {
         throw new Error(`Custom gateway for ${cidr} must be a usable address in that network`);
       }
@@ -96,15 +100,14 @@ function targetGateway(parent, cidr, override = null) {
   const policy = parent.gateway_policy || 'none';
   if (policy === 'custom') {
     const gateway = parent.gateway_address;
-    const value = gateway ? parseCidr(`${gateway}/32`).networkLong : null;
-    const contained = value != null && value >= parsed.networkLong && value <= parsed.broadcastLong;
+    const contained = Boolean(gateway) && parsedNetworkContains(parsed, gateway);
     return { policy: contained ? 'custom' : null, address: contained ? gateway : null };
   }
   return { policy, address: resolveGatewayAddress(parsed, policy) };
 }
 
 function defaultScopesForTarget(db, sourceIds, target) {
-  const parsed = parseCidr(target.cidr);
+  const parsed = parseNetwork(target.cidr);
   const scopes = stableRows(
     db,
     'SELECT * FROM dhcp_scopes WHERE subnet_id IN (:ids) ORDER BY id',
@@ -252,8 +255,8 @@ export function buildDividePlan(
   let mode;
   if (newPrefix !== undefined) {
     mode = 'equal';
-    const calculated = calculateSubnets(parent.cidr, Number(newPrefix), 256).map(
-      (parsed) => `${parsed.network}/${parsed.prefix}`,
+    const calculated = splitNetwork(parent.cidr, Number(newPrefix), 256).map(
+      (parsed) => parsed.cidr,
     );
     if (selectedCidrs?.length) {
       const selected = new Set(selectedCidrs);
@@ -267,7 +270,7 @@ export function buildDividePlan(
     }
   } else {
     mode = 'carve';
-    targets = [cidr, ...subtractCidr(parent.cidr, cidr)].map((value) => ({
+    targets = [cidr, ...subtractNetwork(parent.cidr, cidr)].map((value) => ({
       cidr: value,
       selected: value === cidr,
     }));
@@ -314,7 +317,7 @@ export function buildMergePlan(db, subnets, mergedCidr) {
   ];
   const gatewayConflict = policies.length > 1 || customAddresses.length > 1;
   const policy = gatewayConflict ? null : policies[0] || 'none';
-  const parsed = parseCidr(mergedCidr);
+  const parsed = parseNetwork(mergedCidr);
   const gateway = policy ? resolveGatewayAddress(parsed, policy, customAddresses[0] || null) : null;
   const conflicts = gatewayConflict ? [{ code: 'gateway_policy_conflict' }] : [];
   for (const field of [

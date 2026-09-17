@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import {
   clearDnsFromIp,
+  findSubnetForIp,
+  invalidateSubnetCache,
   syncDhcpReservationToIp,
   syncDnsToIp,
   syncLeasesToIps,
@@ -357,5 +359,33 @@ describe('allocation-owned hostname sync', () => {
       source: 'placeholder',
     });
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.93').hostname).toBeNull();
+  });
+});
+
+describe('findSubnetForIp across address families', () => {
+  it('matches each family only against its own networks and keeps the longest prefix', () => {
+    db.prepare(
+      `INSERT INTO subnets (cidr, name, network_address, prefix_length, address_family, status)
+       VALUES ('fd00:1::/48', 'v6 lab', 'fd00:1::', 48, 6, 'unallocated'),
+              ('fd00:1:0:1::/64', 'v6 net', 'fd00:1:0:1::', 64, 6, 'allocated')`,
+    ).run();
+    db.prepare(
+      "UPDATE subnets SET parent_id = (SELECT id FROM subnets WHERE cidr = 'fd00:1::/48') WHERE cidr = 'fd00:1:0:1::/64'",
+    ).run();
+    invalidateSubnetCache();
+    try {
+      expect(findSubnetForIp(db, '10.0.1.7')?.id).toBe(subnetId);
+      expect(findSubnetForIp(db, 'fd00:1:0:1::10')?.cidr).toBe('fd00:1:0:1::/64');
+      expect(findSubnetForIp(db, 'FD00:1:0:1:0:0:0:10')?.cidr).toBe('fd00:1:0:1::/64');
+      expect(findSubnetForIp(db, 'fe80::1%eth0')).toBeNull();
+      // The /48 is a container with a child, so it is not a leaf.
+      expect(findSubnetForIp(db, 'fd00:1:0:2::10')).toBeNull();
+      // An IPv4 address never lands in an IPv6 network whose value it coincides with.
+      expect(findSubnetForIp(db, '0.0.0.1')).toBeNull();
+      expect(() => findSubnetForIp(db, 'nope')).toThrow(/Invalid IP address/);
+    } finally {
+      db.prepare("DELETE FROM subnets WHERE cidr IN ('fd00:1:0:1::/64', 'fd00:1::/48')").run();
+      invalidateSubnetCache();
+    }
   });
 });

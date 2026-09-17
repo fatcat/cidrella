@@ -1,5 +1,5 @@
 import { activeLeaseSql } from '../utils/lease-sql.js';
-import { ipToLong, isIpInSubnet, longToIp, parseCidr } from '../utils/ip.js';
+import { addressToBig, parseNetwork, parsedNetworkContains } from '../utils/ip.js';
 import { staticDnsClaimSql } from './dns-record.js';
 import { ADDRESS_TYPE, buildVirtualSubnetIpRow, enrichIpViewRows } from './ip-view.js';
 import * as Range from './range.js';
@@ -9,15 +9,23 @@ function functionalRangeLookup(ranges) {
     .filter((range) => range.range_type_is_system)
     .map((range) => ({
       ...range,
-      startLong: ipToLong(range.start_ip),
-      endLong: ipToLong(range.end_ip),
+      start: addressToBig(range.start_ip).value,
+      end: addressToBig(range.end_ip).value,
     }))
-    .sort((left, right) => left.startLong - right.startLong);
+    .sort((left, right) => (left.start < right.start ? -1 : left.start > right.start ? 1 : 0));
+}
+
+// `ip` is an address string, or a numeric value for callers walking an IPv4
+// prefix. Ranges belong to one subnet, so they share the address's family.
+function addressValue(ip) {
+  if (typeof ip === 'bigint') return ip;
+  if (typeof ip === 'number') return BigInt(ip);
+  return addressToBig(ip).value;
 }
 
 export function functionalRangeForIp(rangeLookup, ip) {
-  const ipLong = typeof ip === 'number' ? ip : ipToLong(ip);
-  return rangeLookup.find((range) => ipLong >= range.startLong && ipLong <= range.endLong) || null;
+  const value = addressValue(ip);
+  return rangeLookup.find((range) => value >= range.start && value <= range.end) || null;
 }
 
 export function getSubnetIpReadContext(db, subnet) {
@@ -81,16 +89,16 @@ export function getCanonicalSubnetIpRow(db, subnet, ipAddress, context = null) {
 }
 
 export function summarizeCanonicalSubnetIps(db, subnet) {
-  const parsed = parseCidr(subnet.cidr);
-  const totalAddresses = parsed.broadcastLong - parsed.networkLong + 1;
+  const parsed = parseNetwork(subnet.cidr);
+  // Null when the prefix holds more addresses than a Number represents (IPv6).
+  const totalAddresses = parsed.size;
   const context = getSubnetIpReadContext(db, subnet);
   const persistedRows = projectPersistedSubnetIpRows(db, subnet, { context });
   const rowsByAddress = new Map(persistedRows.map((row) => [row.ip_address, row]));
-  const protectedAddresses = new Set([
-    longToIp(parsed.networkLong),
-    longToIp(parsed.broadcastLong),
-  ]);
-  if (subnet.gateway_address && isIpInSubnet(subnet.gateway_address, subnet.cidr)) {
+  const protectedAddresses = new Set(
+    parsed.family === 4 ? [parsed.network, parsed.broadcast] : [parsed.network],
+  );
+  if (subnet.gateway_address && parsedNetworkContains(parsed, subnet.gateway_address)) {
     protectedAddresses.add(subnet.gateway_address);
   }
   for (const ipAddress of protectedAddresses) {
@@ -105,7 +113,7 @@ export function summarizeCanonicalSubnetIps(db, subnet) {
     subnet_id: subnet.id,
     total_addresses: totalAddresses,
     assigned_count: assignedCount,
-    unassigned_count: totalAddresses - assignedCount,
+    unassigned_count: totalAddresses == null ? null : totalAddresses - assignedCount,
     online_count: canonicalRows.filter((row) => Boolean(row.is_online)).length,
     rogue_count: canonicalRows.filter((row) => row.address_type === ADDRESS_TYPE.ROGUE).length,
   };

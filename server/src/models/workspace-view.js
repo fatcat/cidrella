@@ -2,7 +2,15 @@ import { enrichIpViewRows } from './ip-view.js';
 import { getScopePools } from './dhcp-scope.js';
 import { fqdnForRecordName, ipForPtrRecord } from './dns-record.js';
 import { canonicalizeIp, sortKey } from '../utils/address.js';
-import { ipToLong, longToIp, isIpInSubnet, isValidIpv4 } from '../utils/ip.js';
+import {
+  ipToLong,
+  longToIp,
+  isValidIpv4,
+  isValidAddress,
+  networkContains,
+  addressInRange,
+} from '../utils/ip.js';
+import { parseIp } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
 
 const DNS_SORT_FIELDS = new Set([
@@ -57,12 +65,10 @@ function allocatedLeaves(db) {
 }
 
 function containingSubnet(subnets, ip) {
-  // Managed subnets are currently IPv4. Keep address-family validation at
-  // this boundary so AAAA records never reach the IPv4-only CIDR helpers.
-  if (!ip || !isValidIpv4(ip)) return null;
+  if (!ip || !isValidAddress(ip)) return null;
   return (
     subnets
-      .filter((subnet) => isIpInSubnet(ip, subnet.cidr))
+      .filter((subnet) => networkContains(subnet.cidr, ip))
       .sort((a, b) => b.prefix_length - a.prefix_length || a.id - b.id)[0] || null
   );
 }
@@ -100,7 +106,7 @@ function networkMatches(db, subnet, query, ipRows) {
     return true;
   }
   const exactIp = canonicalizeIp(query);
-  if (exactIp && isValidIpv4(exactIp) && isIpInSubnet(exactIp, subnet.cidr)) return true;
+  if (exactIp && networkContains(subnet.cidr, exactIp)) return true;
   return ipRows.some(
     (row) =>
       row.subnet_id === subnet.id &&
@@ -406,27 +412,20 @@ function allScopes(db) {
 }
 
 function poolForAddress(scopes, subnetId, ip) {
+  if (!isValidAddress(ip)) return undefined;
   return scopes.find(
     (scope) =>
       scope.subnet_id === subnetId &&
-      scope.pools.some(
-        (pool) =>
-          isValidIpv4(ip) &&
-          ipToLong(ip) >= ipToLong(pool.start_ip) &&
-          ipToLong(ip) <= ipToLong(pool.end_ip),
-      ),
+      scope.pools.some((pool) => addressInRange(ip, pool.start_ip, pool.end_ip)),
   );
 }
 
 function scopesForAddress(scopes, subnetId, ip) {
-  if (!isValidIpv4(ip)) return [];
-  const value = ipToLong(ip);
+  if (!isValidAddress(ip)) return [];
   return scopes.filter(
     (scope) =>
       scope.subnet_id === subnetId &&
-      scope.pools.some(
-        (pool) => value >= ipToLong(pool.start_ip) && value <= ipToLong(pool.end_ip),
-      ),
+      scope.pools.some((pool) => addressInRange(ip, pool.start_ip, pool.end_ip)),
   );
 }
 
@@ -484,6 +483,9 @@ function virtualPoolProjection(scopes, excludedKeys, queries, descending = false
       });
     }
     for (const pool of scope.pools) {
+      // The interval walk below is 32-bit. IPv6 pools are never enumerated:
+      // their addresses appear only as persisted leases and reservations.
+      if (parseIp(pool.start_ip)?.bits !== 32) continue;
       subnets.get(scope.subnet_id).intervals.push({
         start: ipToLong(pool.start_ip),
         end: ipToLong(pool.end_ip),
@@ -718,14 +720,7 @@ export function scopeMatches(scope, query, addressRows) {
     return true;
   }
   const exactIp = canonicalizeIp(query);
-  if (
-    exactIp &&
-    isValidIpv4(exactIp) &&
-    scope.pools.some(
-      (pool) =>
-        ipToLong(exactIp) >= ipToLong(pool.start_ip) && ipToLong(exactIp) <= ipToLong(pool.end_ip),
-    )
-  ) {
+  if (exactIp && scope.pools.some((pool) => addressInRange(exactIp, pool.start_ip, pool.end_ip))) {
     return true;
   }
   return addressRows.some(

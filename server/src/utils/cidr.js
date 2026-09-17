@@ -86,9 +86,10 @@ function safeNumber(big) {
  * they fit in a safe integer and null otherwise (a /64 does not fit).
  *
  * Usable range: IPv4 excludes the network and broadcast addresses except on
- * /31 (RFC 3021) and /32. IPv6 has no broadcast, so every address is usable;
- * the subnet-router anycast address is classified by the lifecycle model,
- * not excluded here.
+ * /31 (RFC 3021) and /32. IPv6 has no broadcast; it excludes only the
+ * subnet-router anycast address (the network address), except on /127 and
+ * /128, so a gateway policy of `first` means network plus one in both
+ * families.
  *
  * IPv4 results also carry the legacy Number fields `broadcast`,
  * `networkLong`, `broadcastLong`, `totalAddresses` and `usableCount`.
@@ -124,10 +125,10 @@ export function parseNetwork(cidr) {
   const last = network | (all ^ mask);
   const size = last - network + 1n;
 
-  const hostBitsReserved = family === 4 && prefix < bits - 1;
-  const firstUsableBig = hostBitsReserved ? network + 1n : network;
-  const lastUsableBig = hostBitsReserved ? last - 1n : last;
-  const usable = hostBitsReserved ? size - 2n : size;
+  const reservesEndpoints = prefix < bits - 1;
+  const firstUsableBig = reservesEndpoints ? network + 1n : network;
+  const lastUsableBig = reservesEndpoints && family === 4 ? last - 1n : last;
+  const usable = lastUsableBig - firstUsableBig + 1n;
 
   const parsed = {
     family,
@@ -322,6 +323,52 @@ export function networkNameFromTemplate(template, cidr) {
     .replace(/%3/g, groups[2])
     .replace(/%4/g, groups[3])
     .replace(/%bitmask/g, String(parsed.prefix));
+}
+
+/** True for a plain address of either family: no zone id, no prefix. */
+export function isValidAddress(ip) {
+  if (typeof ip !== 'string') return false;
+  return parseIp(ip, { zoneId: false }) !== null;
+}
+
+/** True when the address is inside the parsed network. A different family is never inside. */
+export function parsedNetworkContains(parsed, ip) {
+  if (typeof ip !== 'string') return false;
+  const address = parseIp(ip, { zoneId: false });
+  if (!address) return false;
+  const family = address.bits === IPV4_BITS ? 4 : 6;
+  if (family !== parsed.family) return false;
+  return address.value >= parsed.networkBig && address.value <= parsed.lastBig;
+}
+
+/**
+ * The addresses topology reserves in a network: the network address for both
+ * families (the subnet-router anycast address in IPv6) and the broadcast
+ * address for IPv4. Point-to-point and host prefixes reserve nothing.
+ */
+export function topologyAddresses(parsed) {
+  if (parsed.prefix >= parsed.bits - 1) return [];
+  return parsed.family === 4 ? [parsed.network, parsed.broadcast] : [parsed.network];
+}
+
+/** The address `offset` places after the network address, in the network's family. */
+export function addressAtOffset(parsed, offset) {
+  return bigToAddress(parsed.networkBig + BigInt(offset), parsed.family);
+}
+
+/** True when the two inclusive address intervals share an address. Different families never do. */
+export function addressRangesOverlap(startA, endA, startB, endB) {
+  const a0 = addressToBig(startA);
+  const a1 = addressToBig(endA);
+  const b0 = addressToBig(startB);
+  const b1 = addressToBig(endB);
+  if (a0.family !== b0.family) return false;
+  return a0.value <= b1.value && b0.value <= a1.value;
+}
+
+/** True when `ip` lies inside the inclusive interval, same family only. */
+export function addressInRange(ip, startIp, endIp) {
+  return addressRangesOverlap(ip, ip, startIp, endIp);
 }
 
 // Well-known reserved and private ranges, both families.

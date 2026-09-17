@@ -129,6 +129,23 @@ desired model use the same words differently.
    plus interface/network context. A zone identifier such as `%eth0` is parsed
    at an input boundary and stored as a separate interface reference, never as
    part of the canonical address text.
+10. **IPv6 network shape.** A network row records its `address_family`. An IPv6
+    network has no broadcast address and no Broadcast range; its subnet-router
+    anycast address is the network address and is the only IPv6 `system`
+    projection. Gateway policy `first` is network plus one and `last` is the
+    last address of the prefix. `total_addresses` is null when the prefix is
+    larger than a JavaScript number represents; no code enumerates or
+    materializes an IPv6 prefix, and reverse projection writes PTR rows only
+    for allocated IPv6 addresses.
+11. **DHCPv6 mode.** Each IPv6 network chooses `slaac`, `stateless`, or
+    `stateful`. Only a `stateful` scope creates `dynamic_dhcp` claims from
+    DHCPv6 leases and accepts DHCP Reservations, both keyed by DUID and IAID.
+    SLAAC observations under any mode become `slaac` claims with their
+    lifetimes. Rogue DHCPv6 and Router Advertisement detection is deferred.
+12. **IPv6 discovery.** Active discovery for IPv6 is observation-driven: an
+    all-nodes multicast probe followed by the Neighbor Discovery table, never
+    a sweep of the prefix. Passive liveness accepts IPv6 query sources except
+    link-local, loopback, and unspecified addresses.
 
 ## Address-family Contract
 
@@ -146,7 +163,11 @@ not infer IPv4 behavior from the absence of an IPv6 branch.
 | Broadcast | Protected broadcast address | None |
 | Gateway source | Subnet configuration or DHCPv4 scope option | Configuration or trusted Router Advertisement |
 | Link-local context | Not applicable | Interface/network identity required |
-| Reverse DNS | `in-addr.arpa` PTR | Nibble-reversed `ip6.arpa` PTR |
+| Reverse DNS | `in-addr.arpa` PTR, placeholders for every usable address | Nibble-reversed `ip6.arpa` PTR, allocated addresses only |
+| Address materialization | Rows for prefixes of /20 and longer | Never; sparse reads only |
+| DHCP client identity | MAC | DUID plus IAID |
+| DHCP mode | Scope with pool | `slaac`, `stateless`, or `stateful` per network |
+| Rogue DHCP detection | Probe on UDP 67/68 | Deferred |
 
 All addresses must pass through `server/src/utils/address.js` for family
 classification and canonical formatting. IPv4-mapped IPv6 input folds to the
