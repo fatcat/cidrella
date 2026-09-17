@@ -39,7 +39,7 @@ export function ensureForwardZoneForDomainChange(db, domainChange) {
 
 export function deleteARecordsByIps(db, ips) {
   let removed = 0;
-  const delRec = db.prepare("DELETE FROM dns_records WHERE type = 'A' AND value = ?");
+  const delRec = db.prepare("DELETE FROM dns_records WHERE type IN ('A', 'AAAA') AND value = ?");
   for (const ip of ips) {
     removed += delRec.run(ip).changes;
   }
@@ -48,6 +48,6 @@ export function deleteARecordsByIps(db, ips) {
 
 export function deleteARecordByIdentity(db, id, ip) {
   return db
-    .prepare("DELETE FROM dns_records WHERE id = ? AND type = 'A' AND value = ?")
+    .prepare("DELETE FROM dns_records WHERE id = ? AND type IN ('A', 'AAAA') AND value = ?")
     .run(id, ip);
 }

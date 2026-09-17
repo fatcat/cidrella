@@ -30,16 +30,18 @@ export function validateDnsmasqConfigValue(value, opts = {}) {
 }
 
 /**
- * PTR record `name` column is the unreversed octet list BEFORE it's joined
- * with the reverse-zone name. Restricting to digits and dots means the
- * generated `ptr-record=<name>.<zone>,<value>` line is safe by construction.
+ * PTR record `name` column is the unreversed octet list (in-addr.arpa) or
+ * nibble list (ip6.arpa) BEFORE it's joined with the reverse-zone name.
+ * Restricting to hex digits and dots means the generated
+ * `ptr-record=<name>.<zone>,<value>` line is safe by construction. 32 nibbles
+ * joined by dots is 63 characters, so the length cap covers both families.
  */
 export function isValidPtrName(name) {
   return (
     typeof name === 'string' &&
     name.length > 0 &&
     name.length <= 63 &&
-    /^[0-9]+(\.[0-9]+)*$/.test(name)
+    /^[0-9a-f]+(\.[0-9a-f]+)*$/.test(name)
   );
 }
 

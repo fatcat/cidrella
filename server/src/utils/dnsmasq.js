@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync, execSync } from 'child_process';
-import { parseCidr } from './ip.js';
+import { parseNetwork, isValidAddress } from './ip.js';
 import { getSetting } from '../db/init.js';
 import { selectInterfaceNames } from './interface-config.js';
 import {
@@ -175,11 +175,18 @@ export function generateReverseName(cidr) {
 }
 
 /**
- * Generate all /24 reverse zone names for a CIDR.
- * Networks /24+ → 1 zone, /17-/23 → multiple /24 zones, /16 → /16 zone, etc.
+ * Generate the reverse zone names for a CIDR.
+ * IPv4: /24+ → 1 zone, /17-/23 → multiple /24 zones, /16 → /16 zone, etc.
+ * IPv6: one ip6.arpa zone at the nibble boundary of the prefix (the prefix
+ * length rounded down to a multiple of four), never a walk of the space.
  */
 export function generateReverseNames(cidr) {
-  const parsed = parseCidr(cidr);
+  const parsed = parseNetwork(cidr);
+  if (parsed.family === 6) {
+    const zoneNibbles = Math.max(1, Math.floor(parsed.prefix / 4));
+    const nibbles = parsed.networkBig.toString(16).padStart(32, '0').split('');
+    return [`${nibbles.slice(0, zoneNibbles).reverse().join('.')}.ip6.arpa`];
+  }
   const octets = parsed.network.split('.').map(Number);
 
   if (parsed.prefix >= 24) {
@@ -217,7 +224,7 @@ export function regenerateHostsDir(db) {
       .prepare(
         `
       SELECT name, value FROM dns_records
-      WHERE zone_id = ? AND type = 'A' AND enabled = 1
+      WHERE zone_id = ? AND type IN ('A', 'AAAA') AND enabled = 1
     `,
       )
       .all(zone.id);
@@ -260,12 +267,13 @@ export function regenerateConfDir(db) {
       .prepare(
         `
       SELECT name, type, value, priority, weight, port, ttl FROM dns_records
-      WHERE zone_id = ? AND type NOT IN ('A', 'PTR') AND enabled = 1
+      WHERE zone_id = ? AND type NOT IN ('A', 'AAAA', 'PTR') AND enabled = 1
     `,
       )
       .all(zone.id);
 
-    // PTR records with hostname values (not bare IPs) generate ptr-record= lines
+    // PTR records with hostname values (not bare-IP placeholders of either
+    // family) generate ptr-record= lines.
     const ptrRecords = db
       .prepare(
         `
@@ -273,7 +281,8 @@ export function regenerateConfDir(db) {
       WHERE zone_id = ? AND type = 'PTR' AND enabled = 1 AND value LIKE '%.%' AND value NOT GLOB '[0-9]*.[0-9]*.[0-9]*.[0-9]*'
     `,
       )
-      .all(zone.id);
+      .all(zone.id)
+      .filter((ptr) => !isValidAddress(ptr.value));
 
     if (records.length === 0 && ptrRecords.length === 0) continue;
 

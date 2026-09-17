@@ -34,8 +34,15 @@ import { findSubnetForIp } from '../utils/ip-sync.js';
 const router = Router();
 
 // Validation helpers
-import { isValidIpv4, isValidDomain, validateDisplayString, ipToLong } from '../utils/ip.js';
-import { isBlockedIpv4 } from '../utils/url-guard.js';
+import {
+  isValidIpv4,
+  isValidAddress,
+  isValidDomain,
+  validateDisplayString,
+  networkContains,
+} from '../utils/ip.js';
+import { canonicalizeIp, isValidIpv6 } from '../utils/address.js';
+import { isBlockedAddress } from '../utils/url-guard.js';
 import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
 import { validateSoaFields, isIntInRange } from '../utils/validation.js';
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
@@ -65,17 +72,18 @@ function normalizeDnsName(name) {
     .toLowerCase();
 }
 
+// A and AAAA records both allocate an address through the same lifecycle.
+function isAddressType(type) {
+  return type === 'A' || type === 'AAAA';
+}
+
 function findSubnetDomainForIp(db, ip) {
-  if (!isValidIpv4(ip)) return null;
-  // Was a fourth hand-rolled copy of the octet arithmetic in a file that could
-  // simply import it (duplicate-logic audit #11). isValidIpv4 above already
-  // guarantees ipToLong will not throw.
-  const ipLong = ipToLong(ip);
+  if (!isValidAddress(ip)) return null;
 
   const subnets = db
     .prepare(
       `
-    SELECT id, network_address, prefix_length, domain_name
+    SELECT id, cidr, domain_name
     FROM subnets
     WHERE status = 'allocated'
       AND domain_name IS NOT NULL
@@ -86,13 +94,7 @@ function findSubnetDomainForIp(db, ip) {
     .all();
 
   for (const subnet of subnets) {
-    const netOctets = subnet.network_address.split('.').map(Number);
-    const netLong =
-      ((netOctets[0] << 24) >>> 0) + (netOctets[1] << 16) + (netOctets[2] << 8) + netOctets[3];
-    const size = 2 ** (32 - subnet.prefix_length);
-    if (ipLong >= netLong && ipLong < netLong + size) {
-      return normalizeDnsName(subnet.domain_name);
-    }
+    if (networkContains(subnet.cidr, ip)) return normalizeDnsName(subnet.domain_name);
   }
 
   return null;
@@ -134,6 +136,10 @@ function validateRecord(
     case 'A':
       if (!isValidRecordName(name)) return 'Invalid hostname';
       if (!isValidIpv4(value)) return 'Invalid IPv4 address';
+      break;
+    case 'AAAA':
+      if (!isValidRecordName(name)) return 'Invalid hostname';
+      if (!isValidIpv6(value)) return 'Invalid IPv6 address';
       break;
     case 'CNAME':
       {
@@ -181,7 +187,7 @@ function validateRecord(
       // digits-and-dots means the generated ptr-record=<name>.<zone>,<value>
       // line is safe by construction, no newline / "=" / "," injection.
       if (!isValidPtrName(name))
-        return 'PTR name must be numeric-octets-and-dots (e.g., "5" or "5.12")';
+        return 'PTR name must be dotted octets (e.g. "5" or "5.12") or hex nibbles (e.g. "f.e")';
       if (!isValidDomain(value)) return 'Invalid target hostname';
       break;
     default:
@@ -304,14 +310,14 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
   if (typeof type !== 'string' || !['forward', 'reverse'].includes(type)) {
     return res.status(400).json({ error: 'Zone type must be forward or reverse' });
   }
-  // Forward zones: a normal domain. Reverse zones: ONLY the dotted-decimal
-  // in-addr.arpa form the generator produces (`<octet>.<octet>.<octet>.in-addr.arpa`).
-  // The old check accepted anything ending in `.in-addr.arpa` with no charset
-  // or length guard, so a newline-laden name smuggled arbitrary dnsmasq
-  // directives into conf.d/zone-*.conf (the name is interpolated raw at the
-  // ptr-record line). Digits and dots only closes that hole and still accepts
-  // every legitimate reverse zone.
-  const REVERSE_ZONE_RE = /^(?:\d{1,3}\.){1,3}in-addr\.arpa$/;
+  // Forward zones: a normal domain. Reverse zones: ONLY the forms the generator
+  // produces, dotted-decimal `<octet>.<octet>.<octet>.in-addr.arpa` or nibble
+  // `<hex>.<hex>...ip6.arpa`. The old check accepted anything ending in
+  // `.in-addr.arpa` with no charset or length guard, so a newline-laden name
+  // smuggled arbitrary dnsmasq directives into conf.d/zone-*.conf (the name is
+  // interpolated raw at the ptr-record line). Digits, hex nibbles and dots only
+  // closes that hole and still accepts every legitimate reverse zone.
+  const REVERSE_ZONE_RE = /^(?:(?:\d{1,3}\.){1,3}in-addr\.arpa|(?:[0-9a-f]\.){1,32}ip6\.arpa)$/;
   if (!isValidDomain(name) && !REVERSE_ZONE_RE.test(name)) {
     return res.status(400).json({ error: 'Invalid zone name' });
   }
@@ -506,7 +512,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: 'Name, type, and value are required' });
   }
 
-  const validTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
+  const validTypes = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
   if (!validTypes.includes(type)) {
     return res.status(400).json({ error: `Type must be one of: ${validTypes.join(', ')}` });
   }
@@ -523,12 +529,20 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   }
 
   const normalizedName =
-    type === 'A' && zone.type === 'forward'
+    isAddressType(type) && zone.type === 'forward'
       ? normalizeARecordName(db, name, value, zone.name)
       : type === 'CNAME' && zone.type === 'forward'
         ? normalizeRecordNameForZone(name, zone.name)
         : name;
-  const normalizedValue = type === 'CNAME' ? normalizeDnsName(value) : value;
+  // An AAAA value is stored in its canonical spelling so equality holds
+  // across the lifecycle tables; validation below still sees the raw input
+  // when it is not an address at all.
+  const normalizedValue =
+    type === 'CNAME'
+      ? normalizeDnsName(value)
+      : type === 'AAAA'
+        ? canonicalizeIp(value) || value
+        : value;
 
   const validationError = validateRecord(
     type,
@@ -545,7 +559,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   );
   if (validationError) return res.status(400).json({ error: validationError });
 
-  if (type === 'A' && zone.type === 'forward') {
+  if (isAddressType(type) && zone.type === 'forward') {
     const conflict = findAHostnameConflict(db, normalizedValue, normalizedName, zone.name);
     if (conflict) {
       return res.status(409).json({
@@ -554,14 +568,15 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     }
   }
 
-  // Check for duplicate A records
-  if (type === 'A') {
+  // Check for duplicate address records
+  if (isAddressType(type)) {
     const dup = db
       .prepare(
         'SELECT id FROM dns_records WHERE zone_id = ? AND name = ? AND type = ? AND value = ?',
       )
       .get(zone.id, normalizedName, type, normalizedValue);
-    if (dup) return res.status(409).json({ error: 'Duplicate A record (same name and value)' });
+    if (dup)
+      return res.status(409).json({ error: `Duplicate ${type} record (same name and value)` });
   }
 
   // Warn about CNAME conflicts
@@ -599,7 +614,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
         },
         { forcePtr: !!force_ptr },
       );
-      if (type === 'A' && zone.type === 'forward' && zone.enabled && created.record.enabled) {
+      if (isAddressType(type) && zone.type === 'forward' && zone.enabled && created.record.enabled) {
         allocateStaticDns(db, normalizedName, normalizedValue, zone.name, created.record.id);
       }
       return created.record;
@@ -664,12 +679,17 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   const rawNewName = name ?? record.name;
   const rawNewValue = value ?? record.value;
   const newName =
-    newType === 'A' && zone.type === 'forward'
+    isAddressType(newType) && zone.type === 'forward'
       ? normalizeARecordName(db, rawNewName, rawNewValue, zone.name)
       : newType === 'CNAME' && zone.type === 'forward'
         ? normalizeRecordNameForZone(rawNewName, zone.name)
         : rawNewName;
-  const newValue = newType === 'CNAME' ? normalizeDnsName(rawNewValue) : rawNewValue;
+  const newValue =
+    newType === 'CNAME'
+      ? normalizeDnsName(rawNewValue)
+      : newType === 'AAAA'
+        ? canonicalizeIp(rawNewValue) || rawNewValue
+        : rawNewValue;
   const newPriority = priority !== undefined ? priority : record.priority;
   const newWeight = weight !== undefined ? weight : record.weight;
   const newPort = port !== undefined ? port : record.port;
@@ -696,7 +716,7 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   );
   if (validationError) return res.status(400).json({ error: validationError });
 
-  if (newType === 'A' && zone.type === 'forward') {
+  if (isAddressType(newType) && zone.type === 'forward') {
     const conflict = findAHostnameConflict(db, newValue, newName, zone.name, record.id);
     if (conflict) {
       return res.status(409).json({
@@ -736,9 +756,9 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     });
 
     const oldWasActiveAddress =
-      record.type === 'A' && zone.type === 'forward' && zone.enabled && record.enabled;
+      isAddressType(record.type) && zone.type === 'forward' && zone.enabled && record.enabled;
     const newIsActiveAddress =
-      newType === 'A' && zone.type === 'forward' && zone.enabled && result.enabled;
+      isAddressType(newType) && zone.type === 'forward' && zone.enabled && result.enabled;
     if (
       oldWasActiveAddress &&
       (!newIsActiveAddress || record.value !== newValue || record.name !== newName)
@@ -776,7 +796,12 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
   const delZone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(record.zone_id);
   db.transaction(() => {
     deleteRecord(db, delZone, record);
-    if (record.type === 'A' && delZone?.type === 'forward' && delZone.enabled && record.enabled) {
+    if (
+      isAddressType(record.type) &&
+      delZone?.type === 'forward' &&
+      delZone.enabled &&
+      record.enabled
+    ) {
       deallocateStaticDns(db, record.name, record.value, delZone.name);
     }
   })();
@@ -836,17 +861,19 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   }
   if (Array.isArray(servers)) {
     for (const s of servers) {
-      if (!isValidIpv4(s)) return res.status(400).json({ error: `Invalid IP address: ${s}` });
+      if (!isValidAddress(s)) return res.status(400).json({ error: `Invalid IP address: ${s}` });
     }
   }
+  // Store the canonical spelling; dnsmasq takes IPv6 literals in server= as is.
+  const canonicalServers = Array.isArray(servers) ? servers.map((s) => canonicalizeIp(s)) : servers;
 
   const db = getDb();
   const oldRow = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
 
   // Preserve the existing forwarder list when recursion is off and none sent,
   // so toggling recursion back on restores them.
-  if (Array.isArray(servers) && servers.length > 0) {
-    setSetting('dns_upstream_servers', JSON.stringify(servers));
+  if (Array.isArray(canonicalServers) && canonicalServers.length > 0) {
+    setSetting('dns_upstream_servers', JSON.stringify(canonicalServers));
   }
   setSetting('dns_no_recursion', noRecursion ? 'true' : 'false');
 
@@ -857,7 +884,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
 
   audit(req.user.id, 'dns_forwarders_updated', 'dns', null, {
     old: oldRow?.value,
-    new: JSON.stringify(servers),
+    new: JSON.stringify(canonicalServers),
     no_recursion: noRecursion,
   });
 
@@ -917,13 +944,13 @@ function validateUpstreamList(arr, mode) {
     if (
       !Array.isArray(u.addresses) ||
       u.addresses.length === 0 ||
-      !u.addresses.every((a) => isValidIpv4(a))
+      !u.addresses.every((a) => isValidAddress(a))
     ) {
-      return 'each upstream needs a non-empty addresses[] of IPv4 strings';
+      return 'each upstream needs a non-empty addresses[] of IP address strings';
     }
     // SSRF guard: the stub connects directly to these IPs (DoT and DoH alike), so
     // refuse private/loopback/metadata/reserved targets, same ranges url-guard blocks.
-    const blocked = u.addresses.find((a) => isBlockedIpv4(a));
+    const blocked = u.addresses.find((a) => isBlockedAddress(a));
     if (blocked) return `upstream address ${blocked} is in a private/reserved range`;
     if (typeof u.hostname !== 'string' || !u.hostname) return 'each upstream needs a hostname';
     // doh_url is only used by DoH (https) mode; DoT (tls) never reads it.
@@ -1009,8 +1036,8 @@ router.put('/soa-defaults', requirePerm('dns:write'), (req, res) => {
 // POST /api/dns/forwarders/test: test if a DNS forwarder is reachable
 router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
   const { ip } = req.body;
-  if (!ip || !isValidIpv4(ip)) {
-    return res.status(400).json({ error: 'Valid IPv4 address required' });
+  if (!ip || !isValidAddress(ip)) {
+    return res.status(400).json({ error: 'Valid IP address required' });
   }
 
   const result = await testDnsForwarder(ip);
@@ -1022,14 +1049,18 @@ router.get('/resolve', requirePerm('dns:read'), async (req, res) => {
   const { name } = req.query;
   if (!name) return res.status(400).json({ error: 'name parameter required' });
 
-  try {
-    const dns = await import('dns');
-    const { resolve4 } = dns.promises;
-    const ips = await resolve4(name);
-    res.json({ name, ips });
-  } catch (err) {
-    res.status(404).json({ error: `Could not resolve ${name}`, details: err.code });
+  const dns = await import('dns');
+  const { resolve4, resolve6 } = dns.promises;
+  const [v4, v6] = await Promise.allSettled([resolve4(name), resolve6(name)]);
+  const ips = [
+    ...(v4.status === 'fulfilled' ? v4.value : []),
+    ...(v6.status === 'fulfilled' ? v6.value : []),
+  ];
+  if (ips.length === 0) {
+    const failure = v4.status === 'rejected' ? v4.reason : v6.reason;
+    return res.status(404).json({ error: `Could not resolve ${name}`, details: failure?.code });
   }
+  res.json({ name, ips });
 });
 
 export default router;

@@ -2,6 +2,8 @@ import dns from 'dns';
 import http from 'http';
 import https from 'https';
 import net from 'net';
+import { parseIp, formatIp } from './address.js';
+import { networkContains } from './cidr.js';
 import { PassThrough, Transform, pipeline } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 
@@ -57,6 +59,35 @@ const BLOCKED_IPV4_RANGES = [
 export function isBlockedIpv4(ip) {
   if (net.isIP(ip) !== 4) return false; // not a v4 literal, caller validates format separately
   return BLOCKED_IPV4_RANGES.some((range) => ipInCidr(ip, range));
+}
+
+// The IPv6 counterpart for literal upstream addresses: unspecified, loopback,
+// unique local, link-local, multicast, documentation, plus the IPv4-mapped and
+// 6to4/Teredo blocks, whose embedded IPv4 gets the IPv4 check.
+const BLOCKED_IPV6_RANGES = [
+  '::/128',
+  '::1/128',
+  '::ffff:0:0/96',
+  '64:ff9b::/96',
+  '2001::/32',
+  '2001:db8::/32',
+  '2002::/16',
+  'fc00::/7',
+  'fe80::/10',
+  'ff00::/8',
+];
+
+export function isBlockedIpv6(ip) {
+  const parsed = parseIp(ip, { zoneId: false, mapV4: false });
+  if (!parsed || parsed.bits !== 128) return false;
+  const mapped = parseIp(ip, { zoneId: false, mapV4: true });
+  if (mapped && mapped.bits === 32) return isBlockedIpv4(formatIp(mapped.value, 32));
+  return BLOCKED_IPV6_RANGES.some((range) => networkContains(range, formatIp(parsed.value, 128)));
+}
+
+/** Either family: a literal address in a private, loopback, reserved or scoped range. */
+export function isBlockedAddress(ip) {
+  return isBlockedIpv4(ip) || isBlockedIpv6(ip);
 }
 
 /**

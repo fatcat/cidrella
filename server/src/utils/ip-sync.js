@@ -118,7 +118,7 @@ export function resolveCanonicalHostname(db, subnetId, ip) {
     SELECT r.name, z.name AS zone_name
     FROM dns_records r
     JOIN dns_zones z ON z.id = r.zone_id
-    WHERE r.type = 'A'
+    WHERE r.type IN ('A', 'AAAA')
       AND r.enabled = 1
       AND z.enabled = 1
       AND z.type = 'forward'

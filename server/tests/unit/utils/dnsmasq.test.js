@@ -19,8 +19,8 @@ function makeDb({ aRecords = [], otherRecords = [], ptrRecords = [], zone = {} }
       return {
         all() {
           if (sql.includes('FROM dns_zones')) return zones;
-          if (sql.includes("type = 'A'")) return aRecords;
-          if (sql.includes("type NOT IN ('A', 'PTR')")) return otherRecords;
+          if (sql.includes("type IN ('A', 'AAAA')")) return aRecords;
+          if (sql.includes("type NOT IN ('A', 'AAAA', 'PTR')")) return otherRecords;
           if (sql.includes("type = 'PTR'")) return ptrRecords;
           return [];
         },
@@ -249,5 +249,45 @@ describe('TXT record escaping', () => {
 
     const conf = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'conf.d', 'zone-10.conf'), 'utf-8');
     expect(conf).toContain('txt-record=meta.the-mcnultys.org,"say \\"hi\\" via C:\\\\path"');
+  });
+});
+
+describe('IPv6 emission', () => {
+  it('writes AAAA hosts lines and nibble ptr-record lines, skipping IPv6 placeholders', () => {
+    regenerateConfigs(
+      makeDb({
+        aRecords: [
+          { name: 'host4', value: '10.0.3.231' },
+          { name: 'host6', value: 'fd00:6::10' },
+        ],
+        ptrRecords: [
+          { name: '0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0', value: 'host6.the-mcnultys.org' },
+          { name: '1.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0', value: 'fd00:6::11' },
+        ],
+      }),
+    );
+    const hosts = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'hosts.d', 'zone-10.hosts'), 'utf8');
+    expect(hosts).toContain('10.0.3.231 host4.the-mcnultys.org');
+    expect(hosts).toContain('fd00:6::10 host6.the-mcnultys.org');
+    const conf = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'conf.d', 'zone-10.conf'), 'utf8');
+    expect(conf).toContain(
+      'ptr-record=0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.the-mcnultys.org,host6.the-mcnultys.org',
+    );
+    expect(conf).not.toContain('fd00:6::11');
+  });
+});
+
+describe('generateReverseNames', () => {
+  it('names one ip6.arpa zone at the nibble boundary of the prefix', async () => {
+    const { generateReverseNames } = await import('../../../src/utils/dnsmasq.js');
+    expect(generateReverseNames('fd00:6::/64')).toEqual(['0.0.0.0.0.0.0.0.6.0.0.0.0.0.d.f.ip6.arpa']);
+    expect(generateReverseNames('2001:db8:1234::/50')).toEqual(['4.3.2.1.8.b.d.0.1.0.0.2.ip6.arpa']);
+    expect(generateReverseNames('2001:db8::/32')).toEqual(['8.b.d.0.1.0.0.2.ip6.arpa']);
+    expect(generateReverseNames('10.0.0.0/22')).toEqual([
+      '0.0.10.in-addr.arpa',
+      '1.0.10.in-addr.arpa',
+      '2.0.10.in-addr.arpa',
+      '3.0.10.in-addr.arpa',
+    ]);
   });
 });

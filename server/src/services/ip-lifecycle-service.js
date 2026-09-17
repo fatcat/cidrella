@@ -203,7 +203,7 @@ export function reconcileStaticDnsZone(db, previousZone, currentZone = null, rec
     SELECT id, name, value
     FROM dns_records
     WHERE zone_id = ?
-      AND type = 'A'
+      AND type IN ('A', 'AAAA')
       AND enabled = 1
       AND COALESCE(source, 'manual') = 'manual'
   `,

@@ -513,7 +513,7 @@ export function findRetirementCandidates(db, cutoff, now, limit = 500) {
           AND NOT EXISTS (
             SELECT 1 FROM dns_records r
             JOIN dns_zones z ON z.id = r.zone_id
-            WHERE r.type = 'A' AND r.enabled = 1 AND z.enabled = 1
+            WHERE r.type IN ('A', 'AAAA') AND r.enabled = 1 AND z.enabled = 1
               AND z.type = 'forward'
               AND COALESCE(r.source, 'manual') = 'manual'
               AND r.value = ip_addresses.ip_address

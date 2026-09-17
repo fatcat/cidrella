@@ -1,6 +1,7 @@
 import { observeDhcpLeases } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from '../utils/after-commit.js';
-import { ipToLong } from '../utils/ip.js';
+import { addressInRange, isValidAddress } from '../utils/ip.js';
+import { addressFamily } from '../utils/address.js';
 import { resolveEffectiveScopeOptions } from './dhcp-scope.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
@@ -123,12 +124,11 @@ export function syncDhcpDnsRecords(db, leases) {
   );
   for (const domain of subnetDomains.values()) allDomains.add(domain);
   const domainFor = (subnetId, ip) => {
-    const value = ipToLong(ip);
-    const scope = (scopesBySubnet.get(subnetId) || []).find((candidate) =>
-      candidate.pools.some(
-        (pool) => value >= ipToLong(pool.start_ip) && value <= ipToLong(pool.end_ip),
-      ),
-    );
+    const scope = isValidAddress(ip)
+      ? (scopesBySubnet.get(subnetId) || []).find((candidate) =>
+          candidate.pools.some((pool) => addressInRange(ip, pool.start_ip, pool.end_ip)),
+        )
+      : null;
     return scope?.effective_domain || subnetDomains.get(subnetId) || null;
   };
 
@@ -176,13 +176,15 @@ export function syncDhcpDnsRecords(db, leases) {
   }
   let configChanged = false;
 
+  // A DHCPv6 lease names its address with an AAAA record.
   const findRecord = db.prepare(`
-    SELECT id, source FROM dns_records WHERE zone_id = ? AND name = ? AND type = 'A' AND value = ?
+    SELECT id, source FROM dns_records WHERE zone_id = ? AND name = ? AND type = ? AND value = ?
   `);
   const insertDhcp = db.prepare(`
     INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
-    VALUES (?, ?, 'A', ?, ?, 1)
+    VALUES (?, ?, ?, ?, ?, 1)
   `);
+  const recordTypeFor = (ip) => (addressFamily(ip) === 6 ? 'AAAA' : 'A');
   const touchDhcp = db.prepare(`
     UPDATE dns_records SET updated_at = datetime('now') WHERE id = ?
   `);
@@ -220,7 +222,7 @@ export function syncDhcpDnsRecords(db, leases) {
     // case-sensitive. See REVIEW.md, duplicate-logic audit #8.
     const recordName = normalizeRecordNameForZone(l.hostname, domain);
 
-    const existing = findRecord.get(zone.id, recordName, l.ip);
+    const existing = findRecord.get(zone.id, recordName, recordTypeFor(l.ip), l.ip);
     if (existing) {
       if (existing.source === 'dhcp' || existing.source === 'reservation') {
         if (existing.source !== (l.source || 'dhcp')) {
@@ -234,7 +236,7 @@ export function syncDhcpDnsRecords(db, leases) {
         if (syncPtr(zone, recordName, l.ip, l.source || 'dhcp')) configChanged = true;
       }
     } else {
-      const result = insertDhcp.run(zone.id, recordName, l.ip, l.source || 'dhcp');
+      const result = insertDhcp.run(zone.id, recordName, recordTypeFor(l.ip), l.ip, l.source || 'dhcp');
       activeRecordIds.add(result.lastInsertRowid);
       activeIps.add(l.ip);
       syncPtr(zone, recordName, l.ip, l.source || 'dhcp');

@@ -46,6 +46,34 @@ describe('PTR record ownership', () => {
     expect(DnsRecord.ipForPtrRecord('host', '1.0.10.in-addr.arpa')).toBeNull();
   });
 
+  it('projects nibble PTR owners in ip6.arpa zones to canonical IPv6', () => {
+    const zone = '1.0.0.0.0.0.0.0.6.0.0.0.0.0.d.f.ip6.arpa';
+    expect(DnsRecord.ipForPtrRecord('0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0', zone)).toBe('fd00:6:0:1::10');
+    // Too few nibbles, or a label that is not a nibble.
+    expect(DnsRecord.ipForPtrRecord('0.1', zone)).toBeNull();
+    expect(DnsRecord.ipForPtrRecord('0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.g', zone)).toBeNull();
+  });
+
+  it('lists ip6.arpa candidates from the /124 zone up to /4, most specific first', () => {
+    const candidates = DnsRecord.reversePtrCandidates('fd00:6::10');
+    expect(candidates).toHaveLength(31);
+    expect(candidates[0]).toEqual({
+      name: '1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.6.0.0.0.0.0.d.f.ip6.arpa',
+      ptrName: '0',
+    });
+    expect(candidates[15]).toEqual({
+      name: '0.0.0.0.0.0.0.0.6.0.0.0.0.0.d.f.ip6.arpa',
+      ptrName: '0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0',
+    });
+    expect(candidates[30]).toEqual({
+      name: 'f.ip6.arpa',
+      ptrName: '0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.6.0.0.0.0.0.d',
+    });
+    expect(DnsRecord.reversePtrCandidates('10.0.1.25')[0].ptrName).toBe('25');
+    expect(DnsRecord.reversePtrCandidates('fe80::1%eth0')).toEqual([]);
+    expect(DnsRecord.reversePtrCandidates('nope')).toEqual([]);
+  });
+
   it('fills missing managed rows and promotes placeholders to canonical protocol names', () => {
     const subnetId = db
       .prepare(
