@@ -368,10 +368,13 @@ so P8 was a verification pass on safe fixtures plus two fixes:
   query parameters survive, and the old `cidrella_analytics_tab` index is still read and written
   (`client/tests/unit/views/Analytics.test.js`). The Dashboard, Performance and Intelligence
   panels are mounted unchanged, the same call as P7's leaves.
-- Q-04 anomaly triage: `/anomalies-preview` still exists (sample and live modes) but nothing
-  links to it since the banners went. The user wants a merge of elements from the preview and
-  from the current Anomalies panel; waiting on which elements. Screenshots of both are in
-  `screenshots/p9-anomalies-*.png`.
+- Q-04 anomaly triage, DEFERRED 2026-09-17 by the user: both views stay as they are, the
+  current Anomalies panel at `/analytics?view=anomalies` and the concept at
+  `/anomalies-preview` (sample and live modes; nothing links to it since the banners went, so
+  the URL is the way in). The merge of elements from each is decided on a system with real
+  anomaly data; the dev box only has learning-baseline clients, so the current view shows
+  nothing to judge by. Screenshots of both as of today: `screenshots/p9-anomalies-*.png`.
+  Element inventory of each is in the session notes of that date.
 - Setup wizard revival is a user want for later, recorded in TODO.md, not part of P9.
 
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
