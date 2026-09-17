@@ -26,6 +26,20 @@ const SHARED = [
   'isSubnetOf',
   'cidrsOverlap',
   'subtractCidr',
+  // The family-generic layer the IPv6 work builds on.
+  'addressToBig',
+  'bigToAddress',
+  'parseNetwork',
+  'isValidNetwork',
+  'normalizeNetwork',
+  'networkContains',
+  'networksOverlap',
+  'isNetworkWithin',
+  'subtractNetwork',
+  'splitNetwork',
+  'mergeNetworks',
+  'networkNameFromTemplate',
+  'validateNetworkBounds',
 ];
 
 describe('client ip.js shares the server CIDR core', () => {

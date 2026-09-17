@@ -32,6 +32,19 @@ export {
   isSubnetOf,
   cidrsOverlap,
   subtractCidr,
+  addressToBig,
+  bigToAddress,
+  parseNetwork,
+  isValidNetwork,
+  normalizeNetwork,
+  networkContains,
+  networksOverlap,
+  isNetworkWithin,
+  subtractNetwork,
+  splitNetwork,
+  mergeNetworks,
+  networkNameFromTemplate,
+  validateNetworkBounds,
 } from '@shared/cidr.js';
 
 /**

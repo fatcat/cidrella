@@ -25,6 +25,19 @@ export {
   isSubnetOf,
   cidrsOverlap,
   subtractCidr,
+  addressToBig,
+  bigToAddress,
+  parseNetwork,
+  isValidNetwork,
+  normalizeNetwork,
+  networkContains,
+  networksOverlap,
+  isNetworkWithin,
+  subtractNetwork,
+  splitNetwork,
+  mergeNetworks,
+  networkNameFromTemplate,
+  validateNetworkBounds,
 } from './cidr.js';
 
 export function isIpInRange(ip, startIp, endIp) {

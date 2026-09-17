@@ -149,6 +149,40 @@ change this entry proposed. Nothing to do.
 
 ---
 
+## IPv6, in flight (started 2026-09-17)
+
+Graduated from TODO.md ("implement IPv6 for management, DNS, DHCP and blocklists") the day
+the first code landed. State of the ground, verified by reading and by probing the dev API:
+phase 0 (the `address.js` core, the `ip_addresses` family/sort-key/interface/DUID columns, the
+`slaac` state, the governance rules) is in place; nothing user-visible takes a v6 address yet.
+`POST /subnets` answers "Invalid CIDR notation" for `fd00:1234::/64`, the DNS write route
+accepts only A/CNAME/MX/TXT/SRV/PTR (reads already join on AAAA), the dnsmasq writer emits
+only IPv4 listen addresses, the DHCP scope and lease tables have no v6 fields, and the scanner
+has no neighbor-discovery path.
+
+**Step 1, 128-bit CIDR math: landed.** `server/src/utils/cidr.js` has a family-generic layer
+in BigInt on top of `address.js`: `parseNetwork` (both families; `size`/`usable` are Numbers
+when safe, null otherwise, BigInt views are non-enumerable so API JSON never trips on them),
+`isValidNetwork`, `normalizeNetwork`, `networkContains`, `networksOverlap`, `isNetworkWithin`,
+`subtractNetwork`, `splitNetwork`, `mergeNetworks`, `networkNameFromTemplate` (hextets for
+v6), `validateNetworkBounds` with five v6 reserved ranges, and `addressToBig`/`bigToAddress`.
+IPv4-mapped input folds to its v4 identity with the prefix reduced by 96. The IPv4 exports
+every caller uses are thin wrappers over it and still refuse IPv6 on purpose, so today's
+behavior is unchanged until the layers above are ready. `server/tests/unit/utils/cidr.test.js`
+covers it (mutation-checked seven ways); the client sees it through `@shared/cidr.js`.
+
+**Next steps, in order:**
+1. Schema: `subnets` stores `broadcast_address` and an integer `total_addresses`, neither of
+   which fits a /64; needs `address_family`, `last_address`, and a size that survives 2^64
+   (text or BigInt-safe), plus the prefix rules for v6 carve/merge.
+2. Routes: `POST /subnets`, divide, merge, carve and the workspace reads switch from the
+   IPv4 wrappers to the generic layer, family-aware validation and errors.
+3. DNS: AAAA on the write route and in the lifecycle service (PTR under ip6.arpa).
+4. dnsmasq: v6 listen addresses, `dhcp-range` with `ra-names`/`slaac`, `enable-ra`.
+5. DHCPv6 and SLAAC: scope and lease tables with DUID/IAID, the lease parser, retirement.
+6. Discovery: neighbor tables and ICMPv6 probes.
+7. UI: the workspace address grid and table on v6 sizes (no per-address rows for a /64).
+
 ## Deferred design work
 
 ### Workspace UI implementation (0.5.0), in flight

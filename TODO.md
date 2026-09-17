@@ -14,7 +14,8 @@ TODO list for CIDRella
 - [ ] revive the setup wizard (`client/src/views/SetupWizard.vue` has had no route since v0.4.0
       and a fresh database seeds the admin, so `/api/setup/status` never asks for it; decide
       what first-run setup should cover before wiring it back)
-- [ ] implement IPv6 for management, DNS, DHCP and blocklists
+- [ ] implement IPv6 for management, DNS, DHCP and blocklists (in flight since 2026-09-17,
+      tracked in BACKLOG.md under "IPv6, in flight")
 - [ ] rework the Analytics page, current implementation is really just a placeholder
 
 # DONE
