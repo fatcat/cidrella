@@ -23,6 +23,14 @@ describe('ipToLong', () => {
   });
 });
 
+describe('ipToLong on bad input', () => {
+  it('throws instead of returning a plausible number', () => {
+    for (const bad of ['abc', '999.1.1.1', '1.2.3', '1.2.3.4.5', null, 42]) {
+      expect(() => ipToLong(bad)).toThrow(/Invalid IP address/);
+    }
+  });
+});
+
 describe('longToIp', () => {
   it('converts 0 to 0.0.0.0', () => {
     expect(longToIp(0)).toBe('0.0.0.0');
@@ -49,10 +57,20 @@ describe('parseCidr', () => {
     expect(result.lastUsable).toBe('192.168.1.254');
   });
 
-  it('parses /32', () => {
-    const result = parseCidr('10.0.0.1/32');
-    expect(result.network).toBe('10.0.0.1');
-    expect(result.broadcast).toBe('10.0.0.1');
+  it('parses /32 as a single host and /31 as a point-to-point pair (RFC 3021)', () => {
+    const host = parseCidr('10.0.0.1/32');
+    expect(host.network).toBe('10.0.0.1');
+    expect(host.broadcast).toBe('10.0.0.1');
+    expect(host.firstUsable).toBe('10.0.0.1');
+    expect(host.lastUsable).toBe('10.0.0.1');
+    expect(host.usableCount).toBe(1);
+    const pair = parseCidr('10.0.0.0/31');
+    expect([pair.firstUsable, pair.lastUsable, pair.usableCount]).toEqual([
+      '10.0.0.0',
+      '10.0.0.1',
+      2,
+    ]);
+    expect(parseCidr('192.168.1.0/24').mask).toBe('255.255.255.0');
   });
 
   it('normalizes host bits', () => {

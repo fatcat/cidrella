@@ -67,7 +67,13 @@ returned HTTP 200 and all 6,717,440 bytes. After the change the database, root `
 `.git/config` and `server/src/index.js` all return 403 while `server/src/utils/address.js`
 still returns 200 and the app runs. The client root entry IS load-bearing, as suspected.
 
-### Duplicate-logic audit #3: the `ip.js` cross-tier pair
+### ~~Duplicate-logic audit #3: the `ip.js` cross-tier pair~~ [FIXED 2026-09-17]
+
+**Done on `dev/0.5.0`:** `server/src/utils/cidr.js` is the one body, both `ip.js` modules
+re-export it, semantics settled on the server's (validated `ipToLong`, RFC 3021 /31 and /32,
+parsed objects from `calculateSubnets`), product wording "networks" on both tiers, and
+`client/tests/unit/utils/ip-shared.test.js` fails on any client-local fork. Details in
+`REVIEW.md` #3. The original notes follow for history.
 
 **No longer blocked, but it is design work, not a quick fix.** The shared-module seam it waited
 on exists and works: `client/shared-modules.js`, the `@shared` alias wired into both

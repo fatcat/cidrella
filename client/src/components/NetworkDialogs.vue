@@ -1931,7 +1931,15 @@ const dividePreviewSubnets = computed(() => {
   const parentCidr = props.selectedNode.data.cidr;
   const targetPrefix = props.selectedNode.data.prefix_length + divideSteps.value;
   if (targetPrefix > 32) return [];
-  return calculateSubnets(parentCidr, targetPrefix);
+  // The shared helper returns parsed networks and throws on an impossible
+  // split; the preview wants the CIDR strings and an empty list.
+  try {
+    return calculateSubnets(parentCidr, targetPrefix).map(
+      (child) => `${child.network}/${child.prefix}`,
+    );
+  } catch {
+    return [];
+  }
 });
 
 const gatewayPolicyOptions = [
@@ -1986,7 +1994,7 @@ watch(
     for (const cidr of cidrs) {
       const existing = divideGatewayPolicies.value[cidr];
       if (existing) next[cidr] = existing;
-      else if (parent.gateway_address && isIpInSubnet(parent.gateway_address, cidr)) {
+      else if (isValidIpv4(parent.gateway_address) && isIpInSubnet(parent.gateway_address, cidr)) {
         next[cidr] = { policy: 'custom', address: parent.gateway_address };
       } else next[cidr] = { policy: 'none', address: null };
     }

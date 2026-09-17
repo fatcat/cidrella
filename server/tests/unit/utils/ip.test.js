@@ -340,7 +340,7 @@ describe('calculateSubnets', () => {
 
   it('rejects excessive division before enumerating addresses', () => {
     expect(() => calculateSubnets('0.0.0.0/0', 32, 256)).toThrow(
-      'Cannot divide into more than 256 subnets',
+      'Cannot divide into more than 256 networks',
     );
   });
 
@@ -403,10 +403,10 @@ describe('canMergeCidrs', () => {
 
   it('rejects duplicate and overlapping inputs explicitly', () => {
     expect(canMergeCidrs(['192.168.1.0/25', '192.168.1.0/25']).error).toBe(
-      'Subnets must not overlap',
+      'Networks must not overlap',
     );
     expect(canMergeCidrs(['192.168.1.0/24', '192.168.1.128/25']).error).toBe(
-      'Subnets must not overlap',
+      'Networks must not overlap',
     );
   });
 
