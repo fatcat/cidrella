@@ -2,14 +2,40 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-// Mock the probe engine so route tests don't touch sockets.
+// Mock the probe engines so route tests don't touch sockets or the kernel.
 vi.mock('../../../src/utils/dhcp-probe.js', () => ({
-  runProbe: vi.fn(async () => ({ supported: true, interfaces: 1, offers: 2, rogues: [] })),
   getProbeState: vi.fn(() => ({ lastProbeAt: '2026-06-08T00:00:00.000Z', probeSupported: true })),
+}));
+vi.mock('../../../src/utils/dhcpv6-probe.js', () => ({
+  getProbe6State: vi.fn(() => ({
+    lastProbeAt: '2026-06-08T00:00:00.000Z',
+    probeSupported: true,
+    probeInProgress: false,
+    lastProbeOutcome: 'ok',
+    lastProbeError: null,
+  })),
+}));
+vi.mock('../../../src/utils/ra-monitor.js', () => ({
+  getRaState: vi.fn(() => ({
+    lastCheckAt: '2026-06-08T00:00:00.000Z',
+    lastOutcome: 'ok',
+    lastError: null,
+    supported: true,
+    supportedInterfaces: ['eth0'],
+    unsupportedInterfaces: [],
+  })),
+}));
+vi.mock('../../../src/utils/rogue-detection.js', () => ({
+  runRogueDetection: vi.fn(async () => ({
+    dhcp: { supported: true, interfaces: 1, offers: 2, rogues: [] },
+    dhcpv6: { supported: true, interfaces: 1, advertisements: 1, rogues: [] },
+    routerAdvertisements: { supported: true, interfaces: 1, routers: 1, rogues: [] },
+  })),
 }));
 
 const { default: rogueRouter } = await import('../../../src/routes/rogue-dhcp.js');
-const { runProbe, getProbeState } = await import('../../../src/utils/dhcp-probe.js');
+const { getProbeState } = await import('../../../src/utils/dhcp-probe.js');
+const { runRogueDetection: runProbe } = await import('../../../src/utils/rogue-detection.js');
 const RogueDhcp = await import('../../../src/models/rogue-dhcp.js');
 const { default: request } = await import('supertest');
 
@@ -39,6 +65,11 @@ describe('GET /status', () => {
     expect(res.body).toHaveProperty('intervalMin');
     expect(res.body).toHaveProperty('probeSupported', true);
     expect(res.body).toHaveProperty('unacknowledged', 0);
+    expect(res.body.dhcpv6).toMatchObject({ probeSupported: true, lastProbeOutcome: 'ok' });
+    expect(res.body.routerAdvertisements).toMatchObject({
+      supported: true,
+      supportedInterfaces: ['eth0'],
+    });
   });
 
   // A clean probe logs nothing, so "healthy but quiet" and "has not run in
@@ -136,6 +167,54 @@ describe('authorized-server allowlist', () => {
       .send({ server_ip: '10.0.0.7' });
     expect(dup.status).toBe(409);
   });
+
+  it('accepts an IPv6 link-local and stores it canonically', async () => {
+    const res = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_ip: 'FE80:0:0:0:0:0:0:1', description: 'edge router' });
+    expect(res.status).toBe(201);
+    const list = await request(app).get('/api/dhcp/rogue/authorized');
+    expect(list.body[0].server_ip).toBe('fe80::1');
+  });
+
+  it('authorizes a DHCPv6 server by DUID alone, and 409s on the same DUID again', async () => {
+    const res = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_duid: '00:01:00:01:2A:2B:2C:2D:AA:BB:CC:DD:EE:FF' });
+    expect(res.status).toBe(201);
+    const list = await request(app).get('/api/dhcp/rogue/authorized');
+    expect(list.body[0]).toMatchObject({
+      server_ip: null,
+      server_duid: '00:01:00:01:2a:2b:2c:2d:aa:bb:cc:dd:ee:ff',
+    });
+    const dup = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_duid: '00:01:00:01:2a:2b:2c:2d:aa:bb:cc:dd:ee:ff' });
+    expect(dup.status).toBe(409);
+  });
+
+  it('authorizes a router by MAC alone, once', async () => {
+    const first = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_mac: 'AA:BB:CC:DD:EE:11' });
+    expect(first.status).toBe(201);
+    const dup = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_mac: 'aa:bb:cc:dd:ee:11' });
+    expect(dup.status).toBe(409);
+    expect((await request(app).get('/api/dhcp/rogue/authorized')).body[0].server_mac).toBe(
+      'aa:bb:cc:dd:ee:11',
+    );
+  });
+
+  it('rejects an entry with no identity at all, and a malformed DUID', async () => {
+    const empty = await request(app).post('/api/dhcp/rogue/authorized').send({ description: 'x' });
+    expect(empty.status).toBe(400);
+    const bad = await request(app)
+      .post('/api/dhcp/rogue/authorized')
+      .send({ server_duid: '00:zz' });
+    expect(bad.status).toBe(400);
+  });
 });
 
 describe('events', () => {
@@ -160,6 +239,38 @@ describe('events', () => {
     const clear = await request(app).delete(`/api/dhcp/rogue/events/${id}`);
     expect(clear.status).toBe(200);
     expect((await request(app).get('/api/dhcp/rogue/events')).body).toHaveLength(0);
+  });
+
+  it('keeps DHCPv6 and Router Advertisement findings from the same host apart', async () => {
+    RogueDhcp.upsertRogueEvent(db, {
+      kind: 'dhcpv6',
+      server_ip: 'fe80::bad',
+      server_mac: 'de:ad:be:ef:00:01',
+      server_duid: '00:01:00:01:2a:2b:2c:2d:de:ad:be:ef:00:01',
+      offered_ip: 'fd00:1234::1500',
+      offered_dns: 'fd00:1234::bad',
+      iface: 'eth0',
+    });
+    RogueDhcp.upsertRogueEvent(db, {
+      kind: 'ra',
+      server_ip: 'fe80::bad',
+      server_mac: 'de:ad:be:ef:00:01',
+      offered_gateway: 'fe80::bad',
+      advertised_prefixes: '2001:db8:bad::/64',
+      iface: 'eth0',
+    });
+    const list = await request(app).get('/api/dhcp/rogue/events');
+    expect(list.body).toHaveLength(2);
+    const byKind = Object.fromEntries(list.body.map((e) => [e.kind, e]));
+    expect(byKind.dhcpv6).toMatchObject({
+      address_family: 6,
+      server_duid: '00:01:00:01:2a:2b:2c:2d:de:ad:be:ef:00:01',
+      offered_ip: 'fd00:1234::1500',
+    });
+    expect(byKind.ra).toMatchObject({
+      address_family: 6,
+      advertised_prefixes: '2001:db8:bad::/64',
+    });
   });
 
   it('acknowledge-all silences every unacknowledged event', async () => {
@@ -193,16 +304,47 @@ describe('POST /probe', () => {
   // successful scan is the whole reason a dead prober can go unnoticed.
   it('says the probe was skipped instead of reporting a clean scan', async () => {
     vi.mocked(runProbe).mockResolvedValueOnce({
-      supported: true,
-      skipped: true,
-      skipReason: 'in-progress',
-      interfaces: 0,
-      offers: 0,
-      rogues: [],
+      dhcp: {
+        supported: true,
+        skipped: true,
+        skipReason: 'in-progress',
+        interfaces: 0,
+        offers: 0,
+        rogues: [],
+      },
+      dhcpv6: { supported: true, interfaces: 0, advertisements: 0, rogues: [] },
+      routerAdvertisements: { supported: true, interfaces: 0, routers: 0, rogues: [] },
     });
     const res = await request(app).post('/api/dhcp/rogue/probe');
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ skipped: true, skipReason: 'in-progress' });
+  });
+
+  it('reports each IPv6 detector on its own, and counts every kind of rogue', async () => {
+    vi.mocked(runProbe).mockResolvedValueOnce({
+      dhcp: { supported: true, interfaces: 1, offers: 1, rogues: [{ server_ip: '10.0.0.9' }] },
+      dhcpv6: {
+        supported: false,
+        error: 'cannot bind UDP :546 (EACCES)',
+        interfaces: 0,
+        advertisements: 0,
+        rogues: [],
+      },
+      routerAdvertisements: {
+        supported: true,
+        interfaces: 1,
+        routers: 2,
+        rogues: [{ server_ip: 'fe80::bad' }],
+      },
+    });
+    const res = await request(app).post('/api/dhcp/rogue/probe');
+    expect(res.status).toBe(200);
+    expect(res.body.rogueCount).toBe(2);
+    expect(res.body.dhcpv6).toMatchObject({
+      supported: false,
+      error: 'cannot bind UDP :546 (EACCES)',
+    });
+    expect(res.body.routerAdvertisements).toMatchObject({ routers: 2, rogueCount: 1 });
   });
 
   it('names the failure when the probe cannot start', async () => {

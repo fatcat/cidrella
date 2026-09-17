@@ -59,7 +59,7 @@ import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geo
 import { startBlocklistScheduler } from './utils/blocklist.js';
 import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
-import { startRogueDhcpScheduler } from './utils/dhcp-probe.js';
+import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import {
   applyInterfaceConfig,

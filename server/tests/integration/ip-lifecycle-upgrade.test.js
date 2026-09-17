@@ -184,7 +184,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
 
     expect(
       upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
-    ).toBe(72);
+    ).toBe(73);
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     expect(
@@ -251,7 +251,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     );
     expect(report).toMatchObject({
       schema_before: 54,
-      schema_after: 72,
+      schema_after: 73,
       outcome: 'complete',
       reconciliation: { inserted: expect.any(Number), updated: expect.any(Number) },
     });
@@ -322,7 +322,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
     );
     expect(completed).toMatchObject({
       schema_before: 54,
-      schema_after: 72,
+      schema_after: 73,
       outcome: 'complete',
       reconciliation: { updated: expect.any(Number), inserted: expect.any(Number) },
     });

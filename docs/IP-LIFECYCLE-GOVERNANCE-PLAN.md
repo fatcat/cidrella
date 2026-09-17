@@ -141,7 +141,11 @@ desired model use the same words differently.
     `stateful`. Only a `stateful` scope creates `dynamic_dhcp` claims from
     DHCPv6 leases and accepts DHCP Reservations, both keyed by DUID and IAID.
     SLAAC observations under any mode become `slaac` claims with their
-    lifetimes. Rogue DHCPv6 and Router Advertisement detection is deferred.
+    lifetimes. Rogue DHCPv6 servers are found by an active SOLICIT probe and
+    identified by DUID; rogue routers by the default routes the kernel learned
+    from Router Advertisements, identified by link-local and MAC. A router
+    whose MAC matches a configured gateway is trusted. Both are detection
+    only and never touch allocation state.
 12. **IPv6 discovery.** Active discovery for IPv6 is observation-driven: an
     all-nodes multicast probe followed by the Neighbor Discovery table, plus a
     unicast echo to every address CIDRella already holds an allocation for,
@@ -174,7 +178,7 @@ not infer IPv4 behavior from the absence of an IPv6 branch.
 | Address materialization | Rows for prefixes of /20 and longer | Never; sparse reads only |
 | DHCP client identity | MAC | DUID plus IAID |
 | DHCP mode | Scope with pool | `slaac`, `stateless`, or `stateful` per network |
-| Rogue DHCP detection | Probe on UDP 67/68 | Deferred |
+| Rogue DHCP detection | Probe on UDP 67/68 | SOLICIT probe on UDP 546/547 by DUID; rogue routers from kernel-learned RA routes |
 
 All addresses must pass through `server/src/utils/address.js` for family
 classification and canonical formatting. IPv4-mapped IPv6 input folds to the

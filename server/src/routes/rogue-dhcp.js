@@ -1,8 +1,14 @@
 import { Router } from 'express';
 import { getDb, getSetting, setSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { isValidIpv4, isValidMac } from '../utils/ip.js';
-import { runProbe, getProbeState } from '../utils/dhcp-probe.js';
+import { isValidMac } from '../utils/ip.js';
+import { isValidAddress } from '../utils/cidr.js';
+import { canonicalizeIp } from '../utils/address.js';
+import { normalizeDuid } from '../utils/duid.js';
+import { getProbeState } from '../utils/dhcp-probe.js';
+import { getProbe6State } from '../utils/dhcpv6-probe.js';
+import { getRaState } from '../utils/ra-monitor.js';
+import { runRogueDetection } from '../utils/rogue-detection.js';
 import * as RogueDhcp from '../models/rogue-dhcp.js';
 
 const router = Router();
@@ -42,6 +48,11 @@ router.get('/status', requirePerm('dhcp:read'), (req, res) => {
     healthy: !enabled || (probeSupported && !stale),
     stale,
     unacknowledged: RogueDhcp.countUnacknowledged(db),
+    // The IPv6 detectors run on the same schedule. Each reports its own
+    // support, because a host can serve DHCPv4 with no IPv6 at all, or accept
+    // Router Advertisements on one interface and not another.
+    dhcpv6: getProbe6State(),
+    routerAdvertisements: getRaState(),
   });
 });
 
@@ -78,31 +89,50 @@ router.delete('/events/:id', requirePerm('dhcp:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/dhcp/rogue/probe: trigger an immediate probe
+// POST /api/dhcp/rogue/probe: run every detector now
 router.post('/probe', requirePerm('dhcp:write'), async (req, res) => {
-  let summary;
+  let result;
   try {
-    summary = await runProbe(getDb(), {});
+    result = await runRogueDetection(getDb(), {});
   } catch (err) {
-    // runProbe rejects when it cannot even get as far as opening a socket.
-    // Name the failure instead of letting it surface as a bare 500.
+    // The DHCPv4 probe rejects when it cannot even get as far as opening a
+    // socket. Name the failure instead of letting it surface as a bare 500.
     return res.status(500).json({ error: `DHCP probe could not start: ${err.message}` });
   }
+  const { dhcp, dhcpv6, routerAdvertisements } = result;
+  const rogueCount = dhcp.rogues.length + dhcpv6.rogues.length + routerAdvertisements.rogues.length;
   audit(req.user.id, 'rogue_dhcp_probe', 'rogue_dhcp', null, {
-    interfaces: summary.interfaces,
-    offers: summary.offers,
-    rogues: summary.rogues.length,
-    skipped: summary.skipped === true,
+    interfaces: dhcp.interfaces,
+    offers: dhcp.offers,
+    advertisements: dhcpv6.advertisements,
+    routers: routerAdvertisements.routers,
+    rogues: rogueCount,
+    skipped: dhcp.skipped === true,
   });
   res.json({
-    supported: summary.supported,
+    supported: dhcp.supported,
     // A skipped run finds nothing because it never looked. Reporting that as a
     // successful probe with zero results is how a dead prober stays hidden.
-    skipped: summary.skipped === true,
-    skipReason: summary.skipReason ?? null,
-    interfaces: summary.interfaces,
-    offers: summary.offers,
-    rogueCount: summary.rogues.length,
+    skipped: dhcp.skipped === true,
+    skipReason: dhcp.skipReason ?? null,
+    interfaces: dhcp.interfaces,
+    offers: dhcp.offers,
+    rogueCount,
+    dhcpv6: {
+      supported: dhcpv6.supported,
+      skipped: dhcpv6.skipped === true,
+      error: dhcpv6.error ?? null,
+      interfaces: dhcpv6.interfaces,
+      advertisements: dhcpv6.advertisements,
+      rogueCount: dhcpv6.rogues.length,
+    },
+    routerAdvertisements: {
+      supported: routerAdvertisements.supported,
+      error: routerAdvertisements.error ?? null,
+      interfaces: routerAdvertisements.interfaces,
+      routers: routerAdvertisements.routers,
+      rogueCount: routerAdvertisements.rogues.length,
+    },
   });
 });
 
@@ -114,28 +144,58 @@ router.get('/authorized', requirePerm('dhcp:read'), (req, res) => {
 });
 
 // POST /api/dhcp/rogue/authorized
+// An entry trusts a server by any of three identities: an IP of either family
+// (a DHCPv4 server's address, or the link-local a DHCPv6 server or router
+// speaks from), a MAC (what the neighbor table reports for a router), or a
+// DUID (a DHCPv6 server's stable identity). At least one is required.
 router.post('/authorized', requirePerm('dhcp:write'), (req, res) => {
-  const { server_ip, server_mac, description } = req.body || {};
-  if (!server_ip || !isValidIpv4(server_ip)) {
-    return res.status(400).json({ error: 'A valid IPv4 server_ip is required' });
+  const { server_ip, server_mac, server_duid, description } = req.body || {};
+  const present = (v) => v !== undefined && v !== null && v !== '';
+  let ip = null;
+  let mac = null;
+  let duid = null;
+  if (present(server_ip)) {
+    if (typeof server_ip !== 'string' || !isValidAddress(server_ip)) {
+      return res.status(400).json({ error: 'server_ip is not a valid IPv4 or IPv6 address' });
+    }
+    ip = canonicalizeIp(server_ip);
   }
-  if (server_mac && !isValidMac(server_mac)) {
-    return res.status(400).json({ error: 'server_mac is not a valid MAC address' });
+  if (present(server_mac)) {
+    if (typeof server_mac !== 'string' || !isValidMac(server_mac)) {
+      return res.status(400).json({ error: 'server_mac is not a valid MAC address' });
+    }
+    mac = server_mac.toLowerCase();
+  }
+  if (present(server_duid)) {
+    duid = normalizeDuid(server_duid);
+    if (!duid) {
+      return res.status(400).json({
+        error: 'server_duid is not a valid DUID (expected colon-separated hex bytes)',
+      });
+    }
+  }
+  if (!ip && !mac && !duid) {
+    return res.status(400).json({ error: 'A server_ip, server_mac or server_duid is required' });
   }
   if (description != null && (typeof description !== 'string' || description.length > 256)) {
     return res.status(400).json({ error: 'description must be a string up to 256 chars' });
   }
   const db = getDb();
-  const result = RogueDhcp.addAuthorized(db, { server_ip, server_mac, description });
+  const result = RogueDhcp.addAuthorized(db, {
+    server_ip: ip,
+    server_mac: mac,
+    server_duid: duid,
+    description,
+  });
   if (result.changes === 0) {
-    return res.status(409).json({ error: 'That server IP is already authorized' });
+    return res.status(409).json({ error: 'That server is already authorized' });
   }
   audit(
     req.user.id,
     'rogue_dhcp_authorized_added',
     'dhcp_authorized_server',
     result.lastInsertRowid,
-    { server_ip },
+    { server_ip: ip, server_mac: mac, server_duid: duid },
   );
   res.status(201).json({ id: result.lastInsertRowid });
 });
@@ -148,6 +208,8 @@ router.delete('/authorized/:id', requirePerm('dhcp:write'), (req, res) => {
   RogueDhcp.deleteAuthorized(db, req.params.id);
   audit(req.user.id, 'rogue_dhcp_authorized_removed', 'dhcp_authorized_server', req.params.id, {
     server_ip: entry.server_ip,
+    server_mac: entry.server_mac,
+    server_duid: entry.server_duid,
   });
   res.json({ ok: true });
 });

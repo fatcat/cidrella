@@ -18,15 +18,13 @@ import dgram from 'dgram';
 import os from 'os';
 import { selectInterfaceNames } from './interface-config.js';
 import { localIpv4Set } from './local-addresses.js';
-import { getDb, getSetting } from '../db/init.js';
+import { getSetting } from '../db/init.js';
 import { upsertRogueEvent, authorizedIpSet } from '../models/rogue-dhcp.js';
 
 const DHCP_SERVER_PORT = 67;
 const DHCP_CLIENT_PORT = 68;
 const MAGIC_COOKIE = 0x63825363;
 const PROBE_WINDOW_MS = 4000;
-const SCHEDULER_TICK_MS = 60 * 1000;
-const INITIAL_KICK_MS = 20 * 1000;
 // Grace on top of the listen window before the watchdog calls a probe stalled.
 const PROBE_WATCHDOG_GRACE_MS = 15 * 1000;
 // How long an "in progress" probe may sit before a later run reclaims the flag.
@@ -40,8 +38,6 @@ let lastProbeAt = null;
 let lastProbeOutcome = null; // ok | timeout | error | unsupported | no-interfaces
 let lastProbeError = null;
 let xidSeq = 1;
-let schedulerTimer = null;
-let initialKickTimer = null;
 
 function probeLog(level, msg, extra) {
   const ts = new Date().toISOString();
@@ -200,17 +196,6 @@ function directedBroadcast(address, netmask) {
 // dnsmasq binds DHCP to all real interfaces, so we probe them all. We additionally
 // need the MAC (for chaddr) and the directed broadcast (for per-segment egress).
 export function getLanInterfaces() {
-  // Global DHCP switch (same default + sense as dnsmasq.js: on unless 'false').
-  if (getSetting('dhcp_enabled') === 'false') return [];
-
-  let ifaceConfig = {};
-  try {
-    const raw = getSetting('interface_config');
-    if (raw) ifaceConfig = JSON.parse(raw);
-  } catch {
-    /* default */
-  }
-
   const sysIfaces = os.networkInterfaces();
   const result = [];
   const pushFrom = (ifName) => {
@@ -227,12 +212,32 @@ export function getLanInterfaces() {
     }
   };
 
-  // Shared with dnsmasq.js and dns-proxy.js (audit #9). This used to carry a
-  // comment claiming it "mirrors dnsmasq.js exactly", which stated the drift
-  // risk without doing anything about it.
-  const { names } = selectInterfaceNames('dhcp', { config: ifaceConfig, sysIfaces });
-  for (const ifName of names) pushFrom(ifName);
+  for (const ifName of selectProbeInterfaceNames({ sysIfaces })) pushFrom(ifName);
   return result;
+}
+
+// The interface names every rogue probe works from: nothing when DHCP is
+// globally off, otherwise the DHCP-serving selection. Shared with
+// dhcpv6-probe.js and ra-monitor.js so the three cannot drift apart on which
+// segments count. Selection itself is shared with dnsmasq.js and dns-proxy.js
+// (audit #9); this used to carry a comment claiming it "mirrors dnsmasq.js
+// exactly", which stated the drift risk without doing anything about it.
+export function selectProbeInterfaceNames({ sysIfaces } = {}) {
+  // Global DHCP switch (same default + sense as dnsmasq.js: on unless 'false').
+  if (getSetting('dhcp_enabled') === 'false') return [];
+
+  let ifaceConfig = {};
+  try {
+    const raw = getSetting('interface_config');
+    if (raw) ifaceConfig = JSON.parse(raw);
+  } catch {
+    /* default */
+  }
+  const { names } = selectInterfaceNames('dhcp', {
+    config: ifaceConfig,
+    sysIfaces: sysIfaces || os.networkInterfaces(),
+  });
+  return names;
 }
 
 // ─── Probe orchestration ─────────────────────────────────
@@ -428,39 +433,4 @@ export function getProbeState() {
     lastProbeOutcome,
     lastProbeError,
   };
-}
-
-// ─── Scheduler ───────────────────────────────────────────
-
-export function startRogueDhcpScheduler() {
-  stopRogueDhcpScheduler();
-  let lastRun = 0;
-  const tick = async () => {
-    try {
-      if (getSetting('rogue_dhcp_detection_enabled') !== 'true') return;
-      const intervalMin = parseInt(getSetting('rogue_dhcp_probe_interval_min'), 10) || 15;
-      const dueMs = intervalMin * 60 * 1000;
-      const now = Date.now();
-      if (now - lastRun < dueMs) return;
-      lastRun = now;
-      await runProbe(getDb(), {});
-    } catch (err) {
-      probeLog('error', 'Scheduler tick failed', { error: err.message });
-    }
-  };
-  schedulerTimer = setInterval(tick, SCHEDULER_TICK_MS);
-  if (schedulerTimer.unref) schedulerTimer.unref();
-  initialKickTimer = setTimeout(tick, INITIAL_KICK_MS);
-  if (initialKickTimer.unref) initialKickTimer.unref();
-}
-
-export function stopRogueDhcpScheduler() {
-  if (schedulerTimer) {
-    clearInterval(schedulerTimer);
-    schedulerTimer = null;
-  }
-  if (initialKickTimer) {
-    clearTimeout(initialKickTimer);
-    initialKickTimer = null;
-  }
 }

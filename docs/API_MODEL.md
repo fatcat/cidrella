@@ -94,8 +94,12 @@ DHCPv6 is configured per network through `dhcp_scopes.v6_mode`: `slaac`
 options), or `stateful` (managed addresses from a pool). The SLAAC modes require
 a /64. Only `stateful` scopes issue leases and accept reservations. IPv6
 reservations and leases are keyed by `duid` (with optional `iaid`) instead of a
-MAC; the MAC, when present, is learned metadata. Rogue DHCPv6 and Router
-Advertisement detection is not implemented.
+MAC; the MAC, when present, is learned metadata. Rogue detection covers three
+kinds of finding under `/api/dhcp/rogue`: `dhcp` (a DHCPv4 server answered a
+DISCOVER), `dhcpv6` (a DHCPv6 server answered a SOLICIT, identified by
+`server_duid`), and `ra` (a router advertised itself, with
+`advertised_prefixes`). The allowlist trusts a server by `server_ip` of either
+family, `server_mac`, or `server_duid`.
 
 ## Network Read Model
 

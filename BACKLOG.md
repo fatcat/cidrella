@@ -198,10 +198,18 @@ and IAID/DUID columns, `dhcp_release6`; discovery by all-nodes multicast plus `i
   (v6 scopes use the scope columns: DNS servers, domain search, NTP).
 - `dhcp_release6` needs the appliance's own non-link-local IPv6 address on the lease's link.
 
-**Deferred from this pass:** rogue DHCPv6 and Router Advertisement detection (a different
-protocol from the DHCPv4 probe: UDP 546/547, `ff02::1:2`, DUID server identity; nothing in
-`dhcp-probe.js` is reusable), a DHCPv6 option catalog (v6 scopes use the scope columns), and
-the UI: workspace grid and table on v6 sizes, no per-address rows for a /64.
+**Rogue IPv6 detection landed 2026-09-17** (`utils/dhcpv6-probe.js`, `utils/ra-monitor.js`,
+`utils/rogue-detection.js`, migration 073): a DHCPv6 SOLICIT probe on UDP 546/547 keyed by
+server DUID, and rogue routers read from the kernel's `proto ra` default routes. Limits: RA
+detection needs `accept_ra` on the interface (reported per interface as unsupported, never as
+clean); no RDNSS in the event since the kernel does not keep it; no active Router
+Solicitation (needs a raw ICMPv6 socket; `rdisc6` from the `ndisc6` package would do it and
+also work with `accept_ra` off, not bundled). The Rogue DHCP page shows the new rows as-is; it
+has no `kind` column and its add-authorized form still requires an IP.
+
+**Deferred from this pass:** a DHCPv6 option catalog (v6 scopes use the scope columns), and
+the UI: workspace grid and table on v6 sizes, no per-address rows for a /64, `kind` and DUID
+on the Rogue DHCP page.
 
 ## Deferred design work
 

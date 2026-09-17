@@ -19,6 +19,7 @@ import { isLeaseActive } from '../utils/lease-sql.js';
 import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
+import { normalizeDuid } from '../utils/duid.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import {
   createScope,
@@ -47,7 +48,6 @@ const LEASE_TIME_RE = /^\d+[smhd]?$/;
 const V6_MODES = ['slaac', 'stateless', 'stateful'];
 // A DHCPv6 DUID as dnsmasq prints it: colon-separated hex bytes, at least
 // the two-byte type prefix, at most the 130 bytes RFC 8415 allows.
-const DUID_RE = /^([0-9a-f]{2}:){1,129}[0-9a-f]{2}$/;
 
 // The DHCPv6 mode for a scope on `subnet`, or an error message. IPv4 scopes
 // carry no mode; slaac and stateless need a /64 because SLAAC does.
@@ -575,11 +575,17 @@ function reservationIdentity({ mac_address, duid, iaid }, family) {
     if (typeof duid !== 'string' || !duid) {
       return { error: 'duid is required for a reservation on an IPv6 network' };
     }
-    const normalizedDuid = duid.toLowerCase();
-    if (!DUID_RE.test(normalizedDuid)) {
-      return { error: 'Invalid DUID format (expected colon-separated hex bytes, e.g. 00:01:00:01:...)' };
+    const normalizedDuid = normalizeDuid(duid);
+    if (!normalizedDuid) {
+      return {
+        error: 'Invalid DUID format (expected colon-separated hex bytes, e.g. 00:01:00:01:...)',
+      };
     }
-    if (iaid !== undefined && iaid !== null && !(Number.isInteger(iaid) && iaid >= 0 && iaid <= 0xffffffff)) {
+    if (
+      iaid !== undefined &&
+      iaid !== null &&
+      !(Number.isInteger(iaid) && iaid >= 0 && iaid <= 0xffffffff)
+    ) {
       return { error: 'iaid must be an integer 0-4294967295' };
     }
     let mac = null;
@@ -676,7 +682,7 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   }
   if (family === 6) {
     const scope = db
-      .prepare("SELECT v6_mode FROM dhcp_scopes WHERE subnet_id = ? AND enabled = 1 LIMIT 1")
+      .prepare('SELECT v6_mode FROM dhcp_scopes WHERE subnet_id = ? AND enabled = 1 LIMIT 1')
       .get(subnet.id);
     if (scope && scope.v6_mode !== 'stateful') {
       return res.status(400).json({

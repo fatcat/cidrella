@@ -68,9 +68,7 @@ function seedTopology(db) {
         '10.70.0.1', 'first', ?, 'allocated', 1, 'lab.test')`,
     )
     .run(parent).lastInsertRowid;
-  const rangeType = db
-    .prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'")
-    .get().id;
+  const rangeType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get().id;
   const range = db
     .prepare(
       `INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
@@ -83,9 +81,10 @@ function seedTopology(db) {
   db.prepare(
     'INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip) VALUES (?, ?, ?, ?)',
   ).run(scope, range, '10.70.0.100', '10.70.0.150');
-  db.prepare(
-    'INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, 3, ?)',
-  ).run(scope, '10.70.0.1');
+  db.prepare('INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, 3, ?)').run(
+    scope,
+    '10.70.0.1',
+  );
   db.prepare(
     `INSERT INTO dhcp_option_defaults (option_code, value, enabled_by_default)
      VALUES (66, '10.70.0.2', 1)`,
@@ -112,9 +111,7 @@ function seedTopology(db) {
         address_sort_key) VALUES (?, ?, ?, 4, ?)`,
     ).run(child, ip, state, ip);
   }
-  db.prepare(
-    `INSERT INTO network_scans (subnet_id, status) VALUES (?, 'completed')`,
-  ).run(child);
+  db.prepare(`INSERT INTO network_scans (subnet_id, status) VALUES (?, 'completed')`).run(child);
   const zone = db
     .prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('lab.test', 'forward', 1)")
     .run().lastInsertRowid;
@@ -122,6 +119,14 @@ function seedTopology(db) {
     `INSERT INTO dns_records (zone_id, name, type, value, source)
      VALUES (?, 'printer', 'A', '10.70.0.20', 'reservation')`,
   ).run(zone);
+  db.prepare(
+    `INSERT INTO rogue_dhcp_events (server_ip, server_identifier, offered_ip, iface, acknowledged)
+     VALUES ('10.70.0.250', '10.70.0.250', '10.70.0.77', 'eth0', 1)`,
+  ).run();
+  db.prepare(
+    `INSERT INTO dhcp_authorized_servers (server_ip, server_mac, description)
+     VALUES ('10.70.0.2', 'aa:bb:cc:dd:ee:03', 'core router')`,
+  ).run();
   return { parent, child, scope };
 }
 
@@ -139,6 +144,8 @@ const COUNTED_TABLES = [
   'network_scans',
   'dns_zones',
   'dns_records',
+  'rogue_dhcp_events',
+  'dhcp_authorized_servers',
 ];
 
 function counts(db) {
@@ -154,7 +161,7 @@ afterEach(() => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-describe('IPv6 schema migrations 070-072', () => {
+describe('IPv6 schema migrations 070-073', () => {
   it('upgrades a seeded 069 database through initDb without losing any child rows', async () => {
     const { db, tmpDir } = databaseThrough(69);
     seedTopology(db);
@@ -169,7 +176,7 @@ describe('IPv6 schema migrations 070-072', () => {
     expect(after).toEqual(before);
     expect(upgraded.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
-    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(72);
+    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(73);
 
     const child = upgraded.prepare("SELECT * FROM subnets WHERE cidr = '10.70.0.0/24'").get();
     expect(child.address_family).toBe(4);
@@ -188,15 +195,27 @@ describe('IPv6 schema migrations 070-072', () => {
     });
     const lease = upgraded.prepare('SELECT * FROM dhcp_leases').get();
     expect(lease).toMatchObject({ dhcp_version: 4, duid: null, iaid: null });
-    expect(upgraded.prepare('SELECT address_family FROM dhcp_scopes').get().address_family).toBe(
-      4,
-    );
+    expect(upgraded.prepare('SELECT address_family FROM dhcp_scopes').get().address_family).toBe(4);
     expect(upgraded.prepare('SELECT v6_mode FROM dhcp_scopes').get().v6_mode).toBeNull();
     for (const table of ['dhcp_scope_options', 'dhcp_option_defaults', 'dhcp_custom_options']) {
-      expect(upgraded.prepare(`SELECT address_family FROM ${table}`).get().address_family).toBe(
-        4,
-      );
+      expect(upgraded.prepare(`SELECT address_family FROM ${table}`).get().address_family).toBe(4);
     }
+
+    // Migration 073: existing rogue rows are DHCPv4 findings and stay acknowledged.
+    expect(upgraded.prepare('SELECT * FROM rogue_dhcp_events').get()).toMatchObject({
+      kind: 'dhcp',
+      address_family: 4,
+      server_ip: '10.70.0.250',
+      server_mac: '',
+      server_duid: null,
+      advertised_prefixes: null,
+      acknowledged: 1,
+    });
+    expect(upgraded.prepare('SELECT * FROM dhcp_authorized_servers').get()).toMatchObject({
+      server_ip: '10.70.0.2',
+      server_mac: 'aa:bb:cc:dd:ee:03',
+      server_duid: null,
+    });
 
     // The widened schema accepts the IPv6 shapes.
     const v6 = upgraded
@@ -245,7 +264,9 @@ describe('IPv6 schema migrations 070-072', () => {
     ).toThrow(/CHECK/);
     expect(() =>
       upgraded
-        .prepare("INSERT INTO dns_records (zone_id, name, type, value) VALUES (?, 'x', 'NAPTR', 'y')")
+        .prepare(
+          "INSERT INTO dns_records (zone_id, name, type, value) VALUES (?, 'x', 'NAPTR', 'y')",
+        )
         .run(zone),
     ).toThrow(/CHECK/);
 
@@ -267,11 +288,17 @@ describe('IPv6 schema migrations 070-072', () => {
     // The self-referencing parent_id cascades into the freshly copied table
     // too, so even the child network row is gone.
     expect(after.subnets).toBeLessThan(before.subnets);
-    for (const table of ['ranges', 'dhcp_scopes', 'dhcp_reservations', 'ip_addresses', 'network_scans']) {
+    for (const table of [
+      'ranges',
+      'dhcp_scopes',
+      'dhcp_reservations',
+      'ip_addresses',
+      'network_scans',
+    ]) {
       expect(after[table], `${table} survives a foreign-keys-on rebuild`).toBe(0);
     }
-    expect(db.prepare('SELECT COUNT(*) AS c FROM dhcp_leases WHERE subnet_id IS NULL').get().c).toBe(
-      before.dhcp_leases,
-    );
+    expect(
+      db.prepare('SELECT COUNT(*) AS c FROM dhcp_leases WHERE subnet_id IS NULL').get().c,
+    ).toBe(before.dhcp_leases);
   });
 });
