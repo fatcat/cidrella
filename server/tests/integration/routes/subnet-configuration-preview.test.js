@@ -36,6 +36,8 @@ describe('subnet configuration preview', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       cidr: '10.20.30.0/24',
+      address_family: 4,
+      dhcp_v6_modes: null,
       gateway_policy: 'last',
       gateway_address: '10.20.30.254',
       suggested_name: '10-20-30-0-24',

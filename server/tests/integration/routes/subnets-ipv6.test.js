@@ -84,13 +84,18 @@ describe('IPv6 networks', () => {
     expect(overlap.body.error).toContain(LAB);
   });
 
-  it('previews configuration with IPv6 gateway semantics and no automatic pool', async () => {
+  it('previews configuration with IPv6 gateway semantics and the stateful default pool', async () => {
     const res = await request(app)
       .post('/api/subnets/configuration-preview')
       .send({ cidr: NET, gateway_policy: 'last' });
     expect(res.status).toBe(200);
     expect(res.body.gateway_address).toBe('fd00:1234:0:1:ffff:ffff:ffff:ffff');
-    expect(res.body.default_dhcp_pool).toBeNull();
+    expect(res.body.address_family).toBe(6);
+    expect(res.body.default_dhcp_pool).toEqual({
+      start_ip: 'fd00:1234:0:1::1000',
+      end_ip: 'fd00:1234:0:1::1fff',
+    });
+    expect(res.body.dhcp_v6_modes).toEqual(['slaac', 'stateless', 'stateful']);
     const bad = await request(app)
       .post('/api/subnets/configuration-preview')
       .send({ cidr: NET, gateway_address: '10.0.0.1' });

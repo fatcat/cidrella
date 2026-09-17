@@ -78,14 +78,21 @@ router.get('/', requirePerm('system:read'), (req, res) => {
     // expose an `address` attribute; control files do not.
     if (!fs.existsSync(`/sys/class/net/${name}/address`)) continue;
 
-    const ipv4Addrs = (sysIfaces[name] || [])
-      .filter((a) => a.family === 'IPv4')
-      .map((a) => ({ address: a.address, netmask: a.netmask }));
+    // Both families, each entry tagged. IPv6 link-local addresses are
+    // reported with their scope so the operator can tell them apart.
+    const addresses = (sysIfaces[name] || [])
+      .filter((a) => a.family === 'IPv4' || a.family === 'IPv6')
+      .map((a) => ({
+        address: a.address,
+        netmask: a.netmask,
+        family: a.family === 'IPv6' ? 6 : 4,
+        ...(a.family === 'IPv6' ? { scopeid: a.scopeid ?? null } : {}),
+      }));
 
     result.push({
       name,
       mac: getInterfaceMac(name),
-      addresses: ipv4Addrs,
+      addresses,
       state: getInterfaceState(name),
     });
   }

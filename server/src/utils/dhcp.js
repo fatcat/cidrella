@@ -9,11 +9,20 @@ import {
   cleanStaleFiles,
   withValidatedDnsmasqUpdate,
 } from './dnsmasq.js';
-import { parseCidr, isIpInSubnet, ipToLong, longToIp } from './ip.js';
+import {
+  parseNetwork,
+  ipToLong,
+  longToIp,
+  addressToBig,
+  bigToAddress,
+  isValidAddress,
+  getServerIpForSubnet,
+} from './ip.js';
+import { addressFamily, isValidIpv6 } from './address.js';
+import { findSubnetForIp } from './ip-sync.js';
 import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
-import { isValidIpv4 } from './ip.js';
 import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
 import { replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { upsertServerDnsDefault } from '../models/dhcp-option.js';
@@ -21,22 +30,25 @@ import { dhcpLeaseRejectionReason } from '../services/ip-lifecycle-service.js';
 import { resolveEffectiveScopeOptions } from '../models/dhcp-scope.js';
 
 /**
- * Resolve a hostname to an IPv4 address. Returns the IP string, or null on failure.
- * Caches results for the lifetime of a config generation pass.
+ * Resolve a hostname to an address of the wanted family (4 by default).
+ * Returns the IP string, or null on failure. Caches results for the lifetime
+ * of a config generation pass.
  */
 const dnsCache = new Map();
-function resolveToIp(value) {
-  if (isValidIpv4(value)) return value;
-  if (dnsCache.has(value)) return dnsCache.get(value);
+function resolveToIp(value, family = 4) {
+  if (isValidAddress(value)) return addressFamily(value) === family ? value : null;
+  const key = `${family}|${value}`;
+  if (dnsCache.has(key)) return dnsCache.get(key);
   try {
-    const out = execFileSync('getent', ['ahostsv4', value], { timeout: 3000, encoding: 'utf-8' });
+    const database = family === 6 ? 'ahostsv6' : 'ahostsv4';
+    const out = execFileSync('getent', [database, value], { timeout: 3000, encoding: 'utf-8' });
     const firstLine = out.split('\n')[0];
     const ip = firstLine?.split(/\s+/)[0];
-    const result = ip && isValidIpv4(ip) ? ip : null;
-    dnsCache.set(value, result);
+    const result = ip && isValidAddress(ip) && addressFamily(ip) === family ? ip : null;
+    dnsCache.set(key, result);
     return result;
   } catch {
-    dnsCache.set(value, null);
+    dnsCache.set(key, null);
     return null;
   }
 }
@@ -183,6 +195,92 @@ function generateScopeConfig(
   return lines.join('\n') + '\n';
 }
 
+// IPv6 pool segments, reserved addresses carved out, as [start, end] BigInts.
+function dynamicRangeSegmentsV6(scope, excludedIps) {
+  const segments = [];
+  const excluded = [...new Set(excludedIps)]
+    .map((ip) => addressToBig(ip))
+    .filter((address) => address.family === 6)
+    .map((address) => address.value)
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  for (const pool of scope.pools) {
+    const start = addressToBig(pool.start_ip).value;
+    const end = addressToBig(pool.end_ip).value;
+    let cursor = start;
+    for (const value of excluded) {
+      if (value < start || value > end) continue;
+      if (cursor < value) segments.push([cursor, value - 1n]);
+      cursor = value + 1n;
+    }
+    if (cursor <= end) segments.push([cursor, end]);
+  }
+  return segments;
+}
+
+// A JSON list of addresses from a scope column, filtered to one family and
+// rendered in the bracketed form option6 values take. Hostnames resolve
+// through the same cache as the IPv4 options.
+function option6AddressList(json, family = 6) {
+  if (!json) return null;
+  let values;
+  try {
+    values = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(values)) return null;
+  const resolved = values
+    .map((value) => resolveToIp(String(value).trim(), family))
+    .filter(Boolean)
+    .filter((ip) => validateDnsmasqConfigValue(ip) == null);
+  return resolved.length ? resolved.map((ip) => `[${ip}]`).join(',') : null;
+}
+
+/**
+ * dnsmasq config for one DHCPv6 scope. The mode decides what dnsmasq does on
+ * the link: `slaac` sends Router Advertisements only, `stateless` adds a
+ * stateless DHCPv6 service for options, `stateful` hands out addresses from
+ * the pool. Routers are never an option: clients learn them from the RA.
+ */
+export function generateScopeConfigV6(scope, excludedIps = []) {
+  const tag = `scope${scope.id}`;
+  const parsed = parseNetwork(scope.subnet_cidr);
+  const mode = scope.v6_mode || 'stateful';
+  const lines = [`# DHCPv6 scope for ${scope.subnet_cidr} (${mode})`, 'enable-ra'];
+  const leaseTime = scope.lease_time;
+
+  if (mode === 'slaac') {
+    lines.push(`dhcp-range=set:${tag},${parsed.network},ra-only,${parsed.prefix}`);
+  } else if (mode === 'stateless') {
+    lines.push(`dhcp-range=set:${tag},${parsed.network},ra-stateless,ra-names,${parsed.prefix}`);
+  } else {
+    for (const [start, end] of dynamicRangeSegmentsV6(scope, excludedIps)) {
+      lines.push(
+        `dhcp-range=set:${tag},${bigToAddress(start, 6)},${bigToAddress(end, 6)},${parsed.prefix},${leaseTime}`,
+      );
+    }
+  }
+
+  // Router Advertisement only: dnsmasq answers no DHCPv6 request, so options
+  // would never be sent.
+  if (mode === 'slaac') return lines.join('\n') + '\n';
+
+  const dnsServers =
+    option6AddressList(scope.dns_servers) ||
+    (getServerIpForSubnet(scope.subnet_cidr)
+      ? `[${getServerIpForSubnet(scope.subnet_cidr)}]`
+      : null);
+  if (dnsServers) lines.push(`dhcp-option=tag:${tag},option6:dns-server,${dnsServers}`);
+  const search = scope.domain_search || scope.domain_name || scope.subnet_domain_name;
+  if (search && validateDnsmasqConfigValue(search, { allowComma: true }) == null) {
+    lines.push(`dhcp-option=tag:${tag},option6:domain-search,${search}`);
+  }
+  const ntp = option6AddressList(scope.ntp_servers);
+  if (ntp) lines.push(`dhcp-option=tag:${tag},option6:ntp-server,${ntp}`);
+
+  return lines.join('\n') + '\n';
+}
+
 /**
  * Regenerate all DHCP scope config files in conf.d/.
  * Clears the DNS resolution cache each pass.
@@ -199,7 +297,7 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
     FROM dhcp_scopes s
     JOIN ranges r ON s.range_id = r.id
     JOIN subnets sub ON s.subnet_id = sub.id
-    WHERE s.enabled = 1
+    WHERE s.enabled = 1 AND sub.status = 'allocated'
   `,
     )
     .all();
@@ -224,7 +322,7 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
 
   for (const scope of scopes) {
     activeIds.add(scope.id);
-    const parsed = parseCidr(scope.subnet_cidr);
+    const parsed = parseNetwork(scope.subnet_cidr);
     scope.netmask = parsed.mask;
     scope.pools = db
       .prepare(
@@ -238,13 +336,16 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
     const filePath = path.join(confDir, `dhcp-scope-${scope.id}.conf`);
     const effective = resolveEffectiveScopeOptions(db, scope);
     scope.lease_time = effective.lease_time;
-    const newContent = generateScopeConfig(
-      scope,
-      {},
-      effective.options,
-      reservedBySubnet.get(scope.subnet_id) || [],
-      effective.router_suppressed,
-    );
+    const newContent =
+      parsed.family === 6
+        ? generateScopeConfigV6(scope, reservedBySubnet.get(scope.subnet_id) || [])
+        : generateScopeConfig(
+            scope,
+            {},
+            effective.options,
+            reservedBySubnet.get(scope.subnet_id) || [],
+            effective.router_suppressed,
+          );
 
     let oldContent = '';
     try {
@@ -266,26 +367,33 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
 
 /**
  * Regenerate the reservations hosts file for dhcp-hostsdir (hot-reload).
- * Format: <mac>,<ip>[,<hostname>],infinite
+ * DHCPv4: <mac>,<ip>[,<hostname>],infinite
+ * DHCPv6: id:<duid>,[<ip>][,<hostname>],infinite
  */
-export function regenerateReservations(db) {
+export function regenerateReservations(db, { hostsDir = DHCP_HOSTS_DIR } = {}) {
   const reservations = db
     .prepare(
       `
-    SELECT * FROM dhcp_reservations WHERE enabled = 1 ORDER BY ip_address
+    SELECT r.* FROM dhcp_reservations r
+    JOIN subnets sub ON sub.id = r.subnet_id
+    WHERE r.enabled = 1 AND sub.status = 'allocated' ORDER BY r.ip_address
   `,
     )
     .all();
 
-  const lines = reservations.map((r) => {
-    const parts = [r.mac_address, r.ip_address];
-    const hostname = r.hostname || generateFallbackHostname(r.mac_address);
-    if (hostname) parts.push(hostname);
-    parts.push('infinite');
-    return parts.join(',');
-  });
+  const lines = reservations
+    .map((r) => {
+      const v6 = r.address_family === 6;
+      if (v6 && (!r.duid || !isValidIpv6(r.ip_address))) return null;
+      const parts = v6 ? [`id:${r.duid}`, `[${r.ip_address}]`] : [r.mac_address, r.ip_address];
+      const hostname = r.hostname || (r.mac_address ? generateFallbackHostname(r.mac_address) : null);
+      if (hostname) parts.push(hostname);
+      parts.push('infinite');
+      return parts.join(',');
+    })
+    .filter(Boolean);
 
-  const filePath = path.join(DHCP_HOSTS_DIR, 'reservations.hosts');
+  const filePath = path.join(hostsDir, 'reservations.hosts');
   const content = lines.length > 0 ? lines.join('\n') + '\n' : '';
 
   let oldContent = '';
@@ -302,53 +410,72 @@ export function regenerateReservations(db) {
 }
 
 /**
- * Sync leases from dnsmasq lease file into the database.
- * Lease format: <expiry_epoch> <mac> <ip> <hostname> <client-id>
+ * One dnsmasq lease-file line as a lease object, or null for lines that are
+ * not leases (the `duid <server-duid>` header, blank or truncated lines).
+ *
+ * DHCPv4: <expiry> <mac> <ip> <hostname|*> <client-id|*>
+ * DHCPv6: <expiry> [T]<iaid> <ip6> <hostname|*> <client-duid|*>
+ *   A leading T marks a temporary (IA_TA) address. The IAID is decimal.
  */
-export function syncLeases(db) {
+export function parseLeaseLine(line) {
+  const parts = String(line || '')
+    .trim()
+    .split(/\s+/);
+  if (parts.length < 4 || parts[0] === 'duid') return null;
+  const [expiryStr, identity, ip, hostname, clientId] = parts;
+  if (!/^\d+$/.test(expiryStr) || !isValidAddress(ip)) return null;
+  const expiry = parseInt(expiryStr, 10);
+  const base = {
+    ip,
+    hostname: hostname === '*' ? null : hostname,
+    clientId: clientId === '*' ? null : clientId || null,
+    expiresAt: expiry === 0 ? 'infinite' : new Date(expiry * 1000).toISOString(),
+  };
+  if (isValidIpv6(ip)) {
+    const iaidMatch = /^(T?)(\d+)$/.exec(identity);
+    if (!iaidMatch) return null;
+    return {
+      ...base,
+      dhcpVersion: 6,
+      mac: null,
+      iaid: Number(iaidMatch[2]),
+      temporary: iaidMatch[1] === 'T',
+      duid: base.clientId ? base.clientId.toLowerCase() : null,
+    };
+  }
+  return { ...base, dhcpVersion: 4, mac: identity.toLowerCase(), duid: null, iaid: null };
+}
+
+/**
+ * Sync leases from dnsmasq lease file into the database.
+ */
+export function syncLeases(db, { leaseFile = LEASE_FILE } = {}) {
   let content;
   try {
-    content = fs.readFileSync(LEASE_FILE, 'utf-8');
+    content = fs.readFileSync(leaseFile, 'utf-8');
   } catch {
     return { synced: 0 };
   }
 
-  const lines = content
-    .trim()
-    .split('\n')
-    .filter((l) => l.trim());
   const leases = [];
-
-  // Load allocated subnets once before the loop to avoid N+1 queries
-  const allocatedSubnets = db
-    .prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'")
-    .all();
-
-  for (const line of lines) {
-    const parts = line.split(/\s+/);
-    if (parts.length < 4) continue;
-
-    const [expiryStr, mac, ip, hostname, clientId] = parts;
-    const expiry = parseInt(expiryStr, 10);
-    const expiresAt = expiry === 0 ? 'infinite' : new Date(expiry * 1000).toISOString();
-
-    // Find matching subnet (using pre-loaded list)
-    const subnet = allocatedSubnets.find((s) => isIpInSubnet(ip, s.cidr));
-
-    leases.push({
-      ip,
-      mac: mac.toLowerCase(),
-      hostname: hostname === '*' ? null : hostname,
-      clientId: clientId === '*' ? null : clientId || null,
-      expiresAt,
-      subnetId: subnet?.id || null,
-    });
+  for (const line of content.split('\n')) {
+    const lease = parseLeaseLine(line);
+    if (!lease) continue;
+    // A DHCPv6 lease without a client DUID has no identity CIDRella can act on.
+    if (lease.dhcpVersion === 6 && !lease.duid) continue;
+    let subnet;
+    try {
+      subnet = findSubnetForIp(db, lease.ip);
+    } catch {
+      subnet = null;
+    }
+    leases.push({ ...lease, subnetId: subnet?.status === 'allocated' ? subnet.id : null });
   }
 
   // Persist the effective hostname used by DNS/IP sync. dnsmasq writes '*'
   // when a client does not provide one; keep CIDRella's generated fallback in
   // dhcp_leases too so later DHCP config regenerations do not treat the
-  // DHCP-sourced DNS record as stale.
+  // DHCP-sourced DNS record as stale. DHCPv6 clients have no MAC to look up.
   for (const l of leases) {
     if (!l.hostname && l.mac) {
       l.hostname = generateFallbackHostname(l.mac) || null;

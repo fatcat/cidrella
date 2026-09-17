@@ -236,7 +236,11 @@ export function allocateStaticDhcp(db, subnetId, ip, fields = {}, reservationId 
     ALLOCATION_STATE.STATIC_DHCP,
     LIFECYCLE_SOURCE.DHCP_RESERVATION,
     reservationId,
-    { dhcp_version: fields.dhcp_version || 4, dhcp_duid: null, dhcp_iaid: null },
+    {
+      dhcp_version: fields.dhcp_version || 4,
+      dhcp_duid: fields.dhcp_duid || null,
+      dhcp_iaid: fields.dhcp_iaid != null ? String(fields.dhcp_iaid) : null,
+    },
   );
 }
 
@@ -283,6 +287,7 @@ export function observeDhcpLeases(db, leases, { prevalidated = false } = {}) {
     `,
       )
       .get(lease.subnetId, lease.ip);
+    const v6 = lease.dhcpVersion === 6;
     if (reservation) {
       setCanonicalAllocation(
         db,
@@ -291,8 +296,21 @@ export function observeDhcpLeases(db, leases, { prevalidated = false } = {}) {
         ALLOCATION_STATE.STATIC_DHCP,
         LIFECYCLE_SOURCE.DHCP_RESERVATION,
         reservation.id,
-        { dhcp_version: 4, dhcp_duid: null, dhcp_iaid: null },
+        v6
+          ? { dhcp_version: 6, dhcp_duid: lease.duid, dhcp_iaid: String(lease.iaid) }
+          : { dhcp_version: 4, dhcp_duid: null, dhcp_iaid: null },
       );
+    } else if (v6) {
+      // A dynamic DHCPv6 lease: the rejection check above validated the
+      // enabled-pool membership the adapter insists on. The lease file gives
+      // one expiry, which is the valid lifetime.
+      observeDhcpv6Lease(db, lease.subnetId, lease.ip, {
+        duid: lease.duid,
+        iaid: lease.iaid,
+        validUntil: lease.expiresAt === 'infinite' ? '9999-12-31T23:59:59.000Z' : lease.expiresAt,
+        poolValidated: true,
+        observedActivity: lease.observedActivity === true,
+      });
     } else {
       const leaseRow = db
         .prepare(
@@ -361,13 +379,21 @@ export function reconcileExpiredDhcpAllocations(db) {
     SELECT ip.subnet_id, ip.ip_address
     FROM ip_addresses ip
     WHERE ip.allocation_state = ?
-      AND ip.dhcp_version = 4
       AND NOT EXISTS (
         SELECT 1
         FROM dhcp_leases dl
         WHERE dl.subnet_id = ip.subnet_id
           AND dl.ip_address = ip.ip_address
           AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+      )
+      AND (
+        ip.dhcp_version = 4
+        OR (
+          -- A DHCPv6 lease is a claim for its valid lifetime even when the
+          -- lease table has no row for it (governance decision 7).
+          ip.dhcp_version = 6
+          AND (ip.valid_until IS NULL OR datetime(ip.valid_until) <= datetime('now'))
+        )
       )
   `,
     )

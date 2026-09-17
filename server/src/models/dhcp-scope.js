@@ -315,8 +315,9 @@ export function createScope(db, fields, { subnet, defaultLeaseTime }) {
     const result = db
       .prepare(
         `
-      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway, ntp_servers, domain_search, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway,
+        ntp_servers, domain_search, description, address_family, v6_mode)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -329,6 +330,8 @@ export function createScope(db, fields, { subnet, defaultLeaseTime }) {
         fields.ntp_servers || null,
         fields.domain_search || null,
         fields.description || null,
+        fields.address_family || subnet?.address_family || 4,
+        fields.v6_mode || null,
       );
 
     saveScopeOptions(db, result.lastInsertRowid, subnet, fields.options);
@@ -352,7 +355,8 @@ export function updateScope(db, scope, fields, { subnet }) {
     db.prepare(
       `
       UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
-        gateway = ?, ntp_servers = ?, domain_search = ?, enabled = ?, description = ?, updated_at = datetime('now')
+        gateway = ?, ntp_servers = ?, domain_search = ?, enabled = ?, description = ?,
+        v6_mode = ?, updated_at = datetime('now')
       WHERE id = ?
     `,
     ).run(
@@ -364,6 +368,7 @@ export function updateScope(db, scope, fields, { subnet }) {
       fields.domain_search !== undefined ? fields.domain_search || null : scope.domain_search,
       fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : scope.enabled,
       fields.description !== undefined ? fields.description : scope.description,
+      fields.v6_mode !== undefined ? fields.v6_mode : scope.v6_mode,
       scope.id,
     );
 

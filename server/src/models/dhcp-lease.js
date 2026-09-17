@@ -11,7 +11,8 @@ export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
       db
         .prepare(
           `
-      SELECT subnet_id, ip_address, mac_address, hostname, client_id, expires_at, last_seen
+      SELECT subnet_id, ip_address, mac_address, hostname, client_id, expires_at, last_seen,
+        dhcp_version, duid, iaid
       FROM dhcp_leases
     `,
         )
@@ -30,32 +31,46 @@ export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
     );
     db.prepare('DELETE FROM dhcp_leases').run();
     const insert = db.prepare(`
-      INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id, last_seen)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+      INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id,
+        last_seen, dhcp_version, duid, iaid)
+      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
     `);
+    // The client identity is the MAC for DHCPv4 and the DUID for DHCPv6.
+    const clientOf = (mac, duid) => String(duid || mac || '').toLowerCase();
     const observedLeases = leases.map((lease) => {
       const old = previous.get(`${lease.subnetId}|${lease.ip}`);
       return {
         ...lease,
         observedActivity:
           !old ||
-          String(old.mac_address).toLowerCase() !== String(lease.mac || '').toLowerCase() ||
+          clientOf(old.mac_address, old.duid) !== clientOf(lease.mac, lease.duid) ||
           old.expires_at !== lease.expiresAt,
       };
     });
     for (const l of observedLeases) {
-      insert.run(l.ip, l.mac, l.hostname, l.clientId, l.expiresAt, l.subnetId);
+      insert.run(
+        l.ip,
+        l.mac || null,
+        l.hostname,
+        l.clientId,
+        l.expiresAt,
+        l.subnetId,
+        l.dhcpVersion || 4,
+        l.duid || null,
+        l.iaid ?? null,
+      );
     }
     const currentKeys = new Set(observedLeases.map((lease) => `${lease.subnetId}|${lease.ip}`));
     const retainExpired = db.prepare(`
       INSERT INTO dhcp_leases
-        (ip_address, mac_address, hostname, client_id, expires_at, subnet_id, last_seen)
+        (ip_address, mac_address, hostname, client_id, expires_at, subnet_id, last_seen,
+         dhcp_version, duid, iaid)
       VALUES (?, ?, ?, ?,
         CASE
           WHEN ? = 'infinite' OR datetime(?) > datetime('now') THEN datetime('now')
           ELSE ?
         END,
-        ?, ?)
+        ?, ?, ?, ?, ?)
     `);
     for (const [key, old] of previous) {
       if (currentKeys.has(key) || reservationKeys.has(key)) continue;
@@ -69,6 +84,9 @@ export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
         old.expires_at,
         old.subnet_id,
         old.last_seen,
+        old.dhcp_version || 4,
+        old.duid,
+        old.iaid,
       );
     }
     observeDhcpLeases(db, observedLeases, { prevalidated: lifecycleValidated });

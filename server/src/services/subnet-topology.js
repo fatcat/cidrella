@@ -469,6 +469,9 @@ export function configureSubnet(db, subnet, parsed, fields) {
         fields.dhcpPool,
       );
     }
+    if (fields.create_dhcp_scope && parsed.family === 6 && fields.dhcpV6) {
+      DhcpTopology.createAutoScopeV6(db, subnet.id, parsed, fields.domain_name || null, fields.dhcpV6);
+    }
   });
 
   configure();

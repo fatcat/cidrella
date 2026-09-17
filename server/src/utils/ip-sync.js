@@ -40,7 +40,7 @@ export function findSubnetForIp(db, ip) {
     leafSubnetCache = db
       .prepare(
         `
-      SELECT id, cidr, network_address, prefix_length FROM subnets
+      SELECT id, cidr, network_address, prefix_length, status FROM subnets
       WHERE (SELECT COUNT(*) FROM subnets c WHERE c.parent_id = subnets.id) = 0
     `,
       )

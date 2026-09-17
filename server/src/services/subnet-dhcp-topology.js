@@ -5,6 +5,7 @@ import {
   ipToLong,
   longToIp,
   addressToBig,
+  addressAtOffset,
   getServerIpForSubnet,
 } from '../utils/ip.js';
 import { dynamicPoolConflict } from '../models/dhcp-scope.js';
@@ -37,6 +38,83 @@ export function defaultDhcpPoolForSubnet(parsed, gateway = null) {
   if (gatewayLong === startLong) startLong++;
   else if (gatewayLong === endLong) endLong--;
   return startLong <= endLong ? { startLong, endLong } : null;
+}
+
+/**
+ * The default stateful DHCPv6 pool: 4096 addresses starting at offset 0x1000
+ * of the prefix, well clear of the low addresses operators hand out by hand.
+ * A prefix too small to hold that offset gets its whole usable range.
+ */
+export function defaultDhcpV6PoolForSubnet(parsed) {
+  if (parsed.family !== 6) return null;
+  if (parsed.prefix >= parsed.bits - 1) return null;
+  const size = parsed.sizeBig;
+  if (size > 0x2000n) {
+    return { start_ip: addressAtOffset(parsed, 0x1000), end_ip: addressAtOffset(parsed, 0x1fff) };
+  }
+  return { start_ip: parsed.firstUsable, end_ip: parsed.lastUsable };
+}
+
+/**
+ * Create the DHCPv6 scope for a network. `mode` is slaac, stateless or
+ * stateful. The scope's range covers the pool for stateful, and the usable
+ * prefix for the two SLAAC modes (a display projection dnsmasq never sees
+ * as a pool). No router, mask or broadcast options exist in DHCPv6.
+ */
+export function createAutoScopeV6(db, subnetId, parsed, domainName, { mode, pool = null }) {
+  const dhcpType = db
+    .prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope' AND is_system = 1")
+    .get();
+  if (!dhcpType) return null;
+  const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
+  const interval =
+    mode === 'stateful'
+      ? pool || defaultDhcpV6PoolForSubnet(parsed)
+      : { start_ip: parsed.firstUsable, end_ip: parsed.lastUsable };
+  if (!interval) return null;
+  if (mode === 'stateful') {
+    const conflict = dynamicPoolConflict(db, subnet, interval.start_ip, interval.end_ip);
+    if (conflict) throw new Error(conflict.error);
+  }
+
+  const rangeResult = db
+    .prepare(
+      'INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip, description) VALUES (?, ?, ?, ?, ?)',
+    )
+    .run(
+      subnetId,
+      dhcpType.id,
+      interval.start_ip,
+      interval.end_ip,
+      mode === 'stateful' ? 'DHCPv6 pool' : `DHCPv6 ${mode}`,
+    );
+  const scopeResult = db
+    .prepare(
+      `
+    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, domain_name, description,
+      address_family, v6_mode)
+    VALUES (?, ?, ?, ?, 'Auto-created DHCPv6 scope', 6, ?)
+  `,
+    )
+    .run(
+      rangeResult.lastInsertRowid,
+      subnetId,
+      getSetting('default_lease_time'),
+      domainName || null,
+      mode,
+    );
+  db.prepare(
+    `
+    INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+    VALUES (?, ?, ?, ?)
+  `,
+  ).run(
+    scopeResult.lastInsertRowid,
+    rangeResult.lastInsertRowid,
+    interval.start_ip,
+    interval.end_ip,
+  );
+  return scopeResult.lastInsertRowid;
 }
 
 export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {

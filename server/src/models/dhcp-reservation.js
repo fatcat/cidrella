@@ -24,16 +24,20 @@ export function createReservation(db, subnet, fields) {
     const result = db
       .prepare(
         `
-      INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, description)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO dhcp_reservations (subnet_id, mac_address, ip_address, hostname, description,
+        address_family, duid, iaid)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
         subnet.id,
-        fields.mac_address,
+        fields.mac_address || null,
         fields.ip_address,
         fields.hostname || null,
         fields.description || null,
+        fields.address_family || subnet.address_family || 4,
+        fields.duid || null,
+        fields.iaid ?? null,
       );
 
     allocateStaticDhcp(
@@ -42,7 +46,10 @@ export function createReservation(db, subnet, fields) {
       fields.ip_address,
       {
         hostname: fields.hostname || null,
-        mac_address: fields.mac_address,
+        mac_address: fields.mac_address || null,
+        dhcp_version: fields.address_family || subnet.address_family || 4,
+        dhcp_duid: fields.duid || null,
+        dhcp_iaid: fields.iaid ?? null,
       },
       result.lastInsertRowid,
     );
@@ -61,15 +68,17 @@ export function updateReservation(db, reservation, subnet, fields) {
     db.prepare(
       `
       UPDATE dhcp_reservations SET mac_address = ?, ip_address = ?, hostname = ?,
-        description = ?, enabled = ?, updated_at = datetime('now')
+        description = ?, enabled = ?, duid = ?, iaid = ?, updated_at = datetime('now')
       WHERE id = ?
     `,
     ).run(
-      fields.mac_address,
+      fields.mac_address || null,
       fields.ip_address,
       fields.hostname !== undefined ? fields.hostname || null : reservation.hostname,
       fields.description !== undefined ? fields.description || null : reservation.description,
       fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : reservation.enabled,
+      fields.duid !== undefined ? fields.duid || null : reservation.duid,
+      fields.iaid !== undefined ? (fields.iaid ?? null) : reservation.iaid,
       reservation.id,
     );
 
@@ -101,7 +110,10 @@ export function updateReservation(db, reservation, subnet, fields) {
         fields.ip_address,
         {
           hostname: newHostname,
-          mac_address: fields.mac_address,
+          mac_address: fields.mac_address || null,
+          dhcp_version: reservation.address_family || 4,
+          dhcp_duid: fields.duid !== undefined ? fields.duid || null : reservation.duid,
+          dhcp_iaid: fields.iaid !== undefined ? (fields.iaid ?? null) : reservation.iaid,
         },
         reservation.id,
       );

@@ -2,18 +2,19 @@ import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
-  isIpInSubnet,
-  ipToLong,
-  longToIp,
-  parseCidr,
+  networkContains,
+  parseNetwork,
+  addressToBig,
+  addressInRange,
+  bigToAddress,
+  isValidAddress,
   getServerIpForSubnet,
-  isValidIpv4,
   isValidMac,
   isClientMac,
   isValidDomain,
   validateDisplayString,
 } from '../utils/ip.js';
-import { sortKey } from '../utils/address.js';
+import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
 import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
@@ -43,6 +44,29 @@ import { scopeMatches } from '../models/workspace-view.js';
 
 const router = Router();
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
+const V6_MODES = ['slaac', 'stateless', 'stateful'];
+// A DHCPv6 DUID as dnsmasq prints it: colon-separated hex bytes, at least
+// the two-byte type prefix, at most the 130 bytes RFC 8415 allows.
+const DUID_RE = /^([0-9a-f]{2}:){1,129}[0-9a-f]{2}$/;
+
+// The DHCPv6 mode for a scope on `subnet`, or an error message. IPv4 scopes
+// carry no mode; slaac and stateless need a /64 because SLAAC does.
+function resolveV6Mode(subnet, requested, current = null) {
+  if (subnet.address_family !== 6) {
+    if (requested !== undefined && requested !== null) {
+      return { error: 'v6_mode applies to IPv6 networks only' };
+    }
+    return { mode: null };
+  }
+  const mode = requested === undefined ? current : requested;
+  if (!V6_MODES.includes(mode)) {
+    return { error: `v6_mode must be one of: ${V6_MODES.join(', ')}` };
+  }
+  if (mode !== 'stateful' && subnet.prefix_length !== 64) {
+    return { error: `v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)` };
+  }
+  return { mode };
+}
 
 // v0.4.15: validate each scope option value before it reaches the scope-
 // options table. The config writer (utils/dhcp.js) already drops bad rows
@@ -76,7 +100,7 @@ function validateDefaultOption(opt) {
 function parseIpList(jsonStr, fieldName) {
   try {
     const servers = JSON.parse(jsonStr);
-    if (!Array.isArray(servers) || !servers.every(isValidIpv4)) {
+    if (!Array.isArray(servers) || !servers.every(isValidAddress)) {
       return { error: `${fieldName} must be a JSON array of valid IPs` };
     }
     return { servers };
@@ -161,17 +185,13 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
     ...db.prepare('SELECT subnet_id, ip_address, hostname, mac_address FROM dhcp_leases').all(),
   ];
   for (const row of memberRows) {
-    const value = isValidIpv4(row.ip_address) ? ipToLong(row.ip_address) : null;
-    row.scope_id =
-      value === null
-        ? null
-        : (scopes.find(
-            (scope) =>
-              scope.subnet_id === row.subnet_id &&
-              scope.pools.some(
-                (pool) => value >= ipToLong(pool.start_ip) && value <= ipToLong(pool.end_ip),
-              ),
-          )?.id ?? null);
+    row.scope_id = !isValidAddress(row.ip_address)
+      ? null
+      : (scopes.find(
+          (scope) =>
+            scope.subnet_id === row.subnet_id &&
+            scope.pools.some((pool) => addressInRange(row.ip_address, pool.start_ip, pool.end_ip)),
+        )?.id ?? null);
   }
   if (req.query.q) scopes = scopes.filter((scope) => scopeMatches(scope, req.query.q, memberRows));
   if (req.query.table_q) {
@@ -194,6 +214,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     ntp_servers,
     domain_search,
     description,
+    v6_mode,
   } = body;
   const db = getDb();
 
@@ -247,13 +268,20 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet_id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-  const poolConflict = dynamicPoolConflict(db, subnet, range.start_ip, range.end_ip);
-  if (poolConflict) {
-    return res.status(409).json({
-      error: poolConflict.error,
-      conflict_type: poolConflict.type,
-      ip_address: poolConflict.ip_address,
-    });
+  const v6 = resolveV6Mode(subnet, v6_mode, subnet.address_family === 6 ? null : undefined);
+  if (v6.error) return res.status(400).json({ error: v6.error });
+
+  // Only a pool that hands out addresses can conflict with them. Under slaac
+  // and stateless the range is a display projection of the prefix.
+  if (v6.mode === null || v6.mode === 'stateful') {
+    const poolConflict = dynamicPoolConflict(db, subnet, range.start_ip, range.end_ip);
+    if (poolConflict) {
+      return res.status(409).json({
+        error: poolConflict.error,
+        conflict_type: poolConflict.type,
+        ip_address: poolConflict.ip_address,
+      });
+    }
   }
 
   // Check no existing scope for this range
@@ -271,8 +299,12 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     if (dnsErr) return res.status(400).json({ error: dnsErr });
   }
 
-  // Validate gateway
-  if (gateway && !isValidIpv4(gateway)) {
+  // Validate gateway. DHCPv6 never carries a router: clients learn it from
+  // the Router Advertisement, so an IPv6 scope refuses one outright.
+  if (gateway && subnet.address_family === 6) {
+    return res.status(400).json({ error: 'DHCPv6 scopes take no gateway; routers come from RA' });
+  }
+  if (gateway && !isValidAddress(gateway)) {
     return res.status(400).json({ error: 'Invalid gateway IP address' });
   }
 
@@ -309,6 +341,8 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
       domain_search,
       description,
       options,
+      address_family: subnet.address_family,
+      v6_mode: v6.mode,
     },
     { subnet, defaultLeaseTime: getSetting('default_lease_time') },
   );
@@ -335,6 +369,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     description,
     start_ip,
     end_ip,
+    v6_mode,
   } = body;
   const db = getDb();
 
@@ -372,7 +407,15 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     if (dnsErr) return res.status(400).json({ error: dnsErr });
   }
 
-  if (gateway !== undefined && gateway !== null && gateway !== '' && !isValidIpv4(gateway)) {
+  const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
+  const scopeSubnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
+  const v6 = resolveV6Mode(scopeSubnet, v6_mode, scope.v6_mode);
+  if (v6.error) return res.status(400).json({ error: v6.error });
+
+  if (gateway && scopeSubnet.address_family === 6) {
+    return res.status(400).json({ error: 'DHCPv6 scopes take no gateway; routers come from RA' });
+  }
+  if (gateway !== undefined && gateway !== null && gateway !== '' && !isValidAddress(gateway)) {
     return res.status(400).json({ error: 'Invalid gateway IP address' });
   }
 
@@ -382,21 +425,22 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   }
 
   // Validate start_ip / end_ip if provided
-  if (start_ip !== undefined && !isValidIpv4(start_ip)) {
+  if (start_ip !== undefined && !isValidAddress(start_ip)) {
     return res.status(400).json({ error: 'Invalid start IP address' });
   }
-  if (end_ip !== undefined && !isValidIpv4(end_ip)) {
+  if (end_ip !== undefined && !isValidAddress(end_ip)) {
     return res.status(400).json({ error: 'Invalid end IP address' });
   }
-  const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
-  const scopeSubnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
   const newStart = start_ip || range.start_ip;
   const newEnd = end_ip || range.end_ip;
   if (start_ip !== undefined || end_ip !== undefined) {
-    if (!isIpInSubnet(newStart, scopeSubnet.cidr) || !isIpInSubnet(newEnd, scopeSubnet.cidr)) {
+    if (
+      !networkContains(scopeSubnet.cidr, newStart) ||
+      !networkContains(scopeSubnet.cidr, newEnd)
+    ) {
       return res.status(400).json({ error: 'IP addresses must be within the subnet' });
     }
-    if (ipToLong(newStart) > ipToLong(newEnd)) {
+    if (addressToBig(newStart).value > addressToBig(newEnd).value) {
       return res.status(400).json({ error: 'Start IP must be before or equal to end IP' });
     }
     // Block a resize that would place the subnet's gateway inside the pool.
@@ -410,7 +454,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     }
   }
   const effectiveEnabled = enabled !== undefined ? enabled : Boolean(scope.enabled);
-  if (effectiveEnabled) {
+  if (effectiveEnabled && (v6.mode === null || v6.mode === 'stateful')) {
     const poolConflict = dynamicPoolConflict(db, scopeSubnet, newStart, newEnd);
     if (poolConflict) {
       return res.status(409).json({
@@ -451,6 +495,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       start_ip,
       end_ip,
       options,
+      v6_mode: v6.mode,
     },
     { subnet: optionSubnet },
   );
@@ -499,11 +544,13 @@ router.get('/reservations', requirePerm('dhcp:read'), (req, res) => {
 // Blocks the subnet's network address, broadcast, gateway, and any IP marked
 // reserved in ip_addresses. Callers have already validated format + subnet bounds.
 export function reservationIpRejectionReason(db, subnet, ipAddress) {
-  const parsed = parseCidr(subnet.cidr);
-  const ipLong = ipToLong(ipAddress);
-  if (ipLong === parsed.networkLong) return 'A DHCP Reservation cannot use the network address';
-  if (ipLong === parsed.broadcastLong) return 'A DHCP Reservation cannot use the broadcast address';
-  if (subnet.gateway_address && ipAddress === subnet.gateway_address) {
+  const parsed = parseNetwork(subnet.cidr);
+  const value = addressToBig(ipAddress).value;
+  if (value === parsed.networkBig) return 'A DHCP Reservation cannot use the network address';
+  if (parsed.family === 4 && value === parsed.lastBig) {
+    return 'A DHCP Reservation cannot use the broadcast address';
+  }
+  if (subnet.gateway_address && addressToBig(subnet.gateway_address).value === value) {
     return 'A DHCP Reservation cannot use the gateway address';
   }
   const row = db
@@ -521,20 +568,62 @@ export function reservationIpRejectionReason(db, subnet, ipAddress) {
   return null;
 }
 
+// The client identity a reservation binds: a MAC for DHCPv4, a DUID (with an
+// optional IAID) for DHCPv6. Returns { mac, duid, iaid } or { error }.
+function reservationIdentity({ mac_address, duid, iaid }, family) {
+  if (family === 6) {
+    if (typeof duid !== 'string' || !duid) {
+      return { error: 'duid is required for a reservation on an IPv6 network' };
+    }
+    const normalizedDuid = duid.toLowerCase();
+    if (!DUID_RE.test(normalizedDuid)) {
+      return { error: 'Invalid DUID format (expected colon-separated hex bytes, e.g. 00:01:00:01:...)' };
+    }
+    if (iaid !== undefined && iaid !== null && !(Number.isInteger(iaid) && iaid >= 0 && iaid <= 0xffffffff)) {
+      return { error: 'iaid must be an integer 0-4294967295' };
+    }
+    let mac = null;
+    if (mac_address !== undefined && mac_address !== null && mac_address !== '') {
+      if (typeof mac_address !== 'string' || !isValidMac(mac_address)) {
+        return { error: 'Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)' };
+      }
+      mac = mac_address.toLowerCase();
+    }
+    return { mac, duid: normalizedDuid, iaid: iaid ?? null };
+  }
+  if (duid !== undefined && duid !== null && duid !== '') {
+    return { error: 'duid applies to reservations on IPv6 networks only' };
+  }
+  if (typeof mac_address !== 'string' || !mac_address) {
+    return { error: 'mac_address is required' };
+  }
+  const mac = mac_address.toLowerCase();
+  if (!isValidMac(mac)) {
+    return { error: 'Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)' };
+  }
+  if (!isClientMac(mac)) {
+    return { error: 'MAC address cannot be all-zero, broadcast, or multicast' };
+  }
+  return { mac, duid: null, iaid: null };
+}
+
 // POST /api/dhcp/reservations
 router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   const body = req.body || {};
-  const { subnet_id, mac_address, ip_address, hostname, description } = body;
+  const { subnet_id, mac_address, duid, iaid, hostname, description } = body;
   const db = getDb();
 
-  if (!subnet_id || !mac_address || !ip_address) {
-    return res.status(400).json({ error: 'subnet_id, mac_address, and ip_address are required' });
+  if (!subnet_id || !body.ip_address) {
+    return res.status(400).json({ error: 'subnet_id and ip_address are required' });
   }
 
   // Type guards BEFORE any string method is called, prevents the
   // `mac_address.toLowerCase is not a function` 500 that v0.4.14's API
   // fuzzer logged.
-  if (typeof mac_address !== 'string' || typeof ip_address !== 'string') {
+  if (
+    typeof body.ip_address !== 'string' ||
+    (mac_address !== undefined && mac_address !== null && typeof mac_address !== 'string')
+  ) {
     return res.status(400).json({ error: 'mac_address and ip_address must be strings' });
   }
   if (hostname !== undefined && hostname !== null && typeof hostname !== 'string') {
@@ -544,21 +633,14 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'description must be a string' });
   }
 
-  const mac = mac_address.toLowerCase();
-  if (!isValidMac(mac)) {
-    return res
-      .status(400)
-      .json({ error: 'Invalid MAC address format (expected XX:XX:XX:XX:XX:XX)' });
-  }
-  if (!isClientMac(mac)) {
-    return res
-      .status(400)
-      .json({ error: 'MAC address cannot be all-zero, broadcast, or multicast' });
-  }
-
-  if (!isValidIpv4(ip_address)) {
+  if (!isValidAddress(body.ip_address)) {
     return res.status(400).json({ error: 'Invalid IP address' });
   }
+  const ip_address = canonicalizeIp(body.ip_address);
+  const family = addressFamily(ip_address);
+  const identity = reservationIdentity({ mac_address, duid, iaid }, family);
+  if (identity.error) return res.status(400).json({ error: identity.error });
+  const mac = identity.mac;
 
   if (hostname && !isValidDomain(hostname)) {
     return res
@@ -589,21 +671,40 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
       .json({ error: 'Subnet is not allocated. DHCP Reservations require an allocated subnet.' });
   }
 
-  if (!isIpInSubnet(ip_address, subnet.cidr)) {
+  if (!networkContains(subnet.cidr, ip_address)) {
     return res.status(400).json({ error: 'IP address is not within the selected subnet' });
+  }
+  if (family === 6) {
+    const scope = db
+      .prepare("SELECT v6_mode FROM dhcp_scopes WHERE subnet_id = ? AND enabled = 1 LIMIT 1")
+      .get(subnet.id);
+    if (scope && scope.v6_mode !== 'stateful') {
+      return res.status(400).json({
+        error: `DHCP Reservations need a stateful DHCPv6 scope; this network uses ${scope.v6_mode}`,
+      });
+    }
   }
 
   const rejection = reservationIpRejectionReason(db, subnet, ip_address);
   if (rejection) return res.status(400).json({ error: rejection });
 
-  // Check duplicate MAC in this subnet
-  const dupMac = db
-    .prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ?')
-    .get(subnet_id, mac);
+  // Check duplicate client identity in this subnet
+  const dupMac = mac
+    ? db
+        .prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ?')
+        .get(subnet_id, mac)
+    : null;
   if (dupMac)
     return res
       .status(409)
       .json({ error: 'MAC address already has a DHCP Reservation in this subnet' });
+  const dupDuid = identity.duid
+    ? db
+        .prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND duid = ?')
+        .get(subnet_id, identity.duid)
+    : null;
+  if (dupDuid)
+    return res.status(409).json({ error: 'DUID already has a DHCP Reservation in this subnet' });
 
   // Check duplicate IP in this subnet
   const dupIp = db
@@ -619,9 +720,13 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
     ip_address,
     hostname,
     description,
+    address_family: family,
+    duid: identity.duid,
+    iaid: identity.iaid,
   });
   audit(req.user.id, 'dhcp_reservation_created', 'dhcp_reservation', reservation.id, {
     mac,
+    duid: identity.duid,
     ip: ip_address,
     subnet: subnet.cidr,
   });
@@ -632,7 +737,7 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
 // PUT /api/dhcp/reservations/:id
 router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   const body = req.body || {};
-  const { mac_address, ip_address, hostname, description, enabled } = body;
+  const { mac_address, duid, iaid, hostname, description, enabled } = body;
   const db = getDb();
 
   const reservation = db.prepare('SELECT * FROM dhcp_reservations WHERE id = ?').get(req.params.id);
@@ -641,10 +746,10 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(reservation.subnet_id);
 
   // Type guards on every optional string field.
-  if (mac_address !== undefined && typeof mac_address !== 'string') {
+  if (mac_address !== undefined && mac_address !== null && typeof mac_address !== 'string') {
     return res.status(400).json({ error: 'mac_address must be a string' });
   }
-  if (ip_address !== undefined && typeof ip_address !== 'string') {
+  if (body.ip_address !== undefined && typeof body.ip_address !== 'string') {
     return res.status(400).json({ error: 'ip_address must be a string' });
   }
   if (hostname !== undefined && hostname !== null && typeof hostname !== 'string') {
@@ -654,21 +759,27 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'description must be a string' });
   }
 
-  const newMac = mac_address ? mac_address.toLowerCase() : reservation.mac_address;
-  const newIp = ip_address ?? reservation.ip_address;
-
-  if (mac_address && !isValidMac(newMac)) {
-    return res.status(400).json({ error: 'Invalid MAC address format' });
-  }
-  if (mac_address && !isClientMac(newMac)) {
-    return res
-      .status(400)
-      .json({ error: 'MAC address cannot be all-zero, broadcast, or multicast' });
-  }
-
-  if (ip_address && !isValidIpv4(ip_address)) {
+  if (body.ip_address && !isValidAddress(body.ip_address)) {
     return res.status(400).json({ error: 'Invalid IP address' });
   }
+  const ip_address = body.ip_address ? canonicalizeIp(body.ip_address) : undefined;
+  const newIp = ip_address ?? reservation.ip_address;
+  const family = reservation.address_family || addressFamily(newIp);
+  if (ip_address && addressFamily(ip_address) !== family) {
+    return res.status(400).json({ error: 'A reservation cannot change address family' });
+  }
+
+  // Identity fields left out keep their stored values.
+  const identity = reservationIdentity(
+    {
+      mac_address: mac_address === undefined ? reservation.mac_address : mac_address,
+      duid: duid === undefined ? reservation.duid : duid,
+      iaid: iaid === undefined ? reservation.iaid : iaid,
+    },
+    family,
+  );
+  if (identity.error) return res.status(400).json({ error: identity.error });
+  const newMac = identity.mac;
 
   if (hostname !== undefined && hostname && !isValidDomain(hostname)) {
     return res
@@ -676,7 +787,7 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
       .json({ error: 'Invalid hostname (letters, digits, dots, hyphens; 1–253 chars)' });
   }
 
-  if (ip_address && !isIpInSubnet(ip_address, subnet.cidr)) {
+  if (ip_address && !networkContains(subnet.cidr, ip_address)) {
     return res.status(400).json({ error: 'IP address is not within the subnet' });
   }
 
@@ -685,8 +796,8 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     if (rejection) return res.status(400).json({ error: rejection });
   }
 
-  // Check duplicate MAC (excluding self)
-  if (newMac !== reservation.mac_address) {
+  // Check duplicate client identity (excluding self)
+  if (newMac && newMac !== reservation.mac_address) {
     const dupMac = db
       .prepare(
         'SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND mac_address = ? AND id != ?',
@@ -696,6 +807,13 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
       return res
         .status(409)
         .json({ error: 'MAC address already has a DHCP Reservation in this subnet' });
+  }
+  if (identity.duid && identity.duid !== reservation.duid) {
+    const dupDuid = db
+      .prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ? AND duid = ? AND id != ?')
+      .get(reservation.subnet_id, identity.duid, reservation.id);
+    if (dupDuid)
+      return res.status(409).json({ error: 'DUID already has a DHCP Reservation in this subnet' });
   }
 
   // Check duplicate IP (excluding self)
@@ -717,6 +835,8 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     hostname,
     description,
     enabled,
+    duid: identity.duid,
+    iaid: identity.iaid,
   });
   audit(req.user.id, 'dhcp_reservation_updated', 'dhcp_reservation', reservation.id, {
     changes: req.body,
@@ -734,6 +854,7 @@ router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   deleteReservation(db, reservation);
   audit(req.user.id, 'dhcp_reservation_deleted', 'dhcp_reservation', reservation.id, {
     mac: reservation.mac_address,
+    duid: reservation.duid,
     ip: reservation.ip_address,
   });
   req.afterCommit('regenerate_dhcp');
@@ -791,11 +912,13 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
   const now = Date.now();
   const leaseIsActive = (lease) => isLeaseActive(lease.expires_at, now);
 
-  // Build a map of active leases by MAC+IP for matching. Expired rows remain
-  // visible as short-lived history but cannot make a reservation look online.
+  // Build a map of active leases by client identity + IP for matching (MAC
+  // for DHCPv4, DUID for DHCPv6). Expired rows remain visible as short-lived
+  // history but cannot make a reservation look online.
+  const identityKey = (row) => `${row.duid || row.mac_address}:${row.ip_address}`;
   const leaseMap = new Map();
   for (const l of leases) {
-    if (leaseIsActive(l)) leaseMap.set(`${l.mac_address}:${l.ip_address}`, l);
+    if (leaseIsActive(l)) leaseMap.set(identityKey(l), l);
   }
 
   const unified = [];
@@ -803,13 +926,16 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
   // Add reservations first (they take priority)
   const matchedLeaseKeys = new Set();
   for (const r of reservations) {
-    const key = `${r.mac_address}:${r.ip_address}`;
+    const key = identityKey(r);
     const matchedLease = leaseMap.get(key);
     const entry = {
       id: r.id,
       dhcp_assignment_type: 'reserved',
       ip_address: r.ip_address,
       mac_address: r.mac_address,
+      duid: r.duid,
+      iaid: r.iaid,
+      dhcp_version: r.address_family === 6 ? 6 : 4,
       hostname: r.hostname,
       description: r.description,
       subnet_id: r.subnet_id,
@@ -830,13 +956,16 @@ function getUnifiedDhcpRows(db, { subnetId = null } = {}) {
 
   // Add dynamic leases that don't match a reservation
   for (const l of leases) {
-    const key = `${l.mac_address}:${l.ip_address}`;
+    const key = identityKey(l);
     if (!matchedLeaseKeys.has(key)) {
       unified.push({
         id: l.id,
         dhcp_assignment_type: 'dynamic',
         ip_address: l.ip_address,
         mac_address: l.mac_address,
+        duid: l.duid,
+        iaid: l.iaid,
+        dhcp_version: l.dhcp_version || 4,
         hostname: l.hostname,
         description: null,
         subnet_id: l.subnet_id,
@@ -884,11 +1013,21 @@ router.get('/scopes/:id/addresses', requirePerm('dhcp:read'), (req, res) => {
   );
   const rows = [];
   scope.pools = getScopePools(db, scope.id);
+  // An IPv6 pool is never walked: its listing is the assigned rows only.
+  if (scope.address_family === 6) {
+    for (const pool of scope.pools) {
+      for (const [ip, assigned] of assignedByIp) {
+        if (addressInRange(ip, pool.start_ip, pool.end_ip)) rows.push(assigned);
+      }
+    }
+    rows.sort((a, b) => sortKey(a.ip_address).localeCompare(sortKey(b.ip_address)));
+    return res.json(enrichDhcpRows(db, rows));
+  }
   for (const pool of scope.pools) {
-    const start = ipToLong(pool.start_ip);
-    const end = ipToLong(pool.end_ip);
+    const start = Number(addressToBig(pool.start_ip).value);
+    const end = Number(addressToBig(pool.end_ip).value);
     for (let ipLong = start; ipLong <= end; ipLong++) {
-      const ip = longToIp(ipLong);
+      const ip = bigToAddress(BigInt(ipLong), 4);
       const assigned = assignedByIp.get(ip);
       if (assigned) {
         rows.push(assigned);

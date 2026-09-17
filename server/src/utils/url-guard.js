@@ -20,20 +20,6 @@ import { createGunzip } from 'node:zlib';
 // (10/8, 172.16/12, 192.168/16), CGNAT (100.64/10), 0/8, metadata (169.254/16),
 // TEST-NET ranges.
 
-function ipInCidr(ip, cidr) {
-  const [base, prefixStr] = cidr.split('/');
-  const prefix = parseInt(prefixStr, 10);
-  const ipLong = ipToLong(ip);
-  const baseLong = ipToLong(base);
-  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
-  return (ipLong & mask) === (baseLong & mask);
-}
-
-function ipToLong(ip) {
-  const p = ip.split('.').map(Number);
-  return ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
-}
-
 const BLOCKED_IPV4_RANGES = [
   '0.0.0.0/8', // "this network"
   '10.0.0.0/8', // RFC1918
@@ -58,7 +44,7 @@ const BLOCKED_IPV4_RANGES = [
  */
 export function isBlockedIpv4(ip) {
   if (net.isIP(ip) !== 4) return false; // not a v4 literal, caller validates format separately
-  return BLOCKED_IPV4_RANGES.some((range) => ipInCidr(ip, range));
+  return BLOCKED_IPV4_RANGES.some((range) => networkContains(range, ip));
 }
 
 // The IPv6 counterpart for literal upstream addresses: unspecified, loopback,
@@ -131,7 +117,7 @@ export async function validateOutboundUrl(rawUrl) {
   }
 
   for (const range of BLOCKED_IPV4_RANGES) {
-    if (ipInCidr(ip, range)) {
+    if (networkContains(range, ip)) {
       return { ok: false, reason: `IP ${ip} is in blocked range ${range}` };
     }
   }

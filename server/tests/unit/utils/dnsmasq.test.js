@@ -291,3 +291,18 @@ describe('generateReverseNames', () => {
     ]);
   });
 });
+
+describe('listenableAddresses', () => {
+  it('binds IPv4 and global or unique-local IPv6, never link-local', async () => {
+    const { listenableAddresses } = await import('../../../src/utils/dnsmasq.js');
+    expect(
+      listenableAddresses([
+        { family: 'IPv4', address: '10.0.1.2' },
+        { family: 'IPv6', address: 'fe80::1' },
+        { family: 'IPv6', address: 'fd00:a::2' },
+        { family: 'IPv6', address: '2001:db8::2' },
+      ]),
+    ).toEqual(['10.0.1.2', 'fd00:a::2', '2001:db8::2']);
+    expect(listenableAddresses(undefined)).toEqual([]);
+  });
+});

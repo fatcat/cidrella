@@ -385,19 +385,26 @@ router.post(
       resolvedPolicy,
       gateway_address,
     );
-    const pool = DhcpTopology.defaultDhcpPoolForSubnet(parsed, resolvedGateway);
+    const pool =
+      parsed.family === 6
+        ? DhcpTopology.defaultDhcpV6PoolForSubnet(parsed)
+        : DhcpTopology.defaultDhcpPoolForSubnet(parsed, resolvedGateway);
 
     res.json({
       cidr: normalized,
+      address_family: parsed.family,
       gateway_policy: resolvedPolicy,
       gateway_address: resolvedGateway,
       suggested_name: networkNameFromTemplate(getSetting('subnet_name_template'), normalized),
       default_dhcp_pool: pool
-        ? { start_ip: longToIp(pool.startLong), end_ip: longToIp(pool.endLong) }
+        ? parsed.family === 6
+          ? pool
+          : { start_ip: longToIp(pool.startLong), end_ip: longToIp(pool.endLong) }
         : null,
       default_dhcp_pool_explanation: pool
         ? null
         : 'No automatic DHCP pool fits this prefix. Configure a supported pool explicitly if needed.',
+      dhcp_v6_modes: parsed.family === 6 ? ['slaac', 'stateless', 'stateful'] : null,
     });
   }),
 );
@@ -1649,12 +1656,20 @@ router.post(
       domain_name,
       dhcp_start_ip,
       dhcp_end_ip,
+      dhcp_v6_mode,
       scan_interval,
       scan_enabled,
     } = req.body;
 
     if (typeof name !== 'string' || !name.trim())
       return res.status(400).json({ error: 'Name is required' });
+    if (
+      dhcp_v6_mode !== undefined &&
+      dhcp_v6_mode !== null &&
+      !['slaac', 'stateless', 'stateful'].includes(dhcp_v6_mode)
+    ) {
+      return res.status(400).json({ error: 'dhcp_v6_mode must be slaac, stateless, or stateful' });
+    }
     {
       const err = validateDisplayString(name, { maxLength: 255 });
       if (err) return res.status(400).json({ error: `name ${err}` });
@@ -1739,8 +1754,37 @@ router.post(
     // We auto-create the zone inside the txn if it doesn't exist yet.
 
     // DHCPv4 pools are sized from the address count below. IPv6 scopes are
-    // created by mode instead (slaac, stateless, stateful).
+    // created by mode instead: slaac (RA only), stateless (SLAAC plus options
+    // over DHCPv6) or stateful (addresses from a pool). The SLAAC modes need a
+    // /64. A stateful pool may be given explicitly or defaults to 4096
+    // addresses at offset 0x1000 of the prefix.
     let dhcpPool = null;
+    let dhcpV6 = null;
+    if (create_dhcp_scope && parsed.family === 6) {
+      const mode = dhcp_v6_mode || 'stateful';
+      if (mode !== 'stateful' && parsed.prefix !== 64) {
+        return res
+          .status(400)
+          .json({ error: `dhcp_v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)` });
+      }
+      let pool = null;
+      if (mode === 'stateful' && (dhcp_start_ip || dhcp_end_ip)) {
+        const defaults = DhcpTopology.defaultDhcpV6PoolForSubnet(parsed);
+        const startIp = dhcp_start_ip || defaults?.start_ip || parsed.firstUsable;
+        const endIp = dhcp_end_ip || defaults?.end_ip || parsed.lastUsable;
+        const error = validateDhcpScopeBounds(parsed, startIp, endIp);
+        if (error) return res.status(400).json({ error });
+        const conflict = gatewayInPoolConflict({ gateway_address: gw }, startIp, endIp);
+        if (conflict) {
+          return res.status(409).json({
+            error: gatewayInPoolError(conflict),
+            gateway_address: conflict.gateway_address,
+          });
+        }
+        pool = { start_ip: canonicalizeIp(startIp), end_ip: canonicalizeIp(endIp) };
+      }
+      dhcpV6 = { mode, pool };
+    }
     if (create_dhcp_scope && parsed.family === 4 && parsed.prefix <= 29) {
       const gwLong = gw && isValidIpv4(gw) ? ipToLong(gw) : null;
       let poolStart, poolEnd;
@@ -1811,12 +1855,14 @@ router.post(
       scan_enabled,
       create_dhcp_scope,
       dhcpPool,
+      dhcpV6,
     });
 
     audit(req.user.id, 'subnet_configured', 'subnet', subnet.id, {
       name,
       cidr: subnet.cidr,
       dhcp: !!create_dhcp_scope,
+      dhcp_v6_mode: dhcpV6?.mode || null,
       reverse_dns: !!create_reverse_dns,
     });
 

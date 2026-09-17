@@ -549,6 +549,15 @@ export function restartDnsmasq() {
   }
 }
 
+// The addresses of one interface a resolver should bind: every IPv4 address
+// and every IPv6 address that is not link-local. Link-local needs a zone id
+// on the wire and clients never send queries to it.
+export function listenableAddresses(addrs) {
+  return (addrs || [])
+    .filter((a) => a.family === 'IPv4' || (a.family === 'IPv6' && !/^fe[89ab]/i.test(a.address)))
+    .map((a) => a.address);
+}
+
 export function applyInterfaceConfig(_db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return false;
 
@@ -637,11 +646,8 @@ export function applyInterfaceConfig(_db) {
       newDirectives.push(`interface=${ifName}`);
       // In bypass mode, dnsmasq also needs listen-address for DNS on LAN IPs
       if (proxyBypass && cfg.dns && dnsEnabled) {
-        const addrs = sysIfaces[ifName];
-        if (addrs) {
-          for (const a of addrs) {
-            if (a.family === 'IPv4') newDirectives.push(`listen-address=${a.address}`);
-          }
+        for (const address of listenableAddresses(sysIfaces[ifName])) {
+          newDirectives.push(`listen-address=${address}`);
         }
       }
       if (!cfg.dhcp || !dhcpEnabled) {
@@ -659,8 +665,8 @@ export function applyInterfaceConfig(_db) {
       }
       // In bypass mode, add listen-address for DNS on LAN IPs
       if (proxyBypass && dnsEnabled) {
-        for (const a of addrs) {
-          if (a.family === 'IPv4') newDirectives.push(`listen-address=${a.address}`);
+        for (const address of listenableAddresses(addrs)) {
+          newDirectives.push(`listen-address=${address}`);
         }
       }
     }
