@@ -6,8 +6,8 @@ import { dnsRecordPayload } from '../../../src/utils/dnsRecordPayload.js';
 describe('dnsRecordPayload', () => {
   const base = { name: 'svc', value: '10.0.0.5', ttl: null, enabled: true };
 
-  it('sends A, CNAME, TXT and PTR without priority, weight or port', () => {
-    for (const type of ['A', 'CNAME', 'TXT', 'PTR']) {
+  it('sends A, AAAA, CNAME, TXT and PTR without priority, weight or port', () => {
+    for (const type of ['A', 'AAAA', 'CNAME', 'TXT', 'PTR']) {
       expect(dnsRecordPayload({ ...base, type, priority: 10, weight: 5, port: 80 })).toEqual({
         name: 'svc',
         type,

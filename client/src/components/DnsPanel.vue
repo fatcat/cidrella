@@ -481,15 +481,13 @@
           }}</span>
         </div>
         <div class="field">
-          <label>{{ recordForm.type === 'PTR' ? 'Last Octet *' : 'Name *' }}</label>
+          <label>{{ recordForm.type === 'PTR' ? ptrHint.label : 'Name *' }}</label>
           <InputText
             v-model="recordForm.name"
             class="w-full"
-            :placeholder="recordForm.type === 'PTR' ? 'e.g. 5' : 'e.g. www or @'"
+            :placeholder="recordForm.type === 'PTR' ? ptrHint.placeholder : 'e.g. www or @'"
           />
-          <small v-if="recordForm.type === 'PTR'" class="field-help"
-            >Host portion of the IP address</small
-          >
+          <small v-if="recordForm.type === 'PTR'" class="field-help">{{ ptrHint.help }}</small>
         </div>
         <div class="field" v-if="!isReverse">
           <label>Type *</label>
@@ -633,7 +631,15 @@ import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { ipToLong, isValidIpv4 } from '../utils/ip.js';
+import { ipToLong, isValidIpv4, isValidIpv6, sortKey } from '../utils/ip.js';
+import {
+  reverseZoneFamily,
+  ptrRecordAddress,
+  reverseZoneSortKey,
+  ptrHostHint,
+} from '../utils/reverseZone.js';
+import { recordTypesFor } from '../utils/dnsRecordTypes.js';
+import { useFeatures } from '../composables/useFeatures.js';
 import {
   addCnameMenuItem,
   dnsRecordProbeIp,
@@ -679,7 +685,8 @@ const {
 // or null. Used to warn when a user points a DNS A record at an IP inside a
 // dynamic DHCP pool, DHCP may hand that IP to a different host tomorrow.
 function findDhcpScopeForIp(ip) {
-  if (!ip) return null;
+  // IPv4 only: an IPv6 pool is compared on the server when the record lands.
+  if (!ip || !isValidIpv4(ip)) return null;
   let ipLong;
   try {
     ipLong = ipToLong(ip);
@@ -711,6 +718,12 @@ function findDhcpScopeForIp(ip) {
 const zoneFilterText = ref('');
 const selectedZone = ref(null);
 const isReverse = computed(() => selectedZone.value?.type === 'reverse');
+// 4 or 6 for a reverse zone by its arpa spelling; the PTR form copy follows.
+const reverseFamily = computed(() =>
+  isReverse.value ? reverseZoneFamily(selectedZone.value?.name) || 4 : null,
+);
+const ptrHint = computed(() => ptrHostHint(reverseFamily.value));
+const { ipv6: ipv6Supported } = useFeatures();
 const dnsTableView = computed(() =>
   isReverse.value ? IP_TABLE_VIEW.DNS_REVERSE : IP_TABLE_VIEW.DNS_FORWARD,
 );
@@ -750,17 +763,14 @@ function resetDnsColumns() {
   else resetDnsForwardColumns();
 }
 
-// Reconstruct the IPv4 address a PTR record points at, by concatenating the
-// record's host label(s) with the zone's arpa prefix and reversing. For zone
-// "0.10.in-addr.arpa" + record name "5.1" → "10.0.1.5".
+// The address a PTR record points at: the record's host label(s) in front
+// of the zone's arpa labels, reversed back into address order, for either
+// arpa spelling. For zone "0.10.in-addr.arpa" + record name "5.1" that is
+// "10.0.1.5"; for an ip6.arpa zone the nibbles become the canonical address.
 function ptrRecordIp(record) {
   if (record?.ip_address) return record.ip_address;
   if (!selectedZone.value || selectedZone.value.type !== 'reverse') return record.name;
-  const zoneLabel = (selectedZone.value.name || '').replace(/\.?in-addr\.arpa\.?$/, '');
-  const recordLabel = record.name || '';
-  const combined = [recordLabel, zoneLabel].filter(Boolean).join('.');
-  // combined is reverse-octet order, e.g. "5.1.0.10"
-  return combined.split('.').reverse().join('.');
+  return ptrRecordAddress(selectedZone.value.name, record.name) || record.name || '';
 }
 const records = ref([]);
 const loadingRecords = ref(false);
@@ -784,15 +794,8 @@ const groupedReverseZones = computed(() => {
   const bySubnet = new Map();
   const reverseZones = store.zones
     .filter((z) => z.type === 'reverse')
-    .sort((a, b) => {
-      const octetsA = a.name.replace('.in-addr.arpa', '').split('.').reverse().map(Number);
-      const octetsB = b.name.replace('.in-addr.arpa', '').split('.').reverse().map(Number);
-      for (let i = 0; i < Math.max(octetsA.length, octetsB.length); i++) {
-        const diff = (octetsA[i] || 0) - (octetsB[i] || 0);
-        if (diff !== 0) return diff;
-      }
-      return 0;
-    });
+    // By the network each zone covers, IPv4 zones before IPv6 ones.
+    .sort((a, b) => reverseZoneSortKey(a.name).localeCompare(reverseZoneSortKey(b.name)));
 
   for (const zone of reverseZones) {
     if (zone.subnet_id) {
@@ -886,7 +889,6 @@ const recordForm = ref({
   ttl: null,
   enabled: true,
 });
-const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
 const recordError = ref('');
 let recordFormBaseline = '';
 const recordDiscard = useDiscardGuard({
@@ -910,13 +912,10 @@ const filteredRecords = computed(() => {
   if (isReverse.value) {
     base = base.map((r) => {
       const ip = ptrRecordIp(r);
-      // utils/ip.js is already imported by this file. The inline copy that used
-      // to live here returned null for unparseable input where ipToLong returns
-      // 0, so a malformed reverse-zone row sorted to the opposite end of the
-      // table depending on which code path produced it (audit #52). Guard with
-      // the shared validator and use the shared conversion.
-      const ipLong = isValidIpv4(ip) ? ipToLong(ip) : null;
-      return { ...r, _ip_long: ipLong };
+      // The shared fixed-width key sorts either family numerically and keeps
+      // a malformed row at one consistent end (audit #52). The field keeps its
+      // name: the column catalog points the IP Address sort at it.
+      return { ...r, _ip_long: sortKey(ip) };
     });
   }
   const q = dnsSearch.value.trim().toLowerCase();
@@ -935,10 +934,10 @@ const filteredRecords = computed(() => {
       (r.device_fingerprint_source && r.device_fingerprint_source.includes(q)),
   );
 });
-const availableRecordTypes = computed(() => {
-  if (selectedZone.value?.type === 'reverse') return ['PTR'];
-  return allRecordTypes;
-});
+// AAAA is offered only while IPv6 support is on; existing AAAA rows still show.
+const availableRecordTypes = computed(() =>
+  recordTypesFor({ zoneType: selectedZone.value?.type, ipv6: ipv6Supported.value }),
+);
 
 // Record context menu
 const recordContextMenu = ref();
@@ -1032,6 +1031,8 @@ const valuePlaceholder = computed(() => {
   switch (recordForm.value.type) {
     case 'A':
       return '192.168.1.10';
+    case 'AAAA':
+      return 'fd00:1234::10';
     case 'CNAME':
       return 'target.example.com';
     case 'MX':
@@ -1210,6 +1211,17 @@ async function saveRecord() {
   savingRecord.value = true;
   recordError.value = '';
   try {
+    // Address records are checked here so the operator sees which field is
+    // wrong instead of a generic 400.
+    const typedValue = (recordForm.value.value || '').trim();
+    if (recordForm.value.type === 'A' && typedValue && !isValidIpv4(typedValue)) {
+      recordError.value = 'An A record needs a valid IPv4 address';
+      return;
+    }
+    if (recordForm.value.type === 'AAAA' && typedValue && !isValidIpv6(typedValue)) {
+      recordError.value = 'An AAAA record needs a valid IPv6 address';
+      return;
+    }
     const payload = dnsRecordPayload(recordForm.value);
     if (editingRecord.value) {
       await store.updateRecord(selectedZone.value.id, editingRecord.value.id, payload);
@@ -1224,7 +1236,7 @@ async function saveRecord() {
     // different host, breaking the A record until the next renewal. A
     // DHCP Reservation would be the right tool if the user wants a stable
     // hostname for that MAC.
-    if (recordForm.value.type === 'A' && recordForm.value.value) {
+    if (['A', 'AAAA'].includes(recordForm.value.type) && recordForm.value.value) {
       const hit = findDhcpScopeForIp(recordForm.value.value);
       if (hit) {
         toast.add({

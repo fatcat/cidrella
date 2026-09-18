@@ -43,7 +43,7 @@
               <InputText
                 v-model="forwarders[i].ip"
                 size="small"
-                placeholder="e.g. 8.8.8.8"
+                :placeholder="forwarderPlaceholder"
                 style="width: 12rem"
                 @blur="onForwarderBlur(i)"
                 @keyup.enter="onForwarderBlur(i)"
@@ -305,10 +305,16 @@ import Checkbox from '../ui/Checkbox.js';
 import StatusDot from '../components/StatusDot.vue';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
-import { isValidIpv4 } from '../utils/ip.js';
+import { isValidIpv4, isValidIpv6 } from '../utils/ip.js';
+import { useFeatures } from '../composables/useFeatures.js';
 
 const store = useDnsStore();
 const toast = useToast();
+// IPv6 forwarders and upstreams are offered only while the switch is on.
+const { ipv6: ipv6Supported } = useFeatures();
+const forwarderPlaceholder = computed(() =>
+  ipv6Supported.value ? 'e.g. 8.8.8.8 or 2606:4700:4700::1111' : 'e.g. 8.8.8.8',
+);
 
 const forwarders = ref([]);
 const savedForwarders = ref([]);
@@ -530,7 +536,8 @@ function removeForwarder(i) {
 
 async function testForwarder(fwd) {
   const ip = fwd.ip.trim();
-  if (!ip || !isValidIpv4(ip)) {
+  // The shared predicates range-check; an IPv6 upstream counts only with the switch on.
+  if (!ip || !(isValidIpv4(ip) || (ipv6Supported.value && isValidIpv6(ip)))) {
     fwd.status = null;
     return;
   }

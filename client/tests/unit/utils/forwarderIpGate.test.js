@@ -52,6 +52,8 @@ describe('forwarder IP gate', () => {
     // neither.
     const { default: src } = await import('../../../src/views/DNS.vue?raw');
     expect(src).toMatch(/isValidIpv4\s*\(\s*ip\s*\)/);
+    // An IPv6 upstream goes through the shared IPv6 predicate, behind the switch.
+    expect(src).toMatch(/ipv6Supported\.value\s*&&\s*isValidIpv6\s*\(\s*ip\s*\)/);
     // Match the regex being EXECUTED, not merely mentioned: the comment above
     // the import quotes the old pattern on purpose, and a bare text search for
     // it fails against that comment rather than against real code.

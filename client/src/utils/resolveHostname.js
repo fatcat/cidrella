@@ -2,7 +2,7 @@
  * Shared DHCP hostname-resolution utilities used by DHCP.vue and ScopeDialog.vue.
  */
 
-import { isValidIpv4 } from './ip.js';
+import { isValidAddress } from './ip.js';
 
 /**
  * Is this entry already an address, so it needs no DNS lookup?
@@ -13,7 +13,9 @@ import { isValidIpv4 } from './ip.js';
  * is the same shape test plus the 0-255 bound.
  * See REVIEW.md, duplicate-logic audit #51.
  */
-const isAddress = (v) => isValidIpv4(String(v ?? '').trim());
+// Either family, no zone id: an IPv6 literal in an option value is passed
+// through the same way an IPv4 one is.
+const isAddress = (v) => isValidAddress(String(v ?? '').trim());
 
 /**
  * Resolve a comma-separated list of hostnames/IPs to IP addresses.

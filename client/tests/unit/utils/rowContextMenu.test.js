@@ -93,7 +93,9 @@ describe('row context menu policy', () => {
     );
     expect(dnsRecordProbeIp({ record_type: 'PTR' }, '10.0.0.12')).toBe('10.0.0.12');
     expect(dnsRecordProbeIp({ record_type: 'CNAME', value: 'host.example.com' })).toBeNull();
-    expect(dnsRecordProbeIp({ record_type: 'AAAA', value: '2001:db8::1' })).toBeNull();
+    // An AAAA host is probed at its address like an A host.
+    expect(dnsRecordProbeIp({ record_type: 'AAAA', value: '2001:db8::1' })).toBe('2001:db8::1');
+    expect(dnsRecordProbeIp({ record_type: 'AAAA', value: 'fe80::1%eth0' })).toBeNull();
     expect(dnsRecordProbeIp({ record_type: 'A', value: 'not-an-ip' })).toBeNull();
   });
 

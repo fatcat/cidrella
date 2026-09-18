@@ -1,4 +1,4 @@
-import { isValidIpv4 } from './ip.js';
+import { isValidAddress } from './ip.js';
 
 const MANAGED_DNS_SOURCE_LABELS = Object.freeze({
   dns: 'Managed by forward DNS record',
@@ -54,13 +54,17 @@ export function scanToggleMenuItem(ipAddress, scanningEnabled, command) {
 export function dnsRecordProbeIp(record, ptrIp = null) {
   const type = record?.record_type;
   const candidate =
-    type === 'A' ? record.ip_address || record.value : type === 'PTR' ? ptrIp : null;
+    type === 'A' || type === 'AAAA'
+      ? record.ip_address || record.value
+      : type === 'PTR'
+        ? ptrIp
+        : null;
 
-  return isValidIpv4(candidate) ? candidate : null;
+  return isValidAddress(candidate) ? candidate : null;
 }
 
 export function addCnameMenuItem(record, command) {
-  if (record?.record_type !== 'A') return null;
+  if (record?.record_type !== 'A' && record?.record_type !== 'AAAA') return null;
   return {
     label: 'Add CNAME',
     icon: 'pi pi-plus',
