@@ -1,8 +1,8 @@
 # UI Toolkit Migration Plan
 
-Date: 2026-09-12
+Date: 2026-09-17
 Status: decided
-Target: not 0.5.0, see Phase 1b
+Target: 0.5.0, see Phase 1b
 Selection: **OpenVue 1.0.0** as the near-term swap (about one day, bounded
 downside). **Element Plus 2.14.5** documented as the long-term move, to be
 bundled with the 0.5.0 redesign. Grid: **gridstack 13.3.0**, settled, chosen
@@ -525,7 +525,7 @@ Vite 8 plan was kept off the release path.
 4. Port the 20 `v-tooltip` directive usages. Directives rarely port as-is.
 5. Verify per component against the existing client test suite.
 
-### Phase 3: port the theme system
+### Phase 3: port the theme system (DONE 2026-09-13)
 
 1. Repoint the 30 semantic tokens in the shim at the new kit's theming output.
 2. Port `updatePreset` and `updateSurfacePalette` in `client/src/ui/theme.js`

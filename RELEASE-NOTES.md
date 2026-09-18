@@ -6,6 +6,23 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.5.0 — 2026-09-18
+
+```yaml
+min_from: "0.4.17"
+breaking: true
+security: false
+```
+
+### New
+- New UI. Revamped UI but keeping current UI, selectable.
+- IPv6 support. Supports DHCPv6, AAAA records, listening and manageable via
+IPv6 addresses.
+
+
+
+---
+
 ## v0.4.18 — 2026-09-07
 
 ```yaml

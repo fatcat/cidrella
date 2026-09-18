@@ -4,13 +4,13 @@ TODO list for CIDRella
 
 ## 0.4.18
 
-- [ ] complete transition to openvue
 - [ ] add inline editing of hostnames in the DNS table view
 - [ ] reverse DNS, some unused addresses get a placeholder reverse entry and some don't
 - [ ] to 'Analytics - Intelligence' add a top 10 domains that don't support DNSSEC
 - [ ] to DNS table add popup menu to edit and delete (clear) static DNS records, with confirmation
 
 ## 0.5.x
+- [x] complete transition to openvue
 - [ ] revive the setup wizard (`client/src/views/SetupWizard.vue` has had no route since v0.4.0
       and a fresh database seeds the admin, so `/api/setup/status` never asks for it; decide
       what first-run setup should cover before wiring it back)
