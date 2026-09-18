@@ -71,10 +71,29 @@
             @update:modelValue="onGlobalDhcpToggle"
           />
         </div>
+        <div class="field field-inline">
+          <label>IPv6 Support</label>
+          <ToggleSwitch v-model="ipv6Enabled" data-track="iface-ipv6-global" />
+        </div>
       </div>
       <small v-if="!dnsEnabled" class="field-help warn-text"
         >DNS is disabled globally. DHCP requires DNS and is also disabled.</small
       >
+      <small
+        class="field-help"
+        style="display: block; margin-top: 0.5rem"
+        data-track="iface-ipv6-help"
+      >
+        <template v-if="ipv6Enabled">
+          IPv6 is on: DNS and DHCP listen on the host's IPv6 addresses, IPv6 networks can be
+          created, and the DHCPv6 and Router Advertisement checks run with rogue detection.
+        </template>
+        <template v-else>
+          IPv6 is off: CIDRella listens on IPv4 only, runs no DHCPv6 or Router Advertisement checks,
+          schedules no IPv6 scans, and refuses new IPv6 networks, records and scopes. Anything IPv6
+          that already exists stays visible.
+        </template>
+      </small>
     </div>
 
     <div class="content-card">
@@ -115,10 +134,12 @@
         </Column>
         <Column header="IP Address">
           <template #body="{ data }">
-            <template v-if="data.addresses && data.addresses.length">
-              <div v-for="addr in data.addresses" :key="addr.address">{{ addr.address }}</div>
+            <template v-if="visibleAddresses(data).length">
+              <div v-for="addr in visibleAddresses(data)" :key="addr.address">
+                {{ addr.address }}
+              </div>
             </template>
-            <span v-else class="muted" title="Interface present but has no IPv4 address"
+            <span v-else class="muted" title="Interface present but has no usable address"
               >no IP</span
             >
           </template>
@@ -190,12 +211,16 @@ import Column from '../ui/Column.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import Button from '../ui/Button.js';
 import Tag from '../ui/Tag.js';
+import { useFeatures } from '../composables/useFeatures.js';
 
 const toast = useToast();
+const { reload: reloadFeatures } = useFeatures();
 const loading = ref(false);
 const saving = ref(false);
 const dnsEnabled = ref(true);
 const dhcpEnabled = ref(true);
+// The global IPv6 switch. Applied by the same save as the rest of this page.
+const ipv6Enabled = ref(false);
 const httpRedirectEnabled = ref(true);
 const webPorts = ref({ https_port: 0, http_port: 0, http_redirect_enabled: true });
 const httpsPortEdit = ref(443);
@@ -210,6 +235,7 @@ const configDirty = computed(() => {
   const current = JSON.stringify({
     dns: dnsEnabled.value,
     dhcp: dhcpEnabled.value,
+    v6: ipv6Enabled.value,
     http: httpRedirectEnabled.value,
     hps: httpsPortEdit.value,
     hpp: httpPortEdit.value,
@@ -256,11 +282,19 @@ function snapshotConfig() {
   configSnapshot.value = JSON.stringify({
     dns: dnsEnabled.value,
     dhcp: dhcpEnabled.value,
+    v6: ipv6Enabled.value,
     http: httpRedirectEnabled.value,
     hps: httpsPortEdit.value,
     hpp: httpPortEdit.value,
     ifaces: mergedInterfaces.value.map((i) => ({ n: i.name, d: i.dns, h: i.dhcp })),
   });
+}
+
+// The server already withholds IPv6 addresses while the switch is off; this
+// covers the moment between flipping the toggle and saving it.
+function visibleAddresses(iface) {
+  const addresses = iface.addresses || [];
+  return ipv6Enabled.value ? addresses : addresses.filter((addr) => addr.family !== 6);
 }
 
 function mergeData() {
@@ -306,6 +340,7 @@ async function loadInterfaces() {
     savedConfig.value = configRes.data.interfaces || {};
     dnsEnabled.value = configRes.data.dns_enabled !== false;
     dhcpEnabled.value = configRes.data.dhcp_enabled !== false;
+    ipv6Enabled.value = configRes.data.ipv6_enabled === true;
     // v0.4.15: web_ports block. Absent on pre-v0.4.15 backends, keep
     // sensible defaults if the field isn't there.
     if (configRes.data.web_ports) {
@@ -386,15 +421,22 @@ async function saveConfig() {
       }
     }
     const originalHttpsPort = webPorts.value.https_port;
+    const ipv6Changed = JSON.parse(configSnapshot.value || '{}').v6 !== ipv6Enabled.value;
     const { data } = await api.put('/interfaces/config', {
       interfaces,
       dns_enabled: dnsEnabled.value,
       dhcp_enabled: dhcpEnabled.value,
+      ipv6_enabled: ipv6Enabled.value,
       http_redirect_enabled: httpRedirectEnabled.value,
       https_port: httpsPortEdit.value,
       http_port: httpPortEdit.value,
     });
     snapshotConfig();
+    if (ipv6Changed) {
+      // The address list and every other page follow the switch.
+      await reloadFeatures();
+      await loadInterfaces();
+    }
     if (data.dnsmasq === 'restart_failed') {
       toast.add({
         severity: 'warn',

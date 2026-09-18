@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
+import { useFeaturesStore } from '../stores/features.js';
 import { rememberView } from '../utils/landing.js';
 
 import Login from '../views/Login.vue';
@@ -127,6 +128,11 @@ router.beforeEach(async (to) => {
       return { name: 'Login' };
     }
   }
+
+  // Feature switches, once per session. Pages hide IPv6 affordances until
+  // this has answered, so it must land before the first page renders.
+  const features = useFeaturesStore();
+  if (!features.loaded) await features.load();
 
   // Force password change
   if (auth.mustChangePassword && to.name !== 'ChangePassword') {
