@@ -1,5 +1,5 @@
 <template>
-  <div class="workspace-preview settings-workspace" data-track="settings-workspace-preview">
+  <div class="workspace settings-workspace" data-track="settings-workspace">
     <section class="workspace-frame">
       <nav class="explorer" aria-label="Settings areas">
         <div class="explorer-search">
@@ -214,7 +214,7 @@ const visibleGroups = computed(() =>
 <style scoped>
 /* Tokens duplicated from networks-workspace/workspace.css (section 5: a third
    consumer moves them to components/workspace/). */
-.workspace-preview {
+.workspace {
   --preview-accent: var(--cid-primary-color);
   --preview-accent-soft: color-mix(in srgb, var(--preview-accent) 12%, transparent);
   --preview-line: color-mix(in srgb, var(--cid-surface-border) 82%, transparent);
@@ -468,7 +468,7 @@ input {
    frame scrolls the page instead of clipping the editor under it, and a fill
    editor keeps enough height to show its table or empty state. */
 @media (max-width: 1023px) {
-  .workspace-preview {
+  .workspace {
     height: auto;
   }
   .workspace-frame {
@@ -490,7 +490,7 @@ input {
   }
 }
 @media (max-width: 720px) {
-  .workspace-preview {
+  .workspace {
     padding: 0.6rem;
   }
   .settings-panel {

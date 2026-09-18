@@ -19,8 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const api = { get: vi.fn(), post: vi.fn(), put: vi.fn() };
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 
-const { default: AnomaliesWorkspacePreview } =
-  await import('../../../src/views/AnomaliesWorkspacePreview.vue');
+const { default: AnomaliesWorkspace } = await import('../../../src/views/AnomaliesWorkspace.vue');
 
 const CALM = {
   identity: 'aa:bb:cc:dd:ee:01',
@@ -61,8 +60,8 @@ const WORST = {
   ],
 };
 
-function mountPreview() {
-  return mount(AnomaliesWorkspacePreview, {
+function mountWorkspace() {
+  return mount(AnomaliesWorkspace, {
     global: {
       plugins: [createPinia()],
       stubs: { 'router-link': { template: '<a><slot /></a>' } },
@@ -143,16 +142,16 @@ beforeEach(() => {
   });
 });
 
-describe('anomaly triage preview, live mode', () => {
+describe('anomaly triage workspace, live mode', () => {
   it('ranks the most anomalous device first, which is the most NEGATIVE score', async () => {
-    const wrapper = await goLive(mountPreview());
+    const wrapper = await goLive(mountWorkspace());
     const names = wrapper.findAll('.queue-row .row-who b').map((node) => node.text());
     expect(names[0]).toBe('worst-host');
     expect(names).toContain('calm-host');
   });
 
   it('opens the worst device and asks the evidence endpoint for its identity', async () => {
-    await goLive(mountPreview());
+    await goLive(mountWorkspace());
     const evidenceCall = api.get.mock.calls
       .map((call) => call[0])
       .find((url) => url.includes('/evidence'));
@@ -161,18 +160,18 @@ describe('anomaly triage preview, live mode', () => {
   });
 
   it('reports a blocked query as BLOCKED even though its response code is NOERROR', async () => {
-    const wrapper = await openDetail(await goLive(mountPreview()));
+    const wrapper = await openDetail(await goLive(mountWorkspace()));
     const codes = wrapper.findAll('.evidence-table .rcode').map((node) => node.text());
     expect(codes).toEqual(['BLOCKED', 'NXDOMAIN']);
   });
 
   it('says the peer median is not collected rather than leaving the cell empty', async () => {
-    const wrapper = await openDetail(await goLive(mountPreview()));
+    const wrapper = await openDetail(await goLive(mountWorkspace()));
     expect(wrapper.find('.signal-table').text()).toContain('not collected');
   });
 
   it('hides the triage map in live mode because nothing scores its vertical axis', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     expect(wrapper.find('.map-svg').exists()).toBe(true);
     await goLive(wrapper);
     expect(wrapper.find('.map-svg').exists()).toBe(false);
@@ -203,7 +202,7 @@ describe('anomaly triage preview, live mode', () => {
       return Promise.resolve({ data: [WORST] });
     });
 
-    const wrapper = await openDetail(await goLive(mountPreview()));
+    const wrapper = await openDetail(await goLive(mountWorkspace()));
     expect(wrapper.find('.evidence-state').text()).toContain(
       'older than the 7 day analytics retention',
     );

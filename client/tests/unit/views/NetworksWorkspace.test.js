@@ -3,7 +3,6 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { useSubnetStore } from '../../../src/stores/subnets.js';
-import NetworksWorkspacePreview from '../../../src/views/NetworksWorkspacePreview.vue';
 import NetworksWorkspace from '../../../src/views/networks-workspace/NetworksWorkspace.vue';
 import AddressGrid from '../../../src/views/networks-workspace/AddressGrid.vue';
 import AddressDetailsPanel from '../../../src/views/networks-workspace/AddressDetailsPanel.vue';
@@ -448,8 +447,8 @@ function installApiFixtures() {
   });
 }
 
-async function mountPreview(options = {}) {
-  const wrapper = mount(NetworksWorkspacePreview, {
+async function mountWorkspace(options = {}) {
+  const wrapper = mount(NetworksWorkspace, {
     ...options,
     global: {
       directives: { tooltip: () => {} },
@@ -496,19 +495,7 @@ async function enterTestNetwork(wrapper) {
   await flushPromises();
 }
 
-describe('Networks workspace live preview', () => {
-  it('keeps the preview route as a thin workspace wrapper', () => {
-    const wrapper = mount(NetworksWorkspacePreview, {
-      global: {
-        stubs: {
-          NetworksWorkspace: true,
-        },
-      },
-    });
-
-    expect(wrapper.findComponent(NetworksWorkspace).exists()).toBe(true);
-  });
-
+describe('Networks workspace', () => {
   beforeEach(() => {
     const pinia = createPinia();
     setActivePinia(pinia);
@@ -546,7 +533,7 @@ describe('Networks workspace live preview', () => {
       JSON.stringify({ q: 'printer', context: 'all', view: 'networks' }),
     );
 
-    await mountPreview();
+    await mountWorkspace();
 
     const firstNetworkRead = api.get.mock.calls.find(([url]) => url === '/workspace/networks');
     const firstDnsRead = api.get.mock.calls.find(([url]) => url === '/workspace/dns-records');
@@ -560,7 +547,7 @@ describe('Networks workspace live preview', () => {
     // W-01: the explorer, context header, toolbar, table, grid and details
     // host are separate components. The orchestrator owns state; each child
     // only renders what it is handed and emits what the operator did.
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     for (const component of [
       ResourceExplorer,
@@ -586,7 +573,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('loads real API data and keeps network context across address, DNS, and DHCP views', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     expect(wrapper.find('.context-header').text()).toContain('Public test network');
     expect(wrapper.find('table').text()).toContain('1.1.1.40');
@@ -613,7 +600,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('offers all-network, zone, and scope inventories in the same work surface', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     expect(wrapper.find('.service-shortcuts').exists()).toBe(false);
     expect(wrapper.find('.estate-row.active').exists()).toBe(true);
     expect(wrapper.find('.context-header').text()).toContain('All Networks');
@@ -639,7 +626,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('uses folders as intermediate inventory scopes', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await wrapper.find('.folder-select').trigger('click');
 
     expect(wrapper.find('.folder-row.active').exists()).toBe(true);
@@ -654,7 +641,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('opens unallocated address space as a functional inventory context', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
 
     expect(wrapper.find('.context-header').text()).toContain('Unallocated Networks');
@@ -663,7 +650,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('filters available canonical rows and opens details from a live row', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     expect(wrapper.find('table').text()).toContain('1.1.1.200');
 
@@ -685,7 +672,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('builds the address grid from API rows instead of sample cells', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper.find('button[aria-label="Grid view"]').trigger('click');
 
@@ -697,7 +684,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('offers a dense 64-column compact address grid using the same canonical rows', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
 
@@ -709,7 +696,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('shares address selection across table and grids and opens the real bulk reservation flow', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const rowCheckboxes = wrapper.findAll('tbody input[type="checkbox"]');
     await rowCheckboxes[2].setValue(true);
@@ -739,7 +726,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('uses the explorer search as a hostname and IP table filter', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const search = wrapper.find('input[data-track="workspace-global-search"]');
 
@@ -763,7 +750,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('sends explicit address filters and preserves table search for network inventory', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper.find('select[aria-label="Online filter"]').setValue('false');
     await new Promise((resolve) => setTimeout(resolve, 120));
@@ -800,7 +787,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('opens zone and scope inventories as URL-backed drill-ins', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await wrapper
       .findAll('.view-tabs button')
       .find((button) => button.text().includes('DNS'))
@@ -844,7 +831,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('opens related resources inside the details panel, never by switching the view', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
 
@@ -920,7 +907,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('keeps the pinned address open by identity when the page no longer holds it', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper
       .findAll('tbody tr')
@@ -938,7 +925,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('closes the details panel with a notice when the pinned resource is gone', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper
       .findAll('tbody tr')
@@ -955,7 +942,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('re-reads a pinned DNS record by zone and id when it leaves the page', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper
       .findAll('.view-tabs button')
@@ -985,7 +972,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('creates and releases an IP Reservation while preserving address context', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const addressRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.33'));
     await addressRow.trigger('click');
@@ -1020,7 +1007,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('re-reads shared inventories, drops the old cache and reports refresh failures after a save', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const store = useSubnetStore();
     const invalidate = vi.spyOn(store, 'invalidateDetailCache');
@@ -1113,7 +1100,7 @@ describe('Networks workspace live preview', () => {
         ]);
       return base(url, config);
     });
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
     await flushPromises();
@@ -1192,7 +1179,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('opens the zone or scope menu from a right-click on its linked card', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
     await flushPromises();
@@ -1266,7 +1253,7 @@ describe('Networks workspace live preview', () => {
       if (url === '/subnets/apply-template') return response({ updated: body.subnet_ids });
       throw new Error(`Unexpected POST ${url}`);
     });
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     let checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
     expect(checkboxes).toHaveLength(2);
 
@@ -1321,7 +1308,7 @@ describe('Networks workspace live preview', () => {
           })
         : base(url, config),
     );
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     const menuButtons = wrapper.findAll('.row-menu-button');
     expect(menuButtons.map((button) => button.attributes('aria-label'))).toEqual([
       'Testerella folder actions',
@@ -1381,7 +1368,7 @@ describe('Networks workspace live preview', () => {
     api.put.mockImplementation((url, body) =>
       url === '/subnets/11' ? response({ id: 11, ...body }) : basePut(url, body),
     );
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     // The old store's PUT re-reads the tree itself; the zone read only comes
     // from the workspace's network refresh contract.
     const zoneReads = () =>
@@ -1466,13 +1453,13 @@ describe('Networks workspace live preview', () => {
         permissions: ['subnets:read'],
       },
     };
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     expect(wrapper.find('.network-row').attributes('draggable')).toBeUndefined();
     expect(wrapper.find('tbody tr').attributes('draggable')).toBeUndefined();
   });
 
   it('opens context menus where they were asked for', async () => {
-    const wrapper = await mountPreview({ attachTo: globalThis.document.body });
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
     // Right-click on an explorer network: the menu sits at the pointer.
     await wrapper.find('.network-row').trigger('contextmenu', { clientX: 240, clientY: 310 });
     await nextTick();
@@ -1521,7 +1508,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('drives every menu through the action registry with a row-derived target', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     // No network is selected, so there is no target for the network actions.
     expect(wrapper.find('.context-actions').text()).not.toContain('Actions');
 
@@ -1570,7 +1557,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('opens menus to the keyboard and returns focus to the invoker', async () => {
-    const wrapper = await mountPreview({ attachTo: globalThis.document.body });
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
     await enterTestNetwork(wrapper);
     const scopeRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
     scopeRow.element.focus();
@@ -1607,7 +1594,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('operates table rows from the keyboard', async () => {
-    const wrapper = await mountPreview({ attachTo: globalThis.document.body });
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
     await enterTestNetwork(wrapper);
     const rows = wrapper.findAll('tbody tr');
     rows[0].element.focus();
@@ -1632,15 +1619,15 @@ describe('Networks workspace live preview', () => {
   });
 
   it('applies the shared small-text size set from the header user menu', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     expect(wrapper.find('.preview-banner').exists()).toBe(false);
-    expect(wrapper.find('.workspace-preview').attributes('style')).toContain(
+    expect(wrapper.find('.workspace').attributes('style')).toContain(
       '--workspace-font-bump: 1.333px',
     );
     const { resize, fontBump } = useWorkspaceFontBump();
     resize(1);
     await nextTick();
-    expect(wrapper.find('.workspace-preview').attributes('style')).toContain(
+    expect(wrapper.find('.workspace').attributes('style')).toContain(
       '--workspace-font-bump: 2.666px',
     );
     expect(localStorage.getItem('cidrella_workspace_font_bump')).toBe('2');
@@ -1650,7 +1637,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('uses tab semantics, one main landmark, and reflows for open details (W-07)', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     expect(wrapper.find('main').exists()).toBe(false);
     expect(wrapper.find('.work-surface').attributes('aria-label')).toBe('Work surface');
@@ -1668,7 +1655,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('closes the details on an outside press and swaps rows in place', async () => {
-    const wrapper = await mountPreview({ attachTo: globalThis.document.body });
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
     await enterTestNetwork(wrapper);
     const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
     const press = (element) =>
@@ -1716,7 +1703,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('pages every table through the shared paginator', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     // Aggregate lists page in the browser: the paginator knows their length.
     expect(wrapper.find('.p-paginator').attributes('data-total')).toBe('1');
     expect(wrapper.find('.p-paginator').attributes('data-rows')).toBe('256');
@@ -1744,7 +1731,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('renders type and status with the current interface tags, in use neutral', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
     const lease = rowFor('1.1.1.40');
@@ -1766,7 +1753,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('toggles the liveness scan from the row menu and offers Reset to Inherit', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const row = wrapper.findAll('tbody tr').find((entry) => entry.text().includes('1.1.1.33'));
     await row.trigger('contextmenu');
@@ -1814,7 +1801,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('gives the details panel a column only on the grid presentations', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     expect(wrapper.find('.workspace-frame').classes()).not.toContain('grid-open');
     await wrapper.find('button[aria-label="Grid view"]').trigger('click');
@@ -1829,7 +1816,7 @@ describe('Networks workspace live preview', () => {
   });
 
   it('keeps header actions anchored after the responsive health metrics', async () => {
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     expect(wrapper.find('.context-overview > .context-title-row').exists()).toBe(true);
     expect(wrapper.find('.context-overview > .health-strip + .context-actions').exists()).toBe(
@@ -1844,7 +1831,7 @@ describe('Networks workspace live preview', () => {
   it('uses whole-network summary counts when the address page is filtered', async () => {
     summaryStats.online_count = 17;
     summaryStats.rogue_count = 4;
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.40');
     await new Promise((resolve) => setTimeout(resolve, 320));
@@ -1868,7 +1855,7 @@ describe('Networks workspace live preview', () => {
         permissions: ['subnets:read', 'dns:read'],
       },
     };
-    const wrapper = await mountPreview();
+    const wrapper = await mountWorkspace();
 
     expect(api.get.mock.calls.some(([url]) => url.startsWith('/dhcp'))).toBe(false);
     expect(api.get.mock.calls.some(([url]) => url === '/workspace/dhcp-addresses')).toBe(false);

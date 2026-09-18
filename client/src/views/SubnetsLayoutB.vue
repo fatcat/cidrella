@@ -287,11 +287,7 @@
                 @click="clearMergeSelection"
               />
             </template>
-            <router-link
-              to="/networks"
-              class="workspace-preview-link"
-              data-track="toolbar-open-workspace"
-            >
+            <router-link to="/networks" class="workspace-link" data-track="toolbar-open-workspace">
               <i class="pi pi-sparkles" /> Workspace interface
             </router-link>
           </div>
@@ -1362,7 +1358,7 @@ onBeforeUnmount(() => {
   height: 1.2rem;
   background: var(--cid-surface-border);
 }
-.workspace-preview-link {
+.workspace-link {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
@@ -1376,7 +1372,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
   text-decoration: none;
 }
-.workspace-preview-link:hover {
+.workspace-link:hover {
   border-color: var(--cid-primary-color);
   background: color-mix(in srgb, var(--cid-primary-color) 12%, transparent);
 }

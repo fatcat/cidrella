@@ -408,7 +408,9 @@ the header user menu. The Interface preference is gone (`useInterfacePreference`
 routes. The legacy bookmark redirects (`/dns`, `/dhcp`, `/blocklists`, `/geoip`, `/range-types`)
 already pointed at `/system?area=...`, which the shell reads. Removing `SubnetsLayoutB.vue`,
 `Settings.vue` and the rest of the classic views is the separate follow-up the plan names, after
-practical validation; the `*WorkspacePreview.vue` file names keep their suffix until then.
+practical validation. The `*WorkspacePreview.vue` wrappers went on 2026-09-18: the routes
+import `NetworksWorkspace.vue` and `SettingsWorkspace.vue` directly, and the anomaly concept is
+`AnomaliesWorkspace.vue` at `/anomalies-workspace` (`/anomalies-preview` redirects).
 
 **P8, appliance and account workflows: landed 2026-09-17.** The S-11..S-15 editors (backup,
 updates, logs, import, users, certificate) were already mounted unchanged in the settings shell,
@@ -449,7 +451,7 @@ so P8 was a verification pass on safe fixtures plus two fixes:
   panels are mounted unchanged, the same call as P7's leaves.
 - Q-04 anomaly triage, DEFERRED 2026-09-17 by the user: both views stay as they are, the
   current Anomalies panel at `/analytics?view=anomalies` and the concept at
-  `/anomalies-preview` (sample and live modes; nothing links to it since the banners went, so
+  `/anomalies-workspace` (sample and live modes; nothing links to it since the banners went, so
   the URL is the way in). The merge of elements from each is decided on a system with real
   anomaly data; the dev box only has learning-baseline clients, so the current view shows
   nothing to judge by. Screenshots of both as of today: `screenshots/p9-anomalies-*.png`.

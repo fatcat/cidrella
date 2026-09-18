@@ -17,11 +17,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const api = { get: vi.fn(() => Promise.resolve({ data: {} })), post: vi.fn(), put: vi.fn() };
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 
-const { default: AnomaliesWorkspacePreview } =
-  await import('../../../src/views/AnomaliesWorkspacePreview.vue');
+const { default: AnomaliesWorkspace } = await import('../../../src/views/AnomaliesWorkspace.vue');
 
-function mountPreview() {
-  return mount(AnomaliesWorkspacePreview, {
+function mountWorkspace() {
+  return mount(AnomaliesWorkspace, {
     attachTo: globalThis.document.body,
     global: {
       plugins: [createPinia()],
@@ -39,7 +38,7 @@ beforeEach(() => vi.clearAllMocks());
 
 describe('anomaly detail dialog', () => {
   it('starts with no detail card on the page at all', () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     expect(isOpen(wrapper)).toBe(false);
     expect(wrapper.find('.entity-panel').exists()).toBe(false);
     expect(wrapper.find('.detail-backdrop').exists()).toBe(false);
@@ -47,7 +46,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('opens on the Detail button showing the device belonging to that row', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     const thirdRowName = wrapper.findAll('.queue-item')[2].find('.row-who b').text();
     await wrapper.findAll('.row-detail')[2].trigger('click');
     expect(isOpen(wrapper)).toBe(true);
@@ -56,7 +55,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('leaves the dialog shut when the row itself is clicked, which only reselects', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.queue-row')[2].trigger('click');
     expect(isOpen(wrapper)).toBe(false);
     expect(wrapper.find('.entity-panel').exists()).toBe(false);
@@ -66,7 +65,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('steps forward and back through the queue, keeping the queue selection in step', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[0].trigger('click');
     await navButton(wrapper, 'Next').trigger('click');
     expect(position(wrapper)).toBe('2 of 6');
@@ -76,7 +75,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('stops at the last device instead of wrapping to the first', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[0].trigger('click');
     for (let i = 0; i < 10; i++) await navButton(wrapper, 'Next').trigger('click');
     expect(position(wrapper)).toBe('6 of 6');
@@ -85,7 +84,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('stops at the first device instead of wrapping to the last', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[3].trigger('click');
     for (let i = 0; i < 10; i++) await navButton(wrapper, 'Previous').trigger('click');
     expect(position(wrapper)).toBe('1 of 6');
@@ -96,7 +95,7 @@ describe('anomaly detail dialog', () => {
   // hide whether stepDetail itself is bounded. The arrow keys have no such
   // gate and go straight in, which makes them the only way to prove it.
   it('holds at the last device when the right arrow is pressed past the end', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[5].trigger('click');
     expect(position(wrapper)).toBe('6 of 6');
     for (let i = 0; i < 3; i++) {
@@ -109,7 +108,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('holds at the first device when the left arrow is pressed past the start', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[0].trigger('click');
     for (let i = 0; i < 3; i++) {
       globalThis.window.dispatchEvent(
@@ -121,21 +120,21 @@ describe('anomaly detail dialog', () => {
   });
 
   it('closes on the X', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[1].trigger('click');
     await wrapper.find('.nav-close').trigger('click');
     expect(isOpen(wrapper)).toBe(false);
   });
 
   it('closes on a backdrop click', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[1].trigger('click');
     await wrapper.find('.detail-backdrop').trigger('click');
     expect(isOpen(wrapper)).toBe(false);
   });
 
   it('closes on Escape, which is a window listener rather than an element handler', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[1].trigger('click');
     globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }));
     await flushPromises();
@@ -143,7 +142,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('ignores the arrow keys while closed rather than stepping the selection', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     const before = wrapper.find('.queue-item.current .row-who b').text();
     globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'ArrowRight' }));
     await flushPromises();
@@ -152,7 +151,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('announces itself as a modal dialog once open', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     await wrapper.findAll('.row-detail')[0].trigger('click');
     const panel = wrapper.find('.entity-panel');
     expect(panel.attributes('role')).toBe('dialog');
@@ -161,7 +160,7 @@ describe('anomaly detail dialog', () => {
   });
 
   it('gives every Detail button a label naming its device', async () => {
-    const wrapper = mountPreview();
+    const wrapper = mountWorkspace();
     const labels = wrapper.findAll('.row-detail').map((b) => b.attributes('aria-label'));
     const names = wrapper.findAll('.queue-item').map((i) => i.find('.row-who b').text());
     expect(labels).toEqual(names.map((n) => `Show detail for ${n}`));

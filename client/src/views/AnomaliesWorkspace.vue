@@ -1,5 +1,5 @@
 <template>
-  <div class="anomaly-preview" data-track="anomalies-workspace-preview">
+  <div class="anomaly-workspace" data-track="anomalies-workspace">
     <header class="preview-banner">
       <div>
         <div class="preview-kicker">Interactive concept</div>
@@ -1162,7 +1162,7 @@ onUnmounted(() => clearTimeout(noticeTimer));
 </script>
 
 <style scoped>
-.anomaly-preview {
+.anomaly-workspace {
   --preview-accent: var(--cid-primary-color);
   --preview-accent-soft: color-mix(in srgb, var(--preview-accent) 12%, transparent);
   --preview-line: color-mix(in srgb, var(--cid-surface-border) 82%, transparent);
@@ -1969,7 +1969,7 @@ td.qtype {
 }
 
 @media (max-width: 1180px) {
-  .anomaly-preview {
+  .anomaly-workspace {
     height: auto;
   }
   .board.as-modal {

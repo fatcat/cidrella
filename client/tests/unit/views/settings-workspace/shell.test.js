@@ -176,23 +176,23 @@ describe('Settings workspace shell', () => {
   });
 
   it('navigates through the router and carries a safe return path', async () => {
-    route.query = { area: 'general', return: '/networks-preview?context=network&network=4' };
+    route.query = { area: 'general', return: '/networks?context=network&network=4' };
     const wrapper = mountShell();
     expect(wrapper.find('[data-track="settings-workspace-return"]').attributes('href')).toBe(
-      '/networks-preview?context=network&network=4',
+      '/networks?context=network&network=4',
     );
     expect(wrapper.find('.scope-chip').text()).toContain('Appliance-wide');
 
     await wrapper.find('[data-track="settings-area-dhcp"]').trigger('click');
     expect(push).toHaveBeenLastCalledWith({
-      query: { area: 'dhcp', return: '/networks-preview?context=network&network=4' },
+      query: { area: 'dhcp', return: '/networks?context=network&network=4' },
     });
     await wrapper.find('[data-track="settings-sec-vlans"]').trigger('click');
     expect(push).toHaveBeenLastCalledWith({
       query: {
         area: 'general',
         sec: 'vlans',
-        return: '/networks-preview?context=network&network=4',
+        return: '/networks?context=network&network=4',
       },
     });
     wrapper.unmount();

@@ -1,7 +1,7 @@
 <template>
   <div
-    class="workspace-preview"
-    data-track="networks-workspace-preview"
+    class="workspace"
+    data-track="networks-workspace"
     :style="{ '--workspace-font-bump': fontBumpStyle }"
   >
     <section

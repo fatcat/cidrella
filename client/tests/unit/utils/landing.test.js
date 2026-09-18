@@ -21,7 +21,7 @@ function makeRouter() {
       { path: '/login', name: 'Login', component: stub },
       { path: '/change-password', name: 'ChangePassword', component: stub },
       { path: '/analytics', name: 'Analytics', component: stub },
-      { path: '/networks-preview', name: 'NetworksWorkspacePreview', component: stub },
+      { path: '/networks', name: 'Networks', component: stub },
       { path: '/:pathMatch(.*)*', name: 'NotFound', component: stub },
     ],
   });
@@ -66,7 +66,7 @@ beforeEach(() => {
 
 describe('safeInternalPath', () => {
   it('accepts an in-app path', () => {
-    expect(safeInternalPath(router, '/networks-preview')).toBe('/networks-preview');
+    expect(safeInternalPath(router, '/networks')).toBe('/networks');
   });
 
   it('keeps the query string, which is where table state lives', () => {
@@ -127,22 +127,22 @@ describe('safeInternalPath', () => {
 describe('landingPath', () => {
   it('prefers the page the user actually asked for', () => {
     rememberView('admin', { name: 'Analytics', fullPath: '/analytics', matched: [{}] });
-    expect(landingPath(router, 'admin', '/networks-preview')).toBe('/networks-preview');
+    expect(landingPath(router, 'admin', '/networks')).toBe('/networks');
   });
 
   it('falls back to the last view when there is no redirect', () => {
     rememberView('admin', {
-      name: 'NetworksWorkspacePreview',
-      fullPath: '/networks-preview',
+      name: 'Networks',
+      fullPath: '/networks',
       matched: [{}],
     });
-    expect(landingPath(router, 'admin', undefined)).toBe('/networks-preview');
+    expect(landingPath(router, 'admin', undefined)).toBe('/networks');
   });
 
   it('ignores a last view belonging to a different user on this browser', () => {
     rememberView('admin', {
-      name: 'NetworksWorkspacePreview',
-      fullPath: '/networks-preview',
+      name: 'Networks',
+      fullPath: '/networks',
       matched: [{}],
     });
     expect(landingPath(router, 'someone-else', undefined)).toBe('/');

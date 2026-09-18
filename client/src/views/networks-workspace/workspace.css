@@ -1,4 +1,4 @@
-.workspace-preview {
+.workspace {
   /* The accent follows the theme's primary color, so it changes with the theme. */
   --preview-accent: var(--cid-primary-color);
   --preview-dns: color-mix(in srgb, #f59e0b 82%, var(--cid-text-color));
@@ -269,7 +269,7 @@ button {
   }
 }
 @media (max-width: 820px) {
-  .workspace-preview {
+  .workspace {
     padding: 0.65rem;
   }
   .workspace-frame {

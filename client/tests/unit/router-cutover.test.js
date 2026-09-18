@@ -14,15 +14,13 @@ describe('workspace route cutover', () => {
   });
 
   it('preserves preview query and hash state through the compatibility redirect', () => {
-    const preview = router.getRoutes().find((record) => record.name === 'NetworksWorkspacePreview');
+    const preview = router.getRoutes().find((record) => record.name === 'NetworksPreviewAlias');
     expect(preview.redirect({ query: { view: 'dns', zone: '7' }, hash: '#records' })).toEqual({
       path: '/networks',
       query: { view: 'dns', zone: '7' },
       hash: '#records',
     });
-    const settings = router
-      .getRoutes()
-      .find((record) => record.name === 'SettingsWorkspacePreview');
+    const settings = router.getRoutes().find((record) => record.name === 'SystemPreviewAlias');
     expect(settings.redirect({ query: { area: 'dns', sec: 'dns' }, hash: '' })).toEqual({
       path: '/system',
       query: { area: 'dns', sec: 'dns' },

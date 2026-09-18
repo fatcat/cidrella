@@ -123,7 +123,6 @@ Do not carry these implementation defects into the new handlers:
 Do not enlarge the preview monolith with every editor. Extract its existing presentation before layering in mutations. Proposed paths below are new unless marked existing. File names are the implementation targets, not an instruction to create empty scaffolding for every file at once.
 
 ```text
-client/src/views/NetworksWorkspacePreview.vue       existing route wrapper during rollout
 client/src/views/networks-workspace/
   NetworksWorkspace.vue                            context orchestration only
   ResourceExplorer.vue                             folders, leaves, search, browse mode
@@ -370,7 +369,7 @@ Every package includes its existing load/error/empty/busy states, field validati
 | Q-01 | Dashboard: retain all existing cards, common time range, query/action distribution, top clients/domains and service summaries. Restyle cards/header using workspace tokens. | `Dashboard.vue`, `stores/dashboard.js`; metrics timeseries/services, health/system, analytics top-clients/top-domains and action-breakdown/query-volume where used. | Counts/charts/table drill-ins share selected time window and distinguish missing data from zero. |
 | Q-02 | Performance: DNS/DHCP volume, latency avg/p95/max, query rate/timeouts, resource CPU/RSS/heap, cache and proxy measurements, DNSSEC unsupported-domain table. | `Performance.vue`, `/metrics/timeseries`, `/metrics/proxy-perf`, `/analytics/dnssec/top-unsupported-domains`, existing chart helpers. | Every existing series, units, tooltip and refresh control survives; theme/font preferences do not clip axes. |
 | Q-03 | Intelligence: blocklist/GeoIP top clients/domains/categories, client-domain drill-ins, time range and allowlist actions. | `Intelligence.vue`, `/metrics/blocklist-hits`, `/metrics/geoip-hits`, analytics blocklist/geoip routes, `/client/:ip/domains`, `/domain/:name/clients`, S-07/S-08 mutations. | Drill-in retains range/context and adding exemption refreshes corresponding tables. |
-| Q-04 | Anomaly triage: queue/filter, history/pattern, score/features/heatmap/trend, raw DNS evidence, device history, model detail, acknowledgements, dismiss/delete/whitelist. | `Anomalies.vue`, `AnomaliesWorkspacePreview.vue`, anomaly components/store; `/anomalies/active`, `/summary`, `/events`, `/client/:identity`, `/model`, `/evidence`, `/acknowledge`, `/:id/dismiss`, DELETE `/:id`, `/whitelist`, device history. | MAC identity distinct from reused IP. Preserve timestamp/window/evidence filters. Use live mode by default in production. Threat shape/peer medians that have no backend computation are unavailable, never sample values posing as findings. |
+| Q-04 | Anomaly triage: queue/filter, history/pattern, score/features/heatmap/trend, raw DNS evidence, device history, model detail, acknowledgements, dismiss/delete/whitelist. | `Anomalies.vue`, `AnomaliesWorkspace.vue`, anomaly components/store; `/anomalies/active`, `/summary`, `/events`, `/client/:identity`, `/model`, `/evidence`, `/acknowledge`, `/:id/dismiss`, DELETE `/:id`, `/whitelist`, device history. | MAC identity distinct from reused IP. Preserve timestamp/window/evidence filters. Use live mode by default in production. Threat shape/peer medians that have no backend computation are unavailable, never sample values posing as findings. |
 
 Analytics retains a top-level destination. Contextual Open analytics from an IP/network may prefill supported filters, but must not claim an entire dashboard is network-filtered unless every query actually supports that constraint.
 
@@ -403,7 +402,7 @@ Expose every appropriate key from `ipTableColumns.js`, including device/OS/confi
 
 ### 12.1 Test files and ownership
 
-- Extend `client/tests/unit/views/NetworksWorkspacePreview.test.js` and `networks-workspace-data.test.js` for route shell/context/render compatibility.
+- Extend `client/tests/unit/views/NetworksWorkspace.test.js` and `networks-workspace-data.test.js` for route shell/context/render compatibility.
 - Extend `AddressDetailsPanel.test.js` for existing live actions plus stale selection/permission/lifecycle behavior.
 - Add focused files under `client/tests/unit/views/networks-workspace/` named `context`, `resources`, `actions`, `network-editor`, `network-transform`, `dns-editors`, `dhcp-editors`, `ranges`, `grid-selection` and `permissions`, each with `.test.js` suffix. Test user-visible outcomes and exact API contracts, not CSS implementation snapshots.
 - Extend existing `NetworkDialogsTarget.test.js`, `subnetTransformations.test.js`, `shared-address.test.js`, lifecycle/column tests when shared logic changes. Both interfaces are consumers until cutover.
@@ -462,7 +461,7 @@ Expose every appropriate key from `ipTableColumns.js`, including device/OS/confi
 For each package run the focused tests using the documented scripts, for example:
 
 ```bash
-npm run test:client -- tests/unit/views/NetworksWorkspacePreview.test.js
+npm run test:client -- tests/unit/views/NetworksWorkspace.test.js
 ```
 
 Run the full relevant suite when a package changes shared UI/model behavior. Canonical IP/display changes require the focused tests, full relevant suite, lint and ownership check specified in `AGENTS.md`. At IP-management parity and application-wide parity gates run:

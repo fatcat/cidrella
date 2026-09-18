@@ -1,4 +1,4 @@
-// Sample data for the anomaly triage concept (AnomaliesWorkspacePreview.vue).
+// Sample data for the anomaly triage concept (AnomaliesWorkspace.vue).
 // Nothing here touches the API. The numbers are invented but the vocabulary is
 // not: feature keys match server/anomaly/config.py FEATURE_NAMES, labels match
 // FEATURE_LABELS, and the score scale matches the isolation forest thresholds

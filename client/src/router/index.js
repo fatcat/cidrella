@@ -38,16 +38,16 @@ const routes = [
       { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
       // P10 cutover (2026-09-17): the workspaces are IP Management and
       // Settings. Each classic view stays reachable at its own route until it
-      // is removed, and each preview route keeps working as an alias with its
-      // query and hash.
+      // is removed, and the old -preview routes keep working as aliases with
+      // their query and hash.
       {
         path: 'networks',
         name: 'Networks',
-        component: () => import('../views/NetworksWorkspacePreview.vue'),
+        component: () => import('../views/networks-workspace/NetworksWorkspace.vue'),
       },
       {
         path: 'networks-preview',
-        name: 'NetworksWorkspacePreview',
+        name: 'NetworksPreviewAlias',
         redirect: (to) => ({ path: '/networks', query: to.query, hash: to.hash }),
       },
       {
@@ -56,18 +56,23 @@ const routes = [
         component: () => import('../views/SubnetsLayoutB.vue'),
       },
       {
+        path: 'anomalies-workspace',
+        name: 'AnomaliesWorkspace',
+        component: () => import('../views/AnomaliesWorkspace.vue'),
+      },
+      {
         path: 'anomalies-preview',
-        name: 'AnomaliesWorkspacePreview',
-        component: () => import('../views/AnomaliesWorkspacePreview.vue'),
+        name: 'AnomaliesPreviewAlias',
+        redirect: (to) => ({ path: '/anomalies-workspace', query: to.query, hash: to.hash }),
       },
       {
         path: 'system',
         name: 'System',
-        component: () => import('../views/SettingsWorkspacePreview.vue'),
+        component: () => import('../views/settings-workspace/SettingsWorkspace.vue'),
       },
       {
         path: 'system-preview',
-        name: 'SettingsWorkspacePreview',
+        name: 'SystemPreviewAlias',
         redirect: (to) => ({ path: '/system', query: to.query, hash: to.hash }),
       },
       {
