@@ -20,6 +20,7 @@ describe('shared IP table column catalog', () => {
     expect(expected).toContain('source');
     expect(expected).toContain('scanning_enabled');
     expect(expected).toContain('network_range_type');
+    expect(expected).toEqual(expect.arrayContaining(['duid', 'iaid']));
     expect(expected).toEqual(
       expect.arrayContaining([
         'os_family',

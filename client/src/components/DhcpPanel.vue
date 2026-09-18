@@ -35,7 +35,7 @@
                       {{ scope.subnet_name || scope.subnet_cidr }}
                     </div>
                     <div class="scope-meta">
-                      <span class="scope-range">{{ scope.start_ip }} — {{ scope.end_ip }}</span>
+                      <span class="scope-range">{{ scopeRangeLabel(scope) }}</span>
                       <span v-if="!scope.enabled" class="badge-sm badge-red-light">disabled</span>
                     </div>
                   </div>
@@ -329,7 +329,7 @@
             placeholder="Select network"
           />
         </div>
-        <div class="field">
+        <div class="field" v-if="reservationFamily !== 6">
           <label>MAC Address *</label>
           <InputText
             :modelValue="reservationForm.mac_address"
@@ -342,12 +342,37 @@
             autocomplete="off"
           />
         </div>
+        <template v-else>
+          <div class="field">
+            <label>DUID *</label>
+            <InputText
+              v-model="reservationForm.duid"
+              class="w-full"
+              placeholder="00:01:00:01:aa:bb:cc:dd:ee:ff:00:11"
+              autocomplete="off"
+              data-track="dhcp-res-duid"
+            />
+            <small class="field-help"
+              >The client's DHCPv6 identity, colon-separated hex bytes</small
+            >
+          </div>
+          <div class="field">
+            <label>IAID</label>
+            <InputText
+              v-model="reservationForm.iaid"
+              class="w-full"
+              placeholder="optional"
+              inputmode="numeric"
+              data-track="dhcp-res-iaid"
+            />
+          </div>
+        </template>
         <div class="field">
           <label>IP Address *</label>
           <InputText
             v-model="reservationForm.ip_address"
             class="w-full"
-            placeholder="192.168.1.100"
+            :placeholder="reservationFamily === 6 ? 'fd00:1234::100' : '192.168.1.100'"
           />
         </div>
         <div class="field">
@@ -476,7 +501,7 @@ import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import { useRowsPreference } from '../composables/useRowsPreference.js';
 import api from '../api/client.js';
 import { apiError, isOnlineFlag } from '../utils/format.js';
-import { ipToLong } from '../utils/ip.js';
+import { sortKey, cidrFamily, DHCP_V6_MODE_LABELS } from '../utils/ip.js';
 import { ipLifecycleDisplayForDhcpRow } from '../utils/ipLifecycleDisplay.js';
 import {
   IP_TABLE_COLUMN_ALIASES,
@@ -535,12 +560,25 @@ const savingReservation = ref(false);
 const reservationForm = ref({
   subnet_id: null,
   mac_address: '',
+  duid: '',
+  iaid: '',
   ip_address: '',
   hostname: '',
   description: '',
   enabled: true,
 });
 const allocatedSubnets = ref([]);
+// A reservation binds a MAC on an IPv4 network and a DUID on an IPv6 one.
+// The network decides, from the chosen row or the address being edited.
+const reservationFamily = computed(() => {
+  const edited = editingReservation.value;
+  if (edited) {
+    return Number(edited.address_family || (edited.ip_address?.includes(':') ? 6 : 4));
+  }
+  const subnet = allocatedSubnets.value.find((s) => s.id === reservationForm.value.subnet_id);
+  if (subnet) return Number(subnet.address_family || cidrFamily(subnet.cidr) || 4);
+  return reservationForm.value.ip_address?.includes(':') ? 6 : 4;
+});
 const reservationError = ref('');
 let reservationFormBaseline = '';
 const reservationDiscard = useDiscardGuard({
@@ -746,6 +784,7 @@ function dhcpMatchSearch(item, query) {
   return (
     (item.ip_address && item.ip_address.toLowerCase().includes(query)) ||
     (item.mac_address && item.mac_address.toLowerCase().includes(query)) ||
+    (item.duid && item.duid.toLowerCase().includes(query)) ||
     (item.hostname && item.hostname.toLowerCase().includes(query)) ||
     (item.vendor && item.vendor.toLowerCase().includes(query)) ||
     (item.os_family && item.os_family.toLowerCase().includes(query)) ||
@@ -761,6 +800,14 @@ function dhcpMatchSearch(item, query) {
     (item.lease_status && item.lease_status.toLowerCase().includes(query)) ||
     (lifecycle.addressType?.label && lifecycle.addressType.label.toLowerCase().includes(query))
   );
+}
+
+// A SLAAC or stateless scope has no pool to show; its mode is the fact.
+function scopeRangeLabel(scope) {
+  if (Number(scope.address_family) === 6 && scope.v6_mode && scope.v6_mode !== 'stateful') {
+    return DHCP_V6_MODE_LABELS[scope.v6_mode] || scope.v6_mode;
+  }
+  return `${scope.start_ip} — ${scope.end_ip}`;
 }
 
 function dhcpAddressTypeDisplay(row) {
@@ -819,7 +866,7 @@ function normalizedExpiry(value) {
 }
 
 function dhcpSortValue(row, field) {
-  if (field === 'ip_address') return row.ip_address ? ipToLong(row.ip_address) : null;
+  if (field === 'ip_address') return row.ip_address ? sortKey(row.ip_address) : null;
   if (field === 'is_online') return normalizedOnline(row.is_online);
   if (field === 'computed_type') return normalizedText(dhcpAddressTypeDisplay(row)?.label);
   if (field === 'lease_status') return normalizedText(dhcpLeaseStatusLabel(row.lease_status));
@@ -957,6 +1004,8 @@ function reservationFormDefaults(overrides = {}) {
   return {
     subnet_id: selectedScope.value?.subnet_id || null,
     mac_address: '',
+    duid: '',
+    iaid: '',
     ip_address: '',
     hostname: '',
     description: '',
@@ -990,6 +1039,8 @@ function addDhcpReservationFromRow(row) {
   openReservationDialog(null, {
     subnet_id: row.subnet_id,
     mac_address: row.mac_address || '',
+    duid: row.duid || '',
+    iaid: row.iaid ?? '',
     ip_address: row.ip_address,
     hostname: row.hostname || '',
   });
@@ -1001,7 +1052,9 @@ async function openReservationDialog(reservation = null, prefill = {}) {
   if (reservation) {
     reservationForm.value = reservationFormDefaults({
       subnet_id: reservation.subnet_id,
-      mac_address: reservation.mac_address,
+      mac_address: reservation.mac_address || '',
+      duid: reservation.duid || '',
+      iaid: reservation.iaid ?? '',
       ip_address: reservation.ip_address,
       hostname: reservation.hostname || '',
       description: reservation.description || '',
@@ -1026,12 +1079,20 @@ async function saveReservation() {
   reservationError.value = '';
   try {
     const payload = {
-      mac_address: reservationForm.value.mac_address,
       ip_address: reservationForm.value.ip_address,
       hostname: reservationForm.value.hostname || null,
       description: reservationForm.value.description || null,
       enabled: reservationForm.value.enabled,
     };
+    if (reservationFamily.value === 6) {
+      const iaid = String(reservationForm.value.iaid ?? '').trim();
+      payload.duid = (reservationForm.value.duid || '').trim();
+      payload.iaid = iaid === '' ? null : Number(iaid);
+      if (reservationForm.value.mac_address)
+        payload.mac_address = reservationForm.value.mac_address;
+    } else {
+      payload.mac_address = reservationForm.value.mac_address;
+    }
 
     if (editingReservation.value) {
       const resId = editingReservation.value.reservation_id || editingReservation.value.id;

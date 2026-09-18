@@ -126,6 +126,21 @@ const COLUMN_CATALOG = [
     field: 'vendor',
     style: 'width: 10rem',
   },
+  // DHCPv6 identity. Off by default: an IPv4 table has nothing to show here.
+  {
+    key: 'duid',
+    header: 'DUID',
+    description: 'DHCPv6 client identity (DUID) behind a lease or reservation.',
+    field: 'duid',
+    style: 'width: 14rem',
+  },
+  {
+    key: 'iaid',
+    header: 'IAID',
+    description: 'DHCPv6 identity association id of the lease or reservation.',
+    field: 'iaid',
+    style: 'width: 6rem',
+  },
   {
     key: 'device',
     header: 'Device OS',

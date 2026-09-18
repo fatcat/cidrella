@@ -175,3 +175,71 @@ describe('ScopeDialog pools, ranges and options', () => {
     expect(wrapper.emitted('saved')).toHaveLength(1);
   });
 });
+
+describe('ScopeDialog on an IPv6 network', () => {
+  const scope6 = {
+    id: 61,
+    subnet_id: 12,
+    range_id: 6,
+    subnet_cidr: 'fd00:1234::/64',
+    subnet_gateway: 'fd00:1234::1',
+    address_family: 6,
+    v6_mode: 'stateless',
+    start_ip: 'fd00:1234::1',
+    end_ip: 'fd00:1234::ffff:ffff:ffff:ffff',
+    lease_time: '1d',
+    enabled: 1,
+    options: [],
+    pools: [{ start_ip: 'fd00:1234::1', end_ip: 'fd00:1234::ffff:ffff:ffff:ffff' }],
+  };
+
+  it('offers the DHCPv6 modes, hides the pool for a SLAAC mode, and sends the mode', async () => {
+    const wrapper = mountDialog();
+    await wrapper.vm.openEdit(scope6);
+    await flushPromises();
+    expect(wrapper.find('[data-track="scope-v6-mode"]').exists()).toBe(true);
+    expect(wrapper.vm.form.v6_mode).toBe('stateless');
+    // Description only: no Start/End for a stateless scope, and no DHCPv4 options block.
+    expect(wrapper.findAll('input').length).toBe(1);
+    expect(wrapper.text()).not.toContain('DHCP Options');
+    expect(wrapper.vm.form.optionValues[3]).toBeUndefined();
+
+    await saveButton(wrapper).trigger('click');
+    await flushPromises();
+    const [, payload] = dhcpStore.updateScope.mock.calls[0];
+    expect(payload.v6_mode).toBe('stateless');
+    expect(payload.options).toEqual([]);
+  });
+
+  it('shows the pool again for a stateful scope', async () => {
+    const wrapper = mountDialog();
+    await wrapper.vm.openEdit({
+      ...scope6,
+      v6_mode: 'stateful',
+      start_ip: 'fd00:1234::1000',
+      end_ip: 'fd00:1234::1fff',
+      pools: [{ start_ip: 'fd00:1234::1000', end_ip: 'fd00:1234::1fff' }],
+    });
+    await flushPromises();
+    expect(wrapper.findAll('input').length).toBe(3); // start, end, description
+    await saveButton(wrapper).trigger('click');
+    await flushPromises();
+    const [, payload] = dhcpStore.updateScope.mock.calls[0];
+    expect(payload).toMatchObject({
+      v6_mode: 'stateful',
+      start_ip: 'fd00:1234::1000',
+      end_ip: 'fd00:1234::1fff',
+    });
+  });
+
+  it('never offers the mode picker on an IPv4 scope', async () => {
+    const wrapper = mountDialog();
+    await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });
+    await flushPromises();
+    expect(wrapper.find('[data-track="scope-v6-mode"]').exists()).toBe(false);
+    await saveButton(wrapper).trigger('click');
+    await flushPromises();
+    const [, payload] = dhcpStore.updateScope.mock.calls[0];
+    expect(payload).not.toHaveProperty('v6_mode');
+  });
+});

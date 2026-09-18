@@ -53,7 +53,22 @@
         />
         <small class="field-help">Only DHCP Scope ranges without existing scopes are shown</small>
       </div>
-      <template v-if="showRangePicker && !form.range_id">
+      <div class="field" v-if="scopeFamily === 6">
+        <label>DHCPv6 mode</label>
+        <SelectButton
+          v-model="form.v6_mode"
+          :options="v6ModeOptions"
+          optionLabel="label"
+          optionValue="value"
+          size="small"
+          data-track="scope-v6-mode"
+        />
+        <small class="field-help">
+          Stateful hands out addresses from the pool below; SLAAC and stateless leave addressing to
+          Router Advertisements and CIDRella records what appears.
+        </small>
+      </div>
+      <template v-if="showRangePicker && !form.range_id && scopeShowsPool">
         <div class="or-divider"><span>or define a new range</span></div>
         <div class="field-row">
           <div class="field" style="flex: 1">
@@ -89,11 +104,11 @@
           description and enabled still save.
         </small>
       </div>
-      <div class="field" v-if="editing && !multiPool">
+      <div class="field" v-if="editing && !multiPool && scopeShowsPool">
         <label>Start IP</label>
         <InputText v-model="form.start_ip" class="w-full" placeholder="e.g. 192.168.1.10" />
       </div>
-      <div class="field" v-if="editing && !multiPool">
+      <div class="field" v-if="editing && !multiPool && scopeShowsPool">
         <label>End IP</label>
         <InputText v-model="form.end_ip" class="w-full" placeholder="e.g. 192.168.1.254" />
       </div>
@@ -111,8 +126,10 @@
       </div>
     </div>
 
-    <!-- Inline Options Section -->
+    <!-- Inline Options Section. The option catalog is DHCPv4; a DHCPv6 scope
+         takes its DNS, domain and NTP values from the network. -->
     <div
+      v-if="scopeFamily !== 6"
       class="scope-options-section"
       :class="{ 'options-disabled': showRangePicker && !form.subnet_id }"
     >
@@ -242,7 +259,16 @@ import Popover from '../ui/Popover.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import NetworkDialogs from './NetworkDialogs.vue';
-import { parseCidr, netmaskFor, dhcpPoolError } from '../utils/ip.js';
+import {
+  parseCidr,
+  netmaskFor,
+  dhcpPoolErrorForNetwork,
+  cidrFamily,
+  dhcpV6ModesFor,
+  DHCP_V6_MODE_LABELS,
+  parseNetwork,
+} from '../utils/ip.js';
+import SelectButton from '../ui/SelectButton.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError, EMPTY_CELL } from '../utils/format.js';
@@ -355,8 +381,39 @@ function emptyForm() {
     enabled: true,
     selectedOptions: [],
     optionValues: {},
+    v6_mode: null,
   };
 }
+
+// The network the scope belongs to, as a CIDR, from whichever way the
+// dialog was opened: the row being edited, the picked network or range, or
+// the caller's context. Its family decides the identity of the form.
+const contextCidr = ref('');
+const scopeFamily = computed(() => cidrFamily(contextCidr.value) || 4);
+const contextPrefix = computed(() => {
+  try {
+    return parseNetwork(contextCidr.value).prefix;
+  } catch {
+    return null;
+  }
+});
+const v6ModeOptions = computed(() =>
+  dhcpV6ModesFor(contextPrefix.value).map((value) => ({
+    value,
+    label: DHCP_V6_MODE_LABELS[value] || value,
+  })),
+);
+// Only a stateful scope has a pool to type; the SLAAC modes cover the prefix.
+const scopeShowsPool = computed(() => scopeFamily.value !== 6 || form.value.v6_mode === 'stateful');
+watch([scopeFamily, v6ModeOptions], ([family, options]) => {
+  if (family !== 6) {
+    if (form.value.v6_mode !== null) form.value.v6_mode = null;
+    return;
+  }
+  if (!options.some((option) => option.value === form.value.v6_mode)) {
+    form.value.v6_mode = options[0]?.value || 'stateful';
+  }
+});
 
 async function loadOptions() {
   if (optionCatalog.value.length > 0) return;
@@ -464,6 +521,26 @@ watch(
     if (form.value.range_id) return;
     const subnet = subnetsList.value.find((s) => s.id === subnetId);
     if (!subnet) return;
+    contextCidr.value = subnet.cidr || '';
+    if (cidrFamily(subnet.cidr) === 6) {
+      // No DHCPv4 options on an IPv6 network. The pool suggestion still applies to stateful.
+      form.value.selectedOptions = [];
+      form.value.optionValues = {};
+      if (subnet.name && !form.value.description) {
+        form.value.description = `${subnet.name} DHCP Scope`;
+      }
+      if (subnet.cidr && !form.value.start_ip && !form.value.end_ip) {
+        try {
+          const pool = await loadSuggestedPool(subnet);
+          if (form.value.subnet_id !== subnetId || form.value.range_id) return;
+          form.value.start_ip = pool?.start_ip || '';
+          form.value.end_ip = pool?.end_ip || '';
+        } catch {
+          /* ignore */
+        }
+      }
+      return;
+    }
 
     // Enable all enabled-by-default options
     for (const code of enabledDefaultCodes.value) {
@@ -522,6 +599,12 @@ watch(
     const range = availableRanges.value.find((r) => r.id === rangeId);
     if (range) form.value.subnet_id = range.subnet_id;
     if (!range) return;
+    contextCidr.value = range.subnet_cidr || contextCidr.value;
+    if (cidrFamily(range.subnet_cidr) === 6) {
+      form.value.selectedOptions = [];
+      form.value.optionValues = {};
+      return;
+    }
 
     // Subnet mask + broadcast
     if (range.subnet_cidr) {
@@ -620,7 +703,11 @@ const poolError = computed(() => {
   // existing range means the bounds come from the server.
   if (!form.value.start_ip && !form.value.end_ip) return null;
   const subnet = subnetsList.value?.find((sn) => sn.id === form.value.subnet_id);
-  return dhcpPoolError(form.value.start_ip, form.value.end_ip, subnet?.cidr || null);
+  return dhcpPoolErrorForNetwork(
+    form.value.start_ip,
+    form.value.end_ip,
+    subnet?.cidr || contextCidr.value || null,
+  );
 });
 
 async function save() {
@@ -646,6 +733,7 @@ async function save() {
       enabled: form.value.enabled,
       options,
     };
+    if (scopeFamily.value === 6) payload.v6_mode = form.value.v6_mode || 'stateful';
 
     if (editing.value) {
       if (!multiPool.value) {
@@ -659,7 +747,13 @@ async function save() {
       let subnetId = form.value.subnet_id;
 
       if (!rangeId && showRangePicker.value) {
-        // Create a new DHCP Scope range from manual start/end IPs
+        // Create a new DHCP Scope range from manual start/end IPs. A SLAAC or
+        // stateless scope has no pool: its range spans the prefix.
+        if (!scopeShowsPool.value && contextCidr.value) {
+          const parsed = parseNetwork(contextCidr.value);
+          form.value.start_ip = parsed.firstUsable;
+          form.value.end_ip = parsed.lastUsable;
+        }
         if (!form.value.start_ip || !form.value.end_ip) {
           toast.add({ severity: 'error', summary: 'Start IP and End IP are required', life: 5000 });
           saving.value = false;
@@ -734,6 +828,7 @@ async function openEdit(scope) {
   await loadOptions();
   editing.value = scope;
   showRangePicker.value = false;
+  contextCidr.value = scope.subnet_cidr || '';
 
   const selOpts = [];
   const optVals = {};
@@ -750,10 +845,13 @@ async function openEdit(scope) {
   // Re-populate inherited values for options not stored in scope_options
   // Gateway (option 3) is stripped on save when it matches the subnet gateway,
   // so re-fill it from the subnet so the UI always shows the effective value.
-  setOptionValue(selOpts, optVals, 3, scope.subnet_gateway, { overwrite: false });
-  if (!selOpts.includes(1) && scope.subnet_cidr) {
-    const mask = computeMask(scope.subnet_cidr);
-    setOptionValue(selOpts, optVals, 1, mask, { overwrite: false });
+  // An IPv6 scope has no DHCPv4 options to fill.
+  if (cidrFamily(scope.subnet_cidr) !== 6) {
+    setOptionValue(selOpts, optVals, 3, scope.subnet_gateway, { overwrite: false });
+    if (!selOpts.includes(1) && scope.subnet_cidr) {
+      const mask = computeMask(scope.subnet_cidr);
+      setOptionValue(selOpts, optVals, 1, mask, { overwrite: false });
+    }
   }
   setOptionValue(selOpts, optVals, 15, scope.subnet_domain_name, { overwrite: false });
   setOptionValue(selOpts, optVals, 119, scope.subnet_domain_name, { overwrite: false });
@@ -771,9 +869,19 @@ async function openEdit(scope) {
     enabled: !!scope.enabled,
     selectedOptions: selOpts,
     optionValues: optVals,
+    v6_mode: scope.v6_mode || null,
   };
-  optionsExpanded.value = selOpts.length > 0;
+  stripOptionsForIpv6();
+  optionsExpanded.value = form.value.selectedOptions.length > 0;
   showScopeDialog();
+}
+
+// The option catalog is DHCPv4. A DHCPv6 scope carries none, whatever the
+// defaults or the network context tried to fill in.
+function stripOptionsForIpv6() {
+  if (scopeFamily.value !== 6) return;
+  form.value.selectedOptions = [];
+  form.value.optionValues = {};
 }
 
 /**
@@ -787,6 +895,7 @@ async function openNewWithPicker(subnetCtx) {
   await loadOptions();
   editing.value = null;
   showRangePicker.value = true;
+  contextCidr.value = subnetCtx?.cidr || '';
 
   const autoSelected = [];
   const autoValues = {};
@@ -830,6 +939,7 @@ async function openNewWithPicker(subnetCtx) {
     selectedOptions: autoSelected,
     optionValues: autoValues,
   };
+  stripOptionsForIpv6();
 
   loadingRanges.value = true;
   try {
@@ -853,6 +963,7 @@ async function openNewForRange(opts) {
   await loadOptions();
   editing.value = null;
   showRangePicker.value = false;
+  contextCidr.value = opts.cidr || '';
 
   // Auto-select enabled-by-default options
   const autoSelected = [];
@@ -884,7 +995,8 @@ async function openNewForRange(opts) {
     selectedOptions: autoSelected,
     optionValues: autoValues,
   };
-  optionsExpanded.value = autoSelected.length > 0;
+  stripOptionsForIpv6();
+  optionsExpanded.value = form.value.selectedOptions.length > 0;
   showScopeDialog();
 }
 
