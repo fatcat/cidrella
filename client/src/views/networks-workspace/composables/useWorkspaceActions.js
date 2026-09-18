@@ -74,7 +74,6 @@ export function useWorkspaceActions(ctx) {
     state.selectedZoneFilter.value = zone;
     rememberDnsZoneSide?.(zone);
     state.selectedScopeFilter.value = null;
-    state.selectedRow.value = null;
     state.currentPage.value = 1;
     await updateWorkspaceRoute();
     await reload();
@@ -83,7 +82,6 @@ export function useWorkspaceActions(ctx) {
   async function drillIntoScope(scope, reload) {
     state.selectedScopeFilter.value = scope;
     state.selectedZoneFilter.value = null;
-    state.selectedRow.value = null;
     state.currentPage.value = 1;
     await updateWorkspaceRoute();
     await reload();

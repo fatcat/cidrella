@@ -21,6 +21,15 @@ vi.mock('../../../src/api/client.js', () => ({
 }));
 // The reused NetworkDialogs editors toast on save; the workspace has no toast host.
 vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => ({ add: vi.fn() }) }));
+// NetworksWorkspace calls useRouter() for the settings, zone and scope
+// navigations. No router plugin is installed here, so useWorkspaceContext keeps
+// its URL-less fallback; only the injection that would otherwise warn on every
+// mount is supplied. The router is built inside the factory because vi.mock is
+// hoisted above the imports that first load vue-router.
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal()),
+  useRouter: () => ({ push: vi.fn(), currentRoute: { value: { fullPath: '/networks' } } }),
+}));
 
 let reservedIp33 = false;
 let deletedIps = new Set();
