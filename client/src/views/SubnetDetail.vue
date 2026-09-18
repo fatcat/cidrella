@@ -266,9 +266,13 @@
                   Unassigned
                 </span>
               </div>
+              <p v-if="isIpv6Subnet" class="muted" data-track="classic-ipv6-notice">
+                IPv6 networks are managed in the Networks workspace; this view lists IPv4 addresses
+                only.
+              </p>
               <div
                 class="ip-grid"
-                v-if="subnet.total_addresses <= 1024"
+                v-if="!isIpv6Subnet && subnet.total_addresses <= 1024"
                 @mousedown="onGridMouseDown"
                 @mousemove="onGridMouseMove"
                 @mouseup="onGridMouseUp"
@@ -1051,8 +1055,15 @@ function gridPseudoData({ addr, assignInfo, rangeInfo }) {
   };
 }
 
+// The classic view enumerates every address with 32-bit math. An IPv6
+// network cannot be enumerated, so it shows a pointer to the workspace instead.
+const isIpv6Subnet = computed(
+  () =>
+    Number(subnet.value?.address_family) === 6 || String(subnet.value?.cidr || '').includes(':'),
+);
+
 const ipGrid = computed(() => {
-  if (!subnet.value || subnet.value.total_addresses > 1024) return [];
+  if (!subnet.value || isIpv6Subnet.value || subnet.value.total_addresses > 1024) return [];
 
   const net = ipToLong(subnet.value.network_address);
   const bcast = ipToLong(subnet.value.broadcast_address);

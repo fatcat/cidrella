@@ -40,3 +40,13 @@ describe('SubnetDetail grid interactions', () => {
     expect(source).toContain("if (isSystemAddress) cellColor = 'var(--cid-system)'");
   });
 });
+
+describe('SubnetDetail on an IPv6 network', () => {
+  it('never enumerates the prefix and points at the workspace instead', () => {
+    expect(source).toContain('data-track="classic-ipv6-notice"');
+    expect(source).toContain('v-if="!isIpv6Subnet && subnet.total_addresses <= 1024"');
+    expect(source).toMatch(
+      /if \(!subnet\.value \|\| isIpv6Subnet\.value \|\| subnet\.value\.total_addresses > 1024\) return \[\];/,
+    );
+  });
+});

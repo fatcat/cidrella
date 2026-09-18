@@ -398,7 +398,7 @@ import { useSubnetStore } from '../stores/subnets.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import { collectAllocatedSubnets } from '../utils/tree.js';
 import { apiError } from '../utils/format.js';
-import { applyNameTemplate, canMergeCidrs } from '../utils/ip.js';
+import { applyNameTemplate, mergeNetworks } from '../utils/ip.js';
 
 const store = useSubnetStore();
 const toast = useToast();
@@ -838,7 +838,12 @@ const mergeValidation = computed(() => {
     })
     .filter(Boolean);
   if (cidrs.length < 2) return { valid: false, error: 'Cannot find network' };
-  return canMergeCidrs(cidrs);
+  // Either family through the shared check; it reports a mixed pair itself.
+  try {
+    return mergeNetworks(cidrs);
+  } catch (error) {
+    return { valid: false, error: error.message };
+  }
 });
 
 function clearMergeSelection() {

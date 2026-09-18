@@ -57,6 +57,36 @@
           style="width: 6rem"
         />
       </div>
+      <div class="schedule-group">
+        <label
+          class="schedule-label"
+          title="The A record answered for a blocked name. Empty means NXDOMAIN."
+        >
+          Sinkhole IPv4:
+        </label>
+        <InputText
+          v-model="redirectIp"
+          size="small"
+          placeholder="none"
+          style="width: 9rem"
+          data-track="blocklist-redirect-ip"
+        />
+      </div>
+      <div v-if="ipv6Supported" class="schedule-group">
+        <label
+          class="schedule-label"
+          title="The AAAA record answered for a blocked name. Empty means no IPv6 answer."
+        >
+          Sinkhole IPv6:
+        </label>
+        <InputText
+          v-model="redirectIp6"
+          size="small"
+          placeholder="none"
+          style="width: 12rem"
+          data-track="blocklist-redirect-ip6"
+        />
+      </div>
       <Button
         label="Save Settings"
         icon="pi pi-save"
@@ -241,6 +271,8 @@
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue';
+import { useFeatures } from '../composables/useFeatures.js';
+import { isValidIpv4, isValidIpv6 } from '../utils/ip.js';
 import { formatDateTime } from '../utils/dateFormat.js';
 import { formatNumber, apiError, EMPTY_CELL } from '../utils/format.js';
 import { useToast } from '../ui/useToast.js';
@@ -269,9 +301,17 @@ const stats = ref({
 const settings = reactive({
   blocklist_enabled: 'true',
   blocklist_redirect_ip: '',
+  blocklist_redirect_ip6: '',
   blocklist_update_schedule: 'daily',
   blocklist_max_feed_mb: '128',
 });
+// The sinkhole addresses, one per family. The IPv6 one is shown only while
+// IPv6 support is on; the server refuses a value while it is off.
+const { ipv6: ipv6Supported } = useFeatures();
+const redirectIp = ref('');
+const savedRedirectIp = ref('');
+const redirectIp6 = ref('');
+const savedRedirectIp6 = ref('');
 const blocklistEnabled = ref(true);
 const savedBlocklistEnabled = ref(true);
 // Show the toggle OFF (and locked) while recursion is disabled. Blocking is
@@ -292,7 +332,9 @@ const settingsDirty = computed(() => {
   return (
     blocklistEnabled.value !== savedBlocklistEnabled.value ||
     settings.blocklist_update_schedule !== savedSchedule.value ||
-    String(maxFeedMb.value) !== savedMaxFeedMb.value
+    String(maxFeedMb.value) !== savedMaxFeedMb.value ||
+    redirectIp.value.trim() !== savedRedirectIp.value ||
+    redirectIp6.value.trim() !== savedRedirectIp6.value
   );
 });
 
@@ -435,17 +477,40 @@ async function doRefreshAll() {
 }
 
 async function doSaveSettings() {
+  const ip4 = redirectIp.value.trim();
+  const ip6 = redirectIp6.value.trim();
+  if (ip4 && !isValidIpv4(ip4)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Sinkhole IPv4 must be a valid IPv4 address',
+      life: 4000,
+    });
+    return;
+  }
+  if (ip6 && !isValidIpv6(ip6)) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Sinkhole IPv6 must be a valid IPv6 address',
+      life: 4000,
+    });
+    return;
+  }
   savingSettings.value = true;
   try {
     await store.updateSettings({
       blocklist_enabled: blocklistEnabled.value ? 'true' : 'false',
-      blocklist_redirect_ip: settings.blocklist_redirect_ip,
+      blocklist_redirect_ip: ip4,
+      blocklist_redirect_ip6: ip6,
       blocklist_update_schedule: settings.blocklist_update_schedule,
       blocklist_max_feed_mb: String(maxFeedMb.value),
     });
     savedBlocklistEnabled.value = blocklistEnabled.value;
     savedSchedule.value = settings.blocklist_update_schedule;
     savedMaxFeedMb.value = String(maxFeedMb.value);
+    settings.blocklist_redirect_ip = ip4;
+    settings.blocklist_redirect_ip6 = ip6;
+    savedRedirectIp.value = ip4;
+    savedRedirectIp6.value = ip6;
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -466,6 +531,10 @@ onMounted(async () => {
   savedSchedule.value = settings.blocklist_update_schedule;
   maxFeedMb.value = settings.blocklist_max_feed_mb || '128';
   savedMaxFeedMb.value = String(maxFeedMb.value);
+  redirectIp.value = settings.blocklist_redirect_ip || '';
+  savedRedirectIp.value = redirectIp.value;
+  redirectIp6.value = settings.blocklist_redirect_ip6 || '';
+  savedRedirectIp6.value = redirectIp6.value;
   try {
     noRecursion.value = !!(await dnsStore.getForwarders()).no_recursion;
   } catch {

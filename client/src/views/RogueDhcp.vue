@@ -2,8 +2,13 @@
   <div class="rogue-dhcp-page">
     <p class="section-hint">
       Periodically broadcasts a DHCP DISCOVER and flags any DHCP server that answers but isn't
-      CIDRella's own or on the authorized list. Detection only. CIDRella can't block a rogue server.
-      Only servers on the same network segment as a CIDRella interface are visible.
+      CIDRella's own or on the authorized list.
+      <template v-if="ipv6Supported">
+        With IPv6 on it also solicits DHCPv6 servers and reads the routers the kernel accepted
+        Router Advertisements from.
+      </template>
+      Detection only. CIDRella can't block a rogue server. Only servers on the same network segment
+      as a CIDRella interface are visible.
     </p>
 
     <!-- Settings -->
@@ -41,6 +46,10 @@
         <p v-else-if="status" class="rd-status">
           Last probe: {{ status.lastProbeAt ? formatDate(status.lastProbeAt) : 'never' }}
         </p>
+        <template v-if="ipv6Supported && status">
+          <p class="rd-status" data-track="rogue-dhcpv6-status">DHCPv6: {{ dhcpv6Line }}</p>
+          <p class="rd-status" data-track="rogue-ra-status">Router Advertisements: {{ raLine }}</p>
+        </template>
         <div class="rd-actions">
           <Button
             label="Save"
@@ -103,9 +112,22 @@
             />
           </template>
         </Column>
-        <Column field="server_ip" header="Server IP" />
+        <Column header="Kind" style="width: 7rem">
+          <template #body="{ data }">
+            <StatusBadge kind="muted" :label="kindLabel(data.kind)" />
+          </template>
+        </Column>
+        <Column field="server_ip" header="Server">
+          <template #body="{ data }">
+            <div>{{ data.server_ip }}</div>
+            <div v-if="data.server_duid" class="rd-duid" :title="'DUID ' + data.server_duid">
+              {{ data.server_duid }}
+            </div>
+            <div v-else-if="data.server_mac" class="rd-duid">{{ data.server_mac }}</div>
+          </template>
+        </Column>
         <Column field="offered_gateway" header="Offered gateway">
-          <template #body="{ data }">{{ data.offered_gateway || EMPTY_CELL }}</template>
+          <template #body="{ data }">{{ offeredGateway(data) }}</template>
         </Column>
         <Column field="offered_dns" header="Offered DNS">
           <template #body="{ data }">{{ data.offered_dns || EMPTY_CELL }}</template>
@@ -163,12 +185,18 @@
       <p class="section-hint">
         CIDRella's own DHCP server is always trusted. Add other legitimate servers here so they
         aren't flagged.
+        <template v-if="ipv6Supported">
+          An entry needs at least one identity: an address of either family, a MAC (routers), or a
+          DUID (DHCPv6 servers).
+        </template>
       </p>
       <div class="rd-add-form">
         <InputText
           v-model="newAuth.server_ip"
           size="small"
-          placeholder="Server IP (e.g. 10.0.0.1)"
+          :placeholder="
+            ipv6Supported ? 'Server IP (10.0.0.1 or fe80::1)' : 'Server IP (e.g. 10.0.0.1)'
+          "
           style="width: 12rem"
         />
         <InputText
@@ -176,6 +204,14 @@
           size="small"
           placeholder="MAC (optional)"
           style="width: 11rem"
+        />
+        <InputText
+          v-if="ipv6Supported"
+          v-model="newAuth.server_duid"
+          size="small"
+          placeholder="DUID (DHCPv6 server)"
+          style="width: 16rem"
+          data-track="rogue-dhcp-auth-duid"
         />
         <InputText
           v-model="newAuth.description"
@@ -200,9 +236,14 @@
             description="Add known-good DHCP servers so probes don't flag them as rogue."
           />
         </template>
-        <Column field="server_ip" header="Server IP" />
+        <Column field="server_ip" header="Server IP">
+          <template #body="{ data }">{{ data.server_ip || EMPTY_CELL }}</template>
+        </Column>
         <Column field="server_mac" header="MAC">
           <template #body="{ data }">{{ data.server_mac || EMPTY_CELL }}</template>
+        </Column>
+        <Column v-if="ipv6Supported" field="server_duid" header="DUID">
+          <template #body="{ data }">{{ data.server_duid || EMPTY_CELL }}</template>
         </Column>
         <Column field="description" header="Description">
           <template #body="{ data }">{{ data.description || EMPTY_CELL }}</template>
@@ -242,9 +283,63 @@ import Toast from '../ui/Toast.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import StatusBadge from '../components/StatusBadge.vue';
 import { useRogueDhcpStore } from '../stores/rogueDhcp.js';
+import { useFeatures } from '../composables/useFeatures.js';
 
 const store = useRogueDhcpStore();
 const toast = useToast();
+const { ipv6: ipv6Supported } = useFeatures();
+
+const KIND_LABELS = { dhcp: 'DHCPv4', dhcpv6: 'DHCPv6', ra: 'Router' };
+function kindLabel(kind) {
+  return KIND_LABELS[kind] || 'DHCPv4';
+}
+// A router advertises prefixes, not a gateway; the gateway column is its own address.
+function offeredGateway(event) {
+  if (event.kind === 'ra') return event.advertised_prefixes || event.offered_gateway || EMPTY_CELL;
+  return event.offered_gateway || EMPTY_CELL;
+}
+
+// The Probe now toast, one clause per detector that ran.
+function probeSummary(res) {
+  const parts = [
+    `${res.rogueCount} rogue server(s), ${res.offers} offer(s) across ${res.interfaces} interface(s)`,
+  ];
+  if (ipv6Supported.value && res.dhcpv6 && !res.dhcpv6.disabled) {
+    parts.push(
+      res.dhcpv6.supported === false
+        ? 'DHCPv6 probe unavailable'
+        : `${res.dhcpv6.advertisements} DHCPv6 advertisement(s)`,
+    );
+  }
+  if (ipv6Supported.value && res.routerAdvertisements && !res.routerAdvertisements.disabled) {
+    parts.push(
+      res.routerAdvertisements.supported === false
+        ? 'Router Advertisement check unavailable'
+        : `${res.routerAdvertisements.routers} advertising router(s)`,
+    );
+  }
+  return `${parts.join('; ')}.`;
+}
+
+// One line per IPv6 detector, honest about off, unsupported and unprobed.
+const dhcpv6Line = computed(() => {
+  const s = status.value?.dhcpv6;
+  if (!s) return 'no data';
+  if (s.disabled) return 'off (IPv6 support is disabled)';
+  if (s.probeSupported === false)
+    return `unavailable (${s.lastProbeError || 'cannot bind UDP 546'})`;
+  return s.lastProbeAt ? `last probe ${formatDate(s.lastProbeAt)}` : 'not probed yet';
+});
+const raLine = computed(() => {
+  const s = status.value?.routerAdvertisements;
+  if (!s) return 'no data';
+  if (s.disabled) return 'off (IPv6 support is disabled)';
+  if (s.supported === false) {
+    const off = (s.unsupportedInterfaces || []).join(', ');
+    return `unavailable (accept_ra is off${off ? ' on ' + off : ''})`;
+  }
+  return s.lastCheckAt ? `last check ${formatDate(s.lastCheckAt)}` : 'not checked yet';
+});
 
 const formatDate = formatDateTime;
 
@@ -264,7 +359,7 @@ const settingsDirty = computed(() => {
 
 const hasUnacknowledged = computed(() => store.events.some((e) => !e.acknowledged));
 
-const newAuth = ref({ server_ip: '', server_mac: '', description: '' });
+const newAuth = ref({ server_ip: '', server_mac: '', server_duid: '', description: '' });
 const addingAuth = ref(false);
 
 async function loadStatus() {
@@ -320,7 +415,7 @@ async function probeNow() {
       toast.add({
         severity: 'success',
         summary: 'Probe complete',
-        detail: `${res.rogueCount} rogue server(s), ${res.offers} offer(s) across ${res.interfaces} interface(s).`,
+        detail: probeSummary(res),
         life: 4000,
       });
     }
@@ -356,18 +451,22 @@ async function clear(id) {
 }
 
 async function addAuth() {
-  if (!newAuth.value.server_ip.trim()) {
-    toast.add({ severity: 'warn', summary: 'Server IP required', life: 3000 });
+  const ip = newAuth.value.server_ip.trim();
+  const mac = newAuth.value.server_mac.trim();
+  const duid = (newAuth.value.server_duid || '').trim();
+  if (!ip && !mac && !duid) {
+    toast.add({ severity: 'warn', summary: 'An IP, MAC or DUID is required', life: 3000 });
     return;
   }
   addingAuth.value = true;
   try {
     await store.addAuthorized({
-      server_ip: newAuth.value.server_ip.trim(),
-      server_mac: newAuth.value.server_mac.trim() || undefined,
+      server_ip: ip || undefined,
+      server_mac: mac || undefined,
+      server_duid: duid || undefined,
       description: newAuth.value.description.trim() || undefined,
     });
-    newAuth.value = { server_ip: '', server_mac: '', description: '' };
+    newAuth.value = { server_ip: '', server_mac: '', server_duid: '', description: '' };
     toast.add({ severity: 'success', summary: 'Server authorized', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -432,6 +531,12 @@ onMounted(async () => {
   font-size: var(--app-fs-xs);
   color: var(--cid-text-muted-color);
   margin: 0;
+}
+.rd-duid {
+  font-family: var(--cid-font-mono, monospace);
+  font-size: 0.75rem;
+  color: var(--cid-text-muted-color);
+  word-break: break-all;
 }
 .rd-warn {
   font-size: var(--app-fs-xs);
