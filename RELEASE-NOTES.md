@@ -28,8 +28,50 @@ instructions to reconcile the conflicts. This should be a rare occurrence but
 I was not able to guarantee recent CIDRella versions would completely guard
 against the possibility.
 
+A manual A record may name a configured gateway without taking ownership of
+it; the address stays `gateway`. A CIDRella service address is an ordinary
+host address and is allocated as `static_dns` by its A record. DHCP
+Reservations and leases on protected or static-DNS addresses are still
+rejected.
+
 ### New
 
+Add under ### New:
+
+- The `system` allocation is limited to the network number and broadcast
+  address (schema 63). A gateway row that was classified `system` becomes
+  `gateway`, a service address with an enabled manual A record becomes
+  `static_dns`, and a `system` row with neither becomes `unassigned` while
+  keeping its liveness and learned MAC.
+- Gateway intent is stored per network as `first`, `last`, `custom` or `none`
+  (schema 64) and returned as `gateway_policy` beside the resolved
+  `gateway_address`. Dividing a first- or last-usable network gives every
+  child the same policy and computes each child's own endpoint. Merging
+  compatible children keeps it. Changing the global Network Defaults later no
+  longer alters an existing network's gateway. Existing rows are marked
+  `custom` when they have a gateway and `none` when they do not, and the
+  startup reconciler promotes a literal first- or last-usable address to the
+  matching policy.
+- Divide, carve and merge run through one preview-and-execute planner. The
+  preview returns the resolved target networks, gateways, scope and pool
+  lineage, exact conflicts and a dependency token. Execution accepts that
+  token and refuses it when a relevant network, DHCP, DNS, lease, reservation
+  or allocation fact changed in between. Conflicts are resolved by naming
+  exact record identities from the preview, not with a blanket force flag.
+  Reservations and leases move to the resulting network instead of being
+  deleted or left detached. Carve remainders can be merged back when their
+  union is one exact CIDR.
+- DHCP scopes own explicit pool intervrned as `pools` on the scope. The mask,
+  router and broadcast options come from the target network, so a child scope
+  no  router. Merging children whose scope policies differ returns a
+  `dhcp_scope_policy_conflict` instead came first in the request.
+- Generated DNS and DHCP configurationed and
+  applied generations (schema 65). A network mutation can succeed in the
+  database while its configuration is ding work is retried and resumed after
+  a restart.
+- A scan belongs to the topology revision that started it (schema 68). A scan
+  still running when its network was dd instead of writing stale ownership 
+  back into the new networks.
 - IP allocation now has one canonical state and transition boundary across
   Networks, DNS, DHCP, imports, scans, and passive liveness. The legacy
   `ip_addresses.status` storage field is removed by schema 58. Schema 59
