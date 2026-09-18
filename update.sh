@@ -95,6 +95,15 @@ PREFLIGHT_PID=""
 LAST_PHASE="init"
 UPDATE_LOG="/var/lib/cidrella/update.log"
 
+# Append stdin to the update log with terminal escape sequences removed, so
+# the file reads as plain text in vim, less, journalctl and the web update
+# panel's failure tail.
+_plain_log() {
+  # LC_ALL=C: under a UTF-8 locale sed's bracket ranges follow collation
+  # order and [@-~] stops matching the final byte, so nothing is stripped.
+  LC_ALL=C sed -u "s|$(printf '\033')\[[0-9;?]*[ -/]*[@-~]||g" >> "$UPDATE_LOG"
+}
+
 # ─── Shared library ───────────────────────────────────────
 # Source the per-slot bash helpers. Scripts live in the active slot at
 # $INSTALL_LINK/scripts/lib/. $0 was resolved above (before `cd /`) so
@@ -378,7 +387,7 @@ OPTIONS
                        min_from gate. Those are safety checks, not policy.
 
                        Use cases:
-                         - Iterate pre-releases: 0.4.15-pre.2 → 0.4.15-pre.1
+                         - Iterate pre-releases: 0.4.15-pre.2 -> 0.4.15-pre.1
                          - Reinstall the same version after a bad install
                          - Install an older tarball known to be good
 
@@ -464,10 +473,15 @@ else
   # stdbuf -oL forces line-buffered output on tee so the log file sees each
   # line as it happens, not after a 4KB buffer fills. Without line buffering
   # the ERR trap can race tee and read an empty/partial log.
+  #
+  # The terminal keeps its colors; the log file does not. Colors are decided
+  # while stderr is still a tty, so without the strip every SGR sequence
+  # lands in update.log and from there in the "Last output" tail of a
+  # failure message. sed -u flushes per line for the same race reason.
   if command -v stdbuf >/dev/null 2>&1; then
-    exec > >(stdbuf -oL tee -a "$UPDATE_LOG") 2>&1
+    exec > >(stdbuf -oL tee >(_plain_log)) 2>&1
   else
-    exec > >(tee -a "$UPDATE_LOG") 2>&1
+    exec > >(tee >(_plain_log)) 2>&1
   fi
 fi
 
@@ -478,7 +492,7 @@ emit_event update start "started_at=$STARTED_AT" "pid=$$"
 # PHASE 1: PREFLIGHT (old version still running)
 # ═══════════════════════════════════════════════════════════
 
-[ "$FROM_API" = false ] && echo -e "\n${BOLD}═══ CIDRella Updater ═══${NC}\n"
+[ "$FROM_API" = false ] && echo -e "\n${BOLD}=== CIDRella Updater ===${NC}\n"
 
 if [ "$(id -u)" -ne 0 ]; then
   err "This script must be run as root (or with sudo)."
@@ -628,10 +642,10 @@ fi
 # responsible for understanding the DB implication.
 if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
   if [ "$FORCE" = true ]; then
-    warn "Allowing downgrade v${CURRENT_VERSION} → v${NEW_VERSION} (--force)."
+    warn "Allowing downgrade v${CURRENT_VERSION} -> v${NEW_VERSION} (--force)."
     warn "No DB snapshot will be restored. Schema newer than v${NEW_VERSION} may break on boot."
   else
-    err "Refusing to downgrade: v${CURRENT_VERSION} → v${NEW_VERSION}"
+    err "Refusing to downgrade: v${CURRENT_VERSION} -> v${NEW_VERSION}"
     err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot),"
     err "or 'cidrella-update --force --version ${NEW_VERSION}' to proceed without snapshot restore."
     write_progress "failed" 5 "Downgrade not allowed via update" "Requested v${NEW_VERSION} is older than running v${CURRENT_VERSION}"
@@ -651,13 +665,13 @@ if [ "$CURRENT_MAJOR_MINOR" != "$NEW_MAJOR_MINOR" ] && [ "$CURRENT_VERSION" != "
   CURRENT_MAJOR=$(echo "$CURRENT_VERSION" | awk -F. '{print $1}')
   NEW_MAJOR=$(echo "$NEW_VERSION" | awk -F. '{print $1}')
   if [ "$CURRENT_MAJOR" -ne "$NEW_MAJOR" ] 2>/dev/null || [ $((NEW_MINOR - CURRENT_MINOR)) -gt 1 ] 2>/dev/null; then
-    warn "Skipping versions: v${CURRENT_VERSION} → v${NEW_VERSION}"
+    warn "Skipping versions: v${CURRENT_VERSION} -> v${NEW_VERSION}"
     warn "We recommend reading release notes for all intermediate versions:"
     warn "  https://github.com/${GITHUB_REPO}/releases"
   fi
 fi
 
-info "New version available: v${CURRENT_VERSION} → v${NEW_VERSION}"
+info "New version available: v${CURRENT_VERSION} -> v${NEW_VERSION}"
 track_progress "downloading" 10 "Downloading v${NEW_VERSION}..."
 
 # Find arch-specific tarball URL (new format: cidrella-vX.Y.Z-linux-x64.tar.gz)
@@ -803,9 +817,9 @@ if [ -f "$RELEASE_META" ]; then
   # (same rationale as the pre-signature-verify guard above).
   if [ "$CURRENT_VERSION" != "unknown" ] && semver_lt "$NEW_VERSION" "$CURRENT_VERSION"; then
     if [ "$FORCE" = true ]; then
-      warn "Allowing downgrade v${CURRENT_VERSION} → v${NEW_VERSION} (--force, verified from signed RELEASE.json)."
+      warn "Allowing downgrade v${CURRENT_VERSION} -> v${NEW_VERSION} (--force, verified from signed RELEASE.json)."
     else
-      err "Refusing to downgrade (verified from signed RELEASE.json): v${CURRENT_VERSION} → v${NEW_VERSION}"
+      err "Refusing to downgrade (verified from signed RELEASE.json): v${CURRENT_VERSION} -> v${NEW_VERSION}"
       err "Use 'cidrella-rollback' to restore the previous version (with DB snapshot),"
       err "or 'cidrella-update --force --version ${NEW_VERSION}' to proceed without snapshot restore."
       emit_event verify fail reason=downgrade "from=$CURRENT_VERSION" "to=$NEW_VERSION"
@@ -1534,9 +1548,9 @@ if [ "$VERIFY_OK" = true ]; then
 
   if [ "$FROM_API" = false ]; then
     echo ""
-    echo -e "${BOLD}═══════════════════════════════════════════${NC}"
-    echo -e "${BOLD}  CIDRella updated: v${CURRENT_VERSION} → v${NEW_VERSION}${NC}"
-    echo -e "${BOLD}═══════════════════════════════════════════${NC}"
+    echo -e "${BOLD}===========================================${NC}"
+    echo -e "${BOLD}  CIDRella updated: v${CURRENT_VERSION} -> v${NEW_VERSION}${NC}"
+    echo -e "${BOLD}===========================================${NC}"
     echo ""
     echo -e "  ${BOLD}Active slot:${NC}  $TARGET_SLOT"
     echo -e "  ${BOLD}Previous:${NC}    $ACTIVE_SLOT (rollback target)"

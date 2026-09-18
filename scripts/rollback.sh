@@ -171,7 +171,7 @@ fi
 # ─── Summary ──────────────────────────────────────────────
 
 echo ""
-echo -e "${BOLD}═══ CIDRella Rollback ═══${NC}"
+echo -e "${BOLD}=== CIDRella Rollback ===${NC}"
 echo ""
 echo -e "  Currently active:  ${BOLD}v${ACTIVE_VERSION}${NC}  (${ACTIVE_SLOT})"
 echo -e "  Will restore:      ${BOLD}v${INACTIVE_VERSION}${NC}  (${INACTIVE_SLOT})"
