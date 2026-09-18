@@ -189,7 +189,7 @@
           />
         </div>
       </div>
-      <div class="field">
+      <div v-if="wizardFamily !== 6" class="field">
         <label>Gateway</label>
         <div class="gateway-row">
           <SelectButton
@@ -236,15 +236,32 @@
           Create DHCP scope
         </label>
       </div>
-      <template v-if="wizardNet.create_dhcp_scope && wizardPrefixLength <= 29">
-        <Message v-if="wizardDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
+      <template v-if="wizardShowsDhcp">
+        <div v-if="wizardFamily === 6" class="field">
+          <label>DHCPv6 mode</label>
+          <SelectButton
+            v-model="wizardNet.dhcp_v6_mode"
+            :options="wizardDhcpV6ModeOptions"
+            optionLabel="label"
+            optionValue="value"
+            size="small"
+            data-track="wizard-dhcp-v6-mode"
+          />
+          <small class="field-help">{{ DHCP_V6_MODE_HELP[wizardNet.dhcp_v6_mode] || '' }}</small>
+        </div>
+        <Message
+          v-if="wizardFamily !== 6 && wizardDhcpRiskySize"
+          severity="warn"
+          :closable="false"
+          class="mt-1"
+        >
           A /{{ wizardPrefixLength }} is larger than CIDRella will auto-size a DHCP pool for. RAM is
           the primary concern: every IP in an allocated subnet gets a row in
           <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB. See
           <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue, just enter
           Start IP and End IP manually.
         </Message>
-        <div class="wizard-dhcp-row">
+        <div v-if="wizardShowsPool" class="wizard-dhcp-row">
           <div class="field">
             <label>DHCP Scope Start IP</label>
             <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" />
@@ -639,7 +656,7 @@
             <InputNumber
               v-model="carvePrefix"
               :min="(props.selectedNode?.data.prefix_length || 0) + 1"
-              :max="32"
+              :max="maxPrefixFor(props.selectedNode?.data.cidr)"
               class="carve-prefix-input"
               :useGrouping="false"
             />
@@ -654,10 +671,10 @@
           <li
             v-for="target in authoritativeDivideTargets"
             :key="target.cidr"
-            :class="{ 'carved-highlight': target.cidr === normalizeCidr(carveCidr) }"
+            :class="{ 'carved-highlight': target.cidr === normalizeNetwork(carveCidr) }"
           >
             <strong>{{ target.cidr }}</strong>
-            {{ target.cidr === normalizeCidr(carveCidr) ? '(created)' : '(remainder)' }}
+            {{ target.cidr === normalizeNetwork(carveCidr) ? '(created)' : '(remainder)' }}
             · gateway {{ target.gateway?.address || 'none' }}
             <template
               v-for="scope in target.scopes || []"
@@ -891,7 +908,7 @@
           />
         </div>
       </div>
-      <div class="field">
+      <div v-if="dialogAddressFamily !== 6" class="field">
         <label>Gateway</label>
         <div class="gateway-row">
           <SelectButton
@@ -994,7 +1011,7 @@
             Create reverse DNS zone
           </label>
         </div>
-        <div class="field" v-if="effectivePrefixLength <= 29">
+        <div class="field" v-if="dialogAddressFamily === 6 || effectivePrefixLength <= 29">
           <label class="toggle-label">
             <input type="checkbox" v-model="networkForm.create_dhcp_scope" />
             Create DHCP scope
@@ -1009,18 +1026,37 @@
           >{{ networkSaveError }}</Message
         >
         <template v-if="networkForm.create_dhcp_scope">
-          <Message v-if="editDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
+          <div v-if="dialogAddressFamily === 6" class="field">
+            <label>DHCPv6 mode</label>
+            <SelectButton
+              v-model="networkForm.dhcp_v6_mode"
+              :options="dhcpV6ModeOptions"
+              optionLabel="label"
+              optionValue="value"
+              size="small"
+              data-track="net-dhcp-v6-mode"
+            />
+            <small class="field-help">{{
+              DHCP_V6_MODE_HELP[networkForm.dhcp_v6_mode] || ''
+            }}</small>
+          </div>
+          <Message
+            v-if="dialogAddressFamily !== 6 && editDhcpRiskySize"
+            severity="warn"
+            :closable="false"
+            class="mt-1"
+          >
             A /{{ effectivePrefixLength }} is larger than CIDRella will auto-size a DHCP pool for.
             RAM is the primary concern: every IP in an allocated subnet gets a row in
             <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB. See
             <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue, just
             enter Start IP and End IP manually.
           </Message>
-          <div class="field">
+          <div v-if="dialogShowsDhcpPool" class="field">
             <label>Start IP *</label>
             <InputText v-model="networkForm.dhcp_start_ip" class="w-full" />
           </div>
-          <div class="field">
+          <div v-if="dialogShowsDhcpPool" class="field">
             <label>End IP *</label>
             <InputText v-model="networkForm.dhcp_end_ip" class="w-full" />
           </div>
@@ -1257,23 +1293,28 @@ import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue
 import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
 import { apiError } from '../utils/format.js';
 import {
-  isValidCidr,
   isValidIpv4,
-  normalizeCidr,
-  dhcpPoolError,
-  cidrValidationError,
-  applyNameTemplate,
-  calculateSubnets,
-  subtractCidr,
-  isSubnetOf,
   isIpInSubnet,
-  parseCidr,
   dhcpRangeDefaults,
   gatewayIpFromPosition,
   normalizeGatewayPositionDefault,
   DHCP_DEFAULT_MIN_PREFIX,
   DHCP_DEFAULT_MAX_PREFIX,
+  isValidNetwork,
+  normalizeNetwork,
+  parseNetwork,
+  splitNetwork,
+  subtractNetwork,
+  isNetworkWithin,
+  networkNameFromTemplate,
+  networkValidationError,
+  dhcpPoolErrorForNetwork,
+  maxPrefixFor,
+  cidrFamily,
+  dhcpV6ModesFor,
+  DHCP_V6_MODE_LABELS,
 } from '../utils/ip.js';
+import { useFeatures } from '../composables/useFeatures.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -1297,6 +1338,19 @@ const emit = defineEmits([
 
 const store = useSubnetStore();
 const toast = useToast();
+// The global IPv6 switch: an IPv6 CIDR is refused inline while it is off.
+const { ipv6: ipv6Supported } = useFeatures();
+
+// What each DHCPv6 mode does, for the mode picker.
+const DHCP_V6_MODE_HELP = Object.freeze({
+  slaac:
+    'Router Advertisements only. Hosts choose their own addresses; CIDRella records them as SLAAC.',
+  stateless: 'SLAAC for addresses, DHCPv6 for DNS and domain options.',
+  stateful: 'CIDRella hands out addresses from a pool. Reservations are by DUID.',
+});
+function dhcpV6ModeOptionsFor(modes) {
+  return modes.map((value) => ({ value, label: DHCP_V6_MODE_LABELS[value] || value }));
+}
 const saving = ref(false);
 
 // ── Folder dialogs ──
@@ -1336,6 +1390,7 @@ const wizardNet = ref({
   create_reverse_dns: false,
   dhcp_start_ip: '',
   dhcp_end_ip: '',
+  dhcp_v6_mode: null,
   scan_enabled: true,
 });
 // Gateway position options live here but watchers that reference `networkForm`
@@ -1351,7 +1406,7 @@ const gatewayPosition = ref('custom');
 function inferGatewayPosition(cidr, address) {
   const addr = (address || '').trim();
   if (!addr) return 'none';
-  if (!cidr || !isValidCidr(cidr)) return 'custom';
+  if (!cidr || !isValidNetwork(cidr)) return 'custom';
   if (addr === gatewayIpFromPosition(cidr, 'first')) return 'first';
   if (addr === gatewayIpFromPosition(cidr, 'last')) return 'last';
   return 'custom';
@@ -1434,14 +1489,17 @@ const wizardCidrError = computed(() => {
   // Runs the reserved-range rule too, which this used to skip. 10.0.0.0/7 was
   // caught inline by the supernet dialog and eaten as a server 400 here
   // (duplicate-logic audit #54).
-  return cidrValidationError(wizardNet.value.cidr, { supernet: true });
+  return networkValidationError(wizardNet.value.cidr, {
+    supernet: true,
+    ipv6: ipv6Supported.value,
+  });
 });
 
 const wizardAutoName = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
-  if (!cidr || !isValidCidr(cidr)) return '';
+  if (!cidr || !isValidNetwork(cidr)) return '';
   try {
-    return applyNameTemplate(props.nameTemplate, normalizeCidr(cidr));
+    return networkNameFromTemplate(props.nameTemplate, normalizeNetwork(cidr));
   } catch {
     return '';
   }
@@ -1449,8 +1507,30 @@ const wizardAutoName = computed(() => {
 
 const wizardPrefixLength = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
-  if (cidr && isValidCidr(cidr)) return parseCidr(cidr).prefix;
+  if (cidr && isValidNetwork(cidr)) return parseNetwork(cidr).prefix;
   return 32;
+});
+const wizardFamily = computed(() => cidrFamily((wizardNet.value.cidr || '').trim()) || 4);
+const wizardDhcpV6ModeOptions = computed(() =>
+  dhcpV6ModeOptionsFor(dhcpV6ModesFor(wizardPrefixLength.value)),
+);
+// A DHCP block on an IPv6 network means a mode; the pool exists only for stateful.
+const wizardShowsDhcp = computed(
+  () =>
+    wizardNet.value.create_dhcp_scope &&
+    (wizardFamily.value === 6 || wizardPrefixLength.value <= 29),
+);
+const wizardShowsPool = computed(
+  () => wizardFamily.value !== 6 || wizardNet.value.dhcp_v6_mode === 'stateful',
+);
+watch([wizardFamily, wizardDhcpV6ModeOptions], ([family, options]) => {
+  if (family !== 6) {
+    wizardNet.value.dhcp_v6_mode = null;
+    return;
+  }
+  if (!options.some((option) => option.value === wizardNet.value.dhcp_v6_mode)) {
+    wizardNet.value.dhcp_v6_mode = options[0]?.value || 'stateful';
+  }
 });
 
 // True when the wizard CIDR is outside the auto-fill sweet spot, either too
@@ -1463,8 +1543,9 @@ const wizardDhcpRiskySize = computed(() => {
 
 const wizardDhcpDefaults = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
-  if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
-  const p = parseCidr(cidr);
+  // IPv4 only: an IPv6 stateful pool is sized by the server when none is typed.
+  if (!cidr || !isValidNetwork(cidr) || cidrFamily(cidr) !== 4) return { start: '', end: '' };
+  const p = parseNetwork(cidr);
   // Use the effective gateway (handles 'custom' and 'none') so the default
   // DHCP range correctly excludes a user-typed gateway address too.
   const gw = wizardEffectiveGateway(cidr);
@@ -1472,13 +1553,13 @@ const wizardDhcpDefaults = computed(() => {
 });
 
 const wizardDhcpScopeError = computed(() => {
-  if (!wizardNet.value.create_dhcp_scope || wizardPrefixLength.value > 29) return null;
+  if (!wizardShowsDhcp.value || !wizardShowsPool.value) return null;
   const cidr = (wizardNet.value.cidr || '').trim();
-  if (!cidr || !isValidCidr(cidr)) return null;
+  if (!cidr || !isValidNetwork(cidr)) return null;
 
   const startIp = (wizardNet.value.dhcp_start_ip || wizardDhcpDefaults.value.start || '').trim();
   const endIp = (wizardNet.value.dhcp_end_ip || wizardDhcpDefaults.value.end || '').trim();
-  return dhcpPoolError(startIp, endIp, cidr, { label: 'DHCP Scope' });
+  return dhcpPoolErrorForNetwork(startIp, endIp, cidr, { label: 'DHCP Scope' });
 });
 
 watch(
@@ -1516,7 +1597,7 @@ watch(
       if (wizardNet.value.gateway_address !== '') wizardNet.value.gateway_address = '';
       return;
     }
-    if (!cidr || !isValidCidr(cidr)) return;
+    if (!cidr || !isValidNetwork(cidr)) return;
     const target = gatewayIpFromPosition(cidr, pos) || '';
     if (wizardNet.value.gateway_address !== target) wizardNet.value.gateway_address = target;
   },
@@ -1533,7 +1614,7 @@ watch(
   (cidr) => {
     const pos = wizardNet.value.gateway_position;
     if (pos === 'first' || pos === 'last') {
-      if (cidr && isValidCidr(cidr)) {
+      if (cidr && isValidNetwork(cidr)) {
         const target = gatewayIpFromPosition(cidr, pos) || '';
         if (wizardNet.value.gateway_address !== target) wizardNet.value.gateway_address = target;
       }
@@ -1651,7 +1732,11 @@ async function wizardCreateAndContinue() {
       create_dhcp_scope: wizardNet.value.create_dhcp_scope,
       create_reverse_dns: wizardNet.value.create_reverse_dns,
     };
-    if (payload.create_dhcp_scope) {
+    if (wizardFamily.value === 6) {
+      payload.gateway_address = undefined;
+      if (payload.create_dhcp_scope) payload.dhcp_v6_mode = wizardNet.value.dhcp_v6_mode;
+    }
+    if (payload.create_dhcp_scope && wizardShowsPool.value) {
       payload.dhcp_start_ip = wizardNet.value.dhcp_start_ip || wizardDhcpDefaults.value.start;
       payload.dhcp_end_ip = wizardNet.value.dhcp_end_ip || wizardDhcpDefaults.value.end;
     }
@@ -1845,14 +1930,17 @@ function openCreateFolderFromEdit() {
 }
 
 const supernetValidationError = computed(() => {
-  return cidrValidationError(supernetForm.value.cidr, { supernet: true });
+  return networkValidationError(supernetForm.value.cidr, {
+    supernet: true,
+    ipv6: ipv6Supported.value,
+  });
 });
 
 const supernetAutoName = computed(() => {
   const cidr = supernetForm.value.cidr.trim();
-  if (!cidr || !isValidCidr(cidr)) return '';
+  if (!cidr || !isValidNetwork(cidr)) return '';
   try {
-    return applyNameTemplate(props.nameTemplate, normalizeCidr(cidr));
+    return networkNameFromTemplate(props.nameTemplate, normalizeNetwork(cidr));
   } catch {
     return '';
   }
@@ -1893,14 +1981,15 @@ const carveCidr = computed(() => `${carveNetwork.value}/${carvePrefix.value}`);
 const carveValidationError = computed(() => {
   const cidr = carveCidr.value;
   if (!carveNetwork.value) return 'Enter a network address';
-  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
+  if (!isValidNetwork(cidr)) return 'Invalid CIDR notation';
   if (!props.selectedNode) return null;
   const parentCidr = props.selectedNode.data.cidr;
-  const normalized = normalizeCidr(cidr);
-  const parentParsed = parseCidr(parentCidr);
-  const childParsed = parseCidr(normalized);
+  const normalized = normalizeNetwork(cidr);
+  const parentParsed = parseNetwork(parentCidr);
+  const childParsed = parseNetwork(normalized);
+  if (childParsed.family !== parentParsed.family) return `Not within ${parentCidr}`;
   if (childParsed.prefix <= parentParsed.prefix) return 'Must have a longer prefix than parent';
-  if (!isSubnetOf(normalized, parentCidr)) return `Not within ${parentCidr}`;
+  if (!isNetworkWithin(normalized, parentCidr)) return `Not within ${parentCidr}`;
   return null;
 });
 
@@ -1908,7 +1997,7 @@ const carvePreview = computed(() => {
   const cidr = carveCidr.value;
   if (!carveNetwork.value || !props.selectedNode || carveValidationError.value) return null;
   try {
-    return subtractCidr(props.selectedNode.data.cidr, normalizeCidr(cidr));
+    return subtractNetwork(props.selectedNode.data.cidr, normalizeNetwork(cidr));
   } catch {
     return null;
   }
@@ -1916,7 +2005,8 @@ const carvePreview = computed(() => {
 
 const maxDivideSteps = computed(() => {
   if (!props.selectedNode) return 1;
-  return Math.min(32 - props.selectedNode.data.prefix_length, 8);
+  const bound = maxPrefixFor(props.selectedNode.data.cidr) - props.selectedNode.data.prefix_length;
+  return Math.max(1, Math.min(bound, 8));
 });
 
 const maxDivideCount = computed(() => Math.pow(2, maxDivideSteps.value));
@@ -1930,11 +2020,11 @@ const dividePreviewSubnets = computed(() => {
   if (!props.selectedNode) return [];
   const parentCidr = props.selectedNode.data.cidr;
   const targetPrefix = props.selectedNode.data.prefix_length + divideSteps.value;
-  if (targetPrefix > 32) return [];
+  if (targetPrefix > maxPrefixFor(parentCidr)) return [];
   // The shared helper returns parsed networks and throws on an impossible
   // split; the preview wants the CIDR strings and an empty list.
   try {
-    return calculateSubnets(parentCidr, targetPrefix).map(
+    return splitNetwork(parentCidr, targetPrefix, 65536).map(
       (child) => `${child.network}/${child.prefix}`,
     );
   } catch {
@@ -1981,7 +2071,7 @@ const divideResultCidrs = computed(() =>
   divideMode.value === 'equal'
     ? dividePreviewSubnets.value
     : carvePreview.value
-      ? [normalizeCidr(carveCidr.value), ...carvePreview.value]
+      ? [normalizeNetwork(carveCidr.value), ...carvePreview.value]
       : [],
 );
 
@@ -2029,7 +2119,7 @@ async function refreshDividePreview() {
     const preview = await store.previewDivide(props.selectedNode.data.id, {
       ...(divideMode.value === 'equal'
         ? { new_prefix: divideTargetPrefix.value }
-        : { cidr: normalizeCidr(carveCidr.value) }),
+        : { cidr: normalizeNetwork(carveCidr.value) }),
       target_gateways: divideTargetGateways(),
     });
     if (requestId === dividePreviewRequest) serverDividePreview.value = preview;
@@ -2095,7 +2185,7 @@ async function executeCarve() {
   const nodeId = props.selectedNode.data.id;
   const isAllocated = props.selectedNode.data.status === 'allocated';
   const params = {
-    cidr: normalizeCidr(carveCidr.value),
+    cidr: normalizeNetwork(carveCidr.value),
     force: isAllocated,
     target_gateways: divideTargetGateways(),
     ...reviewedDividePlan(),
@@ -2255,6 +2345,7 @@ const networkForm = ref({
   create_reverse_dns: false,
   dhcp_start_ip: '',
   dhcp_end_ip: '',
+  dhcp_v6_mode: null,
   scan_enabled: null,
 });
 // Capture the row that opened this dialog. Some callers, such as the folder
@@ -2304,7 +2395,9 @@ async function loadConfigurationPreview() {
     networkDialogMode.value === 'create'
       ? networkForm.value.cidr?.trim()
       : dialogNetworkData.value?.cidr;
-  if (!cidr || !isValidCidr(cidr)) {
+  // An IPv6 CIDR is refused inline while the switch is off; asking the server
+  // for defaults would only echo the same refusal.
+  if (!cidr || !isValidNetwork(cidr) || (cidrFamily(cidr) === 6 && !ipv6Supported.value)) {
     configurationPreview.value = null;
     configurationPreviewError.value = '';
     return;
@@ -2387,10 +2480,7 @@ const networkDialogHeader = computed(() => {
 
 const createCidrError = computed(() => {
   if (networkDialogMode.value !== 'create') return null;
-  const cidr = (networkForm.value.cidr || '').trim();
-  if (!cidr) return null;
-  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
-  return null;
+  return networkValidationError(networkForm.value.cidr, { ipv6: ipv6Supported.value });
 });
 
 const createAutoName = computed(() => {
@@ -2401,10 +2491,39 @@ const createAutoName = computed(() => {
 const effectivePrefixLength = computed(() => {
   if (networkDialogMode.value === 'create') {
     const cidr = (networkForm.value.cidr || '').trim();
-    if (cidr && isValidCidr(cidr)) return parseCidr(cidr).prefix;
+    if (cidr && isValidNetwork(cidr)) return parseNetwork(cidr).prefix;
     return 32;
   }
   return activeNetworkData.value?.prefix_length ?? props.selectedNode?.data?.prefix_length ?? 32;
+});
+
+// The family of the network this dialog is about: from the typed CIDR while
+// creating, from the row otherwise. Drives the gateway and DHCP sections.
+const dialogAddressFamily = computed(() => {
+  if (networkDialogMode.value === 'create') {
+    return cidrFamily((networkForm.value.cidr || '').trim()) || 4;
+  }
+  const data = activeNetworkData.value || props.selectedNode?.data;
+  return Number(data?.address_family || cidrFamily(data?.cidr || '') || 4);
+});
+// The server's preview names the modes a prefix allows; before it answers
+// the same rule is applied here.
+const dhcpV6ModeOptions = computed(() =>
+  dhcpV6ModeOptionsFor(
+    configurationPreview.value?.dhcp_v6_modes || dhcpV6ModesFor(effectivePrefixLength.value),
+  ),
+);
+const dialogShowsDhcpPool = computed(
+  () => dialogAddressFamily.value !== 6 || networkForm.value.dhcp_v6_mode === 'stateful',
+);
+watch([dialogAddressFamily, dhcpV6ModeOptions], ([family, options]) => {
+  if (family !== 6) {
+    if (networkForm.value.dhcp_v6_mode !== null) networkForm.value.dhcp_v6_mode = null;
+    return;
+  }
+  if (!options.some((option) => option.value === networkForm.value.dhcp_v6_mode)) {
+    networkForm.value.dhcp_v6_mode = options[0]?.value || 'stateful';
+  }
 });
 
 // Mirror of wizardDhcpRiskySize for the Edit/Create Network dialog. See
@@ -2615,7 +2734,7 @@ function applyTemplateToEdit() {
     networkDialogMode.value === 'create'
       ? networkForm.value.cidr
       : activeNetworkData.value?.cidr || props.selectedNode?.data?.cidr;
-  if (cidr && isValidCidr(cidr)) {
+  if (cidr && isValidNetwork(cidr)) {
     networkForm.value.name = configurationPreview.value?.suggested_name || '';
   }
 }
@@ -2640,6 +2759,27 @@ function surfaceVlanWarning(resp) {
   });
 }
 
+// The DHCP part of a configure payload by family: IPv4 sends a pool (typed
+// or the server default), IPv6 sends the mode and a pool only for stateful,
+// and never a gateway.
+function shapeDhcpPayload(payload) {
+  if (dialogAddressFamily.value === 6) {
+    payload.gateway_address = '';
+    if (!payload.create_dhcp_scope) delete payload.dhcp_v6_mode;
+    if (payload.create_dhcp_scope && payload.dhcp_v6_mode !== 'stateful') {
+      payload.dhcp_start_ip = '';
+      payload.dhcp_end_ip = '';
+      return;
+    }
+  } else {
+    delete payload.dhcp_v6_mode;
+  }
+  if (payload.create_dhcp_scope) {
+    payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
+    payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
+  }
+}
+
 async function executeNetworkSave() {
   saving.value = true;
   networkSaveError.value = '';
@@ -2659,10 +2799,7 @@ async function executeNetworkSave() {
       payload.name = payload.name || createAutoName.value || cidr;
       delete payload.cidr;
       delete payload.folder_id;
-      if (payload.create_dhcp_scope) {
-        payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
-        payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
-      }
+      shapeDhcpPayload(payload);
       let configured;
       try {
         configured = await store.configureSubnet(created.id, payload);
@@ -2694,11 +2831,7 @@ async function executeNetworkSave() {
       if (dropTargetFolderIdForConfigure.value) {
         payload.folder_id = dropTargetFolderIdForConfigure.value;
       }
-      // Use user-specified or default DHCP range
-      if (payload.create_dhcp_scope) {
-        payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
-        payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
-      }
+      shapeDhcpPayload(payload);
       const configured = await store.configureSubnet(id, payload);
       surfaceVlanWarning(configured);
       showNetworkDialog.value = false;
@@ -2711,6 +2844,7 @@ async function executeNetworkSave() {
       const editPayload = { ...networkForm.value };
       delete editPayload.create_dhcp_scope;
       delete editPayload.create_reverse_dns;
+      delete editPayload.dhcp_v6_mode;
       const updated = await store.updateSubnet(id, editPayload);
       surfaceVlanWarning(updated);
       showNetworkDialog.value = false;
@@ -2818,7 +2952,7 @@ async function executeGroupConfigure() {
     for (const id of groupDropIds.value) {
       const subnet = findSubnetInTree(id);
       if (!subnet) continue;
-      const autoName = applyNameTemplate(props.nameTemplate, subnet.cidr);
+      const autoName = networkNameFromTemplate(props.nameTemplate, subnet.cidr);
       await store.configureSubnet(
         id,
         {
@@ -2972,7 +3106,14 @@ function openEdit(node, folderId) {
   const isUnconfigured = d.status === 'unallocated';
   networkDialogMode.value = isUnconfigured ? 'configure' : 'edit';
 
-  const autoName = isUnconfigured ? applyNameTemplate(props.nameTemplate, d.cidr) : null;
+  let autoName = null;
+  if (isUnconfigured) {
+    try {
+      autoName = networkNameFromTemplate(props.nameTemplate, d.cidr);
+    } catch {
+      autoName = null;
+    }
+  }
   networkForm.value = {
     cidr: d.cidr || '',
     name: d.name || autoName || '',
@@ -2985,6 +3126,7 @@ function openEdit(node, folderId) {
     create_reverse_dns: false,
     dhcp_start_ip: '',
     dhcp_end_ip: '',
+    dhcp_v6_mode: null,
     scan_enabled: d.scan_enabled === null || d.scan_enabled === undefined ? null : !!d.scan_enabled,
   };
   // Seed the SelectButton from the stored address so it reflects reality on open.

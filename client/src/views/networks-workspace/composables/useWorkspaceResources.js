@@ -141,6 +141,8 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
         filteredTotal: Number(response.data.filteredTotal ?? response.data.totalIps ?? 0),
         page: Number(response.data.page || 1),
         totalPages: Number(response.data.totalPages || 1),
+        // An IPv6 network returns only the addresses it holds rows for.
+        sparse: response.data.sparse === true,
       }),
     );
   }

@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue';
+import { addressToBig, bigToAddress } from '../../../utils/ip.js';
 
 const MAX_BULK_ADDRESSES = 1024;
 
@@ -60,12 +61,56 @@ export function contiguousIpv4Runs(values, maxRunSize = MAX_BULK_ADDRESSES) {
   }));
 }
 
+/**
+ * Contiguous runs for either family. IPv4 keeps the path above; IPv6
+ * addresses are grouped by the shared BigInt core. Runs never mix families.
+ */
+export function contiguousAddressRuns(values, maxRunSize = MAX_BULK_ADDRESSES) {
+  if (!Number.isInteger(maxRunSize) || maxRunSize < 1 || maxRunSize > MAX_BULK_ADDRESSES) {
+    throw new RangeError(`Run size must be between 1 and ${MAX_BULK_ADDRESSES}.`);
+  }
+  const unique = [...new Set(values.map(addressIdentity).map(identityAddress))].filter(Boolean);
+  const v4 = unique.filter((address) => !address.includes(':'));
+  const v6 = [];
+  for (const address of unique) {
+    if (!address.includes(':')) continue;
+    try {
+      const parsed = addressToBig(address);
+      if (parsed.family === 6) v6.push(parsed.value);
+    } catch {
+      /* not an address */
+    }
+  }
+  v6.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  const runs = [];
+  for (const value of v6) {
+    let run = runs.at(-1);
+    const contiguous = run && value === run.endValue + 1n;
+    const hasRoom = run && run.count < maxRunSize;
+    if (!contiguous || !hasRoom) {
+      run = { startValue: value, endValue: value, count: 1 };
+      runs.push(run);
+    } else {
+      run.endValue = value;
+      run.count += 1;
+    }
+  }
+  return [
+    ...contiguousIpv4Runs(v4, maxRunSize),
+    ...runs.map((run) => ({
+      start_ip: bigToAddress(run.startValue, 6),
+      end_ip: bigToAddress(run.endValue, 6),
+      count: run.count,
+    })),
+  ];
+}
+
 export function useWorkspaceSelection() {
   const identities = ref(new Set());
   const anchor = ref(null);
   const selectedIds = computed(() => [...identities.value]);
   const selectedCount = computed(() => identities.value.size);
-  const runs = computed(() => contiguousIpv4Runs(selectedIds.value));
+  const runs = computed(() => contiguousAddressRuns(selectedIds.value));
 
   function replace(next) {
     identities.value = new Set(next.map(addressIdentity).filter(Boolean));

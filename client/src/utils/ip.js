@@ -14,7 +14,13 @@ import {
   validateSupernet,
   isValidIpv4,
   isValidCidr,
+  isValidNetwork,
+  normalizeNetwork,
+  parseNetwork,
+  validateNetworkBounds,
+  addressToBig,
 } from '@shared/cidr.js';
+import { addressFamily } from '@shared/address.js';
 
 export {
   ipToLong,
@@ -45,7 +51,9 @@ export {
   mergeNetworks,
   networkNameFromTemplate,
   validateNetworkBounds,
+  isValidAddress,
 } from '@shared/cidr.js';
+export { sortKey, addressFamily, isValidIp, isValidIpv6, canonicalizeIp } from '@shared/address.js';
 
 /**
  * Dotted-quad netmask for a prefix length.
@@ -117,7 +125,8 @@ export function dhcpRangeDefaults(p, gw) {
 
 export function gatewayIpFromPosition(cidr, position) {
   if (!position || position === 'none') return null;
-  const p = parseCidr(cidr);
+  // Either family: the usable bounds are what a gateway position names.
+  const p = parseNetwork(cidr);
   return position === 'last' ? p.lastUsable : p.firstUsable;
 }
 
@@ -185,4 +194,94 @@ export function cidrValidationError(cidr, { supernet = false } = {}) {
   if (!supernet) return null;
   const result = validateSupernet(normalizeCidr(value));
   return result.valid ? null : result.error;
+}
+
+// ── IPv6-aware siblings ──
+//
+// The helpers above keep their IPv4 contracts (tests pin their messages and
+// the identity of the shared functions). Family-generic entry points live
+// here and are what the workspace calls once the IPv6 switch is on.
+
+/** The message the server sends for an IPv6 request while the switch is off. */
+export const IPV6_DISABLED_MESSAGE =
+  'IPv6 support is disabled. Enable it under Settings > General > Interfaces.';
+
+/** The prefix bound for a CIDR's family: 32 or 128. 32 for anything unparseable. */
+export function maxPrefixFor(cidr) {
+  try {
+    return parseNetwork(cidr).bits;
+  } catch {
+    return 32;
+  }
+}
+
+/** The address family of a CIDR: 4, 6, or null. */
+export function cidrFamily(cidr) {
+  try {
+    return parseNetwork(cidr).family;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The DHCPv6 modes a network of this prefix can use. SLAAC needs a /64, so
+ * the stateless and slaac modes exist only there; stateful works anywhere.
+ */
+export function dhcpV6ModesFor(prefix) {
+  return Number(prefix) === 64 ? ['slaac', 'stateless', 'stateful'] : ['stateful'];
+}
+
+export const DHCP_V6_MODE_LABELS = Object.freeze({
+  slaac: 'SLAAC',
+  stateless: 'Stateless DHCPv6',
+  stateful: 'Stateful DHCPv6',
+});
+
+/**
+ * Validate a CIDR of either family. Same contract as cidrValidationError,
+ * plus: an IPv6 CIDR is refused with the server's own message while the IPv6
+ * switch (`ipv6`) is off, so the operator sees why before the round trip.
+ */
+export function networkValidationError(cidr, { supernet = false, ipv6 = false } = {}) {
+  const value = (cidr || '').trim();
+  if (!value) return null;
+  if (!isValidNetwork(value)) return 'Invalid CIDR notation';
+  const normalized = normalizeNetwork(value);
+  if (parseNetwork(normalized).family === 6 && !ipv6) return IPV6_DISABLED_MESSAGE;
+  if (!supernet) return null;
+  const result = validateNetworkBounds(normalized);
+  return result.valid ? null : result.error;
+}
+
+/**
+ * dhcpPoolError for either family. IPv4 input is handed to dhcpPoolError
+ * unchanged, so its messages stay word for word; IPv6 gets the same checks
+ * in BigInt.
+ */
+export function dhcpPoolErrorForNetwork(startIp, endIp, subnetCidr, { label = '' } = {}) {
+  const family = subnetCidr ? cidrFamily(subnetCidr) : addressFamily((startIp || '').trim());
+  if (family !== 6) return dhcpPoolError(startIp, endIp, subnetCidr, { label });
+
+  const S = label ? `${label} Start IP` : 'Start IP';
+  const E = label ? `${label} End IP` : 'End IP';
+  const start = (startIp || '').trim();
+  const end = (endIp || '').trim();
+  if (!start || !end) return `${S} and ${E} are required`;
+  if (addressFamily(start) !== 6) return `${S} must be a valid IPv6 address`;
+  if (addressFamily(end) !== 6) return `${E} must be a valid IPv6 address`;
+  const startBig = addressToBig(start).value;
+  const endBig = addressToBig(end).value;
+  if (startBig > endBig) return `${S} must be less than or equal to ${E}`;
+  if (!subnetCidr || !isValidNetwork(subnetCidr)) return null;
+  const parsed = parseNetwork(subnetCidr);
+  const first = addressToBig(parsed.firstUsable).value;
+  const last = addressToBig(parsed.lastUsable).value;
+  if (startBig < first || startBig > last) {
+    return `${S} must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  if (endBig < first || endBig > last) {
+    return `${E} must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  return null;
 }

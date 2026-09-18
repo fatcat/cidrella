@@ -7,6 +7,7 @@ import {
   mapDnsRows,
   mapDnsZoneRows,
   mapNetworkRows,
+  addressCountLabel,
 } from '../../../src/views/networks-workspace-data.js';
 
 describe('networks workspace data adapter', () => {
@@ -146,5 +147,19 @@ describe('networks workspace data adapter', () => {
       leaseTime: '12 hr',
       enabled: true,
     });
+  });
+});
+
+describe('addressCountLabel', () => {
+  it('names the network total for an enumerable network', () => {
+    expect(addressCountLabel({ shown: 20, matching: 40, total: 256 })).toBe(
+      'Showing 20 on this page · 40 matching · 256 addresses in network',
+    );
+  });
+
+  it('names assigned addresses for a sparse IPv6 network, which has no total', () => {
+    expect(addressCountLabel({ shown: 3, matching: 3, total: 3, sparse: true })).toBe(
+      'Showing 3 on this page · 3 matching · 3 assigned addresses',
+    );
   });
 });

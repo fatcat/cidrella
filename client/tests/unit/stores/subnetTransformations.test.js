@@ -16,6 +16,70 @@ beforeEach(() => {
   get.mockResolvedValue({ data: { folders: [] } });
 });
 
+describe('explorer order with both address families', () => {
+  it('keeps numeric order inside a family and lists every IPv4 network before IPv6', () => {
+    const store = useSubnetStore();
+    store.folders = [
+      {
+        id: 1,
+        name: 'Lab',
+        subnets: [
+          {
+            id: 3,
+            cidr: 'fd00:2::/64',
+            network_address: 'fd00:2::',
+            prefix_length: 64,
+            status: 'allocated',
+            address_family: 6,
+          },
+          {
+            id: 2,
+            cidr: '192.168.1.0/24',
+            network_address: '192.168.1.0',
+            prefix_length: 24,
+            status: 'allocated',
+          },
+          {
+            id: 4,
+            cidr: 'fd00:1::/64',
+            network_address: 'fd00:1::',
+            prefix_length: 64,
+            status: 'allocated',
+            address_family: 6,
+          },
+          {
+            id: 1,
+            cidr: '10.0.0.0/24',
+            network_address: '10.0.0.0',
+            prefix_length: 24,
+            status: 'allocated',
+          },
+          {
+            id: 5,
+            cidr: '10.0.0.0/25',
+            network_address: '10.0.0.0',
+            prefix_length: 25,
+            status: 'unallocated',
+          },
+        ],
+      },
+    ];
+    expect(store.treeNodes[0].children.map((node) => node.data.cidr)).toEqual([
+      '10.0.0.0/24',
+      '10.0.0.0/25',
+      '192.168.1.0/24',
+      'fd00:1::/64',
+      'fd00:2::/64',
+    ]);
+    expect(store.allocatedTreeNodes[0].children.map((node) => node.data.cidr)).toEqual([
+      '10.0.0.0/24',
+      '192.168.1.0/24',
+      'fd00:1::/64',
+      'fd00:2::/64',
+    ]);
+  });
+});
+
 describe('subnet transformation client boundary', () => {
   it('does not present a fully subdivided container as unallocated space', () => {
     const store = useSubnetStore();

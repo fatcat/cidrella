@@ -3,7 +3,7 @@ import { collectAllocatedSubnets } from '../utils/tree.js';
 import { subnetLabel } from '../utils/format.js';
 import { ref, computed } from 'vue';
 import api from '../api/client.js';
-import { ipToLong } from '../utils/ip.js';
+import { sortKey } from '../utils/ip.js';
 
 export const useSubnetStore = defineStore('subnets', () => {
   const folders = ref([]);
@@ -26,14 +26,19 @@ export const useSubnetStore = defineStore('subnets', () => {
     return total;
   });
 
+  // Numeric order within a family, every IPv4 network before every IPv6 one,
+  // shorter prefix first at the same address. The fixed-width sort key makes
+  // string comparison the numeric comparison, for either family.
+  function compareNetworks(a, b) {
+    const aKey = sortKey(a.network_address) || '';
+    const bKey = sortKey(b.network_address) || '';
+    if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+    return a.prefix_length - b.prefix_length;
+  }
+
   // Convert subnet nodes to PrimeVue Tree format
   function toSubnetNodes(nodes) {
-    const sorted = [...nodes].sort((a, b) => {
-      const aNet = ipToLong(a.network_address);
-      const bNet = ipToLong(b.network_address);
-      if (aNet !== bNet) return aNet - bNet;
-      return a.prefix_length - b.prefix_length;
-    });
+    const sorted = [...nodes].sort(compareNetworks);
     return sorted.map((s) => ({
       key: `subnet-${s.id}`,
       label: s.status === 'allocated' ? subnetLabel(s) : s.cidr,
@@ -64,12 +69,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     // reimplement without its query filter (audit #60/#F16).
     return folders.value.map((f) => {
       const allocated = f.subnets ? collectAllocatedSubnets(f.subnets) : [];
-      const sorted = [...allocated].sort((a, b) => {
-        const aNet = ipToLong(a.network_address);
-        const bNet = ipToLong(b.network_address);
-        if (aNet !== bNet) return aNet - bNet;
-        return a.prefix_length - b.prefix_length;
-      });
+      const sorted = [...allocated].sort(compareNetworks);
       return {
         key: `folder-${f.id}`,
         label: f.name,

@@ -65,7 +65,11 @@
       <span /> Show available
     </label>
     <span class="toolbar-space" />
-    <div v-if="activeView === 'addresses'" class="view-switcher" aria-label="Address presentation">
+    <div
+      v-if="activeView === 'addresses' && allowGrid"
+      class="view-switcher"
+      aria-label="Address presentation"
+    >
       <button
         :class="{ active: presentation === 'table' }"
         aria-label="Table view"
@@ -128,6 +132,9 @@ import ColumnChooserButton from '../../components/table/ColumnChooserButton.vue'
 // Search, filters, presentation switch, column chooser, filter chips and the
 // bulk-selection bar. All state is owned by NetworksWorkspace.vue.
 defineProps({
+  // An IPv6 network has no grid: its address space cannot be enumerated, so
+  // the switcher is withheld and the table is the one presentation.
+  allowGrid: { type: Boolean, default: true },
   activeView: { type: String, required: true },
   contextKind: { type: String, required: true },
   viewMeta: { type: Object, required: true },

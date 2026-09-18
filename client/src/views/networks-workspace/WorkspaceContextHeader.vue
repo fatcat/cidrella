@@ -132,7 +132,7 @@
       <span><i class="legend-dot system" />System</span>
     </div>
     <div
-      v-else-if="activeView === 'addresses'"
+      v-else-if="activeView === 'addresses' && addressOverview"
       class="address-overview"
       aria-label="Address utilization"
     >
@@ -177,7 +177,8 @@ defineProps({
   selectedZone: { type: Object, default: null },
   selectedScope: { type: Object, default: null },
   summaryScopes: { type: Array, default: () => [] },
-  addressOverview: { type: Object, required: true },
+  // Null for an IPv6 network: a share of 2^64 addresses is not a number worth showing.
+  addressOverview: { type: Object, default: null },
 });
 const emit = defineEmits([
   'select-estate',

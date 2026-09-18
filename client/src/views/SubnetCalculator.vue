@@ -10,7 +10,7 @@
       </div>
       <div class="field">
         <label>Split into /</label>
-        <InputNumber v-model="newPrefix" :min="1" :max="32" />
+        <InputNumber v-model="newPrefix" :min="1" :max="maxPrefix" />
       </div>
       <Button label="Calculate" icon="pi pi-calculator" @click="calculate" :loading="loading" />
     </div>
@@ -20,10 +20,17 @@
       <h3>Parent Network</h3>
       <div class="info-grid">
         <div><span class="lbl">Network:</span> {{ parent.network }}/{{ parent.prefix }}</div>
-        <div><span class="lbl">Mask:</span> {{ parent.mask }}</div>
-        <div><span class="lbl">Broadcast:</span> {{ parent.broadcast }}</div>
-        <div><span class="lbl">Total IPs:</span> {{ parent.totalAddresses.toLocaleString() }}</div>
-        <div><span class="lbl">Usable:</span> {{ parent.usableCount.toLocaleString() }}</div>
+        <div v-if="parent.mask"><span class="lbl">Mask:</span> {{ parent.mask }}</div>
+        <div v-if="parent.broadcast">
+          <span class="lbl">Broadcast:</span> {{ parent.broadcast }}
+        </div>
+        <div>
+          <span class="lbl">Total IPs:</span>
+          {{ formatCount(parent.totalAddresses ?? parent.size) }}
+        </div>
+        <div>
+          <span class="lbl">Usable:</span> {{ formatCount(parent.usableCount ?? parent.usable) }}
+        </div>
         <div>
           <span class="lbl">Range:</span> {{ parent.firstUsable }} – {{ parent.lastUsable }}
         </div>
@@ -54,12 +61,12 @@
         <Column header="Network">
           <template #body="{ data }">{{ data.network }}/{{ data.prefix }}</template>
         </Column>
-        <Column field="mask" header="Mask" />
+        <Column v-if="parentFamily !== 6" field="mask" header="Mask" />
         <Column field="firstUsable" header="First Usable" />
         <Column field="lastUsable" header="Last Usable" />
-        <Column field="broadcast" header="Broadcast" />
+        <Column v-if="parentFamily !== 6" field="broadcast" header="Broadcast" />
         <Column header="Usable IPs">
-          <template #body="{ data }">{{ data.usableCount.toLocaleString() }}</template>
+          <template #body="{ data }">{{ formatCount(data.usableCount ?? data.usable) }}</template>
         </Column>
       </DataTable>
       <ContextMenu ref="contextMenuRef" :model="contextMenuItems" />
@@ -84,6 +91,7 @@ import Toast from '../ui/Toast.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import { apiError } from '../utils/format.js';
 import { loadJson, saveJson } from '../utils/storage.js';
+import { maxPrefixFor, cidrFamily } from '../utils/ip.js';
 
 const STORAGE_KEY = 'cidrella-subnet-calc';
 const store = useSubnetStore();
@@ -98,6 +106,20 @@ const parent = ref(saved?.parent || null);
 const subnets = ref(saved?.subnets || []);
 const loading = ref(false);
 const error = ref('');
+
+// 32 or 128 by the family of what is typed; the server refuses the rest.
+const maxPrefix = computed(() => maxPrefixFor(cidr.value));
+const parentFamily = computed(() =>
+  parent.value ? cidrFamily(`${parent.value.network}/${parent.value.prefix}`) : null,
+);
+
+// Counts arrive as numbers, as strings above 2^53, or null for a prefix too
+// large to count; each reads sensibly.
+function formatCount(value) {
+  if (value === null || value === undefined) return 'more than 2^53';
+  const n = typeof value === 'string' ? Number(value) : value;
+  return Number.isSafeInteger(n) ? n.toLocaleString() : String(value);
+}
 
 async function calculate() {
   if (!cidr.value) return;

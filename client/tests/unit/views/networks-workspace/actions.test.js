@@ -400,6 +400,11 @@ describe('workspace action registry', () => {
     expect(
       mergeReason([leaf(1, '10.0.0.0/25', { hasChildren: true }), leaf(2, '10.0.0.128/25')]),
     ).toContain('divided');
+    // Either family merges through the shared check; a mixed pair never does.
+    expect(mergeReason([leaf(1, 'fd00:1::/65'), leaf(2, 'fd00:1:0:0:8000::/65')])).toBe('');
+    expect(mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, 'fd00:1::/65')])).toContain(
+      'same address family',
+    );
     expect(mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.1.0/25')])).toContain('contiguous');
     expect(mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25')])).toBe('');
     const addresses = {

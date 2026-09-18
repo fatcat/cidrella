@@ -8,7 +8,7 @@
       class="workspace-frame"
       :class="{
         'details-open': selectedRow,
-        'grid-open': activeView === 'addresses' && addressPresentation !== 'table',
+        'grid-open': activeView === 'addresses' && effectivePresentation !== 'table',
       }"
     >
       <ResourceExplorer
@@ -100,6 +100,7 @@
             v-model:show-available="showAvailable"
             v-model:presentation="addressPresentation"
             v-model:selected-rows="selectedRows"
+            :allow-grid="!isV6Network"
             :active-view="activeView"
             :context-kind="contextKind"
             :view-meta="viewMeta"
@@ -119,9 +120,9 @@
           />
 
           <AddressGrid
-            v-if="activeView === 'addresses' && addressPresentation !== 'table'"
+            v-if="activeView === 'addresses' && effectivePresentation !== 'table'"
             :cells="gridCells"
-            :density="addressPresentation === 'compact-grid' ? 'compact' : 'spacious'"
+            :density="effectivePresentation === 'compact-grid' ? 'compact' : 'spacious'"
             :selected-rows="selectedRows"
             @open="openGridCell"
             @toggle="toggleRow"
@@ -360,7 +361,7 @@ import AddressScanDialog from './dialogs/AddressScanDialog.vue';
 import FolderManagerDialog from './dialogs/FolderManagerDialog.vue';
 import { useWorkspaceContext } from './composables/useWorkspaceContext.js';
 import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
-import { contiguousIpv4Runs } from './composables/useWorkspaceSelection.js';
+import { contiguousAddressRuns } from './composables/useWorkspaceSelection.js';
 import { useRangeActions } from './composables/useRangeActions.js';
 import { useWorkspaceActions } from './composables/useWorkspaceActions.js';
 import { NETWORK_DRAG_TYPE, menuActions, targetForRow } from './workspace-actions.js';
@@ -373,6 +374,7 @@ import {
   buildExplorerFolders,
   gridKind,
   mapAddressRows,
+  addressCountLabel,
   mapDhcpScopeRows,
   mapDhcpRows,
   mapDnsRows,
@@ -381,6 +383,7 @@ import {
   mapRangeRows,
   sumScopeAddresses,
 } from '../networks-workspace-data.js';
+import { DHCP_V6_MODE_LABELS } from '../../utils/ip.js';
 
 const networkViews = [
   { key: 'addresses', label: 'Addresses', icon: 'pi pi-list' },
@@ -424,6 +427,21 @@ const contextKind = ref('estate');
 const activeView = ref('networks');
 const expandedFolders = ref(new Set());
 const addressPresentation = ref('table');
+// An IPv6 network is shown as a table whatever the saved presentation says:
+// its address space cannot be enumerated, so a grid would draw scattered
+// rows as if they were contiguous. The saved choice is kept for the next
+// IPv4 network.
+const isV6Network = computed(
+  () =>
+    contextKind.value === 'network' &&
+    Number(
+      selectedNetwork.value?.address_family ?? selectedNetwork.value?.raw?.address_family ?? 4,
+    ) === 6,
+);
+const effectivePresentation = computed(() =>
+  isV6Network.value ? 'table' : addressPresentation.value,
+);
+const addressSparse = ref(false);
 const showAvailable = ref(true);
 const filters = ref({ status: '', type: '', online: '', scan: '', range: '', protocol: '' });
 // Details identity (W-06). The panel is pinned to a resource, not to a page
@@ -1069,12 +1087,19 @@ function preserveEmptyFolders(allocated, sourceFolders) {
 const contextStats = computed(() =>
   contextKind.value === 'network'
     ? [
-        {
-          label: 'UTILIZATION',
-          value: `${Math.round(((workspaceResources.resources.summary.data?.assigned_count || 0) / Math.max(1, workspaceResources.resources.summary.data?.total_addresses || 0)) * 100)}%`,
-          note: `${formatNumber(workspaceResources.resources.summary.data?.assigned_count || 0)} assigned`,
-          tone: 'neutral',
-        },
+        isV6Network.value
+          ? {
+              label: 'ASSIGNED',
+              value: formatNumber(workspaceResources.resources.summary.data?.assigned_count || 0),
+              note: 'addresses with an allocation',
+              tone: 'neutral',
+            }
+          : {
+              label: 'UTILIZATION',
+              value: `${Math.round(((workspaceResources.resources.summary.data?.assigned_count || 0) / Math.max(1, workspaceResources.resources.summary.data?.total_addresses || 0)) * 100)}%`,
+              note: `${formatNumber(workspaceResources.resources.summary.data?.assigned_count || 0)} assigned`,
+              tone: 'neutral',
+            },
         {
           label: 'ONLINE NOW',
           value: formatNumber(workspaceResources.resources.summary.data?.online_count || 0),
@@ -1090,8 +1115,10 @@ const contextStats = computed(() =>
           view: 'dns',
         },
         {
-          label: 'DHCP POOL',
-          value: formatNumber(sumScopeAddresses(networkScopes.value)),
+          label: isV6Network.value ? 'DHCPV6' : 'DHCP POOL',
+          value: isV6Network.value
+            ? dhcpV6ModeLabel(networkScopes.value)
+            : formatNumber(sumScopeAddresses(networkScopes.value)),
           note: `${networkScopes.value.filter((scope) => scope.enabled).length} active scopes`,
           tone: 'good',
           dot: true,
@@ -1155,7 +1182,15 @@ const showViewSummary = computed(
 // "Unassigned", the exact complement of the server's own used_count. It
 // overlaps the pool on purpose: these three do not partition the space and
 // are not presented as if they do.
+// The mode of the first enabled DHCPv6 scope, for the context tile.
+function dhcpV6ModeLabel(scopes) {
+  const scope = scopes.find((item) => item.enabled) || scopes[0];
+  const mode = scope?.raw?.v6_mode || scope?.v6_mode;
+  return mode ? DHCP_V6_MODE_LABELS[mode] || mode : 'None';
+}
+
 const addressOverview = computed(() => {
+  if (isV6Network.value) return null;
   const total = Math.max(1, addressTotal.value);
   const assigned = Number(workspaceResources.resources.summary.data?.assigned_count) || 0;
   const pool = sumScopeAddresses(networkScopes.value);
@@ -1354,7 +1389,7 @@ const selectedAddressRows = computed(() => {
   const selected = new Set(selectedRows.value);
   return addressRows.value.filter((row) => selected.has(row.id));
 });
-const selectionRuns = computed(() => contiguousIpv4Runs(selectedRows.value));
+const selectionRuns = computed(() => contiguousAddressRuns(selectedRows.value));
 const selectedAllocationStates = computed(() =>
   selectedAddressRows.value.map((row) => row.raw?.allocation_state),
 );
@@ -1664,7 +1699,9 @@ function runViewAdd() {
 const gridCells = computed(() =>
   addressRows.value.map((row) => ({
     ip: row.address,
-    last: row.address.split('.').at(-1),
+    last: row.address.includes(':')
+      ? row.address.split(':').at(-1) || '0'
+      : row.address.split('.').at(-1),
     kind: gridKind(row),
     label: row.type || row.status || 'Available',
     row,
@@ -1707,7 +1744,12 @@ const rowTotal = computed(() => {
 
 const resultCountLabel = computed(() => {
   if (activeView.value === 'addresses' && contextKind.value === 'network') {
-    return `Showing ${filteredRows.value.length} on this page · ${addressFilteredTotal.value} matching · ${addressTotal.value} addresses in network`;
+    return addressCountLabel({
+      shown: filteredRows.value.length,
+      matching: addressFilteredTotal.value,
+      total: addressTotal.value,
+      sparse: addressSparse.value,
+    });
   }
   return `Showing ${filteredRows.value.length} of ${rowTotal.value}`;
 });
@@ -2207,9 +2249,11 @@ async function loadNetworkContext() {
     if (detail) addressRows.value = mapAddressRows(detail.items);
     if (detail) rangeRows.value = mapRangeRows(detail.ranges, networkScopes.value);
     addressFilteredTotal.value = detail?.filteredTotal || 0;
-    addressTotal.value = Number(
-      workspaceResources.resources.summary.data?.total_addresses ?? detail?.total ?? 0,
-    );
+    addressSparse.value = detail?.sparse === true;
+    // A sparse network has no total; its count is the rows it holds.
+    addressTotal.value = addressSparse.value
+      ? Number(detail?.total ?? 0)
+      : Number(workspaceResources.resources.summary.data?.total_addresses ?? detail?.total ?? 0);
     if (activeView.value === 'addresses') {
       totalPages.value = detail?.totalPages || 1;
       currentPage.value = detail?.page || 1;

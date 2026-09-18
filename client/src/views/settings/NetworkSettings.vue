@@ -11,10 +11,14 @@
           <label>Name Template</label>
           <InputText v-model="settings.subnet_name_template" class="w-full" />
           <small class="field-help">
-            Variables: %1, %2, %3, %4 (octets), %bitmask (prefix length)
+            Variables: %1, %2, %3, %4 (the first four octets or hextets of the network), %bitmask
+            (prefix length)
           </small>
           <div v-if="templatePreview" class="template-preview">
             Preview: <strong>{{ templatePreview }}</strong>
+            <template v-if="templatePreviewV6">
+              · IPv6: <strong>{{ templatePreviewV6 }}</strong>
+            </template>
           </div>
         </div>
       </div>
@@ -218,6 +222,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { useFeatures } from '../../composables/useFeatures.js';
 import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
 import DataTable from '../../ui/DataTable.js';
@@ -229,13 +234,14 @@ import ToggleSwitch from '../../ui/ToggleSwitch.js';
 import ContextMenu from '../../ui/ContextMenu.js';
 import { useToast } from '../../ui/useToast.js';
 import { useSubnetStore } from '../../stores/subnets.js';
-import { applyNameTemplate } from '../../utils/ip.js';
+import { applyNameTemplate, networkNameFromTemplate } from '../../utils/ip.js';
 import { apiError, EMPTY_CELL, subnetLabel } from '../../utils/format.js';
 import { collectAllocatedSubnets } from '../../utils/tree.js';
 import api from '../../api/client.js';
 
 const store = useSubnetStore();
 const toast = useToast();
+const { ipv6: ipv6Supported } = useFeatures();
 
 // Settings
 const loadingSettings = ref(true);
@@ -308,6 +314,15 @@ async function doStartScan() {
 const templatePreview = computed(() => {
   try {
     return applyNameTemplate(settings.value.subnet_name_template, '192.168.1.0/24');
+  } catch {
+    return '';
+  }
+});
+// The same template on an IPv6 network, shown only while IPv6 is on.
+const templatePreviewV6 = computed(() => {
+  if (!ipv6Supported.value) return '';
+  try {
+    return networkNameFromTemplate(settings.value.subnet_name_template, '2001:db8:1::/48');
   } catch {
     return '';
   }

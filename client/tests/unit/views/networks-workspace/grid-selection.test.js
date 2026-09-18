@@ -5,6 +5,7 @@ import {
   MAX_BULK_ADDRESSES,
   addressIdentity,
   contiguousIpv4Runs,
+  contiguousAddressRuns,
   useWorkspaceSelection,
 } from '../../../../src/views/networks-workspace/composables/useWorkspaceSelection.js';
 
@@ -28,6 +29,35 @@ describe('workspace address selection', () => {
     ).toEqual([
       { start_ip: '10.0.0.33', end_ip: '10.0.0.34', count: 2 },
       { start_ip: '10.0.0.40', end_ip: '10.0.0.42', count: 3 },
+    ]);
+  });
+
+  it('builds IPv6 runs with the shared address core and never mixes families', () => {
+    expect(
+      contiguousAddressRuns([
+        'fd00:1::10',
+        'address:fd00:1::11',
+        'fd00:1::13',
+        '10.0.0.9',
+        '10.0.0.10',
+        'FD00:1:0:0:0:0:0:12',
+      ]),
+    ).toEqual([
+      { start_ip: '10.0.0.9', end_ip: '10.0.0.10', count: 2 },
+      { start_ip: 'fd00:1::10', end_ip: 'fd00:1::13', count: 4 },
+    ]);
+  });
+
+  it('the selection composable reports IPv6 runs too', () => {
+    const selection = useWorkspaceSelection();
+    selection.replace([
+      { address: 'fd00:1::2' },
+      { address: 'fd00:1::1' },
+      { address: 'fd00:1::9' },
+    ]);
+    expect(selection.runs.value).toEqual([
+      { start_ip: 'fd00:1::1', end_ip: 'fd00:1::2', count: 2 },
+      { start_ip: 'fd00:1::9', end_ip: 'fd00:1::9', count: 1 },
     ]);
   });
 

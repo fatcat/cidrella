@@ -1,5 +1,5 @@
 import api from '../../api/client.js';
-import { canMergeCidrs } from '../../utils/ip.js';
+import { mergeNetworks } from '../../utils/ip.js';
 
 // The workspace action registry (plan section 5, W-05). Every menu, quick
 // action and keyboard invocation resolves to one of these entries by ID and
@@ -678,7 +678,13 @@ function mergeBlocker(target) {
   const parents = new Set(networks.map((network) => network.parent_id ?? null));
   if (parents.has(null)) return 'Root networks cannot be merged.';
   if (parents.size > 1) return 'Only networks under the same parent can be merged.';
-  const check = canMergeCidrs(networks.map((network) => network.cidr));
+  // Either family; a mixed selection is refused by the shared check.
+  let check;
+  try {
+    check = mergeNetworks(networks.map((network) => network.cidr));
+  } catch (error) {
+    return `${error.message}.`;
+  }
   return check.valid ? '' : `${check.error}.`;
 }
 

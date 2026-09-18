@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as shared from '@shared/cidr.js';
+import * as sharedAddress from '@shared/address.js';
 import * as clientIp from '../../../src/utils/ip.js';
 
 /**
@@ -40,12 +41,22 @@ const SHARED = [
   'mergeNetworks',
   'networkNameFromTemplate',
   'validateNetworkBounds',
+  'isValidAddress',
 ];
+
+// The address core the IPv6 UI reads through the same barrel.
+const SHARED_ADDRESS = ['sortKey', 'addressFamily', 'isValidIp', 'isValidIpv6', 'canonicalizeIp'];
 
 describe('client ip.js shares the server CIDR core', () => {
   it('re-exports every shared name as the same object', () => {
     for (const name of SHARED) {
       expect(clientIp[name], name).toBe(shared[name]);
+    }
+  });
+
+  it('re-exports the address core as the same objects', () => {
+    for (const name of SHARED_ADDRESS) {
+      expect(clientIp[name], name).toBe(sharedAddress[name]);
     }
   });
 

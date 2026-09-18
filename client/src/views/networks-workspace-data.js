@@ -221,6 +221,15 @@ export function mapRangeRows(rows, scopes = []) {
   });
 }
 
+/**
+ * The result line under an address table. A sparse (IPv6) network has no
+ * total to show, only the addresses CIDRella holds rows for.
+ */
+export function addressCountLabel({ shown, matching, total, sparse = false }) {
+  const tail = sparse ? `${total} assigned addresses` : `${total} addresses in network`;
+  return `Showing ${shown} on this page · ${matching} matching · ${tail}`;
+}
+
 export function sumScopeAddresses(scopes) {
   return (scopes || []).reduce(
     (total, scope) =>
