@@ -37,7 +37,10 @@ export function formatTimestamp(value) {
   return new Date(timestamp).toLocaleString();
 }
 
+// Percent of a countable network in use. Null for an IPv6 network, whose
+// space is not a number worth dividing by.
 function networkUtilization(network) {
+  if (Number(network.address_family) === 6) return null;
   const total = Number(network.total_addresses) || 0;
   const used = Number(network.used_count) || 0;
   return total ? Math.min(100, Math.round((used / total) * 100)) : 0;
@@ -55,7 +58,7 @@ function collectAllocatedNetworks(nodes, folder, output) {
         domain: network.domain_name || null,
         gateway: network.gateway_address || null,
         used,
-        state: used >= 85 ? 'warning' : 'healthy',
+        state: used !== null && used >= 85 ? 'warning' : 'healthy',
       });
     }
     collectAllocatedNetworks(network.children, folder, output);
@@ -81,7 +84,7 @@ export function mapNetworkRows(networks) {
     vlan: network.vlan != null ? `VLAN ${network.vlan}` : null,
     domain: network.domain,
     gateway: network.gateway,
-    utilization: `${network.used}%`,
+    utilization: network.used === null ? EMPTY_CELL : `${network.used}%`,
     status: humanize(network.status),
     raw: network,
   }));

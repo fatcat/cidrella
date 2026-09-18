@@ -101,6 +101,33 @@ DISCOVER), `dhcpv6` (a DHCPv6 server answered a SOLICIT, identified by
 `advertised_prefixes`). The allowlist trusts a server by `server_ip` of either
 family, `server_mac`, or `server_duid`.
 
+### The IPv6 switch
+
+`ipv6_enabled` (default `false` on new installs and upgrades) is persisted and
+applied by `PUT /api/interfaces/config` and read back from
+`GET /api/interfaces/config` and `GET /api/features` (`{ ipv6 }`, any signed-in
+user). It is not editable through the generic settings route. While it is off
+the appliance is an IPv4 product: dnsmasq and the resolver bind IPv4 only,
+IPv6 DHCP scopes are left out of the generated config, the DHCPv6 and Router
+Advertisement detectors are skipped and reported with `disabled: true`, the
+scan scheduler skips IPv6 networks and a manual scan of one fails,
+`GET /api/interfaces` withholds host IPv6 addresses, and every route that would
+create an IPv6 object answers `400` with one message:
+
+```
+IPv6 support is disabled. Enable it under Settings > General > Interfaces.
+```
+
+That covers `POST /api/subnets` with an IPv6 CIDR, `POST /api/subnets/:id/configure`
+on an IPv6 network, `ip6.arpa` zone create or rename, AAAA record create or
+edit of type or value, `PUT /api/dns/forwarders` and `PUT /api/dns/encryption`
+with an IPv6 address, DHCP scope create on an IPv6 network or a mode, pool or
+gateway change on one, reservation create with a DUID or an identity or
+address change on one, and a non-empty `blocklist_redirect_ip6`. Existing IPv6
+rows stay readable, their non-IPv6 fields (name, description, enabled,
+hostname) stay editable, and deletes work. `GET /api/subnets/:id/ips` on an
+IPv6 network answers `sparse: true` with only the addresses that hold rows.
+
 ## Network Read Model
 
 Network responses expose `gateway_policy` as `first`, `last`, `custom`, or

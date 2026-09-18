@@ -74,6 +74,22 @@ describe('subnet configuration preview', () => {
       .send({ cidr: '10.20.30.0/24', gateway_address: '10.20.31.1' });
     expect(outside.status).toBe(400);
   });
+
+  it('names the DHCPv6 modes the prefix allows: all three on a /64, stateful elsewhere', async () => {
+    const sixtyFour = await request(app)
+      .post('/api/subnets/configuration-preview')
+      .send({ cidr: 'fd00:9:0:1::/64' });
+    expect(sixtyFour.status).toBe(200);
+    expect(sixtyFour.body.address_family).toBe(6);
+    expect(sixtyFour.body.dhcp_v6_modes).toEqual(['slaac', 'stateless', 'stateful']);
+
+    const fortyEight = await request(app)
+      .post('/api/subnets/configuration-preview')
+      .send({ cidr: 'fd00:9::/48' });
+    expect(fortyEight.body.dhcp_v6_modes).toEqual(['stateful']);
+    // This suite's template dashes its groups, so no colon rule applies.
+    expect(fortyEight.body.suggested_name).toBe('fd00-9-0-0-48');
+  });
 });
 
 function setupCount(response) {

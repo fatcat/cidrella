@@ -136,9 +136,12 @@
                   ><template v-else>{{ part.text }}</template></template
                 ><template v-if="network.vlan != null"> · VLAN {{ network.vlan }}</template></small
               >
-              <span class="mini-meter"><i :style="{ width: `${network.used}%` }" /></span>
+              <span v-if="network.used !== null" class="mini-meter"
+                ><i :style="{ width: `${network.used}%` }"
+              /></span>
             </span>
-            <span class="network-percent">{{ network.used }}%</span>
+            <span v-if="network.used !== null" class="network-percent">{{ network.used }}%</span>
+            <span v-else class="network-percent" title="IPv6 network">IPv6</span>
           </button>
         </div>
       </section>

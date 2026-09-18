@@ -163,3 +163,28 @@ describe('addressCountLabel', () => {
     );
   });
 });
+
+describe('IPv6 networks in the explorer data', () => {
+  it('carry no utilization percentage', () => {
+    const folders = buildExplorerFolders([
+      {
+        id: 1,
+        name: 'Lab',
+        subnets: [
+          {
+            id: 9,
+            name: 'lab6',
+            cidr: 'fd00:1::/64',
+            status: 'allocated',
+            address_family: 6,
+            total_addresses: null,
+            used_count: 2,
+          },
+        ],
+      },
+    ]);
+    expect(folders[0].networks[0].used).toBeNull();
+    expect(folders[0].networks[0].state).toBe('healthy');
+    expect(mapNetworkRows(folders[0].networks)[0].utilization).toBe('—');
+  });
+});

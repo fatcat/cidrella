@@ -145,7 +145,9 @@ desired model use the same words differently.
     identified by DUID; rogue routers by the default routes the kernel learned
     from Router Advertisements, identified by link-local and MAC. A router
     whose MAC matches a configured gateway is trusted. Both are detection
-    only and never touch allocation state.
+    only and never touch allocation state. A global `ipv6_enabled` switch
+    (off by default) gates IPv6 listeners, probes, scans and object creation;
+    it changes no precedence, naming or lifecycle rule for rows that exist.
 12. **IPv6 discovery.** Active discovery for IPv6 is observation-driven: an
     all-nodes multicast probe followed by the Neighbor Discovery table, plus a
     unicast echo to every address CIDRella already holds an allocation for,

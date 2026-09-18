@@ -77,6 +77,14 @@ the allowlist by link-local or MAC, and the MAC of any router the operator has
 configured as a network gateway (learned by scans), so the real default router
 is not flagged on the first check.
 
+Both run only while the IPv6 switch (Settings > General > Interfaces) is on.
+Off, `GET /api/dhcp/rogue/status` reports each with `disabled: true` and
+`POST /api/dhcp/rogue/probe` runs the DHCPv4 probe alone. On the page, the
+Detection block shows one line per IPv6 detector (last probe, unavailable with
+the reason, or off), the events table names each finding's kind (DHCPv4,
+DHCPv6, Router) with the DUID or MAC and advertised prefixes, and the
+authorized list takes an IP of either family, a MAC or a DUID.
+
 Limits:
 
 - RA detection needs `accept_ra` on the interface (`2`, or `1` with forwarding

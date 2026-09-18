@@ -2250,9 +2250,10 @@ async function loadNetworkContext() {
     if (detail) rangeRows.value = mapRangeRows(detail.ranges, networkScopes.value);
     addressFilteredTotal.value = detail?.filteredTotal || 0;
     addressSparse.value = detail?.sparse === true;
-    // A sparse network has no total; its count is the rows it holds.
+    // A sparse network has no total; its count is the addresses it holds
+    // an allocation for, which the summary already knows.
     addressTotal.value = addressSparse.value
-      ? Number(detail?.total ?? 0)
+      ? Number(workspaceResources.resources.summary.data?.assigned_count ?? detail?.total ?? 0)
       : Number(workspaceResources.resources.summary.data?.total_addresses ?? detail?.total ?? 0);
     if (activeView.value === 'addresses') {
       totalPages.value = detail?.totalPages || 1;

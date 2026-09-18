@@ -207,9 +207,20 @@ Solicitation (needs a raw ICMPv6 socket; `rdisc6` from the `ndisc6` package woul
 also work with `accept_ra` off, not bundled). The Rogue DHCP page shows the new rows as-is; it
 has no `kind` column and its add-authorized form still requires an IP.
 
-**Deferred from this pass:** a DHCPv6 option catalog (v6 scopes use the scope columns), and
-the UI: workspace grid and table on v6 sizes, no per-address rows for a /64, `kind` and DUID
-on the Rogue DHCP page.
+**UI pass landed 2026-09-18** behind a global `ipv6_enabled` switch (default off, Settings >
+General > Interfaces; `GET /api/features`, a `features` store and `useFeatures()`): the
+explorer sorts both families, the network dialogs validate either family and refuse an IPv6
+CIDR inline while the switch is off, configure and the wizard offer the DHCPv6 mode instead of
+a gateway, an IPv6 network is a table only (no grid, no utilization gauge, assigned counts),
+AAAA and `ip6.arpa` in the DNS pages, DHCPv6 mode and DUID reservations in the DHCP pages,
+detector kinds and DUID/MAC identities on the rogue page, an IPv6 sinkhole field. Server side
+the switch gates listeners, scope config, the IPv6 detectors, scan scheduling and creation
+(`utils/ipv6-support.js`, `ipv6-gate` route suite). Classic views only stop crashing.
+
+**Deferred from this pass:** a DHCPv6 option catalog (v6 scopes use the scope columns), a
+grid presentation for IPv6 (would need gap markers and a redesigned ruler), full IPv6 support
+in the classic views (slated for removal), and the DHCP leases table columns for DUID/IAID
+default to hidden.
 
 ## Deferred design work
 

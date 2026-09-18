@@ -220,6 +220,13 @@ describe('names and bounds', () => {
     );
   });
 
+  it('joins IPv6 hextets with colons where the template dots its group placeholders', () => {
+    expect(networkNameFromTemplate('%1.%2.%3.%4/%bitmask', 'fd00:9::/48')).toBe('fd00:9:0:0/48');
+    expect(networkNameFromTemplate('%1.%2.%3.%4/%bitmask', '10.20.30.0/24')).toBe('10.20.30.0/24');
+    // Dots that are not between two placeholders stay.
+    expect(networkNameFromTemplate('lab.%1.%2/%bitmask', 'fd00:9::/48')).toBe('lab.fd00:9/48');
+  });
+
   it('applies the reserved-range rule per family', () => {
     expect(validateNetworkBounds('fd00:1::/48')).toEqual({ valid: true });
     expect(validateNetworkBounds('fc00::/6').error).toMatch(/extends beyond Unique Local/);

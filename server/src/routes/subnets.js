@@ -405,7 +405,14 @@ router.post(
       default_dhcp_pool_explanation: pool
         ? null
         : 'No automatic DHCP pool fits this prefix. Configure a supported pool explicitly if needed.',
-      dhcp_v6_modes: parsed.family === 6 ? ['slaac', 'stateless', 'stateful'] : null,
+      // The modes this prefix can use, the same rule resolveV6Mode enforces
+      // on configure: the SLAAC modes need a /64, stateful works anywhere.
+      dhcp_v6_modes:
+        parsed.family === 6
+          ? parsed.prefix === 64
+            ? ['slaac', 'stateless', 'stateful']
+            : ['stateful']
+          : null,
     });
   }),
 );
@@ -1767,11 +1774,9 @@ router.post(
     if (create_dhcp_scope && parsed.family === 6) {
       const mode = dhcp_v6_mode || 'stateful';
       if (mode !== 'stateful' && parsed.prefix !== 64) {
-        return res
-          .status(400)
-          .json({
-            error: `dhcp_v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)`,
-          });
+        return res.status(400).json({
+          error: `dhcp_v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)`,
+        });
       }
       let pool = null;
       if (mode === 'stateful' && (dhcp_start_ip || dhcp_end_ip)) {

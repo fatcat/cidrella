@@ -308,6 +308,9 @@ export function mergeNetworks(cidrs) {
  * Apply a naming template to a network. `%1` to `%4` are the first four
  * groups of the network address (octets for IPv4, hextets for IPv6, as they
  * appear in the canonical spelling with '::' expanded), `%bitmask` the prefix.
+ * For IPv6 a dot written between two group placeholders becomes a colon, so
+ * the default `%1.%2.%3.%4/%bitmask` names `fd00:9:0:0/48` rather than
+ * `fd00.9.0.0/48`; dots elsewhere in a template are left alone.
  */
 export function networkNameFromTemplate(template, cidr) {
   const parsed = parseNetwork(cidr);
@@ -317,6 +320,7 @@ export function networkNameFromTemplate(template, cidr) {
       : Array.from({ length: 8 }, (_, i) =>
           ((parsed.networkBig >> BigInt(112 - 16 * i)) & 0xffffn).toString(16),
         );
+  if (parsed.family === 6) template = template.replace(/(%[1-4])\.(?=%[1-4])/g, '$1:');
   return template
     .replace(/%1/g, groups[0])
     .replace(/%2/g, groups[1])
