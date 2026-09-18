@@ -3,6 +3,7 @@ import { startScan } from './scanner.js';
 import { intervalToMs, scanEnabledSql, scanSizeSql } from './scan-coverage.js';
 import * as ScanRun from '../models/scan-run.js';
 import { isGloballyRoutableCidr } from './ip.js';
+import { ipv6Enabled } from './ipv6-support.js';
 
 let timer = null;
 const SCHEDULER_TICK_MS = 60 * 1000;
@@ -27,7 +28,11 @@ function checkScheduledScans() {
     )
     .all();
 
+  // IPv6 networks are scheduled only while IPv6 support is on. The SQL size
+  // gate is shared with the coverage reports, so the switch is applied here.
+  const ipv6 = ipv6Enabled();
   for (const subnet of subnets) {
+    if (subnet.address_family === 6 && !ipv6) continue;
     if (!isAutomaticScanAllowed(subnet)) continue;
     const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
@@ -81,7 +86,7 @@ export function getNextScanTime() {
   const subnets = db
     .prepare(
       `
-    SELECT s.id, s.cidr, s.scan_enabled,
+    SELECT s.id, s.cidr, s.scan_enabled, s.address_family,
       COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
     FROM subnets s
     WHERE s.status = 'allocated' AND ${scanSizeSql('s')}
@@ -91,8 +96,10 @@ export function getNextScanTime() {
     .all();
 
   let earliest = null;
+  const ipv6 = ipv6Enabled();
 
   for (const subnet of subnets) {
+    if (subnet.address_family === 6 && !ipv6) continue;
     if (!isAutomaticScanAllowed(subnet)) continue;
     const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;

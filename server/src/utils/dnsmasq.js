@@ -4,6 +4,7 @@ import os from 'os';
 import { execFileSync, execSync } from 'child_process';
 import { parseNetwork, isValidAddress } from './ip.js';
 import { getSetting } from '../db/init.js';
+import { ipv6Enabled } from './ipv6-support.js';
 import { selectInterfaceNames } from './interface-config.js';
 import {
   DATA_DIR,
@@ -550,11 +551,14 @@ export function restartDnsmasq() {
 }
 
 // The addresses of one interface a resolver should bind: every IPv4 address
-// and every IPv6 address that is not link-local. Link-local needs a zone id
-// on the wire and clients never send queries to it.
-export function listenableAddresses(addrs) {
+// and, while IPv6 support is on, every IPv6 address that is not link-local.
+// Link-local needs a zone id on the wire and clients never send queries to
+// it. `ipv6` defaults to the global switch; tests pass it explicitly.
+export function listenableAddresses(addrs, { ipv6 = ipv6Enabled() } = {}) {
   return (addrs || [])
-    .filter((a) => a.family === 'IPv4' || (a.family === 'IPv6' && !/^fe[89ab]/i.test(a.address)))
+    .filter(
+      (a) => a.family === 'IPv4' || (ipv6 && a.family === 'IPv6' && !/^fe[89ab]/i.test(a.address)),
+    )
     .map((a) => a.address);
 }
 
@@ -627,7 +631,7 @@ export function applyInterfaceConfig(_db) {
   const internalPort = resolveDnsmasqInternalPort(configuredListenPort);
   const dnsPort = !dnsEnabled ? 0 : proxyBypass ? configuredListenPort : internalPort;
   const newDirectives = ['bind-dynamic', 'listen-address=127.0.0.1', `port=${dnsPort}`];
-  if (sysIfaces.lo?.some((a) => a.family === 'IPv6')) {
+  if (ipv6Enabled() && sysIfaces.lo?.some((a) => a.family === 'IPv6')) {
     newDirectives.push('listen-address=::1');
   }
   // Interface SELECTION is shared with dns-proxy.js and dhcp-probe.js so the

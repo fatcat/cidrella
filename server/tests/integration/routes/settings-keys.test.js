@@ -25,6 +25,9 @@ const APPLY_COUPLED_KEYS = [
   'forwarder_encrypted_upstreams',
   'rogue_dhcp_detection_enabled',
   'rogue_dhcp_probe_interval_min',
+  // ipv6_enabled regenerates dnsmasq listeners and rebinds the resolver
+  // through PUT /api/interfaces/config.
+  'ipv6_enabled',
   // geoip_mode is the one with teeth. dns-proxy.js caches it in a module-level
   // `geoipMode` refreshed only by loadGeoipRules(), and blockingCountryCodes()
   // on that cached copy alone, so a bare settings write stored "allowlist"

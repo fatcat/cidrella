@@ -20,6 +20,7 @@ import { syncLeases } from '../utils/dhcp.js';
 import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { normalizeDuid } from '../utils/duid.js';
+import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import {
   createScope,
@@ -267,6 +268,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   // Validate subnet
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnet_id);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+  if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
   const v6 = resolveV6Mode(subnet, v6_mode, subnet.address_family === 6 ? null : undefined);
   if (v6.error) return res.status(400).json({ error: v6.error });
@@ -409,6 +411,15 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
 
   const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
   const scopeSubnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
+  // With IPv6 off an existing v6 scope can still be described, enabled or
+  // disabled; its mode, pool and gateway are IPv6 configuration.
+  if (
+    scopeSubnet.address_family === 6 &&
+    [v6_mode, start_ip, end_ip, gateway].some((v) => v !== undefined) &&
+    refuseIpv6Unless(res)
+  ) {
+    return;
+  }
   const v6 = resolveV6Mode(scopeSubnet, v6_mode, scope.v6_mode);
   if (v6.error) return res.status(400).json({ error: v6.error });
 
@@ -644,6 +655,7 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
   }
   const ip_address = canonicalizeIp(body.ip_address);
   const family = addressFamily(ip_address);
+  if (family === 6 && refuseIpv6Unless(res)) return;
   const identity = reservationIdentity({ mac_address, duid, iaid }, family);
   if (identity.error) return res.status(400).json({ error: identity.error });
   const mac = identity.mac;
@@ -773,6 +785,15 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   const family = reservation.address_family || addressFamily(newIp);
   if (ip_address && addressFamily(ip_address) !== family) {
     return res.status(400).json({ error: 'A reservation cannot change address family' });
+  }
+  // Identity and address edits on a v6 reservation are IPv6 configuration;
+  // hostname, description and enabled stay editable with IPv6 off.
+  if (
+    family === 6 &&
+    [mac_address, duid, iaid, body.ip_address].some((v) => v !== undefined) &&
+    refuseIpv6Unless(res)
+  ) {
+    return;
   }
 
   // Identity fields left out keep their stored values.

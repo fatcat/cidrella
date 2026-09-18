@@ -146,10 +146,11 @@ const SETTING_SCHEMA = {
     normalize: (v) => toBoolStr(v),
   },
   // dnssec_enabled, dns_no_recursion, forwarder_encryption,
-  // forwarder_encrypted_upstreams, rogue_dhcp_detection_enabled, and
-  // rogue_dhcp_probe_interval_min are deliberately NOT editable here. Their
-  // authoritative routes (PUT /api/dns/dnssec, /api/dns/forwarders,
-  // /api/dns/encryption, /api/dhcp/rogue/settings) persist AND apply, regen
+  // forwarder_encrypted_upstreams, rogue_dhcp_detection_enabled,
+  // rogue_dhcp_probe_interval_min and ipv6_enabled are deliberately NOT
+  // editable here. Their authoritative routes (PUT /api/dns/dnssec,
+  // /api/dns/forwarders, /api/dns/encryption, /api/dhcp/rogue/settings,
+  // /api/interfaces/config) persist AND apply, regen
   // dnsmasq.conf, restart, (re)start the DoT/DoH stub, arm the probe
   // scheduler. A bare settings PUT would store the value without applying it,
   // and dnsmasq.js reads these keys on every conf regen, so the stale value

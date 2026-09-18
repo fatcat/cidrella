@@ -28,6 +28,7 @@ import { replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { upsertServerDnsDefault } from '../models/dhcp-option.js';
 import { dhcpLeaseRejectionReason } from '../services/ip-lifecycle-service.js';
 import { resolveEffectiveScopeOptions } from '../models/dhcp-scope.js';
+import { ipv6Enabled } from './ipv6-support.js';
 
 /**
  * Resolve a hostname to an address of the wanted family (4 by default).
@@ -320,9 +321,14 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
   const activeIds = new Set();
   let changed = false;
 
+  // With IPv6 support off a v6 scope is left out of dnsmasq entirely (no
+  // enable-ra, no v6 dhcp-range); its stale conf file is removed below with
+  // the other inactive ones. The scope row itself is untouched.
+  const ipv6 = ipv6Enabled();
   for (const scope of scopes) {
-    activeIds.add(scope.id);
     const parsed = parseNetwork(scope.subnet_cidr);
+    if (parsed.family === 6 && !ipv6) continue;
+    activeIds.add(scope.id);
     scope.netmask = parsed.mask;
     scope.pools = db
       .prepare(
@@ -386,7 +392,8 @@ export function regenerateReservations(db, { hostsDir = DHCP_HOSTS_DIR } = {}) {
       const v6 = r.address_family === 6;
       if (v6 && (!r.duid || !isValidIpv6(r.ip_address))) return null;
       const parts = v6 ? [`id:${r.duid}`, `[${r.ip_address}]`] : [r.mac_address, r.ip_address];
-      const hostname = r.hostname || (r.mac_address ? generateFallbackHostname(r.mac_address) : null);
+      const hostname =
+        r.hostname || (r.mac_address ? generateFallbackHostname(r.mac_address) : null);
       if (hostname) parts.push(hostname);
       parts.push('infinite');
       return parts.join(',');

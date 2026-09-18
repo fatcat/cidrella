@@ -9,6 +9,7 @@ import { getProbeState } from '../utils/dhcp-probe.js';
 import { getProbe6State } from '../utils/dhcpv6-probe.js';
 import { getRaState } from '../utils/ra-monitor.js';
 import { runRogueDetection } from '../utils/rogue-detection.js';
+import { ipv6Enabled } from '../utils/ipv6-support.js';
 import * as RogueDhcp from '../models/rogue-dhcp.js';
 
 const router = Router();
@@ -20,6 +21,7 @@ router.get('/status', requirePerm('dhcp:read'), (req, res) => {
     getProbeState();
   const enabled = getSetting('rogue_dhcp_detection_enabled') === 'true';
   const intervalMin = parseInt(getSetting('rogue_dhcp_probe_interval_min'), 10) || 15;
+  const ipv6 = ipv6Enabled();
 
   // Detection is only doing its job if it is actually probing. A clean probe
   // logs nothing, and the one routine log line it does emit only appears when a
@@ -51,8 +53,12 @@ router.get('/status', requirePerm('dhcp:read'), (req, res) => {
     // The IPv6 detectors run on the same schedule. Each reports its own
     // support, because a host can serve DHCPv4 with no IPv6 at all, or accept
     // Router Advertisements on one interface and not another.
-    dhcpv6: getProbe6State(),
-    routerAdvertisements: getRaState(),
+    dhcpv6: ipv6
+      ? { ...getProbe6State(), disabled: false }
+      : { ...getProbe6State(), probeSupported: false, disabled: true },
+    routerAdvertisements: ipv6
+      ? { ...getRaState(), disabled: false }
+      : { ...getRaState(), supported: false, disabled: true },
   });
 });
 
@@ -120,6 +126,7 @@ router.post('/probe', requirePerm('dhcp:write'), async (req, res) => {
     rogueCount,
     dhcpv6: {
       supported: dhcpv6.supported,
+      disabled: dhcpv6.disabled === true,
       skipped: dhcpv6.skipped === true,
       error: dhcpv6.error ?? null,
       interfaces: dhcpv6.interfaces,
@@ -128,6 +135,7 @@ router.post('/probe', requirePerm('dhcp:write'), async (req, res) => {
     },
     routerAdvertisements: {
       supported: routerAdvertisements.supported,
+      disabled: routerAdvertisements.disabled === true,
       error: routerAdvertisements.error ?? null,
       interfaces: routerAdvertisements.interfaces,
       routers: routerAdvertisements.routers,

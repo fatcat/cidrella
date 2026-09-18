@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import os from 'os';
-import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../helpers/test-db.js';
 
 const responders = new Set();
 const execFile = vi.fn((cmd, args, opts, cb) => {
@@ -57,6 +57,7 @@ function row(ip) {
 
 beforeAll(async () => {
   const setup = await setupTestDb();
+  enableIpv6(setup.db);
   db = setup.db;
   tmpDir = setup.tmpDir;
   nets.slaac = network('fd00:5::/64', 'slaac');

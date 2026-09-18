@@ -27,6 +27,7 @@ import {
   isValidIpv4,
 } from '../utils/ip.js';
 import { canonicalizeIp, sortKey } from '../utils/address.js';
+import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import {
   lifecycleRepository as IpAddress,
   setManualReservation,
@@ -458,6 +459,7 @@ router.post(
     if (typeof cidr !== 'string' || !cidr)
       return res.status(400).json({ error: 'CIDR is required' });
     if (!isValidNetwork(cidr)) return res.status(400).json({ error: 'Invalid CIDR notation' });
+    if (parseNetwork(cidr).family === 6 && refuseIpv6Unless(res)) return;
     if (name !== undefined) {
       const err = validateDisplayString(name, { maxLength: 255 });
       if (err) return res.status(400).json({ error: `name ${err}` });
@@ -1212,8 +1214,7 @@ function transferPerIpArtifactsToChildren(db, parentId) {
   const children = db.prepare('SELECT id, cidr FROM subnets WHERE parent_id = ?').all(parentId);
   if (children.length === 0) return;
   const childRanges = children.map((c) => ({ id: c.id, parsed: parseNetwork(c.cidr) }));
-  const findChildForIp = (ip) =>
-    childRanges.find((c) => parsedNetworkContains(c.parsed, ip));
+  const findChildForIp = (ip) => childRanges.find((c) => parsedNetworkContains(c.parsed, ip));
 
   // ip_addresses: parent's row has the live state and observed metadata.
   // If a row already exists under the child for the same IP (auto-populated
@@ -1723,6 +1724,9 @@ router.post(
     const db = getDb();
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    // Configuring creates the gateway, reverse zone and DHCP scope of an
+    // IPv6 network; editing the name or description goes through PUT /:id.
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
     const parsed = parseNetwork(subnet.cidr);
     {
@@ -1765,7 +1769,9 @@ router.post(
       if (mode !== 'stateful' && parsed.prefix !== 64) {
         return res
           .status(400)
-          .json({ error: `dhcp_v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)` });
+          .json({
+            error: `dhcp_v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)`,
+          });
       }
       let pool = null;
       if (mode === 'stateful' && (dhcp_start_ip || dhcp_end_ip)) {
@@ -2128,15 +2134,11 @@ router.get(
       ) {
         return false;
       }
-      if (
-        addressTypeFilter &&
-        String(row.address_type || '').toLowerCase() !== addressTypeFilter
-      ) {
+      if (addressTypeFilter && String(row.address_type || '').toLowerCase() !== addressTypeFilter) {
         return false;
       }
       if (onlineFilter !== null && Boolean(row.is_online) !== onlineFilter) return false;
-      if (scanningFilter !== null && Boolean(row.scanning_enabled) !== scanningFilter)
-        return false;
+      if (scanningFilter !== null && Boolean(row.scanning_enabled) !== scanningFilter) return false;
       // Range filters select the user-owned network classification. The
       // functional range projection (DHCP pool, gateway, and so on) remains
       // an independent fact and must not stand in for an organizational tag.
@@ -2590,7 +2592,9 @@ router.put(
     const startAddress = typeof start_ip === 'string' ? familyAddress(parsed, start_ip) : null;
     const endAddress = typeof end_ip === 'string' ? familyAddress(parsed, end_ip) : null;
     if (startAddress === null)
-      return res.status(400).json({ error: `start_ip must be a valid IPv${parsed.family} address` });
+      return res
+        .status(400)
+        .json({ error: `start_ip must be a valid IPv${parsed.family} address` });
     if (endAddress === null)
       return res.status(400).json({ error: `end_ip must be a valid IPv${parsed.family} address` });
     if (!['unassigned', 'reserved'].includes(allocation_state)) {
@@ -2656,7 +2660,8 @@ router.put(
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
     const { allocation_state, note } = req.body;
-    if (!isValidAddress(req.params.ip)) return res.status(400).json({ error: 'Invalid IP address' });
+    if (!isValidAddress(req.params.ip))
+      return res.status(400).json({ error: 'Invalid IP address' });
     const ipAddress = subnetAddress(subnet, req.params.ip);
     if (!ipAddress) return res.status(400).json({ error: 'IP address must be within the subnet' });
     if (!['unassigned', 'reserved'].includes(allocation_state)) {
@@ -2700,7 +2705,8 @@ router.put(
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
     const { scan_enabled } = req.body;
-    if (!isValidAddress(req.params.ip)) return res.status(400).json({ error: 'Invalid IP address' });
+    if (!isValidAddress(req.params.ip))
+      return res.status(400).json({ error: 'Invalid IP address' });
     const ipAddress = subnetAddress(subnet, req.params.ip);
     if (!ipAddress) return res.status(400).json({ error: 'IP address must be within the subnet' });
     if (scan_enabled !== null && typeof scan_enabled !== 'boolean') {

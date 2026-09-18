@@ -6,6 +6,7 @@ import { getDb, getSetting } from '../db/init.js';
 import { runProbe } from './dhcp-probe.js';
 import { runProbe6 } from './dhcpv6-probe.js';
 import { checkRouterAdvertisements } from './ra-monitor.js';
+import { ipv6Enabled, IPV6_DISABLED_ERROR } from './ipv6-support.js';
 
 const SCHEDULER_TICK_MS = 60 * 1000;
 const INITIAL_KICK_MS = 20 * 1000;
@@ -29,6 +30,16 @@ function log(level, msg, extra) {
  */
 export async function runRogueDetection(db, opts = {}) {
   const dhcp = await runProbe(db, opts.dhcp || {});
+  if (!ipv6Enabled()) {
+    // The IPv6 detectors are switched off with the rest of IPv6 support.
+    // Say so in the result shape rather than reporting a clean scan.
+    const off = { supported: false, disabled: true, error: IPV6_DISABLED_ERROR, rogues: [] };
+    return {
+      dhcp,
+      dhcpv6: { ...off, interfaces: 0, advertisements: 0 },
+      routerAdvertisements: { ...off, interfaces: 0, routers: 0 },
+    };
+  }
   let dhcpv6;
   try {
     dhcpv6 = await runProbe6(db, opts.dhcpv6 || {});

@@ -41,7 +41,8 @@ import {
   validateDisplayString,
   networkContains,
 } from '../utils/ip.js';
-import { canonicalizeIp, isValidIpv6 } from '../utils/address.js';
+import { canonicalizeIp, isValidIpv6, addressFamily } from '../utils/address.js';
+import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { isBlockedAddress } from '../utils/url-guard.js';
 import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
 import { validateSoaFields, isIntInRange } from '../utils/validation.js';
@@ -321,6 +322,7 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
   if (!isValidDomain(name) && !REVERSE_ZONE_RE.test(name)) {
     return res.status(400).json({ error: 'Invalid zone name' });
   }
+  if (/ip6\.arpa$/i.test(name) && refuseIpv6Unless(res)) return;
 
   if (description !== undefined) {
     const err = validateDisplayString(description, { maxLength: 1024 });
@@ -384,6 +386,7 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
 
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
+  if (typeof name === 'string' && /ip6\.arpa$/i.test(name) && refuseIpv6Unless(res)) return;
 
   if (description !== undefined) {
     const err = validateDisplayString(description, { maxLength: 1024 });
@@ -516,6 +519,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   if (!validTypes.includes(type)) {
     return res.status(400).json({ error: `Type must be one of: ${validTypes.join(', ')}` });
   }
+  if (type === 'AAAA' && refuseIpv6Unless(res)) return;
 
   // Reverse zones only allow PTR records
   if (zone.type === 'reverse' && type !== 'PTR') {
@@ -614,7 +618,12 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
         },
         { forcePtr: !!force_ptr },
       );
-      if (isAddressType(type) && zone.type === 'forward' && zone.enabled && created.record.enabled) {
+      if (
+        isAddressType(type) &&
+        zone.type === 'forward' &&
+        zone.enabled &&
+        created.record.enabled
+      ) {
         allocateStaticDns(db, normalizedName, normalizedValue, zone.name, created.record.id);
       }
       return created.record;
@@ -676,6 +685,11 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   }
 
   const newType = type || record.type;
+  // Changing an AAAA record's type or value re-allocates an IPv6 address;
+  // toggling enabled or a TTL edit on an existing one does not.
+  if (newType === 'AAAA' && (type !== undefined || value !== undefined) && refuseIpv6Unless(res)) {
+    return;
+  }
   const rawNewName = name ?? record.name;
   const rawNewValue = value ?? record.value;
   const newName =
@@ -863,6 +877,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
     for (const s of servers) {
       if (!isValidAddress(s)) return res.status(400).json({ error: `Invalid IP address: ${s}` });
     }
+    if (servers.some((s) => addressFamily(s) === 6) && refuseIpv6Unless(res)) return;
   }
   // Store the canonical spelling; dnsmasq takes IPv6 literals in server= as is.
   const canonicalServers = Array.isArray(servers) ? servers.map((s) => canonicalizeIp(s)) : servers;
@@ -990,6 +1005,12 @@ router.put('/encryption', requirePerm('dns:write'), (req, res) => {
     list = Array.isArray(upstreams) ? upstreams : [];
     const err = validateUpstreamList(list, mode);
     if (err) return res.status(400).json({ error: err });
+    if (
+      list.some((u) => u.addresses.some((a) => addressFamily(a) === 6)) &&
+      refuseIpv6Unless(res)
+    ) {
+      return;
+    }
   }
 
   setSetting('forwarder_encryption', mode);

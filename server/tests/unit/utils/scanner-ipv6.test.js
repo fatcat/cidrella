@@ -5,8 +5,14 @@ const execFile = vi.fn((...args) => {
   const cb = args[args.length - 1];
   if (typeof cb === 'function') cb(null, '');
 });
-vi.mock('child_process', () => ({ execFile: (...args) => execFile(...args), execFileSync: vi.fn() }));
-vi.mock('../../../src/db/init.js', () => ({ getSetting: vi.fn(() => null), getDb: vi.fn() }));
+vi.mock('child_process', () => ({
+  execFile: (...args) => execFile(...args),
+  execFileSync: vi.fn(),
+}));
+vi.mock('../../../src/db/init.js', () => ({
+  getSetting: vi.fn((key) => (key === 'ipv6_enabled' ? 'true' : null)),
+  getDb: vi.fn(),
+}));
 
 const { discoverIpv6Hosts } = await import('../../../src/utils/scanner.js');
 const { parseNetwork } = await import('../../../src/utils/cidr.js');
@@ -36,7 +42,14 @@ describe('discoverIpv6Hosts', () => {
       expect(result.interfaces).toEqual(['eth0']);
       expect(execFile).toHaveBeenCalledTimes(1);
       expect(execFile.mock.calls[0][0]).toBe('ping');
-      expect(execFile.mock.calls[0][1]).toEqual(['-6', '-c', '2', '-W', expect.any(String), 'ff02::1%eth0']);
+      expect(execFile.mock.calls[0][1]).toEqual([
+        '-6',
+        '-c',
+        '2',
+        '-W',
+        expect.any(String),
+        'ff02::1%eth0',
+      ]);
       expect(neighbors).toHaveBeenCalledWith({ force: true });
       // The link-local neighbor on eth0 rides along; the one on eth1 does not.
       expect(result.hosts).toEqual([
@@ -49,9 +62,13 @@ describe('discoverIpv6Hosts', () => {
   });
 
   it('finds nothing without an attached interface and never sweeps the prefix', async () => {
-    const spy = vi.spyOn(os, 'networkInterfaces').mockReturnValue({ eth0: [{ family: 'IPv4', address: '10.0.1.2' }] });
+    const spy = vi
+      .spyOn(os, 'networkInterfaces')
+      .mockReturnValue({ eth0: [{ family: 'IPv4', address: '10.0.1.2' }] });
     try {
-      const result = await discoverIpv6Hosts(parseNetwork('fd00:a::/64'), { neighbors: () => new Map() });
+      const result = await discoverIpv6Hosts(parseNetwork('fd00:a::/64'), {
+        neighbors: () => new Map(),
+      });
       expect(result).toEqual({ interfaces: [], hosts: [] });
       expect(execFile).not.toHaveBeenCalled();
     } finally {

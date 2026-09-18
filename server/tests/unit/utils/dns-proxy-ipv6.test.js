@@ -19,8 +19,12 @@ let tmpDir;
 let db;
 
 function setRedirects(v4, v6) {
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', ?)").run(v4);
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip6', ?)").run(v6);
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', ?)",
+  ).run(v4);
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip6', ?)",
+  ).run(v6);
   loadBlocklist();
 }
 
@@ -39,7 +43,9 @@ beforeAll(async () => {
   const setup = await setupTestDb();
   tmpDir = setup.tmpDir;
   db = setup.db;
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')",
+  ).run();
 });
 
 afterAll(() => cleanupTestDb(tmpDir));
@@ -85,7 +91,10 @@ describe('proxy bind addresses', () => {
       ],
     });
     try {
-      expect(listenableAddresses(os.networkInterfaces().eth0)).toEqual(['10.0.1.2', 'fd00:a::2']);
+      expect(listenableAddresses(os.networkInterfaces().eth0, { ipv6: true })).toEqual([
+        '10.0.1.2',
+        'fd00:a::2',
+      ]);
     } finally {
       spy.mockRestore();
     }

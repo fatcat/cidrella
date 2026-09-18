@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
 vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), execFile: vi.fn() }));
@@ -26,6 +26,7 @@ beforeAll(async () => {
   // DATA_DIR is read when utils/dhcp.js loads, so every module that writes
   // dnsmasq files must load after setupTestDb has pointed it at the temp dir.
   const setup = await setupTestDb();
+  enableIpv6(setup.db);
   tmpDir = setup.tmpDir;
   db = setup.db;
   ({ regenerateScopeConfigs, regenerateReservations, syncLeases, parseLeaseLine } = await import(

@@ -32,6 +32,7 @@ import { authMiddleware } from './auth/middleware.js';
 import { afterCommitMiddleware, resumePendingRegeneration } from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
+import featuresRoutes from './routes/features.js';
 import subnetRoutes from './routes/subnets.js';
 import rangeTypeRoutes from './routes/range-types.js';
 import rangeRoutes from './routes/ranges.js';
@@ -407,6 +408,7 @@ async function main() {
   // API routes
   app.use('/api/auth', authRoutes);
   app.use('/api/health', healthRoutes);
+  app.use('/api/features', featuresRoutes);
   app.use('/api/subnets', subnetRoutes);
   app.use('/api/range-types', rangeTypeRoutes);
   app.use('/api/settings', settingsRoutes);

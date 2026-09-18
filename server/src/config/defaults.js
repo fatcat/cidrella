@@ -39,6 +39,9 @@ export const DEFAULTS = {
   // forwards to the in-Node stub which encrypts to forwarder_encrypted_upstreams.
   forwarder_encryption: 'off',
   forwarder_encrypted_upstreams: [],
+  // Global IPv6 switch, off on new installs and upgrades. Applied by
+  // PUT /api/interfaces/config, see utils/ipv6-support.js.
+  ipv6_enabled: 'false',
   rogue_dhcp_detection_enabled: 'false',
   rogue_dhcp_probe_interval_min: '15',
   blocklist_update_schedule: 'daily',

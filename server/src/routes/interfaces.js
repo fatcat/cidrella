@@ -22,6 +22,7 @@ import {
 } from '../utils/http-server.js';
 import { validPortOrError, validateInterfaceConfig } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
+import { ipv6Enabled } from '../utils/ipv6-support.js';
 
 const router = Router();
 
@@ -71,6 +72,8 @@ router.get('/', requirePerm('system:read'), (req, res) => {
     names = Object.keys(sysIfaces);
   }
 
+  // Host IPv6 addresses are shown only while IPv6 support is on.
+  const ipv6 = ipv6Enabled();
   const result = [];
   for (const name of names) {
     if (!isRealInterface(name)) continue;
@@ -81,7 +84,7 @@ router.get('/', requirePerm('system:read'), (req, res) => {
     // Both families, each entry tagged. IPv6 link-local addresses are
     // reported with their scope so the operator can tell them apart.
     const addresses = (sysIfaces[name] || [])
-      .filter((a) => a.family === 'IPv4' || a.family === 'IPv6')
+      .filter((a) => a.family === 'IPv4' || (ipv6 && a.family === 'IPv6'))
       .map((a) => ({
         address: a.address,
         netmask: a.netmask,
@@ -123,6 +126,7 @@ router.get('/config', requirePerm('system:read'), (req, res) => {
     interfaces,
     dns_enabled: dnsEnabled,
     dhcp_enabled: dhcpEnabled,
+    ipv6_enabled: ipv6Enabled(),
     web_ports: getWebPortInfo(),
   });
 });
@@ -138,6 +142,7 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     http_redirect_enabled,
     https_port,
     http_port,
+    ipv6_enabled,
   } = body;
 
   // Validators are the shared helpers in utils/validation.js, same
@@ -152,6 +157,9 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   }
   if (http_redirect_enabled !== undefined && typeof http_redirect_enabled !== 'boolean') {
     return res.status(400).json({ error: 'http_redirect_enabled must be boolean' });
+  }
+  if (ipv6_enabled !== undefined && typeof ipv6_enabled !== 'boolean') {
+    return res.status(400).json({ error: 'ipv6_enabled must be a boolean' });
   }
   if (interfaces !== undefined) {
     const e = validateInterfaceConfig(interfaces);
@@ -191,9 +199,15 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   }
 
   const db = getDb();
-  const dnsmasqSettingsChanged = [interfaces, dns_enabled, dhcp_enabled, dns_listen_port].some(
-    (value) => value !== undefined,
-  );
+  // The IPv6 switch changes dnsmasq's listen addresses and which DHCP scopes
+  // are emitted, so it counts as an interface change.
+  const dnsmasqSettingsChanged = [
+    interfaces,
+    dns_enabled,
+    dhcp_enabled,
+    dns_listen_port,
+    ipv6_enabled,
+  ].some((value) => value !== undefined);
 
   // Validate the dnsmasq output inside the same transaction as the settings
   // it reflects. A validation or filesystem failure restores both the old
@@ -219,6 +233,9 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
           'http_redirect_enabled',
           http_redirect_enabled ? 'true' : 'false',
         );
+      }
+      if (ipv6_enabled !== undefined) {
+        Setting.upsertSettingWithConflict(db, 'ipv6_enabled', ipv6_enabled ? 'true' : 'false');
       }
       return dnsmasqSettingsChanged
         ? withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db))
@@ -301,6 +318,7 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     https_port: httpsPortNum,
     http_port: httpPortNum,
     http_redirect_enabled,
+    ipv6_enabled,
   });
 
   res.json({
@@ -308,6 +326,7 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     dnsmasq: dnsmasqStatus,
     web_ports: getWebPortInfo(),
     port_changes,
+    ipv6_enabled: ipv6Enabled(),
   });
 });
 

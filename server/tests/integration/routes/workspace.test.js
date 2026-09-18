@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import request from 'supertest';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 import workspaceRouter from '../../../src/routes/workspace.js';
 import dnsRouter from '../../../src/routes/dns.js';
@@ -32,6 +32,7 @@ function addSubnet(cidr, name, network, broadcast, domainName, folder) {
 
 beforeAll(async () => {
   ({ db, tmpDir } = await setupTestDb());
+  enableIpv6(db);
   folderId = Number(
     db.prepare("INSERT INTO folders (name) VALUES ('Branch offices')").run().lastInsertRowid,
   );

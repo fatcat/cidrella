@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
 // Mock dns-proxy so we control getProxyStatus return values
@@ -31,6 +31,7 @@ let app;
 
 beforeAll(async () => {
   const setup = await setupTestDb();
+  enableIpv6(setup.db);
   tmpDir = setup.tmpDir;
   db = setup.db;
   app = createTestApp(metricsRouter, '/api/metrics');

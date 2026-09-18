@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
 // blocklist.js pulls in dnsmasq + dns-proxy side effects and writes conf files.
@@ -27,6 +27,7 @@ let tmpDir, app;
 
 beforeAll(async () => {
   const s = await setupTestDb();
+  enableIpv6(s.db);
   tmpDir = s.tmpDir;
   app = createTestApp(blocklistsRouter, '/api/blocklists');
 });

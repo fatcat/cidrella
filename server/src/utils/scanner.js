@@ -8,6 +8,7 @@ import { observeIpv6Presence } from '../services/ip-lifecycle-service.js';
 import { ipv6DiscoveryPolicy } from '../models/dhcp-scope.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
+import { ipv6Enabled, IPV6_DISABLED_ERROR } from './ipv6-support.js';
 import { observeScanResult, reconcileScanRogues } from '../services/ip-lifecycle-service.js';
 import * as ScanRun from '../models/scan-run.js';
 
@@ -80,7 +81,9 @@ async function probeIp(ip) {
 function interfacesOnNetwork(parsed) {
   const names = [];
   for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
-    if ((addrs || []).some((a) => a.family === 'IPv6' && parsedNetworkContains(parsed, a.address))) {
+    if (
+      (addrs || []).some((a) => a.family === 'IPv6' && parsedNetworkContains(parsed, a.address))
+    ) {
       names.push(name);
     }
   }
@@ -158,6 +161,10 @@ export async function startScan(db, scanId, subnetId, options = {}) {
 
   const probeMethods = new Map();
   const parsed = parseNetwork(subnet.cidr);
+  if (parsed.family === 6 && !ipv6Enabled()) {
+    ScanRun.markFailed(db, scanId, IPV6_DISABLED_ERROR);
+    throw new Error(IPV6_DISABLED_ERROR);
+  }
 
   console.log(
     parsed.family === 6

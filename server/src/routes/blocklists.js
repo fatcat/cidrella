@@ -12,6 +12,7 @@ import {
 import { validateOutboundUrl } from '../utils/url-guard.js';
 import { isValidIpv4, isValidDomain, isValidAddress } from '../utils/ip.js';
 import { addressFamily, canonicalizeIp } from '../utils/address.js';
+import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { isIntInRangeCoercing } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
@@ -250,6 +251,8 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
       .json({ error: 'blocklist_redirect_ip6 must be a valid IPv6 address or empty' });
   }
   if (typeof req.body.blocklist_redirect_ip6 === 'string' && req.body.blocklist_redirect_ip6) {
+    // Setting a sinkhole is creating an IPv6 object; clearing it is not.
+    if (refuseIpv6Unless(res)) return;
     req.body.blocklist_redirect_ip6 = canonicalizeIp(req.body.blocklist_redirect_ip6);
   }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
 // The evidence endpoint reads DuckDB, which no test fixture stands up. Stub
@@ -49,6 +49,7 @@ function insertAnomaly(ip, severity = 'medium') {
 
 beforeAll(async () => {
   const setup = await setupTestDb();
+  enableIpv6(setup.db);
   tmpDir = setup.tmpDir;
   db = setup.db;
   app = createTestApp(anomalyRouter, '/api/anomalies');

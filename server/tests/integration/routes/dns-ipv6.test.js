@@ -3,7 +3,7 @@
  * same static DNS lifecycle as A records on an IPv6 network.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
 vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
@@ -38,6 +38,7 @@ let forwardZoneId;
 
 beforeAll(async () => {
   const setup = await setupTestDb();
+  enableIpv6(setup.db);
   tmpDir = setup.tmpDir;
   db = setup.db;
   app = createMultiRouterApp([
