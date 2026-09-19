@@ -12,10 +12,20 @@ import { looksLikeApiToken, resolveApiToken } from './tokens.js';
 // + dns:read permission). Skipping the global middleware here lets the
 // route handler's ticket validation actually run, without this exemption
 // the SSE GET is rejected at the middleware before the ticket is ever read.
-const PUBLIC_PATHS = ['/api/auth/login', '/api/health', '/api/health/deep', '/api/logs/stream'];
+const PUBLIC_PATHS = [
+  '/api/auth/login',
+  '/api/auth/login/totp',
+  '/api/health',
+  '/api/health/deep',
+  '/api/logs/stream',
+];
 
-// Paths allowed when must_change_password is true
-const PASSWORD_CHANGE_PATHS = ['/api/auth/change-password', '/api/auth/me'];
+// Paths allowed when must_change_password is true. The first-run wizard's
+// password step runs before the password has been changed and needs the
+// setup state: the step markers, the password policy, and the switch that
+// makes complexity optional. Those are markers and one setting, nothing the
+// gate exists to protect, and the PUT still needs system:write.
+const PASSWORD_CHANGE_PATHS = ['/api/auth/change-password', '/api/auth/me', '/api/setup/state'];
 
 // Cached JWT secret, loaded on first use, cleared on key rotation
 let _cachedJwtSecret = null;
@@ -80,6 +90,12 @@ export function authMiddleware(req, res, next) {
     // asymmetric alg). Not exploitable with our symmetric secret, but this
     // closes the class outright rather than relying on the secret's shape.
     const decoded = jwt.verify(token, secret, { algorithms: ['HS256'] });
+
+    // A two-factor challenge is signed with the same secret but carries a
+    // purpose. It is a receipt for the password, never a session.
+    if (decoded.purpose) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
 
     // Re-validate user from DB to catch deletions/role changes
     const user = db

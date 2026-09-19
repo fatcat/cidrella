@@ -217,10 +217,23 @@ detector kinds and DUID/MAC identities on the rogue page, an IPv6 sinkhole field
 the switch gates listeners, scope config, the IPv6 detectors, scan scheduling and creation
 (`utils/ipv6-support.js`, `ipv6-gate` route suite). Classic views only stop crashing.
 
-**Deferred from this pass:** a DHCPv6 option catalog (v6 scopes use the scope columns), a
-grid presentation for IPv6 (would need gap markers and a redesigned ruler), full IPv6 support
-in the classic views (slated for removal), and the DHCP leases table columns for DUID/IAID
-default to hidden.
+**DHCPv6 option catalog landed 2026-09-19** (no migration: 072 already keyed the option tables
+by family). `DHCP6_OPTIONS` in `utils/dhcp-options.js` with `optionCatalogFor(family)`; the
+option model, `insertScopeOptionsFromDefaults`, `resolveEffectiveScopeOptions` and the routes
+(`GET /dhcp/options?family=`, `PUT /options/defaults {family}`, custom options with
+`address_family`) all take a family and default to 4. Seeded IPv6 defaults: 23 and 24 enabled
+without a value (server address on the network, network domain). The scope columns
+`dns_servers`/`domain_search`/`ntp_servers` still work for IPv6 as a layer under the option
+rows. Settings > DHCP has "Scopes & Leases IPv4" and "Scopes & Leases IPv6" (one `DHCP.vue`
+with a `family` prop; the sub-tab carries `props` and `feature: 'ipv6'`, so the shells bind
+props and hide feature-gated tabs). Custom IPv6 codes: 1-65535 minus dnsmasq's internal set.
+Found on the way: custom IPv4 options were never emitted to dnsmasq (the writer only knew the
+catalog); both families now pass custom types through.
+
+**Still deferred:** a grid presentation for IPv6 (would need gap markers and a redesigned
+ruler), full IPv6 support in the classic views (out of scope, classic stays for a while), and
+the DHCP leases table columns for DUID/IAID default to hidden. No IPv6 NTP default is baked
+(the bundled pool is IPv4 literals).
 
 ## Deferred design work
 
@@ -435,10 +448,14 @@ so P8 was a verification pass on safe fixtures plus two fixes:
   the empty cell with an Unknown dot, the popover says Unavailable/Unknown) instead of CPU 0%
   and a healthy dot; a stale good reading is dropped on the next failed poll
   (`client/tests/unit/components/HeaderBarHealth.test.js`, mutation-checked).
-- S-18 finding: `SetupWizard.vue` has had no route since v0.4.0 (`ac734e2`); a fresh database
+- ~~S-18 finding: `SetupWizard.vue` has had no route since v0.4.0 (`ac734e2`); a fresh database
   seeds the admin, so `/api/setup/status` always answers `setup_required: false` and the
   wizard can never show. First run is login, forced password change, then the workspace. The
-  file is dead code and is left for the classic-file removal follow-up.
+  file is dead code and is left for the classic-file removal follow-up.~~ [FIXED] 2026-09-19:
+  replaced by the four-step first run (`views/FirstRun.vue`, `components/first-run/`,
+  `stores/setup.js`, `/api/setup/state`, migration 074). The classic network wizard in
+  `NetworkDialogs.vue` is untouched; the first run sets `setup_wizard_completed` so it never
+  auto-opens on the classic view afterwards.
 - G-02 unchanged: login redirect sanitizing and last-view landing are covered by
   `client/tests/unit/utils/landing.test.js`; the workspace URLs pass through it.
 
@@ -456,7 +473,7 @@ so P8 was a verification pass on safe fixtures plus two fixes:
   anomaly data; the dev box only has learning-baseline clients, so the current view shows
   nothing to judge by. Screenshots of both as of today: `screenshots/p9-anomalies-*.png`.
   Element inventory of each is in the session notes of that date.
-- Setup wizard revival is a user want for later, recorded in TODO.md, not part of P9.
+- ~~Setup wizard revival is a user want for later, recorded in TODO.md, not part of P9.~~ [FIXED] landed 2026-09-19.
 
 ### ~~Canonical Network/DHCP transformations~~ [FIXED]
 
@@ -561,6 +578,16 @@ restore is to recover from a broken install.
    standalone `backup.sh` must either update that table via the sqlite3 CLI (simpler, but adds a
    second DB writer outside the node process, so mind WAL conflicts) or write a sentinel the server
    syncs on next startup (decoupled).
+
+8. **Ask about DHCP, the way the UI does (added 2026-09-19).** The web restore requires the
+   operator to choose whether the appliance serves DHCP after the restart and stamps
+   `dhcp_enabled` into the staged database before the swap (`stampRestoredSettings` in
+   `utils/backup.js`, `?dhcp=enabled|disabled` on the route). `restore.sh` must do the same:
+   prompt on a TTY, or take `--dhcp enabled|disabled` (and refuse to guess without a TTY), and
+   write the same `settings` row with sqlite3 before moving files into place. A restored copy of
+   another appliance must never come up serving that appliance's pools. The same helper also
+   inserts the restore's `audit_log` row into the staged database (the running database's row
+   is replaced by the restore), so `restore.sh` must write one too, attributed by username.
 
 ### Dependency removal transition safety
 

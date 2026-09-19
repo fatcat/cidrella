@@ -197,6 +197,96 @@ describe('IP lifecycle service allocation boundary', () => {
     });
   });
 
+  it('drops the lease name at once when the lease lapses while the host is online', () => {
+    createDynamicScope();
+    const lease = {
+      ip: '10.99.0.24',
+      mac: 'aa:bb:cc:dd:ee:24',
+      hostname: 'still-here',
+      clientId: null,
+      expiresAt: 'infinite',
+      subnetId,
+      observedActivity: true,
+    };
+    db.prepare(
+      'INSERT INTO dhcp_leases (subnet_id, ip_address, mac_address, hostname, expires_at) VALUES (?, ?, ?, ?, ?)',
+    ).run(subnetId, lease.ip, lease.mac, lease.hostname, lease.expiresAt);
+    observeDhcpLeases(db, [lease]);
+    expect(address(lease.ip)).toMatchObject({ hostname: 'still-here', is_online: 1 });
+
+    db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ? AND ip_address = ?').run(
+      subnetId,
+      lease.ip,
+    );
+    observeDhcpLeases(db, []);
+    expect(address(lease.ip)).toMatchObject({
+      allocation_state: 'unassigned',
+      hostname: null,
+      detection_source: null,
+      mac_address: lease.mac,
+    });
+  });
+
+  it('keeps the lease name for an absent host and drops it when the host returns as a rogue', () => {
+    createDynamicScope();
+    const lease = {
+      ip: '10.99.0.25',
+      mac: 'aa:bb:cc:dd:ee:25',
+      hostname: 'went-quiet',
+      clientId: null,
+      expiresAt: 'infinite',
+      subnetId,
+      observedActivity: false,
+    };
+    db.prepare(
+      'INSERT INTO dhcp_leases (subnet_id, ip_address, mac_address, hostname, expires_at) VALUES (?, ?, ?, ?, ?)',
+    ).run(subnetId, lease.ip, lease.mac, lease.hostname, lease.expiresAt);
+    observeDhcpLeases(db, [lease]);
+    expect(address(lease.ip)).toMatchObject({ hostname: 'went-quiet', is_online: 0 });
+
+    // Offline when the lease lapses: the retention window keeps the name.
+    db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ? AND ip_address = ?').run(
+      subnetId,
+      lease.ip,
+    );
+    observeDhcpLeases(db, []);
+    expect(address(lease.ip)).toMatchObject({
+      allocation_state: 'unassigned',
+      hostname: 'went-quiet',
+      detection_source: 'dhcp_lease',
+    });
+
+    // Back online without a lease: a rogue, and the retained name goes.
+    observeScanResult(db, subnetId, lease.ip, {
+      responded: true,
+      mac: lease.mac,
+      isConflict: 1,
+      conflictReason: 'Rogue device (IP not assigned)',
+    });
+    expect(address(lease.ip)).toMatchObject({
+      is_rogue: 1,
+      is_online: 1,
+      hostname: null,
+      detection_source: 'scanner',
+      mac_address: lease.mac,
+    });
+  });
+
+  it('leaves a rogue name alone when it did not come from a lease', () => {
+    const ip = '10.99.0.26';
+    db.prepare(
+      `INSERT INTO ip_addresses (subnet_id, ip_address, hostname, detection_source, allocation_state)
+       VALUES (?, ?, 'named-by-scan', 'scanner', 'unassigned')`,
+    ).run(subnetId, ip);
+    observeScanResult(db, subnetId, ip, {
+      responded: true,
+      mac: 'aa:bb:cc:dd:ee:26',
+      isConflict: 1,
+      conflictReason: 'Rogue device (IP not assigned)',
+    });
+    expect(address(ip)).toMatchObject({ is_rogue: 1, hostname: 'named-by-scan' });
+  });
+
   it('rejects dynamic leases outside pools and on reserved addresses', () => {
     createDynamicScope();
     expect(
@@ -643,7 +733,9 @@ describe('IPv6 topology protection', () => {
     setManualReservation(db, v6, 'fd00:9::ffff:ffff:ffff:ffff', true);
     expect(
       db
-        .prepare("SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = 'fd00:9::ffff:ffff:ffff:ffff'")
+        .prepare(
+          "SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = 'fd00:9::ffff:ffff:ffff:ffff'",
+        )
         .get(v6).allocation_state,
     ).toBe('reserved');
     db.prepare('DELETE FROM subnets WHERE id = ?').run(v6);

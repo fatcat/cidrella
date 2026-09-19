@@ -818,6 +818,13 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       params.push(effectiveConflict ? 1 : 0);
       updates.push('rogue_reason = ?');
       params.push(effectiveConflict ? effectiveReason : null);
+      // A rogue has no lease, so a name the row still carries from one is the
+      // offline retention window outliving the absence it was meant for. The
+      // device's own name remains as DHCP fingerprint evidence.
+      if (effectiveConflict && existing.detection_source === 'dhcp_lease') {
+        updates.push('hostname = NULL');
+        updates.push("detection_source = 'scanner'");
+      }
     } else {
       updates.push('is_rogue = 0');
       updates.push('rogue_reason = NULL');

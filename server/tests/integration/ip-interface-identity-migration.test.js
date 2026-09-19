@@ -108,7 +108,7 @@ describe('migrations 057-059 canonical IP identity', () => {
       source: 'manual',
     });
     expect(db.pragma('foreign_key_check')).toEqual([]);
-    expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(73);
+    expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(75);
     expect(
       db
         .prepare('PRAGMA table_info(ip_addresses)')

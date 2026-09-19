@@ -1042,7 +1042,10 @@ onMounted(async () => {
   const [, settings] = await Promise.all([store.fetchTree(), loadSettings()]);
 
   // Auto-trigger first-time wizard if no networks exist and wizard not completed
-  if (store.subnetCount === 0 && settings?.setup_wizard_completed !== '1') {
+  // The settings route stores this flag as 'true'/'false' (the wizard here
+  // wrote '1', which the validator refused, so the flag never stuck); the
+  // first-run wizard writes 'true'. Accept both spellings.
+  if (store.subnetCount === 0 && !['1', 'true'].includes(settings?.setup_wizard_completed)) {
     dialogs.value?.openWizard();
   }
 

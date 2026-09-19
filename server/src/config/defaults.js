@@ -54,6 +54,8 @@ export const DEFAULTS = {
   backup_retention_count: '7',
   installation_complete: 'false',
   setup_wizard_completed: '0',
+  setup_state: '{"done":false}',
+  password_complexity: 'true',
   audit_log_retention_days: 7,
   geoip_enabled: 'false',
   geoip_mode: 'blocklist',

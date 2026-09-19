@@ -5,6 +5,10 @@
 // lazy-loading the old System.vue had). Optional per-sub-tab hatches:
 //   keepAlive: true    keep the panel mounted across sub-tab switches (form-heavy
 //                      panels with unsaved edits); pair with onActivated refresh.
+//   props              bound onto the component, so one editor can serve two
+//                      sub-tabs (the DHCP defaults editor takes a family).
+//   feature            name of a switch from useFeatures(); the sub-tab is
+//                      listed only while that switch is on.
 //   onEnter           reserved for imperative load-on-enter (e.g. audit log).
 //   badge             () => string|number for a live count chip (reserved).
 
@@ -74,9 +78,19 @@ export const SETTINGS_AREAS = [
     subtabs: [
       {
         id: 'scopes',
-        label: 'Scopes & Leases',
+        label: 'Scopes & Leases IPv4',
         dataTrack: 'settings-sec-dhcp',
         fill: true,
+        props: { family: 4 },
+        component: defineAsyncComponent(() => import('../views/DHCP.vue')),
+      },
+      {
+        id: 'scopes-v6',
+        label: 'Scopes & Leases IPv6',
+        dataTrack: 'settings-sec-dhcp-v6',
+        fill: true,
+        feature: 'ipv6',
+        props: { family: 6 },
         component: defineAsyncComponent(() => import('../views/DHCP.vue')),
       },
       {
@@ -150,7 +164,7 @@ export const SETTINGS_AREAS = [
     label: 'Access',
     icon: 'pi pi-lock',
     group: 'System',
-    blurb: 'Users & roles, TLS certificate',
+    blurb: 'Users & roles, two-factor, TLS certificate',
     dataTrack: 'settings-area-access',
     subtabs: [
       {
@@ -159,6 +173,12 @@ export const SETTINGS_AREAS = [
         dataTrack: 'settings-sec-users',
         fill: true,
         component: defineAsyncComponent(() => import('../views/Users.vue')),
+      },
+      {
+        id: 'two-factor',
+        label: 'Two-factor',
+        dataTrack: 'settings-sec-two-factor',
+        component: defineAsyncComponent(() => import('../views/settings/TwoFactorSettings.vue')),
       },
       {
         id: 'certificate',

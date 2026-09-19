@@ -20,7 +20,7 @@ import {
 } from './ip.js';
 import { addressFamily, isValidIpv6 } from './address.js';
 import { findSubnetForIp } from './ip-sync.js';
-import { DHCP_OPTIONS_BY_CODE } from './dhcp-options.js';
+import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
 import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
@@ -86,6 +86,7 @@ function generateScopeConfig(
   scopeOptions,
   excludedIps = [],
   suppressRouter = false,
+  customTypes = new Map(),
 ) {
   const tag = `scope${scope.id}`;
   const lines = [];
@@ -176,24 +177,37 @@ function generateScopeConfig(
   // safer than crashing the whole regen; a bad row from a pre-v0.4.15
   // install won't be honored, but the scope still comes up.
   for (const [code, value] of mergedOptions) {
-    const optDef = DHCP_OPTIONS_BY_CODE[code];
-    if (!optDef || !value) continue;
-    let emitValue = String(value);
-    if (optDef.type === 'ip' || optDef.type === 'ip-list') {
-      const parts = emitValue.split(',').map((s) => s.trim());
-      const resolved = parts.map((p) => resolveToIp(p)).filter(Boolean);
-      if (resolved.length === 0) continue; // all failed to resolve
-      emitValue = resolved.join(',');
-      if (validateDnsmasqConfigValue(emitValue, { allowComma: true }) != null) continue;
-    } else if (optDef.type === 'text-list') {
-      if (validateDnsmasqConfigValue(emitValue, { allowComma: true }) != null) continue;
-    } else {
-      if (validateDnsmasqConfigValue(emitValue) != null) continue;
-    }
+    // A custom option (dhcp_custom_options) has no catalog entry; its type
+    // comes from the row. Unknown codes are skipped, as before.
+    const type = DHCP_OPTIONS_BY_CODE[code]?.type || customTypes.get(Number(code));
+    if (!type || !value) continue;
+    const emitValue = renderOptionValue(String(value), type, 4);
+    if (emitValue == null) continue;
     lines.push(`dhcp-option=tag:${tag},${code},${emitValue}`);
   }
 
   return lines.join('\n') + '\n';
+}
+
+/**
+ * One option value as dnsmasq wants it, or null when nothing safe can be
+ * written. Address types resolve hostnames in the family and, for IPv6, take
+ * the bracketed form option6 values require. List types may contain commas;
+ * everything is run through the directive-injection guard.
+ */
+function renderOptionValue(value, type, family) {
+  if (type === 'ip' || type === 'ip-list') {
+    const parts = value.split(',').map((s) => s.trim());
+    const resolved = parts.map((p) => resolveToIp(p, family)).filter(Boolean);
+    if (resolved.length === 0) return null;
+    const rendered = family === 6 ? resolved.map((ip) => `[${ip}]`) : resolved;
+    const joined = rendered.join(',');
+    return validateDnsmasqConfigValue(joined, { allowComma: true }) == null ? joined : null;
+  }
+  if (type === 'text-list') {
+    return validateDnsmasqConfigValue(value, { allowComma: true }) == null ? value : null;
+  }
+  return validateDnsmasqConfigValue(value) == null ? value : null;
 }
 
 // IPv6 pool segments, reserved addresses carved out, as [start, end] BigInts.
@@ -218,33 +232,26 @@ function dynamicRangeSegmentsV6(scope, excludedIps) {
   return segments;
 }
 
-// A JSON list of addresses from a scope column, filtered to one family and
-// rendered in the bracketed form option6 values take. Hostnames resolve
-// through the same cache as the IPv4 options.
-function option6AddressList(json, family = 6) {
-  if (!json) return null;
-  let values;
-  try {
-    values = JSON.parse(json);
-  } catch {
-    return null;
-  }
-  if (!Array.isArray(values)) return null;
-  const resolved = values
-    .map((value) => resolveToIp(String(value).trim(), family))
-    .filter(Boolean)
-    .filter((ip) => validateDnsmasqConfigValue(ip) == null);
-  return resolved.length ? resolved.map((ip) => `[${ip}]`).join(',') : null;
-}
-
 /**
  * dnsmasq config for one DHCPv6 scope. The mode decides what dnsmasq does on
  * the link: `slaac` sends Router Advertisements only, `stateless` adds a
  * stateless DHCPv6 service for options, `stateful` hands out addresses from
  * the pool. Routers are never an option: clients learn them from the RA.
+ *
+ * `scopeOptions` is the effective list from resolveEffectiveScopeOptions
+ * (global IPv6 defaults, the scope's own rows, legacy columns and the
+ * network domain already merged). Each is written through the IPv6 catalog
+ * as `option6:<name>`; a custom code is written by number with the type from
+ * its dhcp_custom_options row; dnsmasq's internal codes are never written.
  */
-export function generateScopeConfigV6(scope, excludedIps = []) {
+export function generateScopeConfigV6(
+  scope,
+  scopeOptions = [],
+  excludedIps = [],
+  customTypes = new Map(),
+) {
   const tag = `scope${scope.id}`;
+  const catalog = optionCatalogFor(6);
   const parsed = parseNetwork(scope.subnet_cidr);
   const mode = scope.v6_mode || 'stateful';
   const lines = [`# DHCPv6 scope for ${scope.subnet_cidr} (${mode})`, 'enable-ra'];
@@ -266,18 +273,27 @@ export function generateScopeConfigV6(scope, excludedIps = []) {
   // would never be sent.
   if (mode === 'slaac') return lines.join('\n') + '\n';
 
-  const dnsServers =
-    option6AddressList(scope.dns_servers) ||
-    (getServerIpForSubnet(scope.subnet_cidr)
-      ? `[${getServerIpForSubnet(scope.subnet_cidr)}]`
-      : null);
-  if (dnsServers) lines.push(`dhcp-option=tag:${tag},option6:dns-server,${dnsServers}`);
-  const search = scope.domain_search || scope.domain_name || scope.subnet_domain_name;
-  if (search && validateDnsmasqConfigValue(search, { allowComma: true }) == null) {
-    lines.push(`dhcp-option=tag:${tag},option6:domain-search,${search}`);
+  const merged = new Map();
+  for (const opt of scopeOptions) {
+    const code = Number(opt.option_code ?? opt.code);
+    if (opt.value != null && opt.value !== '') merged.set(code, String(opt.value));
   }
-  const ntp = option6AddressList(scope.ntp_servers);
-  if (ntp) lines.push(`dhcp-option=tag:${tag},option6:ntp-server,${ntp}`);
+  // No DNS Servers value anywhere: CIDRella's own address on the network,
+  // the same fallback the IPv4 path bakes into its default.
+  if (!merged.has(23)) {
+    const serverIp = getServerIpForSubnet(scope.subnet_cidr);
+    if (serverIp) merged.set(23, serverIp);
+  }
+
+  for (const [code, value] of [...merged].sort((a, b) => a[0] - b[0])) {
+    if (catalog.internalCodes.has(code)) continue;
+    const optDef = catalog.byCode[code];
+    const type = optDef?.type || customTypes.get(code);
+    if (!type) continue;
+    const emitValue = renderOptionValue(value, type, 6);
+    if (emitValue == null) continue;
+    lines.push(`dhcp-option=tag:${tag},${optDef?.dnsmasqName || `option6:${code}`},${emitValue}`);
+  }
 
   return lines.join('\n') + '\n';
 }
@@ -321,6 +337,14 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
   const activeIds = new Set();
   let changed = false;
 
+  // Custom option types by family, so a user-defined code can be written.
+  const customTypes = { 4: new Map(), 6: new Map() };
+  for (const row of db
+    .prepare('SELECT code, type, address_family FROM dhcp_custom_options')
+    .all()) {
+    customTypes[row.address_family === 6 ? 6 : 4].set(Number(row.code), row.type || 'text');
+  }
+
   // With IPv6 support off a v6 scope is left out of dnsmasq entirely (no
   // enable-ra, no v6 dhcp-range); its stale conf file is removed below with
   // the other inactive ones. The scope row itself is untouched.
@@ -344,13 +368,19 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
     scope.lease_time = effective.lease_time;
     const newContent =
       parsed.family === 6
-        ? generateScopeConfigV6(scope, reservedBySubnet.get(scope.subnet_id) || [])
+        ? generateScopeConfigV6(
+            scope,
+            effective.options,
+            reservedBySubnet.get(scope.subnet_id) || [],
+            customTypes[6],
+          )
         : generateScopeConfig(
             scope,
             {},
             effective.options,
             reservedBySubnet.get(scope.subnet_id) || [],
             effective.router_suppressed,
+            customTypes[4],
           );
 
     let oldContent = '';

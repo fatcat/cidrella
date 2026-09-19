@@ -11,7 +11,7 @@ const LAST_VIEW_KEY = 'cidrella_last_view';
 
 // Routes that are a means to an end, never a place to come back to. Landing on
 // the login form after logging in, or on a 404, is worse than the default.
-const NON_LANDING = new Set(['Login', 'ChangePassword', 'NotFound']);
+const NON_LANDING = new Set(['Login', 'ChangePassword', 'FirstRun', 'NotFound']);
 
 /**
  * Reject anything that is not a plain in-app path.

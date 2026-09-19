@@ -101,6 +101,34 @@ DISCOVER), `dhcpv6` (a DHCPv6 server answered a SOLICIT, identified by
 `advertised_prefixes`). The allowlist trusts a server by `server_ip` of either
 family, `server_mac`, or `server_duid`.
 
+### DHCP option defaults by family
+
+DHCPv4 and DHCPv6 option codes are separate namespaces (v4 23 is the default
+TTL, v6 23 is the DNS server list), so `dhcp_option_defaults`,
+`dhcp_scope_options` and `dhcp_custom_options` are keyed by
+`(address_family, code)` and every option endpoint takes a family, IPv4 when
+omitted so pre-IPv6 callers are unchanged:
+
+| Endpoint | Family |
+| --- | --- |
+| `GET /api/dhcp/options?family=4\|6` | Catalog, defaults, `enabledDefaults`, custom options and `customRange` for that family. |
+| `PUT /api/dhcp/options/defaults` | Body `{ family, options, enabledDefaults }`; replaces only that family's rows. |
+| `POST /api/dhcp/options/custom` | Body `address_family`; codes 128-254 for IPv4, 1-65535 for IPv6 minus the codes dnsmasq builds itself (1-7, 12-17, 39). |
+| `DELETE /api/dhcp/options/custom/:code?family=` | Deletes the option, its default and its scope values within that family. |
+
+Scope `options` on `POST`/`PUT /api/dhcp/scopes` are validated against the
+network's family. The IPv6 catalog (`DHCP6_OPTIONS`) is written to dnsmasq as
+`option6:<name>` lines with bracketed addresses; a custom IPv6 code is written
+as `option6:<code>`. Startup seeds two IPv6 defaults, DNS servers (23) and the
+search list (24), enabled without a value: a new IPv6 scope inherits the
+enabled defaults and fills 23 with CIDRella's IPv6 address on the network and
+24 with the network's domain, the IPv6 twin of what IPv4 does with 1, 3, 6, 15,
+28 and 119. Routers, prefixes and lifetimes are never options in DHCPv6. The
+`dhcp_scopes` columns `dns_servers`, `domain_search` and `ntp_servers` remain
+a valid way to set 23, 24 and 56 on an IPv6 scope and sit between the global
+defaults and the scope's own option rows. Lease time stays one shared setting,
+`default_lease_time`.
+
 ### The IPv6 switch
 
 `ipv6_enabled` (default `false` on new installs and upgrades) is persisted and

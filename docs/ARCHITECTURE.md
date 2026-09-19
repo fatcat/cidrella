@@ -109,8 +109,13 @@ or `gateway` address takes its name from static DNS. A `static_dhcp`
 address takes its DHCP Reservation name, and a `dynamic_dhcp` address takes its
 DHCP Lease name. An address without a protocol-owned allocation may retain
 learned naming metadata during its retirement window; ties resolve as static
-DNS, DHCP Reservation, then DHCP Lease. This selection changes naming only and
-never changes `allocation_state`.
+DNS, DHCP Reservation, then DHCP Lease. That window is the offline one: a lease
+name outlives its lease only while the host is absent. An address that is
+online with no owner (a rogue) drops its lease name at once, whether the lease
+lapsed while the host was up or the host reappeared still carrying a retained
+name; what the device calls itself stays available as DHCP fingerprint
+evidence, keyed by MAC. This selection changes naming only and never changes
+`allocation_state`.
 
 The executable vocabulary, allowed state transitions, and canonical hostname
 selector live in `server/src/models/ip-lifecycle.js`. Normalized protocol

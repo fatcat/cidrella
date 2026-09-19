@@ -54,6 +54,7 @@ export {
   isValidAddress,
 } from '@shared/cidr.js';
 export { sortKey, addressFamily, isValidIp, isValidIpv6, canonicalizeIp } from '@shared/address.js';
+export { isValidDomain } from '@shared/ip.js';
 
 /**
  * Dotted-quad netmask for a prefix length.

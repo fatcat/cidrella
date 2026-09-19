@@ -15,6 +15,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import express from 'express';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import bcrypt from 'bcryptjs';
 import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
 import { createTestApp, createMultiRouterApp } from '../helpers/test-app.js';
@@ -129,23 +131,33 @@ describe('C1: bcrypt crash DoS, non-string password/username rejected with 400',
 // H1, Unauthenticated setup takeover
 // -----------------------------------------------------------------------------
 
-describe('H1: setup is closed once any user exists', () => {
-  it('GET /api/setup/status returns setup_required:false when users exist', async () => {
-    const res = await request(noAuthApp).get('/api/setup/status');
-    expect(res.status).toBe(200);
-    expect(res.body.setup_required).toBe(false);
-  });
-
-  it('POST /api/setup returns 409 when users exist', async () => {
+// The pre-auth account wizard (POST /api/setup) is gone as of v0.5.0. What
+// remains under /api/setup is first-run step state, mounted behind auth. The
+// pre-auth app here has no auth middleware, so "not reachable pre-auth" is
+// asserted as "no such route": nothing under /api/setup answers without a
+// user, and the old account-creation surface is not there to answer at all.
+describe('H1: no pre-auth setup surface', () => {
+  it('POST /api/setup no longer exists', async () => {
     const res = await request(noAuthApp)
       .post('/api/setup')
       .send({ username: 'pwn', password: 'Pwnd123!' });
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(404);
   });
 
-  it('POST /api/setup with {skip:true} returns 409 when users exist', async () => {
-    const res = await request(noAuthApp).post('/api/setup').send({ skip: true });
-    expect(res.status).toBe(409);
+  it('GET /api/setup/status no longer exists', async () => {
+    const res = await request(noAuthApp).get('/api/setup/status');
+    expect(res.status).toBe(404);
+  });
+
+  it('setup state is behind the auth middleware in the real mount order', () => {
+    const src = fs.readFileSync(
+      fileURLToPath(new URL('../../src/index.js', import.meta.url)),
+      'utf8',
+    );
+    const authAt = src.indexOf('app.use(authMiddleware)');
+    const setupAt = src.indexOf("app.use('/api/setup'");
+    expect(authAt).toBeGreaterThan(-1);
+    expect(setupAt).toBeGreaterThan(authAt);
   });
 });
 

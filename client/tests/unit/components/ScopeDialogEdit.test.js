@@ -67,6 +67,9 @@ function mountDialog() {
 
 const saveButton = (wrapper) =>
   wrapper.findAll('button').find((button) => ['Save', 'Create Scope'].includes(button.text()));
+// The scope form's own inputs, without the option rows' checkboxes and values.
+const formInputs = (wrapper) =>
+  wrapper.findAll('input').filter((input) => !input.element.closest('.scope-options-section'));
 
 beforeEach(() => {
   for (const fn of [
@@ -78,10 +81,25 @@ beforeEach(() => {
     api.post,
   ])
     fn.mockReset();
-  api.get.mockImplementation((url) => {
+  api.get.mockImplementation((url, config) => {
+    if (url === '/dhcp/options' && config?.params?.family === 6)
+      return Promise.resolve({
+        data: {
+          family: 6,
+          catalog: [
+            { code: 23, label: 'DNS Servers', type: 'ip-list', group: 'Common' },
+            { code: 24, label: 'Domain Search List', type: 'text-list', group: 'Common' },
+            { code: 56, label: 'NTP Servers', type: 'ip-list', group: 'Common' },
+          ],
+          groups: [{ name: 'Common', label: 'Common' }],
+          defaults: { 56: 'fd00::123' },
+          enabledDefaults: [23, 24, 56],
+        },
+      });
     if (url === '/dhcp/options')
       return Promise.resolve({
         data: {
+          family: 4,
           catalog: [
             { code: 3, label: 'Router', type: 'ip', group: 'Common' },
             { code: 51, label: 'Lease time', type: 'number', group: 'Common' },
@@ -183,6 +201,7 @@ describe('ScopeDialog on an IPv6 network', () => {
     range_id: 6,
     subnet_cidr: 'fd00:1234::/64',
     subnet_gateway: 'fd00:1234::1',
+    subnet_domain_name: 'six.test',
     address_family: 6,
     v6_mode: 'stateless',
     start_ip: 'fd00:1234::1',
@@ -199,16 +218,31 @@ describe('ScopeDialog on an IPv6 network', () => {
     await flushPromises();
     expect(wrapper.find('[data-track="scope-v6-mode"]').exists()).toBe(true);
     expect(wrapper.vm.form.v6_mode).toBe('stateless');
-    // Description only: no Start/End for a stateless scope, and no DHCPv4 options block.
-    expect(wrapper.findAll('input').length).toBe(1);
-    expect(wrapper.text()).not.toContain('DHCP Options');
+    // Description only: no Start/End for a stateless scope. The options block
+    // is the IPv6 catalog, fetched by family, with no DHCPv4 code in it.
+    expect(formInputs(wrapper).length).toBe(1);
+    expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 6 } });
+    wrapper.vm.optionsExpanded = true;
+    await flushPromises();
+    const codes = wrapper.findAll('.scope-option-code').map((node) => node.text());
+    expect(codes).toEqual(['(23)', '(24)', '(56)']);
     expect(wrapper.vm.form.optionValues[3]).toBeUndefined();
+    expect(wrapper.vm.form.optionValues[1]).toBeUndefined();
+    // On edit, a default is preselected only when it carries a value (as for
+    // IPv4): the NTP default, then the search list from the network's domain.
+    // DNS Servers (23) stays unselected because this scope has no server_ip.
+    expect(wrapper.vm.form.selectedOptions).toEqual([56, 24]);
+    expect(wrapper.vm.form.optionValues[56]).toBe('fd00::123');
+    expect(wrapper.vm.form.optionValues[24]).toBe('six.test');
 
     await saveButton(wrapper).trigger('click');
     await flushPromises();
     const [, payload] = dhcpStore.updateScope.mock.calls[0];
     expect(payload.v6_mode).toBe('stateless');
-    expect(payload.options).toEqual([]);
+    expect(payload.options).toEqual([
+      { code: 56, value: 'fd00::123' },
+      { code: 24, value: 'six.test' },
+    ]);
   });
 
   it('shows the pool again for a stateful scope', async () => {
@@ -221,7 +255,7 @@ describe('ScopeDialog on an IPv6 network', () => {
       pools: [{ start_ip: 'fd00:1234::1000', end_ip: 'fd00:1234::1fff' }],
     });
     await flushPromises();
-    expect(wrapper.findAll('input').length).toBe(3); // start, end, description
+    expect(formInputs(wrapper).length).toBe(3); // start, end, description
     await saveButton(wrapper).trigger('click');
     await flushPromises();
     const [, payload] = dhcpStore.updateScope.mock.calls[0];

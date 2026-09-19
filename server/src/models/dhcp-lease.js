@@ -124,8 +124,14 @@ export function syncDhcpDnsRecords(db, leases) {
       )
       .all(scope.id);
     const effective = resolveEffectiveScopeOptions(db, scope);
+    // DHCPv4 names the domain in option 15; DHCPv6 only has the search list
+    // (24), whose first entry is the domain a lease's hostname belongs to.
+    const domainOption = Number(scope.address_family) === 6 ? 24 : 15;
     scope.effective_domain =
-      effective.options.find((option) => option.option_code === 15)?.value ||
+      effective.options
+        .find((option) => option.option_code === domainOption)
+        ?.value.split(',')[0]
+        .trim() ||
       scope.subnet_domain_name ||
       null;
     if (scope.effective_domain) allDomains.add(scope.effective_domain);
@@ -254,7 +260,13 @@ export function syncDhcpDnsRecords(db, leases) {
         if (syncPtr(zone, recordName, l.ip, l.source || 'dhcp')) configChanged = true;
       }
     } else {
-      const result = insertDhcp.run(zone.id, recordName, recordTypeFor(l.ip), l.ip, l.source || 'dhcp');
+      const result = insertDhcp.run(
+        zone.id,
+        recordName,
+        recordTypeFor(l.ip),
+        l.ip,
+        l.source || 'dhcp',
+      );
       activeRecordIds.add(result.lastInsertRowid);
       activeIps.add(l.ip);
       syncPtr(zone, recordName, l.ip, l.source || 'dhcp');

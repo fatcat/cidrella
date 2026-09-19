@@ -107,12 +107,14 @@
               :is="activeSubtab.component"
               v-if="activeSubtab && activeSubtab.keepAlive"
               :key="`${area.id}:${activeSecId}`"
+              v-bind="activeSubtab.props || {}"
             />
           </keep-alive>
           <component
             :is="activeSubtab.component"
             v-if="activeSubtab && !activeSubtab.keepAlive"
             :key="`${area.id}:${activeSecId}`"
+            v-bind="activeSubtab.props || {}"
           />
         </section>
       </section>
@@ -125,6 +127,7 @@ import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { SETTINGS_AREAS, SETTINGS_GROUPS, findArea } from '../../config/settingsAreas.js';
 import { safeInternalPath } from '../../utils/landing.js';
+import { useFeatures } from '../../composables/useFeatures.js';
 
 // P7 settings shell (section 10). The catalog in settingsAreas.js is the
 // single source: areas become explorer rows, sections become a real tablist,
@@ -139,7 +142,13 @@ const area = computed(() => {
   const requested = route.query.area;
   return (requested && findArea(requested)) || findArea(DEFAULT_AREA_ID);
 });
-const subtabs = computed(() => area.value.subtabs);
+// A sub-tab gated on a feature switch is listed only while the switch is on;
+// a deep link to a hidden one falls back to the first sub-tab like any
+// unknown sec value.
+const features = useFeatures();
+const subtabs = computed(() =>
+  area.value.subtabs.filter((section) => !section.feature || features[section.feature]?.value),
+);
 const activeSecId = computed(() => {
   const ids = subtabs.value.map((section) => section.id);
   return ids.includes(route.query.sec) ? route.query.sec : ids[0] || '';

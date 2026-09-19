@@ -22,7 +22,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 - **Blocklists and GeoIP filtering**: Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy. Two distinct exemptions: a shared **domain whitelist** (always allow a domain everywhere) and a GeoIP **IP/CIDR allowlist** (never GeoIP-block specific addresses/ranges, IPv4 or IPv6, regardless of country).
 - **Anomaly detection**: Python sidecar for unusual query volume, new-domain patterns, beaconing, and DGA-like behavior with UI status/health reporting.
 - **Pi-hole import**: Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP Reservations, and upstream DNS settings.
-- **Operations and recovery**: Signed native updates, scheduled backups, restore validation, reset-password and reset-web-port tools, log viewing, and audit history.
+- **Operations and recovery**: Signed native updates, scheduled backups, restore validation (a restore asks whether this appliance should serve DHCP afterwards, so a copy of another appliance never becomes a second DHCP server, and the restored data carries an audit entry for the restore), reset-password and reset-web-port tools, log viewing, and audit history.
 - **Certificate management**: Self-signed defaults, certificate upload, RSA/ECDSA CSR generation, and certificate/key validation.
 - **Role based access control**: Admin, DNS, DHCP, and readonly roles with permission-checked APIs and audited mutations.
 
@@ -67,6 +67,10 @@ docker compose up -d
 ```
 
 See **[INSTALL-DOCKER.md](INSTALL-DOCKER.md)** for full details. Note: in-app updates are not available in Docker. Update by pulling the latest image.
+
+### First run
+
+The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password (the uppercase, lowercase and digit rule can be switched off for the appliance; eight characters is the floor), optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes, choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start. Nothing but the password and the second factor is applied until the last step, and an interrupted setup resumes where it stopped. Upgraded installs never see it. Two-factor can be turned on, off, or given fresh backup codes later under Settings > Access > Two-factor.
 
 ## Upgrading
 

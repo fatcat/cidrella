@@ -147,6 +147,17 @@
       </section>
       <div v-if="!loading && !folders.length" class="explorer-empty">
         No {{ contextKind === 'unallocated' ? 'unallocated' : 'allocated' }} networks found.
+        <!-- A fresh appliance lands here straight from the first-run wizard, so
+             the empty state is where the first network gets created. -->
+        <button
+          v-if="canCreate && contextKind !== 'unallocated'"
+          type="button"
+          class="explorer-empty-cta"
+          data-track="explorer-create-first-network"
+          @click="emit('action', 'network.allocate')"
+        >
+          <i class="pi pi-plus" /> Create your first network
+        </button>
       </div>
     </div>
 
@@ -423,6 +434,23 @@ button {
   color: var(--preview-muted);
   font-size: var(--app-fs-sm);
   text-align: center;
+}
+.explorer-empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.6rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--preview-accent);
+  border-radius: 999px;
+  background: none;
+  color: var(--preview-accent);
+  font: inherit;
+  font-size: var(--app-fs-sm);
+  cursor: pointer;
+}
+.explorer-empty-cta:hover {
+  background: color-mix(in srgb, var(--preview-accent) 12%, transparent);
 }
 .network-group + .network-group {
   margin-top: 0.18rem;

@@ -31,6 +31,13 @@ const routes = [
     component: ChangePassword,
   },
   {
+    // First-run wizard. Outside AppLayout: nothing in the shell is useful
+    // until the appliance has been told what it is.
+    path: '/setup',
+    name: 'FirstRun',
+    component: () => import('../views/FirstRun.vue'),
+  },
+  {
     path: '/',
     component: AppLayout,
     children: [
@@ -138,6 +145,15 @@ router.beforeEach(async (to) => {
   // this has answered, so it must land before the first page renders.
   const features = useFeaturesStore();
   if (!features.loaded) await features.load();
+
+  // First run. The wizard's first step is the password change, so it takes
+  // precedence over the plain change-password page for the admin doing setup.
+  if (auth.setupRequired) {
+    return to.name === 'FirstRun' ? true : { name: 'FirstRun' };
+  }
+  if (to.name === 'FirstRun') {
+    return { path: '/' };
+  }
 
   // Force password change
   if (auth.mustChangePassword && to.name !== 'ChangePassword') {

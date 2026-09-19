@@ -856,3 +856,257 @@ export const LEGACY_COLUMN_MAP = {
   ntp_servers: 42,
   domain_search: 119,
 };
+
+/**
+ * DHCPv6 options catalog. Same entry shape as DHCP_OPTIONS; `dnsmasqName` is
+ * the `option6:` spelling dnsmasq accepts. DHCPv4 and DHCPv6 codes are separate
+ * namespaces (v4 23 is default TTL, v6 23 is the DNS server list), so nothing
+ * here is shared with the v4 catalog. Routers, prefixes and lifetimes are not
+ * options in DHCPv6: clients learn them from Router Advertisements, which is why
+ * there is no equivalent of v4 options 1, 3 and 28.
+ *
+ * Address values are written bracketed (`[fd00::53]`) by the config writer;
+ * the catalog stores plain addresses.
+ */
+export const DHCP6_OPTIONS = [
+  // ── Common ──────────────────────────────────────────────────────────
+  {
+    code: 23,
+    name: 'dns-server',
+    label: 'DNS Servers',
+    type: 'ip-list',
+    dnsmasqName: 'option6:dns-server',
+    group: 'Common',
+    rfc: 'RFC 3646',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3646#section-3',
+    description:
+      "DNS recursive name servers available to the client, in order of preference. Defaults to CIDRella's IPv6 address on the network. Enter hostnames or IPv6 addresses, hostnames are resolved automatically.",
+  },
+  {
+    code: 24,
+    name: 'domain-search',
+    label: 'Domain Search List',
+    type: 'text-list',
+    dnsmasqName: 'option6:domain-search',
+    group: 'Common',
+    rfc: 'RFC 3646',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3646#section-4',
+    description:
+      "Domain suffixes the client appends when resolving short names. Defaults to the network's domain.",
+  },
+  {
+    code: 56,
+    name: 'ntp-server',
+    label: 'NTP Servers',
+    type: 'ip-list',
+    dnsmasqName: 'option6:ntp-server',
+    group: 'Common',
+    rfc: 'RFC 5908',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc5908',
+    description:
+      'NTP server addresses, in order of preference. Enter hostnames or IPv6 addresses, hostnames are resolved automatically.',
+  },
+
+  // ── Network ─────────────────────────────────────────────────────────
+  {
+    code: 21,
+    name: 'sip-server-domain',
+    label: 'SIP Server Domains',
+    type: 'text-list',
+    dnsmasqName: 'option6:sip-server-domain',
+    group: 'Network',
+    rfc: 'RFC 3319',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3319#section-3.1',
+    description: 'Domain names of SIP outbound proxy servers, in order of preference.',
+  },
+  {
+    code: 22,
+    name: 'sip-server',
+    label: 'SIP Servers',
+    type: 'ip-list',
+    dnsmasqName: 'option6:sip-server',
+    group: 'Network',
+    rfc: 'RFC 3319',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3319#section-3.2',
+    description: 'IPv6 addresses of SIP outbound proxy servers, in order of preference.',
+  },
+  {
+    code: 27,
+    name: 'nis-server',
+    label: 'NIS Servers',
+    type: 'ip-list',
+    dnsmasqName: 'option6:nis-server',
+    group: 'Network',
+    rfc: 'RFC 3898',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3898#section-3',
+    description: 'Network Information Service servers, in order of preference.',
+  },
+  {
+    code: 28,
+    name: 'nis+-server',
+    label: 'NIS+ Servers',
+    type: 'ip-list',
+    dnsmasqName: 'option6:nis+-server',
+    group: 'Network',
+    rfc: 'RFC 3898',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3898#section-4',
+    description: 'NIS+ servers, in order of preference.',
+  },
+  {
+    code: 29,
+    name: 'nis-domain',
+    label: 'NIS Domain',
+    type: 'text',
+    dnsmasqName: 'option6:nis-domain',
+    group: 'Network',
+    rfc: 'RFC 3898',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3898#section-5',
+    description: 'Network Information Service domain name.',
+  },
+  {
+    code: 30,
+    name: 'nis+-domain',
+    label: 'NIS+ Domain',
+    type: 'text',
+    dnsmasqName: 'option6:nis+-domain',
+    group: 'Network',
+    rfc: 'RFC 3898',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3898#section-6',
+    description: 'NIS+ domain name.',
+  },
+  {
+    code: 103,
+    name: 'captive-portal',
+    label: 'Captive Portal URI',
+    type: 'text',
+    dnsmasqName: 'option6:captive-portal',
+    group: 'Network',
+    rfc: 'RFC 8910',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc8910#section-2',
+    description:
+      'URI of the captive portal API the client should consult before assuming open access.',
+  },
+
+  // ── Time ────────────────────────────────────────────────────────────
+  {
+    code: 31,
+    name: 'sntp-server',
+    label: 'SNTP Servers',
+    type: 'ip-list',
+    dnsmasqName: 'option6:sntp-server',
+    group: 'Time',
+    rfc: 'RFC 4075',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc4075',
+    description:
+      'Simple NTP server addresses, for clients that do not understand the newer NTP Servers option (56).',
+  },
+  {
+    code: 32,
+    name: 'information-refresh-time',
+    label: 'Information Refresh Time',
+    type: 'number',
+    dnsmasqName: 'option6:information-refresh-time',
+    group: 'Time',
+    rfc: 'RFC 8415',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc8415#section-21.23',
+    description:
+      'Seconds a stateless client waits before asking for its options again. Only sent in reply to an Information-request; addresses use the lease time instead.',
+  },
+  {
+    code: 41,
+    name: 'posix-timezone',
+    label: 'POSIX Time Zone',
+    type: 'text',
+    dnsmasqName: 'option6:posix-timezone',
+    group: 'Time',
+    rfc: 'RFC 4833',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc4833#section-4.1',
+    description: 'Time zone as a POSIX TZ string, for example EST5EDT4,M3.2.0/02:00,M11.1.0/02:00.',
+  },
+  {
+    code: 42,
+    name: 'tzdb-timezone',
+    label: 'TZ Database Time Zone',
+    type: 'text',
+    dnsmasqName: 'option6:tzdb-timezone',
+    group: 'Time',
+    rfc: 'RFC 4833',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc4833#section-4.2',
+    description: 'Time zone as a TZ database name, for example America/New_York.',
+  },
+
+  // ── Boot/PXE ────────────────────────────────────────────────────────
+  {
+    code: 59,
+    name: 'bootfile-url',
+    label: 'Boot File URL',
+    type: 'text',
+    dnsmasqName: 'option6:bootfile-url',
+    group: 'Boot/PXE',
+    rfc: 'RFC 5970',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc5970#section-3.1',
+    description: 'URL of the network boot file, for example tftp://[fd00::10]/pxelinux.efi.',
+  },
+  {
+    code: 60,
+    name: 'bootfile-param',
+    label: 'Boot File Parameters',
+    type: 'text',
+    dnsmasqName: 'option6:bootfile-param',
+    group: 'Boot/PXE',
+    rfc: 'RFC 5970',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc5970#section-3.2',
+    description: 'Parameters passed to the network boot file.',
+  },
+];
+
+/** Lookup by DHCPv6 option code */
+export const DHCP6_OPTIONS_BY_CODE = Object.fromEntries(DHCP6_OPTIONS.map((o) => [o.code, o]));
+
+/**
+ * DHCPv6 codes dnsmasq builds itself (identifiers, IA containers, status,
+ * reconfigure, vendor and user classes, FQDN). Supplying one as a dhcp-option
+ * would be misparsed or ignored, so they are refused everywhere a code is
+ * accepted from a request.
+ */
+export const DHCP6_INTERNAL_CODES = new Set([1, 2, 3, 4, 5, 6, 7, 12, 13, 14, 15, 16, 17, 39]);
+
+const CATALOGS = {
+  4: {
+    family: 4,
+    options: DHCP_OPTIONS,
+    byCode: DHCP_OPTIONS_BY_CODE,
+    maxCode: 254,
+    customRange: [128, 254],
+    internalCodes: new Set(),
+    prefix: 'option:',
+  },
+  6: {
+    family: 6,
+    options: DHCP6_OPTIONS,
+    byCode: DHCP6_OPTIONS_BY_CODE,
+    maxCode: 65535,
+    customRange: [1, 65535],
+    internalCodes: DHCP6_INTERNAL_CODES,
+    prefix: 'option6:',
+  },
+};
+
+/**
+ * The catalog for one address family. Anything else than 6 is IPv4 so the
+ * many callers that never learned about families keep their behavior.
+ */
+export function optionCatalogFor(family) {
+  return Number(family) === 6 ? CATALOGS[6] : CATALOGS[4];
+}
+
+/** Is `code` a valid user-settable option code for the family? */
+export function isOptionCodeAllowed(code, family) {
+  const catalog = optionCatalogFor(family);
+  return (
+    Number.isInteger(code) &&
+    code >= 1 &&
+    code <= catalog.maxCode &&
+    !catalog.internalCodes.has(code)
+  );
+}

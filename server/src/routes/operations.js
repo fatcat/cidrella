@@ -34,7 +34,18 @@ const APP_ERROR_CODES = new Set([
   'BACKUP_TOO_LARGE',
   'BACKUP_TOO_MANY_ENTRIES',
   'INVALID_DATABASE_FILE',
+  'RESTORE_DHCP_CHOICE_FAILED',
 ]);
+
+// ?dhcp=enabled|disabled on a restore: whether this appliance serves DHCP
+// once it comes back. Omitted keeps whatever the backup says, which is the
+// pre-0.5.0 behavior and what a restore of this appliance's own backup wants.
+function dhcpAfterRestoreParam(value) {
+  if (value === undefined || value === null || value === '') return { choice: null };
+  if (value === 'enabled') return { choice: true };
+  if (value === 'disabled') return { choice: false };
+  return { error: 'dhcp must be "enabled" or "disabled"' };
+}
 
 const router = Router();
 
@@ -211,11 +222,15 @@ router.delete('/backups/:id', (req, res) => {
 // Query params:
 //   ?inspect=1          , just return the manifest + compatibility, don't restore
 //   ?allowIncompatible=1, bypass version safety check (admin escape hatch)
+//   ?dhcp=enabled|disabled, whether DHCP serves after the restart (omitted:
+//                         the backup's own setting stands)
 router.post('/restore', (req, res) => {
   const contentType = req.headers['content-type'] || '';
   const inspectOnly = req.query.inspect === '1' || req.query.inspect === 'true';
   const allowIncompatible =
     req.query.allowIncompatible === '1' || req.query.allowIncompatible === 'true';
+  const dhcp = inspectOnly ? { choice: null } : dhcpAfterRestoreParam(req.query.dhcp);
+  if (dhcp.error) return res.status(400).json({ error: dhcp.error });
 
   if (
     !contentType.includes('application/gzip') &&
@@ -261,16 +276,25 @@ router.post('/restore', (req, res) => {
       }
 
       // Audit BEFORE restoreBackup closes the DB handle. If we called
-      // audit() after, it would hit a closed connection and throw.
+      // audit() after, it would hit a closed connection and throw. This row
+      // lives in the database being replaced, so it survives only in the
+      // pre-restore snapshot; restoreBackup writes the matching row into the
+      // restored database so the appliance keeps a record of its own restore.
       audit(req.user.id, 'restore', 'backup', null, {
         manifest: inspection.manifest,
+        dhcp_after_restore: dhcp.choice,
       });
 
       // Send response BEFORE restoreBackup exits the process, so the client
       // sees a successful acknowledgement. The restore path spins a 500ms
       // timer before exit specifically so Express can flush the response.
       // Pass the inspection through so restoreBackup doesn't re-parse the tarball.
-      const result = restoreBackup(tmpPath, { allowIncompatible, inspection });
+      const result = restoreBackup(tmpPath, {
+        allowIncompatible,
+        inspection,
+        dhcpAfterRestore: dhcp.choice,
+        restoredBy: { username: req.user.username },
+      });
       // Clean up the uploaded tarball, we're about to exit, but be explicit
       // so a second restore within RestartSec doesn't find a stale tmp copy.
       try {

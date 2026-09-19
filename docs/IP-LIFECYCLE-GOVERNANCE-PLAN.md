@@ -450,6 +450,11 @@ After one continuous hour offline:
 
 - Clear `last_seen_at`, observed MAC, dynamic hostname, rogue reason, and other
   address-bound learned metadata.
+
+The dynamic hostname does not wait for that hour when the host is online: a
+lease that lapses while its holder still answers, or a holder that comes back
+online as a rogue while its retained lease name is still on the row, loses the
+lease name immediately. The retention window exists for absent hosts only.
 - Remove the dynamic hostname generated from the lease or autonomous-address
   registration. For managed IPv4 reverse DNS, restore the generated PTR to its
   canonical IP placeholder rather than leaving a missing row.

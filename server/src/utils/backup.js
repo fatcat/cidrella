@@ -1,6 +1,9 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
+import Database from 'better-sqlite3';
+import { insertAuditRow } from '../models/audit-log.js';
+import { upsertSettingWithConflict } from '../models/setting.js';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { DATA_DIR } from '../config/defaults.js';
 import { APP_VERSION } from './version.js';
@@ -540,9 +543,86 @@ function takePreRestoreSnapshot(db) {
  * running server's open file descriptors would point at orphaned inodes
  * and any writes it made before restart would be silently lost.
  */
+/**
+ * Write the operator's restore-time choices, and a record of the restore
+ * itself, into the staged database before it is swapped into DATA_DIR.
+ *
+ * The DHCP choice is honored on the first boot after the restore. Restoring
+ * another appliance's backup onto this box would otherwise bring up a second
+ * DHCP server on the same LAN with the original's pools.
+ *
+ * The audit row goes here because the running database's audit log is about
+ * to be replaced: a row written there survives only in the pre-restore
+ * snapshot. Writing it into the staged file is the one way the restored
+ * appliance can show "restored from backup X by Y, DHCP off" in its own
+ * audit log. The row is attributed by username, looked up in the restored
+ * users table, since the running database's user ids mean nothing there.
+ *
+ * `settings(key PRIMARY KEY, value)` and `audit_log` have existed since
+ * migration 001, so the writes are valid for any backup the compatibility
+ * check admits, whatever schema it is at. Throws with code
+ * RESTORE_DHCP_CHOICE_FAILED; the caller aborts before touching DATA_DIR.
+ *
+ * Returns true when anything was written.
+ */
+export function stampRestoredSettings(
+  stagedDbPath,
+  { dhcpEnabled = null, restoredBy = null, manifest = null } = {},
+) {
+  const hasChoice = dhcpEnabled !== null && dhcpEnabled !== undefined;
+  if (!hasChoice && !restoredBy) return false;
+  let staged;
+  try {
+    staged = new Database(stagedDbPath);
+    const stamp = staged.transaction(() => {
+      if (hasChoice) {
+        upsertSettingWithConflict(staged, 'dhcp_enabled', dhcpEnabled ? 'true' : 'false');
+      }
+      if (restoredBy) {
+        const user = restoredBy.username
+          ? staged.prepare('SELECT id FROM users WHERE username = ?').get(restoredBy.username)
+          : null;
+        insertAuditRow(staged, {
+          userId: user?.id ?? null,
+          action: 'restore',
+          entityType: 'backup',
+          details: {
+            restored_by: restoredBy.username || null,
+            backup_version: manifest?.cidrella_version ?? null,
+            backup_schema_version: manifest?.schema_version ?? null,
+            backup_created_at: manifest?.created_at ?? null,
+            dhcp_after_restore: hasChoice ? dhcpEnabled : null,
+          },
+        });
+      }
+    });
+    stamp();
+    return true;
+  } catch (cause) {
+    const err = new Error(
+      `Restore refused: could not record the restore in the restored database (${cause.message}). ` +
+        `${DATA_DIR} was NOT modified. Service continues running.`,
+    );
+    err.code = 'RESTORE_DHCP_CHOICE_FAILED';
+    err.cause = cause;
+    throw err;
+  } finally {
+    try {
+      staged?.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
 export function restoreBackup(
   archivePath,
-  { allowIncompatible = false, inspection: preInspection = null } = {},
+  {
+    allowIncompatible = false,
+    inspection: preInspection = null,
+    dhcpAfterRestore = null,
+    restoredBy = null,
+  } = {},
 ) {
   // 1. Compatibility check. Reuse the caller's inspection if they already
   //    ran one (e.g., the API route inspects to audit before the restore);
@@ -709,6 +789,29 @@ export function restoreBackup(
       err.code = 'INVALID_DATABASE_FILE';
       throw err;
     }
+
+    // 3b. The operator's DHCP choice and the restore's own audit row go into
+    //     the staged database now, while a failure still leaves DATA_DIR
+    //     untouched.
+    try {
+      stampRestoredSettings(stagedDb, {
+        dhcpEnabled: dhcpAfterRestore,
+        restoredBy,
+        manifest: inspection.manifest,
+      });
+      if (dhcpAfterRestore !== null) {
+        console.log(
+          `Restore: DHCP will be ${dhcpAfterRestore ? 'enabled' : 'disabled'} after the restart`,
+        );
+      }
+    } catch (err) {
+      try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+      throw err;
+    }
   }
 
   // 4. Swap staged files into DATA_DIR.
@@ -807,12 +910,19 @@ export function restoreBackup(
     process.exit(0);
   }, 500);
 
+  const dhcpNote =
+    dhcpAfterRestore === null
+      ? ''
+      : dhcpAfterRestore
+        ? ' DHCP will serve.'
+        : ' DHCP will be off until you enable it under Settings > General > Interfaces.';
   return {
     ok: true,
-    message: 'Backup restored. Service is restarting...',
+    message: `Backup restored. Service is restarting...${dhcpNote}`,
     manifest: inspection.manifest,
     warning: inspection.warning,
     pre_restore_snapshot: PRE_RESTORE_DIR,
+    dhcp_after_restore: dhcpAfterRestore,
   };
 }
 

@@ -70,12 +70,14 @@
             v-if="activeSubtab && activeSubtab.keepAlive"
             :is="activeSubtab.component"
             :key="area.id + ':' + activeSecId"
+            v-bind="activeSubtab.props || {}"
           />
         </keep-alive>
         <component
           v-if="activeSubtab && !activeSubtab.keepAlive"
           :is="activeSubtab.component"
           :key="area.id + ':' + activeSecId"
+          v-bind="activeSubtab.props || {}"
         />
       </div>
     </section>
@@ -85,6 +87,7 @@
 <script setup>
 import { computed, ref } from 'vue';
 import { SETTINGS_AREAS, SETTINGS_GROUPS, findArea } from '../../config/settingsAreas.js';
+import { useFeatures } from '../../composables/useFeatures.js';
 
 const props = defineProps({
   areaId: { type: String, required: true },
@@ -93,7 +96,10 @@ const props = defineProps({
 defineEmits(['area', 'sec']);
 
 const area = computed(() => findArea(props.areaId));
-const subtabs = computed(() => area.value?.subtabs || []);
+const features = useFeatures();
+const subtabs = computed(() =>
+  (area.value?.subtabs || []).filter((st) => !st.feature || features[st.feature]?.value),
+);
 const activeSecId = computed(() => {
   const ids = subtabs.value.map((s) => s.id);
   return ids.includes(props.sec) ? props.sec : ids[0] || '';

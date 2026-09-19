@@ -149,7 +149,11 @@ export function dynamicPoolConflict(db, subnet, startIp, endIp) {
   if (belowHosts || aboveHosts) {
     return {
       type: 'system',
-      ip_address: belowHosts ? parsed.network : parsed.family === 4 ? parsed.broadcast : parsed.last,
+      ip_address: belowHosts
+        ? parsed.network
+        : parsed.family === 4
+          ? parsed.broadcast
+          : parsed.last,
       error: 'DHCP pools may contain host addresses only',
     };
   }
@@ -182,7 +186,9 @@ export function dynamicPoolConflict(db, subnet, startIp, endIp) {
   `,
     )
     .all(subnet.id)
-    .find((row) => isValidAddress(row.ip_address) && addressInRange(row.ip_address, startIp, endIp));
+    .find(
+      (row) => isValidAddress(row.ip_address) && addressInRange(row.ip_address, startIp, endIp),
+    );
   if (protectedRow) {
     return {
       type: protectedRow.allocation_state,
@@ -194,8 +200,40 @@ export function dynamicPoolConflict(db, subnet, startIp, endIp) {
   return null;
 }
 
+// Which family a scope row belongs to. Rows written before migration 072 have
+// address_family 4; anything without the column falls back to its CIDR.
+export function scopeAddressFamily(scope) {
+  if (Number(scope?.address_family) === 6) return 6;
+  if (scope?.address_family) return 4;
+  const cidr = scope?.subnet_cidr || scope?.cidr;
+  if (!cidr) return 4;
+  try {
+    return parseNetwork(cidr).family;
+  } catch {
+    return 4;
+  }
+}
+
+// A legacy scope column holds a JSON array of addresses; an option value is a
+// comma-separated list. Anything unparseable yields null so nothing is emitted.
+function legacyListValue(json) {
+  if (!json) return null;
+  try {
+    const values = JSON.parse(json);
+    return Array.isArray(values) && values.length ? values.join(',') : null;
+  } catch {
+    return null;
+  }
+}
+
 function computeInheritedOptions(subnet) {
   const inherited = {};
+  if (Number(subnet?.address_family) === 6 || subnet?.cidr?.includes(':')) {
+    // DHCPv6 carries no mask, router or broadcast; the search list is the one
+    // network-derived value a scope can inherit.
+    if (subnet?.domain_name) inherited[24] = subnet.domain_name;
+    return inherited;
+  }
   if (subnet?.gateway_address) inherited[3] = subnet.gateway_address;
   if (subnet?.cidr && !subnet.cidr.includes(':')) {
     const pfx = parseInt(subnet.cidr.split('/')[1], 10);
@@ -217,6 +255,7 @@ function computeInheritedOptions(subnet) {
 }
 
 export function resolveEffectiveScopeOptions(db, scope) {
+  const family = scopeAddressFamily(scope);
   const values = new Map();
   const provenance = new Map();
   const set = (code, value, source) => {
@@ -225,8 +264,10 @@ export function resolveEffectiveScopeOptions(db, scope) {
     provenance.set(Number(code), source);
   };
   for (const row of db
-    .prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE value IS NOT NULL')
-    .all()) {
+    .prepare(
+      'SELECT option_code, value FROM dhcp_option_defaults WHERE value IS NOT NULL AND address_family = ?',
+    )
+    .all(family)) {
     if (Number(row.option_code) !== 51) set(row.option_code, row.value, 'global_default');
   }
 
@@ -235,6 +276,33 @@ export function resolveEffectiveScopeOptions(db, scope) {
     db
       .prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?')
       .all(scope.id);
+
+  if (family === 6) {
+    // DHCPv6: the scope columns (dns_servers, domain_search, ntp_servers) are
+    // a second way to set 23, 24 and 56 that predates the IPv6 catalog. They
+    // sit between the global defaults and the scope's own option rows rather
+    // than being a fallback for scopes without rows, because every IPv6 scope
+    // has rows from the day it is created (the inherited defaults). The
+    // search list falls back to the network's domain, and there is no router
+    // to suppress since routers come from Router Advertisements.
+    set(23, legacyListValue(scope.dns_servers), 'legacy_scope');
+    set(24, scope.domain_search, 'legacy_scope');
+    set(56, legacyListValue(scope.ntp_servers), 'legacy_scope');
+    for (const option of explicit) set(option.option_code, option.value, 'scope');
+    if (!values.has(24)) set(24, scope.domain_name || scope.subnet_domain_name, 'network');
+    return {
+      lease_time: scope.lease_time,
+      router_suppressed: false,
+      options: [...values]
+        .map(([option_code, value]) => ({
+          option_code,
+          value,
+          source: provenance.get(option_code),
+        }))
+        .sort((a, b) => a.option_code - b.option_code),
+    };
+  }
+
   for (const option of explicit) {
     if (Number(option.option_code) !== 51) set(option.option_code, option.value, 'scope');
   }
@@ -242,7 +310,7 @@ export function resolveEffectiveScopeOptions(db, scope) {
   if (explicit.length === 0) {
     set(3, scope.gateway, 'legacy_scope');
     set(15, scope.domain_name, 'legacy_scope');
-    set(42, scope.ntp_servers, 'legacy_scope');
+    set(42, legacyListValue(scope.ntp_servers), 'legacy_scope');
     set(119, scope.domain_search, 'legacy_scope');
   }
 
@@ -282,17 +350,18 @@ function saveScopeOptions(db, scopeId, subnet, options, { replace = false } = {}
     db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scopeId);
   }
 
+  const family = scopeAddressFamily(subnet);
   const inherited = computeInheritedOptions(subnet);
   const insertOpt = db.prepare(
-    'INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)',
+    'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, ?)',
   );
   for (const opt of options) {
     if (opt.code && opt.value != null && opt.value !== '') {
-      if (Number(opt.code) === 51) {
+      if (family === 4 && Number(opt.code) === 51) {
         throw new Error('DHCP option 51 is represented by the scope lease_time field');
       }
       if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
-      insertOpt.run(scopeId, opt.code, String(opt.value));
+      insertOpt.run(scopeId, opt.code, String(opt.value), family);
     }
   }
 }

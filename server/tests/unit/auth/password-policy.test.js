@@ -41,10 +41,19 @@ describe('#39: the shared policy', () => {
   });
 });
 
-describe('#39: both enforcing routes go through the one module', () => {
+describe('#39: the enforcing route goes through the one module', () => {
   // A source-level guard. The behavioural half is covered by the integration
   // suite; this catches someone re-adding an inline rule next to the call.
-  const FILES = ['routes/setup.js', 'auth/routes.js'];
+  // routes/setup.js used to be the second enforcing route (the pre-auth
+  // account wizard); since v0.5.0 it only SERVES the policy to the first-run
+  // wizard and creates no account, so change-password is the one place left.
+  const FILES = ['auth/routes.js'];
+
+  it('routes/setup.js serves the policy and enforces nothing itself', () => {
+    const src = fs.readFileSync(path.join(SRC, 'routes/setup.js'), 'utf8');
+    expect(src).toMatch(/effectivePasswordPolicy/);
+    expect(src).not.toMatch(/bcrypt|passwordPolicyError|\[A-Z\]/);
+  });
 
   it.each(FILES)('%s imports passwordPolicyError', (rel) => {
     const src = fs.readFileSync(path.join(SRC, rel), 'utf8');

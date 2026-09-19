@@ -5,9 +5,8 @@ TODO list for CIDRella
 ## 0.5.x
 
 - [x] complete transition to openvue
-- [ ] revive the setup wizard (`client/src/views/SetupWizard.vue` has had no route since v0.4.0
-      and a fresh database seeds the admin, so `/api/setup/status` never asks for it; decide
-      what first-run setup should cover before wiring it back)
+- [x] revive the setup wizard (landed 2026-09-19 as the four-step first run at `/setup`:
+      password, deployment, import, review; the dead account wizard was removed)
 - [x] implement IPv6 for management, DNS, DHCP and blocklists (backend and rogue DHCPv6/RA
       detection landed 2026-09-17, the UI pass with the global IPv6 switch 2026-09-18; what is
       left is in BACKLOG.md under "IPv6, in flight")

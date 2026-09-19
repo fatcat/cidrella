@@ -16,22 +16,26 @@
         label="Apply Config"
         icon="pi pi-refresh"
         size="small"
-        data-track="sys-apply-dhcp-config"
+        :data-track="track('sys-apply-dhcp-config')"
         @click="applyConfig"
       />
       <Button
         label="Save Defaults"
         icon="pi pi-save"
         size="small"
-        data-track="dhcp-save-defaults"
+        :data-track="track('dhcp-save-defaults')"
         @click="saveDefaults"
         :loading="savingDefaults"
         :disabled="!defaultsDirty"
       />
     </div>
     <p class="field-help dhcp-defaults-note">
-      These settings are the defaults for newly created DHCP scopes. Changing these settings will
-      not affect existing scopes.
+      These settings are the defaults for newly created {{ familyLabel }} scopes. Changing these
+      settings will not affect existing scopes.
+      <template v-if="isV6">
+        Routers, prefixes and address lifetimes come from Router Advertisements and are not options;
+        a SLAAC-only scope sends no options at all.
+      </template>
     </p>
     <DataTable
       :value="optionDefaultRows"
@@ -49,7 +53,7 @@
       <template #empty>
         <EmptyState
           icon="pi-sliders-h"
-          title="No DHCP options"
+          :title="`No ${familyLabel} options`"
           description="Options appear here once a scope or global option is defined."
         />
       </template>
@@ -157,16 +161,16 @@
       header="Add Custom Option"
       modal
       :style="{ width: '26rem' }"
-      data-track="dialog-dhcp-custom-option"
+      :data-track="track('dialog-dhcp-custom-option')"
     >
       <div class="form-grid">
         <div class="field">
-          <label>Option Code (128–254) *</label>
+          <label>Option Code ({{ customRange[0] }}–{{ customRange[1] }}) *</label>
           <InputNumber
             v-model="customOptionForm.code"
             class="w-full"
-            :min="128"
-            :max="254"
+            :min="customRange[0]"
+            :max="customRange[1]"
             :useGrouping="false"
             placeholder="e.g. 200"
           />
@@ -226,15 +230,32 @@ import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError } from '../utils/format.js';
 
+// One editor for both families. The family decides which catalog is
+// fetched, which rows a save replaces and how the request is shaped; the
+// server keeps DHCPv4 and DHCPv6 defaults in separate namespaces.
+const props = defineProps({
+  family: { type: Number, default: 4 },
+});
+const isV6 = computed(() => Number(props.family) === 6);
+const familyLabel = computed(() => (isV6.value ? 'DHCPv6' : 'DHCPv4'));
+// The IPv4 editor keeps its historic tracking ids; the IPv6 one is suffixed.
+const track = (id) => (isV6.value ? `${id}-v6` : id);
+
 const DHCP_PLACEHOLDERS = {
-  1: "Defaults to network's mask",
-  3: "Defaults to network's gateway",
-  15: "Defaults to network's domain",
-  119: "Defaults to network's domain",
+  4: {
+    1: "Defaults to network's mask",
+    3: "Defaults to network's gateway",
+    15: "Defaults to network's domain",
+    119: "Defaults to network's domain",
+  },
+  6: {
+    23: "Defaults to CIDRella's IPv6 address on the network",
+    24: "Defaults to network's domain",
+  },
 };
 
 function getOptionPlaceholder(code, type) {
-  return DHCP_PLACEHOLDERS[code] || placeholderForType(type);
+  return DHCP_PLACEHOLDERS[isV6.value ? 6 : 4][code] || placeholderForType(type, props.family);
 }
 
 const store = useDhcpStore();
@@ -242,6 +263,7 @@ const toast = useToast();
 
 // DHCP Options
 const optionCatalog = ref([]);
+const customRange = ref([128, 254]);
 const defaultValues = reactive({});
 const defaultEnabled = reactive({});
 const loadingOptions = ref(false);
@@ -324,6 +346,7 @@ async function createCustomOption() {
       name: f.name || `custom-${f.code}`,
       type: f.type,
       description: f.description,
+      address_family: props.family,
     });
     showCustomOptionDialog.value = false;
     toast.add({ severity: 'success', summary: 'Custom option created', life: 3000 });
@@ -337,7 +360,7 @@ async function createCustomOption() {
 
 async function deleteCustomOption(code) {
   try {
-    await api.delete(`/dhcp/options/custom/${code}`);
+    await api.delete(`/dhcp/options/custom/${code}`, { params: { family: props.family } });
     toast.add({ severity: 'success', summary: 'Custom option deleted', life: 3000 });
     await loadOptions();
   } catch (err) {
@@ -348,9 +371,10 @@ async function deleteCustomOption(code) {
 async function loadOptions() {
   loadingOptions.value = true;
   try {
-    const res = await api.get('/dhcp/options');
+    const res = await api.get('/dhcp/options', { params: { family: props.family } });
     optionCatalog.value = res.data.catalog;
     if (res.data.groups) optionGroupOrder.value = res.data.groups;
+    if (Array.isArray(res.data.customRange)) customRange.value = res.data.customRange;
     Object.keys(defaultValues).forEach((k) => delete defaultValues[k]);
     for (const [code, value] of Object.entries(res.data.defaults || {})) {
       defaultValues[Number(code)] = value;
@@ -387,7 +411,7 @@ async function saveDefaults() {
     const enabledDefaults = Object.keys(defaultEnabled)
       .filter((k) => defaultEnabled[k])
       .map(Number);
-    await api.put('/dhcp/options/defaults', { options, enabledDefaults });
+    await api.put('/dhcp/options/defaults', { family: props.family, options, enabledDefaults });
     snapshotDefaults();
     toast.add({ severity: 'success', summary: 'Defaults saved', life: 3000 });
   } catch (err) {
@@ -421,6 +445,15 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* The flex-scroll table sizes itself to 100% of the page and ignores the
+   button row and note above it, so its bottom (the last rows and the end of
+   the scrollbar) sits under the panel's clip edge and can never be reached.
+   Let it take the remaining height instead. */
+.dhcp-page :deep(.p-datatable-flex-scrollable) {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}
 .section-header {
   display: flex;
   justify-content: flex-end;

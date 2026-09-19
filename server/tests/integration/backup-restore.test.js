@@ -238,3 +238,145 @@ describe('tar --exclude on restore (restoreBackup defense-in-depth)', () => {
     expect(fs.existsSync(path.join(extractDir, 'dnsmasq', 'dnsmasq.leases'))).toBe(true);
   });
 });
+
+describe('restore-time DHCP choice (stampRestoredSettings contract)', () => {
+  let work;
+  let Database;
+  let stampRestoredSettings;
+
+  beforeAll(async () => {
+    work = mktemp('cidrella-stamp-');
+    ({ default: Database } = await import('better-sqlite3'));
+    ({ stampRestoredSettings } = await import('../../src/utils/backup.js'));
+  });
+  afterAll(() => fs.rmSync(work, { recursive: true, force: true }));
+
+  // The three migration-001 tables the stamp touches, at their 001 shape,
+  // so the contract is proven against the oldest backup a restore admits.
+  function stagedDb(name, rows, users = [['admin']]) {
+    const p = path.join(work, name);
+    const db = new Database(p);
+    db.exec(`
+      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE);
+      CREATE TABLE audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        action TEXT NOT NULL,
+        entity_type TEXT,
+        entity_id INTEGER,
+        details TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (user_id) REFERENCES users(id)
+      );
+    `);
+    for (const [key, value] of rows) {
+      db.prepare('INSERT INTO settings (key, value) VALUES (?, ?)').run(key, value);
+    }
+    for (const [username] of users) {
+      db.prepare('INSERT INTO users (username) VALUES (?)').run(username);
+    }
+    db.close();
+    return p;
+  }
+  const read = (p) => {
+    const db = new Database(p, { readonly: true });
+    const row = db.prepare("SELECT value FROM settings WHERE key = 'dhcp_enabled'").get();
+    db.close();
+    return row?.value ?? null;
+  };
+  const auditRows = (p) => {
+    const db = new Database(p, { readonly: true });
+    const rows = db.prepare('SELECT user_id, action, entity_type, details FROM audit_log').all();
+    db.close();
+    return rows.map((r) => ({ ...r, details: JSON.parse(r.details) }));
+  };
+  const manifest = {
+    cidrella_version: '0.4.17',
+    schema_version: 61,
+    created_at: '2026-09-01T12:00:00.000Z',
+  };
+
+  it('turns DHCP off in a backup that had it on', () => {
+    const p = stagedDb('off.db', [['dhcp_enabled', 'true']]);
+    expect(stampRestoredSettings(p, { dhcpEnabled: false })).toBe(true);
+    expect(read(p)).toBe('false');
+  });
+
+  it('turns DHCP on in a backup that had it off', () => {
+    const p = stagedDb('on.db', [['dhcp_enabled', 'false']]);
+    expect(stampRestoredSettings(p, { dhcpEnabled: true })).toBe(true);
+    expect(read(p)).toBe('true');
+  });
+
+  it('adds the row to an old backup that never stored the setting', () => {
+    const p = stagedDb('legacy.db', [['https_port', '8443']]);
+    expect(stampRestoredSettings(p, { dhcpEnabled: false })).toBe(true);
+    expect(read(p)).toBe('false');
+  });
+
+  it('leaves the backup alone when no choice was made and nobody is recorded', () => {
+    const p = stagedDb('none.db', [['dhcp_enabled', 'true']]);
+    expect(stampRestoredSettings(p, {})).toBe(false);
+    expect(stampRestoredSettings(p, { dhcpEnabled: null })).toBe(false);
+    expect(read(p)).toBe('true');
+    expect(auditRows(p)).toEqual([]);
+  });
+
+  it('records the restore in the restored audit log, attributed to the restoring user', () => {
+    const p = stagedDb('audit.db', [['dhcp_enabled', 'true']]);
+    expect(
+      stampRestoredSettings(p, {
+        dhcpEnabled: false,
+        restoredBy: { username: 'admin' },
+        manifest,
+      }),
+    ).toBe(true);
+    expect(read(p)).toBe('false');
+    expect(auditRows(p)).toEqual([
+      {
+        user_id: 1,
+        action: 'restore',
+        entity_type: 'backup',
+        details: {
+          restored_by: 'admin',
+          backup_version: '0.4.17',
+          backup_schema_version: 61,
+          backup_created_at: '2026-09-01T12:00:00.000Z',
+          dhcp_after_restore: false,
+        },
+      },
+    ]);
+  });
+
+  it('keeps the row, unattributed, when the restoring user does not exist in the backup', () => {
+    const p = stagedDb('stranger.db', [], [['someone-else']]);
+    expect(stampRestoredSettings(p, { restoredBy: { username: 'admin' }, manifest })).toBe(true);
+    expect(read(p)).toBeNull();
+    expect(auditRows(p)).toMatchObject([
+      {
+        user_id: null,
+        action: 'restore',
+        details: { restored_by: 'admin', dhcp_after_restore: null },
+      },
+    ]);
+  });
+
+  it('survives a legacy backup with no manifest', () => {
+    const p = stagedDb('legacy-audit.db', []);
+    expect(stampRestoredSettings(p, { restoredBy: { username: 'admin' }, manifest: null })).toBe(
+      true,
+    );
+    expect(auditRows(p)).toMatchObject([
+      { details: { restored_by: 'admin', backup_version: null, backup_schema_version: null } },
+    ]);
+  });
+
+  it('fails with its own code before anything is swapped when the file is not a database', () => {
+    const p = path.join(work, 'junk.db');
+    fs.writeFileSync(p, 'SQLite format 3\x00 but not really');
+    expect(() => stampRestoredSettings(p, { dhcpEnabled: false })).toThrow(
+      expect.objectContaining({ code: 'RESTORE_DHCP_CHOICE_FAILED' }),
+    );
+  });
+});

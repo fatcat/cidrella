@@ -14,12 +14,206 @@ breaking: true
 security: false
 ```
 
+### Breaking changes
+
+The workspace UI is now the interface. `/networks` and `/system` render the
+new views; the previous ones stay reachable at `/networks-classic` and
+`/system-classic` from the "Classic interface" links in the header user menu.
+The Interface preference that switched between them is gone. The preview
+routes from the 0.4.x era (`/networks-preview`, `/system-preview`,
+`/anomalies-preview`) redirect to the new paths and keep their query and hash,
+so bookmarks still land. `/dns`, `/dhcp`, `/blocklists`, `/geoip` and
+`/range-types` redirect into the matching Settings area. The classic views
+will be removed in a later release.
+
+Schema runs to 73. Migrations 070 through 073 rebuild `subnets`,
+`dns_records`, the DHCP tables and the rogue tables so every row carries an
+address family. Anything that reads these tables directly must expect:
+
+- `subnets.broadcast_address` and `subnets.total_addresses` are nullable (an
+  IPv6 /64 holds more addresses than an INTEGER represents) and
+  `last_address` carries the top of the prefix for both families.
+- `dhcp_reservations` and `dhcp_leases` make the MAC optional and add `duid`
+  and `iaid`. The DHCP option tables include the address family in their
+  unique keys, since DHCPv4 and DHCPv6 option codes are separate namespaces.
+- `dhcp_authorized_servers.server_ip` is nullable. A trusted server may be
+  named by IP of either family, MAC or DUID, with at least one required.
+- `rogue_dhcp_events` gains `kind` (`dhcp4`, `dhcp6`, `ra`), the address
+  family, the server DUID and the advertised prefixes, and the dedup key
+  includes `kind`.
+
+Backups taken on 0.5.0 carry `schema_version: 73` and are refused by the
+0.4.x restore. Rolling back through the slot swap restores the pre-update
+database snapshot, so changes made on 0.5.0 do not carry back.
+
+The client toolkit moved from PrimeVue 4.5.5 (archived upstream on
+2026-06-28) to OpenVue 1.0.0, an API-compatible continuation of the same
+line. No page, theme or stylesheet changed as a result; the swap was audited
+file by file and every theme verified against the values captured under
+PrimeVue.
+
+`min_from` stays at 0.4.17: installs on 0.4.17, 0.4.18 or any 0.4.18
+pre-release upgrade directly. The 0.4.18 lifecycle reconciliation still runs
+first on a 0.4.17 host.
+
 ### New
-- New UI. Revamped UI but keeping current UI, selectable.
-- IPv6 support. Supports DHCPv6, AAAA records, listening and manageable via
-IPv6 addresses.
 
+- **A first-run setup.** The first sign-in on a fresh install now opens a
+  five-step wizard: set the admin password, optionally add a second factor,
+  choose the deployment (DNS & DHCP, DNS only, or DHCP only) and the interfaces
+  it applies to, bring in a Pi-hole's records and static leases or restore a
+  CIDRella backup, then review and start. Nothing but the password and the
+  second factor is applied before the last step, each step keeps its own marker
+  so an interrupted setup resumes, and the workspace's empty state offers to
+  create the first network afterwards. The old account wizard, dead since
+  v0.4.0, and its pre-auth `POST /api/setup` are gone; `/api/setup/state`
+  behind auth holds the step markers, and the login and `/api/auth/me` payloads
+  carry `setup_required`. Upgraded installs are marked done by migration 074.
+- **Two-factor sign-in.** Any account can add a time-based one-time password
+  (TOTP, the standard authenticator-app kind) and receives ten one-time backup
+  codes when it does. Sign-in then takes the password first and the code
+  second (`POST /api/auth/login` answers `totp_required` with a five-minute
+  challenge, `POST /api/auth/login/totp` finishes it); a used backup code is
+  spent, and a low count is mentioned after sign-in. Enrolment, fresh backup
+  codes and turning it off live under Settings > Access > Two-factor, and the
+  first-run wizard offers the same enrolment. The verification runs on node's
+  own crypto; the client gained the `qrcode` package to draw the enrolment QR.
+  Migration 075 adds the columns and the backup-code table.
+- **Password complexity is a switch.** The uppercase, lowercase and digit rule
+  can be turned off per appliance (`password_complexity`), from the first-run
+  password step or the settings API. Eight characters stays the floor either
+  way, and the served policy tells every password form which rule applies.
 
+- **IPv6, off by default.** One switch, "IPv6 support" under Settings >
+  General > Interfaces, turns it on. While it is off dnsmasq and the resolver
+  bind IPv4 only, IPv6 DHCP scopes are left out of the generated config, the
+  DHCPv6 and Router Advertisement detectors are skipped and reported as
+  disabled, scheduled scans skip IPv6 networks, host IPv6 addresses are hidden
+  from the Interfaces page, and creating an IPv6 network, an `ip6.arpa` zone,
+  an AAAA record, an IPv6 forwarder or encrypted upstream, an IPv6 scope or
+  reservation, or an IPv6 blocklist sinkhole answers 400 with "IPv6 support
+  is disabled. Enable it under Settings > General > Interfaces." Existing IPv6
+  rows stay readable, editable in their non-IPv6 fields, and deletable.
+  Turning the switch on regenerates dnsmasq and rebinds the resolver, no
+  restart of the appliance needed. `GET /api/features` reports the state to
+  every signed-in user.
+- **IPv6 networks.** Create, divide, carve, merge and template-name IPv6
+  prefixes with the same dialogs as IPv4; prefix bounds run to 128 and the
+  name template fills hextets. An IPv6 network is shown as a table of the
+  addresses CIDRella knows about (there is no grid or utilization gauge, since
+  a /64 cannot be enumerated), with an assigned count and the DHCPv6 mode in
+  place of the pool tile. Discovery uses all-nodes multicast plus the kernel
+  neighbor cache, never a sweep, and echoes every allocated address so quiet
+  static hosts go offline correctly.
+- **DNS over IPv6.** AAAA records in forward zones, `ip6.arpa` reverse zones
+  with PTRs for allocated addresses, IPv6 forwarders and encrypted upstreams,
+  and the DNS proxy listening on IPv6. Reverse zones of either spelling sort
+  by the network they cover.
+- **DHCPv6 per network.** Each IPv6 network picks a mode: `slaac` (Router
+  Advertisement only), `stateless` (SLAAC plus DHCPv6 for options) or
+  `stateful` (managed addresses from a pool). The SLAAC modes need a /64.
+  Only `stateful` issues leases and accepts reservations, which bind a DUID
+  (and optional IAID) instead of a MAC; the leases table and search know both
+  identities, and the DUID and IAID columns are available in the column
+  picker. Under the SLAAC modes an observed global address becomes a `slaac`
+  claim that expires with the scope lease time.
+- **DHCPv6 option defaults.** Settings > DHCP now has "Scopes & Leases IPv4"
+  and "Scopes & Leases IPv6" tabs, one set of global defaults per family (the
+  IPv6 tab shows while the IPv6 switch is on). The IPv6 catalog covers the
+  `option6:` names dnsmasq accepts (DNS servers, domain search, NTP, SNTP,
+  information refresh time, time zones, SIP, NIS, boot file URL, captive
+  portal) plus custom codes. DNS servers and the search list are enabled by
+  default and resolve to CIDRella's IPv6 address on the network and the
+  network's domain, the same way the IPv4 defaults do. New IPv6 scopes inherit
+  the enabled defaults, the scope editor shows the IPv6 catalog on an IPv6
+  network, and every value reaches dnsmasq as an `option6:` line with
+  bracketed addresses. Routers, prefixes and lifetimes are never options in
+  DHCPv6; they come from Router Advertisements.
+- **Rogue DHCPv6 servers and rogue routers.** The rogue detector now sends a
+  DHCPv6 SOLICIT and keys answers by server DUID, and reads Router
+  Advertisement default routes from the kernel. The Rogue DHCP page labels
+  each finding DHCPv4, DHCPv6 or Router, shows the DUID or the MAC and
+  advertised prefixes, and the allowlist accepts an IP, MAC or DUID. RA
+  detection needs `accept_ra` on the interface and is reported per interface
+  as unsupported, never as clean, when it is off.
+- **Anomaly detection** identifies IPv6 hosts and the blocklist sinkhole has
+  its own IPv6 address field.
+- **The networks workspace.** An explorer tree with folders (drag a network
+  onto a folder to move it), a work surface of network, address, DNS and DHCP
+  tables that filter and sort the whole set before paging so a hostname on
+  page three is found, a details popover pinned to the resource rather than
+  the row, row menus that carry the current context, keyboard-operable rows,
+  bulk selection with run-aware actions, divide and merge from the selection
+  bar with a reviewed plan, and one mutation-and-refresh contract so every
+  edit shows up where it should. Configuration of a new network is previewed
+  by the server (`POST /api/subnets/configuration-preview`) so the dialog
+  shows what allocation will actually do.
+- **The settings workspace.** `/system` hosts every settings editor in one
+  shell with the open area and section carried in the URL. Banners are gone;
+  text size lives in the header user menu. Analytics sections are likewise
+  carried as `?view=` so links and Back work.
+- **Anomaly triage view** at `/anomalies-workspace`, alongside the existing
+  anomalies view on Analytics; the two are kept until real data decides the
+  merge.
+- **Role capabilities in the client.** Login and `/auth/me` carry the user's
+  permissions, so the UI skips reads the user cannot make and hides write
+  controls. The server still authorizes every call.
+- **Workspace read API.** `/api/workspace/networks`, `/dns-records` and
+  `/dhcp-addresses`; `GET /api/subnets/:id/ips/:ip` returns one canonical
+  projection without creating a row; `GET /api/subnets/:id/summary` returns
+  whole-network counts; `/subnets/:id/ips` accepts explicit filters and
+  returns `filteredTotal`; `GET /api/dns/zones` and `GET /api/dhcp/scopes`
+  accept folder, network and search filters; `GET /api/audit` accepts
+  `entity_id`.
+- **Install a local build.** `cidrella-update --tarball FILE` installs a
+  signed release tarball from disk through the same verify, downgrade,
+  `min_from` and preflight path as a GitHub release. The `.minisig` sits next
+  to the tarball and the version comes from its `RELEASE.json`.
+- **Plain-text update logs.** `update.log` no longer contains color codes or
+  box-drawing characters, so it reads cleanly in vim, less, journalctl and
+  the web UI. The installer warns when the host locale is not UTF-8.
+- **A restore asks about DHCP.** The restore dialog now requires a choice:
+  serve DHCP after the restart (this is the appliance the backup came from)
+  or DNS only (this is a copy of another appliance, and a second DHCP server
+  would fight the real one). The choice is written into the restored data
+  before the swap, applied on the first boot, and can be changed later under
+  Settings > General > Interfaces. The restored database also gains its own
+  audit entry naming who restored, which backup, and the DHCP choice; before
+  this the only record lived in the database the restore replaced.
+  `POST /api/operations/restore` takes `?dhcp=enabled|disabled`; omitted
+  keeps the backup's own setting.
+- Bundled Node runtime is 24.21.0.
+
+### Fixed
+
+- A disabled DHCP reservation could not be deleted, renamed or moved once DNS
+  had claimed its address: the delete path tried to release an allocation
+  the reservation did not hold and got a 409. Only an enabled reservation
+  releases now.
+- A GeoIP block on a mixed answer set could name a country that had nothing
+  to do with the block, and charged every resolved country's hit counter in
+  the Intelligence analytics. Only the blocking countries are reported and
+  counted.
+- The header showed CPU 0% on a healthy dot when the health read failed. It
+  now shows Unavailable with an Unknown dot and drops the stale reading.
+- The Users page clears a revealed password or token when its dialog closes.
+- The address breakdown counted the current page instead of the network.
+- Four hover states never painted because their color variable was
+  undefined.
+- Custom DHCP options were stored and shown but never written to dnsmasq.
+  They are now emitted by code with the type they were defined with.
+- A host whose DHCP lease lapsed while it stayed online (a static address set
+  by hand, another DHCP server, a restored lease file) kept its old lease name
+  on the rogue row until it had been offline for an hour, which never came.
+  The lease name now goes the moment an online host loses its lease, or when
+  an absent host returns as a rogue still carrying a retained name. The
+  device's own name stays visible as DHCP fingerprint evidence.
+- After signing in, users return to the view they were on.
+- The client and server had drifted copies of the CIDR math: the client's
+  /31 and /32 usable range was wrong and garbage parsed to a plausible
+  number. Both tiers now share one core.
+- The IPv6 parser accepted a dotted quad before `::` and folded it onto a
+  different valid address.
 
 ---
 

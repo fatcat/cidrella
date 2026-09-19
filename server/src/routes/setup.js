@@ -1,94 +1,108 @@
 import { Router } from 'express';
-import { passwordPolicyError, PASSWORD_POLICY } from '../auth/password-policy.js';
-import bcrypt from 'bcryptjs';
-import { getDb } from '../db/init.js';
-import * as User from '../models/user.js';
-import * as Setting from '../models/setting.js';
+import { effectivePasswordPolicy, passwordComplexityEnabled } from '../auth/password-policy.js';
+import { getDb, audit } from '../db/init.js';
+import { requirePerm } from '../auth/require-perm.js';
+import { validateInterfaceConfig } from '../utils/validation.js';
+import { getSetupState, setSetupState, upsertSettingWithConflict } from '../models/setting.js';
+
+// First-run setup state. The wizard itself is a client concern; the server
+// only keeps the step markers so an interrupted setup resumes, and hands the
+// password policy to the password step.
+//
+// History: until v0.5.0 this file was a pre-auth endpoint that created the
+// first admin account. v0.4.15 closed it the moment any user existed, and the
+// server has seeded the admin at first boot ever since, so it could never
+// run. It is mounted behind the auth middleware now. The API is never gated
+// on setup state: scripted installs and the test harness keep working.
 
 const router = Router();
 
-// The setup endpoints are mounted PRE-AUTH so a brand-new install can reach
-// them before any user exists. v0.4.15 tightens them: the handlers short-
-// circuit the moment any user row exists in the DB or the
-// installation_complete flag is set. That closes the v0.4.14 finding where
-// an attacker could flip the flag and/or replace the seeded admin before
-// the operator ever logged in. The status endpoint is still pre-auth so
-// the client can decide whether to show the setup wizard.
+const ROLES = new Set(['both', 'dns', 'dhcp']);
+const IMPORT_KINDS = new Set(['fresh', 'pihole', 'cidrella']);
+const TOTP_CHOICES = new Set(['enabled', 'skipped']);
 
-function setupIsClosed(db) {
-  const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
-  if (userCount > 0) return true;
-  const flag = db.prepare("SELECT value FROM settings WHERE key = 'installation_complete'").get();
-  return flag?.value === 'true';
+function validatePatch(body) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body must be an object';
+  const patch = {};
+  if ('password' in body) {
+    if (typeof body.password !== 'boolean') return 'password must be a boolean';
+    patch.password = body.password;
+  }
+  if ('deployment' in body) {
+    const d = body.deployment;
+    if (d === null) {
+      patch.deployment = null;
+    } else {
+      if (!d || typeof d !== 'object' || Array.isArray(d)) return 'deployment must be an object';
+      if (!ROLES.has(d.role)) return 'deployment.role must be both, dns or dhcp';
+      const ifErr = validateInterfaceConfig(d.interfaces ?? {});
+      if (ifErr) return `deployment.interfaces ${ifErr}`;
+      patch.deployment = { role: d.role, interfaces: d.interfaces ?? {} };
+    }
+  }
+  if ('import' in body) {
+    const i = body.import;
+    if (i === null) {
+      patch.import = null;
+    } else {
+      if (!i || typeof i !== 'object' || Array.isArray(i)) return 'import must be an object';
+      if (!IMPORT_KINDS.has(i.kind)) return 'import.kind must be fresh, pihole or cidrella';
+      patch.import = { kind: i.kind };
+    }
+  }
+  if ('totp' in body) {
+    if (body.totp !== null && !TOTP_CHOICES.has(body.totp)) {
+      return 'totp must be enabled, skipped or null';
+    }
+    patch.totp = body.totp;
+  }
+  if ('done' in body) {
+    if (typeof body.done !== 'boolean') return 'done must be a boolean';
+    patch.done = body.done;
+  }
+  // Not a marker: the one appliance setting the password step owns, kept on
+  // this endpoint because it is the only write the password-change gate lets
+  // through before the password is changed.
+  let complexity;
+  if ('password_complexity' in body) {
+    if (typeof body.password_complexity !== 'boolean') {
+      return 'password_complexity must be a boolean';
+    }
+    complexity = body.password_complexity;
+  }
+  if (Object.keys(patch).length === 0 && complexity === undefined) return 'nothing to update';
+  return { patch, complexity };
 }
 
-// GET /api/setup/status: tell the client whether the wizard should appear.
-router.get('/status', (req, res) => {
-  const db = getDb();
-  // password_policy is served so the wizard can validate and describe the rule
-  // without keeping its own copy, which had already drifted (audit #39).
-  res.json({
-    setup_required: !setupIsClosed(db),
-    password_policy: PASSWORD_POLICY,
-  });
+function stateResponse(db) {
+  return {
+    ...getSetupState(db),
+    password_policy: effectivePasswordPolicy(db),
+    password_complexity: passwordComplexityEnabled(db),
+  };
+}
+
+// GET /api/setup/state: where the first run stands, plus the password rule
+// the password step validates against (served, not restated client-side).
+router.get('/state', (req, res) => {
+  res.json(stateResponse(getDb()));
 });
 
-// POST /api/setup: complete first-run setup. Available ONLY when no user
-// exists. `skip` is accepted in the same window but otherwise rejected.
-router.post('/', async (req, res) => {
-  try {
-    const db = getDb();
-
-    if (setupIsClosed(db)) {
-      return res.status(409).json({ error: 'Setup is not available on this installation.' });
-    }
-
-    const body = req.body || {};
-    const { username, password, skip } = body;
-
-    if (skip === true) {
-      Setting.upsertSetting(db, 'installation_complete', 'true');
-      return res.json({ ok: true, skipped: true });
-    }
-
-    if (typeof username !== 'string' || typeof password !== 'string') {
-      return res.status(400).json({ error: 'Username and password must be strings' });
-    }
-    if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
-    }
-    if (username.length < 3 || username.length > 64) {
-      return res.status(400).json({ error: 'Username must be 3–64 characters' });
-    }
-    {
-      const pwErr = passwordPolicyError(password);
-      if (pwErr) return res.status(400).json({ error: pwErr });
-    }
-
-    const hash = await bcrypt.hash(password, 10);
-
-    db.transaction(() => {
-      // Re-check inside the transaction so two concurrent POSTs can't both win.
-      if (setupIsClosed(db)) {
-        throw new Error('__setup_closed_during_txn__');
-      }
-      User.createUser(db, {
-        username,
-        passwordHash: hash,
-        role: 'admin',
-        mustChangePassword: false,
-      });
-      Setting.upsertSetting(db, 'installation_complete', 'true');
-    })();
-
-    res.json({ ok: true, username });
-  } catch (err) {
-    if (err.message === '__setup_closed_during_txn__') {
-      return res.status(409).json({ error: 'Setup is not available on this installation.' });
-    }
-    console.error('Setup error:', err?.message || err);
-    res.status(500).json({ error: 'Setup failed' });
+// PUT /api/setup/state: merge step markers. Only the keys given change.
+router.put('/state', requirePerm('system:write'), (req, res) => {
+  const result = validatePatch(req.body);
+  if (typeof result === 'string') return res.status(400).json({ error: result });
+  const { patch, complexity } = result;
+  const db = getDb();
+  if (Object.keys(patch).length > 0) setSetupState(db, patch);
+  if (complexity !== undefined) {
+    upsertSettingWithConflict(db, 'password_complexity', complexity ? 'true' : 'false');
   }
+  audit(req.user.id, 'setup_step', 'system', null, {
+    ...patch,
+    ...(complexity === undefined ? {} : { password_complexity: complexity }),
+  });
+  res.json(stateResponse(db));
 });
 
 export default router;

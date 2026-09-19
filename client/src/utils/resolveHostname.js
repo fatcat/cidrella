@@ -54,14 +54,16 @@ export async function resolveHostname(value, api, toast) {
  * Return an input placeholder string appropriate for a DHCP option type.
  *
  * @param {string} type - DHCP option type ('ip', 'ip-list', 'text', 'text-list', 'number')
+ * @param {number} [family=4] - address family the option belongs to (4 or 6)
  * @returns {string}
  */
-export function placeholderForType(type) {
+export function placeholderForType(type, family = 4) {
+  const v6 = Number(family) === 6;
   switch (type) {
     case 'ip':
-      return 'e.g. 192.168.1.1';
+      return v6 ? 'e.g. fd00::1' : 'e.g. 192.168.1.1';
     case 'ip-list':
-      return 'e.g. 192.168.1.1, 192.168.1.2';
+      return v6 ? 'e.g. fd00::53, 2606:4700:4700::1111' : 'e.g. 192.168.1.1, 192.168.1.2';
     case 'text':
       return 'Value';
     case 'text-list':

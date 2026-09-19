@@ -126,10 +126,9 @@
       </div>
     </div>
 
-    <!-- Inline Options Section. The option catalog is DHCPv4; a DHCPv6 scope
-         takes its DNS, domain and NTP values from the network. -->
+    <!-- Inline Options Section. The catalog follows the network's family:
+         DHCPv4 codes on an IPv4 network, the option6 catalog on IPv6. -->
     <div
-      v-if="scopeFamily !== 6"
       class="scope-options-section"
       :class="{ 'options-disabled': showRangePicker && !form.subnet_id }"
     >
@@ -187,7 +186,9 @@
                   v-else
                   v-model="form.optionValues[opt.code]"
                   size="small"
-                  :placeholder="defaultValues[opt.code] || placeholderForType(opt.type)"
+                  :placeholder="
+                    defaultValues[opt.code] || placeholderForType(opt.type, scopeFamily)
+                  "
                   @blur="
                     opt.type === 'ip-list' || opt.type === 'ip'
                       ? resolveHostnameField(opt.code)
@@ -415,28 +416,58 @@ watch([scopeFamily, v6ModeOptions], ([family, options]) => {
   }
 });
 
-async function loadOptions() {
-  if (optionCatalog.value.length > 0) return;
-  try {
-    const res = await api.get('/dhcp/options');
-    optionCatalog.value = res.data.catalog;
-    if (res.data.groups) optionGroupOrder.value = res.data.groups;
-    Object.keys(defaultValues).forEach((k) => delete defaultValues[k]);
-    for (const [code, value] of Object.entries(res.data.defaults || {})) {
-      defaultValues[Number(code)] = value;
+// One catalog per family, fetched on first use. DHCPv4 and DHCPv6 codes are
+// separate namespaces, so the dialog swaps the whole set (catalog, default
+// values, enabled-by-default codes) when the network's family changes.
+const optionCatalogs = { 4: null, 6: null };
+let loadedFamily = null;
+
+async function loadOptions(family = scopeFamily.value) {
+  const fam = Number(family) === 6 ? 6 : 4;
+  if (!optionCatalogs[fam]) {
+    try {
+      const res = await api.get('/dhcp/options', { params: { family: fam } });
+      optionCatalogs[fam] = res.data;
+    } catch (err) {
+      console.error('Failed to load DHCP options:', err);
+      return;
     }
-    enabledDefaultCodes.value = (res.data.enabledDefaults || [])
-      .map(Number)
-      .filter(Number.isInteger);
-  } catch (err) {
-    console.error('Failed to load DHCP options:', err);
   }
+  if (loadedFamily === fam) return;
+  const data = optionCatalogs[fam];
+  optionCatalog.value = data.catalog;
+  if (data.groups) optionGroupOrder.value = data.groups;
+  Object.keys(defaultValues).forEach((k) => delete defaultValues[k]);
+  for (const [code, value] of Object.entries(data.defaults || {})) {
+    defaultValues[Number(code)] = value;
+  }
+  enabledDefaultCodes.value = (data.enabledDefaults || []).map(Number).filter(Number.isInteger);
+  loadedFamily = fam;
 }
 
 // Reload defaults (called from parent when defaults are saved)
 async function reloadOptions() {
+  optionCatalogs[4] = null;
+  optionCatalogs[6] = null;
+  loadedFamily = null;
   optionCatalog.value = [];
   await loadOptions();
+}
+
+// The IPv6 counterparts of the network-derived IPv4 fills: the search list
+// (24) from the network's domain and DNS Servers (23) from CIDRella's own
+// address on the network, never overwriting an explicit value. There is no
+// mask, router or broadcast: those come from Router Advertisements.
+function applyV6NetworkDefaults(selected, values, { domain, serverIp } = {}) {
+  setOptionValue(selected, values, 24, domain, { overwrite: false });
+  setOptionValue(selected, values, 23, serverIp, { overwrite: false });
+}
+
+function selectEnabledDefaults(selected, values) {
+  for (const code of enabledDefaultCodes.value) {
+    addOptionSelection(selected, code);
+    setOptionValue(selected, values, code, defaultValues[code], { overwrite: false });
+  }
 }
 
 function addOptionSelection(selected, code) {
@@ -490,8 +521,15 @@ function toggleOption(code, checked) {
     // Pre-fill from default if no value set
     if (form.value.optionValues[code] == null || form.value.optionValues[code] === '') {
       const def = defaultValues[code];
+      const v6 = scopeFamily.value === 6;
       if (def != null) {
         form.value.optionValues[code] = def;
+      } else if (v6 && code === 24 && editing.value?.subnet_domain_name) {
+        form.value.optionValues[code] = editing.value.subnet_domain_name;
+      } else if (v6 && code === 23 && editing.value?.server_ip) {
+        form.value.optionValues[code] = editing.value.server_ip;
+      } else if (v6) {
+        /* no other network-derived IPv6 value */
       } else if ((code === 15 || code === 119) && editing.value?.subnet_domain_name) {
         form.value.optionValues[code] = editing.value.subnet_domain_name;
       } else if (code === 6 && editing.value?.server_ip) {
@@ -521,11 +559,19 @@ watch(
     if (form.value.range_id) return;
     const subnet = subnetsList.value.find((s) => s.id === subnetId);
     if (!subnet) return;
+    const previousFamily = scopeFamily.value;
     contextCidr.value = subnet.cidr || '';
     if (cidrFamily(subnet.cidr) === 6) {
-      // No DHCPv4 options on an IPv6 network. The pool suggestion still applies to stateful.
+      // The IPv6 catalog replaces whatever the IPv4 defaults filled in. The
+      // pool suggestion still applies to stateful.
+      await loadOptions(6);
+      if (form.value.subnet_id !== subnetId) return;
       form.value.selectedOptions = [];
       form.value.optionValues = {};
+      selectEnabledDefaults(form.value.selectedOptions, form.value.optionValues);
+      applyV6NetworkDefaults(form.value.selectedOptions, form.value.optionValues, {
+        domain: subnet.domain_name,
+      });
       if (subnet.name && !form.value.description) {
         form.value.description = `${subnet.name} DHCP Scope`;
       }
@@ -540,6 +586,14 @@ watch(
         }
       }
       return;
+    }
+
+    // Back on IPv4 after an IPv6 pick: the IPv6 fills are meaningless here.
+    if (previousFamily === 6) {
+      await loadOptions(4);
+      if (form.value.subnet_id !== subnetId) return;
+      form.value.selectedOptions = [];
+      form.value.optionValues = {};
     }
 
     // Enable all enabled-by-default options
@@ -601,8 +655,16 @@ watch(
     if (!range) return;
     contextCidr.value = range.subnet_cidr || contextCidr.value;
     if (cidrFamily(range.subnet_cidr) === 6) {
-      form.value.selectedOptions = [];
-      form.value.optionValues = {};
+      loadOptions(6).then(() => {
+        if (form.value.range_id !== rangeId) return;
+        form.value.selectedOptions = [];
+        form.value.optionValues = {};
+        selectEnabledDefaults(form.value.selectedOptions, form.value.optionValues);
+        applyV6NetworkDefaults(form.value.selectedOptions, form.value.optionValues, {
+          domain: range.subnet_domain_name,
+          serverIp: range.server_ip,
+        });
+      });
       return;
     }
 
@@ -825,10 +887,10 @@ async function save() {
  * @param {Object} scope - scope object with options array, subnet_cidr, server_ip, subnet_domain_name
  */
 async function openEdit(scope) {
-  await loadOptions();
   editing.value = scope;
   showRangePicker.value = false;
   contextCidr.value = scope.subnet_cidr || '';
+  await loadOptions(scopeFamily.value);
 
   const selOpts = [];
   const optVals = {};
@@ -845,19 +907,23 @@ async function openEdit(scope) {
   // Re-populate inherited values for options not stored in scope_options
   // Gateway (option 3) is stripped on save when it matches the subnet gateway,
   // so re-fill it from the subnet so the UI always shows the effective value.
-  // An IPv6 scope has no DHCPv4 options to fill.
-  if (cidrFamily(scope.subnet_cidr) !== 6) {
+  if (scopeFamily.value === 6) {
+    applyV6NetworkDefaults(selOpts, optVals, {
+      domain: scope.subnet_domain_name,
+      serverIp: scope.server_ip,
+    });
+  } else {
     setOptionValue(selOpts, optVals, 3, scope.subnet_gateway, { overwrite: false });
     if (!selOpts.includes(1) && scope.subnet_cidr) {
       const mask = computeMask(scope.subnet_cidr);
       setOptionValue(selOpts, optVals, 1, mask, { overwrite: false });
     }
+    setOptionValue(selOpts, optVals, 15, scope.subnet_domain_name, { overwrite: false });
+    setOptionValue(selOpts, optVals, 119, scope.subnet_domain_name, { overwrite: false });
+    setOptionValue(selOpts, optVals, 6, scope.server_ip ? `${scope.server_ip}, 9.9.9.9` : null, {
+      overwrite: false,
+    });
   }
-  setOptionValue(selOpts, optVals, 15, scope.subnet_domain_name, { overwrite: false });
-  setOptionValue(selOpts, optVals, 119, scope.subnet_domain_name, { overwrite: false });
-  setOptionValue(selOpts, optVals, 6, scope.server_ip ? `${scope.server_ip}, 9.9.9.9` : null, {
-    overwrite: false,
-  });
 
   form.value = {
     range_id: scope.range_id,
@@ -871,17 +937,8 @@ async function openEdit(scope) {
     optionValues: optVals,
     v6_mode: scope.v6_mode || null,
   };
-  stripOptionsForIpv6();
   optionsExpanded.value = form.value.selectedOptions.length > 0;
   showScopeDialog();
-}
-
-// The option catalog is DHCPv4. A DHCPv6 scope carries none, whatever the
-// defaults or the network context tried to fill in.
-function stripOptionsForIpv6() {
-  if (scopeFamily.value !== 6) return;
-  form.value.selectedOptions = [];
-  form.value.optionValues = {};
 }
 
 /**
@@ -892,28 +949,35 @@ function stripOptionsForIpv6() {
  * @param {Object} [subnetCtx] - Optional subnet context { id, cidr, gateway_address, domain_name }
  */
 async function openNewWithPicker(subnetCtx) {
-  await loadOptions();
   editing.value = null;
   showRangePicker.value = true;
   contextCidr.value = subnetCtx?.cidr || '';
+  await loadOptions(scopeFamily.value);
 
   const autoSelected = [];
   const autoValues = {};
 
   // Auto-select all enabled-by-default options
-  for (const code of enabledDefaultCodes.value) {
-    addOptionSelection(autoSelected, code);
-    setOptionValue(autoSelected, autoValues, code, defaultValues[code], { overwrite: false });
-  }
+  selectEnabledDefaults(autoSelected, autoValues);
 
   // Network-dependent overrides from subnet context
   let autoStartIp = '';
   let autoEndIp = '';
   if (subnetCtx) {
-    setOptionValue(autoSelected, autoValues, 3, subnetCtx.gateway_address);
+    if (scopeFamily.value === 6) {
+      applyV6NetworkDefaults(autoSelected, autoValues, { domain: subnetCtx.domain_name });
+    } else {
+      setOptionValue(autoSelected, autoValues, 3, subnetCtx.gateway_address);
+      if (subnetCtx.cidr) {
+        const mask = computeMask(subnetCtx.cidr);
+        setOptionValue(autoSelected, autoValues, 1, mask);
+      }
+      if (subnetCtx.domain_name) {
+        setOptionValue(autoSelected, autoValues, 15, subnetCtx.domain_name);
+        setOptionValue(autoSelected, autoValues, 119, subnetCtx.domain_name);
+      }
+    }
     if (subnetCtx.cidr) {
-      const mask = computeMask(subnetCtx.cidr);
-      setOptionValue(autoSelected, autoValues, 1, mask);
       // Fetch the same server-owned suggestion used by network creation.
       try {
         const pool = await loadSuggestedPool(subnetCtx);
@@ -922,10 +986,6 @@ async function openNewWithPicker(subnetCtx) {
       } catch {
         /* defaults unavailable, leave explicit fields blank */
       }
-    }
-    if (subnetCtx.domain_name) {
-      setOptionValue(autoSelected, autoValues, 15, subnetCtx.domain_name);
-      setOptionValue(autoSelected, autoValues, 119, subnetCtx.domain_name);
     }
   }
 
@@ -939,7 +999,6 @@ async function openNewWithPicker(subnetCtx) {
     selectedOptions: autoSelected,
     optionValues: autoValues,
   };
-  stripOptionsForIpv6();
 
   loadingRanges.value = true;
   try {
@@ -960,32 +1019,33 @@ async function openNewWithPicker(subnetCtx) {
  * @param {Object} opts - { rangeId, subnetId, gateway, cidr, domainName }
  */
 async function openNewForRange(opts) {
-  await loadOptions();
   editing.value = null;
   showRangePicker.value = false;
   contextCidr.value = opts.cidr || '';
+  await loadOptions(scopeFamily.value);
 
   // Auto-select enabled-by-default options
   const autoSelected = [];
   const autoValues = {};
-  for (const code of enabledDefaultCodes.value) {
-    addOptionSelection(autoSelected, code);
-    setOptionValue(autoSelected, autoValues, code, defaultValues[code], { overwrite: false });
-  }
+  selectEnabledDefaults(autoSelected, autoValues);
 
-  // Override gateway from subnet if available
-  setOptionValue(autoSelected, autoValues, 3, opts.gateway);
+  if (scopeFamily.value === 6) {
+    applyV6NetworkDefaults(autoSelected, autoValues, { domain: opts.domainName });
+  } else {
+    // Override gateway from subnet if available
+    setOptionValue(autoSelected, autoValues, 3, opts.gateway);
 
-  // Auto-populate mask from CIDR
-  if (opts.cidr) {
-    const mask = computeMask(opts.cidr);
-    setOptionValue(autoSelected, autoValues, 1, mask);
-  }
+    // Auto-populate mask from CIDR
+    if (opts.cidr) {
+      const mask = computeMask(opts.cidr);
+      setOptionValue(autoSelected, autoValues, 1, mask);
+    }
 
-  // Domain name + DNS search list
-  if (opts.domainName) {
-    setOptionValue(autoSelected, autoValues, 15, opts.domainName, { overwrite: false });
-    setOptionValue(autoSelected, autoValues, 119, opts.domainName, { overwrite: false });
+    // Domain name + DNS search list
+    if (opts.domainName) {
+      setOptionValue(autoSelected, autoValues, 15, opts.domainName, { overwrite: false });
+      setOptionValue(autoSelected, autoValues, 119, opts.domainName, { overwrite: false });
+    }
   }
 
   form.value = {
@@ -995,7 +1055,6 @@ async function openNewForRange(opts) {
     selectedOptions: autoSelected,
     optionValues: autoValues,
   };
-  stripOptionsForIpv6();
   optionsExpanded.value = form.value.selectedOptions.length > 0;
   showScopeDialog();
 }

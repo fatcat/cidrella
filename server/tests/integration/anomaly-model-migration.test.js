@@ -70,7 +70,7 @@ describe('anomaly model identity migration compatibility', () => {
 
     expect(
       upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
-    ).toBe(73);
+    ).toBe(75);
     expect(
       upgraded
         .prepare(
@@ -129,7 +129,7 @@ describe('anomaly model identity migration compatibility', () => {
 
     expect(
       upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
-    ).toBe(73);
+    ).toBe(75);
     expect(
       upgraded
         .prepare(

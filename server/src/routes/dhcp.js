@@ -17,7 +17,11 @@ import {
 import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
 import { syncLeases } from '../utils/dhcp.js';
-import { DHCP_OPTIONS, DHCP_OPTION_GROUPS, DHCP_OPTIONS_BY_CODE } from '../utils/dhcp-options.js';
+import {
+  DHCP_OPTION_GROUPS,
+  optionCatalogFor,
+  isOptionCodeAllowed,
+} from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
 import { normalizeDuid } from '../utils/duid.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
@@ -73,27 +77,45 @@ function resolveV6Mode(subnet, requested, current = null) {
 // options table. The config writer (utils/dhcp.js) already drops bad rows
 // so a malformed row is non-exploitable, but catching it at write-time
 // surfaces a clear error and keeps the DB clean.
-function validateScopeOption(opt) {
+// The family an option request is about. Only 4 and 6 exist; anything else
+// (including nothing) is IPv4 so pre-IPv6 callers keep working.
+function familyParam(value) {
+  if (value === undefined || value === null || value === '') return 4;
+  const n = Number(value);
+  return n === 4 || n === 6 ? n : null;
+}
+
+function optionCodeError(code, family) {
+  const catalog = optionCatalogFor(family);
+  if (!Number.isInteger(code) || code < 1 || code > catalog.maxCode)
+    return `code must be an integer 1-${catalog.maxCode}`;
+  if (!isOptionCodeAllowed(code, family))
+    return `code ${code} is built by dnsmasq itself and cannot be set`;
+  return null;
+}
+
+function validateScopeOption(opt, family = 4) {
   if (!opt || typeof opt !== 'object') return 'option must be an object';
   const code = Number(opt.code);
-  if (!Number.isInteger(code) || code < 1 || code > 254) return 'code must be an integer 1-254';
+  const codeErr = optionCodeError(code, family);
+  if (codeErr) return codeErr;
   const value = opt.value;
   if (value == null || value === '') return null; // caller skips empty values
   if (typeof value !== 'string') return 'value must be a string';
-  const optDef = DHCP_OPTIONS_BY_CODE[code];
+  const optDef = optionCatalogFor(family).byCode[code];
   const type = optDef?.type || 'text';
-  if (code === 51 && !LEASE_TIME_RE.test(value))
+  if (family === 4 && code === 51 && !LEASE_TIME_RE.test(value))
     return 'lease time must look like 3600, 1h, 30m, or 1d';
   const allowComma = type === 'ip-list' || type === 'text-list';
   return validateDnsmasqConfigValue(value, { allowComma });
 }
 
-function validateDefaultOption(opt) {
+function validateDefaultOption(opt, family = 4) {
   if (!opt || typeof opt !== 'object') return 'option must be an object';
-  if (!Number.isInteger(opt.code) || opt.code < 1 || opt.code > 254)
-    return 'code must be an integer 1-254';
+  const codeErr = optionCodeError(opt.code, family);
+  if (codeErr) return codeErr;
   if (opt.value == null || opt.value === '') return null;
-  return validateScopeOption(opt);
+  return validateScopeOption(opt, family);
 }
 
 // Helper: parse and validate a JSON IP array field
@@ -323,7 +345,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   if (Array.isArray(options)) {
     for (const opt of options) {
       if (opt == null || opt.value == null || opt.value === '') continue;
-      const err = validateScopeOption(opt);
+      const err = validateScopeOption(opt, subnet.address_family);
       if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
     }
   } else if (options !== undefined) {
@@ -481,7 +503,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   if (Array.isArray(options)) {
     for (const opt of options) {
       if (opt == null || opt.value == null || opt.value === '') continue;
-      const err = validateScopeOption(opt);
+      const err = validateScopeOption(opt, scopeSubnet.address_family);
       if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
     }
   } else if (options !== undefined) {
@@ -1148,25 +1170,36 @@ router.get('/available-ranges', requirePerm('dhcp:read'), (req, res) => {
 
 // ─── DHCP Options ────────────────────────────────────────
 
-// GET /api/dhcp/options: catalog + global defaults + custom options
+const FAMILY_PARAM_ERROR = 'family must be 4 or 6';
+
+// GET /api/dhcp/options?family=4|6: catalog + global defaults + custom
+// options for one address family (IPv4 when omitted). DHCPv4 and DHCPv6
+// codes are separate namespaces, so nothing here mixes the two.
 router.get('/options', requirePerm('dhcp:read'), (req, res) => {
+  const family = familyParam(req.query.family);
+  if (family === null) return res.status(400).json({ error: FAMILY_PARAM_ERROR });
   const db = getDb();
   const rows = db
-    .prepare('SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults')
-    .all();
+    .prepare(
+      'SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults WHERE address_family = ?',
+    )
+    .all(family);
   const defaults = Object.fromEntries(
     rows.filter((r) => r.value != null).map((r) => [r.option_code, r.value]),
   );
   const enabledDefaults = rows.filter((r) => r.enabled_by_default).map((r) => r.option_code);
 
   // Merge built-in catalog with custom options
-  const customRows = db.prepare('SELECT * FROM dhcp_custom_options ORDER BY code').all();
+  const catalogFor = optionCatalogFor(family);
+  const customRows = db
+    .prepare('SELECT * FROM dhcp_custom_options WHERE address_family = ? ORDER BY code')
+    .all(family);
   const customOptions = customRows.map((r) => ({
     code: r.code,
     name: r.name,
     label: r.label,
     type: r.type,
-    dnsmasqName: String(r.code),
+    dnsmasqName: family === 6 ? `option6:${r.code}` : String(r.code),
     group: 'Custom',
     rfc: null,
     rfcUrl: null,
@@ -1174,33 +1207,52 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
     custom: true,
   }));
 
-  const catalog = [...DHCP_OPTIONS, ...customOptions];
-  res.json({ catalog, defaults, enabledDefaults, groups: DHCP_OPTION_GROUPS });
+  const catalog = [...catalogFor.options, ...customOptions];
+  res.json({
+    family,
+    catalog,
+    defaults,
+    enabledDefaults,
+    groups: DHCP_OPTION_GROUPS,
+    customRange: catalogFor.customRange,
+  });
 });
 
-// POST /api/dhcp/options/custom: create a custom option (codes 128-254)
+// POST /api/dhcp/options/custom: create a custom option. IPv4 codes 128-254;
+// IPv6 any code dnsmasq does not build itself, up to 65535.
 router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const { code, name, label, type, description } = req.body;
+  const family = familyParam(req.body.address_family);
+  if (family === null) return res.status(400).json({ error: 'address_family must be 4 or 6' });
+  const catalogFor = optionCatalogFor(family);
+  const [minCode, maxCode] = catalogFor.customRange;
 
   if (!code || !label) return res.status(400).json({ error: 'code and label are required' });
   const codeNum = parseInt(code, 10);
-  if (isNaN(codeNum) || codeNum < 128 || codeNum > 254) {
-    return res.status(400).json({ error: 'Code must be between 128 and 254' });
+  if (isNaN(codeNum) || codeNum < minCode || codeNum > maxCode) {
+    return res.status(400).json({ error: `Code must be between ${minCode} and ${maxCode}` });
+  }
+  if (!isOptionCodeAllowed(codeNum, family)) {
+    return res
+      .status(400)
+      .json({ error: `Code ${codeNum} is built by dnsmasq itself and cannot be a custom option` });
   }
 
   const allowedTypes = ['ip', 'ip-list', 'text', 'text-list', 'number'];
   const optType = allowedTypes.includes(type) ? type : 'text';
 
   // Check conflict with built-in catalog
-  const builtIn = DHCP_OPTIONS.find((o) => o.code === codeNum);
+  const builtIn = catalogFor.byCode[codeNum];
   if (builtIn)
     return res
       .status(409)
       .json({ error: `Code ${codeNum} is already a built-in option (${builtIn.label})` });
 
   // Check conflict with existing custom option
-  const existing = db.prepare('SELECT id FROM dhcp_custom_options WHERE code = ?').get(codeNum);
+  const existing = db
+    .prepare('SELECT id FROM dhcp_custom_options WHERE code = ? AND address_family = ?')
+    .get(codeNum, family);
   if (existing)
     return res.status(409).json({ error: `Code ${codeNum} already exists as a custom option` });
 
@@ -1211,18 +1263,27 @@ router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
     label,
     type: optType,
     description,
+    address_family: family,
   });
 
-  audit(req.user.id, 'create', 'dhcp_custom_option', created.id, { code: codeNum, label });
+  audit(req.user.id, 'create', 'dhcp_custom_option', created.id, {
+    code: codeNum,
+    label,
+    address_family: family,
+  });
   res.status(201).json(created);
 });
 
-// DELETE /api/dhcp/options/custom/:code: delete a custom option
+// DELETE /api/dhcp/options/custom/:code?family=4|6: delete a custom option
 router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const codeNum = parseInt(req.params.code, 10);
+  const family = familyParam(req.query.family);
+  if (family === null) return res.status(400).json({ error: FAMILY_PARAM_ERROR });
 
-  const entry = db.prepare('SELECT * FROM dhcp_custom_options WHERE code = ?').get(codeNum);
+  const entry = db
+    .prepare('SELECT * FROM dhcp_custom_options WHERE code = ? AND address_family = ?')
+    .get(codeNum, family);
   if (!entry) return res.status(404).json({ error: 'Custom option not found' });
 
   deleteCustomOption(db, entry);
@@ -1230,40 +1291,48 @@ router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => 
   audit(req.user.id, 'delete', 'dhcp_custom_option', entry.id, {
     code: codeNum,
     label: entry.label,
+    address_family: family,
   });
   res.json({ ok: true });
 });
 
-// PUT /api/dhcp/options/defaults: set global defaults
+// PUT /api/dhcp/options/defaults: set global defaults for one family
+// ({ family: 4|6 }, IPv4 when omitted). The other family's rows are untouched.
 router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   const { options, enabledDefaults } = req.body;
+  const family = familyParam(req.body.family);
+  if (family === null) return res.status(400).json({ error: FAMILY_PARAM_ERROR });
+  const { maxCode } = optionCatalogFor(family);
   if (!Array.isArray(options)) {
     return res.status(400).json({ error: 'options must be an array of { code, value }' });
   }
   if (options.length > 254)
     return res.status(400).json({ error: 'options may contain at most 254 entries' });
   for (const opt of options) {
-    const err = validateDefaultOption(opt);
+    const err = validateDefaultOption(opt, family);
     if (err) return res.status(400).json({ error: `Default option ${opt?.code ?? '?'}: ${err}` });
   }
   if (enabledDefaults !== undefined) {
     if (!Array.isArray(enabledDefaults))
       return res.status(400).json({ error: 'enabledDefaults must be an array' });
     for (const code of enabledDefaults) {
-      if (!Number.isInteger(code) || code < 1 || code > 254) {
+      if (!isOptionCodeAllowed(code, family)) {
         return res
           .status(400)
-          .json({ error: 'enabledDefaults must contain integer option codes 1-254' });
+          .json({ error: `enabledDefaults must contain integer option codes 1-${maxCode}` });
       }
     }
   }
 
   const db = getDb();
-  const updated = replaceDefaultOptions(db, options, enabledDefaults);
-  audit(req.user.id, 'dhcp_option_defaults_updated', 'dhcp', null, { count: options.length });
+  const updated = replaceDefaultOptions(db, options, enabledDefaults, family);
+  audit(req.user.id, 'dhcp_option_defaults_updated', 'dhcp', null, {
+    count: options.length,
+    address_family: family,
+  });
   req.afterCommit('regenerate_dhcp');
 
-  res.json(updated);
+  res.json({ family, ...updated });
 });
 
 export default router;

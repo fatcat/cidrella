@@ -1,4 +1,5 @@
-/* Shared layout for authentication pages: Login, ChangePassword, SetupWizard */
+/* Shared layout for authentication pages: Login, ChangePassword. The first-run
+   wizard (FirstRun.vue) has its own two-column layout. */
 
 .login-container,
 .setup-container {

@@ -207,22 +207,61 @@
         This will <strong>replace all current data</strong> with the contents of the backup file.
         The server will need to be restarted after restore.
       </p>
+      <fieldset class="restore-dhcp-choice">
+        <legend>After the restore, should this appliance serve DHCP?</legend>
+        <label class="restore-dhcp-option">
+          <RadioButton
+            v-model="restoreDhcp"
+            inputId="restore-dhcp-on"
+            name="restore-dhcp"
+            value="enabled"
+            data-track="backup-restore-dhcp-on"
+          />
+          <span>
+            <strong>Yes, serve DHCP.</strong> This is the appliance the backup came from.
+          </span>
+        </label>
+        <label class="restore-dhcp-option">
+          <RadioButton
+            v-model="restoreDhcp"
+            inputId="restore-dhcp-off"
+            name="restore-dhcp"
+            value="disabled"
+            data-track="backup-restore-dhcp-off"
+          />
+          <span>
+            <strong>No, DNS only.</strong> This is a copy of another appliance; a second DHCP server
+            would fight the real one on the same network.
+          </span>
+        </label>
+        <small class="field-help">
+          You can change this later under Settings > General > Interfaces.
+        </small>
+      </fieldset>
       <p>Are you sure you want to proceed?</p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showRestoreDialog = false" />
-        <Button label="Restore Now" severity="danger" @click="doRestore" :loading="restoring" />
+        <Button
+          label="Restore Now"
+          severity="danger"
+          data-track="backup-restore-confirm"
+          @click="doRestore"
+          :loading="restoring"
+          :disabled="!restoreDhcp"
+        />
       </template>
     </Dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
 import DataTable from '../../ui/DataTable.js';
 import Column from '../../ui/Column.js';
 import Dialog from '../../ui/Dialog.js';
+import RadioButton from '../../ui/RadioButton.js';
 import Select from '../../ui/Select.js';
 import InputText from '../../ui/InputText.js';
 import ContextMenu from '../../ui/ContextMenu.js';
@@ -379,15 +418,24 @@ function onBackupRightClick(event) {
   backupContextMenuRef.value.show(event.originalEvent);
 }
 
+// The DHCP question has no default on purpose: a production appliance
+// restoring its own backup keeps serving, a copy of it must not, and neither
+// should happen by clicking through.
+const restoreDhcp = ref(null);
+watch(showRestoreDialog, (open) => {
+  if (!open) restoreDhcp.value = null;
+});
+
 function onRestoreFileSelected(e) {
   restoreFile.value = e.target.files[0] || null;
+  restoreDhcp.value = null;
 }
 
 async function doRestore() {
-  if (!restoreFile.value) return;
+  if (!restoreFile.value || !restoreDhcp.value) return;
   restoring.value = true;
   try {
-    const result = await opsStore.restoreBackup(restoreFile.value);
+    const result = await opsStore.restoreBackup(restoreFile.value, { dhcp: restoreDhcp.value });
     showRestoreDialog.value = false;
     toast.add({
       severity: 'warn',
@@ -423,6 +471,25 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.restore-dhcp-choice {
+  margin: 0.75rem 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--cid-content-border-color);
+  border-radius: var(--cid-form-field-border-radius);
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.restore-dhcp-choice legend {
+  padding: 0 0.3rem;
+  font-weight: 600;
+}
+.restore-dhcp-option {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  cursor: pointer;
+}
 .content-card {
   margin: 0;
   padding: 1.25rem;

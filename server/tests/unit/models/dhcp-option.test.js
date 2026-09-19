@@ -119,4 +119,78 @@ describe('DHCP option ownership', () => {
         .get(scopeId),
     ).toBeUndefined();
   });
+
+  it('keeps IPv4 and IPv6 defaults apart when replacing one family', () => {
+    DhcpOption.replaceDefaultOptions(db, [{ code: 6, value: '10.70.0.8' }], [1, 3, 6]);
+    DhcpOption.replaceDefaultOptions(db, [{ code: 56, value: 'fd00::123' }], [23, 24, 56], 6);
+
+    expect(DhcpOption.getDefaultOptions(db)).toEqual({
+      defaults: { 6: '10.70.0.8' },
+      enabledDefaults: [1, 3, 6],
+    });
+    expect(DhcpOption.getDefaultOptions(db, 6)).toEqual({
+      defaults: { 56: 'fd00::123' },
+      enabledDefaults: [23, 24, 56],
+    });
+
+    // Rewriting IPv6 leaves the IPv4 rows exactly as they were.
+    DhcpOption.replaceDefaultOptions(db, [], [24], 6);
+    expect(DhcpOption.getDefaultOptions(db)).toEqual({
+      defaults: { 6: '10.70.0.8' },
+      enabledDefaults: [1, 3, 6],
+    });
+    expect(DhcpOption.getDefaultOptions(db, 6)).toEqual({ defaults: {}, enabledDefaults: [24] });
+  });
+
+  it('seeds the IPv6 defaults once and leaves operator changes alone', () => {
+    DhcpOption.seedDefaultOptions(db);
+    const v6 = () =>
+      db
+        .prepare(
+          'SELECT option_code, value, enabled_by_default FROM dhcp_option_defaults WHERE address_family = 6 ORDER BY option_code',
+        )
+        .all();
+    expect(v6()).toEqual([
+      { option_code: 23, value: null, enabled_by_default: 1 },
+      { option_code: 24, value: null, enabled_by_default: 1 },
+    ]);
+
+    db.prepare(
+      "UPDATE dhcp_option_defaults SET value = 'fd00::53' WHERE address_family = 6 AND option_code = 23",
+    ).run();
+    DhcpOption.seedDefaultOptions(db);
+    expect(v6()[0]).toEqual({ option_code: 23, value: 'fd00::53', enabled_by_default: 1 });
+    // The IPv4 seed is unchanged by the IPv6 rows sharing the table.
+    expect(DhcpOption.getDefaultOptions(db).enabledDefaults).toEqual([1, 3, 6, 15, 42, 119]);
+  });
+
+  it('deletes a custom option within its own family only', () => {
+    DhcpOption.createCustomOption(db, { code: 200, name: 'a', label: 'A', type: 'text' });
+    const v6 = DhcpOption.createCustomOption(db, {
+      code: 200,
+      name: 'b',
+      label: 'B',
+      type: 'text',
+      address_family: 6,
+    });
+    expect(v6.address_family).toBe(6);
+    DhcpOption.replaceDefaultOptions(db, [{ code: 200, value: 'four' }], []);
+    DhcpOption.replaceDefaultOptions(db, [{ code: 200, value: 'six' }], [], 6);
+
+    DhcpOption.deleteCustomOption(db, { code: 200, address_family: 6 });
+
+    expect(db.prepare('SELECT address_family FROM dhcp_custom_options').all()).toEqual([
+      { address_family: 4 },
+    ]);
+    expect(DhcpOption.getDefaultOptions(db).defaults).toEqual({ 200: 'four' });
+    expect(DhcpOption.getDefaultOptions(db, 6).defaults).toEqual({});
+  });
+
+  it('writes the server DNS default into the IPv4 row only', () => {
+    DhcpOption.replaceDefaultOptions(db, [{ code: 23, value: 'fd00::53' }], [23], 6);
+    expect(DhcpOption.upsertServerDnsDefault(db, '10.70.0.2,9.9.9.9')).toBe(true);
+    expect(DhcpOption.upsertServerDnsDefault(db, '10.70.0.2,9.9.9.9')).toBe(false);
+    expect(DhcpOption.getDefaultOptions(db).defaults).toEqual({ 6: '10.70.0.2,9.9.9.9' });
+    expect(DhcpOption.getDefaultOptions(db, 6).defaults).toEqual({ 23: 'fd00::53' });
+  });
 });

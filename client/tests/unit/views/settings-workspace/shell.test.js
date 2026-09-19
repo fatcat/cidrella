@@ -15,9 +15,29 @@ vi.mock('vue-router', () => ({
   useRouter: () => router,
 }));
 
+// The feature switches the shell gates sub-tabs on. Off by default, as in a
+// component test without Pinia; a test flips one on.
+const features = reactive({ ipv6: false });
+vi.mock('../../../../src/composables/useFeatures.js', () => ({
+  useFeatures: () => ({
+    ipv6: {
+      get value() {
+        return features.ipv6;
+      },
+    },
+  }),
+}));
+
 // A small catalog stands in for settingsAreas.js so no real editor (with its
 // API reads) mounts. The shell must not know the difference.
-const leaf = (name) => defineComponent({ name, render: () => h('p', { class: 'leaf' }, name) });
+const leaf = (name) =>
+  defineComponent({
+    name,
+    props: { family: { type: Number, default: 0 } },
+    render() {
+      return h('p', { class: 'leaf' }, this.family ? `${name} ${this.family}` : name);
+    },
+  });
 vi.mock('../../../../src/config/settingsAreas.js', () => {
   const SETTINGS_AREAS = [
     {
@@ -55,6 +75,14 @@ vi.mock('../../../../src/config/settingsAreas.js', () => {
           id: 'scopes',
           label: 'Scopes',
           dataTrack: 'settings-sec-dhcp',
+          component: leaf('Scopes'),
+        },
+        {
+          id: 'scopes-v6',
+          label: 'Scopes IPv6',
+          dataTrack: 'settings-sec-dhcp-v6',
+          feature: 'ipv6',
+          props: { family: 6 },
           component: leaf('Scopes'),
         },
         {
@@ -131,9 +159,32 @@ function mountShell() {
 describe('Settings workspace shell', () => {
   beforeEach(() => {
     route.query = {};
+    features.ipv6 = false;
     push.mockClear();
     replace.mockClear();
     globalThis.document.body.innerHTML = '';
+  });
+
+  it('lists a feature-gated section only while the switch is on and binds its props', async () => {
+    route.query = { area: 'dhcp', sec: 'scopes-v6' };
+    const wrapper = mountShell();
+    // Off: the tab is absent and the deep link falls back to the first section.
+    expect(wrapper.findAll('[role="tab"]').map((el) => el.text())).toEqual([
+      'Scopes',
+      'Rogue Detection',
+    ]);
+    expect(wrapper.find('.leaf').text()).toBe('Scopes');
+
+    features.ipv6 = true;
+    await nextTick();
+    expect(wrapper.findAll('[role="tab"]').map((el) => el.text())).toEqual([
+      'Scopes',
+      'Scopes IPv6',
+      'Rogue Detection',
+    ]);
+    expect(wrapper.find('.leaf').text()).toBe('Scopes 6');
+    expect(wrapper.find('[data-track="settings-sec-dhcp-v6"]').exists()).toBe(true);
+    wrapper.unmount();
   });
 
   it('lists every area under its group and mounts the first section of the default area', () => {

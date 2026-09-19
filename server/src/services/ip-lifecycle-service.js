@@ -376,7 +376,7 @@ export function reconcileExpiredDhcpAllocations(db) {
   const expired = db
     .prepare(
       `
-    SELECT ip.subnet_id, ip.ip_address
+    SELECT ip.subnet_id, ip.ip_address, ip.is_online
     FROM ip_addresses ip
     WHERE ip.allocation_state = ?
       AND NOT EXISTS (
@@ -415,6 +415,14 @@ export function reconcileExpiredDhcpAllocations(db) {
       null,
       null,
     );
+    // The lease name survives only inside the offline retention window. A
+    // holder that is still online has simply stopped being ours (a static
+    // address by hand, another DHCP server, a reset lease file), so the
+    // canonical selector, which yields nothing for an unowned address, wins
+    // now rather than an hour after it finally goes quiet.
+    if (row.is_online) {
+      IpSync.syncCanonicalHostname(db, row.subnet_id, row.ip_address, { clearSource: true });
+    }
   }
   return expired.length;
 }
@@ -796,7 +804,13 @@ export function observeIpv6Presence(
   db,
   subnetId,
   ip,
-  { interfaceId = null, mac = null, policy = null, source = 'neighbor_discovery', now = Date.now() } = {},
+  {
+    interfaceId = null,
+    mac = null,
+    policy = null,
+    source = 'neighbor_discovery',
+    now = Date.now(),
+  } = {},
 ) {
   if (/^fe[89ab]/i.test(ip)) {
     return observeNeighbor(db, subnetId, ip, { interfaceId, mac, rogueAllowed: false, source });

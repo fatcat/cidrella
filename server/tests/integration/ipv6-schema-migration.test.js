@@ -173,10 +173,20 @@ describe('IPv6 schema migrations 070-073', () => {
     const upgraded = getDb();
 
     const after = counts(upgraded);
-    expect(after).toEqual(before);
+    // Startup seeds the two IPv6 option defaults (DNS servers 23, search
+    // list 24); every other table keeps exactly its rows.
+    expect(after).toEqual({ ...before, dhcp_option_defaults: before.dhcp_option_defaults + 2 });
+    expect(
+      upgraded
+        .prepare(
+          'SELECT option_code FROM dhcp_option_defaults WHERE address_family = 6 ORDER BY option_code',
+        )
+        .all()
+        .map((row) => row.option_code),
+    ).toEqual([23, 24]);
     expect(upgraded.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
-    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(73);
+    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(75);
 
     const child = upgraded.prepare("SELECT * FROM subnets WHERE cidr = '10.70.0.0/24'").get();
     expect(child.address_family).toBe(4);

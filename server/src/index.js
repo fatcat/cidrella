@@ -342,9 +342,6 @@ async function main() {
   // Hooks fire on res.on('finish') so regen never blocks the HTTP response.
   app.use(afterCommitMiddleware);
 
-  // Setup routes (pre-auth, accessible before installation is complete)
-  app.use('/api/setup', setupRoutes);
-
   // API browser, developer tool only. Mounts /api-browser which enumerates
   // every registered route and offers an interactive client. In a release
   // audit the validator flagged that it was (a) pre-auth, (b) exposed a
@@ -407,6 +404,8 @@ async function main() {
 
   // API routes
   app.use('/api/auth', authRoutes);
+  // First-run step markers; the API is never gated on them.
+  app.use('/api/setup', setupRoutes);
   app.use('/api/health', healthRoutes);
   app.use('/api/features', featuresRoutes);
   app.use('/api/subnets', subnetRoutes);

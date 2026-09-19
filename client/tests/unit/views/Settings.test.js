@@ -15,6 +15,12 @@ vi.mock('vue-router', () => ({
   useRoute: () => route,
   useRouter: () => router,
 }));
+// SettingsArea reads the feature switches; the real composable pulls in the
+// API client and with it the real router, which the mock above has no
+// createRouter for. Every switch is off here.
+vi.mock('../../../src/composables/useFeatures.js', () => ({
+  useFeatures: () => ({ ipv6: { value: false } }),
+}));
 
 const { default: Settings } = await import('../../../src/views/Settings.vue');
 

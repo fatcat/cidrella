@@ -42,10 +42,13 @@ export const useOperationsStore = defineStore('operations', () => {
     URL.revokeObjectURL(url);
   }
 
-  async function restoreBackup(file) {
+  // `dhcp` is 'enabled' or 'disabled': whether this appliance serves DHCP
+  // after the restart. Omitted keeps the backup's own setting.
+  async function restoreBackup(file, { dhcp } = {}) {
     const res = await api.post('/operations/restore', file, {
       headers: { 'Content-Type': 'application/gzip' },
       timeout: 120000,
+      ...(dhcp ? { params: { dhcp } } : {}),
     });
     return res.data;
   }
@@ -77,17 +80,6 @@ export const useOperationsStore = defineStore('operations', () => {
     return res.data;
   }
 
-  // Setup operations (no auth required)
-  async function getSetupStatus() {
-    const res = await api.get('/setup/status');
-    return res.data;
-  }
-
-  async function completeSetup(data) {
-    const res = await api.post('/setup', data);
-    return res.data;
-  }
-
   return {
     backups,
     certInfo,
@@ -102,7 +94,5 @@ export const useOperationsStore = defineStore('operations', () => {
     uploadSignedCert,
     generateCsr,
     resetCert,
-    getSetupStatus,
-    completeSetup,
   };
 });

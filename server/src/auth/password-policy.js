@@ -32,21 +32,41 @@ export const PASSWORD_POLICY = Object.freeze({
  * passes. Returning the message rather than a boolean keeps the wording in one
  * place too: both routes previously worded the same failure differently.
  */
-export function passwordPolicyError(password) {
+export function passwordPolicyError(password, policy = PASSWORD_POLICY) {
   if (typeof password !== 'string' || password.length === 0) {
     return 'Password is required';
   }
-  if (password.length < PASSWORD_POLICY.minLength || password.length > PASSWORD_POLICY.maxLength) {
-    return `Password must be ${PASSWORD_POLICY.minLength}-${PASSWORD_POLICY.maxLength} characters`;
+  if (password.length < policy.minLength || password.length > policy.maxLength) {
+    return `Password must be ${policy.minLength}-${policy.maxLength} characters`;
   }
-  if (PASSWORD_POLICY.requireUppercase && !/[A-Z]/.test(password)) {
+  if (policy.requireUppercase && !/[A-Z]/.test(password)) {
     return 'Password must contain uppercase, lowercase, and a number';
   }
-  if (PASSWORD_POLICY.requireLowercase && !/[a-z]/.test(password)) {
+  if (policy.requireLowercase && !/[a-z]/.test(password)) {
     return 'Password must contain uppercase, lowercase, and a number';
   }
-  if (PASSWORD_POLICY.requireDigit && !/\d/.test(password)) {
+  if (policy.requireDigit && !/\d/.test(password)) {
     return 'Password must contain uppercase, lowercase, and a number';
   }
   return null;
+}
+
+// The complexity half of the rule is optional, per appliance. The length
+// bounds are not. Off, the policy is "8 to 1024 characters" and nothing else.
+export const PASSWORD_POLICY_LENGTH_ONLY = Object.freeze({
+  ...PASSWORD_POLICY,
+  requireUppercase: false,
+  requireLowercase: false,
+  requireDigit: false,
+  description: 'At least 8 characters.',
+});
+
+export function passwordComplexityEnabled(db) {
+  const row = db.prepare("SELECT value FROM settings WHERE key = 'password_complexity'").get();
+  return row?.value !== 'false';
+}
+
+/** The policy this appliance enforces right now, for both routes and the client. */
+export function effectivePasswordPolicy(db) {
+  return passwordComplexityEnabled(db) ? PASSWORD_POLICY : PASSWORD_POLICY_LENGTH_ONLY;
 }

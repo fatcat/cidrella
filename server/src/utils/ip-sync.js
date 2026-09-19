@@ -137,7 +137,7 @@ export function resolveCanonicalHostname(db, subnetId, ip) {
   });
 }
 
-function syncCanonicalHostname(db, subnetId, ip, { clearSource = false } = {}) {
+export function syncCanonicalHostname(db, subnetId, ip, { clearSource = false } = {}) {
   const canonical = resolveCanonicalHostname(db, subnetId, ip);
   const fields = { hostname: canonical.hostname };
   if (canonical.source || clearSource) fields.detection_source = canonical.source;

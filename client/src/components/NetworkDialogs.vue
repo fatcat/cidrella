@@ -1694,7 +1694,7 @@ function createVlanFromWizard() {
 async function wizardSkip() {
   // Mark wizard as completed and close
   try {
-    await store.updateSetting('setup_wizard_completed', '1');
+    await store.updateSetting('setup_wizard_completed', 'true');
   } catch {
     /* best effort */
   }
@@ -1756,7 +1756,7 @@ async function wizardCreateAndContinue() {
 async function wizardFinish() {
   wizardCreatedVlanId.value = null;
   try {
-    await store.updateSetting('setup_wizard_completed', '1');
+    await store.updateSetting('setup_wizard_completed', 'true');
   } catch {
     /* best effort */
   }

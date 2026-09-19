@@ -28,7 +28,7 @@ router.get('/', requireAdmin, (req, res) => {
   const db = getDb();
   const users = db
     .prepare(
-      `SELECT u.id, u.username, u.role, u.kind, u.must_change_password, u.created_at, u.updated_at,
+      `SELECT u.id, u.username, u.role, u.kind, u.must_change_password, u.totp_enabled, u.created_at, u.updated_at,
             (SELECT COUNT(*) FROM api_tokens t
               WHERE t.user_id = u.id
                 AND t.revoked_at IS NULL

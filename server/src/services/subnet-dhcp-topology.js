@@ -114,35 +114,61 @@ export function createAutoScopeV6(db, subnetId, parsed, domainName, { mode, pool
     interval.start_ip,
     interval.end_ip,
   );
+  // Every mode inherits the IPv6 defaults, including slaac where dnsmasq
+  // sends no options: switching the scope to stateful later then needs no
+  // repair, and the config writer already emits nothing for slaac.
+  insertScopeOptionsFromDefaults(
+    db,
+    scopeResult.lastInsertRowid,
+    parsed,
+    null,
+    domainName || null,
+    subnet.cidr,
+  );
   return scopeResult.lastInsertRowid;
 }
 
+/**
+ * Copy the family's enabled-by-default options into a new scope, filling the
+ * ones that default to a network fact: IPv4 gets mask, router, broadcast,
+ * domain and DNS (CIDRella's address plus the fallback resolver); IPv6 gets
+ * the search list (24) from the domain and DNS (23) from CIDRella's IPv6
+ * address on the network, with no fallback since routers, prefixes and the
+ * rest come from Router Advertisements.
+ */
 export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
+  const family = parsed.family === 6 ? 6 : 4;
   const enabledRows = db
-    .prepare('SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1')
-    .all();
+    .prepare(
+      'SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1 AND address_family = ?',
+    )
+    .all(family);
   const optionValues = new Map();
   for (const row of enabledRows) {
     optionValues.set(row.option_code, row.value != null ? row.value : null);
   }
-  if (gateway) optionValues.set(3, gateway);
-  if (parsed.family === 4) {
+  const unset = (code) => !optionValues.has(code) || !optionValues.get(code);
+  const serverIp = getServerIpForSubnet(cidr);
+  if (family === 6) {
+    if (domain && unset(24)) optionValues.set(24, domain);
+    if (serverIp && unset(23)) optionValues.set(23, serverIp);
+  } else {
+    if (gateway) optionValues.set(3, gateway);
     optionValues.set(1, parsed.mask);
     optionValues.set(28, parsed.broadcast);
-  }
-  if (domain) {
-    if (!optionValues.has(15) || !optionValues.get(15)) optionValues.set(15, domain);
-    if (!optionValues.has(119) || !optionValues.get(119)) optionValues.set(119, domain);
-  }
-  const serverIp = getServerIpForSubnet(cidr);
-  if (serverIp && (!optionValues.has(6) || !optionValues.get(6))) {
-    optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
+    if (domain) {
+      if (unset(15)) optionValues.set(15, domain);
+      if (unset(119)) optionValues.set(119, domain);
+    }
+    if (serverIp && unset(6)) {
+      optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
+    }
   }
   const insertOpt = db.prepare(
-    'INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)',
+    'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, ?)',
   );
   for (const [code, value] of optionValues) {
-    if (value != null && value !== '') insertOpt.run(scopeId, code, String(value));
+    if (value != null && value !== '') insertOpt.run(scopeId, code, String(value), family);
   }
 }
 

@@ -57,3 +57,32 @@ export function updatePreferences(db, userId, preferences) {
     .prepare("UPDATE users SET preferences = ?, updated_at = datetime('now') WHERE id = ?")
     .run(JSON.stringify(preferences), userId);
 }
+
+// Two-factor. None of these touch updated_at: the middleware treats a bump
+// as "every token before this instant is dead", and the wizard enabling TOTP
+// mid-session must keep its session.
+export function setPendingTotpSecret(db, userId, secret) {
+  return db
+    .prepare(
+      'UPDATE users SET totp_secret = ?, totp_enabled = 0, totp_last_step = NULL WHERE id = ?',
+    )
+    .run(secret, userId);
+}
+
+export function enableTotp(db, userId, lastStep) {
+  return db
+    .prepare('UPDATE users SET totp_enabled = 1, totp_last_step = ? WHERE id = ?')
+    .run(lastStep, userId);
+}
+
+export function disableTotp(db, userId) {
+  return db
+    .prepare(
+      'UPDATE users SET totp_secret = NULL, totp_enabled = 0, totp_last_step = NULL WHERE id = ?',
+    )
+    .run(userId);
+}
+
+export function recordTotpStep(db, userId, step) {
+  return db.prepare('UPDATE users SET totp_last_step = ? WHERE id = ?').run(step, userId);
+}

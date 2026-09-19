@@ -125,6 +125,10 @@ const SETTING_SCHEMA = {
     validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
     normalize: (v) => toBoolStr(v),
   },
+  password_complexity: {
+    validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
+    normalize: (v) => toBoolStr(v),
+  },
   interface_config: {
     validate: validateInterfaceConfig,
     normalize: (v) => (typeof v === 'string' ? v : JSON.stringify(v)),
