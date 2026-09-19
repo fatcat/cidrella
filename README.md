@@ -79,6 +79,7 @@ Navigate to **System > Updates** and click **Install Update**. CIDRella will dow
 ```bash
 sudo cidrella-update               # update to latest
 sudo cidrella-update --version 0.5.0  # update to specific version
+sudo cidrella-update --tarball /root/cidrella-v0.5.0-linux-x64.tar.gz  # install a local signed build
 ```
 
 The update script (`/opt/cidrella/update.sh`) backs up the current installation, downloads and verifies the signed release tarball, installs dependencies, and restarts services. Database migrations run automatically on startup.

@@ -8,6 +8,9 @@ set -euo pipefail
 # would produce `//scripts/lib`, the cryptic failure mode that bit prod
 # on the v0.4.6→v0.4.8 transition. Capture the realpath first.
 _UPDATE_SH_REAL="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+# The invoker's cwd, for resolving a relative --tarball path. Everything else
+# in this script is anchored to / on purpose (see below).
+_UPDATE_ORIG_PWD="$PWD"
 
 # Anchor CWD to / so we never depend on the invoker's working directory.
 # Prior incident (2026-04-12): user ran /opt/cidrella/update.sh while cd'd
@@ -81,6 +84,7 @@ HEALTH_POLL_SECONDS=20
 MIN_FREE_MB=400   # Require 400MB free on /opt for bundled tarballs
 
 REQUESTED_VERSION=""
+LOCAL_TARBALL=""
 PROGRESS_FILE=""
 FROM_API=false
 FORCE=false
@@ -373,6 +377,20 @@ OPTIONS
                        on GitHub (they are NOT surfaced via /releases/latest, so
                        the default "latest" path skips them by design).
 
+    --tarball FILE     Install from a local release tarball instead of
+                       downloading one. FILE is the signed tarball that
+                       build-release.sh writes under dist/; put its .minisig
+                       next to it so the signature check runs as it does for
+                       a download. The version comes from the RELEASE.json
+                       inside the tarball, and every gate after that point
+                       (signature, downgrade, min_from, preflight, snapshot,
+                       switchover, rollback) is the same as for a download.
+                       Meant for testing an unpublished build on a throwaway
+                       host. On a host whose installed updater predates this
+                       option, run the candidate's own updater:
+                         tar -xzf cidrella-vX-linux-x64.tar.gz -C /tmp
+                         /tmp/cidrella-vX-linux-x64/update.sh --tarball /path/to/cidrella-vX-linux-x64.tar.gz
+
     --progress-file F  Write JSON progress updates to F. Used by the UI updater
                        so the admin panel can poll status during an in-app
                        update. Contains state, percent, phase, error (if any).
@@ -404,7 +422,8 @@ OPTIONS
 
 FLOW
     1. Preflight: root, disk space, existing install, detect A/B slots.
-    2. Download + verify minisign signature (old version still running).
+    2. Download (or take --tarball) + verify minisign signature (old
+       version still running).
     3. Extract to the INACTIVE slot (old version still serving traffic).
     4. Deep-health preflight: syntax check + spawn on temp port 18443 +
        /api/health/deep must return ok. dnsmasq is NEVER restarted.
@@ -417,6 +436,9 @@ FLOW
 EXAMPLES
     # Update to the latest stable release
     cidrella-update
+
+    # Install a locally built, signed tarball (testing an unpublished build)
+    cidrella-update --tarball /root/cidrella-v0.5.0-pre.1-linux-x64.tar.gz
 
     # Install a specific version
     cidrella-update --version 0.4.15
@@ -446,6 +468,7 @@ HELP
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --version) REQUESTED_VERSION="$2"; shift 2 ;;
+    --tarball) LOCAL_TARBALL="$2"; shift 2 ;;
     --progress-file) PROGRESS_FILE="$2"; shift 2 ;;
     --from-api) FROM_API=true; shift ;;
     --force) FORCE=true; shift ;;
@@ -454,6 +477,20 @@ while [[ $# -gt 0 ]]; do
     *) err "Unknown argument: $1"; err "Run 'cidrella-update --help' for usage."; exit 1 ;;
   esac
 done
+
+if [ -n "$LOCAL_TARBALL" ]; then
+  # Resolve against the invoker's cwd (we are at / by now), then insist on a
+  # readable regular file so a typo fails here and not after the slot wipe.
+  case "$LOCAL_TARBALL" in
+    /*) ;;
+    *) LOCAL_TARBALL="$_UPDATE_ORIG_PWD/$LOCAL_TARBALL" ;;
+  esac
+  LOCAL_TARBALL="$(readlink -f "$LOCAL_TARBALL" 2>/dev/null || echo "$LOCAL_TARBALL")"
+  if [ ! -f "$LOCAL_TARBALL" ] || [ ! -r "$LOCAL_TARBALL" ]; then
+    err "--tarball: no readable file at $LOCAL_TARBALL"
+    exit 1
+  fi
+fi
 
 # Always capture stdout and stderr to $UPDATE_LOG so the ERR trap can read
 # the tail and surface it in the progress file's `error` field. Two modes:
@@ -605,23 +642,57 @@ track_progress "downloading" 5 "Checking for updates..."
 # PHASE 2: FETCH + DOWNLOAD + VERIFY (old version running)
 # ═══════════════════════════════════════════════════════════
 
-if [ -n "$REQUESTED_VERSION" ]; then
-  TAG="v${REQUESTED_VERSION}"
-  RELEASE_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
+if [ -n "$LOCAL_TARBALL" ]; then
+  # ─── Local candidate (--tarball) ───────────────────────
+  # No GitHub lookup. The version comes from the RELEASE.json inside the
+  # tarball, the same signed value the post-extract check below treats as
+  # authoritative, so the pre-verify guards here see what the signed check
+  # will confirm. Pre-v0.4.3 tarballs have no RELEASE.json; for those the
+  # build's own filename shape, cidrella-vX.Y.Z-<arch>.tar.gz, is the
+  # fallback. Anything else is not a release tarball and stops here.
+  RELEASE_JSON=""
+  # `|| true`: a tarball without RELEASE.json makes tar exit 2, and under
+  # pipefail a bare assignment would trip set -e and the ERR trap before the
+  # filename fallback below gets its turn (REVIEW.md 2026-09-19).
+  NEW_VERSION=$(tar -xzOf "$LOCAL_TARBALL" --wildcards '*/RELEASE.json' 2>/dev/null \
+    | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1) || true
+  if [ -z "$NEW_VERSION" ]; then
+    _tb_name="$(basename "$LOCAL_TARBALL")"
+    _tb_ver="${_tb_name#cidrella-v}"
+    _tb_ver="${_tb_ver%-${BUILD_ARCH}.tar.gz}"
+    if [ -n "$_tb_ver" ] && [ "$_tb_ver" != "$_tb_name" ]; then
+      NEW_VERSION="$_tb_ver"
+    fi
+  fi
+  if [ -z "$NEW_VERSION" ]; then
+    err "--tarball: $LOCAL_TARBALL carries no RELEASE.json and its name is not cidrella-vX.Y.Z-${BUILD_ARCH}.tar.gz; not a release tarball."
+    write_progress "failed" 5 "Update failed" "Local tarball is not a CIDRella release tarball"
+    exit 1
+  fi
+  TAG_NAME="v${NEW_VERSION}"
+  info "Local tarball: $LOCAL_TARBALL (v${NEW_VERSION})"
+  if [ -n "$REQUESTED_VERSION" ] && [ "$REQUESTED_VERSION" != "$NEW_VERSION" ]; then
+    warn "--version ${REQUESTED_VERSION} ignored: the tarball says v${NEW_VERSION}."
+  fi
 else
-  RELEASE_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
-fi
+  if [ -n "$REQUESTED_VERSION" ]; then
+    TAG="v${REQUESTED_VERSION}"
+    RELEASE_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${TAG}"
+  else
+    RELEASE_URL="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+  fi
 
-info "Checking for updates..."
-RELEASE_JSON=$(curl -fsSL "$RELEASE_URL" 2>/dev/null || true)
-if [ -z "$RELEASE_JSON" ]; then
-  err "Failed to fetch release info from GitHub."
-  write_progress "failed" 5 "Update failed" "Failed to fetch release info from GitHub"
-  exit 1
-fi
+  info "Checking for updates..."
+  RELEASE_JSON=$(curl -fsSL "$RELEASE_URL" 2>/dev/null || true)
+  if [ -z "$RELEASE_JSON" ]; then
+    err "Failed to fetch release info from GitHub."
+    write_progress "failed" 5 "Update failed" "Failed to fetch release info from GitHub"
+    exit 1
+  fi
 
-TAG_NAME=$(echo "$RELEASE_JSON" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' | head -1)
-NEW_VERSION="${TAG_NAME#v}"
+  TAG_NAME=$(echo "$RELEASE_JSON" | grep -oP '"tag_name"\s*:\s*"\K[^"]+' | head -1)
+  NEW_VERSION="${TAG_NAME#v}"
+fi
 
 # semver_lt / semver_gt / semver_eq come from scripts/lib/slots.sh.
 
@@ -672,29 +743,49 @@ if [ "$CURRENT_MAJOR_MINOR" != "$NEW_MAJOR_MINOR" ] && [ "$CURRENT_VERSION" != "
 fi
 
 info "New version available: v${CURRENT_VERSION} -> v${NEW_VERSION}"
-track_progress "downloading" 10 "Downloading v${NEW_VERSION}..."
 
-# Find arch-specific tarball URL (new format: cidrella-vX.Y.Z-linux-x64.tar.gz)
-TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*'"${BUILD_ARCH}"'\.tar\.gz"' | sed 's/"$//' | head -1)
-if [ -z "$TARBALL_URL" ]; then
-  # Fall back to generic name (pre-bundled-deps releases)
-  TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.tar\.gz"' | sed 's/"$//' | head -1)
+if [ -n "$LOCAL_TARBALL" ]; then
+  # Symlinks rather than copies: a release tarball is ~90MB and the download
+  # path already budgets that once, not twice. Every later step reads
+  # $TMPDIR/cidrella.tar.gz and its .minisig through the links, and cleanup's
+  # rm -rf of $TMPDIR removes the links, never the operator's files.
+  track_progress "downloading" 10 "Preparing local tarball v${NEW_VERSION}..."
+  TMPDIR=$(mktemp -d)
+  ln -s "$LOCAL_TARBALL" "$TMPDIR/cidrella.tar.gz"
+  if [ -f "${LOCAL_TARBALL}.minisig" ]; then
+    ln -s "${LOCAL_TARBALL}.minisig" "$TMPDIR/cidrella.tar.gz.minisig"
+  else
+    warn "No ${LOCAL_TARBALL##*/}.minisig next to the tarball; the signature step will report it."
+  fi
+  TARBALL_SIZE=$(du -hL "$TMPDIR/cidrella.tar.gz" | cut -f1)
+  ok "Using local tarball ($TARBALL_SIZE)"
+  emit_event download pass "tag=$TAG_NAME" "size=$TARBALL_SIZE" "source=local" "path=$LOCAL_TARBALL"
+  track_progress "downloading" 25 "Local tarball ready ($TARBALL_SIZE)"
+else
+  track_progress "downloading" 10 "Downloading v${NEW_VERSION}..."
+
+  # Find arch-specific tarball URL (new format: cidrella-vX.Y.Z-linux-x64.tar.gz)
+  TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*'"${BUILD_ARCH}"'\.tar\.gz"' | sed 's/"$//' | head -1)
+  if [ -z "$TARBALL_URL" ]; then
+    # Fall back to generic name (pre-bundled-deps releases)
+    TARBALL_URL=$(echo "$RELEASE_JSON" | grep -oP '"browser_download_url"\s*:\s*"\K[^"]*\.tar\.gz"' | sed 's/"$//' | head -1)
+  fi
+  if [ -z "$TARBALL_URL" ]; then
+    TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/cidrella-${TAG_NAME}-${BUILD_ARCH}.tar.gz"
+  fi
+  MINISIG_URL="${TARBALL_URL}.minisig"
+
+  # Download
+  info "Downloading: $TARBALL_URL"
+  TMPDIR=$(mktemp -d)
+  curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
+  TARBALL_SIZE=$(du -h "$TMPDIR/cidrella.tar.gz" | cut -f1)
+  ok "Downloaded $TARBALL_SIZE"
+  emit_event download pass "tag=$TAG_NAME" "size=$TARBALL_SIZE"
+  track_progress "downloading" 25 "Download complete ($TARBALL_SIZE)"
+
+  curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
 fi
-if [ -z "$TARBALL_URL" ]; then
-  TARBALL_URL="https://github.com/${GITHUB_REPO}/releases/download/${TAG_NAME}/cidrella-${TAG_NAME}-${BUILD_ARCH}.tar.gz"
-fi
-MINISIG_URL="${TARBALL_URL}.minisig"
-
-# Download
-info "Downloading: $TARBALL_URL"
-TMPDIR=$(mktemp -d)
-curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
-TARBALL_SIZE=$(du -h "$TMPDIR/cidrella.tar.gz" | cut -f1)
-ok "Downloaded $TARBALL_SIZE"
-emit_event download pass "tag=$TAG_NAME" "size=$TARBALL_SIZE"
-track_progress "downloading" 25 "Download complete ($TARBALL_SIZE)"
-
-curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
 
 # ─── Fetch + apply rotation announcements (v0.4.9+) ─────
 #
@@ -707,7 +798,10 @@ curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || tr
 #
 # Gated on rotation.sh being present (pre-v0.4.9 slots don't have it,
 # and the library was sourced at the top of this script if available).
-if declare -F load_key_state >/dev/null 2>&1; then
+# A local tarball has no release JSON to list announcements from, so the
+# rotation step is skipped for it; the tarball is still verified against the
+# current key state below.
+if [ -n "$RELEASE_JSON" ] && declare -F load_key_state >/dev/null 2>&1; then
   load_key_state
 
   BG_PUB_TMP="$TMPDIR/break-glass.pub"
@@ -873,17 +967,25 @@ if [ "$BOOTSTRAPPED" != true ] && [ -x "$TARGET_SLOT/update.sh" ]; then
   CURRENT_UPDATER_HASH=$(sha256sum "$_UPDATE_SH_REAL" 2>/dev/null | awk '{print $1}' || true)
   TARGET_UPDATER_HASH=$(sha256sum "$TARGET_SLOT/update.sh" 2>/dev/null | awk '{print $1}' || true)
   if [ -n "$CURRENT_UPDATER_HASH" ] && [ -n "$TARGET_UPDATER_HASH" ] && [ "$CURRENT_UPDATER_HASH" != "$TARGET_UPDATER_HASH" ]; then
-    ok "Bootstrapping updater from verified v${NEW_VERSION} release"
-    emit_event verify pass updater_bootstrap=target "from=$CURRENT_UPDATER_HASH" "to=$TARGET_UPDATER_HASH"
-    chmod +x "$TARGET_SLOT/update.sh"
-    cleanup
+    if [ -n "$LOCAL_TARBALL" ] && ! grep -q -- '--tarball)' "$TARGET_SLOT/update.sh"; then
+      # The target's updater would try to download v${NEW_VERSION} from
+      # GitHub, where it does not exist. Finish with this updater instead.
+      warn "The v${NEW_VERSION} updater predates --tarball; continuing with the current updater."
+      emit_event verify warn updater_bootstrap=skipped reason=target-lacks-tarball-option
+    else
+      ok "Bootstrapping updater from verified v${NEW_VERSION} release"
+      emit_event verify pass updater_bootstrap=target "from=$CURRENT_UPDATER_HASH" "to=$TARGET_UPDATER_HASH"
+      chmod +x "$TARGET_SLOT/update.sh"
+      cleanup
 
-    REEXEC_ARGS=(--version "$NEW_VERSION" --bootstrapped)
-    [ "$FROM_API" = true ] && REEXEC_ARGS+=(--from-api)
-    [ "$FORCE" = true ] && REEXEC_ARGS+=(--force)
-    [ -n "$PROGRESS_FILE" ] && REEXEC_ARGS+=(--progress-file "$PROGRESS_FILE")
+      REEXEC_ARGS=(--version "$NEW_VERSION" --bootstrapped)
+      [ -n "$LOCAL_TARBALL" ] && REEXEC_ARGS+=(--tarball "$LOCAL_TARBALL")
+      [ "$FROM_API" = true ] && REEXEC_ARGS+=(--from-api)
+      [ "$FORCE" = true ] && REEXEC_ARGS+=(--force)
+      [ -n "$PROGRESS_FILE" ] && REEXEC_ARGS+=(--progress-file "$PROGRESS_FILE")
 
-    exec "$TARGET_SLOT/update.sh" "${REEXEC_ARGS[@]}"
+      exec "$TARGET_SLOT/update.sh" "${REEXEC_ARGS[@]}"
+    fi
   fi
 fi
 
