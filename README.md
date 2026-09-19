@@ -70,7 +70,7 @@ See **[INSTALL-DOCKER.md](INSTALL-DOCKER.md)** for full details. Note: in-app up
 
 ### First run
 
-The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password (the uppercase, lowercase and digit rule can be switched off for the appliance; eight characters is the floor), optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes, choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start. Nothing but the password and the second factor is applied until the last step, and an interrupted setup resumes where it stopped. Upgraded installs never see it. Two-factor can be turned on, off, or given fresh backup codes later under Settings > Access > Two-factor.
+The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password (the uppercase, lowercase and digit rule can be switched off for the appliance; eight characters is the floor), optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes, choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start. Nothing but the password and the second factor is applied until the last step, and an interrupted setup resumes where it stopped. Upgraded installs never see it. Two-factor can be turned on, off, or given fresh backup codes later under Settings > Access > Two-factor, and the complexity rule under Settings > Access > Password rule.
 
 ## Upgrading
 

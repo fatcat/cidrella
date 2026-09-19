@@ -81,8 +81,9 @@ first on a 0.4.17 host.
   Migration 075 adds the columns and the backup-code table.
 - **Password complexity is a switch.** The uppercase, lowercase and digit rule
   can be turned off per appliance (`password_complexity`), from the first-run
-  password step or the settings API. Eight characters stays the floor either
-  way, and the served policy tells every password form which rule applies.
+  password step or Settings > Access > Password rule. Eight characters stays
+  the floor either way, and the served policy tells every password form which
+  rule applies.
 
 - **IPv6, off by default.** One switch, "IPv6 support" under Settings >
   General > Interfaces, turns it on. While it is off dnsmasq and the resolver
