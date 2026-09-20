@@ -86,3 +86,12 @@ export function disableTotp(db, userId) {
 export function recordTotpStep(db, userId, step) {
   return db.prepare('UPDATE users SET totp_last_step = ? WHERE id = ?').run(step, userId);
 }
+
+/** Put a saved enrolment back on an account that has none (restore carry-over). */
+export function restoreTotp(db, userId, { secret, lastStep = null }) {
+  return db
+    .prepare(
+      'UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_last_step = ? WHERE id = ? AND totp_enabled = 0',
+    )
+    .run(secret, lastStep, userId);
+}

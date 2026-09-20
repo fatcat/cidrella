@@ -3,7 +3,9 @@ import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import Database from 'better-sqlite3';
 import { insertAuditRow } from '../models/audit-log.js';
-import { upsertSettingWithConflict } from '../models/setting.js';
+import { upsertSettingWithConflict, deleteSetting } from '../models/setting.js';
+import * as User from '../models/user.js';
+import * as BackupCode from '../models/backup-code.js';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { DATA_DIR } from '../config/defaults.js';
 import { APP_VERSION } from './version.js';
@@ -565,18 +567,27 @@ function takePreRestoreSnapshot(db) {
  *
  * Returns true when anything was written.
  */
+export const RESTORE_CARRYOVER_KEY = 'restore_carryover';
+
 export function stampRestoredSettings(
   stagedDbPath,
-  { dhcpEnabled = null, restoredBy = null, manifest = null } = {},
+  { dhcpEnabled = null, restoredBy = null, manifest = null, carryover = null } = {},
 ) {
   const hasChoice = dhcpEnabled !== null && dhcpEnabled !== undefined;
-  if (!hasChoice && !restoredBy) return false;
+  if (!hasChoice && !restoredBy && !carryover) return false;
   let staged;
   try {
     staged = new Database(stagedDbPath);
     const stamp = staged.transaction(() => {
       if (hasChoice) {
         upsertSettingWithConflict(staged, 'dhcp_enabled', dhcpEnabled ? 'true' : 'false');
+      }
+      // Things the restoring operator just set up that the backup cannot
+      // know about, parked as a setting because the backup's schema may
+      // predate the columns they belong in. The first boot after the restore
+      // applies them once migrations have run (applyRestoreCarryover).
+      if (carryover) {
+        upsertSettingWithConflict(staged, RESTORE_CARRYOVER_KEY, JSON.stringify(carryover));
       }
       if (restoredBy) {
         const user = restoredBy.username
@@ -592,6 +603,7 @@ export function stampRestoredSettings(
             backup_schema_version: manifest?.schema_version ?? null,
             backup_created_at: manifest?.created_at ?? null,
             dhcp_after_restore: hasChoice ? dhcpEnabled : null,
+            totp_carried_over: !!carryover?.totp,
           },
         });
       }
@@ -622,6 +634,7 @@ export function restoreBackup(
     inspection: preInspection = null,
     dhcpAfterRestore = null,
     restoredBy = null,
+    carryover = null,
   } = {},
 ) {
   // 1. Compatibility check. Reuse the caller's inspection if they already
@@ -798,7 +811,11 @@ export function restoreBackup(
         dhcpEnabled: dhcpAfterRestore,
         restoredBy,
         manifest: inspection.manifest,
+        carryover,
       });
+      if (carryover?.totp) {
+        console.log(`Restore: two-factor enrolment for ${carryover.totp.username} will carry over`);
+      }
       if (dhcpAfterRestore !== null) {
         console.log(
           `Restore: DHCP will be ${dhcpAfterRestore ? 'enabled' : 'disabled'} after the restart`,
@@ -1071,4 +1088,74 @@ export function startBackupScheduler() {
     },
     15 * 60 * 1000,
   );
+}
+
+/**
+ * What the restoring operator would lose to the backup and should not: today,
+ * their own two-factor enrolment. The backup's users win on everything else
+ * (that is what a restore is), but the person doing the restore is the one
+ * who signs in next, and an enrolment they made minutes ago must not vanish.
+ * Returns null when there is nothing to carry.
+ */
+export function collectRestoreCarryover(db, userId) {
+  const user = db
+    .prepare('SELECT username, totp_secret, totp_enabled, totp_last_step FROM users WHERE id = ?')
+    .get(userId);
+  if (!user?.totp_enabled || !user.totp_secret) return null;
+  const codes = db
+    .prepare('SELECT code_hash FROM user_backup_codes WHERE user_id = ? AND used_at IS NULL')
+    .all(userId)
+    .map((r) => r.code_hash);
+  return {
+    totp: {
+      username: user.username,
+      secret: user.totp_secret,
+      last_step: user.totp_last_step ?? null,
+      backup_code_hashes: codes,
+    },
+  };
+}
+
+/**
+ * First boot after a restore: apply what stampRestoredSettings parked, once
+ * migrations have given the restored database the columns. Keyed by username;
+ * an account that already has two-factor on in the backup keeps its own.
+ * The parked setting is removed either way so this runs once.
+ */
+export function applyRestoreCarryover(db) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(RESTORE_CARRYOVER_KEY);
+  if (!row) return null;
+  let parked = null;
+  try {
+    parked = JSON.parse(row.value);
+  } catch {
+    parked = null;
+  }
+  const outcome = { totp: 'none' };
+  const apply = db.transaction(() => {
+    const totp = parked?.totp;
+    if (totp?.username && totp.secret) {
+      const user = db
+        .prepare('SELECT id, totp_enabled FROM users WHERE username = ?')
+        .get(totp.username);
+      if (!user) outcome.totp = 'no_such_user';
+      else if (user.totp_enabled) outcome.totp = 'already_enabled';
+      else {
+        User.restoreTotp(db, user.id, { secret: totp.secret, lastStep: totp.last_step ?? null });
+        BackupCode.replaceBackupCodes(db, user.id, totp.backup_code_hashes || []);
+        insertAuditRow(db, {
+          userId: user.id,
+          action: 'totp_carried_over',
+          entityType: 'user',
+          entityId: user.id,
+          details: { backup_codes: (totp.backup_code_hashes || []).length },
+        });
+        outcome.totp = 'applied';
+      }
+    }
+    deleteSetting(db, RESTORE_CARRYOVER_KEY);
+  });
+  apply();
+  console.log(`Restore carry-over: two-factor ${outcome.totp}`);
+  return outcome;
 }

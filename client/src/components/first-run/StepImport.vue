@@ -176,10 +176,12 @@
       </div>
       <div class="fr-note warn">
         <span>
-          A restore replaces this appliance's data, including the password you just set and the
-          deployment choice: the backup's own users and settings win. The one thing carried across
-          is <b>DHCP: {{ draft.role === 'dns' ? 'off' : 'on' }}</b> from step 2, so a copy of
-          another appliance never starts serving that appliance's pools.
+          A restore replaces this appliance's data with the backup's: its users, password and
+          settings win. Two things carry across:
+          <b>DHCP: {{ draft.role === 'dns' ? 'off' : 'on' }}</b>
+          from the deployment step, so a copy of another appliance never starts serving that
+          appliance's pools, and your two-factor enrolment, if you made one, so the next sign-in
+          still asks for the code.
         </span>
       </div>
     </div>

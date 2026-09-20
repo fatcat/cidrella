@@ -38,34 +38,63 @@ describe('GET /api/setup/state', () => {
       deployment: null,
       import: null,
       done: false,
-      password_complexity: true,
     });
-    expect(res.body.password_policy).toMatchObject({ minLength: 8, requireUppercase: true });
+    expect(res.body.password_policy).toMatchObject({
+      minLength: 8,
+      maxLength: 1024,
+      requireMixedCase: true,
+      requireNumber: true,
+      requireSymbol: false,
+    });
+    expect(res.body.password_policy.description).toContain('At least 8 characters');
   });
 });
 
-describe('password complexity switch', () => {
-  it('turns the served policy into length-only and back, without touching the markers', async () => {
-    let res = await request(app).put('/api/setup/state').send({ password_complexity: false });
+describe('password policy', () => {
+  it('changes one part at a time, serves the result, and leaves the markers alone', async () => {
+    let res = await request(app)
+      .put('/api/setup/state')
+      .send({ password_policy: { requireMixedCase: false, requireNumber: false, minLength: 0 } });
     expect(res.status).toBe(200);
-    expect(res.body.password_complexity).toBe(false);
     expect(res.body.password_policy).toMatchObject({
-      requireUppercase: false,
-      requireLowercase: false,
-      requireDigit: false,
-      minLength: 8,
+      minLength: 0,
+      requireMixedCase: false,
+      requireNumber: false,
+      requireSymbol: false,
     });
+    expect(res.body.password_policy.description).toBe('Any password up to 1024 characters.');
     expect(res.body.password).toBe(false);
     expect(
-      db.prepare("SELECT value FROM settings WHERE key = 'password_complexity'").get().value,
-    ).toBe('false');
-    res = await request(app).put('/api/setup/state').send({ password_complexity: true });
-    expect(res.body.password_policy.requireDigit).toBe(true);
+      db.prepare("SELECT value FROM settings WHERE key = 'password_min_length'").get().value,
+    ).toBe('0');
+    res = await request(app)
+      .put('/api/setup/state')
+      .send({ password_policy: { requireSymbol: true } });
+    expect(res.body.password_policy).toMatchObject({ requireSymbol: true, requireNumber: false });
+    res = await request(app)
+      .put('/api/setup/state')
+      .send({
+        password_policy: {
+          minLength: 8,
+          requireMixedCase: true,
+          requireNumber: true,
+          requireSymbol: false,
+        },
+      });
+    expect(res.body.password_policy.description).toContain('a number');
   });
 
-  it('rejects a non-boolean', async () => {
-    const res = await request(app).put('/api/setup/state').send({ password_complexity: 'no' });
-    expect(res.status).toBe(400);
+  it('rejects bad parts', async () => {
+    for (const body of [
+      { password_policy: { minLength: -1 } },
+      { password_policy: { minLength: 'eight' } },
+      { password_policy: { requireSymbol: 'yes' } },
+      { password_policy: {} },
+      { password_policy: 'strict' },
+    ]) {
+      const res = await request(app).put('/api/setup/state').send(body);
+      expect(res.status, JSON.stringify(body)).toBe(400);
+    }
   });
 });
 

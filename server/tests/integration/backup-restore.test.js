@@ -344,6 +344,7 @@ describe('restore-time DHCP choice (stampRestoredSettings contract)', () => {
           backup_schema_version: 61,
           backup_created_at: '2026-09-01T12:00:00.000Z',
           dhcp_after_restore: false,
+          totp_carried_over: false,
         },
       },
     ]);
@@ -360,6 +361,26 @@ describe('restore-time DHCP choice (stampRestoredSettings contract)', () => {
         details: { restored_by: 'admin', dhcp_after_restore: null },
       },
     ]);
+  });
+
+  it('parks a two-factor carry-over as a setting and says so in the audit row', () => {
+    const p = stagedDb('carry.db', []);
+    const carryover = {
+      totp: {
+        username: 'admin',
+        secret: 'JBSWY3DPEHPK3PXP',
+        last_step: 5,
+        backup_code_hashes: ['h1'],
+      },
+    };
+    expect(
+      stampRestoredSettings(p, { restoredBy: { username: 'admin' }, manifest, carryover }),
+    ).toBe(true);
+    const db = new Database(p, { readonly: true });
+    const parked = db.prepare("SELECT value FROM settings WHERE key = 'restore_carryover'").get();
+    db.close();
+    expect(JSON.parse(parked.value)).toEqual(carryover);
+    expect(auditRows(p)[0].details.totp_carried_over).toBe(true);
   });
 
   it('survives a legacy backup with no manifest', () => {

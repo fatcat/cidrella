@@ -55,7 +55,13 @@ export const DEFAULTS = {
   installation_complete: 'false',
   setup_wizard_completed: '0',
   setup_state: '{"done":false}',
-  password_complexity: 'true',
+  password_min_length: '8',
+  password_require_mixed_case: 'true',
+  password_require_number: 'true',
+  password_require_symbol: 'false',
+  // Migration 033 seeds this row as 'true' and 076 flips a fresh database to
+  // 'false', so this default only matters if the row is ever deleted.
+  dhcp_enabled: 'false',
   audit_log_retention_days: 7,
   geoip_enabled: 'false',
   geoip_mode: 'blocklist',

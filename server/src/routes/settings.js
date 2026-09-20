@@ -125,7 +125,19 @@ const SETTING_SCHEMA = {
     validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
     normalize: (v) => toBoolStr(v),
   },
-  password_complexity: {
+  password_min_length: {
+    validate: (v) => (isIntInRangeCoercing(v, 0, 1024) ? null : 'must be an integer 0-1024'),
+    normalize: (v) => String(parseInt(v, 10)),
+  },
+  password_require_mixed_case: {
+    validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
+    normalize: (v) => toBoolStr(v),
+  },
+  password_require_number: {
+    validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
+    normalize: (v) => toBoolStr(v),
+  },
+  password_require_symbol: {
     validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
     normalize: (v) => toBoolStr(v),
   },

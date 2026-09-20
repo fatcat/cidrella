@@ -79,12 +79,20 @@ first on a 0.4.17 host.
   first-run wizard offers the same enrolment. The verification runs on node's
   own crypto; the client gained the `qrcode` package to draw the enrolment QR.
   Migration 075 adds the columns and the backup-code table.
-- **Password complexity is a switch.** The uppercase, lowercase and digit rule
-  can be turned off per appliance (`password_complexity`), from the first-run
-  password step or Settings > Access > Password rule. Eight characters stays
-  the floor either way, and the served policy tells every password form which
-  rule applies.
-
+- **The password rule is four settings.** A minimum length (`password_min_length`,
+  0 for none), mixed case, a number and a symbol
+  (`password_require_mixed_case`, `password_require_number`,
+  `password_require_symbol`), each changed on its own from the first-run
+  password step or Settings > Access > Password rule. The served policy tells
+  every password form which parts apply. The maximum stays 1024.
+- **DHCP is off on a fresh install** until the first-run deployment step
+  applies a role that serves it. Installs already in use keep their setting
+  (migration 076).
+- **A restore keeps the restoring operator's two-factor enrolment.** The
+  backup's users and passwords win, as before, but an authenticator enrolled
+  minutes earlier no longer vanishes with them: it is parked in the restored
+  data and applied to the same username at the first boot, unless that account
+  already had two-factor on in the backup.
 - **IPv6, off by default.** One switch, "IPv6 support" under Settings >
   General > Interfaces, turns it on. While it is off dnsmasq and the resolver
   bind IPv4 only, IPv6 DHCP scopes are left out of the generated config, the

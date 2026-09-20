@@ -52,30 +52,23 @@
           class="w-full"
           input-class="w-full"
         />
-        <label class="fr-switch-row">
-          <Checkbox
-            v-model="complexity"
-            binary
-            input-id="fr-complexity"
-            :disabled="loading || complexitySaving"
-            data-track="first-run-password-complexity"
-            @update:model-value="saveComplexity"
-          />
-          <span>
-            Require an uppercase letter, a lowercase letter and a digit
-            <span class="fr-help"
-              >(applies to every account on this appliance; length is always 8 or more)</span
-            >
-          </span>
-        </label>
         <ul v-if="policy" class="fr-checks" aria-live="polite">
-          <li :class="{ ok: checks.length }">
-            {{ policy.minLength }} to {{ policy.maxLength }} characters
-          </li>
-          <li v-if="policy.requireUppercase" :class="{ ok: checks.upper }">an uppercase letter</li>
-          <li v-if="policy.requireLowercase" :class="{ ok: checks.lower }">a lowercase letter</li>
-          <li v-if="policy.requireDigit" :class="{ ok: checks.digit }">a digit</li>
+          <li v-for="c in checks.checks" :key="c.id" :class="{ ok: c.ok }">{{ c.label }}</li>
+          <li v-if="checks.checks.length === 0" class="ok">no rule beyond the 1024 maximum</li>
         </ul>
+      </div>
+      <div class="fr-field fr-gap fr-policy">
+        <label>Password rule for this appliance</label>
+        <span class="fr-help">
+          Applies to every account whenever a password is set. Change it here, or later under
+          Settings &gt; Access &gt; Password rule.
+        </span>
+        <PasswordPolicyEditor
+          v-if="policy"
+          :policy="policy"
+          :disabled="loading || policySaving"
+          @save="savePolicy"
+        />
       </div>
       <div class="fr-field fr-gap">
         <label for="fr-confirm">Confirm password</label>
@@ -114,12 +107,13 @@
 import { ref, computed } from 'vue';
 import InputText from '../../ui/InputText.js';
 import Password from '../../ui/Password.js';
-import Checkbox from '../../ui/Checkbox.js';
+import PasswordPolicyEditor from '../PasswordPolicyEditor.vue';
 import Button from '../../ui/Button.js';
 import Message from '../../ui/Message.js';
 import { useAuthStore } from '../../stores/auth.js';
 import { useSetupStore } from '../../stores/setup.js';
 import { apiError } from '../../utils/format.js';
+import { policyChecks } from '../../utils/passwordPolicy.js';
 
 const emit = defineEmits(['next']);
 const auth = useAuthStore();
@@ -131,20 +125,18 @@ const confirm = ref('');
 const loading = ref(false);
 const error = ref('');
 
-// The complexity half of the rule is the operator's call, per appliance. The
-// server answers with the policy it will enforce, so the checklist follows.
-const complexity = ref(setup.passwordComplexity);
-const complexitySaving = ref(false);
-async function saveComplexity(value) {
-  complexitySaving.value = true;
+// The rule is the operator's call, part by part. The server answers every
+// change with the policy it will enforce, so the checklist follows.
+const policySaving = ref(false);
+async function savePolicy(patch) {
+  policySaving.value = true;
   error.value = '';
   try {
-    await setup.mark({ password_complexity: value === true });
+    await setup.mark({ password_policy: patch });
   } catch (err) {
-    complexity.value = setup.passwordComplexity;
     error.value = apiError(err);
   } finally {
-    complexitySaving.value = false;
+    policySaving.value = false;
   }
 }
 
@@ -152,21 +144,11 @@ async function saveComplexity(value) {
 // here. With no policy in hand the form only checks the match and lets the
 // server judge the rest.
 const policy = computed(() => setup.passwordPolicy);
-const checks = computed(() => {
-  const v = next.value;
-  const p = policy.value;
-  if (!p) return { length: v.length > 0, upper: true, lower: true, digit: true };
-  return {
-    length: v.length >= p.minLength && v.length <= p.maxLength,
-    upper: !p.requireUppercase || /[A-Z]/.test(v),
-    lower: !p.requireLowercase || /[a-z]/.test(v),
-    digit: !p.requireDigit || /\d/.test(v),
-  };
-});
-const matches = computed(() => next.value.length > 0 && next.value === confirm.value);
-const valid = computed(
-  () => current.value.length > 0 && matches.value && Object.values(checks.value).every(Boolean),
+const checks = computed(() =>
+  policy.value ? policyChecks(next.value, policy.value) : { checks: [], ok: next.value.length > 0 },
 );
+const matches = computed(() => next.value.length > 0 && next.value === confirm.value);
+const valid = computed(() => current.value.length > 0 && matches.value && checks.value.ok);
 
 async function submit() {
   if (!valid.value || loading.value) return;
@@ -188,13 +170,8 @@ async function submit() {
 .fr-gap {
   margin-top: 18px;
 }
-.fr-switch-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 0.85rem;
-  font-weight: 400;
-  margin-top: 4px;
+.fr-policy {
+  max-width: 560px;
 }
 .fr-bad {
   color: var(--cid-red-500);

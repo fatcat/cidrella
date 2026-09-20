@@ -79,6 +79,14 @@ vi.mock('../../../src/ui/InputText.js', () => ({ default: TextStub }));
 vi.mock('../../../src/ui/Password.js', () => ({ default: PasswordStub }));
 vi.mock('../../../src/ui/ToggleSwitch.js', () => ({ default: SwitchStub }));
 vi.mock('../../../src/ui/Checkbox.js', () => ({ default: SwitchStub }));
+vi.mock('../../../src/ui/InputNumber.js', () => ({
+  default: {
+    props: ['modelValue', 'inputId'],
+    emits: ['update:modelValue', 'blur'],
+    template:
+      '<input type="number" :id="inputId" :value="modelValue" @input="$emit(\'update:modelValue\', Number($event.target.value))" @blur="$emit(\'blur\')" />',
+  },
+}));
 vi.mock('../../../src/ui/Tag.js', () => ({ default: { template: '<span />' } }));
 vi.mock('../../../src/ui/Message.js', () => ({
   default: { template: '<div class="msg"><slot /></div>' },
@@ -90,21 +98,15 @@ const { useSetupStore } = await import('../../../src/stores/setup.js');
 const POLICY = {
   minLength: 8,
   maxLength: 1024,
-  requireUppercase: true,
-  requireLowercase: true,
-  requireDigit: true,
+  requireMixedCase: true,
+  requireNumber: true,
+  requireSymbol: false,
+  description: 'At least 8 characters, including upper and lower case letters, a number.',
 };
 const IFACES = [
   { name: 'eth0', addresses: [{ address: '10.0.0.8/24', family: 4 }], state: 'up' },
   { name: 'eth1', addresses: [], state: 'down' },
 ];
-
-const LENGTH_ONLY = {
-  ...POLICY,
-  requireUppercase: false,
-  requireLowercase: false,
-  requireDigit: false,
-};
 
 function serverState(overrides = {}) {
   return {
@@ -114,7 +116,6 @@ function serverState(overrides = {}) {
     import: null,
     done: false,
     password_policy: POLICY,
-    password_complexity: true,
     ...overrides,
   };
 }
@@ -127,12 +128,9 @@ function mountWizard(state) {
   });
   api.put.mockImplementation((url, body) => {
     if (url === '/setup/state') {
-      const { password_complexity: complexity, ...markers } = body;
+      const { password_policy: policyPatch, ...markers } = body;
       Object.assign(state, markers);
-      if (complexity !== undefined) {
-        state.password_complexity = complexity;
-        state.password_policy = complexity ? POLICY : LENGTH_ONLY;
-      }
+      if (policyPatch) state.password_policy = { ...state.password_policy, ...policyPatch };
       return Promise.resolve({ data: { ...state } });
     }
     return Promise.resolve({ data: {} });
@@ -236,27 +234,44 @@ describe('password step', () => {
     await setInput(w, '#fr-new', 'weak');
     await setInput(w, '#fr-confirm', 'weak');
     expect(submit().attributes('disabled')).toBeDefined();
-    expect(w.findAll('.fr-checks li.ok')).toHaveLength(1); // only "a lowercase letter"
+    expect(w.findAll('.fr-checks li')).toHaveLength(3); // length, mixed case, number
+    expect(w.findAll('.fr-checks li.ok')).toHaveLength(0);
 
     await setInput(w, '#fr-new', 'Strong-pass1');
     expect(submit().attributes('disabled')).toBeDefined(); // confirm no longer matches
     await setInput(w, '#fr-confirm', 'Strong-pass1');
     expect(submit().attributes('disabled')).toBeUndefined();
-    expect(w.findAll('.fr-checks li.ok')).toHaveLength(4);
+    expect(w.findAll('.fr-checks li.ok')).toHaveLength(3);
     w.unmount();
   });
 
-  it('lets the operator drop the complexity rule, and the checklist follows the served policy', async () => {
+  it('edits the rule part by part, and the checklist follows the served policy', async () => {
     const w = mountWizard(serverState());
     await flushPromises();
-    expect(w.findAll('.fr-checks li')).toHaveLength(4);
-    await w.find('[data-track="first-run-password-complexity"]').setValue(false);
+    expect(w.findAll('.fr-checks li')).toHaveLength(3);
+
+    await w.find('[data-track="password-policy-mixed-case"]').setValue(false);
     await flushPromises();
-    expect(api.put).toHaveBeenCalledWith('/setup/state', { password_complexity: false });
-    expect(w.findAll('.fr-checks li')).toHaveLength(1);
+    expect(api.put).toHaveBeenCalledWith('/setup/state', {
+      password_policy: { requireMixedCase: false },
+    });
+    await w.find('[data-track="password-policy-number"]').setValue(false);
+    await flushPromises();
+    await w.find('[data-track="password-policy-symbol"]').setValue(true);
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith('/setup/state', {
+      password_policy: { requireSymbol: true },
+    });
+    const len = w.find('#password-min-length');
+    await len.setValue(0);
+    await len.trigger('blur');
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith('/setup/state', { password_policy: { minLength: 0 } });
+
+    expect(w.findAll('.fr-checks li').map((li) => li.text())).toEqual(['a symbol']);
     await setInput(w, '#fr-current', 'installer-pw');
-    await setInput(w, '#fr-new', 'aaaaaaaa');
-    await setInput(w, '#fr-confirm', 'aaaaaaaa');
+    await setInput(w, '#fr-new', 'a!');
+    await setInput(w, '#fr-confirm', 'a!');
     expect(
       w.find('[data-track="first-run-password-submit"]').attributes('disabled'),
     ).toBeUndefined();
@@ -401,8 +416,10 @@ describe('deployment step', () => {
     return w;
   }
 
-  it('ticks every usable interface for both services by default', async () => {
+  it('starts on DNS only, with every usable interface ticked for both services', async () => {
     const w = await atDeployment();
+    expect(w.find('[data-track="first-run-role-dns"]').attributes('aria-pressed')).toBe('true');
+    expect(w.text()).toContain('DHCP is off until a role that serves it is chosen');
     const rows = w.findAll('.fr-table tbody tr');
     expect(rows).toHaveLength(2);
     const [eth0, eth1] = rows;
@@ -419,6 +436,12 @@ describe('deployment step', () => {
 
   it('locks the DHCP column for DNS only and saves only the DNS interfaces', async () => {
     const w = await atDeployment();
+    await w.find('[data-track="first-run-role-both"]').trigger('click');
+    expect(
+      w
+        .findAll('[data-track="first-run-iface-dhcp"]')
+        .every((sw) => sw.attributes('disabled') === undefined),
+    ).toBe(true);
     await w.find('[data-track="first-run-role-dns"]').trigger('click');
     const dhcpSwitches = w.findAll('[data-track="first-run-iface-dhcp"]');
     expect(dhcpSwitches.every((s) => s.attributes('disabled') !== undefined)).toBe(true);
@@ -542,6 +565,7 @@ describe('import step and start', () => {
     await w.find('[data-track="first-run-import-cidrella"]').trigger('click');
     expect(w.find('[data-track="first-run-import-continue"]').attributes('disabled')).toBeDefined();
     expect(w.text()).toContain('DHCP: off');
+    expect(w.text()).toContain('your two-factor enrolment');
 
     const file = new File(['x'], 'cidrella-backup-2026-09-19.tar.gz');
     const input = w.find('[data-track="first-run-restore-file"]');

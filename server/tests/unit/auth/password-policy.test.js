@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { passwordPolicyError, PASSWORD_POLICY } from '../../../src/auth/password-policy.js';
+import {
+  passwordPolicyError,
+  describePolicy,
+  validatePolicyPatch,
+  PASSWORD_POLICY,
+} from '../../../src/auth/password-policy.js';
 
 const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../src');
 
@@ -17,27 +22,83 @@ const SRC = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..
  * why this has behavioural tests and not just a dedup note.
  */
 describe('#39: the shared policy', () => {
-  it('accepts a compliant password', () => {
+  it('accepts a compliant password under the defaults', () => {
     expect(passwordPolicyError('Passw0rdX')).toBeNull();
     expect(passwordPolicyError('A1' + 'b'.repeat(6))).toBeNull();
   });
 
   it('rejects too short and too long', () => {
-    expect(passwordPolicyError('Ab1cdef')).toMatch(/8-1024/);
-    expect(passwordPolicyError('A1' + 'b'.repeat(1023))).toMatch(/8-1024/);
+    expect(passwordPolicyError('Ab1cdef')).toMatch(/at least 8/);
+    expect(passwordPolicyError('A1' + 'b'.repeat(1023))).toMatch(/at most 1024/);
   });
 
   it('rejects a long-but-simple password, which is what change-password used to allow', () => {
-    expect(passwordPolicyError('aaaaaaaa')).toMatch(/uppercase/);
-    expect(passwordPolicyError('AAAAAAAA')).toMatch(/uppercase/);
-    expect(passwordPolicyError('Aaaaaaaa')).toMatch(/uppercase/);
-    expect(passwordPolicyError('12345678')).toMatch(/uppercase/);
+    expect(passwordPolicyError('aaaaaaaa')).toMatch(/upper and lower/);
+    expect(passwordPolicyError('AAAAAAAA')).toMatch(/upper and lower/);
+    expect(passwordPolicyError('Aaaaaaaa')).toMatch(/number/);
+    expect(passwordPolicyError('12345678')).toMatch(/upper and lower/);
   });
 
   it('rejects empty and non-string input', () => {
     for (const v of ['', null, undefined, 12345678, {}]) {
       expect(passwordPolicyError(v), String(v)).toBeTruthy();
     }
+  });
+
+  it('each part is its own switch, and zero minimum means none', () => {
+    const none = {
+      ...PASSWORD_POLICY,
+      minLength: 0,
+      requireMixedCase: false,
+      requireNumber: false,
+    };
+    expect(passwordPolicyError('a', none)).toBeNull();
+    expect(passwordPolicyError('a'.repeat(1025), none)).toMatch(/at most/);
+    const symbol = { ...none, requireSymbol: true };
+    expect(passwordPolicyError('abc', symbol)).toMatch(/symbol/);
+    expect(passwordPolicyError('ab-c', symbol)).toBeNull();
+    const twelve = { ...none, minLength: 12 };
+    expect(passwordPolicyError('a'.repeat(11), twelve)).toMatch(/at least 12/);
+    expect(passwordPolicyError('a'.repeat(12), twelve)).toBeNull();
+  });
+
+  it('describes exactly what it enforces', () => {
+    expect(
+      describePolicy({
+        minLength: 8,
+        requireMixedCase: true,
+        requireNumber: true,
+        requireSymbol: false,
+      }),
+    ).toBe('At least 8 characters, including upper and lower case letters, a number.');
+    expect(
+      describePolicy({
+        minLength: 0,
+        requireMixedCase: false,
+        requireNumber: false,
+        requireSymbol: true,
+      }),
+    ).toBe('Including a symbol.');
+    expect(
+      describePolicy({
+        minLength: 0,
+        requireMixedCase: false,
+        requireNumber: false,
+        requireSymbol: false,
+      }),
+    ).toBe('Any password up to 1024 characters.');
+  });
+
+  it('validates a client patch key by key', () => {
+    expect(validatePolicyPatch({ minLength: 12, requireSymbol: true }).patch).toEqual({
+      password_min_length: '12',
+      password_require_symbol: 'true',
+    });
+    expect(validatePolicyPatch({ minLength: -1 }).error).toMatch(/minLength/);
+    expect(validatePolicyPatch({ minLength: 2000 }).error).toMatch(/minLength/);
+    expect(validatePolicyPatch({ requireNumber: 'yes' }).error).toMatch(/requireNumber/);
+    expect(validatePolicyPatch({}).error).toMatch(/nothing/);
+    expect(validatePolicyPatch(null).error).toBeTruthy();
   });
 });
 
@@ -67,23 +128,21 @@ describe('#39: the enforcing route goes through the one module', () => {
     );
   });
 
-  it('the policy object is frozen, so a caller cannot loosen it at runtime', () => {
+  it('the default policy object is frozen, so a caller cannot loosen it at runtime', () => {
     expect(Object.isFrozen(PASSWORD_POLICY)).toBe(true);
-    const before = PASSWORD_POLICY.requireDigit;
+    const before = PASSWORD_POLICY.requireNumber;
     try {
-      PASSWORD_POLICY.requireDigit = false;
+      PASSWORD_POLICY.requireNumber = false;
     } catch {
       /* strict mode throws */
     }
-    expect(PASSWORD_POLICY.requireDigit).toBe(before);
+    expect(PASSWORD_POLICY.requireNumber).toBe(before);
   });
 
   it('the description matches what the rule actually enforces', () => {
     // The description is served to the client and shown under the field, so a
     // drift here is a lie to the operator rather than a broken check.
-    if (PASSWORD_POLICY.requireUppercase) expect(PASSWORD_POLICY.description).toMatch(/uppercase/i);
-    if (PASSWORD_POLICY.requireLowercase) expect(PASSWORD_POLICY.description).toMatch(/lowercase/i);
-    if (PASSWORD_POLICY.requireDigit) expect(PASSWORD_POLICY.description).toMatch(/number|digit/i);
+    expect(PASSWORD_POLICY.description).toBe(describePolicy(PASSWORD_POLICY));
     expect(PASSWORD_POLICY.description).toContain(String(PASSWORD_POLICY.minLength));
   });
 });

@@ -14,6 +14,7 @@ import {
   getBackupPath,
   restoreBackup,
   inspectBackup,
+  collectRestoreCarryover,
 } from '../utils/backup.js';
 import { reloadTlsCerts } from '../utils/cert.js';
 import * as RangeType from '../models/range-type.js';
@@ -294,6 +295,7 @@ router.post('/restore', (req, res) => {
         inspection,
         dhcpAfterRestore: dhcp.choice,
         restoredBy: { username: req.user.username },
+        carryover: collectRestoreCarryover(getDb(), req.user.id),
       });
       // Clean up the uploaded tarball, we're about to exit, but be explicit
       // so a second restore within RestartSec doesn't find a stale tmp copy.

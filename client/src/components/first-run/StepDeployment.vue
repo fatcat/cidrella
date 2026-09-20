@@ -4,8 +4,8 @@
       <div class="fr-eyebrow">Step 3 of 5</div>
       <h1>What should this appliance do?</h1>
       <p class="fr-lede">
-        Right now dnsmasq is bound to every interface and would answer DHCP on all of them. Choose
-        the role first, then which interfaces it applies to.
+        DHCP is off until a role that serves it is chosen and applied at the last step. Choose the
+        role first, then which interfaces it applies to.
       </p>
     </div>
 
@@ -19,9 +19,7 @@
         :data-track="`first-run-role-${r.id}`"
         @click="draft.role = r.id"
       >
-        <span class="fr-card-title">
-          {{ r.title }} <span v-if="r.tag" class="fr-card-tag">{{ r.tag }}</span>
-        </span>
+        <span class="fr-card-title">{{ r.title }}</span>
         <span class="fr-card-desc">{{ r.desc }}</span>
         <span class="fr-card-note"
           ><b>{{ r.noteLead }}</b> {{ r.note }}</span
@@ -113,7 +111,6 @@ const ROLES = [
   {
     id: 'both',
     title: 'DNS & DHCP',
-    tag: 'typical',
     desc: 'Resolver, blocklists and address leasing for the LAN, with IPAM driven by both.',
     noteLead: 'Leases start',
     note: 'once you create a network with a scope.',

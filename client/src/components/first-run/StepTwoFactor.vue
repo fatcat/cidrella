@@ -28,9 +28,6 @@
         <span class="fr-card-desc">
           Any TOTP app: Aegis, Google Authenticator, 1Password, Bitwarden and the like.
         </span>
-        <span class="fr-card-note"
-          ><b>Two minutes.</b> Scan, type one code, save the backup codes.</span
-        >
       </button>
       <button
         type="button"
@@ -45,7 +42,6 @@
           >Password only. It can be turned on later under Settings &gt; Access &gt;
           Two-factor.</span
         >
-        <span class="fr-card-note"><b>Fine on a trusted LAN.</b> Less so anywhere else.</span>
       </button>
     </div>
 

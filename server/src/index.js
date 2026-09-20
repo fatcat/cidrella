@@ -58,7 +58,11 @@ import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
-import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup.js';
+import {
+  startBackupScheduler,
+  sweepStaleRestoreArtifacts,
+  applyRestoreCarryover,
+} from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
@@ -111,6 +115,15 @@ async function main() {
 
   // Initialize database
   await initDb(DATA_DIR);
+
+  // A restore parks what the restoring operator must not lose (their
+  // two-factor enrolment) in the restored database; apply it now that the
+  // schema is current. No-op on every boot that did not follow a restore.
+  try {
+    applyRestoreCarryover(getDb());
+  } catch (err) {
+    console.error('Restore carry-over failed:', err.message);
+  }
   console.log('Database initialized');
   resumePendingRegeneration();
 

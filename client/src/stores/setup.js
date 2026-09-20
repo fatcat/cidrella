@@ -11,25 +11,23 @@ import api from '../api/client.js';
 export const useSetupStore = defineStore('setup', () => {
   const state = ref({ password: false, totp: null, deployment: null, import: null, done: false });
   const passwordPolicy = ref(null);
-  const passwordComplexity = ref(true);
   const loaded = ref(false);
 
   // What the operator has picked so far. Seeded from `state` on load so a
   // resumed setup shows the earlier answers.
   const draft = reactive({
-    role: 'both',
+    role: 'dns',
     interfaces: [], // [{ name, addresses, state, dns, dhcp }] from GET /api/interfaces
     importKind: 'fresh',
     network: { cidr: '', domain: '' }, // Pi-hole path only
   });
 
-  // Both GET and PUT answer with the markers plus the served policy and the
-  // complexity switch; one reader for both.
+  // Both GET and PUT answer with the markers plus the served policy; one
+  // reader for both.
   function absorb(data) {
-    const { password_policy: policy, password_complexity: complexity, ...rest } = data;
+    const { password_policy: policy, ...rest } = data;
     state.value = rest;
     passwordPolicy.value = policy ?? null;
-    passwordComplexity.value = complexity !== false;
     return state.value;
   }
 
@@ -86,9 +84,8 @@ export const useSetupStore = defineStore('setup', () => {
   function reset() {
     state.value = { password: false, totp: null, deployment: null, import: null, done: false };
     passwordPolicy.value = null;
-    passwordComplexity.value = true;
     loaded.value = false;
-    draft.role = 'both';
+    draft.role = 'dns';
     draft.interfaces = [];
     draft.importKind = 'fresh';
     draft.network = { cidr: '', domain: '' };
@@ -97,7 +94,6 @@ export const useSetupStore = defineStore('setup', () => {
   return {
     state,
     passwordPolicy,
-    passwordComplexity,
     loaded,
     draft,
     interfaceConfig,

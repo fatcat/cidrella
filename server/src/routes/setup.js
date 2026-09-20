@@ -1,9 +1,9 @@
 import { Router } from 'express';
-import { effectivePasswordPolicy, passwordComplexityEnabled } from '../auth/password-policy.js';
+import { effectivePasswordPolicy, validatePolicyPatch } from '../auth/password-policy.js';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateInterfaceConfig } from '../utils/validation.js';
-import { getSetupState, setSetupState, upsertSettingWithConflict } from '../models/setting.js';
+import { getSetupState, setSetupState, upsertSettings } from '../models/setting.js';
 
 // First-run setup state. The wizard itself is a client concern; the server
 // only keeps the step markers so an interrupted setup resumes, and hands the
@@ -60,26 +60,22 @@ function validatePatch(body) {
     if (typeof body.done !== 'boolean') return 'done must be a boolean';
     patch.done = body.done;
   }
-  // Not a marker: the one appliance setting the password step owns, kept on
-  // this endpoint because it is the only write the password-change gate lets
-  // through before the password is changed.
-  let complexity;
-  if ('password_complexity' in body) {
-    if (typeof body.password_complexity !== 'boolean') {
-      return 'password_complexity must be a boolean';
-    }
-    complexity = body.password_complexity;
+  // Not a marker: the password rule the password step owns, kept on this
+  // endpoint because it is the only write the password-change gate lets
+  // through before the password is changed. Partial; only the keys given
+  // change.
+  let policy;
+  if ('password_policy' in body) {
+    const result = validatePolicyPatch(body.password_policy);
+    if (result.error) return result.error;
+    policy = result.patch;
   }
-  if (Object.keys(patch).length === 0 && complexity === undefined) return 'nothing to update';
-  return { patch, complexity };
+  if (Object.keys(patch).length === 0 && !policy) return 'nothing to update';
+  return { patch, policy };
 }
 
 function stateResponse(db) {
-  return {
-    ...getSetupState(db),
-    password_policy: effectivePasswordPolicy(db),
-    password_complexity: passwordComplexityEnabled(db),
-  };
+  return { ...getSetupState(db), password_policy: effectivePasswordPolicy(db) };
 }
 
 // GET /api/setup/state: where the first run stands, plus the password rule
@@ -92,15 +88,13 @@ router.get('/state', (req, res) => {
 router.put('/state', requirePerm('system:write'), (req, res) => {
   const result = validatePatch(req.body);
   if (typeof result === 'string') return res.status(400).json({ error: result });
-  const { patch, complexity } = result;
+  const { patch, policy } = result;
   const db = getDb();
   if (Object.keys(patch).length > 0) setSetupState(db, patch);
-  if (complexity !== undefined) {
-    upsertSettingWithConflict(db, 'password_complexity', complexity ? 'true' : 'false');
-  }
+  if (policy) upsertSettings(db, Object.entries(policy));
   audit(req.user.id, 'setup_step', 'system', null, {
     ...patch,
-    ...(complexity === undefined ? {} : { password_complexity: complexity }),
+    ...(policy ? { password_policy: policy } : {}),
   });
   res.json(stateResponse(db));
 });

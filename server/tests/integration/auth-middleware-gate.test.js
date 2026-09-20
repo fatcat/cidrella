@@ -53,10 +53,12 @@ describe('must-change-password gate', () => {
     expect(res.body.password_policy).toBeDefined();
   });
 
-  it('lets the password step switch complexity off before the change, and nothing else through', async () => {
-    const put = await as(request(app).put('/api/setup/state')).send({ password_complexity: false });
+  it('lets the password step loosen the rule before the change, and nothing else through', async () => {
+    const put = await as(request(app).put('/api/setup/state')).send({
+      password_policy: { requireMixedCase: false, requireNumber: false },
+    });
     expect(put.status).toBe(200);
-    expect(put.body.password_policy.requireDigit).toBe(false);
+    expect(put.body.password_policy.requireNumber).toBe(false);
     const other = await as(request(app).get('/api/anything'));
     expect(other.status).toBe(403);
     expect(other.body.code).toBe('MUST_CHANGE_PASSWORD');
@@ -70,7 +72,9 @@ describe('must-change-password gate', () => {
     expect(weak.status).toBe(200);
     token = weak.body.token;
     // Back to the strict rule for the rest of the suite.
-    const put = await as(request(app).put('/api/setup/state')).send({ password_complexity: true });
+    const put = await as(request(app).put('/api/setup/state')).send({
+      password_policy: { requireMixedCase: true, requireNumber: true },
+    });
     expect(put.status).toBe(200);
     const strict = await as(request(app).post('/api/auth/change-password')).send({
       current_password: 'aaaaaaaa',
