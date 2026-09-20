@@ -470,7 +470,13 @@ export function configureSubnet(db, subnet, parsed, fields) {
       );
     }
     if (fields.create_dhcp_scope && parsed.family === 6 && fields.dhcpV6) {
-      DhcpTopology.createAutoScopeV6(db, subnet.id, parsed, fields.domain_name || null, fields.dhcpV6);
+      DhcpTopology.createAutoScopeV6(
+        db,
+        subnet.id,
+        parsed,
+        fields.domain_name || null,
+        fields.dhcpV6,
+      );
     }
   });
 
@@ -504,6 +510,23 @@ function deleteSubnetRowsWithRanges(db, subnets) {
 
 function deleteSubnetRow(db, subnetId) {
   return db.prepare('DELETE FROM subnets WHERE id = ?').run(subnetId);
+}
+
+// Every subnet below this one, deepest first, so a child's cleanup runs before
+// its parent's.
+function descendantSubnets(db, subnetId) {
+  return db
+    .prepare(
+      `
+    WITH RECURSIVE tree AS (
+      SELECT * FROM subnets WHERE parent_id = ?
+      UNION ALL
+      SELECT s.* FROM subnets s JOIN tree t ON s.parent_id = t.id
+    )
+    SELECT * FROM tree ORDER BY depth DESC, id
+  `,
+    )
+    .all(subnetId);
 }
 
 function deleteDescendantSubnets(db, subnetId) {
@@ -759,10 +782,67 @@ export function mergeSubnets(db, subnets, mergeResult, options = {}) {
   return merge();
 }
 
+// Which networks in the subtree have DNS of their own to clean: the target and
+// any allocated descendant. An unallocated intermediary never wrote DNS.
+function dnsCleanupTargets(db, subnet) {
+  return [...descendantSubnets(db, subnet.id), subnet].filter((row) => row.status === 'allocated');
+}
+
+/**
+ * What deleteSubnet would remove, disable and keep, computed read-only for the
+ * confirmation dialog. Counts cover the network and every allocated network
+ * below it, the same set the cleanup walks.
+ */
+export function deallocationPreview(db, subnet) {
+  const targets = dnsCleanupTargets(db, subnet);
+  const ids = targets.map((row) => row.id);
+  const placeholders = ids.map(() => '?').join(',') || 'NULL';
+  const count = (sql) => (ids.length ? db.prepare(sql).get(...ids).c : 0);
+  const preview = {
+    reservations: count(
+      `SELECT COUNT(*) AS c FROM dhcp_reservations WHERE subnet_id IN (${placeholders})`,
+    ),
+    scopes: count(`SELECT COUNT(*) AS c FROM dhcp_scopes WHERE subnet_id IN (${placeholders})`),
+    leases: count(`SELECT COUNT(*) AS c FROM dhcp_leases WHERE subnet_id IN (${placeholders})`),
+    generated_ptr: 0,
+    generated_address_records: 0,
+    reverse_zones: [],
+    forward_zones: [...new Set(targets.map((row) => row.domain_name).filter(Boolean))],
+    children: Math.max(0, targets.length - (subnet.status === 'allocated' ? 1 : 0)),
+  };
+  const zonesByName = new Map();
+  for (const target of targets) {
+    const impact = DnsTopology.dnsDeallocationImpact(db, target, { excludeSubnetIds: ids });
+    preview.generated_ptr += impact.generatedPtrIds.length;
+    preview.generated_address_records += impact.generatedAddressRecords.length;
+    for (const zone of impact.reverseZones) {
+      zonesByName.set(zone.name, {
+        name: zone.name,
+        enabled: zone.enabled,
+        will_disable: zone.willDisable,
+      });
+    }
+  }
+  preview.reverse_zones = [...zonesByName.values()];
+  return preview;
+}
+
 export function deleteSubnet(db, subnet) {
   const remove = db.transaction(() => {
     const hasChildren =
       db.prepare('SELECT COUNT(*) as c FROM subnets WHERE parent_id = ?').get(subnet.id).c > 0;
+    const dns = { ptr_removed: 0, address_records_removed: 0, zones_disabled: [] };
+    // Generated DNS goes with the network that wrote it. Run before the rows
+    // are deleted or reset, while has_reverse_dns still says which zones the
+    // network owned.
+    const targets = dnsCleanupTargets(db, subnet);
+    const excludeSubnetIds = targets.map((row) => row.id);
+    for (const target of targets) {
+      const result = DnsTopology.cleanupDnsForDeallocatedSubnet(db, target, { excludeSubnetIds });
+      dns.ptr_removed += result.ptr_removed;
+      dns.address_records_removed += result.address_records_removed;
+      dns.zones_disabled.push(...result.zones_disabled);
+    }
 
     if (subnet.status === 'allocated') {
       if (hasChildren) {
@@ -771,7 +851,7 @@ export function deleteSubnet(db, subnet) {
       deleteSubnetData(db, subnet.id);
       deallocateSubnetRow(db, subnet);
       if (subnet.parent_id) buddyMerge(db, subnet.parent_id);
-      return 'deallocated';
+      return { action: 'deallocated', dns };
     }
 
     if (!subnet.parent_id) {
@@ -780,18 +860,18 @@ export function deleteSubnet(db, subnet) {
         DhcpTopology.deleteDhcpStateForSubtree(db, subnet.id);
       }
       deleteSubnetRow(db, subnet.id);
-      return 'deleted';
+      return { action: 'deleted', dns };
     }
 
     if (!hasChildren) {
       deleteSubnetData(db, subnet.id);
       deleteSubnetRow(db, subnet.id);
       buddyMerge(db, subnet.parent_id);
-      return 'deleted';
+      return { action: 'deleted', dns };
     }
 
     deleteDescendantSubnets(db, subnet.id);
-    return 'children_deleted';
+    return { action: 'children_deleted', dns };
   });
 
   return remove();

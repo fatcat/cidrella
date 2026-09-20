@@ -192,13 +192,11 @@ describe('switching on, creating IPv6 objects, switching off', () => {
       .send({ v6_mode: 'slaac' });
     expect(scopeMode.status).toBe(400);
     expect(scopeMode.body.error).toBe(DISABLED);
-    const reservation = await request(app)
-      .post('/api/dhcp/reservations')
-      .send({
-        subnet_id: netId,
-        ip_address: 'fd00:9::21',
-        duid: '00:01:00:01:aa:bb:cc:dd:ee:ff:00:12',
-      });
+    const reservation = await request(app).post('/api/dhcp/reservations').send({
+      subnet_id: netId,
+      ip_address: 'fd00:9::21',
+      duid: '00:01:00:01:aa:bb:cc:dd:ee:ff:00:12',
+    });
     expect(reservation.status).toBe(400);
     expect(reservation.body.error).toBe(DISABLED);
 
@@ -213,7 +211,19 @@ describe('switching on, creating IPv6 objects, switching off', () => {
     expect(a4.status).toBe(201);
 
     // Deletable: the first delete of an allocated network deallocates it,
-    // the second removes the row, both with IPv6 off.
+    // the second removes the row, both with IPv6 off. Deallocation refuses
+    // while the reservation from the previous step exists, so clear it first;
+    // the reservation route stays deletable with IPv6 off.
+    const blocked = await request(app).delete(`/api/subnets/${netId}`);
+    expect(blocked.status).toBe(409);
+    expect(blocked.body).toMatchObject({
+      reason_code: 'reservations_present',
+      reservation_count: 1,
+    });
+    const reservationId = db
+      .prepare('SELECT id FROM dhcp_reservations WHERE subnet_id = ?')
+      .get(netId).id;
+    expect((await request(app).delete(`/api/dhcp/reservations/${reservationId}`)).status).toBe(200);
     const dealloc = await request(app).delete(`/api/subnets/${netId}`);
     expect(dealloc.status).toBe(200);
     const remaining = db.prepare('SELECT status FROM subnets WHERE id = ?').get(netId);

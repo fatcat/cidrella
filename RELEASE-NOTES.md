@@ -218,11 +218,21 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- Deallocating a network left its DNS behind: every placeholder and
+  lease-written PTR stayed, its reverse zones stayed enabled, dnsmasq kept
+  answering for an unallocated block, and DHCP reservations were left
+  pointing at it. Deallocate and delete now remove the generated PTR and
+  A/AAAA records, disable reverse zones no other allocated network covers
+  (configuring the block again re-enables them), and refuse while
+  reservations exist. The confirmation dialogs list what is removed,
+  disabled and kept before you commit; the old one-liner did not mention
+  DHCP at all.
 - The linked-zone strip above a network's DNS view showed at most two cards,
   so a /22 with reverse DNS appeared to own one reverse zone when it owns
-  four. The strip now shows every linked zone and scope, wraps, and past six
-  offers a "+N more" card that expands it in place. A narrow-screen rule that
-  silently dropped the second card is gone too.
+  four. The strip now shows every linked zone and scope. Two or more reverse
+  zones fold into one card of the same shape that opens a list of them and
+  names the one the table is filtered to. A narrow-screen rule that silently
+  dropped the second card is gone too.
 - The update panel's checklist froze at "Verifying signature" and the page had
   to be reloaded by hand to learn the update had finished. The checklist named
   phases the script never reports and knew nothing of the ones it does, and

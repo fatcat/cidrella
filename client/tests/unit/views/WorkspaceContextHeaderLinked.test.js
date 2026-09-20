@@ -11,57 +11,68 @@ function zones(n) {
   }));
 }
 
-function mountHeader(summaryZones, selectedNetwork = { id: 2, folder: 'Home', folderId: 1 }) {
+function mountHeader(summaryZones, selectedZone = null) {
   return mount(WorkspaceContextHeader, {
+    attachTo: globalThis.document.body,
     props: {
       contextKind: 'network',
       contextIcon: 'pi pi-sitemap',
       contextTitle: '10.0.0.0/22',
-      selectedNetwork,
+      selectedNetwork: { id: 2, folder: 'Home', folderId: 1 },
       stats: [],
       views: [],
       activeView: 'dns',
       showSummary: true,
       viewMeta: { title: 'DNS' },
       summaryZones,
+      selectedZone,
     },
   });
 }
 
 const cardNames = (wrapper) =>
-  wrapper.findAll('.linked-card:not(.linked-more) strong').map((el) => el.text());
+  wrapper.findAll('.linked-card:not(.linked-picker) strong').map((el) => el.text());
 
 describe('WorkspaceContextHeader linked zone strip', () => {
-  it('shows every linked zone of a /22 split into /24 reverse zones', () => {
+  it('shows a single reverse zone as its own card', () => {
+    const wrapper = mountHeader(zones(2));
+    expect(cardNames(wrapper)).toEqual(['example.test', '0.0.10.in-addr.arpa']);
+    expect(wrapper.find('.linked-picker').exists()).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('folds the reverse zones of a /22 into one picker card', async () => {
     const wrapper = mountHeader(zones(5));
-    expect(cardNames(wrapper)).toEqual([
-      'example.test',
+    expect(cardNames(wrapper)).toEqual(['example.test']);
+    const picker = wrapper.find('.linked-picker');
+    expect(picker.find('small').text()).toBe('4 reverse zones');
+    expect(picker.find('strong').text()).toBe('Choose a zone');
+    expect(picker.find('em').text()).toBe('1016');
+    expect(picker.attributes('aria-pressed')).toBe('false');
+
+    await picker.trigger('click');
+    const items = globalThis.document.querySelectorAll('.picker-item');
+    expect([...items].map((el) => el.querySelector('strong').textContent)).toEqual([
       '0.0.10.in-addr.arpa',
       '1.0.10.in-addr.arpa',
       '2.0.10.in-addr.arpa',
       '3.0.10.in-addr.arpa',
     ]);
-    expect(wrapper.find('.linked-more').exists()).toBe(false);
+
+    items[2].click();
+    expect(wrapper.emitted('filter-zone')?.[0]?.[0]).toMatchObject({
+      name: '2.0.10.in-addr.arpa',
+    });
+    wrapper.unmount();
   });
 
-  it('shows seven cards rather than six plus a "+1 more" card', () => {
-    const wrapper = mountHeader(zones(7));
-    expect(cardNames(wrapper)).toHaveLength(7);
-    expect(wrapper.find('.linked-more').exists()).toBe(false);
-  });
-
-  it('caps a long list and expands it in place', async () => {
-    const wrapper = mountHeader(zones(17));
-    expect(cardNames(wrapper)).toHaveLength(6);
-    const more = wrapper.find('.linked-more');
-    expect(more.text()).toBe('+11 more');
-
-    await more.trigger('click');
-    expect(cardNames(wrapper)).toHaveLength(17);
-    expect(wrapper.find('.linked-more').text()).toBe('Show fewer');
-
-    // Moving to another network collapses the strip again.
-    await wrapper.setProps({ selectedNetwork: { id: 3, folder: 'Home', folderId: 1 } });
-    expect(cardNames(wrapper)).toHaveLength(6);
+  it('names the chosen reverse zone on the picker card', () => {
+    const list = zones(5);
+    const wrapper = mountHeader(list, list[3]);
+    const picker = wrapper.find('.linked-picker');
+    expect(picker.find('strong').text()).toBe('2.0.10.in-addr.arpa');
+    expect(picker.attributes('aria-pressed')).toBe('true');
+    expect(picker.classes()).toContain('selected');
+    wrapper.unmount();
   });
 });

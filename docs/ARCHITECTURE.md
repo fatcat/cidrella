@@ -224,6 +224,22 @@ file classes have different reload behavior:
 The backend should keep DNS and DHCP table ownership in models/services; config
 generators should read and emit, not invent persistence semantics.
 
+### What deallocating a network takes with it
+
+Deallocating (or deleting) an allocated network removes what the app wrote for
+it and keeps what a person wrote. DHCP scopes, scope options and leases go.
+PTR records with source `placeholder`, `dhcp` or `reservation` for addresses
+inside the block go, as do A/AAAA records with source `dhcp` or `reservation`.
+Manual records and the `dns` PTRs that mirror them stay. Forward zones are
+shared DNS objects and are never touched. Each reverse zone the block maps to
+is disabled unless another allocated network with reverse DNS still overlaps
+it; configuring the block again with reverse DNS re-enables the same zone rows.
+DHCP reservations are a promise someone made on purpose, so the delete refuses
+with 409 `reservations_present` while any exist in the network or below it.
+`GET /api/subnets/:id/deallocation-preview` reports the same selection
+read-only for the confirmation dialog (`subnet-dns-topology.js`
+`dnsDeallocationImpact`, `subnet-topology.js` `deallocationPreview`).
+
 ## Security and Operations Boundaries
 
 Expected low-level write exceptions:

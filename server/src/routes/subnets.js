@@ -1889,6 +1889,46 @@ router.post(
 );
 
 // DELETE /api/subnets/:id: hierarchy-aware deletion with reconsolidation
+// Reservations in the network or anything below it. A reservation is a
+// promise someone made on purpose, so deallocation refuses while any exist
+// rather than deleting them along with the leases.
+function subtreeReservationCount(db, subnetId) {
+  return db
+    .prepare(
+      `
+    WITH RECURSIVE tree AS (
+      SELECT id FROM subnets WHERE id = ?
+      UNION ALL
+      SELECT s.id FROM subnets s JOIN tree t ON s.parent_id = t.id
+    )
+    SELECT COUNT(*) AS c FROM dhcp_reservations WHERE subnet_id IN (SELECT id FROM tree)
+  `,
+    )
+    .get(subnetId).c;
+}
+
+function reservationsBlockResponse(res, count) {
+  return res.status(409).json({
+    error: `Remove the ${count} DHCP reservation${count === 1 ? '' : 's'} in this network first.`,
+    reason_code: 'reservations_present',
+    reservation_count: count,
+  });
+}
+
+// GET /api/subnets/:id/deallocation-preview: what deallocating (or deleting)
+// this network removes, disables and keeps, so the confirmation dialog can say
+// so before the user commits. Read only; the same selection drives the cleanup.
+router.get(
+  '/:id/deallocation-preview',
+  requirePerm('subnets:read'),
+  asyncHandler((req, res) => {
+    const db = getDb();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    res.json(SubnetTopology.deallocationPreview(db, subnet));
+  }),
+);
+
 router.delete(
   '/:id',
   requirePerm('subnets:write'),
@@ -1897,11 +1937,20 @@ router.delete(
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-    const action = SubnetTopology.deleteSubnet(db, subnet);
+    if (subnet.status === 'allocated') {
+      const reservations = subtreeReservationCount(db, subnet.id);
+      if (reservations > 0) return reservationsBlockResponse(res, reservations);
+    }
+
+    const { action, dns } = SubnetTopology.deleteSubnet(db, subnet);
     req.afterCommit('regenerate_dns');
     req.afterCommit('regenerate_dhcp');
-    audit(req.user.id, 'subnet_deleted', 'subnet', subnet.id, { cidr: subnet.cidr, action });
-    res.json({ message: 'Subnet deleted', action });
+    audit(req.user.id, 'subnet_deleted', 'subnet', subnet.id, {
+      cidr: subnet.cidr,
+      action,
+      ...dns,
+    });
+    res.json({ message: 'Subnet deleted', action, dns });
   }),
 );
 

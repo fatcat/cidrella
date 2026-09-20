@@ -208,6 +208,34 @@ export function generateReverseNames(cidr) {
   return [`${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`];
 }
 
+/**
+ * The network a reverse zone name covers, as a CIDR string, or null when the
+ * name is not a whole-octet in-addr.arpa or nibble-aligned ip6.arpa zone.
+ * This is the inverse of generateReverseNames for the shapes it produces:
+ * "1.0.10.in-addr.arpa" is 10.0.1.0/24, "8.b.d.0.1.0.0.2.ip6.arpa" is
+ * 2001:db8::/32.
+ */
+export function reverseZoneNetwork(zoneName) {
+  const name = String(zoneName || '')
+    .toLowerCase()
+    .replace(/\.$/, '');
+  const v4 = name.match(/^((?:\d{1,3}\.){1,3})in-addr\.arpa$/);
+  if (v4) {
+    const octets = v4[1].split('.').filter(Boolean).reverse();
+    if (octets.some((o) => Number(o) > 255)) return null;
+    const padded = [...octets, ...Array(4 - octets.length).fill('0')];
+    return `${padded.join('.')}/${octets.length * 8}`;
+  }
+  const v6 = name.match(/^((?:[0-9a-f]\.){1,32})ip6\.arpa$/);
+  if (v6) {
+    const nibbles = v6[1].split('.').filter(Boolean).reverse();
+    const hex = [...nibbles, ...Array(32 - nibbles.length).fill('0')].join('');
+    const hextets = hex.match(/.{4}/g).join(':');
+    return `${parseNetwork(`${hextets}/${nibbles.length * 4}`).network}/${nibbles.length * 4}`;
+  }
+  return null;
+}
+
 export function regenerateHostsDir(db) {
   const zones = db
     .prepare(

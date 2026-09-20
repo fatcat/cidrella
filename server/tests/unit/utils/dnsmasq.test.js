@@ -296,6 +296,19 @@ describe('generateReverseNames', () => {
   });
 });
 
+describe('reverseZoneNetwork', () => {
+  it('turns a zone name back into the network it covers', async () => {
+    const { reverseZoneNetwork } = await import('../../../src/utils/dnsmasq.js');
+    expect(reverseZoneNetwork('1.0.10.in-addr.arpa')).toBe('10.0.1.0/24');
+    expect(reverseZoneNetwork('16.172.in-addr.arpa')).toBe('172.16.0.0/16');
+    expect(reverseZoneNetwork('10.in-addr.arpa')).toBe('10.0.0.0/8');
+    expect(reverseZoneNetwork('8.b.d.0.1.0.0.2.ip6.arpa')).toBe('2001:db8::/32');
+    expect(reverseZoneNetwork('0.0.0.0.0.0.0.0.6.0.0.0.0.0.d.f.ip6.arpa')).toBe('fd00:6::/64');
+    expect(reverseZoneNetwork('example.test')).toBeNull();
+    expect(reverseZoneNetwork('300.0.10.in-addr.arpa')).toBeNull();
+  });
+});
+
 describe('listenableAddresses', () => {
   it('binds IPv4 and global or unique-local IPv6, never link-local', async () => {
     const { listenableAddresses } = await import('../../../src/utils/dnsmasq.js');

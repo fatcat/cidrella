@@ -174,6 +174,12 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
+  // What deleting or deallocating a network removes, disables and keeps.
+  async function previewDeallocation(id) {
+    const res = await api.get(`/subnets/${id}/deallocation-preview`);
+    return res.data;
+  }
+
   async function previewDivide(id, { new_prefix, cidr, selected_cidrs, target_gateways }) {
     const payload = {};
     if (new_prefix !== undefined) payload.new_prefix = new_prefix;
@@ -442,6 +448,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     createSupernet,
     updateSubnet,
     deleteSubnet,
+    previewDeallocation,
     divideSubnet,
     previewDivide,
     configureSubnet,

@@ -93,7 +93,7 @@
     </div>
     <div v-if="activeView === 'dns'" class="linked-resources">
       <button
-        v-for="zone in visibleCards(summaryZones)"
+        v-for="zone in zoneCards"
         :key="zone.id"
         class="linked-card"
         :class="{ selected: isSelected(selectedZone, zone) }"
@@ -106,20 +106,48 @@
           ><strong>{{ zone.name }}</strong></span
         ><em>{{ zone.record_count || 0 }}</em>
       </button>
+      <!-- A network wider than a /24 has one reverse zone per /24, so several
+           reverse zones fold into one card that opens a list. -->
       <button
-        v-if="overflows(summaryZones)"
+        v-if="reverseZones.length > 1"
         type="button"
-        class="linked-card linked-more"
-        data-track="workspace-linked-more"
-        @click="showAllLinked = !showAllLinked"
+        class="linked-card linked-picker"
+        :class="{ selected: Boolean(selectedReverseZone) }"
+        :aria-pressed="Boolean(selectedReverseZone)"
+        aria-haspopup="menu"
+        data-track="workspace-reverse-zones"
+        @click="reverseMenuRef.toggle($event)"
       >
-        {{ showAllLinked ? 'Show fewer' : `+${hiddenCount(summaryZones)} more` }}
+        <i class="pi pi-replay" /><span
+          ><small>{{ reverseZones.length }} reverse zones</small
+          ><strong>{{ selectedReverseZone?.name || 'Choose a zone' }}</strong></span
+        ><em>{{ reverseRecordCount }}</em
+        ><i class="pi pi-chevron-down picker-caret" />
       </button>
+      <Popover ref="reverseMenuRef">
+        <div class="picker-menu" role="menu">
+          <button
+            v-for="zone in reverseZones"
+            :key="zone.id"
+            type="button"
+            role="menuitemradio"
+            class="picker-item"
+            :aria-checked="isSelected(selectedZone, zone)"
+            :class="{ selected: isSelected(selectedZone, zone) }"
+            data-track="workspace-reverse-zone"
+            @click="pickReverseZone(zone)"
+            @contextmenu.prevent="emit('zone-menu', zone, $event.currentTarget, $event)"
+          >
+            <strong>{{ zone.name }}</strong
+            ><em>{{ zone.record_count || 0 }}</em>
+          </button>
+        </div>
+      </Popover>
       <span v-if="!summaryZones.length" class="linked-empty">No linked zones</span>
     </div>
     <div v-else-if="activeView === 'dhcp'" class="linked-resources">
       <button
-        v-for="scope in visibleCards(summaryScopes)"
+        v-for="scope in summaryScopes"
         :key="scope.id"
         class="linked-card"
         :class="{ selected: isSelected(selectedScope, scope) }"
@@ -131,15 +159,6 @@
           ><small>{{ scope.enabled ? 'ACTIVE SCOPE' : 'DISABLED SCOPE' }}</small
           ><strong>{{ scope.start_ip }} – {{ scope.end_ip }}</strong></span
         ><em>{{ formatDuration(scope.effective?.lease_time || scope.lease_time) }}</em>
-      </button>
-      <button
-        v-if="overflows(summaryScopes)"
-        type="button"
-        class="linked-card linked-more"
-        data-track="workspace-linked-more"
-        @click="showAllLinked = !showAllLinked"
-      >
-        {{ showAllLinked ? 'Show fewer' : `+${hiddenCount(summaryScopes)} more` }}
       </button>
       <span v-if="!summaryScopes.length" class="linked-empty">No DHCP scope</span>
     </div>
@@ -171,7 +190,8 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { computed, ref } from 'vue';
+import Popover from '../../ui/Popover.js';
 import { formatDuration } from '../networks-workspace-data.js';
 
 // Breadcrumb, gauges, pinned actions, view tabs and the per-view summary band.
@@ -215,27 +235,25 @@ function isSelected(selected, item) {
   return Boolean(selected) && Number(selected.id) === Number(item.id);
 }
 
-// The strip shows every linked zone or scope up to this many and wraps. A
-// /22 with reverse DNS has four reverse zones plus its forward zone; a /16
-// split into /24 zones has 256, so past the cap a "+N more" card expands the
-// strip in place. The cap is one short of the total when only one would be
-// hidden, since a "+1 more" card takes the room the card itself would.
-const LINKED_CAP = 6;
-const showAllLinked = ref(false);
-watch(
-  () => props.selectedNetwork?.id,
-  () => {
-    showAllLinked.value = false;
-  },
+// Forward zones are cards of their own. Reverse zones are too while there is
+// only one; from two up they share one picker card so a /22 or /16 does not
+// line the strip with in-addr.arpa names.
+const reverseZones = computed(() => props.summaryZones.filter((zone) => zone.type === 'reverse'));
+const zoneCards = computed(() =>
+  reverseZones.value.length > 1
+    ? props.summaryZones.filter((zone) => zone.type !== 'reverse')
+    : props.summaryZones,
 );
-function overflows(items) {
-  return items.length > LINKED_CAP + 1;
-}
-function visibleCards(items) {
-  return overflows(items) && !showAllLinked.value ? items.slice(0, LINKED_CAP) : items;
-}
-function hiddenCount(items) {
-  return overflows(items) ? items.length - LINKED_CAP : 0;
+const selectedReverseZone = computed(
+  () => reverseZones.value.find((zone) => isSelected(props.selectedZone, zone)) || null,
+);
+const reverseRecordCount = computed(() =>
+  reverseZones.value.reduce((sum, zone) => sum + (zone.record_count || 0), 0),
+);
+const reverseMenuRef = ref(null);
+function pickReverseZone(zone) {
+  reverseMenuRef.value?.hide();
+  emit('filter-zone', zone);
 }
 </script>
 
@@ -491,12 +509,48 @@ button {
   flex-wrap: wrap;
   gap: 0.45rem;
 }
-.linked-card.linked-more {
+.linked-card.linked-picker {
+  grid-template-columns: auto 1fr auto auto;
+}
+.picker-caret {
+  font-size: 0.55rem;
+  color: var(--preview-muted);
+}
+.picker-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 14rem;
+}
+.picker-item {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--cid-text-color);
+  text-align: left;
+  cursor: pointer;
+}
+.picker-item:hover {
+  background: var(--cid-surface-ground);
+}
+.picker-item.selected {
+  background: var(--preview-accent-soft);
+}
+.picker-item strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.picker-item em {
   color: var(--preview-muted);
-  font-size: 0.66rem;
-  border-style: dashed;
+  font-size: 0.63rem;
+  font-style: normal;
 }
 .linked-card {
   display: grid;

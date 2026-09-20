@@ -1165,16 +1165,24 @@
         Delete <strong>{{ dialogNetworkData.cidr }}</strong
         >?
       </p>
-      <p v-if="dialogNetworkData.status === 'allocated'" class="warn-text">
-        This will remove all configuration, ranges, and IP assignments.
-      </p>
       <p v-if="dialogNetworkData.child_count > 0" class="warn-text">
         This network has {{ dialogNetworkData.child_count }} children that will also be affected.
       </p>
+      <DeallocationImpact
+        v-if="dialogNetworkData.status === 'allocated' || dialogNetworkData.child_count > 0"
+        :preview="deallocationPreview"
+        :error="deallocationPreviewError"
+      />
     </template>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showDelete = false" />
-      <Button label="Delete" severity="danger" @click="executeDelete" :loading="saving" />
+      <Button
+        label="Delete"
+        severity="danger"
+        @click="executeDelete"
+        :loading="saving"
+        :disabled="deallocationBlocked"
+      />
     </template>
   </Dialog>
 
@@ -1191,14 +1199,18 @@
         Deallocate <strong>{{ dialogNetworkData.cidr }}</strong
         >?
       </p>
-      <p class="warn-text">
-        This will remove all configuration, ranges, and IP assignments. The network block will
-        remain as unallocated space.
-      </p>
+      <p>The network block stays as unallocated space.</p>
+      <DeallocationImpact :preview="deallocationPreview" :error="deallocationPreviewError" />
     </template>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showDeallocate = false" />
-      <Button label="Deallocate" severity="danger" @click="executeDeallocate" :loading="saving" />
+      <Button
+        label="Deallocate"
+        severity="danger"
+        @click="executeDeallocate"
+        :loading="saving"
+        :disabled="deallocationBlocked"
+      />
     </template>
   </Dialog>
 
@@ -1287,6 +1299,7 @@ import TabList from '../ui/TabList.js';
 import Tab from '../ui/Tab.js';
 import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
+import DeallocationImpact from './DeallocationImpact.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
@@ -3158,11 +3171,29 @@ function openEdit(node, folderId) {
   showNetworkEditor();
 }
 
+// What deleting or deallocating the network removes, disables and keeps. Null
+// while loading; the dialog renders the list once it lands. A reservation
+// anywhere in the subtree blocks the action, the server refuses it too.
+const deallocationPreview = ref(null);
+const deallocationPreviewError = ref('');
+const deallocationBlocked = computed(() => (deallocationPreview.value?.reservations || 0) > 0);
+
+async function loadDeallocationPreview(id) {
+  deallocationPreview.value = null;
+  deallocationPreviewError.value = '';
+  try {
+    deallocationPreview.value = await store.previewDeallocation(id);
+  } catch (err) {
+    deallocationPreviewError.value = apiError(err);
+  }
+}
+
 function openDelete(node) {
   const d = (node || props.selectedNode)?.data;
   if (!d) return;
   activeNetworkData.value = d;
   showDelete.value = true;
+  if (d.status === 'allocated' || d.child_count > 0) loadDeallocationPreview(d.id);
 }
 
 function openDeallocate(node) {
@@ -3170,6 +3201,7 @@ function openDeallocate(node) {
   if (!d) return;
   activeNetworkData.value = d;
   showDeallocate.value = true;
+  loadDeallocationPreview(d.id);
 }
 
 async function openMergeConfirm(ids) {
