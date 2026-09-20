@@ -218,6 +218,11 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- The linked-zone strip above a network's DNS view showed at most two cards,
+  so a /22 with reverse DNS appeared to own one reverse zone when it owns
+  four. The strip now shows every linked zone and scope, wraps, and past six
+  offers a "+N more" card that expands it in place. A narrow-screen rule that
+  silently dropped the second card is gone too.
 - The update panel's checklist froze at "Verifying signature" and the page had
   to be reloaded by hand to learn the update had finished. The checklist named
   phases the script never reports and knew nothing of the ones it does, and

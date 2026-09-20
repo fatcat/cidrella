@@ -93,7 +93,7 @@
     </div>
     <div v-if="activeView === 'dns'" class="linked-resources">
       <button
-        v-for="zone in summaryZones.slice(0, 2)"
+        v-for="zone in visibleCards(summaryZones)"
         :key="zone.id"
         class="linked-card"
         :class="{ selected: isSelected(selectedZone, zone) }"
@@ -106,11 +106,20 @@
           ><strong>{{ zone.name }}</strong></span
         ><em>{{ zone.record_count || 0 }}</em>
       </button>
+      <button
+        v-if="overflows(summaryZones)"
+        type="button"
+        class="linked-card linked-more"
+        data-track="workspace-linked-more"
+        @click="showAllLinked = !showAllLinked"
+      >
+        {{ showAllLinked ? 'Show fewer' : `+${hiddenCount(summaryZones)} more` }}
+      </button>
       <span v-if="!summaryZones.length" class="linked-empty">No linked zones</span>
     </div>
     <div v-else-if="activeView === 'dhcp'" class="linked-resources">
       <button
-        v-for="scope in summaryScopes.slice(0, 2)"
+        v-for="scope in visibleCards(summaryScopes)"
         :key="scope.id"
         class="linked-card"
         :class="{ selected: isSelected(selectedScope, scope) }"
@@ -122,6 +131,15 @@
           ><small>{{ scope.enabled ? 'ACTIVE SCOPE' : 'DISABLED SCOPE' }}</small
           ><strong>{{ scope.start_ip }} – {{ scope.end_ip }}</strong></span
         ><em>{{ formatDuration(scope.effective?.lease_time || scope.lease_time) }}</em>
+      </button>
+      <button
+        v-if="overflows(summaryScopes)"
+        type="button"
+        class="linked-card linked-more"
+        data-track="workspace-linked-more"
+        @click="showAllLinked = !showAllLinked"
+      >
+        {{ showAllLinked ? 'Show fewer' : `+${hiddenCount(summaryScopes)} more` }}
       </button>
       <span v-if="!summaryScopes.length" class="linked-empty">No DHCP scope</span>
     </div>
@@ -153,12 +171,13 @@
 </template>
 
 <script setup>
+import { ref, watch } from 'vue';
 import { formatDuration } from '../networks-workspace-data.js';
 
 // Breadcrumb, gauges, pinned actions, view tabs and the per-view summary band.
 // Renders as three sibling landmarks so the DOM under .work-surface is
 // unchanged from the single-file layout.
-defineProps({
+const props = defineProps({
   contextKind: { type: String, required: true },
   contextIcon: { type: String, required: true },
   contextTitle: { type: String, required: true },
@@ -194,6 +213,29 @@ const emit = defineEmits([
 // A linked card lights up only for the zone or scope the table is filtered to.
 function isSelected(selected, item) {
   return Boolean(selected) && Number(selected.id) === Number(item.id);
+}
+
+// The strip shows every linked zone or scope up to this many and wraps. A
+// /22 with reverse DNS has four reverse zones plus its forward zone; a /16
+// split into /24 zones has 256, so past the cap a "+N more" card expands the
+// strip in place. The cap is one short of the total when only one would be
+// hidden, since a "+1 more" card takes the room the card itself would.
+const LINKED_CAP = 6;
+const showAllLinked = ref(false);
+watch(
+  () => props.selectedNetwork?.id,
+  () => {
+    showAllLinked.value = false;
+  },
+);
+function overflows(items) {
+  return items.length > LINKED_CAP + 1;
+}
+function visibleCards(items) {
+  return overflows(items) && !showAllLinked.value ? items.slice(0, LINKED_CAP) : items;
+}
+function hiddenCount(items) {
+  return overflows(items) ? items.length - LINKED_CAP : 0;
 }
 </script>
 
@@ -446,7 +488,15 @@ button {
 }
 .linked-resources {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.45rem;
+}
+.linked-card.linked-more {
+  display: flex;
+  align-items: center;
+  color: var(--preview-muted);
+  font-size: 0.66rem;
+  border-style: dashed;
 }
 .linked-card {
   display: grid;
@@ -578,11 +628,6 @@ button {
 .health-stat strong,
 .view-tabs button {
   font-size: var(--workspace-font-body);
-}
-@media (max-width: 1100px) {
-  .linked-card:nth-child(2) {
-    display: none;
-  }
 }
 @media (max-width: 820px) {
   .context-title-row {
