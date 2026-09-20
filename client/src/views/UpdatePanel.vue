@@ -148,44 +148,40 @@
       v-if="isUpdating || updateStatus?.state === 'completed' || updateStatus?.state === 'failed'"
       class="content-card update-progress"
     >
-      <h3>{{ reconnecting ? 'Restarting...' : 'Update Progress' }}</h3>
+      <h3>Update Progress</h3>
 
-      <!-- Reconnecting Overlay -->
-      <div v-if="reconnecting" class="reconnecting-overlay">
-        <i class="pi pi-spin pi-spinner reconnecting-spinner"></i>
-        <p>CIDRella is restarting with the new version...</p>
-        <small>This may take a moment. The page will refresh automatically.</small>
-      </div>
-
-      <!-- Step Indicator -->
-      <div v-else class="update-steps">
+      <!-- Step indicator. The steps follow the phases update.sh writes to the
+           status file; the message under the active step is the script's own. -->
+      <div class="update-steps">
         <div
-          v-for="step in updateSteps"
+          v-for="(step, i) in updateSteps"
           :key="step.key"
           class="update-step"
-          :class="stepClass(step.key)"
+          :class="stepClass(i)"
+          :data-step-state="stepClass(i)"
         >
           <div class="step-icon">
-            <i v-if="isStepDone(step.key)" class="pi pi-check"></i>
-            <i v-else-if="isStepActive(step.key)" class="pi pi-spin pi-spinner"></i>
+            <i v-if="stepClass(i) === 'done'" class="pi pi-check"></i>
+            <i v-else-if="stepClass(i) === 'active'" class="pi pi-spin pi-spinner"></i>
+            <i v-else-if="stepClass(i) === 'failed'" class="pi pi-times"></i>
             <span v-else class="step-dot"></span>
           </div>
-          <span class="step-label">{{ step.label }}</span>
+          <div class="step-text">
+            <span class="step-label">{{ step.label }}</span>
+            <small v-if="stepClass(i) === 'active' && stepMessage" class="step-message">
+              {{ stepMessage }}
+            </small>
+          </div>
         </div>
       </div>
 
       <!-- Progress Bar -->
       <ProgressBar
-        v-if="isUpdating"
-        :value="updateStatus?.progress_pct || 0"
+        v-if="isUpdating || reconnecting"
+        :value="reconnecting ? 90 : updateStatus?.progress_pct || 0"
         :showValue="true"
         style="margin-top: 1rem"
       />
-
-      <!-- Status Message -->
-      <p v-if="updateStatus?.message && !reconnecting" class="status-message">
-        {{ updateStatus.message }}
-      </p>
 
       <!-- Completed -->
       <div v-if="updateStatus?.state === 'completed'" class="update-result success">
@@ -193,8 +189,20 @@
         <div>
           <strong>Update complete</strong>
           <p>Updated from v{{ updateStatus.from_version }} to v{{ updateStatus.to_version }}</p>
+          <p v-if="reloadCountdown !== null" class="reload-note">
+            Reloading in {{ reloadCountdown }}s to pick up the new interface.
+          </p>
         </div>
         <Button
+          v-if="reloadCountdown !== null"
+          label="Reload now"
+          icon="pi pi-refresh"
+          size="small"
+          data-track="update-reload-now"
+          @click="reloadPage"
+        />
+        <Button
+          v-else
           label="Dismiss"
           icon="pi pi-times"
           size="small"
@@ -375,22 +383,64 @@ const updateCheckEnabled = ref(true);
 
 let pollTimer = null;
 let reconnectTimer = null;
+let reloadTimer = null;
 
+// Seconds left before the page reloads itself after a completed update, or
+// null when no reload is scheduled. The browser is still running the bundle
+// from the previous version, and its asset names are gone after the swap, so
+// the reload is not optional. It is only scheduled for an update this page
+// watched happen, never for a completed status found on a later visit.
+const reloadCountdown = ref(null);
+const RELOAD_DELAY_S = 5;
+let watchedInstall = false;
+
+// One entry per phase of update.sh, in the order the script runs them. `states`
+// are the names the script writes; `from` is the progress_pct the phase starts
+// at, the fallback when the status carries a state name this build does not
+// know (the script and the panel come from the same release, but the failed
+// record only carries the percentage of the phase that failed).
 const updateSteps = [
-  { key: 'downloading', label: 'Downloading release' },
-  { key: 'verifying', label: 'Verifying signature' },
-  { key: 'backing_up', label: 'Creating backup' },
-  { key: 'extracting', label: 'Extracting files' },
-  { key: 'installing_deps', label: 'Installing dependencies' },
-  { key: 'updating_services', label: 'Updating services' },
-  { key: 'restarting', label: 'Restarting server' },
+  {
+    key: 'download',
+    label: 'Downloading release',
+    states: ['starting', 'preflight', 'downloading'],
+    from: 0,
+  },
+  { key: 'verify', label: 'Verifying signature', states: ['verifying'], from: 30 },
+  { key: 'extract', label: 'Extracting files', states: ['extracting'], from: 40 },
+  { key: 'validate', label: 'Validating new version', states: ['validating'], from: 55 },
+  { key: 'snapshot', label: 'Snapshotting databases', states: ['snapshotting'], from: 75 },
+  { key: 'switch', label: 'Switching over', states: ['switching', 'restarting'], from: 85 },
+  { key: 'confirm', label: 'Confirming health', states: ['confirming'], from: 93 },
 ];
-
-const stepOrder = updateSteps.map((s) => s.key);
+const SWITCH_STEP = updateSteps.findIndex((s) => s.key === 'switch');
 
 const isUpdating = computed(() => {
   const s = updateStatus.value?.state;
   return s && s !== 'idle' && s !== 'completed' && s !== 'failed';
+});
+
+// Index of the step the update is in. Everything before it is done. Equals
+// updateSteps.length once the update completed. While the server is down for
+// the restart there is no status to read, so the switch step stays active.
+const activeStep = computed(() => {
+  if (reconnecting.value) return SWITCH_STEP;
+  const status = updateStatus.value;
+  if (!status || status.state === 'idle') return -1;
+  if (status.state === 'completed') return updateSteps.length;
+  const byState = updateSteps.findIndex((s) => s.states.includes(status.state));
+  if (byState >= 0) return byState;
+  const pct = Number(status.progress_pct) || 0;
+  let idx = 0;
+  updateSteps.forEach((s, i) => {
+    if (pct >= s.from) idx = i;
+  });
+  return idx;
+});
+
+const stepMessage = computed(() => {
+  if (reconnecting.value) return 'CIDRella is restarting with the new version...';
+  return updateStatus.value?.message || '';
 });
 
 // True when the available update is part of a multi-hop skip-upgrade
@@ -405,24 +455,9 @@ const isMultiHopChain = computed(() => {
   return Array.isArray(chain) && chain.length > 1;
 });
 
-function stepIndex(key) {
-  return stepOrder.indexOf(key);
-}
-
-function isStepDone(key) {
-  const current = updateStatus.value?.state;
-  if (current === 'completed') return true;
-  if (current === 'failed') return stepIndex(key) < stepIndex(current);
-  return stepIndex(key) < stepIndex(current);
-}
-
-function isStepActive(key) {
-  return updateStatus.value?.state === key;
-}
-
-function stepClass(key) {
-  if (isStepDone(key)) return 'done';
-  if (isStepActive(key)) return 'active';
+function stepClass(i) {
+  if (i < activeStep.value) return 'done';
+  if (i === activeStep.value) return updateStatus.value?.state === 'failed' ? 'failed' : 'active';
   return 'pending';
 }
 
@@ -440,9 +475,12 @@ async function fetchUpdateStatus() {
   try {
     const res = await api.get('/version/update-status');
     updateStatus.value = res.data;
-
-    if (res.data.state === 'restarting') {
-      startReconnecting();
+    const state = res.data.state;
+    if (state === 'completed' || state === 'failed') {
+      stopPolling();
+      if (state === 'completed' && watchedInstall) scheduleReload();
+    } else if (isUpdating.value) {
+      watchedInstall = true;
     }
   } catch {
     // API unreachable. If we were updating, we're in the restart phase
@@ -450,6 +488,23 @@ async function fetchUpdateStatus() {
       startReconnecting();
     }
   }
+}
+
+function scheduleReload() {
+  if (reloadTimer) return;
+  reloadCountdown.value = RELOAD_DELAY_S;
+  reloadTimer = setInterval(() => {
+    reloadCountdown.value -= 1;
+    if (reloadCountdown.value <= 0) reloadPage();
+  }, 1000);
+}
+
+function reloadPage() {
+  if (reloadTimer) {
+    clearInterval(reloadTimer);
+    reloadTimer = null;
+  }
+  window.location.reload();
 }
 
 async function checkForUpdate() {
@@ -488,6 +543,7 @@ async function startInstall() {
   installing.value = true;
   try {
     await api.post('/version/install');
+    watchedInstall = true;
     toast.add({
       severity: 'info',
       summary: 'Update started',
@@ -598,6 +654,9 @@ function startReconnecting() {
       reconnecting.value = false;
       await fetchVersionInfo();
       await fetchUpdateStatus();
+      // The script is still confirming health after the restart, so keep
+      // watching until it writes completed or failed.
+      if (isUpdating.value) startPolling();
     } catch {
       if (Date.now() - startTime > maxWait) {
         clearInterval(reconnectTimer);
@@ -628,6 +687,10 @@ onUnmounted(() => {
   if (reconnectTimer) {
     clearInterval(reconnectTimer);
     reconnectTimer = null;
+  }
+  if (reloadTimer) {
+    clearInterval(reloadTimer);
+    reloadTimer = null;
   }
 });
 </script>
@@ -860,6 +923,24 @@ onUnmounted(() => {
 .update-step.pending .step-icon {
   background: var(--surface-200);
 }
+.update-step.failed .step-icon {
+  background: var(--red-500);
+  color: white;
+}
+.step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+.step-message {
+  font-size: 0.8rem;
+  color: var(--text-color-secondary);
+}
+.reload-note {
+  margin-top: 0.25rem;
+  font-size: 0.85rem;
+}
 .step-dot {
   width: 0.5rem;
   height: 0.5rem;
@@ -878,28 +959,9 @@ onUnmounted(() => {
 .update-step.pending .step-label {
   color: var(--text-color-secondary);
 }
-
-.status-message {
-  margin-top: 0.5rem;
-  font-size: 0.85rem;
-  color: var(--text-color-secondary);
-}
-
-/* Reconnecting overlay */
-.reconnecting-overlay {
-  text-align: center;
-  padding: 2rem 1rem;
-}
-.reconnecting-spinner {
-  font-size: 2rem;
-  color: var(--primary-color);
-}
-.reconnecting-overlay p {
-  margin: 1rem 0 0.25rem;
+.update-step.failed .step-label {
+  color: var(--red-500);
   font-weight: 600;
-}
-.reconnecting-overlay small {
-  color: var(--text-color-secondary);
 }
 
 /* Update results */

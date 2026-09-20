@@ -1519,7 +1519,7 @@ done
 # PHASE 7: VERIFY HEALTH (auto-rollback on failure)
 # ═══════════════════════════════════════════════════════════
 
-track_progress "verifying" 93 "Verifying new version..."
+track_progress "confirming" 93 "Confirming the new version is healthy..."
 info "Verifying new version..."
 
 # Discover which port the new instance will be listening on. In v0.4.15+ this

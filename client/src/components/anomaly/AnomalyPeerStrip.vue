@@ -4,27 +4,30 @@
       More anomalous than <b>{{ Math.round(percentile * 100) }}%</b> of the
       {{ scores.length }} monitored clients this week.
     </div>
-    <svg width="100%" height="34" viewBox="0 0 620 34">
-      <line x1="10" y1="18" x2="610" y2="18" :stroke="gridColor" stroke-width="1" />
+    <!-- No viewBox on purpose: the strip stretches to the panel width while the
+         dots and labels keep their CSS pixel size, so a narrow drawer does not
+         shrink the text with the graph. -->
+    <svg class="peer-svg" width="100%" height="40" role="img" aria-label="Peer percentile strip">
+      <line x1="2%" y1="16" x2="98%" y2="16" :stroke="gridColor" stroke-width="1" />
       <circle
         v-for="(x, i) in peerDots"
         :key="i"
         :cx="x"
-        cy="18"
-        r="2.2"
+        cy="16"
+        r="2.5"
         :fill="mutedColor"
         opacity=".45"
       />
       <circle
         :cx="myX"
-        cy="18"
+        cy="16"
         r="6"
         :fill="chartColor('err')"
         :stroke="surfaceColor"
         stroke-width="2"
       />
-      <text x="10" y="32" font-size="9" :fill="mutedColor">0th pct</text>
-      <text x="610" y="32" font-size="9" text-anchor="end" :fill="mutedColor">100th pct</text>
+      <text x="2%" y="36" class="peer-label" :fill="mutedColor">0th pct</text>
+      <text x="98%" y="36" class="peer-label" text-anchor="end" :fill="mutedColor">100th pct</text>
     </svg>
   </div>
 </template>
@@ -47,8 +50,10 @@ function percentileOf(score, all) {
 
 const percentile = computed(() => percentileOf(props.mine, props.scores));
 
-const peerDots = computed(() => props.scores.map((s) => 10 + percentileOf(s, props.scores) * 600));
-const myX = computed(() => 10 + percentile.value * 600);
+// Percent of the strip width, 2% in from each edge so the end dots are not clipped.
+const toX = (pct) => `${2 + pct * 96}%`;
+const peerDots = computed(() => props.scores.map((s) => toX(percentileOf(s, props.scores))));
+const myX = computed(() => toX(percentile.value));
 
 const mutedColor = computed(() => {
   chartThemeVersion.value;
@@ -66,10 +71,17 @@ const surfaceColor = computed(() => {
 
 <style scoped>
 .peer-caption {
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   margin-bottom: 0.5rem;
 }
 .peer-caption b {
   font-family: monospace;
+}
+.peer-svg {
+  display: block;
+  overflow: visible;
+}
+.peer-label {
+  font-size: 0.72rem;
 }
 </style>

@@ -218,6 +218,16 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- The update panel's checklist froze at "Verifying signature" and the page had
+  to be reloaded by hand to learn the update had finished. The checklist named
+  phases the script never reports and knew nothing of the ones it does, and
+  once the server restarted the panel fetched the status once and stopped
+  watching. The steps now follow the script's real phases, show its own
+  message under the active one, keep polling through the restart, and reload
+  the page five seconds after completion (or on the Reload now button) so the
+  browser picks up the new interface. An upgrade that starts from an older
+  release still runs that release's panel, so this first applies to upgrades
+  out of 0.5.0.
 - The anomaly score is the Isolation Forest decision value, where negative
   means anomalous, and every chart treated it as a 0..1 badness. The Behavior
   Timeline clamped negatives to zero and kept the highest score per cell, so
