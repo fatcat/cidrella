@@ -203,12 +203,10 @@
               </div>
             </div>
 
-            <div class="section" v-if="clientChartData">
+            <div class="section" v-if="store.clientHistory.length">
               <div class="section-title"><span>Score History</span></div>
               <div class="card">
-                <div class="client-chart">
-                  <Line :data="clientChartData" :options="chartOptions" />
-                </div>
+                <AnomalyScoreHistory :history="store.clientHistory" />
               </div>
             </div>
 
@@ -272,92 +270,38 @@
       </div>
     </div>
 
-    <!-- Whitelist Confirmation Dialog -->
-    <Dialog
+    <WhitelistDialog
       v-model:visible="whitelistDialogVisible"
-      header="Whitelist Client"
-      :modal="true"
-      :closable="true"
-      :style="{ width: '26rem' }"
-    >
-      <p>
-        Whitelist <strong>{{ whitelistTarget?.client_ip }}</strong>
-        <span v-if="whitelistTarget?.hostname"> ({{ whitelistTarget.hostname }})</span>
-        from anomaly detection?
-      </p>
-      <p class="text-muted" style="font-size: 0.85rem">
-        This will stop monitoring this client and delete all existing anomaly scores and model data
-        for it.
-      </p>
-      <div class="field" style="margin-top: 0.75rem">
-        <label style="font-size: 0.85rem">Reason (optional)</label>
-        <InputText
-          v-model="whitelistReason"
-          placeholder="e.g. Known scanner, expected behavior"
-          fluid
-          style="margin-top: 0.25rem"
-        />
-      </div>
-      <template #footer>
-        <Button label="Cancel" text @click="whitelistDialogVisible = false" />
-        <Button
-          label="Whitelist"
-          icon="pi pi-shield"
-          severity="warn"
-          data-track="anomalies-whitelist-confirm"
-          @click="confirmWhitelist"
-        />
-      </template>
-    </Dialog>
+      :target="whitelistTarget"
+      @whitelisted="onWhitelisted"
+    />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
-import { apiError, EMPTY_CELL } from '../utils/format.js';
+import { EMPTY_CELL } from '../utils/format.js';
 import Button from '../ui/Button.js';
-import Dialog from '../ui/Dialog.js';
-import InputText from '../ui/InputText.js';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js';
-import { Line } from 'vue-chartjs';
 import AnomalyGauge from '../components/anomaly/AnomalyGauge.vue';
+import AnomalyScoreHistory from '../components/anomaly/AnomalyScoreHistory.vue';
+import WhitelistDialog from '../components/anomaly/WhitelistDialog.vue';
 import AnomalyHeatmap from '../components/anomaly/AnomalyHeatmap.vue';
 import AnomalySparkline from '../components/anomaly/AnomalySparkline.vue';
 import AnomalyFeatureTrend from '../components/anomaly/AnomalyFeatureTrend.vue';
 import AnomalyPeerStrip from '../components/anomaly/AnomalyPeerStrip.vue';
 import { classifyClients, summaryCounts, PATTERNS } from '../utils/anomaly-pattern.js';
-import { formatFeatureValue, FACTOR_DESCRIPTIONS } from '../utils/anomaly-features.js';
+import {
+  formatFeatureValue,
+  buildFeatureTrends,
+  FACTOR_DESCRIPTIONS,
+} from '../utils/anomaly-features.js';
 import { useAnomalyStore } from '../stores/anomalies.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import '../assets/analytics-layout.css';
-import { chartColor, chartFill } from '../utils/chart-config.js';
-import { formatDateTime, formatRelativeTime as timeAgo } from '../utils/dateFormat.js';
-import { useToast } from '../ui/useToast.js';
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-);
-ChartJS.defaults.elements.line.borderWidth = 1;
+import { chartColor } from '../utils/chart-config.js';
+import { formatRelativeTime as timeAgo } from '../utils/dateFormat.js';
 
 const store = useAnomalyStore();
-const toast = useToast();
 
 const patternFilter = ref(null);
 const selectedIp = ref(null);
@@ -398,33 +342,7 @@ const currentFactors = computed(() => {
   return [...selected.value.latestTopFeatures].sort((a, b) => b.contribution - a.contribution);
 });
 
-// Group every historical occurrence of each feature named in the latest
-// anomalous window's top factors, so "why" (the ranked list below) and
-// "how long has this been building" (these trends) tell the same story.
-const featureTrends = computed(() => {
-  if (!currentFactors.value.length) return [];
-  const wanted = new Map(currentFactors.value.map((f) => [f.feature, f.label]));
-  const series = new Map([...wanted.keys()].map((k) => [k, []]));
-  for (const row of store.clientHistory) {
-    if (!row.top_features?.length) continue;
-    for (const f of row.top_features) {
-      if (series.has(f.feature) && f.observed != null) {
-        series.get(f.feature).push({ t: row.window_start, value: f.observed });
-      }
-    }
-  }
-  return [...series.entries()]
-    .filter(([, points]) => points.length > 0)
-    .map(([feature, points]) => ({
-      feature,
-      label: wanted.get(feature),
-      points: points.sort((a, b) => a.t.localeCompare(b.t)),
-    }));
-});
-
-function formatTime(iso) {
-  return formatDateTime(iso);
-}
+const featureTrends = computed(() => buildFeatureTrends(store.clientHistory, currentFactors.value));
 
 async function selectClient(identity) {
   selectedIp.value = identity;
@@ -436,85 +354,17 @@ async function selectClient(identity) {
   ]);
 }
 
-const sortedHistory = computed(() => {
-  if (!store.clientHistory.length) return [];
-  return [...store.clientHistory].sort((a, b) => a.window_start.localeCompare(b.window_start));
-});
-
-const clientChartData = computed(() => {
-  const sorted = sortedHistory.value;
-  if (!sorted.length) return null;
-  return {
-    labels: sorted.map((r) => formatTime(r.window_start)),
-    datasets: [
-      {
-        label: 'Anomaly Score',
-        data: sorted.map((r) => r.anomaly_score),
-        borderColor: chartColor(3),
-        backgroundColor: chartFill(3, 0.12),
-        fill: true,
-        tension: 0.3,
-        pointRadius: sorted.map((r) => (r.is_anomaly ? 5 : 2)),
-        pointBackgroundColor: sorted.map((r) => (r.is_anomaly ? chartColor('err') : chartColor(3))),
-      },
-    ],
-  };
-});
-
-const chartOptions = computed(() => ({
-  responsive: true,
-  maintainAspectRatio: false,
-  scales: {
-    y: {
-      title: { display: true, text: 'Score', color: chartColor('text') },
-      ticks: { color: chartColor('text') },
-      grid: { color: chartColor('grid') },
-    },
-    x: { display: false },
-  },
-  plugins: {
-    legend: { display: false },
-    tooltip: {
-      callbacks: {
-        afterLabel: (ctx) => {
-          const item = sortedHistory.value[ctx.dataIndex];
-          if (item?.is_anomaly && item?.top_features?.length) {
-            return item.top_features.map((f) => `  ${f.label}`).join('\n');
-          }
-          return '';
-        },
-      },
-    },
-    datalabels: { display: false },
-  },
-}));
-
 // Whitelist dialog state
 const whitelistDialogVisible = ref(false);
 const whitelistTarget = ref(null);
-const whitelistReason = ref('');
 
 function handleWhitelist(client) {
   whitelistTarget.value = client;
-  whitelistReason.value = '';
   whitelistDialogVisible.value = true;
 }
 
-async function confirmWhitelist() {
-  try {
-    await store.whitelistClient(whitelistTarget.value.client_ip, whitelistReason.value || null);
-    whitelistDialogVisible.value = false;
-    if (selectedIp.value === whitelistTarget.value.identity) selectedIp.value = null;
-    toast.add({
-      severity: 'success',
-      summary: 'Client whitelisted',
-      detail: whitelistTarget.value.client_ip,
-      life: 3000,
-    });
-  } catch (err) {
-    const msg = apiError(err);
-    toast.add({ severity: 'error', summary: msg, life: 4000 });
-  }
+function onWhitelisted(target) {
+  if (selectedIp.value === target.identity) selectedIp.value = null;
 }
 
 async function refreshAll() {
@@ -821,9 +671,6 @@ useAutoRefresh(refreshAll);
   border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 0.75rem 0.85rem;
-}
-.client-chart {
-  height: 180px;
 }
 
 .features-grid {

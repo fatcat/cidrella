@@ -60,6 +60,79 @@ const RATIO_FEATURES = new Set([
   'null_resolved_ratio',
 ]);
 
+// Signals whose evidence is a list of names, served by
+// GET /api/anomalies/client/:identity/evidence/signal. Mirrors
+// server/src/utils/anomaly-evidence.js SIGNAL_EVIDENCE.
+export const SIGNAL_EVIDENCE_FEATURES = new Set([
+  'avg_domain_entropy',
+  'max_domain_length',
+  'subdomain_depth_mean',
+  'nxdomain_ratio',
+  'block_ratio',
+  'type_other_ratio',
+  'null_resolved_ratio',
+  'unique_resolved_ips',
+  'unique_domain_count',
+  'query_count',
+  'burst_ratio',
+  'tld_diversity',
+  'new_domain_ratio',
+]);
+
+// The figure printed beside one name in a signal's evidence list.
+export function formatSignalValue(metric, value) {
+  const n = typeof value === 'number' ? value : 0;
+  switch (metric) {
+    case 'entropy':
+      return `${n.toFixed(2)} bits/char`;
+    case 'length':
+      return `${n} chars`;
+    case 'depth':
+      return `${n} labels`;
+    case 'nxdomain':
+      return `${n.toLocaleString()} NXDOMAIN`;
+    case 'blocked':
+      return `${n.toLocaleString()} blocked`;
+    case 'other_types':
+      return `${n.toLocaleString()} non-A/AAAA`;
+    case 'unresolved':
+      return `${n.toLocaleString()} unresolved`;
+    case 'resolved_ips':
+      return `${n.toLocaleString()} answers`;
+    case 'tld':
+      return `${n.toLocaleString()} names`;
+    case 'new':
+      return `${n.toLocaleString()} queries, first seen this window`;
+    default:
+      return `${n.toLocaleString()} queries`;
+  }
+}
+
+// Group every historical occurrence of each feature named in the latest
+// flagged window's top factors, so "why" (the ranked factor list) and "how
+// long has this been building" (the trend cards) tell the same story.
+// history: rows from GET /api/anomalies/client/:identity, any order.
+export function buildFeatureTrends(history, currentFactors) {
+  if (!currentFactors?.length) return [];
+  const wanted = new Map(currentFactors.map((f) => [f.feature, f.label]));
+  const series = new Map([...wanted.keys()].map((k) => [k, []]));
+  for (const row of history || []) {
+    if (!row.top_features?.length) continue;
+    for (const f of row.top_features) {
+      if (series.has(f.feature) && f.observed != null) {
+        series.get(f.feature).push({ t: row.window_start, value: f.observed });
+      }
+    }
+  }
+  return [...series.entries()]
+    .filter(([, points]) => points.length > 0)
+    .map(([feature, points]) => ({
+      feature,
+      label: wanted.get(feature),
+      points: points.sort((a, b) => a.t.localeCompare(b.t)),
+    }));
+}
+
 export function formatFeatureValue(feature, value) {
   if (value == null) return EMPTY_CELL;
   if (COUNT_FEATURES.has(feature)) return Math.round(value).toLocaleString();

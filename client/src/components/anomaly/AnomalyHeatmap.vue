@@ -46,12 +46,12 @@
       />
     </svg>
     <div class="anomaly-heatmap-legend">
-      <span>low</span>
+      <span>baseline</span>
       <span
         class="grad"
         :style="{ background: `linear-gradient(90deg, ${lowColor}, ${highColor})` }"
       ></span>
-      <span>high</span>
+      <span>most anomalous</span>
       <span class="nodata-key"
         ><svg width="10" height="10">
           <rect width="10" height="10" fill="url(#anomaly-heatmap-nodata)" />
@@ -66,14 +66,16 @@
 import { computed } from 'vue';
 import { chartColor, chartThemeVersion, parseColor } from '../../utils/chart-config.js';
 import { dayKey } from '../../utils/anomaly-pattern.js';
+import { deviation, worst } from '../../utils/anomaly-score.js';
 
 const props = defineProps({
   history: { type: Array, required: true }, // rows: { window_start, anomaly_score }
 });
 
+// originX leaves room for "14d ago" at the label size; 34 clipped it to "4d ago".
 const cell = 13,
   gap = 2,
-  originX = 34,
+  originX = 58,
   originY = 14;
 
 const days = computed(() => {
@@ -95,9 +97,9 @@ const grid = computed(() => {
   for (const row of props.history) {
     const dt = new Date(row.window_start);
     const key = `${dayKey(row.window_start)}|${dt.getHours()}`;
-    const existing = byBucket.get(key);
-    if (existing === undefined || row.anomaly_score > existing)
-      byBucket.set(key, row.anomaly_score);
+    // Several windows can land in one hour bucket; keep the most anomalous
+    // (the LOWEST score, since negative means anomalous).
+    byBucket.set(key, worst(byBucket.get(key), row.anomaly_score));
   }
   return days.value.map((day) => {
     const dk = `${day.getFullYear()}-${day.getMonth()}-${day.getDate()}`;
@@ -137,7 +139,10 @@ const mutedColor = computed(() => {
 });
 
 function mixColor(v) {
-  const t = Math.pow(Math.max(0, Math.min(1, v)), 1.8);
+  const t = Math.pow(deviation(v), 0.8);
+  // Inside the baseline: the track color as given, alpha included, so calm
+  // hours sit quietly on either theme instead of as a solid slate block.
+  if (t === 0) return lowColor.value;
   const lo = parseColor(lowColor.value) || [200, 200, 200];
   const hi = parseColor(highColor.value) || [191, 97, 106];
   const r = Math.round(lo[0] + (hi[0] - lo[0]) * t);

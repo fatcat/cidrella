@@ -57,7 +57,8 @@ function classifyGroup(events) {
 
   let pattern = 'flagged';
   let note;
-  if (currentlyActive && distinctDays >= 2 && delta > ESCALATION_DELTA) {
+  // Negative is anomalous, so a worsening client's score is FALLING.
+  if (currentlyActive && distinctDays >= 2 && delta < -ESCALATION_DELTA) {
     pattern = 'escalating';
     note = `Anomaly score has climbed for ${distinctDays} days with no sign of leveling off.`;
   } else if (distinctDays >= 3 && clusterShare >= HOUR_CLUSTER_SHARE) {

@@ -20,9 +20,10 @@
 
 <script setup>
 import { computed } from 'vue';
+import { deviation } from '../../utils/anomaly-score.js';
 
 const props = defineProps({
-  scores: { type: Array, required: true }, // chronological, each in [0, 1]
+  scores: { type: Array, required: true }, // chronological raw scores, negative is anomalous
   color: { type: String, required: true },
   width: { type: Number, default: 64 },
   height: { type: Number, default: 22 },
@@ -33,7 +34,7 @@ const points = computed(() => {
   if (n === 0) return [];
   return props.scores.map((v, i) => [
     n === 1 ? props.width / 2 : (i / (n - 1)) * (props.width - 4) + 2,
-    props.height - 2 - Math.max(0, Math.min(1, v)) * (props.height - 4),
+    props.height - 2 - deviation(v) * (props.height - 4),
   ]);
 });
 

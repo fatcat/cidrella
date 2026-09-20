@@ -335,6 +335,52 @@ export function queryClientWindowEvidence(clientIp, windowStart, windowEnd, limi
   );
 }
 
+// Every distinct name a client asked for in the window, with the counts the
+// per-signal evidence ranks on (server/src/utils/anomaly-evidence.js). One row
+// per name, capped high: a DGA hour is thousands of names queried once each,
+// and the top-by-count list above never shows them.
+export function queryClientWindowDomains(clientIp, windowStart, windowEnd, cap = 5000) {
+  return queryRaw(
+    `SELECT domain,
+            COUNT(*) as count,
+            COUNT(*) FILTER (WHERE response_code = 'NXDOMAIN') as nxdomain_count,
+            COUNT(*) FILTER (WHERE action LIKE 'blocked%') as blocked_count,
+            COUNT(*) FILTER (WHERE query_type NOT IN ('A', 'AAAA')) as other_type_count,
+            COUNT(*) FILTER (WHERE resolved_ip IS NULL) as unresolved_count,
+            COUNT(DISTINCT resolved_ip) as resolved_ip_count
+     FROM dns_queries
+     WHERE client_ip = ?
+       AND ts >= CAST(? AS TIMESTAMP)
+       AND ts < CAST(? AS TIMESTAMP)
+     GROUP BY domain
+     ORDER BY count DESC, domain
+     LIMIT ?`,
+    [clientIp, windowStart, windowEnd, cap],
+  );
+}
+
+// Names in the window this client had not asked for in the lookback before
+// it: the sidecar's new_domain_ratio, spelled out (features.py fills that
+// ratio from 'anomaly-client-historical-domains' with the same bounds).
+export function queryClientNewDomains(clientIp, windowStart, windowEnd, lookbackDays, limit) {
+  return queryRaw(
+    `SELECT w.domain, COUNT(*) as count
+     FROM dns_queries w
+     WHERE w.client_ip = ?
+       AND w.ts >= CAST(? AS TIMESTAMP)
+       AND w.ts < CAST(? AS TIMESTAMP)
+       AND NOT EXISTS (
+         SELECT 1 FROM dns_queries h
+          WHERE h.client_ip = w.client_ip AND h.domain = w.domain
+            AND h.ts >= CAST(? AS TIMESTAMP) - INTERVAL (CAST(? AS INTEGER) || ' days')
+            AND h.ts < CAST(? AS TIMESTAMP))
+     GROUP BY w.domain
+     ORDER BY count DESC, w.domain
+     LIMIT ?`,
+    [clientIp, windowStart, windowEnd, windowStart, lookbackDays, windowStart, limit],
+  );
+}
+
 // Totals for the same window. Separate from the grouped rows above because
 // those are truncated by LIMIT, and a summary computed from a truncated list
 // would understate every count.

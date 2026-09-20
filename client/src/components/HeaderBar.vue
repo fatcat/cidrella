@@ -297,6 +297,13 @@
                 @click="userMenuRef.hide()"
                 >Settings</router-link
               >
+              <router-link
+                :to="CLASSIC_PATHS.anomalies"
+                class="user-menu-link"
+                data-track="user-classic-anomalies"
+                @click="userMenuRef.hide()"
+                >Anomalies</router-link
+              >
             </div>
           </div>
           <div class="user-menu-section">

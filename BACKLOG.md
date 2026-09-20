@@ -466,7 +466,10 @@ so P8 was a verification pass on safe fixtures plus two fixes:
   query parameters survive, and the old `cidrella_analytics_tab` index is still read and written
   (`client/tests/unit/views/Analytics.test.js`). The Dashboard, Performance and Intelligence
   panels are mounted unchanged, the same call as P7's leaves.
-- Q-04 anomaly triage, DEFERRED 2026-09-17 by the user: both views stay as they are, the
+- ~~Q-04 anomaly triage~~ [FIXED] landed 2026-09-20: the triage page (queue + map + Evidence
+  drawer) is the Analytics Anomalies section, the classic panel moved to `/anomalies-classic`,
+  the sidecar writes `threat_score` per window (migration 077). Peer medians are still not
+  collected (needs the full feature vector per window). History: DEFERRED 2026-09-17 by the user: both views stay as they are, the
   current Anomalies panel at `/analytics?view=anomalies` and the concept at
   `/anomalies-workspace` (sample and live modes; nothing links to it since the banners went, so
   the URL is the way in). The merge of elements from each is decided on a system with real

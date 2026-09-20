@@ -10,6 +10,7 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   const clientModel = ref(null);
   const clientEvidence = ref(null);
   const fingerprintChanges = ref([]);
+  const map = ref([]);
   const settings = ref(null);
   const loading = ref(false);
 
@@ -23,6 +24,14 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     const res = await api.get(`/anomalies/events?days=${days}`);
     events.value = res.data.events;
     learning.value = res.data.learning;
+    return res.data;
+  }
+
+  // One row per device with a trained model, carrying its latest scored
+  // window: the triage map's dots, flagged or not.
+  async function fetchMap() {
+    const res = await api.get('/anomalies/map');
+    map.value = res.data;
     return res.data;
   }
 
@@ -46,6 +55,16 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     if (windowStart) params.set('window_start', windowStart);
     const res = await api.get(`/anomalies/client/${identity}/evidence?${params}`);
     clientEvidence.value = res.data;
+    return res.data;
+  }
+
+  // The names behind one contributing factor of a flagged window, ranked by
+  // that factor's own measure. Not kept in the store: the page holds one
+  // result per factor for the device it has open.
+  async function fetchSignalEvidence(identity, feature, { windowStart = null, limit = 8 } = {}) {
+    const params = new URLSearchParams({ feature, limit: String(limit) });
+    if (windowStart) params.set('window_start', windowStart);
+    const res = await api.get(`/anomalies/client/${identity}/evidence/signal?${params}`);
     return res.data;
   }
 
@@ -118,13 +137,16 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     clientModel,
     clientEvidence,
     fingerprintChanges,
+    map,
     settings,
     loading,
     fetchSummary,
     fetchEvents,
+    fetchMap,
     fetchClientHistory,
     fetchClientModel,
     fetchClientEvidence,
+    fetchSignalEvidence,
     fetchFingerprintChanges,
     clearClient,
     whitelistClient,

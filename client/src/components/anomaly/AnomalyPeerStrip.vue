@@ -32,15 +32,17 @@
 <script setup>
 import { computed } from 'vue';
 import { chartColor, chartThemeVersion } from '../../utils/chart-config.js';
+import { moreAnomalousThan } from '../../utils/anomaly-score.js';
 
 const props = defineProps({
   scores: { type: Array, required: true }, // latest score per monitored client
   mine: { type: Number, required: true },
 });
 
+// Negative is anomalous, so "more anomalous than" counts the peers scoring
+// HIGHER than this one.
 function percentileOf(score, all) {
-  if (!all.length) return 0;
-  return all.filter((s) => s <= score).length / all.length;
+  return moreAnomalousThan(score, all);
 }
 
 const percentile = computed(() => percentileOf(props.mine, props.scores));

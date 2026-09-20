@@ -22,11 +22,13 @@ function event(client_ip, { daysAgo, hour = 2, score = 0.9, resolved = 0, identi
 }
 
 describe('classifyClients', () => {
-  it('flags a currently-active, climbing score as escalating', () => {
+  // The stored score is negative when anomalous, so a worsening client's
+  // score falls over time.
+  it('flags a currently-active, falling score as escalating', () => {
     const events = [
-      event('10.0.0.1', { daysAgo: 6, score: 0.2 }),
-      event('10.0.0.1', { daysAgo: 3, score: 0.5 }),
-      event('10.0.0.1', { daysAgo: 0, score: 0.9, resolved: 0 }),
+      event('10.0.0.1', { daysAgo: 6, score: -0.1 }),
+      event('10.0.0.1', { daysAgo: 3, score: -0.3 }),
+      event('10.0.0.1', { daysAgo: 0, score: -0.6, resolved: 0 }),
     ];
     const [client] = classifyClients(events, []);
     expect(client.pattern).toBe('escalating');
@@ -34,14 +36,14 @@ describe('classifyClients', () => {
 
   it('flags a same-hour-every-day pattern as recurring', () => {
     const events = [0, 1, 2, 3, 4].map((d) =>
-      event('10.0.0.2', { daysAgo: d, hour: 3, score: 0.6, resolved: d === 0 ? 0 : 1 }),
+      event('10.0.0.2', { daysAgo: d, hour: 3, score: -0.6, resolved: d === 0 ? 0 : 1 }),
     );
     const [client] = classifyClients(events, []);
     expect(client.pattern).toBe('recurring');
   });
 
   it('flags a resolved short spike as resolved, not escalating', () => {
-    const events = [event('10.0.0.3', { daysAgo: 2, score: 0.85, resolved: 1 })];
+    const events = [event('10.0.0.3', { daysAgo: 2, score: -0.85, resolved: 1 })];
     const [client] = classifyClients(events, []);
     expect(client.pattern).toBe('resolved');
   });
@@ -61,10 +63,10 @@ describe('classifyClients', () => {
   it('sorts escalating clients ahead of recurring, resolved, and learning', () => {
     const events = [
       ...[0, 1, 2, 3].map((d) =>
-        event('10.0.0.6', { daysAgo: d, hour: 3, score: 0.5, resolved: d === 0 ? 0 : 1 }),
+        event('10.0.0.6', { daysAgo: d, hour: 3, score: -0.5, resolved: d === 0 ? 0 : 1 }),
       ),
-      event('10.0.0.7', { daysAgo: 6, score: 0.1 }),
-      event('10.0.0.7', { daysAgo: 0, score: 0.95, resolved: 0 }),
+      event('10.0.0.7', { daysAgo: 6, score: -0.1 }),
+      event('10.0.0.7', { daysAgo: 0, score: -0.95, resolved: 0 }),
     ];
     const learning = [{ client_ip: '10.0.0.8', training_rows: 2 }];
     const clients = classifyClients(events, learning);
@@ -73,8 +75,8 @@ describe('classifyClients', () => {
 
   it('groups two different client_ips under the same identity as one client (IP renewal)', () => {
     const events = [
-      event('10.0.0.9', { daysAgo: 3, score: 0.2, identity: 'aa:bb:cc:dd:ee:ff' }),
-      event('10.0.0.14', { daysAgo: 0, score: 0.9, resolved: 0, identity: 'aa:bb:cc:dd:ee:ff' }),
+      event('10.0.0.9', { daysAgo: 3, score: -0.2, identity: 'aa:bb:cc:dd:ee:ff' }),
+      event('10.0.0.14', { daysAgo: 0, score: -0.9, resolved: 0, identity: 'aa:bb:cc:dd:ee:ff' }),
     ];
     const clients = classifyClients(events, []);
     expect(clients).toHaveLength(1);

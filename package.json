@@ -11,6 +11,7 @@
     "test": "npm run test:server && npm run test:client",
     "test:server": "cd server && npx vitest run",
     "test:client": "cd client && npx vitest run",
+    "test:sidecar": "python3 -m unittest discover -s server/anomaly/tests",
     "test:watch": "cd server && npx vitest",
     "lint": "eslint .",
     "format": "prettier --write .",

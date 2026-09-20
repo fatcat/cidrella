@@ -31,4 +31,5 @@ export function useWorkspaceFontBump() {
 export const CLASSIC_PATHS = Object.freeze({
   networks: '/networks-classic',
   settings: '/system-classic',
+  anomalies: '/anomalies-classic',
 });

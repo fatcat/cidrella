@@ -13,6 +13,21 @@ describe('workspace route cutover', () => {
     expect(records.find((record) => record.name === 'SystemClassic')?.path).toBe('/system-classic');
   });
 
+  it('sends both old anomaly addresses to the Analytics anomalies section', () => {
+    const records = router.getRoutes();
+    for (const name of ['AnomaliesWorkspaceAlias', 'AnomaliesPreviewAlias']) {
+      const alias = records.find((record) => record.name === name);
+      expect(alias.redirect({ query: { client: '7' }, hash: '' })).toEqual({
+        path: '/analytics',
+        query: { client: '7', view: 'anomalies' },
+        hash: '',
+      });
+    }
+    expect(records.find((record) => record.name === 'AnomaliesClassic')?.path).toBe(
+      '/anomalies-classic',
+    );
+  });
+
   it('preserves preview query and hash state through the compatibility redirect', () => {
     const preview = router.getRoutes().find((record) => record.name === 'NetworksPreviewAlias');
     expect(preview.redirect({ query: { view: 'dns', zone: '7' }, hash: '#records' })).toEqual({

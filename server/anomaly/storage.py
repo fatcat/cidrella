@@ -38,7 +38,8 @@ def ensure_tables():
                 severity TEXT,
                 top_features TEXT,
                 resolved INTEGER NOT NULL DEFAULT 0,
-                resolved_at TEXT
+                resolved_at TEXT,
+                threat_score REAL
             );
 
             CREATE TABLE IF NOT EXISTS anomaly_models (
@@ -134,25 +135,28 @@ def get_setting(key, default=None):
 
 
 def save_score(device_key, client_ip, window_start, window_end, anomaly_score,
-               is_anomaly, severity=None, top_features=None):
+               is_anomaly, severity=None, top_features=None, threat_score=None):
     """Insert or update an anomaly score. client_ip is the IP actually
     observed for this window; device_key is the resolved MAC (or client_ip
     itself, when no MAC is known) that scores/models are grouped under,
-    stored in the `identity` column."""
+    stored in the `identity` column. threat_score is the 0..1 rule score
+    from threat.py, written for every window so the triage map can place
+    unflagged devices too."""
     con = _connect()
     try:
         con.execute("""
             INSERT INTO anomaly_scores
                 (client_ip, identity, scored_at, window_start, window_end,
-                 anomaly_score, is_anomaly, severity, top_features)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 anomaly_score, is_anomaly, severity, top_features, threat_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(identity, window_start) DO UPDATE SET
                 client_ip = excluded.client_ip,
                 scored_at = excluded.scored_at,
                 anomaly_score = excluded.anomaly_score,
                 is_anomaly = excluded.is_anomaly,
                 severity = excluded.severity,
-                top_features = excluded.top_features
+                top_features = excluded.top_features,
+                threat_score = excluded.threat_score
         """, (
             client_ip,
             device_key,
@@ -163,6 +167,7 @@ def save_score(device_key, client_ip, window_start, window_end, anomaly_score,
             1 if is_anomaly else 0,
             severity,
             json.dumps(top_features) if top_features else None,
+            threat_score,
         ))
         con.commit()
     finally:

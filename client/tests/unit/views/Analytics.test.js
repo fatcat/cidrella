@@ -24,7 +24,7 @@ vi.mock('../../../src/views/Intelligence.vue', () => ({
   default: { template: '<div />' },
   __isTeleport: false,
 }));
-vi.mock('../../../src/views/Anomalies.vue', () => ({
+vi.mock('../../../src/views/AnomaliesWorkspace.vue', () => ({
   default: { template: '<div />' },
   __isTeleport: false,
 }));

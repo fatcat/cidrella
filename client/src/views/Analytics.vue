@@ -47,7 +47,7 @@ function asyncTab(loader) {
 const DashboardPanel = asyncTab(() => import('./Dashboard.vue'));
 const PerformancePanel = asyncTab(() => import('./Performance.vue'));
 const IntelligencePanel = asyncTab(() => import('./Intelligence.vue'));
-const AnomaliesPanel = asyncTab(() => import('./Anomalies.vue'));
+const AnomaliesPanel = asyncTab(() => import('./AnomaliesWorkspace.vue'));
 
 const menuItems = [
   {

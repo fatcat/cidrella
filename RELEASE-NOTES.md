@@ -58,6 +58,29 @@ first on a 0.4.17 host.
 
 ### New
 
+- **Anomaly triage.** Analytics > Anomalies is now a triage page: a queue of
+  flagged devices and a map of every monitored device, plotted by how far its
+  latest window sits from its own baseline against how much the traffic is
+  shaped like an attack. Hovering either side highlights the other. Opening a
+  device slides in an Evidence drawer with the behavior timeline, score
+  history, contributing signals, why the latest window was flagged, the DNS
+  queries behind that window, and where the device sits among its peers.
+  Each contributing factor also lists the names that back it, ranked by the
+  factor's own measure: the random-looking names for the entropy signal, the
+  longest for the length signal, the NXDOMAIN or blocked ones for those rates,
+  the never-seen-before ones for the new-domain ratio. A plain top-by-count
+  list never shows a DGA hour of once-each names; this does.
+  Picking another device while the drawer is open swaps its content in place;
+  a click anywhere else closes it. The previous panel stays reachable as
+  Anomalies under the user menu's classic links, and the old
+  `/anomalies-workspace` address lands on the new page.
+- **Threat shape.** The sidecar now scores every window it scores for the
+  model on five attack-shaped signals (domain entropy, NXDOMAIN rate, longest
+  name, subdomain depth, blocked share) and stores the 0..1 result beside the
+  model score as `threat_score` (migration 077). A device the model has
+  learned to accept, say one that has tunneled every night since a firmware
+  update, still lands high on this axis. Windows scored before the upgrade
+  have no value and draw as hollow dots until the next scoring cycle.
 - **A first-run setup.** The first sign-in on a fresh install now opens a
   five-step wizard: set the admin password, optionally add a second factor,
   choose the deployment (DNS & DHCP, DNS only, or DHCP only) and the interfaces
@@ -195,6 +218,15 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- The anomaly score is the Isolation Forest decision value, where negative
+  means anomalous, and every chart treated it as a 0..1 badness. The Behavior
+  Timeline clamped negatives to zero and kept the highest score per cell, so
+  it has drawn a blank grid on every install since it shipped. The gauge drew
+  a sliver, the sparklines were flat, "more anomalous than N% of clients"
+  was backwards, and "Escalating" was awarded to a device whose score was
+  climbing, which is one calming down. All of them now read the sign the
+  sidecar writes. The timeline's day labels also clipped ("14d ago" read as
+  "4d ago").
 - A disabled DHCP reservation could not be deleted, renamed or moved once DNS
   had claimed its address: the delete path tried to release an allocation
   the reservation did not hold and got a 409. Only an enabled reservation

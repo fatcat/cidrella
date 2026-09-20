@@ -23,6 +23,7 @@ Run from the repo root (the scripts handle the `cd` into each package):
 npm test               # full suite: server then client
 npm run test:server    # server unit + integration (vitest)
 npm run test:client    # client unit (vitest)
+npm run test:sidecar   # anomaly sidecar rules (python3 unittest, stdlib only, no venv needed)
 npm run lint           # ESLint (flat config, correctness-focused), must exit 0
 npm run build:client   # production client build, a build failure is a test failure
 ```

@@ -23,6 +23,10 @@ describe('workspace UI preferences', () => {
   });
 
   it('names the classic routes the user menu links to', () => {
-    expect(CLASSIC_PATHS).toEqual({ networks: '/networks-classic', settings: '/system-classic' });
+    expect(CLASSIC_PATHS).toEqual({
+      networks: '/networks-classic',
+      settings: '/system-classic',
+      anomalies: '/anomalies-classic',
+    });
   });
 });

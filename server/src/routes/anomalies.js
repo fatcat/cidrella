@@ -6,7 +6,17 @@ import { isValidAddress } from '../utils/ip.js';
 import { canonicalizeIp } from '../utils/address.js';
 import { MAC_RE } from '../utils/mac.js';
 import { enrichWithHostnames } from '../utils/hostnames.js';
-import { queryClientWindowEvidence, queryClientWindowSummary } from '../db/duckdb.js';
+import {
+  queryClientWindowEvidence,
+  queryClientWindowSummary,
+  queryClientWindowDomains,
+  queryClientNewDomains,
+} from '../db/duckdb.js';
+import {
+  SIGNAL_EVIDENCE,
+  hasSignalEvidence,
+  rankDomainsForSignal,
+} from '../utils/anomaly-evidence.js';
 import { DEFAULTS } from '../config/defaults.js';
 import * as Anomaly from '../models/anomaly.js';
 import * as Setting from '../models/setting.js';
@@ -191,6 +201,33 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
   });
 });
 
+// GET /api/anomalies/map: one row per device with a trained model, carrying its
+// latest scored window. This is the triage map's data: every monitored device
+// gets a dot, flagged or not, so "within baseline" is visible as a cloud rather
+// than an absence. threat_score is NULL for windows scored before the column
+// existed; the sidecar fills it on its next cycle.
+router.get('/map', requirePerm('analytics:read'), (req, res) => {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT m.identity, COALESCE(s.client_ip, m.client_ip) AS client_ip, m.training_rows,
+              s.window_start, s.window_end, s.anomaly_score, s.threat_score, s.severity,
+              s.is_anomaly, s.resolved,
+              (SELECT COUNT(*) FROM anomaly_scores f
+                WHERE f.identity = m.identity AND f.is_anomaly = 1
+                  AND f.window_start >= datetime('now', '-1 day')) AS flagged_24h
+         FROM anomaly_models m
+         LEFT JOIN anomaly_scores s ON s.id = (
+           SELECT x.id FROM anomaly_scores x
+            WHERE x.identity = m.identity
+            ORDER BY x.window_start DESC LIMIT 1)
+        WHERE m.status = 'active'
+        ORDER BY s.anomaly_score ASC`,
+    )
+    .all();
+  res.json(enrichWithHostnames(rows));
+});
+
 const FULL_MAC_RE = new RegExp(`^${MAC_RE.source}$`, 'i');
 
 // anomaly_scores.window_start is whatever wrote the row. The scoring sidecar
@@ -259,6 +296,30 @@ router.get('/client/:identity/model', requirePerm('analytics:read'), (req, res) 
   res.json(row || null);
 });
 
+// The window an evidence request is about: the one named by window_start, or
+// the most recent flagged one.
+function findScoredWindow(db, identity, windowStart) {
+  return windowStart
+    ? db
+        .prepare(
+          `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
+         FROM anomaly_scores WHERE identity = ? AND window_start = ?`,
+        )
+        .get(identity, windowStart)
+    : db
+        .prepare(
+          `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
+         FROM anomaly_scores WHERE identity = ? AND is_anomaly = 1
+        ORDER BY window_start DESC LIMIT 1`,
+        )
+        .get(identity);
+}
+function noWindowError(windowStart) {
+  return windowStart
+    ? 'No scored window found for that identity and window_start'
+    : 'No flagged window found for that identity';
+}
+
 // GET /api/anomalies/client/:identity/evidence: the DNS traffic behind a
 // scored window. Without ?window_start it answers for the most recent flagged
 // window, which is what a detail view opens on.
@@ -279,28 +340,8 @@ router.get('/client/:identity/evidence', requirePerm('analytics:read'), async (r
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
   const { window_start: windowStart } = req.query;
 
-  const scored = windowStart
-    ? db
-        .prepare(
-          `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
-         FROM anomaly_scores WHERE identity = ? AND window_start = ?`,
-        )
-        .get(identity, windowStart)
-    : db
-        .prepare(
-          `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
-         FROM anomaly_scores WHERE identity = ? AND is_anomaly = 1
-        ORDER BY window_start DESC LIMIT 1`,
-        )
-        .get(identity);
-
-  if (!scored) {
-    return res.status(404).json({
-      error: windowStart
-        ? 'No scored window found for that identity and window_start'
-        : 'No flagged window found for that identity',
-    });
-  }
+  const scored = findScoredWindow(db, identity, windowStart);
+  if (!scored) return res.status(404).json({ error: noWindowError(windowStart) });
 
   // Analytics data is pruned on its own retention clock (default 7 days),
   // while anomaly scores are kept for 30. A window older than the analytics
@@ -367,6 +408,55 @@ router.delete('/:id', requirePerm('dns:write'), (req, res) => {
 });
 
 // POST /api/anomalies/:id/dismiss: mark anomaly as resolved (kept for backwards compat)
+// GET /api/anomalies/client/:identity/evidence/signal?feature=<name>: the
+// names in the flagged window that back one contributing factor, ranked by
+// that factor's own measure (entropy for the entropy signal, length for the
+// length signal, and so on). The plain evidence list is top-by-count, which
+// is exactly the list a DGA hour of once-each names never appears on.
+router.get('/client/:identity/evidence/signal', requirePerm('analytics:read'), async (req, res) => {
+  const identity = canonicalIdentity(req.params.identity);
+  if (!isValidIdentity(req.params.identity)) {
+    return res.status(400).json({ error: 'Invalid identity' });
+  }
+  const feature = String(req.query.feature || '');
+  if (!hasSignalEvidence(feature)) {
+    return res.status(400).json({ error: 'No name-level evidence for that feature' });
+  }
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 8, 1), 50);
+  const { window_start: windowStart } = req.query;
+
+  const db = getDb();
+  const scored = findScoredWindow(db, identity, windowStart);
+  if (!scored) return res.status(404).json({ error: noWindowError(windowStart) });
+
+  const startTs = windowToDuckTimestamp(scored.window_start);
+  const endTs = windowToDuckTimestamp(scored.window_end);
+  try {
+    let ranked;
+    if (SIGNAL_EVIDENCE[feature].external) {
+      const lookback = Math.max(
+        1,
+        Math.min(30, parseInt(getSetting('analytics_retention_days'), 10) || 7),
+      );
+      const rows = await queryClientNewDomains(scored.client_ip, startTs, endTs, lookback, limit);
+      ranked = rankDomainsForSignal(feature, rows, limit);
+    } else {
+      const rows = await queryClientWindowDomains(scored.client_ip, startTs, endTs);
+      ranked = rankDomainsForSignal(feature, rows, limit);
+    }
+    res.json({
+      identity,
+      client_ip: scored.client_ip,
+      window_start: scored.window_start,
+      window_end: scored.window_end,
+      limit,
+      ...ranked,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id, 10);

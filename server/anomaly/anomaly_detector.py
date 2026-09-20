@@ -23,6 +23,7 @@ from config import (
 import features
 import models
 import storage
+from threat import threat_shape
 
 logging.basicConfig(
     level=logging.INFO,
@@ -192,8 +193,9 @@ def score_all_clients():
             if fv is None:
                 continue
 
-            # Score
+            # Score, plus the model-independent threat shape for the triage map
             score, is_anomaly, severity = models.score_window(model, fv)
+            threat = threat_shape(fv)
 
             # Explain if anomalous using cached median from training
             top_features = None
@@ -212,6 +214,7 @@ def score_all_clients():
                 is_anomaly=is_anomaly,
                 severity=severity,
                 top_features=top_features,
+                threat_score=threat,
             )
 
             scored += 1

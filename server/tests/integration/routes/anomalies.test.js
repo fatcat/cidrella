@@ -5,17 +5,26 @@ import { createTestApp } from '../../helpers/test-app.js';
 // The evidence endpoint reads DuckDB, which no test fixture stands up. Stub
 // only the two query helpers and record their arguments: which IP and which
 // window the route asks for is the behavior under test, not the SQL.
-const { evidenceCalls, summaryCalls, evidenceRows } = vi.hoisted(() => ({
-  evidenceCalls: [],
-  summaryCalls: [],
-  evidenceRows: [],
-}));
+const { evidenceCalls, summaryCalls, evidenceRows, domainRows, newDomainCalls } = vi.hoisted(
+  () => ({
+    evidenceCalls: [],
+    summaryCalls: [],
+    evidenceRows: [],
+    domainRows: [],
+    newDomainCalls: [],
+  }),
+);
 
 vi.mock('../../../src/db/duckdb.js', async (importOriginal) => ({
   ...(await importOriginal()),
   queryClientWindowEvidence: (...args) => {
     evidenceCalls.push(args);
     return Promise.resolve(evidenceRows.slice(0, args[3]));
+  },
+  queryClientWindowDomains: () => Promise.resolve(domainRows.slice()),
+  queryClientNewDomains: (...args) => {
+    newDomainCalls.push(args);
+    return Promise.resolve([{ domain: 'fresh.example.net', count: 3 }]);
   },
   queryClientWindowSummary: (...args) => {
     summaryCalls.push(args);
@@ -470,5 +479,181 @@ describe('anomaly evidence endpoint', () => {
     expect(res.body.truncated).toBe(true);
     expect(res.body.evidence_available).toBe(true);
     expect(evidenceCalls[0][3]).toBe(2);
+  });
+});
+
+describe('GET /api/anomalies/map', () => {
+  function model(identity, clientIp, status = 'active', trainingRows = 120) {
+    db.prepare(
+      `INSERT INTO anomaly_models (identity, client_ip, status, training_rows, trained_at)
+       VALUES (?, ?, ?, ?, datetime('now'))`,
+    ).run(identity, clientIp, status, trainingRows);
+  }
+  function window(identity, clientIp, { hoursAgo, score, threat = null, isAnomaly = 0 }) {
+    db.prepare(
+      `INSERT INTO anomaly_scores
+         (client_ip, identity, window_start, window_end, anomaly_score, threat_score, is_anomaly, severity)
+       VALUES (?, ?, datetime('now', '-' || ? || ' hours'), datetime('now', '-' || ? || ' hours'),
+               ?, ?, ?, ?)`,
+    ).run(
+      clientIp,
+      identity,
+      hoursAgo + 1,
+      hoursAgo,
+      score,
+      threat,
+      isAnomaly,
+      isAnomaly ? 'low' : null,
+    );
+  }
+
+  it('returns the latest window per active model, including devices never flagged', async () => {
+    model('aa:bb:cc:00:00:01', '10.0.0.61');
+    window('aa:bb:cc:00:00:01', '10.0.0.61', {
+      hoursAgo: 5,
+      score: -0.4,
+      threat: 0.8,
+      isAnomaly: 1,
+    });
+    window('aa:bb:cc:00:00:01', '10.0.0.61', {
+      hoursAgo: 1,
+      score: -0.2,
+      threat: 0.6,
+      isAnomaly: 1,
+    });
+    model('10.0.0.62', '10.0.0.62');
+    window('10.0.0.62', '10.0.0.62', { hoursAgo: 1, score: 0.15, threat: 0.05 });
+    model('10.0.0.63', '10.0.0.63', 'learning');
+    db.prepare(
+      `INSERT INTO dhcp_leases (ip_address, mac_address, hostname, expires_at)
+       VALUES ('10.0.0.61', 'aa:bb:cc:00:00:01', 'nas', datetime('now', '+1 day'))`,
+    ).run();
+
+    const res = await request(app).get('/api/anomalies/map');
+    expect(res.status).toBe(200);
+    const byId = Object.fromEntries(res.body.map((row) => [row.identity, row]));
+    expect(Object.keys(byId).sort()).toEqual(['10.0.0.62', 'aa:bb:cc:00:00:01']);
+    expect(byId['aa:bb:cc:00:00:01']).toMatchObject({
+      client_ip: '10.0.0.61',
+      hostname: 'nas',
+      anomaly_score: -0.2,
+      threat_score: 0.6,
+      is_anomaly: 1,
+      flagged_24h: 2,
+      training_rows: 120,
+    });
+    expect(byId['10.0.0.62']).toMatchObject({ anomaly_score: 0.15, is_anomaly: 0, flagged_24h: 0 });
+    // Most anomalous (most negative) first.
+    expect(res.body[0].identity).toBe('aa:bb:cc:00:00:01');
+  });
+
+  it('keeps an active model that has no scored window yet, with null score fields', async () => {
+    model('10.0.0.64', '10.0.0.64');
+    const res = await request(app).get('/api/anomalies/map');
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0]).toMatchObject({
+      identity: '10.0.0.64',
+      client_ip: '10.0.0.64',
+      anomaly_score: null,
+      threat_score: null,
+      flagged_24h: 0,
+    });
+  });
+
+  it('carries threat_score through /events and /client/:identity too', async () => {
+    model('10.0.0.65', '10.0.0.65');
+    window('10.0.0.65', '10.0.0.65', { hoursAgo: 1, score: -0.3, threat: 0.42, isAnomaly: 1 });
+    const events = await request(app).get('/api/anomalies/events');
+    expect(events.body.events[0].threat_score).toBe(0.42);
+    const history = await request(app).get('/api/anomalies/client/10.0.0.65');
+    expect(history.body[0].threat_score).toBe(0.42);
+  });
+});
+
+describe('per-signal evidence endpoint', () => {
+  function flagged(identity, clientIp) {
+    db.prepare(
+      `INSERT INTO anomaly_scores
+         (client_ip, identity, window_start, window_end, anomaly_score, is_anomaly, severity)
+       VALUES (?, ?, '2026-09-10T06:00:00+00:00', '2026-09-10T07:00:00+00:00', -0.6, 1, 'high')`,
+    ).run(clientIp, identity);
+  }
+  beforeEach(() => {
+    domainRows.length = 0;
+    newDomainCalls.length = 0;
+    domainRows.push(
+      {
+        domain: 'cdn.example.com',
+        count: 400,
+        nxdomain_count: 0,
+        blocked_count: 0,
+        other_type_count: 0,
+        unresolved_count: 0,
+        resolved_ip_count: 2,
+      },
+      {
+        domain: 'zq8k2m7x1p.upd.tunnel.net',
+        count: 1,
+        nxdomain_count: 1,
+        blocked_count: 0,
+        other_type_count: 1,
+        unresolved_count: 1,
+        resolved_ip_count: 0,
+      },
+    );
+  });
+
+  it('rejects an unknown feature and a bad identity', async () => {
+    expect(
+      (await request(app).get('/api/anomalies/client/10.0.0.70/evidence/signal?feature=hour_cos'))
+        .status,
+    ).toBe(400);
+    expect(
+      (
+        await request(app).get(
+          '/api/anomalies/client/nope/evidence/signal?feature=avg_domain_entropy',
+        )
+      ).status,
+    ).toBe(400);
+  });
+
+  it('ranks the flagged window names by the requested signal', async () => {
+    flagged('10.0.0.71', '10.0.0.71');
+    const res = await request(app)
+      .get('/api/anomalies/client/10.0.0.71/evidence/signal')
+      .query({ feature: 'avg_domain_entropy', limit: 1 });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      client_ip: '10.0.0.71',
+      window_start: '2026-09-10T06:00:00+00:00',
+      metric: 'entropy',
+      total: 2,
+      limit: 1,
+    });
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].domain).toBe('zq8k2m7x1p.upd.tunnel.net');
+  });
+
+  it('asks the lookback query for the new-domain signal with the window bounds', async () => {
+    flagged('10.0.0.72', '10.0.0.72');
+    const res = await request(app)
+      .get('/api/anomalies/client/10.0.0.72/evidence/signal')
+      .query({ feature: 'new_domain_ratio' });
+    expect(res.status).toBe(200);
+    expect(res.body.metric).toBe('new');
+    expect(res.body.items).toEqual([{ domain: 'fresh.example.net', count: 3, value: 3 }]);
+    expect(newDomainCalls[0].slice(0, 4)).toEqual([
+      '10.0.0.72',
+      '2026-09-10 06:00:00',
+      '2026-09-10 07:00:00',
+      7,
+    ]);
+  });
+
+  it('404s when the identity has no flagged window', async () => {
+    const res = await request(app)
+      .get('/api/anomalies/client/10.0.0.73/evidence/signal')
+      .query({ feature: 'block_ratio' });
+    expect(res.status).toBe(404);
   });
 });

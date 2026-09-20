@@ -62,15 +62,30 @@ const routes = [
         name: 'NetworksClassic',
         component: () => import('../views/SubnetsLayoutB.vue'),
       },
+      // The triage page is the Analytics "Anomalies" section. The two old
+      // addresses of the concept land there; the classic panel keeps its own.
       {
         path: 'anomalies-workspace',
-        name: 'AnomaliesWorkspace',
-        component: () => import('../views/AnomaliesWorkspace.vue'),
+        name: 'AnomaliesWorkspaceAlias',
+        redirect: (to) => ({
+          path: '/analytics',
+          query: { ...to.query, view: 'anomalies' },
+          hash: to.hash,
+        }),
       },
       {
         path: 'anomalies-preview',
         name: 'AnomaliesPreviewAlias',
-        redirect: (to) => ({ path: '/anomalies-workspace', query: to.query, hash: to.hash }),
+        redirect: (to) => ({
+          path: '/analytics',
+          query: { ...to.query, view: 'anomalies' },
+          hash: to.hash,
+        }),
+      },
+      {
+        path: 'anomalies-classic',
+        name: 'AnomaliesClassic',
+        component: () => import('../views/Anomalies.vue'),
       },
       {
         path: 'system',

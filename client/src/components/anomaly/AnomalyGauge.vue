@@ -39,9 +39,10 @@
 <script setup>
 import { computed } from 'vue';
 import { chartColor, chartThemeVersion } from '../../utils/chart-config.js';
+import { deviation } from '../../utils/anomaly-score.js';
 
 const props = defineProps({
-  score: { type: Number, required: true }, // 0..1
+  score: { type: Number, required: true }, // raw stored score, negative is anomalous
   severity: { type: String, default: null }, // 'high' | 'medium' | 'low'
 });
 
@@ -61,12 +62,16 @@ function tickPoint(v) {
 function arcPath(v0, v1) {
   const p0 = pt(v0),
     p1 = pt(v1);
-  const large = v1 - v0 > 0.5 ? 1 : 0;
-  return `M ${p0[0].toFixed(1)} ${p0[1].toFixed(1)} A ${r} ${r} 0 ${large} 1 ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`;
+  // The track is a half circle, so no span on it exceeds 180 degrees and the
+  // large-arc flag stays 0. Setting it past the halfway mark sent the arc
+  // the long way round, under the gauge.
+  return `M ${p0[0].toFixed(1)} ${p0[1].toFixed(1)} A ${r} ${r} 0 0 1 ${p1[0].toFixed(1)} ${p1[1].toFixed(1)}`;
 }
 
 const trackPath = computed(() => arcPath(0, 1));
-const progressPath = computed(() => arcPath(0, Math.max(props.score, 0.012)));
+// The arc is how far below the flag boundary the score sits; the printed
+// number stays raw so it matches the list and the API.
+const progressPath = computed(() => arcPath(0, Math.max(deviation(props.score), 0.012)));
 
 const color = computed(() => {
   chartThemeVersion.value;
