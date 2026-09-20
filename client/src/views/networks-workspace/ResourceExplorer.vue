@@ -90,14 +90,6 @@
             >
             <small>{{ folder.networks.length }}</small>
           </button>
-          <button
-            v-if="canManageFolders"
-            class="row-menu-button"
-            :aria-label="`${folder.name} folder actions`"
-            @click="emit('folder-menu', folder, $event.currentTarget)"
-          >
-            <i class="pi pi-ellipsis-h" />
-          </button>
         </div>
         <div v-if="expandedFolders.has(folder.id)" class="folder-networks">
           <template v-if="contextKind === 'unallocated'">
@@ -516,25 +508,6 @@ button {
 }
 .folder-select small {
   font-size: 0.65rem;
-}
-.row-menu-button {
-  width: 1.5rem;
-  height: 1.5rem;
-  border: 0;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--preview-muted);
-  cursor: pointer;
-  opacity: 0;
-}
-.folder-row:hover .row-menu-button,
-.folder-row.active .row-menu-button,
-.row-menu-button:focus-visible {
-  opacity: 1;
-}
-.row-menu-button:hover {
-  color: var(--preview-accent);
-  background: var(--cid-surface-card);
 }
 .folder-networks {
   display: grid;

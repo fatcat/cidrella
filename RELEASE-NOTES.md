@@ -58,6 +58,10 @@ first on a 0.4.17 host.
 
 ### New
 
+- The DHCP view tags each lease and reservation "in pool" or "outside pool"
+  beside its assignment. A reservation outside the pool is plain
+  information; a dynamic lease outside every pool is flagged, since dnsmasq
+  only hands out pool addresses.
 - **Anomaly triage.** Analytics > Anomalies is now a triage page: a queue of
   flagged devices and a map of every monitored device, plotted by how far its
   latest window sits from its own baseline against how much the traffic is
@@ -218,6 +222,14 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- In the workspace tables the word "online" and the word "Enabled" are green,
+  not only the dot beside them, matching the classic tables. The folder rows
+  in the resource explorer lost their "..." button; a right-click on the row
+  opens the same menu, with Create network on it.
+- The DHCP view showed "unknown" in the Online column for every free pool
+  address. Those rows are synthesized from the pool and had no online value
+  at all. An address nothing has ever answered at is offline, which is what
+  the Addresses view already said for the same rows.
 - Deallocating a network left its DNS behind: every placeholder and
   lease-written PTR stayed, its reverse zones stayed enabled, dnsmasq kept
   answering for an unallocated block, and DHCP reservations were left

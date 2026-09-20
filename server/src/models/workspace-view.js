@@ -464,6 +464,12 @@ function availableRow(scopes, subnet, ip) {
     expires_at: null,
     reservation_id: null,
     lease_id: null,
+    // Nothing has ever answered at this address, so it is offline, the same
+    // reading the Addresses view gives a synthesized row. The DHCP view used
+    // to leave this unset and the table printed "unknown" for every free
+    // pool address, which read as a failed check rather than an idle one.
+    is_online: 0,
+    last_seen_at: null,
     created_at: null,
     updated_at: null,
   };

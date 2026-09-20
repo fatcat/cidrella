@@ -62,12 +62,21 @@
               />
             </template>
             <template v-else-if="column.key === 'assignment'">
-              <span
-                v-if="row.assignment"
-                class="address-type-pill"
-                :class="row.assignment === 'Reserved' ? 'type-reserved-dhcp' : 'type-dynamic-dhcp'"
-                >{{ row.assignment }}</span
-              >
+              <span v-if="row.assignment" class="assignment-cell">
+                <span
+                  class="address-type-pill"
+                  :class="
+                    row.assignment === 'Reserved' ? 'type-reserved-dhcp' : 'type-dynamic-dhcp'
+                  "
+                  >{{ row.assignment }}</span
+                >
+                <span
+                  v-if="row.pool"
+                  class="address-type-pill pool-pill"
+                  :class="`pool-${row.pool.tone}`"
+                  >{{ row.pool.label }}</span
+                >
+              </span>
               <span v-else class="muted">{{ EMPTY_CELL }}</span>
             </template>
             <template v-else-if="column.key === 'enabled'">
@@ -273,6 +282,25 @@ tbody tr:focus-visible {
   background: color-mix(in srgb, var(--cid-status-warn) 16%, transparent);
   color: var(--cid-status-warn);
 }
+.assignment-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+/* Pool membership qualifies the assignment pill beside it: outlined, so it
+   reads as a note rather than a second status. */
+.pool-pill {
+  font-weight: 500;
+  background: transparent;
+}
+.pool-pill.pool-muted {
+  border-color: color-mix(in srgb, var(--cid-status-muted) 45%, transparent);
+  color: var(--cid-status-muted);
+}
+.pool-pill.pool-warn {
+  border-color: color-mix(in srgb, var(--cid-status-warn) 55%, transparent);
+  color: var(--cid-status-warn);
+}
 .online-value,
 .enabled-value {
   display: inline-flex;
@@ -280,12 +308,18 @@ tbody tr:focus-visible {
   gap: 0.3rem;
   text-transform: capitalize;
 }
+/* Online and Enabled are green as a word, not only as a dot, so the state
+   reads at a glance the way it does in the classic tables (.state-ok). */
+.online-value.online,
+.enabled-value:not(.off) {
+  color: var(--cid-status-ok);
+}
 .online-value i,
 .enabled-value i {
   width: 0.38rem;
   height: 0.38rem;
   border-radius: 50%;
-  background: var(--cid-green-500);
+  background: var(--cid-status-ok);
 }
 .online-value.offline i,
 .enabled-value.off i {

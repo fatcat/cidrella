@@ -1309,20 +1309,20 @@ describe('Networks workspace', () => {
         : base(url, config),
     );
     const wrapper = await mountWorkspace();
-    const menuButtons = wrapper.findAll('.row-menu-button');
-    expect(menuButtons.map((button) => button.attributes('aria-label'))).toEqual([
-      'Testerella folder actions',
-      'Ungrouped folder actions',
-    ]);
+    // The folder row has no menu button; a right-click on the row opens the
+    // folder menu, with the same reach from the keyboard menu key.
+    expect(wrapper.find('.row-menu-button').exists()).toBe(false);
+    const folderRows = wrapper.findAll('.folder-row');
+    expect(folderRows).toHaveLength(2);
 
-    await menuButtons[1].trigger('click');
+    await folderRows[1].trigger('contextmenu', { clientX: 40, clientY: 120 });
     expect(wrapper.find('.row-menu span').text()).toBe('FOLDER ACTIONS');
     expect(wrapper.findAll('.row-menu button strong').map((label) => label.text())).toEqual([
       'Create network',
     ]);
     await wrapper.find('.menu-scrim').trigger('click');
 
-    await menuButtons[0].trigger('click');
+    await folderRows[0].trigger('contextmenu', { clientX: 40, clientY: 80 });
     expect(wrapper.findAll('.row-menu button strong').map((label) => label.text())).toEqual([
       'Create network',
       'Rename folder',

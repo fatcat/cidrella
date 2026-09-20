@@ -167,6 +167,24 @@ export function mapDnsRows(zoneRecords) {
   );
 }
 
+// Whether a held address sits inside a dynamic pool of its scope. The server
+// lists the scopes whose pools contain the address in related_scope_ids, so
+// an empty list means outside every pool. A reservation outside the pool is
+// the normal way to keep an address out of dynamic hand-out, so it is plain
+// information. A dynamic lease outside the pool is odd: dnsmasq only hands
+// out pool addresses, so the pool shrank after the lease or another server
+// issued it, and that one is flagged. Free pool addresses get nothing, they
+// are the pool.
+function poolMembership(row) {
+  if (!row.dhcp_assignment_type) return null;
+  const inPool = (row.related_scope_ids || []).length > 0;
+  if (inPool) return { label: 'in pool', tone: 'muted' };
+  return {
+    label: 'outside pool',
+    tone: row.dhcp_assignment_type === 'dynamic' ? 'warn' : 'muted',
+  };
+}
+
 export function mapDhcpRows(rows) {
   return (rows || []).map((row) => ({
     id: `dhcp:${row.dhcp_assignment_type || 'pool'}:${row.id}:${row.ip_address}`,
@@ -174,6 +192,7 @@ export function mapDhcpRows(rows) {
     hostname: row.hostname || null,
     mac: displayMacAddress(row.mac_address),
     assignment: row.dhcp_assignment_type ? humanize(row.dhcp_assignment_type) : null,
+    pool: poolMembership(row),
     leaseStatus: row.lease_status,
     expires: displayExpiry(row.expires_at, formatTimestamp, {
       reserved: row.dhcp_assignment_type === 'reserved' && !row.expires_at,

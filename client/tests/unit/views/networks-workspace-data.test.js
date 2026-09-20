@@ -48,6 +48,21 @@ describe('networks workspace data adapter', () => {
     expect(row.source).toBe('DHCP Reservation');
   });
 
+  it('tags held addresses with their pool membership', () => {
+    const base = { id: 1, ip_address: '10.0.0.40', lease_status: 'active', is_online: 1 };
+    const [reservedIn, reservedOut, leaseOut, free] = mapDhcpRows([
+      { ...base, dhcp_assignment_type: 'reserved', related_scope_ids: [3] },
+      { ...base, dhcp_assignment_type: 'reserved', related_scope_ids: [] },
+      { ...base, dhcp_assignment_type: 'dynamic', related_scope_ids: [] },
+      { ...base, dhcp_assignment_type: null, lease_status: 'available', related_scope_ids: [3] },
+    ]);
+    expect(reservedIn.pool).toEqual({ label: 'in pool', tone: 'muted' });
+    // A reservation outside the pool is deliberate; a lease outside it is not.
+    expect(reservedOut.pool).toEqual({ label: 'outside pool', tone: 'muted' });
+    expect(leaseOut.pool).toEqual({ label: 'outside pool', tone: 'warn' });
+    expect(free.pool).toBeNull();
+  });
+
   it('uses DNS read-model names instead of ambiguous bare fields', () => {
     const [row] = mapDnsRows([
       {

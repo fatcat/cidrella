@@ -312,6 +312,18 @@ describe('workspace read routes', () => {
     expect(addresses).not.toContain('10.20.0.25');
   });
 
+  it('reports a free pool address as offline, not unknown', async () => {
+    const response = await request(app)
+      .get('/api/workspace/dhcp-addresses')
+      .query({ scope_id: scopeId, page_size: 50 });
+    const free = response.body.items.filter((row) => row.lease_status === 'available');
+    expect(free.length).toBeGreaterThan(0);
+    // Nothing has ever answered at these addresses. The table printed
+    // "unknown" for them because is_online was left unset; offline is the
+    // reading every other synthesized row gets.
+    for (const row of free) expect([0, false]).toContain(row.is_online);
+  });
+
   it('pages a very large pool without materializing the address range', async () => {
     const largeSubnet = addSubnet(
       '11.0.0.0/8',
