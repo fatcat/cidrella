@@ -23,7 +23,7 @@ from config import (
 import features
 import models
 import storage
-from threat import threat_shape
+from threat import peer_median_of, threat_shape
 
 logging.basicConfig(
     level=logging.INFO,
@@ -176,6 +176,10 @@ def score_all_clients():
     targets = _active_targets()
     scored = 0
     anomalies = 0
+    # The fleet's typical value per feature, from the medians cached at
+    # training. Computed once per cycle; None until at least two devices
+    # have trained, since one device is not a peer group.
+    peer_median = peer_median_of(_client_medians)
 
     for client_ip, device_key in targets:
         try:
@@ -202,7 +206,7 @@ def score_all_clients():
             if is_anomaly:
                 median = _client_medians.get(device_key)
                 if median is not None:
-                    top_features = models.explain_anomaly(model, fv, median)
+                    top_features = models.explain_anomaly(model, fv, median, peer_median)
 
             # Save score
             storage.save_score(

@@ -159,6 +159,18 @@
               <div class="factor-vals">
                 observed <b>{{ formatFeatureValue(f.feature, f.observed) }}</b> &middot; baseline
                 {{ formatFeatureValue(f.feature, f.baseline) }}
+                <template v-if="typeof f.peers === 'number'">
+                  &middot; peers {{ formatFeatureValue(f.feature, f.peers) }}
+                </template>
+              </div>
+              <!-- The fleet's typical value tells the two stories apart: odd for this
+                   device only, or odd for the whole network too. -->
+              <div
+                v-if="typeof f.peers === 'number'"
+                class="factor-peers"
+                :class="peerNote(f).tone"
+              >
+                {{ peerNote(f).text }}
               </div>
               <div class="factor-desc">{{ FACTOR_DESCRIPTIONS[f.label] || '' }}</div>
               <div class="factor-evidence" v-if="f.evidence && f.evidence.items.length">
@@ -300,6 +312,20 @@ defineProps({
   peerScores: { type: Array, default: () => [] },
 });
 const emit = defineEmits(['close', 'prev', 'next', 'allowlist', 'acknowledge']);
+
+// Whether the observed value is also away from what peers do, in the same
+// direction the factor moved, by at least half the margin the factor itself
+// shows. "Above its peers too" is the tunnel-shaped case; "in line with
+// peers" is the CDN-shaped one, where the device changed with everyone else.
+function peerNote(factor) {
+  const up = factor.observed > factor.baseline;
+  const ownShift = Math.abs(factor.observed - factor.baseline);
+  const peerShift = up ? factor.observed - factor.peers : factor.peers - factor.observed;
+  if (peerShift >= ownShift * 0.5) {
+    return { tone: 'alone', text: up ? 'Above its peers too' : 'Below its peers too' };
+  }
+  return { tone: 'shared', text: 'In line with what peers do' };
+}
 
 function contribColor(contribution) {
   if (contribution > 0.3) return chartColor('err');
@@ -520,6 +546,16 @@ function rcodeClass(response) {
 .factor-names .count {
   color: var(--cid-text-muted-color);
   font-size: 0.72rem;
+}
+.factor-peers {
+  font-size: 0.72rem;
+  margin-top: 0.15rem;
+}
+.factor-peers.alone {
+  color: var(--cid-status-warn);
+}
+.factor-peers.shared {
+  color: var(--cid-text-muted-color);
 }
 .factor-vals,
 .factor-desc,

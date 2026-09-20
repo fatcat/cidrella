@@ -43,3 +43,21 @@ def threat_shape(feature_vector, rules=None):
     if weight_sum <= 0:
         return 0.0
     return round(total / weight_sum, 4)
+
+
+def peer_median_of(medians):
+    """Median across devices of each device's own median feature vector, or
+    None with fewer than two devices, since one device is not a peer group.
+    The drawer prints it as "peers" beside a factor's observed and baseline
+    values. Stdlib only, like the rest of this module, so the unit test runs
+    without numpy."""
+    vectors = [list(v) for v in medians.values()]
+    if len(vectors) < 2:
+        return None
+    width = len(vectors[0])
+    out = []
+    for i in range(width):
+        column = sorted(float(v[i]) for v in vectors)
+        mid = len(column) // 2
+        out.append(column[mid] if len(column) % 2 else (column[mid - 1] + column[mid]) / 2)
+    return out

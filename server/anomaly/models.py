@@ -70,13 +70,20 @@ def score_window(model, feature_vector):
     return float(score), is_anomaly, severity
 
 
-def explain_anomaly(model, feature_vector, client_median):
+def explain_anomaly(model, feature_vector, client_median, peer_median=None):
     """
     Identify top 3 features contributing to the anomaly.
     Uses single-feature perturbation: replace each feature with the client's
     historical median and measure score improvement.
 
-    Returns list of {"feature": name, "label": human_label, "contribution": float}.
+    peer_median, when given, is the fleet's typical value per feature (the
+    median of every trained device's own median). Each factor then carries
+    "peers", so the drawer can say whether the device is odd for itself only
+    or for the whole network: a night of high entropy that every phone shares
+    is a CDN, not a tunnel.
+
+    Returns list of {"feature", "label", "contribution", "observed",
+    "baseline", "peers"}.
     """
     base_score = model.decision_function(feature_vector.reshape(1, -1))[0]
 
@@ -96,12 +103,15 @@ def explain_anomaly(model, feature_vector, client_median):
         if contrib <= 0:
             break  # no more positive contributors
         idx = FEATURE_NAMES.index(name)
-        top3.append({
+        factor = {
             "feature": name,
             "label": FEATURE_LABELS.get(name, name),
             "contribution": round(contrib, 4),
             "observed": round(float(feature_vector[idx]), 4),
             "baseline": round(float(client_median[idx]), 4),
-        })
+        }
+        if peer_median is not None:
+            factor["peers"] = round(float(peer_median[idx]), 4)
+        top3.append(factor)
 
     return top3

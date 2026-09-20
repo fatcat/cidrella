@@ -62,6 +62,13 @@ first on a 0.4.17 host.
   beside its assignment. A reservation outside the pool is plain
   information; a dynamic lease outside every pool is flagged, since dnsmasq
   only hands out pool addresses.
+- Each contributing factor in the Evidence drawer now shows what the
+  device's peers typically do beside its own observed and baseline values,
+  with a one-line reading: "Above its peers too" for a device that stands
+  out from the network, or "In line with what peers do" when the whole
+  network moved together, which is what a CDN change looks like. The
+  sidecar computes the fleet median from the per-device medians it already
+  keeps at training time, so nothing new is stored per window.
 - **Anomaly triage.** Analytics > Anomalies is now a triage page: a queue of
   flagged devices and a map of every monitored device, plotted by how far its
   latest window sits from its own baseline against how much the traffic is
@@ -233,6 +240,10 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- The anomaly bell counted flagged windows, so one device with a noisy
+  night read as a dozen anomalies. The bell and the "active anomalies"
+  figure now count devices; the per-severity breakdown still counts
+  windows, and the summary carries `active_windows` for the raw figure.
 - Opening IP Management on a network flashed the estate tabs (Networks, DNS,
   DHCP) for a few hundred milliseconds before the network's own tabs
   appeared. The page now reads the context from the route before any data

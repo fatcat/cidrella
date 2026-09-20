@@ -56,6 +56,11 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
     parseInt(getSetting('anomaly_acknowledged_score_id'), 10) || 0,
   );
 
+  // Devices, not windows. One noisy device can flag every hour of a night,
+  // and the bell used to say "12 anomalies" for what is one device to act on.
+  // by_severity keeps counting windows, since a device spans severities.
+  // Identity is null on rows scored before migration 060; the IP stands in.
+  const DEVICE = 'COALESCE(identity, client_ip)';
   const active = db
     .prepare(
       `SELECT severity, COUNT(*) as count FROM anomaly_scores
@@ -64,11 +69,18 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
     )
     .all();
 
-  const totalActive = active.reduce((sum, r) => sum + r.count, 0);
+  const activeWindows = active.reduce((sum, r) => sum + r.count, 0);
+  const totalActive =
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT ${DEVICE}) as count FROM anomaly_scores
+     WHERE is_anomaly = 1 AND resolved = 0`,
+      )
+      .get()?.count || 0;
   const unacknowledgedActive =
     db
       .prepare(
-        `SELECT COUNT(*) as count FROM anomaly_scores
+        `SELECT COUNT(DISTINCT ${DEVICE}) as count FROM anomaly_scores
      WHERE is_anomaly = 1 AND resolved = 0 AND id > ?`,
       )
       .get(acknowledgedThroughId)?.count || 0;
@@ -143,6 +155,7 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
     enabled,
     total_active: totalActive,
     unacknowledged_active: unacknowledgedActive,
+    active_windows: activeWindows,
     acknowledged_through_id: acknowledgedThroughId,
     by_severity: bySeverity,
     clients_monitored: clientsMonitored,

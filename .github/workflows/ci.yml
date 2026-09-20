@@ -52,6 +52,12 @@ jobs:
       - name: Client tests
         run: npm run test:client
 
+      - name: Anomaly sidecar tests
+        # Plain unittest over stdlib-only rule code (threat shape). The runner
+        # image ships python3; no venv, no third-party packages, so the model
+        # training path with sklearn stays out of CI on purpose.
+        run: npm run test:sidecar
+
       - name: Client production build
         run: npm run build:client
 

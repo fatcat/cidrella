@@ -118,6 +118,29 @@ describe('anomaly notification counter', () => {
     expect(afterNew.body.total_active).toBe(3);
     expect(afterNew.body.unacknowledged_active).toBe(1);
   });
+
+  it('counts devices, not windows, so one noisy client is one anomaly', async () => {
+    // Three windows on one device, one on another.
+    insertAnomaly('10.0.0.12', 'low');
+    insertAnomaly('10.0.0.12', 'medium');
+    insertAnomaly('10.0.0.12', 'high');
+    insertAnomaly('10.0.0.13', 'low');
+
+    const summary = await request(app).get('/api/anomalies/summary');
+    expect(summary.body.total_active).toBe(2);
+    expect(summary.body.unacknowledged_active).toBe(2);
+    expect(summary.body.active_windows).toBe(4);
+    // Severity still counts windows: the same device carries three of them.
+    expect(summary.body.by_severity).toEqual({ low: 2, medium: 1, high: 1 });
+
+    // Acknowledging, then one more window on the SAME device: it is new again
+    // (the device flagged after the acknowledgement), but still one device.
+    await request(app).post('/api/anomalies/acknowledge');
+    insertAnomaly('10.0.0.12', 'low');
+    const again = await request(app).get('/api/anomalies/summary');
+    expect(again.body.total_active).toBe(2);
+    expect(again.body.unacknowledged_active).toBe(1);
+  });
 });
 
 describe('GET /api/anomalies/events', () => {

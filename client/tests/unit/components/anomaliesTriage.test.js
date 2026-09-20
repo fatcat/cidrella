@@ -40,6 +40,7 @@ const CALM = {
       contribution: 0.2,
       observed: 0.3,
       baseline: 0.02,
+      peers: 0.28,
     },
   ],
 };
@@ -61,6 +62,7 @@ const WORST = {
       contribution: 0.44,
       observed: 0.38,
       baseline: 0.05,
+      peers: 0.04,
     },
   ],
 };
@@ -317,6 +319,27 @@ describe('anomaly triage page', () => {
         url.startsWith(`/anomalies/client/${WORST.identity}/evidence/signal?feature=block_ratio`),
       ),
     ).toBe(true);
+    w.unmount();
+  });
+
+  it('says whether a factor is odd for the device alone or for its peers too', async () => {
+    const w = await mountPage();
+    await dotFor(w, 'worst-host').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    const worst = w.find('.evidence-drawer .factor');
+    expect(worst.find('.factor-vals').text()).toContain('peers');
+    expect(worst.find('.factor-peers').text()).toBe('Above its peers too');
+    expect(worst.find('.factor-peers').classes()).toContain('alone');
+
+    // The calm host's NXDOMAIN rate is high against its own baseline but the
+    // whole network is doing it: shared, not a finding about this device.
+    await dotFor(w, 'calm-host').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    const mild = w.find('.evidence-drawer .factor');
+    expect(mild.find('.factor-peers').text()).toBe('In line with what peers do');
+    expect(mild.find('.factor-peers').classes()).toContain('shared');
     w.unmount();
   });
 });

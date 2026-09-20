@@ -6,7 +6,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import FEATURE_NAMES, THREAT_SHAPE_RULES  # noqa: E402
-from threat import threat_shape  # noqa: E402
+from threat import peer_median_of, threat_shape  # noqa: E402
 
 
 def vector(**overrides):
@@ -50,6 +50,22 @@ class ThreatShapeTest(unittest.TestCase):
     def test_short_or_malformed_vector_counts_missing_rules_as_zero(self):
         self.assertEqual(threat_shape([]), 0.0)
         self.assertEqual(threat_shape(["x"] * len(FEATURE_NAMES)), 0.0)
+
+
+class PeerMedianTest(unittest.TestCase):
+    def test_none_below_two_devices(self):
+        self.assertIsNone(peer_median_of({}))
+        self.assertIsNone(peer_median_of({"a": [1.0, 2.0]}))
+
+    def test_median_per_feature_odd_and_even(self):
+        three = {"a": [1.0, 10.0], "b": [3.0, 20.0], "c": [2.0, 90.0]}
+        self.assertEqual(peer_median_of(three), [2.0, 20.0])
+        four = {"a": [1.0], "b": [2.0], "c": [3.0], "d": [10.0]}
+        self.assertEqual(peer_median_of(four), [2.5])
+
+    def test_accepts_any_sequence(self):
+        # Training caches numpy rows; tuples stand in for them here.
+        self.assertEqual(peer_median_of({"a": (4.0, 1.0), "b": (2.0, 3.0)}), [3.0, 2.0])
 
 
 if __name__ == "__main__":
