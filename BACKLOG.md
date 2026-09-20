@@ -512,15 +512,15 @@ that no longer exist.
 ### Anomaly identity: full MAC scope (lease history + IP-spanning DNS aggregation)
 
 Migration 055 and the sidecar changes shipped the **minimal** half of this: `anomaly_scores`,
-`anomaly_models` and `anomaly_whitelist` are keyed by an `identity` resolved at train/score time
+`anomaly_models` and `anomaly_allowlist` are keyed by an `identity` resolved at train/score time
 (the MAC from the device's *current* DHCP lease, falling back to the IP when there is none). That
 closes the safety-critical bug — a device taking over another host's IP no longer inherits its
-learned baseline, and a whitelist entry now survives a renewal.
+learned baseline, and a allowlist entry now survives a renewal.
 
 What it does **not** close: feature extraction is still IP-keyed, because the DuckDB DNS log has
 no MAC column — `features.get_client_history_hours()` / `extract_training_data()` /
 `extract_features_with_history()` all take a `client_ip`. So when a device renews onto a new IP,
-its identity and whitelist carry over but its *observable history* resets, and it drops back to
+its identity and allowlist carry over but its *observable history* resets, and it drops back to
 `learning` until it re-accumulates `anomaly_min_training_hours` at the new address.
 
 The full fix needs both halves:

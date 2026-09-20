@@ -42,7 +42,7 @@
       <Column field="categories" header="Categories" />
       <Column header="Status" style="width: 8rem">
         <template #body="{ data }">
-          <span v-if="data.whitelisted" class="badge badge-green">Whitelisted</span>
+          <span v-if="data.allowlisted" class="badge badge-green">Allowlisted</span>
           <span v-else class="badge badge-red">Blocked</span>
         </template>
       </Column>

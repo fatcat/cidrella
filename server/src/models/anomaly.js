@@ -26,11 +26,11 @@ export function resolveIdentity(db, clientIp) {
   return row?.mac_address || clientIp;
 }
 
-export function addWhitelistEntry(db, clientIp, reason) {
+export function addAllowlistEntry(db, clientIp, reason) {
   return db.transaction(() => {
     const identity = resolveIdentity(db, clientIp);
     const result = db
-      .prepare('INSERT INTO anomaly_whitelist (identity, client_ip, reason) VALUES (?, ?, ?)')
+      .prepare('INSERT INTO anomaly_allowlist (identity, client_ip, reason) VALUES (?, ?, ?)')
       .run(identity, clientIp, reason || null);
 
     db.prepare('DELETE FROM anomaly_models WHERE identity = ?').run(identity);
@@ -39,6 +39,6 @@ export function addWhitelistEntry(db, clientIp, reason) {
   })();
 }
 
-export function deleteWhitelistEntry(db, id) {
-  return db.prepare('DELETE FROM anomaly_whitelist WHERE id = ?').run(id);
+export function deleteAllowlistEntry(db, id) {
+  return db.prepare('DELETE FROM anomaly_allowlist WHERE id = ?').run(id);
 }

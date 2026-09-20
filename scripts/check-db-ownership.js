@@ -173,7 +173,7 @@ const STRICT_TABLE_RULES = [
       );
     },
   },
-  ...['anomaly_scores', 'anomaly_models', 'anomaly_whitelist'].map((table) => ({
+  ...['anomaly_scores', 'anomaly_models', 'anomaly_allowlist'].map((table) => ({
     table,
     ownerLabel: 'server/src/models/anomaly.js or anomaly service storage',
     writePattern: new RegExp(
@@ -189,7 +189,7 @@ const STRICT_TABLE_RULES = [
       );
     },
   })),
-  ...['blocklist_categories', 'blocklist_domains', 'blocklist_whitelist'].map((table) => ({
+  ...['blocklist_categories', 'blocklist_domains', 'blocklist_allowlist'].map((table) => ({
     table,
     ownerLabel: 'server/src/models/blocklist-store.js or server/src/utils/blocklist.js',
     writePattern: new RegExp(

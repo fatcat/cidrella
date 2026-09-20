@@ -16,7 +16,7 @@ vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), exec
 vi.mock('../../../src/utils/dns-proxy.js', () => ({
   rebindProxy: vi.fn(),
   loadBlocklist: vi.fn(),
-  loadWhitelist: vi.fn(),
+  loadAllowlist: vi.fn(),
 }));
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 

@@ -71,7 +71,7 @@ afterAll(() => {
 beforeEach(() => {
   db.prepare('DELETE FROM anomaly_scores').run();
   db.prepare('DELETE FROM anomaly_models').run();
-  db.prepare('DELETE FROM anomaly_whitelist').run();
+  db.prepare('DELETE FROM anomaly_allowlist').run();
   db.prepare('DELETE FROM dhcp_leases').run();
   db.prepare("DELETE FROM settings WHERE key = 'anomaly_acknowledged_score_id'").run();
 });
@@ -221,27 +221,27 @@ describe('identity-keyed client routes', () => {
   });
 });
 
-describe('POST /api/anomalies/whitelist', () => {
-  it('resolves the current MAC and whitelists by identity', async () => {
+describe('POST /api/anomalies/allowlist', () => {
+  it('resolves the current MAC and allowlists by identity', async () => {
     setLease('10.0.0.50', 'aa:bb:cc:dd:ee:50');
     const res = await request(app)
-      .post('/api/anomalies/whitelist')
+      .post('/api/anomalies/allowlist')
       .send({ client_ip: '10.0.0.50' });
     expect(res.status).toBe(201);
 
     const row = db
-      .prepare('SELECT identity, client_ip FROM anomaly_whitelist WHERE id = ?')
+      .prepare('SELECT identity, client_ip FROM anomaly_allowlist WHERE id = ?')
       .get(res.body.id);
     expect(row).toMatchObject({ identity: 'aa:bb:cc:dd:ee:50', client_ip: '10.0.0.50' });
   });
 
-  it('whitelists an IPv6 client by its canonical address when no lease knows it', async () => {
+  it('allowlists an IPv6 client by its canonical address when no lease knows it', async () => {
     const res = await request(app)
-      .post('/api/anomalies/whitelist')
+      .post('/api/anomalies/allowlist')
       .send({ client_ip: 'FD00:000A::0016' });
     expect(res.status).toBe(201);
     const row = db
-      .prepare('SELECT identity, client_ip FROM anomaly_whitelist WHERE id = ?')
+      .prepare('SELECT identity, client_ip FROM anomaly_allowlist WHERE id = ?')
       .get(res.body.id);
     expect(row).toMatchObject({ identity: 'fd00:a::16', client_ip: 'fd00:a::16' });
     // The client history route takes the same identity in any spelling.
@@ -251,10 +251,10 @@ describe('POST /api/anomalies/whitelist', () => {
     expect(scoped.status).toBe(400);
   });
 
-  it('stays whitelisted under a renewed IP for the same MAC', async () => {
+  it('stays allowlisted under a renewed IP for the same MAC', async () => {
     setLease('10.0.0.51', 'aa:bb:cc:dd:ee:51');
     const first = await request(app)
-      .post('/api/anomalies/whitelist')
+      .post('/api/anomalies/allowlist')
       .send({ client_ip: '10.0.0.51' });
     expect(first.status).toBe(201);
 
@@ -263,7 +263,7 @@ describe('POST /api/anomalies/whitelist', () => {
     setLease('10.0.0.52', 'aa:bb:cc:dd:ee:51');
 
     const second = await request(app)
-      .post('/api/anomalies/whitelist')
+      .post('/api/anomalies/allowlist')
       .send({ client_ip: '10.0.0.52' });
     expect(second.status).toBe(409);
   });
@@ -282,7 +282,7 @@ describe('POST /api/anomalies/whitelist', () => {
     `,
     ).run();
 
-    await request(app).post('/api/anomalies/whitelist').send({ client_ip: '10.0.0.53' });
+    await request(app).post('/api/anomalies/allowlist').send({ client_ip: '10.0.0.53' });
 
     expect(
       db

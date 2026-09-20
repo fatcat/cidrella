@@ -22,7 +22,7 @@ import {
   getAndResetCountryHits,
   getAndResetPerformanceMetrics,
   loadBlocklist,
-  loadWhitelist,
+  loadAllowlist,
   getAndResetBlocklistHits,
   evaluateInboundPolicy,
 } from '../../../src/utils/dns-proxy.js';
@@ -219,7 +219,7 @@ describe('loadBlocklist', () => {
     `);
 
     loadBlocklist();
-    loadWhitelist();
+    loadAllowlist();
 
     const status = getProxyStatus();
     expect(status.blocklistLoaded).toBe(true);
@@ -239,10 +239,10 @@ describe('loadBlocklist', () => {
     loadBlocklist();
   });
 
-  it('does not block whitelisted domains', () => {
+  it('does not block allowlisted domains', () => {
     const db = getDb();
 
-    // Whitelist exclusion used to be baked into the in-memory map by a
+    // Allowlist exclusion used to be baked into the in-memory map by a
     // NOT IN subquery at load time, so it was observable as a smaller domain
     // count. Domains are read from SQLite per query now and the allowlist is
     // applied at lookup time, so assert the verdict rather than the count.
@@ -253,14 +253,14 @@ describe('loadBlocklist', () => {
       INSERT OR REPLACE INTO blocklist_categories (slug, enabled, domain_count) VALUES ('malware', 1, 2);
       INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('evil.example.com', 'malware');
       INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('good.example.com', 'malware');
-      INSERT OR IGNORE INTO blocklist_whitelist (domain) VALUES ('good.example.com');
+      INSERT OR IGNORE INTO blocklist_allowlist (domain) VALUES ('good.example.com');
     `);
 
     loadBlocklist();
-    loadWhitelist();
+    loadAllowlist();
 
     expect(evaluateInboundPolicy('good.example.com').action).toBe('forward');
-    // Subdomains of a whitelisted name are exempt too.
+    // Subdomains of a allowlisted name are exempt too.
     expect(evaluateInboundPolicy('www.good.example.com').action).toBe('forward');
     // And the allowlist does not accidentally exempt everything else.
     expect(evaluateInboundPolicy('evil.example.com').action).toBe('block');
@@ -270,9 +270,9 @@ describe('loadBlocklist', () => {
       "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'false')",
     ).run();
     db.exec("DELETE FROM blocklist_domains WHERE category_slug = 'malware'");
-    db.exec('DELETE FROM blocklist_whitelist');
+    db.exec('DELETE FROM blocklist_allowlist');
     loadBlocklist();
-    loadWhitelist();
+    loadAllowlist();
   });
 
   it('ignores domains whose category is disabled', () => {
@@ -287,7 +287,7 @@ describe('loadBlocklist', () => {
     `);
 
     loadBlocklist();
-    loadWhitelist();
+    loadAllowlist();
 
     expect(evaluateInboundPolicy('off.example.com').action).toBe('forward');
 

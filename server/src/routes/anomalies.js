@@ -472,17 +472,20 @@ router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── Whitelist CRUD ─────────────────────────────────────
+// ─── Allowlist CRUD ─────────────────────────────────────
 
-// GET /api/anomalies/whitelist: list whitelisted clients
-router.get('/whitelist', requirePerm('analytics:read'), (req, res) => {
+// GET /api/anomalies/allowlist: list allowlisted clients
+// The list was called a whitelist until v0.5.0. The old path stays as an
+// alias for one release so a client bundle cached from before the rename
+// keeps working across the upgrade.
+router.get(['/allowlist', '/whitelist'], requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM anomaly_whitelist ORDER BY whitelisted_at DESC').all();
+  const rows = db.prepare('SELECT * FROM anomaly_allowlist ORDER BY allowlisted_at DESC').all();
   res.json(enrichWithHostnames(rows));
 });
 
-// POST /api/anomalies/whitelist: whitelist a client IP
-router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
+// POST /api/anomalies/allowlist: allowlist a client IP
+router.post(['/allowlist', '/whitelist'], requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const { client_ip, reason } = req.body;
 
@@ -491,26 +494,26 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   const clientIp = canonicalizeIp(client_ip);
 
   const identity = Anomaly.resolveIdentity(db, clientIp);
-  const existing = db.prepare('SELECT id FROM anomaly_whitelist WHERE identity = ?').get(identity);
-  if (existing) return res.status(409).json({ error: 'Already whitelisted' });
+  const existing = db.prepare('SELECT id FROM anomaly_allowlist WHERE identity = ?').get(identity);
+  if (existing) return res.status(409).json({ error: 'Already allowlisted' });
 
-  const id = Anomaly.addWhitelistEntry(db, clientIp, reason);
+  const id = Anomaly.addAllowlistEntry(db, clientIp, reason);
 
-  audit(req.user.id, 'anomaly_whitelist_add', 'anomaly_whitelist', id, { client_ip, reason });
+  audit(req.user.id, 'anomaly_allowlist_add', 'anomaly_allowlist', id, { client_ip, reason });
   res.status(201).json({ id, ok: true });
 });
 
-// DELETE /api/anomalies/whitelist/:id: remove from whitelist
-router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
+// DELETE /api/anomalies/allowlist/:id: remove from allowlist
+router.delete(['/allowlist/:id', '/whitelist/:id'], requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
 
-  const entry = db.prepare('SELECT * FROM anomaly_whitelist WHERE id = ?').get(id);
+  const entry = db.prepare('SELECT * FROM anomaly_allowlist WHERE id = ?').get(id);
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  Anomaly.deleteWhitelistEntry(db, id);
-  audit(req.user.id, 'anomaly_whitelist_remove', 'anomaly_whitelist', id, {
+  Anomaly.deleteAllowlistEntry(db, id);
+  audit(req.user.id, 'anomaly_allowlist_remove', 'anomaly_allowlist', id, {
     client_ip: entry.client_ip,
   });
   res.json({ ok: true });

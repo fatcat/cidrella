@@ -63,13 +63,13 @@
             @click="emit('acknowledge')"
           />
           <Button
-            label="Whitelist"
+            label="Allowlist"
             icon="pi pi-shield"
             severity="secondary"
             outlined
             size="small"
-            data-track="evidence-whitelist"
-            @click="emit('whitelist')"
+            data-track="evidence-allowlist"
+            @click="emit('allowlist')"
           />
         </div>
       </div>
@@ -299,7 +299,7 @@ defineProps({
   position: { type: String, default: '' },
   peerScores: { type: Array, default: () => [] },
 });
-const emit = defineEmits(['close', 'prev', 'next', 'whitelist', 'acknowledge']);
+const emit = defineEmits(['close', 'prev', 'next', 'allowlist', 'acknowledge']);
 
 function contribColor(contribution) {
   if (contribution > 0.3) return chartColor('err');

@@ -16,7 +16,7 @@ feature), not how an operator thinks:
 - **"System" is a catch-all** of 7 unrelated things (Backup, Certificates, Users,
   Themes, Logging, Updates, Import).
 - **Related filtering split across 3 tabs**: Category Blocking / GeoIP / Anomaly
-  are one logical job and share a whitelist concept that has no single home.
+  are one logical job and share a allowlist concept that has no single home.
 - **Rogue DHCP under "Security"** but it's a DHCP question (split from DHCP config).
 - **Calculator** is a stateless tool, not a setting. It's a category error.
 - Rail items are `<a @click>` with no `href`/`role`/focus → **not keyboard- or
@@ -36,7 +36,7 @@ feature), not how an operator thinks:
 | Category Blocking | **Filtering** | Categories |
 | GeoIP | **Filtering** | GeoIP |
 | Anomaly Detection | **Filtering** | Anomalies |
-| (shared whitelist) | **Filtering** | Whitelist (shared source of truth) |
+| (shared allowlist) | **Filtering** | Allowlist (shared source of truth) |
 | Users | **Access** | Users |
 | Certificates | **Access** | TLS Certificate |
 | Themes | **Preferences** | Appearance |
@@ -47,7 +47,7 @@ feature), not how an operator thinks:
 
 Resulting rail (7): **General · DNS · DHCP · Filtering · Access · Preferences ·
 Maintenance** (+ Calculator removed to Tools). Biggest single win = **Filtering**
-(three tabs → one; shared whitelist gets one home).
+(three tabs → one; shared allowlist gets one home).
 
 ## Navigation options
 
@@ -86,13 +86,13 @@ anchored-scroll only for pure-form pages (General, DNS) if desired, not the
 table-heavy ones. **A later upgrades to C with zero rework of the pages.**
 
 **Suggested first slice (vertical proof of concept): the Filtering merge.**
-Category Blocking + GeoIP + Anomaly + shared Whitelist → one page with sub-tabs.
-It's the biggest "stop hopping" win and forces the shared-whitelist
+Category Blocking + GeoIP + Anomaly + shared Allowlist → one page with sub-tabs.
+It's the biggest "stop hopping" win and forces the shared-allowlist
 single-source-of-truth question.
 
 ### Top actions
 1. Re-parent the 17 tabs into the 8-page map; remove Calculator from Settings.
-2. Merge the 3 filtering features + shared whitelist into one **Filtering** page.
+2. Merge the 3 filtering features + shared allowlist into one **Filtering** page.
 3. Add a rail **search** that deep-links to `page#sub-tab`; fix rail-item
    keyboard/ARIA (real links/buttons, focusable, `role`).
 
@@ -126,7 +126,7 @@ single-source-of-truth question.
   numeric indices → new `page#sub-tab` so bookmarks/muscle memory don't break.
 
 ## Open questions for the architect
-- Confirm a **single backend whitelist** store/endpoint so the merged Filtering
+- Confirm a **single backend allowlist** store/endpoint so the merged Filtering
   page binds one source of truth (Categories + GeoIP share it).
 - Certificate placement: **Access** (access config) vs a "Server" page (arguable).
 - "Maintenance" grouping: some operators expect Updates/Backup near the top, not

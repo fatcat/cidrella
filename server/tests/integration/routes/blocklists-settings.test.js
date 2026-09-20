@@ -190,12 +190,12 @@ describe('schedule vocabulary single-sourcing (v0.4.16)', () => {
   });
 });
 
-// The whitelist route used to inline its own domain regex with NO length bound,
+// The allowlist route used to inline its own domain regex with NO length bound,
 // so a 300-character name was accepted here and rejected by every other route.
 // It now uses the shared isValidDomain (shape + 253 cap) and keeps its own
 // extra TLD requirement, which is deliberate for a public-domain allowlist.
 // See REVIEW.md, duplicate-logic audit #21.
-describe('whitelist domain validation matches the shared validator', () => {
+describe('allowlist domain validation matches the shared validator', () => {
   // These two names are built from labels of 63 characters or fewer on purpose.
   // They used to be a single 249-character label, which hits the 253 total cap
   // but is not a legal domain: RFC 1035 caps a LABEL at 63 octets, and
@@ -207,7 +207,7 @@ describe('whitelist domain validation matches the shared validator', () => {
     const tooLong = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(62)].join('.');
     expect(tooLong.length).toBe(254);
     expect(tooLong.split('.').every((l) => l.length <= 63)).toBe(true);
-    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: tooLong });
+    const res = await request(app).post('/api/blocklists/allowlist').send({ domain: tooLong });
     expect(res.status).toBe(400);
   });
 
@@ -215,34 +215,34 @@ describe('whitelist domain validation matches the shared validator', () => {
     const ok = ['a'.repeat(63), 'a'.repeat(63), 'a'.repeat(63), 'a'.repeat(61)].join('.');
     expect(ok.length).toBe(253);
     expect(ok.split('.').every((l) => l.length <= 63)).toBe(true);
-    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: ok });
+    const res = await request(app).post('/api/blocklists/allowlist').send({ domain: ok });
     expect(res.status).toBe(201);
   });
 
   it('rejects a label longer than 63 characters even when the total fits', async () => {
     const badLabel = `${'a'.repeat(64)}.com`;
     expect(badLabel.length).toBeLessThan(253);
-    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: badLabel });
+    const res = await request(app).post('/api/blocklists/allowlist').send({ domain: badLabel });
     expect(res.status).toBe(400);
   });
 
   it('still requires a TLD, which is this route being deliberately stricter', async () => {
-    const res = await request(app).post('/api/blocklists/whitelist').send({ domain: 'intranet' });
+    const res = await request(app).post('/api/blocklists/allowlist').send({ domain: 'intranet' });
     expect(res.status).toBe(400);
   });
 
   it('accepts an ordinary domain', async () => {
     const res = await request(app)
-      .post('/api/blocklists/whitelist')
+      .post('/api/blocklists/allowlist')
       .send({ domain: 'example.com' });
     expect(res.status).toBe(201);
   });
 });
 
 describe('input type guards (v0.4.16-pre.3 pentest)', () => {
-  it('whitelist rejects non-string domain with 400 not 500', async () => {
+  it('allowlist rejects non-string domain with 400 not 500', async () => {
     for (const bad of [123, true, ['x.com'], { d: 'x.com' }]) {
-      const res = await request(app).post('/api/blocklists/whitelist').send({ domain: bad });
+      const res = await request(app).post('/api/blocklists/allowlist').send({ domain: bad });
       expect(res.status, `domain ${JSON.stringify(bad)}`).toBe(400);
     }
   });

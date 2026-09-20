@@ -132,13 +132,13 @@
             </div>
             <div class="actions">
               <Button
-                label="Whitelist"
+                label="Allowlist"
                 icon="pi pi-shield"
                 severity="secondary"
                 outlined
                 size="small"
-                data-track="anomalies-whitelist"
-                @click="handleWhitelist(selected)"
+                data-track="anomalies-allowlist"
+                @click="handleAllowlist(selected)"
               />
             </div>
           </div>
@@ -270,10 +270,10 @@
       </div>
     </div>
 
-    <WhitelistDialog
-      v-model:visible="whitelistDialogVisible"
-      :target="whitelistTarget"
-      @whitelisted="onWhitelisted"
+    <AllowlistDialog
+      v-model:visible="allowlistDialogVisible"
+      :target="allowlistTarget"
+      @allowlisted="onAllowlisted"
     />
   </div>
 </template>
@@ -284,7 +284,7 @@ import { EMPTY_CELL } from '../utils/format.js';
 import Button from '../ui/Button.js';
 import AnomalyGauge from '../components/anomaly/AnomalyGauge.vue';
 import AnomalyScoreHistory from '../components/anomaly/AnomalyScoreHistory.vue';
-import WhitelistDialog from '../components/anomaly/WhitelistDialog.vue';
+import AllowlistDialog from '../components/anomaly/AllowlistDialog.vue';
 import AnomalyHeatmap from '../components/anomaly/AnomalyHeatmap.vue';
 import AnomalySparkline from '../components/anomaly/AnomalySparkline.vue';
 import AnomalyFeatureTrend from '../components/anomaly/AnomalyFeatureTrend.vue';
@@ -354,16 +354,16 @@ async function selectClient(identity) {
   ]);
 }
 
-// Whitelist dialog state
-const whitelistDialogVisible = ref(false);
-const whitelistTarget = ref(null);
+// Allowlist dialog state
+const allowlistDialogVisible = ref(false);
+const allowlistTarget = ref(null);
 
-function handleWhitelist(client) {
-  whitelistTarget.value = client;
-  whitelistDialogVisible.value = true;
+function handleAllowlist(client) {
+  allowlistTarget.value = client;
+  allowlistDialogVisible.value = true;
 }
 
-function onWhitelisted(target) {
+function onAllowlisted(target) {
   if (selectedIp.value === target.identity) selectedIp.value = null;
 }
 

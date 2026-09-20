@@ -39,9 +39,9 @@ settings status line.
 ## Use **unfiltered** upstreams
 
 The presets ship the providers' **unfiltered** endpoints on purpose. CIDRella is
-the single source of filtering (blocklist + GeoIP + the shared whitelist).
+the single source of filtering (blocklist + GeoIP + the shared allowlist).
 Pointing at a *filtered* upstream would double-filter: it would NXDOMAIN a domain
-before CIDRella's logic runs, so your whitelist/override couldn't un-block it.
+before CIDRella's logic runs, so your allowlist/override couldn't un-block it.
 
 | Provider | Addresses | Hostname | Note |
 |---|---|---|---|

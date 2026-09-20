@@ -89,8 +89,8 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     fingerprintChanges.value = [];
   }
 
-  async function whitelistClient(clientIp, reason) {
-    await api.post('/anomalies/whitelist', { client_ip: clientIp, reason });
+  async function allowlistClient(clientIp, reason) {
+    await api.post('/anomalies/allowlist', { client_ip: clientIp, reason });
     // Remove all entries for this client from every locally-held list
     events.value = events.value.filter((e) => e.client_ip !== clientIp);
     learning.value = learning.value.filter((l) => l.client_ip !== clientIp);
@@ -149,7 +149,7 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     fetchSignalEvidence,
     fetchFingerprintChanges,
     clearClient,
-    whitelistClient,
+    allowlistClient,
     fetchSettings,
     updateSettings,
     acknowledgeCounter,

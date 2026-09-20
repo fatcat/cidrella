@@ -11,8 +11,8 @@
         <span class="stat-label">Blocked Domains</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ stats.whitelist_count || 0 }}</span>
-        <span class="stat-label">Whitelisted</span>
+        <span class="stat-value">{{ stats.allowlist_count || 0 }}</span>
+        <span class="stat-label">Allowlisted</span>
       </div>
       <div class="stat">
         <span class="stat-value">{{
@@ -295,7 +295,7 @@ const toast = useToast();
 const stats = ref({
   enabled_categories: 0,
   total_domains: 0,
-  whitelist_count: 0,
+  allowlist_count: 0,
   last_update: null,
 });
 const settings = reactive({

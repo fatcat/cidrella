@@ -166,7 +166,7 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
   `,
     )
     .get().c;
-  const whitelistCount = db.prepare('SELECT COUNT(*) as c FROM blocklist_whitelist').get().c;
+  const allowlistCount = db.prepare('SELECT COUNT(*) as c FROM blocklist_allowlist').get().c;
   const lastUpdate = db
     .prepare('SELECT MAX(last_fetched_at) as t FROM blocklist_categories WHERE enabled = 1')
     .get().t;
@@ -174,7 +174,7 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
   res.json({
     enabled_categories: enabledCount,
     total_domains: totalDomains,
-    whitelist_count: whitelistCount,
+    allowlist_count: allowlistCount,
     last_update: lastUpdate,
   });
 });
@@ -280,15 +280,18 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/blocklists/whitelist
-router.get('/whitelist', requirePerm('dns:read'), (req, res) => {
+// GET /api/blocklists/allowlist
+// The list was called a whitelist until v0.5.0. The old path stays as an
+// alias for one release so a client bundle cached from before the rename
+// keeps working across the upgrade.
+router.get(['/allowlist', '/whitelist'], requirePerm('dns:read'), (req, res) => {
   const db = getDb();
-  const items = db.prepare('SELECT * FROM blocklist_whitelist ORDER BY domain').all();
+  const items = db.prepare('SELECT * FROM blocklist_allowlist ORDER BY domain').all();
   res.json(items);
 });
 
-// POST /api/blocklists/whitelist
-router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
+// POST /api/blocklists/allowlist
+router.post(['/allowlist', '/whitelist'], requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const { domain, reason } = req.body;
   // Type guard before the string methods below: a non-string domain (number,
@@ -313,27 +316,27 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
 
   const normalized = domain.toLowerCase().trim();
   const existing = db
-    .prepare('SELECT id FROM blocklist_whitelist WHERE domain = ?')
+    .prepare('SELECT id FROM blocklist_allowlist WHERE domain = ?')
     .get(normalized);
-  if (existing) return res.status(409).json({ error: 'Domain already whitelisted' });
+  if (existing) return res.status(409).json({ error: 'Domain already allowlisted' });
 
-  const id = BlocklistStore.addWhitelistEntry(db, normalized, reason);
+  const id = BlocklistStore.addAllowlistEntry(db, normalized, reason);
   generateBlocklistConfig(db);
 
-  audit(req.user.id, 'create', 'blocklist_whitelist', id, { domain: normalized });
+  audit(req.user.id, 'create', 'blocklist_allowlist', id, { domain: normalized });
   res.status(201).json({ id });
 });
 
-// DELETE /api/blocklists/whitelist/:id
-router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
+// DELETE /api/blocklists/allowlist/:id
+router.delete(['/allowlist/:id', '/whitelist/:id'], requirePerm('dns:write'), (req, res) => {
   const db = getDb();
-  const entry = db.prepare('SELECT * FROM blocklist_whitelist WHERE id = ?').get(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'Whitelist entry not found' });
+  const entry = db.prepare('SELECT * FROM blocklist_allowlist WHERE id = ?').get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Allowlist entry not found' });
 
-  BlocklistStore.deleteWhitelistEntry(db, entry.id);
+  BlocklistStore.deleteAllowlistEntry(db, entry.id);
   generateBlocklistConfig(db);
 
-  audit(req.user.id, 'delete', 'blocklist_whitelist', entry.id, { domain: entry.domain });
+  audit(req.user.id, 'delete', 'blocklist_allowlist', entry.id, { domain: entry.domain });
   res.json({ ok: true });
 });
 
@@ -384,15 +387,15 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
   const hasMore = rows.length > limitNum;
   const items = hasMore ? rows.slice(0, limitNum) : rows;
 
-  const whitelisted = new Set(
+  const allowlisted = new Set(
     db
-      .prepare('SELECT domain FROM blocklist_whitelist')
+      .prepare('SELECT domain FROM blocklist_allowlist')
       .all()
       .map((r) => r.domain),
   );
 
   for (const item of items) {
-    item.whitelisted = whitelisted.has(item.domain);
+    item.allowlisted = allowlisted.has(item.domain);
   }
 
   // `hasMore` rather than a total. An exact count of matches across 2.65M rows

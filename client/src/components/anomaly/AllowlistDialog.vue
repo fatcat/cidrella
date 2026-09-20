@@ -3,14 +3,14 @@
 <template>
   <Dialog
     :visible="visible"
-    header="Whitelist Client"
+    header="Allowlist Client"
     :modal="true"
     :closable="true"
     :style="{ width: '26rem' }"
     @update:visible="emit('update:visible', $event)"
   >
     <p>
-      Whitelist <strong>{{ target?.client_ip }}</strong>
+      Allowlist <strong>{{ target?.client_ip }}</strong>
       <span v-if="target?.hostname"> ({{ target.hostname }})</span>
       from anomaly detection?
     </p>
@@ -19,10 +19,10 @@
       for it.
     </p>
     <div class="field" style="margin-top: 0.75rem">
-      <label style="font-size: 0.85rem" for="anomaly-whitelist-reason">Reason (optional)</label>
+      <label style="font-size: 0.85rem" for="anomaly-allowlist-reason">Reason (optional)</label>
       <InputText
         v-model="reason"
-        input-id="anomaly-whitelist-reason"
+        input-id="anomaly-allowlist-reason"
         placeholder="e.g. Known scanner, expected behavior"
         fluid
         style="margin-top: 0.25rem"
@@ -31,11 +31,11 @@
     <template #footer>
       <Button label="Cancel" text @click="emit('update:visible', false)" />
       <Button
-        label="Whitelist"
+        label="Allowlist"
         icon="pi pi-shield"
         severity="warn"
         :loading="busy"
-        data-track="anomalies-whitelist-confirm"
+        data-track="anomalies-allowlist-confirm"
         @click="confirm"
       />
     </template>
@@ -55,7 +55,7 @@ const props = defineProps({
   visible: { type: Boolean, default: false },
   target: { type: Object, default: null }, // { client_ip, hostname, identity }
 });
-const emit = defineEmits(['update:visible', 'whitelisted']);
+const emit = defineEmits(['update:visible', 'allowlisted']);
 
 const store = useAnomalyStore();
 const toast = useToast();
@@ -73,12 +73,12 @@ async function confirm() {
   if (!props.target) return;
   busy.value = true;
   try {
-    await store.whitelistClient(props.target.client_ip, reason.value || null);
+    await store.allowlistClient(props.target.client_ip, reason.value || null);
     emit('update:visible', false);
-    emit('whitelisted', props.target);
+    emit('allowlisted', props.target);
     toast.add({
       severity: 'success',
-      summary: 'Client whitelisted',
+      summary: 'Client allowlisted',
       detail: props.target.client_ip,
       life: 3000,
     });

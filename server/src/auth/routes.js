@@ -397,7 +397,7 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
 // granular, a login followed by an immediate logout in the same wall-
 // clock second would leave `iat == updated_at` and the token would
 // still verify. Bumping updated_at by 1 second closes the race.
-// A proper blacklist would need persistent state; this approach is
+// A proper denylist would need persistent state; this approach is
 // equivalent for a single-admin tool and doesn't grow unbounded.
 router.post('/logout', (req, res) => {
   try {

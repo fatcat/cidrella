@@ -1,9 +1,9 @@
 <!--
-  Filtering › Allowed Domains: the shared domain whitelist (exempts a
+  Filtering › Allowed Domains: the shared domain allowlist (exempts a
   domain from BOTH category blocking and GeoIP). Extracted from
   Blocklists.vue's inner "Allowed Domains" TabPanel when the Filtering
   area's nested tabs were flattened (v0.4.16). One backend list:
-  /api/blocklists/whitelist.
+  /api/blocklists/allowlist.
 -->
 <template>
   <div class="allowed-domains" style="display: flex; flex-direction: column; height: 100%">
@@ -11,8 +11,8 @@
       Domains here are <strong>never</strong> blocked, by category blocking <em>or</em> GeoIP. (To
       allow specific IPs/ranges regardless of country, use Filtering › Allowed IPs.)
     </p>
-    <DomainWhitelist
-      :items="store.whitelist"
+    <DomainAllowlist
+      :items="store.allowlist"
       :on-add="wlAdd"
       :on-remove="wlRemove"
       add-track="blocklist-add-allowed-domain"
@@ -24,7 +24,7 @@
 <script setup>
 import { onMounted } from 'vue';
 import { useToast } from '../../ui/useToast.js';
-import DomainWhitelist from '../../components/DomainWhitelist.vue';
+import DomainAllowlist from '../../components/DomainAllowlist.vue';
 import { apiError } from '../../utils/format.js';
 import { useBlocklistStore } from '../../stores/blocklists.js';
 
@@ -33,7 +33,7 @@ const toast = useToast();
 
 async function wlAdd(domain, reason) {
   try {
-    await store.addWhitelist(domain, reason);
+    await store.addAllowlist(domain, reason);
     toast.add({ severity: 'success', summary: 'Domain allowed', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -42,14 +42,14 @@ async function wlAdd(domain, reason) {
 
 async function wlRemove(entry) {
   try {
-    await store.removeWhitelist(entry.id);
+    await store.removeAllowlist(entry.id);
     toast.add({ severity: 'success', summary: 'Domain removed', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
 }
 
-onMounted(() => store.fetchWhitelist());
+onMounted(() => store.fetchAllowlist());
 </script>
 
 <style scoped>

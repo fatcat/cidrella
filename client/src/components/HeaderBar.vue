@@ -128,13 +128,13 @@
         <div
           class="status-popover-row status-popover-clickable"
           @click="goToRogueDhcp"
-          title="Open Rogue DHCP"
+          title="Open Rogue DHCP Server detection"
         >
           <StatusDot
             :kind="rogueDhcpCount > 0 ? 'warn' : 'ok'"
             :label="dotLabel(rogueDhcpCount > 0 ? 'warn' : 'ok')"
           />
-          <span class="status-popover-label">Rogue DHCP</span>
+          <span class="status-popover-label">Rogue DHCP Server</span>
           <span class="status-popover-val">{{ rogueDhcpDisplay }}</span>
         </div>
         <div class="status-popover-row">

@@ -159,14 +159,14 @@ describe('search: results are unchanged by the rewrite', () => {
     expect(res.body.items).toEqual([]);
   });
 
-  it('marks whitelisted domains', async () => {
-    db.prepare('INSERT OR IGNORE INTO blocklist_whitelist (domain) VALUES (?)').run(
+  it('marks allowlisted domains', async () => {
+    db.prepare('INSERT OR IGNORE INTO blocklist_allowlist (domain) VALUES (?)').run(
       'n00.needle.example.com',
     );
     const res = await search('n00.needle');
     expect(res.body.items[0]).toMatchObject({
       domain: 'n00.needle.example.com',
-      whitelisted: true,
+      allowlisted: true,
     });
   });
 });

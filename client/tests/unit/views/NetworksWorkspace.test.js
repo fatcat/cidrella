@@ -447,7 +447,9 @@ function installApiFixtures() {
   });
 }
 
-async function mountWorkspace(options = {}) {
+// `settled: false` returns before the workspace reads resolve, for a test that
+// looks at the first paint.
+async function mountWorkspace({ settled = true, ...options } = {}) {
   const wrapper = mount(NetworksWorkspace, {
     ...options,
     global: {
@@ -484,6 +486,7 @@ async function mountWorkspace(options = {}) {
       },
     },
   });
+  if (!settled) return wrapper;
   await flushPromises();
   await flushPromises();
   return wrapper;
@@ -541,6 +544,32 @@ describe('Networks workspace', () => {
     expect(firstNetworkRead[1].params.q).toBe('printer');
     expect(firstDnsRead[1].params.q).toBe('printer');
     expect(firstDhcpRead[1].params.q).toBe('printer');
+  });
+
+  it('shows the network tab set on the first paint, before the tree has loaded', async () => {
+    localStorage.setItem(
+      'cidrella_workspace_v1_admin',
+      JSON.stringify({ context: 'network', network: '11', view: 'dhcp' }),
+    );
+    // Mount without waiting for the workspace reads. The estate tabs used to
+    // render here and swap to the network tabs once the tree came back.
+    const wrapper = await mountWorkspace({ settled: false });
+    const labels = () =>
+      wrapper.findAll('.view-tabs button').map((button) => button.text().split('\n')[0].trim());
+    expect(labels().map((label) => label.replace(/\d+$/, '').trim())).toEqual([
+      'Addresses',
+      'DNS',
+      'DHCP',
+      'Ranges',
+    ]);
+    await flushPromises();
+    expect(labels().map((label) => label.replace(/\d+$/, '').trim())).toEqual([
+      'Addresses',
+      'DNS',
+      'DHCP',
+      'Ranges',
+    ]);
+    wrapper.unmount();
   });
 
   it('composes the section 5 presentation boundaries around one orchestrator', async () => {

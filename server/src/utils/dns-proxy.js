@@ -78,7 +78,7 @@ let healthTimer = null;
 let geoipRuleSet = null; // Set<string>, enabled country codes
 let geoipMode = 'blocklist'; // 'blocklist' or 'allowlist'
 let geoipAllowEntries = []; // parsed IP/CIDR entries never GeoIP-blocked
-let whitelistSet = null; // Set<string>, single global allowlist (blocklist_whitelist), exempts from GeoIP + category blocking
+let allowlistSet = null; // Set<string>, single global allowlist (blocklist_allowlist), exempts from GeoIP + category blocking
 
 // Blocklist state. Domains are NOT held in memory: they are looked up per
 // query against blocklist_domains, which is a WITHOUT ROWID table keyed on
@@ -86,7 +86,7 @@ let whitelistSet = null; // Set<string>, single global allowlist (blocklist_whit
 //
 // This used to be a Map of every enabled domain. That had a hard V8 ceiling of
 // 16,777,216 entries ("Map maximum size exceeded"), cost several hundred MB
-// resident, and had to be rebuilt from scratch on every whitelist edit and
+// resident, and had to be rebuilt from scratch on every allowlist edit and
 // category toggle, which took about 2.8s at 2.65M domains and blocked DNS for
 // all of it. Measured against that same list, the SQLite lookup costs 8.1us
 // per query including the full label walk (~124k q/s), and there is no reload.
@@ -201,15 +201,15 @@ function isGeoipAllowed(ip) {
   return ipInAny(ip, geoipAllowEntries);
 }
 
-// Load the single global allowlist (blocklist_whitelist) into memory. This one
+// Load the single global allowlist (blocklist_allowlist) into memory. This one
 // list applies everywhere: the category blocklist already excludes these domains
 // at load time (SQL), and the GeoIP path consults this set too. Reloaded on any
-// whitelist change via generateBlocklistConfig().
-export function loadWhitelist() {
+// allowlist change via generateBlocklistConfig().
+export function loadAllowlist() {
   const db = getDb();
-  const rows = db.prepare('SELECT domain FROM blocklist_whitelist').all();
-  whitelistSet = new Set(rows.map((r) => r.domain.toLowerCase()));
-  proxyLog('info', 'Whitelist loaded', { count: whitelistSet.size });
+  const rows = db.prepare('SELECT domain FROM blocklist_allowlist').all();
+  allowlistSet = new Set(rows.map((r) => r.domain.toLowerCase()));
+  proxyLog('info', 'Allowlist loaded', { count: allowlistSet.size });
 }
 
 /**
@@ -233,11 +233,11 @@ export function* domainSuffixes(name) {
 }
 
 // Is this query domain on the global allowlist? Returns false when nothing is
-// whitelisted.
-function isWhitelisted(queryName) {
-  if (!whitelistSet || whitelistSet.size === 0 || !queryName) return false;
+// allowlisted.
+function isAllowlisted(queryName) {
+  if (!allowlistSet || allowlistSet.size === 0 || !queryName) return false;
   for (const candidate of domainSuffixes(queryName)) {
-    if (whitelistSet.has(candidate)) return true;
+    if (allowlistSet.has(candidate)) return true;
   }
   return false;
 }
@@ -438,10 +438,10 @@ function checkBlocklist(queryName) {
   if (!blocklistEnabled || !blocklistCategories || blocklistCategories.size === 0) return null;
 
   // The allowlist used to be folded into the Map at load time by a
-  // "NOT IN (SELECT domain FROM blocklist_whitelist)" clause, so this function
+  // "NOT IN (SELECT domain FROM blocklist_allowlist)" clause, so this function
   // never had to think about it. Now that domains are read live, the check has
   // to happen here or allowlisted domains would start getting blocked.
-  if (isWhitelisted(queryName)) return null;
+  if (isAllowlisted(queryName)) return null;
 
   const stmt = getLookupStmt(getDb());
 
@@ -494,7 +494,7 @@ export function recordInboundBlock(verdict) {
 }
 
 // Post-answer verdict: do the resolved IPs trip a GeoIP country block?
-// Allowlisted answer IPs are exempt before the country lookup; a whitelisted
+// Allowlisted answer IPs are exempt before the country lookup; a allowlisted
 // query name overrides a would-be block.
 export function evaluateResolvedPolicy(queryName, ips, lookup = lookupCountry) {
   if (!ips || ips.length === 0) return { action: 'forward' };
@@ -503,7 +503,7 @@ export function evaluateResolvedPolicy(queryName, ips, lookup = lookupCountry) {
     .map((ip) => lookup(ip))
     .filter((cc) => cc !== null);
   const blocking = blockingCountryCodes(countryCodes);
-  if (blocking.length > 0 && !isWhitelisted(queryName)) {
+  if (blocking.length > 0 && !isAllowlisted(queryName)) {
     // Report only the codes that actually matched. countryCodes feeds
     // recordResolvedBlock, which increments per-country hit counters.
     return { action: 'block', blockReason: blocking[0], countryCodes: blocking };
@@ -1161,7 +1161,7 @@ export async function startProxyIfEnabled() {
 
   // Single global allowlist, used by the GeoIP path (the blocklist path also
   // excludes these at load time). Loaded regardless of which features are on.
-  loadWhitelist();
+  loadAllowlist();
 
   startProxy();
 }

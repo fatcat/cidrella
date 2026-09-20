@@ -73,7 +73,7 @@ def resolve_device_key(client_ip):
 
     The value is stored in (and read back from) the `identity` column; the
     Python side calls it `device_key` because that is what it is -- the key
-    models, scores and whitelist rows are grouped under.
+    models, scores and allowlist rows are grouped under.
 
     The MAC column is aliased in the query below, and that is load-bearing
     rather than cosmetic. CodeQL's sensitive-data heuristic classifies any
@@ -99,11 +99,11 @@ def resolve_device_key(client_ip):
         con.close()
 
 
-def get_whitelisted_device_keys():
-    """Return set of whitelisted device keys (MAC or IP-fallback)."""
+def get_allowlisted_device_keys():
+    """Return set of allowlisted device keys (MAC or IP-fallback)."""
     con = _connect()
     try:
-        rows = con.execute("SELECT identity FROM anomaly_whitelist").fetchall()
+        rows = con.execute("SELECT identity FROM anomaly_allowlist").fetchall()
         return {row["identity"] for row in rows}
     except sqlite3.OperationalError:
         # Table may not exist yet (pre-migration)

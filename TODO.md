@@ -30,7 +30,7 @@ TODO list for CIDRella
 ## v0.4.16
 - [x] dnssec support added
 - [x] rogue DHCP server detection
-- [x] add shared whitelist for geoip/content blocking
+- [x] add shared allowlist for geoip/content blocking
 - [x] add passive OS info gathering and store as host metadata
 - [x] add forwarder protocol DNS over TLS, HTTPS etc.
 - [x] add "do not recurse" setting for DNS

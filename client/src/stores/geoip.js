@@ -61,8 +61,8 @@ export const useGeoipStore = defineStore('geoip', () => {
     return res.data;
   }
 
-  // The domain-whitelist wrapper that used to sit here was a second copy of the
-  // one in stores/blocklists.js against the same /api/blocklists/whitelist
+  // The domain-allowlist wrapper that used to sit here was a second copy of the
+  // one in stores/blocklists.js against the same /api/blocklists/allowlist
   // endpoint, and nothing read it (duplicate-logic audit #59). Deleted rather
   // than wired up: the settings shell keeps its panels alive with <keep-alive>,
   // so a second cached copy of one server-side list would go stale the moment

@@ -220,8 +220,24 @@ first on a 0.4.17 host.
   keeps the backup's own setting.
 - Bundled Node runtime is 24.21.0.
 
+### Changed
+
+- "Whitelist" is now "Allowlist" everywhere: the DNS exception list under
+  Blocklists, the anomaly detector's skip list, the UI, the API and the
+  schema. Migration 078 renames the two tables and the anomaly column in
+  place; nothing in the lists changes. The API answers both
+  `/api/blocklists/allowlist` and `/api/anomalies/allowlist` and their old
+  `/whitelist` spellings for this release, so a page loaded before the
+  upgrade keeps working. Audit entries written from now on use the new
+  names; older entries keep theirs.
+
 ### Fixed
 
+- Opening IP Management on a network flashed the estate tabs (Networks, DNS,
+  DHCP) for a few hundred milliseconds before the network's own tabs
+  appeared. The page now reads the context from the route before any data
+  loads, so the right tab set is there on the first paint and only the
+  counts fill in.
 - In the workspace tables the word "online" and the word "Enabled" are green,
   not only the dot beside them, matching the classic tables. The folder rows
   in the resource explorer lost their "..." button; a right-click on the row
@@ -384,7 +400,7 @@ against the possibility.
   resolved anomalies between occurrences.
 - **Anomaly detection is keyed by MAC address** wherever a current DHCP lease
   makes one known, falling back to the IP for statically configured hosts
-  (schema 60). Scores, learned models, and the whitelist all follow the device,
+  (schema 60). Scores, learned models, and the allowlist all follow the device,
   so a device that takes over an IP no longer inherits the previous holder's
   learned baseline. Existing rows are backfilled against the current lease
   table, which is a best-effort approximation rather than an exact one because
@@ -491,7 +507,7 @@ A feature release on top of the v0.4.15 resilience base: encrypted DNS forwardin
 - **Consolidated DNS forwarding settings.** "Upstream Forwarders" and the former standalone "DNS Encryption" card are now one card: a Plaintext / DoT / DoH mode selector swaps the plaintext IP list for the curated provider picker, with a single Save that writes both concerns.
 - **Rogue DHCP events record the relay that forwarded the offer.** The probe never read `giaddr`, the field that names the relay agent in the path. Without it, a genuine second DHCP server and CIDRella's own offer returning through a relay that rewrote the server identifier look identical in the events table. The relay address is now stored per event and the page shows a "Via relay" column reading either that address or "direct".
 - **"Blocklists" renamed to "Category Blocking"** in the navigation for clarity.
-- **Single shared whitelist for category + GeoIP blocking.** The whitelist (extracted into a shared component, now also a tab on the GeoIP page) is one global allowlist that exempts a domain from **both** category blocking and GeoIP. Previously it exempted only category blocking.
+- **Single shared allowlist for category + GeoIP blocking.** The allowlist (extracted into a shared component, now also a tab on the GeoIP page) is one global allowlist that exempts a domain from **both** category blocking and GeoIP. Previously it exempted only category blocking.
 - **Theme picker in the user menu.** The header user dropdown now has a quick theme switcher (grouped light/dark) alongside the full grid on the Themes page.
 - **Interfaces page fixes.** sysfs-based interface enumeration (IP-less interfaces no longer show as "missing"), stale-interface removal, a corrected `ToggleSwitch` binding, and a dark-mode CSS token regression fix.
 - **arm64 builds discontinued.** Releases are linux-x64 only from this version; v0.4.15 was the final arm64 release. The installer and updater now refuse on arm64 hosts instead of fetching a tarball whose bundled native modules (better-sqlite3, DuckDB) cannot load on that architecture.
@@ -514,7 +530,7 @@ A feature release on top of the v0.4.15 resilience base: encrypted DNS forwardin
 
 ### Upgrade notes
 - **`min_from` is now `0.4.15` and the v0.4.15 legacy-updater compatibility bridge is removed.** Release tarballs no longer carry the placeholder `duckdb`/`raw-socket` binding files that let pre-bootstrap (v0.4.14-era, pre.4) updaters pass their stale native-binding checks. A host still running one of those updaters gets a clean `min_from` refusal naming the remedy: **upgrade to v0.4.15 first**, then to this release. Hosts on v0.4.15 (or any v0.4.16 pre-release) are unaffected. Their updaters self-bootstrap into this release's updater before any native checks run.
-- **Schema migrates forward to version 51**, adding the rogue-DHCP authorized-server allowlist (`047`), the per-MAC `device_fingerprints` table (`049`), the GeoIP IP/CIDR allowlist (`050`), and the rogue-DHCP relay-agent column (`051`). The `048` migration slot is intentionally skipped: it was an interim GeoIP-whitelist table that was superseded by unifying the whitelist into the existing one. Transparent and forward-only.
+- **Schema migrates forward to version 51**, adding the rogue-DHCP authorized-server allowlist (`047`), the per-MAC `device_fingerprints` table (`049`), the GeoIP IP/CIDR allowlist (`050`), and the rogue-DHCP relay-agent column (`051`). The `048` migration slot is intentionally skipped: it was an interim GeoIP-allowlist table that was superseded by unifying the allowlist into the existing one. Transparent and forward-only.
 - **Enabling DNSSEC enables system NTP** and installs a polkit rule scoped to exactly `org.freedesktop.timedate1.set-ntp` for the service account. Validation is lenient on signature timestamps until the clock first syncs, then becomes enforcing.
 - **No breaking API changes** and no manual config changes required.
 - **arm64 hosts cannot upgrade to this release.** v0.4.15 is the last supported version on arm64; `cidrella-update` on an arm64 host refuses with an explanatory error rather than installing a broken build.
@@ -561,7 +577,7 @@ The v0.4.14 release is also flagged on GitHub as deprecated in favor of this rel
 - **CNAME self-loop accepted.** v0.4.14 let you create a CNAME whose value resolved back to itself (dnsmasq SERVFAILs but it's still a foot-gun). Now rejected at validation.
 - **Cross-forward-zone PTR overwrite.** Creating an A record whose IP already had a PTR pointing at a different forward zone silently rewrote the PTR. v0.4.15 refuses the write with a 409 and a `ptr_conflict` payload; callers can pass `force_ptr:true` to opt in explicitly.
 - **Display-string validator on subnet name/description.** Reject `<` `>` and control characters to keep stored data benign even if a future UI surface ever uses `v-html`. No v-html exists today, but the pentest flagged the latent risk.
-- **POST `/api/auth/logout`.** Bumps `users.updated_at` for the caller's user, which invalidates the caller's JWT via the existing iat-vs-updated_at check in the auth middleware. Not a true blacklist, but equivalent for a single-admin tool and doesn't grow unbounded.
+- **POST `/api/auth/logout`.** Bumps `users.updated_at` for the caller's user, which invalidates the caller's JWT via the existing iat-vs-updated_at check in the auth middleware. Not a true denylist, but equivalent for a single-admin tool and doesn't grow unbounded.
 - **MX/SRV/TTL integer range validation.** `{"priority":"high"}` or `{"ttl":"forever"}` now return 400 at the route. v0.4.14 persisted them unchecked and let them reach the config writer.
 - **`PUT /api/dhcp/scopes/:id` / POST scope** now validates `domain_name` / `domain_search` / lease_time as strings with domain+escape checks.
 - **`ipToLong()` type guard.** Defense-in-depth. Throws `"expected string, got <type>"` if anything non-string slips through a route.

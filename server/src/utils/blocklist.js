@@ -3,7 +3,7 @@ import path from 'path';
 import readline from 'node:readline';
 import { getDb, getSetting } from '../db/init.js';
 import { atomicWrite, restartDnsmasq, withValidatedDnsmasqUpdate } from './dnsmasq.js';
-import { loadBlocklist, loadWhitelist } from './dns-proxy.js';
+import { loadBlocklist, loadAllowlist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 import {
   DATA_DIR,
@@ -316,9 +316,9 @@ export async function refreshAllEnabled(db) {
  */
 export function generateBlocklistConfig(_db) {
   // Reload the proxy's in-memory blocklist + the global allowlist (the latter
-  // is also consulted by the GeoIP path, so any whitelist change applies there).
+  // is also consulted by the GeoIP path, so any allowlist change applies there).
   loadBlocklist();
-  loadWhitelist();
+  loadAllowlist();
 
   // Clean up legacy blocklist.conf, proxy handles blocking now
   try {

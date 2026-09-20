@@ -8,7 +8,7 @@
   input state, button-loading, and the context menu.
 -->
 <template>
-  <div class="domain-whitelist">
+  <div class="domain-allowlist">
     <div class="settings-row">
       <InputText
         v-model="newDomain"
@@ -80,7 +80,7 @@ const props = defineProps({
   onAdd: { type: Function, required: true }, // async (domain, reason) => void
   onRemove: { type: Function, required: true }, // async (item) => void
   domainPlaceholder: { type: String, default: 'domain.com' },
-  emptyMessage: { type: String, default: 'No whitelisted domains.' },
+  emptyMessage: { type: String, default: 'No allowlisted domains.' },
   addTrack: { type: String, default: undefined },
 });
 
@@ -128,7 +128,7 @@ function onRightClick(event) {
 /* Fill the host panel (e.g. the Categories › Allowed Domains fill tab) so the
    scrollHeight="flex" table below the add-row scrolls internally. Harmless as a
    plain block when the host isn't a flex column. */
-.domain-whitelist {
+.domain-allowlist {
   display: flex;
   flex-direction: column;
   flex: 1;

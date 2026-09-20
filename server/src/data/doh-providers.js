@@ -1,9 +1,9 @@
 // Preset encrypted-DNS upstreams, shared by the API and the UI.
 //
 // IMPORTANT: these are the **unfiltered** endpoints. CIDRella is the single
-// source of filtering (blocklist + GeoIP + the shared whitelist), so the upstream
+// source of filtering (blocklist + GeoIP + the shared allowlist), so the upstream
 // must NOT filter, double-filtering would block domains before CIDRella's logic
-// runs and break the whitelist/override model.
+// runs and break the allowlist/override model.
 //
 // Each provider carries: IPv4 addresses (we connect by IP and verify the cert
 // against `hostname`, avoiding a bootstrap-DNS chicken-and-egg), the DoT/DoH

@@ -517,6 +517,24 @@ const { state: routeState, navigate: navigateWorkspace } = useWorkspaceContext({
 });
 resourceQuery.value = routeState.value.q;
 tableQuery.value = routeState.value.tableQ;
+// The route already names the context before any data arrives. Seed the kind
+// and view from it so the first paint shows the right tab set; without this
+// the page opened as the estate ("Networks" and its siblings) and swapped to
+// the network tabs half a second later once the tree had loaded. The full
+// restore still runs after the load, when the network itself is known.
+{
+  const initial = routeState.value;
+  if (
+    initial.context === 'network' ||
+    initial.context === 'folder' ||
+    initial.context === 'unallocated'
+  ) {
+    contextKind.value = initial.context;
+  }
+  const views = initial.context === 'network' ? networkViews : aggregateViews;
+  if (views.some((view) => view.key === initial.view)) activeView.value = initial.view;
+  else if (initial.context === 'network') activeView.value = 'addresses';
+}
 
 const viewDefinitions = {
   networks: {

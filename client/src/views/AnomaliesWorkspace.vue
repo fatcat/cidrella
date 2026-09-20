@@ -86,17 +86,17 @@
           @close="close"
           @prev="step(-1)"
           @next="step(1)"
-          @whitelist="openWhitelist"
+          @allowlist="openAllowlist"
           @acknowledge="acknowledge"
         />
       </Transition>
     </div>
     <div class="drawer-backdrop" v-if="drawerOpen" aria-hidden="true"></div>
 
-    <WhitelistDialog
-      v-model:visible="whitelistVisible"
-      :target="whitelistTarget"
-      @whitelisted="onWhitelisted"
+    <AllowlistDialog
+      v-model:visible="allowlistVisible"
+      :target="allowlistTarget"
+      @allowlisted="onAllowlisted"
     />
   </div>
 </template>
@@ -107,7 +107,7 @@ import Button from '../ui/Button.js';
 import TriageQueue from '../components/anomaly-triage/TriageQueue.vue';
 import TriageMap from '../components/anomaly-triage/TriageMap.vue';
 import EvidenceDrawer from '../components/anomaly-triage/EvidenceDrawer.vue';
-import WhitelistDialog from '../components/anomaly/WhitelistDialog.vue';
+import AllowlistDialog from '../components/anomaly/AllowlistDialog.vue';
 import { useAnomalyStore } from '../stores/anomalies.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import { classifyClients, summaryCounts, PATTERNS } from '../utils/anomaly-pattern.js';
@@ -131,8 +131,8 @@ const clientState = ref('idle');
 const clientError = ref('');
 const evidenceState = ref('idle');
 const evidenceError = ref('');
-const whitelistVisible = ref(false);
-const whitelistTarget = ref(null);
+const allowlistVisible = ref(false);
+const allowlistTarget = ref(null);
 // feature -> ranked names for the open device's flagged window, or null
 // while loading; missing means the signal has no name-level evidence.
 const signalEvidence = ref({});
@@ -368,7 +368,7 @@ function step(delta) {
 
 // A click anywhere outside the drawer collapses it, unless it landed on
 // another map dot or queue row (those carry data-triage-target and repopulate
-// instead). The whitelist dialog and toasts are teleported to body and are
+// instead). The allowlist dialog and toasts are teleported to body and are
 // not "outside" either.
 function onPointerDown(event) {
   if (!drawerOpen.value) return;
@@ -384,23 +384,23 @@ function onPointerDown(event) {
   close();
 }
 function onKeydown(event) {
-  if (!drawerOpen.value || whitelistVisible.value) return;
+  if (!drawerOpen.value || allowlistVisible.value) return;
   if (event.key === 'Escape') close();
   else if (event.key === 'ArrowLeft') step(-1);
   else if (event.key === 'ArrowRight') step(1);
 }
 
 // ── actions ──────────────────────────────────────────────────────────
-function openWhitelist() {
+function openAllowlist() {
   if (!detail.value) return;
-  whitelistTarget.value = {
+  allowlistTarget.value = {
     client_ip: detail.value.ip,
     hostname: detail.value.name !== detail.value.ip ? detail.value.name : null,
     identity: detail.value.identity,
   };
-  whitelistVisible.value = true;
+  allowlistVisible.value = true;
 }
-async function onWhitelisted() {
+async function onAllowlisted() {
   close();
   await Promise.all([store.fetchMap(), store.fetchSummary()]).catch(() => {});
 }

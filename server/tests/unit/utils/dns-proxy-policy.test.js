@@ -16,7 +16,7 @@ import {
   evaluateInboundPolicy,
   evaluateResolvedPolicy,
   loadBlocklist,
-  loadWhitelist,
+  loadAllowlist,
   loadGeoipRules,
   loadGeoipAllowlist,
 } from '../../../src/utils/dns-proxy.js';
@@ -65,12 +65,12 @@ beforeAll(async () => {
     "INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('evil.example.com', 'malware')",
   ).run();
   db.prepare(
-    "INSERT OR IGNORE INTO blocklist_whitelist (domain) VALUES ('trusted.example.net')",
+    "INSERT OR IGNORE INTO blocklist_allowlist (domain) VALUES ('trusted.example.net')",
   ).run();
   db.prepare("INSERT OR IGNORE INTO geoip_ip_allowlist (value) VALUES ('198.51.100.0/24')").run();
 
   loadBlocklist();
-  loadWhitelist();
+  loadAllowlist();
   loadGeoipRules();
   loadGeoipAllowlist();
 });
@@ -115,7 +115,7 @@ describe('evaluateResolvedPolicy (GeoIP verdict, shared by UDP + TCP)', () => {
     );
   });
 
-  it('a whitelisted query name overrides a would-be country block', () => {
+  it('a allowlisted query name overrides a would-be country block', () => {
     expect(evaluateResolvedPolicy('trusted.example.net', ['203.0.113.9'], lookup).action).toBe(
       'forward',
     );

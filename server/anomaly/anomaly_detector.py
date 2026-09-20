@@ -39,19 +39,19 @@ _client_medians = {}
 
 def _active_targets():
     """Active clients (by DNS-observed IP) paired with their resolved device
-    key, whitelisted devices excluded. Resolution happens once per cycle here
-    rather than deeper in the pipeline, since every downstream step (whitelist
+    key, allowlisted devices excluded. Resolution happens once per cycle here
+    rather than deeper in the pipeline, since every downstream step (allowlist
     check, model lookup, score storage, auto-resolve) needs to agree on the
     same key for a given client_ip.
 
     `device_key` is the MAC (or IP fallback) stored in the `identity` column;
     see storage.resolve_device_key for why the MAC is read under an alias."""
     active_ips = features.get_active_clients(hours=24)
-    whitelisted = storage.get_whitelisted_device_keys()
+    allowlisted = storage.get_allowlisted_device_keys()
     targets = []
     for ip in active_ips:
         device_key = storage.resolve_device_key(ip)
-        if device_key in whitelisted:
+        if device_key in allowlisted:
             continue
         targets.append((ip, device_key))
     return targets
