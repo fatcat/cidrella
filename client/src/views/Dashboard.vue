@@ -5,42 +5,18 @@
      the anomaly triage page: head and lede, chip rail, uppercase panel heads. -->
 <template>
   <div class="workspace health-board" data-track="dashboard-health">
-    <header class="workspace-head">
-      <div>
-        <h1>Network health</h1>
-        <p class="lede">
-          What is running, what is answering, and what needs a decision. Everything here links to
-          where you act on it.
-        </p>
-      </div>
-      <div class="head-actions">
-        <Select
-          v-model="selectedRange"
-          :options="rangeOptions"
-          optionLabel="label"
-          optionValue="value"
-          size="small"
-          style="width: 10rem"
-          aria-label="Range"
-          data-track="dashboard-range"
-          @change="refreshRange"
-        />
-        <Button
-          icon="pi pi-refresh"
-          severity="secondary"
-          text
-          rounded
-          size="small"
-          aria-label="Refresh"
-          data-track="dashboard-refresh"
-          :loading="store.loading"
-          @click="refreshAll"
-        />
-      </div>
-    </header>
+    <WorkspaceHead
+      title="Network health"
+      lede="What is running, what is answering, and what needs a decision. Everything here links to where you act on it."
+      track="dashboard"
+      :range="selectedRange"
+      :loading="store.loading"
+      @update:range="onRange"
+      @refresh="refreshAll"
+    />
 
     <section class="status-rail" aria-label="Status">
-      <span v-for="chip in serviceChips" :key="chip.key" class="chip" :title="chip.title">
+      <span v-for="chip in serviceChipsList" :key="chip.key" class="chip" :title="chip.title">
         <StatusDot :kind="chip.tone" :label="chip.label" decorative /> {{ chip.label }}
         <b>{{ chip.value }}</b>
       </span>
@@ -89,28 +65,9 @@
             <p class="unavailable">{{ unavailable('proxyPerf') }}</p>
           </div>
           <div v-else class="figures">
-            <FigureCard
-              label="p95 latency"
-              :value="resolution.p95"
-              unit="ms"
-              :sub="resolution.latencySub"
-              :series="resolution.p95Series"
-            />
-            <FigureCard
-              label="Cache hit rate"
-              :value="resolution.hitRate"
-              unit="%"
-              :sub="resolution.cacheSub"
-              tone="ok"
-              :series="resolution.hitSeries"
-            />
-            <FigureCard
-              label="Timeouts"
-              :value="resolution.timeouts"
-              :sub="resolution.timeouts > 0 ? 'upstream did not answer' : 'every query answered'"
-              :tone="resolution.timeouts > 0 ? 'warn' : 'ok'"
-              :series="resolution.timeoutSeries"
-            />
+            <FigureCard v-bind="figures.p95" />
+            <FigureCard v-bind="figures.hitRate" />
+            <FigureCard v-bind="figures.timeouts" />
           </div>
         </section>
 
@@ -123,7 +80,7 @@
             <p v-if="health.failed.includes('timeseries')" class="unavailable">
               {{ unavailable('timeseries') }}
             </p>
-            <TrafficChart
+            <SeriesChart
               v-else
               :rows="dnsRows"
               :series="DNS_SERIES"
@@ -188,7 +145,7 @@
             <p v-if="health.failed.includes('timeseries')" class="unavailable">
               {{ unavailable('timeseries') }}
             </p>
-            <TrafficChart
+            <SeriesChart
               v-else
               :rows="dhcpRows"
               :series="DHCP_SERIES"
@@ -206,24 +163,24 @@
 <script setup>
 import { computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
-import Select from '../ui/Select.js';
-import Button from '../ui/Button.js';
 import { useDashboardStore } from '../stores/dashboard.js';
-import { RANGE_OPTIONS } from '../utils/chart-config.js';
+import { rangeLabel as rangeLabelOf } from '../utils/chart-config.js';
+import { proxyPerfFigures, summarizeProxyPerf } from '../utils/proxy-perf.js';
+import { serviceChips } from '../utils/service-chips.js';
 import { formatNumber } from '../utils/format.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
 import '../assets/analytics-workspace.css';
 import { attentionItems, openCount } from '../utils/health-attention.js';
 import StatusDot from '../components/StatusDot.vue';
+import WorkspaceHead from '../components/WorkspaceHead.vue';
+import SeriesChart from '../components/SeriesChart.vue';
 import AttentionList from '../components/dashboard/AttentionList.vue';
 import FigureCard from '../components/dashboard/FigureCard.vue';
 import AllocationBar from '../components/dashboard/AllocationBar.vue';
-import TrafficChart from '../components/dashboard/TrafficChart.vue';
 
 const store = useDashboardStore();
 const health = store.health;
-const rangeOptions = RANGE_OPTIONS;
-const selectedRange = computed({ get: () => store.selectedRange, set: (v) => store.setRange(v) });
+const selectedRange = computed(() => store.selectedRange);
 
 const DNS_SERIES = [
   { key: 'answered', label: 'Answered', color: 'info' },
@@ -249,35 +206,9 @@ function unavailable(key) {
 }
 
 // Rail: services with a dot, then inventory as links.
-const serviceChips = computed(() => {
-  const s = health.services;
+const serviceChipsList = computed(() => {
+  const chips = serviceChips(health.failed.includes('services') ? null : health.services);
   const a = health.anomalies;
-  const chips = [];
-  if (health.failed.includes('services') || !s) {
-    chips.push({ key: 'services', label: 'Services', value: 'unknown', tone: 'muted' });
-  } else {
-    chips.push({
-      key: 'dnsmasq',
-      label: 'dnsmasq',
-      value: s.dnsmasq ? 'Running' : 'Stopped',
-      tone: s.dnsmasq ? 'ok' : 'err',
-    });
-    chips.push({
-      key: 'proxy',
-      label: 'DNS proxy',
-      value: s.geoip_bypassed ? 'Bypassed' : s.geoip_proxy ? 'Running' : 'Stopped',
-      tone: s.geoip_bypassed ? 'warn' : s.geoip_proxy ? 'ok' : 'err',
-    });
-    const fw = s.forwarders || [];
-    const up = fw.filter((f) => f.reachable).length;
-    chips.push({
-      key: 'forwarders',
-      label: 'Forwarders',
-      value: fw.length ? `${up} of ${fw.length}` : 'none',
-      tone: !fw.length ? 'muted' : up === fw.length ? 'ok' : up ? 'warn' : 'err',
-      title: fw.map((f) => `${f.ip} ${f.reachable ? 'reachable' : 'unreachable'}`).join('\n'),
-    });
-  }
   if (a) {
     const d = a.daemon || {};
     chips.push({
@@ -337,45 +268,11 @@ const attentionNote = computed(() => {
     : open;
 });
 
-// Resolution: from the proxy performance minute rows.
-const resolution = computed(() => {
-  const rows = store.proxyPerf || [];
-  const withQueries = rows.filter((r) => (r.query_count || 0) > 0);
-  const queries = rows.reduce((s, r) => s + (r.query_count || 0), 0);
-  const hits = rows.reduce((s, r) => s + (r.cache_hits || 0), 0);
-  const misses = rows.reduce((s, r) => s + (r.cache_misses || 0), 0);
-  const timeouts = rows.reduce((s, r) => s + (r.timeouts || 0), 0);
-  const p95Values = withQueries.map((r) => r.latency_p95).filter((v) => typeof v === 'number');
-  const p95 = p95Values.length
-    ? Math.round(p95Values.reduce((s, v) => s + v, 0) / p95Values.length / 1000)
-    : null;
-  const mins = withQueries.map((r) => r.latency_min).filter((v) => typeof v === 'number');
-  const avgs = withQueries.map((r) => r.latency_avg).filter((v) => typeof v === 'number');
-  const hitRate = hits + misses ? Math.round((hits / (hits + misses)) * 100) : null;
-  return {
-    queries,
-    p95,
-    latencySub:
-      mins.length && avgs.length
-        ? `min ${Math.round(Math.min(...mins) / 1000)} · avg ${Math.round(
-            avgs.reduce((s, v) => s + v, 0) / avgs.length / 1000,
-          )}`
-        : 'no queries in this range',
-    p95Series: rows.map((r) => (typeof r.latency_p95 === 'number' ? r.latency_p95 / 1000 : null)),
-    hitRate,
-    cacheSub:
-      hits + misses
-        ? `${formatNumber(hits)} hits · ${formatNumber(misses)} misses`
-        : 'no cache activity',
-    hitSeries: rows.map((r) =>
-      r.cache_hits + r.cache_misses ? (r.cache_hits / (r.cache_hits + r.cache_misses)) * 100 : null,
-    ),
-    timeouts,
-    timeoutSeries: rows.map((r) => r.timeouts || 0),
-  };
-});
+// Resolution: the shared summary of the proxy performance minute rows.
+const summary = computed(() => summarizeProxyPerf(store.proxyPerf || []));
+const figures = computed(() => proxyPerfFigures(summary.value));
 const resolutionNote = computed(
-  () => `${rangeLabel.value} · ${formatNumber(resolution.value.queries)} queries`,
+  () => `${rangeLabel.value} · ${formatNumber(summary.value.queries)} queries`,
 );
 
 // Traffic: answered is total minus the two block counts, so the stack sums to the total.
@@ -414,11 +311,7 @@ const dhcpNote = computed(() => {
   return `${rangeLabel.value} · ${formatNumber(c)} requests, ${formatNumber(sv)} replies`;
 });
 
-const rangeLabel = computed(() =>
-  (RANGE_OPTIONS.find((o) => o.value === selectedRange.value)?.label || 'Last 24 hours')
-    .replace('Last ', 'last ')
-    .replace(/ 1 (hour|week)$/, ' $1'),
-);
+const rangeLabel = computed(() => rangeLabelOf(selectedRange.value));
 
 function topRows(items, labelOf, keyOf, toOf) {
   const list = (items || []).slice(0, 5);
@@ -482,8 +375,9 @@ const retirementNote = computed(() => {
 async function refreshAll() {
   await store.fetchHealthBoard(selectedRange.value);
 }
-async function refreshRange() {
-  await store.fetchHealthBoard(selectedRange.value, { rangeOnly: true });
+async function onRange(value) {
+  store.setRange(value);
+  await store.fetchHealthBoard(value, { rangeOnly: true });
 }
 
 onMounted(refreshAll);
@@ -492,10 +386,7 @@ useAutoRefresh(refreshAll);
 
 <style scoped>
 .board {
-  display: grid;
-  grid-template-columns: minmax(300px, 5fr) minmax(0, 7fr);
-  gap: 14px;
-  align-items: start;
+  --board-columns: minmax(300px, 5fr) minmax(0, 7fr);
 }
 .col {
   display: grid;
@@ -507,12 +398,6 @@ useAutoRefresh(refreshAll);
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--cid-surface-border);
-}
-.figures {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  padding: 0 14px 14px;
 }
 .tops {
   display: grid;
@@ -561,18 +446,7 @@ useAutoRefresh(refreshAll);
   opacity: 0.7;
 }
 @media (max-width: 860px) {
-  .board {
-    grid-template-columns: 1fr;
-  }
-  .figures {
-    grid-template-columns: 1fr 1fr;
-  }
   .tops {
-    grid-template-columns: 1fr;
-  }
-}
-@media (max-width: 480px) {
-  .figures {
     grid-template-columns: 1fr;
   }
 }

@@ -149,7 +149,9 @@ describe('Dashboard health board', () => {
     expect(wrapper.findAll('.fig')[2].classes()).toContain('warn');
 
     // DNS stack: answered is queries minus both block counts.
-    const legends = wrapper.findAll('.traffic .chip').map((c) => c.text().replace(/\s+/g, ' '));
+    const legends = wrapper
+      .findAll('.series-chart .chip')
+      .map((c) => c.text().replace(/\s+/g, ' '));
     expect(legends).toEqual([
       'Answered 25',
       'Blocked by list 3',
@@ -201,7 +203,9 @@ describe('Dashboard health board', () => {
       minute(0, { dhcp_requests: 5, dhcp_client_msgs: 0, dhcp_server_msgs: 0 }),
     ];
     const wrapper = await mountBoard();
-    const legends = wrapper.findAll('.traffic .chip').map((c) => c.text().replace(/\s+/g, ' '));
+    const legends = wrapper
+      .findAll('.series-chart .chip')
+      .map((c) => c.text().replace(/\s+/g, ' '));
     expect(legends.slice(-2)).toEqual(['Client requests 5', 'Server replies 0']);
     wrapper.unmount();
   });

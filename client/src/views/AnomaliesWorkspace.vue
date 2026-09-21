@@ -8,26 +8,13 @@
     :class="{ 'drawer-open': drawerOpen }"
     data-track="anomalies-workspace"
   >
-    <header class="workspace-head">
-      <div>
-        <h1>Anomaly triage</h1>
-        <p class="lede">
-          One dot per monitored device. Where it sits says whether it is merely unusual for itself,
-          or shaped like an attack. Open a dot or a queue row for the evidence.
-        </p>
-      </div>
-      <Button
-        icon="pi pi-refresh"
-        severity="secondary"
-        text
-        rounded
-        size="small"
-        aria-label="Refresh"
-        data-track="triage-refresh"
-        :loading="state === 'loading'"
-        @click="refresh"
-      />
-    </header>
+    <WorkspaceHead
+      title="Anomaly triage"
+      lede="One dot per monitored device. Where it sits says whether it is merely unusual for itself, or shaped like an attack. Open a dot or a queue row for the evidence."
+      track="triage"
+      :loading="state === 'loading'"
+      @refresh="refresh"
+    />
 
     <section class="status-rail" aria-label="Detector status">
       <span class="chip">
@@ -104,7 +91,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import Button from '../ui/Button.js';
+import WorkspaceHead from '../components/WorkspaceHead.vue';
 import StatusDot from '../components/StatusDot.vue';
 import TriageQueue from '../components/anomaly-triage/TriageQueue.vue';
 import TriageMap from '../components/anomaly-triage/TriageMap.vue';

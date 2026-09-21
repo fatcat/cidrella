@@ -22,7 +22,9 @@
         vector-effect="non-scaling-stroke"
       />
     </svg>
-    <div v-else class="spark spark-empty"></div>
+    <!-- A series too short to draw keeps the height so a row of figures lines up;
+         no series at all means the figure is a number only. -->
+    <div v-else-if="series.length" class="spark spark-empty"></div>
     <div class="sub">{{ sub }}</div>
   </div>
 </template>

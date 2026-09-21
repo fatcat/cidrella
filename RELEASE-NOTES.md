@@ -71,6 +71,20 @@ first on a 0.4.17 host.
   drives the traffic and resolution panels only. Each source loads on its own,
   so one failing endpoint marks its panel unavailable instead of blanking the
   page. The old doughnuts and inventory tiles are gone.
+- **Performance reads like the Dashboard.** Analytics > Performance has the
+  same head, service rail and panels. Seven figures with sparklines lead
+  (queries per minute, p95 latency, cache hit rate, timeouts, peak pending,
+  process CPU and memory), then Latency, Queries and Cache charts side by
+  side and the process charts under their figures. The Dashboard's
+  resolution figures and these are the same numbers from one helper. A range
+  with no queries says so instead of drawing a zero line, p95 leads instead
+  of the average, sub-10 ms latencies keep one decimal, process CPU reads as
+  a share of one core the way top does (it was divided by the host's cores,
+  which on a 16-core box turned 30% into 1.9%), and the memory gauge that
+  measured the process against total system RAM is gone. The DNS Requests
+  chart (a copy of the Dashboard's DNS traffic plus DHCP) and the dual-axis
+  Process Resources chart (the memory and CPU charts drawn a third time) are
+  gone.
 - The per-minute DHCP counter is split into client messages (DISCOVER,
   REQUEST, RELEASE, INFORM, DECLINE) and server messages (OFFER, ACK, NAK),
   migration 079. The old combined column stays as their sum.

@@ -63,7 +63,7 @@ export function parseColor(raw) {
   return null;
 }
 
-function withAlpha(color, alpha) {
+export function withAlpha(color, alpha) {
   const rgb = parseColor(color);
   if (!rgb) return color;
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
@@ -150,6 +150,13 @@ export const RANGE_OPTIONS = [
   { label: 'Last 2 days', value: '2d' },
   { label: 'Last 1 week', value: '1w' },
 ];
+
+// The range as a panel note reads it: "last 4 hours", "last week".
+export function rangeLabel(value) {
+  return (RANGE_OPTIONS.find((o) => o.value === value)?.label || 'Last 24 hours')
+    .replace('Last ', 'last ')
+    .replace(/ 1 (hour|week)$/, ' $1');
+}
 
 const LEGEND_LABELS = {
   usePointStyle: true,

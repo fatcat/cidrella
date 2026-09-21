@@ -108,14 +108,15 @@
         </div>
       </article>
 
-      <div class="dashboard-content lab-wide lab-analytics-sample">
-        <LineChartCard
-          title="CPU Usage"
-          :data="cpuLineData"
-          :options="cpuLineOptions"
-          emptyText="No CPU data in this range."
-        />
-      </div>
+      <article class="panel lab-wide lab-analytics-sample">
+        <div class="panel-head">
+          <h2>Series chart</h2>
+          <span class="panel-note">the analytics chart, sample CPU</span>
+        </div>
+        <div class="panel-body">
+          <SeriesChart :rows="cpuRows" :series="cpuSeries" :stacked="false" unit="%" />
+        </div>
+      </article>
 
       <article class="lab-panel">
         <h2>Gauge States</h2>
@@ -210,7 +211,7 @@ import {
 } from 'chart.js';
 import ChartDataLabels from 'chartjs-plugin-datalabels';
 import AddressTypePill from '../components/table/AddressTypePill.vue';
-import LineChartCard from '../components/LineChartCard.vue';
+import SeriesChart from '../components/SeriesChart.vue';
 import StatusText from '../components/table/StatusText.vue';
 import { useThemeStore, themes, colorSwatches } from '../stores/theme.js';
 import {
@@ -233,6 +234,7 @@ import {
   ADDRESS_TYPE_UNKNOWN,
 } from '../utils/ipLifecycleDisplay.js';
 import '../assets/analytics-layout.css';
+import '../assets/analytics-workspace.css';
 
 ChartJS.register(
   ArcElement,
@@ -382,37 +384,12 @@ const lineData = computed(() => ({
 }));
 const lineOptions = computed(() => makeLineOptions({ yLabel: 'count' }));
 
-const cpuLabels = [
-  '11:00',
-  '11:05',
-  '11:10',
-  '11:15',
-  '11:20',
-  '11:25',
-  '11:30',
-  '11:35',
-  '11:40',
-  '11:45',
-  '11:50',
-  '11:55',
-];
-const cpuLineData = computed(() => ({
-  labels: cpuLabels,
-  datasets: [
-    lineDataset({
-      label: 'CPU %',
-      data: [7, 11, 9, 15, 26, 18, 22, 31, 24, 19, 14, 12],
-      color: 7,
-      fill: true,
-    }),
-  ],
+// Twelve five-minute samples for the SeriesChart sample.
+const cpuRows = [7, 11, 9, 15, 26, 18, 22, 31, 24, 19, 14, 12].map((cpu, i) => ({
+  ts: 1789900000 + i * 300,
+  cpu,
 }));
-const cpuLineOptions = computed(() =>
-  makeLineOptions({
-    yLabel: '%',
-    tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? '-'}%`,
-  }),
-);
+const cpuSeries = [{ key: 'cpu', label: 'CPU', color: 7, aggregate: 'avg', summary: 'avg' }];
 
 const gauges = [
   { label: 'Healthy', value: 28 },

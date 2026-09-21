@@ -1,533 +1,201 @@
+<!-- Analytics "Performance": how fast the resolver answers and what it costs
+     the box. Everything comes from the proxy's minute rows
+     (/api/metrics/proxy-perf) over the shared range: the figures the
+     Dashboard leads with plus the ones only this page shows, then the
+     series behind them. Same grammar as the health board. -->
 <template>
-  <div class="analytics-tab">
-    <!-- Stats Bar -->
-    <div class="stats-bar" v-if="services">
-      <div class="stat">
-        <span class="stat-value">
-          <StatusDot :kind="services.dnsmasq ? 'ok' : 'err'" label="dnsmasq" decorative />
-          {{ services.dnsmasq ? 'Running' : 'Stopped' }}
-        </span>
-        <span class="stat-label">DNSMASQ</span>
+  <div class="workspace performance" data-track="analytics-performance">
+    <WorkspaceHead
+      title="Resolver performance"
+      lede="How fast the resolver answers, how often the cache saves a trip upstream, and what the process costs the box."
+      track="performance"
+      :range="selectedRange"
+      :loading="store.loading"
+      @update:range="onRange"
+      @refresh="refreshAll"
+    />
+
+    <section class="status-rail" aria-label="Services">
+      <span v-for="chip in chips" :key="chip.key" class="chip" :title="chip.title">
+        <StatusDot :kind="chip.tone" :label="chip.label" decorative /> {{ chip.label }}
+        <b>{{ chip.value }}</b>
+      </span>
+    </section>
+
+    <section class="panel" aria-label="Resolution">
+      <div class="panel-head">
+        <h2>Resolution</h2>
+        <span class="panel-note">{{ note }}</span>
       </div>
-      <div class="stat">
-        <span class="stat-value">
-          <StatusDot
-            :kind="services.geoip_bypassed ? 'warn' : services.geoip_proxy ? 'ok' : 'err'"
-            label="DNS proxy"
-            decorative
+      <div class="figures five">
+        <FigureCard v-bind="figures.perMinute" />
+        <FigureCard v-bind="figures.p95" />
+        <FigureCard v-bind="figures.hitRate" />
+        <FigureCard v-bind="figures.timeouts" />
+        <FigureCard v-bind="figures.peakPending" />
+      </div>
+    </section>
+
+    <div class="board three">
+      <section class="panel" aria-label="Latency">
+        <div class="panel-head">
+          <h2>Latency</h2>
+          <span class="panel-note">per minute, averaged into buckets</span>
+        </div>
+        <div class="panel-body">
+          <SeriesChart
+            :rows="latencyRows"
+            :series="LATENCY_SERIES"
+            :range="selectedRange"
+            :stacked="false"
+            unit="ms"
+            noun="latency samples"
           />
-          {{ services.geoip_bypassed ? 'Bypassed' : services.geoip_proxy ? 'Running' : 'Stopped' }}
-        </span>
-        <span class="stat-label">DNS Proxy</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{ proxyStats?.queriesPerMin ?? EMPTY_CELL }}</span>
-        <span class="stat-label">Queries / min</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{
-          proxyStats ? proxyStats.cacheHitRate + '%' : EMPTY_CELL
-        }}</span>
-        <span class="stat-label">Cache Hit Rate</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{
-          proxyStats ? (proxyStats.avgLatency / 1000).toFixed(2) + ' ms' : EMPTY_CELL
-        }}</span>
-        <span class="stat-label">Avg Latency</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value">{{ proxyStats?.peakPending ?? EMPTY_CELL }}</span>
-        <span class="stat-label">Peak Pending</span>
-      </div>
-      <div class="stat">
-        <span class="stat-value" :class="{ 'text-danger': proxyStats?.timeouts > 0 }">
-          {{ proxyStats?.timeouts ?? EMPTY_CELL }}
-        </span>
-        <span class="stat-label">Timeouts</span>
-      </div>
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Queries">
+        <div class="panel-head">
+          <h2>Queries</h2>
+          <span class="panel-note">{{ rangeLabel }}</span>
+        </div>
+        <div class="panel-body">
+          <SeriesChart
+            :rows="rows"
+            :series="QUERY_SERIES"
+            :range="selectedRange"
+            :stacked="false"
+            noun="queries"
+          />
+        </div>
+      </section>
+
+      <section class="panel" aria-label="Cache">
+        <div class="panel-head">
+          <h2>Cache</h2>
+          <span class="panel-note">hits over misses, the stack is every lookup</span>
+        </div>
+        <div class="panel-body">
+          <SeriesChart :rows="rows" :series="CACHE_SERIES" :range="selectedRange" noun="lookups" />
+        </div>
+      </section>
     </div>
 
-    <div class="dashboard-content">
-      <!-- Time Range -->
-      <div class="range-bar">
-        <Select
-          v-model="selectedRange"
-          :options="rangeOptions"
-          optionLabel="label"
-          optionValue="value"
-          size="small"
-          style="width: 10rem"
-          @change="refreshAll"
-        />
-        <Button
-          icon="pi pi-refresh"
-          size="small"
-          text
-          rounded
-          @click="refreshAll"
-          :loading="store.loading"
-          title="Refresh"
-        />
+    <section class="panel" aria-label="Process">
+      <div class="panel-head">
+        <h2>Process</h2>
+        <span class="panel-note">{{ processNote }}</span>
       </div>
-
-      <LineChartCard
-        title="DNS Requests Over Time"
-        :data="dnsRequestsData"
-        :options="dnsRequestsOptions"
-      />
-
-      <LineChartCard
-        title="Proxy Query Latency"
-        :data="latencyData"
-        :options="latencyOptions"
-        emptyText="No proxy latency data in this range."
-      />
-
-      <LineChartCard
-        title="Query Throughput"
-        :data="throughputData"
-        :options="throughputOptions"
-        emptyText="No query throughput data in this range."
-      />
-
-      <!-- Process Resources -->
-      <div class="chart-card">
-        <h4>CIDRella Process Resources</h4>
-        <div class="card-row">
-          <div class="chart-card gauge-card">
-            <div class="gauge-group">
-              <div class="gauge-item">
-                <div class="gauge-wrap">
-                  <Doughnut
-                    :data="cpuGaugeData"
-                    :options="gaugeOptions"
-                    :plugins="[gaugeCenterText]"
-                  />
-                  <span class="gauge-value">{{ processCpuPercent.toFixed(1) }}%</span>
-                </div>
-                <span class="gauge-label">CPU</span>
-              </div>
-              <div class="gauge-item">
-                <div class="gauge-wrap">
-                  <Doughnut
-                    :data="memGaugeData"
-                    :options="gaugeOptions"
-                    :plugins="[gaugeCenterText]"
-                  />
-                  <span class="gauge-value">{{ latestPerf?.rss_mb?.toFixed(0) ?? '0' }} MB</span>
-                </div>
-                <span class="gauge-label">Memory</span>
-              </div>
-            </div>
-          </div>
-          <div class="chart-card">
-            <div v-if="resourceData" class="chart-wrap" style="height: 240px">
-              <Line :data="resourceData" :options="resourceOptions" />
-            </div>
-            <p v-else class="empty-chart">No resource data in this range.</p>
-          </div>
+      <div class="panel-body process">
+        <div>
+          <FigureCard v-bind="figures.cpu" :series="[]" />
+          <SeriesChart
+            :rows="cpuRows"
+            :series="CPU_SERIES"
+            :range="selectedRange"
+            :stacked="false"
+            unit="%"
+            noun="CPU samples"
+          />
+        </div>
+        <div>
+          <FigureCard v-bind="figures.memory" :series="[]" />
+          <SeriesChart
+            :rows="rows"
+            :series="MEMORY_SERIES"
+            :range="selectedRange"
+            :stacked="false"
+            unit=" MB"
+            noun="memory samples"
+          />
         </div>
       </div>
-
-      <LineChartCard
-        title="Cache Performance"
-        :data="cacheData"
-        :options="cacheOptions"
-        emptyText="No cache data in this range."
-      />
-
-      <LineChartCard
-        title="CIDRella Process Memory"
-        :data="memoryData"
-        :options="memoryOptions"
-        emptyText="No memory data in this range."
-      />
-
-      <LineChartCard
-        title="CIDRella Process CPU"
-        :data="cpuData"
-        :options="cpuOptions"
-        emptyText="No CPU data in this range."
-      />
-    </div>
+    </section>
   </div>
 </template>
 
 <script setup>
 import { computed, onMounted } from 'vue';
-import { EMPTY_CELL } from '../utils/format.js';
-import { formatEpoch } from '../utils/dateFormat.js';
-import Select from '../ui/Select.js';
-import Button from '../ui/Button.js';
-import StatusDot from '../components/StatusDot.vue';
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-} from 'chart.js';
-import { Line, Doughnut } from 'vue-chartjs';
 import { useDashboardStore } from '../stores/dashboard.js';
-import { RANGE_OPTIONS, chartColor, lineDataset, makeLineOptions } from '../utils/chart-config.js';
+import { rangeLabel as rangeLabelOf } from '../utils/chart-config.js';
+import { formatNumber } from '../utils/format.js';
+import { proxyPerfFigures, summarizeProxyPerf } from '../utils/proxy-perf.js';
+import { serviceChips } from '../utils/service-chips.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
-import LineChartCard from '../components/LineChartCard.vue';
-import '../assets/analytics-layout.css';
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  ArcElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler,
-);
-ChartJS.defaults.elements.line.borderWidth = 1;
+import '../assets/analytics-workspace.css';
+import StatusDot from '../components/StatusDot.vue';
+import WorkspaceHead from '../components/WorkspaceHead.vue';
+import SeriesChart from '../components/SeriesChart.vue';
+import FigureCard from '../components/dashboard/FigureCard.vue';
 
 const store = useDashboardStore();
-const rangeOptions = RANGE_OPTIONS;
-const selectedRange = computed({ get: () => store.selectedRange, set: (v) => store.setRange(v) });
+const selectedRange = computed(() => store.selectedRange);
+const rows = computed(() => store.proxyPerf || []);
+const cores = computed(() => store.systemHealth?.cpu?.cores || 1);
 
-const services = computed(() => store.services);
-
-function formatTs(epoch) {
-  return formatEpoch(epoch, selectedRange.value);
-}
-
-function normalizeProcessCpuPercent(row) {
-  const cores = store.systemHealth?.cpu?.cores || 1;
-  return (row?.cpu_percent ?? 0) / cores;
-}
-
-// ── Stats bar ──────────────────────────────────────────
-const proxyStats = computed(() => {
-  const pp = store.proxyPerf;
-  if (!pp.length) return null;
-
-  const totalHits = pp.reduce((s, r) => s + (r.cache_hits || 0), 0);
-  const totalMisses = pp.reduce((s, r) => s + (r.cache_misses || 0), 0);
-  const totalLookups = totalHits + totalMisses;
-  const cacheHitRate = totalLookups > 0 ? Math.round((totalHits / totalLookups) * 100) : 0;
-
-  const withLatency = pp.filter((r) => r.latency_avg != null);
-  const avgLatency =
-    withLatency.length > 0
-      ? Math.round(withLatency.reduce((s, r) => s + r.latency_avg, 0) / withLatency.length)
-      : 0;
-
-  const timeouts = pp.reduce((s, r) => s + (r.timeouts || 0), 0);
-  const totalQueries = pp.reduce((s, r) => s + (r.query_count || 0), 0);
-  const queriesPerMin = pp.length > 0 ? Math.round(totalQueries / pp.length) : 0;
-  const peakPending = Math.max(0, ...pp.map((r) => r.pending_queries || 0));
-
-  return { cacheHitRate, avgLatency, timeouts, queriesPerMin, peakPending };
-});
-
-// ── DNS Requests Over Time ─────────────────────────────
-const dnsRequestsData = computed(() => {
-  const ts = store.timeseries;
-  if (!ts.length) return null;
-  return {
-    labels: ts.map((r) => formatTs(r.ts)),
-    datasets: [
-      {
-        ...lineDataset({
-          label: 'DNS Queries',
-          data: ts.map((r) => r.dns_queries),
-          color: 1,
-          fill: true,
-        }),
-      },
-      {
-        ...lineDataset({
-          label: 'DHCP Requests',
-          data: ts.map((r) => r.dhcp_requests),
-          color: 2,
-          fill: true,
-          alpha: 0.12,
-        }),
-      },
-    ],
-  };
-});
-
-const dnsRequestsOptions = makeLineOptions({ yLabel: 'count' });
-
-// ── Proxy Query Latency ────────────────────────────────
-const latencyData = computed(() => {
-  const pp = store.proxyPerf;
-  if (!pp.length) return null;
-  return {
-    labels: pp.map((r) => formatTs(r.ts)),
-    datasets: [
-      {
-        ...lineDataset({
-          label: 'Avg',
-          data: pp.map((r) => (r.latency_avg || 0) / 1000),
-          color: 1,
-        }),
-      },
-      {
-        ...lineDataset({
-          label: 'P95',
-          data: pp.map((r) => (r.latency_p95 || 0) / 1000),
-          color: 'warn',
-        }),
-      },
-      {
-        ...lineDataset({
-          label: 'Max',
-          data: pp.map((r) => (r.latency_max || 0) / 1000),
-          color: 'err',
-        }),
-      },
-    ],
-  };
-});
-
-const latencyOptions = makeLineOptions({
-  yLabel: 'ms',
-  tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(2) ?? EMPTY_CELL} ms`,
-});
-
-// ── Query Throughput ───────────────────────────────────
-const throughputData = computed(() => {
-  const pp = store.proxyPerf;
-  if (!pp.length) return null;
-  return {
-    labels: pp.map((r) => formatTs(r.ts)),
-    datasets: [
-      {
-        ...lineDataset({
-          label: 'Queries / min',
-          data: pp.map((r) => r.query_count || 0),
-          color: 1,
-          fill: true,
-        }),
-      },
-      {
-        ...lineDataset({
-          label: 'Timeouts',
-          data: pp.map((r) => r.timeouts || 0),
-          color: 'err',
-          fill: true,
-          alpha: 0.12,
-        }),
-      },
-    ],
-  };
-});
-
-const throughputOptions = makeLineOptions({ yLabel: 'count' });
-
-// ── Process Resources (combined line chart) ────────────
-const resourceData = computed(() => {
-  const pp = store.proxyPerf;
-  if (!pp.length) return null;
-  return {
-    labels: pp.map((r) => formatTs(r.ts)),
-    datasets: [
-      {
-        ...lineDataset({
-          label: 'RSS (MB)',
-          data: pp.map((r) => r.rss_mb),
-          color: 1,
-          yAxisID: 'y',
-        }),
-      },
-      {
-        ...lineDataset({
-          label: 'Heap (MB)',
-          data: pp.map((r) => r.heap_mb),
-          color: 2,
-          yAxisID: 'y',
-        }),
-      },
-      {
-        ...lineDataset({
-          label: 'CPU %',
-          data: pp.map((r) => normalizeProcessCpuPercent(r)),
-          color: 7,
-          yAxisID: 'y1',
-        }),
-      },
-    ],
-  };
-});
-
-const resourceOptions = makeLineOptions({
-  yLabel: 'MB',
-  extraScales: {
-    y1: {
-      position: 'right',
-      beginAtZero: true,
-      title: { display: true, text: 'CPU %', color: chartColor('text') },
-      ticks: { color: chartColor('text') },
-      grid: { drawOnChartArea: false },
-    },
+const LATENCY_SERIES = [
+  { key: 'latency_avg_ms', label: 'Avg', color: 'info', aggregate: 'avg', summary: 'avg' },
+  { key: 'latency_p95_ms', label: 'p95', color: 'warn', aggregate: 'avg', summary: 'avg' },
+  {
+    key: 'latency_max_ms',
+    label: 'Max',
+    color: 'err',
+    aggregate: 'max',
+    summary: 'max',
+    outline: true,
   },
-});
+];
+const QUERY_SERIES = [
+  { key: 'query_count', label: 'Queries', color: 'info' },
+  { key: 'timeouts', label: 'Timeouts', color: 'err' },
+];
+const CACHE_SERIES = [
+  { key: 'cache_hits', label: 'Hits', color: 'ok' },
+  { key: 'cache_misses', label: 'Misses', color: 'warn' },
+];
+const MEMORY_SERIES = [
+  { key: 'rss_mb', label: 'RSS', color: 'info', aggregate: 'avg', summary: 'latest' },
+  { key: 'heap_mb', label: 'Heap', color: 'ok', aggregate: 'avg', summary: 'latest' },
+];
+const CPU_SERIES = [{ key: 'cpu', label: 'CPU', color: 'info', aggregate: 'avg', summary: 'avg' }];
 
-// ── Gauges (current CPU & Memory) ──────────────────────
-const latestPerf = computed(() => {
-  const pp = store.proxyPerf;
-  return pp.length ? pp[pp.length - 1] : null;
-});
+const summary = computed(() => summarizeProxyPerf(rows.value));
+const figures = computed(() => proxyPerfFigures(summary.value));
+const chips = computed(() => serviceChips(store.services));
 
-const systemMemoryTotalMb = computed(() => {
-  const totalBytes = store.systemHealth?.memory?.total;
-  if (totalBytes) return totalBytes / 1048576;
-  const observedPeak = Math.max(0, ...store.proxyPerf.map((r) => r.rss_mb || 0));
-  return Math.max(512, observedPeak * 1.25);
-});
+// The latency series are stored in microseconds; the chart wants the same
+// milliseconds the figures show. Rows without queries carry null latency,
+// which the chart draws as a gap rather than a zero.
+const ms = (v) => (typeof v === 'number' ? v / 1000 : null);
+const latencyRows = computed(() =>
+  rows.value.map((r) => ({
+    ...r,
+    latency_avg_ms: ms(r.latency_avg),
+    latency_p95_ms: ms(r.latency_p95),
+    latency_max_ms: ms(r.latency_max),
+  })),
+);
+const cpuRows = computed(() =>
+  rows.value.map((r, i) => ({ ts: r.ts, cpu: summary.value.series.cpu[i] })),
+);
 
-const processCpuPercent = computed(() => {
-  return normalizeProcessCpuPercent(latestPerf.value);
-});
+const rangeLabel = computed(() => rangeLabelOf(selectedRange.value));
+const note = computed(
+  () =>
+    `${rangeLabel.value} · ${formatNumber(summary.value.queries)} queries in ${formatNumber(
+      summary.value.minutes,
+    )} samples`,
+);
+const processNote = computed(() =>
+  cores.value > 1
+    ? `CIDRella itself · CPU is of one core, the host has ${cores.value} · heap sits inside RSS`
+    : 'CIDRella itself · heap sits inside RSS',
+);
 
-const cpuGaugeData = computed(() => {
-  const val = processCpuPercent.value;
-  const clamped = Math.min(100, Math.max(0, val));
-  return {
-    labels: ['CPU', ''],
-    datasets: [
-      {
-        data: [clamped, 100 - clamped],
-        backgroundColor: [
-          clamped > 80 ? chartColor('err') : clamped > 50 ? chartColor('warn') : chartColor('ok'),
-          chartColor('track'),
-        ],
-        borderWidth: 0,
-      },
-    ],
-  };
-});
-
-const memGaugeData = computed(() => {
-  const rss = latestPerf.value?.rss_mb ?? 0;
-  const cap = systemMemoryTotalMb.value || 512;
-  const pct = Math.min(100, (rss / cap) * 100);
-  return {
-    labels: ['Memory', ''],
-    datasets: [
-      {
-        data: [pct, 100 - pct],
-        backgroundColor: [
-          pct > 80 ? chartColor('err') : pct > 50 ? chartColor('warn') : chartColor(1),
-          chartColor('track'),
-        ],
-        borderWidth: 0,
-      },
-    ],
-  };
-});
-
-const gaugeOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  rotation: -90,
-  circumference: 180,
-  cutout: '75%',
-  plugins: {
-    legend: { display: false },
-    tooltip: { enabled: false },
-    datalabels: { display: false },
-  },
-};
-
-// Empty plugin object, value shown via HTML overlay
-const gaugeCenterText = { id: 'gaugeCenterText' };
-
-// ── Cache Performance ──────────────────────────────────
-const cacheData = computed(() => {
-  const pp = store.proxyPerf;
-  if (!pp.length) return null;
-  return {
-    labels: pp.map((r) => formatTs(r.ts)),
-    datasets: [
-      {
-        ...lineDataset({
-          label: 'Hits',
-          data: pp.map((r) => r.cache_hits || 0),
-          color: 'ok',
-          fill: true,
-        }),
-      },
-      {
-        ...lineDataset({
-          label: 'Misses',
-          data: pp.map((r) => r.cache_misses || 0),
-          color: 'warn',
-          fill: true,
-        }),
-      },
-    ],
-  };
-});
-
-const cacheOptions = makeLineOptions({ yLabel: 'lookups' });
-
-// ── Memory Consumption ─────────────────────────────────
-const memoryData = computed(() => {
-  const pp = store.proxyPerf;
-  if (!pp.length) return null;
-  return {
-    labels: pp.map((r) => formatTs(r.ts)),
-    datasets: [
-      {
-        ...lineDataset({ label: 'RSS', data: pp.map((r) => r.rss_mb), color: 1, fill: true }),
-      },
-      {
-        ...lineDataset({ label: 'Heap', data: pp.map((r) => r.heap_mb), color: 2, fill: true }),
-      },
-    ],
-  };
-});
-
-const memoryOptions = makeLineOptions({
-  yLabel: 'MB',
-  tooltipCallback: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y?.toFixed(1) ?? EMPTY_CELL} MB`,
-});
-
-// ── CPU Usage ──────────────────────────────────────────
-const cpuData = computed(() => {
-  const pp = store.proxyPerf;
-  if (!pp.length) return null;
-  return {
-    labels: pp.map((r) => formatTs(r.ts)),
-    datasets: [
-      {
-        ...lineDataset({
-          label: 'CPU %',
-          data: pp.map((r) => normalizeProcessCpuPercent(r)),
-          color: 7,
-          fill: true,
-        }),
-      },
-    ],
-  };
-});
-
-const cpuOptions = makeLineOptions({
-  yLabel: '%',
-  tooltipCallback: (ctx) => `CPU: ${ctx.parsed.y?.toFixed(1) ?? EMPTY_CELL}%`,
-});
-
-// ── Data fetching ──────────────────────────────────────
 async function refreshAll() {
   store.loading = true;
   try {
     await Promise.all([
-      store.fetchTimeseries(selectedRange.value),
       store.fetchProxyPerf(selectedRange.value),
       store.fetchSystemHealth(),
       store.fetchServices(),
@@ -536,75 +204,42 @@ async function refreshAll() {
     store.loading = false;
   }
 }
+async function onRange(value) {
+  store.setRange(value);
+  await refreshAll();
+}
 
-onMounted(() => {
-  refreshAll();
-});
-
+onMounted(refreshAll);
 useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>
-/* Page-specific styles only. Shared styles come from analytics-layout.css */
-
-.gauge-card {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  max-width: 280px;
+.process {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
-
-.gauge-group {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  align-items: center;
-  width: 100%;
+.process > div {
+  display: grid;
+  gap: 12px;
 }
-
-.gauge-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+.figures.five {
+  --figures: 5;
 }
-
-.gauge-wrap {
-  width: 140px;
-  height: 80px;
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
+.board.three {
+  --board-columns: repeat(3, minmax(0, 1fr));
 }
-
-.gauge-wrap canvas {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
+@media (max-width: 1100px) {
+  .figures.five {
+    --figures: 3;
+  }
+  .board.three {
+    --board-columns: repeat(2, minmax(0, 1fr));
+  }
 }
-
-.gauge-value {
-  position: relative;
-  font-size: 1rem;
-  font-weight: 700;
-  font-family: monospace;
-  color: var(--cid-text-color);
-  line-height: 1;
-  margin-bottom: 2px;
-}
-
-.gauge-label {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--cid-text-muted-color);
-  text-transform: uppercase;
-  margin-top: 0.25rem;
-}
-
-@media (max-width: 768px) {
-  .gauge-card {
-    max-width: none;
+@media (max-width: 860px) {
+  .process {
+    grid-template-columns: 1fr;
   }
 }
 </style>

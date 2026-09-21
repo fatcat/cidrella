@@ -464,8 +464,11 @@ so P8 was a verification pass on safe fixtures plus two fixes:
   nav is keyboard-operable buttons with `aria-current`, the open section lives in the URL as
   `?view=dashboard|performance|intelligence|anomalies` so bookmarks and Back work, unrelated
   query parameters survive, and the old `cidrella_analytics_tab` index is still read and written
-  (`client/tests/unit/views/Analytics.test.js`). The Dashboard, Performance and Intelligence
-  panels are mounted unchanged, the same call as P7's leaves.
+  (`client/tests/unit/views/Analytics.test.js`). The Dashboard (health board, 2026-09-21) and
+  Performance (2026-09-21) are on the workspace grammar (`WorkspaceHead`, `SeriesChart`,
+  `FigureCard`); Intelligence is the last section still on `analytics-layout.css` and
+  `DoughnutTableCard`, and the last consumer of the old sheet besides the classic views, GeoIP
+  and Blocklists.
 - ~~Q-04 anomaly triage~~ [FIXED] landed 2026-09-20: the triage page (queue + map + Evidence
   drawer) is the Analytics Anomalies section, the classic panel moved to `/anomalies-classic`,
   the sidecar writes `threat_score` per window (migration 077). Peer medians are still not

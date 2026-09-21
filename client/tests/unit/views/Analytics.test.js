@@ -1,4 +1,4 @@
-import { shallowMount } from '@vue/test-utils';
+import { flushPromises, shallowMount } from '@vue/test-utils';
 import { reactive } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -51,6 +51,7 @@ describe('Analytics workspace shell', () => {
 
     expect(push).toHaveBeenCalledWith({ query: { view: 'intelligence' } });
     expect(navigation.findAll('button')[2].attributes('aria-current')).toBe('page');
+    wrapper.unmount();
   });
 
   it('opens a bookmarked section and retains unrelated query parameters', async () => {
@@ -62,5 +63,10 @@ describe('Analytics workspace shell', () => {
     expect(push).toHaveBeenCalledWith({
       query: { view: 'performance', client: 'device-1' },
     });
+    // Every wrapper is unmounted: two live shells reacting to the same route
+    // fire two concurrent loads of the section, and the second one slips past
+    // the vi.mock and pulls the real Performance.vue in after teardown.
+    await flushPromises();
+    wrapper.unmount();
   });
 });

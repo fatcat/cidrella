@@ -106,6 +106,37 @@
 .panel-body {
   padding: 0 14px 14px;
 }
+/* The two-column board of panels under the rail. --board-columns sets the
+   split; it collapses to one column at 860px. */
+.board {
+  display: grid;
+  grid-template-columns: var(--board-columns, repeat(2, minmax(0, 1fr)));
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .board {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* A row of FigureCards inside a panel. --figures sets the column count. */
+.figures {
+  display: grid;
+  grid-template-columns: repeat(var(--figures, 3), minmax(0, 1fr));
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+@media (max-width: 860px) {
+  .figures {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 480px) {
+  .figures {
+    grid-template-columns: 1fr;
+  }
+}
 .panel .unavailable {
   margin: 0;
   padding: 6px 0 4px;

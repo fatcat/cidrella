@@ -37,7 +37,6 @@ const SCAN_ROOT = path.join(PROJECT_DIR, 'client/src');
 // set is a subset of the listed one, so a copy in a NEW file still fails.
 const BASELINE = {
   'available-toggle': ['components/DhcpPanel.vue', 'views/SubnetDetail.vue'],
-  board: ['views/Anomalies.vue', 'views/Dashboard.vue'],
   button: [
     'views/networks-workspace/WorkspaceContextHeader.vue',
     'views/networks-workspace/WorkspaceToolbar.vue',
