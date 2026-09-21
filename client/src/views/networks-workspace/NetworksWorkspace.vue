@@ -998,14 +998,24 @@ const currentRows = computed(() => {
   );
 });
 const distinct = (values) => [...new Set(values.filter(Boolean).map(String))].sort();
+// The DHCP status filter selects a pool slot by what holds it, which is the
+// server's lease_status vocabulary, not the Lease column's. Said in words.
+const DHCP_STATUS_LABELS = {
+  available: 'Free in pool',
+  active: 'Leased',
+  offline: 'No active lease',
+  unavailable: 'Held outside DHCP',
+};
 const filterOptions = computed(() => ({
-  status: distinct(
-    currentRows.value.map((row) =>
-      activeView.value === 'dhcp'
-        ? row.leaseStatus
-        : row.status || (row.enabled ? 'enabled' : 'disabled'),
-    ),
-  ),
+  status:
+    activeView.value === 'dhcp'
+      ? distinct(currentRows.value.map((row) => row.leaseStatus)).map((value) => ({
+          value,
+          label: DHCP_STATUS_LABELS[value] || value,
+        }))
+      : distinct(
+          currentRows.value.map((row) => row.status || (row.enabled ? 'enabled' : 'disabled')),
+        ).map((value) => ({ value, label: value })),
   type: distinct(
     currentRows.value.map((row) =>
       activeView.value === 'dns'

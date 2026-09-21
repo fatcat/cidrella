@@ -309,6 +309,21 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- The IP Management tables show each column the same way whichever table it
+  is in. The Addresses and DHCP tables read one column catalog but filled it
+  from different fields: a free pool address was "DHCP Scope" in one and a
+  dash or "available" in the other, Expires printed the raw `infinite` in
+  one and "Never" in the other, Last seen was relative in one and a raw
+  timestamp in the other, Enabled read "Disabled" on every row of both, and
+  Scanning printed `true`. Now the server stamps every address read, DHCP
+  view included, with the same status and a lease state (active, expired or
+  none), and one adapter fills the shared columns. The Lease column shows
+  the lease dnsmasq holds and nothing else; whether an address is free for
+  DHCP is the Status column's job. The DHCP status filter still selects by
+  what holds the pool slot, now named in words (Free in pool, Leased, No
+  active lease, Held outside DHCP). Each table offers only the columns its
+  rows can fill, so the DNS table no longer lists Lease or MAC and the
+  Addresses table no longer lists Enabled or Network.
 - The anomaly bell counted flagged windows, so one device with a noisy
   night read as a dozen anomalies. The bell and the "active anomalies"
   figure now count devices; the per-severity breakdown still counts

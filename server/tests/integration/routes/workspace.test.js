@@ -125,6 +125,15 @@ beforeAll(async () => {
       VALUES (?, '10.20.0.11', '02:00:00:00:00:11', 'leased-host', datetime('now', '+1 day'))
     `,
   ).run(subnetA);
+  // The lifecycle row the lease sync would have written for that lease.
+  db.prepare(
+    `
+      INSERT INTO ip_addresses
+        (subnet_id, ip_address, hostname, allocation_state, allocation_source_type,
+         address_family, address_sort_key)
+      VALUES (?, '10.20.0.11', 'leased-host', 'dynamic_dhcp', 'dhcp_lease', 4, ?)
+    `,
+  ).run(subnetA, '010.020.000.011');
 
   app = createMultiRouterApp([
     { prefix: '/api/workspace', router: workspaceRouter },
@@ -324,6 +333,25 @@ describe('workspace read routes', () => {
     for (const row of free) expect([0, false]).toContain(row.is_online);
   });
 
+  it('gives every pool row the status and lease state the Addresses table shows', async () => {
+    const response = await request(app)
+      .get('/api/workspace/dhcp-addresses')
+      .query({ scope_id: scopeId, page_size: 50 });
+    const byIp = new Map(response.body.items.map((row) => [row.ip_address, row]));
+    // A free pool address, synthesized or stored, reads "DHCP Scope" as it
+    // does in the Addresses table, and carries no lease.
+    expect(byIp.get('10.20.0.10')).toMatchObject({
+      ip_display_status: 'DHCP Scope',
+      dhcp_lease_state: null,
+    });
+    // A leased pool address is in use with an active lease and its expiry.
+    expect(byIp.get('10.20.0.11')).toMatchObject({
+      ip_display_status: 'in use',
+      dhcp_lease_state: 'active',
+    });
+    expect(byIp.get('10.20.0.11').dhcp_expires_at).toBeTruthy();
+  });
+
   it('pages a very large pool without materializing the address range', async () => {
     const largeSubnet = addSubnet(
       '11.0.0.0/8',
@@ -378,6 +406,7 @@ describe('workspace read routes', () => {
       .get('/api/workspace/dhcp-addresses')
       .query({ subnet_id: subnetA, q: 'old-lease' });
     expect(workspace.body.items[0].lease_status).toBe('offline');
+    expect(workspace.body.items[0].dhcp_lease_state).toBe('expired');
 
     const legacy = await request(app).get('/api/dhcp/leases');
     expect(legacy.body.find((row) => row.hostname === 'old-lease').lease_status).toBe('offline');

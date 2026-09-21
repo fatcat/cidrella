@@ -253,6 +253,9 @@ const lease = {
   hostname: 'client',
   mac_address: '02:00:00:00:00:40',
   expires_at: 'infinite',
+  dhcp_expires_at: 'infinite',
+  dhcp_lease_state: 'active',
+  ip_display_status: 'in use',
   is_online: 1,
   address_type: 'dynamic DHCP',
 };
@@ -625,7 +628,10 @@ describe('Networks workspace', () => {
     await dhcpTab.trigger('click');
     expect(wrapper.find('.view-summary').text()).toContain('Public test network scope');
     expect(wrapper.find('table').text()).toContain('02:00:00:00:00:40');
-    expect(wrapper.find('table').text()).toContain('active');
+    // The Lease column reads the server's lease state the way the Addresses
+    // table does, alongside the shared Status.
+    expect(wrapper.find('table').text()).toContain('Active');
+    expect(wrapper.find('table').text()).toContain('in use');
   });
 
   it('offers all-network, zone, and scope inventories in the same work surface', async () => {
@@ -1778,7 +1784,8 @@ describe('Networks workspace', () => {
     await flushPromises();
     const dhcpRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.40'));
     expect(dhcpRow.find('.address-type-pill.type-dynamic-dhcp').text()).toBe('Dynamic');
-    expect(dhcpRow.find('.status-pill.status-active').exists()).toBe(true);
+    expect(dhcpRow.find('.status-pill.status-in-use').exists()).toBe(true);
+    expect(dhcpRow.find('.status-pill.status-active').text()).toBe('Active');
   });
 
   it('toggles the liveness scan from the row menu and offers Reset to Inherit', async () => {

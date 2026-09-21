@@ -4,6 +4,7 @@ import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
 import { addressFamily, canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import { resolveScanningEnabled } from '../utils/scan-coverage.js';
 import { addressToBig, bigToAddress, parseNetwork } from '../utils/ip.js';
+import { isLeaseActive } from '../utils/lease-sql.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -19,6 +20,16 @@ export const ADDRESS_TYPE = {
 
 function truthy(value) {
   return value === true || value === 1 || value === '1';
+}
+
+// The dnsmasq lease behind an address, as the Lease column reads it in every
+// table: active, expired, or none. Whether the address is free for DHCP to
+// hand out is the status's job, not the lease's.
+export const LEASE_STATE = Object.freeze({ ACTIVE: 'active', EXPIRED: 'expired' });
+
+export function leaseState(expiresAt) {
+  if (!expiresAt) return null;
+  return isLeaseActive(expiresAt) ? LEASE_STATE.ACTIVE : LEASE_STATE.EXPIRED;
 }
 
 export function computeIpView(row) {
@@ -74,6 +85,7 @@ export function computeIpView(row) {
     ip_status_severity: statusSeverity,
     address_type: addressType,
     address_type_tooltip: tooltip,
+    dhcp_lease_state: leaseState(row.dhcp_expires_at),
   };
 }
 

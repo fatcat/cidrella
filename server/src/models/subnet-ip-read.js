@@ -1,4 +1,4 @@
-import { activeLeaseSql } from '../utils/lease-sql.js';
+import { infiniteLeaseFirstSql } from '../utils/lease-sql.js';
 import { addressToBig, parseNetwork, parsedNetworkContains } from '../utils/ip.js';
 import { staticDnsClaimSql } from './dns-record.js';
 import { ADDRESS_TYPE, buildVirtualSubnetIpRow, enrichIpViewRows } from './ip-view.js';
@@ -41,6 +41,10 @@ function attachFunctionalRange(row, rangeLookup) {
   return row;
 }
 
+// dhcp_expires_at is the newest lease dnsmasq holds for the address, active
+// or not, so the Lease column can say "expired" here as it does in the DHCP
+// table. Whether that lease still owns the address is the lifecycle state's
+// call, made elsewhere.
 export function projectPersistedSubnetIpRows(
   db,
   subnet,
@@ -55,14 +59,13 @@ export function projectPersistedSubnetIpRows(
       `
       SELECT ip.*,
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
-        dl.expires_at as dhcp_expires_at,
+        (SELECT dl.expires_at FROM dhcp_leases dl
+          WHERE dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
+          ORDER BY ${infiniteLeaseFirstSql('dl')}, dl.expires_at DESC
+          LIMIT 1) as dhcp_expires_at,
         CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
       FROM ip_addresses ip
       LEFT JOIN dhcp_reservations dr ON dr.subnet_id = ip.subnet_id AND dr.ip_address = ip.ip_address
-      LEFT JOIN dhcp_leases dl
-        ON dl.subnet_id = ip.subnet_id
-       AND dl.ip_address = ip.ip_address
-       AND ${activeLeaseSql('dl')}
       WHERE ip.subnet_id = ? ${identityFilter}
     `,
     )

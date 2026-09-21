@@ -286,6 +286,37 @@ describe('GET /api/subnets/:id/ips', () => {
     expect(row.computed_type).toBe('rogue');
   });
 
+  it('reports the newest lease and its state for an address, active or expired', async () => {
+    const createRes = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.91.0.0/24', name: 'Lease state', status: 'allocated' });
+    expect(createRes.status).toBe(201);
+    const subnetId = createRes.body.id;
+    db.prepare(
+      `
+      INSERT INTO ip_addresses (subnet_id, ip_address, allocation_state, address_family, address_sort_key)
+      VALUES (?, '10.91.0.20', 'unassigned', 4, '010.091.000.020'),
+             (?, '10.91.0.21', 'dynamic_dhcp', 4, '010.091.000.021')
+    `,
+    ).run(subnetId, subnetId);
+    db.prepare(
+      `
+      INSERT INTO dhcp_leases (subnet_id, ip_address, mac_address, hostname, expires_at)
+      VALUES (?, '10.91.0.20', '02:00:00:00:00:20', 'gone', datetime('now', '-1 day')),
+             (?, '10.91.0.21', '02:00:00:00:00:21', 'here', datetime('now', '+1 day'))
+    `,
+    ).run(subnetId, subnetId);
+
+    const res = await request(app).get(`/api/subnets/${subnetId}/ips?page=1&pageSize=64`);
+    const byIp = new Map(res.body.ips.map((ip) => [ip.ip_address, ip]));
+    // The Lease column reads these in the Addresses table exactly as the DHCP
+    // table reads them, so an expired lease is still reported, as expired.
+    expect(byIp.get('10.91.0.20').dhcp_lease_state).toBe('expired');
+    expect(byIp.get('10.91.0.20').dhcp_expires_at).toBeTruthy();
+    expect(byIp.get('10.91.0.21').dhcp_lease_state).toBe('active');
+    expect(byIp.get('10.91.0.22').dhcp_lease_state).toBeNull();
+  });
+
   it('does not classify offline unbacked DHCP lease history as assigned', async () => {
     const createRes = await request(app)
       .post('/api/subnets')

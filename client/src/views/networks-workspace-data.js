@@ -7,6 +7,12 @@ import {
   isOnlineFlag,
 } from '../utils/format.js';
 import { ipToLong } from '../utils/ip.js';
+import { ipSourceLabel } from '../utils/ipTableDisplay.js';
+
+// A server boolean, which arrives as true, 1 or '1' depending on the route.
+function flag(value) {
+  return isOnlineFlag(value) === true;
+}
 
 function humanize(value) {
   if (!value) return EMPTY_CELL;
@@ -110,7 +116,7 @@ export function mapDnsZoneRows(zones, networkLabels = new Map()) {
     records: formatNumber(zone.record_count || 0),
     networks: networkLabels.get(Number(zone.id)) || 'Unlinked',
     description: zone.description || null,
-    enabled: zone.enabled === true || zone.enabled === 1 || zone.enabled === '1',
+    enabled: flag(zone.enabled),
     raw: zone,
   }));
 }
@@ -123,7 +129,7 @@ export function mapDhcpScopeRows(scopes) {
     poolSize: `${formatNumber(sumScopeAddresses([scope]))} addresses`,
     leaseTime: formatDuration(scope.effective?.lease_time || scope.lease_time),
     description: scope.description || null,
-    enabled: scope.enabled === true || scope.enabled === 1 || scope.enabled === '1',
+    enabled: flag(scope.enabled),
     raw: scope,
   }));
 }
@@ -135,29 +141,47 @@ function onlineValue(row, { unknownWhenUnaddressed = false } = {}) {
   return status.label.toLowerCase();
 }
 
+const LEASE_LABEL = { active: 'Active', expired: 'Expired' };
+
+// The fields every IP table shows, filled one way from the server's view of
+// an address. The Addresses and DHCP tables read the same columns, so a
+// column that took its value from a different field in each table (status,
+// lease, expiry, last seen, source) showed the same address two ways.
+function ipRowFields(row) {
+  return {
+    address: row.ip_address,
+    hostname: row.hostname || null,
+    status: row.ip_display_status || null,
+    type: row.address_type || null,
+    // The lease dnsmasq holds: Active, Expired, or nothing. Whether the
+    // address is free for DHCP is the status column's job.
+    lease: LEASE_LABEL[row.dhcp_lease_state] || null,
+    expires: displayExpiry(row.dhcp_expires_at, formatTimestamp, {
+      reserved: row.dhcp_assignment_type === 'reserved' || flag(row.has_dhcp_reservation),
+    }),
+    online: onlineValue(row),
+    mac: displayMacAddress(row.mac_address || row.last_seen_mac),
+    source: row.allocation_source_type || row.detection_source ? ipSourceLabel(row) : null,
+    rangeType: row.network_range_type || null,
+    lastSeen: formatTimestamp(row.last_seen_at),
+    scanning:
+      row.scanning_enabled == null
+        ? null
+        : row.scanning_enabled
+          ? row.scan_enabled == null
+            ? 'On · inherited'
+            : 'On'
+          : row.scan_enabled == null
+            ? 'Off · inherited'
+            : 'Off',
+    raw: row,
+  };
+}
+
 export function mapAddressRows(rows) {
   return (rows || []).map((row) => ({
     id: `address:${row.ip_address}`,
-    address: row.ip_address,
-    hostname: row.hostname || null,
-    status: row.ip_display_status,
-    type: row.address_type || null,
-    online: onlineValue(row),
-    mac: displayMacAddress(row.mac_address || row.last_seen_mac),
-    source: row.allocation_source_type
-      ? humanize(row.allocation_source_type)
-      : row.detection_source
-        ? humanize(row.detection_source)
-        : null,
-    lastSeen: formatTimestamp(row.last_seen_at),
-    scanning: row.scanning_enabled
-      ? row.scan_enabled == null
-        ? 'On · inherited'
-        : 'On'
-      : row.scan_enabled == null
-        ? 'Off · inherited'
-        : 'Off',
-    raw: row,
+    ...ipRowFields(row),
   }));
 }
 
@@ -169,8 +193,8 @@ export function mapDnsRows(zoneRecords) {
       recordType: record.record_type,
       value: record.value,
       ttl: formatDuration(record.ttl),
-      source: humanize(record.dns_source),
-      enabled: record.enabled === true || record.enabled === 1 || record.enabled === '1',
+      source: record.dns_source ? ipSourceLabel(record) : null,
+      enabled: flag(record.enabled),
       online: onlineValue(record, { unknownWhenUnaddressed: true }),
       zone: zone.name,
       zoneType: zone.type,
@@ -200,25 +224,15 @@ function poolMembership(row) {
 export function mapDhcpRows(rows) {
   return (rows || []).map((row) => ({
     id: `dhcp:${row.dhcp_assignment_type || 'pool'}:${row.id}:${row.ip_address}`,
-    address: row.ip_address,
-    hostname: row.hostname || null,
-    mac: displayMacAddress(row.mac_address),
+    ...ipRowFields(row),
     assignment: row.dhcp_assignment_type ? humanize(row.dhcp_assignment_type) : null,
     pool: poolMembership(row),
+    // The pool slot as the server filters it (active, offline, available,
+    // unavailable). Drives the status filter and the attention rules; the
+    // Lease column shows `lease` instead.
     leaseStatus: row.lease_status,
-    expires: displayExpiry(row.expires_at, formatTimestamp, {
-      reserved: row.dhcp_assignment_type === 'reserved' && !row.expires_at,
-    }),
-    online: onlineValue(row),
-    source:
-      row.dhcp_assignment_type === 'reserved'
-        ? 'DHCP Reservation'
-        : row.dhcp_assignment_type === 'dynamic'
-          ? 'DHCP Lease'
-          : 'Dynamic pool',
+    enabled: flag(row.enabled),
     network: row.subnet_name || row.subnet_cidr || null,
-    type: row.address_type || null,
-    raw: row,
   }));
 }
 

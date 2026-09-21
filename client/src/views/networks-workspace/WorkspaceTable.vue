@@ -166,20 +166,24 @@ function handleRowKeydown(event, row) {
   }
 }
 
+// Column key to the adapter field that renders it. A field the adapter
+// filled, even with null, is the value; the raw server row is only for
+// columns no adapter shapes (vendor, the fingerprint set). Falling through
+// to raw on null is how a formatted expiry became the literal "infinite".
+const CELL_FIELDS = {
+  ip_address: 'address',
+  mac_address: 'mac',
+  last_seen_at: 'lastSeen',
+  dns_hostname: 'name',
+  record_type: 'recordType',
+  network_range_type: 'rangeType',
+  scanning_enabled: 'scanning',
+  is_online: 'online',
+};
 function cellValue(row, column) {
-  const aliases = {
-    ip_address: 'address',
-    mac_address: 'mac',
-    last_seen_at: 'lastSeen',
-    dns_hostname: 'name',
-    record_type: 'recordType',
-    lease: 'leaseStatus',
-    expires: 'expires',
-    is_online: 'online',
-  };
   if (column.key === 'dns_hostname' && row.raw?.record_fqdn) return row.raw.record_fqdn;
-  const mappedKey = aliases[column.key] || column.key;
-  if (row[mappedKey] != null) return row[mappedKey];
+  const mappedKey = CELL_FIELDS[column.key] || column.key;
+  if (mappedKey in row) return row[mappedKey];
   const field = column.field || column.key;
   return row.raw?.[field];
 }

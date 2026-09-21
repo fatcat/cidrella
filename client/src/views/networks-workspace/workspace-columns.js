@@ -75,6 +75,76 @@ function basicColumns(kind) {
   }));
 }
 
+// The IP columns each table can actually fill. The shared catalog describes
+// every column any IP table has; a DNS record has no lease and a plain
+// address has no enabled flag and no network but the one on screen, so
+// offering those columns only produced a column of dashes.
+const IP_COLUMNS = {
+  addresses: [
+    'ip_address',
+    'hostname',
+    'status',
+    'type',
+    'lease',
+    'expires',
+    'is_online',
+    'mac_address',
+    'vendor',
+    'device',
+    'os_family',
+    'device_type',
+    'device_confidence',
+    'dhcp_fingerprint',
+    'dhcp_vendor_class',
+    'dhcp_fingerprint_hostname',
+    'device_fingerprint_source',
+    'source',
+    'network_range_type',
+    'last_seen_at',
+    'scanning_enabled',
+  ],
+  dhcp: [
+    'ip_address',
+    'hostname',
+    'status',
+    'type',
+    'lease',
+    'expires',
+    'assignment',
+    'is_online',
+    'mac_address',
+    'vendor',
+    'duid',
+    'iaid',
+    'device',
+    'os_family',
+    'device_type',
+    'device_confidence',
+    'dhcp_fingerprint',
+    'dhcp_vendor_class',
+    'dhcp_fingerprint_hostname',
+    'device_fingerprint_source',
+    'source',
+    'network',
+    'network_range_type',
+    'last_seen_at',
+    'enabled',
+    'scanning_enabled',
+  ],
+  dns: [
+    'dns_hostname',
+    'record_type',
+    'value',
+    'priority',
+    'port',
+    'ttl',
+    'enabled',
+    'source',
+    'is_online',
+    'network',
+  ],
+};
+
 export function workspaceColumnCatalog(kind) {
   if (BASIC[kind]) return basicColumns(kind);
   const view =
@@ -83,31 +153,22 @@ export function workspaceColumnCatalog(kind) {
       : kind === 'dns'
         ? IP_TABLE_VIEW.DNS_FORWARD
         : IP_TABLE_VIEW.NETWORKS;
-  const columns = ipTableColumns(view).map((column) => ({ ...column, label: column.header }));
-  const extras =
-    kind === 'dhcp'
-      ? [
-          {
-            key: 'assignment',
-            header: 'Assignment',
-            label: 'Assignment',
-            field: 'dhcp_assignment_type',
-            sortable: true,
-          },
-        ]
-      : kind === 'dns'
-        ? [
-            {
-              key: 'network',
-              header: 'Related network',
-              label: 'Related network',
-              field: 'subnet_name',
-              sortable: true,
-            },
-          ]
-        : [];
-  const keys = new Set(columns.map((column) => column.key));
-  return [...columns, ...extras.filter((column) => !keys.has(column.key))];
+  const offered = new Set(IP_COLUMNS[kind] || IP_COLUMNS.addresses);
+  const columns = ipTableColumns(view)
+    .filter((column) => offered.has(column.key))
+    .map((column) => ({ ...column, label: column.header }));
+  // Assignment is the one column the shared catalog does not know: reserved
+  // or dynamic, with the pool membership beside it.
+  if (kind === 'dhcp') {
+    columns.push({
+      key: 'assignment',
+      header: 'Assignment',
+      label: 'Assignment',
+      field: 'dhcp_assignment_type',
+      sortable: true,
+    });
+  }
+  return columns;
 }
 
 export function defaultWorkspaceColumnKeys(kind) {

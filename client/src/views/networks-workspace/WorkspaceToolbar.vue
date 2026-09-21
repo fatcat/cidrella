@@ -13,8 +13,8 @@
       <span class="sr-only">Status filter</span>
       <select v-model="filterModel.status" aria-label="Status filter">
         <option value="">All statuses</option>
-        <option v-for="value in filterOptions.status" :key="value" :value="value">
-          {{ value }}
+        <option v-for="option in filterOptions.status" :key="option.value" :value="option.value">
+          {{ option.label }}
         </option>
       </select>
     </label>

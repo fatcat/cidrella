@@ -102,7 +102,11 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `formatNumber`, `displayOnlineStatus`, `EMPTY_CELL`), `utils/chart-config.js` (colors,
   `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`,
   `utils/proxy-perf.js` (the resolution and process figures from the proxy-perf rows),
-  `utils/service-chips.js` (the dnsmasq, proxy and forwarder chips). Shared styles: `assets/utilities.css` (global, loaded by
+  `utils/service-chips.js` (the dnsmasq, proxy and forwarder chips), `utils/ipTableDisplay.js`
+  (`ipSourceLabel`, the one label for a DNS, DHCP or detection source), and in
+  `views/networks-workspace-data.js` the `ipRowFields` adapter that fills every shared IP
+  column for the workspace tables (both the Addresses and DHCP adapters spread it; add a
+  column there, never in one adapter). Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
   `dialog-actions`, `card-header`, `field-error`), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
@@ -111,7 +115,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   for the range dialogs' form grammar, `assets/analytics-layout.css` for
   the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
   `utils/ip.js` and `utils/cidr.js`, `services/ip-lifecycle-service.js` for every lifecycle
-  write, `models/ip-view.js` for every server-owned display field. Add to this list when you
+  write, `models/ip-view.js` for every server-owned display field (status, type, and
+  `dhcp_lease_state` from the newest lease; any read that shows an address feeds it
+  `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own). Add to this list when you
   make something shared. Four guards enforce what they can detect, each baselined so it fails
   only on NEW instances (fix one by deleting its baseline entry, never by adding one):
   `npm run lint` refuses a vendor import outside `src/ui`, a raw `<select>`/`<input>` outside

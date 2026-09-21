@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { EMPTY_CELL } from '../../../src/utils/format.js';
 import {
   buildExplorerFolders,
   mapAddressRows,
@@ -38,14 +39,80 @@ describe('networks workspace data adapter', () => {
         dhcp_assignment_type: 'reserved',
         lease_status: 'offline',
         expires_at: null,
+        dhcp_expires_at: null,
+        dhcp_lease_state: null,
+        allocation_source_type: 'dhcp_reservation',
+        enabled: 1,
         is_online: 0,
       },
     ]);
 
     expect(row.assignment).toBe('Reserved');
     expect(row.leaseStatus).toBe('offline');
+    expect(row.lease).toBeNull();
     expect(row.expires).toBe('Never');
     expect(row.source).toBe('DHCP Reservation');
+    expect(row.enabled).toBe(true);
+  });
+
+  it('fills the shared IP columns the same way from either table', () => {
+    // The same server facts about one address, as the addresses read and
+    // the DHCP read each present them.
+    const facts = {
+      ip_address: '10.0.0.22',
+      hostname: 'S24-Ultra',
+      ip_display_status: 'in use',
+      address_type: 'DHCP Reservation',
+      dhcp_expires_at: 'infinite',
+      dhcp_lease_state: 'active',
+      allocation_source_type: 'dhcp_reservation',
+      network_range_type: 'Phones',
+      last_seen_at: new Date().toISOString(),
+      scanning_enabled: true,
+      scan_enabled: null,
+      is_online: 0,
+    };
+    const [address] = mapAddressRows([{ ...facts, has_dhcp_reservation: 1 }]);
+    const [dhcp] = mapDhcpRows([
+      { ...facts, id: 9, dhcp_assignment_type: 'reserved', expires_at: 'infinite' },
+    ]);
+    const dhcpOnly = new Set([
+      'id',
+      'raw',
+      'assignment',
+      'pool',
+      'leaseStatus',
+      'enabled',
+      'network',
+    ]);
+    const shared = (row) =>
+      Object.fromEntries(Object.entries(row).filter(([key]) => !dhcpOnly.has(key)));
+    expect(shared(dhcp)).toEqual(shared(address));
+    expect(address.lease).toBe('Active');
+    expect(address.expires).toBe('Never');
+    expect(address.source).toBe('DHCP Reservation');
+    expect(address.scanning).toBe('On · inherited');
+    expect(address.lastSeen).toBe('Just now');
+
+    // A free pool address has a status, no lease and no source, in both.
+    const [freeAddress] = mapAddressRows([
+      { ip_address: '10.0.0.16', ip_display_status: 'DHCP Scope', is_online: 0 },
+    ]);
+    const [freePool] = mapDhcpRows([
+      {
+        id: 'available:2:10.0.0.16',
+        ip_address: '10.0.0.16',
+        ip_display_status: 'DHCP Scope',
+        dhcp_assignment_type: null,
+        lease_status: 'available',
+        is_online: 0,
+      },
+    ]);
+    expect(shared(freePool)).toEqual(shared(freeAddress));
+    expect(freePool.status).toBe('DHCP Scope');
+    expect(freePool.lease).toBeNull();
+    expect(freePool.source).toBeNull();
+    expect(freePool.expires).toBe(EMPTY_CELL);
   });
 
   it('tags held addresses with their pool membership', () => {
@@ -84,7 +151,7 @@ describe('networks workspace data adapter', () => {
     ]);
 
     expect(row.recordType).toBe('A');
-    expect(row.source).toBe('DHCP');
+    expect(row.source).toBe('DHCP lease');
     expect(row.zone).toBe('example.test');
   });
 

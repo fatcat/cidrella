@@ -1,4 +1,4 @@
-import { enrichIpViewRows } from './ip-view.js';
+import { computeIpView, enrichIpViewRows } from './ip-view.js';
 import { getScopePools } from './dhcp-scope.js';
 import { fqdnForRecordName, ipForPtrRecord } from './dns-record.js';
 import { canonicalizeIp, sortKey } from '../utils/address.js';
@@ -28,6 +28,8 @@ const DHCP_SORT_FIELDS = new Set([
   'mac_address',
   'dhcp_assignment_type',
   'lease_status',
+  'dhcp_lease_state',
+  'ip_display_status',
   'expires_at',
   'subnet_name',
 ]);
@@ -429,10 +431,15 @@ function scopesForAddress(scopes, subnetId, ip) {
   );
 }
 
+// The view fields (status, type, lease state) come from the same computation
+// the Addresses table uses, fed the same facts: the lease dnsmasq holds and,
+// for anything inside a pool, that it sits in one. That is what makes a free
+// pool address read "DHCP Scope" here as it does there.
 function enrichDhcp(db, rows) {
   for (const row of rows) {
     row.has_dhcp_reservation = row.dhcp_assignment_type === 'reserved' ? 1 : 0;
-    row.dhcp_expires_at = row.dhcp_assignment_type === 'dynamic' ? row.expires_at : null;
+    row.dhcp_expires_at = row.expires_at ?? null;
+    row.in_dynamic_pool = (row.related_scope_ids || []).length > 0 ? 1 : 0;
   }
   enrichIpViewRows(db, rows, { fillFromIpAddress: true });
   for (const row of rows) {
@@ -444,11 +451,12 @@ function enrichDhcp(db, rows) {
 function availableRow(scopes, subnet, ip) {
   const matchingScopes = scopesForAddress(scopes, subnet.id, ip);
   const scope = matchingScopes[0];
-  return {
+  const row = {
     id: `available:${scope.id}:${ip}`,
     protocol_id: `scope:${scope.id}:${ip}`,
     scope_id: scope.id,
     related_scope_ids: matchingScopes.map((item) => item.id),
+    in_dynamic_pool: 1,
     dhcp_assignment_type: null,
     ip_address: ip,
     mac_address: null,
@@ -473,6 +481,9 @@ function availableRow(scopes, subnet, ip) {
     created_at: null,
     updated_at: null,
   };
+  // A synthesized pool address never touches the database, so it takes its
+  // view fields straight from the pure computation.
+  return { ...row, ...computeIpView(row) };
 }
 
 function virtualPoolProjection(scopes, excludedKeys, queries, descending = false) {
@@ -706,8 +717,16 @@ export function getWorkspaceDhcpAddresses(
   );
   rows.sort(compare);
   const total = rows.length + virtualRows.total;
+  const items = mergePage(rows, virtualRows, compare, (page - 1) * pageSize, pageSize);
+  // Synthesized pool addresses are made per page, so only the page's worth
+  // get the per-subnet fields (scanning, the organizational range tag) the
+  // stored rows already have.
+  enrichIpViewRows(
+    db,
+    items.filter((row) => row.scanning_enabled === undefined),
+  );
   return {
-    items: mergePage(rows, virtualRows, compare, (page - 1) * pageSize, pageSize),
+    items,
     total,
     page,
     page_size: pageSize,
