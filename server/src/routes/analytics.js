@@ -137,6 +137,26 @@ router.get('/domain/:name/clients', auth, async (req, res) => {
   }
 });
 
+// The permitted side. /top-domains and /top-clients above count every query,
+// blocked ones included, so a "what got through" list needs the action filter.
+// GET /api/analytics/allowed/top-domains?range=24h&limit=10
+router.get(
+  '/allowed/top-domains',
+  auth,
+  analyticsRoute(queryTopDomainsByAction, { fixedAction: 'allowed', defaultLimit: '10' }),
+);
+
+// GET /api/analytics/allowed/top-clients?range=24h&limit=10
+router.get(
+  '/allowed/top-clients',
+  auth,
+  analyticsRoute(queryTopClientsByAction, {
+    enrich: true,
+    fixedAction: 'allowed',
+    defaultLimit: '10',
+  }),
+);
+
 // GET /api/analytics/blocklist/top-clients?range=24h&limit=10
 router.get(
   '/blocklist/top-clients',

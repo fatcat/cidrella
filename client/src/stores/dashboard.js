@@ -25,11 +25,35 @@ const METRIC_CONFIG = [
   {
     key: 'blocklistTopClientDomains',
     url: '/analytics/blocklist/top-client-domains',
-    params: { limit: 20 },
+    params: { limit: 10 },
   },
   { key: 'geoipTopClients', url: '/analytics/geoip/top-clients', params: { limit: 10 } },
   { key: 'geoipTopDomains', url: '/analytics/geoip/top-domains', params: { limit: 10 } },
+  { key: 'allowedTopClients', url: '/analytics/allowed/top-clients', params: { limit: 10 } },
+  { key: 'allowedTopDomains', url: '/analytics/allowed/top-domains', params: { limit: 10 } },
+  { key: 'actionBreakdown', url: '/analytics/action-breakdown' },
+  // Bucket width per range: enough points to draw, not so many that a week
+  // is ten thousand rows. The chart re-buckets to its width anyway.
+  {
+    key: 'queryVolume',
+    url: '/analytics/query-volume',
+    params: (range) => ({
+      interval:
+        { '1h': '1m', '4h': '5m', '12h': '5m', '24h': '15m', '2d': '30m', '1w': '1h' }[range] ||
+        '15m',
+    }),
+  },
 ];
+
+// One source of a page that loads several: resolves to its data, or to a
+// failed marker, so Promise.all never rejects and the page can say which
+// panel is unavailable instead of blanking.
+const settle = (key, promise) =>
+  promise.then(
+    (data) => ({ key, data }),
+    () => ({ key, data: null, failed: true }),
+  );
+const getData = (url) => api.get(url).then((r) => r.data);
 
 export const useDashboardStore = defineStore('dashboard', () => {
   const metrics = reactive({
@@ -46,6 +70,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     blocklistTopClientDomains: [],
     geoipTopClients: [],
     geoipTopDomains: [],
+    allowedTopClients: [],
+    allowedTopDomains: [],
+    actionBreakdown: [],
+    queryVolume: [],
   });
 
   const services = ref(null);
@@ -63,7 +91,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   async function fetchMetric(key, range = '24h') {
     const cfg = METRIC_CONFIG.find((c) => c.key === key);
     if (!cfg) return;
-    const res = await api.get(cfg.url, { params: { range, ...cfg.params } });
+    const extra = typeof cfg.params === 'function' ? cfg.params(range) : cfg.params;
+    const res = await api.get(cfg.url, { params: { range, ...extra } });
     metrics[key] = res.data;
     return res.data;
   }
@@ -111,11 +140,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   async function fetchHealthBoard(range = '24h', { rangeOnly = false } = {}) {
     loading.value = true;
-    const settle = (key, promise) =>
-      promise.then(
-        (data) => ({ key, data }),
-        () => ({ key, data: null, failed: true }),
-      );
     try {
       const rangeSources = [
         settle('timeseries', fetchMetric('timeseries', range)),
@@ -126,30 +150,12 @@ export const useDashboardStore = defineStore('dashboard', () => {
       const stateSources = rangeOnly
         ? []
         : [
-            settle(
-              'services',
-              api.get('/metrics/services').then((r) => r.data),
-            ),
-            settle(
-              'system',
-              api.get('/health/system').then((r) => r.data),
-            ),
-            settle(
-              'lifecycle',
-              api.get('/metrics/ip-lifecycle').then((r) => r.data),
-            ),
-            settle(
-              'networkDhcp',
-              api.get('/metrics/network-dhcp').then((r) => r.data),
-            ),
-            settle(
-              'rogueDhcp',
-              api.get('/dhcp/rogue/status').then((r) => r.data),
-            ),
-            settle(
-              'anomalies',
-              api.get('/anomalies/summary').then((r) => r.data),
-            ),
+            settle('services', getData('/metrics/services')),
+            settle('system', getData('/health/system')),
+            settle('lifecycle', getData('/metrics/ip-lifecycle')),
+            settle('networkDhcp', getData('/metrics/network-dhcp')),
+            settle('rogueDhcp', getData('/dhcp/rogue/status')),
+            settle('anomalies', getData('/anomalies/summary')),
           ];
       const results = await Promise.all([...rangeSources, ...stateSources]);
       const failed = new Set(rangeOnly ? health.failed.filter((k) => !(k in metrics)) : []);
@@ -159,6 +165,60 @@ export const useDashboardStore = defineStore('dashboard', () => {
         if (key === 'services') services.value = data;
       }
       health.failed = [...failed];
+    } finally {
+      loading.value = false;
+    }
+  }
+
+  // Everything the Intelligence page reads. The filter states (is the
+  // blocklist on, what GeoIP mode, is DNSSEC validating) are dns:read
+  // endpoints; an analytics-only user gets them as unavailable and the rail
+  // says "unknown" rather than the page failing.
+  const intel = reactive({
+    services: null,
+    system: null,
+    blocklistSettings: null,
+    blocklistStats: null,
+    geoip: null,
+    failed: [],
+  });
+  const INTEL_RANGE_KEYS = [
+    'queryVolume',
+    'actionBreakdown',
+    'allowedTopDomains',
+    'allowedTopClients',
+    'blocklistTopDomains',
+    'blocklistTopCategories',
+    'blocklistTopClients',
+    'blocklistTopClientDomains',
+    'geoipHits',
+    'geoipTopDomains',
+    'geoipTopClients',
+    'dnssecUnsupportedDomains',
+  ];
+
+  async function fetchIntelligence(range = '24h', { rangeOnly = false } = {}) {
+    loading.value = true;
+    try {
+      const rangeSources = INTEL_RANGE_KEYS.map((key) => settle(key, fetchMetric(key, range)));
+      const stateSources = rangeOnly
+        ? []
+        : [
+            settle('services', getData('/metrics/services')),
+            settle('system', getData('/health/system')),
+            settle('blocklistSettings', getData('/blocklists/settings')),
+            settle('blocklistStats', getData('/blocklists/stats')),
+            settle('geoip', getData('/geoip/status')),
+          ];
+      const results = await Promise.all([...rangeSources, ...stateSources]);
+      const failed = new Set(rangeOnly ? intel.failed.filter((k) => !(k in metrics)) : []);
+      for (const { key, data, failed: didFail } of results) {
+        if (didFail) failed.add(key);
+        if (key in intel) intel[key] = data;
+        if (key === 'services') services.value = data;
+        if (key === 'system') systemHealth.value = data;
+      }
+      intel.failed = [...failed];
     } finally {
       loading.value = false;
     }
@@ -188,6 +248,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     fetchMetric,
     health,
     fetchHealthBoard,
+    intel,
+    fetchIntelligence,
     fetchTimeseries,
     fetchBlocklistHits,
     fetchGeoipHits,

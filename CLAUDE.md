@@ -94,18 +94,19 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `client/src/ui/*.js`, never from the package; `EmptyState`, `StatusDot`, `StatusBadge`,
   `AddressTypePill`, `ConfirmDialog` (every danger or warn confirmation, with
   `type-to-confirm` for the typed gates), `ScanToggle` (`inherits-from` names the parent),
-  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`,
-  `DoughnutTableCard`, `WorkspaceHead` (title, lede, Refresh and the range select of a
+  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`, `WorkspaceHead` (title, lede, Refresh and the range select of a
   reworked Analytics section), `SeriesChart` (every area chart of minute rows, with per-series
-  `aggregate` and `summary`), `dashboard/FigureCard`; `utils/format.js` (`apiError`,
+  `aggregate` and `summary`; legend chips toggle series), `StackedBar` (a split as one bar with
+  a toggling legend; `dashboard/AllocationBar` wraps it), `TopList` (a ranked list with bars,
+  every top-10), `dashboard/FigureCard`; `utils/format.js` (`apiError`,
   `formatNumber`, `displayOnlineStatus`, `EMPTY_CELL`), `utils/chart-config.js` (colors,
   `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`,
   `utils/proxy-perf.js` (the resolution and process figures from the proxy-perf rows),
   `utils/service-chips.js` (the dnsmasq, proxy and forwarder chips). Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
   `dialog-actions`, `card-header`, `field-error`), `assets/analytics-workspace.css` for the
-  reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns`,
-  `.figures` with `--figures`), `assets/panel-chrome.css` for the
+  reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
+  the `split`/`three` modifiers, `.figures` with `--figures`, `.lists` with `--lists`), `assets/panel-chrome.css` for the
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
   for the range dialogs' form grammar, `assets/analytics-layout.css` for
   the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,

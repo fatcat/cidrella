@@ -70,3 +70,28 @@ describe('SeriesChart', () => {
     expect(legend(none)).toEqual(['CPU —']);
   });
 });
+
+describe('SeriesChart legend', () => {
+  it('hides a series when its chip is clicked, and shows it again on the next click', async () => {
+    const w = mount(SeriesChart, {
+      global: { plugins: [createPinia()] },
+      props: {
+        rows,
+        series: [
+          { key: 'v', label: 'Allowed' },
+          { key: 'gap', label: 'Blocked' },
+        ],
+      },
+    });
+    const chips = w.findAll('.legend .chip');
+    expect(chips[0].attributes('aria-pressed')).toBe('true');
+    await chips[0].trigger('click');
+    expect(chips[0].classes()).toContain('off');
+    expect(chips[0].attributes('aria-pressed')).toBe('false');
+    let data = w.findComponent({ name: 'Line' }).props('data').datasets;
+    expect(data.map((d) => d.hidden)).toEqual([true, false]);
+    await chips[0].trigger('click');
+    data = w.findComponent({ name: 'Line' }).props('data').datasets;
+    expect(data.map((d) => d.hidden)).toEqual([false, false]);
+  });
+});

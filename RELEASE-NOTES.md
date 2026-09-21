@@ -85,6 +85,21 @@ first on a 0.4.17 host.
   chart (a copy of the Dashboard's DNS traffic plus DHCP) and the dual-axis
   Process Resources chart (the memory and CPU charts drawn a third time) are
   gone.
+- **Intelligence shows the permitted side.** Analytics > Intelligence is
+  "DNS filtering": a rail that says whether the blocklist, GeoIP and DNSSEC
+  are on (and how many categories, countries), a Verdicts panel with the
+  allowed count, block rate and the two block counts over one stacked bar,
+  and an allowed-against-blocked line over the range from the same query log
+  the counts come from. Then ranked lists: Permitted domains and clients
+  (new endpoints `/api/analytics/allowed/top-domains` and `top-clients`;
+  the old top lists counted blocked queries too), Blocked by list (domains,
+  categories, hosts, and the host-and-domain pairs), Blocked by GeoIP
+  (countries, new, plus domains and hosts), and Answered without DNSSEC
+  last. A filter that is off says so with a link to its setting instead of
+  an empty chart. The doughnuts are gone: a top-10 reads as a bar per row,
+  and a category split of 16,698 ads to 29 malware is unreadable as slices.
+  Chart legends are buttons: clicking one hides that series, so the blocked
+  line can be read on its own axis without the allowed line dwarfing it.
 - The per-minute DHCP counter is split into client messages (DISCOVER,
   REQUEST, RELEASE, INFORM, DECLINE) and server messages (OFFER, ACK, NAK),
   migration 079. The old combined column stays as their sum.

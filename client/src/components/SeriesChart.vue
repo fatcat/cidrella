@@ -1,5 +1,6 @@
 <!-- One area chart of minute rows, one dataset per series, with a legend of
-     chips underneath instead of Chart.js's own legend. The rows are
+     chips underneath instead of Chart.js's own legend; clicking a chip hides
+     its series, so a small one can be read against the axis on its own. The rows are
      re-bucketed here so a week does not draw ten thousand points; how a
      bucket combines its minutes (sum for counts, avg for a gauge like
      latency, max for a peak) and what the legend chip shows (the total, the
@@ -12,16 +13,25 @@
       <div v-else class="empty">No {{ noun }} in this range.</div>
     </div>
     <div class="legend">
-      <span v-for="(s, i) in legend" :key="`${s.key}-${i}`" class="chip">
+      <button
+        v-for="(s, i) in legend"
+        :key="`${s.key}-${i}`"
+        type="button"
+        class="chip"
+        :class="{ off: hidden.has(s.key) }"
+        :aria-pressed="!hidden.has(s.key)"
+        :title="hidden.has(s.key) ? `Show ${s.label}` : `Hide ${s.label}`"
+        @click="toggle(s.key)"
+      >
         <i class="sw" :style="{ background: s.color }" aria-hidden="true"></i>
         {{ s.label }} <b class="mono">{{ s.text }}</b>
-      </span>
+      </button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import '../assets/analytics-workspace.css';
 import {
   Chart as ChartJS,
@@ -49,7 +59,8 @@ const props = defineProps({
   // [{ key, label, color, aggregate?, summary?, outline? }] drawn bottom to top.
   // aggregate: how a bucket combines its minutes, sum (default) | avg | max.
   // summary: what the legend chip shows, total (default) | avg | max | latest.
-  // outline: a dashed line with no fill, for an envelope like a max.
+  // outline: a line with no fill, for an envelope like a max whose fill
+  // would otherwise tint everything under it.
   series: { type: Array, required: true },
   range: { type: String, default: '24h' },
   noun: { type: String, default: 'traffic' },
@@ -62,6 +73,14 @@ const props = defineProps({
 });
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+const hidden = ref(new Set());
+function toggle(key) {
+  const next = new Set(hidden.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  hidden.value = next;
+}
 
 function combine(values, how) {
   const present = values.map(num).filter((v) => v !== null);
@@ -132,13 +151,13 @@ const chartData = computed(() => ({
     data: bucketed.value.map((r) => r.values[i]),
     borderColor: s.color,
     backgroundColor: withAlpha(s.color, props.stacked ? 0.35 : 0.18),
-    borderWidth: s.outline ? 1 : 1.5,
-    borderDash: s.outline ? [3, 3] : [],
+    borderWidth: 1.5,
     fill: !s.outline,
     tension: 0.2,
     pointRadius: 0,
     pointHitRadius: 8,
     spanGaps: false,
+    hidden: hidden.value.has(s.key),
   })),
 }));
 
@@ -174,5 +193,27 @@ const options = computed(() => {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 8px;
+}
+.legend .chip {
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.78rem;
+}
+.legend .chip:hover {
+  border-color: var(--cid-primary-color);
+}
+.legend .chip:focus-visible {
+  outline: 2px solid var(--cid-primary-color);
+  outline-offset: 1px;
+}
+.legend .chip.off {
+  opacity: 0.5;
+}
+.legend .chip.off .sw {
+  background: transparent !important;
+  box-shadow: inset 0 0 0 1px var(--cid-text-muted-color);
+}
+.legend .chip.off b {
+  text-decoration: line-through;
 }
 </style>

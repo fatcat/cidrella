@@ -465,10 +465,14 @@ so P8 was a verification pass on safe fixtures plus two fixes:
   `?view=dashboard|performance|intelligence|anomalies` so bookmarks and Back work, unrelated
   query parameters survive, and the old `cidrella_analytics_tab` index is still read and written
   (`client/tests/unit/views/Analytics.test.js`). The Dashboard (health board, 2026-09-21) and
-  Performance (2026-09-21) are on the workspace grammar (`WorkspaceHead`, `SeriesChart`,
-  `FigureCard`); Intelligence is the last section still on `analytics-layout.css` and
-  `DoughnutTableCard`, and the last consumer of the old sheet besides the classic views, GeoIP
-  and Blocklists.
+  Performance and Intelligence (all 2026-09-21) are on the workspace grammar (`WorkspaceHead`,
+  `SeriesChart`, `StackedBar`, `TopList`, `FigureCard`). `analytics-layout.css` is now only
+  used by the classic Anomalies page, AnomalyDetection, GeoIP, Blocklists and ThemeLab.
+  Intelligence follow-ups: a drill-down drawer (click a domain: who asked for it via
+  `/analytics/domain/:name/clients`; click a host: what it asked for via
+  `/analytics/client/:ip/domains`; honor the Dashboard's `?q=` link on arrival), and the proxy
+  stamping `block_reason = 'allowlist'` on allowlisted answers so "permitted because you
+  allowlisted it" becomes a verdict (today those rows are plain `allowed`).
 - ~~Q-04 anomaly triage~~ [FIXED] landed 2026-09-20: the triage page (queue + map + Evidence
   drawer) is the Analytics Anomalies section, the classic panel moved to `/anomalies-classic`,
   the sidecar writes `threat_score` per window (migration 077). Peer medians are still not

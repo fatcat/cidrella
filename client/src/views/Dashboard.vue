@@ -32,7 +32,7 @@
       </RouterLink>
     </section>
 
-    <div class="board">
+    <div class="board split">
       <div class="col">
         <section class="panel" aria-label="Needs attention">
           <div class="panel-head">
@@ -87,51 +87,19 @@
               :range="selectedRange"
               noun="queries"
             />
-            <div class="tops">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Top clients</th>
-                    <th class="r">Queries</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in topClients" :key="row.key">
-                    <td>
-                      <RouterLink :to="row.to" data-track="dashboard-top-client">{{
-                        row.label
-                      }}</RouterLink>
-                      <div class="bar" :style="{ width: `${row.pct}%` }"></div>
-                    </td>
-                    <td class="r mono">{{ formatNumber(row.count) }}</td>
-                  </tr>
-                  <tr v-if="!topClients.length">
-                    <td colspan="2" class="unavailable">No queries in this range.</td>
-                  </tr>
-                </tbody>
-              </table>
-              <table>
-                <thead>
-                  <tr>
-                    <th>Top domains</th>
-                    <th class="r">Queries</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="row in topDomains" :key="row.key">
-                    <td>
-                      <RouterLink :to="row.to" data-track="dashboard-top-domain">{{
-                        row.label
-                      }}</RouterLink>
-                      <div class="bar" :style="{ width: `${row.pct}%` }"></div>
-                    </td>
-                    <td class="r mono">{{ formatNumber(row.count) }}</td>
-                  </tr>
-                  <tr v-if="!topDomains.length">
-                    <td colspan="2" class="unavailable">No queries in this range.</td>
-                  </tr>
-                </tbody>
-              </table>
+            <div class="lists">
+              <TopList
+                title="Top clients"
+                :rows="topClients"
+                track="dashboard-top-client"
+                empty-text="No queries in this range."
+              />
+              <TopList
+                title="Top domains"
+                :rows="topDomains"
+                track="dashboard-top-domain"
+                empty-text="No queries in this range."
+              />
             </div>
           </div>
         </section>
@@ -174,6 +142,7 @@ import { attentionItems, openCount } from '../utils/health-attention.js';
 import StatusDot from '../components/StatusDot.vue';
 import WorkspaceHead from '../components/WorkspaceHead.vue';
 import SeriesChart from '../components/SeriesChart.vue';
+import TopList from '../components/TopList.vue';
 import AttentionList from '../components/dashboard/AttentionList.vue';
 import FigureCard from '../components/dashboard/FigureCard.vue';
 import AllocationBar from '../components/dashboard/AllocationBar.vue';
@@ -313,32 +282,21 @@ const dhcpNote = computed(() => {
 
 const rangeLabel = computed(() => rangeLabelOf(selectedRange.value));
 
-function topRows(items, labelOf, keyOf, toOf) {
-  const list = (items || []).slice(0, 5);
-  const max = Math.max(1, ...list.map((r) => Number(r.count) || 0));
-  return list.map((r) => ({
-    key: keyOf(r),
-    label: labelOf(r),
-    count: Number(r.count) || 0,
-    pct: ((Number(r.count) || 0) / max) * 100,
-    to: toOf(r),
-  }));
-}
 const topClients = computed(() =>
-  topRows(
-    store.topClients,
-    (r) => r.hostname || r.client_ip || 'unknown',
-    (r) => r.client_ip || r.hostname,
-    (r) => `/networks?context=all&view=addresses&q=${encodeURIComponent(r.client_ip || '')}`,
-  ),
+  (store.topClients || []).map((r) => ({
+    key: r.client_ip || r.hostname,
+    label: r.hostname || r.client_ip || 'unknown',
+    count: r.count,
+    to: `/networks?context=all&view=addresses&q=${encodeURIComponent(r.client_ip || '')}`,
+  })),
 );
 const topDomains = computed(() =>
-  topRows(
-    store.topDomains,
-    (r) => r.domain || 'unknown',
-    (r) => r.domain,
-    (r) => `/analytics?view=intelligence&q=${encodeURIComponent(r.domain || '')}`,
-  ),
+  (store.topDomains || []).map((r) => ({
+    key: r.domain,
+    label: r.domain || 'unknown',
+    count: r.count,
+    to: `/analytics?view=intelligence&q=${encodeURIComponent(r.domain || '')}`,
+  })),
 );
 
 // Addresses panel notes.
@@ -385,12 +343,12 @@ useAutoRefresh(refreshAll);
 </script>
 
 <style scoped>
-.board {
-  --board-columns: minmax(300px, 5fr) minmax(0, 7fr);
-}
 .col {
   display: grid;
   gap: 14px;
+}
+.lists {
+  margin-top: 14px;
 }
 .alloc-note {
   font-size: 0.78rem;
@@ -398,56 +356,5 @@ useAutoRefresh(refreshAll);
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--cid-surface-border);
-}
-.tops {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
-  margin-top: 14px;
-}
-.tops table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-.tops th {
-  text-align: left;
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--cid-text-muted-color);
-  font-weight: 600;
-  padding: 0 0 6px;
-  border-bottom: 1px solid var(--cid-surface-border);
-}
-.tops th.r,
-.tops td.r {
-  text-align: right;
-}
-.tops td {
-  padding: 5px 0;
-  border-bottom: 1px solid var(--cid-surface-border);
-}
-.tops tr:last-child td {
-  border-bottom: 0;
-}
-.tops td a {
-  color: inherit;
-  text-decoration: none;
-}
-.tops td a:hover {
-  color: var(--cid-primary-color);
-}
-.tops .bar {
-  height: 3px;
-  background: var(--cid-primary-color);
-  border-radius: 2px;
-  margin-top: 3px;
-  opacity: 0.7;
-}
-@media (max-width: 860px) {
-  .tops {
-    grid-template-columns: 1fr;
-  }
 }
 </style>

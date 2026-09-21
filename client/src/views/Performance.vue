@@ -226,15 +226,9 @@ useAutoRefresh(refreshAll);
 .figures.five {
   --figures: 5;
 }
-.board.three {
-  --board-columns: repeat(3, minmax(0, 1fr));
-}
 @media (max-width: 1100px) {
   .figures.five {
     --figures: 3;
-  }
-  .board.three {
-    --board-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 860px) {

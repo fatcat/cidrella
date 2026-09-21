@@ -114,6 +114,18 @@
   gap: 14px;
   align-items: start;
 }
+/* split: a narrow list column beside a wide one. three: equal thirds. */
+.board.split {
+  --board-columns: minmax(300px, 5fr) minmax(0, 7fr);
+}
+.board.three {
+  --board-columns: repeat(3, minmax(0, 1fr));
+}
+@media (max-width: 1100px) {
+  .board.three {
+    --board-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 @media (max-width: 860px) {
   .board {
     grid-template-columns: 1fr;
@@ -134,6 +146,18 @@
 }
 @media (max-width: 480px) {
   .figures {
+    grid-template-columns: 1fr;
+  }
+}
+/* Ranked lists side by side inside a panel body. --lists sets the count. */
+.lists {
+  display: grid;
+  grid-template-columns: repeat(var(--lists, 2), minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+@media (max-width: 860px) {
+  .lists {
     grid-template-columns: 1fr;
   }
 }
