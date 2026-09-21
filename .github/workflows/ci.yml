@@ -91,6 +91,17 @@ jobs:
             exit 1
           fi
 
+      - name: Reuse guards
+        # Byte-identical scoped CSS rules in two components, and confirmation
+        # dialogs hand-built instead of the shared one. Both baselined like
+        # the gates below, so they fail only on NEW instances. The three
+        # ESLint reuse rules (vendor imports through src/ui, form controls
+        # through the wrappers, status marks through StatusDot/StatusBadge)
+        # ran in the Lint step above.
+        run: |
+          node scripts/check-scoped-css-dupes.js
+          node scripts/check-confirm-dialogs.js
+
       - name: Duplicate-export check
         # Fails when a file hand-rolls a function that a module it already
         # imports from also exports. That is the shape utils/validation.js was

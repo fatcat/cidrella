@@ -97,21 +97,18 @@
     </Dialog>
 
     <!-- Delete VLAN Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteVlanDialog"
       header="Delete VLAN"
-      modal
-      :style="{ width: '24rem' }"
+      :loading="savingVlan"
+      data-track="dialog-vlan-delete"
+      @confirm="doDeleteVlan"
     >
       <p>
         Delete VLAN <strong>{{ deletingVlan?.vlan_id }} — {{ deletingVlan?.name }}</strong
         >?
       </p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteVlanDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteVlan" :loading="savingVlan" />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -119,6 +116,7 @@
 import { ref, computed, onMounted } from 'vue';
 import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
+import ConfirmDialog from '../../components/ConfirmDialog.vue';
 import DataTable from '../../ui/DataTable.js';
 import Column from '../../ui/Column.js';
 import Dialog from '../../ui/Dialog.js';
@@ -266,12 +264,6 @@ onMounted(loadVlans);
   border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-}
 .card-header h3 {
   margin: 0;
   font-size: var(--app-fs-lg);
@@ -296,8 +288,5 @@ onMounted(loadVlans);
   margin-bottom: 0.4rem;
   font-size: var(--app-fs-sm);
   font-weight: 500;
-}
-.w-full {
-  width: 100%;
 }
 </style>

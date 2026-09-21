@@ -1,0 +1,58 @@
+/* Single-purpose classes any component may use. Loaded once from main.js.
+   A rule lands here when a second component would otherwise copy it; the
+   scoped-CSS guard (scripts/check-scoped-css-dupes.js) refuses the copy.
+   Anything that belongs to one page's grammar goes in that page's sheet
+   (analytics-workspace.css, panel-chrome.css) instead. */
+
+/* Tabular figures: addresses, MACs, counts, anything that lines up. */
+.mono {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+}
+/* Card title beside its action. */
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+}
+.card-header h3 {
+  margin: 0;
+}
+
+.muted {
+  color: var(--cid-text-muted-color);
+}
+.text-sm {
+  font-size: var(--app-fs-sm);
+}
+
+.w-full {
+  width: 100%;
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+/* A row of small action buttons in a table cell. */
+.action-buttons {
+  display: flex;
+  gap: 0.25rem;
+}
+/* The button row at the foot of a dialog body (not the Dialog footer slot). */
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.6rem;
+}
+.field-error {
+  color: var(--cid-red-500);
+  font-size: 0.75rem;
+}

@@ -1,13 +1,17 @@
 <!-- Confirm taking a client out of anomaly detection. Used by the classic
      Anomalies panel and the triage page's Evidence drawer. -->
 <template>
-  <Dialog
+  <ConfirmDialog
     :visible="visible"
     header="Allowlist Client"
-    :modal="true"
-    :closable="true"
-    :style="{ width: '26rem' }"
+    width="26rem"
+    severity="warn"
+    confirm-label="Allowlist"
+    confirm-icon="pi pi-shield"
+    :loading="busy"
+    confirm-track="anomalies-allowlist-confirm"
     @update:visible="emit('update:visible', $event)"
+    @confirm="confirm"
   >
     <p>
       Allowlist <strong>{{ target?.client_ip }}</strong>
@@ -28,24 +32,12 @@
         style="margin-top: 0.25rem"
       />
     </div>
-    <template #footer>
-      <Button label="Cancel" text @click="emit('update:visible', false)" />
-      <Button
-        label="Allowlist"
-        icon="pi pi-shield"
-        severity="warn"
-        :loading="busy"
-        data-track="anomalies-allowlist-confirm"
-        @click="confirm"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 </template>
 
 <script setup>
 import { ref, watch } from 'vue';
-import Button from '../../ui/Button.js';
-import Dialog from '../../ui/Dialog.js';
+import ConfirmDialog from '../ConfirmDialog.vue';
 import InputText from '../../ui/InputText.js';
 import { useAnomalyStore } from '../../stores/anomalies.js';
 import { useToast } from '../../ui/useToast.js';

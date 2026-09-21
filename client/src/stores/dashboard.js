@@ -95,6 +95,75 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const fetchGeoipTopClients = (range) => fetchMetric('geoipTopClients', range);
   const fetchGeoipTopDomains = (range) => fetchMetric('geoipTopDomains', range);
 
+  // Everything the health board reads, in one round. Each source settles on
+  // its own so a failing one leaves its panel saying "unavailable" instead of
+  // taking the page down with it. The range-driven sources (timeseries, proxy
+  // perf, top lists) are the only ones a range change refetches.
+  const health = reactive({
+    services: null,
+    system: null,
+    lifecycle: null,
+    networkDhcp: null,
+    rogueDhcp: null,
+    anomalies: null,
+    failed: [],
+  });
+
+  async function fetchHealthBoard(range = '24h', { rangeOnly = false } = {}) {
+    loading.value = true;
+    const settle = (key, promise) =>
+      promise.then(
+        (data) => ({ key, data }),
+        () => ({ key, data: null, failed: true }),
+      );
+    try {
+      const rangeSources = [
+        settle('timeseries', fetchMetric('timeseries', range)),
+        settle('proxyPerf', fetchMetric('proxyPerf', range)),
+        settle('topClients', fetchMetric('topClients', range)),
+        settle('topDomains', fetchMetric('topDomains', range)),
+      ];
+      const stateSources = rangeOnly
+        ? []
+        : [
+            settle(
+              'services',
+              api.get('/metrics/services').then((r) => r.data),
+            ),
+            settle(
+              'system',
+              api.get('/health/system').then((r) => r.data),
+            ),
+            settle(
+              'lifecycle',
+              api.get('/metrics/ip-lifecycle').then((r) => r.data),
+            ),
+            settle(
+              'networkDhcp',
+              api.get('/metrics/network-dhcp').then((r) => r.data),
+            ),
+            settle(
+              'rogueDhcp',
+              api.get('/dhcp/rogue/status').then((r) => r.data),
+            ),
+            settle(
+              'anomalies',
+              api.get('/anomalies/summary').then((r) => r.data),
+            ),
+          ];
+      const results = await Promise.all([...rangeSources, ...stateSources]);
+      const failed = new Set(rangeOnly ? health.failed.filter((k) => !(k in metrics)) : []);
+      for (const { key, data, failed: didFail } of results) {
+        if (didFail) failed.add(key);
+        if (key in health) health[key] = data;
+        if (key === 'services') services.value = data;
+      }
+      health.failed = [...failed];
+    } finally {
+      loading.value = false;
+    }
+  }
+
   async function fetchAll(range = '24h') {
     loading.value = true;
     try {
@@ -117,6 +186,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     selectedRange,
     setRange,
     fetchMetric,
+    health,
+    fetchHealthBoard,
     fetchTimeseries,
     fetchBlocklistHits,
     fetchGeoipHits,

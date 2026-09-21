@@ -1,0 +1,114 @@
+/* The grammar the reworked Analytics sections share (Anomalies triage, the
+   Dashboard health board, and whichever comes next): the page root, a head
+   with a title and lede, a rail of status chips, and panels with an uppercase
+   head and a note. Pages import this and add only what is theirs.
+
+   analytics-layout.css is the older sheet the not-yet-reworked sections
+   (Performance, Intelligence, the classic Anomalies page) still use. */
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 1.1rem;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+/* Head: title, lede, and whatever actions sit on the right. */
+.workspace-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.workspace-head h1 {
+  margin: 0;
+  font-size: 1.35rem;
+}
+.workspace-head .lede {
+  margin: 4px 0 0;
+  color: var(--cid-text-muted-color);
+  max-width: 62ch;
+  font-size: 0.9rem;
+}
+.workspace-head .head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Rail of chips. A chip may lead with a StatusDot (service state) or be a link. */
+.status-rail {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.status-rail .sep {
+  width: 1px;
+  background: var(--cid-surface-border);
+  margin: 4px 2px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 0.78rem;
+  color: var(--cid-text-muted-color);
+  text-decoration: none;
+}
+.chip b {
+  color: var(--cid-text-color);
+  font-weight: 600;
+}
+.chip.link:hover {
+  border-color: var(--cid-primary-color);
+}
+/* A legend chip's swatch: square, colored by the series it stands for. */
+.chip .sw {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Panels. */
+.panel {
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
+  border-radius: 10px;
+}
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 14px 8px;
+}
+.panel-head h2 {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--cid-text-muted-color);
+}
+.panel-note {
+  font-size: 0.75rem;
+  color: var(--cid-text-muted-color);
+  text-align: right;
+}
+.panel-body {
+  padding: 0 14px 14px;
+}
+.panel .unavailable {
+  margin: 0;
+  padding: 6px 0 4px;
+  color: var(--cid-text-muted-color);
+  font-size: 0.85rem;
+}

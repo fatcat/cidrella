@@ -567,9 +567,6 @@ onMounted(loadInterfaces);
   font-family: var(--font-mono, monospace);
   font-size: 0.85em;
 }
-.muted {
-  color: var(--cid-text-muted-color);
-}
 .warn-text {
   color: var(--cid-orange-400);
 }

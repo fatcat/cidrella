@@ -47,30 +47,22 @@
     </template>
   </Dialog>
 
-  <Dialog
-    :visible="confirmingDelete"
+  <ConfirmDialog
+    v-model:visible="confirmingDelete"
     header="Delete Network Range Type"
-    modal
-    :style="{ width: '26rem' }"
+    width="26rem"
+    confirm-label="Delete type"
+    :loading="busy"
     data-track="workspace-range-type-delete-confirm"
-    @update:visible="confirmingDelete = $event"
+    confirm-track="workspace-range-type-delete-confirm-action"
+    @confirm="remove"
   >
     <p>
       Delete <strong>{{ rangeType?.name }}</strong
       >? A type that is still assigned to ranges cannot be deleted.
     </p>
     <p v-if="error" class="workspace-range-error" role="alert">{{ error }}</p>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="confirmingDelete = false" />
-      <Button
-        label="Delete type"
-        severity="danger"
-        :loading="busy"
-        data-track="workspace-range-type-delete-confirm-action"
-        @click="remove"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 </template>
 
 <script setup>
@@ -81,7 +73,9 @@ import InputText from '../../../ui/InputText.js';
 import { apiError } from '../../../utils/format.js';
 import { useRangeActions } from '../composables/useRangeActions.js';
 import { useDiscardGuard } from '../composables/useDiscardGuard.js';
+import './range-dialogs.css';
 import DiscardPrompt from './DiscardPrompt.vue';
+import ConfirmDialog from '../../../components/ConfirmDialog.vue';
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -156,27 +150,8 @@ async function save() {
 </script>
 
 <style scoped>
-.workspace-range-form,
-.workspace-range-form label {
-  display: grid;
-  gap: 0.5rem;
-}
-.workspace-range-form {
-  gap: 0.9rem;
-}
 .workspace-color-field {
   grid-template-columns: auto 3rem 1fr;
   align-items: center;
-}
-.workspace-range-help,
-.workspace-range-error {
-  margin: 0;
-  font-size: var(--cid-font-small, 0.8rem);
-}
-.workspace-range-help {
-  color: var(--cid-text-muted);
-}
-.workspace-range-error {
-  color: var(--cid-danger, #b42318);
 }
 </style>

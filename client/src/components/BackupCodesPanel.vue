@@ -107,9 +107,6 @@ function downloadCodes() {
   font-size: 1rem;
   line-height: 1.8;
 }
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
 .code-actions {
   display: flex;
   gap: 8px;

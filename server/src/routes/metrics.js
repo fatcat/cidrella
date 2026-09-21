@@ -33,7 +33,7 @@ router.get('/timeseries', requirePerm('analytics:read'), (req, res) => {
   const cutoff = parseCutoff(req.query.range);
   const rows = db
     .prepare(
-      'SELECT ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks FROM metrics WHERE ts >= ? ORDER BY ts',
+      'SELECT ts, dns_queries, dhcp_requests, dhcp_client_msgs, dhcp_server_msgs, blocklist_blocks, geoip_blocks FROM metrics WHERE ts >= ? ORDER BY ts',
     )
     .all(cutoff);
   res.json(rows);

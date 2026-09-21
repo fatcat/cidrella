@@ -26,6 +26,7 @@ npm run test:client    # client unit (vitest)
 npm run test:sidecar   # anomaly sidecar rules (python3 unittest, stdlib only, no venv needed)
 npm run lint           # ESLint (flat config, correctness-focused), must exit 0
 npm run build:client   # production client build, a build failure is a test failure
+npm run check:reuse    # duplicate helpers, duplicate scoped CSS, hand-built confirm dialogs (baselined)
 ```
 
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
@@ -88,6 +89,32 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   root.
 - **Git**: the maintainer runs all commits, tags, and pushes. Claude prepares changes and
   commit messages but never commits.
+- **Shared things exist, use them.** Before writing a component, style rule or helper, check
+  this list and grep for the name. Client: every vendor component is imported through
+  `client/src/ui/*.js`, never from the package; `EmptyState`, `StatusDot`, `StatusBadge`,
+  `AddressTypePill`, `ConfirmDialog` (every danger or warn confirmation, with
+  `type-to-confirm` for the typed gates), `ScanToggle` (`inherits-from` names the parent),
+  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`,
+  `DoughnutTableCard`; `utils/format.js` (`apiError`, `formatNumber`, `displayOnlineStatus`,
+  `EMPTY_CELL`), `utils/chart-config.js` (colors, `RANGE_OPTIONS`, line and doughnut
+  options), `utils/dateFormat.js`. Shared styles: `assets/utilities.css` (global, loaded by
+  `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
+  `dialog-actions`, `card-header`, `field-error`), `assets/analytics-workspace.css` for the
+  reworked Analytics sections (head, rail, chip, panel), `assets/panel-chrome.css` for the
+  DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
+  for the range dialogs' form grammar, `assets/analytics-layout.css` for
+  the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
+  `utils/ip.js` and `utils/cidr.js`, `services/ip-lifecycle-service.js` for every lifecycle
+  write, `models/ip-view.js` for every server-owned display field. Add to this list when you
+  make something shared. Four guards enforce what they can detect, each baselined so it fails
+  only on NEW instances (fix one by deleting its baseline entry, never by adding one):
+  `npm run lint` refuses a vendor import outside `src/ui`, a raw `<select>`/`<input>` outside
+  the baselined files, and a `dot`/`pill`/`badge` class outside the status components;
+  `npm run check:reuse` runs `check-duplicate-exports.js` (a local copy of an exported helper),
+  `check-scoped-css-dupes.js` (an identical rule in two scoped style blocks; `--drift` lists
+  same-name-different-body candidates as a report) and `check-confirm-dialogs.js` (a Dialog
+  whose footer carries its own danger or warn Button instead of using ConfirmDialog; its
+  baseline is empty). CI runs all of them.
 - **UI instrumentation**: key UI elements carry `data-track` attributes consumed by the dev
   tracking endpoint. Preserve them when refactoring components.
 - **Linting**: ESLint only (`eslint.config.mjs`), correctness-focused. Stylistic Vue rules

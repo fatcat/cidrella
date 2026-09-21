@@ -57,6 +57,13 @@ const node = {
   },
 };
 
+const CheckboxStub = {
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  template:
+    '<input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+};
+
 function mountDialogs(props = {}) {
   return mount(NetworkDialogs, {
     props: { selectedNode: null, folders: [], ...props },
@@ -67,6 +74,8 @@ function mountDialogs(props = {}) {
         InputText: InputStub,
         Message: MessageStub,
         InputNumber: true,
+        Checkbox: CheckboxStub,
+        Slider: true,
         Select: true,
         SelectButton: true,
         AutoComplete: true,

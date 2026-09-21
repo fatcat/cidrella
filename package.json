@@ -17,7 +17,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:db-ownership": "node scripts/check-db-ownership.js",
-    "check:db-ownership:report": "node scripts/check-db-ownership.js --report"
+    "check:db-ownership:report": "node scripts/check-db-ownership.js --report",
+    "check:reuse": "node scripts/check-duplicate-exports.js && node scripts/check-scoped-css-dupes.js && node scripts/check-confirm-dialogs.js",
+    "check:reuse:report": "node scripts/check-scoped-css-dupes.js --drift"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

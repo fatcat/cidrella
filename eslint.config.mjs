@@ -61,6 +61,110 @@ export default [
     },
   },
 
+  // Reuse guards. These turn the "shared things exist, use them" convention in
+  // CLAUDE.md into rules: a vendor component reaches the app only through
+  // src/ui, a form control is one of the wrappers, and a status mark is one
+  // of the status components. Each rule that has pre-existing violations
+  // carries a BASELINE of files it does not run against yet. Fixing a file
+  // means deleting it from the baseline; adding a file to silence a new
+  // finding defeats the guard. scripts/check-scoped-css-dupes.js and
+  // scripts/check-confirm-dialogs.js cover what ESLint cannot see.
+  {
+    files: ['client/src/**/*.{js,vue}'],
+    ignores: ['client/src/ui/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['openvue', 'openvue/*', 'primevue', 'primevue/*'],
+              message:
+                'Import the wrapper from client/src/ui/<Component>.js, never the vendor package. One module per component; add one there if it is missing.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ['client/src/**/*.vue'],
+    ignores: [
+      'client/src/ui/**',
+      // BASELINE, raw form controls. Each of these predates the rule. Remove a
+      // file here once its <select>/<input> use the src/ui wrappers, or once
+      // the raw control is judged deliberate (search boxes inside a custom bar
+      // are; a checkbox in a form that uses ToggleSwitch elsewhere is not).
+      'client/src/components/DebugPanel.vue',
+      'client/src/components/DhcpPanel.vue',
+      'client/src/components/DnsPanel.vue',
+      'client/src/components/first-run/StepImport.vue',
+      'client/src/components/InterfacePanel.vue',
+      'client/src/components/PiholeImportPanel.vue',
+      'client/src/components/ScopeDialog.vue',
+      'client/src/components/settings/SettingsArea.vue',
+      'client/src/views/Blocklists.vue',
+      'client/src/views/DHCP.vue',
+      'client/src/views/GeoIP.vue',
+      'client/src/views/networks-workspace/AddressDetailsPanel.vue',
+      'client/src/views/networks-workspace/dialogs/AddressScanDialog.vue',
+      'client/src/views/networks-workspace/dialogs/IpReservationEditor.vue',
+      'client/src/views/networks-workspace/dialogs/RangeTypeDialog.vue',
+      'client/src/views/networks-workspace/ResourceExplorer.vue',
+      'client/src/views/networks-workspace/WorkspaceTable.vue',
+      'client/src/views/networks-workspace/WorkspaceToolbar.vue',
+      'client/src/views/settings/BackupSettings.vue',
+      'client/src/views/settings/NetworkSettings.vue',
+      'client/src/views/settings-workspace/SettingsWorkspace.vue',
+      'client/src/views/SubnetsLayoutB.vue',
+    ],
+    rules: {
+      'vue/no-restricted-html-elements': [
+        'error',
+        {
+          element: 'select',
+          message: 'Use the Select wrapper from client/src/ui/Select.js.',
+        },
+        {
+          element: 'input',
+          message:
+            'Use InputText, InputNumber, Checkbox, ToggleSwitch or Password from client/src/ui. For a type the wrappers do not cover (file, color, range) add an eslint-disable-next-line comment saying so.',
+        },
+      ],
+    },
+  },
+  {
+    files: ['client/src/**/*.vue'],
+    ignores: [
+      'client/src/components/StatusDot.vue',
+      'client/src/components/StatusBadge.vue',
+      'client/src/components/table/AddressTypePill.vue',
+      // BASELINE, hand-drawn status marks. Remove a file once it renders its
+      // dot or badge through StatusDot / StatusBadge / AddressTypePill. What
+      // is left is badges and pills (the classic views keep theirs until
+      // they are removed).
+      'client/src/components/FolderNetworkTable.vue',
+      'client/src/views/Blocklists.vue',
+      'client/src/views/GeoIP.vue',
+      'client/src/views/SubnetsLayoutB.vue',
+      'client/src/views/ThemeLab.vue',
+      'client/src/views/settings/BlocklistSearch.vue',
+      'client/src/views/settings/LogsSettings.vue',
+      'client/src/views/settings/TwoFactorSettings.vue',
+    ],
+    rules: {
+      'vue/no-restricted-class': [
+        'error',
+        'dot',
+        'status-dot',
+        'pill',
+        'badge',
+        'status-badge',
+        'indicator',
+      ],
+    },
+  },
+
   // Rule calibration: recommended is the floor; relax the rules that fight
   // legitimate existing patterns rather than indicating bugs.
   {

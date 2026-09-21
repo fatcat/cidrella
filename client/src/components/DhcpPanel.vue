@@ -411,46 +411,33 @@
     </Dialog>
 
     <!-- Delete Scope Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteScopeDialog"
       header="Delete Scope"
-      modal
-      :style="{ width: '24rem' }"
+      :loading="savingScope"
       data-track="dialog-dhcp-delete-scope"
+      @confirm="doDeleteScope"
     >
       <p>
         Delete DHCP scope for <strong>{{ deletingScope?.subnet_cidr }}</strong
         >?
       </p>
       <p class="text-sm muted">The underlying DHCP Scope range will be kept.</p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteScopeDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteScope" :loading="savingScope" />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <!-- Delete DHCP Reservation Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteReservationDialog"
       header="Delete DHCP Reservation"
-      modal
-      :style="{ width: '24rem' }"
+      :loading="savingReservation"
       data-track="dialog-dhcp-delete-reservation"
+      @confirm="doDeleteReservation"
     >
       <p>
         Delete DHCP Reservation for <strong>{{ deletingReservation?.mac_address }}</strong> →
         {{ deletingReservation?.ip_address }}?
       </p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteReservationDialog = false" />
-        <Button
-          label="Delete"
-          severity="danger"
-          @click="doDeleteReservation"
-          :loading="savingReservation"
-        />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <!-- Lease Context Menu -->
     <ContextMenu ref="leaseContextMenuRef" :model="leaseContextMenuItems" />
@@ -494,6 +481,8 @@ import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import EmptyState from './EmptyState.vue';
+import '../assets/panel-chrome.css';
+import ConfirmDialog from './ConfirmDialog.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
 import IpTableCell from './table/IpTableCell.vue';
@@ -1212,32 +1201,6 @@ defineExpose({
   background: var(--cid-surface-ground);
 }
 
-.sidebar-search {
-  display: flex;
-  align-items: center;
-  padding: 0 0.6rem;
-  border-bottom: 1px solid var(--cid-surface-border);
-  gap: 0.4rem;
-  height: 2.4rem;
-  box-sizing: border-box;
-  flex-shrink: 0;
-}
-.search-icon {
-  font-size: var(--app-fs-sm);
-  color: var(--cid-text-muted-color);
-}
-.sidebar-filter {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--cid-text-color);
-  font-size: var(--app-fs-sm);
-  outline: none;
-}
-.sidebar-filter::placeholder {
-  color: var(--cid-text-muted-color);
-}
-
 .scope-list {
   overflow-y: auto;
 }
@@ -1335,47 +1298,6 @@ defineExpose({
   font-weight: 600;
 }
 
-.info-bar {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--cid-surface-border);
-  padding: 0 0.75rem;
-  gap: 0.6rem;
-  height: 2.4rem;
-  box-sizing: border-box;
-}
-.info-bar-name {
-  font-weight: 700;
-  font-size: var(--app-fs-md);
-  color: var(--cid-primary-color);
-  font-family: monospace;
-  white-space: nowrap;
-}
-.info-bar-sep {
-  width: 1px;
-  height: 1rem;
-  background: var(--cid-surface-border);
-  flex-shrink: 0;
-}
-.info-bar-pair {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  white-space: nowrap;
-}
-.info-bar-label {
-  font-size: var(--app-fs-xs);
-  text-transform: uppercase;
-  color: var(--cid-text-muted-color);
-  letter-spacing: 0.08em;
-}
-.info-bar-val {
-  font-size: var(--app-fs-sm);
-  font-weight: 600;
-  font-family: monospace;
-}
-
 .type-badge {
   font-size: var(--app-fs-xs);
   font-weight: 600;
@@ -1393,16 +1315,6 @@ defineExpose({
   color: var(--cid-text-color);
 }
 
-.search-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.4rem 0;
-  flex-shrink: 0;
-}
-.search-input {
-  width: 22rem;
-}
 .available-toggle {
   display: inline-flex;
   align-items: center;
@@ -1414,35 +1326,9 @@ defineExpose({
   text-transform: lowercase;
 }
 
-.text-sm {
-  font-size: var(--app-fs-sm);
-}
-.muted {
-  color: var(--cid-text-muted-color);
-}
-
 code {
   font-family: monospace;
   font-size: var(--app-fs-sm);
-}
-
-.empty-state {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--cid-surface-400);
-  font-size: var(--app-fs-base);
-}
-.empty-state.centered {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 4rem 2rem;
-}
-.loading-state {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--cid-surface-400);
 }
 
 .form-error {

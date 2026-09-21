@@ -554,13 +554,6 @@ onMounted(async () => {
   margin: 0 0 1rem 0;
 }
 
-.text-sm {
-  font-size: 0.8rem;
-}
-.muted {
-  color: var(--cid-text-muted-color);
-}
-
 .page-info {
   font-size: 0.85rem;
   color: var(--cid-text-muted-color);

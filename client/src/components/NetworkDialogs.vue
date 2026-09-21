@@ -110,6 +110,7 @@
         <!-- PrimeVue InputNumber only commits its model on blur/Enter, which delays
              the "non-53" warning. Use a plain numeric <input> so the warning fires
              on every keystroke. -->
+        <!-- eslint-disable-next-line vue/no-restricted-html-elements -->
         <input
           type="number"
           min="1"
@@ -224,15 +225,15 @@
       </div>
       <div class="field wizard-toggle-stack">
         <label class="toggle-label">
-          <input type="checkbox" v-model="wizardNet.create_reverse_dns" />
+          <Checkbox v-model="wizardNet.create_reverse_dns" binary />
           Create reverse DNS zone
         </label>
         <label class="toggle-label">
-          <input type="checkbox" v-model="wizardNet.scan_enabled" />
+          <Checkbox v-model="wizardNet.scan_enabled" binary />
           Include hosts in liveness scans by default
         </label>
         <label class="toggle-label">
-          <input type="checkbox" v-model="wizardNet.create_dhcp_scope" />
+          <Checkbox v-model="wizardNet.create_dhcp_scope" binary />
           Create DHCP scope
         </label>
       </div>
@@ -330,6 +331,7 @@
             <div class="form-grid" style="margin-top: 0.5rem">
               <div class="field">
                 <label>Select pihole.toml</label>
+                <!-- eslint-disable-next-line vue/no-restricted-html-elements -->
                 <input
                   type="file"
                   accept=".toml"
@@ -478,12 +480,13 @@
   </Dialog>
 
   <!-- Delete Folder Dialog -->
-  <Dialog
+  <ConfirmDialog
     v-model:visible="showDeleteFolderDialog"
     header="Delete Folder"
-    modal
-    :style="{ width: '28rem' }"
+    width="28rem"
+    :loading="saving"
     data-track="dialog-folder-delete"
+    @confirm="executeDeleteFolder"
   >
     <p>
       Delete folder <strong>{{ deletingFolder?.name }}</strong
@@ -495,11 +498,7 @@
     >
       {{ deletingFolder.subnet_count }} network(s) will be moved to ungrouped.
     </p>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showDeleteFolderDialog = false" />
-      <Button label="Delete" severity="danger" @click="executeDeleteFolder" :loading="saving" />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Create Network Dialog -->
   <Dialog
@@ -591,12 +590,11 @@
         <div class="field">
           <label>Divide into</label>
           <div class="divide-count-row">
-            <input
-              type="range"
+            <Slider
+              v-model="divideSteps"
               class="divide-slider"
               :min="1"
               :max="maxDivideSteps"
-              v-model.number="divideSteps"
               :step="1"
             />
             <InputNumber
@@ -761,12 +759,15 @@
 
   <!-- Lossy-IP confirmation dialog (shown when divide would place host data
        on a new subnet's network/broadcast/outside-selection) -->
-  <Dialog
+  <ConfirmDialog
     v-model:visible="showLossyConfirm"
     header="Some host data will be lost"
-    modal
-    :style="{ width: '40rem' }"
+    width="40rem"
+    confirm-label="Divide Anyway"
+    :loading="saving"
     data-track="dialog-divide-lossy"
+    @confirm="confirmLossyDivide"
+    @cancel="cancelLossyDivide"
   >
     <Message severity="warn" :closable="false">
       After dividing, the IP addresses below will land on a new subnet's
@@ -792,17 +793,7 @@
         </div>
       </div>
     </div>
-
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="cancelLossyDivide" />
-      <Button
-        label="Divide Anyway"
-        severity="danger"
-        @click="confirmLossyDivide"
-        :loading="saving"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Edit Network Dialog -->
   <Dialog
@@ -952,68 +943,21 @@
           />
         </div>
       </div>
-      <div class="field">
-        <label>Liveness Scanning</label>
-        <div class="scan-toggle-group">
-          <button
-            type="button"
-            :class="[
-              'scan-toggle-btn',
-              'scan-inherit',
-              { active: networkForm.scan_enabled === null },
-            ]"
-            @click="networkForm.scan_enabled = null"
-          >
-            Inherit
-          </button>
-          <button
-            type="button"
-            :class="[
-              'scan-toggle-btn',
-              'scan-enabled',
-              {
-                active: networkForm.scan_enabled === true,
-                resolved: networkForm.scan_enabled === null && resolvedOrgScanEnabled,
-              },
-            ]"
-            @click="networkForm.scan_enabled = true"
-          >
-            Enabled
-          </button>
-          <button
-            type="button"
-            :class="[
-              'scan-toggle-btn',
-              'scan-disabled',
-              {
-                active: networkForm.scan_enabled === false,
-                resolved: networkForm.scan_enabled === null && !resolvedOrgScanEnabled,
-              },
-            ]"
-            @click="networkForm.scan_enabled = false"
-          >
-            Disabled
-          </button>
-        </div>
-        <small class="field-help" v-if="networkForm.scan_enabled === null">
-          Inherits from global default: scanning is
-          {{ resolvedGlobalScanEnabled ? 'enabled' : 'disabled' }} for this network
-        </small>
-        <small class="field-help" v-else-if="networkForm.scan_enabled === true"
-          >Scanning is enabled for this network</small
-        >
-        <small class="field-help" v-else>Scanning is disabled for this network</small>
-      </div>
+      <ScanToggle
+        v-model="networkForm.scan_enabled"
+        :resolved-enabled="resolvedGlobalScanEnabled"
+        inherits-from="global default"
+      />
       <template v-if="networkDialogMode === 'configure' || networkDialogMode === 'create'">
         <div class="field">
           <label class="toggle-label">
-            <input type="checkbox" v-model="networkForm.create_reverse_dns" />
+            <Checkbox v-model="networkForm.create_reverse_dns" binary />
             Create reverse DNS zone
           </label>
         </div>
         <div class="field" v-if="dialogAddressFamily === 6 || effectivePrefixLength <= 29">
           <label class="toggle-label">
-            <input type="checkbox" v-model="networkForm.create_dhcp_scope" />
+            <Checkbox v-model="networkForm.create_dhcp_scope" binary />
             Create DHCP scope
           </label>
         </div>
@@ -1153,12 +1097,14 @@
   </Dialog>
 
   <!-- Delete Network Dialog -->
-  <Dialog
+  <ConfirmDialog
     v-model:visible="showDelete"
     header="Delete Network"
-    modal
-    :style="{ width: '26rem' }"
+    width="26rem"
+    :loading="saving"
+    :disabled="deallocationBlocked"
     data-track="dialog-network-delete"
+    @confirm="executeDelete"
   >
     <template v-if="dialogNetworkData">
       <p>
@@ -1174,25 +1120,18 @@
         :error="deallocationPreviewError"
       />
     </template>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showDelete = false" />
-      <Button
-        label="Delete"
-        severity="danger"
-        @click="executeDelete"
-        :loading="saving"
-        :disabled="deallocationBlocked"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Deallocate Network Dialog -->
-  <Dialog
+  <ConfirmDialog
     v-model:visible="showDeallocate"
     header="Deallocate Network"
-    modal
-    :style="{ width: '26rem' }"
+    width="26rem"
+    confirm-label="Deallocate"
+    :loading="saving"
+    :disabled="deallocationBlocked"
     data-track="dialog-network-deallocate"
+    @confirm="executeDeallocate"
   >
     <template v-if="dialogNetworkData">
       <p>
@@ -1202,25 +1141,21 @@
       <p>The network block stays as unallocated space.</p>
       <DeallocationImpact :preview="deallocationPreview" :error="deallocationPreviewError" />
     </template>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showDeallocate = false" />
-      <Button
-        label="Deallocate"
-        severity="danger"
-        @click="executeDeallocate"
-        :loading="saving"
-        :disabled="deallocationBlocked"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Merge Networks Dialog -->
-  <Dialog
+  <ConfirmDialog
     v-model:visible="showMerge"
     header="Merge Networks"
-    modal
-    :style="{ width: '32rem' }"
+    width="32rem"
+    severity="warn"
+    confirm-label="Merge"
+    :loading="saving"
+    :disabled="
+      !mergePreview || Boolean(mergeError) || Boolean(mergePreview.plan?.conflicts?.length)
+    "
     data-track="dialog-network-merge"
+    @confirm="executeMerge"
   >
     <template v-if="mergePreview">
       <p>
@@ -1247,17 +1182,7 @@
     <template v-if="mergeError">
       <p class="warn-text">{{ mergeError }}</p>
     </template>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showMerge = false" />
-      <Button
-        v-if="mergePreview && !mergeError && !mergePreview.plan?.conflicts?.length"
-        label="Merge"
-        severity="warn"
-        @click="executeMerge"
-        :loading="saving"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Group Allocate Dialog -->
   <Dialog
@@ -1289,6 +1214,8 @@ import SelectButton from '../ui/SelectButton.js';
 import Dialog from '../ui/Dialog.js';
 import InputText from '../ui/InputText.js';
 import InputNumber from '../ui/InputNumber.js';
+import Checkbox from '../ui/Checkbox.js';
+import Slider from '../ui/Slider.js';
 import Select from '../ui/Select.js';
 import Message from '../ui/Message.js';
 import AutoComplete from '../ui/AutoComplete.js';
@@ -1300,6 +1227,8 @@ import Tab from '../ui/Tab.js';
 import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
 import DeallocationImpact from './DeallocationImpact.vue';
+import ScanToggle from './ScanToggle.vue';
+import ConfirmDialog from './ConfirmDialog.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
 import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
@@ -2369,7 +2298,6 @@ const dialogNetworkData = computed(
   () => activeNetworkData.value || props.selectedNode?.data || null,
 );
 const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialog opens
-const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
 // Set when a two-step create made the root but configuration failed; Save
 // then configures that ID instead of creating a second root (N-04, T-10).
@@ -3284,10 +3212,6 @@ defineExpose({
   font-weight: 600;
   color: var(--cid-text-muted-color);
 }
-.field-error {
-  color: var(--cid-red-500);
-  font-size: 0.75rem;
-}
 .warn-text {
   color: var(--cid-red-500);
   font-size: 0.85rem;
@@ -3412,9 +3336,6 @@ defineExpose({
 }
 .mt-3 {
   margin-top: 0.75rem;
-}
-.w-full {
-  width: 100%;
 }
 
 /* Wizard styles */
@@ -3559,60 +3480,6 @@ defineExpose({
 }
 
 /* Scan toggle button group */
-.scan-toggle-group {
-  display: inline-flex;
-  border-radius: 4px;
-  overflow: hidden;
-  border: 1px solid var(--cid-surface-border);
-}
-.scan-toggle-btn {
-  padding: 0.3rem 0.75rem;
-  font-size: 0.8rem;
-  font-weight: 500;
-  border: none;
-  cursor: pointer;
-  background: var(--cid-surface-ground);
-  color: var(--cid-text-muted-color);
-  transition:
-    background 0.15s,
-    color 0.15s;
-}
-.scan-toggle-btn + .scan-toggle-btn {
-  border-left: 1px solid var(--cid-surface-border);
-}
-.scan-toggle-btn:hover {
-  background: var(--cid-surface-200);
-}
-.p-dark .scan-toggle-btn:hover {
-  background: var(--cid-surface-700);
-}
-/* Active states */
-.scan-inherit.active {
-  background: var(--cid-surface-300);
-  color: var(--cid-text-color);
-}
-.p-dark .scan-inherit.active {
-  background: var(--cid-surface-600);
-}
-.scan-enabled.active {
-  background: color-mix(in srgb, var(--cid-green-500) 25%, transparent);
-  color: var(--cid-green-500);
-}
-.scan-disabled.active {
-  background: color-mix(in srgb, var(--cid-blue-500) 25%, transparent);
-  color: var(--cid-blue-500);
-}
-/* Resolved (inherited) indicator, subtle highlight */
-.scan-enabled.resolved {
-  background: color-mix(in srgb, var(--cid-green-500) 10%, transparent);
-  color: var(--cid-green-500);
-  opacity: 0.7;
-}
-.scan-disabled.resolved {
-  background: color-mix(in srgb, var(--cid-blue-500) 10%, transparent);
-  color: var(--cid-blue-500);
-  opacity: 0.7;
-}
 
 /* Lossy-divide confirmation list */
 .lossy-list {

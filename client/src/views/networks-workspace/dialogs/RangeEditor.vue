@@ -61,38 +61,35 @@
     </template>
   </Dialog>
 
-  <Dialog
-    :visible="confirmingDelete"
+  <ConfirmDialog
+    v-model:visible="confirmingDelete"
     header="Delete Network Range"
-    modal
-    :style="{ width: '28rem' }"
+    width="28rem"
+    confirm-label="Delete label"
+    :loading="busy"
     data-track="workspace-range-delete-confirm"
-    @update:visible="confirmingDelete = $event"
+    confirm-track="workspace-range-delete-confirm-action"
+    @confirm="remove"
   >
     <p>
       Delete {{ range?.start_ip }} to {{ range?.end_ip }}? This removes only the organizational
       label. It does not release or otherwise change the addresses.
     </p>
     <p v-if="error" class="workspace-range-error" role="alert">{{ error }}</p>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="confirmingDelete = false" />
-      <Button
-        label="Delete label"
-        severity="danger"
-        :loading="busy"
-        data-track="workspace-range-delete-confirm-action"
-        @click="remove"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
-  <Dialog
+  <ConfirmDialog
     :visible="Boolean(overlap)"
     header="Review overlapping range labels"
-    modal
-    :style="{ width: '32rem' }"
+    width="32rem"
+    severity="warn"
+    confirm-label="Accept replacement"
+    cancel-label="Keep existing labels"
+    :loading="busy"
     data-track="workspace-range-overlap"
-    @update:visible="cancelOverlap"
+    confirm-track="workspace-range-overlap-accept"
+    @cancel="cancelOverlap"
+    @confirm="save(true)"
   >
     <p>The requested range overlaps these organizational labels:</p>
     <ul>
@@ -101,17 +98,7 @@
       </li>
     </ul>
     <p>Accepting replaces only the requested addresses and preserves unaffected fragments.</p>
-    <template #footer>
-      <Button label="Keep existing labels" severity="secondary" @click="cancelOverlap" />
-      <Button
-        label="Accept replacement"
-        severity="warn"
-        :loading="busy"
-        data-track="workspace-range-overlap-accept"
-        @click="save(true)"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 </template>
 
 <script setup>
@@ -123,7 +110,9 @@ import Select from '../../../ui/Select.js';
 import { apiError } from '../../../utils/format.js';
 import { isProtectedRange, useRangeActions } from '../composables/useRangeActions.js';
 import { useDiscardGuard } from '../composables/useDiscardGuard.js';
+import './range-dialogs.css';
 import DiscardPrompt from './DiscardPrompt.vue';
+import ConfirmDialog from '../../../components/ConfirmDialog.vue';
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -218,26 +207,3 @@ async function save(force) {
   }
 }
 </script>
-
-<style scoped>
-.workspace-range-form {
-  display: grid;
-  gap: 0.9rem;
-}
-.workspace-range-form label {
-  display: grid;
-  gap: 0.35rem;
-  font-weight: 600;
-}
-.workspace-range-help,
-.workspace-range-error {
-  margin: 0;
-  font-size: var(--cid-font-small, 0.8rem);
-}
-.workspace-range-help {
-  color: var(--cid-text-muted);
-}
-.workspace-range-error {
-  color: var(--cid-danger, #b42318);
-}
-</style>

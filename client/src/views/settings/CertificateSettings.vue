@@ -442,9 +442,6 @@ onMounted(() => {
   margin: 0 0 0.75rem;
   color: var(--cid-text-color);
 }
-.muted {
-  color: var(--cid-text-muted-color);
-}
 .setting-group {
   margin-bottom: 1.5rem;
   padding-bottom: 1.5rem;
@@ -566,8 +563,5 @@ onMounted(() => {
 }
 .cert-status-err {
   color: var(--cid-red-500);
-}
-.w-full {
-  width: 100%;
 }
 </style>

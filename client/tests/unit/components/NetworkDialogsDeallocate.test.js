@@ -30,6 +30,13 @@ const ButtonStub = {
     '<button type="button" :disabled="disabled" @click="$emit(\'click\')">{{ label }}</button>',
 };
 
+const CheckboxStub = {
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  template:
+    '<input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+};
+
 function mountDialogs() {
   return mount(NetworkDialogs, {
     props: { selectedNode: null, folders: [] },
@@ -39,6 +46,8 @@ function mountDialogs() {
         Button: ButtonStub,
         InputText: true,
         InputNumber: true,
+        Checkbox: CheckboxStub,
+        Slider: true,
         Select: true,
         SelectButton: true,
         Message: true,

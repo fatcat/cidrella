@@ -197,26 +197,18 @@
     </Dialog>
 
     <!-- Delete Network Range Type Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteRangeTypeDialog"
       header="Delete Network Range Type"
-      modal
-      :style="{ width: '24rem' }"
+      :loading="savingRangeType"
+      data-track="dialog-range-type-delete"
+      @confirm="doDeleteRangeType"
     >
       <p>
         Delete Network Range Type <strong>{{ deletingRangeType?.name }}</strong
         >?
       </p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteRangeTypeDialog = false" />
-        <Button
-          label="Delete"
-          severity="danger"
-          @click="doDeleteRangeType"
-          :loading="savingRangeType"
-        />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -225,6 +217,7 @@ import { ref, computed, onMounted } from 'vue';
 import { useFeatures } from '../../composables/useFeatures.js';
 import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
+import ConfirmDialog from '../../components/ConfirmDialog.vue';
 import DataTable from '../../ui/DataTable.js';
 import Column from '../../ui/Column.js';
 import Dialog from '../../ui/Dialog.js';
@@ -462,9 +455,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.muted {
-  color: var(--cid-text-muted-color);
-}
 .content-card {
   margin: 0;
   padding: 1.25rem;
@@ -474,15 +464,6 @@ onMounted(async () => {
 }
 .content-card h3 {
   margin: 0 0 0.75rem 0;
-}
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-}
-.card-header h3 {
-  margin: 0;
 }
 .content-card + .content-card {
   margin-top: 0.75rem;
@@ -554,8 +535,5 @@ onMounted(async () => {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-}
-.w-full {
-  width: 100%;
 }
 </style>

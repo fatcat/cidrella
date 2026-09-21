@@ -369,17 +369,6 @@ button {
 .button {
   font-size: var(--workspace-font-body);
 }
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
-}
 @media (max-width: 820px) {
   .table-toolbar {
     flex-wrap: wrap;

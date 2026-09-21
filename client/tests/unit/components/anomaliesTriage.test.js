@@ -222,7 +222,7 @@ describe('anomaly triage page', () => {
     const w = await mountPage();
     await dotFor(w, 'worst-host').trigger('click');
     await flushPromises();
-    pointerDownOn(w.find('.triage-head h1').element);
+    pointerDownOn(w.find('.workspace-head h1').element);
     await flushPromises();
     expect(drawer(w).exists()).toBe(false);
     w.unmount();

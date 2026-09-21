@@ -8,7 +8,7 @@
     :class="{ 'drawer-open': drawerOpen }"
     data-track="anomalies-workspace"
   >
-    <header class="triage-head">
+    <header class="workspace-head">
       <div>
         <h1>Anomaly triage</h1>
         <p class="lede">
@@ -30,8 +30,9 @@
     </header>
 
     <section class="status-rail" aria-label="Detector status">
-      <span class="chip" :class="rail.sidecarOk ? 'ok' : 'warn'">
-        <i class="dot" aria-hidden="true"></i> Detector <b>{{ rail.sidecar }}</b>
+      <span class="chip">
+        <StatusDot :kind="rail.sidecarOk ? 'ok' : 'warn'" label="Detector" decorative /> Detector
+        <b>{{ rail.sidecar }}</b>
       </span>
       <span class="chip"
         >Monitored <b>{{ rail.monitored }}</b></span
@@ -104,12 +105,14 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import Button from '../ui/Button.js';
+import StatusDot from '../components/StatusDot.vue';
 import TriageQueue from '../components/anomaly-triage/TriageQueue.vue';
 import TriageMap from '../components/anomaly-triage/TriageMap.vue';
 import EvidenceDrawer from '../components/anomaly-triage/EvidenceDrawer.vue';
 import AllowlistDialog from '../components/anomaly/AllowlistDialog.vue';
 import { useAnomalyStore } from '../stores/anomalies.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
+import '../assets/analytics-workspace.css';
 import { classifyClients, summaryCounts, PATTERNS } from '../utils/anomaly-pattern.js';
 import { buildFeatureTrends, SIGNAL_EVIDENCE_FEATURES } from '../utils/anomaly-features.js';
 import { chartColor } from '../utils/chart-config.js';
@@ -447,14 +450,6 @@ useAutoRefresh(refresh);
    scrolling to its panels: the queue and the Evidence drawer scroll inside
    themselves, so the content area itself only scrolls when the header and
    rail alone do not fit. */
-.anomaly-triage {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  padding: 1.1rem;
-  min-height: 100%;
-  box-sizing: border-box;
-}
 @media (min-width: 860px) {
   .anomaly-triage {
     height: 100%;
@@ -470,80 +465,11 @@ useAutoRefresh(refresh);
     overflow: auto;
   }
 }
-.triage-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-}
-.triage-head h1 {
-  margin: 0;
-  font-size: 1.35rem;
-}
-.lede {
-  margin: 4px 0 0;
-  color: var(--cid-text-muted-color);
-  max-width: 62ch;
-  font-size: 0.9rem;
-}
-.status-rail {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--cid-surface-card);
-  border: 1px solid var(--cid-surface-border);
-  border-radius: 999px;
-  padding: 4px 11px;
-  font-size: 0.78rem;
-  color: var(--cid-text-muted-color);
-}
-.chip b {
-  color: var(--cid-text-color);
-  font-weight: 600;
-}
-.chip .dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--cid-green-500, #a3be8c);
-}
-.chip.warn .dot {
-  background: var(--cid-orange-500, #d08770);
-}
 .triage-board {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
   gap: 14px;
   align-items: start;
-}
-.triage-board :deep(.panel) {
-  background: var(--cid-surface-card);
-  border: 1px solid var(--cid-surface-border);
-  border-radius: 10px;
-}
-.triage-board :deep(.panel-head) {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 10px;
-  padding: 12px 14px 8px;
-}
-.triage-board :deep(.panel-head h2) {
-  margin: 0;
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--cid-text-muted-color);
-}
-.triage-board :deep(.panel-note) {
-  font-size: 0.75rem;
-  color: var(--cid-text-muted-color);
 }
 @media (max-width: 860px) {
   .triage-board {

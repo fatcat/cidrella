@@ -541,54 +541,37 @@
     </Dialog>
 
     <!-- Delete Zone Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteZoneDialog"
       header="Delete Zone"
-      modal
-      :style="{ width: '28rem' }"
+      width="28rem"
+      :loading="savingZone"
+      :type-to-confirm="deletingZone?.record_count > 0 ? 'DELETE' : ''"
       data-track="dialog-dns-delete-zone"
-      @hide="zoneDeleteConfirmText = ''"
+      @confirm="doDeleteZone"
     >
       <p>
         Delete zone <strong>{{ deletingZone?.name }}</strong
         >?
       </p>
-      <template v-if="deletingZone?.record_count > 0">
-        <p class="warn-text">
-          This will permanently delete {{ deletingZone.record_count }} DNS record(s).
-        </p>
-        <p class="warn-text" style="margin-top: 0.5rem">Type <strong>DELETE</strong> to confirm:</p>
-        <InputText v-model="zoneDeleteConfirmText" placeholder="DELETE" style="width: 100%" />
-      </template>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteZoneDialog = false" />
-        <Button
-          label="Delete"
-          severity="danger"
-          @click="doDeleteZone"
-          :loading="savingZone"
-          :disabled="deletingZone?.record_count > 0 && zoneDeleteConfirmText !== 'DELETE'"
-        />
-      </template>
-    </Dialog>
+      <p v-if="deletingZone?.record_count > 0" class="warn-text">
+        This will permanently delete {{ deletingZone.record_count }} DNS record(s).
+      </p>
+    </ConfirmDialog>
 
     <!-- Delete Record Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteRecordDialog"
       header="Delete Record"
-      modal
-      :style="{ width: '24rem' }"
+      :loading="savingRecord"
       data-track="dialog-dns-delete-record"
+      @confirm="doDeleteRecord"
     >
       <p>
         Delete {{ deletingRecord?.record_type }} record <strong>{{ deletingRecord?.name }}</strong
         >?
       </p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteRecordDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteRecord" :loading="savingRecord" />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <IpDetailsDrawer
       v-model:visible="showIpDetails"
@@ -649,6 +632,8 @@ import {
 } from '../utils/rowContextMenu.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import EmptyState from './EmptyState.vue';
+import '../assets/panel-chrome.css';
+import ConfirmDialog from './ConfirmDialog.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
 import IpTableCell from './table/IpTableCell.vue';
@@ -1023,7 +1008,6 @@ async function probeDnsRecord(ip, subnetId) {
 // Delete dialogs
 const showDeleteZoneDialog = ref(false);
 const deletingZone = ref(null);
-const zoneDeleteConfirmText = ref('');
 const showDeleteRecordDialog = ref(false);
 const deletingRecord = ref(null);
 
@@ -1361,73 +1345,6 @@ defineExpose({ openZoneDialog, openRecordEditor, confirmDeleteZone, confirmDelet
   color: var(--cid-text-color);
 }
 
-.info-bar {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--cid-surface-border);
-  padding: 0 0.75rem;
-  gap: 0.6rem;
-  height: 2.4rem;
-  box-sizing: border-box;
-}
-.info-bar-name {
-  font-weight: 700;
-  font-size: var(--app-fs-md);
-  color: var(--cid-primary-color);
-  font-family: monospace;
-  white-space: nowrap;
-}
-.info-bar-sep {
-  width: 1px;
-  height: 1rem;
-  background: var(--cid-surface-border);
-  flex-shrink: 0;
-}
-.info-bar-pair {
-  display: flex;
-  align-items: baseline;
-  gap: 4px;
-  white-space: nowrap;
-}
-.info-bar-label {
-  font-size: var(--app-fs-xs);
-  text-transform: uppercase;
-  color: var(--cid-text-muted-color);
-  letter-spacing: 0.08em;
-}
-.info-bar-val {
-  font-size: var(--app-fs-sm);
-  font-weight: 600;
-  font-family: monospace;
-}
-
-.sidebar-search {
-  display: flex;
-  align-items: center;
-  padding: 0 0.6rem;
-  border-bottom: 1px solid var(--cid-surface-border);
-  gap: 0.4rem;
-  height: 2.4rem;
-  box-sizing: border-box;
-  flex-shrink: 0;
-}
-.search-icon {
-  font-size: var(--app-fs-sm);
-  color: var(--cid-text-muted-color);
-}
-.sidebar-filter {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--cid-text-color);
-  font-size: var(--app-fs-sm);
-  outline: none;
-}
-.sidebar-filter::placeholder {
-  color: var(--cid-text-muted-color);
-}
-
 .zone-list {
   max-height: 500px;
   overflow-y: auto;
@@ -1527,41 +1444,6 @@ defineExpose({ openZoneDialog, openRecordEditor, confirmDeleteZone, confirmDelet
 .badge-enabled {
   font-size: var(--app-fs-xs);
   color: var(--cid-green-500);
-}
-
-.action-buttons {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.search-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.4rem 0;
-  flex-shrink: 0;
-}
-.search-input {
-  width: 22rem;
-}
-
-.empty-state {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--cid-surface-400);
-  font-size: var(--app-fs-base);
-}
-.empty-state.centered {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 4rem 2rem;
-}
-.loading-state {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--cid-surface-400);
 }
 
 .form-grid {

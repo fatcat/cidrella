@@ -1,8 +1,6 @@
 <template>
   <div class="field">
-    <label style="display: block; margin-bottom: 0.35rem; font-size: 0.85rem; font-weight: 600"
-      >Liveness Scanning</label
-    >
+    <label class="scan-label">Liveness Scanning</label>
     <div class="scan-toggle-group">
       <button
         type="button"
@@ -38,8 +36,8 @@
       v-if="modelValue === null"
       style="font-size: 0.75rem; color: var(--cid-text-muted-color)"
     >
-      Inherits from subnet: scanning is {{ resolvedEnabled ? 'enabled' : 'disabled' }} for this
-      network
+      Inherits from {{ inheritsFrom }}: scanning is {{ resolvedEnabled ? 'enabled' : 'disabled' }}
+      for this network
     </small>
     <small
       v-else-if="modelValue === true"
@@ -56,13 +54,24 @@
 defineProps({
   modelValue: { type: Boolean, default: null },
   resolvedEnabled: { type: Boolean, default: false },
+  // What "Inherit" inherits from: the subnet for an address, the global
+  // default for a network.
+  inheritsFrom: { type: String, default: 'subnet' },
 });
 defineEmits(['update:modelValue']);
 </script>
 
 <style scoped>
+.scan-label {
+  display: block;
+  margin-bottom: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--cid-text-muted-color);
+}
 .scan-toggle-group {
   display: inline-flex;
+  align-self: flex-start;
   border-radius: 4px;
   overflow: hidden;
   border: 1px solid var(--cid-surface-border);

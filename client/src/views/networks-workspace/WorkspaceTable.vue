@@ -44,7 +44,14 @@
           </td>
           <td v-for="column in columns" :key="column.key" :class="column.className">
             <template v-if="column.key === 'online' || column.key === 'is_online'">
-              <span class="online-value" :class="row.online"><i />{{ row.online }}</span>
+              <StatusDot
+                :kind="row.online === 'online' ? 'ok' : 'muted'"
+                :label="row.online"
+                show-label
+                tint-label
+                class="online-value"
+                :class="row.online"
+              />
             </template>
             <template v-else-if="column.key === 'status' || column.key === 'lease'">
               <span
@@ -80,9 +87,14 @@
               <span v-else class="muted">{{ EMPTY_CELL }}</span>
             </template>
             <template v-else-if="column.key === 'enabled'">
-              <span class="enabled-value" :class="{ off: !row.enabled }"
-                ><i />{{ row.enabled ? 'Enabled' : 'Disabled' }}</span
-              >
+              <StatusDot
+                :kind="row.enabled ? 'ok' : 'muted'"
+                :label="row.enabled ? 'Enabled' : 'Disabled'"
+                show-label
+                tint-label
+                class="enabled-value"
+                :class="{ off: !row.enabled }"
+              />
             </template>
             <template v-else>{{ cellValue(row, column) || EMPTY_CELL }}</template>
           </td>
@@ -98,6 +110,7 @@
 
 <script setup>
 import AddressTypePill from '../../components/table/AddressTypePill.vue';
+import StatusDot from '../../components/StatusDot.vue';
 import { EMPTY_CELL } from '../../utils/format.js';
 import { ipLifecycleDisplay } from '../../utils/ipLifecycleDisplay.js';
 
@@ -250,9 +263,6 @@ tbody tr:focus-visible {
 .check-cell input {
   accent-color: var(--preview-accent);
 }
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
 .muted {
   color: var(--preview-muted);
 }
@@ -301,36 +311,12 @@ tbody tr:focus-visible {
   border-color: color-mix(in srgb, var(--cid-status-warn) 55%, transparent);
   color: var(--cid-status-warn);
 }
+/* Online and Enabled are green as a word, not only as a dot (StatusDot with
+   tint-label), so the state reads at a glance the way it does in the classic
+   tables (.state-ok). Off states take the muted ring and the muted word. */
 .online-value,
 .enabled-value {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
   text-transform: capitalize;
-}
-/* Online and Enabled are green as a word, not only as a dot, so the state
-   reads at a glance the way it does in the classic tables (.state-ok). */
-.online-value.online,
-.enabled-value:not(.off) {
-  color: var(--cid-status-ok);
-}
-.online-value i,
-.enabled-value i {
-  width: 0.38rem;
-  height: 0.38rem;
-  border-radius: 50%;
-  background: var(--cid-status-ok);
-}
-.online-value.offline i,
-.enabled-value.off i {
-  background: var(--cid-surface-400);
-}
-.online-value.unknown {
-  color: var(--preview-muted);
-}
-.online-value.unknown i {
-  border: 1px solid var(--cid-surface-400);
-  background: transparent;
 }
 .no-results {
   display: flex;
@@ -353,16 +339,5 @@ tbody tr:focus-visible {
 table,
 th button {
   font-size: var(--workspace-font-body);
-}
-.sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
 }
 </style>

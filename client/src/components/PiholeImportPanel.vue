@@ -182,10 +182,6 @@ defineExpose({ resetState });
   font-weight: 600;
   color: var(--cid-text-muted-color);
 }
-.field-error {
-  color: var(--cid-red-500);
-  font-size: 0.75rem;
-}
 .field-warn {
   color: var(--cid-orange-500);
   font-size: 0.75rem;
@@ -231,8 +227,5 @@ defineExpose({ resetState });
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
-}
-.muted {
-  color: var(--cid-text-muted-color);
 }
 </style>

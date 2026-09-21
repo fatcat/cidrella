@@ -142,66 +142,48 @@
     <ContextMenu ref="backupContextMenuRef" :model="backupContextMenuItems" />
 
     <!-- Delete Backup Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteBackupDialog"
       header="Delete Backup"
-      modal
-      :style="{ width: '24rem' }"
+      :loading="deletingBackupLoading"
+      data-track="dialog-backup-delete"
+      @confirm="doDeleteBackup"
     >
       <p>
         Delete backup <strong>{{ deletingBackup?.filename }}</strong
         >?
       </p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteBackupDialog = false" />
-        <Button
-          label="Delete"
-          severity="danger"
-          @click="doDeleteBackup"
-          :loading="deletingBackupLoading"
-        />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <!-- Database Reset Confirmation Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showResetDbDialog"
       header="Reset Database"
-      modal
-      :style="{ width: '28rem' }"
+      width="28rem"
+      confirm-label="Reset Database"
+      type-to-confirm="RESET"
+      :loading="resettingDb"
+      data-track="dialog-backup-reset-db"
+      @confirm="doResetDatabase"
     >
       <p style="color: var(--cid-red-500); font-weight: 600">This action cannot be undone.</p>
       <p>
         All application data will be permanently deleted and the database will be reinitialized. You
         will be logged out and a new admin account will be generated.
       </p>
-      <p>Type <strong>RESET</strong> to confirm:</p>
-      <InputText v-model="resetConfirmText" class="w-full" placeholder="Type RESET" />
-      <template #footer>
-        <Button
-          label="Cancel"
-          severity="secondary"
-          @click="
-            showResetDbDialog = false;
-            resetConfirmText = '';
-          "
-        />
-        <Button
-          label="Reset Database"
-          severity="danger"
-          @click="doResetDatabase"
-          :loading="resettingDb"
-          :disabled="resetConfirmText !== 'RESET'"
-        />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <!-- Restore Confirmation Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showRestoreDialog"
       header="Confirm Restore"
-      modal
-      :style="{ width: '28rem' }"
+      width="28rem"
+      confirm-label="Restore Now"
+      :loading="restoring"
+      :disabled="!restoreDhcp"
+      data-track="dialog-backup-restore"
+      confirm-track="backup-restore-confirm"
+      @confirm="doRestore"
     >
       <p>
         This will <strong>replace all current data</strong> with the contents of the backup file.
@@ -239,18 +221,7 @@
         </small>
       </fieldset>
       <p>Are you sure you want to proceed?</p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showRestoreDialog = false" />
-        <Button
-          label="Restore Now"
-          severity="danger"
-          data-track="backup-restore-confirm"
-          @click="doRestore"
-          :loading="restoring"
-          :disabled="!restoreDhcp"
-        />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -258,9 +229,9 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
+import ConfirmDialog from '../../components/ConfirmDialog.vue';
 import DataTable from '../../ui/DataTable.js';
 import Column from '../../ui/Column.js';
-import Dialog from '../../ui/Dialog.js';
 import RadioButton from '../../ui/RadioButton.js';
 import Select from '../../ui/Select.js';
 import InputText from '../../ui/InputText.js';
@@ -286,7 +257,6 @@ const deletingBackup = ref(null);
 const deletingBackupLoading = ref(false);
 const showDeleteBackupDialog = ref(false);
 const showResetDbDialog = ref(false);
-const resetConfirmText = ref('');
 const resettingDb = ref(false);
 const showRestoreDialog = ref(false);
 const restoreFile = ref(null);
@@ -461,7 +431,6 @@ async function doResetDatabase() {
   } finally {
     resettingDb.value = false;
     showResetDbDialog.value = false;
-    resetConfirmText.value = '';
   }
 }
 
@@ -502,15 +471,6 @@ onMounted(async () => {
   margin: 0 0 0.75rem;
   color: var(--cid-text-color);
 }
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-}
-.card-header h3 {
-  margin: 0;
-}
 .setting-group {
   margin-bottom: 1.5rem;
   padding-bottom: 1.5rem;
@@ -540,10 +500,6 @@ onMounted(async () => {
   font-size: var(--app-fs-xs);
   color: var(--cid-text-muted-color);
 }
-.action-buttons {
-  display: flex;
-  gap: 0.25rem;
-}
 .settings-actions {
   margin-top: 1rem;
   display: flex;
@@ -564,8 +520,5 @@ onMounted(async () => {
   display: flex;
   gap: 0.75rem;
   align-items: center;
-}
-.w-full {
-  width: 100%;
 }
 </style>

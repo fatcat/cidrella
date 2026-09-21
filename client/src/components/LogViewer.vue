@@ -52,8 +52,11 @@
       </div>
     </div>
     <div class="log-status">
-      <span :class="['status-dot', connected ? 'connected' : 'disconnected']"></span>
-      {{ connected ? 'Live' : 'Disconnected' }}
+      <StatusDot
+        :kind="connected ? 'ok' : 'err'"
+        :label="connected ? 'Live' : 'Disconnected'"
+        show-label
+      />
       <span class="log-count">{{ filteredLines.length }} lines</span>
     </div>
     <pre
@@ -69,6 +72,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
 import api from '../api/client.js';
 import Button from '../ui/Button.js';
+import StatusDot from './StatusDot.vue';
 import InputText from '../ui/InputText.js';
 const logPre = ref(null);
 const lines = ref([]);
@@ -266,18 +270,6 @@ onUnmounted(() => {
   color: var(--cid-text-muted-color);
   background: var(--cid-surface-ground);
   border-bottom: 1px solid var(--cid-surface-border);
-}
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
-.status-dot.connected {
-  background: var(--cid-green-500);
-}
-.status-dot.disconnected {
-  background: var(--cid-red-500);
 }
 
 .log-count {

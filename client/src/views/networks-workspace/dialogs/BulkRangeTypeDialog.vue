@@ -41,13 +41,18 @@
     </template>
   </Dialog>
 
-  <Dialog
+  <ConfirmDialog
     :visible="Boolean(overlap)"
     header="Review replaced range labels"
-    modal
-    :style="{ width: '32rem' }"
+    width="32rem"
+    severity="warn"
+    confirm-label="Accept replacement"
+    cancel-label="Keep existing labels"
+    :loading="busy"
     data-track="workspace-bulk-range-overlap"
-    @update:visible="decline"
+    confirm-track="workspace-bulk-range-overlap-accept"
+    @cancel="decline"
+    @confirm="apply(true)"
   >
     <p>Only the exact selected runs will change. These existing labels overlap them:</p>
     <ul>
@@ -56,26 +61,18 @@
       </li>
     </ul>
     <p>Unselected portions of those labels will be preserved.</p>
-    <template #footer>
-      <Button label="Keep existing labels" severity="secondary" @click="decline" />
-      <Button
-        label="Accept replacement"
-        severity="warn"
-        :loading="busy"
-        data-track="workspace-bulk-range-overlap-accept"
-        @click="apply(true)"
-      />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 </template>
 
 <script setup>
 import { computed, ref, watch } from 'vue';
 import Button from '../../../ui/Button.js';
 import Dialog from '../../../ui/Dialog.js';
+import ConfirmDialog from '../../../components/ConfirmDialog.vue';
 import Select from '../../../ui/Select.js';
 import { apiError } from '../../../utils/format.js';
 import { useRangeActions } from '../composables/useRangeActions.js';
+import './range-dialogs.css';
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -141,15 +138,5 @@ async function apply(acceptOverlaps) {
   display: grid;
   gap: 0.35rem;
   font-weight: 600;
-}
-.workspace-range-help,
-.workspace-range-error {
-  font-size: var(--cid-font-small, 0.8rem);
-}
-.workspace-range-help {
-  color: var(--cid-text-muted);
-}
-.workspace-range-error {
-  color: var(--cid-danger, #b42318);
 }
 </style>

@@ -54,6 +54,13 @@ const SelectButtonStub = {
 };
 const MessageStub = { template: '<div class="message"><slot /></div>' };
 
+const CheckboxStub = {
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  template:
+    '<input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+};
+
 function mountDialogs(ipv6) {
   const pinia = createPinia();
   const wrapper = mount(NetworkDialogs, {
@@ -67,6 +74,8 @@ function mountDialogs(ipv6) {
         Message: MessageStub,
         SelectButton: SelectButtonStub,
         InputNumber: true,
+        Checkbox: CheckboxStub,
+        Slider: true,
         Select: true,
         AutoComplete: true,
         ToggleSwitch: true,

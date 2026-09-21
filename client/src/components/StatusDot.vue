@@ -16,7 +16,7 @@
     :aria-hidden="decorative ? 'true' : undefined"
     :aria-label="decorative ? undefined : label"
   >
-    <span v-if="showLabel" class="sd-label">{{ label }}</span>
+    <span v-if="showLabel" class="sd-label" :class="{ tinted: tintLabel }">{{ label }}</span>
   </span>
 </template>
 
@@ -30,6 +30,9 @@ defineProps({
   label: { type: String, required: true },
   title: { type: String, default: '' },
   showLabel: { type: Boolean, default: false },
+  // With showLabel: color the word like the dot (Online in green) instead
+  // of the default text color, for cells where the word is the state.
+  tintLabel: { type: Boolean, default: false },
   // For hosts that render their own visible label right next to the dot
   // (StatusBadge): hide the dot from assistive tech so the state isn't
   // announced twice.
@@ -77,5 +80,9 @@ defineProps({
 .sd-label {
   color: var(--cid-text-color);
   font-size: var(--app-fs-sm);
+}
+.sd-label.tinted {
+  color: inherit;
+  font-size: inherit;
 }
 </style>

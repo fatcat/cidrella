@@ -24,8 +24,13 @@ const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
 // Matches: "query[A] example.com from 192.168.1.100"
 const QUERY_RE = /\bquery\[.+?\]\s+\S+\s+from\s+/;
-// Matches DHCP request events: DHCPACK, DHCPREQUEST, DHCPDISCOVER
-const DHCP_RE = /\bDHCP(?:ACK|REQUEST|DISCOVER)\b/;
+// DHCP conversation halves. Clients send DISCOVER, REQUEST, RELEASE, INFORM
+// and DECLINE; the server answers with OFFER, ACK and NAK. dnsmasq logs one
+// line per message with the type as the first word after the tag. The two
+// counts are kept apart so the dashboard can show a request the server never
+// answered. dhcp_requests, the column older readers use, stays as the sum.
+const DHCP_CLIENT_RE = /\bDHCP(?:DISCOVER|REQUEST|RELEASE|INFORM|DECLINE)\b/;
+const DHCP_SERVER_RE = /\bDHCP(?:OFFER|ACK|NAK)\b/;
 
 let db = null;
 let timer = null;
@@ -48,22 +53,24 @@ let deleteOldGeoipHits = null;
 let deleteOldProxyPerf = null;
 
 /**
- * Parse new log lines and return { dnsQueries, dhcpRequests }
+ * Parse new log lines and return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs }.
  */
-function parseLogLines(lines) {
+export function parseLogLines(lines) {
   let dnsQueries = 0;
-  let dhcpRequests = 0;
+  let dhcpClientMsgs = 0;
+  let dhcpServerMsgs = 0;
 
   for (const line of lines) {
     if (QUERY_RE.test(line)) {
       dnsQueries++;
-    }
-    if (DHCP_RE.test(line)) {
-      dhcpRequests++;
+    } else if (DHCP_CLIENT_RE.test(line)) {
+      dhcpClientMsgs++;
+    } else if (DHCP_SERVER_RE.test(line)) {
+      dhcpServerMsgs++;
     }
   }
 
-  return { dnsQueries, dhcpRequests };
+  return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs };
 }
 
 /**
@@ -76,7 +83,7 @@ function aggregate() {
     // Parse dnsmasq log for DNS query and DHCP counts
     const { lines, newOffset: newLogOffset } = readLogTail(LOG_FILE, logOffset);
     logOffset = newLogOffset;
-    const { dnsQueries, dhcpRequests } = parseLogLines(lines);
+    const { dnsQueries, dhcpClientMsgs, dhcpServerMsgs } = parseLogLines(lines);
 
     // Blocklist blocks from in-memory proxy counters
     const blocklistData = getAndResetBlocklistHits();
@@ -112,7 +119,15 @@ function aggregate() {
 
     // Insert all metrics in a single transaction
     const insertAll = db.transaction(() => {
-      insertMetrics.run(ts, dnsQueries, dhcpRequests, blocklistBlocks, geoipBlocks);
+      insertMetrics.run(
+        ts,
+        dnsQueries,
+        dhcpClientMsgs + dhcpServerMsgs,
+        dhcpClientMsgs,
+        dhcpServerMsgs,
+        blocklistBlocks,
+        geoipBlocks,
+      );
       for (const [category, count] of categoryCounts) {
         insertBlocklistHit.run(ts, category, count);
       }
@@ -160,7 +175,7 @@ export function startMetricsAggregator(database) {
 
   // Prepare statements
   insertMetrics = db.prepare(
-    'INSERT INTO metrics (ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO metrics (ts, dns_queries, dhcp_requests, dhcp_client_msgs, dhcp_server_msgs, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?, ?, ?)',
   );
   insertBlocklistHit = db.prepare(
     'INSERT INTO metrics_blocklist_hits (ts, category, count) VALUES (?, ?, ?)',

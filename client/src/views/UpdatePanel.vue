@@ -330,12 +330,16 @@
     </Dialog>
 
     <!-- Reset-update-state Confirmation -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showResetConfirm"
       header="Reset update state"
-      :modal="true"
-      :closable="true"
-      :style="{ width: '28rem' }"
+      width="28rem"
+      severity="warn"
+      confirm-label="Reset state"
+      confirm-icon="pi pi-refresh"
+      data-track="dialog-update-reset-state"
+      confirm-track="update-reset-state-confirm"
+      @confirm="resetUpdateState"
     >
       <p>
         This clears the in-progress update status record on the server. Use this only if the update
@@ -345,17 +349,7 @@
         It does <strong>not</strong> affect the actual cidrella service, the installed version, or
         any update process that may still be running in the background.
       </p>
-      <template #footer>
-        <Button label="Cancel" text @click="showResetConfirm = false" />
-        <Button
-          label="Reset state"
-          icon="pi pi-refresh"
-          severity="warn"
-          data-track="update-reset-state-confirm"
-          @click="resetUpdateState"
-        />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -366,6 +360,7 @@ import Button from '../ui/Button.js';
 import ProgressBar from '../ui/ProgressBar.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import Dialog from '../ui/Dialog.js';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
 import { formatRelativeTime as formatRelative } from '../utils/dateFormat.js';

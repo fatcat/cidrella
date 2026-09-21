@@ -82,9 +82,6 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.muted {
-  color: var(--cid-text-muted-color);
-}
 .content-card {
   margin: 0;
   padding: 1.25rem;

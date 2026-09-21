@@ -65,6 +65,18 @@ function collectAllocatedNetworks(nodes, folder, output) {
   }
 }
 
+// StatusDot kind for an explorer node's state. Unallocated space shows the
+// same filled dot as a healthy network; a subdivided container is muted.
+const NETWORK_STATE_KIND = {
+  healthy: 'ok',
+  warning: 'warn',
+  unallocated: 'ok',
+  container: 'muted',
+};
+export function networkStateKind(state) {
+  return NETWORK_STATE_KIND[state] || 'ok';
+}
+
 export function buildExplorerFolders(folders) {
   return (folders || [])
     .map((folder) => {

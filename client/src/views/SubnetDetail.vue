@@ -390,12 +390,15 @@
     </Dialog>
 
     <!-- Overlap Warning Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showOverlapDialog"
       header="Range Overlap Warning"
-      modal
-      :style="{ width: '30rem' }"
+      width="30rem"
+      severity="warn"
+      confirm-label="Accept"
+      :loading="saving"
       data-track="dialog-overlap-warning"
+      @confirm="acceptRangeChange"
     >
       <p>This range overlaps with existing ranges:</p>
       <ul>
@@ -408,19 +411,19 @@
         Accepting will replace only the overlapping portion and preserve the unaffected parts of the
         existing Network Range Types.
       </p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showOverlapDialog = false" />
-        <Button label="Accept" severity="warn" @click="acceptRangeChange" :loading="saving" />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <!-- Grid Network Range Type overlap warning -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showRangeTypeOverlapDialog"
       header="Network Range Type Overlap"
-      modal
-      :style="{ width: '30rem' }"
+      width="30rem"
+      severity="warn"
+      confirm-label="Accept"
+      :loading="saving"
       data-track="dialog-range-type-overlap"
+      @cancel="cancelNetworkRangeTypeOverlap"
+      @confirm="acceptNetworkRangeTypeChange"
     >
       <p>The selected addresses overlap existing Network Range Types:</p>
       <ul>
@@ -434,36 +437,23 @@
         <strong>{{ pendingNetworkRangeType?.name }}</strong> and preserve the unaffected parts of
         the existing ranges.
       </p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="cancelNetworkRangeTypeOverlap" />
-        <Button
-          label="Accept"
-          severity="warn"
-          @click="acceptNetworkRangeTypeChange"
-          :loading="saving"
-        />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <!-- Delete Range/Address Confirmation -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteRangeDialog"
       :header="
         deletingRange?.start_ip === deletingRange?.end_ip ? 'Delete Address' : 'Delete Range'
       "
-      modal
-      :style="{ width: '24rem' }"
+      :loading="saving"
       data-track="dialog-delete-range"
+      @confirm="doDeleteRange"
     >
       <p v-if="deletingRange?.start_ip === deletingRange?.end_ip">
         Delete this address ({{ deletingRange?.start_ip }})?
       </p>
       <p v-else>Delete this range ({{ deletingRange?.start_ip }} – {{ deletingRange?.end_ip }})?</p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteRangeDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteRange" :loading="saving" />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <!-- Scope Dialog (shared component) -->
     <ScopeDialog ref="scopeDialogRef" @saved="reloadData" />
@@ -602,6 +592,7 @@ import { ref, computed, watch, onUnmounted } from 'vue';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import DataTable from '../ui/DataTable.js';
 import Column from '../ui/Column.js';
 import Dialog from '../ui/Dialog.js';

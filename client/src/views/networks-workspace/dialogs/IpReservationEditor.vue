@@ -152,9 +152,4 @@ input {
 .error {
   color: var(--cid-red-600);
 }
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.6rem;
-}
 </style>

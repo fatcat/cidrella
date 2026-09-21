@@ -24,9 +24,10 @@
           <div>
             <div class="title-line">
               <h2>{{ contextTitle }}</h2>
-              <span v-if="contextKind === 'network'" class="state-chip"
-                ><i /> {{ selectedNetwork.status }}</span
-              >
+              <span v-if="contextKind === 'network'" class="state-chip">
+                <StatusDot kind="ok" :label="selectedNetwork.status" decorative />
+                {{ selectedNetwork.status }}
+              </span>
             </div>
             <p>{{ contextSubtitle }}</p>
           </div>
@@ -45,7 +46,15 @@
         >
           <span>{{ stat.label }}</span>
           <strong>{{ stat.value }}</strong>
-          <small :class="stat.tone"><i v-if="stat.dot" />{{ stat.note }}</small>
+          <small :class="stat.tone">
+            <StatusDot
+              v-if="stat.dot"
+              :kind="stat.tone === 'warning' ? 'warn' : 'ok'"
+              :label="stat.note"
+              decorative
+            />
+            {{ stat.note }}
+          </small>
         </button>
       </div>
 
@@ -193,6 +202,7 @@
 import { computed, ref } from 'vue';
 import Popover from '../../ui/Popover.js';
 import { formatDuration } from '../networks-workspace-data.js';
+import StatusDot from '../../components/StatusDot.vue';
 
 // Breadcrumb, gauges, pinned actions, view tabs and the per-view summary band.
 // Renders as three sibling landmarks so the DOM under .work-surface is
@@ -346,12 +356,6 @@ button {
   font-weight: 800;
   text-transform: uppercase;
 }
-.state-chip i {
-  width: 0.36rem;
-  height: 0.36rem;
-  border-radius: 50%;
-  background: var(--cid-green-500);
-}
 .context-actions {
   display: flex;
   flex: 0 0 auto;
@@ -429,17 +433,8 @@ button {
   font-size: 0.61rem;
   white-space: nowrap;
 }
-.health-stat small i {
-  width: 0.34rem;
-  height: 0.34rem;
-  border-radius: 50%;
-  background: var(--cid-green-500);
-}
 .health-stat small.warning {
   color: var(--cid-orange-600);
-}
-.health-stat small.warning i {
-  background: var(--cid-orange-500);
 }
 @container workspace-context (max-width: 1180px) {
   .context-overview {

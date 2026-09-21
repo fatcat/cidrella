@@ -4,14 +4,18 @@
     <div class="stats-bar" v-if="services">
       <div class="stat">
         <span class="stat-value">
-          <span :class="services.dnsmasq ? 'indicator-on' : 'indicator-off'"></span>
+          <StatusDot :kind="services.dnsmasq ? 'ok' : 'err'" label="dnsmasq" decorative />
           {{ services.dnsmasq ? 'Running' : 'Stopped' }}
         </span>
         <span class="stat-label">DNSMASQ</span>
       </div>
       <div class="stat">
         <span class="stat-value">
-          <span :class="services.geoip_proxy ? 'indicator-on' : 'indicator-off'"></span>
+          <StatusDot
+            :kind="services.geoip_bypassed ? 'warn' : services.geoip_proxy ? 'ok' : 'err'"
+            label="DNS proxy"
+            decorative
+          />
           {{ services.geoip_bypassed ? 'Bypassed' : services.geoip_proxy ? 'Running' : 'Stopped' }}
         </span>
         <span class="stat-label">DNS Proxy</span>
@@ -156,6 +160,7 @@ import { EMPTY_CELL } from '../utils/format.js';
 import { formatEpoch } from '../utils/dateFormat.js';
 import Select from '../ui/Select.js';
 import Button from '../ui/Button.js';
+import StatusDot from '../components/StatusDot.vue';
 import {
   Chart as ChartJS,
   CategoryScale,

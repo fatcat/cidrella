@@ -349,22 +349,19 @@
     </Dialog>
 
     <!-- Delete User Confirmation -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteDialog"
       header="Delete User"
-      modal
-      :style="{ width: '24rem' }"
+      :loading="saving"
+      data-track="dialog-user-delete"
+      @confirm="deleteUser"
     >
       <p>
         Delete user <strong>{{ deletingUser?.username }}</strong
         >?
       </p>
       <p class="text-sm muted">This action cannot be undone.</p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteDialog = false" />
-        <Button label="Delete" severity="danger" @click="deleteUser" :loading="saving" />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <Toast />
   </div>
@@ -376,6 +373,7 @@ import { formatDateOnly } from '../utils/dateFormat.js';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import DataTable from '../ui/DataTable.js';
 import Column from '../ui/Column.js';
 import ContextMenu from '../ui/ContextMenu.js';
@@ -701,15 +699,6 @@ onMounted(async () => {
   border-top: 1px solid var(--cid-content-border-color);
 }
 
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-}
-.card-header h3 {
-  margin: 0;
-}
 .section-header {
   display: flex;
   justify-content: flex-end;
@@ -766,14 +755,6 @@ onMounted(async () => {
 .password-note {
   margin: 0;
   font-size: 0.85rem;
-  color: var(--cid-text-muted-color);
-}
-
-.text-sm {
-  font-size: 0.85rem;
-}
-
-.muted {
   color: var(--cid-text-muted-color);
 }
 </style>

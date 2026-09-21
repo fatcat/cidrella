@@ -114,7 +114,12 @@
             @keydown="handleMenuKey($event, 'network-menu', network)"
             @dragstart="onNetworkDragStart($event, network)"
           >
-            <span class="network-state" :class="network.state" />
+            <StatusDot
+              :kind="networkStateKind(network.state)"
+              :label="network.state"
+              decorative
+              class="network-state"
+            />
             <span class="network-copy">
               <strong
                 ><template v-for="(part, index) in highlightParts(network.name)" :key="index"
@@ -168,6 +173,8 @@
 import { ref } from 'vue';
 import { countOf } from '../../utils/format.js';
 import ResourceExplorerNode from './ResourceExplorerNode.vue';
+import StatusDot from '../../components/StatusDot.vue';
+import { networkStateKind } from '../networks-workspace-data.js';
 import { NETWORK_DRAG_TYPE } from './workspace-actions.js';
 
 // Presentation only. Folder/network selection, expansion and the create menu
@@ -538,14 +545,7 @@ button {
     inset 0 0 0 1px var(--preview-line);
 }
 .network-state {
-  width: 0.42rem;
-  height: 0.42rem;
   margin-top: 0.32rem;
-  border-radius: 50%;
-  background: var(--cid-green-500);
-}
-.network-state.warning {
-  background: var(--cid-orange-500);
 }
 .network-copy {
   display: flex;

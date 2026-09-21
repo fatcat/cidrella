@@ -359,7 +359,4 @@ async function submit() {
 .fr-bad-text {
   color: var(--cid-red-500);
 }
-.w-full {
-  width: 100%;
-}
 </style>

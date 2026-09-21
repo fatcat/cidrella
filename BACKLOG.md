@@ -502,7 +502,21 @@ Remaining:
 - **Unified status system** (StatusDot / StatusBadge, one vocabulary:
   `state-ok | state-warn | state-err | state-info | state-idle`, deleting the aliases). This is
   where the 2026-07-23 review deferrals live: WCAG 1.4.1 color-only dots, red-badge-on-warn-chip,
-  and rogue yellow/orange drift.
+  and rogue yellow/orange drift. **Dots done 2026-09-21**: every status dot outside the classic
+  views renders through StatusDot (the ESLint `no-restricted-class` baseline is down to 8 files,
+  all badges/pills). **Pills still open**: 19 files hand-build a pill or badge, and they are
+  three different things (address type, record source, lease state), so the fix is likely
+  three components, not one StatusBadge.
+- **Scoped CSS drift** (from the 2026-09-21 reuse pass; the identical set moved to
+  `assets/utilities.css`, `assets/panel-chrome.css` and `range-dialogs.css`). What is left in
+  `check-scoped-css-dupes.js --drift` needs a decision on which body is right before it can be
+  hoisted: `.field-help` (7 versions), `.form-grid` (4), `.field` (3), `.content-card` (3),
+  plus the settings-card grammar (`.setting-group`, its `:last-child` and `h3`, `.settings-actions`)
+  that belongs in one settings sheet. The classic views (`SubnetsLayoutB`, `SubnetDetail`,
+  `Anomalies.vue`) keep their copies until they are removed.
+- **API token revoke has no confirmation** (`Users.vue`, the in-table `Revoke` button deletes on
+  click). Noticed while converting the confirm dialogs; a one-line `ConfirmDialog` swap once
+  someone decides it should ask.
 - **Empty states** for every table-backed view.
 - **Settings tab-nesting flattening**, plus the PrimeVue `TabView` -> `Tabs` migration.
 

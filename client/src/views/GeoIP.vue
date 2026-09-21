@@ -4,7 +4,7 @@
     <div class="stats-bar" v-if="status">
       <div class="stat">
         <span class="stat-value">
-          <span :class="status.running ? 'indicator-on' : 'indicator-off'"></span>
+          <StatusDot :kind="status.running ? 'ok' : 'err'" label="GeoIP proxy" decorative />
           {{ status.running ? 'Running' : 'Stopped' }}
         </span>
         <span class="stat-label">Proxy Status</span>
@@ -184,21 +184,18 @@
     </Dialog>
 
     <!-- Delete Rule Dialog -->
-    <Dialog
+    <ConfirmDialog
       v-model:visible="showDeleteDialog"
       header="Delete Rule"
-      modal
-      :style="{ width: '24rem' }"
+      :loading="deleting"
+      data-track="dialog-geoip-delete-rule"
+      @confirm="doDeleteRule"
     >
       <p>
         Remove <strong>{{ deletingRule?.country_name }}</strong> ({{ deletingRule?.country_code }})
         from GeoIP rules?
       </p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteRule" :loading="deleting" />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <Toast />
   </div>
@@ -211,6 +208,8 @@ import { formatNumber, apiError } from '../utils/format.js';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
+import StatusDot from '../components/StatusDot.vue';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import InputText from '../ui/InputText.js';
 import Select from '../ui/Select.js';
 import DataTable from '../ui/DataTable.js';
@@ -445,10 +444,6 @@ onMounted(async () => {
 }
 .country-flag {
   font-size: 1.1rem;
-}
-.action-buttons {
-  display: flex;
-  gap: 0.25rem;
 }
 .country-search {
   margin-bottom: 0.75rem;

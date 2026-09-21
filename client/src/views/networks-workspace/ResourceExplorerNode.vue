@@ -8,7 +8,12 @@
       data-track="workspace-network-select"
       @click="node.allocatable && emit('select', node)"
     >
-      <span class="network-state" :class="node.state" />
+      <StatusDot
+        :kind="networkStateKind(node.state)"
+        :label="node.state"
+        decorative
+        class="network-state"
+      />
       <span class="network-copy">
         <strong>
           <template v-for="(part, index) in highlight(node.name || node.cidr)" :key="index">
@@ -40,6 +45,9 @@
 </template>
 
 <script setup>
+import StatusDot from '../../components/StatusDot.vue';
+import { networkStateKind } from '../networks-workspace-data.js';
+
 defineOptions({ name: 'ResourceExplorerNode' });
 const props = defineProps({
   node: { type: Object, required: true },
@@ -83,14 +91,7 @@ function highlight(value) {
   box-shadow: inset 0 0 0 1px var(--preview-line);
 }
 .network-state {
-  width: 0.42rem;
-  height: 0.42rem;
   margin-top: 0.32rem;
-  border-radius: 50%;
-  background: var(--cid-green-500);
-}
-.network-state.container {
-  background: var(--preview-muted);
 }
 .network-copy {
   display: flex;

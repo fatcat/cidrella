@@ -11,6 +11,7 @@ import 'primeicons/primeicons.css';
 // The CSS half of the ./ui shim: maps vendor --p-* tokens onto the --cid-*
 // names the app actually reads. Must load before any component styles.
 import './ui/tokens.css';
+import './assets/utilities.css';
 
 import App from './App.vue';
 import router from './router/index.js';

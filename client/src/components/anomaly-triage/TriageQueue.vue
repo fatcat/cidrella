@@ -12,7 +12,7 @@
         v-for="f in QUEUE_FILTERS"
         :key="f.id"
         type="button"
-        class="chip"
+        class="filter-chip"
         :aria-pressed="filter === f.id"
         :data-track="`triage-filter-${f.id}`"
         @click="emit('update:filter', f.id)"
@@ -88,7 +88,7 @@ const emit = defineEmits(['select', 'hover', 'update:filter']);
   flex-wrap: wrap;
   padding: 0 14px 10px;
 }
-.chip {
+.filter-chip {
   font: inherit;
   font-size: 0.78rem;
   background: var(--cid-surface-ground);
@@ -98,7 +98,7 @@ const emit = defineEmits(['select', 'hover', 'update:filter']);
   padding: 3px 10px;
   cursor: pointer;
 }
-.chip[aria-pressed='true'] {
+.filter-chip[aria-pressed='true'] {
   background: var(--cid-primary-color);
   border-color: var(--cid-primary-color);
   color: var(--cid-primary-contrast-color, #fff);

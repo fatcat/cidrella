@@ -198,7 +198,4 @@ async function disable() {
   flex-wrap: wrap;
   margin-top: 0.5rem;
 }
-.w-full {
-  width: 100%;
-}
 </style>

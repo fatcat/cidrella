@@ -465,18 +465,6 @@ onMounted(async () => {
   margin: 0 0 0.75rem;
 }
 
-.action-buttons {
-  display: flex;
-  gap: 0.25rem;
-}
-
-.text-sm {
-  font-size: var(--app-fs-sm);
-}
-.muted {
-  color: var(--cid-text-muted-color);
-}
-
 .form-grid {
   display: flex;
   flex-direction: column;

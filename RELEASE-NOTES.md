@@ -58,6 +58,22 @@ first on a 0.4.17 host.
 
 ### New
 
+- **Dashboard is a health board.** Analytics > Dashboard now answers one
+  question, is the network healthy right now. A status rail (services,
+  forwarders, detector, and the inventory counts as links), a Needs attention
+  list of every open condition with a link to where it is acted on (rogue
+  DHCP servers, rogue hosts, anomalous devices, scope conflicts, DHCP review,
+  reconciliation, a stopped service, and a note when the rogue probe cannot
+  run so silence is not read as safety), resolution figures with sparklines
+  (p95 latency, cache hit rate, timeouts), DNS traffic as answered against
+  blocked with the top clients and domains, DHCP traffic as client requests
+  against server replies, and the address plan as one bar. The range selector
+  drives the traffic and resolution panels only. Each source loads on its own,
+  so one failing endpoint marks its panel unavailable instead of blanking the
+  page. The old doughnuts and inventory tiles are gone.
+- The per-minute DHCP counter is split into client messages (DISCOVER,
+  REQUEST, RELEASE, INFORM, DECLINE) and server messages (OFFER, ACK, NAK),
+  migration 079. The old combined column stays as their sum.
 - The DHCP view tags each lease and reservation "in pool" or "outside pool"
   beside its assignment. A reservation outside the pool is plain
   information; a dynamic lease outside every pool is flagged, since dnsmasq
@@ -237,6 +253,30 @@ first on a 0.4.17 host.
   `/whitelist` spellings for this release, so a page loaded before the
   upgrade keeps working. Audit entries written from now on use the new
   names; older entries keep theirs.
+- Every confirmation in the app is one component. The 29 hand-built confirm
+  dialogs (delete this, deallocate that, accept an overlap, merge, reset,
+  restore) now share `ConfirmDialog`: same Cancel and primary buttons, same
+  busy and disabled handling, Escape and the close button both count as
+  Cancel, and the two type-the-word gates (deleting a zone with records,
+  resetting the database) use one field. Merge Networks shows a disabled
+  Merge button while the plan has conflicts instead of hiding it. A guard in
+  `npm run check:reuse` refuses a new hand-built one.
+- Status dots are one component. The dashboard rail and attention list, the
+  triage rail, the log viewer, the Intelligence, Performance and GeoIP
+  service tiles, the workspace explorer, the network header's state chip and
+  health strip, and the Online and Enabled table cells all render through
+  `StatusDot` instead of drawing their own circle. Off states now show the
+  same hollow muted ring everywhere; Online and Enabled keep the green word.
+- The duplicated scoped CSS behind the reuse audit moved into shared sheets:
+  `utilities.css` (muted, text-sm, w-full, mono, sr-only, action-buttons,
+  dialog-actions, card-header, field-error), `panel-chrome.css` (the DNS and
+  DHCP panels' info bar, sidebar search and empty states) and the range
+  dialogs' `range-dialogs.css`. The scoped-CSS guard's baseline dropped from
+  52 classes to 27; what remains is drift (same name, different bodies) that
+  needs a design decision, plus the classic views.
+- The network editor uses the shared `ScanToggle` instead of its own copy of
+  the Inherit / Enabled / Disabled control, and its checkboxes and the divide
+  slider are the toolkit's `Checkbox` and `Slider` rather than raw inputs.
 
 ### Fixed
 

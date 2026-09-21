@@ -285,9 +285,6 @@ onMounted(() => {
   font-size: var(--app-fs-sm);
   color: var(--cid-text-muted-color);
 }
-.w-full {
-  width: 100%;
-}
 .logging-subtabs {
   display: flex;
   flex-direction: column;
