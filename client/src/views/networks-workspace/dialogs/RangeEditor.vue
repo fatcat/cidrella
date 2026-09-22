@@ -13,13 +13,17 @@
         Network Range Type
         <Select
           v-model="form.range_type_id"
-          :options="customTypes"
+          :options="typeOptions"
           optionLabel="name"
           optionValue="id"
           placeholder="Choose a type"
           class="w-full"
+          data-track="workspace-range-type-select"
         />
       </label>
+      <!-- A new label is made here, in the same save as the range that
+           wears it, instead of a trip to Settings first. -->
+      <RangeTypeFields v-if="creatingType" v-model="newType" />
       <label>
         Start IP
         <InputText v-model="form.start_ip" class="w-full" required />
@@ -108,6 +112,7 @@ import Dialog from '../../../ui/Dialog.js';
 import InputText from '../../../ui/InputText.js';
 import Select from '../../../ui/Select.js';
 import { apiError } from '../../../utils/format.js';
+import RangeTypeFields from './RangeTypeFields.vue';
 import { isProtectedRange, useRangeActions } from '../composables/useRangeActions.js';
 import { useDiscardGuard } from '../composables/useDiscardGuard.js';
 import './range-dialogs.css';
@@ -120,16 +125,33 @@ const props = defineProps({
   range: { type: Object, default: null },
   rangeTypes: { type: Array, default: () => [] },
 });
-const emit = defineEmits(['update:visible', 'saved', 'deleted']);
-const { busy, createRange, updateRange, deleteRange } = useRangeActions();
+const emit = defineEmits(['update:visible', 'saved', 'deleted', 'type-created']);
+const { busy, createRange, createRangeType, updateRange, deleteRange } = useRangeActions();
 const overlap = ref(null);
 const confirmingDelete = ref(false);
 const error = ref('');
+const NEW_TYPE = 'new';
 const form = reactive({ range_type_id: null, start_ip: '', end_ip: '', description: '' });
+const newType = ref({ name: '', color: '#14b8a6', description: '' });
 let baseline = JSON.stringify(form);
-const customTypes = computed(() => props.rangeTypes.filter((type) => !type.is_system));
+// Types made from this dialog join the list at once; the parent's list
+// catches up when it reloads after the save. Cleared on every open, and
+// merged by id, so a type that has since arrived in the prop is one entry.
+const createdTypes = ref([]);
+const customTypes = computed(() => {
+  const byId = new Map();
+  for (const type of [...props.rangeTypes, ...createdTypes.value]) {
+    if (!type.is_system) byId.set(type.id, type);
+  }
+  return [...byId.values()];
+});
+const typeOptions = computed(() => [...customTypes.value, { id: NEW_TYPE, name: 'New type…' }]);
+const creatingType = computed(() => form.range_type_id === NEW_TYPE);
 const isValid = computed(
-  () => Number.isInteger(form.range_type_id) && form.start_ip.trim() && form.end_ip.trim(),
+  () =>
+    (Number.isInteger(form.range_type_id) || (creatingType.value && newType.value.name.trim())) &&
+    form.start_ip.trim() &&
+    form.end_ip.trim(),
 );
 
 function reset() {
@@ -140,7 +162,10 @@ function reset() {
   error.value = '';
   overlap.value = null;
   confirmingDelete.value = false;
-  form.range_type_id = props.range?.range_type_id ?? customTypes.value[0]?.id ?? null;
+  createdTypes.value = [];
+  // With no label yet the dialog opens ready to make one.
+  form.range_type_id = props.range?.range_type_id ?? customTypes.value[0]?.id ?? NEW_TYPE;
+  newType.value = { name: '', color: '#14b8a6', description: '' };
   form.start_ip = props.range?.start_ip ?? '';
   form.end_ip = props.range?.end_ip ?? '';
   form.description = props.range?.description ?? '';
@@ -154,9 +179,17 @@ const {
   keepEditing,
   discard,
   reset: resetGuard,
-} = useDiscardGuard({ busy, isDirty: () => JSON.stringify(form) !== baseline, close });
+} = useDiscardGuard({
+  busy,
+  isDirty: () => JSON.stringify(form) !== baseline || Boolean(newType.value.name.trim()),
+  close,
+});
 
-watch(() => [props.visible, props.range, props.rangeTypes], reset, { immediate: true, deep: true });
+// Only opening the dialog, or pointing it at another range, resets the form.
+// It used to reset on rangeTypes too, which meant the parent adding the type
+// this dialog had just created wiped the half-filled range out from under
+// the save. The parent loads the types before it opens the dialog.
+watch(() => [props.visible, props.range], reset, { immediate: true, deep: true });
 
 function close() {
   overlap.value = null;
@@ -181,9 +214,29 @@ function cancelOverlap() {
   overlap.value = null;
 }
 
+// The type is created first and the form switches to its id, so a retry
+// after an overlap prompt saves the range under the type already made.
+async function ensureType() {
+  if (!creatingType.value) return;
+  const created = await createRangeType({
+    name: newType.value.name.trim(),
+    color: newType.value.color,
+    description: newType.value.description.trim(),
+  });
+  createdTypes.value = [...createdTypes.value, created];
+  form.range_type_id = created.id;
+  newType.value = { name: '', color: '#14b8a6', description: '' };
+}
+
 async function save(force) {
   if (!isValid.value || (props.range && isProtectedRange(props.range))) return;
   error.value = '';
+  try {
+    await ensureType();
+  } catch (err) {
+    error.value = apiError(err);
+    return;
+  }
   const payload = {
     range_type_id: form.range_type_id,
     start_ip: form.start_ip.trim(),
@@ -196,6 +249,9 @@ async function save(force) {
       ? await updateRange(props.subnetId, props.range.id, payload)
       : await createRange(props.subnetId, payload);
     overlap.value = null;
+    // Only what this open created. The list is cleared on every open, so a
+    // later save under an existing type announces nothing.
+    if (createdTypes.value.length) emit('type-created', createdTypes.value);
     emit('saved', saved);
     emit('update:visible', false);
   } catch (err) {

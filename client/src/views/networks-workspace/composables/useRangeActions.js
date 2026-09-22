@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import api from '../../../api/client.js';
+import { useSubnetStore } from '../../../stores/subnets.js';
 
 const PROTECTED_SYSTEM_TYPES = new Set(['Network', 'Broadcast']);
 
@@ -42,12 +43,24 @@ export function exactRangeRuns(selectedRuns) {
 
 export function useRangeActions() {
   const busy = ref(false);
+  const store = useSubnetStore();
 
   async function request(method, url, data) {
     busy.value = true;
     try {
       const response = data === undefined ? await api[method](url) : await api[method](url, data);
       return response.data;
+    } finally {
+      busy.value = false;
+    }
+  }
+  // Type writes go through the store, which caches the type list for the
+  // pickers and drops that cache on a write. Writing the endpoint here
+  // directly left Settings showing the list from before the save.
+  async function viaStore(work) {
+    busy.value = true;
+    try {
+      return await work();
     } finally {
       busy.value = false;
     }
@@ -66,15 +79,15 @@ export function useRangeActions() {
     }
     return request('delete', `/subnets/${subnetId}/ranges/${range.id}`);
   };
-  const createRangeType = (payload) => request('post', '/range-types', payload);
+  const createRangeType = (payload) => viaStore(() => store.createRangeType(payload));
   const updateRangeType = (rangeTypeId, payload) =>
-    request('put', `/range-types/${rangeTypeId}`, payload);
+    viaStore(() => store.updateRangeType(rangeTypeId, payload));
   const deleteRangeType = (rangeType) => {
     if (!rangeType?.id) throw new TypeError('A Network Range Type row is required');
     if (rangeType.is_system) {
       throw new TypeError('Functional system range types cannot be deleted');
     }
-    return request('delete', `/range-types/${rangeType.id}`);
+    return viaStore(() => store.deleteRangeType(rangeType.id));
   };
   const setRangeType = (subnetId, rangeTypeId, selectedRuns, acceptOverlaps = false) =>
     request('put', `/subnets/${subnetId}/ranges/set-type`, {

@@ -9,16 +9,7 @@
     @update:visible="requestClose"
   >
     <form class="workspace-range-form" @submit.prevent="save">
-      <label>Name <InputText v-model="form.name" class="w-full" maxlength="64" required /></label>
-      <label class="workspace-color-field">
-        Color
-        <input v-model="form.color" type="color" />
-        <InputText v-model="form.color" maxlength="7" />
-      </label>
-      <label>
-        Description
-        <InputText v-model="form.description" class="w-full" maxlength="1024" />
-      </label>
+      <RangeTypeFields v-model="form" />
       <p class="workspace-range-help">
         Network Range Types are visual organizational labels. They never allocate an address or
         change DHCP, DNS, scanning, or liveness.
@@ -66,10 +57,10 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue';
+import { ref, watch } from 'vue';
 import Button from '../../../ui/Button.js';
 import Dialog from '../../../ui/Dialog.js';
-import InputText from '../../../ui/InputText.js';
+import RangeTypeFields from './RangeTypeFields.vue';
 import { apiError } from '../../../utils/format.js';
 import { useRangeActions } from '../composables/useRangeActions.js';
 import { useDiscardGuard } from '../composables/useDiscardGuard.js';
@@ -83,8 +74,8 @@ const props = defineProps({
 });
 const emit = defineEmits(['update:visible', 'saved', 'deleted']);
 const { busy, createRangeType, updateRangeType, deleteRangeType } = useRangeActions();
-const form = reactive({ name: '', color: '#14b8a6', description: '' });
-let baseline = JSON.stringify(form);
+const form = ref({ name: '', color: '#14b8a6', description: '' });
+let baseline = JSON.stringify(form.value);
 const error = ref('');
 const confirmingDelete = ref(false);
 
@@ -94,19 +85,21 @@ const {
   keepEditing,
   discard,
   reset: resetGuard,
-} = useDiscardGuard({ busy, isDirty: () => JSON.stringify(form) !== baseline, close });
+} = useDiscardGuard({ busy, isDirty: () => JSON.stringify(form.value) !== baseline, close });
 
 watch(
   () => [props.visible, props.rangeType],
   () => {
-    form.name = props.rangeType?.name ?? '';
-    form.color = props.rangeType?.color ?? '#14b8a6';
-    form.description = props.rangeType?.description ?? '';
+    form.value = {
+      name: props.rangeType?.name ?? '',
+      color: props.rangeType?.color ?? '#14b8a6',
+      description: props.rangeType?.description ?? '',
+    };
     error.value = props.rangeType?.is_system
       ? 'Functional system range types cannot be modified.'
       : '';
     confirmingDelete.value = false;
-    baseline = JSON.stringify(form);
+    baseline = JSON.stringify(form.value);
     resetGuard();
   },
   { immediate: true, deep: true },
@@ -131,11 +124,11 @@ async function remove() {
 }
 
 async function save() {
-  if (!form.name.trim() || props.rangeType?.is_system) return;
+  if (!form.value.name.trim() || props.rangeType?.is_system) return;
   const payload = {
-    name: form.name.trim(),
-    color: form.color,
-    description: form.description.trim(),
+    name: form.value.name.trim(),
+    color: form.value.color,
+    description: form.value.description.trim(),
   };
   try {
     const saved = props.rangeType
@@ -148,10 +141,3 @@ async function save() {
   }
 }
 </script>
-
-<style scoped>
-.workspace-color-field {
-  grid-template-columns: auto 3rem 1fr;
-  align-items: center;
-}
-</style>

@@ -595,13 +595,45 @@ describe('Networks workspace', () => {
     expect(wrapper.findComponent(WorkspaceTable).exists()).toBe(false);
     await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
     expect(wrapper.findComponent(AddressGrid).props('density')).toBe('compact');
-    // The pager belongs to the surface, not the table, so it survives the grid.
-    expect(wrapper.find('.table-footer .p-paginator').exists()).toBe(true);
+    // The grid shows the whole network, so a /24 has no pages to turn; the
+    // footer with its count stays.
+    expect(wrapper.find('.table-footer .p-paginator').exists()).toBe(false);
+    expect(wrapper.find('.table-footer').exists()).toBe(true);
 
     await wrapper.find('button[aria-label="Table view"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.table-footer .p-paginator').exists()).toBe(true);
     await wrapper.find('tbody tr').trigger('click');
     await flushPromises();
     expect(wrapper.findComponent(WorkspaceDetailsHost).props('row')).not.toBeNull();
+  });
+
+  it('reads the whole network for the grid and a page for the table', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const ipsCalls = () => api.get.mock.calls.filter(([url]) => url === '/subnets/11/ips');
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 256 });
+
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 4096 });
+    // The DNS and DHCP reads on the same page keep the table's size.
+    const dhcpCall = api.get.mock.calls
+      .filter(([url, config]) => url === '/workspace/dhcp-addresses' && config?.params?.sort_order)
+      .at(-1);
+    expect(dhcpCall[1].params.page_size).toBe(256);
+
+    // Compact is still the grid: no reload for a density change.
+    const before = ipsCalls().length;
+    await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
+    await flushPromises();
+    expect(ipsCalls().length).toBe(before);
+
+    await wrapper.find('button[aria-label="Table view"]').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 256 });
   });
 
   it('loads real API data and keeps network context across address, DNS, and DHCP views', async () => {

@@ -252,6 +252,9 @@ describe('addressCountLabel', () => {
   });
 
   it('names assigned addresses for a sparse IPv6 network, which has no total', () => {
+    expect(addressCountLabel({ shown: 256, matching: 256, total: 256, paged: false })).toBe(
+      'Showing 256 · 256 matching · 256 addresses in network',
+    );
     expect(addressCountLabel({ shown: 3, matching: 3, total: 3, sparse: true })).toBe(
       'Showing 3 on this page · 3 matching · 3 assigned addresses',
     );

@@ -1,9 +1,11 @@
 import { flushPromises, mount } from '@vue/test-utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
 import api from '../../../../src/api/client.js';
 import BulkRangeTypeDialog from '../../../../src/views/networks-workspace/dialogs/BulkRangeTypeDialog.vue';
 import RangeEditor from '../../../../src/views/networks-workspace/dialogs/RangeEditor.vue';
 import RangeTypeDialog from '../../../../src/views/networks-workspace/dialogs/RangeTypeDialog.vue';
+import RangeTypeFields from '../../../../src/views/networks-workspace/dialogs/RangeTypeFields.vue';
 import {
   exactRangeRuns,
   isProtectedRange,
@@ -50,7 +52,10 @@ const componentOptions = {
 const customType = { id: 8, name: 'Lab equipment', is_system: 0, color: '#14b8a6' };
 
 describe('workspace range management', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setActivePinia(createPinia());
+  });
 
   it('keeps organizational labels separate from protected functional projections', () => {
     const custom = { range_type_name: 'Lab equipment', range_type_is_system: 0 };
@@ -234,6 +239,110 @@ describe('workspace range management', () => {
 
     expect(api.delete).toHaveBeenCalledWith('/subnets/4/ranges/12');
     expect(wrapper.emitted('deleted')?.[0]).toEqual([range]);
+  });
+
+  it('creates a new type inline and saves the range under it in one go', async () => {
+    api.post.mockImplementation((url) =>
+      Promise.resolve({
+        data:
+          url === '/range-types'
+            ? { id: 21, name: 'Servers', color: '#7b5e3d', is_system: 0 }
+            : { id: 50, range_type_id: 21, start_ip: '10.0.0.30', end_ip: '10.0.0.40' },
+      }),
+    );
+    // No custom types yet: the dialog opens on "New type" with its fields shown.
+    const wrapper = mount(RangeEditor, {
+      ...componentOptions,
+      props: { visible: true, subnetId: 4, rangeTypes: [], range: null },
+    });
+    const nameInput = wrapper.get('[data-track="workspace-range-type-name"]');
+    expect(nameInput.exists()).toBe(true);
+    await wrapper.findComponent(RangeTypeFields).vm.$emit('update:modelValue', {
+      name: 'Servers',
+      color: '#7b5e3d',
+      description: '',
+    });
+    const inputs = wrapper.findAllComponents(InputTextStub);
+    const byIndex = (i, value) => inputs[i].vm.$emit('update:modelValue', value);
+    // Type name, color, type description, then start, end, range description.
+    await byIndex(3, '10.0.0.30');
+    await byIndex(4, '10.0.0.40');
+    await wrapper.get('[data-track="workspace-range-save"]').trigger('click');
+    await flushPromises();
+
+    expect(api.post.mock.calls[0]).toEqual([
+      '/range-types',
+      { name: 'Servers', color: '#7b5e3d', description: '' },
+    ]);
+    expect(api.post.mock.calls[1]).toEqual([
+      '/subnets/4/ranges',
+      { range_type_id: 21, start_ip: '10.0.0.30', end_ip: '10.0.0.40', description: '' },
+    ]);
+    expect(wrapper.emitted('type-created')?.[0]?.[0]).toEqual([
+      { id: 21, name: 'Servers', color: '#7b5e3d', is_system: 0 },
+    ]);
+    expect(wrapper.emitted('saved')).toHaveLength(1);
+  });
+
+  it('does not re-announce an earlier type on a later save from the same dialog', async () => {
+    // One mounted editor, two ranges: the first makes a type, the second
+    // picks an existing one. The parent appends what it is told, so a
+    // repeat announcement duplicates the type in every picker.
+    api.post.mockImplementation((url) =>
+      Promise.resolve({
+        data: url === '/range-types' ? { id: 21, name: 'Servers', is_system: 0 } : { id: 50 },
+      }),
+    );
+    const wrapper = mount(RangeEditor, {
+      ...componentOptions,
+      props: { visible: true, subnetId: 4, rangeTypes: [], range: null },
+    });
+    await wrapper.findComponent(RangeTypeFields).vm.$emit('update:modelValue', {
+      name: 'Servers',
+      color: '#7b5e3d',
+      description: '',
+    });
+    let inputs = wrapper.findAllComponents(InputTextStub);
+    await inputs[3].vm.$emit('update:modelValue', '10.0.0.30');
+    await inputs[4].vm.$emit('update:modelValue', '10.0.0.40');
+    await wrapper.get('[data-track="workspace-range-save"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.emitted('type-created')).toHaveLength(1);
+
+    // The parent has the type now and reopens the same dialog for range two.
+    await wrapper.setProps({ visible: false });
+    await wrapper.setProps({ rangeTypes: [{ id: 21, name: 'Servers', is_system: 0 }] });
+    await wrapper.setProps({ visible: true });
+    inputs = wrapper.findAllComponents(InputTextStub);
+    await inputs[0].vm.$emit('update:modelValue', '10.0.0.50');
+    await inputs[1].vm.$emit('update:modelValue', '10.0.0.60');
+    await wrapper.get('[data-track="workspace-range-save"]').trigger('click');
+    await flushPromises();
+
+    expect(wrapper.emitted('type-created')).toHaveLength(1);
+    expect(api.post.mock.calls.filter(([url]) => url === '/range-types')).toHaveLength(1);
+    // One "Servers" in the picker, not the prop copy plus the local one.
+    expect(wrapper.findComponent(SelectStub).props('options')).toEqual([
+      { id: 21, name: 'Servers', is_system: 0 },
+      { id: 'new', name: 'New type…' },
+    ]);
+  });
+
+  it('saves a range under an existing type without touching the type endpoint', async () => {
+    api.post.mockResolvedValue({ data: { id: 51 } });
+    const wrapper = mount(RangeEditor, {
+      ...componentOptions,
+      props: { visible: true, subnetId: 4, rangeTypes: [customType], range: null },
+    });
+    expect(wrapper.find('[data-track="workspace-range-type-name"]').exists()).toBe(false);
+    const inputs = wrapper.findAllComponents(InputTextStub);
+    await inputs[0].vm.$emit('update:modelValue', '10.0.0.30');
+    await inputs[1].vm.$emit('update:modelValue', '10.0.0.40');
+    await wrapper.get('[data-track="workspace-range-save"]').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(api.post.mock.calls[0][0]).toBe('/subnets/4/ranges');
+    expect(api.post.mock.calls[0][1].range_type_id).toBe(8);
   });
 
   it('prevents functional range types from being edited', async () => {

@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import helmet from 'helmet';
+import compression from 'compression';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 import morgan from 'morgan';
@@ -349,6 +350,17 @@ async function main() {
     next();
   });
   app.use(morgan('short'));
+  // gzip everything compressible above the default 1 KB. A full-network
+  // address read (4,096 rows for a /20 in the grid view) is 4 MB of JSON
+  // that shrinks about ten to one. The log stream is left alone: an event
+  // stream has to leave as it is written, and gzip would hold it.
+  app.use(
+    compression({
+      filter: (req, res) =>
+        !String(res.getHeader('Content-Type') || '').startsWith('text/event-stream') &&
+        compression.filter(req, res),
+    }),
+  );
   app.use(express.json());
 
   // Attach req.afterCommit(hookName) for routes to queue dedup'd regen.

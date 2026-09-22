@@ -118,7 +118,10 @@
             size="small"
             text
             data-track="sys-add-range-type"
-            @click="showRangeTypeDialog = true"
+            @click="
+              editingRangeType = null;
+              showRangeTypeDialog = true;
+            "
           />
         </div>
         <p class="field-help range-type-help">
@@ -162,39 +165,13 @@
 
     <ContextMenu ref="rangeTypeContextMenuRef" :model="rangeTypeContextMenuItems" />
 
-    <!-- Network Range Type Dialog -->
-    <Dialog
+    <!-- The same type editor the workspace range dialog uses inline. -->
+    <RangeTypeDialog
       v-model:visible="showRangeTypeDialog"
-      :header="editingRangeType ? 'Edit Network Range Type' : 'Add Network Range Type'"
-      modal
-      :style="{ width: '24rem' }"
-    >
-      <div class="form-grid">
-        <div class="field">
-          <label>Name *</label>
-          <InputText v-model="rangeTypeForm.name" class="w-full" />
-        </div>
-        <div class="field">
-          <label>Color</label>
-          <div class="color-picker-row">
-            <input type="color" v-model="rangeTypeForm.color" />
-            <InputText v-model="rangeTypeForm.color" style="width: 8rem; font-family: monospace" />
-          </div>
-        </div>
-        <div class="field">
-          <label>Description</label>
-          <InputText v-model="rangeTypeForm.description" class="w-full" />
-        </div>
-      </div>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="closeRangeTypeDialog" />
-        <Button
-          :label="editingRangeType ? 'Save' : 'Create'"
-          @click="saveRangeType"
-          :loading="savingRangeType"
-        />
-      </template>
-    </Dialog>
+      :range-type="editingRangeType"
+      @saved="handleRangeTypeSaved"
+      @deleted="handleRangeTypeDeleted"
+    />
 
     <!-- Delete Network Range Type Dialog -->
     <ConfirmDialog
@@ -220,8 +197,8 @@ import EmptyState from '../../components/EmptyState.vue';
 import ConfirmDialog from '../../components/ConfirmDialog.vue';
 import DataTable from '../../ui/DataTable.js';
 import Column from '../../ui/Column.js';
-import Dialog from '../../ui/Dialog.js';
 import Select from '../../ui/Select.js';
+import RangeTypeDialog from '../networks-workspace/dialogs/RangeTypeDialog.vue';
 import InputText from '../../ui/InputText.js';
 import ToggleSwitch from '../../ui/ToggleSwitch.js';
 import ContextMenu from '../../ui/ContextMenu.js';
@@ -353,7 +330,6 @@ const showRangeTypeDialog = ref(false);
 const showDeleteRangeTypeDialog = ref(false);
 const editingRangeType = ref(null);
 const deletingRangeType = ref(null);
-const rangeTypeForm = ref({ name: '', color: '#6b7280', description: '' });
 
 async function loadRangeTypes() {
   loadingRangeTypes.value = true;
@@ -366,33 +342,23 @@ async function loadRangeTypes() {
 
 function editRangeType(type) {
   editingRangeType.value = type;
-  rangeTypeForm.value = { name: type.name, color: type.color, description: type.description || '' };
   showRangeTypeDialog.value = true;
 }
 
-function closeRangeTypeDialog() {
-  showRangeTypeDialog.value = false;
+async function handleRangeTypeSaved() {
+  toast.add({
+    severity: 'success',
+    summary: editingRangeType.value ? 'Range type updated' : 'Range type created',
+    life: 3000,
+  });
   editingRangeType.value = null;
-  rangeTypeForm.value = { name: '', color: '#6b7280', description: '' };
+  await loadRangeTypes();
 }
 
-async function saveRangeType() {
-  savingRangeType.value = true;
-  try {
-    if (editingRangeType.value) {
-      await store.updateRangeType(editingRangeType.value.id, rangeTypeForm.value);
-      toast.add({ severity: 'success', summary: 'Range type updated', life: 3000 });
-    } else {
-      await store.createRangeType(rangeTypeForm.value);
-      toast.add({ severity: 'success', summary: 'Range type created', life: 3000 });
-    }
-    closeRangeTypeDialog();
-    await loadRangeTypes();
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally {
-    savingRangeType.value = false;
-  }
+async function handleRangeTypeDeleted() {
+  toast.add({ severity: 'success', summary: 'Range type deleted', life: 3000 });
+  editingRangeType.value = null;
+  await loadRangeTypes();
 }
 
 function confirmDeleteRangeType(type) {
@@ -512,23 +478,6 @@ onMounted(async () => {
   height: 14px;
   border-radius: 3px;
   border: 1px solid var(--cid-surface-border);
-}
-.form-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-.color-picker-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.color-picker-row input[type='color'] {
-  width: 36px;
-  height: 36px;
-  border: none;
-  padding: 0;
-  cursor: pointer;
 }
 .range-types-section {
   display: flex;

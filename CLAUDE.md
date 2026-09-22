@@ -94,7 +94,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `client/src/ui/*.js`, never from the package; `EmptyState`, `StatusDot`, `StatusBadge`,
   `AddressTypePill`, `ConfirmDialog` (every danger or warn confirmation, with
   `type-to-confirm` for the typed gates), `ScanToggle` (`inherits-from` names the parent),
-  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`, `WorkspaceHead` (title, lede, Refresh and the range select of a
+  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`, `networks-workspace/dialogs/RangeTypeDialog`
+  + `RangeTypeFields` (the one Network Range Type editor: Settings uses the dialog, RangeEditor
+  the fields inline; type writes go through the subnet store so its type cache drops), `WorkspaceHead` (title, lede, Refresh and the range select of a
   reworked Analytics section), `SeriesChart` (every area chart of minute rows, with per-series
   `aggregate` and `summary`; legend chips toggle series), `StackedBar` (a split as one bar with
   a toggling legend; `dashboard/AllocationBar` wraps it), `TopList` (a ranked list with bars,

@@ -274,6 +274,16 @@ first on a 0.4.17 host.
 
 ### Changed
 
+- The address grid shows the whole network. Grid and compact grid read up
+  to 4,096 addresses (a /20) in one page, so a /22 or /21 is one grid with
+  no pages to turn; a /19 or larger pages the grid in /20 chunks. The table
+  keeps its 32 to 512 rows a page, and the DNS and DHCP reads on the same
+  page keep the table's size. Measured on the dev stack: a /22 grid draws in
+  60 ms and answers a click in 85 ms, a /20 in 200 and 250.
+- API responses are gzip compressed. A full /20 address read is 4 MB of
+  JSON that leaves as 70 KB; a 256-row table page goes from 260 KB to 7 KB.
+  Every JSON response benefits, the table views included. The log event
+  stream is excluded, since compression would hold events back.
 - "Whitelist" is now "Allowlist" everywhere: the DNS exception list under
   Blocklists, the anomaly detector's skip list, the UI, the API and the
   schema. Migration 078 renames the two tables and the anomaly column in
@@ -324,6 +334,12 @@ first on a 0.4.17 host.
   active lease, Held outside DHCP). Each table offers only the columns its
   rows can fill, so the DNS table no longer lists Lease or MAC and the
   Addresses table no longer lists Enabled or Network.
+- Adding a range no longer needs a trip to Settings first. The Network Range
+  Type select in Add range offers "New type", which opens name, color and
+  description inline, and Create makes the type and the range in one save
+  (with no custom type yet the dialog opens on it). Settings > General >
+  Naming keeps the type list for renaming, recoloring and deleting, now
+  through the same editor the workspace uses.
 - The IP Management workspace refreshes its shared reads once a minute, and
   in a network context that reload showed the "Loading live data" popover and
   dimmed the table every time. The minute refresh now updates the rows in

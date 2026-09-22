@@ -56,6 +56,13 @@ import {
   dynamicPoolConflict,
 } from '../models/dhcp-scope.js';
 
+// One page of an address read. The table pages at 32 to 512; the grid asks
+// for the whole network at once, which is a /20 at most.
+export const IPS_PAGE_SIZE_MAX = 4096;
+function clampPageSize(value) {
+  return Math.min(Math.max(parseInt(value) || 256, 1), IPS_PAGE_SIZE_MAX);
+}
+
 const router = Router();
 
 // Invalidate subnet cache after any mutating request
@@ -2212,7 +2219,7 @@ router.get(
     // is the persisted rows plus the protected topology addresses, filtered,
     // sorted and paged in memory.
     if (parsed.family === 6) {
-      const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+      const pageSize = clampPageSize(req.query.pageSize);
       const rowsByAddress = new Map(loadPersistedRows().map((row) => [row.ip_address, row]));
       const protectedAddresses = [parsed.network];
       if (subnet.gateway_address && parsedNetworkContains(parsed, subnet.gateway_address)) {
@@ -2253,7 +2260,7 @@ router.get(
       exactExplorerSearch ||
       (reqSortField && reqSortField !== 'ip_address')
     ) {
-      const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+      const pageSize = clampPageSize(req.query.pageSize);
       const allPersisted = loadPersistedRows();
       const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
       const matchedPersisted = allPersisted.filter(rowMatches);
@@ -2405,7 +2412,7 @@ router.get(
 
     // ── Search mode: return only matching persisted IPs (no virtual fill) ──
     if (search) {
-      const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+      const pageSize = clampPageSize(req.query.pageSize);
 
       const allPersisted = loadPersistedRows();
 
@@ -2462,7 +2469,7 @@ router.get(
 
     // ── Suppressed-available mode: return occupied and protected rows only ──
     if (!showAvailable) {
-      const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+      const pageSize = clampPageSize(req.query.pageSize);
 
       const allPersisted = loadPersistedRows();
 
@@ -2506,7 +2513,7 @@ router.get(
 
     // ── Normal mode: virtual IPs with pagination ──
     // Pagination params
-    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize) || 256, 1), 512);
+    const pageSize = clampPageSize(req.query.pageSize);
     const totalPages = Math.ceil(totalIps / pageSize);
     const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), totalPages);
 

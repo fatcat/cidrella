@@ -77,7 +77,6 @@ const BASELINE = {
     'views/DHCP.vue',
     'views/SubnetDetail.vue',
     'views/Users.vue',
-    'views/settings/NetworkSettings.vue',
     'views/settings/VlanSettings.vue',
   ],
   help: ['components/BackupCodesPanel.vue', 'components/PasswordPolicyEditor.vue'],

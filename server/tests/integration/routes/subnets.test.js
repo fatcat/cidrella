@@ -693,6 +693,19 @@ describe('GET /api/subnets/:id/ips', () => {
         .prepare('SELECT COUNT(*) AS count FROM ip_addresses WHERE subnet_id = ?')
         .get(created.body.id).count,
     ).toBe(beforeRows);
+
+    // The grid reads a whole /20 in one page; anything above the cap is the
+    // cap, so a /19 pages in /20 chunks rather than being refused.
+    const whole = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ page: 1, pageSize: 4096 });
+    expect(whole.body.ips).toHaveLength(4096);
+    expect(whole.body.pageSize).toBe(4096);
+    const over = await request(app)
+      .get(`/api/subnets/${created.body.id}/ips`)
+      .query({ page: 2, pageSize: 8192 });
+    expect(over.body.pageSize).toBe(4096);
+    expect(over.body.ips[0].ip_address).toBe('11.0.16.0');
   });
 });
 
