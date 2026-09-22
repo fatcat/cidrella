@@ -130,6 +130,18 @@ describe('networks workspace data adapter', () => {
     expect(free.pool).toBeNull();
   });
 
+  it('shows a record without its own TTL as inheriting the zone TTL', () => {
+    const zone = { id: 4, name: 'example.test', type: 'forward', soa_minimum_ttl: 3600 };
+    const record = { id: 1, record_type: 'A', name: 'a', value: '10.0.0.1', enabled: 1 };
+    const [inherited, own, unknown] = mapDnsRows([
+      { zone, records: [record, { ...record, id: 2, ttl: 300 }] },
+      { zone: { id: 5, name: 'other.test', type: 'forward' }, records: [{ ...record, id: 3 }] },
+    ]);
+    expect(inherited.ttl).toBe('3,600 · inherited');
+    expect(own.ttl).toBe('300');
+    expect(unknown.ttl).toBe(EMPTY_CELL);
+  });
+
   it('uses DNS read-model names instead of ambiguous bare fields', () => {
     const [row] = mapDnsRows([
       {

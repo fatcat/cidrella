@@ -23,12 +23,14 @@ function humanize(value) {
 }
 
 export function formatDuration(seconds) {
+  if (seconds == null || seconds === '') return EMPTY_CELL;
   const value = Number(seconds);
   if (!Number.isFinite(value)) return EMPTY_CELL;
   if (value < 60) return `${value} sec`;
   if (value < 3600) return `${Math.round(value / 60)} min`;
   if (value < 86400) return `${Math.round(value / 3600)} hr`;
-  return `${Math.round(value / 86400)} days`;
+  const days = Math.round(value / 86400);
+  return `${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
 export function formatTimestamp(value) {
@@ -192,7 +194,16 @@ export function mapDnsRows(zoneRecords) {
       name: record.name || '@',
       recordType: record.record_type,
       value: record.value,
-      ttl: formatDuration(record.ttl),
+      // A record with no TTL of its own takes the zone's, and says so, the
+      // way Scanning says "inherited". Seconds, as the SOA form states them.
+      // Every record printed "0 sec" before, because a null TTL became the
+      // number zero.
+      ttl:
+        record.ttl != null
+          ? formatNumber(record.ttl)
+          : zone.soa_minimum_ttl != null
+            ? `${formatNumber(zone.soa_minimum_ttl)} · inherited`
+            : EMPTY_CELL,
       source: record.dns_source ? ipSourceLabel(record) : null,
       enabled: flag(record.enabled),
       online: onlineValue(record, { unknownWhenUnaddressed: true }),

@@ -780,6 +780,7 @@ function mapWorkspaceDnsRows(records) {
       id: record.zone_id,
       name: record.zone_name || 'Unknown zone',
       type: record.zone_type,
+      soa_minimum_ttl: record.zone_soa_minimum_ttl ?? null,
     };
     const entry = grouped.get(Number(zone.id)) || { zone, records: [] };
     entry.records.push(record);

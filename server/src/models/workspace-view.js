@@ -195,6 +195,7 @@ function allDnsRows(db) {
       `
       SELECT r.*, r.type AS record_type, r.source AS dns_source,
              z.name AS zone_name, z.type AS zone_type, z.folder_id AS zone_folder_id,
+             z.soa_minimum_ttl AS zone_soa_minimum_ttl,
              CASE WHEN r.type IN ('A', 'AAAA') THEN r.value END AS ip_address
         FROM dns_records r
         JOIN dns_zones z ON z.id = r.zone_id

@@ -324,6 +324,11 @@ first on a 0.4.17 host.
   active lease, Held outside DHCP). Each table offers only the columns its
   rows can fill, so the DNS table no longer lists Lease or MAC and the
   Addresses table no longer lists Enabled or Network.
+- The workspace DNS table printed "0 sec" as the TTL of every record, because
+  a record with no TTL of its own (which is all of them unless one was set by
+  hand) was read as zero. It now shows the zone TTL the record takes, in
+  seconds as the SOA form states it, marked "inherited" the way Scanning
+  marks an inherited setting. The column header reads "TTL (s)".
 - The anomaly bell counted flagged windows, so one device with a noisy
   night read as a dozen anomalies. The bell and the "active anomalies"
   figure now count devices; the per-severity breakdown still counts

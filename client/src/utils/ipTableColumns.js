@@ -89,7 +89,7 @@ const COLUMN_CATALOG = [
   },
   {
     key: 'ttl',
-    header: 'TTL',
+    header: 'TTL (s)',
     description: 'DNS record time-to-live or the zone default.',
     field: 'ttl',
     style: 'width: 6rem',
