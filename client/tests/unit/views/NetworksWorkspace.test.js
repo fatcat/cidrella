@@ -1765,6 +1765,39 @@ describe('Networks workspace', () => {
     expect(wrapper.find('.loading-bar').exists()).toBe(false);
   });
 
+  it('refreshes a network context once a minute without the loading popover', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const wrapper = await mountWorkspace();
+      await enterTestNetwork(wrapper);
+      const ipsCalls = () => api.get.mock.calls.filter(([url]) => url === '/subnets/11/ips');
+      const before = ipsCalls().length;
+
+      // Hold the address read open so the refresh is observably in flight.
+      let release;
+      const base = api.get.getMockImplementation();
+      api.get.mockImplementation((url, config) =>
+        url === '/subnets/11/ips'
+          ? new Promise((resolve) => {
+              release = () => resolve(base(url, config));
+            })
+          : base(url, config),
+      );
+      vi.advanceTimersByTime(60_000);
+      await flushPromises();
+      expect(ipsCalls().length).toBe(before + 1);
+      // The rows stay put; nothing dims them and no popover appears.
+      expect(wrapper.find('[data-track="workspace-loading"]').exists()).toBe(false);
+      expect(wrapper.find('.table-card').classes()).not.toContain('is-loading');
+      expect(wrapper.find('tbody tr').exists()).toBe(true);
+      release();
+      await flushPromises();
+      expect(wrapper.find('[data-track="workspace-loading"]').exists()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('renders type and status with the current interface tags, in use neutral', async () => {
     const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);

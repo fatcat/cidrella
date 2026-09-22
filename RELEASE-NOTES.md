@@ -324,6 +324,12 @@ first on a 0.4.17 host.
   active lease, Held outside DHCP). Each table offers only the columns its
   rows can fill, so the DNS table no longer lists Lease or MAC and the
   Addresses table no longer lists Enabled or Network.
+- The IP Management workspace refreshes its shared reads once a minute, and
+  in a network context that reload showed the "Loading live data" popover and
+  dimmed the table every time. The minute refresh now updates the rows in
+  place with no popover; the popover is for a load you asked for. A hidden
+  tab skips the tick on every auto-refreshing page (Dashboard, Performance,
+  Intelligence, Anomalies, the workspace).
 - The workspace DNS table printed "0 sec" as the TTL of every record, because
   a record with no TTL of its own (which is all of them unless one was set by
   hand) was read as zero. It now shows the zone TTL the record takes, in

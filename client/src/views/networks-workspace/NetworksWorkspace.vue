@@ -2212,10 +2212,12 @@ async function filterToScope(scope) {
   else await refreshAggregateTable();
 }
 
-async function loadNetworkContext() {
+// `silent` is the auto-refresh: the rows update in place under the reader
+// with no "Loading live data" popover dimming the table once a minute.
+async function loadNetworkContext({ silent = false } = {}) {
   if (!selectedNetwork.value.id) return;
   const request = ++contextRequest;
-  loadingContext.value = true;
+  if (!silent) loadingContext.value = true;
   loadError.value = '';
   try {
     const params = {
@@ -2304,7 +2306,7 @@ async function loadNetworkContext() {
   } catch (error) {
     if (request === contextRequest) loadError.value = apiError(error);
   } finally {
-    if (request === contextRequest) loadingContext.value = false;
+    if (request === contextRequest && !silent) loadingContext.value = false;
   }
 }
 
@@ -2559,7 +2561,7 @@ async function reloadSharedReads(kind) {
   if (zones) dnsZones.value = zones;
   if (scopes) dhcpScopes.value = scopes;
   await revalidateWorkspaceContext();
-  if (contextKind.value === 'network') await loadNetworkContext();
+  if (contextKind.value === 'network') await loadNetworkContext({ silent: kind === 'refresh' });
   else await refreshAggregateTable();
   if (plan.applyStatus) await applyStatus.value?.refresh();
 }
