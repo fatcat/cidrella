@@ -591,10 +591,12 @@ const columnCatalog = computed(() =>
       (['ip_address', 'mac_address', 'value', 'dns_hostname'].includes(column.key) ? 'mono' : ''),
   })),
 );
-const columnTableName = computed(
-  () =>
-    `${contextKind.value === 'estate' ? 'All Networks' : contextTitle.value} ${activeView.value}`,
-);
+const columnTableName = computed(() => {
+  const label =
+    [...networkViews, ...aggregateViews].find((view) => view.key === activeView.value)?.label ||
+    activeView.value;
+  return `${contextKind.value === 'estate' ? 'All Networks' : contextTitle.value} ${label}`;
+});
 
 const canAnyCreate = computed(() => createMenuItems.value.length > 0);
 const canCreateCurrent = computed(() => viewAddAction.value?.available === true);

@@ -274,6 +274,17 @@ first on a 0.4.17 host.
 
 ### Changed
 
+- Addresses, DNS and DHCP are one table model. Each of the three tables can
+  show any column the others have: an address row can show its DNS record
+  (name, type, TTL, whether it is enabled, what wrote it) and its DHCP
+  Reservation or lease (assignment, pool membership, DUID, IAID), and a DNS
+  row can show its address's status, type, lease and MAC. A column means
+  the same thing on every table, so the old Enabled and Source columns are
+  split into Record Enabled, Reservation Enabled, Source (the address's
+  allocation) and Record Source. Each table keeps a few columns it cannot
+  hide, marked with a lock in the Columns dialog; they can still be moved.
+  Saved column choices carry over.
+
 - The address grid shows the whole network. Grid and compact grid read up
   to 4,096 addresses (a /20) in one page, so a /22 or /21 is one grid with
   no pages to turn; a /19 or larger pages the grid in /20 chunks. The table

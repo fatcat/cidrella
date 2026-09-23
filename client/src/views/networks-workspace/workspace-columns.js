@@ -48,7 +48,15 @@ const DEFAULTS = {
     'mac_address',
     'last_seen_at',
   ],
-  dns: ['dns_hostname', 'record_type', 'value', 'ttl', 'enabled', 'source', 'network'],
+  dns: [
+    'dns_hostname',
+    'record_type',
+    'value',
+    'ttl',
+    'record_enabled',
+    'record_source',
+    'network',
+  ],
   dnsZones: BASIC.dnsZones.map(([key]) => key),
   dhcp: [
     'ip_address',
@@ -57,8 +65,8 @@ const DEFAULTS = {
     'assignment',
     'lease',
     'expires',
-    'status',
     'type',
+    'status',
     'is_online',
   ],
   dhcpScopes: BASIC.dhcpScopes.map(([key]) => key),
@@ -75,110 +83,94 @@ function basicColumns(kind) {
   }));
 }
 
-// The IP columns each table can actually fill. The shared catalog describes
-// every column any IP table has; a DNS record has no lease and a plain
-// address has no enabled flag and no network but the one on screen, so
-// offering those columns only produced a column of dashes.
-const IP_COLUMNS = {
-  addresses: [
-    'ip_address',
-    'hostname',
-    'status',
-    'type',
-    'lease',
-    'expires',
-    'is_online',
-    'mac_address',
-    'vendor',
-    'device',
-    'os_family',
-    'device_type',
-    'device_confidence',
-    'dhcp_fingerprint',
-    'dhcp_vendor_class',
-    'dhcp_fingerprint_hostname',
-    'device_fingerprint_source',
-    'source',
-    'network_range_type',
-    'last_seen_at',
-    'scanning_enabled',
-  ],
-  dhcp: [
-    'ip_address',
-    'hostname',
-    'status',
-    'type',
-    'lease',
-    'expires',
-    'assignment',
-    'is_online',
-    'mac_address',
-    'vendor',
-    'duid',
-    'iaid',
-    'device',
-    'os_family',
-    'device_type',
-    'device_confidence',
-    'dhcp_fingerprint',
-    'dhcp_vendor_class',
-    'dhcp_fingerprint_hostname',
-    'device_fingerprint_source',
-    'source',
-    'network',
-    'network_range_type',
-    'last_seen_at',
-    'enabled',
-    'scanning_enabled',
-  ],
-  dns: [
-    'dns_hostname',
-    'record_type',
-    'value',
-    'priority',
-    'port',
-    'ttl',
-    'enabled',
-    'source',
-    'is_online',
-    'network',
-  ],
+// Addresses, DNS and DHCP are one table model: each can show any column any
+// of them has, and a column means the same thing on every one. What keeps the
+// tables apart is LOCKED, the columns each cannot hide (they still reorder).
+const IP_KINDS = new Set(['addresses', 'dns', 'dhcp']);
+
+export const LOCKED = Object.freeze({
+  addresses: ['ip_address', 'hostname', 'status'],
+  dns: ['dns_hostname', 'record_type', 'value'],
+  dhcp: ['ip_address', 'hostname', 'mac_address', 'assignment', 'lease', 'expires', 'type'],
+});
+
+// The shared catalog's `enabled` and `source` each meant two things depending
+// on the table. Here each meaning is its own column.
+const WORKSPACE_COLUMNS = [
+  {
+    key: 'record_enabled',
+    header: 'Record Enabled',
+    description: 'Whether the DNS record naming the address is enabled.',
+    field: 'enabled',
+  },
+  {
+    key: 'record_source',
+    header: 'Record Source',
+    description: 'What wrote the DNS record: manual, DHCP, a reservation, or a placeholder.',
+    field: 'dns_source',
+  },
+  {
+    key: 'assignment',
+    header: 'Assignment',
+    description: 'DHCP Reservation or dynamic lease, with pool membership beside it.',
+    field: 'dhcp_assignment_type',
+  },
+  {
+    key: 'reservation_enabled',
+    header: 'Reservation Enabled',
+    description: 'Whether the DHCP Reservation for the address is enabled.',
+    field: 'reservation_enabled',
+  },
+];
+
+// Keys a stored preference may still hold from before the split, per table.
+const RENAMED = {
+  dns: { enabled: 'record_enabled', source: 'record_source' },
+  dhcp: { enabled: 'reservation_enabled' },
+  addresses: {},
 };
+
+function ipColumnCatalog() {
+  const shared = ipTableColumns(IP_TABLE_VIEW.NETWORKS)
+    .filter((column) => column.key !== 'enabled')
+    .map((column) =>
+      column.key === 'dns_hostname'
+        ? { ...column, header: 'DNS Name', field: 'record_fqdn', sortField: 'record_fqdn' }
+        : column,
+    );
+  const extra = WORKSPACE_COLUMNS.map((column) => ({
+    ...column,
+    sortField: column.field,
+    sortable: true,
+  }));
+  return [...shared, ...extra].map((column) => ({ ...column, label: column.header }));
+}
 
 export function workspaceColumnCatalog(kind) {
   if (BASIC[kind]) return basicColumns(kind);
-  const view =
-    kind === 'dhcp'
-      ? IP_TABLE_VIEW.DHCP
-      : kind === 'dns'
-        ? IP_TABLE_VIEW.DNS_FORWARD
-        : IP_TABLE_VIEW.NETWORKS;
-  const offered = new Set(IP_COLUMNS[kind] || IP_COLUMNS.addresses);
-  const columns = ipTableColumns(view)
-    .filter((column) => offered.has(column.key))
-    .map((column) => ({ ...column, label: column.header }));
-  // Assignment is the one column the shared catalog does not know: reserved
-  // or dynamic, with the pool membership beside it.
-  if (kind === 'dhcp') {
-    columns.push({
-      key: 'assignment',
-      header: 'Assignment',
-      label: 'Assignment',
-      field: 'dhcp_assignment_type',
-      sortable: true,
-    });
-  }
-  return columns;
+  const locked = new Set(LOCKED[IP_KINDS.has(kind) ? kind : 'addresses']);
+  return ipColumnCatalog().map((column) => ({ ...column, locked: locked.has(column.key) }));
 }
 
 export function defaultWorkspaceColumnKeys(kind) {
   return [...(DEFAULTS[kind] || [])];
 }
 
+export function lockedWorkspaceColumnKeys(kind) {
+  return [...(LOCKED[kind] || [])];
+}
+
 export function restoreWorkspaceColumnKeys(kind, stored) {
   const valid = new Set(workspaceColumnCatalog(kind).map((column) => column.key));
-  const restored = Array.isArray(stored) ? stored.filter((key) => valid.has(key)) : [];
+  const renamed = RENAMED[kind] || {};
+  const restored = Array.isArray(stored)
+    ? stored.map((key) => renamed[key] || key).filter((key) => valid.has(key))
+    : [];
   if (!restored.length) return defaultWorkspaceColumnKeys(kind).filter((key) => valid.has(key));
+  // A preference saved before a column was locked lacks it; locked columns
+  // lead, in their own order, ahead of what was stored.
+  const missingLocked = lockedWorkspaceColumnKeys(kind).filter((key) => !restored.includes(key));
+  restored.unshift(...missingLocked);
   const identity =
     kind === 'networks'
       ? 'name'

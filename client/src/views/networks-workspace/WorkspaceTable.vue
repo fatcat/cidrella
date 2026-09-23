@@ -86,15 +86,17 @@
               </span>
               <span v-else class="muted">{{ EMPTY_CELL }}</span>
             </template>
-            <template v-else-if="column.key === 'enabled'">
+            <template v-else-if="SWITCH_COLUMNS.has(column.key)">
               <StatusDot
-                :kind="row.enabled ? 'ok' : 'muted'"
-                :label="row.enabled ? 'Enabled' : 'Disabled'"
+                v-if="cellValue(row, column) != null"
+                :kind="cellValue(row, column) ? 'ok' : 'muted'"
+                :label="cellValue(row, column) ? 'Enabled' : 'Disabled'"
                 show-label
                 tint-label
                 class="enabled-value"
-                :class="{ off: !row.enabled }"
+                :class="{ off: !cellValue(row, column) }"
               />
+              <span v-else class="muted">{{ EMPTY_CELL }}</span>
             </template>
             <template v-else>{{ cellValue(row, column) || EMPTY_CELL }}</template>
           </td>
@@ -174,14 +176,19 @@ const CELL_FIELDS = {
   ip_address: 'address',
   mac_address: 'mac',
   last_seen_at: 'lastSeen',
-  dns_hostname: 'name',
+  dns_hostname: 'dnsName',
   record_type: 'recordType',
+  record_enabled: 'recordEnabled',
+  record_source: 'recordSource',
+  reservation_enabled: 'reservationEnabled',
   network_range_type: 'rangeType',
   scanning_enabled: 'scanning',
   is_online: 'online',
 };
+// Columns shown as an on/off dot. The two enabled columns are null on a row
+// with no record or reservation behind it, which is an empty cell, not "off".
+const SWITCH_COLUMNS = new Set(['enabled', 'record_enabled', 'reservation_enabled']);
 function cellValue(row, column) {
-  if (column.key === 'dns_hostname' && row.raw?.record_fqdn) return row.raw.record_fqdn;
   const mappedKey = CELL_FIELDS[column.key] || column.key;
   if (mappedKey in row) return row[mappedKey];
   const field = column.field || column.key;

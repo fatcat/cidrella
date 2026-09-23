@@ -73,25 +73,22 @@ describe('networks workspace data adapter', () => {
       scan_enabled: null,
       is_online: 0,
     };
-    const [address] = mapAddressRows([{ ...facts, has_dhcp_reservation: 1 }]);
-    const [dhcp] = mapDhcpRows([
-      { ...facts, id: 9, dhcp_assignment_type: 'reserved', expires_at: 'infinite' },
-    ]);
-    const dhcpOnly = new Set([
-      'id',
-      'raw',
-      'assignment',
-      'pool',
-      'leaseStatus',
-      'enabled',
-      'network',
-    ]);
+    // The reservation behind the address: the row itself on the DHCP table,
+    // the fact the server attaches to the address row.
+    const reservation = { dhcp_assignment_type: 'reserved', enabled: 1, related_scope_ids: [] };
+    const [address] = mapAddressRows([{ ...facts, has_dhcp_reservation: 1, dhcp: reservation }]);
+    const [dhcp] = mapDhcpRows([{ ...facts, ...reservation, id: 9, expires_at: 'infinite' }]);
+    // Every column the one table model has; only the row's identity and the
+    // DHCP table's own bookkeeping differ.
+    const ownFields = new Set(['id', 'raw', 'leaseStatus', 'enabled']);
     const shared = (row) =>
-      Object.fromEntries(Object.entries(row).filter(([key]) => !dhcpOnly.has(key)));
+      Object.fromEntries(Object.entries(row).filter(([key]) => !ownFields.has(key)));
     expect(shared(dhcp)).toEqual(shared(address));
     expect(address.lease).toBe('Active');
     expect(address.expires).toBe('Never');
     expect(address.source).toBe('DHCP Reservation');
+    expect(address.assignment).toBe('Reserved');
+    expect(address.reservationEnabled).toBe(true);
     expect(address.scanning).toBe('On · inherited');
     expect(address.lastSeen).toBe('Just now');
 
@@ -164,7 +161,12 @@ describe('networks workspace data adapter', () => {
     ]);
 
     expect(row.recordType).toBe('A');
-    expect(row.source).toBe('DHCP lease');
+    // Record Source is what wrote the record; Source is the address's
+    // allocation, which this fixture does not carry.
+    expect(row.recordSource).toBe('DHCP lease');
+    expect(row.source).toBeNull();
+    expect(row.dnsName).toBeNull();
+    expect(row.recordEnabled).toBe(true);
     expect(row.zone).toBe('example.test');
   });
 
@@ -304,6 +306,35 @@ describe('dnsRecordSummary', () => {
       total: 3,
       disabled: 1,
       note: '3 records reference this address, 1 disabled',
+    });
+  });
+});
+
+describe('one IP table model', () => {
+  it("fills a record's columns on an address row from the attached DNS facts", () => {
+    const [row] = mapAddressRows([
+      {
+        ip_address: '10.0.3.228',
+        ip_display_status: 'in use',
+        dns_record: {
+          record_fqdn: 'hass.the-mcnultys.org',
+          record_type: 'A',
+          value: '10.0.3.228',
+          enabled: 0,
+          dns_source: 'manual',
+          zone_soa_minimum_ttl: 3600,
+        },
+      },
+    ]);
+    expect(row).toMatchObject({
+      dnsName: 'hass.the-mcnultys.org',
+      recordType: 'A',
+      value: '10.0.3.228',
+      ttl: '3,600 · inherited',
+      recordEnabled: false,
+      recordSource: 'Manual',
+      assignment: null,
+      reservationEnabled: null,
     });
   });
 });

@@ -205,6 +205,19 @@ reports `assigned_count` and leaves `unassigned_count` null when
 decimal strings when they exceed that limit. Divide and merge use the same
 rules for both families with the prefix bound at the family's width.
 
+## Cross-Table Facts
+
+The Addresses, DNS and DHCP workspace tables are one table model: each can show
+any column the others have. The reads attach what the other tables know about
+an address, from `server/src/models/ip-row-facts.js`, as nested objects so a
+table's own fields never collide with them:
+
+| Field | On | Meaning |
+| --- | --- | --- |
+| `dns_record` | Addresses, DHCP rows | The forward A/AAAA record behind the address: the one the allocation names, else the lowest-id served record, else the lowest-id record. `record_fqdn`, `record_type`, `value`, `ttl`, `priority`, `port`, `enabled`, `dns_source`, `zone_soa_minimum_ttl`; null when none. |
+| `dns_record_count` | Addresses, DHCP rows | How many forward address records name the address. |
+| `dhcp` | Addresses, DNS rows | The DHCP Reservation, else the active lease, else the newest lease for the address: `dhcp_assignment_type`, `lease_status`, `enabled`, `duid`, `iaid`, `subnet_name`, `related_scope_ids`; null when none. |
+
 ## IP Allocation Writes
 
 An IP Reservation is an administrative address hold without a DHCP client

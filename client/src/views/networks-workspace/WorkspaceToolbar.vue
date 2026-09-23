@@ -97,6 +97,7 @@
       :table-name="columnTableName"
       :all-columns="columnCatalog"
       :visible-columns="columns"
+      :locked-keys="columnCatalog.filter((column) => column.locked).map((column) => column.key)"
       @update:visible-columns="emit('update:visible-columns', $event)"
       @reset="emit('reset-columns')"
     />

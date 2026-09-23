@@ -109,7 +109,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `views/networks-workspace-data.js` the `ipRowFields` adapter that fills every shared IP
   column for the workspace tables (both the Addresses and DHCP adapters spread it; add a
   column there, never in one adapter), and `dnsRecordSummary` (the one wording for the DNS
-  records behind an address, disabled ones named). Shared styles: `assets/utilities.css` (global, loaded by
+  records behind an address, disabled ones named). The Addresses, DNS and DHCP tables are ONE
+  table model: `networks-workspace/workspace-columns.js` holds the one catalog every one of
+  them offers, and `LOCKED` the columns each cannot hide (they reorder); the server attaches
+  what the other tables know with `models/ip-row-facts.js` (`dns_record`, `dhcp`). Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
   `dialog-actions`, `card-header`, `field-error`), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and

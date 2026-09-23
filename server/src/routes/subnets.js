@@ -1,3 +1,4 @@
+import { attachDhcpFacts, attachDnsFacts } from '../models/ip-row-facts.js';
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
@@ -2110,8 +2111,14 @@ router.get(
       return (row.ip_display_status || 'available') === 'available';
     }
 
+    // Any column any IP table has: the DNS record and DHCP reservation or
+    // lease behind each address, and the network it is in.
     function loadPersistedRows() {
-      return projectPersistedSubnetIpRows(db, subnet, { context: readContext });
+      const rows = projectPersistedSubnetIpRows(db, subnet, { context: readContext });
+      for (const row of rows) row.subnet_name = subnet.name || subnet.cidr;
+      attachDnsFacts(db, rows);
+      attachDhcpFacts(db, rows);
+      return rows;
     }
 
     const tableSearch = (req.query.table_search || '').trim().toLowerCase();

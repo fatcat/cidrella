@@ -1,5 +1,11 @@
 import { computeIpView, enrichIpViewRows } from './ip-view.js';
-import { getScopePools } from './dhcp-scope.js';
+import {
+  allScopes,
+  attachDhcpFacts,
+  attachDnsFacts,
+  scopesForAddress,
+  unifiedDhcpRows,
+} from './ip-row-facts.js';
 import { fqdnForRecordName, ipForPtrRecord } from './dns-record.js';
 import { canonicalizeIp, sortKey } from '../utils/address.js';
 import {
@@ -11,7 +17,6 @@ import {
   addressInRange,
 } from '../utils/ip.js';
 import { parseIp } from '../utils/address.js';
-import { isLeaseActive } from '../utils/lease-sql.js';
 
 const DNS_SORT_FIELDS = new Set([
   'record_fqdn',
@@ -31,6 +36,7 @@ const DHCP_SORT_FIELDS = new Set([
   'dhcp_lease_state',
   'ip_display_status',
   'expires_at',
+  'dhcp_expires_at',
   'subnet_name',
 ]);
 
@@ -251,6 +257,8 @@ export function getWorkspaceDnsRecords(
   } = {},
 ) {
   let { records } = allDnsRows(db);
+  // Any column any IP table has: the DHCP facts behind each record's address.
+  attachDhcpFacts(db, records);
   if (subnetId !== undefined)
     records = records.filter((row) => row.related_subnet_ids.includes(subnetId));
   if (folderId !== undefined) {
@@ -348,84 +356,9 @@ export function getWorkspaceDnsZones(
   return rows.map(({ _related_subnet_ids, ...row }) => row);
 }
 
-function unifiedDhcpRows(db) {
-  const subnets = allocatedLeaves(db);
-  const leases = db.prepare('SELECT * FROM dhcp_leases').all();
-  const reservations = db.prepare('SELECT * FROM dhcp_reservations').all();
-  const activeByIdentity = new Map(
-    leases
-      .filter((lease) => isLeaseActive(lease.expires_at))
-      .map((lease) => [`${text(lease.mac_address)}:${lease.ip_address}`, lease]),
-  );
-  const matched = new Set();
-  const rows = reservations.map((reservation) => {
-    const subnet = subnets.find((item) => item.id === reservation.subnet_id);
-    const key = `${text(reservation.mac_address)}:${reservation.ip_address}`;
-    const lease = activeByIdentity.get(key);
-    if (lease) matched.add(key);
-    return {
-      ...reservation,
-      protocol_id: `reservation:${reservation.id}`,
-      reservation_id: reservation.id,
-      lease_id: lease?.id ?? null,
-      dhcp_assignment_type: 'reserved',
-      lease_status: lease ? 'active' : 'offline',
-      expires_at: lease?.expires_at ?? null,
-      subnet_cidr: subnet?.cidr ?? null,
-      subnet_name: subnet?.name ?? null,
-      subnet_domain_name: subnet?.domain_name ?? null,
-      folder_id: subnet?.folder_id ?? null,
-    };
-  });
-  for (const lease of leases) {
-    const key = `${text(lease.mac_address)}:${lease.ip_address}`;
-    if (matched.has(key)) continue;
-    const subnet = subnets.find((item) => item.id === lease.subnet_id);
-    rows.push({
-      ...lease,
-      protocol_id: `lease:${lease.id}`,
-      reservation_id: null,
-      lease_id: lease.id,
-      dhcp_assignment_type: 'dynamic',
-      lease_status: isLeaseActive(lease.expires_at) ? 'active' : 'offline',
-      enabled: 1,
-      subnet_cidr: subnet?.cidr ?? null,
-      subnet_name: subnet?.name ?? null,
-      subnet_domain_name: subnet?.domain_name ?? null,
-      folder_id: subnet?.folder_id ?? null,
-    });
-  }
-  return rows;
-}
-
-function allScopes(db) {
-  const scopes = db
-    .prepare(
-      `
-      SELECT s.*, sub.cidr AS subnet_cidr, sub.name AS subnet_name,
-             sub.domain_name AS subnet_domain_name, sub.folder_id
-        FROM dhcp_scopes s
-        JOIN subnets sub ON sub.id = s.subnet_id
-       ORDER BY sub.network_address, s.id
-    `,
-    )
-    .all();
-  for (const scope of scopes) scope.pools = getScopePools(db, scope.id);
-  return scopes;
-}
-
 function poolForAddress(scopes, subnetId, ip) {
   if (!isValidAddress(ip)) return undefined;
   return scopes.find(
-    (scope) =>
-      scope.subnet_id === subnetId &&
-      scope.pools.some((pool) => addressInRange(ip, pool.start_ip, pool.end_ip)),
-  );
-}
-
-function scopesForAddress(scopes, subnetId, ip) {
-  if (!isValidAddress(ip)) return [];
-  return scopes.filter(
     (scope) =>
       scope.subnet_id === subnetId &&
       scope.pools.some((pool) => addressInRange(ip, pool.start_ip, pool.end_ip)),
@@ -689,6 +622,8 @@ export function getWorkspaceDhcpAddresses(
     row.related_scope_ids = matchingScopes.map((scope) => scope.id);
   }
   enrichDhcp(db, rows);
+  // Any column any IP table has: the DNS record behind each address.
+  attachDnsFacts(db, rows);
   const searchFields = [
     'ip_address',
     'hostname',

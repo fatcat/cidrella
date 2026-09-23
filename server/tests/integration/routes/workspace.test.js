@@ -5,6 +5,7 @@ import { createMultiRouterApp } from '../../helpers/test-app.js';
 import workspaceRouter from '../../../src/routes/workspace.js';
 import dnsRouter from '../../../src/routes/dns.js';
 import dhcpRouter from '../../../src/routes/dhcp.js';
+import subnetRouter from '../../../src/routes/subnets.js';
 
 let app;
 let db;
@@ -139,6 +140,7 @@ beforeAll(async () => {
     { prefix: '/api/workspace', router: workspaceRouter },
     { prefix: '/api/dns', router: dnsRouter },
     { prefix: '/api/dhcp', router: dhcpRouter },
+    { prefix: '/api/subnets', router: subnetRouter },
   ]);
 });
 
@@ -453,5 +455,62 @@ describe('extended inventory routes', () => {
     } finally {
       db.prepare('UPDATE dhcp_scopes SET description = NULL WHERE id = ?').run(scopeId);
     }
+  });
+});
+
+// Addresses, DNS and DHCP are one table model: each read carries the facts the
+// other two tables have about an address, so any column shows on any table.
+describe('one IP table model', () => {
+  it('shows the same DNS and DHCP facts for one address in all three reads', async () => {
+    db.prepare(
+      `INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+       VALUES (?, 'leased-host', 'A', '10.20.0.11', 'dhcp', 1)`,
+    ).run(zoneId);
+
+    const dhcp = await request(app)
+      .get('/api/workspace/dhcp-addresses')
+      .query({ subnet_id: subnetA, table_q: '10.20.0.11' });
+    const dns = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ subnet_id: subnetA, table_q: 'leased-host' });
+    const addresses = await request(app)
+      .get(`/api/subnets/${subnetA}/ips`)
+      .query({ table_search: '10.20.0.11', pageSize: 32 });
+
+    const dhcpRow = dhcp.body.items.find((row) => row.ip_address === '10.20.0.11');
+    const dnsRow = dns.body.items.find((row) => row.record_type === 'A');
+    const addressRow = addresses.body.ips.find((row) => row.ip_address === '10.20.0.11');
+
+    const record = {
+      record_fqdn: 'leased-host.shared.test',
+      record_type: 'A',
+      value: '10.20.0.11',
+      dns_source: 'dhcp',
+    };
+    expect(dhcpRow.dns_record).toMatchObject(record);
+    expect(addressRow.dns_record).toMatchObject(record);
+    expect(dnsRow).toMatchObject(record);
+
+    const lease = {
+      dhcp_assignment_type: 'dynamic',
+      lease_status: 'active',
+      related_scope_ids: [scopeId],
+    };
+    expect(dnsRow.dhcp).toMatchObject(lease);
+    expect(addressRow.dhcp).toMatchObject(lease);
+    expect(dhcpRow).toMatchObject(lease);
+
+    expect(addressRow.subnet_name).toBe('Alpha LAN');
+    expect(dhcpRow.subnet_name).toBe('Alpha LAN');
+  });
+
+  it('attaches nothing to an address no record or lease names', async () => {
+    const addresses = await request(app)
+      .get(`/api/subnets/${subnetA}/ips`)
+      .query({ table_search: '10.20.0.40', pageSize: 32 });
+    const row = addresses.body.ips.find((item) => item.ip_address === '10.20.0.40');
+    expect(row.dns_record).toBeNull();
+    expect(row.dns_record_count).toBe(0);
+    expect(row.dhcp).toBeNull();
   });
 });
