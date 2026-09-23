@@ -1,3 +1,4 @@
+import { IP_COLUMNS, parseColumnFilters } from '../utils/ip-columns.js';
 import { Router } from 'express';
 import { getDb } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
@@ -74,6 +75,16 @@ function parseCommon(req, { paged = false } = {}) {
   const enabled = optionalBoolean(req.query.enabled, 'enabled');
   if (enabled.error) return enabled;
   result.enabled = enabled.value;
+  // Any column of the one IP table model (utils/ip-columns.js), and whether
+  // to count each column's values over the whole result.
+  const filters = parseColumnFilters(req.query.filters);
+  if (filters.error) return filters;
+  result.filters = filters.value;
+  result.facets = req.query.facets === '1' || req.query.facets === 'true';
+  if (req.query.sort_column !== undefined) {
+    if (!IP_COLUMNS[req.query.sort_column]) return { error: 'sort_column is not a known column' };
+    result.sortColumn = req.query.sort_column;
+  }
   // Exact address match, unlike table_q's substring search. The details panel
   // uses it to list what references one pinned address.
   if (req.query.ip_address !== undefined) {

@@ -112,7 +112,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   records behind an address, disabled ones named). The Addresses, DNS and DHCP tables are ONE
   table model: `networks-workspace/workspace-columns.js` holds the one catalog every one of
   them offers, and `LOCKED` the columns each cannot hide (they reorder); the server attaches
-  what the other tables know with `models/ip-row-facts.js` (`dns_record`, `dhcp`). Shared styles: `assets/utilities.css` (global, loaded by
+  what the other tables know with `models/ip-row-facts.js` (`dns_record`, `dhcp`). Filtering,
+  counting and sorting any column is `utils/ip-columns.js` (one getter per column key; its test
+  checks the keys against the client catalog), and the client control is
+  `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
   `dialog-actions`, `card-header`, `field-error`), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and

@@ -104,7 +104,9 @@
             :active-view="activeView"
             :context-kind="contextKind"
             :view-meta="viewMeta"
-            :filter-options="filterOptions"
+            :filter-columns="filterColumns"
+            :facets="facets"
+            :facets-loading="facetsLoading"
             :column-table-name="columnTableName"
             :column-catalog="columnCatalog"
             :columns="columns"
@@ -115,6 +117,7 @@
             @reset-columns="resetVisibleColumns"
             @clear-filter="clearFilter"
             @clear-filters="clearFilters"
+            @filter-open="loadFilterFacets"
             @add="runViewAdd"
             @selection-action="runSelectionAction"
           />
@@ -369,6 +372,7 @@ import { useWorkspaceActions } from './composables/useWorkspaceActions.js';
 import { NETWORK_DRAG_TYPE, menuActions, targetForRow } from './workspace-actions.js';
 import {
   defaultWorkspaceColumnKeys,
+  filterValueLabel,
   restoreWorkspaceColumnKeys,
   workspaceColumnCatalog,
 } from './workspace-columns.js';
@@ -456,7 +460,13 @@ const gridMode = computed(
 const addressPageSize = computed(() => (gridMode.value ? GRID_PAGE_SIZE : pageSize.value));
 const addressSparse = ref(false);
 const showAvailable = ref(true);
-const filters = ref({ status: '', type: '', online: '', scan: '', range: '', protocol: '' });
+// { column: [value, ...] }. The three IP tables filter on the server, over
+// every row; the other lists (networks, zones, scopes, ranges) are loaded
+// whole and filter here.
+const filters = ref({});
+const facets = ref(null);
+const facetsLoading = ref(false);
+const facetKinds = ref(null);
 // Details identity (W-06). The panel is pinned to a resource, not to a page
 // row: `detailIdentity` says what is open, `detailFallback` is the last row
 // read for it, and `selectedRow` prefers the live page row when the same
@@ -822,7 +832,7 @@ function workspaceQueryState() {
     tableQ: tableQuery.value,
     page: currentPage.value,
     pageSize: pageSize.value,
-    ...filters.value,
+    filters: Object.keys(filters.value).length ? JSON.stringify(filters.value) : undefined,
   };
 }
 
@@ -856,14 +866,7 @@ function restoreContextFromRoute(availableNetworks) {
   tableQuery.value = state.tableQ;
   pageSize.value = PAGE_SIZES.includes(state.pageSize) ? state.pageSize : 256;
   currentPage.value = state.page;
-  filters.value = {
-    status: state.status,
-    type: state.type,
-    online: state.online,
-    scan: state.scan,
-    range: state.range,
-    protocol: state.protocol,
-  };
+  filters.value = { ...state.filters };
   addressPresentation.value =
     state.presentation === 'compact' ? 'compact-grid' : state.presentation;
   if (state.context === 'network') {
@@ -1012,7 +1015,8 @@ const currentRows = computed(() => {
       (row) =>
         Number(row.raw.scope_id || row.raw.dhcp_scope_id) === Number(selectedScopeFilter.value.id),
     );
-  if (!sortKey.value || activeView.value === 'addresses') return rows;
+  // The IP tables arrive sorted by the server, over every row, not the page.
+  if (!sortKey.value || isIpTable.value) return rows;
   return [...rows].sort(
     (a, b) =>
       String(a[sortKey.value] ?? '').localeCompare(String(b[sortKey.value] ?? ''), undefined, {
@@ -1020,54 +1024,75 @@ const currentRows = computed(() => {
       }) * sortOrder.value,
   );
 });
-const distinct = (values) => [...new Set(values.filter(Boolean).map(String))].sort();
-// The DHCP status filter selects a pool slot by what holds it, which is the
-// server's lease_status vocabulary, not the Lease column's. Said in words.
-const DHCP_STATUS_LABELS = {
-  available: 'Free in pool',
-  active: 'Leased',
-  offline: 'No active lease',
-  unavailable: 'Held outside DHCP',
-};
-const filterOptions = computed(() => ({
-  status:
-    activeView.value === 'dhcp'
-      ? distinct(currentRows.value.map((row) => row.leaseStatus)).map((value) => ({
-          value,
-          label: DHCP_STATUS_LABELS[value] || value,
-        }))
-      : distinct(
-          currentRows.value.map((row) => row.status || (row.enabled ? 'enabled' : 'disabled')),
-        ).map((value) => ({ value, label: value })),
-  type: distinct(
-    currentRows.value.map((row) =>
-      activeView.value === 'dns'
-        ? row.raw?.record_type || row.zoneType
-        : activeView.value === 'dhcp'
-          ? row.raw?.dhcp_assignment_type
-          : row.type,
-    ),
-  ),
-  range:
-    activeView.value === 'addresses'
-      ? (workspaceResources.resources.addresses.data.ranges || [])
-          .filter((range) => !range.range_type_is_system)
-          .map((range) => ({
-            value: String(range.range_type_id || range.id),
-            label: range.range_type_name || range.name,
-          }))
-      : [],
-  protocol:
-    activeView.value === 'dns'
-      ? distinct(currentRows.value.map((row) => row.raw?.dns_source))
-      : activeView.value === 'dhcp'
-        ? distinct(currentRows.value.map((row) => row.raw?.dhcp_assignment_type))
-        : distinct(currentRows.value.map((row) => row.raw?.allocation_source_type)),
-}));
+const IP_TABLE_KINDS = new Set(['addresses', 'dns', 'dhcp']);
+const isIpTable = computed(() => IP_TABLE_KINDS.has(columnKind.value));
+
+// The columns the Filter menu offers. On an IP table the server says which
+// columns filter by value and which by text; the other lists offer every
+// column by value.
+const filterColumns = computed(() =>
+  columnCatalog.value
+    .map((column) => ({
+      key: column.key,
+      header: column.header,
+      kind: isIpTable.value ? facetKinds.value?.[column.key] : 'enum',
+    }))
+    .filter((column) => column.kind === 'enum' || column.kind === 'text'),
+);
+
+// A value as a whole-list row carries it, for the lists filtered here.
+function localValue(row, key) {
+  const value = key in row ? row[key] : row.raw?.[key];
+  return value === undefined || value === '' ? null : value;
+}
+function localFacets(rows) {
+  const counts = {};
+  for (const column of columnCatalog.value) {
+    const map = new Map();
+    for (const row of rows) {
+      const others = Object.entries(filters.value).every(
+        ([key, values]) => key === column.key || values.includes(localValue(row, key)),
+      );
+      if (!others) continue;
+      const value = localValue(row, column.key);
+      map.set(value, (map.get(value) || 0) + 1);
+    }
+    counts[column.key] = [...map.entries()]
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
+  }
+  return counts;
+}
+
+// Counted when the Filter menu opens, over the whole result: the server's
+// facets for an IP table, the loaded list for the others.
+async function loadFilterFacets() {
+  if (!isIpTable.value) {
+    facets.value = localFacets(currentRows.value);
+    return;
+  }
+  facetsLoading.value = true;
+  try {
+    const response = await workspaceResources.loadFacets(activeView.value, {
+      ...tableRequestParams(),
+      subnetId: contextKind.value === 'network' ? selectedNetwork.value.id : null,
+    });
+    if (response) {
+      facets.value = response.facets || {};
+      facetKinds.value = response.filter_kinds || facetKinds.value;
+    }
+  } finally {
+    facetsLoading.value = false;
+  }
+}
+
 const activeFilterChips = computed(() =>
-  Object.entries(filters.value)
-    .filter(([, value]) => value !== '')
-    .map(([key, value]) => ({ key, label: `${key}: ${value}` })),
+  Object.entries(filters.value).map(([key, values]) => {
+    const header = columnCatalog.value.find((column) => column.key === key)?.header || key;
+    const kind = filterColumns.value.find((column) => column.key === key)?.kind;
+    const shown = values.map((value) => filterValueLabel(key, value)).join(', ');
+    return { key, label: kind === 'text' ? `${header} contains ${shown}` : `${header}: ${shown}` };
+  }),
 );
 const actionMenuTitle = computed(() =>
   activeView.value === 'dns'
@@ -1396,29 +1421,12 @@ const filteredRows = computed(() => {
   return currentRows.value.filter((row) => {
     if (!showAvailable.value && (row.status === 'available' || row.leaseStatus === 'available'))
       return false;
-    const status = activeView.value === 'dhcp' ? row.leaseStatus : row.status;
-    const type =
-      activeView.value === 'dns'
-        ? row.raw?.record_type || row.zoneType
-        : activeView.value === 'dhcp'
-          ? row.raw?.dhcp_assignment_type
-          : row.type;
-    const protocol =
-      activeView.value === 'dns'
-        ? row.raw?.dns_source
-        : activeView.value === 'dhcp'
-          ? row.raw?.dhcp_assignment_type
-          : row.raw?.allocation_source_type;
-    if (filters.value.status && String(status) !== filters.value.status) return false;
-    if (filters.value.type && String(type) !== filters.value.type) return false;
+    // The IP tables arrive filtered by the server; the whole lists filter here.
     if (
-      filters.value.online &&
-      String(row.raw?.is_online === 1 || row.online === 'online') !== filters.value.online
+      !isIpTable.value &&
+      !Object.entries(filters.value).every(([key, values]) => values.includes(localValue(row, key)))
     )
       return false;
-    if (filters.value.scan && String(Boolean(row.raw?.scanning_enabled)) !== filters.value.scan)
-      return false;
-    if (filters.value.protocol && String(protocol) !== filters.value.protocol) return false;
     if (
       (globalQuery || tableQuery.value.trim()) &&
       activeView.value === 'networks' &&
@@ -2094,10 +2102,12 @@ async function retryNoticeRefresh() {
   await retry();
 }
 function clearFilter(key) {
-  filters.value = { ...filters.value, [key]: '' };
+  const next = { ...filters.value };
+  delete next[key];
+  filters.value = next;
 }
 function clearFilters() {
-  filters.value = { status: '', type: '', online: '', scan: '', range: '', protocol: '' };
+  filters.value = {};
 }
 function toggleRow(id) {
   selectedRows.value = selectedRows.value.includes(id)
@@ -2243,6 +2253,40 @@ async function filterToScope(scope) {
   else await refreshAggregateTable();
 }
 
+// The on-screen IP table's request: its search, column filters and sort.
+function columnParams() {
+  const out = {};
+  if (Object.keys(filters.value).length) out.filters = JSON.stringify(filters.value);
+  if (sortKey.value && columnCatalog.value.some((column) => column.key === sortKey.value)) {
+    out.sort_column = sortKey.value;
+  }
+  return out;
+}
+function tableRequestParams() {
+  const order = sortOrder.value === 1 ? 'asc' : 'desc';
+  const q = resourceQuery.value.trim() || undefined;
+  const tableQ = tableQuery.value.trim() || undefined;
+  if (activeView.value === 'addresses') {
+    return { search: q, table_search: tableQ, sortOrder: order, ...columnParams() };
+  }
+  const place =
+    contextKind.value === 'network'
+      ? { subnet_id: selectedNetwork.value.id }
+      : contextKind.value === 'folder'
+        ? { folder_id: selectedFolder.value?.id }
+        : {};
+  return {
+    ...place,
+    q,
+    table_q: tableQ,
+    sort_order: order,
+    ...(activeView.value === 'dns'
+      ? { zone_id: selectedZoneFilter.value?.id || undefined }
+      : { scope_id: selectedScopeFilter.value?.id || undefined }),
+    ...columnParams(),
+  };
+}
+
 // `silent` is the auto-refresh: the rows update in place under the reader
 // with no "Loading live data" popover dimming the table once a minute.
 async function loadNetworkContext({ silent = false } = {}) {
@@ -2251,56 +2295,24 @@ async function loadNetworkContext({ silent = false } = {}) {
   if (!silent) loadingContext.value = true;
   loadError.value = '';
   try {
+    // Every table of the network loads for the tab badges and the details
+    // panel; only the one on screen carries the search, filters and sort.
+    const onScreen = (view) => (activeView.value === view ? tableRequestParams() : {});
     const params = {
       page: activeView.value === 'addresses' ? currentPage.value : 1,
       pageSize: addressPageSize.value,
       showAvailable: showAvailable.value ? 'true' : 'false',
+      ...onScreen('addresses'),
     };
-    if (activeView.value === 'addresses') {
-      params.search = resourceQuery.value.trim() || undefined;
-      params.table_search = tableQuery.value.trim() || undefined;
-      params.display_status = filters.value.status || undefined;
-      params.address_type = filters.value.type || undefined;
-      params.online = filters.value.online || undefined;
-      params.scanning_enabled = filters.value.scan || undefined;
-      params.network_range_type_id = filters.value.range || undefined;
-      params.allocation_source_type = filters.value.protocol || undefined;
-    }
-    const addressSortColumn = workspaceColumnCatalog('addresses').find(
-      (column) => column.key === sortKey.value,
-    );
-    if (addressSortColumn) {
-      params.sortField = addressSortColumn.sortField || addressSortColumn.field;
-      params.sortOrder = sortOrder.value === 1 ? 'asc' : 'desc';
-    }
     const protocolParams = {
       subnet_id: selectedNetwork.value.id,
-      q: resourceQuery.value.trim() || undefined,
-      table_q: tableQuery.value.trim() || undefined,
       page: currentPage.value,
       page_size: pageSize.value,
-      sort_order: sortOrder.value === 1 ? 'asc' : 'desc',
     };
-    if (activeView.value === 'dns') {
-      protocolParams.zone_id = selectedZoneFilter.value?.id || undefined;
-      protocolParams.record_type = filters.value.type || undefined;
-      protocolParams.dns_source = filters.value.protocol || undefined;
-      if (filters.value.status) protocolParams.enabled = filters.value.status === 'enabled';
-    }
-    if (activeView.value === 'dhcp') {
-      protocolParams.scope_id = selectedScopeFilter.value?.id || undefined;
-      protocolParams.lease_status = filters.value.status || undefined;
-      protocolParams.dhcp_assignment_type =
-        filters.value.type || filters.value.protocol || undefined;
-    }
-    const activeColumn = columnCatalog.value.find((column) => column.key === sortKey.value);
-    if (activeColumn?.sortField || activeColumn?.field) {
-      protocolParams.sort_field = activeColumn.sortField || activeColumn.field;
-    }
     const [detail, dns, dhcp] = await Promise.all([
       workspaceResources.loadAddresses(selectedNetwork.value.id, params),
-      workspaceResources.loadDns(protocolParams),
-      workspaceResources.loadDhcp(protocolParams),
+      workspaceResources.loadDns({ ...protocolParams, ...onScreen('dns') }),
+      workspaceResources.loadDhcp({ ...protocolParams, ...onScreen('dhcp') }),
       workspaceResources.loadSummary(selectedNetwork.value.id),
       workspaceResources.loadDnsTotal({ subnet_id: selectedNetwork.value.id }),
       workspaceResources.loadDhcpTotal({ subnet_id: selectedNetwork.value.id }),
@@ -2471,27 +2483,12 @@ async function refreshAggregateTable() {
     page_size: pageSize.value,
   };
   if (activeView.value === 'dns') {
-    const zoneParams = {
-      folder_id: params.folder_id,
-      q: params.q,
-      type: selectedZoneFilter.value ? undefined : filters.value.type || undefined,
-      enabled: selectedZoneFilter.value
-        ? undefined
-        : filters.value.status
-          ? filters.value.status === 'enabled'
-          : undefined,
-    };
+    const zoneParams = { folder_id: params.folder_id, q: params.q };
     const recordParams = {
       ...params,
+      ...(isIpTable.value ? tableRequestParams() : {}),
       zone_id: selectedZoneFilter.value?.id || undefined,
-      record_type: filters.value.type || undefined,
-      dns_source: filters.value.protocol || undefined,
-      enabled: filters.value.status ? filters.value.status === 'enabled' : undefined,
     };
-    const activeColumn = columnCatalog.value.find((column) => column.key === sortKey.value);
-    if (activeColumn?.sortField || activeColumn?.field)
-      recordParams.sort_field = activeColumn.sortField || activeColumn.field;
-    recordParams.sort_order = sortOrder.value === 1 ? 'asc' : 'desc';
     const [zones, dns] = await Promise.all([
       workspaceResources.loadZones(zoneParams),
       workspaceResources.loadDns(recordParams),
@@ -2504,25 +2501,12 @@ async function refreshAggregateTable() {
         totalPages.value = Math.max(1, Math.ceil(dns.total / pageSize.value));
     }
   } else if (activeView.value === 'dhcp') {
-    const scopeParams = {
-      folder_id: params.folder_id,
-      q: params.q,
-      enabled: selectedScopeFilter.value
-        ? undefined
-        : filters.value.status
-          ? filters.value.status === 'enabled'
-          : undefined,
-    };
+    const scopeParams = { folder_id: params.folder_id, q: params.q };
     const addressParams = {
       ...params,
+      ...(isIpTable.value ? tableRequestParams() : {}),
       scope_id: selectedScopeFilter.value?.id || undefined,
-      lease_status: filters.value.status || undefined,
-      dhcp_assignment_type: filters.value.type || filters.value.protocol || undefined,
     };
-    const activeColumn = columnCatalog.value.find((column) => column.key === sortKey.value);
-    if (activeColumn?.sortField || activeColumn?.field)
-      addressParams.sort_field = activeColumn.sortField || activeColumn.field;
-    addressParams.sort_order = sortOrder.value === 1 ? 'asc' : 'desc';
     const [scopes, dhcp] = await Promise.all([
       workspaceResources.loadScopes(scopeParams),
       workspaceResources.loadDhcp(addressParams),
@@ -2681,10 +2665,16 @@ watch(
       updateWorkspaceRoute({ replace: true });
       if (contextKind.value === 'network') loadNetworkContext();
       else refreshAggregateTable();
+      // Counts the Filter menu already showed follow the new filters.
+      if (facets.value) loadFilterFacets();
     }, 100);
   },
   { deep: true },
 );
+// Counts belong to one table in one place; anywhere else they are recounted.
+watch([activeView, contextKind, () => selectedNetwork.value?.id, columnKind], () => {
+  facets.value = null;
+});
 
 watch(pageSize, () => {
   currentPage.value = 1;

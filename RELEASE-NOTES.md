@@ -274,6 +274,16 @@ first on a 0.4.17 host.
 
 ### Changed
 
+- Every IP table filters and sorts on any column, over the whole result. A
+  Filter button lists every column; picking one shows its values with how
+  many rows carry each, or a text box for a free-text column, and the active
+  filters show as chips. The same filters on Addresses, DNS and DHCP. The
+  old dropdowns took their choices from the page on screen, so a value that
+  was not on it could not be picked: a disabled DNS record among a network's
+  1,068 could not be found. Free addresses and free DHCP pool addresses are
+  counted and filtered too. Links written with the old filter keys (the
+  Dashboard's rogue link among them) still open with the same filter.
+
 - Addresses, DNS and DHCP are one table model. Each of the three tables can
   show any column the others have: an address row can show its DNS record
   (name, type, TTL, whether it is enabled, what wrote it) and its DHCP

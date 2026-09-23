@@ -1,4 +1,5 @@
 import { IP_TABLE_VIEW, ipTableColumns } from '../../utils/ipTableColumns.js';
+import { allocationSourceLabel, recordSourceLabel } from '../../utils/ipTableDisplay.js';
 
 const BASIC = {
   networks: [
@@ -185,4 +186,33 @@ export function restoreWorkspaceColumnKeys(kind, stored) {
               : 'ip_address';
   if (!restored.includes(identity) && valid.has(identity)) restored.unshift(identity);
   return [...new Set(restored)];
+}
+
+// How a filter value reads in the Filter menu and on its chip: the words the
+// cell uses for it, so "false" in Online reads Offline.
+const BOOLEAN_LABELS = {
+  is_online: ['Online', 'Offline'],
+  scanning_enabled: ['On', 'Off'],
+  record_enabled: ['Enabled', 'Disabled'],
+  reservation_enabled: ['Enabled', 'Disabled'],
+  enabled: ['Enabled', 'Disabled'],
+};
+const VALUE_LABELS = {
+  assignment: { reserved: 'Reserved', dynamic: 'Dynamic' },
+  lease: { active: 'Active', expired: 'Expired' },
+};
+
+export function filterValueLabel(key, value) {
+  if (value === null || value === '') return 'None';
+  if (typeof value === 'boolean') {
+    const [on, off] = BOOLEAN_LABELS[key] || ['Yes', 'No'];
+    return value ? on : off;
+  }
+  if (key === 'source') {
+    return value === 'dns_hold'
+      ? allocationSourceLabel({ allocation_state: 'reserved', allocation_source_type: 'dns' })
+      : allocationSourceLabel({ allocation_source_type: value });
+  }
+  if (key === 'record_source') return recordSourceLabel({ dns_source: value });
+  return VALUE_LABELS[key]?.[value] || String(value);
 }

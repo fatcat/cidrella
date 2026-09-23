@@ -218,6 +218,22 @@ table's own fields never collide with them:
 | `dns_record_count` | Addresses, DHCP rows | How many forward address records name the address. |
 | `dhcp` | Addresses, DNS rows | The DHCP Reservation, else the active lease, else the newest lease for the address: `dhcp_assignment_type`, `lease_status`, `enabled`, `duid`, `iaid`, `subnet_name`, `related_scope_ids`; null when none. |
 
+## Column Filters
+
+`GET /api/subnets/:id/ips`, `/api/workspace/dns-records` and
+`/api/workspace/dhcp-addresses` take the same column parameters, applied to the
+whole result before paging (`server/src/utils/ip-columns.js`):
+
+| Parameter | Meaning |
+| --- | --- |
+| `filters` | JSON object `{ column: [value, ...] }`. A value is a string, a boolean, or null for "none". A value-list column matches any listed value; a text column takes one string and matches a case-insensitive substring. Unknown columns and other value types are refused with 400. |
+| `facets=1` | Adds `facets` (`{ column: [{ value, count }] }` for every value-list column, each counted over rows matching the other filters, free addresses included) and `filter_kinds` (`{ column: 'enum' \| 'text' }`). |
+| `sort_column` | Sort by any column key, empty values last. |
+
+The older single-purpose filters (`display_status`, `address_type`, `online`,
+`record_type`, `dns_source`, `lease_status`, `dhcp_assignment_type`, and so on)
+still work.
+
 ## IP Allocation Writes
 
 An IP Reservation is an administrative address hold without a DHCP client

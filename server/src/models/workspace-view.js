@@ -6,6 +6,12 @@ import {
   scopesForAddress,
   unifiedDhcpRows,
 } from './ip-row-facts.js';
+import {
+  columnFacets,
+  compareByColumn,
+  facetFields,
+  matchesColumnFilters,
+} from '../utils/ip-columns.js';
 import { fqdnForRecordName, ipForPtrRecord } from './dns-record.js';
 import { canonicalizeIp, sortKey } from '../utils/address.js';
 import {
@@ -250,6 +256,9 @@ export function getWorkspaceDnsRecords(
     recordType,
     dnsSource,
     enabled,
+    filters = {},
+    facets = false,
+    sortColumn,
     page = 1,
     pageSize = 50,
     sortField = 'record_fqdn',
@@ -292,14 +301,31 @@ export function getWorkspaceDnsRecords(
   ];
   if (q) records = records.filter((row) => anyFieldMatches(row, searchFields, q));
   if (tableQ) records = records.filter((row) => anyFieldMatches(row, searchFields, tableQ));
-  records.sort(compareRows(DNS_SORT_FIELDS.has(sortField) ? sortField : 'record_fqdn', sortOrder));
+  const counted = facets
+    ? columnFacets(
+        records.map((row) => ({ row })),
+        filters,
+        'dns',
+      )
+    : undefined;
+  records = records.filter((row) => matchesColumnFilters(row, filters, 'dns'));
+  records.sort(
+    sortColumn
+      ? thenBy(compareByColumn(sortColumn, sortOrder, 'dns'), compareRows('record_fqdn', 'asc'))
+      : compareRows(DNS_SORT_FIELDS.has(sortField) ? sortField : 'record_fqdn', sortOrder),
+  );
   const total = records.length;
   return {
     items: records.slice((page - 1) * pageSize, page * pageSize),
     total,
     page,
     page_size: pageSize,
+    ...facetFields(counted),
   };
+}
+
+function thenBy(first, second) {
+  return (a, b) => first(a, b) || second(a, b);
 }
 
 export function getWorkspaceDnsZones(
@@ -420,7 +446,13 @@ function availableRow(scopes, subnet, ip) {
   return { ...row, ...computeIpView(row) };
 }
 
-function virtualPoolProjection(scopes, excludedKeys, queries, descending = false) {
+// The free pool addresses no stored row accounts for, as segments of
+// identical rows: pools are cut at every pool and organizational range
+// boundary, so every address in a segment has the same status, scope and
+// Network Range Type as the segment's sample. Filtering and counting then
+// work on a segment's sample times its size, never on the addresses one by
+// one, which a /16 pool would make expensive.
+function virtualPoolSegments(db, scopes, excludedKeys, queries) {
   const subnets = new Map();
   for (const scope of scopes) {
     if (!subnets.has(scope.subnet_id)) {
@@ -443,6 +475,19 @@ function virtualPoolProjection(scopes, excludedKeys, queries, descending = false
       });
     }
   }
+  const tagRanges = subnets.size
+    ? db
+        .prepare(
+          `
+      SELECT r.subnet_id, r.start_ip, r.end_ip
+        FROM ranges r
+        JOIN range_types t ON t.id = r.range_type_id
+       WHERE t.is_system = 0
+    `,
+        )
+        .all()
+        .filter((range) => subnets.has(range.subnet_id) && isValidIpv4(range.start_ip))
+    : [];
 
   const segments = [];
   for (const subnet of subnets.values()) {
@@ -470,25 +515,31 @@ function virtualPoolProjection(scopes, excludedKeys, queries, descending = false
       exactQueries.push(ipToLong(exactIp));
     }
     if (!includeAll) continue;
+    if (exactQueries.some((value) => value !== exactQueries[0])) continue;
 
-    const merged = [];
-    for (const interval of subnet.intervals.sort((a, b) => a.start - b.start || a.end - b.end)) {
-      const previous = merged[merged.length - 1];
-      if (previous && interval.start <= previous.end + 1)
-        previous.end = Math.max(previous.end, interval.end);
-      else merged.push({ ...interval });
+    const boundaries = new Set();
+    for (const interval of subnet.intervals) {
+      boundaries.add(interval.start);
+      boundaries.add(interval.end + 1);
     }
-    for (const interval of merged) {
-      let start = interval.start;
-      let end = interval.end;
+    for (const range of tagRanges.filter((item) => item.subnet_id === subnet.id)) {
+      boundaries.add(ipToLong(range.start_ip));
+      boundaries.add(ipToLong(range.end_ip) + 1);
+    }
+    const ordered = [...boundaries].sort((a, b) => a - b);
+    const covered = (value) =>
+      subnet.intervals.some((interval) => value >= interval.start && value <= interval.end);
+    for (let index = 0; index < ordered.length - 1; index += 1) {
+      let start = ordered[index];
+      let end = ordered[index + 1] - 1;
+      if (!covered(start)) continue;
       if (exactQueries.length) {
-        if (exactQueries.some((value) => value !== exactQueries[0])) continue;
+        if (exactQueries[0] < start || exactQueries[0] > end) continue;
         start = exactQueries[0];
         end = exactQueries[0];
-        if (start < interval.start || start > interval.end) continue;
       }
       const excluded = [];
-      // Avoid walking the interval. Only test materialized keys for this
+      // Avoid walking the segment. Only test materialized keys for this
       // subnet, which stays proportional to real protocol/IP rows.
       for (const key of excludedKeys) {
         const [subnetId, ip] = key.split(':');
@@ -497,10 +548,21 @@ function virtualPoolProjection(scopes, excludedKeys, queries, descending = false
         if (value >= start && value <= end) excluded.push(value);
       }
       excluded.sort((a, b) => a - b);
-      segments.push({ subnet, start, end, excluded, count: end - start + 1 - excluded.length });
+      const count = end - start + 1 - excluded.length;
+      if (count <= 0) continue;
+      const sample = availableRow(scopes, subnet, longToIp(start));
+      segments.push({ subnet, start, end, excluded, count, sample });
     }
   }
+  enrichIpViewRows(
+    db,
+    segments.map((segment) => segment.sample),
+  );
   segments.sort((a, b) => a.start - b.start || a.subnet.id - b.subnet.id);
+  return segments;
+}
+
+function pageSegments(scopes, segments, descending = false) {
   const total = segments.reduce((sum, segment) => sum + segment.count, 0);
 
   function at(index) {
@@ -575,6 +637,9 @@ export function getWorkspaceDhcpAddresses(
     ipAddress,
     leaseStatus,
     assignmentType,
+    filters = {},
+    facets = false,
+    sortColumn,
     page = 1,
     pageSize = 50,
     sortField = 'ip_address',
@@ -638,19 +703,32 @@ export function getWorkspaceDhcpAddresses(
   if (ipAddress) rows = rows.filter((row) => row.ip_address === ipAddress);
   if (leaseStatus) rows = rows.filter((row) => row.lease_status === leaseStatus);
   if (assignmentType) rows = rows.filter((row) => row.dhcp_assignment_type === assignmentType);
-  const virtualRows =
+  // Free pool addresses exist only while nothing narrows the rows to held
+  // ones. Their segments are counted for the filter menu, and kept for the
+  // page when their sample matches the column filters.
+  const segments =
     (!leaseStatus || leaseStatus === 'available') && !assignmentType
-      ? virtualPoolProjection(
-          scopes,
-          materializedKeys,
-          [q, tableQ, ipAddress],
-          sortOrder === 'desc',
-        )
-      : { total: 0, at: () => null };
-  const compare = compareRows(
-    DHCP_SORT_FIELDS.has(sortField) ? sortField : 'ip_address',
-    sortOrder,
+      ? virtualPoolSegments(db, scopes, materializedKeys, [q, tableQ, ipAddress])
+      : [];
+  const counted = facets
+    ? columnFacets(
+        [
+          ...rows.map((row) => ({ row })),
+          ...segments.map((segment) => ({ row: segment.sample, weight: segment.count })),
+        ],
+        filters,
+        'dhcp',
+      )
+    : undefined;
+  rows = rows.filter((row) => matchesColumnFilters(row, filters, 'dhcp'));
+  const virtualRows = pageSegments(
+    scopes,
+    segments.filter((segment) => matchesColumnFilters(segment.sample, filters, 'dhcp')),
+    sortOrder === 'desc',
   );
+  const compare = sortColumn
+    ? thenBy(compareByColumn(sortColumn, sortOrder, 'dhcp'), compareRows('ip_address', 'asc'))
+    : compareRows(DHCP_SORT_FIELDS.has(sortField) ? sortField : 'ip_address', sortOrder);
   rows.sort(compare);
   const total = rows.length + virtualRows.total;
   const items = mergePage(rows, virtualRows, compare, (page - 1) * pageSize, pageSize);
@@ -666,6 +744,7 @@ export function getWorkspaceDhcpAddresses(
     total,
     page,
     page_size: pageSize,
+    ...facetFields(counted),
   };
 }
 

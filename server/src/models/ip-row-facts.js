@@ -145,6 +145,7 @@ export function attachDhcpFacts(db, rows) {
 function recordFact(record) {
   return {
     id: record.id,
+    name: record.name,
     record_fqdn: fqdnForRecordName(record.name, record.zone_name),
     record_type: record.type,
     value: record.value,

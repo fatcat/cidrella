@@ -35,6 +35,7 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
       totalPages: 1,
     }),
     summary: resourceState(null),
+    facets: resourceState(null),
     detail: resourceState(null),
     // What references the pinned address (details panel related resources).
     relatedDns: resourceState([]),
@@ -146,6 +147,29 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
       }),
     );
   }
+  // The filter counts of one IP table, over its whole result. One row is
+  // enough: only the facets and the column kinds are wanted.
+  function loadFacets(view, { subnetId = null, ...params } = {}) {
+    const request =
+      view === 'addresses'
+        ? () =>
+            api.get(`/subnets/${subnetId}/ips`, {
+              params: compactParams({ ...params, facets: 1, page: 1, pageSize: 1 }),
+            })
+        : () =>
+            api.get(view === 'dns' ? '/workspace/dns-records' : '/workspace/dhcp-addresses', {
+              params: compactParams({ ...params, facets: 1, page: 1, page_size: 1 }),
+            });
+    return read(
+      'facets',
+      view === 'dhcp' ? 'dhcp:read' : view === 'dns' ? 'dns:read' : 'subnets:read',
+      request,
+      (response) => ({
+        facets: response.data?.facets || {},
+        filter_kinds: response.data?.filter_kinds || null,
+      }),
+    );
+  }
   function loadSummary(subnetId) {
     return read('summary', 'subnets:read', () => api.get(`/subnets/${subnetId}/summary`));
   }
@@ -237,6 +261,7 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
     loadDhcpTotal,
     loadAddresses,
     loadSummary,
+    loadFacets,
     loadAddressDetail,
     loadRelatedDns,
     loadRelatedDhcp,

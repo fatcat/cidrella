@@ -11,6 +11,7 @@ import WorkspaceContextHeader from '../../../src/views/networks-workspace/Worksp
 import WorkspaceDetailsHost from '../../../src/views/networks-workspace/WorkspaceDetailsHost.vue';
 import WorkspaceTable from '../../../src/views/networks-workspace/WorkspaceTable.vue';
 import WorkspaceToolbar from '../../../src/views/networks-workspace/WorkspaceToolbar.vue';
+import FilterMenu from '../../../src/components/table/FilterMenu.vue';
 import IpReservationEditor from '../../../src/views/networks-workspace/dialogs/IpReservationEditor.vue';
 import api from '../../../src/api/client.js';
 import { useWorkspaceFontBump } from '../../../src/composables/useWorkspaceUi.js';
@@ -396,7 +397,14 @@ function installApiFixtures() {
       }
       const pageSize = Number(config.params?.pageSize) || 256;
       const page = Number(config.params?.page) || 1;
+      const counted = config.params?.facets
+        ? {
+            facets: { is_online: [{ value: false, count: ips.length }] },
+            filter_kinds: { is_online: 'enum', hostname: 'text', status: 'enum' },
+          }
+        : {};
       return response({
+        ...counted,
         subnet,
         ips: ips.slice((page - 1) * pageSize, page * pageSize),
         ranges,
@@ -620,7 +628,9 @@ describe('Networks workspace', () => {
     expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 4096 });
     // The DNS and DHCP reads on the same page keep the table's size.
     const dhcpCall = api.get.mock.calls
-      .filter(([url, config]) => url === '/workspace/dhcp-addresses' && config?.params?.sort_order)
+      .filter(
+        ([url, config]) => url === '/workspace/dhcp-addresses' && config?.params?.page_size > 1,
+      )
       .at(-1);
     expect(dhcpCall[1].params.page_size).toBe(256);
 
@@ -816,27 +826,38 @@ describe('Networks workspace', () => {
     expect(wrapper.find('tbody').text()).toContain('client.test.example');
   });
 
-  it('sends explicit address filters and preserves table search for network inventory', async () => {
+  it('sends column filters to the table on screen and counts them when the menu opens', async () => {
     const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
-    await wrapper.find('select[aria-label="Online filter"]').setValue('false');
-    await new Promise((resolve) => setTimeout(resolve, 120));
-    await flushPromises();
-    expect(api.get).toHaveBeenCalledWith(
-      '/subnets/11/ips',
-      expect.objectContaining({ params: expect.objectContaining({ online: 'false' }) }),
-    );
-    expect(wrapper.find('.filter-chips').text()).toContain('online: false');
+    const menu = () => wrapper.findComponent(FilterMenu);
 
-    await wrapper.find('select[aria-label="Protocol filter"]').setValue('dhcp_lease');
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    // Opening the menu asks the server for the counts of the whole result.
+    menu().vm.$emit('open');
     await flushPromises();
     expect(api.get).toHaveBeenCalledWith(
       '/subnets/11/ips',
-      expect.objectContaining({
-        params: expect.objectContaining({ allocation_source_type: 'dhcp_lease' }),
-      }),
+      expect.objectContaining({ params: expect.objectContaining({ facets: 1, pageSize: 1 }) }),
     );
+    expect(menu().props('facets')).toEqual({
+      is_online: [{ value: false, count: expect.any(Number) }],
+    });
+    expect(
+      menu()
+        .props('columns')
+        .map((column) => column.key),
+    ).toEqual(expect.arrayContaining(['is_online', 'hostname', 'status']));
+
+    menu().vm.$emit('update:modelValue', { is_online: [false] });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await flushPromises();
+    const filtered = api.get.mock.calls
+      .filter(([url, config]) => url === '/subnets/11/ips' && !config?.params?.facets)
+      .at(-1);
+    expect(JSON.parse(filtered[1].params.filters)).toEqual({ is_online: [false] });
+    expect(wrapper.find('.filter-chips').text()).toContain('Online: Offline');
+    // The other tables' reads carry no filter of this one.
+    const dnsCall = api.get.mock.calls.filter(([url]) => url === '/workspace/dns-records').at(-1);
+    expect(dnsCall[1].params.filters).toBeUndefined();
 
     await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
     await wrapper.find('input[aria-label="Search current table"]').setValue('Public');

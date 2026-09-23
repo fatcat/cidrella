@@ -514,3 +514,82 @@ describe('one IP table model', () => {
     expect(row.dhcp).toBeNull();
   });
 });
+
+describe('column filters, counts and sorting on every IP table', () => {
+  const filters = (value) => JSON.stringify(value);
+
+  it('finds a disabled record through the Record Enabled filter and counts both values', async () => {
+    db.prepare(
+      `INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+       VALUES (?, 'parked', 'A', '10.20.0.77', 'manual', 0)`,
+    ).run(zoneId);
+
+    const response = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ subnet_id: subnetA, filters: filters({ record_enabled: [false] }), facets: 1 });
+
+    expect(response.status).toBe(200);
+    expect(response.body.items.map((row) => row.record_fqdn)).toEqual(['parked.shared.test']);
+    const counts = Object.fromEntries(
+      response.body.facets.record_enabled.map((item) => [String(item.value), item.count]),
+    );
+    expect(counts.false).toBe(1);
+    expect(counts.true).toBeGreaterThan(0);
+  });
+
+  it('counts free pool addresses by segment and filters them by their status', async () => {
+    const all = await request(app)
+      .get('/api/workspace/dhcp-addresses')
+      .query({ subnet_id: subnetA, facets: 1, page_size: 1 });
+    const scope = all.body.facets.status.find((item) => item.value === 'DHCP Scope');
+    const pooled = await request(app)
+      .get('/api/workspace/dhcp-addresses')
+      .query({ subnet_id: subnetA, filters: filters({ status: ['DHCP Scope'] }), page_size: 512 });
+
+    expect(pooled.status).toBe(200);
+    expect(pooled.body.total).toBe(scope.count);
+    expect(pooled.body.items.every((row) => row.ip_display_status === 'DHCP Scope')).toBe(true);
+    const sum = all.body.facets.status.reduce((total, item) => total + item.count, 0);
+    expect(sum).toBe(all.body.total);
+  });
+
+  it('counts every address of the network, free ones included, on the Addresses read', async () => {
+    const response = await request(app)
+      .get(`/api/subnets/${subnetA}/ips`)
+      .query({ facets: 1, pageSize: 32 });
+    expect(response.status).toBe(200);
+    const sum = response.body.facets.status.reduce((total, item) => total + item.count, 0);
+    expect(sum).toBe(256);
+    expect(response.body.filteredTotal).toBe(256);
+
+    const named = await request(app)
+      .get(`/api/subnets/${subnetA}/ips`)
+      .query({ filters: filters({ dns_hostname: ['shared.test'] }), pageSize: 32 });
+    expect(named.body.ips.length).toBeGreaterThan(0);
+    expect(
+      named.body.ips.every((row) => row.dns_record?.record_fqdn?.includes('shared.test')),
+    ).toBe(true);
+  });
+
+  it('sorts by a column another table owns', async () => {
+    const response = await request(app)
+      .get(`/api/subnets/${subnetA}/ips`)
+      .query({ sort_column: 'dns_hostname', sortOrder: 'asc', pageSize: 4 });
+    expect(response.status).toBe(200);
+    const names = response.body.ips.map((row) => row.dns_record?.record_fqdn).filter(Boolean);
+    expect(names.length).toBeGreaterThan(0);
+    expect([...names].sort()).toEqual(names);
+  });
+
+  it('refuses a malformed filter or an unknown sort column', async () => {
+    const bad = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ filters: '{"password":["x"]}' });
+    expect(bad.status).toBe(400);
+    expect(bad.body.error).toMatch(/unknown column/);
+    const badSort = await request(app)
+      .get(`/api/subnets/${subnetA}/ips`)
+      .query({ sort_column: 'drop table' });
+    expect(badSort.status).toBe(400);
+  });
+});

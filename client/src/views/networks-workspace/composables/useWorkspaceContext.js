@@ -16,17 +16,58 @@ export const WORKSPACE_DEFAULT_STATE = Object.freeze({
   tableQ: '',
   page: 1,
   pageSize: 256,
-  status: '',
-  type: '',
-  online: '',
-  scan: '',
-  range: '',
-  protocol: '',
+  filters: {},
 });
 
 const CONTEXTS = new Set(['all', 'folder', 'network', 'unallocated']);
 const VIEWS = new Set(['networks', 'addresses', 'dns', 'dhcp', 'ranges']);
 const PRESENTATIONS = new Set(['table', 'grid', 'compact']);
+
+// Column filters: { column: [value, ...] }, a value being a string, a
+// boolean, or null for "none". Anything else in a hand-edited link is dropped.
+function decodeFilters(raw) {
+  if (typeof raw !== 'string' || !raw) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const filters = {};
+  for (const [key, values] of Object.entries(parsed)) {
+    if (!/^[a-z_]{1,40}$/.test(key) || !Array.isArray(values)) continue;
+    const kept = values.filter(
+      (value) => value === null || typeof value === 'boolean' || typeof value === 'string',
+    );
+    if (kept.length) filters[key] = kept;
+  }
+  return filters;
+}
+
+// Links written before column filters (the Dashboard's rogue link among
+// them) name a filter by its old key, whose column depended on the table.
+const LEGACY_FILTERS = {
+  type: { addresses: 'type', dns: 'record_type', dhcp: 'assignment' },
+  protocol: { addresses: 'source', dns: 'record_source', dhcp: 'assignment' },
+  status: { addresses: 'status' },
+};
+function legacyFilters(query, view) {
+  const filters = {};
+  for (const [param, columns] of Object.entries(LEGACY_FILTERS)) {
+    const column = columns[view];
+    if (column && typeof query[param] === 'string' && query[param])
+      filters[column] = [query[param]];
+  }
+  if (view === 'dns' && ['enabled', 'disabled'].includes(query.status)) {
+    filters.record_enabled = [query.status === 'enabled'];
+  }
+  if (['true', 'false'].includes(query.online)) filters.is_online = [query.online === 'true'];
+  if (['true', 'false'].includes(query.scan)) {
+    filters.scanning_enabled = [query.scan === 'true'];
+  }
+  return filters;
+}
 
 function positiveInteger(value) {
   if (value == null || value === '') return null;
@@ -53,12 +94,7 @@ export function decodeWorkspaceQuery(query = {}) {
     tableQ: typeof query.tableQ === 'string' ? query.tableQ : '',
     page: positiveInteger(query.page) || 1,
     pageSize: positiveInteger(query.pageSize) || WORKSPACE_DEFAULT_STATE.pageSize,
-    status: typeof query.status === 'string' ? query.status : '',
-    type: typeof query.type === 'string' ? query.type : '',
-    online: ['true', 'false'].includes(query.online) ? query.online : '',
-    scan: ['true', 'false'].includes(query.scan) ? query.scan : '',
-    range: positiveInteger(query.range)?.toString() || '',
-    protocol: typeof query.protocol === 'string' ? query.protocol : '',
+    filters: { ...legacyFilters(query, view), ...decodeFilters(query.filters) },
   };
 
   if (state.context === 'folder' && !state.folder) state.context = 'all';
@@ -83,8 +119,8 @@ export function encodeWorkspaceQuery(state) {
   if (state.tableQ) query.tableQ = state.tableQ;
   if (state.page > 1) query.page = String(state.page);
   if (state.pageSize !== WORKSPACE_DEFAULT_STATE.pageSize) query.pageSize = String(state.pageSize);
-  for (const key of ['status', 'type', 'online', 'scan', 'range', 'protocol']) {
-    if (state[key]) query[key] = String(state[key]);
+  if (state.filters && Object.keys(state.filters).length) {
+    query.filters = JSON.stringify(state.filters);
   }
   return query;
 }

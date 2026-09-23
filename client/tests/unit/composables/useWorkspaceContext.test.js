@@ -7,6 +7,7 @@ import {
 
 describe('workspace route codec', () => {
   it('round trips valid non-default state with workspace URL naming', () => {
+    const filters = JSON.stringify({ type: ['gateway'], record_enabled: [false], lease: [null] });
     const state = decodeWorkspaceQuery({
       context: 'network',
       network: '42',
@@ -17,15 +18,16 @@ describe('workspace route codec', () => {
       tableQ: 'online',
       page: '2',
       pageSize: '100',
-      status: 'available',
-      type: 'gateway',
-      online: 'true',
-      scan: 'false',
-      range: '8',
-      protocol: 'manual',
+      filters,
     });
 
-    expect(state).toMatchObject({ network: 42, tableQ: 'online', page: 2, pageSize: 100 });
+    expect(state).toMatchObject({
+      network: 42,
+      tableQ: 'online',
+      page: 2,
+      pageSize: 100,
+      filters: { type: ['gateway'], record_enabled: [false], lease: [null] },
+    });
     expect(encodeWorkspaceQuery(state)).toEqual({
       context: 'network',
       network: '42',
@@ -36,13 +38,32 @@ describe('workspace route codec', () => {
       tableQ: 'online',
       page: '2',
       pageSize: '100',
-      status: 'available',
-      type: 'gateway',
-      online: 'true',
-      scan: 'false',
-      range: '8',
-      protocol: 'manual',
+      filters,
     });
+  });
+
+  it('reads the filter keys of older links as column filters for their table', () => {
+    // The Dashboard's rogue link, and links saved before column filters.
+    expect(
+      decodeWorkspaceQuery({ context: 'network', network: '2', view: 'addresses', type: 'rogue' })
+        .filters,
+    ).toEqual({ type: ['rogue'] });
+    expect(
+      decodeWorkspaceQuery({ view: 'dns', type: 'A', status: 'disabled', protocol: 'manual' })
+        .filters,
+    ).toEqual({ record_type: ['A'], record_enabled: [false], record_source: ['manual'] });
+    expect(
+      decodeWorkspaceQuery({ view: 'dhcp', type: 'reserved', online: 'true' }).filters,
+    ).toEqual({ assignment: ['reserved'], is_online: [true] });
+  });
+
+  it('drops what a hand-edited filters parameter should not carry', () => {
+    expect(decodeWorkspaceQuery({ filters: 'not json' }).filters).toEqual({});
+    expect(
+      decodeWorkspaceQuery({
+        filters: JSON.stringify({ status: ['in use', { $ne: 1 }, 3], 'bad key!': ['x'] }),
+      }).filters,
+    ).toEqual({ status: ['in use'] });
   });
 
   it('rejects invalid identities and removes orphaned address details', () => {

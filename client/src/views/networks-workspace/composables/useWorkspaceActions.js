@@ -140,10 +140,8 @@ export function useWorkspaceActions(ctx) {
       await selectNetwork(network);
     },
     'dns.zones.switch-side': () => {
-      state.filters.value = {
-        ...state.filters.value,
-        type: state.filters.value.type === 'forward' ? 'reverse' : 'forward',
-      };
+      const side = state.filters.value.zoneType?.[0] === 'forward' ? 'reverse' : 'forward';
+      state.filters.value = { ...state.filters.value, zoneType: [side] };
     },
 
     // Networks and folders

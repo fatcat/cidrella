@@ -9,54 +9,14 @@
         aria-label="Search current table"
       />
     </label>
-    <label class="filter-control">
-      <span class="sr-only">Status filter</span>
-      <select v-model="filterModel.status" aria-label="Status filter">
-        <option value="">All statuses</option>
-        <option v-for="option in filterOptions.status" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-      </select>
-    </label>
-    <label v-if="filterOptions.type.length" class="filter-control">
-      <span class="sr-only">Type filter</span>
-      <select v-model="filterModel.type" aria-label="Type filter">
-        <option value="">All types</option>
-        <option v-for="value in filterOptions.type" :key="value" :value="value">
-          {{ value }}
-        </option>
-      </select>
-    </label>
-    <label v-if="activeView === 'addresses'" class="filter-control">
-      <select v-model="filterModel.online" aria-label="Online filter">
-        <option value="">Any liveness</option>
-        <option value="true">Online</option>
-        <option value="false">Offline</option>
-      </select>
-    </label>
-    <label v-if="activeView === 'addresses'" class="filter-control">
-      <select v-model="filterModel.scan" aria-label="Scan filter">
-        <option value="">Any scan state</option>
-        <option value="true">Scanning on</option>
-        <option value="false">Scanning off</option>
-      </select>
-    </label>
-    <label v-if="filterOptions.range.length" class="filter-control">
-      <select v-model="filterModel.range" aria-label="Range filter">
-        <option value="">All ranges</option>
-        <option v-for="option in filterOptions.range" :key="option.value" :value="option.value">
-          {{ option.label }}
-        </option>
-      </select>
-    </label>
-    <label v-if="filterOptions.protocol.length" class="filter-control">
-      <select v-model="filterModel.protocol" aria-label="Protocol filter">
-        <option value="">All protocol sources</option>
-        <option v-for="value in filterOptions.protocol" :key="value" :value="value">
-          {{ value }}
-        </option>
-      </select>
-    </label>
+    <FilterMenu
+      v-model="filters"
+      :columns="filterColumns"
+      :facets="facets"
+      :loading="facetsLoading"
+      :value-label="filterValueLabel"
+      @open="emit('filter-open')"
+    />
     <label
       v-if="activeView === 'addresses' || (activeView === 'dhcp' && contextKind === 'network')"
       class="available-switch"
@@ -129,6 +89,8 @@
 
 <script setup>
 import ColumnChooserButton from '../../components/table/ColumnChooserButton.vue';
+import FilterMenu from '../../components/table/FilterMenu.vue';
+import { filterValueLabel } from './workspace-columns.js';
 
 // Search, filters, presentation switch, column chooser, filter chips and the
 // bulk-selection bar. All state is owned by NetworksWorkspace.vue.
@@ -139,7 +101,11 @@ defineProps({
   activeView: { type: String, required: true },
   contextKind: { type: String, required: true },
   viewMeta: { type: Object, required: true },
-  filterOptions: { type: Object, required: true },
+  // [{ key, header, kind }]: the columns the Filter menu offers, and the
+  // counts of each one's values over the whole result (null until asked).
+  filterColumns: { type: Array, default: () => [] },
+  facets: { type: Object, default: null },
+  facetsLoading: { type: Boolean, default: false },
   columnTableName: { type: String, required: true },
   columnCatalog: { type: Array, required: true },
   columns: { type: Array, required: true },
@@ -154,6 +120,7 @@ const emit = defineEmits([
   'reset-columns',
   'clear-filter',
   'clear-filters',
+  'filter-open',
   'add',
   'selection-action',
 ]);
@@ -162,20 +129,6 @@ const filters = defineModel('filters', { type: Object, required: true });
 const showAvailable = defineModel('showAvailable', { type: Boolean, default: true });
 const presentation = defineModel('presentation', { type: String, default: 'table' });
 const selectedRows = defineModel('selectedRows', { type: Array, default: () => [] });
-
-// v-model target for the filter selects. Reads come straight from the prop;
-// each write emits a replaced object rather than mutating the parent's, so the
-// parent's deep watcher fires exactly as it did when the selects lived there.
-const filterModel = new Proxy(
-  {},
-  {
-    get: (_, key) => filters.value[key],
-    set: (_, key, value) => {
-      filters.value = { ...filters.value, [key]: value };
-      return true;
-    },
-  },
-);
 </script>
 
 <style scoped>
@@ -245,15 +198,6 @@ button {
   min-height: 1.9rem;
   padding: 0 0.5rem;
   border-radius: 7px;
-}
-.filter-control select {
-  min-height: 34px;
-  max-width: 150px;
-  border: 1px solid var(--cid-surface-border);
-  border-radius: 8px;
-  background: var(--cid-surface-card);
-  color: var(--cid-text-color);
-  padding: 0 0.55rem;
 }
 .filter-chips {
   display: flex;

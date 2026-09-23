@@ -1,4 +1,12 @@
 import { attachDhcpFacts, attachDnsFacts } from '../models/ip-row-facts.js';
+import {
+  IP_COLUMNS,
+  columnFacets,
+  columnSortValue,
+  facetFields,
+  matchesColumnFilters,
+  parseColumnFilters,
+} from '../utils/ip-columns.js';
 import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
@@ -2087,10 +2095,35 @@ router.get(
       });
     }
 
+    // Sort on any column of the one IP table model, empty values last and
+    // the address as the tie-breaker.
+    function sortByColumn(arr) {
+      arr.sort((a, b) => compareSortValues(a, b) || compareAddresses(a, b));
+    }
+    function compareSortValues(a, b) {
+      const left = columnSortValue(a, sortColumn, 'addresses');
+      const right = columnSortValue(b, sortColumn, 'addresses');
+      if (left == null && right == null) return 0;
+      if (left == null) return 1;
+      if (right == null) return -1;
+      if (left < right) return -1 * reqSortOrder;
+      if (left > right) return reqSortOrder;
+      return 0;
+    }
+    function compareAddresses(a, b) {
+      const left = addressToBig(a.ip_address).value;
+      const right = addressToBig(b.ip_address).value;
+      return left < right ? -1 : left > right ? 1 : 0;
+    }
+
     // `ip` is an address string, or a numeric value when the IPv4 engine
     // below walks the prefix by offset.
     function makeVirtualIpRow(ip) {
-      return projectVirtualSubnetIpRow(db, subnet, ip, readContext);
+      const row = projectVirtualSubnetIpRow(db, subnet, ip, readContext);
+      row.subnet_name = subnet.name || subnet.cidr;
+      row.dns_record = null;
+      row.dhcp = null;
+      return row;
     }
 
     function buildRangeLookup(ranges) {
@@ -2124,14 +2157,29 @@ router.get(
     const tableSearch = (req.query.table_search || '').trim().toLowerCase();
     const exactExplorerSearch =
       Boolean(search) && isValidAddress(search) && parsedNetworkContains(parsed, search);
-    const hasExplicitFilters = [
-      'display_status',
-      'address_type',
-      'online',
-      'network_range_type_id',
-      'allocation_source_type',
-      'scanning_enabled',
-    ].some((name) => req.query[name] !== undefined);
+    // Any column of the one IP table model (utils/ip-columns.js), whether to
+    // count each column's values for the filter menu, and a column to sort by.
+    const parsedFilters = parseColumnFilters(req.query.filters);
+    if (parsedFilters.error) return res.status(400).json({ error: parsedFilters.error });
+    const columnFilters = parsedFilters.value;
+    const wantFacets = req.query.facets === '1' || req.query.facets === 'true';
+    const sortColumn = req.query.sort_column;
+    if (sortColumn !== undefined && !IP_COLUMNS[sortColumn]) {
+      return res.status(400).json({ error: 'sort_column is not a known column' });
+    }
+    const matchesColumns = (row) => matchesColumnFilters(row, columnFilters, 'addresses');
+    const hasExplicitFilters =
+      Object.keys(columnFilters).length > 0 ||
+      wantFacets ||
+      sortColumn !== undefined ||
+      [
+        'display_status',
+        'address_type',
+        'online',
+        'network_range_type_id',
+        'allocation_source_type',
+        'scanning_enabled',
+      ].some((name) => req.query[name] !== undefined);
 
     function parseBooleanFilter(name) {
       const value = req.query[name];
@@ -2235,8 +2283,17 @@ router.get(
       for (const ip of protectedAddresses) {
         if (!rowsByAddress.has(ip)) rowsByAddress.set(ip, makeVirtualIpRow(ip));
       }
-      const rows = [...rowsByAddress.values()].filter(rowMatches);
-      sortIps(rows, reqSortField || 'ip_address', reqSortField ? reqSortOrder : 1);
+      const base = [...rowsByAddress.values()].filter(rowMatches);
+      const facets = wantFacets
+        ? columnFacets(
+            base.map((row) => ({ row })),
+            columnFilters,
+            'addresses',
+          )
+        : undefined;
+      const rows = base.filter(matchesColumns);
+      if (sortColumn) sortByColumn(rows);
+      else sortIps(rows, reqSortField || 'ip_address', reqSortField ? reqSortOrder : 1);
       const filteredTotal = rows.length;
       const totalPages = Math.ceil(filteredTotal / pageSize) || 1;
       const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), totalPages);
@@ -2252,8 +2309,9 @@ router.get(
         totalPages,
         search,
         table_search: tableSearch,
-        sorted: Boolean(reqSortField),
+        sorted: Boolean(reqSortField || sortColumn),
         sparse: true,
+        ...facetFields(facets),
       });
     }
 
@@ -2270,7 +2328,8 @@ router.get(
       const pageSize = clampPageSize(req.query.pageSize);
       const allPersisted = loadPersistedRows();
       const gwLong = subnet.gateway_address ? ipToLong(subnet.gateway_address) : null;
-      const matchedPersisted = allPersisted.filter(rowMatches);
+      const basePersisted = allPersisted.filter(rowMatches);
+      const matchedPersisted = basePersisted.filter(matchesColumns);
       const persistedLongs = new Set(allPersisted.map((row) => ipToLong(row.ip_address)));
 
       // Text searches historically search persisted metadata. A synthetically
@@ -2286,7 +2345,10 @@ router.get(
           exactSearchIps[index] === null ? false : exactSearchIps[index] === exactSearchIps[0],
         );
 
-      const virtualIntervals = [];
+      // Segments of identical free addresses. Every one the other filters
+      // allow is counted for the filter menu; the page keeps those whose
+      // sample also matches the column filters.
+      const baseIntervals = [];
       if (!searchTerms.length || mayMatchVirtual) {
         const boundaries = new Set([parsed.networkLong, parsed.broadcastLong + 1]);
         for (const range of ranges) {
@@ -2315,7 +2377,7 @@ router.get(
           if (startLong < segmentStart || startLong > segmentEnd) continue;
           const sample = makeVirtualIpRow(startLong);
           enrichIpViewRows(db, [sample]);
-          if (rowMatches(sample)) virtualIntervals.push({ startLong, endLong, sortRow: sample });
+          if (rowMatches(sample)) baseIntervals.push({ startLong, endLong, sortRow: sample });
           if (searchTerms.length) break;
         }
       }
@@ -2331,6 +2393,21 @@ router.get(
         }
         return count;
       };
+      const virtualIntervals = baseIntervals.filter((interval) => matchesColumns(interval.sortRow));
+      const facets = wantFacets
+        ? columnFacets(
+            [
+              ...basePersisted.map((row) => ({ row })),
+              ...baseIntervals.map((interval) => ({
+                row: interval.sortRow,
+                weight:
+                  interval.endLong - interval.startLong + 1 - persistedInIntervals([interval]),
+              })),
+            ],
+            columnFilters,
+            'addresses',
+          )
+        : undefined;
       const virtualTotal =
         virtualIntervals.reduce(
           (sum, interval) => sum + interval.endLong - interval.startLong + 1,
@@ -2368,9 +2445,14 @@ router.get(
           });
         }
       }
-      const sortField = reqSortField || 'ip_address';
+      const sortField = sortColumn || reqSortField || 'ip_address';
       entries.sort((a, b) => {
         if (sortField === 'ip_address') return (a.startLong - b.startLong) * reqSortOrder;
+        if (sortColumn) {
+          return (
+            compareSortValues(a.row || a.sortRow, b.row || b.sortRow) || a.startLong - b.startLong
+          );
+        }
         let left = (a.row || a.sortRow)?.[sortField];
         let right = (b.row || b.sortRow)?.[sortField];
         if (typeof left === 'string') left = left.trim() ? left.toLowerCase() : null;
@@ -2413,7 +2495,8 @@ router.get(
         totalPages,
         search,
         table_search: tableSearch,
-        sorted: Boolean(reqSortField),
+        sorted: Boolean(reqSortField || sortColumn),
+        ...facetFields(facets),
       });
     }
 
