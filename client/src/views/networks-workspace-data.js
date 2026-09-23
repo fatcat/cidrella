@@ -23,10 +23,19 @@ function humanize(value) {
     .replace(/\b(Dhcp|Dns|Slaac|Arp)\b/g, (match) => match.toUpperCase());
 }
 
+const DURATION_UNITS = { s: 1, m: 60, h: 3600, d: 86400, w: 604800 };
+
+// Seconds, or a dnsmasq lease time as the scopes API returns it: a number
+// with an optional unit ("900s", "12h", "7d") or "infinite".
 export function formatDuration(seconds) {
   if (seconds == null || seconds === '') return EMPTY_CELL;
-  const value = Number(seconds);
-  if (!Number.isFinite(value)) return EMPTY_CELL;
+  if (String(seconds).trim().toLowerCase() === 'infinite') return 'Infinite';
+  const match = String(seconds)
+    .trim()
+    .toLowerCase()
+    .match(/^(\d+(?:\.\d+)?)\s*([smhdw]?)$/);
+  if (!match) return EMPTY_CELL;
+  const value = Number(match[1]) * DURATION_UNITS[match[2] || 's'];
   if (value < 60) return `${value} sec`;
   if (value < 3600) return `${Math.round(value / 60)} min`;
   if (value < 86400) return `${Math.round(value / 3600)} hr`;

@@ -139,10 +139,6 @@ export function useWorkspaceActions(ctx) {
       state.activeView.value = 'dhcp';
       await selectNetwork(network);
     },
-    'dns.zones.switch-side': () => {
-      const side = state.filters.value.zoneType?.[0] === 'forward' ? 'reverse' : 'forward';
-      state.filters.value = { ...state.filters.value, zoneType: [side] };
-    },
 
     // Networks and folders
     'network.allocate': async (target) => {

@@ -692,14 +692,19 @@ describe('Networks workspace', () => {
       .trigger('click');
     expect(wrapper.find('.context-header').text()).toContain('All Networks');
     expect(wrapper.find('.view-tabs button.active').text()).toContain('DNS');
-    expect(wrapper.find('table').text()).toContain('1.1.1.in-addr.arpa');
+    // Every network's records, the same DNS table as inside a network; the
+    // zones are the cards above it.
+    await flushPromises();
+    expect(wrapper.find('table').text()).toContain('client.test.example');
+    expect(wrapper.find('.view-summary').text()).toContain('1.1.1.in-addr.arpa');
 
     await wrapper
       .findAll('.view-tabs button')
       .find((button) => button.text().includes('DHCP'))
       .trigger('click');
-    expect(wrapper.find('table').text()).toContain('1.1.1.33 – 1.1.1.126');
-    expect(wrapper.find('table').text()).toContain('Public test network');
+    await flushPromises();
+    expect(wrapper.find('table').text()).toContain('1.1.1.40');
+    expect(wrapper.find('.view-summary').text()).toContain('1.1.1.33 – 1.1.1.126');
   });
 
   it('uses folders as intermediate inventory scopes', async () => {
@@ -874,19 +879,23 @@ describe('Networks workspace', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(0);
   });
 
-  it('opens zone and scope inventories as URL-backed drill-ins', async () => {
+  it('narrows the all-network DNS and DHCP tables to a zone or scope, URL-backed', async () => {
     const wrapper = await mountWorkspace();
-    await wrapper
-      .findAll('.view-tabs button')
-      .find((button) => button.text().includes('DNS'))
-      .trigger('click');
-    await wrapper.find('tbody tr').trigger('click');
-    await wrapper
-      .findAll('.quick-actions button')
-      .find((button) => button.text() === 'Open zone')
-      .trigger('click');
-    await flushPromises();
+    const tab = (name) =>
+      wrapper
+        .findAll('.view-tabs button')
+        .find((button) => button.text().includes(name))
+        .trigger('click');
+    const card = (text) =>
+      wrapper
+        .findAll('.view-summary .linked-card')
+        .find((button) => button.text().includes(text))
+        .trigger('click');
 
+    await tab('DNS');
+    await flushPromises();
+    await card('test.example');
+    await flushPromises();
     expect(api.get).toHaveBeenCalledWith(
       '/workspace/dns-records',
       expect.objectContaining({ params: expect.objectContaining({ zone_id: 21 }) }),
@@ -897,17 +906,10 @@ describe('Networks workspace', () => {
     });
     expect(wrapper.find('tbody').text()).toContain('client.test.example');
 
-    await wrapper
-      .findAll('.view-tabs button')
-      .find((button) => button.text().includes('DHCP'))
-      .trigger('click');
-    await wrapper.find('tbody tr').trigger('click');
-    await wrapper
-      .findAll('.quick-actions button')
-      .find((button) => button.text() === 'Open scope')
-      .trigger('click');
+    await tab('DHCP');
     await flushPromises();
-
+    await card('1.1.1.33');
+    await flushPromises();
     expect(api.get).toHaveBeenCalledWith(
       '/workspace/dhcp-addresses',
       expect.objectContaining({ params: expect.objectContaining({ scope_id: 31 }) }),

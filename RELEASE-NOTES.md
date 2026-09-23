@@ -274,6 +274,15 @@ first on a 0.4.17 host.
 
 ### Changed
 
+- At All Networks and in a folder, the DNS and DHCP tabs are the same record
+  and address tables as inside a network, across every network in view,
+  with the same columns and filters. They used to list zones and scopes
+  until one was picked. The zones and scopes are now the cards above the
+  table: click one to narrow the table to it, right-click for its actions
+  (open, edit, add a record or reservation, delete). "Switch forward /
+  reverse" is gone; the forward zone cards and the reverse zone picker do
+  that.
+
 - Every IP table filters and sorts on any column, over the whole result. A
   Filter button lists every column; picking one shows its values with how
   many rows carry each, or a text box for a free-text column, and the active
@@ -339,6 +348,10 @@ first on a 0.4.17 host.
   slider are the toolkit's `Checkbox` and `Slider` rather than raw inputs.
 
 ### Fixed
+
+- DHCP scope cards show their lease time. The scopes API gives it as
+  dnsmasq writes it ("900s", "12h"), which the cards read as a number and
+  showed as a dash.
 
 - A disabled DNS record now holds its address (ADR 004). Disabling a record,
   or its forward zone, used to leave the address unassigned: it could be

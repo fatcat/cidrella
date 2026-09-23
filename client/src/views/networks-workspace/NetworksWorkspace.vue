@@ -581,13 +581,9 @@ const viewDefinitions = {
 };
 
 const visibleColumnKeys = ref({});
-const columnKind = computed(() => {
-  if (contextKind.value !== 'network' && activeView.value === 'dns' && !selectedZoneFilter.value)
-    return 'dnsZones';
-  if (contextKind.value !== 'network' && activeView.value === 'dhcp' && !selectedScopeFilter.value)
-    return 'dhcpScopes';
-  return activeView.value;
-});
+// DNS and DHCP are the same record and address tables at every level; the
+// zones and scopes are the pickers above them.
+const columnKind = computed(() => activeView.value);
 const columnStorageKey = computed(
   () =>
     `cidrella_workspace_columns_v1_${user.value?.username || 'anonymous'}_${contextKind.value}_${columnKind.value}`,
@@ -687,8 +683,6 @@ const scopedDhcpRows = computed(() =>
     : allDhcpRows.value.filter((row) => scopedNetworkIds.value.has(Number(row.raw.subnet_id))),
 );
 const networkInventoryRows = computed(() => mapNetworkRows(scopedNetworks.value));
-const dnsZoneRows = computed(() => mapDnsZoneRows(scopedZones.value, dnsZoneNetworkLabels.value));
-const dhcpScopeRows = computed(() => mapDhcpScopeRows(scopedScopes.value));
 
 const contextTitle = computed(() => {
   if (contextKind.value === 'estate') return 'All Networks';
@@ -942,9 +936,19 @@ const viewMeta = computed(() => {
       // whole band is hidden for this one.
       return { ...base, title: '' };
     if (activeView.value === 'dns')
-      return { ...base, title: countOf(scopedZones.value.length, 'authoritative zone') };
+      return {
+        ...base,
+        title:
+          selectedZoneFilter.value?.name ||
+          `${countOf(dnsTotal.value, 'record')} in ${countOf(scopedZones.value.length, 'zone')}`,
+      };
     if (activeView.value === 'dhcp')
-      return { ...base, title: countOf(scopedScopes.value.length, 'configured scope') };
+      return {
+        ...base,
+        title: selectedScopeFilter.value
+          ? `${selectedScopeFilter.value.start_ip} – ${selectedScopeFilter.value.end_ip}`
+          : `${countOf(dhcpTotal.value, 'address', 'addresses')} in ${countOf(scopedScopes.value.length, 'scope')}`,
+      };
   }
   if (activeView.value === 'addresses')
     return { ...base, title: `${formatNumber(addressTotal.value)} managed addresses` };
@@ -974,14 +978,7 @@ const columns = computed(() => {
   const byKey = new Map(columnCatalog.value.map((column) => [column.key, column]));
   return keys.map((key) => byKey.get(key)).filter(Boolean);
 });
-const serverPagedView = computed(
-  () =>
-    activeView.value === 'addresses' ||
-    (activeView.value === 'dns' &&
-      (contextKind.value === 'network' || Boolean(selectedZoneFilter.value))) ||
-    (activeView.value === 'dhcp' &&
-      (contextKind.value === 'network' || Boolean(selectedScopeFilter.value))),
-);
+const serverPagedView = computed(() => ['addresses', 'dns', 'dhcp'].includes(activeView.value));
 const visibleResourceError = computed(() => {
   if (activeView.value === 'addresses') return workspaceResources.resources.addresses.error;
   if (activeView.value === 'dns') return workspaceResources.resources.dns.error;
@@ -994,19 +991,9 @@ const currentRows = computed(() => {
   if (activeView.value === 'networks') rows = networkInventoryRows.value;
   else if (activeView.value === 'addresses') rows = addressRows.value;
   else if (activeView.value === 'dns')
-    rows =
-      contextKind.value === 'network' || selectedZoneFilter.value
-        ? contextKind.value === 'network'
-          ? networkDnsRows.value
-          : allDnsRows.value
-        : dnsZoneRows.value;
+    rows = contextKind.value === 'network' ? networkDnsRows.value : allDnsRows.value;
   else if (activeView.value === 'dhcp')
-    rows =
-      contextKind.value === 'network' || selectedScopeFilter.value
-        ? contextKind.value === 'network'
-          ? networkDhcpRows.value
-          : allDhcpRows.value
-        : dhcpScopeRows.value;
+    rows = contextKind.value === 'network' ? networkDhcpRows.value : allDhcpRows.value;
   else rows = rangeRows.value;
   if (activeView.value === 'dns' && selectedZoneFilter.value)
     rows = rows.filter((row) => Number(row.raw.zone_id) === Number(selectedZoneFilter.value.id));
@@ -1391,7 +1378,7 @@ async function resolveDetail(request, isCurrent) {
     fresh = detail ? mapDhcpRows([detail])[0] : null;
   } else if (identity.kind === 'zone') {
     const zone = dnsZones.value.find((item) => `zone:${item.id}` === identity.id);
-    fresh = zone ? mapDnsZoneRows([zone])[0] : null;
+    fresh = zone ? mapDnsZoneRows([zone], dnsZoneNetworkLabels.value)[0] : null;
   } else if (identity.kind === 'scope') {
     const scope = dhcpScopes.value.find((item) => `scope:${item.id}` === identity.id);
     fresh = scope ? mapDhcpScopeRows([scope])[0] : null;
@@ -1794,10 +1781,8 @@ async function onPaginatorPage({ page, rows }) {
 }
 const rowTotal = computed(() => {
   if (activeView.value === 'addresses') return addressFilteredTotal.value;
-  if (activeView.value === 'dns' && (contextKind.value === 'network' || selectedZoneFilter.value))
-    return dnsTotal.value;
-  if (activeView.value === 'dhcp' && (contextKind.value === 'network' || selectedScopeFilter.value))
-    return dhcpTotal.value;
+  if (activeView.value === 'dns') return dnsTotal.value;
+  if (activeView.value === 'dhcp') return dhcpTotal.value;
   return currentRows.value.length;
 });
 
@@ -2497,8 +2482,7 @@ async function refreshAggregateTable() {
     if (dns) {
       allDnsRows.value = mapWorkspaceDnsRows(dns.items);
       dnsTotal.value = dns.total;
-      if (selectedZoneFilter.value)
-        totalPages.value = Math.max(1, Math.ceil(dns.total / pageSize.value));
+      totalPages.value = Math.max(1, Math.ceil(dns.total / pageSize.value));
     }
   } else if (activeView.value === 'dhcp') {
     const scopeParams = { folder_id: params.folder_id, q: params.q };
@@ -2515,8 +2499,7 @@ async function refreshAggregateTable() {
     if (dhcp) {
       allDhcpRows.value = mapDhcpRows(dhcp.items);
       dhcpTotal.value = dhcp.total;
-      if (selectedScopeFilter.value)
-        totalPages.value = Math.max(1, Math.ceil(dhcp.total / pageSize.value));
+      totalPages.value = Math.max(1, Math.ceil(dhcp.total / pageSize.value));
     }
   } else {
     const networks = await workspaceResources.loadNetworks(params);

@@ -10,8 +10,9 @@ export function formatNumber(n) {
  * "3 networks", "1 zone": a formatted count with a plain-English plural.
  * Regular nouns only; pass the singular.
  */
-export function countOf(n, noun) {
-  return `${formatNumber(n)} ${noun}${n === 1 ? '' : 's'}`;
+// "1 zone", "3 zones"; pass the plural for a noun that does not take an s.
+export function countOf(n, noun, plural = `${noun}s`) {
+  return `${formatNumber(n)} ${n === 1 ? noun : plural}`;
 }
 
 /**

@@ -12,22 +12,6 @@ const BASIC = {
     ['utilization', 'Utilization'],
     ['status', 'State'],
   ],
-  dnsZones: [
-    ['name', 'Zone'],
-    ['zoneType', 'Type'],
-    ['records', 'Records'],
-    ['networks', 'Network scope'],
-    ['description', 'Description'],
-    ['enabled', 'State'],
-  ],
-  dhcpScopes: [
-    ['range', 'Scope'],
-    ['network', 'Network'],
-    ['poolSize', 'Pool size'],
-    ['leaseTime', 'Lease time'],
-    ['description', 'Description'],
-    ['enabled', 'State'],
-  ],
   ranges: [
     ['range', 'Address / range'],
     ['rangeType', 'Range type'],
@@ -58,7 +42,6 @@ const DEFAULTS = {
     'record_source',
     'network',
   ],
-  dnsZones: BASIC.dnsZones.map(([key]) => key),
   dhcp: [
     'ip_address',
     'hostname',
@@ -70,7 +53,6 @@ const DEFAULTS = {
     'status',
     'is_online',
   ],
-  dhcpScopes: BASIC.dhcpScopes.map(([key]) => key),
   ranges: BASIC.ranges.map(([key]) => key),
 };
 
@@ -177,13 +159,9 @@ export function restoreWorkspaceColumnKeys(kind, stored) {
       ? 'name'
       : kind === 'ranges'
         ? 'range'
-        : kind.endsWith('Scopes')
-          ? 'range'
-          : kind === 'dnsZones'
-            ? 'name'
-            : kind === 'dns'
-              ? 'dns_hostname'
-              : 'ip_address';
+        : kind === 'dns'
+          ? 'dns_hostname'
+          : 'ip_address';
   if (!restored.includes(identity) && valid.has(identity)) restored.unshift(identity);
   return [...new Set(restored)];
 }

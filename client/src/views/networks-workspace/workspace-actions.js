@@ -45,15 +45,6 @@ const ACTION_DEFINITIONS = [
     available: (target) => target.subnet_id != null,
     disabledReason: 'This scope is not attached to a network.',
   },
-  {
-    id: 'dns.zones.switch-side',
-    label: 'Switch forward / reverse',
-    note: 'Browse the other side of DNS',
-    icon: 'pi pi-replay',
-    targetKind: 'workspace',
-    menus: ['actions'],
-    views: ['dns'],
-  },
 
   // Networks and folders
   {
@@ -581,14 +572,7 @@ const ACTION_DEFINITIONS = [
 // leads with the edit action. Overrides by row kind and by view fix the few
 // places where registry order is wrong. Unlisted actions sort last.
 const ACTIONS_MENU_ORDER = {
-  dns: [
-    'dns.zone.edit',
-    'dns.zones.switch-side',
-    'dns.zone.create',
-    'dns.apply',
-    'dns.settings',
-    'dns.zone.delete',
-  ],
+  dns: ['dns.zone.edit', 'dns.zone.create', 'dns.apply', 'dns.settings', 'dns.zone.delete'],
   dhcp: [
     'dhcp.scope.edit',
     'dhcp.leases.sync',

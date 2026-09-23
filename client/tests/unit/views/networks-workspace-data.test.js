@@ -10,6 +10,7 @@ import {
   mapNetworkRows,
   addressCountLabel,
   dnsRecordSummary,
+  formatDuration,
 } from '../../../src/views/networks-workspace-data.js';
 
 describe('networks workspace data adapter', () => {
@@ -336,5 +337,18 @@ describe('one IP table model', () => {
       assignment: null,
       reservationEnabled: null,
     });
+  });
+});
+
+describe('formatDuration', () => {
+  it('reads seconds and the lease times dnsmasq writes', () => {
+    expect(formatDuration(900)).toBe('15 min');
+    expect(formatDuration('900s')).toBe('15 min');
+    expect(formatDuration('12h')).toBe('12 hr');
+    expect(formatDuration('1d')).toBe('1 day');
+    expect(formatDuration('2w')).toBe('14 days');
+    expect(formatDuration('infinite')).toBe('Infinite');
+    expect(formatDuration(null)).toBe(EMPTY_CELL);
+    expect(formatDuration('soon')).toBe(EMPTY_CELL);
   });
 });

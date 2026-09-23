@@ -17,10 +17,7 @@
       :value-label="filterValueLabel"
       @open="emit('filter-open')"
     />
-    <label
-      v-if="activeView === 'addresses' || (activeView === 'dhcp' && contextKind === 'network')"
-      class="available-switch"
-    >
+    <label v-if="activeView === 'addresses' || activeView === 'dhcp'" class="available-switch">
       <input v-model="showAvailable" type="checkbox" />
       <span /> Show available
     </label>

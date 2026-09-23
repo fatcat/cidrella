@@ -6,7 +6,7 @@
       </button>
       <template v-if="contextKind === 'folder'">
         <i class="pi pi-chevron-right" />
-        <span>{{ selectedFolder.name }}</span>
+        <span>{{ selectedFolder?.name || contextTitle }}</span>
       </template>
       <template v-else-if="contextKind === 'network'">
         <i class="pi pi-chevron-right" />
