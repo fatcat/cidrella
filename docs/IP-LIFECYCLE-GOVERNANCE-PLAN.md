@@ -109,9 +109,12 @@ desired model use the same words differently.
    hostname and additional names should be CNAMEs. If multiple A records to the
    same IP must be supported, the canonical-hostname selection rule must be
    specified instead.
-4. **Disabled configuration.** This plan treats disabled DNS records, DHCP
-   Reservations, and DHCP scopes as non-authoritative. They remain stored for
-   later re-enablement but do not allocate, protect, or classify an IP.
+4. **Disabled configuration.** This plan treats disabled DHCP Reservations and
+   DHCP scopes as non-authoritative. They remain stored for later
+   re-enablement but do not allocate, protect, or classify an IP. A disabled
+   manual DNS A or AAAA record (or one in a disabled forward zone) holds its
+   address instead: allocation `reserved` owned by `dns`, protected like an IP
+   Reservation, never `static_dns`. See ADR 004.
 5. **Lease history.** This plan keeps historical lease events outside the live
    allocation object. An expired lease is not an allocation claim.
 6. **SLAAC state.** This plan uses `slaac` for an address observed through
@@ -290,8 +293,9 @@ reconciliation backstops where practical.
 9. An expired or missing dynamic lease immediately ends dynamic allocation.
    SLAAC authority ends when its valid lifetime expires or the address is
    explicitly withdrawn.
-10. Disabled DNS records, DHCP Reservations, leases, and scopes do not create
-    live claims.
+10. Disabled DHCP Reservations, leases, and scopes do not create live claims.
+    A disabled DNS address record holds its address (ADR 004) but never makes
+    it `static_dns`.
 11. Scope creation, enabling, or resizing must reject conflicts with static DNS
     allocations and protected addresses before dnsmasq configuration changes.
 12. DNS allocation must reject scope membership and any existing incompatible

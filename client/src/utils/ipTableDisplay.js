@@ -17,6 +17,14 @@ const SOURCE_LABELS = Object.freeze({
 });
 
 export function ipSourceLabel(row) {
+  // An address a disabled record holds (ADR 004) is not static DNS: the name
+  // does not resolve.
+  if (
+    !row?.dns_source &&
+    row?.allocation_state === 'reserved' &&
+    row.allocation_source_type === 'dns'
+  )
+    return 'Disabled DNS record';
   const source = row?.dns_source || row?.allocation_source_type || row?.detection_source;
   if (!source) return EMPTY_CELL;
   if (SOURCE_LABELS[source]) return SOURCE_LABELS[source];

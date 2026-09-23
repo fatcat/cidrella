@@ -20,8 +20,8 @@ fields produced by `server/src/models/ip-view.js`.
 | `interface_id` | Interface context required for scoped addresses such as IPv6 link-local. | identifier, null |
 | `ip_display_status` | User-facing availability derived by the server. | `available`, `DHCP Scope`, `in use` |
 | `ip_status_severity` | UI severity for `ip_display_status`. | `secondary`, `danger` |
-| `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `DHCP Reservation`, `SLAAC`, `rogue`, `system`, `gateway`, `IP Reservation` |
-| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, IP Reservation note |
+| `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `DHCP Reservation`, `SLAAC`, `rogue`, `system`, `gateway`, `IP Reservation`, `disabled DNS` |
+| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, IP Reservation note, the disabled record's name |
 | `computed_type` | Sort/search alias for `address_type`, or `available`. | same as `address_type`, plus `available` |
 | `is_online` | Current liveness state. | `0`/`1`, boolean in some API rows |
 | `last_seen_at` | Last observation time from scans, DHCP, or passive checks. | datetime/null |
@@ -220,7 +220,9 @@ IP Reservation range, use `PUT /api/subnets/:id/ips/bulk-allocation` with
 `start_ip`, `end_ip`, `allocation_state`, and an optional `note`. These
 endpoints accept only the internal values `reserved` and `unassigned`; DNS,
 DHCP, SLAAC, and topology allocations must be changed through their owning
-APIs. A DHCP Reservation is a static DHCP client-to-address binding and is
+APIs. An address held by a disabled DNS record (`reserved` owned by `dns`,
+shown as `disabled DNS`) is refused here with 409: enable or delete the record
+instead (ADR 004). A DHCP Reservation is a static DHCP client-to-address binding and is
 managed through `/api/dhcp/reservations`.
 
 ## DNS Rows

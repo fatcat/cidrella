@@ -102,13 +102,14 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   a toggling legend; `dashboard/AllocationBar` wraps it), `TopList` (a ranked list with bars,
   every top-10), `dashboard/FigureCard`; `utils/format.js` (`apiError`,
   `formatNumber`, `displayOnlineStatus`, `EMPTY_CELL`), `utils/chart-config.js` (colors,
-  `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`,
+  `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`, `utils/keyboard.js` (`MOD_LABEL`, `isModShortcut`: Ctrl, or Command on a Mac, for every shortcut and its hint),
   `utils/proxy-perf.js` (the resolution and process figures from the proxy-perf rows),
   `utils/service-chips.js` (the dnsmasq, proxy and forwarder chips), `utils/ipTableDisplay.js`
   (`ipSourceLabel`, the one label for a DNS, DHCP or detection source), and in
   `views/networks-workspace-data.js` the `ipRowFields` adapter that fills every shared IP
   column for the workspace tables (both the Addresses and DHCP adapters spread it; add a
-  column there, never in one adapter). Shared styles: `assets/utilities.css` (global, loaded by
+  column there, never in one adapter), and `dnsRecordSummary` (the one wording for the DNS
+  records behind an address, disabled ones named). Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
   `dialog-actions`, `card-header`, `field-error`), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
@@ -119,7 +120,12 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `utils/ip.js` and `utils/cidr.js`, `services/ip-lifecycle-service.js` for every lifecycle
   write, `models/ip-view.js` for every server-owned display field (status, type, and
   `dhcp_lease_state` from the newest lease; any read that shows an address feeds it
-  `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own). Add to this list when you
+  `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own; a count of rogue
+  hosts runs rows through it too), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
+  record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
+  change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
+  this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6
+  gates SQL cannot express; the scheduler and the stale sweep both apply both). Add to this list when you
   make something shared. Four guards enforce what they can detect, each baselined so it fails
   only on NEW instances (fix one by deleting its baseline entry, never by adding one):
   `npm run lint` refuses a vendor import outside `src/ui`, a raw `<select>`/`<input>` outside

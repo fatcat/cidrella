@@ -471,6 +471,13 @@ body {
   background: color-mix(in srgb, var(--cid-reserved) 16%, transparent);
   color: var(--cid-reserved);
 }
+/* Held by a disabled DNS record: the static DNS color, outlined and dashed
+   because nothing answers for the name. */
+.address-type-pill.type-dns-hold {
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--cid-static-dns) 70%, transparent);
+  color: var(--cid-static-dns);
+}
 .address-type-pill.type-rogue {
   background: color-mix(in srgb, var(--cid-rogue) 16%, transparent);
   color: var(--cid-rogue);

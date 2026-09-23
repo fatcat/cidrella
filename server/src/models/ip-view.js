@@ -13,6 +13,7 @@ export const ADDRESS_TYPE = {
   SYSTEM: 'system',
   GATEWAY: 'gateway',
   RESERVED: 'IP Reservation',
+  DNS_HOLD: 'disabled DNS',
   SLAAC: 'SLAAC',
   QUARANTINED: 'quarantined',
   ROGUE: 'rogue',
@@ -53,6 +54,14 @@ export function computeIpView(row) {
   } else if (allocationState === ALLOCATION_STATE.QUARANTINED) {
     addressType = ADDRESS_TYPE.QUARANTINED;
     tooltip = row.allocation_conflict_reason || 'Conflicting allocation claims';
+  } else if (
+    allocationState === ALLOCATION_STATE.RESERVED &&
+    row.allocation_source_type === 'dns'
+  ) {
+    // ADR 004: held by a manual record that exists but is not served.
+    addressType = ADDRESS_TYPE.DNS_HOLD;
+    tooltip =
+      'Held by a disabled DNS record. Enable it to publish the name, or delete it to free the address';
   } else if (allocationState === ALLOCATION_STATE.RESERVED) {
     addressType = ADDRESS_TYPE.RESERVED;
     tooltip = row.reservation_note || null;

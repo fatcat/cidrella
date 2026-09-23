@@ -1,4 +1,5 @@
 import {
+  countOf,
   displayExpiry,
   displayMacAddress,
   displayOnlineStatus,
@@ -284,6 +285,21 @@ export function mapRangeRows(rows, scopes = []) {
  * The result line under an address table. A sparse (IPv6) network has no
  * total to show, only the addresses CIDRella holds rows for.
  */
+// The DNS records behind one address, as the details panel lists them. A
+// disabled record is kept but does not answer or claim the address, so it is
+// named rather than folded into the count.
+export function dnsRecordSummary(rows) {
+  const total = rows.length;
+  const disabled = rows.filter((row) => row.enabled === false).length;
+  const verb = total === 1 ? 'references' : 'reference';
+  let note;
+  if (!disabled) note = `${countOf(total, 'record')} ${verb} this address`;
+  else if (disabled === total) note = `${countOf(total, 'disabled record')} ${verb} this address`;
+  else
+    note = `${countOf(total, 'record')} ${verb} this address, ${formatNumber(disabled)} disabled`;
+  return { total, disabled, note };
+}
+
 export function addressCountLabel({ shown, matching, total, sparse = false, paged = true }) {
   const tail = sparse ? `${total} assigned addresses` : `${total} addresses in network`;
   // The grid shows the whole network, so "on this page" would be noise.
@@ -314,7 +330,7 @@ export function gridKind(row) {
   if (type === 'gateway') return 'gateway';
   if (type === 'rogue') return 'rogue';
   if (type === 'static DNS') return 'dns';
-  if (type === 'IP Reservation') return 'reserved';
+  if (type === 'IP Reservation' || type === 'disabled DNS') return 'reserved';
   if (type === 'dynamic DHCP' || type === 'DHCP Reservation') return 'dhcp-active';
   if (row?.status === 'DHCP Scope') return 'dhcp';
   return 'available';

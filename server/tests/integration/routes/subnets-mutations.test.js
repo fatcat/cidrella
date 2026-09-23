@@ -284,9 +284,11 @@ describe('DNS zone CRUD ↔ subnets.domain_name sync', () => {
 
     const disabled = await request(app).put(`/api/dns/zones/${zone.id}`).send({ enabled: false });
     expect(disabled.status).toBe(200);
+    // ADR 004: the record is still there but not served, so it holds the
+    // address without naming it.
     expect(allocation()).toMatchObject({
-      allocation_state: 'unassigned',
-      allocation_source_type: null,
+      allocation_state: 'reserved',
+      allocation_source_type: 'dns',
       hostname: null,
     });
 

@@ -52,10 +52,13 @@ export const ALLOCATION_TRANSITIONS = Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.RESERVED]),
     [A.RESERVED]: Object.freeze([A.RESERVED, A.UNASSIGNED]),
   }),
+  // A record that exists but is not served holds its address as `reserved`
+  // owned by dns (ADR 004). Which `reserved` row DNS may renew or release is
+  // decided by its allocation_source_type in the lifecycle service.
   [S.DNS]: Object.freeze({
-    [A.UNASSIGNED]: Object.freeze([A.STATIC_DNS]),
-    [A.RESERVED]: Object.freeze([A.STATIC_DNS]),
-    [A.STATIC_DNS]: Object.freeze([A.STATIC_DNS, A.UNASSIGNED]),
+    [A.UNASSIGNED]: Object.freeze([A.STATIC_DNS, A.RESERVED]),
+    [A.RESERVED]: Object.freeze([A.STATIC_DNS, A.RESERVED, A.UNASSIGNED]),
+    [A.STATIC_DNS]: Object.freeze([A.STATIC_DNS, A.UNASSIGNED, A.RESERVED]),
   }),
   [S.DHCP_RESERVATION]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.STATIC_DHCP]),

@@ -19,13 +19,14 @@
     <label class="explorer-search">
       <i class="pi pi-search" />
       <input
+        ref="searchInput"
         v-model="query"
         type="search"
         placeholder="Find networks, hostnames, or IPs"
         aria-label="Find networks, hostnames, or IPs"
         data-track="workspace-global-search"
       />
-      <kbd>⌘ K</kbd>
+      <kbd :title="`Press ${MOD_LABEL}+K to search`">{{ MOD_LABEL }} K</kbd>
     </label>
 
     <button
@@ -170,7 +171,8 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { MOD_LABEL, isModShortcut } from '../../utils/keyboard.js';
 import { countOf } from '../../utils/format.js';
 import ResourceExplorerNode from './ResourceExplorerNode.vue';
 import StatusDot from '../../components/StatusDot.vue';
@@ -224,6 +226,20 @@ function handleMenuKey(event, name, resource) {
 // interface so a network dragged from the table lands here too. Ungrouped
 // has a null id, so the hover state is keyed by name.
 const dropFolderKey = ref(null);
+
+// Ctrl+K (Command+K on a Mac) jumps to the search from anywhere on the page.
+// The browser's own Ctrl+K is taken over only while the field is showing.
+const searchInput = ref(null);
+function focusSearch(event) {
+  if (!isModShortcut(event, 'k')) return;
+  const input = searchInput.value;
+  if (!input || !input.offsetParent) return;
+  event.preventDefault();
+  input.focus();
+  input.select();
+}
+onMounted(() => globalThis.window?.addEventListener('keydown', focusSearch));
+onBeforeUnmount(() => globalThis.window?.removeEventListener('keydown', focusSearch));
 function folderKey(folder) {
   return folder.id ?? `ungrouped:${folder.name}`;
 }

@@ -7,7 +7,8 @@
 
 import { getSetting } from '../db/init.js';
 import { activeLeaseSql } from '../utils/lease-sql.js';
-import { scannerCoveredSql } from '../utils/scan-coverage.js';
+import { isAutomaticScanAllowed, scannerCoveredSql } from '../utils/scan-coverage.js';
+import { ipv6Enabled } from '../utils/ipv6-support.js';
 import { canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 
 // The reason string the passive path stamps on an unassigned address.
@@ -450,19 +451,33 @@ export function markOffline(db, subnetId, ip) {
 export function bulkMarkStale(db, staleMinutes) {
   const offset = `-${staleMinutes} minutes`;
 
+  const ipv6 = ipv6Enabled();
   const staleIps = db
     .prepare(
       `
     SELECT ip.id, ip.subnet_id, ip.ip_address, ip.is_rogue,
-           ip.hostname, ip.mac_address, ip.last_seen_mac, ip.scan_enabled
+           ip.hostname, ip.mac_address, ip.last_seen_mac, ip.scan_enabled,
+           s.cidr, s.scan_enabled AS subnet_scan_enabled, s.address_family,
+           ${scannerCoveredSql('s', 'ip')} AS sql_covered
     FROM ip_addresses ip
     JOIN subnets s ON s.id = ip.subnet_id
     WHERE ip.is_online = 1
       AND ip.last_seen_at < datetime('now', ?)
-      AND NOT ${scannerCoveredSql('s', 'ip')}
   `,
     )
-    .all(offset);
+    .all(offset)
+    .filter(
+      (row) =>
+        !row.sql_covered ||
+        !isAutomaticScanAllowed(
+          {
+            cidr: row.cidr,
+            scan_enabled: row.subnet_scan_enabled,
+            address_family: row.address_family,
+          },
+          { ipv6 },
+        ),
+    );
 
   for (const row of staleIps) {
     emit(db, row.id, row.subnet_id, row.ip_address, 'offline', { source: 'stale' });

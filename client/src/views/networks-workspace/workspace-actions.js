@@ -455,8 +455,12 @@ const ACTION_DEFINITIONS = [
     label: 'Release IP Reservation',
     capability: 'subnets:write',
     targetKind: 'address',
-    available: (target) => target.allocation_state === 'reserved',
-    disabledReason: 'Only an IP Reservation can be released here.',
+    // A reserved row owned by dns is held by a disabled record (ADR 004); the
+    // record, not this action, releases it.
+    available: (target) =>
+      target.allocation_state === 'reserved' && target.allocation_source_type !== 'dns',
+    disabledReason:
+      'Only an IP Reservation can be released here. An address held by a disabled DNS record is freed by deleting the record.',
   },
   {
     id: 'ip.reserve',
@@ -758,6 +762,7 @@ export function targetForRow(row) {
         id: row.id,
         address: row.address,
         allocation_state: raw.allocation_state,
+        allocation_source_type: raw.allocation_source_type,
         type: row.type,
         status: row.status,
         raw,

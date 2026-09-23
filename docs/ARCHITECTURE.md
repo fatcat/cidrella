@@ -70,7 +70,12 @@ Terminology:
 - `online_status`: active/passive liveness state, independent of assignment.
 - `hostname`: one primary hostname for an IP. Additional names should be CNAMEs.
 - `IP Reservation`: an administrative address hold with no DHCP client
-  identity. Its internal allocation state is `reserved`.
+  identity. Its internal allocation state is `reserved`, owned by
+  `admin_reservation`.
+- `disabled DNS`: an address held by a manual A or AAAA record that exists but
+  is not served (the record or its forward zone is disabled). Its internal
+  allocation state is `reserved`, owned by `dns`. It protects the address like
+  an IP Reservation; deleting the record releases it. See ADR 004.
 - `DHCP Reservation`: a static DHCP client-to-address binding. Its internal
   allocation state is `static_dhcp` and its protocol row is stored in
   `dhcp_reservations`.

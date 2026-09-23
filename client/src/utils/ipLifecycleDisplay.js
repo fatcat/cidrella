@@ -28,6 +28,12 @@ export const ADDRESS_TYPE_RESERVED = {
   className: 'type-reserved',
 };
 
+// ADR 004: held by a DNS record that exists but is not served.
+export const ADDRESS_TYPE_DNS_HOLD = {
+  label: 'disabled DNS',
+  className: 'type-dns-hold',
+};
+
 export const ADDRESS_TYPE_SLAAC = {
   label: 'SLAAC',
   className: 'type-slaac',
@@ -55,6 +61,7 @@ const ADDRESS_TYPE_BY_LABEL = {
   [ADDRESS_TYPE_SYSTEM.label]: ADDRESS_TYPE_SYSTEM,
   [ADDRESS_TYPE_GATEWAY.label]: ADDRESS_TYPE_GATEWAY,
   [ADDRESS_TYPE_RESERVED.label]: ADDRESS_TYPE_RESERVED,
+  [ADDRESS_TYPE_DNS_HOLD.label]: ADDRESS_TYPE_DNS_HOLD,
   [ADDRESS_TYPE_SLAAC.label]: ADDRESS_TYPE_SLAAC,
   [ADDRESS_TYPE_QUARANTINED.label]: ADDRESS_TYPE_QUARANTINED,
   [ADDRESS_TYPE_ROGUE.label]: ADDRESS_TYPE_ROGUE,

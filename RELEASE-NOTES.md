@@ -319,6 +319,49 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- A disabled DNS record now holds its address (ADR 004). Disabling a record,
+  or its forward zone, used to leave the address unassigned: it could be
+  retired or offered as free, and a host still answering there showed as
+  rogue. The address is now kept for the record, shown as "disabled DNS",
+  and protected like an IP Reservation, while the name stays unpublished.
+  Enabling the record makes it static DNS again; deleting it frees the
+  address. A DHCP Reservation, a live lease, an enabled record or an IP
+  Reservation still take precedence, and a record inside an enabled DHCP
+  scope does not hold. Existing disabled records are picked up on first
+  start.
+
+- A disabled DNS record no longer passes for a live one. The address
+  details panel warns when every record naming an address is disabled, and
+  says a disabled record neither answers nor claims the address, which is
+  why an online host there shows as rogue. The related-records line counts
+  the disabled ones ("1 disabled record references this address", where it
+  used to read "1 records"), and disabled records, zones and scopes are
+  dimmed in the workspace tables.
+
+- The IP Management search's shortcut hint works and shows your platform's
+  key. It always read "⌘ K" and nothing listened for it. Ctrl+K on Windows
+  and Linux, Command+K on a Mac, now jumps to the search.
+
+- Hosts on a public network no longer stay "online" forever. The scheduler
+  skips a publicly routable network unless scanning is switched on for it by
+  name, but the offline sweep still counted it as scanned and left its
+  hosts alone, so one scan's results never aged out. A network like
+  `1.1.1.0/24` scanned once showed every address online and rogue from then
+  on. Both now use one rule.
+
+- The Dashboard's rogue hosts count matches the address tables and links
+  somewhere useful. It counted only flagged hosts while the tables call any
+  online host at an unassigned address rogue, and it linked to an
+  all-networks addresses view that does not exist, which landed on the
+  Networks tab with a filter nothing could match. It now shows a row per
+  network (the three busiest) linking to that network's addresses filtered
+  to rogue. A link to a view the workspace cannot show now drops its
+  filters instead of carrying them onto the tab it lands on.
+
+- Analytics charts shrink when the window does. They grew with a wider
+  window but kept their width when it narrowed, so the Performance CPU and
+  Memory charts overlapped until a reload.
+
 - The IP Management tables show each column the same way whichever table it
   is in. The Addresses and DHCP tables read one column catalog but filled it
   from different fields: a free pool address was "DHCP Scope" in one and a

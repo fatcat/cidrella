@@ -5,6 +5,7 @@ import { queueRegen } from '../utils/after-commit.js';
 import {
   allocateStaticDns,
   deallocateStaticDns,
+  reconcileDnsHold,
   reconcileStaticDnsZone,
 } from '../services/ip-lifecycle-service.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
@@ -443,14 +444,15 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
   const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(req.params.id);
   if (!zone) return res.status(404).json({ error: 'Zone not found' });
 
+  // Read before the delete: enabled records release their claim, and every
+  // record's hold is re-checked once the zone is gone (ADR 004).
   const addressRecords = db
     .prepare(
       `
-    SELECT id, name, value
+    SELECT id, name, value, enabled
     FROM dns_records
     WHERE zone_id = ?
-      AND type = 'A'
-      AND enabled = 1
+      AND type IN ('A', 'AAAA')
       AND COALESCE(source, 'manual') = 'manual'
   `,
     )
@@ -625,6 +627,8 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
         created.record.enabled
       ) {
         allocateStaticDns(db, normalizedName, normalizedValue, zone.name, created.record.id);
+      } else if (isAddressType(type) && zone.type === 'forward') {
+        reconcileDnsHold(db, normalizedValue);
       }
       return created.record;
     });
@@ -782,6 +786,10 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     if (newIsActiveAddress) {
       allocateStaticDns(db, newName, newValue, zone.name, result.id);
     }
+    if (zone.type === 'forward') {
+      if (isAddressType(record.type)) reconcileDnsHold(db, record.value);
+      if (isAddressType(newType) && newValue !== record.value) reconcileDnsHold(db, newValue);
+    }
     return result;
   });
   const updated = updateWorkflow();
@@ -817,6 +825,8 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
       record.enabled
     ) {
       deallocateStaticDns(db, record.name, record.value, delZone.name);
+    } else if (isAddressType(record.type) && delZone?.type === 'forward') {
+      reconcileDnsHold(db, record.value);
     }
   })();
 

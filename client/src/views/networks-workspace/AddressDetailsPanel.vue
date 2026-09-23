@@ -22,6 +22,22 @@
       <span>{{ feedback.message }}</span>
     </div>
 
+    <!-- Every record naming this address is disabled: the address is held
+         for it (ADR 004) but nothing answers for the name. -->
+    <div
+      v-if="dns.total && dns.disabled === dns.total"
+      class="feedback warning"
+      data-track="workspace-address-dns-disabled"
+    >
+      <i class="pi pi-exclamation-triangle" />
+      <span
+        >{{ dns.total === 1 ? 'Its DNS record is' : 'Its DNS records are' }} disabled, so the
+        address is held but the name does not resolve. Enable
+        {{ dns.total === 1 ? 'the record' : 'one' }} to publish it, or delete
+        {{ dns.total === 1 ? 'it' : 'them' }} to free the address.</span
+      >
+    </div>
+
     <div class="panel-tabs" role="tablist" aria-label="Address details">
       <button
         v-for="tab in availableTabs"
@@ -59,12 +75,17 @@
     </dl>
 
     <!-- Only offered when there is something to open (the operator's rule). -->
-    <section v-if="activeTab === 'overview' && (dnsCount || dhcpCount)" class="panel-section">
+    <section v-if="activeTab === 'overview' && (dns.total || dhcpCount)" class="panel-section">
       <span class="eyebrow">RELATED RESOURCES</span>
-      <button v-if="dnsCount" class="related-button" @click="navigateRelated('dns')">
+      <button
+        v-if="dns.total"
+        class="related-button"
+        :class="{ disabled: dns.disabled }"
+        data-track="workspace-address-related-dns"
+        @click="navigateRelated('dns')"
+      >
         <i class="pi pi-globe" /><span
-          ><strong>DNS records</strong
-          ><small>{{ dnsCount }} records reference this address</small></span
+          ><strong>DNS records</strong><small>{{ dns.note }}</small></span
         ><i class="pi pi-chevron-right" />
       </button>
       <button v-if="dhcpCount" class="related-button" @click="navigateRelated('dhcp')">
@@ -296,7 +317,7 @@ const props = defineProps({
   row: { type: Object, required: true },
   subnetId: { type: [Number, String], required: true },
   networkName: { type: String, default: '' },
-  dnsCount: { type: Number, default: 0 },
+  dns: { type: Object, default: () => ({ total: 0, disabled: 0, note: '' }) },
   dhcpCount: { type: Number, default: 0 },
   canWrite: { type: Boolean, default: false },
   canReadDevice: { type: Boolean, default: false },
@@ -332,7 +353,11 @@ const availableTabs = computed(() => [
   { id: 'lifecycle', label: 'Lifecycle' },
   ...(props.canReadDevice && macAddress.value ? [{ id: 'device', label: 'Device' }] : []),
 ]);
-const isReserved = computed(() => raw.value.allocation_state === 'reserved');
+// An IP Reservation, not an address a disabled DNS record holds (ADR 004):
+// only deleting or enabling the record changes that one.
+const isReserved = computed(
+  () => raw.value.allocation_state === 'reserved' && raw.value.allocation_source_type !== 'dns',
+);
 const canReserve = computed(() => raw.value.allocation_state === 'unassigned');
 const allocationLabel = computed(
   () => props.row.type || String(raw.value.allocation_state || 'unassigned').replaceAll('_', ' '),
@@ -782,6 +807,10 @@ dd {
 }
 .related-button > i:first-child {
   color: var(--preview-accent);
+}
+.related-button.disabled > i:first-child,
+.related-button.disabled small {
+  color: var(--cid-orange-700);
 }
 .related-button > i:last-child {
   color: var(--preview-muted);

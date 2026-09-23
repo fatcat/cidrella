@@ -189,28 +189,159 @@ export function deallocateStaticDns(db, recordName, ip, zoneName) {
     IpAddress.upsert(db, subnet.id, ip, { detection_source: 'topology' });
     return IpAddress.findBySubnetAndIp(db, subnet.id, ip);
   }
-  assertAllocationTransition(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DNS);
+  // Disabling a record (or its zone) leaves it in place, and a record that
+  // exists but is not served holds the address (ADR 004). Deleting it frees
+  // the address unless another unserved record still names it.
+  const holder = dnsHoldingRecord(db, subnet.id, ip);
+  const target = holder ? ALLOCATION_STATE.RESERVED : ALLOCATION_STATE.UNASSIGNED;
+  assertAllocationTransition(db, subnet.id, ip, target, LIFECYCLE_SOURCE.DNS);
   IpSync.clearDnsFromIp(db, recordName, ip, zoneName);
+  return holder
+    ? setCanonicalAllocation(db, subnet.id, ip, target, LIFECYCLE_SOURCE.DNS, holder.id, {
+        reservation_note: null,
+      })
+    : setCanonicalAllocation(db, subnet.id, ip, target, null, null);
+}
+
+/**
+ * The manual A or AAAA record that holds an address it does not serve, per
+ * ADR 004: the record or its forward zone is disabled. There is no hold on a
+ * protected topology address, which topology owns, or inside an enabled DHCP
+ * scope, which the pool owns. Lowest record id wins so the choice is stable.
+ */
+function dnsHoldingRecord(db, subnetId, ip) {
+  if (protectedAddress(db, subnetId, ip)) return null;
+  if (findEnabledScopeForIp(db, subnetId, ip)) return null;
+  return (
+    db
+      .prepare(
+        `
+    SELECT record.id, record.name, zone.name AS zone_name
+    FROM dns_records record
+    JOIN dns_zones zone ON zone.id = record.zone_id
+    WHERE record.value = ? AND record.type IN ('A', 'AAAA')
+      AND zone.type = 'forward'
+      AND COALESCE(record.source, 'manual') = 'manual'
+      AND (record.enabled = 0 OR zone.enabled = 0)
+    ORDER BY record.id
+    LIMIT 1
+  `,
+      )
+      .get(ip) || null
+  );
+}
+
+function isDnsHold(row) {
+  return (
+    row?.allocation_state === ALLOCATION_STATE.RESERVED &&
+    row.allocation_source_type === LIFECYCLE_SOURCE.DNS
+  );
+}
+
+/**
+ * Bring one address's DNS hold in line with its records (ADR 004): take the
+ * hold when an unserved record names an address nothing else owns, move it to
+ * the lowest remaining record, release it when no record is left. An address
+ * owned by anything else (a served record, DHCP, topology, an administrator's
+ * IP Reservation) is left alone. Idempotent; call it after any DNS write.
+ */
+export function reconcileDnsHold(db, ip) {
+  const subnet = IpSync.findSubnetForIp(db, ip);
+  if (!subnet) return null;
+  const existing = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+  const state = existing?.allocation_state || ALLOCATION_STATE.UNASSIGNED;
+  const held = isDnsHold(existing);
+  if (state !== ALLOCATION_STATE.UNASSIGNED && !held) return existing;
+  const holder = dnsHoldingRecord(db, subnet.id, ip);
+  if (holder) {
+    if (held && Number(existing.allocation_source_id) === holder.id) return existing;
+    assertAllocationTransition(db, subnet.id, ip, ALLOCATION_STATE.RESERVED, LIFECYCLE_SOURCE.DNS);
+    return setCanonicalAllocation(
+      db,
+      subnet.id,
+      ip,
+      ALLOCATION_STATE.RESERVED,
+      LIFECYCLE_SOURCE.DNS,
+      holder.id,
+      { reservation_note: null },
+    );
+  }
+  if (!held) return existing;
+  assertAllocationTransition(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DNS);
   return setCanonicalAllocation(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, null, null);
 }
 
+/**
+ * Apply reconcileDnsHold to every address a manual record names plus every
+ * existing hold. Run at startup after migrations, so installs from before
+ * ADR 004 and restored backups converge without a schema change.
+ */
+export function reconcileDnsHolds(db) {
+  const ips = new Set(
+    db
+      .prepare(
+        `
+    SELECT record.value AS ip
+    FROM dns_records record
+    JOIN dns_zones zone ON zone.id = record.zone_id
+    WHERE record.type IN ('A', 'AAAA') AND zone.type = 'forward'
+      AND COALESCE(record.source, 'manual') = 'manual'
+      AND (record.enabled = 0 OR zone.enabled = 0)
+    UNION
+    SELECT ip_address FROM ip_addresses
+    WHERE allocation_state = 'reserved' AND allocation_source_type = 'dns'
+  `,
+      )
+      .all()
+      .map((row) => row.ip),
+  );
+  let changed = 0;
+  for (const ip of ips) {
+    const subnet = IpSync.findSubnetForIp(db, ip);
+    if (!subnet) continue;
+    const before = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+    try {
+      reconcileDnsHold(db, ip);
+    } catch (err) {
+      if (!(err instanceof IpLifecycleConflictError)) throw err;
+      console.warn(`[dns-hold] ${ip}: ${err.message}`);
+      continue;
+    }
+    const after = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+    if (
+      before?.allocation_state !== after?.allocation_state ||
+      before?.allocation_source_id !== after?.allocation_source_id
+    ) {
+      changed++;
+    }
+  }
+  return { checked: ips.size, changed };
+}
+
+/**
+ * Re-derive the addresses a forward zone's manual records claim after the
+ * zone is renamed, enabled, disabled or deleted. `records` are the zone's
+ * manual A and AAAA records with their `enabled` flag, read before a delete;
+ * enabled ones move their static DNS claim, and every one of them then has
+ * its hold re-checked (ADR 004), which is what holds a disabled zone's
+ * addresses and releases a deleted zone's.
+ */
 export function reconcileStaticDnsZone(db, previousZone, currentZone = null, records = null) {
   const addressRecords =
     records ||
     db
       .prepare(
         `
-    SELECT id, name, value
+    SELECT id, name, value, enabled
     FROM dns_records
     WHERE zone_id = ?
       AND type IN ('A', 'AAAA')
-      AND enabled = 1
       AND COALESCE(source, 'manual') = 'manual'
   `,
       )
       .all(previousZone.id);
 
-  for (const record of addressRecords) {
+  for (const record of addressRecords.filter((row) => row.enabled)) {
     if (previousZone.type === 'forward' && previousZone.enabled) {
       deallocateStaticDns(db, record.name, record.value, previousZone.name);
     }
@@ -218,6 +349,7 @@ export function reconcileStaticDnsZone(db, previousZone, currentZone = null, rec
       allocateStaticDns(db, record.name, record.value, currentZone.name, record.id);
     }
   }
+  for (const record of addressRecords) reconcileDnsHold(db, record.value);
 }
 
 export function allocateStaticDhcp(db, subnetId, ip, fields = {}, reservationId = null) {
@@ -254,18 +386,22 @@ export function deallocateStaticDhcp(db, subnetId, ip, macAddress) {
   );
   IpSync.clearDhcpReservationFromIp(db, subnetId, ip, macAddress);
   const existing = IpAddress.findBySubnetAndIp(db, subnetId, ip);
-  if (!existing) return null;
+  // Clearing a lease-less reservation removes the row outright; a disabled
+  // record naming the address still takes its hold back (ADR 004).
+  if (!existing) return reconcileDnsHold(db, ip);
   const state =
     existing.detection_source === 'dhcp_lease'
       ? ALLOCATION_STATE.DYNAMIC_DHCP
       : ALLOCATION_STATE.UNASSIGNED;
-  return setCanonicalAllocation(
+  const released = setCanonicalAllocation(
     db,
     subnetId,
     ip,
     state,
     state === ALLOCATION_STATE.DYNAMIC_DHCP ? LIFECYCLE_SOURCE.DHCP_LEASE : null,
   );
+  // A disabled record naming the address takes its hold back (ADR 004).
+  return state === ALLOCATION_STATE.UNASSIGNED ? reconcileDnsHold(db, ip) || released : released;
 }
 
 export function observeDhcpLeases(db, leases, { prevalidated = false } = {}) {
@@ -544,6 +680,17 @@ export function pruneLifecycleEvents(db) {
 }
 
 export function setManualReservation(db, subnetId, ip, reserved, note = null) {
+  const existing = IpAddress.findBySubnetAndIp(db, subnetId, ip);
+  if (isDnsHold(existing)) {
+    throw new IpLifecycleConflictError(
+      `${ip} is held by a disabled DNS record. Enable the record to publish it, or delete it to free the address`,
+      {
+        currentState: existing.allocation_state,
+        targetState: reserved ? ALLOCATION_STATE.RESERVED : ALLOCATION_STATE.UNASSIGNED,
+        ip,
+      },
+    );
+  }
   assertAllocationTransition(
     db,
     subnetId,
@@ -551,7 +698,7 @@ export function setManualReservation(db, subnetId, ip, reserved, note = null) {
     reserved ? ALLOCATION_STATE.RESERVED : ALLOCATION_STATE.UNASSIGNED,
     LIFECYCLE_SOURCE.ADMIN_RESERVATION,
   );
-  return setCanonicalAllocation(
+  const result = setCanonicalAllocation(
     db,
     subnetId,
     ip,
@@ -563,6 +710,8 @@ export function setManualReservation(db, subnetId, ip, reserved, note = null) {
       detection_source: reserved ? 'manual' : null,
     },
   );
+  // Releasing an IP Reservation hands a disabled record its hold back (ADR 004).
+  return reserved ? result : reconcileDnsHold(db, ip) || result;
 }
 
 export function protectTopologyAddress(db, subnetId, ip, state, note = null) {

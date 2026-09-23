@@ -136,6 +136,12 @@ export async function initDb(dataDir) {
       `IP lifecycle migration reconciliation complete: ${reconciliation.updated} updated, ${reconciliation.inserted} inserted`,
     );
   }
+  // ADR 004: a manual address record that exists but is not served holds its
+  // address. Idempotent, so installs from before the rule, upgrades and
+  // restored backups all converge here.
+  const { reconcileDnsHolds } = await import('../services/ip-lifecycle-service.js');
+  const holds = reconcileDnsHolds(db);
+  if (holds.changed) console.log(`DNS holds reconciled: ${holds.changed} address(es) changed`);
   await ensureDefaults();
 
   return db;

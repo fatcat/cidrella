@@ -419,6 +419,39 @@ describe('bulkMarkStale', () => {
       db.prepare('UPDATE subnets SET scan_interval = NULL WHERE id = ?').run(subnetId);
     }
   });
+
+  // The production failure: the scheduler skips a public network that only
+  // inherits scanning, so the sweep has to age it out or its hosts stay
+  // online, and rogue, forever.
+  it('sweeps a public network the scheduler will not scan, and not one switched on by name', () => {
+    const publicId = db
+      .prepare(
+        "INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length, total_addresses, status, scan_interval) VALUES ('1.1.1.0/25', 'Public', '1.1.1.0', '1.1.1.127', 25, 128, 'allocated', '30m')",
+      )
+      .run().lastInsertRowid;
+    try {
+      const stale = (ip) => {
+        IpAddress.upsert(db, publicId, ip, { is_online: 1 });
+        db.prepare(
+          "UPDATE ip_addresses SET last_seen_at = datetime('now', '-2 hours'), is_rogue = 1 WHERE subnet_id = ? AND ip_address = ?",
+        ).run(publicId, ip);
+      };
+
+      stale('1.1.1.10');
+      IpAddress.bulkMarkStale(db, 60);
+      const swept = IpAddress.findBySubnetAndIp(db, publicId, '1.1.1.10');
+      expect(swept.is_online).toBe(0);
+      expect(swept.is_rogue).toBe(0);
+
+      db.prepare('UPDATE subnets SET scan_enabled = 1 WHERE id = ?').run(publicId);
+      stale('1.1.1.11');
+      IpAddress.bulkMarkStale(db, 60);
+      expect(IpAddress.findBySubnetAndIp(db, publicId, '1.1.1.11').is_online).toBe(1);
+    } finally {
+      db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(publicId);
+      db.prepare('DELETE FROM subnets WHERE id = ?').run(publicId);
+    }
+  });
 });
 
 describe('upsert liveness events', () => {

@@ -9,7 +9,7 @@
       :row="row"
       :subnet-id="network.id"
       :network-name="network.name"
-      :dns-count="dnsCount"
+      :dns="dns"
       :dhcp-count="dhcpCount"
       :can-write="canWrite"
       @close="emit('close')"
@@ -82,7 +82,8 @@ defineProps({
   rowContext: { type: String, default: 'network' },
   canWrite: { type: Boolean, default: false },
   network: { type: Object, required: true },
-  dnsCount: { type: Number, default: 0 },
+  // dnsRecordSummary() of the records behind the address: { total, disabled, note }.
+  dns: { type: Object, default: () => ({ total: 0, disabled: 0, note: '' }) },
   dhcpCount: { type: Number, default: 0 },
   title: { type: String, default: '' },
   heading: { type: String, default: '' },

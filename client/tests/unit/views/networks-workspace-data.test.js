@@ -9,6 +9,7 @@ import {
   mapDnsZoneRows,
   mapNetworkRows,
   addressCountLabel,
+  dnsRecordSummary,
 } from '../../../src/views/networks-workspace-data.js';
 
 describe('networks workspace data adapter', () => {
@@ -283,5 +284,26 @@ describe('IPv6 networks in the explorer data', () => {
     expect(folders[0].networks[0].used).toBeNull();
     expect(folders[0].networks[0].state).toBe('healthy');
     expect(mapNetworkRows(folders[0].networks)[0].utilization).toBe('—');
+  });
+});
+
+describe('dnsRecordSummary', () => {
+  const rec = (enabled) => ({ enabled });
+  it('counts records and names the disabled ones', () => {
+    expect(dnsRecordSummary([rec(true)])).toEqual({
+      total: 1,
+      disabled: 0,
+      note: '1 record references this address',
+    });
+    expect(dnsRecordSummary([rec(true), rec(true)]).note).toBe('2 records reference this address');
+    expect(dnsRecordSummary([rec(false)]).note).toBe('1 disabled record references this address');
+    expect(dnsRecordSummary([rec(false), rec(false)]).note).toBe(
+      '2 disabled records reference this address',
+    );
+    expect(dnsRecordSummary([rec(true), rec(false), rec(true)])).toEqual({
+      total: 3,
+      disabled: 1,
+      note: '3 records reference this address, 1 disabled',
+    });
   });
 });

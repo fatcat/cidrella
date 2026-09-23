@@ -171,7 +171,7 @@
         :row-context="selectedRowContext"
         :can-write="can('subnets:write')"
         :network="selectedNetwork"
-        :dns-count="selectedAddressDnsCount"
+        :dns="selectedAddressDns"
         :dhcp-count="selectedAddressDhcpCount"
         :title="detailTitle"
         :heading="detailHeading"
@@ -377,6 +377,7 @@ import {
   gridKind,
   mapAddressRows,
   addressCountLabel,
+  dnsRecordSummary,
   mapDhcpScopeRows,
   mapDhcpRows,
   mapDnsRows,
@@ -901,6 +902,13 @@ function restoreContextFromRoute(availableNetworks) {
     activeView.value = aggregateViews.some((view) => view.key === state.view)
       ? state.view
       : 'networks';
+  }
+  // A link that asks for a view this context does not have lands on another.
+  // Its filters were meant for the view it asked for, and the one it got may
+  // have no control that shows them, so they are dropped with the view.
+  if (activeView.value !== state.view) {
+    clearFilters();
+    repairedRoute = true;
   }
   selectedZoneFilter.value = state.zone
     ? dnsZones.value.find((zone) => Number(zone.id) === Number(state.zone)) || null
@@ -1539,7 +1547,7 @@ const relatedResources = computed(() => {
     ? {
         view: 'dns',
         label: 'DNS records',
-        note: `${countOf(dnsRows.length, 'record')} reference this address`,
+        note: dnsRecordSummary(dnsRows).note,
         icon: 'pi pi-globe',
       }
     : null;
@@ -1578,8 +1586,8 @@ const relatedResources = computed(() => {
     selectedRowView.value === 'dns' ? dhcpEntry : dnsEntry,
   ].filter(Boolean);
 });
-const selectedAddressDnsCount = computed(
-  () => relatedRowsFor('dns', selectedRow.value?.address).length,
+const selectedAddressDns = computed(() =>
+  dnsRecordSummary(relatedRowsFor('dns', selectedRow.value?.address)),
 );
 const selectedAddressDhcpCount = computed(
   () => relatedRowsFor('dhcp', selectedRow.value?.address).length,

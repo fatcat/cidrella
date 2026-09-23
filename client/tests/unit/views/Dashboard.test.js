@@ -100,6 +100,9 @@ describe('Dashboard health board', () => {
         allocations: { unassigned: 42, static_dns: 18, static_dhcp: 23, system: 8, gateway: 4 },
         scope_conflicts: 0,
         rogue_hosts: 7,
+        rogue_hosts_by_network: [
+          { subnet_id: 2, cidr: '10.0.0.0/22', name: 'Trust Network', count: 7 },
+        ],
         retirement: { last_24h: 131 },
         reconciliation: { outcome: 'complete', failures: 0, blocking_conflicts: 0 },
       },
@@ -135,12 +138,12 @@ describe('Dashboard health board', () => {
     const rows = wrapper.findAll('.attn-row').map((r) => r.attributes('data-track'));
     expect(rows).toEqual([
       'dashboard-attention-rogue-dhcp',
-      'dashboard-attention-rogue-hosts',
+      'dashboard-attention-rogue-hosts-2',
       'dashboard-attention-anomalies',
     ]);
-    expect(wrapper.find('[data-track="dashboard-attention-rogue-hosts"]').attributes('href')).toBe(
-      '/networks?context=all&view=addresses&type=rogue',
-    );
+    expect(
+      wrapper.find('[data-track="dashboard-attention-rogue-hosts-2"]').attributes('href'),
+    ).toBe('/networks?context=network&network=2&view=addresses&type=rogue');
     expect(wrapper.findAll('.panel-note')[0].text()).toBe('3 open');
 
     const figures = wrapper.findAll('.fig .value').map((v) => v.text());

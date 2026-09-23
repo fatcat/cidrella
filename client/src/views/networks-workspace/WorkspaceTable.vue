@@ -25,7 +25,7 @@
         <tr
           v-for="row in rows"
           :key="row.id"
-          :class="{ selected: selectedRowId === row.id }"
+          :class="{ selected: selectedRowId === row.id, disabled: row.enabled === false }"
           tabindex="0"
           :aria-selected="selectedRowId === row.id"
           :draggable="draggableRows ? 'true' : undefined"
@@ -255,6 +255,11 @@ tbody tr {
 tbody tr:hover,
 tbody tr.selected {
   background: var(--preview-accent-soft);
+}
+/* A disabled record, zone or scope is kept but not served: the whole row
+   recedes so it cannot be read as live, while the Enabled cell says why. */
+tbody tr.disabled td:not(.check-cell) {
+  opacity: 0.55;
 }
 tbody tr:focus-visible {
   outline: 2px solid var(--cid-primary-color);

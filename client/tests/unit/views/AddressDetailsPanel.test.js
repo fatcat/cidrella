@@ -36,7 +36,7 @@ function mountPanel(row = availableRow, extraProps = {}) {
       row,
       subnetId: 7,
       networkName: 'Lab',
-      dnsCount: 1,
+      dns: { total: 1, disabled: 0, note: '1 record references this address' },
       dhcpCount: 2,
       canWrite: true,
       ...extraProps,
@@ -208,13 +208,36 @@ describe('workspace address details panel', () => {
   });
 
   it('offers only the related resources that exist', () => {
-    expect(mountPanel(availableRow, { dnsCount: 0, dhcpCount: 0 }).text()).not.toContain(
-      'RELATED RESOURCES',
-    );
-    const dhcpOnly = mountPanel(availableRow, { dnsCount: 0, dhcpCount: 2 });
+    expect(
+      mountPanel(availableRow, { dns: { total: 0, disabled: 0, note: '' }, dhcpCount: 0 }).text(),
+    ).not.toContain('RELATED RESOURCES');
+    const dhcpOnly = mountPanel(availableRow, {
+      dns: { total: 0, disabled: 0, note: '' },
+      dhcpCount: 2,
+    });
     expect(
       dhcpOnly.findAll('.related-button').map((button) => button.find('strong').text()),
     ).toEqual(['DHCP identity']);
+  });
+
+  it('warns when every DNS record naming the address is disabled, and only then', () => {
+    const callout = '[data-track="workspace-address-dns-disabled"]';
+    const allDisabled = mountPanel(availableRow, {
+      dns: { total: 1, disabled: 1, note: '1 disabled record references this address' },
+    });
+    expect(allDisabled.find(callout).text()).toContain(
+      'Its DNS record is disabled, so the address is held',
+    );
+    expect(allDisabled.find('.related-button').classes()).toContain('disabled');
+    expect(allDisabled.find('.related-button small').text()).toBe(
+      '1 disabled record references this address',
+    );
+
+    const oneOfTwo = mountPanel(availableRow, {
+      dns: { total: 2, disabled: 1, note: '2 records reference this address, 1 disabled' },
+    });
+    expect(oneOfTwo.find(callout).exists()).toBe(false);
+    expect(mountPanel().find(callout).exists()).toBe(false);
   });
 
   it('emits stable identities for related resources and the network', async () => {
@@ -226,6 +249,19 @@ describe('workspace address details panel', () => {
       { kind: 'ip', subnet_id: 7, ip_address: '10.0.0.33', address_family: null },
     ]);
     expect(wrapper.emitted('open-network')?.[0]).toEqual([{ kind: 'network', subnet_id: 7 }]);
+  });
+
+  it('offers no release for an address a disabled DNS record holds', () => {
+    const row = {
+      ...availableRow,
+      status: 'in use',
+      type: 'disabled DNS',
+      raw: { ...availableRow.raw, allocation_state: 'reserved', allocation_source_type: 'dns' },
+    };
+    const wrapper = mountPanel(row);
+    expect(wrapper.find('button[data-track="workspace-release-ip-reservation"]').exists()).toBe(
+      false,
+    );
   });
 
   it('requires confirmation before releasing an IP Reservation', async () => {

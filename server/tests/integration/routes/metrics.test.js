@@ -181,6 +181,41 @@ describe('GET /api/metrics/ip-lifecycle', () => {
       },
     });
   });
+
+  it('breaks rogue hosts down by network, busiest first, summing to the total', async () => {
+    const subnetId = db
+      .prepare(
+        `INSERT INTO subnets
+           (cidr, name, network_address, broadcast_address, prefix_length, total_addresses, status)
+         VALUES ('192.0.2.0/24', 'Rogue test', '192.0.2.0', '192.0.2.255', 24, 256, 'allocated')`,
+      )
+      .run().lastInsertRowid;
+    const subnet = db.prepare('SELECT id, cidr, name FROM subnets WHERE id = ?').get(subnetId);
+    const insert = db.prepare(
+      `INSERT INTO ip_addresses
+         (subnet_id, ip_address, allocation_state, address_family, address_sort_key, is_online, is_rogue)
+       VALUES (?, ?, 'unassigned', 4, ?, 1, 1)`,
+    );
+    insert.run(subnet.id, '192.0.2.31', 'k31');
+    insert.run(subnet.id, '192.0.2.32', 'k32');
+    // Online at an address nothing assigned is rogue in the address tables
+    // whether or not the flag is set, and the dashboard counts what they show.
+    db.prepare(
+      `INSERT INTO ip_addresses
+         (subnet_id, ip_address, allocation_state, address_family, address_sort_key, is_online, is_rogue)
+       VALUES (?, '192.0.2.33', 'unassigned', 4, 'k33', 1, 0)`,
+    ).run(subnet.id);
+
+    const res = await request(app).get('/api/metrics/ip-lifecycle');
+    const byNetwork = res.body.rogue_hosts_by_network;
+    expect(byNetwork[0]).toMatchObject({
+      subnet_id: subnet.id,
+      cidr: subnet.cidr,
+      name: subnet.name,
+    });
+    expect(byNetwork[0].count).toBe(3);
+    expect(byNetwork.reduce((sum, row) => sum + row.count, 0)).toBe(res.body.rogue_hosts);
+  });
 });
 
 // ── GET /api/metrics/services ───────────────────────────────────

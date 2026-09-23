@@ -178,8 +178,12 @@ const options = computed(() => {
 </script>
 
 <style scoped>
+/* Chart.js redraws only when this box resizes, and a canvas at its drawn
+   pixel width would otherwise set the box's minimum in any grid or flex
+   parent: the chart could grow with the window but never shrink back. */
 .chart-box {
   position: relative;
+  contain: inline-size;
 }
 .empty {
   height: 100%;

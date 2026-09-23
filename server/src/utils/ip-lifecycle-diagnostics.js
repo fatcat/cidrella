@@ -1,6 +1,7 @@
 import { DATA_DIR } from '../config/defaults.js';
 import { readLifecycleMigrationReport } from '../db/ip-lifecycle-upgrade.js';
 import { findEnabledScopeForIp } from '../models/dhcp-scope.js';
+import { ADDRESS_TYPE, computeIpView } from '../models/ip-view.js';
 import { getLastRetirementDiagnostics } from '../services/ip-lifecycle-service.js';
 
 const ALLOCATION_STATES = [
@@ -62,18 +63,41 @@ export function getIpLifecycleDiagnostics(db, { dataDir = DATA_DIR } = {}) {
     )
     .get();
 
+  // Rogue is whatever the address tables call rogue, so ip-view decides it
+  // rather than a second rule in SQL. Only unassigned rows can be rogue.
+  const rogueCounts = new Map();
+  for (const row of db
+    .prepare(
+      `
+    SELECT ip.allocation_state, ip.is_online, ip.is_rogue, s.id AS subnet_id, s.cidr, s.name
+    FROM ip_addresses ip
+    JOIN subnets s ON s.id = ip.subnet_id
+    WHERE COALESCE(ip.allocation_state, 'unassigned') = 'unassigned'
+  `,
+    )
+    .iterate()) {
+    if (computeIpView(row).address_type !== ADDRESS_TYPE.ROGUE) continue;
+    const network = rogueCounts.get(row.subnet_id);
+    if (network) network.count++;
+    else
+      rogueCounts.set(row.subnet_id, {
+        subnet_id: row.subnet_id,
+        cidr: row.cidr,
+        name: row.name,
+        count: 1,
+      });
+  }
+  const rogueByNetwork = [...rogueCounts.values()].sort(
+    (a, b) => b.count - a.count || a.cidr.localeCompare(b.cidr),
+  );
+
   return {
     allocations: allocationCounts,
     scope_conflicts: scopeConflicts,
-    rogue_hosts: db
-      .prepare(
-        `
-      SELECT COUNT(*) AS count
-      FROM ip_addresses
-      WHERE is_online = 1 AND is_rogue = 1 AND allocation_state = 'unassigned'
-    `,
-      )
-      .get().count,
+    rogue_hosts: rogueByNetwork.reduce((sum, row) => sum + row.count, 0),
+    // Rogue hosts can only be listed inside a network, so the dashboard links
+    // each network that has them rather than an all-networks view.
+    rogue_hosts_by_network: rogueByNetwork,
     retirement: {
       total: retirementEvents.total,
       last_24h: retirementEvents.last_24h || 0,

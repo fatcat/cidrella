@@ -14,13 +14,16 @@
 // below is kept: the things a person acts on first sit higher.
 
 const TONE_ORDER = { err: 0, warn: 1, muted: 2 };
+const ROGUE_NETWORK_ROWS = 3;
 
 const plural = (n, one, many) => (n === 1 ? one : many);
 
 export const ATTENTION_ROUTES = {
   serviceDown: '/system?area=maintenance&sec=logs',
   rogueDhcp: '/system?area=dhcp&sec=rogue',
-  rogueHosts: '/networks?context=all&view=addresses&type=rogue',
+  // Rogue hosts are listed per network; there is no all-networks addresses view.
+  rogueHosts: (subnetId) =>
+    `/networks?context=network&network=${subnetId}&view=addresses&type=rogue`,
   anomalies: '/analytics?view=anomalies',
   scopeConflicts: '/networks?context=all&view=dhcp',
   dhcpReview: '/networks?context=all&view=networks',
@@ -87,16 +90,23 @@ export function attentionItems(snapshot = {}) {
     });
   }
 
-  if (lifecycle?.rogue_hosts > 0) {
+  // One row per network, busiest first, since each links into that network.
+  // Past ROGUE_NETWORK_ROWS the last row names how many more there are.
+  const rogueNetworks = lifecycle?.rogue_hosts_by_network || [];
+  rogueNetworks.slice(0, ROGUE_NETWORK_ROWS).forEach((network, i, shown) => {
+    const more = rogueNetworks.length - shown.length;
     rows.push({
-      id: 'rogue-hosts',
+      id: `rogue-hosts-${network.subnet_id}`,
       tone: 'warn',
-      title: 'Rogue hosts',
-      detail: 'Online at addresses nothing assigned them',
-      count: lifecycle.rogue_hosts,
-      to: ATTENTION_ROUTES.rogueHosts,
+      title: `Rogue hosts in ${network.name || network.cidr}`,
+      detail:
+        i === shown.length - 1 && more > 0
+          ? `Online at addresses nothing assigned them. ${more} more ${plural(more, 'network has', 'networks have')} them too`
+          : 'Online at addresses nothing assigned them',
+      count: network.count,
+      to: ATTENTION_ROUTES.rogueHosts(network.subnet_id),
     });
-  }
+  });
 
   if (anomalies?.unacknowledged_active > 0) {
     const sev = anomalies.by_severity || {};

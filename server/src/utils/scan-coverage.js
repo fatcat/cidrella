@@ -10,12 +10,17 @@
  * probing it, a host that answers every scan would flap offline between scans.
  * Keeping one definition here is what prevents that.
  *
- * This module deliberately imports nothing but config defaults, so both the
- * scheduler (which pulls in the scanner) and the IP model can use it without
- * creating an import cycle.
+ * Most of the decision is SQL (scannerCoveredSql). The two gates SQL cannot
+ * express, a public network and the IPv6 switch, are isAutomaticScanAllowed
+ * below, and every caller of the SQL applies it too.
+ *
+ * This module deliberately imports nothing but config defaults and the pure
+ * address helpers, so both the scheduler (which pulls in the scanner) and the
+ * IP model can use it without creating an import cycle.
  */
 
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
+import { isGloballyRoutableCidr } from './ip.js';
 
 const INTERVAL_MS = {
   '': null,
@@ -127,6 +132,21 @@ export function effectiveIntervalSql(alias = 's') {
  */
 export function scanSizeSql(subnetAlias = 's') {
   return `(${subnetAlias}.address_family = 6 OR ${subnetAlias}.total_addresses <= ${MAX_SCAN_SIZE})`;
+}
+
+/**
+ * The per-network gates scannerCoveredSql cannot express. A publicly routable
+ * network is swept only when scanning is switched on for it by name, never by
+ * inheritance, and an IPv6 network only while IPv6 support is on. `subnet`
+ * needs cidr, scan_enabled (the network's own override) and address_family.
+ *
+ * The scheduler once had this rule and the sweep did not, so a public network
+ * scanned once stayed "online" forever: nothing scanned it again and nothing
+ * was allowed to age it out.
+ */
+export function isAutomaticScanAllowed(subnet, { ipv6 }) {
+  if (subnet.address_family === 6 && !ipv6) return false;
+  return subnet.scan_enabled === 1 || !isGloballyRoutableCidr(subnet.cidr);
 }
 
 export function scannerCoveredSql(subnetAlias = 's', ipAlias = 'ip') {
