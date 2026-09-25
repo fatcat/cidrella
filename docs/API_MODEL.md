@@ -246,7 +246,9 @@ binding. Create or release one IP Reservation with
 
 Release it by sending `{"allocation_state":"unassigned"}`. For a contiguous
 IP Reservation range, use `PUT /api/subnets/:id/ips/bulk-allocation` with
-`start_ip`, `end_ip`, `allocation_state`, and an optional `note`. These
+`start_ip`, `end_ip`, `allocation_state`, and an optional `note`
+(`PUT /api/subnets/:id/ips/bulk-scan-enabled` takes the same run with
+`scan_enabled` for the liveness scan override, which is not allocation). These
 endpoints accept only the internal values `reserved` and `unassigned`; DNS,
 DHCP, SLAAC, and topology allocations must be changed through their owning
 APIs. An address held by a disabled DNS record (`reserved` owned by `dns`,

@@ -946,7 +946,8 @@ async function openEdit(scope) {
  */
 /**
  * Open dialog to create a new scope with the range picker.
- * @param {Object} [subnetCtx] - Optional subnet context { id, cidr, gateway_address, domain_name }
+ * @param {Object} [subnetCtx] - Optional subnet context { id, cidr, gateway_address, domain_name },
+ *   with start_ip and end_ip to set the pool instead of the suggested one
  */
 async function openNewWithPicker(subnetCtx) {
   editing.value = null;
@@ -977,7 +978,11 @@ async function openNewWithPicker(subnetCtx) {
         setOptionValue(autoSelected, autoValues, 119, subnetCtx.domain_name);
       }
     }
-    if (subnetCtx.cidr) {
+    if (subnetCtx.start_ip && subnetCtx.end_ip) {
+      // The caller chose the pool.
+      autoStartIp = subnetCtx.start_ip;
+      autoEndIp = subnetCtx.end_ip;
+    } else if (subnetCtx.cidr) {
       // Fetch the same server-owned suggestion used by network creation.
       try {
         const pool = await loadSuggestedPool(subnetCtx);

@@ -129,7 +129,12 @@
             :selected-rows="selectedRows"
             @open="openGridCell"
             @toggle="toggleRow"
-            @range-toggle="selectGridRange"
+            @range-toggle="
+              selectRange(
+                $event,
+                gridCells.map((cell) => cell.row.id),
+              )
+            "
             @drag-select="selectGridDrag"
             @row-menu="openRowMenu"
           />
@@ -146,6 +151,12 @@
             @sort="sortBy"
             @select="selectRow"
             @toggle-row="toggleRow"
+            @range-row="
+              selectRange(
+                $event,
+                pagedRows.map((row) => row.id),
+              )
+            "
             @toggle-all="toggleAllRows"
             @row-menu="openRowMenu"
             @row-dragstart="startNetworkDrag"
@@ -366,7 +377,7 @@ import AddressScanDialog from './dialogs/AddressScanDialog.vue';
 import FolderManagerDialog from './dialogs/FolderManagerDialog.vue';
 import { useWorkspaceContext } from './composables/useWorkspaceContext.js';
 import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
-import { contiguousAddressRuns } from './composables/useWorkspaceSelection.js';
+import { contiguousAddressRuns, identityAddress } from './composables/useWorkspaceSelection.js';
 import { useRangeActions } from './composables/useRangeActions.js';
 import { useWorkspaceActions } from './composables/useWorkspaceActions.js';
 import { NETWORK_DRAG_TYPE, menuActions, targetForRow } from './workspace-actions.js';
@@ -1090,13 +1101,21 @@ const actionMenuTitle = computed(() =>
         ? 'FOLDER ACTIONS'
         : 'NETWORK ACTIONS',
 );
-const rowMenuTitle = computed(() =>
-  menuTarget.value?.kind === 'folder'
+const SELECTION_NOUNS = {
+  'address-selection': ['address', 'addresses'],
+  'network-selection': ['network', 'networks'],
+};
+const rowMenuTitle = computed(() => {
+  const kind = menuTarget.value?.kind;
+  if (SELECTION_NOUNS[kind]) {
+    return `${countOf(menuTarget.value.count, ...SELECTION_NOUNS[kind]).toUpperCase()} SELECTED`;
+  }
+  return kind === 'folder'
     ? 'FOLDER ACTIONS'
-    : menuTarget.value?.kind === 'network'
+    : kind === 'network'
       ? 'NETWORK ACTIONS'
-      : `${activeView.value.toUpperCase()} ACTIONS`,
-);
+      : `${activeView.value.toUpperCase()} ACTIONS`;
+});
 
 function buildUnallocatedFolders(sourceFolders) {
   const mapNode = (network, folder) => {
@@ -1639,10 +1658,15 @@ const selectionTarget = computed(() => {
       }));
     return { kind: 'network-selection', ids, count: ids.length, networks };
   }
+  const rows = selectedAddressRows.value;
   return {
     kind: 'address-selection',
-    count: selectedAddressRows.value.length,
+    count: rows.length,
     allocationStates: selectedAllocationStates.value,
+    addresses: selectedRows.value.map(identityAddress).filter(Boolean),
+    runs: selectionRuns.value,
+    inScope: rows.some((row) => row.status === 'DHCP Scope' || row.raw?.in_dynamic_pool),
+    scanOverrides: rows.filter((row) => row.raw?.scan_enabled != null).length,
   };
 });
 // The selection bar. Reserve and Release share one slot: a selection is all
@@ -2048,9 +2072,12 @@ async function openRangeEditor(range) {
   }
 }
 // A row menu targets the row without pinning it: right-click and the row
-// button must not open the details panel (operator's rule).
+// button must not open the details panel (operator's rule). Right-clicking
+// one of several checked rows targets the whole selection, as a file
+// manager does, so a dragged range can be tagged from the menu.
 function openRowMenu(row, invoker = null, event = null) {
-  openTargetMenu(targetForRow(row), invoker, event);
+  const onSelection = selectedRows.value.length > 1 && selectedRows.value.includes(row.id);
+  openTargetMenu(onSelection ? selectionTarget.value : targetForRow(row), invoker, event);
 }
 function selectRow(row) {
   pinDetail(row);
@@ -2094,10 +2121,14 @@ function clearFilter(key) {
 function clearFilters() {
   filters.value = {};
 }
+// The row a Shift pick runs from: the last one checked on its own.
+let selectionAnchor = null;
 function toggleRow(id) {
-  selectedRows.value = selectedRows.value.includes(id)
-    ? selectedRows.value.filter((rowId) => rowId !== id)
-    : [...selectedRows.value, id];
+  const checking = !selectedRows.value.includes(id);
+  selectedRows.value = checking
+    ? [...selectedRows.value, id]
+    : selectedRows.value.filter((rowId) => rowId !== id);
+  if (checking) selectionAnchor = id;
 }
 function toggleAllRows(event) {
   selectedRows.value = event.target.checked ? filteredRows.value.map((row) => row.id) : [];
@@ -2105,9 +2136,12 @@ function toggleAllRows(event) {
 function openGridCell(cell) {
   selectRow(cell.row);
 }
-function selectGridRange(row) {
-  const visibleIds = filteredRows.value.map((item) => item.id);
-  const anchorId = selectedRows.value.at(-1);
+// Shift pick in the grid or the table: every row on screen from the anchor
+// to this one joins the selection.
+function selectRange(row, visibleIds) {
+  const anchorId = selectedRows.value.includes(selectionAnchor)
+    ? selectionAnchor
+    : selectedRows.value.at(-1);
   const start = visibleIds.indexOf(anchorId);
   const end = visibleIds.indexOf(row.id);
   if (start < 0 || end < 0) {

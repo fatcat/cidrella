@@ -271,6 +271,16 @@ first on a 0.4.17 host.
   `POST /api/operations/restore` takes `?dhcp=enabled|disabled`; omitted
   keeps the backup's own setting.
 - Bundled Node runtime is 24.21.0.
+- **Selected addresses get the single-address actions.** Right-clicking one
+  of several checked addresses, in the table or either grid, opens a menu for
+  the whole selection: Create DHCP Scope (one unbroken run outside any scope,
+  opened with that run as the pool), Reserve or Release, Set range type,
+  Enable or Disable liveness scan, Reset scan to Inherit, and Probe now (up to
+  256 addresses). Right-clicking checked networks likewise offers Merge and
+  Apply defaults. New endpoint `PUT /api/subnets/:id/ips/bulk-scan-enabled`
+  takes `start_ip`, `end_ip` and `scan_enabled` (`true`, `false` or `null`);
+  `POST /api/scans/probe` also takes `{ subnet_id, ips: [...] }` and answers
+  `{ results: [...] }` from one targeted scan.
 
 ### Changed
 
@@ -348,6 +358,12 @@ first on a 0.4.17 host.
   slider are the toolkit's `Checkbox` and `Slider` rather than raw inputs.
 
 ### Fixed
+
+- Right-clicking a dragged grid range acted on the one cell under the pointer,
+  and its Set Range Type reset the selection to that cell. The menu now
+  targets the selection.
+- Shift+click selects a run of rows in the address table, as it already did
+  in the grid; Ctrl+click (Command on a Mac) checks one row.
 
 - DHCP scope cards show their lease time. The scopes API gives it as
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and

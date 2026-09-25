@@ -1,6 +1,6 @@
 import { nextTick } from 'vue';
 import api from '../../../api/client.js';
-import { apiError } from '../../../utils/format.js';
+import { apiError, countOf, formatNumber } from '../../../utils/format.js';
 import { createWorkspaceActionRegistry, targetForRow } from '../workspace-actions.js';
 
 // The handler side of the action registry (plan section 5, W-05). The
@@ -115,6 +115,38 @@ export function useWorkspaceActions(ctx) {
       showLiveNotice(`Could not change the scan setting for ${target.address}: ${apiError(error)}`);
     }
   }
+  // The same override for every run of a selection, one request per run.
+  async function setSelectionScan(target, value, message) {
+    const subnetId = state.selectedNetwork.value?.id;
+    const noun = countOf(target.addresses.length, 'address', 'addresses');
+    try {
+      for (const run of target.runs) {
+        await api.put(`/subnets/${subnetId}/ips/bulk-scan-enabled`, {
+          start_ip: run.start_ip,
+          end_ip: run.end_ip,
+          scan_enabled: value,
+        });
+      }
+      await refreshAfterMutation('address', `${noun}: ${message}`);
+    } catch (error) {
+      showLiveNotice(`Could not change the scan setting for ${noun}: ${apiError(error)}`);
+    }
+  }
+  async function probeSelection(target) {
+    const subnetId = state.selectedNetwork.value?.id;
+    const noun = countOf(target.addresses.length, 'address', 'addresses');
+    showLiveNotice(`Probing ${noun}…`);
+    try {
+      const { data } = await api.post('/scans/probe', {
+        subnet_id: subnetId,
+        ips: target.addresses,
+      });
+      const responded = data.results.filter((result) => result.responded).length;
+      await refreshAfterMutation('address', `Probed ${noun}: ${formatNumber(responded)} responded`);
+    } catch (error) {
+      showLiveNotice(`Could not probe ${noun}: ${apiError(error)}`);
+    }
+  }
   function openScanDialog(target, mode) {
     dialogs.scanTarget.value = { address: target.address, raw: { ...target.raw } };
     dialogs.scanDialogMode.value = mode;
@@ -218,7 +250,18 @@ export function useWorkspaceActions(ctx) {
 
     // DHCP
     'dhcp.scope.create': async () => (await ensureProtocolDialogs()).dhcp.openScopeDialog(),
-    'dhcp.scope.create-here': async () => (await ensureProtocolDialogs()).dhcp.openScopeDialog(),
+    // From a selection the dialog opens on this network with the selected run
+    // as the pool.
+    'dhcp.scope.create-here': async (target) => {
+      const dhcp = (await ensureProtocolDialogs()).dhcp;
+      if (target.kind !== 'address-selection') return dhcp.openScopeDialog();
+      const [run] = target.runs;
+      await dhcp.openScopeDialog(null, {
+        ...state.selectedNetwork.value,
+        start_ip: run.start_ip,
+        end_ip: run.end_ip,
+      });
+    },
     'dhcp.scope.edit': async (target) => {
       const scope = scopeFor(target);
       if (!scope) return showLiveNotice('That scope is no longer in the inventory.');
@@ -290,7 +333,14 @@ export function useWorkspaceActions(ctx) {
       );
     },
     'ip.scan-inherit': (target) => setAddressScan(target, null, 'scan setting reset to inherit'),
-    'ip.probe': (target) => openScanDialog(target, 'probe'),
+    'ip.probe': (target) =>
+      target.kind === 'address-selection'
+        ? probeSelection(target)
+        : openScanDialog(target, 'probe'),
+    'ip.bulk-scan-enable': (target) => setSelectionScan(target, true, 'liveness scan enabled'),
+    'ip.bulk-scan-disable': (target) => setSelectionScan(target, false, 'liveness scan disabled'),
+    'ip.bulk-scan-inherit': (target) =>
+      setSelectionScan(target, null, 'scan setting reset to inherit'),
 
     // Ranges
     'range.create': () => openRangeEditor(null),

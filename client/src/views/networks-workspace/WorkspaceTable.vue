@@ -29,7 +29,8 @@
           tabindex="0"
           :aria-selected="selectedRowId === row.id"
           :draggable="draggableRows ? 'true' : undefined"
-          @click="emit('select', row)"
+          @mousedown="holdTextSelection"
+          @click="clickRow($event, row)"
           @keydown="handleRowKeydown($event, row)"
           @dragstart="emit('row-dragstart', row, $event)"
           @contextmenu.prevent="emit('row-menu', row, $event.currentTarget, $event)"
@@ -39,7 +40,7 @@
               type="checkbox"
               :checked="selectedRows.includes(row.id)"
               :aria-label="`Select ${row.address}`"
-              @change="emit('toggle-row', row.id)"
+              @click="clickCheckbox($event, row)"
             />
           </td>
           <td v-for="column in columns" :key="column.key" :class="column.className">
@@ -136,10 +137,32 @@ const emit = defineEmits([
   'sort',
   'select',
   'toggle-row',
+  'range-row',
   'toggle-all',
   'row-menu',
   'row-dragstart',
 ]);
+
+// Where rows have checkboxes, a click picks like a file list: Shift checks
+// every row from the last one checked to this one, Ctrl (Command on a Mac)
+// checks or unchecks this one, and a plain click opens details.
+function clickRow(event, row) {
+  if (props.showCheckboxes && event.shiftKey) emit('range-row', row);
+  else if (props.showCheckboxes && (event.ctrlKey || event.metaKey)) emit('toggle-row', row.id);
+  else emit('select', row);
+}
+// A range pick always leaves the box checked, even where the click just
+// unchecked it.
+function clickCheckbox(event, row) {
+  if (event.shiftKey) {
+    event.target.checked = true;
+    emit('range-row', row);
+  } else emit('toggle-row', row.id);
+}
+// Shift+click would otherwise also select the text between the two rows.
+function holdTextSelection(event) {
+  if (props.showCheckboxes && event.shiftKey) event.preventDefault();
+}
 
 // Rows are focusable so the table works without a pointer (T-38): Enter
 // opens details, Space toggles selection where the view has checkboxes,
@@ -152,7 +175,8 @@ function handleRowKeydown(event, row) {
     emit('select', row);
   } else if (event.key === ' ' && props.showCheckboxes) {
     event.preventDefault();
-    emit('toggle-row', row.id);
+    if (event.shiftKey) emit('range-row', row);
+    else emit('toggle-row', row.id);
   } else if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
     event.preventDefault();
     emit('row-menu', row, event.currentTarget);

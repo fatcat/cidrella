@@ -1290,6 +1290,47 @@ describe('canonical IP allocation endpoints', () => {
         .map((row) => row.ip_address),
     ).toEqual(['10.47.0.2', '10.47.0.3']);
   });
+
+  it('bulk scan override sets, clears and validates a run of addresses', async () => {
+    const s = await mkSubnet({
+      cidr: '10.48.0.0/24',
+      name: 'bulk-scan',
+      status: 'allocated',
+      gateway_address: '10.48.0.1',
+    });
+    const { getDb } = await import('../../../src/db/init.js');
+    const overrides = () =>
+      getDb()
+        .prepare(
+          `SELECT ip_address, scan_enabled FROM ip_addresses
+           WHERE subnet_id = ? AND scan_enabled IS NOT NULL ORDER BY ip_address`,
+        )
+        .all(s.id);
+    const put = (body) => request(app).put(`/api/subnets/${s.id}/ips/bulk-scan-enabled`).send(body);
+
+    const off = await put({ start_ip: '10.48.0.10', end_ip: '10.48.0.12', scan_enabled: false });
+    expect(off.status).toBe(200);
+    expect(off.body).toEqual({ count: 3, scan_enabled: 0 });
+    expect(overrides()).toEqual([
+      { ip_address: '10.48.0.10', scan_enabled: 0 },
+      { ip_address: '10.48.0.11', scan_enabled: 0 },
+      { ip_address: '10.48.0.12', scan_enabled: 0 },
+    ]);
+
+    const inherit = await put({ start_ip: '10.48.0.11', end_ip: '10.48.0.12', scan_enabled: null });
+    expect(inherit.body).toEqual({ count: 2, scan_enabled: null });
+    expect(overrides()).toEqual([{ ip_address: '10.48.0.10', scan_enabled: 0 }]);
+
+    expect(
+      (await put({ start_ip: '10.48.0.1', end_ip: '10.48.0.2', scan_enabled: 'yes' })).status,
+    ).toBe(400);
+    expect(
+      (await put({ start_ip: '10.48.0.9', end_ip: '10.48.0.1', scan_enabled: true })).status,
+    ).toBe(400);
+    expect(
+      (await put({ start_ip: '10.49.0.1', end_ip: '10.49.0.2', scan_enabled: true })).status,
+    ).toBe(400);
+  });
 });
 
 // --- Child-folder assignment ------------------------------------------

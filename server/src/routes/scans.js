@@ -71,12 +71,41 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   res.status(201).json(scan);
 });
 
-// POST /api/scans/probe: probe a single IP (or list) for liveness using startScan
+// POST /api/scans/probe: probe addresses for liveness using startScan.
+// { ip, subnet_id? } probes one address and answers with its result;
+// { ips, subnet_id } probes up to MAX_PROBE_IPS addresses of one network in a
+// single targeted scan and answers { results: [...] }.
+const MAX_PROBE_IPS = 256;
+function probeResult(scanId, scanResult, ip, db) {
+  const sr = ScanRun.getResultForIp(db, scanId, ip);
+  if (!sr) return null;
+  return {
+    ip,
+    responded: !!sr.responded,
+    mac: sr.mac_address,
+    method: scanResult?.results?.[ip] || scanResult?.method || 'unknown',
+    is_conflict: !!sr.is_conflict,
+    conflict_reason: sr.conflict_reason,
+  };
+}
+
 router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
-  const { ip, subnet_id } = req.body;
-  if (!ip || !isValidAddress(ip)) {
+  const { ip, ips, subnet_id } = req.body;
+  const many = ips !== undefined;
+  if (many) {
+    if (!Array.isArray(ips) || ips.length === 0 || ips.length > MAX_PROBE_IPS) {
+      return res
+        .status(400)
+        .json({ error: `ips must be a list of 1 to ${MAX_PROBE_IPS} addresses` });
+    }
+    if (!subnet_id) return res.status(400).json({ error: 'subnet_id is required with ips' });
+    if (!ips.every((item) => typeof item === 'string' && isValidAddress(item))) {
+      return res.status(400).json({ error: 'Every entry in ips must be a valid IP address' });
+    }
+  } else if (!ip || !isValidAddress(ip)) {
     return res.status(400).json({ error: 'Valid IP address is required' });
   }
+  const targets = many ? [...new Set(ips)] : [ip];
 
   const db = getDb();
 
@@ -90,8 +119,9 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
     if (subnet.status !== 'allocated') {
       return res.status(400).json({ error: 'Can only probe allocated subnets' });
     }
-    if (!networkContains(subnet.cidr, ip)) {
-      return res.status(400).json({ error: 'IP address is not in the selected subnet' });
+    const outside = targets.find((target) => !networkContains(subnet.cidr, target));
+    if (outside) {
+      return res.status(400).json({ error: `${outside} is not in the selected subnet` });
     }
   } else {
     const subnets = db.prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'").all();
@@ -110,27 +140,18 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
     // Create a scan record for this targeted probe
     const scanId = ScanRun.createPending(db, resolvedSubnetId);
 
-    // Run the scan synchronously with targeted IP
-    const scanResult = await startScan(db, scanId, resolvedSubnetId, { targetIps: [ip] });
-
-    // Read the scan result for this IP
-    const sr = ScanRun.getResultForIp(db, scanId, ip);
+    // Run the scan synchronously with the targeted IPs
+    const scanResult = await startScan(db, scanId, resolvedSubnetId, { targetIps: targets });
+    const results = targets.map((target) => probeResult(scanId, scanResult, target, db));
 
     // Clean up the probe scan record (don't clutter scan history)
     ScanRun.deleteById(db, scanId);
 
-    if (!sr) {
+    if (many) return res.json({ results: results.filter(Boolean) });
+    if (!results[0]) {
       return res.status(500).json({ error: 'Probe completed but no result recorded' });
     }
-
-    res.json({
-      ip,
-      responded: !!sr.responded,
-      mac: sr.mac_address,
-      method: scanResult?.results?.[ip] || scanResult?.method || 'unknown',
-      is_conflict: !!sr.is_conflict,
-      conflict_reason: sr.conflict_reason,
-    });
+    res.json(results[0]);
   } catch (err) {
     res.status(500).json({ error: `Probe failed: ${err.message}` });
   }

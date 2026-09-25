@@ -946,13 +946,16 @@ function selectScope(scope) {
 }
 
 // Scope dialog methods
-async function openScopeDialog(scope = null) {
+// `subnetCtx` is for a new scope: the network it is on, optionally with the
+// start_ip and end_ip of its pool (the workspace's Create DHCP Scope on a
+// selection).
+async function openScopeDialog(scope = null, subnetCtx = undefined) {
   if (scope) {
     // Ensure the header reflects this scope while editing
     selectedScope.value = scope;
     scopeDialogRef.value.openEdit(scope);
   } else {
-    scopeDialogRef.value.openNewWithPicker();
+    scopeDialogRef.value.openNewWithPicker(subnetCtx);
   }
 }
 

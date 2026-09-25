@@ -156,7 +156,7 @@ const ACTION_DEFINITIONS = [
     targetKind: 'network-selection',
     available: (target) => mergeBlocker(target) === '',
     disabledReason: (target) => mergeBlocker(target),
-    menus: ['selection'],
+    menus: ['row', 'selection'],
   },
   {
     id: 'network.move',
@@ -325,9 +325,17 @@ const ACTION_DEFINITIONS = [
     id: 'dhcp.scope.create-here',
     label: 'Create DHCP Scope',
     capability: 'dhcp:write',
-    targetKind: ['address', 'range'],
-    available: (target) => (target.kind === 'range' ? !target.isScope : target.type === 'gateway'),
-    disabledReason: 'This range already backs a DHCP scope.',
+    targetKind: ['address', 'range', 'address-selection'],
+    available: (target) =>
+      target.kind === 'address-selection'
+        ? target.runs?.length === 1 && !target.inScope
+        : target.kind === 'range'
+          ? !target.isScope
+          : target.type === 'gateway',
+    disabledReason: (target) =>
+      target.kind === 'address-selection'
+        ? 'A scope needs one unbroken run of addresses outside any DHCP scope.'
+        : 'This range already backs a DHCP scope.',
   },
   {
     id: 'dhcp.scope.edit',
@@ -474,7 +482,7 @@ const ACTION_DEFINITIONS = [
     note: 'Create IP Reservations',
     capability: 'subnets:write',
     targetKind: 'address-selection',
-    menus: ['selection'],
+    menus: ['row', 'selection'],
     available: (target) =>
       target.count > 0 &&
       target.allocationStates?.length === target.count &&
@@ -487,7 +495,7 @@ const ACTION_DEFINITIONS = [
     note: 'Release IP Reservations',
     capability: 'subnets:write',
     targetKind: 'address-selection',
-    menus: ['selection'],
+    menus: ['row', 'selection'],
     available: (target) =>
       target.count > 0 &&
       target.allocationStates?.length === target.count &&
@@ -499,7 +507,7 @@ const ACTION_DEFINITIONS = [
     label: 'Set range type',
     capability: 'subnets:write',
     targetKind: 'address-selection',
-    menus: ['selection'],
+    menus: ['row', 'selection'],
     available: (target) => target.count > 0,
     disabledReason: 'Select at least one address.',
   },
@@ -528,14 +536,45 @@ const ACTION_DEFINITIONS = [
     available: (target) => target.raw?.scan_enabled != null,
     disabledReason: 'This address inherits the network scan setting.',
   },
+  // A selection gets both switches, since its addresses may differ.
+  {
+    id: 'ip.bulk-scan-enable',
+    label: 'Enable liveness scan',
+    capability: 'subnets:write',
+    targetKind: 'address-selection',
+    available: (target) => target.runs?.length > 0,
+    disabledReason: 'Select at least one address.',
+  },
+  {
+    id: 'ip.bulk-scan-disable',
+    label: 'Disable liveness scan',
+    capability: 'subnets:write',
+    targetKind: 'address-selection',
+    available: (target) => target.runs?.length > 0,
+    disabledReason: 'Select at least one address.',
+  },
+  {
+    id: 'ip.bulk-scan-inherit',
+    label: 'Reset scan to Inherit',
+    capability: 'subnets:write',
+    targetKind: 'address-selection',
+    available: (target) => target.scanOverrides > 0,
+    disabledReason: 'Every selected address inherits the network scan setting.',
+  },
   // Probe sits last in the menu, under the one separator (operator's rule).
   {
     id: 'ip.probe',
     label: 'Probe now',
     capability: 'subnets:write',
-    targetKind: ['address', 'dhcp-address'],
-    available: (target) => target.kind === 'address' || target.address != null,
-    disabledReason: 'This row has no address to probe.',
+    targetKind: ['address', 'dhcp-address', 'address-selection'],
+    available: (target) =>
+      target.kind === 'address-selection'
+        ? target.addresses?.length > 0 && target.addresses.length <= MAX_PROBE_ADDRESSES
+        : target.kind === 'address' || target.address != null,
+    disabledReason: (target) =>
+      target.kind === 'address-selection'
+        ? `Probe at most ${MAX_PROBE_ADDRESSES} addresses at a time.`
+        : 'This row has no address to probe.',
     placement: 'last',
     separatorBefore: true,
   },
@@ -629,6 +668,17 @@ const ROW_MENU_ORDER = {
     'dhcp.leases.sync',
     'dhcp.scope.delete',
   ],
+  // The single-address order, with the bulk forms in the single ones' places.
+  'address-selection': [
+    'dhcp.scope.create-here',
+    'ip.bulk-release',
+    'ip.bulk-reserve',
+    'ip.bulk-range-type',
+    'ip.bulk-scan-enable',
+    'ip.bulk-scan-disable',
+    'ip.bulk-scan-inherit',
+    'ip.probe',
+  ],
   range: [
     'dhcp.scope.edit',
     'dhcp.scope.remove-members',
@@ -645,6 +695,9 @@ const SELECTION_MENU_ORDER = {
   'address-selection': ['ip.bulk-range-type', 'ip.bulk-reserve', 'ip.bulk-release'],
   'network-selection': ['network.merge', 'network.apply-defaults'],
 };
+
+// The server's cap on one probe request (routes/scans.js MAX_PROBE_IPS).
+export const MAX_PROBE_ADDRESSES = 256;
 
 const asList = (value) => (Array.isArray(value) ? value : value == null ? [] : [value]);
 
@@ -806,7 +859,7 @@ export function menuActions({
   });
   const order =
     menu === 'row'
-      ? ROW_MENU_ORDER[target?.kind]
+      ? ROW_MENU_ORDER[target?.kind] || SELECTION_MENU_ORDER[target?.kind]
       : menu === 'actions'
         ? ACTIONS_MENU_ORDER[view]
         : menu === 'selection'

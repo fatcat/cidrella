@@ -449,9 +449,13 @@ function installApiFixtures() {
     }
     if (url === '/subnets/11/ips/1.1.1.33/scan-enabled')
       return response({ ip_address: '1.1.1.33', scan_enabled: body.scan_enabled });
+    if (url === '/subnets/11/ips/bulk-scan-enabled')
+      return response({ count: 3, scan_enabled: body.scan_enabled ? 1 : 0 });
     throw new Error(`Unexpected PUT ${url}`);
   });
-  api.post.mockImplementation((url) => {
+  api.post.mockImplementation((url, body) => {
+    if (url === '/scans/probe' && body?.ips)
+      return response({ results: body.ips.map((ip, i) => ({ ip, responded: i === 0 })) });
     if (url === '/scans/probe')
       return response({ ip: '1.1.1.33', responded: true, method: 'arp', mac: '02:00:00:00:00:33' });
     throw new Error(`Unexpected POST ${url}`);
@@ -482,6 +486,8 @@ async function mountWorkspace({ settled = true, ...options } = {}) {
           template:
             '<input class="w-full" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
         },
+        // The vendor select needs the PrimeVue plugin too (the bulk range dialog).
+        Select: { props: ['modelValue', 'options'], template: '<select />' },
         // The vendor paginator needs the PrimeVue plugin; the stub keeps its
         // contract (first/rows/totalRecords in, a page event out).
         Paginator: {
@@ -781,8 +787,8 @@ describe('Networks workspace', () => {
     const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const rowCheckboxes = wrapper.findAll('tbody input[type="checkbox"]');
-    await rowCheckboxes[2].setValue(true);
-    await rowCheckboxes[3].setValue(true);
+    await rowCheckboxes[2].trigger('click');
+    await rowCheckboxes[3].trigger('click');
 
     expect(wrapper.find('.selection-bar').text()).toContain('2 selected');
     await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
@@ -1348,7 +1354,7 @@ describe('Networks workspace', () => {
     expect(checkboxes).toHaveLength(2);
 
     // One network: Merge stays visible but disabled with its reason.
-    await checkboxes[0].setValue(true);
+    await checkboxes[0].trigger('click');
     let bar = wrapper.find('.selection-bar');
     const merge = () => bar.findAll('button').find((button) => button.text() === 'Merge');
     expect(bar.text()).toContain('1 selected');
@@ -1357,7 +1363,7 @@ describe('Networks workspace', () => {
     expect(bar.text()).not.toContain('Reserve');
 
     // Two allocated roots: still disabled, and the reason says to deallocate.
-    await checkboxes[1].setValue(true);
+    await checkboxes[1].trigger('click');
     bar = wrapper.find('.selection-bar');
     expect(merge().attributes('disabled')).toBeDefined();
     expect(merge().attributes('title')).toContain('Deallocate');
@@ -1375,8 +1381,8 @@ describe('Networks workspace', () => {
     await flushPromises();
     checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
     expect(checkboxes).toHaveLength(3);
-    await checkboxes[1].setValue(true);
-    await checkboxes[2].setValue(true);
+    await checkboxes[1].trigger('click');
+    await checkboxes[2].trigger('click');
     bar = wrapper.find('.selection-bar');
     expect(merge().attributes('disabled')).toBeUndefined();
     await merge().trigger('click');
@@ -1706,6 +1712,91 @@ describe('Networks workspace', () => {
     await flushPromises();
     expect(globalThis.document.activeElement).toBe(rows[1].element);
     wrapper.unmount();
+  });
+
+  it('picks a range with Shift in the table and right-clicks a selection as a whole', async () => {
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await enterTestNetwork(wrapper);
+    const rows = wrapper.findAll('tbody tr');
+    const checked = () =>
+      wrapper
+        .findAll('tbody input[type="checkbox"]')
+        .map((box, index) => (box.element.checked ? index : null))
+        .filter((index) => index != null);
+    const menuLabels = () =>
+      wrapper.findAll('.row-menu button strong').map((label) => label.text());
+
+    await rows[2].find('input[type="checkbox"]').trigger('click');
+    await rows[5].trigger('click', { shiftKey: true });
+    expect(checked()).toEqual([2, 3, 4, 5]);
+    expect(wrapper.find('.selection-bar').text()).toContain('4 selected');
+    // Shift on an already checked box keeps it checked.
+    await rows[3].find('input[type="checkbox"]').trigger('click', { shiftKey: true });
+    expect(checked()).toEqual([2, 3, 4, 5]);
+
+    // Right-click inside the selection targets all of it, not the one row.
+    await rows[4].trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('4 ADDRESSES SELECTED');
+    expect(menuLabels()).toContain('Set range type');
+    expect(menuLabels()).not.toContain('Set Range Type');
+    await wrapper
+      .findAll('.row-menu button')
+      .find((button) => button.text() === 'Set range type')
+      .trigger('click');
+    await flushPromises();
+    const dialog = wrapper.findComponent({ name: 'BulkRangeTypeDialog' });
+    expect(dialog.props('visible')).toBe(true);
+    expect(dialog.props('selectedRuns')).toEqual([
+      { start_ip: '1.1.1.2', end_ip: '1.1.1.5', count: 4 },
+    ]);
+    expect(checked()).toEqual([2, 3, 4, 5]);
+
+    // Outside the selection a right-click is the row's own menu.
+    await rows[9].trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('ADDRESSES ACTIONS');
+    expect(menuLabels()).toContain('Set Range Type');
+    wrapper.unmount();
+  });
+
+  it('right-clicks a grid drag as the dragged range', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    const cells = wrapper.findAll('.address-grid button');
+    await cells[10].trigger('pointerdown', { button: 0 });
+    await cells[11].trigger('pointerenter', { buttons: 1 });
+    await cells[12].trigger('pointerenter', { buttons: 1 });
+    globalThis.window.dispatchEvent(new globalThis.Event('pointerup'));
+    await cells[12].trigger('click');
+    await flushPromises();
+    expect(wrapper.findAll('.address-grid button.selected')).toHaveLength(3);
+
+    await cells[11].trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('3 ADDRESSES SELECTED');
+    const pick = async (label) => {
+      await cells[11].trigger('contextmenu');
+      await flushPromises();
+      await wrapper
+        .findAll('.row-menu button')
+        .find((button) => button.text() === label)
+        .trigger('click');
+      await flushPromises();
+    };
+    await pick('Disable liveness scan');
+    expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/bulk-scan-enabled', {
+      start_ip: '1.1.1.10',
+      end_ip: '1.1.1.12',
+      scan_enabled: false,
+    });
+    await pick('Probe now');
+    expect(api.post).toHaveBeenCalledWith('/scans/probe', {
+      subnet_id: 11,
+      ips: ['1.1.1.10', '1.1.1.11', '1.1.1.12'],
+    });
+    expect(wrapper.text()).toContain('Probed 3 addresses: 1 responded');
   });
 
   it('applies the shared small-text size set from the header user menu', async () => {

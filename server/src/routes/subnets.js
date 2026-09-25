@@ -2727,6 +2727,28 @@ function subnetAddress(subnet, ip) {
   return canonical && networkContains(subnet.cidr, canonical) ? canonical : null;
 }
 
+// The start_ip..end_ip run a bulk address request names, checked against the
+// subnet: both ends valid for its family and inside it, in order, at most
+// 1024 addresses. Returns { error } or { addresses() } yielding each address.
+function bulkRange(subnet, { start_ip, end_ip }) {
+  if (!start_ip || !end_ip) return { error: 'start_ip and end_ip are required' };
+  const parsed = parseNetwork(subnet.cidr);
+  const start = typeof start_ip === 'string' ? familyAddress(parsed, start_ip) : null;
+  const end = typeof end_ip === 'string' ? familyAddress(parsed, end_ip) : null;
+  if (start === null) return { error: `start_ip must be a valid IPv${parsed.family} address` };
+  if (end === null) return { error: `end_ip must be a valid IPv${parsed.family} address` };
+  if (!parsedNetworkContains(parsed, start_ip) || !parsedNetworkContains(parsed, end_ip)) {
+    return { error: 'IP range must be within the subnet' };
+  }
+  if (start > end) return { error: 'start_ip must be <= end_ip' };
+  if (end - start > 1024n) return { error: 'Range too large (max 1024 IPs)' };
+  return {
+    *addresses() {
+      for (let value = start; value <= end; value++) yield bigToAddress(value, parsed.family);
+    },
+  };
+}
+
 // PUT /api/subnets/:id/ips/bulk-allocation: reserve or release a range of IPs
 router.put(
   '/:id/ips/bulk-allocation',
@@ -2737,40 +2759,22 @@ router.put(
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
     const { start_ip, end_ip, allocation_state, note } = req.body;
-    if (!start_ip || !end_ip)
-      return res.status(400).json({ error: 'start_ip and end_ip are required' });
-    const parsed = parseNetwork(subnet.cidr);
-    const startAddress = typeof start_ip === 'string' ? familyAddress(parsed, start_ip) : null;
-    const endAddress = typeof end_ip === 'string' ? familyAddress(parsed, end_ip) : null;
-    if (startAddress === null)
-      return res
-        .status(400)
-        .json({ error: `start_ip must be a valid IPv${parsed.family} address` });
-    if (endAddress === null)
-      return res.status(400).json({ error: `end_ip must be a valid IPv${parsed.family} address` });
+    const range = bulkRange(subnet, req.body);
+    if (range.error) return res.status(400).json({ error: range.error });
     if (!['unassigned', 'reserved'].includes(allocation_state)) {
       return res.status(400).json({ error: 'allocation_state must be reserved or unassigned' });
-    }
-    if (!parsedNetworkContains(parsed, start_ip) || !parsedNetworkContains(parsed, end_ip)) {
-      return res.status(400).json({ error: 'IP range must be within the subnet' });
     }
     if (note !== undefined) {
       const err = validateDisplayString(note, { maxLength: 1024 });
       if (err) return res.status(400).json({ error: `note ${err}` });
     }
 
-    if (startAddress > endAddress)
-      return res.status(400).json({ error: 'start_ip must be <= end_ip' });
-    if (endAddress - startAddress > 1024n)
-      return res.status(400).json({ error: 'Range too large (max 1024 IPs)' });
-
     const reservationNote = allocation_state === 'reserved' ? note || null : null;
     const updated = [];
     const skipped = [];
 
     const bulkUpdate = db.transaction(() => {
-      for (let value = startAddress; value <= endAddress; value++) {
-        const ip = bigToAddress(value, parsed.family);
+      for (const ip of range.addresses()) {
         // Silently skip protected IPs (network/broadcast/gateway) so a bulk
         // "reserve this /24" doesn't fail wholesale on three topology IPs.
         if (ipAllocationRejectionReason(subnet, ip)) {
@@ -2868,6 +2872,41 @@ router.put(
     IpAddress.setScanEnabled(db, subnet.id, ipAddress, scanEn);
 
     res.json({ ip_address: ipAddress, scan_enabled: scanEn });
+  }),
+);
+
+// PUT /:id/ips/bulk-scan-enabled: the per-IP liveness scan override for a
+// run of addresses at once (true, false, or null to inherit).
+router.put(
+  '/:id/ips/bulk-scan-enabled',
+  requirePerm('subnets:write'),
+  asyncHandler((req, res) => {
+    const db = getDb();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    const range = bulkRange(subnet, req.body);
+    if (range.error) return res.status(400).json({ error: range.error });
+    const { scan_enabled } = req.body;
+    if (scan_enabled !== null && typeof scan_enabled !== 'boolean') {
+      return res.status(400).json({ error: 'scan_enabled must be boolean or null' });
+    }
+    const scanEn = scan_enabled === null ? null : scan_enabled ? 1 : 0;
+
+    let count = 0;
+    db.transaction(() => {
+      for (const ip of range.addresses()) {
+        IpAddress.setScanEnabled(db, subnet.id, ip, scanEn);
+        count += 1;
+      }
+    })();
+
+    audit(req.user.id, 'ip_scan_enabled_changed', 'ip_address', subnet.id, {
+      start_ip: req.body.start_ip,
+      end_ip: req.body.end_ip,
+      count,
+      scan_enabled: scanEn,
+    });
+    res.json({ count, scan_enabled: scanEn });
   }),
 );
 

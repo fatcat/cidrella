@@ -326,6 +326,45 @@ describe('workspace action registry', () => {
     );
   });
 
+  it('offers a selection the single-address actions in the same order on right-click', () => {
+    const all = () => true;
+    const target = (extra = {}) => ({
+      kind: 'address-selection',
+      count: 3,
+      allocationStates: ['unassigned', 'unassigned', 'unassigned'],
+      addresses: ['10.0.0.10', '10.0.0.11', '10.0.0.12'],
+      runs: [{ start_ip: '10.0.0.10', end_ip: '10.0.0.12', count: 3 }],
+      inScope: false,
+      scanOverrides: 0,
+      ...extra,
+    });
+    const labels = (item) =>
+      menuActions({ menu: 'row', target: item, can: all }).map((a) => a.label);
+    expect(labels(target())).toEqual([
+      'Create DHCP Scope',
+      'Reserve',
+      'Set range type',
+      'Enable liveness scan',
+      'Disable liveness scan',
+      'Probe now',
+    ]);
+    // Two runs, or an address already in a scope: no scope. An override: inherit.
+    const split = target({
+      runs: [
+        { start_ip: '10.0.0.10', end_ip: '10.0.0.10', count: 1 },
+        { start_ip: '10.0.0.12', end_ip: '10.0.0.12', count: 1 },
+      ],
+      scanOverrides: 1,
+    });
+    expect(labels(split)).not.toContain('Create DHCP Scope');
+    expect(labels(split)).toContain('Reset scan to Inherit');
+    expect(labels(target({ inScope: true }))).not.toContain('Create DHCP Scope');
+    const many = Array.from({ length: 257 }, (_, i) => `10.0.${i >> 8}.${i & 255}`);
+    expect(actionAvailability('ip.probe', target({ addresses: many }), all).reason).toContain(
+      '256',
+    );
+  });
+
   it('targets folders and checked rows through their own kinds', () => {
     const all = () => true;
     const labels = (options) => menuActions(options).map((item) => item.label);
@@ -349,7 +388,7 @@ describe('workspace action registry', () => {
     expect(
       labels({ menu: 'actions', target: { kind: 'network', id: 1 }, view: 'networks', can: all }),
     ).not.toContain('Rename folder');
-    expect(WORKSPACE_ACTIONS['network.merge'].menus).toEqual(['selection']);
+    expect(WORKSPACE_ACTIONS['network.merge'].menus).not.toContain('actions');
 
     // The selection bar keeps unavailable entries so it can say why.
     const selection = (networks) => ({
