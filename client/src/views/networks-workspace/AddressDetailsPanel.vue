@@ -109,9 +109,16 @@
       </div>
     </section>
 
-    <section v-if="activeTab === 'overview' && canWrite" class="panel-section">
+    <section v-if="activeTab === 'overview' && (canWrite || dnsAction)" class="panel-section">
       <span class="eyebrow">ADDRESS ACTIONS</span>
       <div class="quick-actions">
+        <button
+          v-if="dnsAction"
+          data-track="workspace-address-create-dns"
+          @click="emit('action', dnsAction)"
+        >
+          {{ dnsAction.label }}
+        </button>
         <button
           v-if="canWrite && canReserve"
           data-track="workspace-create-ip-reservation"
@@ -128,6 +135,7 @@
           Release IP Reservation
         </button>
         <button
+          v-if="canWrite"
           :disabled="busyAction === 'probe' || !supportsProbe"
           :title="
             supportsProbe ? '' : 'Manual probing is currently available for IPv4 addresses only.'
@@ -322,8 +330,11 @@ const props = defineProps({
   canWrite: { type: Boolean, default: false },
   canReadDevice: { type: Boolean, default: false },
   canWriteDevice: { type: Boolean, default: false },
+  // The registry's Create DNS entry item for this address when it is
+  // available (the same entry the row menu offers), else null.
+  dnsAction: { type: Object, default: null },
 });
-const emit = defineEmits(['close', 'navigate', 'changed', 'open-network']);
+const emit = defineEmits(['close', 'navigate', 'changed', 'open-network', 'action']);
 
 const dash = EMPTY_CELL;
 const events = ref([]);

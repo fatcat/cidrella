@@ -68,20 +68,6 @@
     </button>
     <button @click="emit('clear-filters')">Clear all</button>
   </div>
-
-  <div v-if="selectedRows.length" class="selection-bar">
-    <strong>{{ selectedRows.length }} selected</strong>
-    <button
-      v-for="action in selectionActions"
-      :key="action.id"
-      :disabled="!action.available"
-      :title="action.available ? action.note : action.reason"
-      @click="emit('selection-action', action.id)"
-    >
-      {{ action.label }}
-    </button>
-    <button @click="selectedRows = []">Clear</button>
-  </div>
 </template>
 
 <script setup>
@@ -89,8 +75,9 @@ import ColumnChooserButton from '../../components/table/ColumnChooserButton.vue'
 import FilterMenu from '../../components/table/FilterMenu.vue';
 import { filterValueLabel } from './workspace-columns.js';
 
-// Search, filters, presentation switch, column chooser, filter chips and the
-// bulk-selection bar. All state is owned by NetworksWorkspace.vue.
+// Search, filters, presentation switch, column chooser and filter chips. All
+// state is owned by NetworksWorkspace.vue. A checked selection is acted on from
+// its right-click menu; there is no bar for it here.
 defineProps({
   // An IPv6 network has no grid: its address space cannot be enumerated, so
   // the switcher is withheld and the table is the one presentation.
@@ -107,9 +94,6 @@ defineProps({
   columnCatalog: { type: Array, required: true },
   columns: { type: Array, required: true },
   canCreate: { type: Boolean, default: false },
-  // Registry items for the selection bar (`menuActions({ menu: 'selection' })`
-  // with unavailable entries kept so their reason can be shown).
-  selectionActions: { type: Array, default: () => [] },
   filterChips: { type: Array, default: () => [] },
 });
 const emit = defineEmits([
@@ -119,13 +103,11 @@ const emit = defineEmits([
   'clear-filters',
   'filter-open',
   'add',
-  'selection-action',
 ]);
 const tableQuery = defineModel('tableQuery', { type: String, default: '' });
 const filters = defineModel('filters', { type: Object, required: true });
 const showAvailable = defineModel('showAvailable', { type: Boolean, default: true });
 const presentation = defineModel('presentation', { type: String, default: 'table' });
-const selectedRows = defineModel('selectedRows', { type: Array, default: () => [] });
 </script>
 
 <style scoped>
@@ -278,33 +260,7 @@ button {
   font-size: 0.66rem;
   transform: scale(0.82);
 }
-.selection-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.42rem 0.65rem;
-  color: var(--cid-primary-contrast-color, white);
-  background: var(--preview-accent);
-  font-size: 0.67rem;
-}
-.selection-bar button {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  text-decoration: underline;
-  cursor: pointer;
-}
-.selection-bar button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-  text-decoration: none;
-}
-.selection-bar button:last-child {
-  margin-left: auto;
-}
-.available-switch,
-.selection-bar {
+.available-switch {
   font-size: var(--workspace-font-small);
 }
 .table-search input,

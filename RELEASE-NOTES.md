@@ -281,9 +281,20 @@ first on a 0.4.17 host.
   takes `start_ip`, `end_ip` and `scan_enabled` (`true`, `false` or `null`);
   `POST /api/scans/probe` also takes `{ subnet_id, ips: [...] }` and answers
   `{ results: [...] }` from one targeted scan.
+- **Create DNS entry for an address.** The address row menu and the address
+  details panel offer Create DNS entry, which opens the record editor with an
+  A (or AAAA) record for that address in the network's domain zone. It is
+  offered where DNS may claim the address (unassigned, an IP Reservation or
+  the gateway), not in a DHCP pool, and needs `dns:write`.
 
 ### Changed
 
+- Checking rows no longer opens a bar above the table. The bar pushed the
+  rows down as it appeared, so the row under the pointer moved and the
+  selection looked wrong. A checked selection is acted on from its
+  right-click menu, which already offered every action the bar had. The
+  header checkbox now shows the selection (checked, or partly checked) and
+  clears it when clicked.
 - At All Networks and in a folder, the DNS and DHCP tabs are the same record
   and address tables as inside a network, across every network in view,
   with the same columns and filters. They used to list zones and scopes

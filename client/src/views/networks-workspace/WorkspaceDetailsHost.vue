@@ -12,9 +12,11 @@
       :dns="dns"
       :dhcp-count="dhcpCount"
       :can-write="canWrite"
+      :dns-action="dnsAction"
       @close="emit('close')"
       @navigate="(view, identity) => emit('navigate', view, identity)"
       @changed="emit('changed', $event)"
+      @action="emit('action', $event)"
     />
 
     <aside v-else-if="row" key="generic" class="details-panel">
@@ -92,6 +94,8 @@ defineProps({
   items: { type: Array, default: () => [] },
   related: { type: Array, default: () => [] },
   actions: { type: Array, default: () => [] },
+  // Create DNS entry for the address panel: a row-menu item or null.
+  dnsAction: { type: Object, default: null },
 });
 const emit = defineEmits(['close', 'navigate', 'changed', 'action']);
 </script>

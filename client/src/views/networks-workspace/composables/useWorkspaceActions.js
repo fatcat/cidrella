@@ -55,6 +55,12 @@ export function useWorkspaceActions(ctx) {
     return null;
   }
 
+  const zoneKey = (name) =>
+    String(name || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\.$/, '');
+
   function scopeFor(target) {
     if (target.kind === 'dhcp-scope') return target.raw;
     if (target.kind === 'workspace') return target.scope || null;
@@ -229,6 +235,34 @@ export function useWorkspaceActions(ctx) {
       const zone = zoneFor(target);
       if (!zone) return showLiveNotice('That zone is no longer in the inventory.');
       (await ensureProtocolDialogs()).dns.openRecordEditor(null, { type: 'CNAME' }, zone);
+    },
+    // The record goes in the forward zone named by the network's domain, the
+    // zone its hosts already resolve in.
+    'dns.record.create-for-address': async (target) => {
+      const domain = zoneKey(state.selectedNetwork.value?.domain_name);
+      if (!domain) {
+        return showLiveNotice(
+          'This network has no DNS domain. Set one with Edit network, then create the entry.',
+        );
+      }
+      const matches = (zone) => zone.type === 'forward' && zoneKey(zone.name) === domain;
+      let zone = state.dnsZones.value.find(matches);
+      if (!zone) {
+        try {
+          const response = await api.get('/dns/zones', { params: { type: 'forward' } });
+          zone = (response.data || []).find(matches);
+        } catch (error) {
+          return showLiveNotice(`Could not load DNS zones: ${apiError(error)}`);
+        }
+      }
+      if (!zone)
+        return showLiveNotice(`There is no forward zone for ${domain}. Add it in DNS first.`);
+      const type = String(target.address).includes(':') ? 'AAAA' : 'A';
+      (await ensureProtocolDialogs()).dns.openRecordEditor(
+        null,
+        { type, value: target.address },
+        zone,
+      );
     },
     'dns.record.edit': async (target) =>
       (await ensureProtocolDialogs()).dns.openRecordEditor(target.raw, {}, zoneFor(target)),

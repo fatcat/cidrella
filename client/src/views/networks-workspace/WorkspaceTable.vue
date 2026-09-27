@@ -6,8 +6,10 @@
           <th v-if="showCheckboxes" class="check-cell">
             <input
               type="checkbox"
-              aria-label="Select all visible rows"
-              @change="emit('toggle-all', $event)"
+              :checked="allRowsChecked"
+              :indeterminate="selectedRows.length > 0 && !allRowsChecked"
+              :aria-label="selectedRows.length ? 'Clear selection' : 'Select all visible rows'"
+              @click.prevent="emit('toggle-all', selectedRows.length === 0)"
             />
           </th>
           <th v-for="column in columns" :key="column.key" :class="column.className">
@@ -112,6 +114,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
 import AddressTypePill from '../../components/table/AddressTypePill.vue';
 import StatusDot from '../../components/StatusDot.vue';
 import { EMPTY_CELL } from '../../utils/format.js';
@@ -142,6 +145,14 @@ const emit = defineEmits([
   'row-menu',
   'row-dragstart',
 ]);
+
+// The header box shows the selection: checked when every visible row is,
+// partly checked when some are. Clicking it with anything checked clears the
+// selection, on or off this page; with nothing checked it checks every
+// visible row. `toggle-all` carries which of the two to do.
+const allRowsChecked = computed(
+  () => props.rows.length > 0 && props.rows.every((row) => props.selectedRows.includes(row.id)),
+);
 
 // Where rows have checkboxes, a click picks like a file list: Shift checks
 // every row from the last one checked to this one, Ctrl (Command on a Mac)

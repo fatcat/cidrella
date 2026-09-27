@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import api from '../../../../src/api/client.js';
 import AddressDetailsPanel from '../../../../src/views/networks-workspace/AddressDetailsPanel.vue';
 import ResourceExplorer from '../../../../src/views/networks-workspace/ResourceExplorer.vue';
-import WorkspaceToolbar from '../../../../src/views/networks-workspace/WorkspaceToolbar.vue';
 import { menuActions } from '../../../../src/views/networks-workspace/workspace-actions.js';
 import {
   decodeWorkspaceQuery,
@@ -83,28 +82,14 @@ describe('workspace P1 regression contracts', () => {
     expect(explorer.text().includes('Manage folders')).toBe(folders);
     expect(explorer.text().includes('Defaults')).toBe(defaults);
 
-    const toolbar = mount(WorkspaceToolbar, {
-      props: {
-        activeView: 'addresses',
-        contextKind: 'network',
-        viewMeta: { search: '', addAction: '', addLabel: '' },
-        filterOptions: { status: [], type: [], range: [], protocol: [] },
-        columnTableName: 'Addresses',
-        columnCatalog: [],
-        columns: [],
-        filters: { status: '', type: '', online: '', scan: '', range: '', protocol: '' },
-        selectedRows: ['address:10.0.0.9'],
-        selectionActions: menuActions({
-          menu: 'selection',
-          target: { kind: 'address-selection', count: 1, allocationStates: ['unassigned'] },
-          can: () => range && reserve,
-          includeUnavailable: true,
-        }),
-      },
-      global: { stubs: { ColumnChooserButton: true } },
-    });
-    expect(toolbar.text().includes('Set range type')).toBe(range);
-    expect(toolbar.text().includes('Reserve')).toBe(reserve);
+    // A checked selection's actions live in its row menu, gated the same way.
+    const selectionMenu = menuActions({
+      menu: 'row',
+      target: { kind: 'address-selection', count: 1, allocationStates: ['unassigned'] },
+      can: () => range && reserve,
+    }).map((item) => item.label);
+    expect(selectionMenu.includes('Set range type')).toBe(range);
+    expect(selectionMenu.includes('Reserve')).toBe(reserve);
   });
 
   it('renders subdivided unallocated parents as nonallocatable search-highlighted containers', async () => {

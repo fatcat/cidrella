@@ -10,9 +10,9 @@ import { mergeNetworks } from '../../utils/ip.js';
 //   workspace         no resource selected; the create menu, explorer footer
 //   folder            an explorer folder row or the folder context
 //   network           a network row or the selected network
-//   network-selection checked network rows; the selection bar
+//   network-selection checked network rows; the menu of a checked row
 //   address           an address row inside a network
-//   address-selection checked address rows; the selection bar
+//   address-selection checked address rows; the menu of a checked row
 //   dns-zone          a zone row in an aggregate DNS inventory
 //   dns-record        a record row
 //   dhcp-scope        a scope row in an aggregate DHCP inventory
@@ -156,7 +156,7 @@ const ACTION_DEFINITIONS = [
     targetKind: 'network-selection',
     available: (target) => mergeBlocker(target) === '',
     disabledReason: (target) => mergeBlocker(target),
-    menus: ['row', 'selection'],
+    menus: ['row'],
   },
   {
     id: 'network.move',
@@ -177,7 +177,7 @@ const ACTION_DEFINITIONS = [
     targetKind: ['network', 'network-selection'],
     available: (target) => target.kind === 'network' || target.count > 0,
     disabledReason: 'Select at least one network.',
-    menus: ['actions', 'row', 'selection'],
+    menus: ['actions', 'row'],
     views: ['networks', 'addresses', 'ranges'],
   },
   {
@@ -254,6 +254,26 @@ const ACTION_DEFINITIONS = [
     targetKind: ['dns-zone', 'workspace'],
     available: (target) => target.kind === 'dns-zone' || target.zone != null,
     disabledReason: 'Open a zone first. A record needs a zone to be saved into.',
+  },
+  // An A or AAAA record for one address, in the network's domain zone. Only
+  // an address DNS may claim is offered: the lifecycle refuses DHCP-owned,
+  // pooled and system addresses, and a second name for a named address
+  // belongs in a CNAME.
+  {
+    id: 'dns.record.create-for-address',
+    label: 'Create DNS entry',
+    icon: 'pi pi-globe',
+    capability: 'dns:write',
+    targetKind: 'address',
+    available: (target) =>
+      ['unassigned', 'reserved', 'gateway'].includes(target.allocation_state) &&
+      !inDhcpPool(target),
+    disabledReason: (target) =>
+      target.allocation_state === 'static_dns'
+        ? 'This address already has a DNS name. Add another name as a CNAME.'
+        : inDhcpPool(target)
+          ? 'This address is in a DHCP pool. Create a DHCP Reservation for it instead.'
+          : 'DNS cannot name this address while DHCP or the network topology owns it.',
   },
   {
     id: 'dns.record.edit',
@@ -482,7 +502,7 @@ const ACTION_DEFINITIONS = [
     note: 'Create IP Reservations',
     capability: 'subnets:write',
     targetKind: 'address-selection',
-    menus: ['row', 'selection'],
+    menus: ['row'],
     available: (target) =>
       target.count > 0 &&
       target.allocationStates?.length === target.count &&
@@ -495,7 +515,7 @@ const ACTION_DEFINITIONS = [
     note: 'Release IP Reservations',
     capability: 'subnets:write',
     targetKind: 'address-selection',
-    menus: ['row', 'selection'],
+    menus: ['row'],
     available: (target) =>
       target.count > 0 &&
       target.allocationStates?.length === target.count &&
@@ -507,7 +527,7 @@ const ACTION_DEFINITIONS = [
     label: 'Set range type',
     capability: 'subnets:write',
     targetKind: 'address-selection',
-    menus: ['row', 'selection'],
+    menus: ['row'],
     available: (target) => target.count > 0,
     disabledReason: 'Select at least one address.',
   },
@@ -647,6 +667,7 @@ const ROW_MENU_ORDER = {
     'dhcp.scope.delete',
     'ip.release',
     'ip.reserve',
+    'dns.record.create-for-address',
     'dhcp.reservation.create',
     'ip.range-type',
     'ip.scan-toggle',
@@ -679,6 +700,8 @@ const ROW_MENU_ORDER = {
     'ip.bulk-scan-inherit',
     'ip.probe',
   ],
+  // Merge before the template re-apply.
+  'network-selection': ['network.merge', 'network.apply-defaults'],
   range: [
     'dhcp.scope.edit',
     'dhcp.scope.remove-members',
@@ -689,17 +712,15 @@ const ROW_MENU_ORDER = {
   ],
 };
 
-// The selection bar keeps its own order: the range tag first, then the
-// allocation pair; merge before the template re-apply.
-const SELECTION_MENU_ORDER = {
-  'address-selection': ['ip.bulk-range-type', 'ip.bulk-reserve', 'ip.bulk-release'],
-  'network-selection': ['network.merge', 'network.apply-defaults'],
-};
-
 // The server's cap on one probe request (routes/scans.js MAX_PROBE_IPS).
 export const MAX_PROBE_ADDRESSES = 256;
 
 const asList = (value) => (Array.isArray(value) ? value : value == null ? [] : [value]);
+
+// The server's display status says so, or its pool flag does.
+function inDhcpPool(target) {
+  return target.status === 'DHCP Scope' || Boolean(Number(target.raw?.in_dynamic_pool));
+}
 
 function hasChildren(target) {
   return Boolean(target.raw?.children?.length || target.raw?.child_count);
@@ -833,16 +854,7 @@ export function targetForRow(row) {
 // caller's capabilities, and the entry's own predicate. Unavailable entries
 // are left out rather than shown disabled; the reason is still reachable
 // through actionAvailability for panels that want to explain it.
-// Menus hide what the target cannot do. The selection bar is the exception
-// (`includeUnavailable`): a mixed selection keeps the button visible, disabled,
-// with the reason as its title, so the operator learns what to deselect.
-export function menuActions({
-  menu,
-  target,
-  view = null,
-  can = () => false,
-  includeUnavailable = false,
-}) {
+export function menuActions({ menu, target, view = null, can = () => false }) {
   const states = new Map();
   const ids = Object.keys(WORKSPACE_ACTIONS).filter((id) => {
     const action = WORKSPACE_ACTIONS[id];
@@ -855,16 +867,14 @@ export function menuActions({
     if (action.capability && !can(action.capability)) return false;
     const state = actionAvailability(id, target, can);
     states.set(id, state);
-    return state.available || includeUnavailable;
+    return state.available;
   });
   const order =
     menu === 'row'
-      ? ROW_MENU_ORDER[target?.kind] || SELECTION_MENU_ORDER[target?.kind]
+      ? ROW_MENU_ORDER[target?.kind]
       : menu === 'actions'
         ? ACTIONS_MENU_ORDER[view]
-        : menu === 'selection'
-          ? SELECTION_MENU_ORDER[target?.kind]
-          : null;
+        : null;
   if (order) ids.sort((a, b) => orderIndex(order, a) - orderIndex(order, b));
   // `placement: 'last'` entries (scan, probe) close the menu whatever the order says.
   const lastIds = ids.filter((id) => WORKSPACE_ACTIONS[id].placement === 'last');

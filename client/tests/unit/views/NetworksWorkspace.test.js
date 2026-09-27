@@ -509,6 +509,13 @@ async function mountWorkspace({ settled = true, ...options } = {}) {
   return wrapper;
 }
 
+// The open row menu's labels, and one of its items by label. Items with a
+// note render it beside the label, so match on the label element.
+const rowMenuLabels = (wrapper) =>
+  wrapper.findAll('.row-menu button strong').map((label) => label.text());
+const rowMenuItem = (wrapper, label) =>
+  wrapper.findAll('.row-menu button').find((button) => button.find('strong').text() === label);
+
 async function enterTestNetwork(wrapper) {
   await wrapper.find('.network-row').trigger('click');
   await flushPromises();
@@ -790,14 +797,15 @@ describe('Networks workspace', () => {
     await rowCheckboxes[2].trigger('click');
     await rowCheckboxes[3].trigger('click');
 
-    expect(wrapper.find('.selection-bar').text()).toContain('2 selected');
+    // No bar pushes the rows down; the selection is acted on from its menu.
+    expect(wrapper.find('.selection-bar').exists()).toBe(false);
     await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
     expect(wrapper.findAll('.compact-address-grid button.selected')).toHaveLength(2);
+    await wrapper.find('button[aria-label="Table view"]').trigger('click');
 
-    const reserve = wrapper
-      .findAll('.selection-bar button')
-      .find((button) => button.text() === 'Reserve');
-    await reserve.trigger('click');
+    await wrapper.findAll('tbody tr')[3].trigger('contextmenu');
+    await flushPromises();
+    await rowMenuItem(wrapper, 'Reserve').trigger('click');
     const form = wrapper.find('.bulk-action-form');
     expect(form.text()).toContain('1.1.1.2 through 1.1.1.3');
     await form.find('textarea').setValue('Lab hosts');
@@ -810,7 +818,9 @@ describe('Networks workspace', () => {
       allocation_state: 'reserved',
       note: 'Lab hosts',
     });
-    expect(wrapper.find('.selection-bar').exists()).toBe(false);
+    expect(
+      wrapper.findAll('tbody input[type="checkbox"]').filter((box) => box.element.checked),
+    ).toHaveLength(0);
   });
 
   it('uses the explorer search as a hostname and IP table filter', async () => {
@@ -1300,7 +1310,7 @@ describe('Networks workspace', () => {
     await wrapper.find('.menu-scrim').trigger('click');
   });
 
-  it('merges and re-templates checked networks from the selection bar', async () => {
+  it('merges and re-templates checked networks from their context menu', async () => {
     const sibling = {
       id: 13,
       cidr: '1.1.0.0/24',
@@ -1352,28 +1362,28 @@ describe('Networks workspace', () => {
     const wrapper = await mountWorkspace();
     let checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
     expect(checkboxes).toHaveLength(2);
+    const openMenu = async (index) => {
+      await wrapper.findAll('tbody tr')[index].trigger('contextmenu');
+      await flushPromises();
+    };
+    const closeMenu = () => wrapper.find('.menu-scrim').trigger('click');
 
-    // One network: Merge stays visible but disabled with its reason.
+    // One checked network: its menu is the network's own, with no Merge.
     await checkboxes[0].trigger('click');
-    let bar = wrapper.find('.selection-bar');
-    const merge = () => bar.findAll('button').find((button) => button.text() === 'Merge');
-    expect(bar.text()).toContain('1 selected');
-    expect(merge().attributes('disabled')).toBeDefined();
-    expect(merge().attributes('title')).toContain('two');
-    expect(bar.text()).not.toContain('Reserve');
+    await openMenu(0);
+    expect(rowMenuLabels(wrapper)).not.toContain('Merge');
+    await closeMenu();
 
-    // Two allocated roots: still disabled, and the reason says to deallocate.
+    // Two allocated roots: the selection menu leaves Merge out (they have to
+    // be deallocated first) and re-applies the defaults to both.
     await checkboxes[1].trigger('click');
-    bar = wrapper.find('.selection-bar');
-    expect(merge().attributes('disabled')).toBeDefined();
-    expect(merge().attributes('title')).toContain('Deallocate');
-    expect(api.post).not.toHaveBeenCalledWith('/subnets/merge/preview', expect.anything());
-
-    await bar
-      .findAll('button')
-      .find((button) => button.text() === 'Apply defaults')
-      .trigger('click');
+    await openMenu(1);
+    expect(wrapper.find('.row-menu span').text()).toContain('SELECTED');
+    expect(rowMenuLabels(wrapper)).not.toContain('Merge');
+    expect(rowMenuLabels(wrapper)).not.toContain('Reserve');
+    await rowMenuItem(wrapper, 'Apply defaults').trigger('click');
     await flushPromises();
+    expect(api.post).not.toHaveBeenCalledWith('/subnets/merge/preview', expect.anything());
     expect(api.post).toHaveBeenCalledWith('/subnets/apply-template', { subnet_ids: [11, 13] });
 
     // The unallocated halves merge.
@@ -1383,9 +1393,8 @@ describe('Networks workspace', () => {
     expect(checkboxes).toHaveLength(3);
     await checkboxes[1].trigger('click');
     await checkboxes[2].trigger('click');
-    bar = wrapper.find('.selection-bar');
-    expect(merge().attributes('disabled')).toBeUndefined();
-    await merge().trigger('click');
+    await openMenu(2);
+    await rowMenuItem(wrapper, 'Merge').trigger('click');
     await flushPromises();
     await flushPromises();
     expect(api.post).toHaveBeenCalledWith('/subnets/merge/preview', { subnet_ids: [31, 32] });
@@ -1729,7 +1738,6 @@ describe('Networks workspace', () => {
     await rows[2].find('input[type="checkbox"]').trigger('click');
     await rows[5].trigger('click', { shiftKey: true });
     expect(checked()).toEqual([2, 3, 4, 5]);
-    expect(wrapper.find('.selection-bar').text()).toContain('4 selected');
     // Shift on an already checked box keeps it checked.
     await rows[3].find('input[type="checkbox"]').trigger('click', { shiftKey: true });
     expect(checked()).toEqual([2, 3, 4, 5]);

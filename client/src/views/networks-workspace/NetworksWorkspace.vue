@@ -99,7 +99,6 @@
             v-model:filters="filters"
             v-model:show-available="showAvailable"
             v-model:presentation="addressPresentation"
-            v-model:selected-rows="selectedRows"
             :allow-grid="!isV6Network"
             :active-view="activeView"
             :context-kind="contextKind"
@@ -111,7 +110,6 @@
             :column-catalog="columnCatalog"
             :columns="columns"
             :can-create="canCreateCurrent"
-            :selection-actions="selectionActions"
             :filter-chips="activeFilterChips"
             @update:visible-columns="setVisibleColumns"
             @reset-columns="resetVisibleColumns"
@@ -119,7 +117,6 @@
             @clear-filters="clearFilters"
             @filter-open="loadFilterFacets"
             @add="runViewAdd"
-            @selection-action="runSelectionAction"
           />
 
           <AddressGrid
@@ -194,6 +191,7 @@
         :items="detailItems"
         :related="relatedResources"
         :actions="rowMenuItems"
+        :dns-action="addressDnsAction"
         @close="clearDetail"
         @navigate="openRelatedResource"
         @changed="refreshAfterMutation('address', $event)"
@@ -1669,32 +1667,6 @@ const selectionTarget = computed(() => {
     scanOverrides: rows.filter((row) => row.raw?.scan_enabled != null).length,
   };
 });
-// The selection bar. Reserve and Release share one slot: a selection is all
-// unassigned, all reserved, or mixed, and the mixed case keeps one disabled
-// button whose title says what to deselect.
-const selectionActions = computed(() => {
-  if (!selectedRows.value.length) return [];
-  const items = menuActions({
-    menu: 'selection',
-    target: selectionTarget.value,
-    view: activeView.value,
-    can,
-    includeUnavailable: true,
-  });
-  const reserve = items.find((item) => item.id === 'ip.bulk-reserve');
-  const release = items.find((item) => item.id === 'ip.bulk-release');
-  if (!reserve || !release) return items;
-  const rest = items.filter((item) => item !== reserve && item !== release);
-  if (release.available) return [...rest, release];
-  if (reserve.available) return [...rest, reserve];
-  return [
-    ...rest,
-    {
-      ...reserve,
-      reason: 'Select only unassigned addresses to reserve, or only IP Reservations to release.',
-    },
-  ];
-});
 // The folder context and explorer folder rows are action targets of their
 // own; Ungrouped (id null) is the server's bucket, not a folder.
 const folderTarget = computed(() =>
@@ -1729,6 +1701,17 @@ const rowMenuItems = computed(() => {
   if (!target) return [];
   return withTarget(menuActions({ menu: 'row', target, view: activeView.value, can }), target);
 });
+// The address panel's Create DNS entry: the pinned address's own row-menu
+// item, so the panel and the menu offer it under the same rule.
+const addressDnsAction = computed(() => {
+  const target = selectedRowTarget.value;
+  if (target?.kind !== 'address') return null;
+  return (
+    withTarget(menuActions({ menu: 'row', target, can }), target).find(
+      (item) => item.id === 'dns.record.create-for-address',
+    ) || null
+  );
+});
 // Addresses and DHCP have no toolbar button: reservations come from the row
 // menu and the Create menu.
 const VIEW_ADD_ACTIONS = {
@@ -1756,9 +1739,6 @@ function runRowAction(item) {
 function runContextAction(actionId) {
   const target = actionId === 'network.scan' ? networkTarget.value : workspaceTarget.value;
   return workspaceActions.invoke(actionId, target);
-}
-function runSelectionAction(actionId) {
-  return workspaceActions.invoke(actionId, selectionTarget.value);
 }
 function runViewAdd() {
   const action = viewAddAction.value;
@@ -2130,8 +2110,8 @@ function toggleRow(id) {
     : selectedRows.value.filter((rowId) => rowId !== id);
   if (checking) selectionAnchor = id;
 }
-function toggleAllRows(event) {
-  selectedRows.value = event.target.checked ? filteredRows.value.map((row) => row.id) : [];
+function toggleAllRows(selectAll) {
+  selectedRows.value = selectAll ? filteredRows.value.map((row) => row.id) : [];
 }
 function openGridCell(cell) {
   selectRow(cell.row);

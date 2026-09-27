@@ -407,17 +407,17 @@ describe('workspace action registry', () => {
     });
     const one = selection([leaf(1, '10.0.0.0/25')]);
     const two = selection([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25')]);
-    expect(
-      menuActions({ menu: 'selection', target: one, can: all, includeUnavailable: true }),
-    ).toMatchObject([
-      { id: 'network.merge', available: false, reason: expect.stringContaining('two') },
-      { id: 'network.apply-defaults', available: true },
+    // A selection is acted on from its row menu, which leaves out what the
+    // selection cannot do; the reason stays reachable through availability.
+    expect(menuActions({ menu: 'row', target: one, can: all }).map((i) => i.id)).toEqual([
+      'network.apply-defaults',
     ]);
-    expect(menuActions({ menu: 'selection', target: two, can: all }).map((i) => i.id)).toEqual([
+    expect(actionAvailability('network.merge', one, all).reason).toContain('two');
+    expect(menuActions({ menu: 'row', target: two, can: all }).map((i) => i.id)).toEqual([
       'network.merge',
       'network.apply-defaults',
     ]);
-    expect(menuActions({ menu: 'selection', target: two, can: () => false })).toEqual([]);
+    expect(menuActions({ menu: 'row', target: two, can: () => false })).toEqual([]);
     // Merge follows the server's rules and the allocation rule: unallocated
     // siblings under one parent, no children, and a CIDR union that is one block.
     const mergeReason = (networks) =>
@@ -449,15 +449,10 @@ describe('workspace action registry', () => {
       count: 2,
       allocationStates: ['reserved', 'unassigned'],
     };
-    expect(
-      menuActions({ menu: 'selection', target: addresses, can: all, includeUnavailable: true }).map(
-        (item) => [item.id, item.available],
-      ),
-    ).toEqual([
-      ['ip.bulk-range-type', true],
-      ['ip.bulk-reserve', false],
-      ['ip.bulk-release', false],
-    ]);
+    const addressMenu = menuActions({ menu: 'row', target: addresses, can: all }).map((i) => i.id);
+    expect(addressMenu).toContain('ip.bulk-range-type');
+    expect(addressMenu).not.toContain('ip.bulk-reserve');
+    expect(addressMenu).not.toContain('ip.bulk-release');
   });
 
   it('builds distinct reserve and release payloads', () => {
