@@ -369,6 +369,15 @@ first on a 0.4.17 host.
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and
   showed as a dash.
 
+- A host named by a manual DNS record no longer shows a blank address. A
+  record created before its network existed, or kept when the network was
+  deleted and configured again, was served by DNS but never claimed its
+  address: the Addresses row had no type or hostname, and neither the
+  Addresses search nor the All Networks search could find the host.
+  Configuring a network now adopts the manual A and AAAA records that
+  already name its addresses (static DNS, a gateway's name, or a disabled
+  DNS hold), and addresses left blank this way are repaired on first start.
+
 - A disabled DNS record now holds its address (ADR 004). Disabling a record,
   or its forward zone, used to leave the address unassigned: it could be
   retired or offered as free, and a host still answering there showed as

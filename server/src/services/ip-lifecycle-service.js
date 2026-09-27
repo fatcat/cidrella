@@ -13,7 +13,7 @@ import {
 } from '../models/ip-lifecycle.js';
 import { findEnabledScopeForIp } from '../models/dhcp-scope.js';
 import { isValidAddress, parseNetwork, addressToBig, topologyAddresses } from '../utils/ip.js';
-import { deleteDynamicDhcpRecordsByIps } from '../models/dns-record.js';
+import { deleteDynamicDhcpRecordsByIps, fqdnForRecordName } from '../models/dns-record.js';
 import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease-queries.js';
 import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
 import { leaseExpiryMs, leaseDurationMs } from '../utils/lease-sql.js';
@@ -316,6 +316,83 @@ export function reconcileDnsHolds(db) {
     }
   }
   return { checked: ips.size, changed };
+}
+
+/**
+ * Converge every address a manual A or AAAA record names on the allocation
+ * that record implies, whichever came first, the record or its network: an
+ * enabled record in an enabled forward zone allocates it as static DNS (or
+ * names a gateway), and an unserved one holds it (ADR 004). Record creation
+ * only claims an address that already belongs to a managed network, so
+ * configuring a network, and startup for installs that drifted before this
+ * ran there, must adopt the records that predate it.
+ *
+ * Only an unassigned address, a DNS hold, or an unnamed gateway is touched;
+ * DHCP, topology and IP Reservation owners are left alone, and an address the
+ * lifecycle refuses (inside an enabled DHCP scope, a protected system
+ * address) is counted as a conflict. Lowest record id wins, as for holds.
+ * `subnetId` limits the pass to one network. Idempotent.
+ */
+export function reconcileStaticDnsAllocations(db, { subnetId = null } = {}) {
+  // A network created or re-shaped earlier in the same request is not yet in
+  // the leaf cache, which the subnet routes only invalidate once they finish.
+  IpSync.invalidateSubnetCache();
+  const records = db
+    .prepare(
+      `
+    SELECT record.id, record.name, record.value AS ip, zone.name AS zone_name,
+      (record.enabled = 1 AND zone.enabled = 1) AS served
+    FROM dns_records record
+    JOIN dns_zones zone ON zone.id = record.zone_id
+    WHERE record.type IN ('A', 'AAAA') AND zone.type = 'forward'
+      AND COALESCE(record.source, 'manual') = 'manual'
+    ORDER BY record.id
+  `,
+    )
+    .all();
+
+  // Per address: the lowest-id record, and the lowest-id served one.
+  const byIp = new Map();
+  for (const record of records) {
+    if (!isValidAddress(record.ip)) continue;
+    const entry = byIp.get(record.ip) || { ip: record.ip, first: record, served: null };
+    if (record.served && !entry.served) entry.served = record;
+    byIp.set(record.ip, entry);
+  }
+
+  const result = { checked: 0, changed: 0, conflicts: [] };
+  for (const { ip, first, served } of byIp.values()) {
+    const subnet = IpSync.findSubnetForIp(db, ip);
+    if (!subnet || (subnetId != null && subnet.id !== Number(subnetId))) continue;
+    result.checked++;
+
+    const before = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+    const state = before?.allocation_state || ALLOCATION_STATE.UNASSIGNED;
+    try {
+      if (!served) {
+        reconcileDnsHold(db, ip);
+      } else if (state === ALLOCATION_STATE.GATEWAY) {
+        if (before.hostname !== fqdnForRecordName(served.name, served.zone_name)) {
+          allocateStaticDns(db, served.name, served.ip, served.zone_name, served.id);
+        }
+      } else if (state === ALLOCATION_STATE.UNASSIGNED || isDnsHold(before)) {
+        allocateStaticDns(db, served.name, served.ip, served.zone_name, served.id);
+      }
+    } catch (err) {
+      if (!(err instanceof IpLifecycleConflictError)) throw err;
+      result.conflicts.push({ ip, record_id: (served || first).id, reason: err.message });
+      continue;
+    }
+    const after = IpAddress.findBySubnetAndIp(db, subnet.id, ip);
+    if (
+      before?.allocation_state !== after?.allocation_state ||
+      before?.allocation_source_id !== after?.allocation_source_id ||
+      before?.hostname !== after?.hostname
+    ) {
+      result.changed++;
+    }
+  }
+  return result;
 }
 
 /**

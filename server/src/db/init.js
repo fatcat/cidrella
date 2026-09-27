@@ -139,9 +139,20 @@ export async function initDb(dataDir) {
   // ADR 004: a manual address record that exists but is not served holds its
   // address. Idempotent, so installs from before the rule, upgrades and
   // restored backups all converge here.
-  const { reconcileDnsHolds } = await import('../services/ip-lifecycle-service.js');
+  const { reconcileDnsHolds, reconcileStaticDnsAllocations } =
+    await import('../services/ip-lifecycle-service.js');
   const holds = reconcileDnsHolds(db);
   if (holds.changed) console.log(`DNS holds reconciled: ${holds.changed} address(es) changed`);
+  // An enabled manual record allocates its address whichever came first, the
+  // record or its network. Heals rows left blank by a network configured
+  // after its records, before configure adopted them.
+  const staticDns = reconcileStaticDnsAllocations(db);
+  if (staticDns.changed) {
+    console.log(`Static DNS reconciled: ${staticDns.changed} address(es) changed`);
+  }
+  for (const conflict of staticDns.conflicts) {
+    console.warn(`[static-dns] ${conflict.ip}: ${conflict.reason}`);
+  }
   await ensureDefaults();
 
   return db;

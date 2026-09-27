@@ -128,6 +128,14 @@ ownership and topology projection are recorded in
 `docs/adr/001-ip-protocol-table-ownership.md` and
 `docs/adr/002-ip-topology-projection.md`.
 
+The allocation a manual A or AAAA record implies does not depend on whether
+the record or its network came first. Configuring a network adopts the
+records that already name its addresses, and startup runs the same
+reconciliation (`reconcileStaticDnsAllocations`) so rows that drifted
+converge. Addresses owned by DHCP, topology or an IP Reservation are left
+alone. A record inside an enabled DHCP scope is reported as a conflict,
+not allocated.
+
 CIDRella's interface addresses have no special allocation state. When an
 enabled manual A or AAAA record names one, it is an ordinary `static_dns`
 allocation and receives the same DNS-versus-DHCP exclusion as every other

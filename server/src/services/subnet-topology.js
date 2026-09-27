@@ -8,6 +8,7 @@ import {
 } from '../utils/ip.js';
 import {
   lifecycleRepository as IpAddress,
+  reconcileStaticDnsAllocations,
   reconcileTopologyAddresses,
 } from './ip-lifecycle-service.js';
 import { ALLOCATION_STATE } from '../models/ip-lifecycle.js';
@@ -478,6 +479,12 @@ export function configureSubnet(db, subnet, parsed, fields) {
         fields.dhcpV6,
       );
     }
+
+    // Manual A and AAAA records can predate the network (created while the
+    // address was unmanaged, or kept when the network was deleted). Adopt
+    // them now that the rows and any DHCP pool exist, so the address reads
+    // the same as when the record came second.
+    reconcileStaticDnsAllocations(db, { subnetId: subnet.id });
   });
 
   configure();
