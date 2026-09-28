@@ -295,7 +295,10 @@ first on a 0.4.17 host.
   selection looked wrong. A checked selection is acted on from its
   right-click menu, which already offered every action the bar had. The
   header checkbox now shows the selection (checked, or partly checked) and
-  clears it when clicked.
+  clears it when clicked. Merge (on checked networks) and Divide network
+  stay in their menus when they cannot run, greyed out with the reason
+  (only unallocated sibling networks merge, only an unallocated network
+  divides), as the bar's Merge button used to.
 - Liveness scan is one switch in the row menu instead of an Enable or a
   Disable entry. The switch shows the current state, on or off for an
   address and on, off or half-way (mixed) for a selection, and choosing it

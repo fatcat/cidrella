@@ -146,6 +146,7 @@ const ACTION_DEFINITIONS = [
       hasChildren(target)
         ? 'This network is already divided.'
         : 'Deallocate the network first. Only unallocated networks can be divided.',
+    showUnavailable: true,
   },
   {
     id: 'network.merge',
@@ -157,6 +158,7 @@ const ACTION_DEFINITIONS = [
     available: (target) => mergeBlocker(target) === '',
     disabledReason: (target) => mergeBlocker(target),
     menus: ['row'],
+    showUnavailable: true,
   },
   {
     id: 'network.move',

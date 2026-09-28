@@ -313,12 +313,13 @@
         v-for="item in actionMenuItems"
         :key="item.id"
         role="menuitem"
-        :class="{ danger: item.danger }"
-        @click="runMenuAction(item)"
+        :class="{ danger: item.danger, unavailable: !item.available }"
+        :aria-disabled="item.available ? undefined : 'true'"
+        @click="item.available && runMenuAction(item)"
       >
         <i :class="item.icon" /><span
           ><strong>{{ item.label }}</strong
-          ><small>{{ item.note }}</small></span
+          ><small>{{ item.available ? item.note : item.reason }}</small></span
         >
       </button>
     </div>

@@ -1374,12 +1374,16 @@ describe('Networks workspace', () => {
     expect(rowMenuLabels(wrapper)).not.toContain('Merge');
     await closeMenu();
 
-    // Two allocated roots: the selection menu leaves Merge out (they have to
-    // be deallocated first) and re-applies the defaults to both.
+    // Two allocated roots: Merge stays greyed out with why (they have to be
+    // deallocated first), does nothing when chosen, and Apply defaults
+    // re-applies the defaults to both.
     await checkboxes[1].trigger('click');
     await openMenu(1);
     expect(wrapper.find('.row-menu span').text()).toContain('SELECTED');
-    expect(rowMenuLabels(wrapper)).not.toContain('Merge');
+    const blockedMerge = rowMenuItem(wrapper, 'Merge');
+    expect(blockedMerge.attributes('aria-disabled')).toBe('true');
+    expect(blockedMerge.attributes('title')).toContain('Deallocate');
+    await blockedMerge.trigger('click');
     expect(rowMenuLabels(wrapper)).not.toContain('Reserve');
     await rowMenuItem(wrapper, 'Apply defaults').trigger('click');
     await flushPromises();
@@ -1660,6 +1664,7 @@ describe('Networks workspace', () => {
       .trigger('click');
     expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
       'Edit network',
+      'Divide network',
       'Move to folder',
       'Apply defaults',
       'Deallocate network',

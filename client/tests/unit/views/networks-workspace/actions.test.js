@@ -264,16 +264,21 @@ describe('workspace action registry', () => {
       'Appliance-wide DHCP settings',
       'Delete selected scope',
     ]);
-    // Allocated: no divide (deallocate first). Unallocated: allocate, divide, no deallocate.
-    expect(
-      labels({
-        menu: 'actions',
-        target: { kind: 'network', id: 1, status: 'allocated' },
-        view: 'addresses',
-        can: all,
-      }),
-    ).toEqual([
+    // Allocated: divide greyed out (deallocate first). Unallocated: allocate,
+    // divide, no deallocate.
+    const allocatedItems = menuActions({
+      menu: 'actions',
+      target: { kind: 'network', id: 1, status: 'allocated' },
+      view: 'addresses',
+      can: all,
+    });
+    expect(allocatedItems.find((item) => item.id === 'network.divide')).toMatchObject({
+      available: false,
+      reason: expect.stringContaining('Deallocate'),
+    });
+    expect(allocatedItems.map((item) => item.label)).toEqual([
       'Edit network',
+      'Divide network',
       'Move to folder',
       'Apply defaults',
       'Deallocate network',
@@ -438,12 +443,12 @@ describe('workspace action registry', () => {
     });
     const one = selection([leaf(1, '10.0.0.0/25')]);
     const two = selection([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25')]);
-    // A selection is acted on from its row menu, which leaves out what the
-    // selection cannot do; the reason stays reachable through availability.
-    expect(menuActions({ menu: 'row', target: one, can: all }).map((i) => i.id)).toEqual([
-      'network.apply-defaults',
+    // A selection is acted on from its row menu. Merge stays in it, greyed
+    // out with the reason, when the checked networks cannot be merged.
+    expect(menuActions({ menu: 'row', target: one, can: all })).toMatchObject([
+      { id: 'network.merge', available: false, reason: expect.stringContaining('two') },
+      { id: 'network.apply-defaults', available: true },
     ]);
-    expect(actionAvailability('network.merge', one, all).reason).toContain('two');
     expect(menuActions({ menu: 'row', target: two, can: all }).map((i) => i.id)).toEqual([
       'network.merge',
       'network.apply-defaults',
