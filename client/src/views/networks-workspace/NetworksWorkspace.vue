@@ -207,6 +207,25 @@
       />
     </section>
 
+    <ConfirmDialog
+      :visible="allocateOnMove != null"
+      header="Allocate network?"
+      severity="warn"
+      confirm-label="Continue"
+      confirm-icon="pi pi-arrow-right"
+      confirm-track="workspace-move-allocate-confirm"
+      cancel-track="workspace-move-allocate-cancel"
+      @update:visible="(visible) => !visible && (allocateOnMove = null)"
+      @confirm="continueAllocateOnMove"
+    >
+      <p v-if="allocateOnMove">
+        Moving <strong>{{ allocateOnMove.network.cidr }}</strong> into
+        {{ allocateOnMove.folder ? allocateOnMove.folder.name : 'a folder' }} allocates it. The
+        network form opens next; saving it makes {{ allocateOnMove.network.cidr }} a configured
+        network whose addresses can be named in DNS and served by DHCP. Nothing changes until you
+        save.
+      </p>
+    </ConfirmDialog>
     <BulkActionDialog
       v-if="selectedNetwork.id"
       v-model:visible="bulkActionVisible"
@@ -386,6 +405,7 @@ import WorkspaceContextHeader from './WorkspaceContextHeader.vue';
 import WorkspaceDetailsHost from './WorkspaceDetailsHost.vue';
 import WorkspaceTable from './WorkspaceTable.vue';
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
+import ConfirmDialog from '../../components/ConfirmDialog.vue';
 import BulkActionDialog from './dialogs/BulkActionDialog.vue';
 import BulkRangeTypeDialog from './dialogs/BulkRangeTypeDialog.vue';
 import IpReservationEditor from './dialogs/IpReservationEditor.vue';
@@ -1996,9 +2016,26 @@ function startNetworkDrag(row, event) {
   event.dataTransfer.setData('text/plain', row.cidr || '');
   event.dataTransfer.effectAllowed = 'move';
 }
+// Moving an unallocated network into a folder allocates it: the confirmation
+// says so, then the allocation form opens with the folder as its target.
+const allocateOnMove = ref(null);
+function confirmAllocateOnMove(network, folder = null) {
+  allocateOnMove.value = { network, folder };
+}
+async function continueAllocateOnMove() {
+  const pending = allocateOnMove.value;
+  allocateOnMove.value = null;
+  if (pending) await workspaceActions.openAllocation(pending.network, pending.folder?.id ?? null);
+}
 async function moveNetworkToFolder({ networkId, folder }) {
   const network = allNetworks.value.find((entry) => Number(entry.id) === Number(networkId));
-  if (!network) return;
+  if (!network) {
+    const unallocated = unallocatedFolders.value
+      .flatMap((entry) => flattenAllocatable(entry.networks))
+      .find((entry) => Number(entry.id) === Number(networkId));
+    if (unallocated) confirmAllocateOnMove(unallocated, folder);
+    return;
+  }
   const folderId = folder.id ?? null;
   if ((network.folderId ?? null) === folderId) return;
   try {
@@ -2212,6 +2249,7 @@ const workspaceActions = useWorkspaceActions({
   openCanonicalAddress,
   openRangeEditor,
   openBulkRangeType,
+  confirmAllocateOnMove,
   refreshAfterMutation,
   rememberDnsZoneSide,
 });

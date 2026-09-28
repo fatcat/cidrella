@@ -388,6 +388,12 @@ first on a 0.4.17 host.
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and
   showed as a dash.
 
+- Moving an unallocated network into a folder asks first. Filing it in a
+  folder allocates it, so Move to folder, and dragging it onto a folder in
+  the explorer, now say so and wait for Continue before opening the network
+  form (which files it in that folder when saved). Dragging an unallocated
+  network used to do nothing at all.
+
 - Deallocating or deleting a network no longer merges its unallocated
   siblings. Deallocating both halves of a divided /24, for example, folded
   them back into one /24 on its own. The halves now stay as they are, and

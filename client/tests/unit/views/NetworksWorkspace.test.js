@@ -3,6 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { useSubnetStore } from '../../../src/stores/subnets.js';
+import NetworkDialogs from '../../../src/components/NetworkDialogs.vue';
 import NetworksWorkspace from '../../../src/views/networks-workspace/NetworksWorkspace.vue';
 import AddressGrid from '../../../src/views/networks-workspace/AddressGrid.vue';
 import AddressDetailsPanel from '../../../src/views/networks-workspace/AddressDetailsPanel.vue';
@@ -464,7 +465,7 @@ function installApiFixtures() {
 
 // `settled: false` returns before the workspace reads resolve, for a test that
 // looks at the first paint.
-async function mountWorkspace({ settled = true, ...options } = {}) {
+async function mountWorkspace({ settled = true, stubs = {}, ...options } = {}) {
   const wrapper = mount(NetworksWorkspace, {
     ...options,
     global: {
@@ -500,6 +501,7 @@ async function mountWorkspace({ settled = true, ...options } = {}) {
             '<select aria-label="Rows per page" :value="rows" @change="$emit(\'page\', { page: 0, first: 0, rows: Number($event.target.value) })"><option v-for="size in rowsPerPageOptions" :key="size" :value="size">{{ size }}</option></select>' +
             '</nav>',
         },
+        ...stubs,
       },
     },
   });
@@ -742,6 +744,70 @@ describe('Networks workspace', () => {
     expect(wrapper.find('.context-header').text()).toContain('Unallocated Networks');
     expect(wrapper.find('table').text()).toContain('1.1.2.0/24');
     expect(wrapper.find('.network-tree').text()).toContain('1.1.2.0/24');
+  });
+
+  it('asks before Move to folder allocates an unallocated network', async () => {
+    // The allocation form's vendor inputs need the PrimeVue plugin.
+    const wrapper = await mountWorkspace({
+      stubs: { AutoComplete: true, InputNumber: true, ToggleSwitch: true, Checkbox: true },
+    });
+    await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
+    await flushPromises();
+    const moveFromMenu = async () => {
+      const row = wrapper.findAll('tbody tr').find((entry) => entry.text().includes('1.1.2.0/24'));
+      await row.trigger('contextmenu');
+      await flushPromises();
+      await rowMenuItem(wrapper, 'Move to folder').trigger('click');
+      await flushPromises();
+    };
+    const networkDialogs = () => wrapper.findComponent(NetworkDialogs);
+
+    const warning = 'Moving 1.1.2.0/24 into a folder allocates it.';
+    await moveFromMenu();
+    expect(wrapper.text()).toContain(warning);
+    // Nothing opens, and nothing is sent, until the operator continues.
+    expect(networkDialogs().exists() && networkDialogs().vm.showNetworkDialog).toBeFalsy();
+    await wrapper.find('[data-track="workspace-move-allocate-cancel"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain(warning);
+    expect(networkDialogs().exists() && networkDialogs().vm.showNetworkDialog).toBeFalsy();
+
+    await moveFromMenu();
+    await wrapper.find('[data-track="workspace-move-allocate-confirm"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain(warning);
+    expect(networkDialogs().vm.showNetworkDialog).toBe(true);
+    expect(networkDialogs().vm.networkDialogMode).toBe('configure');
+    expect(networkDialogs().vm.activeNetworkData).toMatchObject({ id: 12, cidr: '1.1.2.0/24' });
+    expect(api.post).not.toHaveBeenCalledWith('/subnets/12/configure', expect.anything());
+  });
+
+  it('asks before a dropped unallocated network is allocated into the folder', async () => {
+    const wrapper = await mountWorkspace({
+      stubs: { AutoComplete: true, InputNumber: true, ToggleSwitch: true, Checkbox: true },
+    });
+    const dataTransfer = {
+      data: { 'application/x-subnet-id': '12' },
+      types: ['application/x-subnet-id'],
+      getData(type) {
+        return this.data[type] ?? '';
+      },
+    };
+    const [folderRow] = wrapper.findAll('.folder-row');
+    for (const type of ['dragover', 'drop']) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      event.dataTransfer = dataTransfer;
+      folderRow.element.dispatchEvent(event);
+    }
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Moving 1.1.2.0/24 into Testerella allocates it.');
+    expect(api.put).not.toHaveBeenCalledWith('/subnets/12', expect.anything());
+    await wrapper.find('[data-track="workspace-move-allocate-confirm"]').trigger('click');
+    await flushPromises();
+    const dialogs = wrapper.findComponent(NetworkDialogs).vm;
+    expect(dialogs.networkDialogMode).toBe('configure');
+    expect(dialogs.dropTargetFolderIdForConfigure).toBe(1);
   });
 
   it('filters available canonical rows and opens details from a live row', async () => {

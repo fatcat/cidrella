@@ -23,6 +23,7 @@ export function useWorkspaceActions(ctx) {
     openBulkRangeType,
     refreshAfterMutation,
     rememberDnsZoneSide,
+    confirmAllocateOnMove,
   } = ctx;
 
   async function ensureNetworkDialogs() {
@@ -202,7 +203,10 @@ export function useWorkspaceActions(ctx) {
       const node = networkNode(target);
       (await ensureNetworkDialogs()).openEdit(node, node?.data?.folder_id);
     },
+    // Filing an unallocated network into a folder allocates it, through the
+    // allocation form; the operator confirms that first.
     'network.move': async (target) => {
+      if (target.status === 'unallocated') return confirmAllocateOnMove(target.raw);
       const node = networkNode(target);
       (await ensureNetworkDialogs()).openEdit(node, node?.data?.folder_id);
     },
@@ -405,5 +409,14 @@ export function useWorkspaceActions(ctx) {
     return outcome;
   }
 
-  return { registry, invoke, startNetworkScan, currentNetworkTarget };
+  // The allocation form for an unallocated network, filing it in `folderId`
+  // on save (null keeps its folder). Callers confirm with the operator first.
+  async function openAllocation(network, folderId = null) {
+    (await ensureNetworkDialogs()).openConfigure(
+      { key: `subnet-${network.id}`, data: network },
+      folderId,
+    );
+  }
+
+  return { registry, invoke, startNetworkScan, currentNetworkTarget, openAllocation };
 }
