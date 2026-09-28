@@ -422,6 +422,12 @@ first on a 0.4.17 host.
   menu too. The DNS and DHCP tables have no bulk actions, so their rows
   stay single-pick.
 
+- Two repeated creation buttons are gone: the explorer's "+" (the header's
+  Create button opens the same menu) and the Networks tab's Allocate
+  network (Create network is in the Create menu, the Actions menu and a
+  folder's right-click menu). The DNS tab's Add DNS record and the Ranges
+  tab's add button stay; neither has another way in.
+
 - All Unallocated Networks shows its network table without the Networks,
   DNS and DHCP tabs. Unallocated space has no DNS or DHCP of its own, so
   the tabs had nothing to switch to.

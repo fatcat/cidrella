@@ -28,7 +28,6 @@
         :can-manage-defaults="can('subnets:write')"
         :can-move-networks="can('subnets:write')"
         :selected-rows="selectedRows"
-        @create="toggleMenu('create')"
         @select-estate="selectEstate"
         @select-unallocated="selectUnallocated"
         @select-folder="selectFolder"
@@ -1795,8 +1794,9 @@ const addressDnsAction = computed(() => {
 });
 // Addresses and DHCP have no toolbar button: reservations come from the row
 // menu and the Create menu.
+// Networks has none: Create network is in the header's Create menu, the
+// Actions menu and a folder's row menu.
 const VIEW_ADD_ACTIONS = {
-  networks: ['network.allocate', workspaceTarget],
   dns: ['dns.record.create', workspaceTarget],
   ranges: ['range.create', networkTarget],
 };

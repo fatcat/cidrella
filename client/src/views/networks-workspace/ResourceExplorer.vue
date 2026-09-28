@@ -5,15 +5,6 @@
         <span class="eyebrow">RESOURCE EXPLORER</span>
         <strong>Infrastructure</strong>
       </div>
-      <button
-        v-if="canCreate"
-        class="icon-button"
-        title="Create resource"
-        aria-label="Create resource"
-        @click="emit('create')"
-      >
-        <i class="pi pi-plus" />
-      </button>
     </div>
 
     <label class="explorer-search">
@@ -232,7 +223,6 @@ const props = defineProps({
   selectedRows: { type: Array, default: () => [] },
 });
 const emit = defineEmits([
-  'create',
   'select-estate',
   'select-unallocated',
   'select-folder',
@@ -390,21 +380,6 @@ button {
 }
 .explorer-heading strong {
   font-size: 1rem;
-}
-.icon-button {
-  display: inline-flex;
-  width: 2rem;
-  height: 2rem;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  cursor: pointer;
-}
-.icon-button:hover {
-  background: var(--preview-accent-soft);
-  color: var(--preview-accent);
 }
 .explorer-search {
   display: flex;

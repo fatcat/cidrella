@@ -737,6 +737,26 @@ describe('Networks workspace', () => {
     expect(wrapper.find('table').text()).toContain('test.example');
   });
 
+  it('creates networks from the Create menu only, and keeps the DNS and range add buttons', async () => {
+    const wrapper = await mountWorkspace();
+    // No explorer "+" and no Allocate network toolbar button: both repeated
+    // the header's Create menu.
+    expect(wrapper.find('.resource-explorer [aria-label="Create resource"]').exists()).toBe(false);
+    expect(wrapper.find('.table-toolbar .button.primary').exists()).toBe(false);
+    await wrapper.find('.context-actions button').trigger('click');
+    expect(wrapper.findAll('.create-menu button strong').map((label) => label.text())).toContain(
+      'Create network',
+    );
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    // A DNS record has no other creation point, so its tab keeps the button
+    // (once a zone is open; a network's DNS tab opens on its forward zone).
+    await enterTestNetwork(wrapper);
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.table-toolbar .button.primary').exists()).toBe(true);
+  });
+
   it('opens unallocated address space as a functional inventory context', async () => {
     const wrapper = await mountWorkspace();
     await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
