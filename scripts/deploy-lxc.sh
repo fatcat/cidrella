@@ -64,6 +64,60 @@ echo -e "\n${BOLD}═══ CIDRella LXC Deploy ═══${NC}\n"
 
 info "Target: ${SSH_TARGET}:${INSTALL_DIR}"
 
+# Resolve the target once, up front, and connect by address from then on.
+# Every ssh and rsync below used to look the name up again, and a lookup that
+# fails now and then (a single-label name like "testerella" from WSL, which
+# goes through Windows name resolution) failed the deploy at a random step:
+# "ssh: Could not resolve hostname". One lookup, retried, replaces dozens.
+# HostKeyAlias keeps the host key checked under the name it was recorded as,
+# and `ssh -G` applies ~/.ssh/config, so a HostName or HostKeyAlias set there
+# wins.
+SSH_CONFIG=$(ssh -G "$SSH_TARGET" 2>/dev/null || true)
+SSH_HOSTNAME=$(awk '$1 == "hostname" { print $2; exit }' <<<"$SSH_CONFIG")
+SSH_KEY_ALIAS=$(awk '$1 == "hostkeyalias" { print $2; exit }' <<<"$SSH_CONFIG")
+SSH_HOSTNAME=${SSH_HOSTNAME:-$LXC_HOST}
+if [[ $SSH_HOSTNAME =~ ^[0-9.]+$ || $SSH_HOSTNAME == *:* ]]; then
+  TARGET_ADDR=$SSH_HOSTNAME
+elif command -v getent >/dev/null 2>&1; then
+  TARGET_ADDR=""
+  # getent exits 2 for a name it cannot find; under pipefail that must not
+  # end the script before the retries and the message below.
+  for attempt in 1 2 3 4 5; do
+    TARGET_ADDR=$({ getent ahostsv4 "$SSH_HOSTNAME" || getent ahosts "$SSH_HOSTNAME" || true; } \
+      2>/dev/null | awk 'NR == 1 { print $1 }')
+    if [ -n "$TARGET_ADDR" ]; then break; fi
+    if [ "$attempt" -lt 5 ]; then sleep 1; fi
+  done
+else
+  TARGET_ADDR=""
+fi
+SSH_OPTS=()
+if [ -n "$TARGET_ADDR" ] && [ "$TARGET_ADDR" != "$SSH_HOSTNAME" ]; then
+  SSH_OPTS=(-o "HostName=${TARGET_ADDR}" -o "HostKeyAlias=${SSH_KEY_ALIAS:-$SSH_HOSTNAME}")
+  info "Resolved ${SSH_HOSTNAME} to ${TARGET_ADDR}; connecting by address from here on."
+elif [ -z "$TARGET_ADDR" ] && command -v getent >/dev/null 2>&1; then
+  err "Could not resolve ${SSH_HOSTNAME} after 5 tries. Pass --host <address>, or check name resolution here."
+elif [ -z "$TARGET_ADDR" ]; then
+  warn "No getent here to resolve ${SSH_HOSTNAME} once; every step will look it up by name."
+fi
+# Every ssh below, and rsync's remote shell, goes to that address.
+ssh() { command ssh "${SSH_OPTS[@]}" "$@"; }
+export RSYNC_RSH="ssh ${SSH_OPTS[*]}"
+
+# A deploy that dies after stopping the services would leave the LXC with
+# CIDRella down until someone starts it by hand. Start them again on any
+# failed exit.
+SERVICES_STOPPED=false
+restart_services_on_failure() {
+  local status=$?
+  if [ "$status" -ne 0 ] && [ "$SERVICES_STOPPED" = true ]; then
+    warn "Deploy failed with the services stopped; starting them again on ${LXC_HOST}."
+    ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella cidrella-anomaly 2>/dev/null || true" ||
+      warn "Could not reach ${LXC_HOST} to start them: ssh ${SSH_TARGET} systemctl start cidrella-dnsmasq cidrella"
+  fi
+}
+trap restart_services_on_failure EXIT
+
 # Verify SSH connectivity. Automatically record a new test host, but keep
 # rejecting changed keys so a rebuilt or impersonated target is never trusted
 # silently. Leave stderr visible so SSH explains any key or config problem.
@@ -128,6 +182,7 @@ fi
 # ═══════════════════════════════════════════════════════════
 
 info "Stopping services on LXC..."
+SERVICES_STOPPED=true
 ssh "$SSH_TARGET" "systemctl stop cidrella-anomaly cidrella cidrella-dnsmasq 2>/dev/null || true"
 ok "Services stopped."
 
@@ -279,6 +334,7 @@ ssh "$SSH_TARGET" "
 
 info "Starting services..."
 ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella"
+SERVICES_STOPPED=false
 
 # Enable and start anomaly service if the unit file exists
 ssh "$SSH_TARGET" "
