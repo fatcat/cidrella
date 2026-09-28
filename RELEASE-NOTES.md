@@ -388,6 +388,11 @@ first on a 0.4.17 host.
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and
   showed as a dash.
 
+- Deallocating or deleting a network no longer merges its unallocated
+  siblings. Deallocating both halves of a divided /24, for example, folded
+  them back into one /24 on its own. The halves now stay as they are, and
+  are merged only when you choose Merge on them.
+
 - Sorting the DNS table by its Value column puts addresses in network order.
   It compared them as text, so 10.0.0.10 came before 10.0.0.9. Addresses now
   sort numerically, as the IP column does, with names (CNAME, MX and PTR

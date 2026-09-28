@@ -179,7 +179,7 @@ not route-local SQL.
 - `services/subnet-topology.js` owns subnet lifecycle helpers, system range
   creation, subnet insertion, user-range copy, parent config clearing,
   edit/configure transaction bodies, merge/delete transaction bodies,
-  buddy/consolidation helpers, and subnet name-template application.
+  intermediate-container consolidation, and subnet name-template application.
 - `services/subnet-dhcp-topology.js` owns DHCP mutations needed during subnet
   configure/divide/merge/delete workflows.
 - `services/subnet-dns-topology.js` owns DNS mutations needed during subnet

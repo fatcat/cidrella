@@ -185,7 +185,7 @@ const ACTION_DEFINITIONS = [
   {
     id: 'network.deallocate',
     label: 'Deallocate network',
-    note: 'Return this block to its parent',
+    note: 'Clear its configuration; the block stays as unallocated space',
     icon: 'pi pi-undo',
     danger: true,
     capability: 'subnets:write',

@@ -38,6 +38,7 @@ const { default: subnetRouter } = await import('../../../src/routes/subnets.js')
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
 const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');
 const { default: request } = await import('supertest');
+const { ipToLong } = await import('../../../src/utils/ip.js');
 
 let tmpDir;
 let app;
@@ -313,5 +314,61 @@ describe('DELETE /api/subnets/:id on an allocated network', () => {
       dns: { ptr_removed: 0, address_records_removed: 0, zones_disabled: [] },
     });
     expect(db.prepare('SELECT COUNT(*) AS c FROM dns_records').get().c).toBe(before);
+  });
+});
+
+// Merging is an operation the operator asks for (Merge), never a side effect.
+// Deallocating or deleting one network must not fold its unallocated
+// siblings back into their parent.
+describe('siblings are never merged as a side effect', () => {
+  async function divideInto(cidr, newPrefix) {
+    const parent = await mkSubnet({ cidr, name: cidr });
+    const preview = await request(app)
+      .post(`/api/subnets/${parent.id}/divide/preview`)
+      .send({ new_prefix: newPrefix });
+    expect(preview.status).toBe(200);
+    const divided = await request(app)
+      .post(`/api/subnets/${parent.id}/divide`)
+      .send({ new_prefix: newPrefix, plan_token: preview.body.plan.dependency_token });
+    expect(divided.status).toBe(200);
+    return { parent, children: childRows(parent.id) };
+  }
+  // In address order; network_address is text, so ORDER BY puts .64 after .192.
+  const childRows = (parentId) =>
+    db
+      .prepare('SELECT * FROM subnets WHERE parent_id = ?')
+      .all(parentId)
+      .sort((a, b) => ipToLong(a.network_address) - ipToLong(b.network_address));
+  const childCidrs = (parentId) =>
+    childRows(parentId).map(({ cidr, status }) => ({ cidr, status }));
+
+  it('keeps both halves after deallocating each of them', async () => {
+    const { parent, children } = await divideInto('10.90.0.0/24', 25);
+    expect(children.map((child) => child.cidr)).toEqual(['10.90.0.0/25', '10.90.0.128/25']);
+    for (const child of children) {
+      await configure(child.id, { name: `net ${child.cidr}`, gateway_address: null });
+    }
+    for (const child of children) {
+      expect((await request(app).delete(`/api/subnets/${child.id}`)).status).toBe(200);
+    }
+
+    expect(db.prepare('SELECT id FROM subnets WHERE id = ?').get(parent.id)).toBeTruthy();
+    expect(childCidrs(parent.id)).toEqual([
+      { cidr: '10.90.0.0/25', status: 'unallocated' },
+      { cidr: '10.90.0.128/25', status: 'unallocated' },
+    ]);
+  });
+
+  it('leaves the other unallocated siblings alone when one is deleted', async () => {
+    const { parent, children } = await divideInto('10.91.0.0/24', 26);
+    expect(children).toHaveLength(4);
+    expect((await request(app).delete(`/api/subnets/${children[3].id}`)).status).toBe(200);
+
+    expect(children[3].cidr).toBe('10.91.0.192/26');
+    expect(childCidrs(parent.id).map((child) => child.cidr)).toEqual([
+      '10.91.0.0/26',
+      '10.91.0.64/26',
+      '10.91.0.128/26',
+    ]);
   });
 });

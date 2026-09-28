@@ -2,7 +2,6 @@ import {
   parseNetwork,
   addressToBig,
   bigToAddress,
-  mergeNetworks,
   networkNameFromTemplate,
   topologyAddresses,
 } from '../utils/ip.js';
@@ -594,80 +593,6 @@ export function consolidateIntermediate(db, parentId) {
   consolidateIntermediate(db, parent.parent_id);
 }
 
-export function buddyMerge(db, parentId) {
-  if (!parentId) return;
-
-  let merged = true;
-  while (merged) {
-    merged = false;
-    const unallocLeaves = db
-      .prepare(
-        `
-      SELECT s.* FROM subnets s
-      WHERE s.parent_id = ? AND s.status = 'unallocated'
-        AND NOT EXISTS (SELECT 1 FROM subnets c WHERE c.parent_id = s.id)
-      ORDER BY s.network_address
-    `,
-      )
-      .all(parentId);
-
-    for (let i = 0; i < unallocLeaves.length && !merged; i++) {
-      for (let j = i + 1; j < unallocLeaves.length && !merged; j++) {
-        const a = unallocLeaves[i];
-        const b = unallocLeaves[j];
-        if (a.prefix_length !== b.prefix_length) continue;
-
-        // Two equal-prefix siblings are buddies exactly when their union is
-        // one aligned network of the next shorter prefix.
-        const union = mergeNetworks([a.cidr, b.cidr]);
-        if (!union.valid) continue;
-        const combinedCidr = union.merged_cidr;
-        const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-
-        let destId;
-        if (parent && combinedCidr === parent.cidr) {
-          destId = parent.id;
-        } else {
-          destId = insertSubnet(db, {
-            cidr: combinedCidr,
-            name: combinedCidr,
-            parent_id: parentId,
-            status: 'unallocated',
-            depth: a.depth,
-          }).lastInsertRowid;
-        }
-
-        movePerIpArtifactsToSubnet(db, [a.id, b.id], destId);
-        deleteSubnetData(db, a.id);
-        deleteSubnetData(db, b.id);
-        db.prepare('DELETE FROM subnets WHERE id IN (?, ?)').run(a.id, b.id);
-        merged = true;
-      }
-    }
-  }
-
-  const remaining = db
-    .prepare('SELECT COUNT(*) as c FROM subnets WHERE parent_id = ?')
-    .get(parentId);
-  if (remaining.c === 0) return;
-
-  if (remaining.c === 1) {
-    const onlyChild = db.prepare('SELECT * FROM subnets WHERE parent_id = ?').get(parentId);
-    const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
-    if (
-      onlyChild.status === 'unallocated' &&
-      onlyChild.cidr === parent.cidr.replace(/\/\d+$/, '') + '/' + onlyChild.prefix_length
-    ) {
-      if (
-        onlyChild.network_address === parent.network_address &&
-        onlyChild.prefix_length === parent.prefix_length
-      ) {
-        deleteSubnetRow(db, onlyChild.id);
-      }
-    }
-  }
-}
-
 function restoreMergedParent(
   db,
   parent,
@@ -856,8 +781,9 @@ export function deleteSubnet(db, subnet) {
         deleteDescendantSubnets(db, subnet.id);
       }
       deleteSubnetData(db, subnet.id);
+      // The block stays where it is, unallocated. Merging it with a sibling
+      // is the operator's call (Merge), never a side effect.
       deallocateSubnetRow(db, subnet);
-      if (subnet.parent_id) buddyMerge(db, subnet.parent_id);
       return { action: 'deallocated', dns };
     }
 
@@ -873,7 +799,6 @@ export function deleteSubnet(db, subnet) {
     if (!hasChildren) {
       deleteSubnetData(db, subnet.id);
       deleteSubnetRow(db, subnet.id);
-      buddyMerge(db, subnet.parent_id);
       return { action: 'deleted', dns };
     }
 
