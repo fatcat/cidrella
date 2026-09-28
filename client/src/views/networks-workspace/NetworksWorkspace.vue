@@ -2400,24 +2400,29 @@ function resetVisibleColumns() {
 }
 // Every reverse zone of one network: the network's heading in the picker.
 async function filterToReverseNetwork(network) {
-  reverseNetworkFilter.value =
-    reverseNetworkFilter.value?.id === Number(network.id)
-      ? null
-      : allNetworks.value.find((entry) => Number(entry.id) === Number(network.id)) || {
-          id: Number(network.id),
-          name: network.name || network.cidr,
-          cidr: network.cidr,
-        };
+  if (Number(reverseNetworkFilter.value?.id) === Number(network.id)) return;
+  reverseNetworkFilter.value = allNetworks.value.find(
+    (entry) => Number(entry.id) === Number(network.id),
+  ) || {
+    id: Number(network.id),
+    name: network.name || network.cidr,
+    cidr: network.cidr,
+  };
   selectedZoneFilter.value = null;
   selectedScopeFilter.value = null;
-  if (reverseNetworkFilter.value) rememberDnsZoneSide({ type: 'reverse' });
+  rememberDnsZoneSide({ type: 'reverse' });
   tableQuery.value = '';
   await updateWorkspaceRoute();
   if (contextKind.value === 'network') await loadNetworkContext();
   else await refreshAggregateTable();
 }
+// Choosing the zone that is already chosen keeps it. Clearing it would drop
+// the table to the mixed record list, where every PTR sorts ahead of the
+// forward records and a second click on a forward zone looked like a jump to
+// a reverse one.
 async function filterToZone(zone) {
-  selectedZoneFilter.value = selectedZoneFilter.value?.id === zone.id ? null : zone;
+  if (Number(selectedZoneFilter.value?.id) === Number(zone.id)) return;
+  selectedZoneFilter.value = zone;
   reverseNetworkFilter.value = null;
   rememberDnsZoneSide(selectedZoneFilter.value);
   selectedScopeFilter.value = null;

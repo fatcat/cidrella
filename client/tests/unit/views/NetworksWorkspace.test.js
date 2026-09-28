@@ -1455,14 +1455,21 @@ describe('Networks workspace', () => {
     expect(selectedCards()).toEqual(['reverse']);
     await selectSibling();
 
-    // Clearing the zone is remembered too: the next network shows everything.
+    // Clicking the chosen card again keeps it. Clearing it used to drop the
+    // table to the mixed list, where the PTRs sort first and a forward zone
+    // looked as if it had turned into a reverse one.
+    const reads = api.get.mock.calls.length;
     await clickCard('reverse');
-    expect(lastDnsParams().zone_id).toBeUndefined();
-    expect(selectedCards()).toEqual([]);
+    expect(api.get.mock.calls.length).toBe(reads);
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 23 });
+    expect(selectedCards()).toEqual(['reverse']);
+    await clickCard('forward');
+    await clickCard('forward');
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 21 });
+    expect(selectedCards()).toEqual(['forward']);
     await selectFirst();
-    expect(lastDnsParams()).toMatchObject({ subnet_id: 11 });
-    expect(lastDnsParams().zone_id).toBeUndefined();
-    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('""');
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 21 });
+    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('"forward"');
 
     // Leaving the DNS view still resets the choice for that view's filters.
     await wrapper.find('[data-track="workspace-tab-addresses"]').trigger('click');

@@ -422,6 +422,12 @@ first on a 0.4.17 host.
   menu too. The DNS and DHCP tables have no bulk actions, so their rows
   stay single-pick.
 
+- Clicking the DNS zone card that is already chosen keeps it. It used to
+  clear the choice and drop the table to the mixed record list, where the
+  PTR records sort first, so a second click on a forward zone looked like a
+  jump to a reverse one. The same holds for a network in the reverse zone
+  picker.
+
 - The reverse zone picker is grouped by network and searchable. Each
   network is a heading (name, CIDR, zone count, record count) over its
   zones in address order, each zone with the /24 it covers; reverse zones
