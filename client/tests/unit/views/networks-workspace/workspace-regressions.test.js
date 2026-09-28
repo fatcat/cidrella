@@ -133,6 +133,73 @@ describe('workspace P1 regression contracts', () => {
     expect(wrapper.emitted('select-unallocated-network')?.[0]?.[0].id).toBe(11);
   });
 
+  it('shows only the allocatable leaves when Show hierarchy is off, and remembers it', async () => {
+    globalThis.localStorage?.removeItem('cidrella_workspace_unallocated_hierarchy');
+    const leaf = (id, cidr) => ({ id, cidr, name: cidr, allocatable: true, children: [] });
+    const folders = [
+      {
+        id: 1,
+        name: 'Lab',
+        networks: [
+          {
+            id: 10,
+            cidr: '10.0.0.0/23',
+            name: '10.0.0.0/23',
+            allocatable: false,
+            children: [
+              {
+                id: 11,
+                cidr: '10.0.0.0/24',
+                name: '10.0.0.0/24',
+                allocatable: false,
+                children: [leaf(12, '10.0.0.0/25'), leaf(13, '10.0.0.128/25')],
+              },
+              leaf(14, '10.0.1.0/24'),
+            ],
+          },
+        ],
+      },
+    ];
+    const ToggleSwitch = {
+      props: ['modelValue'],
+      emits: ['update:modelValue'],
+      template:
+        '<input type="checkbox" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+    };
+    const mountExplorer = (contextKind = 'unallocated') =>
+      mount(ResourceExplorer, {
+        props: { contextKind, folders, expandedFolders: new Set([1]) },
+        global: { stubs: { ToggleSwitch } },
+      });
+    const cidrs = (wrapper) =>
+      wrapper
+        .findAll('[data-track="workspace-network-select"] small')
+        .map((small) => small.text().replace(' · subdivided', ''));
+
+    const wrapper = mountExplorer();
+    const toggle = wrapper.find('.hierarchy-toggle');
+    expect(toggle.text()).toContain('Show hierarchy');
+    // On by default: the containers above the leaves are drawn too.
+    expect(cidrs(wrapper)).toEqual([
+      '10.0.0.0/23',
+      '10.0.0.0/24',
+      '10.0.0.0/25',
+      '10.0.0.128/25',
+      '10.0.1.0/24',
+    ]);
+    // The folder counts networks that can be allocated, in either mode.
+    expect(wrapper.find('.folder-row small').text()).toBe('3');
+
+    await toggle.find('input').setValue(false);
+    expect(cidrs(wrapper)).toEqual(['10.0.0.0/25', '10.0.0.128/25', '10.0.1.0/24']);
+    expect(wrapper.find('.resource-node.container').exists()).toBe(false);
+    // Remembered for the next visit.
+    expect(cidrs(mountExplorer())).toEqual(['10.0.0.0/25', '10.0.0.128/25', '10.0.1.0/24']);
+    // Allocated folders are flat already; the toggle is not offered there.
+    expect(mountExplorer('estate').find('.hierarchy-toggle').exists()).toBe(false);
+    globalThis.localStorage?.removeItem('cidrella_workspace_unallocated_hierarchy');
+  });
+
   it('T33 refreshes permissions after 403 and preserves successful domains', async () => {
     const onForbidden = vi.fn();
     const workspace = useWorkspaceResources({ can: () => true, onForbidden });

@@ -438,6 +438,7 @@ import {
   mapNetworkRows,
   mapRangeRows,
   sumScopeAddresses,
+  flattenAllocatable,
 } from '../networks-workspace-data.js';
 import { DHCP_V6_MODE_LABELS } from '../../utils/ip.js';
 
@@ -1185,13 +1186,6 @@ function buildUnallocatedFolders(sourceFolders) {
       networks: (folder.subnets || []).map((network) => mapNode(network, folder)).filter(Boolean),
     }))
     .filter((folder) => folder.networks.length);
-}
-
-function flattenAllocatable(nodes) {
-  return (nodes || []).flatMap((node) => [
-    ...(node.allocatable ? [node] : []),
-    ...flattenAllocatable(node.children),
-  ]);
 }
 
 function preserveEmptyFolders(allocated, sourceFolders) {

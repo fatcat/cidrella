@@ -395,6 +395,12 @@ first on a 0.4.17 host.
   only; its gateway, domain and scanning settings apply when you allocate
   it. Create used to allocate every new network.
 
+- All Unallocated Networks has a Show hierarchy switch beside Network
+  Scope. On (the default) the explorer draws the tree of subdivided
+  containers as before; off, it lists only the networks that can be
+  allocated. The choice is remembered per browser, and each folder's count
+  is the number of networks it can allocate.
+
 - The explorer names its two estates by allocation state: All Allocated
   Networks (every configured network, with its zones and scopes; formerly
   All Networks) and All Unallocated Networks (the address space ready to

@@ -63,6 +63,12 @@
 
     <div class="explorer-section-head">
       <span>NETWORK SCOPE</span>
+      <!-- Unallocated space is a tree of subdivided containers; with many
+           networks, the leaves alone are easier to scan. -->
+      <label v-if="contextKind === 'unallocated'" class="hierarchy-toggle">
+        Show hierarchy
+        <ToggleSwitch v-model="showHierarchy" data-track="workspace-unallocated-hierarchy" />
+      </label>
     </div>
 
     <div class="network-tree">
@@ -101,13 +107,17 @@
                 ><template v-else>{{ part.text }}</template></template
               ></span
             >
-            <small>{{ folder.networks.length }}</small>
+            <small>{{
+              contextKind === 'unallocated'
+                ? flattenAllocatable(folder.networks).length
+                : folder.networks.length
+            }}</small>
           </button>
         </div>
         <div v-if="expandedFolders.has(folder.id)" class="folder-networks">
           <template v-if="contextKind === 'unallocated'">
             <ResourceExplorerNode
-              v-for="network in folder.networks"
+              v-for="network in unallocatedNodes(folder)"
               :key="network.id"
               :node="network"
               :query="query"
@@ -183,12 +193,14 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { MOD_LABEL, isModShortcut } from '../../utils/keyboard.js';
 import { countOf } from '../../utils/format.js';
 import ResourceExplorerNode from './ResourceExplorerNode.vue';
 import StatusDot from '../../components/StatusDot.vue';
-import { networkStateKind } from '../networks-workspace-data.js';
+import ToggleSwitch from '../../ui/ToggleSwitch.js';
+import { loadJson, saveJson } from '../../utils/storage.js';
+import { flattenAllocatable, networkStateKind } from '../networks-workspace-data.js';
 import { NETWORK_DRAG_TYPE } from './workspace-actions.js';
 
 // Presentation only. Folder/network selection, expansion and the create menu
@@ -224,6 +236,16 @@ const emit = defineEmits([
   'action',
 ]);
 const query = defineModel('query', { type: String, default: '' });
+
+// Show hierarchy (unallocated only): the tree of subdivided containers, or
+// just the networks that can be allocated. Remembered per browser.
+const HIERARCHY_KEY = 'cidrella_workspace_unallocated_hierarchy';
+const showHierarchy = ref(loadJson(HIERARCHY_KEY, true) !== false);
+watch(showHierarchy, (value) => saveJson(HIERARCHY_KEY, value));
+function unallocatedNodes(folder) {
+  if (showHierarchy.value) return folder.networks;
+  return flattenAllocatable(folder.networks).map((node) => ({ ...node, children: [] }));
+}
 
 // Folder and network rows open their action menu from the keyboard the same
 // way table rows do (T-38): Shift+F10 or the ContextMenu key.
@@ -440,6 +462,14 @@ button {
   font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.12em;
+}
+.hierarchy-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  cursor: pointer;
 }
 .network-tree {
   flex: 1;

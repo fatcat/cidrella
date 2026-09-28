@@ -91,6 +91,15 @@ const NETWORK_STATE_KIND = {
   unallocated: 'ok',
   container: 'muted',
 };
+// The allocatable leaves of an unallocated tree, in tree order: the networks
+// that can be allocated, without the subdivided containers above them.
+export function flattenAllocatable(nodes) {
+  return (nodes || []).flatMap((node) => [
+    ...(node.allocatable ? [node] : []),
+    ...flattenAllocatable(node.children),
+  ]);
+}
+
 export function networkStateKind(state) {
   return NETWORK_STATE_KIND[state] || 'ok';
 }
