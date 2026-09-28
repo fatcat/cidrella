@@ -9,6 +9,14 @@ set -euo pipefail
 #   ./scripts/deploy-lxc.sh              # full deploy
 #   ./scripts/deploy-lxc.sh --skip-build # skip client build (server-only changes)
 #   ./scripts/deploy-lxc.sh --host cidrella-test.example.com  # override target host
+#   ./scripts/deploy-lxc.sh --bootstrap-version 0.4.18  # release to install on a bare LXC
+#   ./scripts/deploy-lxc.sh --no-bootstrap  # fail instead of installing on a bare LXC
+#
+# A bare LXC (no cidrella user, bundled Node runtime or systemd units) is
+# bootstrapped first by running this tree's scripts/install.sh on it, which
+# installs a published release and everything it depends on. The dev tree is
+# then synced over that install as usual. The installer is interactive, so a
+# bootstrap needs a terminal.
 # ═══════════════════════════════════════════════════════════
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,6 +26,8 @@ LXC_HOST="testerella"
 LXC_USER="root"
 INSTALL_DIR="/opt/cidrella"
 SKIP_BUILD=false
+BOOTSTRAP=true
+BOOTSTRAP_VERSION=""
 
 # ─── Colors ───────────────────────────────────────────────
 RED='\033[0;31m'
@@ -38,6 +48,8 @@ while [[ $# -gt 0 ]]; do
     --skip-build) SKIP_BUILD=true; shift ;;
     --host) LXC_HOST="$2"; shift 2 ;;
     --user) LXC_USER="$2"; shift 2 ;;
+    --bootstrap-version) BOOTSTRAP_VERSION="$2"; shift 2 ;;
+    --no-bootstrap) BOOTSTRAP=false; shift ;;
     *) err "Unknown argument: $1" ;;
   esac
 done
@@ -63,6 +75,39 @@ if ! ssh \
   err "Cannot connect to ${SSH_TARGET}. Check SSH config and keys."
 fi
 ok "SSH connection verified."
+
+# What an existing install provides and every step below relies on: the
+# service user, the bundled Node runtime (npm), the systemd units and rsync.
+# A bare LXC has none of them.
+MISSING=$(ssh "$SSH_TARGET" "
+  id cidrella >/dev/null 2>&1 || echo user
+  [ -x ${INSTALL_DIR}/runtime/node/bin/node ] || echo runtime
+  [ -f /etc/systemd/system/cidrella.service ] || echo units
+  command -v rsync >/dev/null 2>&1 || echo rsync
+" | xargs)
+
+if [ -n "$MISSING" ] && [ "$MISSING" != "rsync" ]; then
+  warn "No CIDRella install on ${LXC_HOST} (missing: ${MISSING})."
+  if [ "$BOOTSTRAP" = false ]; then
+    err "Install CIDRella there first (scripts/install.sh), or run without --no-bootstrap."
+  fi
+  [ -t 0 ] || err "Bootstrapping runs the interactive installer; run this from a terminal."
+  info "Bootstrapping with scripts/install.sh${BOOTSTRAP_VERSION:+ --version ${BOOTSTRAP_VERSION}}..."
+  # Copied over the SSH session itself: a bare LXC may lack SFTP for scp.
+  ssh "$SSH_TARGET" "cat > /tmp/cidrella-install.sh" < "$PROJECT_DIR/scripts/install.sh"
+  # -t: the installer asks how to handle dnsmasq and systemd-resolved.
+  ssh -t "$SSH_TARGET" \
+    "bash /tmp/cidrella-install.sh ${BOOTSTRAP_VERSION:+--version ${BOOTSTRAP_VERSION}}; status=\$?; rm -f /tmp/cidrella-install.sh; exit \$status" \
+    || err "The installer failed on ${LXC_HOST}; see its output above."
+  ssh "$SSH_TARGET" "id cidrella >/dev/null 2>&1 && [ -x ${INSTALL_DIR}/runtime/node/bin/node ] && command -v rsync >/dev/null" \
+    || err "The installer finished but ${LXC_HOST} still lacks the cidrella user, runtime or rsync."
+  ok "Base install complete; deploying the dev tree over it."
+elif [ "$MISSING" = "rsync" ]; then
+  info "Installing rsync on the LXC..."
+  ssh "$SSH_TARGET" "apt-get update -qq >/dev/null 2>&1; apt-get install -y -qq rsync >/dev/null" \
+    || err "Could not install rsync on ${LXC_HOST}."
+  ok "rsync installed."
+fi
 
 # ═══════════════════════════════════════════════════════════
 # BUILD CLIENT (local)
