@@ -47,7 +47,7 @@ import { canonicalizeIp, isValidIpv6, addressFamily } from '../utils/address.js'
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { isBlockedAddress } from '../utils/url-guard.js';
 import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
-import { validateSoaFields, isIntInRange } from '../utils/validation.js';
+import { validateSoaFields, isIntInRange, UNGROUPED } from '../utils/validation.js';
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
 function enrichDnsAddressRecords(db, records, zoneName) {
@@ -206,11 +206,12 @@ router.get('/zones', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   const parseId = (value) => {
     if (value === undefined) return undefined;
-    return /^\d+$/.test(String(value)) && Number(value) > 0 ? Number(value) : null;
+    return /^\d+$/.test(String(value)) && Number(value) > 0 ? Number(value) : NaN;
   };
-  const folderId = parseId(req.query.folder_id);
+  // folder_id=ungrouped is the networks in no folder, which is folder null.
+  const folderId = req.query.folder_id === UNGROUPED ? null : parseId(req.query.folder_id);
   const subnetId = parseId(req.query.subnet_id);
-  if (folderId === null || subnetId === null) {
+  if (Number.isNaN(folderId) || Number.isNaN(subnetId)) {
     return res.status(400).json({ error: 'folder_id and subnet_id must be positive integers' });
   }
   if (req.query.type !== undefined && !['forward', 'reverse'].includes(req.query.type)) {
@@ -235,7 +236,7 @@ router.get('/zones', requirePerm('dns:read'), (req, res) => {
       return res.status(400).json({ error: `${name} must be at most 256 characters` });
     }
   }
-  if (folderId !== undefined && !db.prepare('SELECT id FROM folders WHERE id = ?').get(folderId)) {
+  if (folderId && !db.prepare('SELECT id FROM folders WHERE id = ?').get(folderId)) {
     return res.status(404).json({ error: 'Folder not found' });
   }
   if (subnetId !== undefined && !db.prepare('SELECT id FROM subnets WHERE id = ?').get(subnetId)) {

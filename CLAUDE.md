@@ -27,7 +27,15 @@ npm run test:sidecar   # anomaly sidecar rules (python3 unittest, stdlib only, n
 npm run lint           # ESLint (flat config, correctness-focused), must exit 0
 npm run build:client   # production client build, a build failure is a test failure
 npm run check:reuse    # duplicate helpers, duplicate scoped CSS, hand-built confirm dialogs (baselined)
+npm run hunt:workspace # 300 seeded random walks through the Networks workspace (model test)
 ```
+
+The Networks workspace has a model-based test (`client/tests/unit/views/networks-workspace/model/`,
+read its `README.md`). Seeded random walks click through a fake estate and check the screen against
+invariants after every step; a failure shrinks to a `walk([...])` for `regressions.test.js`. When
+the workspace gains a control or a display rule, add it to `driver.js` or `violations` there.
+Components carry `data-row-id`, `data-zone-id`, `data-scope-id`, `data-network-id` and
+`data-folder-id` for it; keep them when refactoring, like `data-track`.
 
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.

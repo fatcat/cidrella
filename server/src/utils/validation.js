@@ -162,6 +162,10 @@ export function validateSoaFields(fields = {}) {
 // (`0 == null` is false), so two subnets both holding vlan_id = 0 reported a
 // collision on a VLAN that is not allowed to exist in the first place.
 // See REVIEW.md, duplicate-logic audit #16.
+// The folder_id query value for the networks in no folder (folder null), on
+// every read that filters by folder.
+export const UNGROUPED = 'ungrouped';
+
 export const VLAN_ID_MIN = 1;
 export const VLAN_ID_MAX = 4094;
 

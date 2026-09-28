@@ -66,6 +66,7 @@
       <section v-for="folder in folders" :key="folder.id" class="network-group">
         <div
           class="folder-row"
+          :data-folder-id="folder.id ?? 'ungrouped'"
           :class="{
             active: contextKind === 'folder' && selectedFolderId === folder.id,
             'drop-target': dropFolderKey === folderKey(folder),
@@ -127,6 +128,7 @@
               checked: selectedRows.includes(`network:${network.id}`),
             }"
             :aria-selected="selectedRows.includes(`network:${network.id}`)"
+            :data-network-id="network.id"
             data-track="workspace-network-select"
             :draggable="canMoveNetworks ? 'true' : undefined"
             @mousedown="holdTextSelection"

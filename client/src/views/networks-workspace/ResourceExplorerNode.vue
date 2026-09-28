@@ -9,6 +9,7 @@
       :disabled="!node.allocatable"
       :aria-label="node.allocatable ? `Select ${node.cidr}` : `${node.cidr} subdivided container`"
       data-track="workspace-network-select"
+      :data-network-id="node.id"
       @mousedown="$event.shiftKey && $event.preventDefault()"
       @click="node.allocatable && emit('pick', node, $event)"
       @contextmenu.prevent="node.allocatable && emit('menu', node, $event.currentTarget, $event)"

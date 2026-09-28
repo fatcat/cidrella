@@ -277,9 +277,11 @@ export function getWorkspaceDnsRecords(
         .filter((row) => row.folder_id === folderId)
         .map((row) => row.id),
     );
+    // Ungrouped (folder null) is its networks only: a zone with no folder of
+    // its own is not in it.
     records = records.filter(
       (row) =>
-        row.zone_folder_id === folderId ||
+        (folderId !== null && row.zone_folder_id === folderId) ||
         row.related_subnet_ids.some((id) => folderSubnetIds.has(id)),
     );
   }
@@ -370,7 +372,8 @@ export function getWorkspaceDnsZones(
     );
     rows = rows.filter(
       (row) =>
-        row.folder_id === folderId || row._related_subnet_ids.some((id) => folderSubnetIds.has(id)),
+        (folderId !== null && row.folder_id === folderId) ||
+        row._related_subnet_ids.some((id) => folderSubnetIds.has(id)),
     );
   }
   if (type) rows = rows.filter((row) => row.type === type);

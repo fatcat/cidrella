@@ -28,6 +28,7 @@
           v-for="row in rows"
           :key="row.id"
           :class="{ selected: selectedRowId === row.id, disabled: row.enabled === false }"
+          :data-row-id="row.id"
           tabindex="0"
           :aria-selected="selectedRowId === row.id"
           :draggable="draggableRows ? 'true' : undefined"

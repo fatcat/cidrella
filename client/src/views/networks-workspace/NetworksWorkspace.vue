@@ -436,7 +436,7 @@ import IpReservationEditor from './dialogs/IpReservationEditor.vue';
 import RangeEditor from './dialogs/RangeEditor.vue';
 import AddressScanDialog from './dialogs/AddressScanDialog.vue';
 import FolderManagerDialog from './dialogs/FolderManagerDialog.vue';
-import { useWorkspaceContext } from './composables/useWorkspaceContext.js';
+import { UNGROUPED_FOLDER, useWorkspaceContext } from './composables/useWorkspaceContext.js';
 import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
 import { contiguousAddressRuns, identityAddress } from './composables/useWorkspaceSelection.js';
 import { useRangeActions } from './composables/useRangeActions.js';
@@ -494,6 +494,16 @@ const addressRows = ref([]);
 const networkDhcpRows = ref([]);
 const rangeRows = ref([]);
 const matchedNetworkIds = ref(null);
+// What the explorer search matches ({ networks, zones, scopes } of id Sets,
+// from loadSearchMatches), or null with no search. The zone and scope cards
+// show only these; the whole lists stay whole for everything else.
+const searchMatches = ref(null);
+// The zone and scope lists have been read: before that no choice is judged.
+let listsLoaded = false;
+const matchesSearch = (kind, item) => {
+  const ids = searchMatches.value?.[kind];
+  return !ids || ids.has(Number(item.id));
+};
 const resourceQuery = ref('');
 const tableQuery = ref('');
 const selectedNetwork = ref({
@@ -538,7 +548,9 @@ const gridMode = computed(
 );
 const addressPageSize = computed(() => (gridMode.value ? GRID_PAGE_SIZE : pageSize.value));
 const addressSparse = ref(false);
-const showAvailable = ref(true);
+// Show available is a preference, kept per browser like the zone side below.
+const SHOW_AVAILABLE_KEY = 'cidrella_workspace_show_available';
+const showAvailable = ref(loadJson(SHOW_AVAILABLE_KEY, true) !== false);
 // { column: [value, ...] }. The three IP tables filter on the server, over
 // every row; the other lists (networks, zones, scopes, ranges) are loaded
 // whole and filter here.
@@ -689,6 +701,10 @@ const columnTableName = computed(() => {
 const canAnyCreate = computed(() => createMenuItems.value.length > 0);
 const canCreateCurrent = computed(() => viewAddAction.value?.available === true);
 
+// What the explorer and the unallocated table match a search against. The
+// server's network search covers allocated networks only.
+const networkTextMatches = (network, query) =>
+  `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query);
 const filteredFolders = computed(() => {
   const query = resourceQuery.value.trim().toLowerCase();
   const source = contextKind.value === 'unallocated' ? unallocatedFolders.value : folders.value;
@@ -697,8 +713,8 @@ const filteredFolders = computed(() => {
     nodes.flatMap((network) => {
       const children = filterNodes(network.children || []);
       const matches =
-        matchedNetworkIds.value?.has(Number(network.id)) ||
-        `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query);
+        searchMatches.value?.networks?.has(Number(network.id)) ||
+        networkTextMatches(network, query);
       return matches || children.length ? [{ ...network, children }] : [];
     });
   return source
@@ -833,39 +849,81 @@ function rememberDnsZoneSide(zone) {
 }
 // The zone the DNS table opens on when the context changes: the one already
 // chosen if the new context still has it, else the first zone of the side the
-// operator last chose (forward zones by name, reverse ones in address order).
-// Never the mixed list, where every PTR of every zone sorts first.
+// operator last chose (forward zones by name, reverse ones in address order),
+// else the first of the other side, so a network with only a reverse zone
+// still opens on it. Never the mixed list, where every PTR of every zone
+// sorts first.
 function dnsZoneForContext(previous) {
-  const inScope = contextKind.value === 'network' ? linkedZones.value : scopedZones.value;
+  const inScope = summaryZones.value;
   if (previous && inScope.some((zone) => Number(zone.id) === Number(previous.id))) {
     return inScope.find((zone) => Number(zone.id) === Number(previous.id));
   }
-  const side = dnsZoneSide.value;
-  if (!side) return null;
-  const key = (zone) => (side === 'reverse' ? reverseZoneSortKey(zone.name) : zone.name);
-  return (
-    inScope.filter((zone) => zone.type === side).sort((a, b) => key(a).localeCompare(key(b)))[0] ||
-    null
-  );
+  const firstOf = (side) => {
+    const key = (zone) => (side === 'reverse' ? reverseZoneSortKey(zone.name) : zone.name);
+    return inScope
+      .filter((zone) => zone.type === side)
+      .sort((a, b) => key(a).localeCompare(key(b)))[0];
+  };
+  const [side, other] =
+    dnsZoneSide.value === 'reverse' ? ['reverse', 'forward'] : ['forward', 'reverse'];
+  return firstOf(side) || firstOf(other) || null;
 }
-function linkedZoneOfSide(networkId, side) {
-  if (!side) return null;
-  return (
-    dnsZones.value.find(
-      (zone) =>
-        zone.type === side && dnsZoneNetworkIds.value.get(Number(zone.id))?.has(Number(networkId)),
-    ) || null
-  );
+// Keeps the DNS and DHCP choices among the cards on screen, which a search or
+// a change of context can take away: a reverse-zone network choice needs the
+// picker (two or more of its reverse zones shown), the DNS view always has a
+// zone chosen when any is shown, and a scope choice needs its card. True when
+// a choice changed, so the caller writes the route before it reads the table.
+function reconcileSearchChoices() {
+  if (!listsLoaded) return false;
+  const before = [
+    selectedZoneFilter.value?.id,
+    reverseNetworkFilter.value?.id,
+    selectedScopeFilter.value?.id,
+  ];
+  const network = reverseNetworkFilter.value;
+  if (network) {
+    const reverse = summaryZones.value.filter((zone) => zone.type === 'reverse');
+    const serves = reverse.some((zone) =>
+      dnsZoneNetworkIds.value.get(Number(zone.id))?.has(Number(network.id)),
+    );
+    if (reverse.length < 2 || !serves) reverseNetworkFilter.value = null;
+  }
+  if (activeView.value === 'dns' && !reverseNetworkFilter.value)
+    selectedZoneFilter.value = dnsZoneForContext(selectedZoneFilter.value);
+  const scope = selectedScopeFilter.value;
+  if (scope && !summaryScopes.value.some((entry) => Number(entry.id) === Number(scope.id)))
+    selectedScopeFilter.value = null;
+  const after = [
+    selectedZoneFilter.value?.id,
+    reverseNetworkFilter.value?.id,
+    selectedScopeFilter.value?.id,
+  ];
+  return before.some((id, index) => Number(id || 0) !== Number(after[index] || 0));
+}
+// Reads what the explorer search matches. A read overtaken by a newer search
+// is dropped, not applied.
+async function refreshSearchMatches() {
+  const query = resourceQuery.value.trim();
+  if (!query) {
+    searchMatches.value = null;
+    return;
+  }
+  const matches = await workspaceResources.loadSearchMatches(query);
+  if (query === resourceQuery.value.trim()) searchMatches.value = matches;
 }
 const networkDnsRows = computed(() => networkDnsRowsData.value);
 const networkScopes = computed(() =>
   dhcpScopes.value.filter((scope) => Number(scope.subnet_id) === Number(selectedNetwork.value.id)),
 );
 const summaryZones = computed(() =>
-  contextKind.value === 'network' ? linkedZones.value : scopedZones.value,
+  (contextKind.value === 'network' ? linkedZones.value : scopedZones.value).filter((zone) =>
+    matchesSearch('zones', zone),
+  ),
 );
 const summaryScopes = computed(() =>
-  contextKind.value === 'network' ? networkScopes.value : scopedScopes.value,
+  (contextKind.value === 'network' ? networkScopes.value : scopedScopes.value).filter((scope) =>
+    matchesSearch('scopes', scope),
+  ),
 );
 const scopedActiveLeaseCount = computed(
   () => scopedDhcpRows.value.filter((row) => row.leaseStatus === 'active').length,
@@ -928,7 +986,7 @@ function mapWorkspaceDnsRows(records) {
 function workspaceQueryState() {
   return {
     context: contextKind.value === 'estate' ? 'all' : contextKind.value,
-    folder: contextKind.value === 'folder' ? selectedFolder.value?.id : null,
+    folder: contextKind.value === 'folder' ? (selectedFolder.value?.id ?? UNGROUPED_FOLDER) : null,
     network: contextKind.value === 'network' ? selectedNetwork.value.id : null,
     view: activeView.value,
     zone: selectedZoneFilter.value?.id || null,
@@ -998,7 +1056,7 @@ function restoreContextFromRoute(availableNetworks) {
       repairedRoute = true;
     }
   } else if (state.context === 'folder') {
-    const folder = folders.value.find((item) => Number(item.id) === Number(state.folder));
+    const folder = folders.value.find((item) => (item.id ?? UNGROUPED_FOLDER) === state.folder);
     if (folder) {
       selectedFolder.value = folder;
       contextKind.value = 'folder';
@@ -1545,12 +1603,16 @@ const filteredRows = computed(() => {
       !Object.entries(filters.value).every(([key, values]) => values.includes(localValue(row, key)))
     )
       return false;
-    if (
-      (globalQuery || tableQuery.value.trim()) &&
-      activeView.value === 'networks' &&
-      !matchedNetworkIds.value?.has(Number(row.raw.id))
-    )
-      return false;
+    const tableText = tableQuery.value.trim().toLowerCase();
+    if ((globalQuery || tableText) && activeView.value === 'networks') {
+      const matches =
+        contextKind.value === 'unallocated'
+          ? [globalQuery, tableText]
+              .filter(Boolean)
+              .every((query) => networkTextMatches(row.raw, query))
+          : matchedNetworkIds.value?.has(Number(row.raw.id));
+      if (!matches) return false;
+    }
     return localQueries.every((query) =>
       Object.entries(row).some(
         ([key, value]) =>
@@ -1937,6 +1999,7 @@ function toggleFolder(id) {
   expandedFolders.value = next;
 }
 async function selectNetwork(network) {
+  const previous = [selectedZoneFilter.value, reverseNetworkFilter.value];
   selectedNetwork.value = network;
   selectedFolder.value =
     folders.value.find((folder) => Number(folder.id) === Number(network.folderId)) || null;
@@ -1946,11 +2009,11 @@ async function selectNetwork(network) {
   sortKey.value = null;
   // On the DNS view the operator's last zone choice and record filters carry
   // over to the next network instead of resetting to the mixed record list.
-  const keepDnsChoice = activeView.value === 'dns';
-  if (!keepDnsChoice) clearFilters();
-  selectedZoneFilter.value = keepDnsChoice ? linkedZoneOfSide(network.id, dnsZoneSide.value) : null;
+  if (activeView.value !== 'dns') clearFilters();
+  selectedZoneFilter.value = null;
   reverseNetworkFilter.value = null;
   selectedScopeFilter.value = null;
+  carryDnsChoice(...previous);
   clearDetail();
   tableQuery.value = '';
   await updateWorkspaceRoute();
@@ -2002,7 +2065,14 @@ async function selectEstate() {
 async function selectFolder(folder) {
   const previous = [selectedZoneFilter.value, reverseNetworkFilter.value];
   contextKind.value = 'folder';
-  selectedFolder.value = folder;
+  // The unallocated explorer lists its own copy of each folder, holding the
+  // unallocated networks; the folder context is always the allocated one.
+  selectedFolder.value = folders.value.find(
+    (entry) => (entry.id ?? null) === (folder.id ?? null),
+  ) || {
+    ...folder,
+    networks: [],
+  };
   if (!expandedFolders.value.has(folder.id)) toggleFolder(folder.id);
   if (!aggregateViews.some((view) => view.key === activeView.value)) activeView.value = 'networks';
   resetContextNavigation();
@@ -2028,12 +2098,7 @@ async function switchView(view) {
   clearFilters();
   // The DNS tab opens on the zone side the operator last chose, not on the
   // mixed record list, which sorts every PTR record ahead of the forward ones.
-  selectedZoneFilter.value =
-    view !== 'dns'
-      ? null
-      : contextKind.value === 'network'
-        ? linkedZoneOfSide(selectedNetwork.value?.id, dnsZoneSide.value)
-        : dnsZoneForContext(null);
+  selectedZoneFilter.value = view === 'dns' ? dnsZoneForContext(null) : null;
   reverseNetworkFilter.value = null;
   selectedScopeFilter.value = null;
   clearDetail();
@@ -2485,6 +2550,12 @@ async function filterToScope(scope) {
   else await refreshAggregateTable();
 }
 
+// The folder a read is filtered to. Ungrouped has no id; the server takes
+// `ungrouped` for the networks in no folder, where leaving the filter off
+// would read the whole estate.
+function folderParam() {
+  return selectedFolder.value?.id ?? UNGROUPED_FOLDER;
+}
 // A network's reverse zones: its records in reverse zones, by network.
 function reverseNetworkParams() {
   return reverseNetworkFilter.value
@@ -2511,7 +2582,7 @@ function tableRequestParams() {
     contextKind.value === 'network'
       ? { subnet_id: selectedNetwork.value.id }
       : contextKind.value === 'folder'
-        ? { folder_id: selectedFolder.value?.id }
+        ? { folder_id: folderParam() }
         : {};
   return {
     ...place,
@@ -2530,6 +2601,7 @@ function tableRequestParams() {
 async function loadNetworkContext({ silent = false } = {}) {
   if (!selectedNetwork.value.id) return;
   const request = ++contextRequest;
+  if (reconcileSearchChoices()) await updateWorkspaceRoute({ replace: true });
   if (!silent) loadingContext.value = true;
   loadError.value = '';
   try {
@@ -2646,13 +2718,18 @@ async function loadWorkspace() {
   loadingContext.value = true;
   loadError.value = '';
   try {
-    const [tree, networks, zones, dns, scopes, dhcp] = await Promise.all([
+    const query = resourceQuery.value.trim();
+    const [tree, networks, zones, dns, scopes, dhcp, matches] = await Promise.all([
       workspaceResources.loadTree(),
-      workspaceResources.loadNetworks({ q: resourceQuery.value.trim() || undefined }),
+      workspaceResources.loadNetworks({
+        q: query || undefined,
+        table_q: tableQuery.value.trim() || undefined,
+      }),
       workspaceResources.loadZones(),
-      workspaceResources.loadDns({ q: resourceQuery.value.trim() || undefined, page_size: 256 }),
+      workspaceResources.loadDns({ q: query || undefined, page_size: 256 }),
       workspaceResources.loadScopes(),
-      workspaceResources.loadDhcp({ q: resourceQuery.value.trim() || undefined, page_size: 256 }),
+      workspaceResources.loadDhcp({ q: query || undefined, page_size: 256 }),
+      query ? workspaceResources.loadSearchMatches(query) : null,
     ]);
     if (!tree)
       throw new Error(workspaceResources.resources.tree.error || 'Network tree unavailable');
@@ -2660,6 +2737,8 @@ async function loadWorkspace() {
     unallocatedFolders.value = buildUnallocatedFolders(tree.folders);
     dnsZones.value = zones || [];
     dhcpScopes.value = scopes || [];
+    searchMatches.value = matches;
+    listsLoaded = true;
     allDhcpRows.value = mapDhcpRows(dhcp?.items || []);
     allDnsRows.value = mapWorkspaceDnsRows(dns?.items || []);
     expandedFolders.value = new Set(
@@ -2681,11 +2760,9 @@ async function loadWorkspace() {
         ? new Set((networks?.items || []).map((network) => Number(network.id)))
         : null;
     restoreContextFromRoute(availableNetworks);
-    if (
-      contextKind.value !== 'network' &&
-      (selectedZoneFilter.value || reverseNetworkFilter.value || selectedScopeFilter.value)
-    )
-      await refreshAggregateTable();
+    // The first reads above are the whole estate; the restored context, zone,
+    // scope and table search read the table the way every later visit does.
+    if (contextKind.value !== 'network') await refreshAggregateTable();
     loadingContext.value = false;
   } catch (error) {
     loadError.value = apiError(error);
@@ -2716,43 +2793,32 @@ async function sortBy(key) {
 
 async function refreshAggregateTable() {
   const request = ++aggregateRequest;
+  if (reconcileSearchChoices()) await updateWorkspaceRoute({ replace: true });
   const params = {
-    folder_id: contextKind.value === 'folder' ? selectedFolder.value?.id : undefined,
+    folder_id: contextKind.value === 'folder' ? folderParam() : undefined,
     q: resourceQuery.value.trim() || undefined,
     table_q: tableQuery.value.trim() || undefined,
     page: currentPage.value,
     page_size: pageSize.value,
   };
   if (activeView.value === 'dns') {
-    const zoneParams = { folder_id: params.folder_id, q: params.q };
-    const recordParams = {
+    const dns = await workspaceResources.loadDns({
       ...params,
       ...(isIpTable.value ? tableRequestParams() : {}),
       zone_id: selectedZoneFilter.value?.id || undefined,
       ...reverseNetworkParams(),
-    };
-    const [zones, dns] = await Promise.all([
-      workspaceResources.loadZones(zoneParams),
-      workspaceResources.loadDns(recordParams),
-    ]);
-    if (zones) dnsZones.value = zones;
+    });
     if (dns) {
       allDnsRows.value = mapWorkspaceDnsRows(dns.items);
       dnsTotal.value = dns.total;
       totalPages.value = Math.max(1, Math.ceil(dns.total / pageSize.value));
     }
   } else if (activeView.value === 'dhcp') {
-    const scopeParams = { folder_id: params.folder_id, q: params.q };
-    const addressParams = {
+    const dhcp = await workspaceResources.loadDhcp({
       ...params,
       ...(isIpTable.value ? tableRequestParams() : {}),
       scope_id: selectedScopeFilter.value?.id || undefined,
-    };
-    const [scopes, dhcp] = await Promise.all([
-      workspaceResources.loadScopes(scopeParams),
-      workspaceResources.loadDhcp(addressParams),
-    ]);
-    if (scopes) dhcpScopes.value = scopes;
+    });
     if (dhcp) {
       allDhcpRows.value = mapDhcpRows(dhcp.items);
       dhcpTotal.value = dhcp.total;
@@ -2760,10 +2826,10 @@ async function refreshAggregateTable() {
     }
   } else {
     const networks = await workspaceResources.loadNetworks(params);
-    matchedNetworkIds.value =
-      resourceQuery.value.trim() || tableQuery.value.trim()
-        ? new Set((networks?.items || []).map((network) => Number(network.id)))
-        : null;
+    // A read overtaken by a newer one comes back null; the newer one applies.
+    if (!params.q && !params.table_q) matchedNetworkIds.value = null;
+    else if (networks)
+      matchedNetworkIds.value = new Set(networks.items.map((network) => Number(network.id)));
   }
   if (request === aggregateRequest)
     await resolveDetail(request, (generation) => generation === aggregateRequest);
@@ -2793,14 +2859,12 @@ const MUTATION_REFRESH = {
 
 async function reloadSharedReads(kind) {
   const plan = MUTATION_REFRESH[kind];
-  const query = resourceQuery.value.trim() || tableQuery.value.trim();
   const [tree, zones, scopes] = await Promise.all([
     plan.tree ? workspaceResources.loadTree() : null,
     plan.zones ? workspaceResources.loadZones() : null,
     plan.scopes ? workspaceResources.loadScopes() : null,
-    plan.networks && query
-      ? workspaceResources.loadNetworks({ q: resourceQuery.value.trim() || undefined })
-      : null,
+    // A write can change what the search matches (a new record's zone).
+    refreshSearchMatches(),
   ]);
   if (plan.tree && !tree)
     throw new Error(workspaceResources.resources.tree.error || 'Network tree unavailable');
@@ -2864,6 +2928,7 @@ async function refreshCurrentContext() {
 }
 
 watch(showAvailable, () => {
+  saveJson(SHOW_AVAILABLE_KEY, showAvailable.value);
   if (activeView.value !== 'addresses' || contextKind.value !== 'network') return;
   currentPage.value = 1;
   loadNetworkContext();
@@ -2881,15 +2946,12 @@ watch(tableQuery, () => {
 
 watch(resourceQuery, () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
+  searchTimer = setTimeout(async () => {
     currentPage.value = 1;
     updateWorkspaceRoute({ replace: true });
-    const query = resourceQuery.value.trim();
-    workspaceResources.loadNetworks({ q: query || undefined }).then((networks) => {
-      matchedNetworkIds.value = query
-        ? new Set((networks?.items || []).map((network) => Number(network.id)))
-        : null;
-    });
+    // The cards the table's choices come from follow the search, so the
+    // matches land before the table is read.
+    await refreshSearchMatches();
     if (contextKind.value === 'network') loadNetworkContext();
     else refreshAggregateTable();
   }, 300);

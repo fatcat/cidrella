@@ -106,6 +106,7 @@
         :key="zone.id"
         class="linked-card"
         :class="{ selected: isSelected(selectedZone, zone) }"
+        :data-zone-id="zone.id"
         :aria-pressed="isSelected(selectedZone, zone)"
         @click="emit('filter-zone', zone)"
         @contextmenu.prevent="emit('zone-menu', zone, $event.currentTarget, $event)"
@@ -126,6 +127,8 @@
         :aria-pressed="reversePicked"
         aria-haspopup="menu"
         data-track="workspace-reverse-zones"
+        :data-zone-id="selectedReverseZone?.id"
+        :data-network-id="selectedReverseNetwork?.id"
         @click="reverseMenuRef.toggle($event)"
       >
         <i class="pi pi-replay" /><span
@@ -157,6 +160,7 @@
                 :aria-checked="isSelected(selectedReverseNetwork, group.network)"
                 :title="`Every reverse zone of ${group.network.name || group.network.cidr}`"
                 data-track="workspace-reverse-network"
+                :data-network-id="group.network.id"
                 @click="pickReverseNetwork(group.network)"
               >
                 <span
@@ -180,6 +184,7 @@
                 :aria-checked="isSelected(selectedZone, zone)"
                 :class="{ selected: isSelected(selectedZone, zone) }"
                 data-track="workspace-reverse-zone"
+                :data-zone-id="zone.id"
                 @click="pickReverseZone(zone)"
                 @contextmenu.prevent="emit('zone-menu', zone, $event.currentTarget, $event)"
               >
@@ -203,6 +208,7 @@
         :key="scope.id"
         class="linked-card"
         :class="{ selected: isSelected(selectedScope, scope) }"
+        :data-scope-id="scope.id"
         :aria-pressed="isSelected(selectedScope, scope)"
         @click="emit('filter-scope', scope)"
         @contextmenu.prevent="emit('scope-menu', scope, $event.currentTarget, $event)"

@@ -47,6 +47,7 @@ import {
   replaceDefaultOptions,
 } from '../models/dhcp-option.js';
 import { scopeMatches } from '../models/workspace-view.js';
+import { UNGROUPED } from '../utils/validation.js';
 
 const router = Router();
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
@@ -170,11 +171,12 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
 
   const parseId = (value) => {
     if (value === undefined) return undefined;
-    return /^\d+$/.test(String(value)) && Number(value) > 0 ? Number(value) : null;
+    return /^\d+$/.test(String(value)) && Number(value) > 0 ? Number(value) : NaN;
   };
-  const folderId = parseId(req.query.folder_id);
+  // folder_id=ungrouped is the networks in no folder, which is folder null.
+  const folderId = req.query.folder_id === UNGROUPED ? null : parseId(req.query.folder_id);
   const subnetId = parseId(req.query.subnet_id);
-  if (folderId === null || subnetId === null) {
+  if (Number.isNaN(folderId) || Number.isNaN(subnetId)) {
     return res.status(400).json({ error: 'folder_id and subnet_id must be positive integers' });
   }
   let enabled;
@@ -191,7 +193,7 @@ router.get('/scopes', requirePerm('dhcp:read'), (req, res) => {
       return res.status(400).json({ error: `${name} must be at most 256 characters` });
     }
   }
-  if (folderId !== undefined && !db.prepare('SELECT id FROM folders WHERE id = ?').get(folderId)) {
+  if (folderId && !db.prepare('SELECT id FROM folders WHERE id = ?').get(folderId)) {
     return res.status(404).json({ error: 'Folder not found' });
   }
   if (subnetId !== undefined && !db.prepare('SELECT id FROM subnets WHERE id = ?').get(subnetId)) {

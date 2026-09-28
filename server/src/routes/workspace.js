@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { getDb } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { canonicalizeIp } from '../utils/address.js';
+import { UNGROUPED } from '../utils/validation.js';
 import {
   getWorkspaceNetworks,
   getWorkspaceDnsRecords,
@@ -43,6 +44,11 @@ function parseCommon(req, { paged = false } = {}) {
     ['zone_id', 'zoneId'],
     ['scope_id', 'scopeId'],
   ]) {
+    // folder_id=ungrouped is the networks in no folder, which is folder null.
+    if (queryName === 'folder_id' && req.query.folder_id === UNGROUPED) {
+      result.folderId = null;
+      continue;
+    }
     const parsed = optionalInteger(req.query[queryName], queryName);
     if (parsed.error) return parsed;
     result[key] = parsed.value;
@@ -127,7 +133,8 @@ function contextExists(db, field, id) {
 
 function validateContexts(db, query, fields) {
   for (const field of fields) {
-    if (query[field] !== undefined && !contextExists(db, field, query[field])) {
+    // A null folder is Ungrouped, which always exists.
+    if (query[field] != null && !contextExists(db, field, query[field])) {
       return (
         field.replace(/Id$/, '').replace(/^./, (letter) => letter.toUpperCase()) + ' not found'
       );

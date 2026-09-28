@@ -70,6 +70,10 @@ function legacyFilters(query, view) {
   return filters;
 }
 
+// Ungrouped, the networks in no folder, has no id; its links say this.
+export const UNGROUPED_FOLDER = 'ungrouped';
+const folderOf = (value) => (value === UNGROUPED_FOLDER ? value : positiveInteger(value));
+
 function positiveInteger(value) {
   if (value == null || value === '') return null;
   const number = Number(value);
@@ -84,7 +88,7 @@ export function decodeWorkspaceQuery(query = {}) {
     : WORKSPACE_DEFAULT_STATE.presentation;
   const state = {
     context,
-    folder: positiveInteger(query.folder),
+    folder: folderOf(query.folder),
     network: positiveInteger(query.network),
     view,
     zone: positiveInteger(query.zone),
@@ -109,8 +113,7 @@ export function decodeWorkspaceQuery(query = {}) {
 export function encodeWorkspaceQuery(state) {
   const query = {};
   if (state.context !== 'all') query.context = state.context;
-  if (state.context === 'folder' && positiveInteger(state.folder))
-    query.folder = String(state.folder);
+  if (state.context === 'folder' && folderOf(state.folder)) query.folder = String(state.folder);
   if (state.context === 'network' && positiveInteger(state.network))
     query.network = String(state.network);
   if (state.view !== 'networks') query.view = state.view;

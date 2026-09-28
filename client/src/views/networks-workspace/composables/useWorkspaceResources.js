@@ -24,6 +24,11 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
     dns: resourceState({ items: [], total: 0, page: 1, pageSize: 50 }),
     dnsTotal: resourceState(0),
     scopes: resourceState([]),
+    // The zones, scopes and networks the explorer search matches. Kept apart
+    // from the whole lists above, which the rest of the workspace reads.
+    searchZones: resourceState([]),
+    searchScopes: resourceState([]),
+    searchNetworks: resourceState({ items: [], total: 0 }),
     dhcp: resourceState({ items: [], total: 0, page: 1, pageSize: 50 }),
     dhcpTotal: resourceState(0),
     addresses: resourceState({
@@ -86,6 +91,24 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
     return read('zones', 'dns:read', () =>
       api.get('/dns/zones', { params: compactParams({ include_networks: 'true', ...params }) }),
     );
+  }
+  // What the explorer search matches, by id: a Set per kind, or null for
+  // a kind the user cannot read (nothing of it is shown to filter).
+  async function loadSearchMatches(q) {
+    const ids = (rows) => (rows ? new Set(rows.map((row) => Number(row.id))) : null);
+    const [networks, zones, scopes] = await Promise.all([
+      read(
+        'searchNetworks',
+        'subnets:read',
+        () => api.get('/workspace/networks', { params: { q } }),
+        (response) => envelope(response),
+      ),
+      read('searchZones', 'dns:read', () =>
+        api.get('/dns/zones', { params: { q, include_networks: 'false' } }),
+      ),
+      read('searchScopes', 'dhcp:read', () => api.get('/dhcp/scopes', { params: { q } })),
+    ]);
+    return { networks: ids(networks?.items), zones: ids(zones), scopes: ids(scopes) };
   }
   function loadDns(params = {}) {
     return read(
@@ -257,6 +280,7 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
     loadDns,
     loadDnsTotal,
     loadScopes,
+    loadSearchMatches,
     loadDhcp,
     loadDhcpTotal,
     loadAddresses,

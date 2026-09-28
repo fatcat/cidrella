@@ -307,6 +307,47 @@ describe('workspace read routes', () => {
     expect(response.body.items).toHaveLength(3);
   });
 
+  // Ungrouped has no folder id. Leaving folder_id off read the whole estate
+  // into the Ungrouped folder; `ungrouped` reads the networks in no folder.
+  it('reads Ungrouped with folder_id=ungrouped', async () => {
+    const networks = await request(app)
+      .get('/api/workspace/networks')
+      .query({ folder_id: 'ungrouped' });
+    expect(networks.status).toBe(200);
+    expect(networks.body.items.map((row) => row.id)).toEqual([subnetB]);
+
+    // Every record here belongs to Alpha, in the folder; a zone with no
+    // folder of its own is not thereby Ungrouped.
+    const records = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ folder_id: 'ungrouped' });
+    expect(records.status).toBe(200);
+    expect(records.body.items).toEqual([]);
+
+    const dhcp = await request(app)
+      .get('/api/workspace/dhcp-addresses')
+      .query({ folder_id: 'ungrouped' });
+    expect(dhcp.status).toBe(200);
+    expect(dhcp.body.items).toEqual([]);
+
+    // shared.test is Beta's domain too; the reverse zone serves Alpha alone.
+    const zones = await request(app).get('/api/dns/zones').query({ folder_id: 'ungrouped' });
+    expect(zones.status).toBe(200);
+    expect(zones.body.map((zone) => zone.name)).toEqual(['shared.test']);
+    const inFolder = await request(app).get('/api/dns/zones').query({ folder_id: folderId });
+    expect(inFolder.body.map((zone) => zone.name).sort()).toEqual([
+      '0.20.10.in-addr.arpa',
+      'shared.test',
+    ]);
+
+    const scopes = await request(app).get('/api/dhcp/scopes').query({ folder_id: 'ungrouped' });
+    expect(scopes.status).toBe(200);
+    expect(scopes.body.map((scope) => scope.id)).not.toContain(scopeId);
+
+    expect((await request(app).get('/api/dns/zones?folder_id=nope')).status).toBe(400);
+    expect((await request(app).get('/api/workspace/networks?folder_id=nope')).status).toBe(400);
+  });
+
   it('includes an out-of-pool reservation in network view but not scope view', async () => {
     const network = await request(app)
       .get('/api/workspace/dhcp-addresses')
