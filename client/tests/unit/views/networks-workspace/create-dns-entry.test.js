@@ -36,7 +36,22 @@ describe('Create DNS entry in the address row menu', () => {
     }
   });
 
-  it('is left out where the lifecycle would refuse the record', () => {
+  it('stays in the menu greyed out, with the reason, where it cannot run', () => {
+    const network = menuActions({ menu: 'row', target: address('system'), can: all }).find(
+      (item) => item.id === ID,
+    );
+    expect(network).toMatchObject({
+      label: 'Create DNS entry',
+      available: false,
+      reason: expect.stringMatching(/network and broadcast/),
+    });
+    // Other unavailable entries are still left out.
+    expect(
+      menuActions({ menu: 'row', target: address('system'), can: all }).map((item) => item.id),
+    ).not.toContain('ip.reserve');
+  });
+
+  it('is refused where the lifecycle would refuse the record', () => {
     expect(actionAvailability(ID, address('static_dns'), all).reason).toMatch(/CNAME/);
     expect(
       actionAvailability(ID, address('unassigned', { status: 'DHCP Scope' }), all).reason,
@@ -133,7 +148,13 @@ describe('Create DNS entry in the address details panel', () => {
   };
 
   it('offers the row-menu item and hands it back as an action', async () => {
-    const item = { id: ID, label: 'Create DNS entry', target: address('unassigned') };
+    const item = {
+      id: ID,
+      label: 'Create DNS entry',
+      available: true,
+      reason: '',
+      target: address('unassigned'),
+    };
     const wrapper = mountPanel({ dnsAction: item });
     await flushPromises();
     const button = wrapper.find('[data-track="workspace-address-create-dns"]');
@@ -144,7 +165,23 @@ describe('Create DNS entry in the address details panel', () => {
     expect(wrapper.emitted('action')).toEqual([[item]]);
   });
 
-  it('shows no button when the menu would not offer it', async () => {
+  it('greys the button out with the reason where the entry cannot run', async () => {
+    const item = {
+      id: ID,
+      label: 'Create DNS entry',
+      available: false,
+      reason: 'The network and broadcast addresses belong to the network and cannot be named.',
+    };
+    const wrapper = mountPanel({ dnsAction: item });
+    await flushPromises();
+    const button = wrapper.find('[data-track="workspace-address-create-dns"]');
+    expect(button.attributes('disabled')).toBeDefined();
+    expect(button.attributes('title')).toBe(item.reason);
+    await button.trigger('click');
+    expect(wrapper.emitted('action')).toBeUndefined();
+  });
+
+  it('shows no button without dns:write', async () => {
     const wrapper = mountPanel({ canWrite: true, dnsAction: null });
     await flushPromises();
     expect(wrapper.find('[data-track="workspace-address-create-dns"]').exists()).toBe(false);

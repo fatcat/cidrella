@@ -1626,11 +1626,17 @@ describe('Networks workspace', () => {
       'Remove this IP from Scope',
       'Delete Scope',
       'Create IP Reservation',
+      'Create DNS entry',
       'Create DHCP Reservation',
       'Set Range Type',
       'Liveness scan',
       'Probe now',
     ]);
+    // A pooled address cannot be named: the entry stays, greyed, with why.
+    const dnsEntry = menu.findAll('button').find((button) => button.text() === 'Create DNS entry');
+    expect(dnsEntry.attributes('aria-disabled')).toBe('true');
+    expect(dnsEntry.classes()).toContain('unavailable');
+    expect(dnsEntry.attributes('title')).toMatch(/DHCP pool/);
     // One separator, above Probe now, which closes the menu.
     const separators = menu.findAll('[role="separator"]');
     expect(separators).toHaveLength(1);

@@ -193,6 +193,17 @@ button {
 .floating-menu button.danger > i {
   color: var(--cid-red-500);
 }
+/* An entry kept in the menu where it cannot run; its title says why. */
+.floating-menu button.unavailable {
+  color: var(--preview-muted);
+  cursor: not-allowed;
+}
+.floating-menu button.unavailable:hover {
+  background: transparent;
+}
+.floating-menu button.unavailable > i {
+  color: inherit;
+}
 /* Fallback corners for a menu opened without an anchor; menuStyle overrides
    them with the pointer or invoker position. */
 .create-menu {

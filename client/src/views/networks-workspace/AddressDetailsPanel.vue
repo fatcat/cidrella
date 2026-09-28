@@ -114,6 +114,8 @@
       <div class="quick-actions">
         <button
           v-if="dnsAction"
+          :disabled="!dnsAction.available"
+          :title="dnsAction.available ? '' : dnsAction.reason"
           data-track="workspace-address-create-dns"
           @click="emit('action', dnsAction)"
         >
@@ -330,8 +332,9 @@ const props = defineProps({
   canWrite: { type: Boolean, default: false },
   canReadDevice: { type: Boolean, default: false },
   canWriteDevice: { type: Boolean, default: false },
-  // The registry's Create DNS entry item for this address when it is
-  // available (the same entry the row menu offers), else null.
+  // The registry's Create DNS entry item for this address, the same entry
+  // the row menu offers (greyed out with its reason when it cannot run), or
+  // null without dns:write.
   dnsAction: { type: Object, default: null },
 });
 const emit = defineEmits(['close', 'navigate', 'changed', 'open-network', 'action']);

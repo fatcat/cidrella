@@ -268,12 +268,20 @@ const ACTION_DEFINITIONS = [
     available: (target) =>
       ['unassigned', 'reserved', 'gateway'].includes(target.allocation_state) &&
       !inDhcpPool(target),
-    disabledReason: (target) =>
-      target.allocation_state === 'static_dns'
-        ? 'This address already has a DNS name. Add another name as a CNAME.'
-        : inDhcpPool(target)
-          ? 'This address is in a DHCP pool. Create a DHCP Reservation for it instead.'
-          : 'DNS cannot name this address while DHCP or the network topology owns it.',
+    disabledReason: (target) => {
+      const state = target.allocation_state;
+      if (state === 'static_dns')
+        return 'This address already has a DNS name. Add another name as a CNAME.';
+      if (state === 'system')
+        return 'The network and broadcast addresses belong to the network and cannot be named.';
+      if (state === 'static_dhcp') return 'A DHCP Reservation names this address.';
+      if (state === 'dynamic_dhcp') return 'A DHCP lease holds this address.';
+      if (inDhcpPool(target))
+        return 'This address is in a DHCP pool. Create a DHCP Reservation for it instead.';
+      return 'DNS cannot name this address in its current state.';
+    },
+    // Kept in the menu, greyed out with the reason, where it cannot run.
+    showUnavailable: true,
   },
   {
     id: 'dns.record.edit',
@@ -764,6 +772,7 @@ export const WORKSPACE_ACTIONS = Object.freeze(
         placement: null,
         separatorBefore: false,
         toggle: null,
+        showUnavailable: false,
         ...definition,
         targetKinds: asList(definition.targetKind),
       }),
@@ -851,8 +860,9 @@ export function targetForRow(row) {
 // Actions a menu should offer for a target: registry order, filtered to the
 // menu, the active view when the entry names one, the target kind, the
 // caller's capabilities, and the entry's own predicate. Unavailable entries
-// are left out rather than shown disabled; the reason is still reachable
-// through actionAvailability for panels that want to explain it.
+// are left out, except those marked `showUnavailable`, which stay greyed out
+// with their reason (`available: false`, `reason`). A missing capability
+// always leaves an entry out.
 export function menuActions({ menu, target, view = null, can = () => false }) {
   const states = new Map();
   const ids = Object.keys(WORKSPACE_ACTIONS).filter((id) => {
@@ -866,7 +876,7 @@ export function menuActions({ menu, target, view = null, can = () => false }) {
     if (action.capability && !can(action.capability)) return false;
     const state = actionAvailability(id, target, can);
     states.set(id, state);
-    return state.available;
+    return state.available || action.showUnavailable;
   });
   const order =
     menu === 'row'

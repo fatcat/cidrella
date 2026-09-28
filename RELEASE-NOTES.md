@@ -284,8 +284,9 @@ first on a 0.4.17 host.
 - **Create DNS entry for an address.** The address row menu and the address
   details panel offer Create DNS entry, which opens the record editor with an
   A (or AAAA) record for that address in the network's domain zone. It is
-  offered where DNS may claim the address (unassigned, an IP Reservation or
-  the gateway), not in a DHCP pool, and needs `dns:write`.
+  available where DNS may claim the address (unassigned, an IP Reservation or
+  the gateway, outside a DHCP pool) and needs `dns:write`. Elsewhere it is
+  shown greyed out, with the reason as its tooltip.
 
 ### Changed
 

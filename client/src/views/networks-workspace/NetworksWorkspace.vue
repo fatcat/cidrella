@@ -343,7 +343,14 @@
           <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
           <span class="menu-switch" :class="item.toggle" aria-hidden="true" />
         </button>
-        <button v-else role="menuitem" :class="{ danger: item.danger }" @click="runRowAction(item)">
+        <button
+          v-else
+          role="menuitem"
+          :class="{ danger: item.danger, unavailable: !item.available }"
+          :aria-disabled="item.available ? undefined : 'true'"
+          :title="item.available ? undefined : item.reason"
+          @click="item.available && runRowAction(item)"
+        >
           <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
         </button>
       </template>
