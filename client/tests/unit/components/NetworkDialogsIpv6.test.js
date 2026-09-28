@@ -97,6 +97,15 @@ const button = (wrapper, text) =>
   dialog(wrapper)
     .findAll('button')
     .find((candidate) => candidate.text() === text);
+// Create asks whether the network is created allocated; confirm it.
+async function confirmCreate(wrapper) {
+  await wrapper
+    .find('[data-track="dialog-network-create-confirm"]')
+    .findAll('button')
+    .find((candidate) => candidate.text() === 'Create')
+    .trigger('click');
+  await settle();
+}
 const checkbox = (wrapper, label) =>
   wrapper
     .findAll('label.toggle-label')
@@ -166,6 +175,7 @@ describe('NetworkDialogs with an IPv6 CIDR', () => {
 
     await button(wrapper, 'Create').trigger('click');
     await settle();
+    await confirmCreate(wrapper);
     expect(store.createSupernet).toHaveBeenCalledWith(
       expect.objectContaining({ cidr: 'fd00:1234::/48' }),
     );
@@ -191,8 +201,11 @@ describe('NetworkDialogs with an IPv6 CIDR', () => {
     await dialog(wrapper).find('input').setValue('10.9.0.0/24');
     await settle();
     expect(dialog(wrapper).text()).toContain('Gateway');
+    // A reverse zone is what allocates it here, so configure runs.
+    await checkbox(wrapper, 'Create reverse DNS zone').setValue(true);
     await button(wrapper, 'Create').trigger('click');
     await settle();
+    await confirmCreate(wrapper);
     const payload = store.configureSubnet.mock.calls[0][1];
     expect(payload).not.toHaveProperty('dhcp_v6_mode');
   });

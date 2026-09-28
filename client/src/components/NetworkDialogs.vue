@@ -1011,7 +1011,8 @@
       <Button label="Cancel" severity="secondary" @click="networkDiscard.requestClose(false)" />
       <Button
         :label="networkDialogMode === 'create' ? 'Create' : 'Save'"
-        @click="executeNetworkSave"
+        data-track="network-save"
+        @click="requestNetworkSave"
         :loading="saving"
         :disabled="networkDialogMode === 'create' && !!createCidrError"
       />
@@ -1095,6 +1096,31 @@
       <Button label="Yes" @click="confirmVlanAssignment" />
     </template>
   </Dialog>
+
+  <!-- Create Network: whether the new network is allocated -->
+  <ConfirmDialog
+    v-model:visible="confirmingCreate"
+    header="Create network"
+    severity="warn"
+    confirm-label="Create"
+    confirm-icon="pi pi-check"
+    width="28rem"
+    data-track="dialog-network-create-confirm"
+    confirm-track="network-create-confirm"
+    cancel-track="network-create-cancel"
+    @confirm="confirmNetworkCreate"
+  >
+    <p v-if="createAllocates">
+      <strong>{{ networkForm.cidr }}</strong> will be created as an
+      <strong>allocated</strong> network because you chose to create {{ createAllocationCauses }}.
+      To create it as unallocated, choose Cancel and clear the {{ createAllocationCheckboxes }}.
+    </p>
+    <p v-else>
+      <strong>{{ networkForm.cidr }}</strong> will be created as an
+      <strong>unallocated</strong> network: address space only, with no DNS zone or DHCP scope. Its
+      gateway, domain and scanning settings are applied when you allocate it.
+    </p>
+  </ConfirmDialog>
 
   <!-- Delete Network Dialog -->
   <ConfirmDialog
@@ -2721,6 +2747,35 @@ function shapeDhcpPayload(payload) {
   }
 }
 
+// A new network is created unallocated, as address space only, unless the
+// operator asks for a reverse DNS zone or a DHCP scope, which need an
+// allocated network. Create says which it will be before anything is sent.
+const confirmingCreate = ref(false);
+const createAllocates = computed(
+  () => !!(networkForm.value.create_dhcp_scope || networkForm.value.create_reverse_dns),
+);
+const createAllocationChoices = computed(() =>
+  [
+    networkForm.value.create_reverse_dns && ['a reverse DNS zone', 'Create reverse DNS zone'],
+    networkForm.value.create_dhcp_scope && ['a DHCP scope', 'Create DHCP scope'],
+  ].filter(Boolean),
+);
+const createAllocationCauses = computed(() =>
+  createAllocationChoices.value.map(([cause]) => cause).join(' and '),
+);
+const createAllocationCheckboxes = computed(() => {
+  const labels = createAllocationChoices.value.map(([, label]) => `"${label}"`);
+  return `${labels.join(' and ')} ${labels.length > 1 ? 'checkboxes' : 'checkbox'}`;
+});
+function requestNetworkSave() {
+  if (networkDialogMode.value === 'create') confirmingCreate.value = true;
+  else executeNetworkSave();
+}
+function confirmNetworkCreate() {
+  confirmingCreate.value = false;
+  executeNetworkSave();
+}
+
 async function executeNetworkSave() {
   saving.value = true;
   networkSaveError.value = '';
@@ -2735,7 +2790,18 @@ async function executeNetworkSave() {
         vlan_id: networkForm.value.vlan_id || undefined,
       });
       surfaceVlanWarning(created);
-      // Now configure it with full options
+      if (!createAllocates.value) {
+        showNetworkDialog.value = false;
+        toast.add({
+          severity: 'success',
+          summary: 'Network created',
+          detail: `${created.cidr || cidr} is unallocated`,
+          life: 3000,
+        });
+        emit('network-created');
+        return;
+      }
+      // A DNS zone or DHCP scope was asked for: configure (allocate) it.
       const payload = { ...networkForm.value };
       payload.name = payload.name || createAutoName.value || cidr;
       delete payload.cidr;

@@ -388,6 +388,13 @@ first on a 0.4.17 host.
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and
   showed as a dash.
 
+- A new network is created unallocated unless you ask for a reverse DNS
+  zone or a DHCP scope, which need an allocated network. Create now says
+  which it will be before anything is saved, and names the checkbox that
+  makes it allocated. An unallocated network is saved as address space
+  only; its gateway, domain and scanning settings apply when you allocate
+  it. Create used to allocate every new network.
+
 - The explorer names its two estates by allocation state: All Allocated
   Networks (every configured network, with its zones and scopes; formerly
   All Networks) and All Unallocated Networks (the address space ready to

@@ -97,6 +97,12 @@ const button = (wrapper, track, text) =>
     .findAll('button')
     .find((candidate) => candidate.text() === text);
 
+const reverseZoneBox = (wrapper) =>
+  dialog(wrapper, 'dialog-network-edit')
+    .findAll('label')
+    .find((label) => label.text().includes('Create reverse DNS zone'))
+    .find('input');
+
 async function settle() {
   await vi.runAllTimersAsync();
   await flushPromises();
@@ -127,8 +133,16 @@ describe('NetworkDialogs transformation and two-step flows', () => {
     await settle();
     await dialog(wrapper, 'dialog-network-edit').find('input').setValue('10.9.0.0/24');
     await settle();
+    // A reverse zone makes this an allocating create, the one that can fail
+    // half-way.
+    await reverseZoneBox(wrapper).setValue(true);
 
     await button(wrapper, 'dialog-network-edit', 'Create').trigger('click');
+    await settle();
+    expect(dialog(wrapper, 'dialog-network-create-confirm').text()).toContain(
+      'allocated network because you chose to create a reverse DNS zone',
+    );
+    await button(wrapper, 'dialog-network-create-confirm', 'Create').trigger('click');
     await settle();
     expect(store.createSupernet).toHaveBeenCalledTimes(1);
     expect(store.configureSubnet).toHaveBeenCalledWith(
@@ -150,6 +164,59 @@ describe('NetworkDialogs transformation and two-step flows', () => {
     expect(store.configureSubnet.mock.calls[1][0]).toBe(77);
     expect(wrapper.emitted('network-configured')).toEqual([[77]]);
     expect(dialog(wrapper, 'dialog-network-edit').exists()).toBe(false);
+  });
+
+  it('creates a network unallocated unless a DNS zone or DHCP scope is asked for', async () => {
+    store.createSupernet.mockResolvedValue({ id: 78, cidr: '10.8.0.0/24' });
+    const wrapper = mountDialogs();
+    await wrapper.vm.openCreateNetwork(null);
+    await settle();
+    await dialog(wrapper, 'dialog-network-edit').find('input').setValue('10.8.0.0/24');
+    await settle();
+
+    // Create says so first, and Cancel sends nothing.
+    await button(wrapper, 'dialog-network-edit', 'Create').trigger('click');
+    await settle();
+    expect(dialog(wrapper, 'dialog-network-create-confirm').text()).toContain(
+      '10.8.0.0/24 will be created as an unallocated network',
+    );
+    await button(wrapper, 'dialog-network-create-confirm', 'Cancel').trigger('click');
+    await settle();
+    expect(store.createSupernet).not.toHaveBeenCalled();
+    expect(dialog(wrapper, 'dialog-network-edit').exists()).toBe(true);
+
+    await button(wrapper, 'dialog-network-edit', 'Create').trigger('click');
+    await settle();
+    await button(wrapper, 'dialog-network-create-confirm', 'Create').trigger('click');
+    await settle();
+    expect(store.createSupernet).toHaveBeenCalledWith(
+      expect.objectContaining({ cidr: '10.8.0.0/24' }),
+    );
+    expect(store.configureSubnet).not.toHaveBeenCalled();
+    expect(wrapper.emitted('network-created')).toHaveLength(1);
+    expect(dialog(wrapper, 'dialog-network-edit').exists()).toBe(false);
+  });
+
+  it('names both choices that make a new network allocated', async () => {
+    const wrapper = mountDialogs();
+    await wrapper.vm.openCreateNetwork(null);
+    await settle();
+    await dialog(wrapper, 'dialog-network-edit').find('input').setValue('10.7.0.0/24');
+    await settle();
+    await reverseZoneBox(wrapper).setValue(true);
+    await dialog(wrapper, 'dialog-network-edit')
+      .findAll('label')
+      .find((label) => label.text().includes('Create DHCP scope'))
+      .find('input')
+      .setValue(true);
+    await button(wrapper, 'dialog-network-edit', 'Create').trigger('click');
+    await settle();
+    expect(dialog(wrapper, 'dialog-network-create-confirm').text()).toContain(
+      'because you chose to create a reverse DNS zone and a DHCP scope',
+    );
+    expect(dialog(wrapper, 'dialog-network-create-confirm').text()).toContain(
+      'clear the "Create reverse DNS zone" and "Create DHCP scope" checkboxes',
+    );
   });
 
   it('T-15 executes the reviewed plan token and re-reviews a stale plan without resubmitting', async () => {
