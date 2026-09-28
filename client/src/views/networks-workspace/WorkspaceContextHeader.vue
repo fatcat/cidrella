@@ -80,7 +80,7 @@
     </div>
   </header>
 
-  <div class="view-tabs" role="tablist" aria-label="Network workspace views">
+  <div v-if="views.length" class="view-tabs" role="tablist" aria-label="Network workspace views">
     <button
       v-for="view in views"
       :key="view.key"

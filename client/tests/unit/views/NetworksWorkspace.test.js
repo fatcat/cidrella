@@ -749,8 +749,17 @@ describe('Networks workspace', () => {
     expect(estates[1]).toContain('1 network ready to allocate');
     expect(wrapper.find('.estate-row.active').text()).toContain('All Unallocated Networks');
     expect(wrapper.text()).not.toContain('Browse unallocated');
+    // One table and no DNS or DHCP of its own: no tabs to switch between.
+    expect(wrapper.find('.view-tabs').exists()).toBe(false);
+    expect(wrapper.find('[data-track="workspace-tab-dns"]').exists()).toBe(false);
     expect(wrapper.find('table').text()).toContain('1.1.2.0/24');
     expect(wrapper.find('.network-tree').text()).toContain('1.1.2.0/24');
+    // All Allocated Networks has its three tabs back.
+    await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.findAll('.view-tabs button').map((tab) => tab.attributes('data-track'))).toEqual(
+      ['workspace-tab-networks', 'workspace-tab-dns', 'workspace-tab-dhcp'],
+    );
   });
 
   it('asks before Move to folder allocates an unallocated network', async () => {

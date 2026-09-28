@@ -837,30 +837,34 @@ const summaryScopes = computed(() =>
 const scopedActiveLeaseCount = computed(
   () => scopedDhcpRows.value.filter((row) => row.leaseStatus === 'active').length,
 );
+// Unallocated space has no DNS or DHCP of its own and only one table, its
+// networks, so it offers no tabs to switch between.
 const availableViews = computed(() =>
-  contextKind.value === 'network'
-    ? networkViews.map((view) => ({
-        ...view,
-        count: String(
-          view.key === 'addresses'
-            ? addressTotal.value
-            : view.key === 'dns'
-              ? workspaceResources.resources.dnsTotal.data
-              : view.key === 'dhcp'
-                ? workspaceResources.resources.dhcpTotal.data
-                : rangeRows.value.length,
-        ),
-      }))
-    : aggregateViews.map((view) => ({
-        ...view,
-        count: String(
-          view.key === 'networks'
-            ? scopedNetworks.value.length
-            : view.key === 'dns'
-              ? scopedZones.value.length
-              : scopedScopes.value.length,
-        ),
-      })),
+  contextKind.value === 'unallocated'
+    ? []
+    : contextKind.value === 'network'
+      ? networkViews.map((view) => ({
+          ...view,
+          count: String(
+            view.key === 'addresses'
+              ? addressTotal.value
+              : view.key === 'dns'
+                ? workspaceResources.resources.dnsTotal.data
+                : view.key === 'dhcp'
+                  ? workspaceResources.resources.dhcpTotal.data
+                  : rangeRows.value.length,
+          ),
+        }))
+      : aggregateViews.map((view) => ({
+          ...view,
+          count: String(
+            view.key === 'networks'
+              ? scopedNetworks.value.length
+              : view.key === 'dns'
+                ? scopedZones.value.length
+                : scopedScopes.value.length,
+          ),
+        })),
 );
 // "1 managed networks" reads as a bug even when the number is right. Every
 // count in this view is a plain English noun, so the "s" rule is enough.

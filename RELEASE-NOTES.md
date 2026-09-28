@@ -422,6 +422,10 @@ first on a 0.4.17 host.
   menu too. The DNS and DHCP tables have no bulk actions, so their rows
   stay single-pick.
 
+- All Unallocated Networks shows its network table without the Networks,
+  DNS and DHCP tabs. Unallocated space has no DNS or DHCP of its own, so
+  the tabs had nothing to switch to.
+
 - All Unallocated Networks has a Show hierarchy switch beside Network
   Scope. On (the default) the explorer draws the tree of subdivided
   containers as before; off, it lists only the networks that can be
