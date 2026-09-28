@@ -125,6 +125,7 @@
 
       <template v-if="preview">
         <div class="fr-note ok">
+          <StatusDot kind="ok" label="OK" class="fr-note-mark" />
           <span class="fr-mono"
             >{{ preview.hosts.length }} hosts · {{ preview.cnames.length }} CNAMEs ·
             {{ preview.dhcpHosts.length }} static leases<template v-if="preview.zoneName">
@@ -175,6 +176,7 @@
         </span>
       </div>
       <div class="fr-note warn">
+        <StatusDot kind="warn" label="Warning" class="fr-note-mark" />
         <span>
           A restore replaces this appliance's data with the backup's: its users, password and
           settings win. Two things carry across:
@@ -204,6 +206,7 @@
 </template>
 
 <script setup>
+import StatusDot from '../StatusDot.vue';
 import { ref, computed, inject, watch } from 'vue';
 import Button from '../../ui/Button.js';
 import InputText from '../../ui/InputText.js';

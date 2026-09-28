@@ -1215,7 +1215,6 @@ defineExpose({
   padding: 0.6rem 1rem;
   cursor: pointer;
   border-bottom: 1px solid var(--cid-surface-border);
-  border-left: 3px solid transparent;
   transition: background 0.15s;
 }
 .scope-item:hover {
@@ -1223,7 +1222,8 @@ defineExpose({
 }
 .scope-item.active {
   background: var(--cid-highlight-background);
-  border-left-color: var(--cid-primary-color);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--cid-primary-color) 45%, var(--cid-surface-border));
 }
 
 .ip-detail-table :deep(.p-datatable-tbody > tr) {

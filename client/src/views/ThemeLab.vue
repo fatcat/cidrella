@@ -594,17 +594,11 @@ const contrastRows = computed(() => {
   background: var(--cid-status-err);
 }
 
-.chip-row .chip-ok {
-  border-left: 3px solid var(--cid-status-ok);
-}
-
 .chip-row .chip-warn {
-  border-left: 3px solid var(--cid-status-warn);
   color: var(--cid-status-warn);
 }
 
 .chip-row .chip-err {
-  border-left: 3px solid var(--cid-status-err);
   color: var(--cid-status-err);
 }
 

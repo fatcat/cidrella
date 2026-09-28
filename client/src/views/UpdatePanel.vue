@@ -60,7 +60,7 @@
     >
       <div class="update-header">
         <div>
-          <h3>Update Available</h3>
+          <h3><i class="pi pi-arrow-circle-up update-mark"></i> Update Available</h3>
           <p class="update-version">
             v{{ versionInfo.version }} <i class="pi pi-arrow-right"></i> v{{
               versionInfo.updateAvailable
@@ -303,6 +303,7 @@
       </p>
       <div v-if="isMultiHopChain" class="chain-confirm-note">
         <p>
+          <i class="pi pi-info-circle"></i>
           The latest version <strong>v{{ versionInfo.chainTarget }}</strong> requires upgrading
           through {{ versionInfo.updateChain.length }} intermediate versions due to version
           compatibility rules. After this step completes, return to the Updates panel and click
@@ -735,7 +736,6 @@ onUnmounted(() => {
   align-items: flex-start;
   gap: 0.75rem;
   background: var(--surface-ground);
-  border-left: 3px solid var(--blue-500);
 }
 .docker-notice i {
   font-size: 1.25rem;
@@ -749,8 +749,8 @@ onUnmounted(() => {
 }
 
 /* Update available */
-.update-available {
-  border-left: 3px solid var(--green-500);
+.update-mark {
+  color: var(--green-500);
 }
 .update-header {
   display: flex;
@@ -791,8 +791,7 @@ onUnmounted(() => {
   margin-top: 0.75rem;
   padding: 0.75rem 1rem;
   background: var(--surface-100);
-  border-left: 3px solid var(--primary-color);
-  border-radius: 0 4px 4px 0;
+  border-radius: 4px;
   font-size: 0.9rem;
 }
 .chain-summary {
@@ -836,9 +835,8 @@ onUnmounted(() => {
 }
 .chain-confirm-note {
   background: var(--surface-100);
-  border-left: 3px solid var(--primary-color);
   padding: 0.75rem 1rem;
-  border-radius: 0 4px 4px 0;
+  border-radius: 4px;
   margin: 0.75rem 0;
   font-size: 0.9rem;
 }
@@ -860,8 +858,7 @@ onUnmounted(() => {
   padding: 0.5rem 0.75rem;
   background: var(--yellow-50, #fef3c7);
   color: var(--yellow-900, #78350f);
-  border-left: 3px solid var(--yellow-500, #f59e0b);
-  border-radius: 0 4px 4px 0;
+  border-radius: 4px;
   font-size: 0.85rem;
   display: flex;
   align-items: flex-start;
@@ -997,7 +994,6 @@ onUnmounted(() => {
   font-size: 0.8rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   background: rgba(255, 0, 0, 0.08);
-  border-left: 3px solid var(--red-500);
   border-radius: 3px;
   white-space: pre-wrap;
   word-break: break-word;

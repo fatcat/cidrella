@@ -138,10 +138,9 @@ watch(activeTab, (val) => {
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-  border-left: 3px solid transparent;
   transition:
     background 0.1s,
-    border-color 0.1s;
+    box-shadow 0.1s;
 }
 
 .ana-nav-item:focus-visible {
@@ -157,7 +156,8 @@ watch(activeTab, (val) => {
   background: color-mix(in srgb, var(--cid-primary-color) 15%, transparent);
   color: var(--cid-primary-color);
   font-weight: 600;
-  border-left-color: var(--cid-primary-color);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--cid-primary-color) 45%, var(--cid-surface-border));
   padding-left: calc(1rem - 0px); /* border replaces padding room */
 }
 
@@ -197,8 +197,9 @@ watch(activeTab, (val) => {
     white-space: nowrap;
   }
 
+  /* The narrow layout is a tab strip: the current tab is underlined. */
   .ana-nav-item.active {
-    border-left-color: transparent;
+    box-shadow: none;
     border-bottom-color: var(--cid-primary-color);
     padding-left: 1rem;
   }

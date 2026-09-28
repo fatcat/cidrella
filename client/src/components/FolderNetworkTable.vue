@@ -291,7 +291,7 @@ function statusLabel(node) {
 }
 .table-row.row-merge-selected {
   background: color-mix(in srgb, var(--cid-orange-500) 15%, transparent);
-  border-left: 3px solid var(--cid-orange-500);
+  box-shadow: inset 0 0 0 1px var(--cid-orange-500);
 }
 
 .col {

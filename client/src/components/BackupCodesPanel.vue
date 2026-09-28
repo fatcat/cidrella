@@ -1,6 +1,7 @@
 <template>
   <div class="backup-codes" data-track="backup-codes-panel">
     <div class="fr-note ok">
+      <StatusDot kind="ok" label="OK" class="fr-note-mark" />
       <span
         ><b>{{ lead }}</b> These backup codes are shown once. Each works one time.</span
       >
@@ -42,6 +43,7 @@
 </template>
 
 <script setup>
+import StatusDot from './StatusDot.vue';
 import { ref } from 'vue';
 import Button from '../ui/Button.js';
 import Checkbox from '../ui/Checkbox.js';
@@ -97,7 +99,11 @@ function downloadCodes() {
   padding: 10px 12px;
   border-radius: 8px;
   background: var(--cid-content-background);
-  border-left: 3px solid var(--cid-green-500);
+}
+/* The note's state is its dot, not a colored edge. */
+.fr-note-mark {
+  margin-top: 0.4em;
+  flex: 0 0 auto;
 }
 .codes {
   margin: 0;

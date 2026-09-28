@@ -10,6 +10,7 @@
     </div>
 
     <div v-if="alreadyOn" class="fr-note ok">
+      <StatusDot kind="ok" label="OK" class="fr-note-mark" />
       <span>Two-factor is already on for this account.</span>
     </div>
 
@@ -74,6 +75,7 @@
 </template>
 
 <script setup>
+import StatusDot from '../StatusDot.vue';
 import { ref, computed } from 'vue';
 import Button from '../../ui/Button.js';
 import Message from '../../ui/Message.js';

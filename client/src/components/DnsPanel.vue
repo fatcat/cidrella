@@ -1364,7 +1364,8 @@ defineExpose({ openZoneDialog, openRecordEditor, confirmDeleteZone, confirmDelet
 }
 .zone-item.active {
   background: var(--cid-highlight-background);
-  border-left: 3px solid var(--cid-primary-color);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--cid-primary-color) 45%, var(--cid-surface-border));
 }
 
 :deep(.ip-detail-row) {

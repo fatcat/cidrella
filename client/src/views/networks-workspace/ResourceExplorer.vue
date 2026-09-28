@@ -498,9 +498,9 @@ button {
   font-weight: 800;
   letter-spacing: 0.12em;
 }
-/* A checked network, in either list; the node rows are the child component's. */
+/* A checked network, in either list, is tinted; the open one is outlined, so
+   a network can show both. The node rows are the child component's. */
 .folder-networks :deep(.network-row.checked) {
-  box-shadow: inset 3px 0 0 var(--preview-accent);
   background: var(--preview-accent-soft);
 }
 .hierarchy-toggle {
@@ -629,9 +629,7 @@ button {
   box-shadow: inset 0 0 0 1px var(--preview-line);
 }
 .network-row.active {
-  box-shadow:
-    inset 3px 0 var(--preview-accent),
-    inset 0 0 0 1px var(--preview-line);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--preview-accent) 45%, var(--preview-line));
 }
 .network-state {
   margin-top: 0.32rem;

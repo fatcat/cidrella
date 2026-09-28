@@ -31,6 +31,7 @@
       <i class="pi pi-spinner pi-spin"></i> Reading interfaces
     </div>
     <div v-else-if="draft.interfaces.length === 0" class="fr-note warn">
+      <StatusDot kind="warn" label="Warning" class="fr-note-mark" />
       No network interfaces found. The role is saved; interfaces can be set later under Settings
       &gt; General &gt; Interfaces.
     </div>
@@ -75,7 +76,14 @@
       </tbody>
     </table>
 
-    <div class="fr-note" :class="{ warn: draft.role !== 'both' }">{{ roleNote }}</div>
+    <div class="fr-note" :class="{ warn: draft.role !== 'both' }">
+      <StatusDot
+        v-if="draft.role !== 'both'"
+        kind="warn"
+        label="Warning"
+        class="fr-note-mark"
+      /><span>{{ roleNote }}</span>
+    </div>
     <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
 
     <div class="fr-actions">
@@ -94,6 +102,7 @@
 </template>
 
 <script setup>
+import StatusDot from '../StatusDot.vue';
 import { ref, computed, onMounted } from 'vue';
 import Button from '../../ui/Button.js';
 import Message from '../../ui/Message.js';

@@ -109,6 +109,9 @@ function highlight(value) {
   background: var(--cid-surface-card);
   box-shadow: inset 0 0 0 1px var(--preview-line);
 }
+.network-row.active {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--preview-accent) 45%, var(--preview-line));
+}
 .network-state {
   margin-top: 0.32rem;
 }

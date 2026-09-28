@@ -131,7 +131,8 @@ const emit = defineEmits(['select', 'hover', 'update:filter']);
   background: var(--cid-surface-ground);
 }
 .queue-row.open {
-  box-shadow: inset 3px 0 0 var(--cid-primary-color);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--cid-primary-color) 45%, var(--cid-surface-border));
   background: color-mix(in srgb, var(--cid-primary-color) 12%, transparent);
 }
 .queue-row:focus-visible {

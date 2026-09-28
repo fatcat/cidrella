@@ -48,6 +48,7 @@
       <span>{{ progress }}</span>
     </div>
     <div v-if="restarting" class="fr-note ok">
+      <StatusDot kind="ok" label="OK" class="fr-note-mark" />
       <span>
         The backup is in place and the service is restarting. You will be sent to the sign-in page
         when it is back.
@@ -76,6 +77,7 @@
 </template>
 
 <script setup>
+import StatusDot from '../StatusDot.vue';
 import { computed } from 'vue';
 import Button from '../../ui/Button.js';
 import Message from '../../ui/Message.js';

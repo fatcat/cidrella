@@ -481,11 +481,10 @@ async function start() {
   border-radius: 8px;
   background: var(--cid-content-background);
 }
-.fr-note.warn {
-  border-left: 3px solid var(--cid-orange-400);
-}
-.fr-note.ok {
-  border-left: 3px solid var(--cid-green-500);
+/* A note's state is the StatusDot it leads with, not a colored edge. */
+.fr-note .fr-note-mark {
+  margin-top: 0.4em;
+  flex: 0 0 auto;
 }
 .fr-detail {
   border: 1px solid var(--cid-surface-border);

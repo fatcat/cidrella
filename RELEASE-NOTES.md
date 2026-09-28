@@ -395,6 +395,14 @@ first on a 0.4.17 host.
   only; its gateway, domain and scanning settings apply when you allocate
   it. Create used to allocate every new network.
 
+- Selection reads the same everywhere: the open or selected item (a network
+  in the explorer, a zone or scope in the DNS and DHCP panels, a triage row,
+  an anomaly host, the Analytics section) is outlined and tinted like All
+  Allocated Networks, and a checked network is tinted, instead of carrying
+  a colored bar on its left edge. Notes that carried a colored edge for
+  their state (first-run and backup-code notes, the update panel) now lead
+  with a status dot or an icon.
+
 - DNS records can be enabled, disabled and deleted in bulk. The DNS table
   has checkboxes, Ctrl-click and Shift-click, and right-clicking the checked
   records offers Enable records, Disable records and Delete records (which

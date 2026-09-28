@@ -141,6 +141,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   same-name-different-body candidates as a report) and `check-confirm-dialogs.js` (a Dialog
   whose footer carries its own danger or warn Button instead of using ConfirmDialog; its
   baseline is empty). CI runs all of them.
+- **Selection and status marks**: a selected or open item is shown by a 1px outline in the
+  accent color plus a soft tint (the explorer's All Allocated Networks row is the model); a
+  checked item that is not the open one gets the tint alone. A state (ok, warning, error) is
+  shown by a `StatusDot` or an icon beside the text. Neither uses a colored left bar.
 - **UI instrumentation**: key UI elements carry `data-track` attributes consumed by the dev
   tracking endpoint. Preserve them when refactoring components.
 - **Linting**: ESLint only (`eslint.config.mjs`), correctness-focused. Stylistic Vue rules
