@@ -2928,12 +2928,16 @@ async function executeDeallocate() {
 const showMerge = ref(false);
 const mergePreview = ref(null);
 const mergeError = ref(null);
+// The networks the open Merge dialog previewed, from the caller or the
+// classic view's selection. Merge sends exactly these, never a selection
+// that may have changed (or, in the workspace, was never set) since.
+const mergingIds = ref([]);
 
 async function executeMerge() {
   saving.value = true;
   try {
     await store.mergeSubnets(
-      props.mergeSelectedIds,
+      mergingIds.value,
       mergePreview.value?.plan?.dependency_token || null,
       mergePreview.value?.plan?.plan_id || null,
     );
@@ -3199,8 +3203,9 @@ function openDeallocate(node) {
 }
 
 async function openMergeConfirm(ids) {
-  const mergeIds = ids || props.mergeSelectedIds;
+  const mergeIds = [...(ids || props.mergeSelectedIds || [])];
   if (mergeIds.length < 2) return;
+  mergingIds.value = mergeIds;
   mergeError.value = null;
   mergePreview.value = null;
   try {

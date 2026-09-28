@@ -407,6 +407,11 @@ first on a 0.4.17 host.
   form (which files it in that folder when saved). Dragging an unallocated
   network used to do nothing at all.
 
+- Merge from the networks workspace failed with "At least 2 subnet IDs
+  required" after showing its preview. The dialog previewed the checked
+  networks but sent the old Networks page's selection, which is empty in
+  the workspace. It now merges exactly the networks it previewed.
+
 - Deallocating or deleting a network no longer merges its unallocated
   siblings. Deallocating both halves of a divided /24, for example, folded
   them back into one /24 on its own. The halves now stay as they are, and

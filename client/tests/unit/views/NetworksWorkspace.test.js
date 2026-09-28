@@ -1430,6 +1430,7 @@ describe('Networks workspace', () => {
           plan: {},
         });
       if (url === '/subnets/apply-template') return response({ updated: body.subnet_ids });
+      if (url === '/subnets/merge') return response({ merged_cidr: '1.1.4.0/24' });
       throw new Error(`Unexpected POST ${url}`);
     });
     const wrapper = await mountWorkspace();
@@ -1476,6 +1477,19 @@ describe('Networks workspace', () => {
     await flushPromises();
     expect(api.post).toHaveBeenCalledWith('/subnets/merge/preview', { subnet_ids: [31, 32] });
     expect(wrapper.text()).toContain('1.1.4.0/24');
+
+    // Merge sends the networks it previewed. It used to send the classic
+    // view's selection, empty here: "At least 2 subnet IDs required".
+    await wrapper
+      .find('[data-track="dialog-network-merge"]')
+      .findAll('button')
+      .find((button) => button.text() === 'Merge')
+      .trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith(
+      '/subnets/merge',
+      expect.objectContaining({ subnet_ids: [31, 32] }),
+    );
   });
 
   it('opens folder actions from the explorer row and carries the description into rename', async () => {
