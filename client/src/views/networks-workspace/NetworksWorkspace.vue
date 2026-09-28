@@ -27,6 +27,7 @@
         :can-manage-folders="can('subnets:write')"
         :can-manage-defaults="can('subnets:write')"
         :can-move-networks="can('subnets:write')"
+        :selected-rows="selectedRows"
         @create="toggleMenu('create')"
         @select-estate="selectEstate"
         @select-unallocated="selectUnallocated"
@@ -37,6 +38,8 @@
         @folder-menu="openFolderMenu"
         @network-menu="openNetworkMenu"
         @move-network="moveNetworkToFolder"
+        @toggle-network="toggleExplorerNetwork"
+        @range-network="rangeExplorerNetwork"
         @action="runContextAction"
       />
 
@@ -1675,14 +1678,19 @@ const workspaceTarget = computed(() => {
         : selectedScopeFilter.value;
   return { kind: 'workspace', zone, scope };
 });
+const isNetworkId = (id) => String(id).startsWith('network:');
 const selectionTarget = computed(() => {
-  if (activeView.value === 'networks') {
+  // Checked networks, from the Networks table or the explorer (which can
+  // check them from any view), or checked addresses. The two never mix.
+  const networkPicks = selectedRows.value.length > 0 && selectedRows.value.every(isNetworkId);
+  if (activeView.value === 'networks' || networkPicks) {
     const ids = selectedRows.value
-      .filter((id) => String(id).startsWith('network:'))
+      .filter(isNetworkId)
       .map((id) => Number(String(id).slice('network:'.length)));
+    const known = [...allNetworks.value, ...unallocatedNetworks.value];
     // What the merge rules need to know about each checked network.
     const networks = ids
-      .map((id) => scopedNetworks.value.find((network) => Number(network.id) === id))
+      .map((id) => known.find((network) => Number(network.id) === id))
       .filter(Boolean)
       .map((network) => ({
         id: Number(network.id),
@@ -2047,8 +2055,29 @@ async function moveNetworkToFolder({ networkId, folder }) {
 function openFolderMenu(folder, invoker = null, event = null) {
   openTargetMenu({ kind: 'folder', id: folder.id, name: folder.name, raw: folder }, invoker, event);
 }
+// Right-clicking one of several checked networks targets them all, as in
+// the table.
 function openNetworkMenu(network, invoker = null, event = null) {
-  openTargetMenu(targetForRow(mapNetworkRows([network])[0]), invoker, event);
+  const onSelection =
+    selectedRows.value.length > 1 && selectedRows.value.includes(`network:${network.id}`);
+  openTargetMenu(
+    onSelection ? selectionTarget.value : targetForRow(mapNetworkRows([network])[0]),
+    invoker,
+    event,
+  );
+}
+// The explorer checks networks for the same selection the Networks table
+// uses. Checking a network there replaces a selection of addresses.
+function keepNetworkSelectionOnly() {
+  if (!selectedRows.value.every(isNetworkId)) selectedRows.value = [];
+}
+function toggleExplorerNetwork(id) {
+  keepNetworkSelectionOnly();
+  toggleRow(id);
+}
+function rangeExplorerNetwork(id, visibleIds) {
+  keepNetworkSelectionOnly();
+  selectRange({ id }, visibleIds);
 }
 function handleWorkspaceKeydown(event) {
   if (event.key !== 'Escape' || !openMenuName.value) return;

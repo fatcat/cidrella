@@ -122,17 +122,24 @@
               :node="network"
               :query="query"
               :selected-network-id="selectedNetworkId"
-              @select="emit('select-unallocated-network', $event)"
+              :selected-rows="selectedRows"
+              @pick="(node, event) => pickNetwork(event, node, 'select-unallocated-network')"
+              @menu="(node, invoker, event) => emit('network-menu', node, invoker, event)"
             />
           </template>
           <button
             v-for="network in contextKind === 'unallocated' ? [] : folder.networks"
             :key="network.id"
             class="network-row"
-            :class="{ active: contextKind === 'network' && selectedNetworkId === network.id }"
+            :class="{
+              active: contextKind === 'network' && selectedNetworkId === network.id,
+              checked: selectedRows.includes(`network:${network.id}`),
+            }"
+            :aria-selected="selectedRows.includes(`network:${network.id}`)"
             data-track="workspace-network-select"
             :draggable="canMoveNetworks ? 'true' : undefined"
-            @click="emit('select-network', network)"
+            @mousedown="holdTextSelection"
+            @click="pickNetwork($event, network, 'select-network')"
             @contextmenu.prevent="emit('network-menu', network, $event.currentTarget, $event)"
             @keydown="handleMenuKey($event, 'network-menu', network)"
             @dragstart="onNetworkDragStart($event, network)"
@@ -193,7 +200,7 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { MOD_LABEL, isModShortcut } from '../../utils/keyboard.js';
 import { countOf } from '../../utils/format.js';
 import ResourceExplorerNode from './ResourceExplorerNode.vue';
@@ -221,6 +228,8 @@ const props = defineProps({
   canManageFolders: { type: Boolean, default: false },
   canManageDefaults: { type: Boolean, default: false },
   canMoveNetworks: { type: Boolean, default: false },
+  // The workspace's checked rows; network rows are `network:<id>`.
+  selectedRows: { type: Array, default: () => [] },
 });
 const emit = defineEmits([
   'create',
@@ -233,6 +242,8 @@ const emit = defineEmits([
   'folder-menu',
   'network-menu',
   'move-network',
+  'toggle-network',
+  'range-network',
   'action',
 ]);
 const query = defineModel('query', { type: String, default: '' });
@@ -245,6 +256,30 @@ watch(showHierarchy, (value) => saveJson(HIERARCHY_KEY, value));
 function unallocatedNodes(folder) {
   if (showHierarchy.value) return folder.networks;
   return flattenAllocatable(folder.networks).map((node) => ({ ...node, children: [] }));
+}
+
+// Network rows pick like the table's rows and a file list: Ctrl (Command on
+// a Mac) checks or unchecks one, Shift checks the run from the last one
+// checked, in the order the explorer shows them, and a plain click opens it.
+const visibleNetworkIds = computed(() =>
+  props.folders
+    .filter((folder) => props.expandedFolders.has(folder.id))
+    .flatMap((folder) =>
+      props.contextKind === 'unallocated'
+        ? flattenAllocatable(unallocatedNodes(folder))
+        : folder.networks,
+    )
+    .map((network) => `network:${network.id}`),
+);
+function pickNetwork(event, network, selectEvent) {
+  const id = `network:${network.id}`;
+  if (event?.shiftKey) emit('range-network', id, visibleNetworkIds.value);
+  else if (event?.ctrlKey || event?.metaKey) emit('toggle-network', id);
+  else emit(selectEvent, network);
+}
+// Shift+click would otherwise also select the text between the two rows.
+function holdTextSelection(event) {
+  if (event.shiftKey) event.preventDefault();
 }
 
 // Folder and network rows open their action menu from the keyboard the same
@@ -462,6 +497,11 @@ button {
   font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.12em;
+}
+/* A checked network, in either list; the node rows are the child component's. */
+.folder-networks :deep(.network-row.checked) {
+  box-shadow: inset 3px 0 0 var(--preview-accent);
+  background: var(--preview-accent-soft);
 }
 .hierarchy-toggle {
   display: flex;

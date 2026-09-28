@@ -395,6 +395,15 @@ first on a 0.4.17 host.
   only; its gateway, domain and scanning settings apply when you allocate
   it. Create used to allocate every new network.
 
+- The explorer's network list picks like the tables: Ctrl-click (Command
+  on a Mac) checks or unchecks a network, Shift-click checks the run from
+  the last one checked, and a plain click still opens it. The explorer and
+  the Networks table share one selection, and right-clicking a checked
+  network in either opens the menu for the whole selection (Merge, Apply
+  defaults). Unallocated networks in the explorer now have the right-click
+  menu too. The DNS and DHCP tables have no bulk actions, so their rows
+  stay single-pick.
+
 - All Unallocated Networks has a Show hierarchy switch beside Network
   Scope. On (the default) the explorer draws the tree of subdivided
   containers as before; off, it lists only the networks that can be

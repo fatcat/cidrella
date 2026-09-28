@@ -200,6 +200,67 @@ describe('workspace P1 regression contracts', () => {
     globalThis.localStorage?.removeItem('cidrella_workspace_unallocated_hierarchy');
   });
 
+  it('picks allocated explorer networks with Ctrl and Shift, and opens a plain click', async () => {
+    const network = (id, cidr) => ({ id, cidr, name: cidr, state: 'allocated', used: 0 });
+    const wrapper = mount(ResourceExplorer, {
+      props: {
+        contextKind: 'estate',
+        folders: [
+          { id: 1, name: 'Lab', networks: [network(5, '10.5.0.0/24'), network(6, '10.6.0.0/24')] },
+          { id: 2, name: 'Closed', networks: [network(7, '10.7.0.0/24')] },
+        ],
+        expandedFolders: new Set([1]),
+        selectedRows: ['network:6'],
+      },
+    });
+    const rows = wrapper.findAll('[data-track="workspace-network-select"]');
+    expect(rows.map((row) => row.classes().includes('checked'))).toEqual([false, true]);
+
+    await rows[0].trigger('click', { ctrlKey: true });
+    await rows[0].trigger('click', { metaKey: true });
+    expect(wrapper.emitted('toggle-network')).toEqual([['network:5'], ['network:5']]);
+    // Shift ranges over what the explorer shows: collapsed folders are out.
+    await rows[1].trigger('click', { shiftKey: true });
+    expect(wrapper.emitted('range-network')).toEqual([['network:6', ['network:5', 'network:6']]]);
+    expect(wrapper.emitted('select-network')).toBeUndefined();
+    await rows[1].trigger('click');
+    expect(wrapper.emitted('select-network')?.[0]?.[0].id).toBe(6);
+  });
+
+  it('opens the menu of an unallocated network from the tree, not of a container', async () => {
+    const wrapper = mount(ResourceExplorer, {
+      props: {
+        contextKind: 'unallocated',
+        folders: [
+          {
+            id: 1,
+            name: 'Lab',
+            networks: [
+              {
+                id: 10,
+                cidr: '10.0.0.0/24',
+                allocatable: false,
+                children: [{ id: 11, cidr: '10.0.0.0/25', allocatable: true, children: [] }],
+              },
+            ],
+          },
+        ],
+        expandedFolders: new Set([1]),
+        selectedRows: ['network:11'],
+      },
+    });
+    const [container, leaf] = wrapper.findAll('[data-track="workspace-network-select"]');
+    expect(leaf.classes()).toContain('checked');
+    await container.trigger('contextmenu');
+    expect(wrapper.emitted('network-menu')).toBeUndefined();
+    await leaf.trigger('contextmenu');
+    expect(wrapper.emitted('network-menu')?.[0]?.[0].id).toBe(11);
+    await leaf.trigger('keydown', { key: 'F10', shiftKey: true });
+    expect(wrapper.emitted('network-menu')).toHaveLength(2);
+    await leaf.trigger('click', { ctrlKey: true });
+    expect(wrapper.emitted('toggle-network')).toEqual([['network:11']]);
+  });
+
   it('T33 refreshes permissions after 403 and preserves successful domains', async () => {
     const onForbidden = vi.fn();
     const workspace = useWorkspaceResources({ can: () => true, onForbidden });

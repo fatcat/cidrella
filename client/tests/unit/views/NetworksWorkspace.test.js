@@ -1383,6 +1383,80 @@ describe('Networks workspace', () => {
     await wrapper.find('.menu-scrim').trigger('click');
   });
 
+  it('checks networks in the explorer with Ctrl and Shift and merges them from its menu', async () => {
+    const halves = [
+      { id: 31, cidr: '1.1.4.0/25', status: 'unallocated', parent_id: 30, children: [] },
+      { id: 32, cidr: '1.1.4.128/25', status: 'unallocated', parent_id: 30, children: [] },
+    ];
+    const dividedParent = {
+      id: 30,
+      cidr: '1.1.4.0/24',
+      name: null,
+      status: 'unallocated',
+      total_addresses: 256,
+      used_count: 0,
+      children: halves,
+    };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets'
+        ? response({
+            folders: [
+              { id: 1, name: 'Testerella', subnets: [subnet, unallocatedSubnet, dividedParent] },
+            ],
+          })
+        : base(url, config),
+    );
+    api.post.mockImplementation((url) => {
+      if (url === '/subnets/merge/preview')
+        return response({
+          source_cidrs: ['1.1.4.0/25', '1.1.4.128/25'],
+          merged_cidr: '1.1.4.0/24',
+          plan: {},
+        });
+      throw new Error(`Unexpected POST ${url}`);
+    });
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
+    await flushPromises();
+    const explorerRow = (cidr) =>
+      wrapper
+        .findAll('.network-tree [data-track="workspace-network-select"]')
+        .find((row) => row.text().includes(cidr));
+
+    // Ctrl checks one row without opening it; Shift checks the run to another.
+    await explorerRow('1.1.4.0/25').trigger('click', { ctrlKey: true });
+    expect(explorerRow('1.1.4.0/25').classes()).toContain('checked');
+    expect(wrapper.find('.context-header').text()).toContain('All Unallocated Networks');
+    await explorerRow('1.1.4.128/25').trigger('click', { shiftKey: true });
+    expect(explorerRow('1.1.4.128/25').classes()).toContain('checked');
+    // The Networks table shows the same selection.
+    const tableChecked = wrapper
+      .findAll('tbody tr')
+      .filter((row) => row.find('input[type="checkbox"]').element.checked)
+      .map((row) => row.text());
+    expect(tableChecked.some((text) => text.includes('1.1.4.0/25'))).toBe(true);
+    expect(tableChecked.some((text) => text.includes('1.1.4.128/25'))).toBe(true);
+
+    // Right-clicking a checked explorer row opens the selection's menu.
+    await explorerRow('1.1.4.128/25').trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('2 NETWORKS SELECTED');
+    await rowMenuItem(wrapper, 'Merge').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/subnets/merge/preview', { subnet_ids: [31, 32] });
+
+    // Ctrl again unchecks; a plain right-click then targets the one network.
+    await explorerRow('1.1.4.0/25').trigger('click', { ctrlKey: true });
+    expect(explorerRow('1.1.4.0/25').classes()).not.toContain('checked');
+    await explorerRow('1.1.2.0/24').trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('NETWORK ACTIONS');
+    expect(rowMenuLabels(wrapper)).toContain('Allocate network');
+    wrapper.unmount();
+  });
+
   it('merges and re-templates checked networks from their context menu', async () => {
     const sibling = {
       id: 13,

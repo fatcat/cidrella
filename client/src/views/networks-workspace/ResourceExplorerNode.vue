@@ -2,11 +2,17 @@
   <div class="resource-node" :class="{ container: !node.allocatable }">
     <button
       class="network-row"
-      :class="{ active: node.allocatable && selectedNetworkId === node.id }"
+      :class="{
+        active: node.allocatable && selectedNetworkId === node.id,
+        checked: node.allocatable && selectedRows.includes(`network:${node.id}`),
+      }"
       :disabled="!node.allocatable"
       :aria-label="node.allocatable ? `Select ${node.cidr}` : `${node.cidr} subdivided container`"
       data-track="workspace-network-select"
-      @click="node.allocatable && emit('select', node)"
+      @mousedown="$event.shiftKey && $event.preventDefault()"
+      @click="node.allocatable && emit('pick', node, $event)"
+      @contextmenu.prevent="node.allocatable && emit('menu', node, $event.currentTarget, $event)"
+      @keydown="menuKey"
     >
       <StatusDot
         :kind="networkStateKind(node.state)"
@@ -38,7 +44,9 @@
         :node="child"
         :query="query"
         :selected-network-id="selectedNetworkId"
-        @select="emit('select', $event)"
+        :selected-rows="selectedRows"
+        @pick="(child, event) => emit('pick', child, event)"
+        @menu="(child, invoker, event) => emit('menu', child, invoker, event)"
       />
     </div>
   </div>
@@ -53,8 +61,19 @@ const props = defineProps({
   node: { type: Object, required: true },
   query: { type: String, default: '' },
   selectedNetworkId: { type: Number, default: null },
+  selectedRows: { type: Array, default: () => [] },
 });
-const emit = defineEmits(['select']);
+// pick: a click, with its event so the explorer can read Ctrl and Shift.
+// menu: a right-click or the menu key, as on the explorer's other rows.
+const emit = defineEmits(['pick', 'menu']);
+
+function menuKey(event) {
+  if (!props.node.allocatable) return;
+  if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
+    event.preventDefault();
+    emit('menu', props.node, event.currentTarget);
+  }
+}
 
 function highlight(value) {
   const text = String(value || '');

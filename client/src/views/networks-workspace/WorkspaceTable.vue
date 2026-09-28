@@ -7,9 +7,9 @@
             <input
               type="checkbox"
               :checked="allRowsChecked"
-              :indeterminate="selectedRows.length > 0 && !allRowsChecked"
-              :aria-label="selectedRows.length ? 'Clear selection' : 'Select all visible rows'"
-              @click.prevent="emit('toggle-all', selectedRows.length === 0)"
+              :indeterminate="selectedHere > 0 && !allRowsChecked"
+              :aria-label="selectedHere ? 'Clear selection' : 'Select all visible rows'"
+              @click.prevent="emit('toggle-all', selectedHere === 0)"
             />
           </th>
           <th v-for="column in columns" :key="column.key" :class="column.className">
@@ -153,6 +153,12 @@ const emit = defineEmits([
 const allRowsChecked = computed(
   () => props.rows.length > 0 && props.rows.every((row) => props.selectedRows.includes(row.id)),
 );
+// Checked rows of this table's kind, on or off this page. Networks checked in
+// the explorer while the Addresses table is open are not this table's.
+const selectedHere = computed(() => {
+  const kind = String(props.rows[0]?.id ?? '').split(':')[0];
+  return props.selectedRows.filter((id) => String(id).split(':')[0] === kind).length;
+});
 
 // Where rows have checkboxes, a click picks like a file list: Shift checks
 // every row from the last one checked to this one, Ctrl (Command on a Mac)
