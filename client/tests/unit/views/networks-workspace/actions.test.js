@@ -8,6 +8,7 @@ import {
   actionLabel,
   allocationPayload,
   createWorkspaceActionRegistry,
+  dnsSelectionTarget,
   executeBulkAllocation,
   menuActions,
   targetForRow,
@@ -489,6 +490,37 @@ describe('workspace action registry', () => {
     expect(addressMenu).toContain('ip.bulk-range-type');
     expect(addressMenu).not.toContain('ip.bulk-reserve');
     expect(addressMenu).not.toContain('ip.bulk-release');
+  });
+
+  it('builds the DNS record selection and offers bulk enable, disable and delete', () => {
+    const all = () => true;
+    const target = dnsSelectionTarget([
+      { id: 1, dns_source: 'manual', enabled: 1 },
+      { id: 2, dns_source: 'manual', enabled: 0 },
+      { id: 3, dns_source: 'dhcp', enabled: 1 },
+      { id: 4, source: 'placeholder', enabled: 1 },
+    ]);
+    expect(target).toEqual({
+      kind: 'dns-selection',
+      count: 4,
+      ids: [1, 2],
+      manual: 2,
+      enabledCount: 1,
+    });
+    const items = (t, can = all) => menuActions({ menu: 'row', target: t, can });
+    expect(items(target).map((item) => [item.label, item.available])).toEqual([
+      ['Enable records', true],
+      ['Disable records', true],
+      ['Delete records', true],
+    ]);
+    // Only generated records checked: every entry stays, greyed, with why.
+    const generated = dnsSelectionTarget([{ id: 3, dns_source: 'dhcp', enabled: 1 }]);
+    expect(items(generated)).toMatchObject([
+      { available: false, reason: expect.stringContaining('Generated') },
+      { available: false, reason: expect.stringContaining('Generated') },
+      { available: false, reason: expect.stringContaining('Generated') },
+    ]);
+    expect(items(target, (capability) => capability === 'subnets:write')).toEqual([]);
   });
 
   it('builds distinct reserve and release payloads', () => {

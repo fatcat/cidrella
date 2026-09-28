@@ -1383,6 +1383,56 @@ describe('Networks workspace', () => {
     await wrapper.find('.menu-scrim').trigger('click');
   });
 
+  it('enables, disables and deletes checked DNS records from the selection menu', async () => {
+    api.post.mockImplementation((url, body) => {
+      if (url === '/dns/records/bulk')
+        return response({ action: body.action, applied: body.ids, skipped: [] });
+      throw new Error(`Unexpected POST ${url}`);
+    });
+    // All Allocated Networks lists every record; a network's DNS tab opens on
+    // its forward zone.
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    const recordRows = () => wrapper.findAll('tbody tr');
+    expect(recordRows()).toHaveLength(2);
+    const checkBoth = async () => {
+      await recordRows()[0].trigger('click', { ctrlKey: true });
+      await recordRows()[1].trigger('click', { ctrlKey: true });
+      await recordRows()[1].trigger('contextmenu');
+      await flushPromises();
+    };
+
+    // The A record (manual) and its PTR (generated) are checked together.
+    await checkBoth();
+    expect(wrapper.find('.row-menu span').text()).toBe('2 RECORDS SELECTED');
+    expect(rowMenuLabels(wrapper)).toEqual(['Enable records', 'Disable records', 'Delete records']);
+    const enable = rowMenuItem(wrapper, 'Enable records');
+    expect(enable.attributes('aria-disabled')).toBe('true');
+    expect(enable.attributes('title')).toBe('Every selected record is already enabled.');
+
+    // Only the manual record is sent; the generated PTR follows its source.
+    await rowMenuItem(wrapper, 'Disable records').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/dns/records/bulk', { action: 'disable', ids: [51] });
+    expect(wrapper.find('.prototype-notice').text()).toContain('1 DNS record disabled');
+
+    // Delete asks first and says what stays.
+    await checkBoth();
+    await rowMenuItem(wrapper, 'Delete records').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Delete 1 DNS record?');
+    expect(wrapper.text()).toContain('1 generated record in the selection stay');
+    expect(api.post).not.toHaveBeenCalledWith(
+      '/dns/records/bulk',
+      expect.objectContaining({ action: 'delete' }),
+    );
+    await wrapper.find('[data-track="workspace-dns-bulk-delete-confirm"]').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/dns/records/bulk', { action: 'delete', ids: [51] });
+    wrapper.unmount();
+  });
+
   it('checks networks in the explorer with Ctrl and Shift and merges them from its menu', async () => {
     const halves = [
       { id: 31, cidr: '1.1.4.0/25', status: 'unallocated', parent_id: 30, children: [] },

@@ -24,6 +24,7 @@ export function useWorkspaceActions(ctx) {
     refreshAfterMutation,
     rememberDnsZoneSide,
     confirmAllocateOnMove,
+    confirmDnsBulkDelete,
   } = ctx;
 
   async function ensureNetworkDialogs() {
@@ -272,6 +273,10 @@ export function useWorkspaceActions(ctx) {
       (await ensureProtocolDialogs()).dns.openRecordEditor(target.raw, {}, zoneFor(target)),
     'dns.record.delete': async (target) =>
       (await ensureProtocolDialogs()).dns.confirmDeleteRecordForZone(target.raw, zoneFor(target)),
+    'dns.record.bulk-enable': (target) => bulkRecords(target, 'enable'),
+    'dns.record.bulk-disable': (target) => bulkRecords(target, 'disable'),
+    // Delete asks first; the confirmation calls bulkRecords.
+    'dns.record.bulk-delete': (target) => confirmDnsBulkDelete(target),
     'dns.apply': async () => {
       try {
         await api.post('/dns/apply');
@@ -409,6 +414,27 @@ export function useWorkspaceActions(ctx) {
     return outcome;
   }
 
+  // Enable, disable or delete checked DNS records in one request. The server
+  // skips what it cannot change and says why; the notice names the first.
+  const BULK_RECORD_DONE = { enable: 'enabled', disable: 'disabled', delete: 'deleted' };
+  async function bulkRecords(target, action) {
+    let result;
+    try {
+      ({ data: result } = await api.post('/dns/records/bulk', { action, ids: target.ids }));
+    } catch (error) {
+      return showLiveNotice(`Could not ${action} DNS records: ${apiError(error)}`);
+    }
+    state.selectedRows.value = [];
+    const skipped = result.skipped || [];
+    const note = skipped.length
+      ? `; ${countOf(skipped.length, 'record')} skipped (${skipped[0].reason}${skipped.length > 1 ? ', and others' : ''})`
+      : '';
+    await refreshAfterMutation(
+      'dns',
+      `${countOf(result.applied.length, 'DNS record')} ${BULK_RECORD_DONE[action]}${note}`,
+    );
+  }
+
   // The allocation form for an unallocated network, filing it in `folderId`
   // on save (null keeps its folder). Callers confirm with the operator first.
   async function openAllocation(network, folderId = null) {
@@ -418,5 +444,12 @@ export function useWorkspaceActions(ctx) {
     );
   }
 
-  return { registry, invoke, startNetworkScan, currentNetworkTarget, openAllocation };
+  return {
+    registry,
+    invoke,
+    startNetworkScan,
+    currentNetworkTarget,
+    openAllocation,
+    bulkRecords,
+  };
 }

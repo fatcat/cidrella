@@ -395,6 +395,16 @@ first on a 0.4.17 host.
   only; its gateway, domain and scanning settings apply when you allocate
   it. Create used to allocate every new network.
 
+- DNS records can be enabled, disabled and deleted in bulk. The DNS table
+  has checkboxes, Ctrl-click and Shift-click, and right-clicking the checked
+  records offers Enable records, Disable records and Delete records (which
+  asks first). Generated records (PTRs, lease-written A records) are left
+  out, and an entry that cannot apply stays greyed out with the reason. New
+  endpoint `POST /api/dns/records/bulk` with `{ action, ids }` answers
+  `{ action, applied, skipped }`; each record goes through the same workflow
+  as the single-record routes, and one that is refused is skipped with its
+  reason while the rest apply.
+
 - The explorer's network list picks like the tables: Ctrl-click (Command
   on a Mac) checks or unchecks a network, Shift-click checks the run from
   the last one checked, and a plain click still opens it. The explorer and

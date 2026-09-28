@@ -143,7 +143,7 @@
             v-else
             :columns="columns"
             :rows="pagedRows"
-            :show-checkboxes="['addresses', 'networks'].includes(activeView)"
+            :show-checkboxes="['addresses', 'networks', 'dns'].includes(activeView)"
             :selected-row-id="selectedRow?.id ?? null"
             :selected-rows="selectedRows"
             :sort-key="sortKey"
@@ -211,6 +211,24 @@
       />
     </section>
 
+    <ConfirmDialog
+      :visible="dnsBulkDelete != null"
+      header="Delete DNS records?"
+      confirm-label="Delete"
+      confirm-track="workspace-dns-bulk-delete-confirm"
+      cancel-track="workspace-dns-bulk-delete-cancel"
+      @update:visible="(visible) => !visible && (dnsBulkDelete = null)"
+      @confirm="continueDnsBulkDelete"
+    >
+      <p v-if="dnsBulkDelete">
+        Delete {{ countOf(dnsBulkDelete.manual, 'DNS record') }}? An address a deleted A or AAAA
+        record named is freed, and its reverse (PTR) record goes with it.
+        <template v-if="dnsBulkDelete.count > dnsBulkDelete.manual">
+          {{ countOf(dnsBulkDelete.count - dnsBulkDelete.manual, 'generated record') }} in the
+          selection stay; they follow their DNS or DHCP source.
+        </template>
+      </p>
+    </ConfirmDialog>
     <ConfirmDialog
       :visible="allocateOnMove != null"
       header="Allocate network?"
@@ -421,7 +439,13 @@ import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
 import { contiguousAddressRuns, identityAddress } from './composables/useWorkspaceSelection.js';
 import { useRangeActions } from './composables/useRangeActions.js';
 import { useWorkspaceActions } from './composables/useWorkspaceActions.js';
-import { NETWORK_DRAG_TYPE, menuActions, scanningOn, targetForRow } from './workspace-actions.js';
+import {
+  NETWORK_DRAG_TYPE,
+  dnsSelectionTarget,
+  menuActions,
+  scanningOn,
+  targetForRow,
+} from './workspace-actions.js';
 import {
   defaultWorkspaceColumnKeys,
   filterValueLabel,
@@ -1149,6 +1173,7 @@ const actionMenuTitle = computed(() =>
 const SELECTION_NOUNS = {
   'address-selection': ['address', 'addresses'],
   'network-selection': ['network', 'networks'],
+  'dns-selection': ['record', 'records'],
 };
 const rowMenuTitle = computed(() => {
   const kind = menuTarget.value?.kind;
@@ -1683,6 +1708,12 @@ const selectionTarget = computed(() => {
   // Checked networks, from the Networks table or the explorer (which can
   // check them from any view), or checked addresses. The two never mix.
   const networkPicks = selectedRows.value.length > 0 && selectedRows.value.every(isNetworkId);
+  if (activeView.value === 'dns') {
+    const selected = new Set(selectedRows.value);
+    return dnsSelectionTarget(
+      allDnsRows.value.filter((row) => selected.has(row.id)).map((row) => row.raw),
+    );
+  }
   if (activeView.value === 'networks' || networkPicks) {
     const ids = selectedRows.value
       .filter(isNetworkId)
@@ -2022,6 +2053,16 @@ function startNetworkDrag(row, event) {
   event.dataTransfer.setData('text/plain', row.cidr || '');
   event.dataTransfer.effectAllowed = 'move';
 }
+// Deleting checked DNS records asks first, with the count it will delete.
+const dnsBulkDelete = ref(null);
+function confirmDnsBulkDelete(target) {
+  dnsBulkDelete.value = target;
+}
+async function continueDnsBulkDelete() {
+  const target = dnsBulkDelete.value;
+  dnsBulkDelete.value = null;
+  if (target) await workspaceActions.bulkRecords(target, 'delete');
+}
 // Moving an unallocated network into a folder allocates it: the confirmation
 // says so, then the allocation form opens with the folder as its target.
 const allocateOnMove = ref(null);
@@ -2277,6 +2318,7 @@ const workspaceActions = useWorkspaceActions({
   openRangeEditor,
   openBulkRangeType,
   confirmAllocateOnMove,
+  confirmDnsBulkDelete,
   refreshAfterMutation,
   rememberDnsZoneSide,
 });

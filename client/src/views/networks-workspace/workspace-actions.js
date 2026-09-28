@@ -15,12 +15,17 @@ import { mergeNetworks } from '../../utils/ip.js';
 //   address-selection checked address rows; the menu of a checked row
 //   dns-zone          a zone row in an aggregate DNS inventory
 //   dns-record        a record row
+//   dns-selection     checked record rows
 //   dhcp-scope        a scope row in an aggregate DHCP inventory
 //   dhcp-address      a scope-member row (lease, reservation or free pool slot)
 //   range             a range row
 //
 // Order here is menu order. When an action serves several kinds, its position
 // has to satisfy each kind's menu at once.
+// DNS record sources the server writes itself; the bulk route skips them too.
+export const GENERATED_DNS_SOURCES = Object.freeze(['dns', 'dhcp', 'reservation', 'placeholder']);
+const GENERATED_ONLY_REASON = 'Generated records follow their DNS or DHCP source.';
+
 const ACTION_DEFINITIONS = [
   // Read/navigation
   {
@@ -296,6 +301,39 @@ const ACTION_DEFINITIONS = [
     label: 'Add CNAME',
     capability: 'dns:write',
     targetKind: 'dns-record',
+  },
+  // Checked records. Generated ones (PTRs and lease-written A records) follow
+  // their source and are left out; each entry stays greyed out, with why,
+  // when nothing checked can take it.
+  {
+    id: 'dns.record.bulk-enable',
+    label: 'Enable records',
+    capability: 'dns:write',
+    targetKind: 'dns-selection',
+    available: (target) => target.manual > target.enabledCount,
+    disabledReason: (target) =>
+      target.manual ? 'Every selected record is already enabled.' : GENERATED_ONLY_REASON,
+    showUnavailable: true,
+  },
+  {
+    id: 'dns.record.bulk-disable',
+    label: 'Disable records',
+    capability: 'dns:write',
+    targetKind: 'dns-selection',
+    available: (target) => target.enabledCount > 0,
+    disabledReason: (target) =>
+      target.manual ? 'Every selected record is already disabled.' : GENERATED_ONLY_REASON,
+    showUnavailable: true,
+  },
+  {
+    id: 'dns.record.bulk-delete',
+    label: 'Delete records',
+    danger: true,
+    capability: 'dns:write',
+    targetKind: 'dns-selection',
+    available: (target) => target.manual > 0,
+    disabledReason: GENERATED_ONLY_REASON,
+    showUnavailable: true,
   },
   {
     id: 'dns.record.delete',
@@ -693,6 +731,7 @@ const ROW_MENU_ORDER = {
     'dhcp.leases.sync',
     'dhcp.scope.delete',
   ],
+  'dns-selection': ['dns.record.bulk-enable', 'dns.record.bulk-disable', 'dns.record.bulk-delete'],
   // The single-address order, with the bulk forms in the single ones' places.
   'address-selection': [
     'dhcp.scope.create-here',
@@ -714,6 +753,22 @@ const ROW_MENU_ORDER = {
     'range.delete',
   ],
 };
+
+// The action target of checked DNS record rows: the ids the bulk route can
+// change (manual records) and how many of those are enabled.
+export function dnsSelectionTarget(records) {
+  const manual = (records || []).filter(
+    (record) => !GENERATED_DNS_SOURCES.includes(record.dns_source ?? record.source),
+  );
+  return {
+    kind: 'dns-selection',
+    count: (records || []).length,
+    ids: manual.map((record) => Number(record.id)),
+    manual: manual.length,
+    enabledCount: manual.filter((record) => Number(record.enabled) === 1 || record.enabled === true)
+      .length,
+  };
+}
 
 // The server's cap on one probe request (routes/scans.js MAX_PROBE_IPS).
 export const MAX_PROBE_ADDRESSES = 256;

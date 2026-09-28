@@ -7,6 +7,7 @@ import {
   deallocateStaticDns,
   reconcileDnsHold,
   reconcileStaticDnsZone,
+  IpLifecycleConflictError,
 } from '../services/ip-lifecycle-service.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
 import { dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
@@ -655,6 +656,45 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
   res.status(201).json(record);
 });
 
+// The record workflows the single-record routes and the bulk route share: the
+// record row, then the address it names (its static DNS claim, and the ADR 004
+// hold of an unserved record). They run inside the caller's transaction.
+const GENERATED_RECORD_SOURCES = ['dns', 'dhcp', 'reservation', 'placeholder'];
+
+function applyRecordUpdate(db, zone, record, fields) {
+  const result = updateRecord(db, zone, record, fields);
+  const oldWasActiveAddress =
+    isAddressType(record.type) && zone.type === 'forward' && zone.enabled && record.enabled;
+  const newIsActiveAddress =
+    isAddressType(fields.type) && zone.type === 'forward' && zone.enabled && result.enabled;
+  if (
+    oldWasActiveAddress &&
+    (!newIsActiveAddress || record.value !== fields.value || record.name !== fields.name)
+  ) {
+    deallocateStaticDns(db, record.name, record.value, zone.name);
+  }
+  if (newIsActiveAddress) {
+    allocateStaticDns(db, fields.name, fields.value, zone.name, result.id);
+  }
+  if (zone.type === 'forward') {
+    if (isAddressType(record.type)) reconcileDnsHold(db, record.value);
+    if (isAddressType(fields.type) && fields.value !== record.value) {
+      reconcileDnsHold(db, fields.value);
+    }
+  }
+  return result;
+}
+
+// Clears the PTR and the address's hostname when a forward A or AAAA goes.
+function applyRecordDelete(db, zone, record) {
+  deleteRecord(db, zone, record);
+  if (isAddressType(record.type) && zone?.type === 'forward' && zone.enabled && record.enabled) {
+    deallocateStaticDns(db, record.name, record.value, zone.name);
+  } else if (isAddressType(record.type) && zone?.type === 'forward') {
+    reconcileDnsHold(db, record.value);
+  }
+}
+
 // PUT /api/dns/zones/:zoneId/records/:id
 router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) => {
   const body = req.body || {};
@@ -669,7 +709,7 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     .get(req.params.id, zone.id);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  if (['dns', 'dhcp', 'reservation', 'placeholder'].includes(record.source)) {
+  if (GENERATED_RECORD_SOURCES.includes(record.source)) {
     return res.status(403).json({
       error:
         'Generated DNS/PTR records cannot be edited manually; assign the hostname through DNS or DHCP',
@@ -761,8 +801,8 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     }
   }
 
-  const updateWorkflow = db.transaction(() => {
-    const result = updateRecord(db, zone, record, {
+  const updateWorkflow = db.transaction(() =>
+    applyRecordUpdate(db, zone, record, {
       name: newName,
       type: newType,
       value: newValue,
@@ -771,27 +811,8 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
       port: newPort,
       ttl: newTtl,
       enabled,
-    });
-
-    const oldWasActiveAddress =
-      isAddressType(record.type) && zone.type === 'forward' && zone.enabled && record.enabled;
-    const newIsActiveAddress =
-      isAddressType(newType) && zone.type === 'forward' && zone.enabled && result.enabled;
-    if (
-      oldWasActiveAddress &&
-      (!newIsActiveAddress || record.value !== newValue || record.name !== newName)
-    ) {
-      deallocateStaticDns(db, record.name, record.value, zone.name);
-    }
-    if (newIsActiveAddress) {
-      allocateStaticDns(db, newName, newValue, zone.name, result.id);
-    }
-    if (zone.type === 'forward') {
-      if (isAddressType(record.type)) reconcileDnsHold(db, record.value);
-      if (isAddressType(newType) && newValue !== record.value) reconcileDnsHold(db, newValue);
-    }
-    return result;
-  });
+    }),
+  );
   const updated = updateWorkflow();
   audit(req.user.id, 'record_updated', 'dns_record', record.id, { changes: req.body });
 
@@ -807,28 +828,15 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
     .get(req.params.id, req.params.zoneId);
   if (!record) return res.status(404).json({ error: 'Record not found' });
 
-  if (['dns', 'dhcp', 'reservation', 'placeholder'].includes(record.source)) {
+  if (GENERATED_RECORD_SOURCES.includes(record.source)) {
     return res.status(403).json({
       error:
         'Generated DNS/PTR records cannot be deleted manually; change the DNS or DHCP hostname source, or disable managed reverse DNS',
     });
   }
 
-  // Clear PTR and IP hostname when A record is deleted from a forward zone
   const delZone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(record.zone_id);
-  db.transaction(() => {
-    deleteRecord(db, delZone, record);
-    if (
-      isAddressType(record.type) &&
-      delZone?.type === 'forward' &&
-      delZone.enabled &&
-      record.enabled
-    ) {
-      deallocateStaticDns(db, record.name, record.value, delZone.name);
-    } else if (isAddressType(record.type) && delZone?.type === 'forward') {
-      reconcileDnsHold(db, record.value);
-    }
-  })();
+  db.transaction(() => applyRecordDelete(db, delZone, record))();
 
   audit(req.user.id, 'record_deleted', 'dns_record', record.id, {
     type: record.type,
@@ -837,6 +845,98 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
 
   req.afterCommit('regenerate_dns');
   res.json({ message: 'Record deleted' });
+});
+
+// POST /api/dns/records/bulk: enable, disable or delete many records, across
+// zones, through the same workflows as the single-record routes. Each record
+// is applied on its own savepoint: one the lifecycle refuses (an address a
+// DHCP pool owns, a hostname conflict) or that cannot be changed (a generated
+// record) is skipped with its reason and the rest still apply. DNS is
+// regenerated once.
+const BULK_RECORD_ACTIONS = new Set(['enable', 'disable', 'delete']);
+const BULK_RECORD_MAX = 1000;
+
+router.post('/records/bulk', requirePerm('dns:write'), (req, res) => {
+  const { action, ids } = req.body || {};
+  if (!BULK_RECORD_ACTIONS.has(action)) {
+    return res.status(400).json({ error: 'action must be enable, disable or delete' });
+  }
+  if (
+    !Array.isArray(ids) ||
+    ids.length === 0 ||
+    ids.length > BULK_RECORD_MAX ||
+    !ids.every((id) => Number.isInteger(id) && id > 0)
+  ) {
+    return res
+      .status(400)
+      .json({ error: `ids must be 1 to ${BULK_RECORD_MAX} positive integer record ids` });
+  }
+
+  const db = getDb();
+  const applied = [];
+  const skipped = [];
+  const applyOne = db.transaction((zone, record) =>
+    action === 'delete'
+      ? applyRecordDelete(db, zone, record)
+      : applyRecordUpdate(db, zone, record, {
+          name: record.name,
+          type: record.type,
+          value: record.value,
+          priority: record.priority,
+          weight: record.weight,
+          port: record.port,
+          ttl: record.ttl,
+          enabled: action === 'enable',
+        }),
+  );
+  db.transaction(() => {
+    for (const id of new Set(ids)) {
+      const record = db.prepare('SELECT * FROM dns_records WHERE id = ?').get(id);
+      if (!record) {
+        skipped.push({ id, reason: 'Record not found' });
+        continue;
+      }
+      if (GENERATED_RECORD_SOURCES.includes(record.source)) {
+        skipped.push({ id, reason: 'Generated records follow their DNS or DHCP source' });
+        continue;
+      }
+      if (action !== 'delete' && Boolean(record.enabled) === (action === 'enable')) {
+        skipped.push({ id, reason: `Already ${action}d` });
+        continue;
+      }
+      const zone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(record.zone_id);
+      if (action === 'enable' && isAddressType(record.type) && zone.type === 'forward') {
+        const conflict = findAHostnameConflict(db, record.value, record.name, zone.name, id);
+        if (conflict) {
+          skipped.push({
+            id,
+            reason: `IP already has hostname "${conflict.hostname}" from ${conflict.source}`,
+          });
+          continue;
+        }
+      }
+      try {
+        applyOne(zone, record);
+      } catch (err) {
+        if (!(err instanceof IpLifecycleConflictError)) throw err;
+        skipped.push({ id, reason: err.message });
+        continue;
+      }
+      applied.push(id);
+      audit(
+        req.user.id,
+        action === 'delete' ? 'record_deleted' : 'record_updated',
+        'dns_record',
+        id,
+        action === 'delete'
+          ? { type: record.type, name: record.name, bulk: true }
+          : { changes: { enabled: action === 'enable' }, bulk: true },
+      );
+    }
+  })();
+
+  if (applied.length) req.afterCommit('regenerate_dns');
+  res.json({ action, applied, skipped });
 });
 
 // ─── Utility ─────────────────────────────────────────────

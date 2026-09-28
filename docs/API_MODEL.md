@@ -270,6 +270,19 @@ DNS write APIs still accept `type` because the submitted form is a DNS record
 write model. UI read paths should use `record_type` and `dns_source`; form
 submission should map `record_type` back to `type` only when editing a record.
 
+### Bulk record actions
+
+`POST /api/dns/records/bulk` (`dns:write`) takes `{ action, ids }`: `action`
+is `enable`, `disable` or `delete`, and `ids` is 1 to 1000 record ids from any
+zones. Each record goes through the same workflow as the single-record
+`PUT` or `DELETE`, so its address converges the same way (static DNS, an
+ADR 004 hold, or freed), each on its own savepoint. The response is
+`{ action, applied: [ids], skipped: [{ id, reason }] }`: a generated record
+(`dns_source` other than `manual`), one already in the requested state, a
+missing id, a hostname conflict or a lifecycle refusal (an address a DHCP
+pool owns) is skipped with its reason while the rest apply. DNS is
+regenerated once when anything applied.
+
 ## Storage Fields
 
 The database may continue to use table-local names when they are meaningful in
