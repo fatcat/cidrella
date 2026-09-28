@@ -18,6 +18,8 @@ export const WORKSPACE_DEFAULT_STATE = Object.freeze({
   page: 1,
   pageSize: 256,
   filters: {},
+  sort: null,
+  order: 'asc',
 });
 
 const CONTEXTS = new Set(['all', 'folder', 'network', 'unallocated']);
@@ -102,6 +104,9 @@ export function decodeWorkspaceQuery(query = {}) {
     page: positiveInteger(query.page) || 1,
     pageSize: positiveInteger(query.pageSize) || WORKSPACE_DEFAULT_STATE.pageSize,
     filters: { ...legacyFilters(query, view), ...decodeFilters(query.filters) },
+    // The table's sort column (a column key) and direction.
+    sort: typeof query.sort === 'string' && /^[a-z_]{1,40}$/.test(query.sort) ? query.sort : null,
+    order: query.order === 'desc' ? 'desc' : 'asc',
   };
 
   if (state.context === 'folder' && !state.folder) state.context = 'all';
@@ -129,6 +134,8 @@ export function encodeWorkspaceQuery(state) {
   if (state.filters && Object.keys(state.filters).length) {
     query.filters = JSON.stringify(state.filters);
   }
+  if (state.sort) query.sort = state.sort;
+  if (state.sort && state.order === 'desc') query.order = 'desc';
   return query;
 }
 

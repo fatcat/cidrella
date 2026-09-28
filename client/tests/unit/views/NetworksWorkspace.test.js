@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount } from '@vue/test-utils';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
 import { nextTick } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import { useSubnetStore } from '../../../src/stores/subnets.js';
@@ -31,6 +31,10 @@ vi.mock('vue-router', async (importOriginal) => ({
   ...(await importOriginal()),
   useRouter: () => ({ push: vi.fn(), currentRoute: { value: { fullPath: '/networks' } } }),
 }));
+
+// Every test's workspace is unmounted after it: one left mounted keeps its
+// timers, and its reads land in the next test's api mock.
+enableAutoUnmount(afterEach);
 
 let reservedIp33 = false;
 let deletedIps = new Set();
@@ -1360,7 +1364,7 @@ describe('Networks workspace', () => {
     globalThis.window.removeEventListener('ipam:stats-changed', statsChanged);
   });
 
-  it('keeps a zone chosen when stepping out to All Allocated Networks or a folder', async () => {
+  it('keeps a zone chosen when stepping out to a folder; All Allocated Networks goes home', async () => {
     const wrapper = await mountWorkspace();
     const tableReads = () =>
       api.get.mock.calls.filter(
@@ -1373,6 +1377,7 @@ describe('Networks workspace', () => {
     };
     const selectedCards = () =>
       wrapper.findAll('.linked-card.selected').map((card) => card.find('strong').text());
+    const activeTab = () => wrapper.find('.view-tabs button.active').attributes('data-track');
 
     // All Allocated Networks' DNS tab opens on the forward zone, not on the
     // mixed list that sorts every PTR first.
@@ -1381,22 +1386,23 @@ describe('Networks workspace', () => {
     expect(lastRead()).toMatchObject({ zone_id: 21 });
     expect(selectedCards()).toEqual(['test.example']);
 
-    // From a network's DNS view, the zone it shows carries to the estate.
+    // From a network's DNS view, the zone it shows carries to a folder that
+    // holds it.
     await enterTestNetwork(wrapper);
     await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
     await flushPromises();
     expect(lastRead()).toMatchObject({ subnet_id: 11, zone_id: 21 });
-    await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
+    await wrapper.find('.folder-row .folder-select').trigger('click');
     await settle();
     expect(lastRead()).toMatchObject({ zone_id: 21 });
     expect(lastRead().subnet_id).toBeUndefined();
     expect(selectedCards()).toEqual(['test.example']);
 
-    // And to a folder that holds it.
-    await wrapper.find('.folder-row').trigger('click');
+    // All Allocated Networks is home: the networks, whatever tab was open.
+    await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
     await settle();
-    expect(lastRead()).toMatchObject({ zone_id: 21 });
-    expect(selectedCards()).toEqual(['test.example']);
+    expect(activeTab()).toBe('workspace-tab-networks');
+    expect(selectedCards()).toEqual([]);
   });
 
   it('carries the last zone choice to the next network on the DNS view', async () => {

@@ -43,4 +43,29 @@ describe('Networks workspace regressions', () => {
 
   it('Show available stays off across a reload', () =>
     walk(['network 13', 'available', 'tab dhcp', 'tab addresses']));
+
+  // navigate merged the state's `reverseNetwork` into a query keyed `rzones`,
+  // so a network's reverse zones were never saved.
+  it('a network-wide reverse zone choice survives a reload', () =>
+    walk(['tab dns', 'pick-network 11']));
+
+  // Restoring the filters counted as changing them, which reset the page.
+  it('the page survives a reload', () => walk(['page-size 32', 'tab dns', 'page next']));
+
+  it('the sort survives a reload', () =>
+    walk(['tab dhcp', 'page-size 32', 'folder 1', 'tab dns', 'sort record_enabled']));
+
+  // All Allocated Networks is home: every allocated network, nothing left over.
+  it('All Allocated Networks shows every allocated network from any table', () =>
+    walk([
+      'network 13',
+      'tab dns',
+      'filter record_type 0',
+      'search "lab"',
+      'estate',
+      'folder 1',
+      'tab dhcp',
+      'table-search "lease"',
+      'estate',
+    ]));
 });

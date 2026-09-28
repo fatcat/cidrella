@@ -10,6 +10,7 @@ import {
   freshSession,
   mountWorkspace,
   observe,
+  postconditions,
   restorable,
   settle,
   violations,
@@ -53,8 +54,12 @@ export function useModelSession() {
     return session;
   }
 
-  function check(session) {
-    const found = violations(observe(), { unexpected: fake.unexpected, errors });
+  function check(session, label = null) {
+    const state = observe();
+    const found = [
+      ...violations(state, { unexpected: fake.unexpected, errors }),
+      ...(label ? postconditions(label, state) : []),
+    ];
     if (found.length) {
       const trace = session.trace.map((label) => `  '${label}',`).join('\n');
       const error = new Error(`${found.join('\n')}\n\nafter:\n${trace || '  (mount)'}`);
@@ -66,7 +71,7 @@ export function useModelSession() {
   async function step(session, label) {
     session.trace.push(label);
     await perform(session, label);
-    check(session);
+    check(session, label);
   }
 
   async function reloadKeeps(session) {

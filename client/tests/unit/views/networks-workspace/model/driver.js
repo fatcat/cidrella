@@ -8,12 +8,27 @@
 //   zone <id> · pick-zone <id> · pick-network <id> · scope <id>
 //   search "<text>" · table-search "<text>"
 //   row <n> [ctrl|shift] · check <n> · check-all · row-menu <n> · close-details
+//   filter <column> <n> · filter-text <column> "<text>" · clear-filter <column>
+//   sort <column> · page next|prev · page-size <n>
 //
 // `candidates()` lists the ones the screen offers right now, so a random walk
 // only does what a person could.
 import { mountWorkspace, settle } from './harness.js';
+import { NETWORKS, ZONES } from './fake-estate.js';
 
 export const SEARCH_TERMS = ['', 'trust', 'lab', '10.0.1', 'laptop', '172.16', 'zzz'];
+// Filter values are picked by their place in the menu's list; a pick past the
+// end opens and closes the menu, as a person finding nothing there would.
+const FILTER_PICKS = [0, 1];
+const FILTER_TEXTS = {
+  ip_address: '10.0.1',
+  hostname: 'host-1',
+  dns_hostname: 'home',
+  record_name: 'host',
+  value: '10.0.0.1',
+  mac_address: '02:00',
+};
+const PAGE_SIZES = [32, 64, 256];
 
 const all = (selector) => [...document.body.querySelectorAll(selector)];
 const one = (selector) => document.body.querySelector(selector);
@@ -48,10 +63,14 @@ export function candidates() {
     out.push(`stat ${stat.dataset.track.slice('workspace-stat-'.length)}`);
   for (const card of all('.linked-card:not(.linked-picker)[data-zone-id]'))
     out.push(`zone ${card.dataset.zoneId}`);
-  for (const item of all('.picker-item[data-zone-id]'))
-    out.push(`pick-zone ${item.dataset.zoneId}`);
-  for (const item of all('.picker-heading[data-network-id]'))
-    out.push(`pick-network ${item.dataset.networkId}`);
+  // The picker's list exists only while it is open: offer every reverse zone
+  // and network, and let a pick of one it does not list be a look and close.
+  if (one('.linked-picker')) {
+    for (const zone of ZONES.filter((entry) => entry.type === 'reverse'))
+      out.push(`pick-zone ${zone.id}`);
+    for (const network of NETWORKS.filter((entry) => entry.status === 'allocated'))
+      out.push(`pick-network ${network.id}`);
+  }
   for (const card of all('.linked-card[data-scope-id]')) out.push(`scope ${card.dataset.scopeId}`);
   if (one('[data-track="workspace-global-search"]'))
     for (const term of SEARCH_TERMS) out.push(`search ${JSON.stringify(term)}`);
@@ -66,6 +85,20 @@ export function candidates() {
   if (one('.available-switch input')) out.push('available');
   if (one('[data-track="workspace-unallocated-hierarchy"]')) out.push('hierarchy');
   if (one('[aria-label="Close details"]')) out.push('close-details');
+  // Filters and sorting on the columns the table shows.
+  const columns = all('th[data-column]').map((header) => header.dataset.column);
+  if (one('[data-track="workspace-filter-menu"]')) {
+    for (const key of columns) {
+      if (FILTER_TEXTS[key]) out.push(`filter-text ${key} ${JSON.stringify(FILTER_TEXTS[key])}`);
+      else for (const pick of FILTER_PICKS) out.push(`filter ${key} ${pick}`);
+    }
+  }
+  for (const chip of all('.filter-chips button[data-filter-key]'))
+    out.push(`clear-filter ${chip.dataset.filterKey}`);
+  for (const key of columns) out.push(`sort ${key}`);
+  if (one('.paginator-stub [aria-label="Next Page"]:not([disabled])')) out.push('page next');
+  if (one('.paginator-stub [aria-label="Previous Page"]:not([disabled])')) out.push('page prev');
+  if (one('.paginator-stub select')) for (const size of PAGE_SIZES) out.push(`page-size ${size}`);
   return out;
 }
 
@@ -104,15 +137,56 @@ export async function perform(session, label) {
       click(one(`.linked-card:not(.linked-picker)[data-zone-id="${arg}"]`));
       break;
     case 'pick-zone':
+    case 'pick-network': {
       click(one('.linked-picker'));
       await settle();
-      click(one(`.picker-item[data-zone-id="${arg}"]`));
+      const item =
+        verb === 'pick-zone'
+          ? one(`.picker-item[data-zone-id="${arg}"]`)
+          : one(`.picker-heading[data-network-id="${arg}"]`);
+      // Not listed: close the picker again.
+      click(item || one('.linked-picker'));
       break;
-    case 'pick-network':
-      click(one('.linked-picker'));
+    }
+    case 'filter':
+    case 'filter-text': {
+      click(one('[data-track="workspace-filter-menu"]'));
       await settle();
-      click(one(`.picker-heading[data-network-id="${arg}"]`));
+      const column = one(`[data-track="workspace-filter-column-${arg}"]`);
+      if (column) {
+        click(column);
+        await settle();
+        if (verb === 'filter') {
+          const value = all('.filter-value')[Number(rest[1])];
+          if (value) click(value.querySelector('input'));
+        } else {
+          type(one('.filter-text input'), JSON.parse(rest.slice(1).join(' ')));
+          await settle();
+          one('.filter-text').dispatchEvent(
+            new Event('submit', { bubbles: true, cancelable: true }),
+          );
+        }
+        await settle();
+      }
+      // The menu stays open for more picks; close it as a person would.
+      if (one('.filter-menu')) click(one('[data-track="workspace-filter-menu"]'));
       break;
+    }
+    case 'clear-filter':
+      click(one(`.filter-chips button[data-filter-key="${arg}"]`));
+      break;
+    case 'sort':
+      click(one(`th[data-column="${arg}"] button`));
+      break;
+    case 'page':
+      click(one(`.paginator-stub [aria-label="${arg === 'next' ? 'Next' : 'Previous'} Page"]`));
+      break;
+    case 'page-size': {
+      const select = one('.paginator-stub select');
+      select.value = arg;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      break;
+    }
     case 'scope':
       click(one(`.linked-card[data-scope-id="${arg}"]`));
       break;

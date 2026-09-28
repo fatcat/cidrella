@@ -12,7 +12,12 @@
               @click.prevent="emit('toggle-all', selectedHere === 0)"
             />
           </th>
-          <th v-for="column in columns" :key="column.key" :class="column.className">
+          <th
+            v-for="column in columns"
+            :key="column.key"
+            :class="column.className"
+            :data-column="column.key"
+          >
             <button @click="emit('sort', column.key)">
               {{ column.label }}
               <i

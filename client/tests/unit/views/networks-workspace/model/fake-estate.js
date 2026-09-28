@@ -1,3 +1,10 @@
+import {
+  columnFacets,
+  compareByColumn,
+  facetFields,
+  matchesColumnFilters,
+} from '@shared/ip-columns.js';
+
 // An in-memory estate that answers the Networks workspace's reads the way the
 // server filters them (models/workspace-view.js and the subnet routes), so a
 // model test can say which rows the visible state should show and compare.
@@ -96,6 +103,13 @@ export const RECORDS = [
   record(1012, 204, '10', 'PTR', 'lab-a.lab.example', { dns_source: 'dns', ip: '172.16.0.10' }),
   record(1013, 205, '1', 'PTR', '1.1.2.1', { dns_source: 'placeholder', ip: '1.1.2.1' }),
   record(1014, 207, '7', 'PTR', 'ext.outside.example', { ip: '198.51.99.7' }),
+  // Enough hosts for home.example to span pages at the smaller page sizes,
+  // every seventh one disabled.
+  ...Array.from({ length: 70 }, (_, index) =>
+    record(1100 + index, 101, `host-${index}`, 'A', `10.0.0.${100 + index}`, {
+      enabled: index % 7 === 6 ? 0 : 1,
+    }),
+  ),
 ];
 
 export const SCOPES = [
@@ -109,6 +123,14 @@ export const DHCP_ROWS = [
   { id: 402, ip_address: '10.0.1.110', hostname: 'printer', type: 'reserved', scope_id: 301 },
   { id: 403, ip_address: '10.0.8.120', hostname: 'thermostat', type: 'dynamic', scope_id: 302 },
   { id: 404, ip_address: '172.16.0.60', hostname: 'bench', type: 'reserved', scope_id: 303 },
+  // Enough leases for the DHCP table to span pages.
+  ...Array.from({ length: 40 }, (_, index) => ({
+    id: 500 + index,
+    ip_address: `10.0.1.${160 + index}`,
+    hostname: `lease-${index}`,
+    type: index % 5 === 0 ? 'reserved' : 'dynamic',
+    scope_id: 301,
+  })),
 ];
 
 // ─── Address arithmetic ───────────────────────────────────────────────
@@ -242,6 +264,22 @@ function addressRows(network) {
 
 // ─── Query semantics ──────────────────────────────────────────────────
 
+// GET /subnets/:id/ips before its column filters: Show available and the two
+// searches.
+function addressQuery(network, params) {
+  let rows = addressRows(network);
+  if (params.showAvailable === 'false')
+    rows = rows.filter((row) => row.ip_display_status !== 'available');
+  const fields = ['ip_address', 'hostname', 'mac_address'];
+  rows = rows.filter((row) => matchesAny(row, fields, params.search));
+  return rows.filter((row) => matchesAny(row, fields, params.table_search));
+}
+export function queryAddresses(networkId, params = {}, filters = {}) {
+  return applyColumnFilters(addressQuery(networkById(networkId), params), filters, 'addresses');
+}
+export const applyColumnFilters = (rows, filters, table) =>
+  rows.filter((row) => matchesColumnFilters(row, filters, table));
+
 const text = (value) => String(value ?? '').toLowerCase();
 const matchesAny = (row, fields, query) =>
   !query || fields.some((field) => text(row[field]).includes(text(query).trim()));
@@ -371,7 +409,7 @@ export function queryNetworks(params = {}) {
 }
 
 // GET /subnets: folders of trees, allocated and not; Ungrouped has id null.
-function subnetTree() {
+export function subnetTree() {
   const node = (network) => ({
     ...network,
     folder: null,
@@ -389,14 +427,39 @@ function subnetTree() {
   };
 }
 
-function page(rows, params, sizeKey = 'page_size') {
+// The column filters, sort and facets every IP table read takes, with the
+// server's own column getters (utils/ip-columns.js).
+export function columnFilters(params) {
+  return params.filters ? JSON.parse(params.filters) : {};
+}
+function filtered(rows, params, table) {
+  const filters = columnFilters(params);
+  let out = applyColumnFilters(rows, filters, table);
+  if (params.sort_column) {
+    out = [...out].sort(
+      compareByColumn(params.sort_column, params.sort_order || params.sortOrder, table),
+    );
+  }
+  const facets =
+    params.facets &&
+    columnFacets(
+      rows.map((row) => ({ row })),
+      filters,
+      table,
+    );
+  return { rows: out, extra: facetFields(facets) };
+}
+
+function page(rows, params, table, sizeKey = 'page_size') {
+  const { rows: out, extra } = filtered(rows, params, table);
   const size = Number(params[sizeKey]) || 50;
   const at = Number(params.page) || 1;
   return {
-    items: rows.slice((at - 1) * size, at * size),
-    total: rows.length,
+    items: out.slice((at - 1) * size, at * size),
+    total: out.length,
     page: at,
     page_size: size,
+    ...extra,
   };
 }
 
@@ -414,21 +477,18 @@ export function createFakeApi() {
       return reply({ items: rows, total: rows.length });
     }
     if (url === '/dns/zones') return reply(queryZones(params));
-    if (url === '/workspace/dns-records') return reply(page(queryDnsRecords(params), params));
+    if (url === '/workspace/dns-records')
+      return reply(page(queryDnsRecords(params), params, 'dns'));
     if (url === '/dhcp/scopes') return reply(queryScopes(params));
-    if (url === '/workspace/dhcp-addresses') return reply(page(queryDhcpRows(params), params));
+    if (url === '/workspace/dhcp-addresses')
+      return reply(page(queryDhcpRows(params), params, 'dhcp'));
     if (url === '/range-types' || url === '/dhcp/leases') return reply([]);
     if (url === '/settings') return reply({});
     if (url.startsWith('/metrics/')) return reply(url.endsWith('generation') ? [] : {});
     const ips = url.match(/^\/subnets\/(\d+)\/ips$/);
     if (ips) {
       const network = networkById(ips[1]);
-      let rows = addressRows(network);
-      if (params.showAvailable === 'false')
-        rows = rows.filter((row) => row.ip_display_status !== 'available');
-      const fields = ['ip_address', 'hostname', 'mac_address'];
-      rows = rows.filter((row) => matchesAny(row, fields, params.search));
-      rows = rows.filter((row) => matchesAny(row, fields, params.table_search));
+      const { rows, extra } = filtered(addressQuery(network, params), params, 'addresses');
       const size = Number(params.pageSize) || 256;
       const at = Number(params.page) || 1;
       return reply({
@@ -440,6 +500,7 @@ export function createFakeApi() {
         page: at,
         pageSize: size,
         totalPages: Math.max(1, Math.ceil(rows.length / size)),
+        ...extra,
       });
     }
     const summary = url.match(/^\/subnets\/(\d+)\/summary$/);

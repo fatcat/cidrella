@@ -990,7 +990,9 @@ function workspaceQueryState() {
     network: contextKind.value === 'network' ? selectedNetwork.value.id : null,
     view: activeView.value,
     zone: selectedZoneFilter.value?.id || null,
-    reverseNetwork: reverseNetworkFilter.value?.id || null,
+    // Handed over in its query name, like the filters below: navigate merges
+    // this into the query, and a state name would not replace the query's.
+    rzones: reverseNetworkFilter.value?.id || undefined,
     scope: selectedScopeFilter.value?.id || null,
     ip:
       selectedRowView.value === 'addresses' && selectedRowContext.value === 'network'
@@ -1003,6 +1005,8 @@ function workspaceQueryState() {
     page: currentPage.value,
     pageSize: pageSize.value,
     filters: Object.keys(filters.value).length ? JSON.stringify(filters.value) : undefined,
+    sort: sortKey.value || undefined,
+    order: sortKey.value && sortOrder.value === -1 ? 'desc' : undefined,
   };
 }
 
@@ -1037,6 +1041,8 @@ function restoreContextFromRoute(availableNetworks) {
   pageSize.value = PAGE_SIZES.includes(state.pageSize) ? state.pageSize : 256;
   currentPage.value = state.page;
   filters.value = { ...state.filters };
+  sortKey.value = state.sort;
+  sortOrder.value = state.order === 'desc' ? -1 : 1;
   addressPresentation.value =
     state.presentation === 'compact' ? 'compact-grid' : state.presentation;
   if (state.context === 'network') {
@@ -2048,17 +2054,20 @@ function carryDnsChoice(previousZone, previousReverseNetwork) {
   }
   selectedZoneFilter.value = dnsZoneForContext(previousZone);
 }
-// Both re-read the table for the new context. Neither watcher does it: the
-// filters one returns while this route write is in flight, and the route one
-// skips the workspace's own writes. Without this the estate showed whatever
-// the page first loaded, every zone's records with the PTRs first.
+// All Allocated Networks is home: whichever table was open, it shows every
+// allocated network, with no search, filter or zone choice left over.
+//
+// It and selectFolder re-read the table for the new context themselves.
+// Neither watcher does it: the filters one returns while this route write is
+// in flight, and the route one skips the workspace's own writes.
 async function selectEstate() {
-  const previous = [selectedZoneFilter.value, reverseNetworkFilter.value];
   contextKind.value = 'estate';
   selectedFolder.value = null;
-  if (!aggregateViews.some((view) => view.key === activeView.value)) activeView.value = 'networks';
+  activeView.value = 'networks';
   resetContextNavigation();
-  carryDnsChoice(...previous);
+  resourceQuery.value = '';
+  searchMatches.value = null;
+  matchedNetworkIds.value = null;
   await updateWorkspaceRoute();
   await refreshAggregateTable();
 }
@@ -2784,6 +2793,8 @@ async function changePage(page) {
 async function sortBy(key) {
   sortOrder.value = sortKey.value === key ? sortOrder.value * -1 : 1;
   sortKey.value = key;
+  if (serverPagedView.value) currentPage.value = 1;
+  await updateWorkspaceRoute({ replace: true });
   if (serverPagedView.value) {
     currentPage.value = 1;
     if (contextKind.value === 'network') await loadNetworkContext();
@@ -2971,30 +2982,44 @@ watch(
       if (facets.value) loadFilterFacets();
     }, 100);
   },
-  { deep: true },
+  // Synchronous, so a route restore (which sets restoringRoute around its
+  // writes) is seen as one: restoring the filters is not changing them, and
+  // must not send a restored page back to page one.
+  { deep: true, flush: 'sync' },
 );
 // Counts belong to one table in one place; anywhere else they are recounted.
 watch([activeView, contextKind, () => selectedNetwork.value?.id, columnKind], () => {
   facets.value = null;
 });
 
-watch(pageSize, () => {
-  currentPage.value = 1;
-  selectedRows.value = [];
-  updateWorkspaceRoute({ replace: true });
-  if (contextKind.value === 'network') loadNetworkContext();
-  else refreshAggregateTable();
-});
+// Like the filters watcher, synchronous so a route restore is not a change:
+// the restored page stays.
+watch(
+  pageSize,
+  () => {
+    if (restoringRoute) return;
+    currentPage.value = 1;
+    selectedRows.value = [];
+    updateWorkspaceRoute({ replace: true });
+    if (contextKind.value === 'network') loadNetworkContext();
+    else refreshAggregateTable();
+  },
+  { flush: 'sync' },
+);
 
 watch(addressPresentation, () => updateWorkspaceRoute({ replace: true }));
 // Table and grid read different page sizes, so a switch between them
 // starts at page one and loads that presentation's page.
-watch(effectivePresentation, (next, previous) => {
-  if ((next === 'table') === (previous === 'table')) return;
-  if (contextKind.value !== 'network' || activeView.value !== 'addresses') return;
-  currentPage.value = 1;
-  loadNetworkContext();
-});
+watch(
+  effectivePresentation,
+  (next, previous) => {
+    if (restoringRoute || (next === 'table') === (previous === 'table')) return;
+    if (contextKind.value !== 'network' || activeView.value !== 'addresses') return;
+    currentPage.value = 1;
+    loadNetworkContext();
+  },
+  { flush: 'sync' },
+);
 
 watch(
   routeState,

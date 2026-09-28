@@ -63,7 +63,12 @@
     </button>
   </div>
   <div v-if="filterChips.length" class="filter-chips" aria-label="Active filters">
-    <button v-for="chip in filterChips" :key="chip.key" @click="emit('clear-filter', chip.key)">
+    <button
+      v-for="chip in filterChips"
+      :key="chip.key"
+      :data-filter-key="chip.key"
+      @click="emit('clear-filter', chip.key)"
+    >
       {{ chip.label }} <i class="pi pi-times" />
     </button>
     <button @click="emit('clear-filters')">Clear all</button>

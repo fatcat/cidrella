@@ -9,15 +9,20 @@ import { createPinia, setActivePinia } from 'pinia';
 import NetworksWorkspace from '../../../../../src/views/networks-workspace/NetworksWorkspace.vue';
 import { UiPlugin } from '../../../../../src/ui/plugin.js';
 import {
+  buildExplorerFolders,
+  mapNetworkRows,
+} from '../../../../../src/views/networks-workspace-data.js';
+import {
   FOLDERS,
-  NETWORKS,
   allocatedLeaves,
-  networkById,
+  applyColumnFilters,
+  queryAddresses,
   queryDhcpRows,
   queryDnsRecords,
   queryNetworks,
   queryScopes,
   queryZones,
+  subnetTree,
   unallocatedLeaves,
 } from './fake-estate.js';
 
@@ -41,6 +46,40 @@ export function mountWorkspace(pinia) {
       plugins: [pinia, [UiPlugin, { unstyled: true }]],
       stubs: {
         RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
+        // The vendor paginator's markup is not what is under test; the stub
+        // keeps its contract (first/rows/totalRecords in, a page event out).
+        Paginator: {
+          props: ['first', 'rows', 'totalRecords', 'rowsPerPageOptions'],
+          emits: ['page'],
+          template:
+            '<nav class="paginator-stub" :data-first="first" :data-rows="rows" :data-total="totalRecords">' +
+            '<button aria-label="Previous Page" :disabled="first === 0" @click="$emit(\'page\', { page: Math.floor(first / rows) - 1, first: first - rows, rows })" />' +
+            '<button aria-label="Next Page" :disabled="first + rows >= totalRecords" @click="$emit(\'page\', { page: Math.floor(first / rows) + 1, first: first + rows, rows })" />' +
+            '<select aria-label="Rows per page" :value="rows" @change="$emit(\'page\', { page: 0, first: 0, rows: Number($event.target.value) })"><option v-for="size in rowsPerPageOptions" :key="size" :value="size">{{ size }}</option></select>' +
+            '</nav>',
+        },
+        // The vendor popover leaves its content behind in this DOM once
+        // hidden; the stub renders it only while open, as a browser shows it.
+        Popover: {
+          emits: ['show', 'hide'],
+          data: () => ({ visible: false }),
+          methods: {
+            toggle() {
+              if (this.visible) this.hide();
+              else this.show();
+            },
+            show() {
+              this.visible = true;
+              this.$emit('show');
+            },
+            hide() {
+              if (!this.visible) return;
+              this.visible = false;
+              this.$emit('hide');
+            },
+          },
+          template: '<div v-if="visible" class="popover-stub"><slot /></div>',
+        },
         Dialog: {
           props: ['visible'],
           template:
@@ -115,9 +154,30 @@ export function observe() {
       Number(row.dataset.networkId),
     ),
     explorerChecked: all('.network-row.checked').map((row) => Number(row.dataset.networkId)),
-    paginator: one('.workspace-pagination, .p-paginator') ? true : false,
+    pager: pagerOf(one('.paginator-stub')),
+    chips: all('.filter-chips button[data-filter-key]').map((chip) => chip.dataset.filterKey),
+    filters: savedFilters(),
     loadError: one('.load-error, .workspace-error')?.textContent.trim() || null,
   };
+}
+
+function pagerOf(element) {
+  if (!element) return null;
+  const [first, rows, total] = ['first', 'rows', 'total'].map((key) =>
+    Number(element.dataset[key]),
+  );
+  return { first, rows, total };
+}
+
+// The column filters in force, from the saved workspace state (the route):
+// the chips on screen are checked against these.
+function savedFilters() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+    return saved.filters ? JSON.parse(saved.filters) : {};
+  } catch {
+    return {};
+  }
 }
 
 // The context the header names. The explorer cannot say: a search may hide
@@ -168,7 +228,7 @@ function expectedDns(state, context) {
       (row) =>
         row.zone_type === 'reverse' && row.related_subnet_ids.includes(state.reverseNetworkId),
     );
-  return rows.map((row) => row.id);
+  return applyColumnFilters(rows, state.filters, 'dns').map((row) => row.id);
 }
 
 function expectedDhcp(state, context) {
@@ -178,7 +238,34 @@ function expectedDhcp(state, context) {
     scope_id: state.scopeId ?? undefined,
     ...search,
   });
-  return rows.map((row) => row.ip_address);
+  return applyColumnFilters(rows, state.filters, 'dhcp').map((row) => row.ip_address);
+}
+
+function expectedAddresses(state, context) {
+  const params = {
+    showAvailable: state.showAvailable === false ? 'false' : 'true',
+    search: state.q || undefined,
+    table_search: state.tableQ || undefined,
+  };
+  return queryAddresses(context.networkId, params, state.filters).map((row) => row.ip_address);
+}
+
+// The networks list filters in the browser, on the values its rows carry
+// (mapNetworkRows over the explorer's networks, as the workspace builds them).
+function networkListFilter(ids, filters) {
+  if (!Object.keys(filters).length) return ids;
+  const rows = mapNetworkRows(
+    buildExplorerFolders(subnetTree().folders).flatMap((folder) => folder.networks),
+  ).filter((row) => ids.includes(row.raw.id));
+  const value = (row, key) => {
+    const found = key in row ? row[key] : row.raw?.[key];
+    return found === undefined || found === '' ? null : found;
+  };
+  return rows
+    .filter((row) =>
+      Object.entries(filters).every(([key, values]) => values.includes(value(row, key))),
+    )
+    .map((row) => row.raw.id);
 }
 
 function expectedNetworks(state, context) {
@@ -192,7 +279,10 @@ function expectedNetworks(state, context) {
     q: state.q || undefined,
     table_q: state.tableQ || undefined,
   });
-  return rows.map((row) => row.id);
+  return networkListFilter(
+    rows.map((row) => row.id),
+    state.filters,
+  );
 }
 
 // The zones and scopes the cards should offer: the place's, that the search
@@ -223,6 +313,30 @@ function expectedScopes(state, context) {
 }
 
 const sameSet = (a, b) => a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
+// The rows on screen are one page of `expected`, and the paginator agrees.
+function checkPage(out, label, shown, expected, pager) {
+  const known = new Set(expected.map(String));
+  const stray = shown.filter((id) => !known.has(String(id)));
+  if (stray.length) out.push(`${label} rows [${stray.slice(0, 5)}] are not in the result`);
+  if (new Set(shown.map(String)).size !== shown.length) out.push(`${label} rows repeat`);
+  if (!pager) {
+    if (!sameSet(shown.map(String), [...known]))
+      out.push(`${label} rows [${shown}] expected [${expected}]`);
+    return;
+  }
+  if (pager.total !== expected.length)
+    out.push(`${label} paginator counts ${pager.total}, the result has ${expected.length}`);
+  if (pager.first % pager.rows)
+    out.push(`${label} page starts at ${pager.first}, not a page boundary`);
+  if (pager.first > 0 && pager.first >= expected.length)
+    out.push(`${label} page starts at ${pager.first}, past the ${expected.length} results`);
+  const want = Math.max(0, Math.min(pager.rows, expected.length - pager.first));
+  if (shown.length !== want)
+    out.push(
+      `${label} page shows ${shown.length} rows, expected ${want} (from ${pager.first} of ${expected.length}, ${pager.rows} a page)`,
+    );
+}
 
 // ─── Invariants ───────────────────────────────────────────────────────
 
@@ -302,26 +416,29 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
       out.push(`scope cards [${state.scopeCards}] expected [${scopes}]`);
   }
 
-  // 4. The table shows exactly what the estate says it should.
+  // 4. The table shows exactly what the estate says it should: the page on
+  // screen is a page of the result, and the paginator counts the result.
   if (view === 'dns') {
-    const shown = state.rows.map(recordIdOf);
-    const expected = expectedDns(state, context);
-    if (!sameSet(shown, expected)) out.push(`DNS rows [${shown}] expected [${expected}]`);
+    checkPage(out, 'DNS', state.rows.map(recordIdOf), expectedDns(state, context), state.pager);
   } else if (view === 'dhcp') {
     const shown = state.rows.filter((id) => !id.startsWith('dhcp:available')).map(dhcpIpOf);
-    const expected = expectedDhcp(state, context);
-    if (!sameSet(shown, expected)) out.push(`DHCP rows [${shown}] expected [${expected}]`);
+    checkPage(out, 'DHCP', shown, expectedDhcp(state, context), state.pager);
   } else if (view === 'networks') {
     const shown = state.rows.map((id) => Number(id.split(':')[1]));
     const expected = expectedNetworks(state, context);
-    if (!sameSet(shown, expected)) out.push(`network rows [${shown}] expected [${expected}]`);
+    // The unallocated rows' filter values are the workspace's own to build.
+    if (context.kind === 'unallocated' && Object.keys(state.filters).length) {
+      const stray = shown.filter((id) => !expected.includes(id));
+      if (stray.length) out.push(`unallocated rows [${stray}] outside the search`);
+    } else checkPage(out, 'network', shown, expected, state.pager);
   } else if (view === 'addresses' && context.kind === 'network') {
-    const network = networkById(context.networkId);
-    const outside = state.rows.filter(
-      (id) => networkOf(id.slice('address:'.length)) !== network.id,
-    );
-    if (outside.length) out.push(`address rows outside ${network.cidr}: ${outside.slice(0, 3)}`);
+    const shown = state.rows.map((id) => id.slice('address:'.length));
+    checkPage(out, 'address', shown, expectedAddresses(state, context), state.pager);
   }
+
+  // 4b. The chips are the filters in force.
+  if (!sameSet(state.chips, Object.keys(state.filters)))
+    out.push(`filter chips [${state.chips}] for filters [${Object.keys(state.filters)}]`);
 
   // 5. A network checked in the table is checked in the explorer and back.
   if (view === 'networks' && context.kind !== 'unallocated') {
@@ -341,15 +458,20 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
   return out;
 }
 
-function networkOf(ip) {
-  const value = ip.split('.').reduce((sum, octet) => sum * 256 + Number(octet), 0);
-  const match = NETWORKS.filter((network) => network.status === 'allocated').find((network) => {
-    const start = network.network_address
-      .split('.')
-      .reduce((sum, octet) => sum * 256 + Number(octet), 0);
-    return value >= start && value < start + network.total_addresses;
-  });
-  return match?.id ?? null;
+// What one action must leave on screen, beyond the invariants.
+export function postconditions(label, state) {
+  const out = [];
+  if (label === 'estate' || label === 'breadcrumb') {
+    // Home: every allocated network, whatever was open before.
+    if (state.title !== 'All Allocated Networks') out.push(`${label} opened "${state.title}"`);
+    if (state.view !== 'networks') out.push(`${label} left the ${state.view} tab open`);
+    if (state.q || state.tableQ) out.push(`${label} kept the search "${state.q || state.tableQ}"`);
+    if (Object.keys(state.filters).length) out.push(`${label} kept filters`);
+    const all = allocatedLeaves().map((network) => network.id);
+    const shown = state.rows.map((id) => Number(id.split(':')[1]));
+    if (!sameSet(shown, all)) out.push(`${label} shows networks [${shown}], not all [${all}]`);
+  }
+  return out;
 }
 
 // The parts of the screen a reload must bring back.
@@ -362,6 +484,9 @@ export function restorable(state) {
     scopeId: state.scopeId,
     q: state.q,
     showAvailable: state.showAvailable,
+    filters: state.filters,
+    chips: [...state.chips].sort(),
+    pager: state.pager,
     rows: [...state.rows].sort(),
   };
 }
