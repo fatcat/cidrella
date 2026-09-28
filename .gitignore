@@ -1,0 +1,15 @@
+.claude
+node_modules/
+dist/
+data/
+# Source modules, not the dev DATA_DIR that data/ is for.
+!server/src/data/
+*.db
+.env
+PLAN.md
+PROMPT.md
+REVIEW.md
+tmp/
+.mcp.json
+.playwright-mcp
+screenshots/
