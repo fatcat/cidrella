@@ -44,7 +44,18 @@ export const IP_COLUMNS = Object.freeze({
   dns_hostname: { kind: 'text', get: (row, t) => str(dnsOf(row, t)?.record_fqdn) },
   record_name: { kind: 'text', get: (row, t) => str(dnsOf(row, t)?.name) },
   record_type: { kind: 'enum', get: (row, t) => str(dnsOf(row, t)?.record_type) },
-  value: { kind: 'text', get: (row, t) => str(dnsOf(row, t)?.value) },
+  // An address record's value is an IP and sorts numerically, like
+  // ip_address; a name (CNAME, MX, PTR target) sorts as text after them.
+  value: {
+    kind: 'text',
+    get: (row, t) => str(dnsOf(row, t)?.value),
+    sort: (row, t) => {
+      const value = str(dnsOf(row, t)?.value);
+      if (!value) return null;
+      const key = sortKey(value.trim());
+      return key ? `0${key}` : `1${value}`;
+    },
+  },
   priority: { kind: 'none', get: (row, t) => dnsOf(row, t)?.priority ?? null },
   port: { kind: 'none', get: (row, t) => dnsOf(row, t)?.port ?? null },
   ttl: {
@@ -203,7 +214,7 @@ export function columnFacets(entries, filters, table) {
 export function columnSortValue(row, key, table) {
   const column = IP_COLUMNS[key];
   if (!column) return null;
-  const value = column.sort ? column.sort(row) : column.get(row, table);
+  const value = column.sort ? column.sort(row, table) : column.get(row, table);
   if (typeof value === 'string') return value.trim() ? value.toLowerCase() : null;
   if (typeof value === 'boolean') return value ? 1 : 0;
   return value ?? null;

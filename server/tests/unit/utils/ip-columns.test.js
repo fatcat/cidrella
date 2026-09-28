@@ -85,4 +85,44 @@ describe('ip-columns', () => {
     expect(rows.map((row) => row.hostname)).toEqual(['A', 'b', null]);
     expect(FILTERABLE).not.toContain('ttl');
   });
+
+  it('sorts a DNS value by address, not as text, with names after the addresses', () => {
+    const values = [
+      '10.0.0.10',
+      'www.lab.test',
+      '10.0.0.9',
+      null,
+      '10.0.1.2',
+      'fd00::1',
+      '9.9.9.9',
+    ];
+    const rows = values.map((value) => ({ value }));
+    const sorted = (order, table = 'dns') =>
+      [...rows].sort(compareByColumn('value', order, table)).map((row) => row.value);
+    expect(sorted('asc')).toEqual([
+      '9.9.9.9',
+      '10.0.0.9',
+      '10.0.0.10',
+      '10.0.1.2',
+      'fd00::1',
+      'www.lab.test',
+      null,
+    ]);
+    expect(sorted('desc')).toEqual([
+      'www.lab.test',
+      'fd00::1',
+      '10.0.1.2',
+      '10.0.0.10',
+      '10.0.0.9',
+      '9.9.9.9',
+      null,
+    ]);
+    // Another table reads the same column from the row's DNS record.
+    const addressRows = [
+      { dns_record: { value: '10.0.0.10' } },
+      { dns_record: { value: '10.0.0.9' } },
+    ];
+    addressRows.sort(compareByColumn('value', 'asc', 'addresses'));
+    expect(addressRows.map((row) => row.dns_record.value)).toEqual(['10.0.0.9', '10.0.0.10']);
+  });
 });

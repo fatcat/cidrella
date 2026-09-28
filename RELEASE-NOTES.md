@@ -385,6 +385,11 @@ first on a 0.4.17 host.
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and
   showed as a dash.
 
+- Sorting the DNS table by its Value column puts addresses in network order.
+  It compared them as text, so 10.0.0.10 came before 10.0.0.9. Addresses now
+  sort numerically, as the IP column does, with names (CNAME, MX and PTR
+  targets) after them.
+
 - A host named by a manual DNS record no longer shows a blank address. A
   record created before its network existed, or kept when the network was
   deleted and configured again, was served by DNS but never claimed its
