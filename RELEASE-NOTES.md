@@ -422,6 +422,14 @@ first on a 0.4.17 host.
   menu too. The DNS and DHCP tables have no bulk actions, so their rows
   stay single-pick.
 
+- Stepping out to All Allocated Networks or a folder on the DNS tab keeps
+  the zone you were looking at when the new context has it, and otherwise
+  opens on the first zone of the side you last used. It used to drop to
+  the page's first load of every zone's records, PTRs first, so a reverse
+  zone from an unrelated network led the table. Choosing All Allocated
+  Networks or a folder now also re-reads the table; it used to keep the
+  rows from before.
+
 - Clicking the DNS zone card that is already chosen keeps it. It used to
   clear the choice and drop the table to the mixed record list, where the
   PTR records sort first, so a second click on a forward zone looked like a

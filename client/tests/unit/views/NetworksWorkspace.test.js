@@ -1360,6 +1360,45 @@ describe('Networks workspace', () => {
     globalThis.window.removeEventListener('ipam:stats-changed', statsChanged);
   });
 
+  it('keeps a zone chosen when stepping out to All Allocated Networks or a folder', async () => {
+    const wrapper = await mountWorkspace();
+    const tableReads = () =>
+      api.get.mock.calls.filter(
+        ([url, config]) => url === '/workspace/dns-records' && config.params.sort_order,
+      );
+    const lastRead = () => tableReads().at(-1)[1].params;
+    const settle = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await flushPromises();
+    };
+    const selectedCards = () =>
+      wrapper.findAll('.linked-card.selected').map((card) => card.find('strong').text());
+
+    // All Allocated Networks' DNS tab opens on the forward zone, not on the
+    // mixed list that sorts every PTR first.
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    expect(lastRead()).toMatchObject({ zone_id: 21 });
+    expect(selectedCards()).toEqual(['test.example']);
+
+    // From a network's DNS view, the zone it shows carries to the estate.
+    await enterTestNetwork(wrapper);
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    expect(lastRead()).toMatchObject({ subnet_id: 11, zone_id: 21 });
+    await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
+    await settle();
+    expect(lastRead()).toMatchObject({ zone_id: 21 });
+    expect(lastRead().subnet_id).toBeUndefined();
+    expect(selectedCards()).toEqual(['test.example']);
+
+    // And to a folder that holds it.
+    await wrapper.find('.folder-row').trigger('click');
+    await settle();
+    expect(lastRead()).toMatchObject({ zone_id: 21 });
+    expect(selectedCards()).toEqual(['test.example']);
+  });
+
   it('carries the last zone choice to the next network on the DNS view', async () => {
     const sibling = {
       id: 13,
@@ -1510,8 +1549,25 @@ describe('Networks workspace', () => {
         return response({ action: body.action, applied: body.ids, skipped: [] });
       throw new Error(`Unexpected POST ${url}`);
     });
-    // All Allocated Networks lists every record; a network's DNS tab opens on
-    // its forward zone.
+    // The forward zone holds the manual A record and one a DHCP lease wrote.
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/workspace/dns-records' && !config?.params?.ip_address
+        ? base(url, config).then((res) => {
+            const [manual] = res.data.items;
+            const leased = {
+              ...manual,
+              id: 54,
+              name: 'laptop',
+              record_fqdn: 'laptop.test.example',
+              value: '1.1.1.41',
+              ip_address: '1.1.1.41',
+              dns_source: 'dhcp',
+            };
+            return { ...res, data: { ...res.data, items: [manual, leased], total: 2 } };
+          })
+        : base(url, config),
+    );
     const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
     await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
     await flushPromises();
@@ -1524,7 +1580,7 @@ describe('Networks workspace', () => {
       await flushPromises();
     };
 
-    // The A record (manual) and its PTR (generated) are checked together.
+    // A manual record and a generated one are checked together.
     await checkBoth();
     expect(wrapper.find('.row-menu span').text()).toBe('2 RECORDS SELECTED');
     expect(rowMenuLabels(wrapper)).toEqual(['Enable records', 'Disable records', 'Delete records']);
@@ -1532,7 +1588,7 @@ describe('Networks workspace', () => {
     expect(enable.attributes('aria-disabled')).toBe('true');
     expect(enable.attributes('title')).toBe('Every selected record is already enabled.');
 
-    // Only the manual record is sent; the generated PTR follows its source.
+    // Only the manual record is sent; the generated one follows its lease.
     await rowMenuItem(wrapper, 'Disable records').trigger('click');
     await flushPromises();
     expect(api.post).toHaveBeenCalledWith('/dns/records/bulk', { action: 'disable', ids: [51] });

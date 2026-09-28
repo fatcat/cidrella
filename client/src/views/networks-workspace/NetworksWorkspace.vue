@@ -421,6 +421,7 @@ import DhcpPanel from '../../components/DhcpPanel.vue';
 import Paginator from '../../ui/Paginator.js';
 import { apiError, countOf, formatNumber } from '../../utils/format.js';
 import { loadJson, saveJson } from '../../utils/storage.js';
+import { reverseZoneSortKey } from '../../utils/reverseZone.js';
 import AddressGrid from './AddressGrid.vue';
 import ApplyStatusBanner from './ApplyStatusBanner.vue';
 import ResourceExplorer from './ResourceExplorer.vue';
@@ -829,6 +830,23 @@ const dnsZoneSide = ref(
 function rememberDnsZoneSide(zone) {
   dnsZoneSide.value = !zone ? '' : zone.type === 'reverse' ? 'reverse' : 'forward';
   saveJson(DNS_ZONE_SIDE_KEY, dnsZoneSide.value);
+}
+// The zone the DNS table opens on when the context changes: the one already
+// chosen if the new context still has it, else the first zone of the side the
+// operator last chose (forward zones by name, reverse ones in address order).
+// Never the mixed list, where every PTR of every zone sorts first.
+function dnsZoneForContext(previous) {
+  const inScope = contextKind.value === 'network' ? linkedZones.value : scopedZones.value;
+  if (previous && inScope.some((zone) => Number(zone.id) === Number(previous.id))) {
+    return inScope.find((zone) => Number(zone.id) === Number(previous.id));
+  }
+  const side = dnsZoneSide.value;
+  if (!side) return null;
+  const key = (zone) => (side === 'reverse' ? reverseZoneSortKey(zone.name) : zone.name);
+  return (
+    inScope.filter((zone) => zone.type === side).sort((a, b) => key(a).localeCompare(key(b)))[0] ||
+    null
+  );
 }
 function linkedZoneOfSide(networkId, side) {
   if (!side) return null;
@@ -1953,20 +1971,44 @@ function resetContextNavigation() {
   selectedRows.value = [];
   tableQuery.value = '';
 }
-function selectEstate() {
+// On the DNS view the zone choice carries into the new context when it can
+// (see dnsZoneForContext); a network-wide reverse choice carries when that
+// network is in the new context.
+function carryDnsChoice(previousZone, previousReverseNetwork) {
+  if (activeView.value !== 'dns') return;
+  if (
+    previousReverseNetwork &&
+    scopedNetworks.value.some((network) => Number(network.id) === previousReverseNetwork.id)
+  ) {
+    reverseNetworkFilter.value = previousReverseNetwork;
+    return;
+  }
+  selectedZoneFilter.value = dnsZoneForContext(previousZone);
+}
+// Both re-read the table for the new context. Neither watcher does it: the
+// filters one returns while this route write is in flight, and the route one
+// skips the workspace's own writes. Without this the estate showed whatever
+// the page first loaded, every zone's records with the PTRs first.
+async function selectEstate() {
+  const previous = [selectedZoneFilter.value, reverseNetworkFilter.value];
   contextKind.value = 'estate';
   selectedFolder.value = null;
   if (!aggregateViews.some((view) => view.key === activeView.value)) activeView.value = 'networks';
   resetContextNavigation();
-  updateWorkspaceRoute();
+  carryDnsChoice(...previous);
+  await updateWorkspaceRoute();
+  await refreshAggregateTable();
 }
-function selectFolder(folder) {
+async function selectFolder(folder) {
+  const previous = [selectedZoneFilter.value, reverseNetworkFilter.value];
   contextKind.value = 'folder';
   selectedFolder.value = folder;
   if (!expandedFolders.value.has(folder.id)) toggleFolder(folder.id);
   if (!aggregateViews.some((view) => view.key === activeView.value)) activeView.value = 'networks';
   resetContextNavigation();
-  updateWorkspaceRoute();
+  carryDnsChoice(...previous);
+  await updateWorkspaceRoute();
+  await refreshAggregateTable();
 }
 function selectUnallocated() {
   contextKind.value = 'unallocated';
@@ -1987,9 +2029,11 @@ async function switchView(view) {
   // The DNS tab opens on the zone side the operator last chose, not on the
   // mixed record list, which sorts every PTR record ahead of the forward ones.
   selectedZoneFilter.value =
-    view === 'dns' && contextKind.value === 'network'
-      ? linkedZoneOfSide(selectedNetwork.value?.id, dnsZoneSide.value)
-      : null;
+    view !== 'dns'
+      ? null
+      : contextKind.value === 'network'
+        ? linkedZoneOfSide(selectedNetwork.value?.id, dnsZoneSide.value)
+        : dnsZoneForContext(null);
   reverseNetworkFilter.value = null;
   selectedScopeFilter.value = null;
   clearDetail();
