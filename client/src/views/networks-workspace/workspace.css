@@ -211,6 +211,44 @@ button {
 .row-menu button {
   grid-template-columns: 1rem 1fr;
 }
+/* A switch item (Liveness scan): the switch shows the current state, on,
+   off, or mixed across a selection; choosing the item flips it. */
+.row-menu button.menu-toggle {
+  grid-template-columns: 1rem 1fr auto;
+}
+.floating-menu .menu-switch {
+  position: relative;
+  display: block;
+  width: 1.65rem;
+  height: 0.92rem;
+  border-radius: 99px;
+  background: var(--cid-surface-300);
+  transition: background 0.15s;
+}
+.floating-menu .menu-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(0.92rem - 4px);
+  height: calc(0.92rem - 4px);
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.15s;
+}
+.floating-menu .menu-switch.on {
+  background: var(--preview-accent);
+}
+.floating-menu .menu-switch.on::after {
+  transform: translateX(0.72rem);
+}
+.floating-menu .menu-switch.mixed {
+  background: color-mix(in srgb, var(--preview-accent) 45%, var(--cid-surface-300));
+}
+.floating-menu .menu-switch.mixed::after {
+  transform: translateX(0.36rem);
+}
 .prototype-notice {
   position: fixed;
   right: 1.25rem;

@@ -1628,7 +1628,7 @@ describe('Networks workspace', () => {
       'Create IP Reservation',
       'Create DHCP Reservation',
       'Set Range Type',
-      'Disable liveness scan',
+      'Liveness scan',
       'Probe now',
     ]);
     // One separator, above Probe now, which closes the menu.
@@ -1793,7 +1793,13 @@ describe('Networks workspace', () => {
         .trigger('click');
       await flushPromises();
     };
-    await pick('Disable liveness scan');
+    // Every picked address scans, so the one switch reads on and turns it off.
+    await cells[11].trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu [role="menuitemcheckbox"]').attributes('aria-checked')).toBe(
+      'true',
+    );
+    await pick('Liveness scan');
     expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/bulk-scan-enabled', {
       start_ip: '1.1.1.10',
       end_ip: '1.1.1.12',
@@ -1975,18 +1981,20 @@ describe('Networks workspace', () => {
     expect(dhcpRow.find('.status-pill.status-active').text()).toBe('Active');
   });
 
-  it('toggles the liveness scan from the row menu and offers Reset to Inherit', async () => {
+  it('toggles the liveness scan from one switch in the row menu and offers Reset to Inherit', async () => {
     const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);
     const row = wrapper.findAll('tbody tr').find((entry) => entry.text().includes('1.1.1.33'));
     await row.trigger('contextmenu');
+    // One switch item, showing that the address scans now.
+    const scanSwitch = () => wrapper.find('.row-menu [role="menuitemcheckbox"]');
+    expect(scanSwitch().text()).toBe('Liveness scan');
+    expect(scanSwitch().attributes('aria-checked')).toBe('true');
+    expect(scanSwitch().find('.menu-switch.on').exists()).toBe(true);
     let labels = wrapper.findAll('.row-menu button').map((button) => button.text());
-    expect(labels).toContain('Disable liveness scan');
+    expect(labels).not.toContain('Disable liveness scan');
     expect(labels).not.toContain('Reset to Inherit');
-    await wrapper
-      .findAll('.row-menu button')
-      .find((button) => button.text() === 'Disable liveness scan')
-      .trigger('click');
+    await scanSwitch().trigger('click');
     await flushPromises();
     expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/1.1.1.33/scan-enabled', {
       scan_enabled: false,
@@ -2011,7 +2019,8 @@ describe('Networks workspace', () => {
     await flushPromises();
     await wrapper.find('tbody tr').trigger('contextmenu');
     labels = wrapper.findAll('.row-menu button').map((button) => button.text());
-    expect(labels).toContain('Enable liveness scan');
+    expect(scanSwitch().attributes('aria-checked')).toBe('false');
+    expect(scanSwitch().find('.menu-switch.off').exists()).toBe(true);
     expect(labels).toContain('Reset to Inherit');
     await wrapper
       .findAll('.row-menu button')

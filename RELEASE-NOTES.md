@@ -275,7 +275,7 @@ first on a 0.4.17 host.
   of several checked addresses, in the table or either grid, opens a menu for
   the whole selection: Create DHCP Scope (one unbroken run outside any scope,
   opened with that run as the pool), Reserve or Release, Set range type,
-  Enable or Disable liveness scan, Reset scan to Inherit, and Probe now (up to
+  the Liveness scan switch, Reset scan to Inherit, and Probe now (up to
   256 addresses). Right-clicking checked networks likewise offers Merge and
   Apply defaults. New endpoint `PUT /api/subnets/:id/ips/bulk-scan-enabled`
   takes `start_ip`, `end_ip` and `scan_enabled` (`true`, `false` or `null`);
@@ -295,6 +295,10 @@ first on a 0.4.17 host.
   right-click menu, which already offered every action the bar had. The
   header checkbox now shows the selection (checked, or partly checked) and
   clears it when clicked.
+- Liveness scan is one switch in the row menu instead of an Enable or a
+  Disable entry. The switch shows the current state, on or off for an
+  address and on, off or half-way (mixed) for a selection, and choosing it
+  flips the state; a mixed selection turns scanning on.
 - At All Networks and in a folder, the DNS and DHCP tabs are the same record
   and address tables as inside a network, across every network in view,
   with the same columns and filters. They used to list zones and scopes

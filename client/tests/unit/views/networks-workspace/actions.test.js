@@ -138,7 +138,7 @@ describe('workspace action registry', () => {
       'Create IP Reservation',
       'Create DHCP Reservation',
       'Set Range Type',
-      'Enable liveness scan',
+      'Liveness scan',
       'Probe now',
     ]);
     expect(
@@ -156,7 +156,7 @@ describe('workspace action registry', () => {
       'Delete Gateway',
       'Create DHCP Scope',
       'Set Range Type',
-      'Enable liveness scan',
+      'Liveness scan',
       'Probe now',
     ]);
     expect(
@@ -344,8 +344,7 @@ describe('workspace action registry', () => {
       'Create DHCP Scope',
       'Reserve',
       'Set range type',
-      'Enable liveness scan',
-      'Disable liveness scan',
+      'Liveness scan',
       'Probe now',
     ]);
     // Two runs, or an address already in a scope: no scope. An override: inherit.
@@ -359,10 +358,40 @@ describe('workspace action registry', () => {
     expect(labels(split)).not.toContain('Create DHCP Scope');
     expect(labels(split)).toContain('Reset scan to Inherit');
     expect(labels(target({ inScope: true }))).not.toContain('Create DHCP Scope');
+    // One Liveness scan switch, showing the selection's state.
+    const scanSwitch = (extra) =>
+      menuActions({ menu: 'row', target: target(extra), can: all }).find(
+        (item) => item.id === 'ip.bulk-scan-toggle',
+      ).toggle;
+    expect(scanSwitch({ scanningOn: 0 })).toBe('off');
+    expect(scanSwitch({ scanningOn: 2 })).toBe('mixed');
+    expect(scanSwitch({ scanningOn: 3 })).toBe('on');
     const many = Array.from({ length: 257 }, (_, i) => `10.0.${i >> 8}.${i & 255}`);
     expect(actionAvailability('ip.probe', target({ addresses: many }), all).reason).toContain(
       '256',
     );
+  });
+
+  it('shows one Liveness scan switch for an address, in its current state', () => {
+    const all = () => true;
+    const scanItem = (raw) =>
+      menuActions({
+        menu: 'row',
+        target: { kind: 'address', id: 'address:10.0.0.9', address: '10.0.0.9', raw },
+        can: all,
+      }).filter((item) => item.label === 'Liveness scan');
+    expect(scanItem({ scanning_enabled: true })).toMatchObject([
+      { id: 'ip.scan-toggle', toggle: 'on' },
+    ]);
+    expect(scanItem({ scanning_enabled: 0 })).toMatchObject([{ toggle: 'off' }]);
+    // A plain item carries no switch state.
+    expect(
+      menuActions({
+        menu: 'row',
+        target: { kind: 'address', id: 'address:10.0.0.9', raw: {} },
+        can: all,
+      }).find((item) => item.id === 'ip.probe').toggle,
+    ).toBeNull();
   });
 
   it('targets folders and checked rows through their own kinds', () => {
@@ -390,7 +419,7 @@ describe('workspace action registry', () => {
     ).not.toContain('Rename folder');
     expect(WORKSPACE_ACTIONS['network.merge'].menus).not.toContain('actions');
 
-    // The selection bar keeps unavailable entries so it can say why.
+    // Checked networks.
     const selection = (networks) => ({
       kind: 'network-selection',
       ids: networks.map((network) => network.id),

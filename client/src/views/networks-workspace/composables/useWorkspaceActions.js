@@ -1,7 +1,7 @@
 import { nextTick } from 'vue';
 import api from '../../../api/client.js';
 import { apiError, countOf, formatNumber } from '../../../utils/format.js';
-import { createWorkspaceActionRegistry, targetForRow } from '../workspace-actions.js';
+import { createWorkspaceActionRegistry, scanningOn, targetForRow } from '../workspace-actions.js';
 
 // The handler side of the action registry (plan section 5, W-05). The
 // orchestrator owns the state and the dialog refs; this composable owns what
@@ -358,8 +358,7 @@ export function useWorkspaceActions(ctx) {
       await openBulkRangeType();
     },
     'ip.scan-toggle': (target) => {
-      const raw = target.raw || {};
-      const enabled = raw.scanning_enabled === true || raw.scanning_enabled === 1;
+      const enabled = scanningOn(target.raw);
       return setAddressScan(
         target,
         !enabled,
@@ -371,8 +370,10 @@ export function useWorkspaceActions(ctx) {
       target.kind === 'address-selection'
         ? probeSelection(target)
         : openScanDialog(target, 'probe'),
-    'ip.bulk-scan-enable': (target) => setSelectionScan(target, true, 'liveness scan enabled'),
-    'ip.bulk-scan-disable': (target) => setSelectionScan(target, false, 'liveness scan disabled'),
+    'ip.bulk-scan-toggle': (target) =>
+      target.scanningOn >= target.count
+        ? setSelectionScan(target, false, 'liveness scan disabled')
+        : setSelectionScan(target, true, 'liveness scan enabled'),
     'ip.bulk-scan-inherit': (target) =>
       setSelectionScan(target, null, 'scan setting reset to inherit'),
 

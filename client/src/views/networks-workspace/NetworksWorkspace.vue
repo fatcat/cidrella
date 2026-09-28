@@ -332,7 +332,18 @@
       <span>{{ rowMenuTitle }}</span>
       <template v-for="item in rowMenuItems" :key="item.id">
         <hr v-if="item.separatorBefore" class="menu-separator" role="separator" />
-        <button role="menuitem" :class="{ danger: item.danger }" @click="runRowAction(item)">
+        <button
+          v-if="item.toggle"
+          role="menuitemcheckbox"
+          class="menu-toggle"
+          :aria-checked="item.toggle === 'mixed' ? 'mixed' : String(item.toggle === 'on')"
+          :title="item.toggle === 'mixed' ? 'On for some of the selection' : ''"
+          @click="runRowAction(item)"
+        >
+          <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
+          <span class="menu-switch" :class="item.toggle" aria-hidden="true" />
+        </button>
+        <button v-else role="menuitem" :class="{ danger: item.danger }" @click="runRowAction(item)">
           <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
         </button>
       </template>
@@ -378,7 +389,7 @@ import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
 import { contiguousAddressRuns, identityAddress } from './composables/useWorkspaceSelection.js';
 import { useRangeActions } from './composables/useRangeActions.js';
 import { useWorkspaceActions } from './composables/useWorkspaceActions.js';
-import { NETWORK_DRAG_TYPE, menuActions, targetForRow } from './workspace-actions.js';
+import { NETWORK_DRAG_TYPE, menuActions, scanningOn, targetForRow } from './workspace-actions.js';
 import {
   defaultWorkspaceColumnKeys,
   filterValueLabel,
@@ -1665,6 +1676,7 @@ const selectionTarget = computed(() => {
     runs: selectionRuns.value,
     inScope: rows.some((row) => row.status === 'DHCP Scope' || row.raw?.in_dynamic_pool),
     scanOverrides: rows.filter((row) => row.raw?.scan_enabled != null).length,
+    scanningOn: rows.filter((row) => scanningOn(row.raw)).length,
   };
 });
 // The folder context and explorer folder rows are action targets of their
@@ -2000,10 +2012,12 @@ function handleWorkspaceKeydown(event) {
   event.preventDefault();
   closeMenu();
 }
+// A menu's items: plain actions and the switch items (Liveness scan).
+const MENU_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
 // Arrow keys walk the open menu; focus lands on the first item when a menu
 // opens (see the openMenuName watcher) and goes back to the invoker on close.
 function handleMenuKeydown(event) {
-  const items = [...event.currentTarget.querySelectorAll('[role="menuitem"]')];
+  const items = [...event.currentTarget.querySelectorAll(MENU_ITEMS)];
   if (!items.length) return;
   const current = items.indexOf(document.activeElement);
   let next = null;
@@ -2018,7 +2032,7 @@ function handleMenuKeydown(event) {
 watch(openMenuName, async (name) => {
   if (!name) return;
   await nextTick();
-  document.querySelector(`.floating-menu.${name}-menu [role="menuitem"]`)?.focus();
+  document.querySelector(`.floating-menu.${name}-menu`)?.querySelector(MENU_ITEMS)?.focus();
 });
 
 async function openFolderDialog(mode, folder = null) {

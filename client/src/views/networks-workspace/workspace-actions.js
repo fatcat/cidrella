@@ -537,16 +537,15 @@ const ACTION_DEFINITIONS = [
     capability: 'subnets:write',
     targetKind: 'address',
   },
-  // Liveness scan, as the current interface's context menu has it: one toggle
-  // for the effective state, plus Reset to Inherit while an override is set.
+  // Liveness scan is one switch in the menu, showing the effective state:
+  // choosing it flips that state. Reset to Inherit stays beside it while an
+  // override is set. `toggle` reports the state the switch shows.
   {
     id: 'ip.scan-toggle',
-    label: (target) =>
-      target.raw?.scanning_enabled === true || target.raw?.scanning_enabled === 1
-        ? 'Disable liveness scan'
-        : 'Enable liveness scan',
+    label: 'Liveness scan',
     capability: 'subnets:write',
     targetKind: 'address',
+    toggle: (target) => (scanningOn(target.raw) ? 'on' : 'off'),
   },
   {
     id: 'ip.scan-inherit',
@@ -556,22 +555,17 @@ const ACTION_DEFINITIONS = [
     available: (target) => target.raw?.scan_enabled != null,
     disabledReason: 'This address inherits the network scan setting.',
   },
-  // A selection gets both switches, since its addresses may differ.
+  // A selection's switch is on when every address scans, off when none does,
+  // and mixed between; choosing it turns scanning on unless it is on for all.
   {
-    id: 'ip.bulk-scan-enable',
-    label: 'Enable liveness scan',
+    id: 'ip.bulk-scan-toggle',
+    label: 'Liveness scan',
     capability: 'subnets:write',
     targetKind: 'address-selection',
     available: (target) => target.runs?.length > 0,
     disabledReason: 'Select at least one address.',
-  },
-  {
-    id: 'ip.bulk-scan-disable',
-    label: 'Disable liveness scan',
-    capability: 'subnets:write',
-    targetKind: 'address-selection',
-    available: (target) => target.runs?.length > 0,
-    disabledReason: 'Select at least one address.',
+    toggle: (target) =>
+      !target.scanningOn ? 'off' : target.scanningOn >= target.count ? 'on' : 'mixed',
   },
   {
     id: 'ip.bulk-scan-inherit',
@@ -695,8 +689,7 @@ const ROW_MENU_ORDER = {
     'ip.bulk-release',
     'ip.bulk-reserve',
     'ip.bulk-range-type',
-    'ip.bulk-scan-enable',
-    'ip.bulk-scan-disable',
+    'ip.bulk-scan-toggle',
     'ip.bulk-scan-inherit',
     'ip.probe',
   ],
@@ -716,6 +709,11 @@ const ROW_MENU_ORDER = {
 export const MAX_PROBE_ADDRESSES = 256;
 
 const asList = (value) => (Array.isArray(value) ? value : value == null ? [] : [value]);
+
+// The server-resolved effective scan setting of an address row.
+export function scanningOn(raw) {
+  return raw?.scanning_enabled === true || raw?.scanning_enabled === 1;
+}
 
 // The server's display status says so, or its pool flag does.
 function inDhcpPool(target) {
@@ -765,6 +763,7 @@ export const WORKSPACE_ACTIONS = Object.freeze(
         views: null,
         placement: null,
         separatorBefore: false,
+        toggle: null,
         ...definition,
         targetKinds: asList(definition.targetKind),
       }),
@@ -890,6 +889,8 @@ export function menuActions({ menu, target, view = null, can = () => false }) {
       separatorBefore: action.separatorBefore,
       available: states.get(id).available,
       reason: states.get(id).reason,
+      // 'on', 'off' or 'mixed' for a switch item, null for a plain one.
+      toggle: action.toggle ? action.toggle(target) : null,
     };
   });
 }
