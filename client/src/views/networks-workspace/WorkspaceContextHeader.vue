@@ -116,40 +116,83 @@
         ><em>{{ zone.record_count || 0 }}</em>
       </button>
       <!-- A network wider than a /24 has one reverse zone per /24, so several
-           reverse zones fold into one card that opens a list. -->
+           reverse zones fold into one card that opens a searchable list,
+           grouped by the network each zone serves. -->
       <button
         v-if="reverseZones.length > 1"
         type="button"
         class="linked-card linked-picker"
-        :class="{ selected: Boolean(selectedReverseZone) }"
-        :aria-pressed="Boolean(selectedReverseZone)"
+        :class="{ selected: reversePicked }"
+        :aria-pressed="reversePicked"
         aria-haspopup="menu"
         data-track="workspace-reverse-zones"
         @click="reverseMenuRef.toggle($event)"
       >
         <i class="pi pi-replay" /><span
           ><small>{{ reverseZones.length }} reverse zones</small
-          ><strong>{{ selectedReverseZone?.name || 'Choose a zone' }}</strong></span
+          ><strong>{{ reversePickLabel }}</strong></span
         ><em>{{ reverseRecordCount }}</em
         ><i class="pi pi-chevron-down picker-caret" />
       </button>
-      <Popover ref="reverseMenuRef">
-        <div class="picker-menu" role="menu">
-          <button
-            v-for="zone in reverseZones"
-            :key="zone.id"
-            type="button"
-            role="menuitemradio"
-            class="picker-item"
-            :aria-checked="isSelected(selectedZone, zone)"
-            :class="{ selected: isSelected(selectedZone, zone) }"
-            data-track="workspace-reverse-zone"
-            @click="pickReverseZone(zone)"
-            @contextmenu.prevent="emit('zone-menu', zone, $event.currentTarget, $event)"
-          >
-            <strong>{{ zone.name }}</strong
-            ><em>{{ zone.record_count || 0 }}</em>
-          </button>
+      <Popover ref="reverseMenuRef" @show="onReverseMenuShow">
+        <div class="picker-menu" role="menu" aria-label="Reverse zones">
+          <label class="picker-search">
+            <i class="pi pi-search" aria-hidden="true" />
+            <InputText
+              ref="reverseSearchRef"
+              v-model="reverseQuery"
+              placeholder="Network, CIDR, IP or zone"
+              aria-label="Find a reverse zone"
+              data-track="workspace-reverse-zone-search"
+            />
+          </label>
+          <div class="picker-groups">
+            <section v-for="group in shownReverseGroups" :key="group.key" class="picker-group">
+              <button
+                v-if="group.network"
+                type="button"
+                role="menuitemradio"
+                class="picker-heading"
+                :class="{ selected: isSelected(selectedReverseNetwork, group.network) }"
+                :aria-checked="isSelected(selectedReverseNetwork, group.network)"
+                :title="`Every reverse zone of ${group.network.name || group.network.cidr}`"
+                data-track="workspace-reverse-network"
+                @click="pickReverseNetwork(group.network)"
+              >
+                <span
+                  ><strong>{{ group.network.name || group.network.cidr }}</strong
+                  ><small
+                    >{{ group.network.cidr }} · {{ countOf(group.zones.length, 'zone') }}</small
+                  ></span
+                ><em>{{ formatNumber(group.records) }}</em>
+              </button>
+              <div v-else class="picker-heading other">
+                <span
+                  ><strong>Other zones</strong><small>Not used by an allocated network</small></span
+                >
+              </div>
+              <button
+                v-for="zone in group.zones"
+                :key="zone.id"
+                type="button"
+                role="menuitemradio"
+                class="picker-item"
+                :aria-checked="isSelected(selectedZone, zone)"
+                :class="{ selected: isSelected(selectedZone, zone) }"
+                data-track="workspace-reverse-zone"
+                @click="pickReverseZone(zone)"
+                @contextmenu.prevent="emit('zone-menu', zone, $event.currentTarget, $event)"
+              >
+                <span
+                  ><strong>{{ zone.name }}</strong
+                  ><small>{{ reverseZoneCidr(zone.name) }}</small></span
+                ><em>{{ formatNumber(zone.record_count || 0) }}</em>
+              </button>
+            </section>
+            <p v-if="!shownReverseGroups.length" class="picker-empty">
+              No reverse zone matches “{{ reverseQuery.trim() }}”.
+            </p>
+          </div>
         </div>
       </Popover>
       <span v-if="!summaryZones.length" class="linked-empty">No linked zones</span>
@@ -201,9 +244,15 @@
 <script setup>
 import { computed, ref } from 'vue';
 import Popover from '../../ui/Popover.js';
+import InputText from '../../ui/InputText.js';
+import { countOf, formatNumber } from '../../utils/format.js';
 import { formatDuration } from '../networks-workspace-data.js';
 import StatusDot from '../../components/StatusDot.vue';
-import { reverseZoneSortKey } from '../../utils/reverseZone.js';
+import {
+  reverseZoneCidr,
+  reverseZoneContains,
+  reverseZoneSortKey,
+} from '../../utils/reverseZone.js';
 
 // Breadcrumb, gauges, pinned actions, view tabs and the per-view summary band.
 // Renders as three sibling landmarks so the DOM under .work-surface is
@@ -225,6 +274,8 @@ const props = defineProps({
   viewMeta: { type: Object, required: true },
   summaryZones: { type: Array, default: () => [] },
   selectedZone: { type: Object, default: null },
+  // Every reverse zone of this network is the filter ({ id, name, cidr }).
+  selectedReverseNetwork: { type: Object, default: null },
   selectedScope: { type: Object, default: null },
   summaryScopes: { type: Array, default: () => [] },
   // Null for an IPv6 network: a share of 2^64 addresses is not a number worth showing.
@@ -236,6 +287,7 @@ const emit = defineEmits([
   'switch-view',
   'open-menu',
   'filter-zone',
+  'filter-reverse-network',
   'filter-scope',
   'zone-menu',
   'scope-menu',
@@ -267,9 +319,82 @@ const reverseRecordCount = computed(() =>
   reverseZones.value.reduce((sum, zone) => sum + (zone.record_count || 0), 0),
 );
 const reverseMenuRef = ref(null);
+const reverseSearchRef = ref(null);
+const reverseQuery = ref('');
+const reversePicked = computed(() =>
+  Boolean(selectedReverseZone.value || props.selectedReverseNetwork),
+);
+const reversePickLabel = computed(
+  () =>
+    selectedReverseZone.value?.name ||
+    (props.selectedReverseNetwork &&
+      `${props.selectedReverseNetwork.name || props.selectedReverseNetwork.cidr} · all zones`) ||
+    'Choose a zone',
+);
+
+// The reverse zones under the network each serves, networks in address
+// order. A /24 zone shared by two /25 networks is listed under both. Zones
+// no allocated network uses (kept for space outside IPAM) close the list.
+const reverseGroups = computed(() => {
+  const byNetwork = new Map();
+  const other = [];
+  for (const zone of reverseZones.value) {
+    const networks = zone.related_networks || [];
+    if (!networks.length) other.push(zone);
+    for (const network of networks) {
+      const group = byNetwork.get(network.id) || {
+        key: `network-${network.id}`,
+        network,
+        zones: [],
+      };
+      group.zones.push(zone);
+      byNetwork.set(network.id, group);
+    }
+  }
+  const networkKey = (group) => reverseZoneSortKey(group.zones[0].name);
+  const groups = [...byNetwork.values()].sort((a, b) => networkKey(a).localeCompare(networkKey(b)));
+  if (other.length) groups.push({ key: 'other', network: null, zones: other });
+  return groups.map((group) => ({
+    ...group,
+    records: group.zones.reduce((sum, zone) => sum + (zone.record_count || 0), 0),
+  }));
+});
+
+// The search matches a network's name or CIDR (keeping all its zones), or a
+// zone's name, its CIDR, or an address it covers.
+const shownReverseGroups = computed(() => {
+  const query = reverseQuery.value.trim().toLowerCase();
+  if (!query) return reverseGroups.value;
+  const zoneMatches = (zone) =>
+    zone.name.toLowerCase().includes(query) ||
+    (reverseZoneCidr(zone.name) || '').includes(query) ||
+    reverseZoneContains(zone.name, query);
+  return reverseGroups.value
+    .map((group) => {
+      const networkMatches =
+        group.network &&
+        [group.network.name, group.network.cidr].some((text) =>
+          String(text || '')
+            .toLowerCase()
+            .includes(query),
+        );
+      return networkMatches ? group : { ...group, zones: group.zones.filter(zoneMatches) };
+    })
+    .filter((group) => group.zones.length);
+});
+
+function onReverseMenuShow() {
+  reverseQuery.value = '';
+  // The Popover renders its content on show; focus once it is there.
+  setTimeout(() => reverseSearchRef.value?.$el?.focus?.(), 0);
+}
 function pickReverseZone(zone) {
   reverseMenuRef.value?.hide();
   emit('filter-zone', zone);
+}
+function pickReverseNetwork(network) {
+  reverseMenuRef.value?.hide();
+  emit('filter-reverse-network', network);
 }
 </script>
 
@@ -520,11 +645,83 @@ button {
 .picker-menu {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
-  min-width: 14rem;
-  /* A /16 has 256 reverse zones: scroll instead of running off the screen. */
+  gap: 0.4rem;
+  width: 22rem;
+}
+.picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.25rem;
+  color: var(--preview-muted);
+}
+.picker-search :deep(input) {
+  flex: 1;
+  min-width: 0;
+}
+/* A /16 has 256 reverse zones: the list scrolls under a fixed search box. */
+.picker-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
   max-height: min(24rem, 60vh);
   overflow-y: auto;
+}
+.picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.picker-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--cid-text-color);
+  text-align: left;
+  cursor: pointer;
+}
+button.picker-heading:hover {
+  background: var(--cid-surface-ground);
+}
+.picker-heading.selected {
+  background: var(--preview-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--preview-accent) 45%, var(--preview-line));
+}
+.picker-heading.other {
+  cursor: default;
+}
+.picker-heading > span,
+.picker-item > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.picker-heading strong {
+  font-size: 0.72rem;
+}
+.picker-heading small,
+.picker-item small {
+  color: var(--preview-muted);
+  font-size: 0.6rem;
+}
+.picker-heading em {
+  color: var(--preview-muted);
+  font-size: 0.63rem;
+  font-style: normal;
+}
+.picker-group .picker-item {
+  padding-left: 1.25rem;
+}
+.picker-empty {
+  margin: 0.25rem 0.5rem;
+  color: var(--preview-muted);
+  font-size: 0.68rem;
 }
 .picker-item {
   display: flex;
@@ -545,6 +742,7 @@ button {
 }
 .picker-item.selected {
   background: var(--preview-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--preview-accent) 45%, var(--preview-line));
 }
 .picker-item strong {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

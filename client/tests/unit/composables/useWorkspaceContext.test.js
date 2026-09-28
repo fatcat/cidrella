@@ -42,6 +42,14 @@ describe('workspace route codec', () => {
     });
   });
 
+  it('carries a network-wide reverse zone choice as rzones', () => {
+    const state = decodeWorkspaceQuery({ view: 'dns', rzones: '7' });
+    expect(state.reverseNetwork).toBe(7);
+    expect(encodeWorkspaceQuery(state)).toEqual({ view: 'dns', rzones: '7' });
+    expect(decodeWorkspaceQuery({ rzones: 'x' }).reverseNetwork).toBeNull();
+    expect(encodeWorkspaceQuery(decodeWorkspaceQuery({}))).not.toHaveProperty('rzones');
+  });
+
   it('reads the filter keys of older links as column filters for their table', () => {
     // The Dashboard's rogue link, and links saved before column filters.
     expect(

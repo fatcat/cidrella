@@ -9,6 +9,7 @@ export const WORKSPACE_DEFAULT_STATE = Object.freeze({
   network: null,
   view: 'networks',
   zone: null,
+  reverseNetwork: null,
   scope: null,
   ip: null,
   presentation: 'table',
@@ -87,6 +88,8 @@ export function decodeWorkspaceQuery(query = {}) {
     network: positiveInteger(query.network),
     view,
     zone: positiveInteger(query.zone),
+    // Every reverse zone of one network, by that network's id.
+    reverseNetwork: positiveInteger(query.rzones),
     scope: positiveInteger(query.scope),
     ip: typeof query.ip === 'string' && query.ip ? query.ip : null,
     presentation,
@@ -112,6 +115,7 @@ export function encodeWorkspaceQuery(state) {
     query.network = String(state.network);
   if (state.view !== 'networks') query.view = state.view;
   if (positiveInteger(state.zone)) query.zone = String(state.zone);
+  if (positiveInteger(state.reverseNetwork)) query.rzones = String(state.reverseNetwork);
   if (positiveInteger(state.scope)) query.scope = String(state.scope);
   if (state.ip && state.network) query.ip = state.ip;
   if (state.presentation !== 'table') query.presentation = state.presentation;

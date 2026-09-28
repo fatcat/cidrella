@@ -254,6 +254,7 @@ export function getWorkspaceDnsRecords(
     tableQ,
     ipAddress,
     recordType,
+    zoneType,
     dnsSource,
     enabled,
     filters = {},
@@ -285,6 +286,8 @@ export function getWorkspaceDnsRecords(
   if (zoneId !== undefined) records = records.filter((row) => row.zone_id === zoneId);
   if (ipAddress) records = records.filter((row) => row.ip_address === ipAddress);
   if (recordType) records = records.filter((row) => row.record_type === recordType);
+  // With subnetId, zone_type reverse is every reverse zone of one network.
+  if (zoneType) records = records.filter((row) => row.zone_type === zoneType);
   if (dnsSource) records = records.filter((row) => row.dns_source === dnsSource);
   if (enabled !== undefined)
     records = records.filter((row) => enabledMatches(row.enabled, enabled));

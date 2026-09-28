@@ -47,28 +47,52 @@ export function ptrRecordAddress(zoneName, recordName) {
   return canonicalizeIp(hextets.join(':'));
 }
 
+// The network a reverse zone covers, as its first address and prefix length:
+// octets or nibbles padded out to a full address.
+function zoneNetwork(name) {
+  const family = reverseZoneFamily(name);
+  if (!family) return null;
+  const labels = zoneLabels(name, family);
+  if (family === 4) {
+    const octets = [...labels, ...Array(Math.max(0, 4 - labels.length)).fill('0')].slice(0, 4);
+    return { family, address: octets.join('.'), prefix: Math.min(labels.length, 4) * 8 };
+  }
+  const nibbles = [...labels, ...Array(Math.max(0, 32 - labels.length)).fill('0')].slice(0, 32);
+  const hextets = [];
+  for (let i = 0; i < 32; i += 4) hextets.push(nibbles.slice(i, i + 4).join(''));
+  return { family, address: hextets.join(':'), prefix: Math.min(labels.length, 32) * 4 };
+}
+
 /**
  * A key that orders reverse zones by the network they cover: octets or
  * nibbles padded to a full address, then the shared fixed-width sort key,
  * so IPv4 zones come before IPv6 ones and each family sorts numerically.
  */
 export function reverseZoneSortKey(name) {
-  const family = reverseZoneFamily(name);
-  if (!family) return `9${name}`;
-  const labels = zoneLabels(name, family);
-  const padded =
-    family === 4
-      ? [...labels, ...Array(Math.max(0, 4 - labels.length)).fill('0')].slice(0, 4).join('.')
-      : (() => {
-          const nibbles = [...labels, ...Array(Math.max(0, 32 - labels.length)).fill('0')].slice(
-            0,
-            32,
-          );
-          const hextets = [];
-          for (let i = 0; i < 32; i += 4) hextets.push(nibbles.slice(i, i + 4).join(''));
-          return hextets.join(':');
-        })();
-  return sortKey(padded) || `9${name}`;
+  const network = zoneNetwork(name);
+  return (network && sortKey(network.address)) || `9${name}`;
+}
+
+/** The network a reverse zone covers, as a CIDR: 2.0.10.in-addr.arpa is 10.0.2.0/24. */
+export function reverseZoneCidr(name) {
+  const network = zoneNetwork(name);
+  if (!network) return null;
+  return `${canonicalizeIp(network.address) || network.address}/${network.prefix}`;
+}
+
+/** Whether an address falls in the network a reverse zone covers. */
+export function reverseZoneContains(name, ip) {
+  const network = zoneNetwork(name);
+  const address = canonicalizeIp(String(ip ?? '').trim());
+  if (!network || !address) return false;
+  const addressKey = sortKey(address);
+  const zoneKey = sortKey(network.address);
+  if (!addressKey || !zoneKey || addressKey[0] !== zoneKey[0]) return false;
+  // The keys are the family digit and 32 hex digits; an IPv4 address fills
+  // the last 8. The prefix covers one hex digit per 4 bits.
+  const start = network.family === 4 ? 25 : 1;
+  const digits = network.prefix / 4;
+  return addressKey.slice(start, start + digits) === zoneKey.slice(start, start + digits);
 }
 
 /** Form copy for the PTR name field by zone family. */

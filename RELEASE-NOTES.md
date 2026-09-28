@@ -422,6 +422,16 @@ first on a 0.4.17 host.
   menu too. The DNS and DHCP tables have no bulk actions, so their rows
   stay single-pick.
 
+- The reverse zone picker is grouped by network and searchable. Each
+  network is a heading (name, CIDR, zone count, record count) over its
+  zones in address order, each zone with the /24 it covers; reverse zones
+  no allocated network uses close the list under Other zones. The search
+  box matches a network's name or CIDR, a zone's name or CIDR, or an
+  address (10.0.1.77 finds 1.0.10.in-addr.arpa). Choosing a network's
+  heading shows every one of its reverse records at once, and the choice
+  is kept in the page address. `GET /api/workspace/dns-records` takes
+  `zone_type=forward|reverse`.
+
 - The DNS tab's reverse zone list is in address order (10.0.2.0 before
   10.0.10.0 before 172.16.0.0) and scrolls when it is long. At All
   Allocated Networks it no longer lists the reverse zone a deallocated

@@ -201,6 +201,23 @@ describe('workspace read routes', () => {
       ip_address: '10.20.0.15',
       related_subnet_ids: [subnetA],
     });
+    // zone_type narrows a network's records to one side: its reverse zones'.
+    const reverse = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ subnet_id: subnetA, zone_type: 'reverse' });
+    expect(reverse.body.total).toBeGreaterThan(0);
+    expect(reverse.body.items.every((row) => row.zone_type === 'reverse')).toBe(true);
+    const forward = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ subnet_id: subnetA, zone_type: 'forward' });
+    expect(forward.body.items.every((row) => row.zone_type === 'forward')).toBe(true);
+    expect(reverse.body.total + forward.body.total).toBe(
+      (await request(app).get('/api/workspace/dns-records').query({ subnet_id: subnetA })).body
+        .total,
+    );
+    expect(
+      (await request(app).get('/api/workspace/dns-records').query({ zone_type: 'both' })).status,
+    ).toBe(400);
   });
 
   it('matches one address exactly with ip_address, unlike the substring table_q', async () => {

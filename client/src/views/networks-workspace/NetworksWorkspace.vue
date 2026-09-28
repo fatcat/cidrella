@@ -66,6 +66,7 @@
           :summary-zones="summaryZones"
           :summary-scopes="summaryScopes"
           :selected-zone="selectedZoneFilter"
+          :selected-reverse-network="reverseNetworkFilter"
           :selected-scope="selectedScopeFilter"
           :address-overview="addressOverview"
           @select-estate="selectEstate"
@@ -73,6 +74,7 @@
           @switch-view="switchView"
           @open-menu="toggleMenu"
           @filter-zone="filterToZone"
+          @filter-reverse-network="filterToReverseNetwork"
           @filter-scope="filterToScope"
           @zone-menu="(zone, invoker, event) => openLinkedMenu('zone', zone, invoker, event)"
           @scope-menu="(scope, invoker, event) => openLinkedMenu('scope', scope, invoker, event)"
@@ -572,6 +574,9 @@ const dhcpDialogs = ref(null);
 const applyStatus = ref(null);
 const folderManagerVisible = ref(false);
 const selectedZoneFilter = ref(null);
+// Every reverse zone of one network at once, the heading of that network in
+// the reverse zone picker. Excludes selectedZoneFilter: one or the other.
+const reverseNetworkFilter = ref(null);
 const selectedScopeFilter = ref(null);
 const openMenuName = ref(null);
 const notice = ref('');
@@ -909,6 +914,7 @@ function workspaceQueryState() {
     network: contextKind.value === 'network' ? selectedNetwork.value.id : null,
     view: activeView.value,
     zone: selectedZoneFilter.value?.id || null,
+    reverseNetwork: reverseNetworkFilter.value?.id || null,
     scope: selectedScopeFilter.value?.id || null,
     ip:
       selectedRowView.value === 'addresses' && selectedRowContext.value === 'network'
@@ -1006,6 +1012,10 @@ function restoreContextFromRoute(availableNetworks) {
   selectedZoneFilter.value = state.zone
     ? dnsZones.value.find((zone) => Number(zone.id) === Number(state.zone)) || null
     : null;
+  reverseNetworkFilter.value =
+    !selectedZoneFilter.value && state.reverseNetwork
+      ? allNetworks.value.find((network) => Number(network.id) === state.reverseNetwork) || null
+      : null;
   selectedScopeFilter.value = state.scope
     ? dhcpScopes.value.find((scope) => Number(scope.id) === Number(state.scope)) || null
     : null;
@@ -1034,6 +1044,7 @@ const viewMeta = computed(() => {
         ...base,
         title:
           selectedZoneFilter.value?.name ||
+          (reverseNetworkFilter.value && `${reverseNetworkFilter.value.name} reverse zones`) ||
           `${countOf(dnsTotal.value, 'record')} in ${countOf(scopedZones.value.length, 'zone')}`,
       };
     if (activeView.value === 'dhcp')
@@ -1091,6 +1102,12 @@ const currentRows = computed(() => {
   else rows = rangeRows.value;
   if (activeView.value === 'dns' && selectedZoneFilter.value)
     rows = rows.filter((row) => Number(row.raw.zone_id) === Number(selectedZoneFilter.value.id));
+  if (activeView.value === 'dns' && reverseNetworkFilter.value)
+    rows = rows.filter(
+      (row) =>
+        row.raw.zone_type === 'reverse' &&
+        (row.raw.related_subnet_ids || []).map(Number).includes(reverseNetworkFilter.value.id),
+    );
   if (activeView.value === 'dhcp' && selectedScopeFilter.value)
     rows = rows.filter(
       (row) =>
@@ -1914,6 +1931,7 @@ async function selectNetwork(network) {
   const keepDnsChoice = activeView.value === 'dns';
   if (!keepDnsChoice) clearFilters();
   selectedZoneFilter.value = keepDnsChoice ? linkedZoneOfSide(network.id, dnsZoneSide.value) : null;
+  reverseNetworkFilter.value = null;
   selectedScopeFilter.value = null;
   clearDetail();
   tableQuery.value = '';
@@ -1929,6 +1947,7 @@ function resetContextNavigation() {
   sortKey.value = null;
   clearFilters();
   selectedZoneFilter.value = null;
+  reverseNetworkFilter.value = null;
   selectedScopeFilter.value = null;
   clearDetail();
   selectedRows.value = [];
@@ -1971,6 +1990,7 @@ async function switchView(view) {
     view === 'dns' && contextKind.value === 'network'
       ? linkedZoneOfSide(selectedNetwork.value?.id, dnsZoneSide.value)
       : null;
+  reverseNetworkFilter.value = null;
   selectedScopeFilter.value = null;
   clearDetail();
   selectedRows.value = [];
@@ -2378,8 +2398,27 @@ function resetVisibleColumns() {
   visibleColumnKeys.value = { ...visibleColumnKeys.value, [columnStorageKey.value]: keys };
   saveJson(columnStorageKey.value, keys);
 }
+// Every reverse zone of one network: the network's heading in the picker.
+async function filterToReverseNetwork(network) {
+  reverseNetworkFilter.value =
+    reverseNetworkFilter.value?.id === Number(network.id)
+      ? null
+      : allNetworks.value.find((entry) => Number(entry.id) === Number(network.id)) || {
+          id: Number(network.id),
+          name: network.name || network.cidr,
+          cidr: network.cidr,
+        };
+  selectedZoneFilter.value = null;
+  selectedScopeFilter.value = null;
+  if (reverseNetworkFilter.value) rememberDnsZoneSide({ type: 'reverse' });
+  tableQuery.value = '';
+  await updateWorkspaceRoute();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
+}
 async function filterToZone(zone) {
   selectedZoneFilter.value = selectedZoneFilter.value?.id === zone.id ? null : zone;
+  reverseNetworkFilter.value = null;
   rememberDnsZoneSide(selectedZoneFilter.value);
   selectedScopeFilter.value = null;
   tableQuery.value = '';
@@ -2390,12 +2429,19 @@ async function filterToZone(zone) {
 async function filterToScope(scope) {
   selectedScopeFilter.value = selectedScopeFilter.value?.id === scope.id ? null : scope;
   selectedZoneFilter.value = null;
+  reverseNetworkFilter.value = null;
   tableQuery.value = '';
   await updateWorkspaceRoute();
   if (contextKind.value === 'network') await loadNetworkContext();
   else await refreshAggregateTable();
 }
 
+// A network's reverse zones: its records in reverse zones, by network.
+function reverseNetworkParams() {
+  return reverseNetworkFilter.value
+    ? { subnet_id: reverseNetworkFilter.value.id, zone_type: 'reverse' }
+    : {};
+}
 // The on-screen IP table's request: its search, column filters and sort.
 function columnParams() {
   const out = {};
@@ -2424,7 +2470,7 @@ function tableRequestParams() {
     table_q: tableQ,
     sort_order: order,
     ...(activeView.value === 'dns'
-      ? { zone_id: selectedZoneFilter.value?.id || undefined }
+      ? { zone_id: selectedZoneFilter.value?.id || undefined, ...reverseNetworkParams() }
       : { scope_id: selectedScopeFilter.value?.id || undefined }),
     ...columnParams(),
   };
@@ -2586,7 +2632,10 @@ async function loadWorkspace() {
         ? new Set((networks?.items || []).map((network) => Number(network.id)))
         : null;
     restoreContextFromRoute(availableNetworks);
-    if (contextKind.value !== 'network' && (selectedZoneFilter.value || selectedScopeFilter.value))
+    if (
+      contextKind.value !== 'network' &&
+      (selectedZoneFilter.value || reverseNetworkFilter.value || selectedScopeFilter.value)
+    )
       await refreshAggregateTable();
     loadingContext.value = false;
   } catch (error) {
@@ -2631,6 +2680,7 @@ async function refreshAggregateTable() {
       ...params,
       ...(isIpTable.value ? tableRequestParams() : {}),
       zone_id: selectedZoneFilter.value?.id || undefined,
+      ...reverseNetworkParams(),
     };
     const [zones, dns] = await Promise.all([
       workspaceResources.loadZones(zoneParams),

@@ -3,6 +3,8 @@ import {
   reverseZoneFamily,
   ptrRecordAddress,
   reverseZoneSortKey,
+  reverseZoneCidr,
+  reverseZoneContains,
   ptrHostHint,
 } from '../../../src/utils/reverseZone.js';
 
@@ -66,5 +68,21 @@ describe('ptrHostHint', () => {
     expect(ptrHostHint(4).label).toBe('Last Octet *');
     expect(ptrHostHint(6).label).toBe('Host nibbles *');
     expect(ptrHostHint(6).placeholder).toBe('e.g. 1.0.0.0');
+  });
+
+  it('names the network a reverse zone covers, and whether it holds an address', () => {
+    expect(reverseZoneCidr('2.0.10.in-addr.arpa')).toBe('10.0.2.0/24');
+    expect(reverseZoneCidr('16.172.in-addr.arpa.')).toBe('172.16.0.0/16');
+    expect(reverseZoneCidr('8.b.d.0.1.0.0.2.ip6.arpa')).toBe('2001:db8::/32');
+    expect(reverseZoneCidr('example.test')).toBeNull();
+
+    expect(reverseZoneContains('2.0.10.in-addr.arpa', '10.0.2.15')).toBe(true);
+    expect(reverseZoneContains('2.0.10.in-addr.arpa', '10.0.3.15')).toBe(false);
+    expect(reverseZoneContains('16.172.in-addr.arpa', '172.16.200.1')).toBe(true);
+    expect(reverseZoneContains('8.b.d.0.1.0.0.2.ip6.arpa', '2001:db8::1')).toBe(true);
+    expect(reverseZoneContains('8.b.d.0.1.0.0.2.ip6.arpa', '2001:db9::1')).toBe(false);
+    // An address of the other family, or not an address at all.
+    expect(reverseZoneContains('2.0.10.in-addr.arpa', '2001:db8::1')).toBe(false);
+    expect(reverseZoneContains('2.0.10.in-addr.arpa', '10.0.2')).toBe(false);
   });
 });

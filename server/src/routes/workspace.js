@@ -51,6 +51,7 @@ function parseCommon(req, { paged = false } = {}) {
     ['q', 'q'],
     ['table_q', 'tableQ'],
     ['record_type', 'recordType'],
+    ['zone_type', 'zoneType'],
     ['dns_source', 'dnsSource'],
     ['lease_status', 'leaseStatus'],
     ['dhcp_assignment_type', 'assignmentType'],
@@ -59,6 +60,9 @@ function parseCommon(req, { paged = false } = {}) {
     const parsed = optionalText(req.query[queryName], queryName);
     if (parsed.error) return parsed;
     result[key] = parsed.value;
+  }
+  if (result.zoneType !== undefined && !['forward', 'reverse'].includes(result.zoneType)) {
+    return { error: 'zone_type must be forward or reverse' };
   }
   if (
     result.leaseStatus !== undefined &&

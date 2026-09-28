@@ -270,6 +270,10 @@ DNS write APIs still accept `type` because the submitted form is a DNS record
 write model. UI read paths should use `record_type` and `dns_source`; form
 submission should map `record_type` back to `type` only when editing a record.
 
+`GET /api/workspace/dns-records` takes `zone_type` (`forward` or `reverse`)
+beside `zone_id`: with `subnet_id` it returns every record in that network's
+reverse zones, the reverse picker's network-wide choice.
+
 ### Bulk record actions
 
 `POST /api/dns/records/bulk` (`dns:write`) takes `{ action, ids }`: `action`

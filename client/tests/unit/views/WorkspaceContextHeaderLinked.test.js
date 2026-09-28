@@ -11,9 +11,18 @@ function zones(n) {
   }));
 }
 
-function mountHeader(summaryZones, selectedZone = null) {
+// The vendor input needs the PrimeVue plugin; the search box is a plain input.
+const InputText = {
+  props: ['modelValue'],
+  emits: ['update:modelValue'],
+  template:
+    '<input class="picker-search-input" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+};
+
+function mountHeader(summaryZones, selectedZone = null, extra = {}) {
   return mount(WorkspaceContextHeader, {
     attachTo: globalThis.document.body,
+    global: { stubs: { InputText } },
     props: {
       contextKind: 'network',
       contextIcon: 'pi pi-sitemap',
@@ -26,6 +35,7 @@ function mountHeader(summaryZones, selectedZone = null) {
       viewMeta: { title: 'DNS' },
       summaryZones,
       selectedZone,
+      ...extra,
     },
   });
 }
@@ -98,6 +108,75 @@ describe('WorkspaceContextHeader linked zone strip', () => {
     expect(picker.find('strong').text()).toBe('2.0.10.in-addr.arpa');
     expect(picker.attributes('aria-pressed')).toBe('true');
     expect(picker.classes()).toContain('selected');
+    wrapper.unmount();
+  });
+
+  it('groups reverse zones under the network each serves, and searches them', async () => {
+    const trust = { id: 7, cidr: '10.0.0.0/22', name: 'Trust Network' };
+    const iot = { id: 8, cidr: '10.0.8.0/24', name: 'IOT' };
+    const zone = (id, name, networks, count = 254) => ({
+      id,
+      type: 'reverse',
+      name,
+      record_count: count,
+      related_networks: networks,
+    });
+    const wrapper = mountHeader([
+      zone(1, '8.0.10.in-addr.arpa', [iot]),
+      zone(2, '1.0.10.in-addr.arpa', [trust]),
+      zone(3, '0.0.10.in-addr.arpa', [trust]),
+      zone(4, '99.51.198.in-addr.arpa', [], 3),
+    ]);
+    await wrapper.find('.linked-picker').trigger('click');
+    const doc = globalThis.document;
+    const headings = () =>
+      [...doc.querySelectorAll('.picker-heading strong')].map((el) => el.textContent);
+    const zonesShown = () =>
+      [...doc.querySelectorAll('.picker-item strong')].map((el) => el.textContent);
+    // Networks in address order, zones in address order under each, and the
+    // unlinked zone last.
+    expect(headings()).toEqual(['Trust Network', 'IOT', 'Other zones']);
+    expect(zonesShown()).toEqual([
+      '0.0.10.in-addr.arpa',
+      '1.0.10.in-addr.arpa',
+      '8.0.10.in-addr.arpa',
+      '99.51.198.in-addr.arpa',
+    ]);
+    expect(doc.querySelector('.picker-item small').textContent).toBe('10.0.0.0/24');
+    expect(doc.querySelector('.picker-heading em').textContent).toBe('508');
+
+    const search = doc.querySelector('.picker-search-input');
+    const type = async (text) => {
+      search.value = text;
+      search.dispatchEvent(new Event('input'));
+      await wrapper.vm.$nextTick();
+    };
+    // A network name keeps all its zones.
+    await type('trust');
+    expect(zonesShown()).toEqual(['0.0.10.in-addr.arpa', '1.0.10.in-addr.arpa']);
+    // An address finds the zone that covers it.
+    await type('10.0.1.77');
+    expect(headings()).toEqual(['Trust Network']);
+    expect(zonesShown()).toEqual(['1.0.10.in-addr.arpa']);
+    // A CIDR prefix.
+    await type('10.0.8');
+    expect(zonesShown()).toEqual(['8.0.10.in-addr.arpa']);
+    await type('nothing here');
+    expect(doc.querySelector('.picker-empty').textContent).toContain('nothing here');
+
+    // The heading picks every reverse zone of that network.
+    await type('');
+    doc.querySelector('[data-track="workspace-reverse-network"]').click();
+    expect(wrapper.emitted('filter-reverse-network')?.[0]?.[0]).toEqual(trust);
+    wrapper.unmount();
+  });
+
+  it('names the whole network on the card when its reverse zones are the filter', () => {
+    const trust = { id: 7, cidr: '10.0.0.0/22', name: 'Trust Network' };
+    const wrapper = mountHeader(zones(5), null, { selectedReverseNetwork: trust });
+    const picker = wrapper.find('.linked-picker');
+    expect(picker.find('strong').text()).toBe('Trust Network · all zones');
+    expect(picker.attributes('aria-pressed')).toBe('true');
     wrapper.unmount();
   });
 });

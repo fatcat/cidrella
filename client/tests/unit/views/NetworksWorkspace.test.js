@@ -757,6 +757,53 @@ describe('Networks workspace', () => {
     expect(wrapper.find('.table-toolbar .button.primary').exists()).toBe(true);
   });
 
+  it('shows every reverse zone of one network from its heading in the picker', async () => {
+    const base = api.get.getMockImplementation();
+    const owner = { id: subnet.id, cidr: subnet.cidr, name: subnet.name };
+    const reverse = (id, name) => ({
+      id,
+      name,
+      type: 'reverse',
+      enabled: 1,
+      record_count: 254,
+      related_subnet_ids: [subnet.id],
+      related_networks: [owner],
+    });
+    api.get.mockImplementation((url, config) =>
+      url === '/dns/zones'
+        ? base(url, config).then((res) => ({
+            ...res,
+            data: [
+              ...res.data.filter((zone) => zone.type !== 'reverse'),
+              reverse(41, '1.1.1.in-addr.arpa'),
+              reverse(42, '2.1.1.in-addr.arpa'),
+            ],
+          }))
+        : base(url, config),
+    );
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    await wrapper.find('.linked-picker').trigger('click');
+    globalThis.document.querySelector('[data-track="workspace-reverse-network"]').click();
+    await flushPromises();
+
+    const dnsReads = api.get.mock.calls.filter(([url]) => url === '/workspace/dns-records');
+    expect(dnsReads.at(-1)[1].params).toMatchObject({ subnet_id: subnet.id, zone_type: 'reverse' });
+    expect(dnsReads.at(-1)[1].params.zone_id).toBeUndefined();
+    expect(wrapper.find('.linked-picker strong').text()).toBe('Public test network · all zones');
+
+    // Picking one zone replaces the network-wide choice.
+    await wrapper.find('.linked-picker').trigger('click');
+    globalThis.document.querySelectorAll('[data-track="workspace-reverse-zone"]')[1].click();
+    await flushPromises();
+    const last = api.get.mock.calls.filter(([url]) => url === '/workspace/dns-records').at(-1);
+    expect(last[1].params).toMatchObject({ zone_id: 42 });
+    expect(last[1].params.zone_type).toBeUndefined();
+    expect(wrapper.find('.linked-picker strong').text()).toBe('2.1.1.in-addr.arpa');
+    wrapper.unmount();
+  });
+
   it('leaves the reverse zone a deallocated network left behind out of the allocated estate', async () => {
     const base = api.get.getMockImplementation();
     const leftover = {
