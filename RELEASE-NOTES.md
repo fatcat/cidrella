@@ -422,6 +422,12 @@ first on a 0.4.17 host.
   menu too. The DNS and DHCP tables have no bulk actions, so their rows
   stay single-pick.
 
+- The DNS tab's reverse zone list is in address order (10.0.2.0 before
+  10.0.10.0 before 172.16.0.0) and scrolls when it is long. At All
+  Allocated Networks it no longer lists the reverse zone a deallocated
+  network leaves behind (disabled, and used by no allocated network); an
+  enabled reverse zone for space kept outside IPAM still shows.
+
 - Two repeated creation buttons are gone: the explorer's "+" (the header's
   Create button opens the same menu) and the Networks tab's Allocate
   network (Create network is in the Create menu, the Actions menu and a

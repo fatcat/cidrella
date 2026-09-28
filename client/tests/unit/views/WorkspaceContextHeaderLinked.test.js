@@ -66,6 +66,31 @@ describe('WorkspaceContextHeader linked zone strip', () => {
     wrapper.unmount();
   });
 
+  it('lists reverse zones in address order, not name order', async () => {
+    const names = [
+      '0.0.10.in-addr.arpa',
+      '0.16.172.in-addr.arpa',
+      '0.168.192.in-addr.arpa',
+      '1.0.10.in-addr.arpa',
+      '8.0.10.in-addr.arpa',
+      '10.0.10.in-addr.arpa',
+    ];
+    const wrapper = mountHeader(
+      names.map((name, i) => ({ id: i + 1, type: 'reverse', name, record_count: 1 })),
+    );
+    await wrapper.find('.linked-picker').trigger('click');
+    const items = globalThis.document.querySelectorAll('.picker-item strong');
+    expect([...items].map((el) => el.textContent)).toEqual([
+      '0.0.10.in-addr.arpa',
+      '1.0.10.in-addr.arpa',
+      '8.0.10.in-addr.arpa',
+      '10.0.10.in-addr.arpa',
+      '0.16.172.in-addr.arpa',
+      '0.168.192.in-addr.arpa',
+    ]);
+    wrapper.unmount();
+  });
+
   it('names the chosen reverse zone on the picker card', () => {
     const list = zones(5);
     const wrapper = mountHeader(list, list[3]);

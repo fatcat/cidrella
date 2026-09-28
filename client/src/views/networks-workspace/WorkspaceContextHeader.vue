@@ -203,6 +203,7 @@ import { computed, ref } from 'vue';
 import Popover from '../../ui/Popover.js';
 import { formatDuration } from '../networks-workspace-data.js';
 import StatusDot from '../../components/StatusDot.vue';
+import { reverseZoneSortKey } from '../../utils/reverseZone.js';
 
 // Breadcrumb, gauges, pinned actions, view tabs and the per-view summary band.
 // Renders as three sibling landmarks so the DOM under .work-surface is
@@ -248,7 +249,12 @@ function isSelected(selected, item) {
 // Forward zones are cards of their own. Reverse zones are too while there is
 // only one; from two up they share one picker card so a /22 or /16 does not
 // line the strip with in-addr.arpa names.
-const reverseZones = computed(() => props.summaryZones.filter((zone) => zone.type === 'reverse'));
+// In address order: 2.0.10.in-addr.arpa (10.0.2.0) before 16.172.in-addr.arpa.
+const reverseZones = computed(() =>
+  props.summaryZones
+    .filter((zone) => zone.type === 'reverse')
+    .sort((a, b) => reverseZoneSortKey(a.name).localeCompare(reverseZoneSortKey(b.name))),
+);
 const zoneCards = computed(() =>
   reverseZones.value.length > 1
     ? props.summaryZones.filter((zone) => zone.type !== 'reverse')
@@ -516,6 +522,9 @@ button {
   flex-direction: column;
   gap: 0.1rem;
   min-width: 14rem;
+  /* A /16 has 256 reverse zones: scroll instead of running off the screen. */
+  max-height: min(24rem, 60vh);
+  overflow-y: auto;
 }
 .picker-item {
   display: flex;

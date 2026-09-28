@@ -742,9 +742,20 @@ const dnsZoneNetworkLabels = computed(
       }),
     ),
 );
+// A disabled reverse zone that no allocated network uses is what deallocating
+// a network leaves behind; it is not part of the allocated estate. An enabled
+// one stands for address space kept outside IPAM and stays.
+function inAllocatedEstate(zone) {
+  return (
+    zone.type !== 'reverse' ||
+    Number(zone.enabled) === 1 ||
+    zone.enabled === true ||
+    (dnsZoneNetworkIds.value.get(Number(zone.id))?.size || 0) > 0
+  );
+}
 const scopedZones = computed(() =>
   contextKind.value === 'estate'
-    ? dnsZones.value
+    ? dnsZones.value.filter(inAllocatedEstate)
     : dnsZones.value.filter((zone) =>
         [...(dnsZoneNetworkIds.value.get(Number(zone.id)) || [])].some((id) =>
           scopedNetworkIds.value.has(id),

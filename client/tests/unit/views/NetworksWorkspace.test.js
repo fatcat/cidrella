@@ -757,6 +757,44 @@ describe('Networks workspace', () => {
     expect(wrapper.find('.table-toolbar .button.primary').exists()).toBe(true);
   });
 
+  it('leaves the reverse zone a deallocated network left behind out of the allocated estate', async () => {
+    const base = api.get.getMockImplementation();
+    const leftover = {
+      id: 29,
+      name: '2.1.1.in-addr.arpa',
+      type: 'reverse',
+      enabled: 0,
+      record_count: 0,
+      related_subnet_ids: [],
+    };
+    const standalone = {
+      id: 30,
+      name: '99.51.198.in-addr.arpa',
+      type: 'reverse',
+      enabled: 1,
+      record_count: 3,
+      related_subnet_ids: [],
+    };
+    api.get.mockImplementation((url, config) =>
+      url === '/dns/zones'
+        ? base(url, config).then((res) => ({ ...res, data: [...res.data, leftover, standalone] }))
+        : base(url, config),
+    );
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    // Two fixture zones plus the standalone one; the leftover is not counted.
+    expect(wrapper.find('[data-track="workspace-tab-dns"] span').text()).toBe('3');
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    await wrapper.find('.linked-picker').trigger('click');
+    const zonesListed = [...globalThis.document.querySelectorAll('.picker-item strong')].map(
+      (el) => el.textContent,
+    );
+    // Disabled and used by no allocated network: gone. Enabled and unlinked
+    // (address space kept outside IPAM): still there.
+    expect(zonesListed).toEqual(['1.1.1.in-addr.arpa', '99.51.198.in-addr.arpa']);
+    wrapper.unmount();
+  });
+
   it('opens unallocated address space as a functional inventory context', async () => {
     const wrapper = await mountWorkspace();
     await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
