@@ -695,7 +695,7 @@ describe('Networks workspace', () => {
     const wrapper = await mountWorkspace();
     expect(wrapper.find('.service-shortcuts').exists()).toBe(false);
     expect(wrapper.find('.estate-row.active').exists()).toBe(true);
-    expect(wrapper.find('.context-header').text()).toContain('All Networks');
+    expect(wrapper.find('.context-header').text()).toContain('All Allocated Networks');
     expect(wrapper.findAll('.view-tabs button')).toHaveLength(3);
     expect(wrapper.find('table').text()).toContain('Public test network');
 
@@ -705,7 +705,7 @@ describe('Networks workspace', () => {
       .findAll('.view-tabs button')
       .find((button) => button.text().includes('DNS'))
       .trigger('click');
-    expect(wrapper.find('.context-header').text()).toContain('All Networks');
+    expect(wrapper.find('.context-header').text()).toContain('All Allocated Networks');
     expect(wrapper.find('.view-tabs button.active').text()).toContain('DNS');
     // Every network's records, the same DNS table as inside a network; the
     // zones are the cards above it.
@@ -741,7 +741,14 @@ describe('Networks workspace', () => {
     const wrapper = await mountWorkspace();
     await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
 
-    expect(wrapper.find('.context-header').text()).toContain('Unallocated Networks');
+    expect(wrapper.find('.context-header').text()).toContain('All Unallocated Networks');
+    // The explorer names both estates by allocation state, each with its count.
+    const estates = wrapper.findAll('.estate-row').map((row) => row.text());
+    expect(estates[0]).toContain('All Allocated Networks');
+    expect(estates[1]).toContain('All Unallocated Networks');
+    expect(estates[1]).toContain('1 network ready to allocate');
+    expect(wrapper.find('.estate-row.active').text()).toContain('All Unallocated Networks');
+    expect(wrapper.text()).not.toContain('Browse unallocated');
     expect(wrapper.find('table').text()).toContain('1.1.2.0/24');
     expect(wrapper.find('.network-tree').text()).toContain('1.1.2.0/24');
   });

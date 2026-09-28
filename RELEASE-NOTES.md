@@ -303,7 +303,7 @@ first on a 0.4.17 host.
   Disable entry. The switch shows the current state, on or off for an
   address and on, off or half-way (mixed) for a selection, and choosing it
   flips the state; a mixed selection turns scanning on.
-- At All Networks and in a folder, the DNS and DHCP tabs are the same record
+- At All Allocated Networks and in a folder, the DNS and DHCP tabs are the same record
   and address tables as inside a network, across every network in view,
   with the same columns and filters. They used to list zones and scopes
   until one was picked. The zones and scopes are now the cards above the
@@ -388,6 +388,12 @@ first on a 0.4.17 host.
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and
   showed as a dash.
 
+- The explorer names its two estates by allocation state: All Allocated
+  Networks (every configured network, with its zones and scopes; formerly
+  All Networks) and All Unallocated Networks (the address space ready to
+  allocate, with its count). The second replaces the Browse unallocated
+  link.
+
 - Moving an unallocated network into a folder asks first. Filing it in a
   folder allocates it, so Move to folder, and dragging it onto a folder in
   the explorer, now say so and wait for Continue before opening the network
@@ -408,7 +414,7 @@ first on a 0.4.17 host.
   record created before its network existed, or kept when the network was
   deleted and configured again, was served by DNS but never claimed its
   address: the Addresses row had no type or hostname, and neither the
-  Addresses search nor the All Networks search could find the host.
+  Addresses search nor the All Allocated Networks search could find the host.
   Configuring a network now adopts the manual A and AAAA records that
   already name its addresses (static DNS, a gateway's name, or a disabled
   DNS hold), and addresses left blank this way are repaired on first start.

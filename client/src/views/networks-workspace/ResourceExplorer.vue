@@ -29,6 +29,8 @@
       <kbd :title="`Press ${MOD_LABEL}+K to search`">{{ MOD_LABEL }} K</kbd>
     </label>
 
+    <!-- The two estates, by allocation state: every configured network, and
+         the address space not yet allocated. -->
     <button
       class="estate-row"
       :class="{ active: contextKind === 'estate' }"
@@ -37,7 +39,7 @@
     >
       <span class="estate-icon"><i class="pi pi-building" /></span>
       <span
-        ><strong>All Networks</strong
+        ><strong>All Allocated Networks</strong
         ><small
           >{{ countOf(networkCount, 'network') }} · {{ countOf(zoneCount, 'zone') }} ·
           {{ countOf(scopeCount, 'scope') }}</small
@@ -45,12 +47,22 @@
       >
       <i class="pi pi-chevron-right" />
     </button>
+    <button
+      class="estate-row"
+      :class="{ active: contextKind === 'unallocated' }"
+      data-track="workspace-unallocated-select"
+      @click="emit('select-unallocated')"
+    >
+      <span class="estate-icon"><i class="pi pi-inbox" /></span>
+      <span
+        ><strong>All Unallocated Networks</strong
+        ><small>{{ countOf(unallocatedCount, 'network') }} ready to allocate</small></span
+      >
+      <i class="pi pi-chevron-right" />
+    </button>
 
     <div class="explorer-section-head">
       <span>NETWORK SCOPE</span>
-      <button data-track="workspace-unallocated-select" @click="emit('select-unallocated')">
-        Browse unallocated
-      </button>
     </div>
 
     <div class="network-tree">
@@ -189,6 +201,7 @@ const props = defineProps({
   selectedFolderId: { type: Number, default: null },
   selectedNetworkId: { type: Number, default: null },
   networkCount: { type: Number, default: 0 },
+  unallocatedCount: { type: Number, default: 0 },
   zoneCount: { type: Number, default: 0 },
   scopeCount: { type: Number, default: 0 },
   loading: { type: Boolean, default: false },
@@ -427,16 +440,6 @@ button {
   font-size: 0.62rem;
   font-weight: 800;
   letter-spacing: 0.12em;
-}
-.explorer-section-head button {
-  padding: 0;
-  border: 0;
-  color: var(--preview-accent);
-  background: none;
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0;
-  cursor: pointer;
 }
 .network-tree {
   flex: 1;

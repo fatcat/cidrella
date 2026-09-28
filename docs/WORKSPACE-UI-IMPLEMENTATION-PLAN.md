@@ -37,7 +37,7 @@ Older documentation is not uniformly current. For example, `docs/SESSION-STATUS.
 | ID | Design contract |
 | --- | --- |
 | UX-01 | Keep a single central work surface. Selecting a network establishes context for Addresses, DNS, DHCP and Ranges. Do not restore separate DNS/DHCP inventory buttons at the top of the explorer. |
-| UX-02 | Keep the existing **All Networks** label pending a naming decision. It exposes Networks, all DNS zones and all DHCP scopes. The label does not limit its contents to networks. |
+| UX-02 | Decided 2026-09-28: the estate is **All Allocated Networks** (networks, all DNS zones and all DHCP scopes), beside **All Unallocated Networks**, which replaces the Browse unallocated link. The explorer names both by allocation state. |
 | UX-03 | Explorer remains at left, selected context and gauges above the central surface, resource details at right. Global configuration belongs in Settings. |
 | UX-04 | Keep Table, Grid and Compact Grid address presentations. The same row identity, action eligibility and selection model drive all three. |
 | UX-05 | Related-resource navigation retains the right panel. The panel owns a stable resource identity independently of the active table. |

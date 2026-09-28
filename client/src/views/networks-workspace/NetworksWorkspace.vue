@@ -19,6 +19,7 @@
         :selected-folder-id="selectedFolder?.id ?? null"
         :selected-network-id="selectedNetwork?.id ?? null"
         :network-count="allNetworks.length"
+        :unallocated-count="unallocatedNetworks.length"
         :zone-count="dnsZones.length"
         :scope-count="dhcpScopes.length"
         :loading="loading"
@@ -649,7 +650,7 @@ const columnTableName = computed(() => {
   const label =
     [...networkViews, ...aggregateViews].find((view) => view.key === activeView.value)?.label ||
     activeView.value;
-  return `${contextKind.value === 'estate' ? 'All Networks' : contextTitle.value} ${label}`;
+  return `${contextKind.value === 'estate' ? 'All Allocated Networks' : contextTitle.value} ${label}`;
 });
 
 const canAnyCreate = computed(() => createMenuItems.value.length > 0);
@@ -678,12 +679,15 @@ const filteredFolders = computed(() => {
 });
 
 const allNetworks = computed(() => folders.value.flatMap((folder) => folder.networks));
+// Every unallocated leaf network, the address space ready to allocate.
+const unallocatedNetworks = computed(() =>
+  unallocatedFolders.value.flatMap((folder) => flattenAllocatable(folder.networks)),
+);
 const scopedNetworks = computed(() => {
   if (contextKind.value === 'network')
     return selectedNetwork.value.id ? [selectedNetwork.value] : [];
   if (contextKind.value === 'folder') return selectedFolder.value?.networks || [];
-  if (contextKind.value === 'unallocated')
-    return unallocatedFolders.value.flatMap((folder) => flattenAllocatable(folder.networks));
+  if (contextKind.value === 'unallocated') return unallocatedNetworks.value;
   return allNetworks.value;
 });
 const scopedNetworkIds = computed(
@@ -733,8 +737,8 @@ const scopedDhcpRows = computed(() =>
 const networkInventoryRows = computed(() => mapNetworkRows(scopedNetworks.value));
 
 const contextTitle = computed(() => {
-  if (contextKind.value === 'estate') return 'All Networks';
-  if (contextKind.value === 'unallocated') return 'Unallocated Networks';
+  if (contextKind.value === 'estate') return 'All Allocated Networks';
+  if (contextKind.value === 'unallocated') return 'All Unallocated Networks';
   if (contextKind.value === 'folder') return selectedFolder.value?.name || 'Folder';
   return selectedNetwork.value.name;
 });
@@ -2030,9 +2034,9 @@ async function continueAllocateOnMove() {
 async function moveNetworkToFolder({ networkId, folder }) {
   const network = allNetworks.value.find((entry) => Number(entry.id) === Number(networkId));
   if (!network) {
-    const unallocated = unallocatedFolders.value
-      .flatMap((entry) => flattenAllocatable(entry.networks))
-      .find((entry) => Number(entry.id) === Number(networkId));
+    const unallocated = unallocatedNetworks.value.find(
+      (entry) => Number(entry.id) === Number(networkId),
+    );
     if (unallocated) confirmAllocateOnMove(unallocated, folder);
     return;
   }
@@ -2422,7 +2426,7 @@ async function revalidateWorkspaceContext() {
       contextKind.value = 'estate';
       selectedFolder.value = null;
       activeView.value = 'networks';
-      message = 'The selected folder no longer exists. Showing All Networks.';
+      message = 'The selected folder no longer exists. Showing All Allocated Networks.';
     } else selectedFolder.value = folder;
   }
   if (contextKind.value === 'network') {
@@ -2437,7 +2441,7 @@ async function revalidateWorkspaceContext() {
       selectedFolder.value = folder || null;
       activeView.value = 'networks';
       clearDetail();
-      message = `The selected network no longer exists. Showing ${folder?.name || 'All Networks'}.`;
+      message = `The selected network no longer exists. Showing ${folder?.name || 'All Allocated Networks'}.`;
     } else selectedNetwork.value = network;
   }
   if (
