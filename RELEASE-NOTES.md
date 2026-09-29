@@ -454,6 +454,16 @@ first on a 0.4.17 host.
   the picker (never saved), the Show available switch (it reset to on), and
   the table search on the first load of a folder or All Allocated Networks.
 
+- Analytics keeps the range you picked. A minute's auto-refresh still out
+  when you changed the range could answer last and put the old range's
+  charts back; the spinner also stopped when the first of two overlapping
+  loads finished.
+
+- Leaving Settings > Updates stops its timers. A request still out when you
+  left used to start one afterwards: a status check every two seconds for
+  as long as the tab stayed open, or, if an update finished meanwhile, a
+  page reload wherever you had gone.
+
 - Two backups started in the same second, a scheduled one and a click, keep
   both archives. The second used to overwrite the first archive and then
   fail. The later one now takes a `-2` suffix.

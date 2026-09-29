@@ -380,6 +380,12 @@ const updateCheckEnabled = ref(true);
 let pollTimer = null;
 let reconnectTimer = null;
 let reloadTimer = null;
+// Every path that starts a timer awaits a request first (the first reads on
+// mount, the install POST, a status poll, the reconnect probe). One still out
+// when the panel closes used to start its timer after onUnmounted had cleared
+// them: a poll every two seconds for the life of the tab, or a page reload
+// from wherever the operator had gone. Once closed, nothing starts.
+let closed = false;
 
 // Seconds left before the page reloads itself after a completed update, or
 // null when no reload is scheduled. The browser is still running the bundle
@@ -487,7 +493,7 @@ async function fetchUpdateStatus() {
 }
 
 function scheduleReload() {
-  if (reloadTimer) return;
+  if (closed || reloadTimer) return;
   reloadCountdown.value = RELOAD_DELAY_S;
   reloadTimer = setInterval(() => {
     reloadCountdown.value -= 1;
@@ -623,6 +629,7 @@ async function saveSettings() {
 
 function startPolling() {
   stopPolling();
+  if (closed) return;
   pollTimer = setInterval(fetchUpdateStatus, 2000);
 }
 
@@ -634,7 +641,7 @@ function stopPolling() {
 }
 
 function startReconnecting() {
-  if (reconnecting.value) return;
+  if (closed || reconnecting.value) return;
   reconnecting.value = true;
   stopPolling();
 
@@ -679,6 +686,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  closed = true;
   stopPolling();
   if (reconnectTimer) {
     clearInterval(reconnectTimer);

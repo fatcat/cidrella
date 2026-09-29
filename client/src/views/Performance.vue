@@ -192,17 +192,14 @@ const processNote = computed(() =>
     : 'CIDRella itself · heap sits inside RSS',
 );
 
-async function refreshAll() {
-  store.loading = true;
-  try {
-    await Promise.all([
+function refreshAll() {
+  return store.track(() =>
+    Promise.all([
       store.fetchProxyPerf(selectedRange.value),
       store.fetchSystemHealth(),
       store.fetchServices(),
-    ]);
-  } finally {
-    store.loading = false;
-  }
+    ]),
+  );
 }
 async function onRange(value) {
   store.setRange(value);

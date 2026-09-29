@@ -80,6 +80,24 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const systemHealth = ref(null);
   const loading = ref(false);
 
+  // Reads overlap: the minute's auto-refresh can still be out when the range
+  // changes, and a slow answer used to land last and put the old range back
+  // on screen. Each metric keeps only its newest read's answer, and each page
+  // round only its newest run's state. `loading` holds while any read is out;
+  // the first to finish used to switch it off under the others.
+  const metricRequests = {};
+  let inFlight = 0;
+  async function track(work) {
+    inFlight += 1;
+    loading.value = true;
+    try {
+      return await work();
+    } finally {
+      inFlight -= 1;
+      loading.value = inFlight > 0;
+    }
+  }
+
   // Shared time range across all analytics tabs
   const selectedRange = ref(loadJson('cidrella_analytics_range', '24h'));
 
@@ -92,8 +110,9 @@ export const useDashboardStore = defineStore('dashboard', () => {
     const cfg = METRIC_CONFIG.find((c) => c.key === key);
     if (!cfg) return;
     const extra = typeof cfg.params === 'function' ? cfg.params(range) : cfg.params;
+    const request = (metricRequests[key] = (metricRequests[key] || 0) + 1);
     const res = await api.get(cfg.url, { params: { range, ...extra } });
-    metrics[key] = res.data;
+    if (request === metricRequests[key]) metrics[key] = res.data;
     return res.data;
   }
 
@@ -138,9 +157,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     failed: [],
   });
 
-  async function fetchHealthBoard(range = '24h', { rangeOnly = false } = {}) {
-    loading.value = true;
-    try {
+  let healthRun = 0;
+  function fetchHealthBoard(range = '24h', { rangeOnly = false } = {}) {
+    const run = ++healthRun;
+    return track(async () => {
       const rangeSources = [
         settle('timeseries', fetchMetric('timeseries', range)),
         settle('proxyPerf', fetchMetric('proxyPerf', range)),
@@ -158,6 +178,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
             settle('anomalies', getData('/anomalies/summary')),
           ];
       const results = await Promise.all([...rangeSources, ...stateSources]);
+      if (run !== healthRun) return;
       const failed = new Set(rangeOnly ? health.failed.filter((k) => !(k in metrics)) : []);
       for (const { key, data, failed: didFail } of results) {
         if (didFail) failed.add(key);
@@ -165,9 +186,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
         if (key === 'services') services.value = data;
       }
       health.failed = [...failed];
-    } finally {
-      loading.value = false;
-    }
+    });
   }
 
   // Everything the Intelligence page reads. The filter states (is the
@@ -197,9 +216,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
     'dnssecUnsupportedDomains',
   ];
 
-  async function fetchIntelligence(range = '24h', { rangeOnly = false } = {}) {
-    loading.value = true;
-    try {
+  let intelRun = 0;
+  function fetchIntelligence(range = '24h', { rangeOnly = false } = {}) {
+    const run = ++intelRun;
+    return track(async () => {
       const rangeSources = INTEL_RANGE_KEYS.map((key) => settle(key, fetchMetric(key, range)));
       const stateSources = rangeOnly
         ? []
@@ -211,6 +231,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
             settle('geoip', getData('/geoip/status')),
           ];
       const results = await Promise.all([...rangeSources, ...stateSources]);
+      if (run !== intelRun) return;
       const failed = new Set(rangeOnly ? intel.failed.filter((k) => !(k in metrics)) : []);
       for (const { key, data, failed: didFail } of results) {
         if (didFail) failed.add(key);
@@ -219,22 +240,17 @@ export const useDashboardStore = defineStore('dashboard', () => {
         if (key === 'system') systemHealth.value = data;
       }
       intel.failed = [...failed];
-    } finally {
-      loading.value = false;
-    }
+    });
   }
 
-  async function fetchAll(range = '24h') {
-    loading.value = true;
-    try {
-      await Promise.all([
+  function fetchAll(range = '24h') {
+    return track(() =>
+      Promise.all([
         ...METRIC_CONFIG.map((c) => fetchMetric(c.key, range)),
         fetchServices(),
         fetchSystemHealth(),
-      ]);
-    } finally {
-      loading.value = false;
-    }
+      ]),
+    );
   }
 
   return {
@@ -243,6 +259,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     services,
     systemHealth,
     loading,
+    track,
     selectedRange,
     setRange,
     fetchMetric,
