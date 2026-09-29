@@ -37,6 +37,13 @@ the workspace gains a control or a display rule, add it to `driver.js` or `viola
 Components carry `data-row-id`, `data-zone-id`, `data-scope-id`, `data-network-id` and
 `data-folder-id` for it; keep them when refactoring, like `data-track`.
 
+Backups have a round-trip test (`server/tests/integration/backup-round-trip.test.js`): export,
+change everything, restore, restart, and every table and carried file must match, but for what a
+restore promises to change. A new table is covered automatically; a new file or directory under
+`DATA_DIR` that backups carry goes in its `CARRIED` list. Server code that reads `DATA_DIR` when it
+loads (`config/defaults.js`, so `utils/backup.js`) needs `tests/helpers/isolated-data-dir.js`
+imported first in its test file; `setupTestDb` sets `DATA_DIR` too late for it.
+
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.
 Dependabot delivers grouped weekly dependency PRs. Prefer merging those over manual

@@ -422,13 +422,47 @@ first on a 0.4.17 host.
   menu too. The DNS and DHCP tables have no bulk actions, so their rows
   stay single-pick.
 
-- Stepping out to All Allocated Networks or a folder on the DNS tab keeps
-  the zone you were looking at when the new context has it, and otherwise
-  opens on the first zone of the side you last used. It used to drop to
-  the page's first load of every zone's records, PTRs first, so a reverse
-  zone from an unrelated network led the table. Choosing All Allocated
-  Networks or a folder now also re-reads the table; it used to keep the
-  rows from before.
+- All Allocated Networks is the home button: whichever table was open, it
+  shows every allocated network on the Networks tab, with no search,
+  filter, sort or zone choice left over. The Infrastructure breadcrumb does
+  the same. Stepping into a folder on the DNS tab keeps the zone you were
+  looking at when the folder has it, and otherwise opens on the first zone
+  of the side you last used. Both used to drop to the page's first load of
+  every zone's records, PTRs first, and kept the rows from before.
+
+- A network with only a reverse zone opens its DNS tab on that zone. With
+  the forward side remembered it used to open on the mixed list with no
+  zone chosen.
+
+- The zone and scope cards follow the explorer search without losing the
+  rest: a search on one tab used to replace the workspace's list of zones
+  with the matches, so a network opened afterwards showed no zone cards,
+  and a chosen zone the search hid left an empty table with no card lit.
+  The table now moves to a zone the search leaves.
+
+- Searching All Unallocated Networks finds its networks. Any search used to
+  empty the table. A folder picked in the unallocated explorer opens that
+  folder's allocated networks; it used to list the unallocated ones.
+
+- The Ungrouped folder shows only its own networks' DNS records and DHCP
+  addresses; it used to show the whole estate's. The workspace reads take
+  `folder_id=ungrouped` for the networks in no folder (`/api/workspace/*`,
+  `/api/dns/zones`, `/api/dhcp/scopes`), and Ungrouped survives a reload.
+
+- A reload brings back the table as it was: the page (it went back to the
+  first), the sort (it was not kept), a network's reverse zones chosen in
+  the picker (never saved), the Show available switch (it reset to on), and
+  the table search on the first load of a folder or All Allocated Networks.
+
+- Two backups started in the same second, a scheduled one and a click, keep
+  both archives. The second used to overwrite the first archive and then
+  fail. The later one now takes a `-2` suffix.
+
+- After a restore the backup list shows every archive in the backups
+  directory, the restored one and any taken after it included. The list
+  came back as it was when the restored backup was taken, so newer archives
+  stayed on disk unlisted, could be neither downloaded nor deleted, and
+  retention never counted them.
 
 - Clicking the DNS zone card that is already chosen keeps it. It used to
   clear the choice and drop the table to the mixed record list, where the

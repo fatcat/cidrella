@@ -48,7 +48,14 @@ export function createBackup(db) {
   db.pragma('wal_checkpoint(TRUNCATE)');
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
-  const filename = `cidrella-backup-${timestamp}.tar.gz`;
+  // Two backups in one second (a scheduled one and a click, a double click)
+  // would share the name: tar overwrote the first archive, then the insert
+  // below failed on the unique filename. The later one takes a suffix.
+  let filename = `cidrella-backup-${timestamp}.tar.gz`;
+  const taken = (name) =>
+    fs.existsSync(path.join(BACKUP_DIR, name)) ||
+    db.prepare('SELECT 1 FROM backups WHERE filename = ?').get(name);
+  for (let n = 2; taken(filename); n += 1) filename = `cidrella-backup-${timestamp}-${n}.tar.gz`;
   const archivePath = path.join(BACKUP_DIR, filename);
 
   // Write a manifest so restore can verify compatibility.
@@ -946,7 +953,36 @@ export function restoreBackup(
 /**
  * List all backups, verifying files exist on disk
  */
+// The backups table travels inside every backup, so a restore brings back
+// the list as it was when that backup was taken: the backup just restored,
+// and every one taken after it, are on disk but not in the table. Unlisted,
+// they could be neither downloaded nor deleted, and retention never counted
+// them. Take up any archive the table does not know, dated by its file.
+const ARCHIVE_NAME = /^cidrella-backup-.+\.tar\.gz$/;
+function adoptUnlistedArchives(db) {
+  if (!fs.existsSync(BACKUP_DIR)) return 0;
+  const known = new Set(
+    db
+      .prepare('SELECT filename FROM backups')
+      .all()
+      .map((row) => row.filename),
+  );
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO backups (filename, size_bytes, created_at) VALUES (?, ?, ?)',
+  );
+  let adopted = 0;
+  for (const name of fs.readdirSync(BACKUP_DIR)) {
+    if (!ARCHIVE_NAME.test(name) || known.has(name)) continue;
+    const stat = fs.statSync(path.join(BACKUP_DIR, name));
+    if (!stat.isFile()) continue;
+    const createdAt = stat.mtime.toISOString().slice(0, 19).replace('T', ' ');
+    adopted += insert.run(name, stat.size, createdAt).changes;
+  }
+  return adopted;
+}
+
 export function listBackups(db) {
+  adoptUnlistedArchives(db);
   const rows = db.prepare('SELECT * FROM backups ORDER BY created_at DESC').all();
   const result = [];
 
@@ -983,7 +1019,12 @@ export function deleteBackup(db, id) {
  * Enforce backup retention limit
  */
 function enforceRetention(db) {
-  const maxCount = parseInt(getSetting('backup_retention_count') || '7', 10);
+  // The database the backup was taken from, not whichever getDb() holds.
+  const setting = db
+    .prepare("SELECT value FROM settings WHERE key = 'backup_retention_count'")
+    .get()?.value;
+  const maxCount = parseInt(setting || '7', 10);
+  adoptUnlistedArchives(db);
 
   const backups = db.prepare('SELECT * FROM backups ORDER BY created_at DESC').all();
   if (backups.length <= maxCount) return;
