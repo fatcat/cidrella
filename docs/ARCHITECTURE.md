@@ -126,6 +126,18 @@ bare-address placeholder PTR with it; IPv4 keeps one for every address.
 Point-to-point and host prefixes (/31, /32, /127, /128) reserve nothing, so
 none of their addresses is a `system` row (RFC 3021, RFC 6164).
 
+Known limitation: anomaly detection identifies a client by its DHCPv4 lease
+MAC, falling back to its address (`resolveIdentity` in `models/anomaly.js`,
+`resolve_device_key` in `server/anomaly/storage.py`). A DHCPv6 lease carries a
+DUID, not a MAC, and a SLAAC host has no lease, so every IPv6 client is scored
+under its current address. In practice: a host's IPv6 traffic is a separate
+client from its IPv4 traffic, so allowlisting it by its IPv4 address does not
+cover its IPv6 queries; and an RFC 8981 temporary address rotates about daily,
+before the 48 hours of history training needs, so those addresses stay in
+learning and are never scored. Lifting it means keying identity, history and
+training on the device (the DHCPv6 DUID, or the Neighbor Discovery MAC) rather
+than on one address, in both the server and the sidecar.
+
 Hostname selection is centralized in `models/ip-lifecycle.js`. A `static_dns`
 or `gateway` address takes its name from static DNS. A `static_dhcp`
 address takes its DHCP Reservation name, and a `dynamic_dhcp` address takes its

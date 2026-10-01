@@ -184,7 +184,8 @@ network (`slaac` / `stateless` / `stateful`, the user's call), `enable-ra` and t
 `dhcp-range` forms, `option6:` lines, `dhcp-host=id:<duid>`, the lease parser's `duid` header
 and IAID/DUID columns, `dhcp_release6`; discovery by all-nodes multicast plus `ip -6 neigh`
 (`utils/nd-cache.js`), never a sweep; udp6/tcp6 proxy listeners, canonical client addresses,
-`blocklist_redirect_ip6`; IPv6 anomaly identities. Tests: `subnets-ipv6`, `dns-ipv6`,
+`blocklist_redirect_ip6`; IPv6 anomaly identities (by address only: see the known
+limitation in docs/ARCHITECTURE.md). Tests: `subnets-ipv6`, `dns-ipv6`,
 `dhcp-ipv6`, `ipv6-schema-migration`, `nd-cache`, `scanner-ipv6`, `ip-liveness`,
 `dns-proxy-ipv6`.
 

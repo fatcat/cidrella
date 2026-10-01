@@ -21,6 +21,9 @@ export function dismissScore(db, id) {
 // the MAC under a column alias, to keep CodeQL's `mac.?addr` private-data
 // heuristic from flagging every daemon log line that names the device; the
 // column, this function, and the API field are all still `identity`.)
+// IPv4 only in effect: a DHCPv6 lease has no MAC and a SLAAC host no lease, so
+// an IPv6 client is its address (docs/ARCHITECTURE.md, the known limitation
+// under the IPv6 paragraph).
 export function resolveIdentity(db, clientIp) {
   const row = db.prepare('SELECT mac_address FROM dhcp_leases WHERE ip_address = ?').get(clientIp);
   return row?.mac_address || clientIp;

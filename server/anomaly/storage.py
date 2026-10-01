@@ -71,6 +71,11 @@ def resolve_device_key(client_ip):
     inherit whatever baseline the previous holder had trained. The IP
     fallback covers hosts CIDRella has no lease for (static, out-of-pool).
 
+    IPv4 only in effect: a DHCPv6 lease has no MAC and a SLAAC host no
+    lease, so an IPv6 client is keyed by its address, and a rotating
+    temporary address never gathers enough history to train (see the known
+    limitation in docs/ARCHITECTURE.md).
+
     The value is stored in (and read back from) the `identity` column; the
     Python side calls it `device_key` because that is what it is -- the key
     models, scores and allowlist rows are grouped under.
