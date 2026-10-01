@@ -48,6 +48,14 @@ describe('cnameTargetError', () => {
     expect(cnameTargetError(db, 'nas.lab.lan', zone)).toBeNull();
   });
 
+  it('accepts a target that exists only as an AAAA record', () => {
+    // An IPv6-only host is as real a CNAME target as an IPv4 one.
+    db.prepare(
+      "INSERT INTO dns_records (zone_id, name, type, value, enabled) VALUES (?, 'v6host', 'AAAA', 'fd00::5', 1)",
+    ).run(zone.id);
+    expect(cnameTargetError(db, 'v6host.lab.lan', zone)).toBeNull();
+  });
+
   it('refuses a target outside the zone', () => {
     // The import hole: this is a syntactically valid domain, so isValidDomain
     // alone passed it straight through.

@@ -359,7 +359,7 @@
         <div class="preview-summary">
           <div class="preview-item">
             <span class="preview-count">{{ piholePreview.hosts.length }}</span>
-            <span class="preview-label">A records</span>
+            <span class="preview-label">Host records</span>
           </div>
           <div class="preview-item">
             <span class="preview-count">{{ piholePreview.cnames.length }}</span>
@@ -377,19 +377,9 @@
 
       <!-- Import results -->
       <div v-if="piholeImportResults" class="pihole-results">
-        <Message severity="success" :closable="false">
-          Import complete:
-          {{ piholeImportResults.a.created }} A created<template
-            v-if="piholeImportResults.a.updated"
-            >, {{ piholeImportResults.a.updated }} updated</template
-          >; {{ piholeImportResults.cname.created }} CNAME created<template
-            v-if="piholeImportResults.cname.updated"
-            >, {{ piholeImportResults.cname.updated }} updated</template
-          >; {{ piholeImportResults.dhcp.created }} DHCP created
-          <template v-if="piholeImportResults.dhcp.noSubnet > 0">
-            ({{ piholeImportResults.dhcp.noSubnet }} DHCP skipped: no matching subnet)
-          </template>
-        </Message>
+        <Message severity="success" :closable="false">{{
+          piholeImportSummary(piholeImportResults)
+        }}</Message>
       </div>
     </div>
 
@@ -1239,7 +1229,7 @@
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue';
 import { useToast } from '../ui/useToast.js';
-import { usePiholeImport } from '../composables/usePiholeImport.js';
+import { usePiholeImport, piholeImportSummary } from '../composables/usePiholeImport.js';
 import Button from '../ui/Button.js';
 import SelectButton from '../ui/SelectButton.js';
 import Dialog from '../ui/Dialog.js';

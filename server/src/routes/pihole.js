@@ -2,13 +2,15 @@ import { Router } from 'express';
 import { parse as parseToml } from 'smol-toml';
 import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { ipToLong, isClientMac, isValidMac, isValidIpv4, isValidDomain } from '../utils/ip.js';
+import { isClientMac, isValidMac, isValidIpv4, isValidDomain } from '../utils/ip.js';
 import { allocateStaticDns, deallocateStaticDns } from '../services/ip-lifecycle-service.js';
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
 import { validateDnsmasqConfigValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
-import { canonicalizeIp } from '../utils/address.js';
+import { addressFamily, canonicalizeIp, isValidIpv6 } from '../utils/address.js';
+import { findSubnetForIp } from '../utils/ip-sync.js';
+import { ipv6Enabled, IPV6_DISABLED_ERROR } from '../utils/ipv6-support.js';
 import { createReservation } from '../models/dhcp-reservation.js';
 import {
   importRecords,
@@ -92,7 +94,9 @@ function parsePiholeConfig(cfg) {
       if (macParts.length === 7 && macParts[0].toLowerCase() === '01') {
         mac = macParts.slice(1).join(':');
       }
-      return { mac: mac.toLowerCase(), ip: parts[1].trim(), hostname: parts[2].trim() };
+      // dnsmasq spells an IPv6 address in a dhcp-host in brackets.
+      const ip = parts[1].trim().replace(/^\[(.*)\]$/, '$1');
+      return { mac: mac.toLowerCase(), ip, hostname: parts[2].trim() };
     })
     .filter(Boolean);
 
@@ -153,6 +157,11 @@ function validateImportRecord(record, zoneName, db = null, zone = null, batchFqd
     if (!isValidIpv4(record.value)) return 'Invalid IPv4 address';
     return null;
   }
+  if (record.type === 'AAAA') {
+    if (!isValidIpv6(record.value)) return 'Invalid IPv6 address';
+    if (!ipv6Enabled()) return IPV6_DISABLED_ERROR;
+    return null;
+  }
   if (record.type === 'CNAME') {
     if (!isValidDomain(record.value)) return 'Invalid CNAME target';
     if (record.name === '@') return 'CNAME cannot be created at zone apex';
@@ -196,6 +205,10 @@ function appendPath(norm, path) {
     ...norm.outbound,
     url: `${norm.baseUrl}${path}`,
   };
+}
+
+function isAddressRecord(record) {
+  return record.type === 'A' || record.type === 'AAAA';
 }
 
 // ── Routes ───────────────────────────────────────────────────────────────────
@@ -327,8 +340,12 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
 
   const results = {
     a: { created: 0, updated: 0, skipped: 0, failed: 0 },
+    aaaa: { created: 0, updated: 0, skipped: 0, failed: 0 },
     cname: { created: 0, updated: 0, skipped: 0, failed: 0 },
-    dhcp: { created: 0, skipped: 0, failed: 0, noSubnet: 0 },
+    // ipv6: IPv6 DHCP hosts, which are not imported. A Pi-hole dhcp-host names
+    // a MAC, and a DHCPv6 reservation binds a DUID, so there is nothing to
+    // reserve them by.
+    dhcp: { created: 0, skipped: 0, failed: 0, noSubnet: 0, ipv6: 0 },
   };
 
   const recordsToImport = [];
@@ -341,7 +358,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     return res.status(400).json({ error: err.message });
   }
 
-  // Import A records, merge: skip exact dupes, update if same name but different value
+  // Import A and AAAA records, merge: skip exact dupes, update if same name but different value
   // Every problem is collected rather than returned on sight. Nothing is
   // imported if there is even one, but an operator fixing a file should see the
   // whole list in one response instead of re-uploading once per bad row.
@@ -356,14 +373,15 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
         return res.status(400).json({ error: 'hosts entries must be objects' });
       if (typeof h.hostname !== 'string')
         return res.status(400).json({ error: 'hosts hostname must be a string' });
+      // A Pi-hole host line carries either family; the address picks the type.
       const record = {
-        type: 'A',
+        type: addressFamily(h.ip) === 6 ? 'AAAA' : 'A',
         name: recordName(h.hostname.trim(), zone.name),
         value: canonicalizeIp(h.ip) || h.ip,
       };
       const err = validateImportRecord(record, zone.name);
       if (err) {
-        problem('A', record.name, record.value, err);
+        problem(record.type, record.name, record.value, err);
         continue;
       }
       recordsToImport.push(record);
@@ -372,14 +390,14 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
 
   // Import CNAME records, merge: skip exact dupes, update if same name but different target
   //
-  // The A records above are already in recordsToImport, and their FQDNs count as
+  // The A and AAAA records above are already in recordsToImport, and their FQDNs count as
   // valid targets even though none of them is in the DB yet: nothing is inserted
   // until importRecords runs below. Without this set, a Pi-hole file that
   // defines a host and a CNAME pointing at it (the normal case) would be
   // rejected for referencing a record that "does not exist".
   const batchFqdns = new Set(
     recordsToImport
-      .filter((r) => r.type === 'A' || r.type === 'CNAME')
+      .filter((r) => isAddressRecord(r) || r.type === 'CNAME')
       .map((r) =>
         String(fqdnForRecordName(r.name, zone.name)).trim().replace(/\.$/, '').toLowerCase(),
       ),
@@ -414,7 +432,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   // ambiguity and every later re-import treats it as legitimate history.
   const duplicateBatchRecords = new Set();
   const aRecordsByIp = new Map();
-  for (const record of recordsToImport.filter((r) => r.type === 'A')) {
+  for (const record of recordsToImport.filter(isAddressRecord)) {
     if (!aRecordsByIp.has(record.value)) aRecordsByIp.set(record.value, []);
     aRecordsByIp.get(record.value).push(record);
   }
@@ -424,11 +442,11 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     for (const record of records) {
       duplicateBatchRecords.add(record);
       problem(
-        'A',
+        record.type,
         record.name,
         record.value,
-        `${ip} is assigned to multiple A records in this import: ${hostnames.join(', ')}. ` +
-          'Keep one canonical A record and convert each additional name to a CNAME.',
+        `${ip} is assigned to multiple ${record.type} records in this import: ${hostnames.join(', ')}. ` +
+          `Keep one canonical ${record.type} record and convert each additional name to a CNAME.`,
       );
     }
   }
@@ -436,7 +454,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   // Check the remaining unambiguous A records against existing DNS and DHCP
   // names. Exact records from this batch are ignored so re-importing a valid
   // one-name-per-address file remains idempotent.
-  for (const record of recordsToImport.filter((r) => r.type === 'A')) {
+  for (const record of recordsToImport.filter(isAddressRecord)) {
     if (duplicateBatchRecords.has(record)) continue;
     const conflict = findAHostnameConflict(
       db,
@@ -448,7 +466,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     );
     if (conflict) {
       problem(
-        'A',
+        record.type,
         record.name,
         record.value,
         `${record.value} is already named ${conflict.hostname} (${conflict.source}). One address gets one name; add a CNAME instead.`,
@@ -476,10 +494,10 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
   const importDnsWorkflow = db.transaction(() => {
     const importResult = importRecords(db, zone, recordsToImport);
     if (zone.enabled) {
-      // Reconcile every A row in the submitted batch, including exact records
-      // that importRecords skipped. Re-importing a valid file must repair a
-      // missing/stale PTR just as creating the record does.
-      for (const record of recordsToImport.filter((item) => item.type === 'A')) {
+      // Reconcile every A and AAAA row in the submitted batch, including exact
+      // records that importRecords skipped. Re-importing a valid file must
+      // repair a missing/stale PTR just as creating the record does.
+      for (const record of recordsToImport.filter(isAddressRecord)) {
         const ptrResult = syncPtrForARecord(db, record.name, record.value, zone.name);
         if (ptrResult?.conflict) {
           const err = new Error('PTR conflict');
@@ -488,7 +506,7 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
           throw err;
         }
       }
-      for (const record of importResult.aRecordsToSync) {
+      for (const record of importResult.addressRecordsToSync) {
         if (record.previousValue && record.previousValue !== record.value) {
           deallocateStaticDns(db, record.name, record.previousValue, zone.name);
         }
@@ -510,30 +528,11 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     }
     throw err;
   }
-  results.a = {
-    created: importResult.results.A.created,
-    updated: importResult.results.A.updated,
-    skipped: importResult.results.A.skipped,
-    failed: importResult.results.A.failed,
-  };
-  results.cname = {
-    created: importResult.results.CNAME.created,
-    updated: importResult.results.CNAME.updated,
-    skipped: importResult.results.CNAME.skipped,
-    failed: importResult.results.CNAME.failed,
-  };
+  results.a = { ...importResult.results.A };
+  results.aaaa = { ...importResult.results.AAAA };
+  results.cname = { ...importResult.results.CNAME };
   // Import DHCP reservations
   if (dhcpRows.length > 0) {
-    // Find all leaf subnets to match IPs against
-    const subnets = db
-      .prepare(
-        `
-      SELECT s.* FROM subnets s
-      WHERE (SELECT COUNT(*) FROM subnets c WHERE c.parent_id = s.id) = 0
-    `,
-      )
-      .all();
-
     const existingRes = db
       .prepare('SELECT subnet_id, mac_address, ip_address FROM dhcp_reservations')
       .all();
@@ -548,6 +547,10 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
         results.dhcp.failed++;
         continue;
       }
+      if (isValidIpv6(d.ip)) {
+        results.dhcp.ipv6++;
+        continue;
+      }
       if (!isValidIpv4(d.ip)) {
         results.dhcp.failed++;
         continue;
@@ -557,16 +560,9 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
         continue;
       }
 
-      // Find best matching subnet
-      const ipLong = ipToLong(d.ip);
-      let best = null;
-      for (const s of subnets) {
-        const netLong = ipToLong(s.network_address);
-        const size = Math.pow(2, 32 - s.prefix_length);
-        if (ipLong >= netLong && ipLong < netLong + size) {
-          if (!best || s.prefix_length > best.prefix_length) best = s;
-        }
-      }
+      // The most specific leaf network of the address's own family.
+      const leaf = findSubnetForIp(db, d.ip);
+      const best = leaf ? db.prepare('SELECT * FROM subnets WHERE id = ?').get(leaf.id) : null;
 
       if (!best) {
         results.dhcp.noSubnet++;

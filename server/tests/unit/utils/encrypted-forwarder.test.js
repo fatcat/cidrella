@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import dnsPacket from 'dns-packet';
+import net from 'net';
+import https from 'https';
 
 // dns-proxy is imported transitively (framing helpers); stub its side-effecting deps.
 vi.mock('../../../src/utils/dnsmasq.js', () => ({
@@ -69,5 +71,81 @@ describe('fail-closed forwarding (no plaintext fallback)', () => {
     expect(
       await forwardDoT(encodeQuery('x.com'), { addresses: [], hostname: 'h' }, 200),
     ).toBeNull();
+  });
+});
+
+/**
+ * DoH connects to the configured address, not to whatever the hostname
+ * resolves to, through a custom `lookup`. Node (20 and later, with
+ * autoSelectFamily on) calls it with { all: true } and expects an array; the
+ * family must be the address's own, or an IPv6 upstream gets an IPv4 socket
+ * (IPV6-23).
+ */
+function listener(host) {
+  return new Promise((resolve, reject) => {
+    const connections = [];
+    const server = net.createServer((socket) => {
+      connections.push(socket.remoteAddress);
+      socket.destroy();
+    });
+    server.on('error', reject);
+    server.listen(0, host, () => resolve({ server, connections, port: server.address().port }));
+  });
+}
+
+const loopbackV6 = await listener('::1').then(
+  ({ server }) => (server.close(), true),
+  () => false,
+);
+
+describe('DoH connects to the configured upstream address', () => {
+  it.each([
+    ['IPv4', '127.0.0.1', true],
+    ['IPv6', '::1', loopbackV6],
+  ])('reaches a listener on %s', async (_label, address, available) => {
+    if (!available) return; // no IPv6 loopback in this sandbox; the lookup test below still runs
+    const { server, connections, port } = await listener(address);
+    try {
+      const out = await forwardDoH(
+        encodeQuery('example.com'),
+        {
+          addresses: [address],
+          hostname: 'doh.test',
+          doh_url: `https://doh.test:${port}/dns-query`,
+        },
+        2000,
+      );
+      // The listener is not TLS, so the query fails closed, but only after
+      // the connection arrived at the pinned address.
+      expect(out).toBeNull();
+      expect(connections).toHaveLength(1);
+    } finally {
+      server.close();
+    }
+  });
+
+  it.each([
+    ['2606:4700:4700::1111', 6],
+    ['1.1.1.1', 4],
+  ])('answers the lookup for %s with family %i in both callback forms', async (address, family) => {
+    const spy = vi.spyOn(https, 'request').mockImplementation(() => {
+      throw new Error('captured');
+    });
+    try {
+      await forwardDoH(encodeQuery('example.com'), {
+        addresses: [address],
+        hostname: 'doh.test',
+        doh_url: 'https://doh.test/dns-query',
+      }).catch(() => null);
+      const { lookup } = spy.mock.calls[0][0];
+      const single = vi.fn();
+      lookup('doh.test', {}, single);
+      expect(single).toHaveBeenCalledWith(null, address, family);
+      const all = vi.fn();
+      lookup('doh.test', { all: true }, all);
+      expect(all).toHaveBeenCalledWith(null, [{ address, family }]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

@@ -324,7 +324,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
             isConflict = 1;
             conflictReason = 'Rogue device (IP not assigned)';
           } else if (
-            assignment.mac_address &&
+            assignment?.mac_address &&
             result.mac &&
             assignment.mac_address.toLowerCase() !== result.mac
           ) {

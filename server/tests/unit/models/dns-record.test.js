@@ -387,7 +387,7 @@ describe('DNS import ownership', () => {
 
     expect(result.results.A).toEqual({ created: 1, updated: 1, skipped: 1, failed: 0 });
     expect(result.results.CNAME).toEqual({ created: 0, updated: 1, skipped: 0, failed: 0 });
-    expect(result.aRecordsToSync).toEqual([
+    expect(result.addressRecordsToSync).toEqual([
       { id: expect.any(Number), name: 'old', value: '10.0.0.11', previousValue: '10.0.0.10' },
       { id: expect.any(Number), name: 'new', value: '10.0.0.12', previousValue: null },
     ]);

@@ -152,7 +152,7 @@ export function cnameTargetError(db, target, zone, extraKnownFqdns = null) {
     WHERE z.enabled = 1
       AND z.type = 'forward'
       AND r.enabled = 1
-      AND r.type IN ('A', 'CNAME')
+      AND r.type IN ('A', 'AAAA', 'CNAME')
       AND lower(CASE WHEN r.name = '@' THEN z.name ELSE r.name || '.' || z.name END) = ?
     LIMIT 1
   `,
@@ -160,7 +160,7 @@ export function cnameTargetError(db, target, zone, extraKnownFqdns = null) {
     .get(normalized);
 
   if (!known) {
-    return `CNAME target must already exist as an enabled A or CNAME record in ${zone.name}`;
+    return `CNAME target must already exist as an enabled A, AAAA or CNAME record in ${zone.name}`;
   }
   return null;
 }
@@ -934,9 +934,10 @@ export function importRecords(db, zone, records) {
 
     const results = {
       A: { created: 0, updated: 0, skipped: 0, failed: 0 },
+      AAAA: { created: 0, updated: 0, skipped: 0, failed: 0 },
       CNAME: { created: 0, updated: 0, skipped: 0, failed: 0 },
     };
-    const aRecordsToSync = [];
+    const addressRecordsToSync = [];
     let changed = false;
 
     for (const r of records) {
@@ -976,8 +977,8 @@ export function importRecords(db, zone, records) {
           results[r.type].created++;
         }
         changed = true;
-        if (r.type === 'A') {
-          aRecordsToSync.push({ id: recordId, name, value: r.value, previousValue });
+        if (isAddressRecordType(r.type)) {
+          addressRecordsToSync.push({ id: recordId, name, value: r.value, previousValue });
         }
       } catch {
         results[r.type].failed++;
@@ -988,7 +989,7 @@ export function importRecords(db, zone, records) {
       bumpZoneSerial(db, zone.id);
     }
 
-    return { results, aRecordsToSync, changed };
+    return { results, addressRecordsToSync, changed };
   });
 
   return importTxn();

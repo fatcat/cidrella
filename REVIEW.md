@@ -133,24 +133,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 
 ### DNS, the DNS proxy and DoH
 
-#### IPV6-23: DoH forwarder's pinned lookup hard-codes family 4, so an IPv6 upstream address cannot connect
-
-**high**, confirmed. `server/src/utils/encrypted-forwarder.js:180` (also `server/src/utils/encrypted-forwarder.js:180`)
-
-- **What happens:** Set encryption mode https with the upstream {addresses:['2606:4700:4700::1111'], hostname:'cloudflare-dns.com', doh_url:'https://cloudflare-dns.com/dns-query'}. Every DoH query fails and resolves to SERVFAIL. With autoSelectFamily on, IPv4 upstreams fail too.
-- **Why:** `lookup: (_h, _o, cb) => cb(null, ip, 4)`, where ip is `upstream.addresses[0]`. The PUT /api/dns/encryption route explicitly accepts IPv6 upstream addresses when the switch is on (routes/dns.js:1119-1124). Node uses the family argument to choose the socket type. With autoSelectFamily disabled, a v6 address with family 4 fails with `connect EINVAL 2001:db8::1:443`, which I reproduced. Separately, and more seriously, on Node >= 20 (autoSelectFamily on by default) Node calls the lookup with {all:true} and expects an array. This 3-argument callback therefore fails with 'Invalid IP address: undefined' for IPv4 as well. I reproduced that by calling forwardDoH on Node 22: lastError was 'Invalid IP address: undefined' for both 127.0.0.1 and 2001:db8::1. I could not test Node 24, the version the project ships on. DoT (`tls.connect({host: ip})`) is unaffected.
-- **Verifier:** I reproduced this on Node 22.22.2. With autoSelectFamily on by default, an https.request that names a hostname and uses the custom lookup `cb(null, ip, 4)` fails with 'Invalid IP address: undefined' for both 127.0.0.1 and ::1. Node calls the lookup with all:true and expects an array back. encrypted-forwarder.js:180 passes url.hostname, a name and not an IP, so the lookup always runs. DoH is therefore broken for both families on Node 20 and later; I could not test Node 24, the version the project ships. Separately, the hard-coded family 4 is wrong for an IPv6 upstream that routes/dns.js:1119-1124 accepts. url-guard is not affected: it passes the IP as hostname, so Node skips the lookup.
-- **Fix:** Honour the lookup options and the address's family: `lookup: (_h, opts, cb) => { const family = net.isIP(ip); return opts?.all ? cb(null, [{ address: ip, family }]) : cb(null, ip, family); }`. Alternatively pass `family: net.isIP(ip)` in the request options. Add a test that a DoH request actually reaches a local listener for each family.
-
-#### IPV6-24: A CNAME cannot target a host that only has an AAAA record
-
-**high**, confirmed. `server/src/models/dns-record.js:155`
-
-- **What happens:** I reproduced this with IPv6 enabled, using 2001:db8:1::/64 and 10.9.9.0/24, both with domain v6.test. AAAA six -> 2001:db8:1::5 returned 201, and A four -> 10.9.9.5 returned 201. POST CNAME alias6 -> six.v6.test returned 400 'CNAME target must already exist as an enabled A or CNAME record in v6.test'. POST CNAME alias4 -> four.v6.test returned 201. The 'Add CNAME' menu item on an AAAA row hits the same error.
-- **Why:** cnameTargetError only accepts a target that already exists as an enabled `r.type IN ('A', 'CNAME')`. AAAA is missing from that list. The rule is shared by POST/PUT /api/dns/zones/:id/records (routes/dns.js validateRecord) and by the Pi-hole importer. The client offers 'Add CNAME' on AAAA rows (client/src/utils/rowContextMenu.js:67). findAHostnameConflict also tells the user to 'create a CNAME pointing at that hostname instead' when an AAAA address already has a name (routes/dns.js, and the dns-ipv6 test asserts that message). On an IPv6-only host, that workaround is then refused.
-- **Verifier:** models/dns-record.js cnameTargetError SQL (around line 155) filters `r.type IN ('A', 'CNAME')`, and AAAA is not in that list. No caller adds AAAA targets: extraKnownFqdns only carries same-batch names. routes/dns.js:574 and :782 tell the user to 'create a CNAME pointing at that hostname instead' when an AAAA address already has a hostname, and client rowContextMenu.js addCnameMenuItem offers 'Add CNAME' on AAAA rows. So on an IPv6-only host both the suggested workaround and the menu action are refused. This is a feature that works for IPv4 and is broken for IPv6.
-- **Fix:** Change the predicate to `r.type IN ('A', 'AAAA', 'CNAME')` and update the error text. Add an IPv6 case to the CNAME tests, including one through the Pi-hole import path.
-
 #### IPV6-25: After dividing an IPv6 network across a nibble boundary, deallocating a child leaves its generated PTRs served in the parent's ip6.arpa zone
 
 **medium**, confirmed. `server/src/services/subnet-dns-topology.js:62`
@@ -206,15 +188,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Fix:** Add `if (addressFamily(ip) === 6 && refuseIpv6Unless(res)) return;` and cover it in ipv6-gate.test.js.
 
 ### Scanning, liveness, rogue and anomaly detection
-
-#### IPV6-31: IPv6 scan crashes (TypeError) whenever an unassigned address answers on a network without a stateful DHCPv6 scope
-
-**high**, confirmed. `server/src/utils/scanner.js:327`
-
-- **What happens:** Confirmed by running a copy of tests/integration/scanner-ipv6-scan.test.js. On network fd00:7::/64 with no DHCPv6 scope, neighbour fd00:7::c1 answers the echo, and the scan ends with status 'failed', error "Cannot read properties of undefined (reading 'mac_address')", scanned_ips 0. Because the error is caught before observeScanResult and reconcileScanRogues run, no allocated address on that network is ever marked offline by a scan, and every scheduled scan fails. Also confirmed: POST /api/scans/probe with targetIps ['fd00:5::99'] on a SLAAC network (unassigned, responding) gives a failed scan, so the route answers 500 'Probe completed but no result recorded'.
-- **Why:** `const rogueMeaningful = parsed.family === 4 || policy?.mode === 'stateful'; if (!assignment && rogueMeaningful) {...} else if (assignment.mac_address && result.mac && ...)`. On IPv4, `rogueMeaningful` is always true, so `assignment` is never dereferenced while undefined. On IPv6 with mode null (no DHCPv6 scope), or on a targeted probe of an unassigned address under slaac or stateless, `!assignment && false` falls through to `assignment.mac_address` and throws. observeIpv6Presence stores a bare-network neighbour as `unassigned`, and the assignment snapshot excludes `unassigned`, so this happens on every scan that finds any host. The existing test 'records liveness only when the network has no scope' never checks `run.status`, so it passes while the scan fails.
-- **Verifier:** Reproduced against the real scanner in a scratch vitest at /tmp/claude-0/-home-user-cidrella/dd3d8b96-fd4c-5864-996a-7445c57d0948/scratchpad/ipv6-audit/skeptic-scan/sk.test.js, with the same mocks as tests/integration/scanner-ipv6-scan.test.js. On a bare fd00:7::/64 network where fd00:7::c1 answers, the run ends status 'failed' with error "Cannot read properties of undefined (reading 'mac_address')" and scanned_ips 0. A targeted probe of an unassigned responder (fd00:5::99) on a SLAAC network fails the same way. The cause is at server/src/utils/scanner.js:327-333: `!assignment && rogueMeaningful` is false when there is no assignment and the mode is not stateful, so control falls into `assignment.mac_address`. Two things make it reachable: observeIpv6Presence leaves a no-scope neighbour as 'unassigned', and the assignment snapshot excludes 'unassigned' rows. The existing test 'records liveness only when the network has no scope' never checks run.status. The try/catch catches the error before observeScanResult and reconcileScanRogues run, so the scan marks nothing offline. IPv4 is unaffected because rogueMeaningful is always true there.
-- **Fix:** Guard the MAC-mismatch branch with `else if (assignment && assignment.mac_address && ...)`, and add `expect(run.status).toBe('completed')` to the no-scope and SLAAC tests, plus a targeted-probe IPv6 test.
 
 #### IPV6-32: IPv6 rows the sparse scan never probes are still treated as 'scanner covered', so they stay online forever
 
@@ -280,15 +253,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Fix:** In both POST / and /probe, call `if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;` before creating the scan record, and add the case to ipv6-gate.test.js.
 
 ### Imports, address helpers and outbound URLs
-
-#### IPV6-39: Pi-hole DHCP import crashes (500, partial import) whenever any IPv6 leaf network exists
-
-**high**, confirmed. `server/src/routes/pihole.js:563` (also `server/src/routes/pihole.js:360`, `server/src/routes/pihole.js:360`)
-
-- **What happens:** I confirmed this with a scratch vitest. Turn IPv6 on, create the leaf networks 10.9.0.0/24 and 2001:db8::/64, then POST /api/pihole/import with hosts [{nas,10.9.0.5}] and dhcpHosts [{aa:bb:cc:dd:ee:01,10.9.0.50,printer}]. The response is HTTP 500 with an empty body, and the A record nas is still left in dns_records (count 1). The import half-succeeds and the operator only sees an error. The same import with no IPv6 network present succeeds.
-- **Why:** The best-subnet loop runs 32-bit math over every leaf subnet with no family filter: `for (const s of subnets) { const netLong = ipToLong(s.network_address); const size = Math.pow(2, 32 - s.prefix_length); ...}` (lines 562-568). The subnet list comes from `SELECT s.* FROM subnets s WHERE <leaf>` (528-534), which includes IPv6 networks. ipToLong throws 'Invalid IP address: 2001:db8::' on a v6 network_address. This runs after the DNS transaction has already committed (line 476/501). So existing IPv6 data breaks an IPv4-only feature.
-- **Verifier:** pihole.js:5 imports ipToLong from utils/ip.js, which re-exports cidr.js:50. That function splits on '.' and throws 'Invalid IP address: 2001:db8::' for any IPv6 string, which I checked with node. The leaf query at lines 528-534 has no address_family filter, and the loop at 562-568 visits every subnet, so a single IPv6 leaf network makes any import with a valid DHCP row throw, whatever order the rows come in. By then the DNS transaction (lines 476-501) has already committed, so the import is left half done and the operator gets a 500.
-- **Fix:** Choose the subnet with findSubnetForIp(db, d.ip) from utils/ip-sync.js, or with parseNetwork/parsedNetworkContains filtered to the address's family, instead of ipToLong and 2**(32-prefix). Add an integration test that imports DHCP hosts while an IPv6 leaf network exists.
 
 #### IPV6-40: Outbound URL guard refuses IPv6 entirely, even with the IPv6 switch on
 

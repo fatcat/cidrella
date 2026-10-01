@@ -23,6 +23,32 @@ import { apiError } from '../utils/format.js';
  * What mattered was that the LOGIC was duplicated, because that is where the
  * drift landed. See REVIEW.md, duplicate-logic audit #47.
  */
+/**
+ * The one sentence both import screens show for POST /api/pihole/import's
+ * `results`. Host lines of either family land as A or AAAA records; IPv6 DHCP
+ * host lines are counted but not imported (a DHCPv6 reservation binds a DUID,
+ * and a Pi-hole dhcp-host names a MAC).
+ */
+export function piholeImportSummary(results) {
+  if (!results) return '';
+  const records = (label, r) =>
+    r ? `${r.created} ${label} created${r.updated ? `, ${r.updated} updated` : ''}` : null;
+  const parts = [
+    records('A', results.a),
+    results.aaaa?.created || results.aaaa?.updated ? records('AAAA', results.aaaa) : null,
+    records('CNAME', results.cname),
+    `${results.dhcp?.created ?? 0} DHCP created`,
+  ].filter(Boolean);
+  const notes = [];
+  if (results.dhcp?.noSubnet > 0) {
+    notes.push(`${results.dhcp.noSubnet} DHCP skipped: no matching subnet`);
+  }
+  if (results.dhcp?.ipv6 > 0) {
+    notes.push(`${results.dhcp.ipv6} IPv6 DHCP skipped: a DHCPv6 reservation needs a DUID`);
+  }
+  return `Import complete: ${parts.join('; ')}${notes.length ? ` (${notes.join('; ')})` : ''}`;
+}
+
 export function usePiholeImport({ toast, fallbackZoneName = null, onImported = null } = {}) {
   const tab = ref('online');
   const url = ref('');

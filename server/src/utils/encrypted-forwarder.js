@@ -177,7 +177,14 @@ export function forwardDoH(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIM
         port: url.port || 443,
         path: url.pathname + url.search,
         servername: upstream.hostname || url.hostname,
-        lookup: (_h, _o, cb) => cb(null, ip, 4), // connect by IP, validate cert vs hostname
+        // Connect by IP, validate the cert against the hostname. Node asks
+        // for { all: true } (an array) when autoSelectFamily is on, and the
+        // family must be the address's own or an IPv6 upstream gets an IPv4
+        // socket.
+        lookup: (_h, opts, cb) => {
+          const family = net.isIP(ip);
+          return opts?.all ? cb(null, [{ address: ip, family }]) : cb(null, ip, family);
+        },
         headers: {
           'content-type': 'application/dns-message',
           accept: 'application/dns-message',

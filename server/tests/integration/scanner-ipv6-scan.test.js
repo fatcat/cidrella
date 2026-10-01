@@ -33,20 +33,20 @@ let tmpDir;
 const nets = {};
 
 function network(cidr, mode) {
-  const id = insertSubnet(db, { cidr, name: cidr, status: 'unallocated', depth: 0 }).lastInsertRowid;
+  const id = insertSubnet(db, {
+    cidr,
+    name: cidr,
+    status: 'unallocated',
+    depth: 0,
+  }).lastInsertRowid;
   const parsed = parseNetwork(cidr);
-  configureSubnet(
-    db,
-    db.prepare('SELECT * FROM subnets WHERE id = ?').get(id),
-    parsed,
-    {
-      name: cidr,
-      gateway: parsed.firstUsable,
-      gateway_policy: 'first',
-      create_dhcp_scope: Boolean(mode),
-      dhcpV6: mode ? { mode, pool: null } : null,
-    },
-  );
+  configureSubnet(db, db.prepare('SELECT * FROM subnets WHERE id = ?').get(id), parsed, {
+    name: cidr,
+    gateway: parsed.firstUsable,
+    gateway_policy: 'first',
+    create_dhcp_scope: Boolean(mode),
+    dhcpV6: mode ? { mode, pool: null } : null,
+  });
   invalidateSubnetCache();
   return Number(id);
 }
@@ -115,12 +115,19 @@ describe('IPv6 scan', () => {
   });
 
   it('flags an unclaimed host as rogue on a stateful network', async () => {
-    neighbors = new Map([['fd00:6::b1', { mac: 'aa:bb:cc:dd:ee:b1', interface: 'eth0', state: 'REACHABLE' }]]);
+    neighbors = new Map([
+      ['fd00:6::b1', { mac: 'aa:bb:cc:dd:ee:b1', interface: 'eth0', state: 'REACHABLE' }],
+    ]);
     responders.clear();
     responders.add('fd00:6::b1');
     const run = await scan(nets.stateful);
+    expect(run.status).toBe('completed');
     expect(run.conflicts_found).toBe(1);
-    expect(row('fd00:6::b1')).toMatchObject({ allocation_state: 'unassigned', is_rogue: 1, is_online: 1 });
+    expect(row('fd00:6::b1')).toMatchObject({
+      allocation_state: 'unassigned',
+      is_rogue: 1,
+      is_online: 1,
+    });
   });
 
   it('records liveness only when the network has no scope', async () => {
@@ -128,8 +135,27 @@ describe('IPv6 scan', () => {
     responders.clear();
     responders.add('fd00:7::c1');
     const run = await scan(nets.bare);
+    expect(run.status).toBe('completed');
     expect(run.conflicts_found).toBe(0);
-    expect(row('fd00:7::c1')).toMatchObject({ allocation_state: 'unassigned', is_rogue: 0, is_online: 1 });
+    expect(row('fd00:7::c1')).toMatchObject({
+      allocation_state: 'unassigned',
+      is_rogue: 0,
+      is_online: 1,
+    });
+  });
+
+  it('probes an unassigned address on a SLAAC network without failing', async () => {
+    neighbors = new Map();
+    responders.clear();
+    responders.add('fd00:5::d1');
+    const scanId = ScanRun.createPending(db, nets.slaac);
+    await startScan(db, scanId, nets.slaac, { targetIps: ['fd00:5::d1'] });
+    const run = db.prepare('SELECT * FROM network_scans WHERE id = ?').get(scanId);
+    expect(run.status).toBe('completed');
+    expect(ScanRun.getResultForIp(db, scanId, 'fd00:5::d1')).toMatchObject({
+      responded: 1,
+      is_conflict: 0,
+    });
   });
 
   it('echoes every persisted allocated address so a quiet static host goes offline', async () => {
@@ -158,7 +184,11 @@ describe('passive IPv6 source under each mode', () => {
     ]);
     recordDnsQueryLiveness(db, 'fd00:5::d1', { createRogue: true });
     recordDnsQueryLiveness(db, 'fd00:6::d2', { createRogue: true });
-    expect(row('fd00:5::d1')).toMatchObject({ allocation_state: 'slaac', is_rogue: 0, detection_source: 'passive' });
+    expect(row('fd00:5::d1')).toMatchObject({
+      allocation_state: 'slaac',
+      is_rogue: 0,
+      detection_source: 'passive',
+    });
     expect(row('fd00:6::d2')).toMatchObject({ allocation_state: 'unassigned', is_rogue: 1 });
   });
 });

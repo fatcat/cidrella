@@ -72,7 +72,7 @@
       <div class="preview-summary">
         <div class="preview-item">
           <span class="preview-count">{{ preview.hosts.length }}</span>
-          <span class="preview-label">A records</span>
+          <span class="preview-label">Host records</span>
         </div>
         <div class="preview-item">
           <span class="preview-count">{{ preview.cnames.length }}</span>
@@ -87,18 +87,9 @@
     </div>
 
     <div v-if="importResults" class="pihole-results">
-      <Message severity="success" :closable="false">
-        Import complete:
-        {{ importResults.a.created }} A created<template v-if="importResults.a.updated"
-          >, {{ importResults.a.updated }} updated</template
-        >; {{ importResults.cname.created }} CNAME created<template
-          v-if="importResults.cname.updated"
-          >, {{ importResults.cname.updated }} updated</template
-        >; {{ importResults.dhcp.created }} DHCP created
-        <template v-if="importResults.dhcp.noSubnet > 0">
-          ({{ importResults.dhcp.noSubnet }} DHCP skipped: no matching subnet)
-        </template>
-      </Message>
+      <Message severity="success" :closable="false">{{
+        piholeImportSummary(importResults)
+      }}</Message>
     </div>
 
     <div class="import-actions">
@@ -126,7 +117,7 @@ import TabList from '../ui/TabList.js';
 import Tab from '../ui/Tab.js';
 import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
-import { usePiholeImport } from '../composables/usePiholeImport.js';
+import { usePiholeImport, piholeImportSummary } from '../composables/usePiholeImport.js';
 
 defineProps({
   showCancel: { type: Boolean, default: false },

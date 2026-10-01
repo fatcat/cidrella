@@ -539,6 +539,28 @@ first on a 0.4.17 host.
   addresses you selected as a stateful pool. The dialog used to open with no
   DHCPv6 mode and save a stateful pool over the whole /64.
 
+- An IPv6 scan no longer fails when an address nobody assigned answers on a
+  network without a stateful DHCPv6 scope, or when a single address is probed
+  on a SLAAC network. Every such scan used to end "failed", so it marked
+  nothing offline, and a probe answered with a server error.
+
+- DNS-over-HTTPS forwarding connects. The upstream lookup answered in a form
+  current Node.js versions no longer accept, so every DoH query failed and
+  resolution returned SERVFAIL, for IPv4 upstreams as well; an IPv6 upstream
+  address was also given an IPv4 socket. DNS-over-TLS was not affected.
+
+- A CNAME can point at a host that has only an AAAA record, on the DNS page
+  and in a Pi-hole import. It used to be refused as a target that does not
+  exist.
+
+- The Pi-hole import handles IPv6. A host line with an IPv6 address becomes
+  an AAAA record (refused, with nothing imported, while IPv6 is switched
+  off) instead of failing the whole import as an invalid IPv4 address. DHCP
+  host lines are matched to a network of their own family: any IPv6 network
+  used to make the DHCP step fail with a server error after the DNS records
+  had already been imported. IPv6 DHCP host lines are counted and left out,
+  since a DHCPv6 reservation needs the client's DUID and Pi-hole gives a MAC.
+
 - Two backups started in the same second, a scheduled one and a click, keep
   both archives. The second used to overwrite the first archive and then
   fail. The later one now takes a `-2` suffix.
