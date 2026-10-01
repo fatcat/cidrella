@@ -84,7 +84,8 @@ address in a managed subnet with reverse DNS enabled has one visible PTR row
 when the subnet has at most 65,536 usable addresses. Larger reverse zones
 remain supported without full placeholder materialization. The canonical
 hostname selector uses static DNS for `static_dns` and `gateway`, a
-DHCP Reservation name for `static_dhcp`, and a DHCP Lease name for `dynamic_dhcp`.
+DHCP Reservation name for `static_dhcp`, and a DHCP Lease name for `dynamic_dhcp`
+(the lease's effective name, unique and sticky in its zone; ADR 005).
 During learned-metadata retention, an address without a protocol-owned
 allocation resolves a naming tie as static DNS, DHCP Reservation, then DHCP
 Lease. With

@@ -24,7 +24,7 @@ import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
 import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
-import { replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
+import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { upsertServerDnsDefault } from '../models/dhcp-option.js';
 import { dhcpLeaseRejectionReason } from '../services/ip-lifecycle-service.js';
 import { resolveEffectiveScopeOptions } from '../models/dhcp-scope.js';
@@ -509,16 +509,6 @@ export function syncLeases(db, { leaseFile = LEASE_FILE } = {}) {
     leases.push({ ...lease, subnetId: subnet?.status === 'allocated' ? subnet.id : null });
   }
 
-  // Persist the effective hostname used by DNS/IP sync. dnsmasq writes '*'
-  // when a client does not provide one; keep CIDRella's generated fallback in
-  // dhcp_leases too so later DHCP config regenerations do not treat the
-  // DHCP-sourced DNS record as stale. DHCPv6 clients have no MAC to look up.
-  for (const l of leases) {
-    if (!l.hostname && l.mac) {
-      l.hostname = generateFallbackHostname(l.mac) || null;
-    }
-  }
-
   const acceptedLeases = [];
   let rejected = 0;
   for (const lease of leases) {
@@ -530,6 +520,13 @@ export function syncLeases(db, { leaseFile = LEASE_FILE } = {}) {
       acceptedLeases.push(lease);
     }
   }
+
+  // Persist the effective name every reader uses (ADR 005): unique in its
+  // zone, sticky to the address holding it, the vendor fallback only for an
+  // unnamed client holding none. dnsmasq writes '*' for a client without a
+  // name, and for one whose name it handed to another client. DHCPv6 clients
+  // have no MAC to look a vendor up by.
+  assignLeaseNames(db, acceptedLeases, { fallbackName: generateFallbackHostname });
 
   replaceLeases(db, acceptedLeases, { lifecycleValidated: true });
 
@@ -556,16 +553,14 @@ export function regenerateDhcpConfigs(db) {
     const resChanged = regenerateReservations(db);
     return { confChanged, resChanged, changed: confChanged || resChanged };
   });
-  // Sync DHCP hostnames (leases + reservations) into dns_records
+  // Sync DHCP hostnames (leases + reservations) into dns_records. Stored
+  // leases already carry their effective names (ADR 005), the vendor
+  // fallback included, so none is applied here.
   const leases = db
     .prepare(
       'SELECT ip_address as ip, hostname, mac_address as mac, subnet_id as subnetId FROM dhcp_leases',
     )
-    .all()
-    .map((l) => ({
-      ...l,
-      hostname: l.hostname || (l.mac ? generateFallbackHostname(l.mac) : null),
-    }));
+    .all();
   syncDhcpDnsRecords(db, leases);
   if (confChanged) {
     restartDnsmasq();

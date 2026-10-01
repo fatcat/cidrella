@@ -96,6 +96,19 @@ safely converge when their source changes. Every path that creates, changes,
 removes, imports, migrates, or reconciles one of those facts must converge on
 the same PTR result through the shared DNS/IP lifecycle boundary.
 
+A DHCP lease's name is its effective name (ADR 005), decided when leases are
+read from dnsmasq and before they are stored: unique within its forward zone
+and sticky to the address that holds it. A client whose name another address
+holds gets the first free suffix `-00` through `-FF`; a client that sends no
+name keeps the name its address holds before any vendor fallback applies.
+
+dnsmasq serves the PTR result from its hosts file: every A and AAAA name is
+written to `hosts.d/records.hosts` with each address's canonical PTR name
+first, since dnsmasq answers a reverse lookup with the first hosts line for an
+address and reloads that file without a restart. Only a PTR the hosts file
+cannot answer (an operator override, or a PTR with no matching A record) is
+written as a `ptr-record` line in `conf.d`, which needs a restart.
+
 IPv6 topology follows the same model with three differences. The subnet-router
 anycast address is the network address of the prefix and is the only IPv6
 `system` row; there is no broadcast address, no Broadcast range, and no

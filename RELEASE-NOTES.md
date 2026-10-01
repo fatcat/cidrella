@@ -378,6 +378,23 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- Renaming a host no longer restarts dnsmasq. Generated PTRs were written as
+  `ptr-record` lines in `conf.d`, which dnsmasq only reads at start, so every
+  DNS name change from a DHCP lease or a record edit restarted DNS and DHCP.
+  They are now served from the hosts file, which dnsmasq reloads in place:
+  `hosts.d/records.hosts` (one file replacing the per-zone `zone-*.hosts`)
+  lists each address's canonical PTR name first. `conf.d` keeps only the PTRs
+  the hosts file cannot answer, such as operator overrides.
+
+- Two DHCP clients sending the same hostname no longer restart dnsmasq all day.
+  dnsmasq gives a shared name to whichever client renewed last, and every
+  renewal moved the DNS name and swapped the PTRs, which restarted dnsmasq (33
+  times an hour on one network with two mesh units both named `deco-XE75`). A
+  lease name is now unique in its zone and stays with the address that holds
+  it; the next client to ask for it gets the first free of `-00` through `-FF`
+  (`deco-XE75-00`), in DNS and in every table. Two unnamed clients of one
+  vendor are told apart the same way. See ADR 005.
+
 - Right-clicking a dragged grid range acted on the one cell under the pointer,
   and its Set Range Type reset the selection to that cell. The menu now
   targets the selection.

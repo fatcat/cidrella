@@ -14,6 +14,10 @@ let regenerateConfigs;
 
 function makeDb({ aRecords = [], otherRecords = [], ptrRecords = [], zone = {} } = {}) {
   const zones = [{ id: 10, name: 'the-mcnultys.org', ...zone }];
+  // The hosts writer reads records joined to their zone.
+  const inZone = (rows) => rows.map((row) => ({ zone_name: zones[0].name, ...row }));
+  aRecords = inZone(aRecords);
+  ptrRecords = inZone(ptrRecords);
   return {
     prepare(sql) {
       return {
@@ -114,7 +118,7 @@ describe('regenerateConfigs reload behavior', () => {
     );
 
     const hosts = fs.readFileSync(
-      path.join(tmpDir, 'dnsmasq', 'hosts.d', 'zone-10.hosts'),
+      path.join(tmpDir, 'dnsmasq', 'hosts.d', 'records.hosts'),
       'utf-8',
     );
     expect(hosts).toContain('10.0.3.232 host.google.com.');
@@ -266,7 +270,7 @@ describe('IPv6 emission', () => {
         ],
       }),
     );
-    const hosts = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'hosts.d', 'zone-10.hosts'), 'utf8');
+    const hosts = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'hosts.d', 'records.hosts'), 'utf8');
     expect(hosts).toContain('10.0.3.231 host4.the-mcnultys.org');
     expect(hosts).toContain('fd00:6::10 host6.the-mcnultys.org');
     const conf = fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'conf.d', 'zone-10.conf'), 'utf8');

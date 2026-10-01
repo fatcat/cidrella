@@ -3,6 +3,8 @@ import path from 'path';
 import os from 'os';
 import { execFileSync, execSync } from 'child_process';
 import { parseNetwork, isValidAddress } from './ip.js';
+import { sortKey } from './address.js';
+import { ipForPtrRecord } from '../models/dns-record.js';
 import { getSetting } from '../db/init.js';
 import { ipv6Enabled } from './ipv6-support.js';
 import { selectInterfaceNames } from './interface-config.js';
@@ -236,38 +238,84 @@ export function reverseZoneNetwork(zoneName) {
   return null;
 }
 
-export function regenerateHostsDir(db) {
-  const zones = db
+// Every served A and AAAA name, grouped by address, with each address's
+// canonical PTR name first. dnsmasq answers a reverse lookup from the first
+// hosts line naming the address, so this order makes the hosts file serve the
+// PTR that reverse-DNS projection chose, and dnsmasq picks hosts changes up
+// without a restart.
+function servedHostsByAddress(db) {
+  const records = db
     .prepare(
       `
-    SELECT z.id, z.name FROM dns_zones z WHERE z.enabled = 1
+    SELECT r.id, r.name, r.value, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE z.enabled = 1 AND z.type = 'forward' AND r.type IN ('A', 'AAAA') AND r.enabled = 1
+    ORDER BY r.id
   `,
     )
     .all();
-
-  const activeIds = new Set();
-  let changed = false;
-
-  for (const zone of zones) {
-    const records = db
-      .prepare(
-        `
-      SELECT name, value FROM dns_records
-      WHERE zone_id = ? AND type IN ('A', 'AAAA') AND enabled = 1
-    `,
-      )
-      .all(zone.id);
-
-    if (records.length === 0) continue;
-
-    activeIds.add(zone.id);
-    const filePath = path.join(HOSTS_DIR, `zone-${zone.id}.hosts`);
-    const newContent =
-      records.map((r) => `${r.value} ${toFqdn(r.name, zone.name)}`).join('\n') + '\n';
-    if (writeIfChanged(filePath, newContent)) changed = true;
+  const ptrNames = new Map();
+  for (const ptr of db
+    .prepare(
+      `
+    SELECT r.name, r.value, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE z.enabled = 1 AND r.type = 'PTR' AND r.enabled = 1
+    ORDER BY r.id
+  `,
+    )
+    .all()) {
+    const ip = ipForPtrRecord(ptr.name, ptr.zone_name);
+    if (ip && !ptrNames.has(ip)) ptrNames.set(ip, lowerFqdn(ptr.value));
   }
 
-  if (cleanStaleFiles(HOSTS_DIR, 'zone-', '.hosts', activeIds)) changed = true;
+  // Each name keeps the spelling it is written with (an absolute external
+  // name keeps its trailing dot); `key` is the form PTR values compare by.
+  const byAddress = new Map();
+  for (const record of records) {
+    const fqdn = toFqdn(record.name, record.zone_name);
+    const names = byAddress.get(record.value) || [];
+    if (!names.some((name) => name.key === lowerFqdn(fqdn))) {
+      names.push({ fqdn, key: lowerFqdn(fqdn) });
+    }
+    byAddress.set(record.value, names);
+  }
+  for (const [ip, names] of byAddress) {
+    const canonical = ptrNames.get(ip);
+    const at = canonical ? names.findIndex((name) => name.key === canonical) : -1;
+    if (at > 0) names.unshift(...names.splice(at, 1));
+  }
+  return byAddress;
+}
+
+function lowerFqdn(name) {
+  return String(name || '')
+    .trim()
+    .replace(/\.$/, '')
+    .toLowerCase();
+}
+
+// One file for every zone, so the order across zones is defined: dnsmasq
+// takes the PTR from the first hosts line for an address.
+const HOSTS_FILE = 'records.hosts';
+
+export function regenerateHostsDir(db) {
+  const byAddress = servedHostsByAddress(db);
+  const lines = [...byAddress.keys()]
+    .sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+    .flatMap((ip) => byAddress.get(ip).map(({ fqdn }) => `${ip} ${fqdn}`));
+  const filePath = path.join(HOSTS_DIR, HOSTS_FILE);
+  let changed;
+  if (lines.length) {
+    changed = writeIfChanged(filePath, lines.join('\n') + '\n');
+  } else {
+    changed = fs.existsSync(filePath);
+    if (changed) fs.unlinkSync(filePath);
+  }
+  // The per-zone files this replaced.
+  if (cleanStaleFiles(HOSTS_DIR, 'zone-', '.hosts', new Set())) changed = true;
   return changed;
 }
 
@@ -282,6 +330,8 @@ export function regenerateConfDir(db) {
 
   const activeIds = new Set();
   let changed = false;
+  let hostsCache = null;
+  const hostsByAddress = () => (hostsCache ||= servedHostsByAddress(db));
 
   for (const zone of zones) {
     // Defense in depth: the zone name is interpolated raw into ptr-record= and
@@ -314,6 +364,14 @@ export function regenerateConfDir(db) {
       .filter((ptr) => !isValidAddress(ptr.value));
 
     if (records.length === 0 && ptrRecords.length === 0) continue;
+    // A PTR the hosts file already answers (its value is the first name for
+    // the address there) needs no ptr-record line. Leaving those out keeps
+    // generated PTRs out of conf.d, whose changes cost a dnsmasq restart.
+    const servedPtrs = ptrRecords.filter((ptr) => {
+      const ip = ipForPtrRecord(ptr.name, zone.name);
+      return !(ip && hostsByAddress().get(ip)?.[0]?.key === lowerFqdn(ptr.value));
+    });
+    if (records.length === 0 && servedPtrs.length === 0) continue;
 
     activeIds.add(zone.id);
     const lines = [];
@@ -354,7 +412,7 @@ export function regenerateConfDir(db) {
     // PTR records: ptr-record=<octet>.<zone>,<hostname>. Skip any row whose
     // name or value doesn't pass the sanitizer, they would only emit if
     // someone bypassed the route validator or edited the DB directly.
-    for (const ptr of ptrRecords) {
+    for (const ptr of servedPtrs) {
       if (!isValidPtrName(ptr.name)) continue;
       if (validateDnsmasqConfigValue(ptr.value) != null) continue;
       lines.push(`ptr-record=${ptr.name}.${zone.name},${ptr.value}`);
